@@ -25,7 +25,9 @@
 - [Configuration](#configuration)
   - [Common flags](#common-flags)
   - [Helm rendering](#helm-rendering)
+  - [Build flags](#build-flags)
   - [Diff flags](#diff-flags)
+  - [Get flags](#get-flags)
 - [Defaults](#defaults)
 - [Architecture](#architecture)
 - [Development](#development)
@@ -237,6 +239,14 @@ Pair with `--output-file <path>` (or `-` for stdout) to write directly to disk â
 | `-s`, `--show-only` | _(none)_ | Restrict render to specific template paths, repeatable. |
 | `--enable-dns` | `false` | Allow DNS lookups during `helm template`. |
 
+### Build flags
+
+Apply to `build ks` / `build hr` / `build all`:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--only-crds` | `false` | Emit only `CustomResourceDefinition` resources (implies `--skip-crds=false`). |
+
 ### Diff flags
 
 Apply to `diff ks` / `diff hr`:
@@ -252,6 +262,15 @@ Apply to `diff ks` / `diff hr`:
 | Flag | Default | Description |
 |---|---|---|
 | `--include-removed` | `false` | Emit images dropped from `--path-orig` alongside newly added ones. |
+
+### Get flags
+
+Apply to `get all`:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--enable-images` | `false` | Group container images per HelmRelease in the summary. |
+| `--only-images` | `false` | Emit only the deduplicated image list (no counts or HelmRelease grouping). |
 
 ## Defaults
 

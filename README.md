@@ -42,7 +42,7 @@ Validating a Flux GitOps repo from CI used to mean a `kind` cluster, a `flux ins
 - ⚡ **PR-fast** — changed-only mode reconciles only the resources whose source files moved; one-file PRs drop from seconds to tens of milliseconds.
 - 🧪 **Diff-aware** — unified diffs of rendered output, with parent KS / HR headers and a flat image-set diff for CI pull-tests.
 - 📦 **CI-friendly** — `--output-file`, JSON / YAML / name output, no TTY assumptions.
-- 🧬 **Native Go SDKs** — helm v3 client-only, krusty, go-git, oras-go — linked in, not shelled out.
+- 🧬 **Native Go SDKs** — helm v4 client-only, krusty, go-git, oras-go — linked in, not shelled out.
 
 ## Quick start
 
@@ -275,7 +275,7 @@ Apply to `diff ks` / `diff hr`:
                  ▼      ▼        ▼                 │
        ┌────────────┐ ┌──────────────┐ ┌──────────────────┐
        │ SourceCtrl │ │ KSController │ │ HRController     │
-       │ go-git +   │ │ krusty +     │ │ helm v3          │
+       │ go-git +   │ │ krusty +     │ │ helm v4          │
        │ oras-go    │ │ Flux gen     │ │ (ClientOnly)     │
        └────────────┘ └──────────────┘ └──────────────────┘
 ```

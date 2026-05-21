@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.0](https://github.com/home-operations/flate/compare/0.0.4...0.1.0) (2026-05-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** unify ks/hr/all layout across get and test ([#11](https://github.com/home-operations/flate/issues/11))
+
+### Features
+
+* **cli:** unify ks/hr/all layout across get and test ([#11](https://github.com/home-operations/flate/issues/11)) ([e490dc8](https://github.com/home-operations/flate/commit/e490dc87df12fd53bd66426260f12e38fe040ed4))
+
+
+### Documentation
+
+* correct helm version reference from v3 to v4 ([#10](https://github.com/home-operations/flate/issues/10)) ([eb174dd](https://github.com/home-operations/flate/commit/eb174dd230ec06cf68bd6ff10440e42b46170687))
+* document --only-crds and get-all image flags ([#12](https://github.com/home-operations/flate/issues/12)) ([c9e5cc9](https://github.com/home-operations/flate/commit/c9e5cc95e7d619e173c8e43a9be703602e8b0471))
+* polish README and trim helper comments ([#8](https://github.com/home-operations/flate/issues/8)) ([3956827](https://github.com/home-operations/flate/commit/39568273c88ea1b06ee6e746a36fc3db5cae64f4))
+
 ## [0.0.4](https://github.com/home-operations/flate/compare/0.0.3...0.0.4) (2026-05-21)
 
 

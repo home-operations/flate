@@ -27,8 +27,8 @@ func runCLI(t *testing.T, args ...string) string {
 	return stdout.String() + stderr.String()
 }
 
-// runCLIStdout is like runCLI but returns stdout only, so tests can
-// parse the payload without log lines mixed in.
+// runCLIStdout returns stdout only — log lines on stderr would
+// otherwise pollute payloads that tests parse.
 func runCLIStdout(t *testing.T, args ...string) string {
 	t.Helper()
 	var stdout, stderr bytes.Buffer

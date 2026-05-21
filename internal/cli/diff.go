@@ -101,9 +101,8 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 	return emitImageList(w, imgs, c.output)
 }
 
-// imageSetDiff returns the sorted images that differ between orig and
-// current. Images added in current are always included; when
-// includeRemoved is set, images dropped from orig are added too.
+// imageSetDiff returns the sorted images added in current; when
+// includeRemoved is set, images dropped from orig are included too.
 func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []string {
 	out := make([]string, 0, len(current))
 	for img := range current {

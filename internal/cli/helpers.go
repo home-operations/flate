@@ -35,11 +35,9 @@ func sortRows(rows []map[string]string) {
 	})
 }
 
-// collectImages returns the union of container images found in every
-// rendered Kustomization and HelmRelease artifact reachable from the
-// store — Deployments, StatefulSets, Pods, Jobs, and anything else
-// `image.Extract` can recognise. The namespace scope on c is honored:
-// resources whose parent is out of scope contribute nothing.
+// collectImages returns the union of images extracted from every
+// rendered Kustomization and HelmRelease artifact. Namespace scope on
+// c is honored.
 func collectImages(o *orchestrator.Orchestrator, c *commonFlags) map[string]struct{} {
 	set := map[string]struct{}{}
 	add := func(docs []map[string]any) {
@@ -67,8 +65,8 @@ func collectImages(o *orchestrator.Orchestrator, c *commonFlags) map[string]stru
 	return set
 }
 
-// emitImageList writes a sorted image list in the requested format.
-// Non-structured outputs fall back to one image per line.
+// emitImageList writes a sorted image list — JSON / YAML when
+// requested, otherwise one image per line.
 func emitImageList(w io.Writer, imgs []string, out string) error {
 	switch format.Output(out) {
 	case format.OutputJSON:
@@ -84,10 +82,9 @@ func emitImageList(w io.Writer, imgs []string, out string) error {
 	return nil
 }
 
-// runDiffOrchestrators boots two orchestrators in changed-only mode,
-// each treating the other as baseline. Both sides resolve the same
-// (symmetric) change set, so reconciliation is restricted to resources
-// that differ between paths.
+// runDiffOrchestrators boots two orchestrators with each side's
+// --path-orig pointing at the other, so both resolve the same symmetric
+// change set and only render resources that differ between paths.
 func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (orig, current *orchestrator.Orchestrator, err error) {
 	if c.pathOrig == "" {
 		return nil, nil, errors.New("diff requires --path-orig")

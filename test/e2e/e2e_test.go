@@ -92,8 +92,8 @@ func TestE2E_BuildHR(t *testing.T) {
 	}
 }
 
-func TestE2E_GetCluster_JSON(t *testing.T) {
-	out := runCLI(t, "get", "cl", "--path", testdataPath(t, "simple"), "-o", "json")
+func TestE2E_GetAll_JSON(t *testing.T) {
+	out := runCLI(t, "get", "all", "--path", testdataPath(t, "simple"), "-o", "json")
 	if !strings.Contains(out, `"kustomizations"`) {
 		t.Errorf("missing kustomizations in json:\n%s", out)
 	}
@@ -123,7 +123,7 @@ func TestE2E_BadPath(t *testing.T) {
 }
 
 func TestE2E_TestCommand(t *testing.T) {
-	out := runCLI(t, "test", "--path", copyTree(t, testdataPath(t, "simple")))
+	out := runCLI(t, "test", "all", "--path", copyTree(t, testdataPath(t, "simple")))
 	if !strings.Contains(out, "PASSED") {
 		t.Errorf("expected PASSED in test output:\n%s", out)
 	}

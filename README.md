@@ -71,14 +71,16 @@ flate diff images  --path ./kubernetes --path-orig ../baseline/kubernetes -o jso
 |---|---|---|
 | `flate get ks` | `kustomization`, `kustomizations` | List Kustomizations |
 | `flate get hr` | `helmrelease`, `helmreleases` | List HelmReleases |
-| `flate get cl` | `cluster`, `clusters` | Cluster summary (`--enable-images`, `--only-images`) |
+| `flate get all` | | Cluster summary (`--enable-images`, `--only-images`) |
 | `flate build ks` | | Render Kustomizations to YAML |
 | `flate build hr` | | Render HelmReleases to YAML |
 | `flate build all` | | Render every Kustomization and HelmRelease |
 | `flate diff ks` | | Unified diff of rendered Kustomizations |
 | `flate diff hr` | | Unified diff of rendered HelmReleases |
 | `flate diff images` | | Set diff of container images (CI-friendly) |
-| `flate test` | | Codegen + run table-driven Go tests against the repo |
+| `flate test ks` | `kustomization`, `kustomizations` | Validate Kustomization reconcile status |
+| `flate test hr` | `helmrelease`, `helmreleases` | Validate HelmRelease reconcile status |
+| `flate test all` | | Validate every Kustomization and HelmRelease |
 | `flate diag` | | YAML / `.krmignore` sanity checks |
 
 Every command takes `--path <dir>` (default `.`). Add `--path-orig <dir>` to switch into [changed-only mode](#changed-only-mode).
@@ -88,10 +90,10 @@ Every command takes `--path <dir>` (default `.`). Add `--path-orig <dir>` to swi
 ```bash
 flate get ks --path ./kubernetes -o json
 flate get hr --path ./kubernetes -l app.kubernetes.io/part-of=media
-flate get cl --path ./kubernetes --only-images
+flate get all --path ./kubernetes --only-images
 ```
 
-`get cl --enable-images` groups images per HelmRelease; `--only-images` emits a flat, deduplicated list across both HelmReleases and Kustomization-managed workloads (Deployments, StatefulSets, Pods, Jobs).
+`get all --enable-images` groups images per HelmRelease; `--only-images` emits a flat, deduplicated list across both HelmReleases and Kustomization-managed workloads (Deployments, StatefulSets, Pods, Jobs).
 
 ### `flate build`
 
@@ -135,7 +137,7 @@ The header always shows the **parent** (HelmRelease or Kustomization) and the re
 
 #### `flate diff images`
 
-A diff-aware companion to `get cl --only-images`. Emits images whose string actually changed between `--path` and `--path-orig` — touching an env var doesn't produce noise.
+A diff-aware companion to `get all --only-images`. Emits images whose string actually changed between `--path` and `--path-orig` — touching an env var doesn't produce noise.
 
 | Flag | Effect |
 |---|---|
@@ -151,10 +153,12 @@ flate diff images --path ./pull --path-orig ./default -o json
 
 ### `flate test`
 
-Generates table-driven Go tests for every Kustomization and HelmRelease in the repo, then runs them. Tests assert that each resource reconciles successfully and renders a non-empty manifest set.
+Reports the reconcile status of every Kustomization and HelmRelease in the repo in a pytest-like progress format. A case passes when the resource reached `Ready`; it fails otherwise. Resources skipped by [changed-only mode](#changed-only-mode) appear as `SKIPPED`.
 
 ```bash
-flate test --path ./kubernetes
+flate test all --path ./kubernetes              # both kinds
+flate test ks  --path ./kubernetes              # only Kustomizations
+flate test hr  --path ./kubernetes media/plex   # one HelmRelease by name
 ```
 
 ### `flate diag`

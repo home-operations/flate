@@ -18,7 +18,7 @@ import (
 
 func newGetCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "get", Short: "List Flux objects"}
-	cmd.AddCommand(newGetKSCmd(), newGetHRCmd(), newGetClusterCmd())
+	cmd.AddCommand(newGetKSCmd(), newGetHRCmd(), newGetAllCmd())
 	return cmd
 }
 
@@ -54,14 +54,13 @@ func newGetHRCmd() *cobra.Command {
 		})
 }
 
-func newGetClusterCmd() *cobra.Command {
+func newGetAllCmd() *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
 	var enableImages, onlyImages bool
 	cmd := &cobra.Command{
-		Use:     "cl",
-		Aliases: []string{"cluster", "clusters"},
-		Short:   "Summarize the cluster",
+		Use:   "all",
+		Short: "Summarize every Kustomization and HelmRelease",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
 			if err != nil && o == nil {

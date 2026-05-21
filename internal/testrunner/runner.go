@@ -21,6 +21,11 @@ import (
 // Job collects the orchestrator's post-run state.
 type Job struct {
 	Store *store.Store
+	// Kinds limits the kinds reported on. Empty ↦ both Kustomization
+	// and HelmRelease.
+	Kinds []string
+	// Name optionally narrows the report to a single resource.
+	Name string
 }
 
 // Outcome enumerates the per-resource result.
@@ -76,24 +81,31 @@ func (r Report) Write(w io.Writer) {
 	_, _ = io.WriteString(w, b.String())
 }
 
-// Run inspects the store and produces a Report. The set of kinds to
-// include is the reconciler-driven ones: Kustomization, HelmRelease.
+// Run inspects the store and produces a Report. When j.Kinds is empty,
+// both reconciler-driven kinds (Kustomization, HelmRelease) are
+// reported on.
 func Run(j Job) Report {
-	kinds := []string{manifest.KindKustomization, manifest.KindHelmRelease}
+	kinds := j.Kinds
+	if len(kinds) == 0 {
+		kinds = []string{manifest.KindKustomization, manifest.KindHelmRelease}
+	}
 	var rep Report
 	for _, kind := range kinds {
 		for _, obj := range j.Store.ListObjects(kind) {
-			rep.Cases = append(rep.Cases, classify(j.Store, obj.Named()))
-		}
-	}
-	for _, c := range rep.Cases {
-		switch c.Outcome {
-		case OutcomePassed:
-			rep.Passed++
-		case OutcomeSkipped:
-			rep.Skipped++
-		case OutcomeFailed:
-			rep.Failed++
+			id := obj.Named()
+			if j.Name != "" && id.Name != j.Name {
+				continue
+			}
+			c := classify(j.Store, id)
+			switch c.Outcome {
+			case OutcomePassed:
+				rep.Passed++
+			case OutcomeSkipped:
+				rep.Skipped++
+			case OutcomeFailed:
+				rep.Failed++
+			}
+			rep.Cases = append(rep.Cases, c)
 		}
 	}
 	return rep

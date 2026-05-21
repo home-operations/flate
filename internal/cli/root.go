@@ -1,11 +1,12 @@
 // Package cli wires flate's command-line interface using cobra.
 //
-// Commands:
-//   - get   — list Flux objects (Kustomizations, HelmReleases, Clusters).
-//   - build — render Flux objects to YAML.
-//   - diff  — compare current vs. another path.
-//   - test  — report Kustomization + HelmRelease reconcile status.
-//   - diag  — sanity-check local manifests.
+// Every multi-kind command takes the same ks/hr/all positional layout:
+//
+//   - get   ks|hr|all — list Flux objects or summarize the cluster.
+//   - build ks|hr|all — render Flux objects to YAML.
+//   - diff  ks|hr|images — compare current vs. another path.
+//   - test  ks|hr|all — report reconcile status.
+//   - diag             — sanity-check local manifests.
 //
 // Use New() to obtain a cobra.Command for embedding flate in a parent
 // CLI; Execute() and Run() are the entry points used by cmd/flate and

@@ -15,6 +15,7 @@ import (
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 )
 
 // chartCacheLocks serializes concurrent fetches of the same cached
@@ -174,8 +175,8 @@ func (c *Client) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Optio
 		return nil, fmt.Errorf("HelmRepository %s/%s: secret %s/%s not found",
 			r.Namespace, r.Name, r.Namespace, r.SecretRef.Name)
 	}
-	username := stringFromHelmSecret(sec, "username")
-	password := stringFromHelmSecret(sec, "password")
+	username := source.StringFromSecret(sec, "username")
+	password := source.StringFromSecret(sec, "password")
 	if username == "" || password == "" {
 		return nil, fmt.Errorf("HelmRepository %s/%s: secret %s/%s missing username/password",
 			r.Namespace, r.Name, r.Namespace, r.SecretRef.Name)
@@ -213,7 +214,7 @@ func (c *Client) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option
 
 	var tmpFiles []string
 	writeKey := func(key string) (string, error) {
-		v := stringFromHelmSecret(sec, key)
+		v := source.StringFromSecret(sec, key)
 		if v == "" {
 			return "", nil
 		}
@@ -260,26 +261,6 @@ func (c *Client) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option
 			r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
 	}
 	return []getter.Option{getter.WithTLSClientConfig(certPath, keyPath, caPath)}, cleanup, nil
-}
-
-// stringFromHelmSecret reads a Secret key, preferring StringData and
-// treating wiped PLACEHOLDER values as missing. Local copy to avoid a
-// cross-package dep on pkg/source.
-func stringFromHelmSecret(sec *manifest.Secret, key string) string {
-	bag := func(m map[string]any) string {
-		v, ok := m[key].(string)
-		if !ok {
-			return ""
-		}
-		if strings.HasPrefix(v, "..PLACEHOLDER_") {
-			return ""
-		}
-		return v
-	}
-	if v := bag(sec.StringData); v != "" {
-		return v
-	}
-	return bag(sec.Data)
 }
 
 // fetchIndex downloads and parses a HelmRepository index.yaml.

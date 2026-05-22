@@ -4,7 +4,6 @@ package git
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
@@ -129,12 +128,12 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (*tls.Config, error) 
 	if ca == "" {
 		return nil, nil
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM([]byte(ca)) {
-		return nil, fmt.Errorf("GitRepository %s/%s: ca.crt did not parse as PEM",
-			repo.Namespace, repo.Name)
+	cfg, err := source.BuildTLSConfig("", "", ca)
+	if err != nil {
+		return nil, fmt.Errorf("GitRepository %s/%s: secretRef %s/%s: %w",
+			repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name, err)
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}, nil
+	return cfg, nil
 }
 
 // resolveAuth turns repo.SecretRef into a go-git AuthMethod. Returns

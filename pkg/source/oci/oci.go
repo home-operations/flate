@@ -6,7 +6,6 @@ package oci
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
@@ -94,32 +93,20 @@ func (f *Fetcher) resolveTLS(repo *manifest.OCIRepository) (*tls.Config, error) 
 		return nil, fmt.Errorf("OCIRepository %s/%s: cert secret %s/%s not found",
 			repo.Namespace, repo.Name, repo.Namespace, repo.CertSecretRef.Name)
 	}
-	crt := source.StringFromSecret(sec, "tls.crt")
-	key := source.StringFromSecret(sec, "tls.key")
-	ca := source.StringFromSecret(sec, "ca.crt")
-	if crt == "" && key == "" && ca == "" {
-		return nil, fmt.Errorf("OCIRepository %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
-			repo.Namespace, repo.Name, repo.Namespace, repo.CertSecretRef.Name)
+	mtls, err := source.BuildTLSConfig(
+		source.StringFromSecret(sec, "tls.crt"),
+		source.StringFromSecret(sec, "tls.key"),
+		source.StringFromSecret(sec, "ca.crt"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("OCIRepository %s/%s: certSecretRef %s/%s: %w",
+			repo.Namespace, repo.Name, repo.Namespace, repo.CertSecretRef.Name, err)
 	}
-	if (crt == "") != (key == "") {
-		return nil, fmt.Errorf("OCIRepository %s/%s: certSecretRef %s/%s must provide both tls.crt and tls.key together",
-			repo.Namespace, repo.Name, repo.Namespace, repo.CertSecretRef.Name)
+	if mtls.Certificates != nil {
+		cfg.Certificates = mtls.Certificates
 	}
-	if crt != "" {
-		cert, err := tls.X509KeyPair([]byte(crt), []byte(key))
-		if err != nil {
-			return nil, fmt.Errorf("OCIRepository %s/%s: parse tls.crt/tls.key: %w",
-				repo.Namespace, repo.Name, err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	if ca != "" {
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM([]byte(ca)) {
-			return nil, fmt.Errorf("OCIRepository %s/%s: ca.crt did not parse as PEM",
-				repo.Namespace, repo.Name)
-		}
-		cfg.RootCAs = pool
+	if mtls.RootCAs != nil {
+		cfg.RootCAs = mtls.RootCAs
 	}
 	return cfg, nil
 }

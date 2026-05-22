@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -142,33 +141,14 @@ func (f *Fetcher) resolveTLSConfig(b *manifest.Bucket) (*tls.Config, error) {
 		return nil, fmt.Errorf("bucket %s/%s: cert secret %s/%s not found",
 			b.Namespace, b.Name, b.Namespace, b.CertSecretRef.Name)
 	}
-	crt := source.StringFromSecret(sec, "tls.crt")
-	key := source.StringFromSecret(sec, "tls.key")
-	ca := source.StringFromSecret(sec, "ca.crt")
-	if crt == "" && key == "" && ca == "" {
-		return nil, fmt.Errorf("bucket %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
-			b.Namespace, b.Name, b.Namespace, b.CertSecretRef.Name)
-	}
-	if (crt == "") != (key == "") {
-		return nil, fmt.Errorf("bucket %s/%s: certSecretRef %s/%s must provide both tls.crt and tls.key together",
-			b.Namespace, b.Name, b.Namespace, b.CertSecretRef.Name)
-	}
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if crt != "" {
-		cert, err := tls.X509KeyPair([]byte(crt), []byte(key))
-		if err != nil {
-			return nil, fmt.Errorf("bucket %s/%s: parse tls.crt/tls.key: %w",
-				b.Namespace, b.Name, err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	if ca != "" {
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM([]byte(ca)) {
-			return nil, fmt.Errorf("bucket %s/%s: ca.crt did not parse as PEM",
-				b.Namespace, b.Name)
-		}
-		cfg.RootCAs = pool
+	cfg, err := source.BuildTLSConfig(
+		source.StringFromSecret(sec, "tls.crt"),
+		source.StringFromSecret(sec, "tls.key"),
+		source.StringFromSecret(sec, "ca.crt"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("bucket %s/%s: certSecretRef %s/%s: %w",
+			b.Namespace, b.Name, b.Namespace, b.CertSecretRef.Name, err)
 	}
 	return cfg, nil
 }

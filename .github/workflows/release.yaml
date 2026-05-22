@@ -4,10 +4,11 @@ name: Release
 
 on:
   push:
-    # Trigger on tag push, not the `release` event: org-enforced release
-    # immutability locks assets the moment a release is published, so we
-    # upload to the still-draft release release-please created and flip it
-    # to published in the final job.
+    # release-please-config has `skip-github-release: true`, so it only
+    # pushes the tag — no draft release, no GitHub release to fight over.
+    # Goreleaser creates the release itself (as a draft, see
+    # .goreleaser.yaml), uploads assets, and the final job in this workflow
+    # flips the draft to published.
     tags:
       - "*"
 

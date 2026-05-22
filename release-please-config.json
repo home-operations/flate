@@ -12,8 +12,8 @@
       "include-v-in-tag": false,
       "include-v-in-release-name": false,
       "always-update": true,
-      "draft": true,
-      "draft-pull-request": true
+      "draft-pull-request": true,
+      "skip-github-release": true
     }
   },
   "changelog-sections": [

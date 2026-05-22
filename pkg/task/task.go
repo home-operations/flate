@@ -87,6 +87,11 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 // MUST be called only from inside a body launched by Service.Go —
 // calling from outside corrupts the semaphore accounting.
 //
+// The re-acquire is deferred so a panic inside fn still restores the
+// slot count; otherwise Service.Go's outer `defer <-s.sem` would drain
+// a phantom slot on unwind, eventually hanging another goroutine that
+// did own a slot legitimately.
+//
 // On an unbounded Service (New or NewBounded(<=0)), fn runs unchanged.
 func (s *Service) YieldSlot(fn func()) {
 	if s.sem == nil {
@@ -94,8 +99,8 @@ func (s *Service) YieldSlot(fn func()) {
 		return
 	}
 	<-s.sem
+	defer func() { s.sem <- struct{}{} }()
 	fn()
-	s.sem <- struct{}{}
 }
 
 // ActiveCount returns the number of currently active tasks.

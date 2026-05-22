@@ -40,22 +40,18 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 		return info, nil
 	}
 
-	// Subscribe and then re-check (avoids the gap between GetStatus and
-	// AddListener).
-	ch := make(chan StatusInfo, 1)
-	unsub := s.AddListener(EventStatusUpdated, func(other manifest.NamedResource, payload any) {
+	// Subscribe with a wake-only signal — the actual status is read
+	// back from the store on every wake. Carrying StatusInfo through
+	// the channel directly would lose Failed→Ready transitions when
+	// the buffer-1 channel drops on a default-send.
+	wake := make(chan struct{}, 1)
+	unsub := s.AddListener(EventStatusUpdated, func(other manifest.NamedResource, _ any) {
 		if other != id {
 			return
 		}
-		info, ok := payload.(StatusInfo)
-		if !ok {
-			return
-		}
-		if info.Status == StatusReady || info.Status == StatusFailed {
-			select {
-			case ch <- info:
-			default:
-			}
+		select {
+		case wake <- struct{}{}:
+		default:
 		}
 	}, false)
 	defer unsub()
@@ -81,17 +77,20 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 
 	for {
 		select {
-		case info := <-ch:
-			if info.Status == StatusReady {
-				return info, nil
+		case <-wake:
+			info, ok := s.GetStatus(id)
+			if !ok {
+				continue
 			}
-			// Another Failed update — track the latest reason but
-			// don't reset the grace timer (the resource is still
-			// failing; we don't want to wait forever).
-			f := info
-			currentFailed = &f
-			if graceCh == nil {
-				graceCh = time.After(FailedGrace)
+			switch info.Status {
+			case StatusReady:
+				return info, nil
+			case StatusFailed:
+				f := info
+				currentFailed = &f
+				if graceCh == nil {
+					graceCh = time.After(FailedGrace)
+				}
 			}
 		case <-graceCh:
 			return *currentFailed, &manifest.ResourceFailedError{

@@ -251,3 +251,34 @@ func TestYieldSlot_UnboundedIsNoOp(t *testing.T) {
 	}
 }
 
+// TestYieldSlot_PanicRestoresSlot guards against a phantom-slot drain
+// when fn panics: without the deferred re-acquire, Service.Go's outer
+// `defer <-s.sem` would consume an extra token on unwind, eventually
+// hanging another goroutine that legitimately holds a slot.
+func TestYieldSlot_PanicRestoresSlot(t *testing.T) {
+	s := NewBounded(1)
+
+	// Run a panicking YieldSlot inside a real Service.Go goroutine so
+	// the outer defer chain actually fires; Service.Go's own recover
+	// absorbs the panic.
+	s.Go(context.Background(), "boom", func(_ context.Context) {
+		func() {
+			defer func() { _ = recover() }()
+			s.YieldSlot(func() { panic("boom") })
+		}()
+	})
+	s.BlockTillDone()
+
+	// After the panicked run, a fresh Go must still acquire a slot
+	// promptly. Without the fix the buffered semaphore would have
+	// been drained by one token and this second body would hang.
+	ran := make(chan struct{})
+	s.Go(context.Background(), "next", func(_ context.Context) { close(ran) })
+	select {
+	case <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker pool drained after YieldSlot panic — subsequent task could not acquire a slot")
+	}
+	s.BlockTillDone()
+}
+

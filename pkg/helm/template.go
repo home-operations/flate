@@ -57,6 +57,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	inst.EnableDNS = opts.EnableDNS
 	inst.Replace = true
 	inst.DisableOpenAPIValidation = hr.DisableOpenAPIValidation
+	inst.SkipSchemaValidation = hr.DisableSchemaValidation
 	// spec.postRenderers — pipe rendered output through one or more
 	// kustomize patch+image transforms. helm-controller does this via
 	// the same postrenderer.PostRenderer hook.

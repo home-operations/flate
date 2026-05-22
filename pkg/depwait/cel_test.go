@@ -17,6 +17,22 @@ import (
 // against current state, the dep is Ready regardless of the built-in
 // Ready condition. The store carries Ready=False here to prove the
 // replacement.
+func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}
+	s.UpdateStatus(dep, store.StatusReady, "")
+
+	w := &Waiter{Store: s, Timeout: time.Second}
+	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
+		NamedResource: dep,
+		// Common Flux readiness idiom.
+		ReadyExpr: `object.status.observedGeneration == object.metadata.generation`,
+	}}))
+	if !sum.AllReady() {
+		t.Errorf("observedGeneration projection should match metadata.generation: %+v", sum)
+	}
+}
+
 func TestReadyExpr_NonAdditive_PassesOnTrue(t *testing.T) {
 	s := store.New()
 	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}

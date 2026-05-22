@@ -92,9 +92,18 @@ func projectObject(s *store.Store, id manifest.NamedResource) map[string]any {
 		"metadata": map[string]any{
 			"name":      id.Name,
 			"namespace": id.Namespace,
+			// flate has no apiserver, so there is no monotonically-
+			// increasing generation count to model. The single-snapshot
+			// render pins both metadata.generation and
+			// status.observedGeneration to the same value so CEL
+			// expressions like
+			//   object.status.observedGeneration == object.metadata.generation
+			// — a common Flux readiness idiom — never spuriously fail.
+			"generation": int64(1),
 		},
 		"status": map[string]any{
-			"conditions": condsAny,
+			"observedGeneration": int64(1),
+			"conditions":         condsAny,
 		},
 	}
 }

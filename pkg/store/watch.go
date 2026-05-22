@@ -163,6 +163,6 @@ func (s *Store) WatchAdded(ctx context.Context, kind string, bufSize int) <-chan
 func (s *Store) String() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return fmt.Sprintf("Store{objects:%d, status:%d, artifacts:%d}",
-		len(s.objects), len(s.status), len(s.artifacts))
+	return fmt.Sprintf("Store{objects:%d, conditions:%d, artifacts:%d}",
+		len(s.objects), len(s.conditions), len(s.artifacts))
 }

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -65,6 +67,59 @@ func TestStore_UpdateStatus_Idempotent(t *testing.T) {
 	info, ok := s.GetStatus(id)
 	if !ok || info.Status != StatusReady {
 		t.Errorf("status: %+v ok=%v", info, ok)
+	}
+}
+
+func TestStore_SetCondition_NonReadyDoesNotFireStatusEvent(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: "Kustomization", Name: "k", Namespace: "ns"}
+	s.UpdateStatus(id, StatusPending, "starting")
+	statusEvents := 0
+	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
+		statusEvents++
+	}, false)
+	// A non-Ready condition should land silently.
+	s.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue, Reason: "Healthy"})
+	if statusEvents != 0 {
+		t.Errorf("non-Ready SetCondition fired StatusUpdated event %d times", statusEvents)
+	}
+	got := s.GetConditions(id)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 conditions, got %d", len(got))
+	}
+}
+
+func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: "Kustomization", Name: "k", Namespace: "ns"}
+	statusEvents := 0
+	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
+		statusEvents++
+		info, ok := payload.(StatusInfo)
+		if !ok || info.Status != StatusReady {
+			t.Errorf("expected Ready payload, got %+v", payload)
+		}
+	}, false)
+	s.SetCondition(id, Condition{
+		Type: ConditionReady, Status: metav1.ConditionTrue,
+		Reason: ReasonSucceeded, Message: "ok",
+	})
+	if statusEvents != 1 {
+		t.Errorf("Ready SetCondition fired %d events; want 1", statusEvents)
+	}
+}
+
+func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: "Kustomization", Name: "k", Namespace: "ns"}
+	statusEvents := 0
+	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) { statusEvents++ }, false)
+
+	cond := Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: ReasonSucceeded}
+	s.SetCondition(id, cond)
+	s.SetCondition(id, cond)
+	if statusEvents != 1 {
+		t.Errorf("identical SetCondition fired %d events; want 1", statusEvents)
 	}
 }
 

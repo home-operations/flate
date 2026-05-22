@@ -4,6 +4,9 @@ import (
 	"slices"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -52,13 +55,17 @@ func TestFilter_ResolveDirectMatch(t *testing.T) {
 func TestFilter_SharedComponentPropagatesToAllConsumers(t *testing.T) {
 	plex := &manifest.Kustomization{
 		Name: "plex", Namespace: "media",
-		Path:       "apps/media/plex/app",
-		Components: []string{"../../../../components/volsync"},
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path:       "apps/media/plex/app",
+			Components: []string{"../../../../components/volsync"},
+		},
 	}
 	atuin := &manifest.Kustomization{
 		Name: "atuin", Namespace: "default",
-		Path:       "apps/default/atuin/app",
-		Components: []string{"../../../../components/volsync"},
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path:       "apps/default/atuin/app",
+			Components: []string{"../../../../components/volsync"},
+		},
 	}
 	hrPlex := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "media", Name: "plex"}
 	hrAtuin := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "atuin"}
@@ -86,8 +93,14 @@ func TestFilter_SharedComponentPropagatesToAllConsumers(t *testing.T) {
 func TestFilter_LongestPrefixOwnerWins(t *testing.T) {
 	// A meta-KS at apps/ and a specific KS at apps/media/plex/app —
 	// changes inside plex must belong to plex, not the meta-KS.
-	meta := &manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system", Path: "apps"}
-	plex := &manifest.Kustomization{Name: "plex", Namespace: "media", Path: "apps/media/plex/app"}
+	meta := &manifest.Kustomization{
+		Name: "cluster-apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps"},
+	}
+	plex := &manifest.Kustomization{
+		Name: "plex", Namespace: "media",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/media/plex/app"},
+	}
 	hrPlex := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "media", Name: "plex"}
 	metaID, plexID := meta.Named(), plex.Named()
 
@@ -140,8 +153,10 @@ func TestFilter_TransitiveDepsHelmRelease(t *testing.T) {
 		Chart: manifest.HelmChart{
 			RepoKind: manifest.KindOCIRepository, RepoName: "app-template", RepoNamespace: "flux-system",
 		},
-		ValuesFrom: []manifest.ValuesReference{
-			{Kind: manifest.KindConfigMap, Name: "plex-values"},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: manifest.KindConfigMap, Name: "plex-values"},
+			},
 		},
 	}
 	hrID := hr.Named()

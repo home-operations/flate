@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -20,19 +22,19 @@ import (
 func TestDetectOrphans(t *testing.T) {
 	parent := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
-		Path: "./kubernetes/apps",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps"},
 	}
 	orphan := &manifest.Kustomization{
 		Name: "orphan", Namespace: "flux-system",
-		Path: "./kubernetes/apps/orphan/app",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps/orphan/app"},
 	}
 	emittedChild := &manifest.Kustomization{
 		Name: "wired", Namespace: "flux-system",
-		Path: "./kubernetes/apps/wired/app",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps/wired/app"},
 	}
 	root := &manifest.Kustomization{
 		Name: "another-root", Namespace: "flux-system",
-		Path: "./standalone",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./standalone"},
 	}
 
 	o := &Orchestrator{
@@ -79,7 +81,8 @@ func TestDetectOrphans(t *testing.T) {
 // detection only applies to Kustomization + HelmRelease.
 func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 	parent := &manifest.Kustomization{
-		Name: "p", Namespace: "ns", Path: "./apps",
+		Name: "p", Namespace: "ns",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
 	}
 	cm := &manifest.ConfigMap{Name: "stuck", Namespace: "ns"}
 

@@ -585,8 +585,8 @@ spec:
 	if err != nil {
 		t.Fatalf("ParseHelmRelease: %v", err)
 	}
-	if hr.ReleaseNameOverride != "my-explicit-release" {
-		t.Errorf("ReleaseNameOverride = %q, want my-explicit-release", hr.ReleaseNameOverride)
+	if hr.HelmReleaseSpec.ReleaseName != "my-explicit-release" {
+		t.Errorf("HelmReleaseSpec.ReleaseName = %q, want my-explicit-release", hr.HelmReleaseSpec.ReleaseName)
 	}
 	if got := hr.ReleaseName(); got != "my-explicit-release" {
 		t.Errorf("ReleaseName() with override = %q, want my-explicit-release", got)

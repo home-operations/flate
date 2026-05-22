@@ -4,6 +4,8 @@ import (
 	"slices"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -40,8 +42,10 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
-		Values:     map[string]any{"image": map[string]any{"repository": "x"}},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
+		},
+		Values: map[string]any{"image": map[string]any{"repository": "x"}},
 	}
 	if err := ExpandValueReferences(hr, provider); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
@@ -63,8 +67,10 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		ValuesFrom: []manifest.ValuesReference{
-			{Kind: "ConfigMap", Name: "k", ValuesKey: "v", TargetPath: "auth.password"},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "k", ValuesKey: "v", TargetPath: "auth.password"},
+			},
 		},
 	}
 	if err := ExpandValueReferences(hr, provider); err != nil {
@@ -79,8 +85,10 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		ValuesFrom: []manifest.ValuesReference{
-			{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k", Optional: true},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k", Optional: true},
+			},
 		},
 	}
 	provider := &SliceProvider{}

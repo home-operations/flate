@@ -1,4 +1,7 @@
-package source
+// Package oci implements the source.Fetcher for KindOCIRepository
+// via oras-go. Generic provider only — IRSA / Workload Identity is
+// out of scope for offline flate.
+package oci
 
 import (
 	"context"
@@ -18,26 +21,27 @@ import (
 	"oras.land/oras-go/v2/registry/remote/credentials"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// OCIFetcher is the Fetcher implementation for KindOCIRepository.
+// Fetcher is the Fetcher implementation for KindOCIRepository.
 // RegistryConfig is the global --registry-config docker-style
 // config.json path used when no per-repo SecretRef is set. Secrets is
-// the per-repo SecretGetter (typically the orchestrator-provided
+// the per-repo source.SecretGetter (typically the orchestrator-provided
 // Store.GetByName), required when any OCIRepository has spec.secretRef
 // pointing at a kubernetes.io/dockerconfigjson Secret.
-type OCIFetcher struct {
-	Cache          *Cache
+type Fetcher struct {
+	Cache          *source.Cache
 	RegistryConfig string
-	Secrets        SecretGetter
+	Secrets        source.SecretGetter
 }
 
 // Fetch implements source.Fetcher for *manifest.OCIRepository.
-func (f *OCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
 	repo, ok := obj.(*manifest.OCIRepository)
 	if !ok {
-		return nil, fmt.Errorf("%w: OCIFetcher: unexpected payload %T", manifest.ErrInput, obj)
+		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
 	}
 	if repo.Provider != "" && repo.Provider != manifest.OCIProviderGeneric {
 		return nil, fmt.Errorf(
@@ -50,7 +54,7 @@ func (f *OCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*sto
 		return nil, err
 	}
 	defer cleanup()
-	return FetchOCI(ctx, f.Cache, repo, configPath)
+	return fetch(ctx, f.Cache, repo, configPath)
 }
 
 // resolveRegistryConfig picks the credential source for a fetch.
@@ -63,13 +67,13 @@ func (f *OCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*sto
 //
 // The cleanup func removes any temp file the SecretRef path created;
 // safe to call when no temp file was made (no-op).
-func (f *OCIFetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, func(), error) {
+func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, func(), error) {
 	noCleanup := func() {}
 	if repo.SecretRef == nil {
 		return f.RegistryConfig, noCleanup, nil
 	}
 	if f.Secrets == nil {
-		return "", noCleanup, fmt.Errorf("OCIRepository %s/%s references secretRef but no SecretGetter is wired",
+		return "", noCleanup, fmt.Errorf("OCIRepository %s/%s references secretRef but no source.SecretGetter is wired",
 			repo.Namespace, repo.Name)
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
@@ -77,7 +81,7 @@ func (f *OCIFetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string
 		return "", noCleanup, fmt.Errorf("OCIRepository %s/%s: secret %s/%s not found",
 			repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
 	}
-	configJSON := stringFromSecret(sec, ".dockerconfigjson")
+	configJSON := source.StringFromSecret(sec, ".dockerconfigjson")
 	if configJSON == "" {
 		return "", noCleanup, fmt.Errorf(
 			"OCIRepository %s/%s: secret %s/%s missing .dockerconfigjson "+
@@ -101,12 +105,12 @@ func (f *OCIFetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string
 	return tmp.Name(), cleanup, nil
 }
 
-// FetchOCI pulls the OCIRepository artifact into cache. Credentials are
+// fetch pulls the OCIRepository artifact into cache. Credentials are
 // read from a docker-style config.json honored by oras-go's
 // credentials.NewFileStore. When spec.ref.semver is set, the registry
 // is listed and the highest matching tag (filtered by semverFilter, if
 // any) is resolved before pulling.
-func FetchOCI(ctx context.Context, cache *Cache, repo *manifest.OCIRepository, registryConfig string) (*store.SourceArtifact, error) {
+func fetch(ctx context.Context, cache *source.Cache, repo *manifest.OCIRepository, registryConfig string) (*store.SourceArtifact, error) {
 	if repo == nil {
 		return nil, errors.New("oci repository is nil")
 	}

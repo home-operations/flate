@@ -1,4 +1,4 @@
-package source_test
+package bucket_test
 
 import (
 	"context"
@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/bucket"
 )
 
-func TestBucketFetcher_NonGenericProviderFailsLoud(t *testing.T) {
-	f := &source.BucketFetcher{}
+func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
+	f := &bucket.Fetcher{}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
 		Provider: manifest.BucketProviderAmazon,
@@ -25,8 +25,8 @@ func TestBucketFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 	}
 }
 
-func TestBucketFetcher_SecretRefWithoutGetter(t *testing.T) {
-	f := &source.BucketFetcher{} // no Secrets
+func TestFetcher_SecretRefWithoutGetter(t *testing.T) {
+	f := &bucket.Fetcher{} // no Secrets
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
 		Provider: manifest.BucketProviderGeneric,
@@ -42,8 +42,8 @@ func TestBucketFetcher_SecretRefWithoutGetter(t *testing.T) {
 	}
 }
 
-func TestBucketFetcher_SecretRefMissingKeys(t *testing.T) {
-	f := &source.BucketFetcher{
+func TestFetcher_SecretRefMissingKeys(t *testing.T) {
+	f := &bucket.Fetcher{
 		Secrets: func(ns, name string) *manifest.Secret {
 			return &manifest.Secret{
 				Name: name, Namespace: ns,
@@ -66,8 +66,8 @@ func TestBucketFetcher_SecretRefMissingKeys(t *testing.T) {
 	}
 }
 
-func TestBucketFetcher_SecretRefNotFound(t *testing.T) {
-	f := &source.BucketFetcher{
+func TestFetcher_SecretRefNotFound(t *testing.T) {
+	f := &bucket.Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret { return nil },
 	}
 	b := &manifest.Bucket{

@@ -1,4 +1,5 @@
-package source
+// Package git implements the source.Fetcher for KindGitRepository.
+package git
 
 import (
 	"context"
@@ -14,23 +15,24 @@ import (
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// GitFetcher is the Fetcher implementation for KindGitRepository.
+// Fetcher is the source.Fetcher implementation for KindGitRepository.
 // It owns a shared Cache so multiple GitRepository CRs writing to the
 // same cache root serialize on slot allocation correctly. Secrets is
 // optional; required when a GitRepository sets spec.secretRef.
-type GitFetcher struct {
-	Cache   *Cache
-	Secrets SecretGetter
+type Fetcher struct {
+	Cache   *source.Cache
+	Secrets source.SecretGetter
 }
 
 // Fetch implements source.Fetcher for *manifest.GitRepository.
-func (f *GitFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
 	repo, ok := obj.(*manifest.GitRepository)
 	if !ok {
-		return nil, fmt.Errorf("%w: GitFetcher: unexpected payload %T", manifest.ErrInput, obj)
+		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
 	}
 	if repo.Provider != "" && repo.Provider != manifest.GitProviderGeneric {
 		return nil, fmt.Errorf(
@@ -42,7 +44,7 @@ func (f *GitFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*sto
 	if err != nil {
 		return nil, err
 	}
-	return FetchGit(ctx, f.Cache, repo, auth)
+	return fetch(ctx, f.Cache, repo, auth)
 }
 
 // resolveAuth turns repo.SecretRef into a go-git AuthMethod. Returns
@@ -50,7 +52,7 @@ func (f *GitFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*sto
 // pre-auth behavior. For HTTPS URLs the secret may carry either
 // (username, password) or (bearerToken); for SSH URLs the secret
 // carries `identity` (PEM private key) and an optional `password`.
-func (f *GitFetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMethod, error) {
+func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMethod, error) {
 	if repo.SecretRef == nil {
 		return nil, nil
 	}
@@ -64,12 +66,12 @@ func (f *GitFetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMe
 			repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
 	}
 	if isSSHURL(repo.URL) {
-		identity := stringFromSecret(sec, "identity")
+		identity := source.StringFromSecret(sec, "identity")
 		if identity == "" {
 			return nil, fmt.Errorf("GitRepository %s/%s: secret %s/%s missing 'identity' for SSH auth",
 				repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
 		}
-		password := stringFromSecret(sec, "password")
+		password := source.StringFromSecret(sec, "password")
 		user := sshUserFromURL(repo.URL)
 		auth, err := gitssh.NewPublicKeys(user, []byte(identity), password)
 		if err != nil {
@@ -80,7 +82,7 @@ func (f *GitFetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMe
 		// enforce strict host-key checking; otherwise skip (offline
 		// renders against ephemeral worktrees are the norm). Users who
 		// need strict checks provide `known_hosts` in the Secret.
-		if kh := stringFromSecret(sec, "known_hosts"); kh != "" {
+		if kh := source.StringFromSecret(sec, "known_hosts"); kh != "" {
 			cb, herr := knownHostsCallback([]byte(kh))
 			if herr != nil {
 				return nil, fmt.Errorf("GitRepository %s/%s: parse known_hosts: %w",
@@ -94,11 +96,11 @@ func (f *GitFetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMe
 	}
 	// HTTPS / HTTP: bearerToken takes precedence over basic auth, mirroring
 	// source-controller's docs.
-	if token := stringFromSecret(sec, "bearerToken"); token != "" {
+	if token := source.StringFromSecret(sec, "bearerToken"); token != "" {
 		return &githttp.TokenAuth{Token: token}, nil
 	}
-	username := stringFromSecret(sec, "username")
-	password := stringFromSecret(sec, "password")
+	username := source.StringFromSecret(sec, "username")
+	password := source.StringFromSecret(sec, "password")
 	if username == "" || password == "" {
 		return nil, fmt.Errorf("GitRepository %s/%s: secret %s/%s missing username/password (or bearerToken) for HTTPS auth",
 			repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
@@ -121,13 +123,14 @@ func sshUserFromURL(url string) string {
 	return "git"
 }
 
-// FetchGit clones the GitRepository referenced by repo into the supplied
-// cache and returns a populated *store.SourceArtifact. If a usable cached
-// copy already exists, it is reused. auth may be nil for anonymous clones.
+// fetch clones the GitRepository referenced by repo into the supplied
+// cache and returns a populated *store.SourceArtifact. If a usable
+// cached copy already exists, it is reused. auth may be nil for
+// anonymous clones.
 //
-// Supported transports: HTTPS (anonymous, basic, bearer), SSH (key from
-// SecretRef or ssh-agent), and file:// URLs.
-func FetchGit(ctx context.Context, cache *Cache, repo *manifest.GitRepository, auth transport.AuthMethod) (*store.SourceArtifact, error) {
+// Supported transports: HTTPS (anonymous, basic, bearer), SSH (key
+// from SecretRef or ssh-agent), and file:// URLs.
+func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepository, auth transport.AuthMethod) (*store.SourceArtifact, error) {
 	if repo == nil {
 		return nil, errors.New("git repository is nil")
 	}

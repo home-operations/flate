@@ -1,4 +1,4 @@
-package source_test
+package external_test
 
 import (
 	"context"
@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/external"
 )
 
-func TestExternalArtifactFetcher_FileURL(t *testing.T) {
-	f := &source.ExternalArtifactFetcher{}
+func TestFetcher_FileURL(t *testing.T) {
+	f := &external.Fetcher{}
 	ea := &manifest.ExternalArtifact{
 		Name: "ea", Namespace: "apps",
 		ArtifactURL: "file:///cache/x.tar.gz",
@@ -32,8 +32,8 @@ func TestExternalArtifactFetcher_FileURL(t *testing.T) {
 	}
 }
 
-func TestExternalArtifactFetcher_NoArtifact(t *testing.T) {
-	f := &source.ExternalArtifactFetcher{}
+func TestFetcher_NoArtifact(t *testing.T) {
+	f := &external.Fetcher{}
 	ea := &manifest.ExternalArtifact{Name: "ea", Namespace: "apps"}
 	_, err := f.Fetch(context.Background(), ea)
 	if err == nil {
@@ -44,8 +44,8 @@ func TestExternalArtifactFetcher_NoArtifact(t *testing.T) {
 	}
 }
 
-func TestExternalArtifactFetcher_NonFileURL(t *testing.T) {
-	f := &source.ExternalArtifactFetcher{}
+func TestFetcher_NonFileURL(t *testing.T) {
+	f := &external.Fetcher{}
 	ea := &manifest.ExternalArtifact{
 		Name: "ea", Namespace: "apps",
 		ArtifactURL: "http://source-controller.flux-system.svc/x.tar.gz",

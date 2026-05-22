@@ -1,4 +1,4 @@
-package source
+package git
 
 import (
 	"context"
@@ -11,52 +11,40 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 )
 
-func TestFetchGit_LocalFileURL(t *testing.T) {
+func TestFetcher_LocalFileURL(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := NewCache(t.TempDir())
+	cache := source.NewCache(t.TempDir())
 	repo := &manifest.GitRepository{
 		Name:      "test",
 		Namespace: "flux-system",
 		URL:       "file://" + src,
 	}
 
-	art, err := FetchGit(context.Background(), cache, repo, nil)
+	f := &Fetcher{Cache: cache}
+	art, err := f.Fetch(context.Background(), repo)
 	if err != nil {
-		t.Fatalf("FetchGit: %v", err)
+		t.Fatalf("Fetch: %v", err)
 	}
-	if art.LocalPath == "" || art.URL == "" {
-		t.Errorf("incomplete artifact: %+v", art)
+	sa := art
+	if sa.LocalPath == "" || sa.URL == "" {
+		t.Errorf("incomplete artifact: %+v", sa)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "hello.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(sa.LocalPath, "hello.txt")); err != nil {
 		t.Errorf("expected checked-out file: %v", err)
 	}
 
 	// Second call should reuse cache.
-	art2, err := FetchGit(context.Background(), cache, repo, nil)
+	art2, err := f.Fetch(context.Background(), repo)
 	if err != nil {
-		t.Fatalf("FetchGit second: %v", err)
+		t.Fatalf("Fetch second: %v", err)
 	}
-	if art2.LocalPath != art.LocalPath {
-		t.Errorf("cache slot changed: %s vs %s", art.LocalPath, art2.LocalPath)
-	}
-}
-
-func TestSlugifyRepo(t *testing.T) {
-	cases := map[string]string{
-		"https://github.com/owner/cluster.git":                "cluster",
-		"git@github.com:owner/cluster.git":                    "cluster",
-		"https://example.com/long-path/with/slashes/repo.git": "repo",
-		"oci://ghcr.io/stefanprodan/charts/podinfo":           "podinfo",
-		"": "repo",
-	}
-	for in, want := range cases {
-		if got := slugifyRepo(in); got != want {
-			t.Errorf("slugifyRepo(%q) = %q want %q", in, got, want)
-		}
+	if art2.LocalPath != sa.LocalPath {
+		t.Errorf("cache slot changed: %s vs %s", sa.LocalPath, art2.LocalPath)
 	}
 }
 

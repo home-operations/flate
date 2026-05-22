@@ -1,4 +1,6 @@
-package source
+// Package bucket implements the source.Fetcher for KindBucket
+// (S3-compatible object storage via minio-go).
+package bucket
 
 import (
 	"context"
@@ -17,24 +19,25 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// BucketFetcher pulls a Flux Bucket CR into the on-disk cache. Only
-// the "generic" provider (any S3-API-compatible storage) is wired up
+// Fetcher pulls a Flux Bucket CR into the on-disk cache. Only the
+// "generic" provider (any S3-API-compatible storage) is wired up
 // today via minio-go. The aws/gcp/azure providers parse and route
 // here but return a clear "not implemented" error rather than silently
 // falling back.
-type BucketFetcher struct {
-	Cache   *Cache
-	Secrets SecretGetter
+type Fetcher struct {
+	Cache   *source.Cache
+	Secrets source.SecretGetter
 }
 
 // Fetch implements source.Fetcher for *manifest.Bucket.
-func (f *BucketFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
 	b, ok := obj.(*manifest.Bucket)
 	if !ok {
-		return nil, fmt.Errorf("%w: BucketFetcher: unexpected payload %T", manifest.ErrInput, obj)
+		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
 	}
 	if b.Provider != "" && b.Provider != manifest.BucketProviderGeneric {
 		return nil, fmt.Errorf(
@@ -89,7 +92,7 @@ func (f *BucketFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*
 
 // resolveCredentials picks up accesskey/secretkey from the SecretRef
 // or falls back to anonymous (which is valid for public buckets).
-func (f *BucketFetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentials, error) {
+func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentials, error) {
 	if b.SecretRef == nil {
 		return credentials.NewStaticV4("", "", ""), nil
 	}
@@ -102,33 +105,13 @@ func (f *BucketFetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Cre
 		return nil, fmt.Errorf("bucket %s/%s: secret %s/%s not found",
 			b.Namespace, b.Name, b.Namespace, b.SecretRef.Name)
 	}
-	access := stringFromSecret(sec, "accesskey")
-	secret := stringFromSecret(sec, "secretkey")
+	access := source.StringFromSecret(sec, "accesskey")
+	secret := source.StringFromSecret(sec, "secretkey")
 	if access == "" || secret == "" {
 		return nil, fmt.Errorf("bucket %s/%s: secret %s/%s missing accesskey/secretkey",
 			b.Namespace, b.Name, b.Namespace, b.SecretRef.Name)
 	}
 	return credentials.NewStaticV4(access, secret, ""), nil
-}
-
-// stringFromSecret looks up a key from either Secret.StringData
-// (plain) or Secret.Data (which may have been wiped to a placeholder
-// by ParseSecret when WipeSecrets=true). A placeholder is treated as
-// empty so the caller surfaces a clear "missing keys" error.
-func stringFromSecret(sec *manifest.Secret, key string) string {
-	if v, ok := sec.StringData[key].(string); ok {
-		if strings.HasPrefix(v, "..PLACEHOLDER_") {
-			return ""
-		}
-		return v
-	}
-	if v, ok := sec.Data[key].(string); ok {
-		if strings.HasPrefix(v, "..PLACEHOLDER_") {
-			return ""
-		}
-		return v
-	}
-	return ""
 }
 
 // normalizeEndpoint splits a Flux-style endpoint into the

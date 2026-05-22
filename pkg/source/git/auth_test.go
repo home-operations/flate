@@ -1,4 +1,4 @@
-package source
+package git
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestGitFetcher_NonGenericProvider(t *testing.T) {
-	f := &GitFetcher{}
+func TestFetcher_NonGenericProvider(t *testing.T) {
+	f := &Fetcher{}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
 		URL:      "https://github.com/x/y.git",
@@ -26,8 +26,8 @@ func TestGitFetcher_NonGenericProvider(t *testing.T) {
 	}
 }
 
-func TestGitFetcher_HTTPSBasicAuth(t *testing.T) {
-	f := &GitFetcher{
+func TestFetcher_HTTPSBasicAuth(t *testing.T) {
+	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{
 				StringData: map[string]any{
@@ -55,8 +55,8 @@ func TestGitFetcher_HTTPSBasicAuth(t *testing.T) {
 	}
 }
 
-func TestGitFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
-	f := &GitFetcher{
+func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
+	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{
 				StringData: map[string]any{
@@ -84,8 +84,8 @@ func TestGitFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 	}
 }
 
-func TestGitFetcher_HTTPSMissingCreds(t *testing.T) {
-	f := &GitFetcher{
+func TestFetcher_HTTPSMissingCreds(t *testing.T) {
+	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{StringData: map[string]any{"username": "alice"}}
 		},
@@ -100,8 +100,8 @@ func TestGitFetcher_HTTPSMissingCreds(t *testing.T) {
 	}
 }
 
-func TestGitFetcher_NoSecretIsAnonymous(t *testing.T) {
-	f := &GitFetcher{}
+func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
+	f := &Fetcher{}
 	repo := &manifest.GitRepository{URL: "https://github.com/x/y.git", Name: "g", Namespace: "ns"}
 	auth, err := f.resolveAuth(repo)
 	if err != nil {
@@ -112,8 +112,8 @@ func TestGitFetcher_NoSecretIsAnonymous(t *testing.T) {
 	}
 }
 
-func TestGitFetcher_SecretRefMissingGetter(t *testing.T) {
-	f := &GitFetcher{} // no Secrets
+func TestFetcher_SecretRefMissingGetter(t *testing.T) {
+	f := &Fetcher{} // no Secrets
 	repo := &manifest.GitRepository{
 		URL: "https://github.com/x/y.git", Name: "g", Namespace: "ns",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},

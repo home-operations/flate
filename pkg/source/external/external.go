@@ -1,4 +1,8 @@
-package source
+// Package external implements the source.Fetcher for
+// KindExternalArtifact (third-party-published artifacts under Flux's
+// source-controller schema). Only file:// URLs are resolvable from
+// offline flate; other URL schemes fail-loud.
+package external
 
 import (
 	"context"
@@ -9,7 +13,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// ExternalArtifactFetcher resolves an ExternalArtifact CR into a
+// Fetcher resolves an ExternalArtifact CR into a
 // SourceArtifact. Because ExternalArtifact is the contract a
 // third-party controller uses to publish content into a live cluster,
 // flate (which runs offline) has no general way to fetch from the
@@ -25,13 +29,13 @@ import (
 //     that references this ExternalArtifact will fail-loud with a
 //     "source artifact not found" message — preferable to silently
 //     emitting empty output.
-type ExternalArtifactFetcher struct{}
+type Fetcher struct{}
 
 // Fetch implements source.Fetcher for *manifest.ExternalArtifact.
-func (f *ExternalArtifactFetcher) Fetch(_ context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(_ context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
 	ea, ok := obj.(*manifest.ExternalArtifact)
 	if !ok {
-		return nil, fmt.Errorf("%w: ExternalArtifactFetcher: unexpected payload %T", manifest.ErrInput, obj)
+		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
 	}
 	if ea.ArtifactURL == "" {
 		return nil, fmt.Errorf(

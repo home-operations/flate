@@ -1,4 +1,4 @@
-package source
+package oci
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestOCIFetcher_NonGenericProvider(t *testing.T) {
-	f := &OCIFetcher{}
+func TestFetcher_NonGenericProvider(t *testing.T) {
+	f := &Fetcher{}
 	repo := &manifest.OCIRepository{
 		Name: "o", Namespace: "ns",
 		URL:      "oci://ghcr.io/x/y",
@@ -25,8 +25,8 @@ func TestOCIFetcher_NonGenericProvider(t *testing.T) {
 	}
 }
 
-func TestOCIFetcher_ResolveConfig_NoSecretFallsBackToGlobal(t *testing.T) {
-	f := &OCIFetcher{RegistryConfig: "/etc/docker/config.json"}
+func TestFetcher_ResolveConfig_NoSecretFallsBackToGlobal(t *testing.T) {
+	f := &Fetcher{RegistryConfig: "/etc/docker/config.json"}
 	repo := &manifest.OCIRepository{Name: "o", Namespace: "ns"}
 	path, cleanup, err := f.resolveRegistryConfig(repo)
 	defer cleanup()
@@ -38,9 +38,9 @@ func TestOCIFetcher_ResolveConfig_NoSecretFallsBackToGlobal(t *testing.T) {
 	}
 }
 
-func TestOCIFetcher_ResolveConfig_SecretWritesTempFile(t *testing.T) {
+func TestFetcher_ResolveConfig_SecretWritesTempFile(t *testing.T) {
 	dockerJSON := `{"auths":{"ghcr.io":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`
-	f := &OCIFetcher{
+	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{
 				StringData: map[string]any{".dockerconfigjson": dockerJSON},
@@ -74,8 +74,8 @@ func TestOCIFetcher_ResolveConfig_SecretWritesTempFile(t *testing.T) {
 	}
 }
 
-func TestOCIFetcher_ResolveConfig_SecretMissingDockerConfigJSON(t *testing.T) {
-	f := &OCIFetcher{
+func TestFetcher_ResolveConfig_SecretMissingDockerConfigJSON(t *testing.T) {
+	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{
 				StringData: map[string]any{"username": "alice"}, // wrong shape
@@ -93,21 +93,21 @@ func TestOCIFetcher_ResolveConfig_SecretMissingDockerConfigJSON(t *testing.T) {
 	}
 }
 
-func TestOCIFetcher_ResolveConfig_SecretRefWithoutGetter(t *testing.T) {
-	f := &OCIFetcher{} // no Secrets
+func TestFetcher_ResolveConfig_SecretRefWithoutGetter(t *testing.T) {
+	f := &Fetcher{} // no Secrets
 	repo := &manifest.OCIRepository{
 		Name: "o", Namespace: "ns",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
 	_, cleanup, err := f.resolveRegistryConfig(repo)
 	cleanup()
-	if err == nil || !strings.Contains(err.Error(), "SecretGetter") {
-		t.Errorf("expected SecretGetter error; got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {
+		t.Errorf("expected source.SecretGetter error; got %v", err)
 	}
 }
 
-func TestOCIFetcher_ResolveConfig_SecretNotFound(t *testing.T) {
-	f := &OCIFetcher{
+func TestFetcher_ResolveConfig_SecretNotFound(t *testing.T) {
+	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret { return nil },
 	}
 	repo := &manifest.OCIRepository{

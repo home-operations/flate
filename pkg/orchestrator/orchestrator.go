@@ -18,6 +18,10 @@ import (
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/bucket"
+	"github.com/home-operations/flate/pkg/source/external"
+	"github.com/home-operations/flate/pkg/source/git"
+	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -110,12 +114,12 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 	helmClient.SetSecretGetter(helm.SecretGetter(secretGet))
 	fetchers := map[string]source.Fetcher{
-		manifest.KindGitRepository:    &source.GitFetcher{Cache: cache, Secrets: secretGet},
-		manifest.KindExternalArtifact: &source.ExternalArtifactFetcher{},
-		manifest.KindBucket:           &source.BucketFetcher{Cache: cache, Secrets: secretGet},
+		manifest.KindGitRepository:    &git.Fetcher{Cache: cache, Secrets: secretGet},
+		manifest.KindExternalArtifact: &external.Fetcher{},
+		manifest.KindBucket:           &bucket.Fetcher{Cache: cache, Secrets: secretGet},
 	}
 	if cfg.EnableOCI {
-		fetchers[manifest.KindOCIRepository] = &source.OCIFetcher{
+		fetchers[manifest.KindOCIRepository] = &oci.Fetcher{
 			Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet,
 		}
 	}

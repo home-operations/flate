@@ -1,15 +1,10 @@
 package source
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 func TestBuildTLSConfig_AllEmpty(t *testing.T) {
@@ -34,7 +29,7 @@ func TestBuildTLSConfig_KeyWithoutCert(t *testing.T) {
 }
 
 func TestBuildTLSConfig_CAOnly(t *testing.T) {
-	caPEM := generateSelfSignedCA(t)
+	caPEM := testutil.SelfSignedCA(t)
 	cfg, err := BuildTLSConfig("", "", caPEM)
 	if err != nil {
 		t.Fatalf("BuildTLSConfig: %v", err)
@@ -51,8 +46,8 @@ func TestBuildTLSConfig_CAOnly(t *testing.T) {
 }
 
 func TestBuildTLSConfig_FullMaterial(t *testing.T) {
-	certPEM, keyPEM := generateSelfSignedCertKey(t)
-	caPEM := generateSelfSignedCA(t)
+	certPEM, keyPEM := testutil.SelfSignedClientCert(t)
+	caPEM := testutil.SelfSignedCA(t)
 	cfg, err := BuildTLSConfig(certPEM, keyPEM, caPEM)
 	if err != nil {
 		t.Fatalf("BuildTLSConfig: %v", err)
@@ -79,46 +74,3 @@ func TestBuildTLSConfig_InvalidCertKey(t *testing.T) {
 	}
 }
 
-func generateSelfSignedCA(t *testing.T) string {
-	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "flate-test-ca"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		IsCA:         true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	if err != nil {
-		t.Fatalf("CreateCertificate: %v", err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-}
-
-func generateSelfSignedCertKey(t *testing.T) (string, string) {
-	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "flate-test-client"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	if err != nil {
-		t.Fatalf("CreateCertificate: %v", err)
-	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	return string(certPEM), string(keyPEM)
-}

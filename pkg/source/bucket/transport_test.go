@@ -1,16 +1,10 @@
 package bucket
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -27,7 +21,7 @@ func TestFetcher_ResolveTransport_NoCertSecretIsNil(t *testing.T) {
 }
 
 func TestFetcher_ResolveTransport_FromSecret(t *testing.T) {
-	certPEM, keyPEM := generateSelfSignedCertForBucket(t)
+	certPEM, keyPEM := testutil.SelfSignedServerCert(t)
 	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{
@@ -119,28 +113,3 @@ func TestFetcher_ResolveTransport_CertSecretRefWithoutGetter(t *testing.T) {
 	}
 }
 
-func generateSelfSignedCertForBucket(t *testing.T) (string, string) {
-	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "flate-test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		IsCA:         true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	if err != nil {
-		t.Fatalf("CreateCertificate: %v", err)
-	}
-	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	keyPEM := string(pem.EncodeToMemory(&pem.Block{
-		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv),
-	}))
-	return certPEM, keyPEM
-}

@@ -48,9 +48,6 @@ func (k *Kustomization) Named() NamedResource {
 	return NamedResource{Kind: KindKustomization, Namespace: k.Namespace, Name: k.Name}
 }
 
-// IDName is the test-friendly identifier (the path).
-func (k *Kustomization) IDName() string { return k.Path }
-
 // NamespacedName is "<namespace>/<name>".
 func (k *Kustomization) NamespacedName() string { return k.Namespace + "/" + k.Name }
 

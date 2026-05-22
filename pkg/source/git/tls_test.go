@@ -1,16 +1,10 @@
 package git
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -67,7 +61,7 @@ func TestFetcher_ResolveTLS_NoCAKeyInSecretIsNil(t *testing.T) {
 }
 
 func TestFetcher_ResolveTLS_CAFromCACrt(t *testing.T) {
-	caPEM := generateSelfSignedCA(t)
+	caPEM := testutil.SelfSignedCA(t)
 	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{StringData: map[string]any{"ca.crt": caPEM}}
@@ -88,7 +82,7 @@ func TestFetcher_ResolveTLS_CAFromCACrt(t *testing.T) {
 }
 
 func TestFetcher_ResolveTLS_CAFromCAFileLegacyKey(t *testing.T) {
-	caPEM := generateSelfSignedCA(t)
+	caPEM := testutil.SelfSignedCA(t)
 	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{StringData: map[string]any{"caFile": caPEM}}
@@ -125,23 +119,3 @@ func TestFetcher_ResolveTLS_InvalidPEM(t *testing.T) {
 	}
 }
 
-func generateSelfSignedCA(t *testing.T) string {
-	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "flate-test-ca"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		IsCA:         true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	if err != nil {
-		t.Fatalf("CreateCertificate: %v", err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-}

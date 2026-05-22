@@ -88,8 +88,7 @@ func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, val
 		return docs, nil
 	}
 	return slices.DeleteFunc(docs, func(doc map[string]any) bool {
-		kind, _ := doc["kind"].(string)
-		return slices.Contains(skip, kind)
+		return slices.Contains(skip, manifest.DocKind(doc))
 	}), nil
 }
 

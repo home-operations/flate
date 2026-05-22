@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/image"
@@ -40,25 +42,21 @@ func sortRows(rows []map[string]string) {
 // c is honored.
 func collectImages(o *orchestrator.Orchestrator, c *commonFlags) map[string]struct{} {
 	set := map[string]struct{}{}
-	add := func(docs []map[string]any) {
-		for _, doc := range docs {
-			imgs, _ := image.Extract(doc)
-			for _, img := range imgs {
-				set[img] = struct{}{}
-			}
-		}
-	}
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		for _, obj := range o.Store().ListObjects(kind) {
 			id := obj.Named()
 			if !c.includeNamespace(o.Filter(), id.Namespace) {
 				continue
 			}
-			switch art := o.Store().GetArtifact(id).(type) {
-			case *store.KustomizationArtifact:
-				add(art.Manifests)
-			case *store.HelmReleaseArtifact:
-				add(art.Manifests)
+			art, ok := o.Store().GetArtifact(id).(store.RenderedArtifact)
+			if !ok {
+				continue
+			}
+			for _, doc := range art.RenderedManifests() {
+				imgs, _ := image.Extract(doc)
+				for _, img := range imgs {
+					set[img] = struct{}{}
+				}
 			}
 		}
 	}
@@ -84,18 +82,31 @@ func emitImageList(w io.Writer, imgs []string, out string) error {
 
 // runDiffOrchestrators boots two orchestrators with each side's
 // --path-orig pointing at the other, so both resolve the same symmetric
-// change set and only render resources that differ between paths.
-func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (orig, current *orchestrator.Orchestrator, err error) {
+// change set and only render resources that differ between paths. Both
+// sides are independent (separate task service, helm client, staging
+// cache, store), so they run concurrently — wall time roughly halves on
+// changed-only diffs.
+func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (*orchestrator.Orchestrator, *orchestrator.Orchestrator, error) {
 	if c.pathOrig == "" {
 		return nil, nil, errors.New("diff requires --path-orig")
 	}
 	currentCfg := buildOrchCfg(*c, *h)
-	if current, err = runOrchestratorCfg(ctx, currentCfg); err != nil && current == nil {
-		return nil, nil, err
-	}
 	origCfg := currentCfg
 	origCfg.Path, origCfg.PathOrig = c.pathOrig, c.path
-	if orig, err = runOrchestratorCfg(ctx, origCfg); err != nil && orig == nil {
+
+	var orig, current *orchestrator.Orchestrator
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		o, err := runOrchestratorCfg(gctx, currentCfg)
+		current = o
+		return err
+	})
+	g.Go(func() error {
+		o, err := runOrchestratorCfg(gctx, origCfg)
+		orig = o
+		return err
+	})
+	if err := g.Wait(); err != nil {
 		return nil, nil, err
 	}
 	return orig, current, nil
@@ -120,13 +131,8 @@ func gatherArtifacts(o *orchestrator.Orchestrator, kind, name string, c *commonF
 		if ks, ok := obj.(*manifest.Kustomization); ok {
 			parent.Path = strings.TrimPrefix(ks.Path, "./")
 		}
-		switch a := o.Store().GetArtifact(id).(type) {
-		case *store.KustomizationArtifact:
-			for _, m := range a.Manifests {
-				out = append(out, diff.Doc{Manifest: m, Parent: parent})
-			}
-		case *store.HelmReleaseArtifact:
-			for _, m := range a.Manifests {
+		if a, ok := o.Store().GetArtifact(id).(store.RenderedArtifact); ok {
+			for _, m := range a.RenderedManifests() {
 				out = append(out, diff.Doc{Manifest: m, Parent: parent})
 			}
 		}

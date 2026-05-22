@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
+	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
@@ -43,9 +44,11 @@ type Config struct {
 	// CacheDir overrides the default on-disk cache root
 	// (os.TempDir()/flate-cache).
 	CacheDir string
-	// ExternalFilter, when non-nil, overrides the orchestrator's
-	// internal change-set computation.
-	ExternalFilter *change.Filter
+	// ExternalChanges, when non-nil, supplies the file-level diff so
+	// the orchestrator skips its built-in change.Detect step. The
+	// filter is still built from this set + the loaded SourceFiles
+	// during Bootstrap.
+	ExternalChanges *change.Set
 }
 
 // Orchestrator wires controllers and drives reconciliation.
@@ -53,12 +56,17 @@ type Orchestrator struct {
 	cfg     Config
 	store   *store.Store
 	tasks   *task.Service
-	src     *source.Controller
+	src     *sourcectrl.Controller
 	ksc     *kustomization.Controller
 	hrc     *helmrelease.Controller
 	helm    *helm.Client
 	staging *kustomize.StagingCache
 	filter  *change.Filter
+
+	// sourceFiles tracks which file produced each loaded resource. It
+	// is populated during loadManifests and consumed once by Bootstrap
+	// to construct the immutable change.Filter.
+	sourceFiles map[manifest.NamedResource]string
 }
 
 // New constructs an Orchestrator. It allocates the Store and TaskService
@@ -90,7 +98,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		cfg:   cfg,
 		store: st,
 		tasks: ts,
-		src: &source.Controller{
+		src: &sourcectrl.Controller{
 			Store:          st,
 			Tasks:          ts,
 			Cache:          source.NewCache(filepath.Join(cacheRoot, "sources")),
@@ -101,9 +109,6 @@ func New(cfg Config) (*Orchestrator, error) {
 		hrc:     &helmrelease.Controller{Store: st, Tasks: ts, Helm: helmClient, Options: cfg.HelmOptions, WipeSecrets: cfg.WipeSecrets},
 		helm:    helmClient,
 		staging: staging,
-	}
-	if cfg.ExternalFilter != nil {
-		o.attachFilter(cfg.ExternalFilter)
 	}
 	return o, nil
 }
@@ -131,7 +136,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	}
 	o.validateDependsOn()
 	o.markExistenceOnlyReady()
-	return o.resolveChangeFilter(repoRoot)
+	return o.buildChangeFilter(repoRoot)
 }
 
 // seedBootstrapSource publishes a synthetic GitRepository pointing at
@@ -159,12 +164,12 @@ func (o *Orchestrator) seedBootstrapSource() (string, error) {
 // still discovers the apps/ tree it references — without dragging in
 // unrelated siblings of the user-supplied path.
 func (o *Orchestrator) loadManifests(repoRoot string) error {
-	sourceFiles := map[manifest.NamedResource]string{}
+	o.sourceFiles = map[manifest.NamedResource]string{}
 
 	l := loader.New(o.store)
 	l.Options.WipeSecrets = o.cfg.WipeSecrets
 	l.SourceRoot = repoRoot
-	l.SourceFiles = sourceFiles
+	l.SourceFiles = o.sourceFiles
 
 	scanRoot := repoRoot
 	if o.cfg.Path != "" {
@@ -221,14 +226,7 @@ func (o *Orchestrator) loadManifests(repoRoot string) error {
 	l.PreferExisting = false
 	slog.Debug("orchestrator: loaded objects", "count", total, "scan", scanRoot, "source-root", repoRoot)
 
-	loader.ApplyNamespaceInheritance(o.store, sourceFiles, repoRoot)
-
-	if o.filter != nil || o.cfg.PathOrig != "" {
-		if o.filter == nil {
-			o.filter = &change.Filter{}
-		}
-		o.filter.SourceFiles = sourceFiles
-	}
+	loader.ApplyNamespaceInheritance(o.store, o.sourceFiles, repoRoot)
 	return nil
 }
 
@@ -283,10 +281,14 @@ func (o *Orchestrator) markExistenceOnlyReady() {
 	}
 }
 
-// resolveChangeFilter computes the change set (if changed-only mode is
-// requested) and pushes the resolved filter onto each controller.
-func (o *Orchestrator) resolveChangeFilter(repoRoot string) error {
-	if o.cfg.PathOrig != "" && (o.filter == nil || o.filter.Changes == nil) {
+// buildChangeFilter computes the file-level change set (if changed-only
+// mode is requested) and constructs the immutable change.Filter from
+// (changes, sourceFiles, repoRoot, store), then wires it onto every
+// controller. When changed-only mode is off the filter remains nil and
+// controllers reconcile everything.
+func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
+	changes := o.cfg.ExternalChanges
+	if changes == nil && o.cfg.PathOrig != "" {
 		origAbs, err := filepath.Abs(o.cfg.PathOrig)
 		if err != nil {
 			return fmt.Errorf("--path-orig: %w", err)
@@ -307,24 +309,18 @@ func (o *Orchestrator) resolveChangeFilter(repoRoot string) error {
 		if rel, err := filepath.Rel(repoRoot, currAbs); err == nil && rel != "." {
 			cs = cs.Reroot(rel)
 		}
-		if o.filter == nil {
-			o.filter = &change.Filter{}
-		}
-		o.filter.Changes = cs
-		o.filter.RepoRoot = repoRoot
 		slog.Info("changed-only mode",
 			"baseline", origAbs, "current", currAbs, "changed_files", cs.Len())
 		if cs.Len() == 0 {
 			slog.Warn("no changes detected between --path and --path-orig — output will be empty; verify both paths reference distinct snapshots")
 		}
+		changes = cs
 	}
-	if !o.filter.Enabled() {
+	if changes == nil {
 		return nil
 	}
-	o.filter.Resolve(o.store)
-	o.attachFilter(o.filter)
-	slog.Debug("changed-only keep set",
-		"size", len(o.filter.Keep), "items", o.filter.KeepNames())
+	o.attachFilter(change.NewFilter(changes, o.sourceFiles, repoRoot, o.store))
+	slog.Debug("changed-only keep set", "size", o.filter.Size(), "items", o.filter.KeepNames())
 	return nil
 }
 
@@ -357,6 +353,13 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}
 
 	if len(failed) == 0 {
+		// Controllers attribute panics by marking the resource StatusFailed
+		// (see kustomization/helmrelease/source controllers). This catches
+		// any panic that escaped attribution — e.g. inside a future task
+		// dispatched outside the per-resource recover.
+		if n := o.tasks.Failures(); n > 0 {
+			return fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n)
+		}
 		return nil
 	}
 	msgs := make([]string, 0, len(failed))

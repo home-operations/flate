@@ -71,6 +71,12 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 			return
 		}
 		c.coal.Submit(ctx, "kustomization/"+id.String(), id, func(ctx context.Context) {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("kustomization: panic during reconcile", "id", id.String(), "panic", r)
+					c.Store.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
+				}
+			}()
 			// Re-read the spec each iteration so a coalesced re-run
 			// picks up patches a parent KS installed mid-flight rather
 			// than the stale payload from the original event.
@@ -147,7 +153,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 			slog.Debug("kustomization: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
-		c.Store.AddObject(obj)
+		c.Store.AddRendered(obj)
 	}
 
 	c.Store.SetArtifact(id, &store.KustomizationArtifact{

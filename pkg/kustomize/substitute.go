@@ -43,29 +43,6 @@ func Substitute(data []byte, vars map[string]string) ([]byte, error) {
 	return out, nil
 }
 
-// SubstituteString is the string-typed convenience wrapper.
-func SubstituteString(s string, vars map[string]string) (string, error) {
-	out, err := Substitute([]byte(s), vars)
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
-// SubstitutionsToVars accepts the kustomization's postBuild.substitute
-// map (string -> any) and flattens it to string-string. Non-string
-// values are stringified via fmt.Sprint.
-func SubstitutionsToVars(in map[string]any) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = fmt.Sprint(v)
-	}
-	return out
-}
-
 // substRe matches ${VAR}, ${VAR:=default}, ${VAR:-default}. The default
 // portion may contain any character except '}'.
 var substRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:=|:-)?([^}]*)\}`)

@@ -11,6 +11,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -40,11 +42,15 @@ type Controller struct {
 
 	unsub []store.Unsubscribe
 	coal  *task.Coalescer[manifest.NamedResource]
+
+	chartSourcesMu sync.RWMutex
+	chartSources   map[string]*manifest.HelmChartSource
 }
 
 // Start registers the listeners. The controller runs until Close.
 func (c *Controller) Start(ctx context.Context) {
 	c.coal = task.NewCoalescer[manifest.NamedResource](c.Tasks)
+	c.chartSources = map[string]*manifest.HelmChartSource{}
 	c.unsub = append(c.unsub,
 		c.Store.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx), true),
 		c.Store.AddListener(store.EventArtifactUpdated, c.onArtifactUpdated, true),
@@ -70,6 +76,12 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 			if r, ok := payload.(*manifest.OCIRepository); ok {
 				c.Helm.AddOCIRepo(r)
 			}
+		case manifest.KindHelmChart:
+			if s, ok := payload.(*manifest.HelmChartSource); ok {
+				c.chartSourcesMu.Lock()
+				c.chartSources[s.ResourceFullName()] = s
+				c.chartSourcesMu.Unlock()
+			}
 		case manifest.KindHelmRelease:
 			if _, ok := payload.(*manifest.HelmRelease); !ok {
 				return
@@ -79,6 +91,12 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 				return
 			}
 			c.coal.Submit(ctx, "helmrelease/"+id.String(), id, func(ctx context.Context) {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("helmrelease: panic during reconcile", "id", id.String(), "panic", r)
+						c.Store.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
+					}
+				}()
 				// Re-read each iteration so a coalesced re-run picks up
 				// a parent KS's patches rather than the stale payload.
 				hr, _ := c.Store.GetObject(id).(*manifest.HelmRelease)
@@ -155,7 +173,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			slog.Debug("helmrelease: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
-		c.Store.AddObject(obj)
+		c.Store.AddRendered(obj)
 	}
 
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{
@@ -166,18 +184,14 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	return nil
 }
 
-// gatherHelmChartSources builds the lookup map needed for chartRef
-// resolution by walking every Kustomization (whose HelmChartSources
-// were populated at parse time) and the Store's standalone HelmChart
-// resources.
+// gatherHelmChartSources returns a snapshot of the HelmChart lookup
+// map. The cache is maintained incrementally by onObjectAdded — every
+// HelmChart added to the store (initial parse phase or later, e.g. via
+// a Kustomization render) flows through the same listener.
 func (c *Controller) gatherHelmChartSources() map[string]*manifest.HelmChartSource {
-	out := map[string]*manifest.HelmChartSource{}
-	for _, obj := range c.Store.ListObjects(manifest.KindHelmChart) {
-		s, ok := obj.(*manifest.HelmChartSource)
-		if !ok {
-			continue
-		}
-		out[s.ResourceFullName()] = s
-	}
+	c.chartSourcesMu.RLock()
+	defer c.chartSourcesMu.RUnlock()
+	out := make(map[string]*manifest.HelmChartSource, len(c.chartSources))
+	maps.Copy(out, c.chartSources)
 	return out
 }

@@ -8,6 +8,15 @@ type Artifact interface {
 	artifact()
 }
 
+// RenderedArtifact is satisfied by artifacts that carry a rendered
+// manifest set — KustomizationArtifact and HelmReleaseArtifact. CLI
+// emitters use it to collect rendered output without caring which
+// controller produced it.
+type RenderedArtifact interface {
+	Artifact
+	RenderedManifests() []map[string]any
+}
+
 // GitArtifact is the working tree produced by SourceController for a
 // GitRepository.
 type GitArtifact struct {
@@ -39,6 +48,9 @@ type KustomizationArtifact struct {
 
 func (*KustomizationArtifact) artifact() {}
 
+// RenderedManifests returns the manifests rendered by the Kustomization.
+func (a *KustomizationArtifact) RenderedManifests() []map[string]any { return a.Manifests }
+
 // HelmReleaseArtifact is the rendered output of a HelmRelease template.
 type HelmReleaseArtifact struct {
 	ChartName string
@@ -47,3 +59,6 @@ type HelmReleaseArtifact struct {
 }
 
 func (*HelmReleaseArtifact) artifact() {}
+
+// RenderedManifests returns the manifests rendered by the HelmRelease.
+func (a *HelmReleaseArtifact) RenderedManifests() []map[string]any { return a.Manifests }

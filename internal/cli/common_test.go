@@ -17,11 +17,17 @@ func TestScopedNamespaces_ExplicitNamespaceWins(t *testing.T) {
 
 func TestScopedNamespaces_PathOrigAutoScopesToKeepSet(t *testing.T) {
 	c := &commonFlags{namespace: ""}
-	f := &change.Filter{Changes: change.NewSet([]string{"file"})}
-	f.Keep = map[manifest.NamedResource]struct{}{
-		{Kind: "K", Namespace: "media", Name: "x"}:      {},
-		{Kind: "K", Namespace: "networking", Name: "y"}: {},
-	}
+	mediaHR := &manifest.HelmRelease{Name: "x", Namespace: "media"}
+	netHR := &manifest.HelmRelease{Name: "y", Namespace: "networking"}
+	f := change.NewFilter(
+		change.NewSet([]string{"media.yaml", "networking.yaml"}),
+		map[manifest.NamedResource]string{
+			mediaHR.Named(): "media.yaml",
+			netHR.Named():   "networking.yaml",
+		},
+		"",
+		emptyLister{},
+	)
 	got := c.scopedNamespaces(f)
 	for _, want := range []string{"media", "networking"} {
 		if _, ok := got[want]; !ok {
@@ -29,6 +35,13 @@ func TestScopedNamespaces_PathOrigAutoScopesToKeepSet(t *testing.T) {
 		}
 	}
 }
+
+// emptyLister satisfies change.ObjectLister with empty results — used
+// for filter resolution tests where transitive deps aren't exercised.
+type emptyLister struct{}
+
+func (emptyLister) GetObject(manifest.NamedResource) manifest.BaseManifest { return nil }
+func (emptyLister) ListObjects(string) []manifest.BaseManifest             { return nil }
 
 func TestScopedNamespaces_NoFilterMeansAll(t *testing.T) {
 	c := &commonFlags{namespace: ""}

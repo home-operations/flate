@@ -16,6 +16,11 @@ type Store struct {
 	status    map[manifest.NamedResource]StatusInfo
 	artifacts map[manifest.NamedResource]Artifact
 
+	// byName is a secondary index keyed by kind, then "namespace/name".
+	// It makes hot-path namespaced lookups (e.g. valuesFrom ConfigMap /
+	// Secret resolution) O(1) instead of O(total objects of that kind).
+	byName map[string]map[string]manifest.BaseManifest
+
 	// listeners is keyed by EventKind. Each entry is a slice of
 	// (id, listener) pairs. We use a slice + linear scan because:
 	//   - listener counts are tiny (a handful per event)
@@ -30,6 +35,7 @@ func New() *Store {
 		objects:   make(map[manifest.NamedResource]manifest.BaseManifest),
 		status:    make(map[manifest.NamedResource]StatusInfo),
 		artifacts: make(map[manifest.NamedResource]Artifact),
+		byName:    make(map[string]map[string]manifest.BaseManifest),
 		listeners: map[EventKind]*listenerSet{
 			EventObjectAdded:     newListenerSet(),
 			EventStatusUpdated:   newListenerSet(),
@@ -37,6 +43,8 @@ func New() *Store {
 		},
 	}
 }
+
+func nameKey(namespace, name string) string { return namespace + "/" + name }
 
 // AddObject inserts a manifest. Re-adding an equal object is a no-op.
 // Re-adding a different object overwrites the existing entry AND still
@@ -50,8 +58,34 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 		return
 	}
 	s.objects[id] = obj
+	inner, ok := s.byName[id.Kind]
+	if !ok {
+		inner = make(map[string]manifest.BaseManifest)
+		s.byName[id.Kind] = inner
+	}
+	inner[nameKey(id.Namespace, id.Name)] = obj
 	s.mu.Unlock()
 	s.fire(EventObjectAdded, id, obj)
+}
+
+// AddRendered records a manifest produced by helm/kustomize rendering.
+// Compared to AddObject it skips the reflect.DeepEqual dedup check and
+// the listener dispatch — rendered docs are leaves that no controller
+// listens for. The byName index is still updated so downstream
+// valuesFrom / GetByName lookups see the new object. On the build/diff
+// hot path this removes ~N×listeners closure invocations and the
+// dispatch defer/recover stack per rendered manifest.
+func (s *Store) AddRendered(obj manifest.BaseManifest) {
+	id := obj.Named()
+	s.mu.Lock()
+	s.objects[id] = obj
+	inner, ok := s.byName[id.Kind]
+	if !ok {
+		inner = make(map[string]manifest.BaseManifest)
+		s.byName[id.Kind] = inner
+	}
+	inner[nameKey(id.Namespace, id.Name)] = obj
+	s.mu.Unlock()
 }
 
 // GetObject returns the manifest for id, or nil if not present.
@@ -73,7 +107,22 @@ func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 	delete(s.objects, id)
 	delete(s.status, id)
 	delete(s.artifacts, id)
+	if inner := s.byName[id.Kind]; inner != nil {
+		delete(inner, nameKey(id.Namespace, id.Name))
+	}
 	return true
+}
+
+// GetByName returns the object matching (kind, namespace, name), or nil
+// when none is present. Hot-path callers (valuesFrom expansion, source
+// resolution) should prefer this over filtering ListObjects.
+func (s *Store) GetByName(kind, namespace, name string) manifest.BaseManifest {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if inner := s.byName[kind]; inner != nil {
+		return inner[nameKey(namespace, name)]
+	}
+	return nil
 }
 
 // ListObjects returns every stored manifest, optionally filtered by kind.

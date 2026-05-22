@@ -7,21 +7,14 @@ import (
 )
 
 // Filter answers "should I reconcile this resource?" by checking
-// against a keep-set resolved from a file-level diff. The
-// orchestrator populates SourceFiles + Coverage, then calls Resolve.
+// against a keep-set resolved from a file-level diff. Construct via
+// NewFilter — the zero value is the "no filtering" sentinel and
+// returns true from ShouldReconcile for every id.
 type Filter struct {
-	// Changes is the file-level diff from change.Detect.
-	Changes *Set
-	// SourceFiles maps every loaded resource to the file it came from
-	// (slash-separated, relative to the repo root).
-	SourceFiles map[manifest.NamedResource]string
-	// RepoRoot is the absolute path that SourceFiles paths are
-	// relative to. Needed to anchor on-disk kustomization.yaml
-	// lookups during ownership resolution.
-	RepoRoot string
-	// Keep is the resolved set of resources whose work flate must
-	// still do.
-	Keep map[manifest.NamedResource]struct{}
+	changes     *Set
+	sourceFiles map[manifest.NamedResource]string
+	repoRoot    string
+	keep        map[manifest.NamedResource]struct{}
 
 	// keepByName: (Kind, Name) presence set used as an O(1) fallback
 	// when either side of a lookup has an empty namespace.
@@ -30,8 +23,35 @@ type Filter struct {
 
 type nameKey struct{ kind, name string }
 
+// NewFilter constructs a fully-resolved Filter in one shot. It walks
+// the file-level Changes set, attributes each change to the most
+// specific Flux Kustomization that owns it, then expands transitive
+// dependencies (chart sources, sourceRef, valuesFrom). Pass a nil
+// changes argument to construct a disabled filter (ShouldReconcile
+// returns true for everything).
+//
+//  1. Every resource whose source file changed is kept.
+//  2. For each changed file, the most-specific Flux Kustomization that
+//     owns it (longest matching spec.path, including spec.components)
+//     is kept — along with every resource whose source file shares
+//     the same owner.
+//  3. BFS over chart sources, sourceRef, and valuesFrom to pull in
+//     upstream dependencies. dependsOn is intentionally excluded.
+func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister) *Filter {
+	f := &Filter{
+		changes:     changes,
+		sourceFiles: sourceFiles,
+		repoRoot:    repoRoot,
+	}
+	if changes == nil {
+		return f
+	}
+	f.resolve(objs)
+	return f
+}
+
 // Enabled reports whether change-based filtering is active.
-func (f *Filter) Enabled() bool { return f != nil && f.Changes != nil }
+func (f *Filter) Enabled() bool { return f != nil && f.changes != nil }
 
 // ShouldReconcile reports whether the controller for id should do work
 // (true when filtering is disabled). Lookups tolerate an empty
@@ -41,7 +61,7 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	if !f.Enabled() {
 		return true
 	}
-	if _, ok := f.Keep[id]; ok {
+	if _, ok := f.keep[id]; ok {
 		return true
 	}
 	if id.Namespace != "" {
@@ -57,22 +77,10 @@ func (f *Filter) SourceFile(id manifest.NamedResource) string {
 	if f == nil {
 		return ""
 	}
-	return f.SourceFiles[id]
+	return f.sourceFiles[id]
 }
 
-// Resolve expands the file-level change set into a keep-set:
-//
-//  1. Every resource whose source file changed is kept.
-//  2. For each changed file, the most-specific Flux Kustomization that
-//     owns it (longest matching spec.path, including spec.components)
-//     is kept — along with every resource whose source file shares
-//     the same owner.
-//  3. BFS over chart sources, sourceRef, dependsOn, and valuesFrom
-//     to pull in upstream dependencies.
-func (f *Filter) Resolve(objs ObjectLister) {
-	if !f.Enabled() {
-		return
-	}
+func (f *Filter) resolve(objs ObjectLister) {
 	keep := make(map[manifest.NamedResource]struct{})
 	var queue []manifest.NamedResource
 	enqueue := func(id manifest.NamedResource) {
@@ -83,17 +91,17 @@ func (f *Filter) Resolve(objs ObjectLister) {
 		queue = append(queue, id)
 	}
 
-	owners := buildOwnership(objs, f.RepoRoot)
+	owners := buildOwnership(objs, f.repoRoot)
 	ownersHit := make(map[manifest.NamedResource]struct{})
 
-	for _, file := range f.Changes.Paths() {
+	for _, file := range f.changes.Paths() {
 		for _, owner := range owners.ownersOf(file) {
 			ownersHit[owner] = struct{}{}
 			enqueue(owner)
 		}
 	}
-	for id, src := range f.SourceFiles {
-		if f.Changes.Contains(src) {
+	for id, src := range f.sourceFiles {
+		if f.changes.Contains(src) {
 			enqueue(id)
 			continue
 		}
@@ -111,7 +119,7 @@ func (f *Filter) Resolve(objs ObjectLister) {
 			enqueue(d)
 		}
 	}
-	f.Keep = keep
+	f.keep = keep
 
 	f.keepByName = make(map[nameKey]struct{}, len(keep))
 	for id := range keep {
@@ -121,13 +129,21 @@ func (f *Filter) Resolve(objs ObjectLister) {
 	}
 }
 
+// Size returns the number of resources in the resolved keep set.
+func (f *Filter) Size() int {
+	if f == nil {
+		return 0
+	}
+	return len(f.keep)
+}
+
 // KeepNames returns the resolved keep-set as sorted strings for logs.
 func (f *Filter) KeepNames() []string {
-	if f == nil || f.Keep == nil {
+	if f == nil || f.keep == nil {
 		return nil
 	}
-	out := make([]string, 0, len(f.Keep))
-	for id := range f.Keep {
+	out := make([]string, 0, len(f.keep))
+	for id := range f.keep {
 		out = append(out, id.String())
 	}
 	slices.Sort(out)
@@ -138,11 +154,11 @@ func (f *Filter) KeepNames() []string {
 // or nil when no scope can be derived (disabled, empty, or
 // cluster-scoped only).
 func (f *Filter) KeepNamespaces() map[string]struct{} {
-	if f == nil || f.Keep == nil {
+	if f == nil || f.keep == nil {
 		return nil
 	}
 	out := make(map[string]struct{})
-	for id := range f.Keep {
+	for id := range f.keep {
 		if id.Namespace != "" {
 			out[id.Namespace] = struct{}{}
 		}

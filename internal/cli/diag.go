@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -64,9 +65,10 @@ func newDiagCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if ok {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "[DIAGNOSTICS OK]")
+			if !ok {
+				return errors.New("diagnostics failed")
 			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "[DIAGNOSTICS OK]")
 			return nil
 		},
 	}

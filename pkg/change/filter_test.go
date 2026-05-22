@@ -38,11 +38,12 @@ func TestFilter_DisabledKeepsEverything(t *testing.T) {
 
 func TestFilter_ResolveDirectMatch(t *testing.T) {
 	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "x"}
-	f := &Filter{
-		Changes:     NewSet([]string{"apps/x/helmrelease.yaml"}),
-		SourceFiles: map[manifest.NamedResource]string{hr: "apps/x/helmrelease.yaml"},
-	}
-	f.Resolve(emptyLister{})
+	f := NewFilter(
+		NewSet([]string{"apps/x/helmrelease.yaml"}),
+		map[manifest.NamedResource]string{hr: "apps/x/helmrelease.yaml"},
+		"",
+		emptyLister{},
+	)
 	if !f.ShouldReconcile(hr) {
 		t.Fatalf("expected direct-match keep; keep=%v", f.KeepNames())
 	}
@@ -63,16 +64,17 @@ func TestFilter_SharedComponentPropagatesToAllConsumers(t *testing.T) {
 	hrAtuin := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "atuin"}
 	ksPlex, ksAtuin := plex.Named(), atuin.Named()
 
-	f := &Filter{
-		Changes: NewSet([]string{"components/volsync/pvc.yaml"}),
-		SourceFiles: map[manifest.NamedResource]string{
+	f := NewFilter(
+		NewSet([]string{"components/volsync/pvc.yaml"}),
+		map[manifest.NamedResource]string{
 			ksPlex:  "apps/media/plex/app/ks.yaml",
 			hrPlex:  "apps/media/plex/app/helmrelease.yaml",
 			ksAtuin: "apps/default/atuin/app/ks.yaml",
 			hrAtuin: "apps/default/atuin/app/helmrelease.yaml",
 		},
-	}
-	f.Resolve(mapLister{ksPlex: plex, ksAtuin: atuin})
+		"",
+		mapLister{ksPlex: plex, ksAtuin: atuin},
+	)
 
 	for _, id := range []manifest.NamedResource{ksPlex, ksAtuin, hrPlex, hrAtuin} {
 		if !f.ShouldReconcile(id) {
@@ -89,15 +91,16 @@ func TestFilter_LongestPrefixOwnerWins(t *testing.T) {
 	hrPlex := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "media", Name: "plex"}
 	metaID, plexID := meta.Named(), plex.Named()
 
-	f := &Filter{
-		Changes: NewSet([]string{"apps/media/plex/app/helmrelease.yaml"}),
-		SourceFiles: map[manifest.NamedResource]string{
+	f := NewFilter(
+		NewSet([]string{"apps/media/plex/app/helmrelease.yaml"}),
+		map[manifest.NamedResource]string{
 			metaID: "flux/cluster/ks.yaml",
 			plexID: "apps/media/plex/app/ks.yaml",
 			hrPlex: "apps/media/plex/app/helmrelease.yaml",
 		},
-	}
-	f.Resolve(mapLister{metaID: meta, plexID: plex})
+		"",
+		mapLister{metaID: meta, plexID: plex},
+	)
 
 	if !f.ShouldReconcile(plexID) || !f.ShouldReconcile(hrPlex) {
 		t.Errorf("plex tree should be kept: %v", f.KeepNames())
@@ -108,15 +111,17 @@ func TestFilter_LongestPrefixOwnerWins(t *testing.T) {
 }
 
 func TestFilter_KeepNamespaces(t *testing.T) {
-	f := &Filter{
-		Changes:     NewSet([]string{"a"}),
-		SourceFiles: map[manifest.NamedResource]string{},
-	}
-	f.Keep = map[manifest.NamedResource]struct{}{
-		{Kind: "K", Namespace: "ns-a", Name: "x"}:         {},
-		{Kind: "K", Namespace: "ns-b", Name: "y"}:         {},
-		{Kind: "K", Namespace: "", Name: "cluster-scope"}: {},
-	}
+	// Drive keep via NewFilter rather than mutating the struct.
+	ksA := &manifest.Kustomization{Name: "x", Namespace: "ns-a"}
+	ksB := &manifest.Kustomization{Name: "y", Namespace: "ns-b"}
+	ksCluster := &manifest.Kustomization{Name: "cluster-scope", Namespace: ""}
+	a, b, c := ksA.Named(), ksB.Named(), ksCluster.Named()
+	f := NewFilter(
+		NewSet([]string{"a.yaml", "b.yaml", "c.yaml"}),
+		map[manifest.NamedResource]string{a: "a.yaml", b: "b.yaml", c: "c.yaml"},
+		"",
+		mapLister{a: ksA, b: ksB, c: ksCluster},
+	)
 	ns := f.KeepNamespaces()
 	got := make([]string, 0, len(ns))
 	for k := range ns {
@@ -143,11 +148,12 @@ func TestFilter_TransitiveDepsHelmRelease(t *testing.T) {
 	repoID := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "media", Name: "plex-values"}
 
-	f := &Filter{
-		Changes:     NewSet([]string{"hr.yaml"}),
-		SourceFiles: map[manifest.NamedResource]string{hrID: "hr.yaml"},
-	}
-	f.Resolve(mapLister{hrID: hr})
+	f := NewFilter(
+		NewSet([]string{"hr.yaml"}),
+		map[manifest.NamedResource]string{hrID: "hr.yaml"},
+		"",
+		mapLister{hrID: hr},
+	)
 
 	if !f.ShouldReconcile(repoID) {
 		t.Errorf("chart source not pulled in by HR; keep=%v", f.KeepNames())
@@ -167,11 +173,12 @@ func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 	gitID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"}
 	depID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "repositories"}
 
-	f := &Filter{
-		Changes:     NewSet([]string{"ks.yaml"}),
-		SourceFiles: map[manifest.NamedResource]string{ksID: "ks.yaml"},
-	}
-	f.Resolve(mapLister{ksID: ks})
+	f := NewFilter(
+		NewSet([]string{"ks.yaml"}),
+		map[manifest.NamedResource]string{ksID: "ks.yaml"},
+		"",
+		mapLister{ksID: ks},
+	)
 
 	if !f.ShouldReconcile(gitID) {
 		t.Errorf("sourceRef not pulled in by KS; keep=%v", f.KeepNames())
@@ -195,11 +202,12 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 	b := &manifest.Kustomization{Name: "b", Namespace: "flux-system"}
 	aID, bID := a.Named(), b.Named()
 
-	f := &Filter{
-		Changes:     NewSet([]string{"a.yaml"}),
-		SourceFiles: map[manifest.NamedResource]string{aID: "a.yaml"},
-	}
-	f.Resolve(mapLister{aID: a, bID: b})
+	f := NewFilter(
+		NewSet([]string{"a.yaml"}),
+		map[manifest.NamedResource]string{aID: "a.yaml"},
+		"",
+		mapLister{aID: a, bID: b},
+	)
 
 	if !f.ShouldReconcile(aID) {
 		t.Fatalf("a should be kept; keep=%v", f.KeepNames())
@@ -212,11 +220,12 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 func TestFilter_ShouldReconcileEmptyNamespaceFallback(t *testing.T) {
 	hrLoaded := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "", Name: "x"}
 	hrLookup := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "media", Name: "x"}
-	f := &Filter{
-		Changes:     NewSet([]string{"f"}),
-		SourceFiles: map[manifest.NamedResource]string{hrLoaded: "f"},
-	}
-	f.Resolve(emptyLister{})
+	f := NewFilter(
+		NewSet([]string{"f"}),
+		map[manifest.NamedResource]string{hrLoaded: "f"},
+		"",
+		emptyLister{},
+	)
 	// keep contains hrLoaded (namespace=""); a lookup with namespace=media
 	// must still hit via the (Kind, Name) fallback index.
 	if !f.ShouldReconcile(hrLookup) {

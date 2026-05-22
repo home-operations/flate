@@ -6,12 +6,32 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// pathLocks serialize concurrent renders against the same staged path —
+// Flux's Generator mutates kustomization.yaml in place, so parallel
+// builds against the same path race.
+var (
+	pathLocksMu sync.Mutex
+	pathLocks   = map[string]*sync.Mutex{}
+)
+
+func lockPath(path string) *sync.Mutex {
+	pathLocksMu.Lock()
+	defer pathLocksMu.Unlock()
+	if l, ok := pathLocks[path]; ok {
+		return l
+	}
+	l := &sync.Mutex{}
+	pathLocks[path] = l
+	return l
+}
 
 // RenderFlux renders a Flux kustomize.toolkit.fluxcd.io Kustomization
 // using the same library that Flux's kustomize-controller uses

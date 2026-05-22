@@ -3,9 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -15,8 +12,6 @@ import (
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
-// commonFlags collect path/namespace/selection flags shared across
-// subcommands.
 type commonFlags struct {
 	path           string
 	pathOrig       string
@@ -26,9 +21,7 @@ type commonFlags struct {
 	skipSecrets    bool
 	skipKinds      []string
 	output         string
-	outputFile     string
 	enableOCI      bool
-	enableHelm     bool
 	registryConfig string
 }
 
@@ -43,10 +36,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
 	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, wide, yaml, json, name")
-	fs.StringVar(&f.outputFile, "output-file", "",
-		"write output to this file instead of stdout (use \"-\" for stdout; convenient for containerised use without a shell)")
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
-	fs.BoolVar(&f.enableHelm, "enable-helm", true, "render HelmReleases via the helm SDK")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 }
 
@@ -84,20 +74,6 @@ func (c *commonFlags) includeNamespace(filter *change.Filter, ns string) bool {
 	return ok
 }
 
-// resolveWriter returns the writer commands should emit to. When
-// --output-file is empty or "-", fallback is used (typically the
-// cobra command's stdout). The returned close func must be invoked.
-func (c *commonFlags) resolveWriter(fallback io.Writer) (io.Writer, func() error, error) {
-	if c.outputFile == "" || c.outputFile == "-" || c.outputFile == "/dev/stdout" {
-		return fallback, func() error { return nil }, nil
-	}
-	f, err := os.Create(c.outputFile)
-	if err != nil {
-		return nil, nil, fmt.Errorf("--output-file %q: %w", c.outputFile, err)
-	}
-	return f, f.Close, nil
-}
-
 // helmFlags collect the helm template options. Mirrors flux-local's
 // --kube-version/--api-versions/--no-hooks/etc.
 type helmFlags struct {
@@ -123,7 +99,6 @@ func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
 	fs.BoolVar(&h.enableDNS, "enable-dns", false, "enable DNS lookups during helm template")
 }
 
-// helmOptions assembles helm.Options from CLI flags.
 func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	return helm.Options{
 		SkipCRDs:    c.skipCRDs,
@@ -139,8 +114,6 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	}
 }
 
-// buildOrchCfg materializes an orchestrator.Config from the parsed
-// CLI flags.
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
 		Path:           c.path,
@@ -152,9 +125,6 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	}
 }
 
-// runOrchestrator constructs and runs the orchestrator against the
-// supplied path. Returns the Orchestrator (so the caller can introspect
-// the Store) and any error.
 func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, error) {
 	if c.path == "" {
 		return nil, errors.New("path is required")
@@ -162,6 +132,11 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
 }
 
+// runOrchestratorCfg returns a non-nil orchestrator whenever Bootstrap
+// succeeds, even if Run had per-resource failures — the partial Store
+// still backs `build`/`get`/`diff` output, and `test` separately
+// surfaces failures via Store.FailedResources. The returned error is
+// reserved for fatal init/bootstrap problems (orchestrator is nil).
 func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestrator.Orchestrator, error) {
 	o, err := orchestrator.New(cfg)
 	if err != nil {
@@ -170,14 +145,13 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestr
 	if err := o.Bootstrap(ctx); err != nil {
 		return nil, err
 	}
-	if err := o.Run(ctx); err != nil {
-		return o, err
-	}
+	// Recoverable per-resource failures are logged by Run() and visible
+	// through Store status; downstream commands report them on their
+	// own (e.g. `test` via AnyFailed).
+	_ = o.Run(ctx)
 	return o, nil
 }
 
-// cmdContext returns the cobra command's context — set up by Run() with
-// signal cancellation, so Ctrl-C terminates work mid-flight.
 func cmdContext(cmd *cobra.Command) context.Context {
 	if ctx := cmd.Context(); ctx != nil {
 		return ctx

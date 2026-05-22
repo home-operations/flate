@@ -29,82 +29,41 @@ func newBuildCmd() *cobra.Command {
 		Use:   "build",
 		Short: "Render Flux objects to YAML",
 	}
-	cmd.AddCommand(newBuildKSCmd(), newBuildHRCmd(), newBuildAllCmd())
+	cmd.AddCommand(
+		buildCmd("ks [name]", []string{"kustomization", "kustomizations"},
+			"Render Kustomizations", cobra.MaximumNArgs(1),
+			manifest.KindKustomization),
+		buildCmd("hr [name]", []string{"helmrelease", "helmreleases"},
+			"Render HelmReleases", cobra.MaximumNArgs(1),
+			manifest.KindHelmRelease),
+		buildCmd("all", nil,
+			"Render all Kustomization and HelmRelease objects", cobra.NoArgs,
+			manifest.KindKustomization, manifest.KindHelmRelease),
+	)
 	return cmd
 }
 
-func newBuildKSCmd() *cobra.Command {
+func buildCmd(use string, aliases []string, short string, args cobra.PositionalArgs, kinds ...string) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
 	b := &buildFlags{}
 	cmd := &cobra.Command{
-		Use:     "ks [name]",
-		Aliases: []string{"kustomization", "kustomizations"},
-		Short:   "Render Kustomizations",
-		Args:    cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		Use:     use,
+		Aliases: aliases,
+		Short:   short,
+		Args:    args,
+		RunE: func(cmd *cobra.Command, argv []string) error {
 			applyBuildFlags(c, b)
 			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil && o == nil {
-				return err
-			}
-			return emitRendered(cmd.OutOrStdout(), o, manifest.KindKustomization, firstArg(args), c, b)
-		},
-	}
-	bindCommon(cmd.Flags(), c)
-	bindHelmFlags(cmd.Flags(), h)
-	bindBuildFlags(cmd.Flags(), b)
-	return cmd
-}
-
-func newBuildHRCmd() *cobra.Command {
-	c := &commonFlags{}
-	h := &helmFlags{}
-	b := &buildFlags{}
-	c.enableHelm = true // implicit
-	cmd := &cobra.Command{
-		Use:     "hr [name]",
-		Aliases: []string{"helmrelease", "helmreleases"},
-		Short:   "Render HelmReleases",
-		Args:    cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			applyBuildFlags(c, b)
-			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil && o == nil {
-				return err
-			}
-			return emitRendered(cmd.OutOrStdout(), o, manifest.KindHelmRelease, firstArg(args), c, b)
-		},
-	}
-	bindCommon(cmd.Flags(), c)
-	bindHelmFlags(cmd.Flags(), h)
-	bindBuildFlags(cmd.Flags(), b)
-	return cmd
-}
-
-func newBuildAllCmd() *cobra.Command {
-	c := &commonFlags{}
-	h := &helmFlags{}
-	b := &buildFlags{}
-	cmd := &cobra.Command{
-		Use:   "all",
-		Short: "Render all Kustomization and HelmRelease objects",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			applyBuildFlags(c, b)
-			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil && o == nil {
-				return err
-			}
-			w, closeFn, err := c.resolveWriter(cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closeFn() }()
-			if err := writeRendered(w, o, manifest.KindKustomization, "", c, b); err != nil {
-				return err
-			}
-			if c.enableHelm {
-				return writeRendered(w, o, manifest.KindHelmRelease, "", c, b)
+			w := cmd.OutOrStdout()
+			name := firstArg(argv)
+			for _, kind := range kinds {
+				if err := writeRendered(w, o, kind, name, c, b); err != nil {
+					return err
+				}
 			}
 			return nil
 		},
@@ -121,17 +80,6 @@ func applyBuildFlags(c *commonFlags, b *buildFlags) {
 	}
 }
 
-func emitRendered(stdout io.Writer, o *orchestrator.Orchestrator, kind, name string, c *commonFlags, b *buildFlags) error {
-	w, closeFn, err := c.resolveWriter(stdout)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = closeFn() }()
-	return writeRendered(w, o, kind, name, c, b)
-}
-
-// writeRendered is the writer-injectable inner half of emitRendered;
-// `build all` shares one writer across two calls.
 func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string, c *commonFlags, b *buildFlags) error {
 	var all []map[string]any
 	for _, obj := range o.Store().ListObjects(kind) {
@@ -142,11 +90,8 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string,
 		if !c.includeNamespace(o.Filter(), id.Namespace) {
 			continue
 		}
-		switch a := o.Store().GetArtifact(id).(type) {
-		case *store.KustomizationArtifact:
-			all = append(all, a.Manifests...)
-		case *store.HelmReleaseArtifact:
-			all = append(all, a.Manifests...)
+		if a, ok := o.Store().GetArtifact(id).(store.RenderedArtifact); ok {
+			all = append(all, a.RenderedManifests()...)
 		}
 	}
 	if b.onlyCRDs {

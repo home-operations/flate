@@ -49,7 +49,7 @@ func (p *SliceProvider) Secret(namespace, name string) *manifest.Secret {
 // ObjectLister is the minimal Store surface needed for value lookups.
 // It is satisfied by *store.Store and by any test-only fake.
 type ObjectLister interface {
-	ListObjects(kind string) []manifest.BaseManifest
+	GetByName(kind, namespace, name string) manifest.BaseManifest
 }
 
 // NewStoreProvider returns a Provider backed by an ObjectLister (the
@@ -59,21 +59,13 @@ func NewStoreProvider(l ObjectLister) Provider { return &storeProvider{l: l} }
 type storeProvider struct{ l ObjectLister }
 
 func (p *storeProvider) ConfigMap(namespace, name string) *manifest.ConfigMap {
-	for _, obj := range p.l.ListObjects(manifest.KindConfigMap) {
-		if c, ok := obj.(*manifest.ConfigMap); ok && c.Namespace == namespace && c.Name == name {
-			return c
-		}
-	}
-	return nil
+	c, _ := p.l.GetByName(manifest.KindConfigMap, namespace, name).(*manifest.ConfigMap)
+	return c
 }
 
 func (p *storeProvider) Secret(namespace, name string) *manifest.Secret {
-	for _, obj := range p.l.ListObjects(manifest.KindSecret) {
-		if s, ok := obj.(*manifest.Secret); ok && s.Namespace == namespace && s.Name == name {
-			return s
-		}
-	}
-	return nil
+	s, _ := p.l.GetByName(manifest.KindSecret, namespace, name).(*manifest.Secret)
+	return s
 }
 
 // DeepMerge returns a new map with override's keys merged into base.

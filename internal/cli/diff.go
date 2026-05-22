@@ -14,7 +14,13 @@ func newDiffCmd() *cobra.Command {
 		Use:   "diff",
 		Short: "Diff rendered output against a previous revision",
 	}
-	cmd.AddCommand(newDiffKSCmd(), newDiffHRCmd(), newDiffImagesCmd())
+	cmd.AddCommand(
+		diffCmd("ks [name]", []string{"kustomization", "kustomizations"},
+			"Diff Kustomizations against another path", manifest.KindKustomization),
+		diffCmd("hr [name]", []string{"helmrelease", "helmreleases"},
+			"Diff HelmReleases against another path", manifest.KindHelmRelease),
+		newDiffImagesCmd(),
+	)
 	return cmd
 }
 
@@ -24,42 +30,30 @@ type diffFlags struct {
 	limitBytes int
 }
 
+var defaultStripAttrs = []string{
+	"helm.sh/chart",
+	"checksum/config",
+	"app.kubernetes.io/version",
+	"chart",
+}
+
 func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
-	cmd.Flags().IntVarP(&d.unified, "unified", "u", 3, "unified diff context lines")
-	cmd.Flags().StringSliceVar(&d.stripAttrs, "strip-attrs", nil, "metadata annotation/label keys to strip before diffing")
-	cmd.Flags().IntVar(&d.limitBytes, "limit-bytes", 0, "truncate per-resource diffs (0 = unlimited)")
+	cmd.Flags().IntVarP(&d.unified, "unified", "u", 6, "unified diff context lines")
+	cmd.Flags().StringArrayVar(&d.stripAttrs, "strip-attr", defaultStripAttrs, "metadata annotation/label key to strip before diffing (repeatable; supplying any value replaces the default set)")
+	cmd.Flags().IntVar(&d.limitBytes, "limit-bytes", 65536, "truncate per-resource diffs (0 = unlimited; default matches GitHub issue body limit)")
 }
 
-func newDiffKSCmd() *cobra.Command {
+func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
 	d := &diffFlags{}
 	cmd := &cobra.Command{
-		Use:     "ks [name]",
-		Aliases: []string{"kustomization", "kustomizations"},
-		Short:   "Diff Kustomizations against another path",
+		Use:     use,
+		Aliases: aliases,
+		Short:   short,
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd, c, h, d, manifest.KindKustomization, firstArg(args))
-		},
-	}
-	bindCommon(cmd.Flags(), c)
-	bindHelmFlags(cmd.Flags(), h)
-	bindDiffFlags(cmd, d)
-	return cmd
-}
-
-func newDiffHRCmd() *cobra.Command {
-	c := &commonFlags{}
-	h := &helmFlags{}
-	d := &diffFlags{}
-	cmd := &cobra.Command{
-		Use:     "hr [name]",
-		Aliases: []string{"helmrelease", "helmreleases"},
-		Short:   "Diff HelmReleases against another path",
-		Args:    cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd, c, h, d, manifest.KindHelmRelease, firstArg(args))
+			return runDiff(cmd, c, h, d, kind, firstArg(args))
 		},
 	}
 	bindCommon(cmd.Flags(), c)
@@ -92,13 +86,7 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 		return err
 	}
 	imgs := imageSetDiff(collectImages(orig, c), collectImages(current, c), includeRemoved)
-
-	w, closeFn, err := c.resolveWriter(cmd.OutOrStdout())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = closeFn() }()
-	return emitImageList(w, imgs, c.output)
+	return emitImageList(cmd.OutOrStdout(), imgs, c.output)
 }
 
 // imageSetDiff returns the sorted images added in current; when
@@ -146,11 +134,6 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	if err != nil {
 		return err
 	}
-	w, closeFn, err := c.resolveWriter(cmd.OutOrStdout())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = closeFn() }()
-	_, err = w.Write(formatted)
+	_, err = cmd.OutOrStdout().Write(formatted)
 	return err
 }

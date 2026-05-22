@@ -176,10 +176,8 @@ type pairKey struct {
 func pair(left, right []Doc) []pairedResource {
 	idx := make(map[pairKey]*pairedResource, len(left)+len(right))
 	add := func(side int, d Doc) {
-		kind, _ := d.Manifest["kind"].(string)
-		md, _ := d.Manifest["metadata"].(map[string]any)
-		name, _ := md["name"].(string)
-		ns, _ := md["namespace"].(string)
+		kind := manifest.DocKind(d.Manifest)
+		name, ns := manifest.DocMetadata(d.Manifest)
 		k := pairKey{d.Parent.Kind, d.Parent.Namespace, d.Parent.Name, kind, ns, name}
 		p, ok := idx[k]
 		if !ok {

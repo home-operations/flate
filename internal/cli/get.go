@@ -63,14 +63,10 @@ func newGetAllCmd() *cobra.Command {
 		Short: "Summarize every Kustomization and HelmRelease",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil && o == nil {
-				return err
-			}
-			w, closeFn, err := c.resolveWriter(cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closeFn() }()
+			w := cmd.OutOrStdout()
 			if enableImages || onlyImages {
 				return printClusterImages(w, o, c, onlyImages)
 			}
@@ -100,20 +96,14 @@ func resourceListCmd[T manifest.BaseManifest](
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil && o == nil {
-				return err
-			}
-			sel := selector.Metadata{
-				Name:          firstArg(args),
-				AllNamespaces: true, // namespace scope handled via c.includeNamespace
-				Labels:        c.labels,
-			}
-			w, closeFn, err := c.resolveWriter(cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closeFn() }()
-			return printResources(w, o, sel, c, c.output, kind, cols, mapper)
+			sel := selector.Metadata{
+				Name:   firstArg(args),
+				Labels: c.labels,
+			}
+			return printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper)
 		},
 	}
 	bindCommon(cmd.Flags(), c)
@@ -121,8 +111,6 @@ func resourceListCmd[T manifest.BaseManifest](
 	return cmd
 }
 
-// printResources collects, sorts, and emits a typed resource list in
-// the user-selected format.
 func printResources[T manifest.BaseManifest](
 	w io.Writer, o *orchestrator.Orchestrator, sel selector.Metadata, c *commonFlags,
 	out, kind string,

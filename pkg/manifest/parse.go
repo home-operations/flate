@@ -5,6 +5,32 @@ import (
 	"strings"
 )
 
+// DocKind returns the "kind" field of a manifest document, or "" if
+// absent. Centralizes the doc["kind"].(string) cast.
+func DocKind(doc map[string]any) string {
+	k, _ := doc["kind"].(string)
+	return k
+}
+
+// DocAPIVersion returns the "apiVersion" field of a manifest document,
+// or "" if absent.
+func DocAPIVersion(doc map[string]any) string {
+	v, _ := doc["apiVersion"].(string)
+	return v
+}
+
+// DocMetadata returns (name, namespace) from a manifest document's
+// metadata block. Both are "" when metadata is absent or unset.
+func DocMetadata(doc map[string]any) (name, namespace string) {
+	md, _ := doc["metadata"].(map[string]any)
+	if md == nil {
+		return "", ""
+	}
+	name, _ = md["name"].(string)
+	namespace, _ = md["namespace"].(string)
+	return
+}
+
 // ParseDocOptions tunes ParseDoc behavior.
 type ParseDocOptions struct {
 	// WipeSecrets controls Secret cleartext replacement. Default true.

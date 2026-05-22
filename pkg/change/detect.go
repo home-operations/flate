@@ -81,9 +81,12 @@ func (s *Set) Reroot(prefix string) *Set {
 	return out
 }
 
-// Detect walks before and after concurrently, hashes every regular
-// file, and returns the relative paths whose contents differ. Files
-// present on only one side are also included.
+// Detect walks before and after concurrently, then compares files via a
+// cheap (size, mtime) pre-pass before falling back to SHA-256 only for
+// files where size matches but mtime differs. Files present on only
+// one side are also included. The mtime check is opportunistic — when
+// timestamps are unreliable (e.g. fresh `git checkout`) we still fall
+// through to hashing same-sized files, so correctness is preserved.
 //
 // Directories whose name begins with "." (e.g. .git, .flate-cache)
 // and well-known noise dirs (node_modules) are skipped.
@@ -93,66 +96,102 @@ func Detect(before, after string) (*Set, error) {
 	}
 
 	var (
-		eg      errgroup.Group
-		beforeH map[string]string
-		afterH  map[string]string
+		eg       errgroup.Group
+		beforeFS map[string]fileMeta
+		afterFS  map[string]fileMeta
 	)
 	eg.Go(func() error {
-		h, err := hashTree(before)
-		beforeH = h
+		fs, err := scanTree(before)
+		beforeFS = fs
 		return err
 	})
 	eg.Go(func() error {
-		h, err := hashTree(after)
-		afterH = h
+		fs, err := scanTree(after)
+		afterFS = fs
 		return err
 	})
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
 
-	paths := make(map[string]struct{}, len(afterH)/8)
-	for rel, h := range afterH {
-		if beforeH[rel] != h {
+	paths := make(map[string]struct{}, len(afterFS)/8)
+	type hashJob struct {
+		rel              string
+		beforeAbs, after string
+	}
+	var hashJobs []hashJob
+
+	for rel, after := range afterFS {
+		bef, ok := beforeFS[rel]
+		if !ok {
+			paths[rel] = struct{}{}
+			continue
+		}
+		if bef.size != after.size {
+			paths[rel] = struct{}{}
+			continue
+		}
+		// Same size: trust matching mtime as identical, hash otherwise.
+		if bef.mtime == after.mtime {
+			continue
+		}
+		hashJobs = append(hashJobs, hashJob{rel: rel, beforeAbs: bef.abs, after: after.abs})
+	}
+	for rel := range beforeFS {
+		if _, ok := afterFS[rel]; !ok {
 			paths[rel] = struct{}{}
 		}
 	}
-	for rel := range beforeH {
-		if _, ok := afterH[rel]; !ok {
-			paths[rel] = struct{}{}
+
+	if len(hashJobs) > 0 {
+		var mu sync.Mutex
+		hg, _ := errgroup.WithContext(context.Background())
+		const hashWorkers = 8
+		jobs := make(chan hashJob, len(hashJobs))
+		for range hashWorkers {
+			hg.Go(func() error {
+				for j := range jobs {
+					b, err := hashFile(j.beforeAbs)
+					if err != nil {
+						return err
+					}
+					a, err := hashFile(j.after)
+					if err != nil {
+						return err
+					}
+					if a != b {
+						mu.Lock()
+						paths[j.rel] = struct{}{}
+						mu.Unlock()
+					}
+				}
+				return nil
+			})
+		}
+		for _, j := range hashJobs {
+			jobs <- j
+		}
+		close(jobs)
+		if err := hg.Wait(); err != nil {
+			return nil, err
 		}
 	}
+
 	return &Set{paths: paths}, nil
 }
 
-// hashTree returns a map of relative-slash path → SHA-256 hex for
-// every regular file under root.
-func hashTree(root string) (map[string]string, error) {
-	type job struct{ rel, abs string }
-	jobs := make(chan job, 64)
-	var (
-		mu  sync.Mutex
-		out = map[string]string{}
-	)
+// fileMeta is the (size, mtime, abs) tuple collected by scanTree.
+type fileMeta struct {
+	size  int64
+	mtime int64 // unix nanos
+	abs   string
+}
 
-	const workers = 8
-	eg, _ := errgroup.WithContext(context.Background())
-	for range workers {
-		eg.Go(func() error {
-			for j := range jobs {
-				h, err := hashFile(j.abs)
-				if err != nil {
-					return err
-				}
-				mu.Lock()
-				out[j.rel] = h
-				mu.Unlock()
-			}
-			return nil
-		})
-	}
-
-	walkErr := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+// scanTree walks root collecting per-file (size, mtime, abs). Mirrors
+// the directory pruning that hashTree previously did.
+func scanTree(root string) (map[string]fileMeta, error) {
+	out := map[string]fileMeta{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -170,14 +209,18 @@ func hashTree(root string) (map[string]string, error) {
 		if err != nil {
 			return err
 		}
-		jobs <- job{rel: filepath.ToSlash(rel), abs: p}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		out[filepath.ToSlash(rel)] = fileMeta{
+			size:  info.Size(),
+			mtime: info.ModTime().UnixNano(),
+			abs:   p,
+		}
 		return nil
 	})
-	close(jobs)
-	if walkErr != nil {
-		return nil, walkErr
-	}
-	if err := eg.Wait(); err != nil {
+	if err != nil {
 		return nil, err
 	}
 	return out, nil

@@ -38,7 +38,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
 			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil && o == nil {
+			if err != nil {
 				return err
 			}
 			report := testrunner.Run(testrunner.Job{

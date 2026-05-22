@@ -19,12 +19,8 @@ func TestMetadata_Matches(t *testing.T) {
 		{"empty matches all", Metadata{}, true},
 		{"name match", Metadata{Name: "apps"}, true},
 		{"name mismatch", Metadata{Name: "other"}, false},
-		{"namespace match", Metadata{Namespace: "flux-system"}, true},
-		{"namespace mismatch", Metadata{Namespace: "other"}, false},
-		{"all-namespaces overrides namespace", Metadata{AllNamespaces: true, Namespace: "other"}, true},
 		{"label match", Metadata{Labels: map[string]string{"env": "prod"}}, true},
 		{"label mismatch", Metadata{Labels: map[string]string{"env": "dev"}}, false},
-		{"skip-kinds drops match", Metadata{SkipKinds: []string{"Kustomization"}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

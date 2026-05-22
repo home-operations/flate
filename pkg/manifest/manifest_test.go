@@ -86,7 +86,7 @@ spec:
 		{"Chart.Version", hr.Chart.Version, "6.3.2"},
 		{"Chart.RepoKind", hr.Chart.RepoKind, "HelmRepository"},
 		{"Chart.RepoName", hr.Chart.RepoName, "podinfo"},
-		{"replicaCount", hr.Values["replicaCount"], float64(3)},
+		{"replicaCount", hr.Values["replicaCount"], 3},
 		{"ValuesFrom[0].Optional", hr.ValuesFrom[0].Optional, true},
 	}
 	for _, c := range cases {

@@ -13,8 +13,7 @@ func FilterKinds(docs []map[string]any, keep []string) []map[string]any {
 		return docs
 	}
 	return filter(docs, func(doc map[string]any) bool {
-		kind, _ := doc["kind"].(string)
-		return slices.Contains(keep, kind)
+		return slices.Contains(keep, manifest.DocKind(doc))
 	})
 }
 
@@ -25,8 +24,7 @@ func ExcludeKinds(docs []map[string]any, skip []string) []map[string]any {
 		return docs
 	}
 	return filter(docs, func(doc map[string]any) bool {
-		kind, _ := doc["kind"].(string)
-		return !slices.Contains(skip, kind)
+		return !slices.Contains(skip, manifest.DocKind(doc))
 	})
 }
 
@@ -37,14 +35,11 @@ func GrepHelmRelease(docs []map[string]any, release *manifest.HelmRelease) []map
 		return docs
 	}
 	return filter(docs, func(doc map[string]any) bool {
-		if kind, _ := doc["kind"].(string); kind != manifest.KindHelmRelease {
+		if manifest.DocKind(doc) != manifest.KindHelmRelease {
 			return false
 		}
-		md, _ := doc["metadata"].(map[string]any)
-		if md == nil {
-			return false
-		}
-		return md["name"] == release.Name && md["namespace"] == release.Namespace
+		name, ns := manifest.DocMetadata(doc)
+		return name == release.Name && ns == release.Namespace
 	})
 }
 

@@ -1,11 +1,17 @@
+// Package source reconciles Flux source CRs (GitRepository,
+// OCIRepository) into on-disk artifacts via the pkg/source SDK adapter,
+// then publishes the result to the Store. It mirrors
+// pkg/controllers/{kustomization,helmrelease}.
 package source
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -16,7 +22,7 @@ import (
 type Controller struct {
 	Store          *store.Store
 	Tasks          *task.Service
-	Cache          *Cache
+	Cache          *src.Cache
 	RegistryConfig string
 	// Filter, when non-nil and enabled, narrows fetches to only
 	// sources referenced by changed resources.
@@ -57,6 +63,7 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 				return
 			}
 			c.Tasks.Go(ctx, "source/"+id.String(), func(ctx context.Context) {
+				defer c.recoverPanic(id)
 				c.reconcileGit(ctx, id, repo)
 			})
 		case manifest.KindOCIRepository:
@@ -71,9 +78,17 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 				return
 			}
 			c.Tasks.Go(ctx, "source/"+id.String(), func(ctx context.Context) {
+				defer c.recoverPanic(id)
 				c.reconcileOCI(ctx, id, repo)
 			})
 		}
+	}
+}
+
+func (c *Controller) recoverPanic(id manifest.NamedResource) {
+	if r := recover(); r != nil {
+		slog.Error("source: panic during reconcile", "id", id.String(), "panic", r)
+		c.Store.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
 	}
 }
 
@@ -97,7 +112,7 @@ func (c *Controller) reconcileGit(ctx context.Context, id manifest.NamedResource
 		return
 	}
 	slog.Debug("source: git fetch", "id", id.String(), "url", repo.URL)
-	artifact, err := FetchGit(ctx, c.Cache, repo)
+	artifact, err := src.FetchGit(ctx, c.Cache, repo)
 	if err != nil {
 		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
 		return
@@ -113,7 +128,7 @@ func (c *Controller) reconcileOCI(ctx context.Context, id manifest.NamedResource
 		return
 	}
 	slog.Debug("source: oci fetch", "id", id.String(), "url", repo.URL)
-	artifact, err := FetchOCI(ctx, c.Cache, repo, c.RegistryConfig)
+	artifact, err := src.FetchOCI(ctx, c.Cache, repo, c.RegistryConfig)
 	if err != nil {
 		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
 		return

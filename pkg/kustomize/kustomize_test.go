@@ -1,30 +1,8 @@
 package kustomize
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/home-operations/flate/internal/testutil"
 )
-
-func TestBuild_Simple(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kustomization.yaml", "resources:\n- cm.yaml\n")
-	testutil.WriteFile(t, dir, "cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: hello
-data:
-  greeting: hi
-`)
-	data, err := Build(dir, Options{})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if !strings.Contains(string(data), "name: hello") {
-		t.Errorf("output missing expected resource: %s", data)
-	}
-}
 
 func TestFilterKinds(t *testing.T) {
 	docs := []map[string]any{

@@ -6,6 +6,8 @@ package depwait
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -108,7 +110,10 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 		wg.Add(1)
 		go func(dep manifest.DependencyRef) {
 			defer wg.Done()
-			ev := w.watchOne(ctx, dep, timeout)
+			// Recover from panics in watchOne (e.g. malformed CEL expression
+			// evaluating against an unexpected payload type) so the whole
+			// run isn't killed. The dep is reported failed instead.
+			ev := safeWatchOne(ctx, w, dep, timeout)
 			select {
 			case out <- ev:
 			case <-ctx.Done():
@@ -121,6 +126,23 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 		close(out)
 	}()
 	return out
+}
+
+// safeWatchOne wraps watchOne with panic recovery — a malformed CEL
+// ReadyExpr (or any other internal bug) reports the dep as failed
+// instead of taking the orchestrator down with it.
+func safeWatchOne(ctx context.Context, w *Waiter, dep manifest.DependencyRef, timeout time.Duration) (ev Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("depwait: panic in watchOne", "dep", dep.String(), "panic", r)
+			ev = Event{
+				Dep:    dep.NamedResource,
+				Status: DepFailed,
+				Reason: fmt.Sprintf("depwait panic: %v", r),
+			}
+		}
+	}()
+	return w.watchOne(ctx, dep, timeout)
 }
 
 func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeout time.Duration) Event {

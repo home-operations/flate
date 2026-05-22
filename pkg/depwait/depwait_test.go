@@ -2,6 +2,7 @@ package depwait
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,5 +101,20 @@ func TestWaiter_NoDeps(t *testing.T) {
 	sum := WaitAll(w.Watch(context.Background(), nil))
 	if !sum.AllReady() {
 		t.Errorf("expected vacuous ready: %+v", sum)
+	}
+}
+
+// TestWaiter_PanicReportedAsFailed asserts that a panic in watchOne
+// (here triggered by a nil Store) is caught and reported as a failed
+// Event instead of killing the orchestrator.
+func TestWaiter_PanicReportedAsFailed(t *testing.T) {
+	w := &Waiter{} // Store nil — depExists will nil-deref
+	dep := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "ns", Name: "x"}
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
+	if !sum.AnyFailed() {
+		t.Fatalf("expected fail on panic: %+v", sum)
+	}
+	if msg := sum.Messages[dep]; !strings.Contains(msg, "depwait panic:") {
+		t.Errorf("expected 'depwait panic:' prefix, got %q", msg)
 	}
 }

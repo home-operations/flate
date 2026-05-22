@@ -64,6 +64,28 @@ spec:
 	}
 }
 
+func TestParseGitRepository_SparseCheckout(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: monorepo, namespace: flux-system}
+spec:
+  url: https://github.com/owner/big-monorepo.git
+  sparseCheckout:
+    - kubernetes/apps/media
+    - kubernetes/components/shared
+  interval: 5m
+`)
+	g, err := ParseGitRepository(doc)
+	if err != nil {
+		t.Fatalf("ParseGitRepository: %v", err)
+	}
+	wantDirs := []string{"kubernetes/apps/media", "kubernetes/components/shared"}
+	if !slices.Equal(g.SparseCheckout, wantDirs) {
+		t.Errorf("SparseCheckout = %v, want %v", g.SparseCheckout, wantDirs)
+	}
+}
+
 func TestParseGitRepository_RefNameAndSubmodules(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: source.toolkit.fluxcd.io/v1

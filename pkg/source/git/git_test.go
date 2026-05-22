@@ -91,6 +91,69 @@ func TestFetcher_RefByName_Unresolvable(t *testing.T) {
 	}
 }
 
+// TestFetcher_SparseCheckout exercises spec.sparseCheckout — when
+// the repo declares specific directories, the worktree contains only
+// those (plus any tree-root metadata go-git keeps).
+func TestFetcher_SparseCheckout(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepoWithFiles(t, src, map[string]string{
+		"apps/a/manifest.yaml":   "kind: ConfigMap",
+		"apps/b/manifest.yaml":   "kind: ConfigMap",
+		"infra/c/manifest.yaml":  "kind: ConfigMap",
+		"README.md":              "top-level",
+	})
+
+	cache := source.NewCache(t.TempDir())
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		URL:            "file://" + src,
+		SparseCheckout: []string{"apps/a"},
+	}
+	f := &Fetcher{Cache: cache}
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	// apps/a must be present; apps/b must not.
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "a", "manifest.yaml")); err != nil {
+		t.Errorf("sparse-included file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "b", "manifest.yaml")); !os.IsNotExist(err) {
+		t.Errorf("sparse-excluded file should be absent; stat err = %v", err)
+	}
+}
+
+// mustInitRepoWithFiles creates a git repo at dir with the given
+// {path: contents} entries committed as one revision.
+func mustInitRepoWithFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	r, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("PlainInit: %v", err)
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree: %v", err)
+	}
+	for path, content := range files {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		if _, err := wt.Add(path); err != nil {
+			t.Fatalf("Add %s: %v", path, err)
+		}
+	}
+	if _, err := wt.Commit("init", &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+	}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+}
+
 // mustTagHEAD creates an annotated tag pointing at the worktree HEAD
 // and returns the tagged commit SHA.
 func mustTagHEAD(t *testing.T, dir, tag string) string {

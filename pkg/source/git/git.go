@@ -180,7 +180,7 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 		return nil, fmt.Errorf("clone %s: %w", url, err)
 	}
 
-	if err := checkoutRef(cloned, repo.Ref); err != nil {
+	if err := checkoutRef(cloned, repo.Ref, repo.SparseCheckout); err != nil {
 		return nil, fmt.Errorf("checkout %s: %w", refStr, err)
 	}
 	if repo.RecurseSubmodules {
@@ -196,10 +196,25 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 	}, nil
 }
 
-func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef) error {
+func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []string) error {
 	wt, err := repo.Worktree()
 	if err != nil {
 		return err
+	}
+	// newOpts builds a CheckoutOptions pre-populated with sparse-checkout
+	// directories when configured. Repeated per call-site because
+	// CheckoutOptions is consumed by each Checkout invocation.
+	newOpts := func() *git.CheckoutOptions {
+		opts := &git.CheckoutOptions{}
+		if len(sparse) > 0 {
+			opts.SparseCheckoutDirectories = append(opts.SparseCheckoutDirectories, sparse...)
+		}
+		return opts
+	}
+	checkout := func(set func(*git.CheckoutOptions)) error {
+		opts := newOpts()
+		set(opts)
+		return wt.Checkout(opts)
 	}
 	switch {
 	case ref.Name != "":
@@ -210,39 +225,35 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef) error {
 		// branches under refs/remotes/origin.
 		rev := plumbing.Revision(ref.Name)
 		if h, err := repo.ResolveRevision(rev); err == nil {
-			return wt.Checkout(&git.CheckoutOptions{Hash: *h})
+			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
 		}
 		// Fall through: try resolving as a remote-tracking ref. This
 		// handles refs/heads/<branch> by mapping to refs/remotes/origin/<branch>.
 		if rest, ok := strings.CutPrefix(ref.Name, "refs/heads/"); ok {
 			remote := plumbing.NewRemoteReferenceName("origin", rest)
 			if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
-				return wt.Checkout(&git.CheckoutOptions{Hash: *h})
+				return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
 			}
 		}
 		return fmt.Errorf("%w: unable to resolve git ref %q", manifest.ErrInput, ref.Name)
 	case ref.Commit != "":
-		return wt.Checkout(&git.CheckoutOptions{Hash: plumbing.NewHash(ref.Commit)})
+		return checkout(func(o *git.CheckoutOptions) { o.Hash = plumbing.NewHash(ref.Commit) })
 	case ref.Tag != "":
-		// Tags are typically reachable via "refs/tags/<tag>".
 		if h, err := repo.ResolveRevision(plumbing.Revision("refs/tags/" + ref.Tag)); err == nil {
-			return wt.Checkout(&git.CheckoutOptions{Hash: *h})
+			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
 		}
-		return wt.Checkout(&git.CheckoutOptions{Branch: plumbing.NewTagReferenceName(ref.Tag)})
+		return checkout(func(o *git.CheckoutOptions) { o.Branch = plumbing.NewTagReferenceName(ref.Tag) })
 	case ref.Branch != "":
-		// Default-branch HEAD is already checked out when NoCheckout=false.
-		// With NoCheckout we must resolve the remote branch.
 		remoteRef := plumbing.NewRemoteReferenceName("origin", ref.Branch)
 		if h, err := repo.ResolveRevision(plumbing.Revision(remoteRef)); err == nil {
-			return wt.Checkout(&git.CheckoutOptions{Hash: *h})
+			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
 		}
-		// Fallback: maybe the repo has a local branch (file:// case).
-		return wt.Checkout(&git.CheckoutOptions{Branch: plumbing.NewBranchReferenceName(ref.Branch)})
+		return checkout(func(o *git.CheckoutOptions) { o.Branch = plumbing.NewBranchReferenceName(ref.Branch) })
 	case ref.Semver != "":
 		return fmt.Errorf("%w: GitRepository semver ref is not supported yet", manifest.ErrInput)
 	}
-	// No ref: just check out HEAD.
-	return wt.Checkout(&git.CheckoutOptions{})
+	// No ref: just check out HEAD (with sparse, if configured).
+	return checkout(func(*git.CheckoutOptions) {})
 }
 
 // updateSubmodules initializes and pulls submodules in the cloned

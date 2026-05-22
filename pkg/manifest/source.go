@@ -48,7 +48,10 @@ type GitRepository struct {
 	Provider          string                `json:"provider,omitempty" yaml:"provider,omitempty"`
 	SecretRef         *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
 	RecurseSubmodules bool                  `json:"recurseSubmodules,omitempty" yaml:"recurseSubmodules,omitempty"`
-	Suspend           bool                  `json:"-" yaml:"-"`
+	// SparseCheckout limits the checkout to the listed repo-relative
+	// directories. When empty, the full tree is checked out (default).
+	SparseCheckout []string `json:"sparseCheckout,omitempty" yaml:"sparseCheckout,omitempty"`
+	Suspend        bool     `json:"-" yaml:"-"`
 }
 
 // Named identifies the GitRepository.
@@ -100,6 +103,7 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 		Ref:               ref,
 		Provider:          provider,
 		RecurseSubmodules: cr.Spec.RecurseSubmodules,
+		SparseCheckout:    cr.Spec.SparseCheckout,
 		Suspend:           cr.Spec.Suspend,
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {

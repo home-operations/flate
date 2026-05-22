@@ -3,12 +3,13 @@
 name: Release
 
 on:
-  # release-please creates the release as a draft (see release-please-config.json)
-  # so goreleaser can upload assets before the org-enforced release immutability
-  # kicks in. The publish job at the end flips the draft to published.
-  release:
-    types:
-      - created
+  push:
+    # Trigger on tag push, not the `release` event: org-enforced release
+    # immutability locks assets the moment a release is published, so we
+    # upload to the still-draft release release-please created and flip it
+    # to published in the final job.
+    tags:
+      - "*"
 
 jobs:
   build:
@@ -222,7 +223,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TAG: ${{ github.event.release.tag_name }}
+      TAG: ${{ github.ref_name }}
     steps:
       - name: Mark release as published
         run: gh release edit "$TAG" --draft=false --repo "${{ github.repository }}"

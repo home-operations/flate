@@ -38,11 +38,13 @@ type Controller struct {
 	Fetchers map[string]src.Fetcher
 
 	unsubscribers []store.Unsubscribe
+	coal          *task.Coalescer[manifest.NamedResource]
 }
 
 // Start registers listeners on the Store. The controller runs until
 // Close is called.
 func (c *Controller) Start(ctx context.Context) {
+	c.coal = task.NewCoalescer[manifest.NamedResource](c.Tasks)
 	c.unsubscribers = append(c.unsubscribers,
 		c.Store.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx), true),
 	)
@@ -73,7 +75,10 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 		if c.skip(id) {
 			return
 		}
-		c.Tasks.Go(ctx, "source/"+id.String(), func(ctx context.Context) {
+		// Coalesce per-id so a duplicate AddObject for the same source
+		// (e.g. a parent KS re-emits a child source on re-render)
+		// doesn't race two concurrent fetches into the same cache slot.
+		c.coal.Submit(ctx, "source/"+id.String(), id, func(ctx context.Context) {
 			defer base.Recover(c.Store, id, "source")
 			c.runFetch(ctx, id, obj, fetcher)
 		})

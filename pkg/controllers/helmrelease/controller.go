@@ -173,18 +173,17 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
-	for _, doc := range docs {
-		if manifest.IsEncryptedSecret(doc) {
-			name, ns := manifest.DocMetadata(doc)
-			return fmt.Errorf(
-				"SOPS-encrypted %s %s/%s in rendered chart output: flate does not implement spec.decryption — "+
-					"render against pre-decrypted manifests or remove the encrypted resource",
-				manifest.DocKind(doc), ns, name,
-			)
-		}
-	}
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
 	for _, doc := range docs {
+		if manifest.IsEncryptedSecret(doc) {
+			// SOPS-encrypted Secret in chart output — let ParseSecret
+			// wipe its values to PLACEHOLDER below, same as cleartext
+			// Secret data when --wipe-secrets is on. flate has no SOPS
+			// keys, so the placeholder is the honest rendered value.
+			name, ns := manifest.DocMetadata(doc)
+			slog.Debug("helmrelease: SOPS-encrypted resource wiped to placeholder",
+				"id", id.String(), "ref", manifest.DocKind(doc)+" "+ns+"/"+name)
+		}
 		obj, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
 			slog.Debug("helmrelease: skipped doc", "id", id.String(), "err", err)

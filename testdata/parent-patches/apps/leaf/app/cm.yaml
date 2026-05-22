@@ -5,3 +5,8 @@ metadata:
 data:
   value: ${MY_VAR}
   app: ${APP}
+  # MY_SECRET lives in the SOPS-encrypted cluster-secrets Secret. flate
+  # can't decrypt offline; the fix wipes the encrypted value to
+  # PLACEHOLDER (matching the cleartext --wipe-secrets behavior) so
+  # substitution succeeds rather than aborting.
+  secret: ${MY_SECRET}

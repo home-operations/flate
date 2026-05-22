@@ -133,12 +133,16 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
-	var sopsRefs []string
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
+			// flate can't decrypt SOPS offline. ParseSecret will wipe
+			// the encrypted values to PLACEHOLDER below — same as it
+			// does for cleartext Secret data when --wipe-secrets is on
+			// — so downstream substituteFrom lookups succeed with a
+			// clearly-marked placeholder rather than failing.
 			name, ns := manifest.DocMetadata(doc)
-			sopsRefs = append(sopsRefs, fmt.Sprintf("%s %s/%s", manifest.DocKind(doc), ns, name))
-			continue
+			slog.Debug("kustomization: SOPS-encrypted resource wiped to placeholder",
+				"id", id.String(), "ref", manifest.DocKind(doc)+" "+ns+"/"+name)
 		}
 		obj, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
@@ -159,16 +163,6 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		} else {
 			c.Store.AddRendered(obj)
 		}
-	}
-	if len(sopsRefs) > 0 {
-		// Surface SOPS docs as the Kustomization's failure reason but
-		// keep the non-SOPS docs in the store so downstream consumers
-		// can still reconcile against the parts flate could render.
-		return fmt.Errorf(
-			"SOPS-encrypted resource(s) in rendered output: %s — flate does not implement spec.decryption; "+
-				"render against pre-decrypted manifests or remove the encrypted resource",
-			strings.Join(sopsRefs, ", "),
-		)
 	}
 
 	c.Store.SetArtifact(id, &store.KustomizationArtifact{

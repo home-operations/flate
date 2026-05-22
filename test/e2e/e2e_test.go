@@ -227,38 +227,49 @@ func TestE2E_NonSharedChangeDoesNotPropagate(t *testing.T) {
 // home-ops cluster-apps pattern: a top-level Flux Kustomization with
 // spec.patches that inject postBuild.substituteFrom into every child
 // Kustomization. Children carry only inline substitute.* — they rely
-// on the parent's patches to wire the ConfigMap reference at render
-// time. The fixture's leaf KS references ${MY_VAR}, which only
-// resolves if the parent's render-emitted (patched) child KS
-// supersedes the statically-loaded one and triggers a fresh reconcile.
+// on the parent's patches to wire the ConfigMap and Secret references
+// at render time.
 //
-// A SOPS-encrypted Secret in the same parent kustomize tree exercises
-// the secondary fix: render must continue past the SOPS doc so the
-// (non-SOPS) patched children still reach the store.
+//   - leaf references ${MY_VAR} (from cluster-settings ConfigMap),
+//     proving that parent-injected substituteFrom reaches the child.
+//   - leaf references ${MY_SECRET} (from the SOPS-encrypted
+//     cluster-secrets Secret), proving that SOPS-encrypted values are
+//     wiped to PLACEHOLDER instead of aborting the run.
 func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
 	src := testdataPath(t, "parent-patches")
 	root := copyTree(t, src)
 
-	// `flate test ks` exits non-zero because cluster-apps reports the
-	// SOPS Secret it could not decrypt — that's the intended fail-loud.
-	// What matters here is that leaf still PASSED.
-	out, _ := runCLIExpectErr(t, "test", "ks", "--path", root)
+	out := runCLI(t, "test", "ks", "--path", root)
 
-	if !strings.Contains(out, "Kustomization/flux-system/leaf") {
-		t.Fatalf("leaf KS missing from output:\n%s", out)
-	}
 	leafLine := mustExtractLine(t, out, "Kustomization/flux-system/leaf")
 	if !strings.Contains(leafLine, "PASSED") {
 		t.Errorf("leaf should pass once parent patches inject substituteFrom; got: %s", leafLine)
 	}
-	if strings.Contains(out, `variable "MY_VAR" is undefined`) {
-		t.Errorf("MY_VAR should be resolved via parent-injected substituteFrom:\n%s", out)
+	clusterLine := mustExtractLine(t, out, "Kustomization/flux-system/cluster-apps")
+	if !strings.Contains(clusterLine, "PASSED") {
+		t.Errorf("cluster-apps should pass; SOPS values are wiped to placeholder, not fail-loud; got: %s", clusterLine)
 	}
-	// cluster-apps itself stays FAILED so users see the SOPS warning,
-	// but the failure mode is the collected-and-reported one, not the
-	// early-abort that previously dropped all other rendered docs.
-	if !strings.Contains(out, "SOPS-encrypted resource(s)") {
-		t.Errorf("cluster-apps should still surface a SOPS warning:\n%s", out)
+	if strings.Contains(out, `is undefined and has no default`) {
+		t.Errorf("no postBuild variable should be reported undefined:\n%s", out)
+	}
+}
+
+// TestE2E_SOPSValueWipedToPlaceholder verifies the rendered output
+// actually contains the PLACEHOLDER token where a SOPS-encrypted value
+// would have lived. Without the wipe-to-placeholder behavior, this
+// substitution would fail the run entirely.
+func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
+	src := testdataPath(t, "parent-patches")
+	root := copyTree(t, src)
+
+	out := runCLIStdout(t, "build", "ks", "leaf", "-n", "flux-system",
+		"--path", root, "-o", "yaml")
+
+	if !strings.Contains(out, "secret: ..PLACEHOLDER_MY_SECRET..") {
+		t.Errorf("expected SOPS-derived MY_SECRET to substitute to its placeholder:\n%s", out)
+	}
+	if !strings.Contains(out, "value: from-cluster-settings") {
+		t.Errorf("cleartext cluster-settings value should substitute normally:\n%s", out)
 	}
 }
 

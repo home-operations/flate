@@ -77,6 +77,10 @@ func (c *Cache) Reset(path string) error {
 // dash so the resulting slug is fs-safe.
 var nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
+// maxSlugLen caps slug length so cache paths stay below typical
+// filesystem name limits and remain greppable.
+const maxSlugLen = 50
+
 // slugifyRepo reduces a URL to a short, filesystem-safe identifier. It
 // preserves the last path segment so cache directories are recognizable
 // when poking around manually.
@@ -87,8 +91,8 @@ func slugifyRepo(url string) string {
 	}
 	url = nonAlnum.ReplaceAllString(url, "-")
 	url = strings.Trim(url, "-_.")
-	if len(url) > 50 {
-		url = url[:50]
+	if len(url) > maxSlugLen {
+		url = url[:maxSlugLen]
 	}
 	return cmp.Or(url, "repo")
 }

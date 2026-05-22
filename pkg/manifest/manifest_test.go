@@ -228,64 +228,81 @@ spec:
 	}
 }
 
-func TestParseGitRepository_ProxySecretRef(t *testing.T) {
-	doc := mustYAML(t, `
+func TestParseProxySecretRef_AllSourceKinds(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		get  func(doc map[string]any) (*LocalObjectReference, error)
+	}{
+		{
+			name: "GitRepository",
+			yaml: `
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: r, namespace: flux-system}
 spec:
   url: https://github.com/owner/repo.git
-  proxySecretRef:
-    name: corp-proxy
+  proxySecretRef: {name: corp-proxy}
   interval: 5m
-`)
-	g, err := ParseGitRepository(doc)
-	if err != nil {
-		t.Fatalf("ParseGitRepository: %v", err)
-	}
-	if g.ProxySecretRef == nil || g.ProxySecretRef.Name != "corp-proxy" {
-		t.Errorf("ProxySecretRef = %+v, want {Name: corp-proxy}", g.ProxySecretRef)
-	}
-}
-
-func TestParseOCIRepository_ProxySecretRef(t *testing.T) {
-	doc := mustYAML(t, `
+`,
+			get: func(d map[string]any) (*LocalObjectReference, error) {
+				g, err := ParseGitRepository(d)
+				if err != nil {
+					return nil, err
+				}
+				return g.ProxySecretRef, nil
+			},
+		},
+		{
+			name: "OCIRepository",
+			yaml: `
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata: {name: r, namespace: ns}
 spec:
   url: oci://ghcr.io/x/y
-  proxySecretRef:
-    name: corp-proxy
+  proxySecretRef: {name: corp-proxy}
   interval: 5m
-`)
-	o, err := ParseOCIRepository(doc)
-	if err != nil {
-		t.Fatalf("ParseOCIRepository: %v", err)
-	}
-	if o.ProxySecretRef == nil || o.ProxySecretRef.Name != "corp-proxy" {
-		t.Errorf("ProxySecretRef = %+v", o.ProxySecretRef)
-	}
-}
-
-func TestParseBucket_ProxySecretRef(t *testing.T) {
-	doc := mustYAML(t, `
+`,
+			get: func(d map[string]any) (*LocalObjectReference, error) {
+				o, err := ParseOCIRepository(d)
+				if err != nil {
+					return nil, err
+				}
+				return o.ProxySecretRef, nil
+			},
+		},
+		{
+			name: "Bucket",
+			yaml: `
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: Bucket
 metadata: {name: b, namespace: ns}
 spec:
   bucketName: x
   endpoint: minio:9000
-  proxySecretRef:
-    name: corp-proxy
+  proxySecretRef: {name: corp-proxy}
   interval: 5m
-`)
-	b, err := ParseBucket(doc)
-	if err != nil {
-		t.Fatalf("ParseBucket: %v", err)
+`,
+			get: func(d map[string]any) (*LocalObjectReference, error) {
+				b, err := ParseBucket(d)
+				if err != nil {
+					return nil, err
+				}
+				return b.ProxySecretRef, nil
+			},
+		},
 	}
-	if b.ProxySecretRef == nil || b.ProxySecretRef.Name != "corp-proxy" {
-		t.Errorf("ProxySecretRef = %+v", b.ProxySecretRef)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ref, err := tc.get(mustYAML(t, tc.yaml))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if ref == nil || ref.Name != "corp-proxy" {
+				t.Errorf("ProxySecretRef = %+v, want {Name: corp-proxy}", ref)
+			}
+		})
 	}
 }
 

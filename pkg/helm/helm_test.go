@@ -7,6 +7,8 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+	"helm.sh/helm/v4/pkg/chart/common"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -239,6 +241,74 @@ func TestApplyHRCommonMetadata_CreatesMetadataWhenMissing(t *testing.T) {
 	if labels["team"] != "flate" {
 		t.Errorf("labels not merged into newly-created metadata: %v", labels)
 	}
+}
+
+func TestMergeChartValuesFiles(t *testing.T) {
+	chartWith := func(files map[string]string) *chart.Chart {
+		c := &chart.Chart{}
+		for name, body := range files {
+			c.Files = append(c.Files, &common.File{Name: name, Data: []byte(body)})
+		}
+		return c
+	}
+
+	t.Run("LayersInOrderOverridesEarlier", func(t *testing.T) {
+		c := chartWith(map[string]string{
+			"first.yaml":  "a: first-only\nb: from-first\n",
+			"second.yaml": "b: from-second\nc: second-only\n",
+		})
+		got, err := mergeChartValuesFiles(c, []string{"first.yaml", "second.yaml"}, false)
+		if err != nil {
+			t.Fatalf("merge: %v", err)
+		}
+		if got["a"] != "first-only" || got["b"] != "from-second" || got["c"] != "second-only" {
+			t.Errorf("layering failed: %v", got)
+		}
+	})
+
+	t.Run("MissingFileIgnored", func(t *testing.T) {
+		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
+		got, err := mergeChartValuesFiles(c, []string{"a.yaml", "missing.yaml"}, true)
+		if err != nil {
+			t.Fatalf("merge: %v", err)
+		}
+		if got["k"] != "v" {
+			t.Errorf("present file should still merge: %v", got)
+		}
+	})
+
+	t.Run("MissingFileErrorsWhenStrict", func(t *testing.T) {
+		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
+		_, err := mergeChartValuesFiles(c, []string{"missing.yaml"}, false)
+		if err == nil {
+			t.Fatal("expected error for missing file when ignoreMissing=false")
+		}
+		if !strings.Contains(err.Error(), "missing.yaml") {
+			t.Errorf("error should name the missing file: %v", err)
+		}
+	})
+
+	t.Run("InvalidYAMLErrors", func(t *testing.T) {
+		c := chartWith(map[string]string{"bad.yaml": "key: : not-yaml\n"})
+		_, err := mergeChartValuesFiles(c, []string{"bad.yaml"}, false)
+		if err == nil {
+			t.Fatal("expected error for invalid YAML")
+		}
+		if !strings.Contains(err.Error(), "bad.yaml") {
+			t.Errorf("error should name the bad file: %v", err)
+		}
+	})
+
+	t.Run("EmptyNamesReturnsEmpty", func(t *testing.T) {
+		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
+		got, err := mergeChartValuesFiles(c, nil, false)
+		if err != nil {
+			t.Fatalf("merge: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("expected empty result for nil names: %v", got)
+		}
+	})
 }
 
 func TestOptions_SkipResourceKinds(t *testing.T) {

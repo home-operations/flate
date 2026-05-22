@@ -26,12 +26,17 @@ func ApplyNamespaceInheritance(s *store.Store, sourceFiles map[manifest.NamedRes
 		return
 	}
 
-	// Index #1 — Flux Kustomizations with a targetNamespace.
-	fluxByPath := indexFluxTargetNamespaces(s)
-
-	// Index #2 — kustomize.yaml `namespace:` directives, keyed by
-	// the directory containing the kustomization file.
+	// Index #1 — kustomize.yaml `namespace:` directives, keyed by
+	// the directory containing the kustomization file. Indexed first
+	// because indexFluxByPath consults it to project a Flux KS's
+	// effective namespace before the parent's render fires.
 	kustomizeByDir := indexKustomizeNamespaces(sourceFiles, repoRoot)
+
+	// Index #2 — Flux Kustomizations by spec.path → effective
+	// namespace (targetNamespace if set, otherwise metadata.namespace,
+	// otherwise the kustomize.yaml directive that would patch the KS
+	// itself once the parent renders).
+	fluxByPath := indexFluxByPath(s, sourceFiles, kustomizeByDir)
 
 	type update struct {
 		old, new manifest.NamedResource
@@ -95,20 +100,44 @@ func resolveNamespace(file string, flux, kust []pathEntry) string {
 	return best.ns
 }
 
-// indexFluxTargetNamespaces returns one pathEntry per Flux
-// Kustomization with a non-empty targetNamespace. resolveNamespace
-// already picks the longest-prefix match, so the slice can stay
-// unsorted.
-func indexFluxTargetNamespaces(s *store.Store) []pathEntry {
+// indexFluxByPath returns one pathEntry per Flux Kustomization keyed
+// by spec.path → the KS's effective namespace. Mirrors what real Flux
+// renders into the cluster:
+//   - spec.targetNamespace wins when set (kustomize-controller injects it).
+//   - Otherwise metadata.namespace acts as the apply-context default —
+//     resources rendered by the KS without explicit namespaces land
+//     in the KS's own namespace.
+//   - When metadata.namespace is also empty (i.e. the KS hasn't yet
+//     had a kustomize directive applied at the time of indexing), fall
+//     back to the kustomize.yaml directive that would patch the KS at
+//     parent-render time. This handles the cross-tree base/ pattern,
+//     where the parent's `replacements:` block injects targetNamespace
+//     only at kustomize-build, but flate runs inheritance at load.
+//
+// resolveNamespace picks the longest-prefix match, so the slice can
+// stay unsorted.
+func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]string, kust []pathEntry) []pathEntry {
 	var out []pathEntry
 	for _, obj := range s.ListObjects(manifest.KindKustomization) {
 		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.TargetNamespace == "" {
+		if !ok || ks.Path == "" {
+			continue
+		}
+		ns := ks.TargetNamespace
+		if ns == "" {
+			ns = ks.Namespace
+		}
+		if ns == "" {
+			if file, ok := sourceFiles[ks.Named()]; ok {
+				ns = resolveNamespace(file, nil, kust)
+			}
+		}
+		if ns == "" {
 			continue
 		}
 		out = append(out, pathEntry{
 			prefix: normalizePrefix(ks.Path),
-			ns:     ks.TargetNamespace,
+			ns:     ns,
 		})
 	}
 	return out

@@ -125,6 +125,60 @@ func TestReadKustomizeNamespace_AnchoredByRepoRoot(t *testing.T) {
 	}
 }
 
+// TestApplyNamespaceInheritance_CrossTreeBasePattern covers the
+// multi-cluster shared-base layout (e.g. joryirving/home-ops): the
+// parent kustomization.yaml under `main/<ns>/` carries the `namespace:`
+// directive that — at parent-render time — patches the Flux KS itself
+// to namespace=<ns> and (via a replacements: block) injects
+// spec.targetNamespace=<ns>. The Flux KS's spec.path then points at a
+// directory under `base/` that has no local namespace directive.
+//
+// Pre-fix behavior: inheritance only saw the KS's empty
+// targetNamespace, so resources under the cross-tree base/ path stayed
+// at namespace="" and later failed source-ref resolution.
+//
+// Post-fix: the KS's effective namespace (derived from the
+// kustomization.yaml directive on its own file) propagates to
+// resources under spec.path even when both live in different subtrees.
+func TestApplyNamespaceInheritance_CrossTreeBasePattern(t *testing.T) {
+	root := t.TempDir()
+	// Parent kustomize file lives under main/games and carries the
+	// `namespace: games` directive that real Flux's replacements block
+	// would later turn into spec.targetNamespace=games.
+	writeFile(t, root, "apps/main/games/kustomization.yaml", "namespace: games\n")
+
+	s := store.New()
+	// Flux KS lives at apps/main/games/romm.yaml but spec.path crosses
+	// over to apps/base/games/romm. Neither metadata.namespace nor
+	// spec.targetNamespace is set in the source YAML.
+	ks := &manifest.Kustomization{
+		Name: "romm",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path: "./apps/base/games/romm",
+		},
+	}
+	hr := &manifest.HelmRelease{Name: "romm"}
+	s.AddObject(ks)
+	s.AddObject(hr)
+
+	sourceFiles := map[manifest.NamedResource]string{
+		ks.Named(): "apps/main/games/romm.yaml",
+		hr.Named(): "apps/base/games/romm/helmrelease.yaml",
+	}
+	ApplyNamespaceInheritance(s, sourceFiles, root)
+
+	// Both the KS and the HR should now be namespace=games — the KS
+	// from the local kustomize.yaml directive, the HR from the KS's
+	// effective namespace projected onto its spec.path.
+	want := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "games", Name: "romm"}
+	if got := s.GetObject(want); got == nil {
+		t.Fatalf("expected cross-tree HR at games/romm; sourceFiles=%v", sourceFiles)
+	}
+	if got := s.GetObject(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "romm"}); got != nil {
+		t.Errorf("empty-namespace HR should have been removed")
+	}
+}
+
 func TestApplyNamespaceInheritance_HRChartRepoNamespaceTracksHR(t *testing.T) {
 	// When HR.Chart.RepoNamespace is empty, it implicitly tracks the
 	// HR's own namespace. After inheritance fills the HR namespace in,

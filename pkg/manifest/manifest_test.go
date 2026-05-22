@@ -64,6 +64,46 @@ spec:
 	}
 }
 
+func TestParseHelmRelease_ServiceAccountName(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: hr, namespace: ns}
+spec:
+  serviceAccountName: privileged-installer
+  chart:
+    spec:
+      chart: c
+      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
+`)
+	hr, err := ParseHelmRelease(doc)
+	if err != nil {
+		t.Fatalf("ParseHelmRelease: %v", err)
+	}
+	if hr.ServiceAccountName != "privileged-installer" {
+		t.Errorf("ServiceAccountName = %q, want %q", hr.ServiceAccountName, "privileged-installer")
+	}
+}
+
+func TestParseHelmChartSource_ReconcileStrategy(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata: {name: c, namespace: ns}
+spec:
+  chart: nginx
+  reconcileStrategy: Revision
+  sourceRef: {kind: HelmRepository, name: r}
+`)
+	hc, err := ParseHelmChartSource(doc)
+	if err != nil {
+		t.Fatalf("ParseHelmChartSource: %v", err)
+	}
+	if hc.ReconcileStrategy != "Revision" {
+		t.Errorf("ReconcileStrategy = %q, want %q", hc.ReconcileStrategy, "Revision")
+	}
+}
+
 func TestParseGitRepository_SparseCheckout(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: source.toolkit.fluxcd.io/v1

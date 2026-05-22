@@ -107,6 +107,10 @@ type HelmChartSource struct {
 	Suspend                  bool     `json:"-" yaml:"-"`
 	ValuesFiles              []string `json:"-" yaml:"-"`
 	IgnoreMissingValuesFiles bool     `json:"-" yaml:"-"`
+	// ReconcileStrategy is "ChartVersion" (default) or "Revision". Flate
+	// does not re-trigger reconciles; this is parsed for round-tripping
+	// fidelity so consumers can observe the upstream intent.
+	ReconcileStrategy string `json:"-" yaml:"-"`
 }
 
 // Named identifies the chart resource.
@@ -157,6 +161,7 @@ func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 		Suspend:                  cr.Spec.Suspend,
 		ValuesFiles:              cr.Spec.ValuesFiles,
 		IgnoreMissingValuesFiles: cr.Spec.IgnoreMissingValuesFiles,
+		ReconcileStrategy:        cr.Spec.ReconcileStrategy,
 	}, nil
 }
 
@@ -197,6 +202,11 @@ type HelmRelease struct {
 	Suspend                  bool              `json:"-" yaml:"-"`
 	DisableSchemaValidation  bool              `json:"-" yaml:"-"`
 	DisableOpenAPIValidation bool              `json:"-" yaml:"-"`
+	// ServiceAccountName is the SA Flux's helm-controller impersonates
+	// when applying the release. Flate renders offline so it has no
+	// effect here, but the field is preserved for fidelity with the
+	// upstream CR and so future render-time policy checks can observe it.
+	ServiceAccountName string `json:"-" yaml:"-"`
 	// ChartValuesFiles are values files baked into the chart that
 	// should be merged BEFORE the HR's own Values overrides. Sourced
 	// from either spec.chart.spec.valuesFiles (inline template) or the
@@ -352,6 +362,7 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		DisableOpenAPIValidation: disableOpenAPI,
 		ChartValuesFiles:         chartValuesFiles,
 		IgnoreMissingValuesFiles: ignoreMissingValuesFiles,
+		ServiceAccountName:       cr.Spec.ServiceAccountName,
 	}, nil
 }
 

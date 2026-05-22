@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -62,7 +63,7 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	if err != nil {
 		return nil, err
 	}
-	return fetch(ctx, f.Cache, repo, configPath, tlsCfg)
+	return fetch(ctx, f, repo, configPath, tlsCfg)
 }
 
 // resolveTLS builds a *tls.Config from spec.certSecretRef (PEM-encoded
@@ -170,8 +171,10 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 // read from a docker-style config.json honored by oras-go's
 // credentials.NewFileStore. When spec.ref.semver is set, the registry
 // is listed and the highest matching tag (filtered by semverFilter, if
-// any) is resolved before pulling.
-func fetch(ctx context.Context, cache *source.Cache, repo *manifest.OCIRepository, registryConfig string, tlsCfg *tls.Config) (*store.SourceArtifact, error) {
+// any) is resolved before pulling. When spec.verify is set, the pulled
+// digest is verified against the trusted public keys before returning.
+func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, registryConfig string, tlsCfg *tls.Config) (*store.SourceArtifact, error) {
+	cache := f.Cache
 	if repo == nil {
 		return nil, errors.New("oci repository is nil")
 	}
@@ -228,12 +231,31 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.OCIRepositor
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}
 	if exists {
-		return &store.SourceArtifact{
-			Kind: manifest.KindOCIRepository,
-			URL:  repo.URL, LocalPath: slot,
-			Revision: ociRevision(ref, ref.Digest),
-			Digest:   ref.Digest,
-		}, nil
+		cachedDigest := readCachedDigest(slot)
+		if cachedDigest == "" {
+			cachedDigest = ref.Digest
+		}
+		// When verification is configured, re-verify the cached digest
+		// against the registry. Cheap (one metadata fetch) and closes the
+		// gap where a slot was populated under a prior policy. If we have
+		// no recorded digest, the verify pass can't be trusted — fall
+		// through to a fresh pull.
+		if repo.Verify != nil {
+			if cachedDigest == "" {
+				_ = cache.Reset(slot)
+				exists = false
+			} else if err := f.verifyCosignSignature(ctx, repoClient, repo, cachedDigest); err != nil {
+				return nil, err
+			}
+		}
+		if exists {
+			return &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository,
+				URL:  repo.URL, LocalPath: slot,
+				Revision: ociRevision(ref, cachedDigest),
+				Digest:   cachedDigest,
+			}, nil
+		}
 	}
 
 	tag := versionTag(ref)
@@ -254,6 +276,16 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.OCIRepositor
 	}
 
 	digest := desc.Digest.String()
+	if repo.Verify != nil {
+		if err := f.verifyCosignSignature(ctx, repoClient, repo, digest); err != nil {
+			_ = os.RemoveAll(slot)
+			return nil, err
+		}
+	}
+	// Persist the resolved digest so a subsequent cache hit can
+	// re-verify against the exact bytes we wrote, even when the spec
+	// pinned only a tag.
+	_ = writeCachedDigest(slot, digest)
 	return &store.SourceArtifact{
 		Kind: manifest.KindOCIRepository,
 		URL:  repo.URL, LocalPath: slot,
@@ -261,6 +293,23 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.OCIRepositor
 		Digest:   digest,
 		Size:     desc.Size,
 	}, nil
+}
+
+// cachedDigestFile is the slot-relative path where flate records the
+// resolved digest of an OCIRepository pull. Used to re-verify on cache
+// hit when spec.verify is configured.
+const cachedDigestFile = ".flate-digest"
+
+func writeCachedDigest(slot, digest string) error {
+	return os.WriteFile(filepath.Join(slot, cachedDigestFile), []byte(digest), 0o600)
+}
+
+func readCachedDigest(slot string) string {
+	b, err := os.ReadFile(filepath.Join(slot, cachedDigestFile)) //nolint:gosec // slot is fetcher-owned cache path
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // ociRevision composes a Flux-style "<tag>@<digest>" revision string.

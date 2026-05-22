@@ -125,15 +125,38 @@ func (r OCIRepositoryRef) IsEmpty() bool { return r == OCIRepositoryRef{} }
 
 // OCIRepository is the Flux OCIRepository CRD.
 type OCIRepository struct {
-	Name          string                `json:"name" yaml:"name"`
-	Namespace     string                `json:"namespace" yaml:"namespace"`
-	URL           string                `json:"url" yaml:"url"`
-	Ref           OCIRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
-	Provider      string                `json:"provider,omitempty" yaml:"provider,omitempty"`
-	SecretRef     *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-	CertSecretRef *LocalObjectReference `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
-	Insecure      bool                  `json:"insecure,omitempty" yaml:"insecure,omitempty"`
-	Suspend       bool                  `json:"-" yaml:"-"`
+	Name          string                 `json:"name" yaml:"name"`
+	Namespace     string                 `json:"namespace" yaml:"namespace"`
+	URL           string                 `json:"url" yaml:"url"`
+	Ref           OCIRepositoryRef       `json:"ref,omitzero" yaml:"ref,omitempty"`
+	Provider      string                 `json:"provider,omitempty" yaml:"provider,omitempty"`
+	SecretRef     *LocalObjectReference  `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	CertSecretRef *LocalObjectReference  `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
+	Verify        *OCIRepositoryVerify   `json:"verify,omitempty" yaml:"verify,omitempty"`
+	Insecure      bool                   `json:"insecure,omitempty" yaml:"insecure,omitempty"`
+	Suspend       bool                   `json:"-" yaml:"-"`
+}
+
+// OCIRepositoryVerify mirrors source-controller's spec.verify on
+// OCIRepository. Flate implements keyed mode only:
+//   - Provider: "cosign" (the upstream default)
+//   - SecretRef: a Secret whose keys hold one or more PEM-encoded
+//     public keys (cosign.pub or any *.pub key).
+//
+// The "notation" provider and keyless (OIDC) flows parse here for
+// round-trip fidelity but are not enforced at Fetch time. MatchOIDCIdentity
+// is preserved verbatim for the same reason.
+type OCIRepositoryVerify struct {
+	Provider          string                `json:"provider,omitempty" yaml:"provider,omitempty"`
+	SecretRef         *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	MatchOIDCIdentity []OIDCIdentityMatch   `json:"matchOIDCIdentity,omitempty" yaml:"matchOIDCIdentity,omitempty"`
+}
+
+// OIDCIdentityMatch is the keyless-mode identity matcher. Parsed for
+// fidelity; flate does not perform keyless verification.
+type OIDCIdentityMatch struct {
+	Issuer  string `json:"issuer" yaml:"issuer"`
+	Subject string `json:"subject" yaml:"subject"`
 }
 
 // Named identifies the OCIRepository.
@@ -222,6 +245,16 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
 		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
+	}
+	if v := cr.Spec.Verify; v != nil {
+		out.Verify = &OCIRepositoryVerify{Provider: v.Provider}
+		if v.SecretRef != nil && v.SecretRef.Name != "" {
+			out.Verify.SecretRef = &LocalObjectReference{Name: v.SecretRef.Name}
+		}
+		for _, m := range v.MatchOIDCIdentity {
+			out.Verify.MatchOIDCIdentity = append(out.Verify.MatchOIDCIdentity,
+				OIDCIdentityMatch{Issuer: m.Issuer, Subject: m.Subject})
+		}
 	}
 	return out, nil
 }

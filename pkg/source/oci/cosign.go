@@ -1,0 +1,276 @@
+package oci
+
+import (
+	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"strings"
+
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/opencontainers/go-digest"
+	"oras.land/oras-go/v2/registry/remote"
+
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+)
+
+// cosignSignatureAnnotation is the OCI annotation cosign uses to
+// embed the base64-encoded signature on each "signature layer".
+const cosignSignatureAnnotation = "dev.cosignproject.cosign/signature"
+
+// cosignPayload is the JSON envelope cosign signs. The "image"
+// stanza ties the signature to a specific image digest so an
+// attacker can't lift a signature off an unrelated artifact.
+type cosignPayload struct {
+	Critical struct {
+		Image struct {
+			DockerManifestDigest string `json:"docker-manifest-digest"`
+		} `json:"image"`
+	} `json:"critical"`
+}
+
+// signatureLayer is the subset of an OCI manifest layer that
+// cosign verification needs.
+type signatureLayer struct {
+	MediaType   string            `json:"mediaType"`
+	Digest      string            `json:"digest"`
+	Size        int64             `json:"size"`
+	Annotations map[string]string `json:"annotations"`
+}
+
+// descriptorFromLayer builds an OCI descriptor suitable for
+// oras-go's Blobs().Fetch from a parsed signature manifest layer.
+func descriptorFromLayer(l signatureLayer) ocispec.Descriptor {
+	return ocispec.Descriptor{
+		MediaType: l.MediaType,
+		Digest:    digest.Digest(l.Digest),
+		Size:      l.Size,
+	}
+}
+
+// signatureManifest is the cosign signature artifact's OCI manifest.
+type signatureManifest struct {
+	Layers []signatureLayer `json:"layers"`
+}
+
+// verifyCosignSignature locates the cosign signature artifact for the
+// freshly-pulled image digest, fetches each signature layer, and
+// verifies it against the trusted public keys carried in
+// spec.verify.secretRef. Returns nil on success — at least one layer's
+// signature must verify under at least one trusted key AND its payload
+// must reference the same digest we just pulled.
+//
+// Implements the cosign "simple signing" keyed verification path:
+//   - https://github.com/sigstore/cosign/blob/main/specs/SIGNATURE_SPEC.md
+//
+// Keyless / Rekor / Notation are out of scope for offline flate.
+func (f *Fetcher) verifyCosignSignature(
+	ctx context.Context,
+	repoClient *remote.Repository,
+	repo *manifest.OCIRepository,
+	pulledDigest string,
+) error {
+	if repo.Verify == nil {
+		return nil
+	}
+	provider := repo.Verify.Provider
+	if provider == "" {
+		provider = "cosign"
+	}
+	if provider != "cosign" {
+		return fmt.Errorf("OCIRepository %s/%s: verify provider %q is not implemented; flate currently supports only %q",
+			repo.Namespace, repo.Name, provider, "cosign")
+	}
+	if repo.Verify.SecretRef == nil {
+		// Keyless (OIDC) — flate cannot enforce this offline. Surface
+		// the gap as a loud error rather than silently passing.
+		return fmt.Errorf("OCIRepository %s/%s: keyless cosign verification is not implemented; supply spec.verify.secretRef with a public key",
+			repo.Namespace, repo.Name)
+	}
+	keys, err := f.loadCosignPublicKeys(repo)
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return fmt.Errorf("OCIRepository %s/%s: secret %s/%s contains no PEM-encoded public keys",
+			repo.Namespace, repo.Name, repo.Namespace, repo.Verify.SecretRef.Name)
+	}
+
+	sigTag := cosignSigTag(pulledDigest)
+	manDesc, err := repoClient.Resolve(ctx, sigTag)
+	if err != nil {
+		return fmt.Errorf("OCIRepository %s/%s: locate cosign signature %s: %w",
+			repo.Namespace, repo.Name, sigTag, err)
+	}
+	manReader, err := repoClient.Fetch(ctx, manDesc)
+	if err != nil {
+		return fmt.Errorf("OCIRepository %s/%s: fetch signature manifest: %w",
+			repo.Namespace, repo.Name, err)
+	}
+	manBytes, err := io.ReadAll(manReader)
+	_ = manReader.Close()
+	if err != nil {
+		return fmt.Errorf("OCIRepository %s/%s: read signature manifest: %w",
+			repo.Namespace, repo.Name, err)
+	}
+	var sigMan signatureManifest
+	if err := json.Unmarshal(manBytes, &sigMan); err != nil {
+		return fmt.Errorf("OCIRepository %s/%s: parse signature manifest: %w",
+			repo.Namespace, repo.Name, err)
+	}
+	if len(sigMan.Layers) == 0 {
+		return fmt.Errorf("OCIRepository %s/%s: signature manifest has no layers",
+			repo.Namespace, repo.Name)
+	}
+
+	var lastErr error
+	for _, layer := range sigMan.Layers {
+		sigB64, ok := layer.Annotations[cosignSignatureAnnotation]
+		if !ok || sigB64 == "" {
+			continue
+		}
+		sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
+		if err != nil {
+			lastErr = fmt.Errorf("decode signature: %w", err)
+			continue
+		}
+		// Fetch the payload blob (the signed bytes).
+		payloadReader, err := repoClient.Blobs().Fetch(ctx, descriptorFromLayer(layer))
+		if err != nil {
+			lastErr = fmt.Errorf("fetch payload blob: %w", err)
+			continue
+		}
+		payload, err := io.ReadAll(payloadReader)
+		_ = payloadReader.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("read payload blob: %w", err)
+			continue
+		}
+		// The payload must commit to the digest we pulled.
+		var p cosignPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			lastErr = fmt.Errorf("parse payload JSON: %w", err)
+			continue
+		}
+		if p.Critical.Image.DockerManifestDigest != pulledDigest {
+			lastErr = fmt.Errorf("payload binds digest %s, pulled %s",
+				p.Critical.Image.DockerManifestDigest, pulledDigest)
+			continue
+		}
+		// Try every trusted key — first success wins.
+		hash := sha256.Sum256(payload)
+		for _, k := range keys {
+			verr := verifyCosignSignatureBytes(k, hash[:], sigBytes)
+			if verr == nil {
+				return nil
+			}
+			lastErr = verr
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no signature layer matched any trusted key")
+	}
+	return fmt.Errorf("OCIRepository %s/%s: cosign verify failed: %w",
+		repo.Namespace, repo.Name, lastErr)
+}
+
+// loadCosignPublicKeys resolves spec.verify.secretRef and parses every
+// value containing PEM-encoded public-key blocks. Any value whose
+// content does not look like a PEM key is ignored — matches Flux's
+// "all *.pub keys in the secret are trusted" semantics.
+func (f *Fetcher) loadCosignPublicKeys(repo *manifest.OCIRepository) ([]crypto.PublicKey, error) {
+	if f.Secrets == nil {
+		return nil, fmt.Errorf("OCIRepository %s/%s: spec.verify.secretRef set but no source.SecretGetter is wired",
+			repo.Namespace, repo.Name)
+	}
+	sec := f.Secrets(repo.Namespace, repo.Verify.SecretRef.Name)
+	if sec == nil {
+		return nil, fmt.Errorf("OCIRepository %s/%s: verify secret %s/%s not found",
+			repo.Namespace, repo.Name, repo.Namespace, repo.Verify.SecretRef.Name)
+	}
+	var keys []crypto.PublicKey
+	for k, v := range sec.StringData {
+		s, ok := v.(string)
+		if !ok || s == "" {
+			continue
+		}
+		// Treat the --wipe-secrets placeholder as missing.
+		if s = source.StringFromSecret(sec, k); s == "" {
+			continue
+		}
+		parsed := parsePEMPublicKeys([]byte(s))
+		if len(parsed) == 0 {
+			continue
+		}
+		keys = append(keys, parsed...)
+	}
+	return keys, nil
+}
+
+// parsePEMPublicKeys decodes every PUBLIC KEY block in the buffer.
+// Accepts both PKIX (SubjectPublicKeyInfo) and bare RSA PUBLIC KEY blocks.
+// Returns an empty slice when nothing parses; callers treat that as
+// "no trusted keys" and fail loud upstream.
+func parsePEMPublicKeys(b []byte) []crypto.PublicKey {
+	var keys []crypto.PublicKey
+	for {
+		block, rest := pem.Decode(b)
+		if block == nil {
+			break
+		}
+		switch block.Type {
+		case "PUBLIC KEY":
+			k, err := x509.ParsePKIXPublicKey(block.Bytes)
+			if err == nil {
+				keys = append(keys, k)
+			}
+		case "RSA PUBLIC KEY":
+			k, err := x509.ParsePKCS1PublicKey(block.Bytes)
+			if err == nil {
+				keys = append(keys, k)
+			}
+		}
+		b = rest
+	}
+	return keys
+}
+
+// verifyCosignSignatureBytes verifies sig over digest using key. Supports
+// the three algorithms cosign's keyed mode emits: ECDSA-P256-SHA256
+// (default), RSA-PKCS1v15-SHA256, and Ed25519 (over the raw payload —
+// here we approximate by feeding the SHA-256 digest, which matches
+// cosign's "PreHashed" flow used for ed25519 signatures).
+func verifyCosignSignatureBytes(key crypto.PublicKey, digest, sig []byte) error {
+	switch k := key.(type) {
+	case *ecdsa.PublicKey:
+		if !ecdsa.VerifyASN1(k, digest, sig) {
+			return fmt.Errorf("ecdsa verify failed")
+		}
+		return nil
+	case *rsa.PublicKey:
+		return rsa.VerifyPKCS1v15(k, crypto.SHA256, digest, sig)
+	case ed25519.PublicKey:
+		if !ed25519.Verify(k, digest, sig) {
+			return fmt.Errorf("ed25519 verify failed")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported public key type %T", key)
+	}
+}
+
+// cosignSigTag converts an artifact digest "sha256:abc..." into the
+// signature lookup tag "sha256-abc....sig" that cosign publishes.
+func cosignSigTag(digest string) string {
+	d := strings.ReplaceAll(digest, ":", "-")
+	return d + ".sig"
+}

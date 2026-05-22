@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/home-operations/flate/compare/0.1.2...0.1.3) (2026-05-22)
+
+
+### Bug Fixes
+
+* **ci:** create releases as drafts so goreleaser can upload before immutability ([f28c03b](https://github.com/home-operations/flate/commit/f28c03be95f4b60d941d3fbdd1631c85717fb717))
+
 ## [0.1.2](https://github.com/home-operations/flate/compare/0.1.1...0.1.2) (2026-05-22)
 
 

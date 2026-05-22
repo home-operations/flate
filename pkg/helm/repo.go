@@ -8,33 +8,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/getter"
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
+	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
 
 // chartCacheLocks serializes concurrent fetches of the same cached
 // chart tarball so two reconcilers don't race on the same file.
-var (
-	chartCacheLocksMu sync.Mutex
-	chartCacheLocks   = map[string]*sync.Mutex{}
-)
-
-func lockChartPath(p string) *sync.Mutex {
-	chartCacheLocksMu.Lock()
-	defer chartCacheLocksMu.Unlock()
-	if l, ok := chartCacheLocks[p]; ok {
-		return l
-	}
-	l := &sync.Mutex{}
-	chartCacheLocks[p] = l
-	return l
-}
+var chartCacheLocks = keylock.New[string]()
 
 // writeAtomic writes data to path via a temp file + rename so partial
 // writes never appear at the target path to concurrent readers.
@@ -133,9 +119,11 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	cacheKey := safeName(hr.Chart.Name) + "-" + cv.Version + ".tgz"
 	target := filepath.Join(c.cacheDir, cacheKey)
 
-	lock := lockChartPath(target)
-	lock.Lock()
-	defer lock.Unlock()
+	release, err := chartCacheLocks.Acquire(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 
 	if _, err := os.Stat(target); err == nil {
 		return target, nil
@@ -318,9 +306,11 @@ func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string
 	}
 	target := filepath.Join(c.cacheDir, safeName(filepath.Base(ref))+"-"+version+".tgz")
 
-	lock := lockChartPath(target)
-	lock.Lock()
-	defer lock.Unlock()
+	release, err := chartCacheLocks.Acquire(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 
 	if _, err := os.Stat(target); err == nil {
 		return target, nil

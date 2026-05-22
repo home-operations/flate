@@ -8,33 +8,19 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"sync"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/kustomize/api/resmap"
 
+	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // pathLocks serialize concurrent renders against the same staged path —
 // Flux's Generator mutates kustomization.yaml in place, so parallel
 // builds against the same path race.
-var (
-	pathLocksMu sync.Mutex
-	pathLocks   = map[string]*sync.Mutex{}
-)
-
-func lockPath(path string) *sync.Mutex {
-	pathLocksMu.Lock()
-	defer pathLocksMu.Unlock()
-	if l, ok := pathLocks[path]; ok {
-		return l
-	}
-	l := &sync.Mutex{}
-	pathLocks[path] = l
-	return l
-}
+var pathLocks = keylock.New[string]()
 
 // RenderFlux renders a Flux kustomize.toolkit.fluxcd.io Kustomization
 // using the same library that Flux's kustomize-controller uses
@@ -96,14 +82,12 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath st
 	// Generator merges patches / images / components into the
 	// kustomization file at the staged path — restoring the source
 	// baseline + writing the Generator output must happen atomically
-	// per Kustomization.
-	lock := lockPath(stagedSub)
-	lock.Lock()
-	defer lock.Unlock()
-
-	if err := ctx.Err(); err != nil {
+	// per Kustomization. ctx cancellation interrupts the acquire.
+	release, err := pathLocks.Acquire(ctx, stagedSub)
+	if err != nil {
 		return nil, err
 	}
+	defer release()
 
 	// Restore the source kustomization.yaml before each Generator
 	// run so repeat reconciles (e.g. when a parent renders and

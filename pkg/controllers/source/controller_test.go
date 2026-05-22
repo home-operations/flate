@@ -112,18 +112,31 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 }
 
 func TestController_UnregisteredKindIgnored(t *testing.T) {
-	_, st := newController(t, map[string]src.Fetcher{}) // no fetchers
-	repo := &manifest.GitRepository{
+	// Register an OCIRepository fetcher so the controller is alive but
+	// has no entry for KindGitRepository. The AddObject path dispatches
+	// listeners synchronously, so checking status immediately after
+	// AddObject proves the unregistered branch returned without writing
+	// any status — no sleep needed.
+	registered := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindOCIRepository}}
+	_, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: registered})
+
+	unregistered := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "https://example/r.git"},
 	}
-	st.AddObject(repo)
-
-	// Give the listener a tick — nothing should run, no status set.
-	time.Sleep(20 * time.Millisecond)
-	if _, ok := st.GetStatus(repo.Named()); ok {
+	st.AddObject(unregistered)
+	if _, ok := st.GetStatus(unregistered.Named()); ok {
 		t.Errorf("expected no status update for unregistered kind")
 	}
+
+	// Positive control: a registered kind reaches Ready, proving the
+	// dispatcher is alive and the unregistered skip is targeted.
+	oci := &manifest.OCIRepository{
+		Name: "o", Namespace: "ns",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+	}
+	st.AddObject(oci)
+	waitForStatus(t, st, oci.Named(), store.StatusReady)
 }
 
 func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {

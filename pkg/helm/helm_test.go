@@ -145,6 +145,12 @@ func TestTemplate_HRInstallDisableHooks(t *testing.T) {
 	if strings.Contains(out, "demo-pre") {
 		t.Errorf("HR-scoped spec.install.disableHooks should suppress pre-install hook: %s", out)
 	}
+	// Positive control — non-hook resources must still render so we
+	// know the absence of "demo-pre" is hook-suppression, not a broken
+	// render path.
+	if !strings.Contains(out, "demo-cm") {
+		t.Errorf("expected non-hook ConfigMap to still render: %s", out)
+	}
 }
 
 func TestTemplateDocs_AppliesHRCommonMetadata(t *testing.T) {
@@ -171,6 +177,67 @@ func TestTemplateDocs_AppliesHRCommonMetadata(t *testing.T) {
 	}
 	if annotations["owner"] != "platform" {
 		t.Errorf("commonMetadata.annotations not merged: %v", annotations)
+	}
+}
+
+func TestApplyHRCommonMetadata_LabelsOnly(t *testing.T) {
+	docs := []map[string]any{
+		{"metadata": map[string]any{"name": "x"}},
+	}
+	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+		Labels: map[string]string{"team": "flate"},
+	})
+	md := docs[0]["metadata"].(map[string]any)
+	labels, _ := md["labels"].(map[string]any)
+	if labels["team"] != "flate" {
+		t.Errorf("labels not merged: %v", labels)
+	}
+	if _, ok := md["annotations"]; ok {
+		t.Errorf("annotations key should not be created when input is empty: %v", md)
+	}
+}
+
+func TestApplyHRCommonMetadata_AnnotationsOnly(t *testing.T) {
+	docs := []map[string]any{
+		{"metadata": map[string]any{"name": "x"}},
+	}
+	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+		Annotations: map[string]string{"owner": "platform"},
+	})
+	md := docs[0]["metadata"].(map[string]any)
+	annotations, _ := md["annotations"].(map[string]any)
+	if annotations["owner"] != "platform" {
+		t.Errorf("annotations not merged: %v", annotations)
+	}
+	if _, ok := md["labels"]; ok {
+		t.Errorf("labels key should not be created when input is empty: %v", md)
+	}
+}
+
+func TestApplyHRCommonMetadata_NilOrEmptyIsNoop(t *testing.T) {
+	docs := []map[string]any{
+		{"metadata": map[string]any{"name": "x"}},
+	}
+	original := docs[0]["metadata"].(map[string]any)
+	applyHRCommonMetadata(docs, nil)
+	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{})
+	if len(original) != 1 || original["name"] != "x" {
+		t.Errorf("metadata mutated by nil/empty CommonMetadata: %v", original)
+	}
+}
+
+func TestApplyHRCommonMetadata_CreatesMetadataWhenMissing(t *testing.T) {
+	docs := []map[string]any{{}} // no metadata
+	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+		Labels: map[string]string{"team": "flate"},
+	})
+	md, ok := docs[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata not created: %v", docs[0])
+	}
+	labels, _ := md["labels"].(map[string]any)
+	if labels["team"] != "flate" {
+		t.Errorf("labels not merged into newly-created metadata: %v", labels)
 	}
 }
 

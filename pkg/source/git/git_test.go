@@ -129,6 +129,42 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 	}
 }
 
+// TestFetcher_AppliesSpecIgnore exercises the spec.ignore wiring: a
+// staged tree containing a tracked file matching the user-supplied
+// gitignore pattern must have that file deleted post-checkout.
+func TestFetcher_AppliesSpecIgnore(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepoWithFiles(t, src, map[string]string{
+		"apps/deployment.yaml": "kind: Deployment",
+		"apps/scratch.tmp":     "noise",
+		"docs/notes.md":        "drop-me",
+	})
+
+	patterns := "*.tmp\ndocs/\n"
+	cache := source.NewCache(t.TempDir())
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:    "file://" + src,
+			Ignore: &patterns,
+		},
+	}
+	f := &Fetcher{Cache: cache}
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "scratch.tmp")); !os.IsNotExist(err) {
+		t.Errorf("expected *.tmp to be removed by spec.ignore; stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "docs")); !os.IsNotExist(err) {
+		t.Errorf("expected docs/ to be removed by spec.ignore; stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "deployment.yaml")); err != nil {
+		t.Errorf("non-ignored file should remain: %v", err)
+	}
+}
+
 // mustInitRepoWithFiles creates a git repo at dir with the given
 // {path: contents} entries committed as one revision.
 func mustInitRepoWithFiles(t *testing.T, dir string, files map[string]string) {

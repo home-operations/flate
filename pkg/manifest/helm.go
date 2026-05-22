@@ -364,6 +364,7 @@ type HelmRepository struct {
 	RepoType        string                `json:"repoType,omitempty" yaml:"repoType,omitempty"`
 	Provider        string                `json:"provider,omitempty" yaml:"provider,omitempty"`
 	SecretRef       *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	CertSecretRef   *LocalObjectReference `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
 	PassCredentials bool                  `json:"-" yaml:"-"`
 	Insecure        bool                  `json:"-" yaml:"-"`
 	Suspend         bool                  `json:"-" yaml:"-"`
@@ -418,6 +419,9 @@ func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
 		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
+	}
+	if cr.Spec.CertSecretRef != nil && cr.Spec.CertSecretRef.Name != "" {
+		out.CertSecretRef = &LocalObjectReference{Name: cr.Spec.CertSecretRef.Name}
 	}
 	return out, nil
 }

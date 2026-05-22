@@ -105,9 +105,15 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	if err != nil {
 		return "", err
 	}
+	tlsOpts, cleanup, err := c.helmRepoTLSOptions(r)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	allOpts := append(authOpts, tlsOpts...)
 
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	idx, err := c.fetchIndex(indexURL, authOpts)
+	idx, err := c.fetchIndex(indexURL, allOpts)
 	if err != nil {
 		return "", err
 	}
@@ -137,7 +143,7 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	if err != nil {
 		return "", err
 	}
-	buf, err := g.Get(chartURL, authOpts...)
+	buf, err := g.Get(chartURL, allOpts...)
 	if err != nil {
 		return "", fmt.Errorf("download %s: %w", chartURL, err)
 	}
@@ -179,6 +185,81 @@ func (c *Client) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Optio
 		opts = append(opts, getter.WithPassCredentialsAll(true))
 	}
 	return opts, nil
+}
+
+// helmRepoTLSOptions resolves spec.certSecretRef into helm getter
+// options. The Secret should carry one or both of (tls.crt, tls.key)
+// for client cert auth, plus optional ca.crt for a custom server CA.
+// Each present file is materialized to a temp file (helm getter v4's
+// WithTLSClientConfig accepts paths, not bytes) and removed by the
+// returned cleanup func — always safe to call.
+func (c *Client) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option, func(), error) {
+	noCleanup := func() {}
+	if r.CertSecretRef == nil {
+		return nil, noCleanup, nil
+	}
+	c.mu.RLock()
+	getSec := c.secrets
+	c.mu.RUnlock()
+	if getSec == nil {
+		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s references certSecretRef but no SecretGetter is wired",
+			r.Namespace, r.Name)
+	}
+	sec := getSec(r.Namespace, r.CertSecretRef.Name)
+	if sec == nil {
+		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s: cert secret %s/%s not found",
+			r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
+	}
+
+	var tmpFiles []string
+	writeKey := func(key string) (string, error) {
+		v := stringFromHelmSecret(sec, key)
+		if v == "" {
+			return "", nil
+		}
+		tmp, err := os.CreateTemp(c.tmpDir, "helm-tls-*.pem")
+		if err != nil {
+			return "", fmt.Errorf("temp %s: %w", key, err)
+		}
+		if _, err := tmp.WriteString(v); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+			return "", fmt.Errorf("write %s: %w", key, err)
+		}
+		if err := tmp.Close(); err != nil {
+			_ = os.Remove(tmp.Name())
+			return "", fmt.Errorf("close %s: %w", key, err)
+		}
+		tmpFiles = append(tmpFiles, tmp.Name())
+		return tmp.Name(), nil
+	}
+	cleanup := func() {
+		for _, p := range tmpFiles {
+			_ = os.Remove(p)
+		}
+	}
+
+	certPath, err := writeKey("tls.crt")
+	if err != nil {
+		cleanup()
+		return nil, noCleanup, err
+	}
+	keyPath, err := writeKey("tls.key")
+	if err != nil {
+		cleanup()
+		return nil, noCleanup, err
+	}
+	caPath, err := writeKey("ca.crt")
+	if err != nil {
+		cleanup()
+		return nil, noCleanup, err
+	}
+	if certPath == "" && keyPath == "" && caPath == "" {
+		cleanup()
+		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
+			r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
+	}
+	return []getter.Option{getter.WithTLSClientConfig(certPath, keyPath, caPath)}, cleanup, nil
 }
 
 // stringFromHelmSecret reads a Secret key, preferring StringData and

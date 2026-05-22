@@ -7,6 +7,86 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func TestHelmRepoTLS_NoCertSecretIsNoOp(t *testing.T) {
+	c, err := NewClient(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	r := &manifest.HelmRepository{Name: "r", Namespace: "ns", URL: "https://charts.example"}
+	opts, cleanup, err := c.helmRepoTLSOptions(r)
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("helmRepoTLSOptions: %v", err)
+	}
+	if opts != nil {
+		t.Errorf("expected nil opts when no CertSecretRef; got %v", opts)
+	}
+}
+
+func TestHelmRepoTLS_FromSecret(t *testing.T) {
+	c, err := NewClient(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	c.SetSecretGetter(func(_, _ string) *manifest.Secret {
+		return &manifest.Secret{
+			StringData: map[string]any{
+				"tls.crt": "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+				"tls.key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n",
+				"ca.crt":  "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n",
+			},
+		}
+	})
+	r := &manifest.HelmRepository{
+		Name: "r", Namespace: "ns", URL: "https://charts.example",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "tls-creds"},
+	}
+	opts, cleanup, err := c.helmRepoTLSOptions(r)
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("helmRepoTLSOptions: %v", err)
+	}
+	if len(opts) == 0 {
+		t.Errorf("expected non-empty TLS opts when cert/key/ca present")
+	}
+}
+
+func TestHelmRepoTLS_AllKeysMissing(t *testing.T) {
+	c, err := NewClient(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	c.SetSecretGetter(func(_, _ string) *manifest.Secret {
+		return &manifest.Secret{StringData: map[string]any{"unrelated": "x"}}
+	})
+	r := &manifest.HelmRepository{
+		Name: "r", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "wrong-shape"},
+	}
+	_, cleanup, err := c.helmRepoTLSOptions(r)
+	cleanup()
+	if err == nil || !strings.Contains(err.Error(), "tls.crt") {
+		t.Errorf("expected error mentioning expected keys; got %v", err)
+	}
+}
+
+func TestHelmRepoTLS_CertSecretNotFound(t *testing.T) {
+	c, err := NewClient(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	c.SetSecretGetter(func(_, _ string) *manifest.Secret { return nil })
+	r := &manifest.HelmRepository{
+		Name: "r", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "missing"},
+	}
+	_, cleanup, err := c.helmRepoTLSOptions(r)
+	cleanup()
+	if err == nil || !strings.Contains(err.Error(), "cert secret ns/missing not found") {
+		t.Errorf("expected secret-not-found error; got %v", err)
+	}
+}
+
 func TestHelmRepoAuth_NoSecretIsAnonymous(t *testing.T) {
 	c, err := NewClient(t.TempDir(), t.TempDir())
 	if err != nil {

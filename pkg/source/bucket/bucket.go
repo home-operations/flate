@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
@@ -41,10 +42,10 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	if !ok {
 		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
 	}
-	if b.Provider != "" && b.Provider != manifest.BucketProviderGeneric {
+	if b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
 		return nil, fmt.Errorf(
 			"bucket %s/%s provider %q is not implemented; flate currently supports only %q (S3-compatible)",
-			b.Namespace, b.Name, b.Provider, manifest.BucketProviderGeneric,
+			b.Namespace, b.Name, b.Provider, sourcev1.BucketProviderGeneric,
 		)
 	}
 

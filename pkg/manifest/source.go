@@ -68,11 +68,12 @@ type GitRepositoryVerify struct {
 	SecretRef *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
 }
 
-// Git verification modes accepted on spec.verify.mode.
-const (
-	GitVerifyModeHEAD       = "HEAD"
-	GitVerifyModeTag        = "Tag"
-	GitVerifyModeTagAndHEAD = "TagAndHEAD"
+// Git verification modes — sourced from sourcev1.GitVerificationMode so
+// flate's bare-string Mode field interops with the typed upstream API.
+var (
+	GitVerifyModeHEAD       = string(sourcev1.ModeGitHEAD)
+	GitVerifyModeTag        = string(sourcev1.ModeGitTag)
+	GitVerifyModeTagAndHEAD = string(sourcev1.ModeGitTagAndHEAD)
 )
 
 // Named identifies the GitRepository.
@@ -115,7 +116,7 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 	}
 	provider := cr.Spec.Provider
 	if provider == "" {
-		provider = GitProviderGeneric
+		provider = sourcev1.GitProviderGeneric
 	}
 	out := &GitRepository{
 		Name:              cr.Name,
@@ -278,7 +279,7 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	}
 	provider := cr.Spec.Provider
 	if provider == "" {
-		provider = OCIProviderGeneric
+		provider = sourcev1.GenericOCIProvider
 	}
 	out := &OCIRepository{
 		Name:      cr.Name,

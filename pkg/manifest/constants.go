@@ -34,38 +34,6 @@ const (
 	RepoTypeOCI     = "oci"
 )
 
-// Bucket providers as understood by Flux. flate currently supports
-// only "generic" (S3-compatible via minio-go); the others (aws, gcp,
-// azure) parse correctly but fail-loud at fetch time.
-const (
-	BucketProviderGeneric = "generic"
-	BucketProviderAmazon  = "aws"
-	BucketProviderGoogle  = "gcp"
-	BucketProviderAzure   = "azure"
-)
-
-// GitRepository providers as understood by Flux. flate currently
-// supports only "generic" (SecretRef-based username/password / bearer
-// / SSH identity); azure (Managed Identity) and github (GitHub App)
-// require live cloud-provider auth flows and fail-loud at fetch time.
-const (
-	GitProviderGeneric = "generic"
-	GitProviderAzure   = "azure"
-	GitProviderGitHub  = "github"
-)
-
-// OCIRepository providers as understood by Flux. flate currently
-// supports only "generic" (SecretRef carrying a docker-style
-// dockerconfigjson, or the global --registry-config file). The
-// aws/gcp/azure providers need IRSA / Workload Identity and fail-loud
-// at fetch time.
-const (
-	OCIProviderGeneric = "generic"
-	OCIProviderAmazon  = "aws"
-	OCIProviderGoogle  = "gcp"
-	OCIProviderAzure   = "azure"
-)
-
 // ValuePlaceholderTemplate is the format string used when wiping Secret
 // values. The "{name}" token is replaced with the data key.
 const ValuePlaceholderTemplate = "..PLACEHOLDER_%s.."

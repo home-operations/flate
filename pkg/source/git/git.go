@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
@@ -43,10 +44,10 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	if !ok {
 		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
 	}
-	if repo.Provider != "" && repo.Provider != manifest.GitProviderGeneric {
+	if repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
 		return nil, fmt.Errorf(
 			"GitRepository %s/%s provider %q is not implemented; flate currently supports only %q (SecretRef-based credentials)",
-			repo.Namespace, repo.Name, repo.Provider, manifest.GitProviderGeneric,
+			repo.Namespace, repo.Name, repo.Provider, sourcev1.GitProviderGeneric,
 		)
 	}
 	auth, err := f.resolveAuth(repo)

@@ -63,7 +63,7 @@ func ParseBucket(doc map[string]any) (*Bucket, error) {
 	}
 	provider := cr.Spec.Provider
 	if provider == "" {
-		provider = BucketProviderGeneric
+		provider = sourcev1.BucketProviderGeneric
 	}
 	out := &Bucket{
 		Name:       cr.Name,

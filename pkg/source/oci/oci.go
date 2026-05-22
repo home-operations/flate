@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"oras.land/oras-go/v2"
 	orasfile "oras.land/oras-go/v2/content/file"
 	"oras.land/oras-go/v2/registry/remote"
@@ -47,10 +48,10 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	if !ok {
 		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
 	}
-	if repo.Provider != "" && repo.Provider != manifest.OCIProviderGeneric {
+	if repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
 		return nil, fmt.Errorf(
 			"OCIRepository %s/%s provider %q is not implemented; flate currently supports only %q (SecretRef or --registry-config credentials)",
-			repo.Namespace, repo.Name, repo.Provider, manifest.OCIProviderGeneric,
+			repo.Namespace, repo.Name, repo.Provider, sourcev1.GenericOCIProvider,
 		)
 	}
 	configPath, cleanup, err := f.resolveRegistryConfig(repo)

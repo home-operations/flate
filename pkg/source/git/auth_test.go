@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -15,7 +16,7 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
 		URL:      "https://github.com/x/y.git",
-		Provider: manifest.GitProviderGitHub,
+		Provider: sourcev1.GitProviderGitHub,
 	}
 	_, err := f.Fetch(context.Background(), repo)
 	if err == nil {

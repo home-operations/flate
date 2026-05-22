@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/bucket"
 )
@@ -13,7 +15,7 @@ func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 	f := &bucket.Fetcher{}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		Provider: manifest.BucketProviderAmazon,
+		Provider: sourcev1.BucketProviderAmazon,
 		BucketName: "x", Endpoint: "s3.amazonaws.com",
 	}
 	_, err := f.Fetch(context.Background(), b)
@@ -29,7 +31,7 @@ func TestFetcher_SecretRefWithoutGetter(t *testing.T) {
 	f := &bucket.Fetcher{} // no Secrets
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		Provider: manifest.BucketProviderGeneric,
+		Provider: sourcev1.BucketProviderGeneric,
 		BucketName: "x", Endpoint: "minio:9000",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
@@ -53,7 +55,7 @@ func TestFetcher_SecretRefMissingKeys(t *testing.T) {
 	}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		Provider: manifest.BucketProviderGeneric,
+		Provider: sourcev1.BucketProviderGeneric,
 		BucketName: "x", Endpoint: "minio:9000",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
@@ -72,7 +74,7 @@ func TestFetcher_SecretRefNotFound(t *testing.T) {
 	}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		Provider: manifest.BucketProviderGeneric,
+		Provider: sourcev1.BucketProviderGeneric,
 		BucketName: "x", Endpoint: "minio:9000",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}

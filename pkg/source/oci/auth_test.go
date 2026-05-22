@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -106,7 +108,7 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 	repo := &manifest.OCIRepository{
 		Name: "o", Namespace: "ns",
 		URL:      "oci://ghcr.io/x/y",
-		Provider: manifest.OCIProviderAmazon,
+		Provider: sourcev1.AmazonOCIProvider,
 	}
 	_, err := f.Fetch(context.Background(), repo)
 	if err == nil {

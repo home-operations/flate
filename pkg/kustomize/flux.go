@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -41,12 +42,18 @@ func lockPath(path string) *sync.Mutex {
 // targetNamespace, commonMetadata, plus the auto-generation of a
 // kustomization.yaml when one is absent at spec.path.
 //
+// ctx is honored at coarse boundaries — between path validation,
+// after acquiring the per-path lock, and before/after SecureBuild —
+// because fluxcd/pkg/kustomize.NewGenerator/SecureBuild do not
+// themselves accept a ctx. A cancelled ctx returns ctx.Err() rather
+// than completing the (potentially expensive) build.
+//
 // The source tree at sourceRoot is never modified — staging is handled
 // by `cache` which produces a writable copy. rawSpec must be the
 // original Flux Kustomization document (the Contents field on
 // manifest.Kustomization). subPath is the spec.path value relative to
 // sourceRoot.
-func RenderFlux(cache *StagingCache, sourceRoot, subPath string, rawSpec map[string]any) ([]byte, error) {
+func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath string, rawSpec map[string]any) ([]byte, error) {
 	if cache == nil {
 		return nil, errors.New("kustomize: nil staging cache")
 	}
@@ -55,6 +62,9 @@ func RenderFlux(cache *StagingCache, sourceRoot, subPath string, rawSpec map[str
 	}
 	if rawSpec == nil {
 		return nil, fmt.Errorf("%w: nil flux Kustomization spec", manifest.ErrInput)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	if r, err := filepath.EvalSymlinks(sourceRoot); err == nil {
@@ -86,6 +96,10 @@ func RenderFlux(cache *StagingCache, sourceRoot, subPath string, rawSpec map[str
 	lock.Lock()
 	defer lock.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Restore the source kustomization.yaml before each Generator
 	// run so repeat reconciles (e.g. when a parent renders and
 	// re-emits a child) don't accumulate appended patches / images /
@@ -100,6 +114,9 @@ func RenderFlux(cache *StagingCache, sourceRoot, subPath string, rawSpec map[str
 		return nil, fmt.Errorf("flux kustomize generator: %w", err)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	rm, err := fluxkustomize.SecureBuild(staged, stagedSub, false)
 	if err != nil {
 		return nil, fmt.Errorf("kustomize build %s: %w", subPath, err)

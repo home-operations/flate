@@ -158,7 +158,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := o.loadManifests(repoRoot); err != nil {
+	if err := o.loadManifests(ctx, repoRoot); err != nil {
 		return err
 	}
 	o.validateDependsOn()
@@ -193,7 +193,7 @@ func (o *Orchestrator) seedBootstrapSource() (string, error) {
 // Flux KS's spec.path so a narrow entry (e.g. ./kubernetes/flux/cluster)
 // still discovers the apps/ tree it references — without dragging in
 // unrelated siblings of the user-supplied path.
-func (o *Orchestrator) loadManifests(repoRoot string) error {
+func (o *Orchestrator) loadManifests(ctx context.Context, repoRoot string) error {
 	o.sourceFiles = map[manifest.NamedResource]string{}
 
 	l := loader.New(o.store)
@@ -214,7 +214,7 @@ func (o *Orchestrator) loadManifests(repoRoot string) error {
 	}
 	scanned := map[string]struct{}{}
 	total := 0
-	if err := o.loadAt(l, scanRoot, scanned, &total); err != nil {
+	if err := o.loadAt(ctx, l, scanRoot, scanned, &total); err != nil {
 		return err
 	}
 	// Iteratively follow each loaded Flux KS's spec.path so a narrow
@@ -244,7 +244,7 @@ func (o *Orchestrator) loadManifests(repoRoot string) error {
 			if !strings.HasPrefix(target+string(filepath.Separator), repoRoot+string(filepath.Separator)) {
 				continue
 			}
-			if err := o.loadAt(l, target, scanned, &total); err != nil {
+			if err := o.loadAt(ctx, l, target, scanned, &total); err != nil {
 				return err
 			}
 			added++
@@ -262,7 +262,7 @@ func (o *Orchestrator) loadManifests(repoRoot string) error {
 
 // loadAt scans dir if not already scanned, marks it, and accumulates
 // the loaded object count.
-func (o *Orchestrator) loadAt(l *loader.Loader, dir string, scanned map[string]struct{}, total *int) error {
+func (o *Orchestrator) loadAt(ctx context.Context, l *loader.Loader, dir string, scanned map[string]struct{}, total *int) error {
 	if _, seen := scanned[dir]; seen {
 		return nil
 	}
@@ -270,7 +270,7 @@ func (o *Orchestrator) loadAt(l *loader.Loader, dir string, scanned map[string]s
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return nil
 	}
-	n, err := l.Load(dir)
+	n, err := l.Load(ctx, dir)
 	if err != nil {
 		return err
 	}

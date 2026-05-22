@@ -1,9 +1,36 @@
 package kustomize
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 )
+
+// TestRenderFlux_RespectsCanceledContext asserts the renderer bails
+// fast when ctx is already done. The fluxcd/pkg/kustomize Generator
+// and SecureBuild don't take ctx themselves, so flate checks at
+// coarse boundaries — this guards that those checks fire.
+func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
+	cache, err := NewStagingCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = RenderFlux(ctx, cache, t.TempDir(), ".", map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
+		"spec":       map[string]any{"path": "./"},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
 
 func TestFilterKinds(t *testing.T) {
 	docs := []map[string]any{

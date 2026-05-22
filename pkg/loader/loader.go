@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -50,7 +51,11 @@ func New(s *store.Store) *Loader {
 // Load walks root recursively, decoding every .yaml/.yml/.json document
 // and adding recognized Flux objects to the Store. Returns the count of
 // added objects.
-func (l *Loader) Load(root string) (int, error) {
+//
+// Honors ctx cancellation between directory entries — a stuck NFS
+// mount or symlink loop aborts cleanly instead of blocking the whole
+// orchestrator.
+func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	if l.Store == nil {
 		return 0, errors.New("loader: Store is nil")
 	}
@@ -65,6 +70,9 @@ func (l *Loader) Load(root string) (int, error) {
 
 	count := 0
 	err = filepath.WalkDir(abs, func(path string, d fs.DirEntry, walkErr error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if walkErr != nil {
 			return walkErr
 		}

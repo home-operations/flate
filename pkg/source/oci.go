@@ -22,9 +22,15 @@ import (
 )
 
 // OCIFetcher is the Fetcher implementation for KindOCIRepository.
+// RegistryConfig is the global --registry-config docker-style
+// config.json path used when no per-repo SecretRef is set. Secrets is
+// the per-repo SecretGetter (typically the orchestrator-provided
+// Store.GetByName), required when any OCIRepository has spec.secretRef
+// pointing at a kubernetes.io/dockerconfigjson Secret.
 type OCIFetcher struct {
 	Cache          *Cache
 	RegistryConfig string
+	Secrets        SecretGetter
 }
 
 // Fetch implements source.Fetcher for *manifest.OCIRepository.
@@ -33,7 +39,66 @@ func (f *OCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*sto
 	if !ok {
 		return nil, fmt.Errorf("%w: OCIFetcher: unexpected payload %T", manifest.ErrInput, obj)
 	}
-	return FetchOCI(ctx, f.Cache, repo, f.RegistryConfig)
+	if repo.Provider != "" && repo.Provider != manifest.OCIProviderGeneric {
+		return nil, fmt.Errorf(
+			"OCIRepository %s/%s provider %q is not implemented; flate currently supports only %q (SecretRef or --registry-config credentials)",
+			repo.Namespace, repo.Name, repo.Provider, manifest.OCIProviderGeneric,
+		)
+	}
+	configPath, cleanup, err := f.resolveRegistryConfig(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	return FetchOCI(ctx, f.Cache, repo, configPath)
+}
+
+// resolveRegistryConfig picks the credential source for a fetch.
+// Precedence:
+//  1. per-OCIRepository spec.secretRef (a kubernetes.io/dockerconfigjson
+//     Secret materialized to a temp file).
+//  2. global --registry-config path (f.RegistryConfig).
+//  3. docker's default lookup (~/.docker/config.json), handled inside
+//     loadCredentials when configPath is empty.
+//
+// The cleanup func removes any temp file the SecretRef path created;
+// safe to call when no temp file was made (no-op).
+func (f *OCIFetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, func(), error) {
+	noCleanup := func() {}
+	if repo.SecretRef == nil {
+		return f.RegistryConfig, noCleanup, nil
+	}
+	if f.Secrets == nil {
+		return "", noCleanup, fmt.Errorf("OCIRepository %s/%s references secretRef but no SecretGetter is wired",
+			repo.Namespace, repo.Name)
+	}
+	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
+	if sec == nil {
+		return "", noCleanup, fmt.Errorf("OCIRepository %s/%s: secret %s/%s not found",
+			repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
+	}
+	configJSON := stringFromSecret(sec, ".dockerconfigjson")
+	if configJSON == "" {
+		return "", noCleanup, fmt.Errorf(
+			"OCIRepository %s/%s: secret %s/%s missing .dockerconfigjson "+
+				"(must be type kubernetes.io/dockerconfigjson)",
+			repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
+	}
+	tmp, err := os.CreateTemp("", "flate-oci-creds-*.json")
+	if err != nil {
+		return "", noCleanup, fmt.Errorf("temp docker config: %w", err)
+	}
+	if _, err := tmp.WriteString(configJSON); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return "", noCleanup, fmt.Errorf("write temp docker config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return "", noCleanup, fmt.Errorf("close temp docker config: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(tmp.Name()) }
+	return tmp.Name(), cleanup, nil
 }
 
 // FetchOCI pulls the OCIRepository artifact into cache. Credentials are

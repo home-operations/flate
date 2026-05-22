@@ -115,7 +115,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 	if cfg.EnableOCI {
 		fetchers[manifest.KindOCIRepository] = &source.OCIFetcher{
-			Cache: cache, RegistryConfig: cfg.RegistryConfig,
+			Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet,
 		}
 	}
 	o := &Orchestrator{

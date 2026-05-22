@@ -54,6 +54,18 @@ const (
 	GitProviderGitHub  = "github"
 )
 
+// OCIRepository providers as understood by Flux. flate currently
+// supports only "generic" (SecretRef carrying a docker-style
+// dockerconfigjson, or the global --registry-config file). The
+// aws/gcp/azure providers need IRSA / Workload Identity and fail-loud
+// at fetch time.
+const (
+	OCIProviderGeneric = "generic"
+	OCIProviderAmazon  = "aws"
+	OCIProviderGoogle  = "gcp"
+	OCIProviderAzure   = "azure"
+)
+
 // ValuePlaceholderTemplate is the format string used when wiping Secret
 // values. The "{name}" token is replaced with the data key.
 const ValuePlaceholderTemplate = "..PLACEHOLDER_%s.."

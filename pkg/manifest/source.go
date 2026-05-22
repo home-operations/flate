@@ -114,6 +114,7 @@ type OCIRepository struct {
 	Namespace string                `json:"namespace" yaml:"namespace"`
 	URL       string                `json:"url" yaml:"url"`
 	Ref       OCIRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
+	Provider  string                `json:"provider,omitempty" yaml:"provider,omitempty"`
 	SecretRef *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
 	Suspend   bool                  `json:"-" yaml:"-"`
 }
@@ -179,10 +180,15 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("OCIRepository missing spec.url")
 	}
+	provider := cr.Spec.Provider
+	if provider == "" {
+		provider = OCIProviderGeneric
+	}
 	out := &OCIRepository{
 		Name:      cr.Name,
 		Namespace: cr.Namespace,
 		URL:       cr.Spec.URL,
+		Provider:  provider,
 		Suspend:   cr.Spec.Suspend,
 	}
 	if r := cr.Spec.Reference; r != nil {

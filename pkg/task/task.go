@@ -33,15 +33,43 @@ type Service struct {
 	// failures is incremented by goroutines that panic; non-zero implies
 	// the run is poisoned.
 	failures atomic.Int64
+
+	// sem bounds the number of concurrent active task BODIES. The
+	// goroutine is launched eagerly but blocks on the semaphore until
+	// a worker slot is free, so callers never block on Go(). Background
+	// tasks are unaffected — they're long-lived stream processors.
+	//
+	// nil = unbounded (every Go runs in parallel). Set via NewBounded.
+	sem chan struct{}
 }
 
-// New constructs a fresh Service.
+// New constructs a fresh Service with unbounded concurrency.
 func New() *Service {
 	return &Service{names: make(map[int64]string)}
 }
 
+// NewBounded constructs a Service that caps the number of concurrently
+// executing active-task bodies at workers. Submitting more does not
+// block — the surplus goroutines exist but wait on an internal
+// semaphore until a slot opens. workers <= 0 disables bounding
+// (equivalent to New).
+//
+// Sized for I/O-bound work: helm template / oras pull / git clone all
+// release the worker briefly while blocked on the network. A sensible
+// default is runtime.NumCPU() * 4, but callers know their workload
+// better than the package does.
+func NewBounded(workers int) *Service {
+	s := New()
+	if workers > 0 {
+		s.sem = make(chan struct{}, workers)
+	}
+	return s
+}
+
 // Go launches an active task. ctx is propagated to fn. Completion is
-// reported via WaitActive / BlockTillDone.
+// reported via WaitActive / BlockTillDone. When the Service is
+// bounded (NewBounded), fn waits on the worker semaphore before it
+// executes — but Go itself never blocks.
 func (s *Service) Go(ctx context.Context, name string, fn func(context.Context)) {
 	id := s.next.Add(1)
 	s.active.Add(1)
@@ -61,6 +89,14 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 				slog.Error("task panicked", "name", name, "panic", r)
 			}
 		}()
+		if s.sem != nil {
+			select {
+			case s.sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-s.sem }()
+		}
 		fn(ctx)
 	}()
 }

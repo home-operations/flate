@@ -61,6 +61,13 @@ type Config struct {
 	// filter is still built from this set + the loaded SourceFiles
 	// during Bootstrap.
 	ExternalChanges *change.Set
+
+	// Concurrency caps the number of active reconcile bodies running
+	// in parallel. <= 0 means unbounded (every Kustomization / HR
+	// reconciles on its own goroutine). Background watch loops are
+	// unaffected. Sensible default for I/O-bound work is
+	// runtime.NumCPU() * 4.
+	Concurrency int
 }
 
 // Orchestrator wires controllers and drives reconciliation.
@@ -105,7 +112,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 
 	st := store.New()
-	ts := task.New()
+	ts := task.NewBounded(cfg.Concurrency)
 	cache := cmp.Or(cfg.SourceCache, source.NewCache(filepath.Join(cacheRoot, "sources")))
 	secretGet := func(ns, name string) *manifest.Secret {
 		obj := st.GetByName(manifest.KindSecret, ns, name)

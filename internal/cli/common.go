@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"runtime"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -23,6 +24,7 @@ type commonFlags struct {
 	output         string
 	enableOCI      bool
 	registryConfig string
+	concurrency    int
 }
 
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
@@ -38,6 +40,8 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, wide, yaml, json, name")
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
+	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
+		"max parallel reconcile bodies (0 = unbounded)")
 }
 
 // scopedNamespaces returns the namespace filter the command should
@@ -122,6 +126,7 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		WipeSecrets:    true,
 		EnableOCI:      c.enableOCI,
 		RegistryConfig: c.registryConfig,
+		Concurrency:    c.concurrency,
 	}
 }
 

@@ -39,7 +39,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 
 	inst := action.NewInstall(cfg)
 	inst.DryRunStrategy = action.DryRunClient
-	inst.ReleaseName = hr.Name
+	inst.ReleaseName = hr.ReleaseName()
 	inst.Namespace = hr.ReleaseNamespace()
 	inst.IncludeCRDs = !opts.SkipCRDs
 	// HR-scoped policy wins: spec.install.crds / spec.upgrade.crds set

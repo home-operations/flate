@@ -171,6 +171,10 @@ type HelmRelease struct {
 	Name                     string            `json:"name" yaml:"name"`
 	Namespace                string            `json:"namespace" yaml:"namespace"`
 	Chart                    HelmChart         `json:"chart" yaml:"chart"`
+	// ReleaseNameOverride holds spec.releaseName when set. Empty means
+	// helm-controller defaults to metadata.name. Use ReleaseName() to
+	// resolve.
+	ReleaseNameOverride      string            `json:"-" yaml:"-"`
 	TargetNamespace          string            `json:"-" yaml:"-"`
 	Values                   map[string]any    `json:"-" yaml:"-"`
 	ValuesFrom               []ValuesReference `json:"-" yaml:"-"`
@@ -209,8 +213,15 @@ func (h *HelmRelease) Named() NamedResource {
 	return NamedResource{Kind: KindHelmRelease, Namespace: h.Namespace, Name: h.Name}
 }
 
-// ReleaseName is "<namespace>-<name>" — the canonical id.
-func (h *HelmRelease) ReleaseName() string { return h.Namespace + "-" + h.Name }
+// ReleaseName returns the resolved Helm release name — spec.releaseName
+// when set, otherwise metadata.name. Mirrors helm-controller's behavior
+// at template time. Always non-empty.
+func (h *HelmRelease) ReleaseName() string {
+	if h.ReleaseNameOverride != "" {
+		return h.ReleaseNameOverride
+	}
+	return h.Name
+}
 
 // ReleaseNamespace returns TargetNamespace when set, otherwise Namespace.
 func (h *HelmRelease) ReleaseNamespace() string {
@@ -340,6 +351,7 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		Name:                     cr.Name,
 		Namespace:                cr.Namespace,
 		Chart:                    chart,
+		ReleaseNameOverride:      cr.Spec.ReleaseName,
 		TargetNamespace:          cr.Spec.TargetNamespace,
 		Values:                   values,
 		ValuesFrom:               vfs,

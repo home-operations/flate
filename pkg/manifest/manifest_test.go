@@ -549,7 +549,7 @@ spec:
 	}{
 		{"Name", hr.Name, "podinfo"},
 		{"Namespace", hr.Namespace, "podinfo"},
-		{"ReleaseName", hr.ReleaseName(), "podinfo-podinfo"},
+		{"ReleaseName", hr.ReleaseName(), "podinfo"},
 		{"ReleaseNamespace", hr.ReleaseNamespace(), "apps"},
 		{"Chart.Name", hr.Chart.Name, "podinfo"},
 		{"Chart.Version", hr.Chart.Version, "6.3.2"},
@@ -564,6 +564,30 @@ spec:
 				t.Errorf("got %v, want %v", c.got, c.want)
 			}
 		})
+	}
+}
+
+func TestParseHelmRelease_ReleaseNameOverride(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: hr, namespace: ns}
+spec:
+  releaseName: my-explicit-release
+  chart:
+    spec:
+      chart: c
+      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
+`)
+	hr, err := ParseHelmRelease(doc)
+	if err != nil {
+		t.Fatalf("ParseHelmRelease: %v", err)
+	}
+	if hr.ReleaseNameOverride != "my-explicit-release" {
+		t.Errorf("ReleaseNameOverride = %q, want my-explicit-release", hr.ReleaseNameOverride)
+	}
+	if got := hr.ReleaseName(); got != "my-explicit-release" {
+		t.Errorf("ReleaseName() with override = %q, want my-explicit-release", got)
 	}
 }
 

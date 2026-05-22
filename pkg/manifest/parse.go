@@ -29,13 +29,6 @@ func DocKind(doc map[string]any) string {
 	return k
 }
 
-// DocAPIVersion returns the "apiVersion" field of a manifest document,
-// or "" if absent.
-func DocAPIVersion(doc map[string]any) string {
-	v, _ := doc["apiVersion"].(string)
-	return v
-}
-
 // DocMetadata returns (name, namespace) from a manifest document's
 // metadata block. Both are "" when metadata is absent or unset.
 func DocMetadata(doc map[string]any) (name, namespace string) {

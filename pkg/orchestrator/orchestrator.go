@@ -150,9 +150,6 @@ func New(cfg Config) (*Orchestrator, error) {
 // Store returns the underlying object store.
 func (o *Orchestrator) Store() *store.Store { return o.store }
 
-// Tasks returns the task scheduler.
-func (o *Orchestrator) Tasks() *task.Service { return o.tasks }
-
 // Filter returns the change filter (may be nil-but-non-active).
 func (o *Orchestrator) Filter() *change.Filter { return o.filter }
 

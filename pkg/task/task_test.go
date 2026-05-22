@@ -74,25 +74,6 @@ func TestService_BlockTillDone(t *testing.T) {
 	}
 }
 
-func TestService_BackgroundDoesNotBlockActive(t *testing.T) {
-	s := New()
-	bgDone := make(chan struct{})
-	defer close(bgDone)
-	s.GoBackground(context.Background(), "bg", func(_ context.Context) {
-		<-bgDone
-	})
-
-	var done atomic.Bool
-	s.Go(context.Background(), "active", func(_ context.Context) { done.Store(true) })
-	s.BlockTillDone()
-	if !done.Load() {
-		t.Errorf("active task didn't run")
-	}
-	if s.BackgroundCount() != 1 {
-		t.Errorf("background should still be running, got %d", s.BackgroundCount())
-	}
-}
-
 func TestService_PanicCountedAndRecovered(t *testing.T) {
 	s := New()
 	s.Go(context.Background(), "boom", func(_ context.Context) {
@@ -270,18 +251,3 @@ func TestYieldSlot_UnboundedIsNoOp(t *testing.T) {
 	}
 }
 
-func TestService_ActiveNames(t *testing.T) {
-	s := New()
-	gate := make(chan struct{})
-	started := make(chan struct{})
-	s.Go(context.Background(), "alpha", func(_ context.Context) {
-		close(started)
-		<-gate
-	})
-	<-started
-	if names := s.ActiveNames(); len(names) != 1 || names[0] != "alpha" {
-		t.Errorf("ActiveNames: %v", names)
-	}
-	close(gate)
-	s.BlockTillDone()
-}

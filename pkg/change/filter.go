@@ -72,14 +72,6 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	return false
 }
 
-// SourceFile returns the file path that produced id, when known.
-func (f *Filter) SourceFile(id manifest.NamedResource) string {
-	if f == nil {
-		return ""
-	}
-	return f.sourceFiles[id]
-}
-
 func (f *Filter) resolve(objs ObjectLister) {
 	keep := make(map[manifest.NamedResource]struct{})
 	var queue []manifest.NamedResource

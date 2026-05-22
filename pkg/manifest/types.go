@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"cmp"
-	"strings"
 
 	meta "github.com/fluxcd/pkg/apis/meta"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -59,16 +58,6 @@ func (n NamedResource) Compare(other NamedResource) int {
 
 // Less is the sort.Interface-style predicate.
 func (n NamedResource) Less(other NamedResource) bool { return n.Compare(other) < 0 }
-
-// SplitNamespacedName parses "namespace/name". When s has no separator
-// the fallback namespace is used. ok is false when the string is empty
-// or one of its parts is.
-func SplitNamespacedName(s, fallback string) (ns, name string, ok bool) {
-	if before, after, found := strings.Cut(s, "/"); found {
-		return before, after, before != "" && after != ""
-	}
-	return fallback, s, s != ""
-}
 
 // BaseManifest is the marker interface every domain object implements.
 // Concrete handling is done via type assertions in each controller.

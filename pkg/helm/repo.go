@@ -78,7 +78,7 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 			manifest.ErrObjectNotFound, hr.RepoName(), hr.NamespacedName())
 	}
 
-	if r.RepoType == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://") {
+	if r.Type == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://") {
 		if r.SecretRef != nil {
 			return "", fmt.Errorf(
 				"HelmRepository %s/%s: SecretRef on OCI HelmRepositories is not yet implemented; "+

@@ -288,9 +288,13 @@ type ExternalArtifactSourceRef = meta.NamespacedObjectKindReference
 // the user must supply status.artifact in the YAML (typical workflow:
 // pre-bake a file:// URL) for flate to resolve a local path.
 type ExternalArtifact struct {
-	Name      string                     `json:"name" yaml:"name"`
-	Namespace string                     `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	SourceRef *ExternalArtifactSourceRef `json:"sourceRef,omitempty" yaml:"sourceRef,omitempty"`
+	Name      string `json:"name"                yaml:"name"`
+	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+
+	// ExternalArtifactSpec embeds the upstream spec, exposing
+	// SourceRef at the top level.
+	sourcev1.ExternalArtifactSpec `json:",inline" yaml:",inline"`
+
 	// ArtifactURL / Revision / Digest come from status.artifact when
 	// pre-populated in the YAML. Empty otherwise (the normal case for a
 	// freshly-written CR); flate then fails to resolve any consumer.
@@ -323,12 +327,9 @@ func ParseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 		return nil, inputf("ExternalArtifact missing metadata.name")
 	}
 	out := &ExternalArtifact{
-		Name:      cr.Name,
-		Namespace: cr.Namespace,
-	}
-	if cr.Spec.SourceRef != nil {
-		ref := *cr.Spec.SourceRef
-		out.SourceRef = &ref
+		Name:                  cr.Name,
+		Namespace:             cr.Namespace,
+		ExternalArtifactSpec:  cr.Spec,
 	}
 	if a := cr.Status.Artifact; a != nil {
 		out.ArtifactURL = a.URL

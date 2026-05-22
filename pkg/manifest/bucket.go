@@ -13,25 +13,13 @@ import (
 // via minio-go). The aws/gcp/azure providers parse correctly but the
 // Fetcher returns a clear "provider X not implemented" error.
 type Bucket struct {
-	Name       string `json:"name" yaml:"name"`
-	Namespace  string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Provider   string `json:"provider,omitempty" yaml:"provider,omitempty"`
-	BucketName string `json:"bucketName" yaml:"bucketName"`
-	Endpoint   string `json:"endpoint" yaml:"endpoint"`
-	Region     string `json:"region,omitempty" yaml:"region,omitempty"`
-	Prefix     string `json:"prefix,omitempty" yaml:"prefix,omitempty"`
-	Insecure   bool   `json:"insecure,omitempty" yaml:"insecure,omitempty"`
-	// SecretRef points at a Secret carrying accesskey / secretkey
-	// (generic provider) or the provider-specific credential bag.
-	SecretRef *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-	// CertSecretRef points at a Secret with tls.crt + tls.key
-	// (client cert) and/or ca.crt (server CA) for mTLS endpoints.
-	CertSecretRef *LocalObjectReference `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
-	// ProxySecretRef points at a Secret carrying an HTTP proxy
-	// configuration (address + optional username/password) used when
-	// reaching the bucket endpoint.
-	ProxySecretRef *LocalObjectReference `json:"proxySecretRef,omitempty" yaml:"proxySecretRef,omitempty"`
-	Suspend        bool                  `json:"-" yaml:"-"`
+	Name      string `json:"name"                yaml:"name"`
+	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	// BucketSpec is the embedded upstream sourcev1.BucketSpec — all
+	// fields (Provider, BucketName, Endpoint, Region, Prefix, Insecure,
+	// SecretRef, CertSecretRef, ProxySecretRef, Suspend, ...) are
+	// promoted to the top level for ergonomic access (b.Endpoint, etc.).
+	sourcev1.BucketSpec `json:",inline" yaml:",inline"`
 }
 
 // Named identifies the Bucket.
@@ -61,29 +49,12 @@ func ParseBucket(doc map[string]any) (*Bucket, error) {
 	if cr.Spec.Endpoint == "" {
 		return nil, inputf("Bucket %s/%s missing spec.endpoint", cr.Namespace, cr.Name)
 	}
-	provider := cr.Spec.Provider
-	if provider == "" {
-		provider = sourcev1.BucketProviderGeneric
+	if cr.Spec.Provider == "" {
+		cr.Spec.Provider = sourcev1.BucketProviderGeneric
 	}
-	out := &Bucket{
+	return &Bucket{
 		Name:       cr.Name,
 		Namespace:  cr.Namespace,
-		Provider:   provider,
-		BucketName: cr.Spec.BucketName,
-		Endpoint:   cr.Spec.Endpoint,
-		Region:     cr.Spec.Region,
-		Prefix:     cr.Spec.Prefix,
-		Insecure:   cr.Spec.Insecure,
-		Suspend:    cr.Spec.Suspend,
-	}
-	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
-		out.SecretRef = cr.Spec.SecretRef
-	}
-	if cr.Spec.CertSecretRef != nil && cr.Spec.CertSecretRef.Name != "" {
-		out.CertSecretRef = cr.Spec.CertSecretRef
-	}
-	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
-		out.ProxySecretRef = cr.Spec.ProxySecretRef
-	}
-	return out, nil
+		BucketSpec: cr.Spec,
+	}, nil
 }

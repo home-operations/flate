@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -35,7 +37,9 @@ func TestFetcher_ResolveTransport_FromSecret(t *testing.T) {
 	}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+		BucketSpec: sourcev1.BucketSpec{
+			CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+		},
 	}
 	tr, err := f.resolveTransport(b)
 	if err != nil {
@@ -63,7 +67,9 @@ func TestFetcher_ResolveTransport_PartialCertKey(t *testing.T) {
 	}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+		BucketSpec: sourcev1.BucketSpec{
+			CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+		},
 	}
 	_, err := f.resolveTransport(b)
 	if err == nil || !strings.Contains(err.Error(), "must provide both") {
@@ -79,7 +85,9 @@ func TestFetcher_ResolveTransport_AllKeysMissing(t *testing.T) {
 	}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+		BucketSpec: sourcev1.BucketSpec{
+			CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+		},
 	}
 	_, err := f.resolveTransport(b)
 	if err == nil || !strings.Contains(err.Error(), "tls.crt") {
@@ -93,7 +101,9 @@ func TestFetcher_ResolveTransport_SecretNotFound(t *testing.T) {
 	}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "missing"},
+		BucketSpec: sourcev1.BucketSpec{
+			CertSecretRef: &manifest.LocalObjectReference{Name: "missing"},
+		},
 	}
 	_, err := f.resolveTransport(b)
 	if err == nil || !strings.Contains(err.Error(), "secret ns/missing not found") {
@@ -105,7 +115,9 @@ func TestFetcher_ResolveTransport_CertSecretRefWithoutGetter(t *testing.T) {
 	f := &Fetcher{} // no Secrets
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+		BucketSpec: sourcev1.BucketSpec{
+			CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+		},
 	}
 	_, err := f.resolveTransport(b)
 	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {

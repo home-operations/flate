@@ -15,8 +15,10 @@ func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 	f := &bucket.Fetcher{}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		Provider: sourcev1.BucketProviderAmazon,
-		BucketName: "x", Endpoint: "s3.amazonaws.com",
+		BucketSpec: sourcev1.BucketSpec{
+			Provider:   sourcev1.BucketProviderAmazon,
+			BucketName: "x", Endpoint: "s3.amazonaws.com",
+		},
 	}
 	_, err := f.Fetch(context.Background(), b)
 	if err == nil {
@@ -31,9 +33,11 @@ func TestFetcher_SecretRefWithoutGetter(t *testing.T) {
 	f := &bucket.Fetcher{} // no Secrets
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		Provider: sourcev1.BucketProviderGeneric,
-		BucketName: "x", Endpoint: "minio:9000",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		BucketSpec: sourcev1.BucketSpec{
+			Provider:   sourcev1.BucketProviderGeneric,
+			BucketName: "x", Endpoint: "minio:9000",
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	_, err := f.Fetch(context.Background(), b)
 	if err == nil {
@@ -55,9 +59,11 @@ func TestFetcher_SecretRefMissingKeys(t *testing.T) {
 	}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		Provider: sourcev1.BucketProviderGeneric,
-		BucketName: "x", Endpoint: "minio:9000",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		BucketSpec: sourcev1.BucketSpec{
+			Provider:   sourcev1.BucketProviderGeneric,
+			BucketName: "x", Endpoint: "minio:9000",
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	_, err := f.Fetch(context.Background(), b)
 	if err == nil {
@@ -74,9 +80,11 @@ func TestFetcher_SecretRefNotFound(t *testing.T) {
 	}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		Provider: sourcev1.BucketProviderGeneric,
-		BucketName: "x", Endpoint: "minio:9000",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		BucketSpec: sourcev1.BucketSpec{
+			Provider:   sourcev1.BucketProviderGeneric,
+			BucketName: "x", Endpoint: "minio:9000",
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	_, err := f.Fetch(context.Background(), b)
 	if err == nil {

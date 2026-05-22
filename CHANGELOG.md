@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/home-operations/flate/compare/0.1.0...0.1.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* add gorelease and jacked security ([cd7cff3](https://github.com/home-operations/flate/commit/cd7cff3379512922a9c51430ed7db4e4d25bfa82))
+
 ## [0.1.0](https://github.com/home-operations/flate/compare/0.0.4...0.1.0) (2026-05-21)
 
 

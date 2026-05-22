@@ -193,6 +193,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		}
 		if p.reconcilable {
 			c.Store.AddObject(p.obj)
+			c.Store.MarkRendered(p.obj.Named())
 		} else {
 			c.Store.AddRendered(p.obj)
 		}
@@ -202,6 +203,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			c.Store.AddObject(p.obj)
+			c.Store.MarkRendered(p.obj.Named())
 		}
 	}
 

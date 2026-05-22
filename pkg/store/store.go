@@ -21,6 +21,14 @@ type Store struct {
 	// Secret resolution) O(1) instead of O(total objects of that kind).
 	byName map[string]map[string]manifest.BaseManifest
 
+	// rendered tracks IDs that were emitted by a parent Kustomization's
+	// render output (in addition to or instead of the file walker's
+	// static load). Used by the orchestrator to detect orphan
+	// Kustomizations — files that exist on disk but no parent
+	// kustomization.yaml ever references, so Flux would never
+	// reconcile them either.
+	rendered map[manifest.NamedResource]struct{}
+
 	// listeners is keyed by EventKind. Each entry is a slice of
 	// (id, listener) pairs. We use a slice + linear scan because:
 	//   - listener counts are tiny (a handful per event)
@@ -36,12 +44,31 @@ func New() *Store {
 		conditions: make(map[manifest.NamedResource][]Condition),
 		artifacts:  make(map[manifest.NamedResource]Artifact),
 		byName:     make(map[string]map[string]manifest.BaseManifest),
+		rendered:   make(map[manifest.NamedResource]struct{}),
 		listeners: map[EventKind]*listenerSet{
 			EventObjectAdded:     newListenerSet(),
 			EventStatusUpdated:   newListenerSet(),
 			EventArtifactUpdated: newListenerSet(),
 		},
 	}
+}
+
+// MarkRendered records that id was emitted by a parent Kustomization's
+// render output (as opposed to coming only from the static file walk).
+// The orchestrator's post-run phase uses this to distinguish real
+// failures from orphaned-and-loaded-anyway resources.
+func (s *Store) MarkRendered(id manifest.NamedResource) {
+	s.mu.Lock()
+	s.rendered[id] = struct{}{}
+	s.mu.Unlock()
+}
+
+// WasRendered reports whether id was ever emitted by a parent's render.
+func (s *Store) WasRendered(id manifest.NamedResource) bool {
+	s.mu.RLock()
+	_, ok := s.rendered[id]
+	s.mu.RUnlock()
+	return ok
 }
 
 func nameKey(namespace, name string) string { return namespace + "/" + name }

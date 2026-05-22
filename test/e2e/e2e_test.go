@@ -273,6 +273,35 @@ func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
 	}
 }
 
+// TestE2E_OrphanedKustomizationIsWarning verifies that a ks.yaml
+// living under another Kustomization's spec.path but NOT listed in
+// any parent kustomization.yaml is treated as an orphan: the
+// reconcile warning is surfaced, the orphan is marked Ready, and
+// the overall test does not fail. Mirrors how Flux behaves — Flux
+// never sees orphaned files because they aren't in the kustomize
+// build output.
+func TestE2E_OrphanedKustomizationIsWarning(t *testing.T) {
+	src := testdataPath(t, "orphans")
+	root := copyTree(t, src)
+
+	out := runCLI(t, "test", "ks", "--path", root)
+
+	// "wired" is referenced and should pass.
+	wiredLine := mustExtractLine(t, out, "Kustomization/flux-system/wired")
+	if !strings.Contains(wiredLine, "PASSED") {
+		t.Errorf("wired should pass: %s", wiredLine)
+	}
+	// "orphan" should also report PASSED (downgraded), not FAILED.
+	orphanLine := mustExtractLine(t, out, "Kustomization/flux-system/orphan")
+	if !strings.Contains(orphanLine, "PASSED") {
+		t.Errorf("orphan should be downgraded to PASSED: %s", orphanLine)
+	}
+	// The orphan must surface as a warning so users see the issue.
+	if !strings.Contains(out, "resource orphaned") {
+		t.Errorf(`expected "resource orphaned" warning in log:\n%s`, out)
+	}
+}
+
 // TestE2E_SubstituteDisabledAnnotation reproduces the Flux opt-out
 // pattern: a ConfigMap embedding a shell script with bash array
 // expansions (${ARR[@]}) that the envsubst parser can't handle is

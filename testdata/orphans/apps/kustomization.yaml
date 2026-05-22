@@ -1,0 +1,7 @@
+# Parent kustomize tree includes only the "wired" Kustomization.
+# ./orphan/ks.yaml exists on disk but is intentionally NOT referenced —
+# real Flux would never reconcile it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ./wired/ks.yaml

@@ -296,6 +296,62 @@ func (o *Orchestrator) validateDependsOn() {
 	}
 }
 
+// detectOrphans returns the subset of failed resources that are
+// "orphans" — Kustomizations/HelmReleases whose source files sit
+// under another Kustomization's spec.path but were never emitted by
+// that parent's render output. Such files exist on disk but Flux
+// would never see them, so flate downgrades the failure to a
+// warning rather than gating the test on stale local files.
+func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]struct{} {
+	out := make(map[manifest.NamedResource]struct{})
+	// Collect every loaded Kustomization's spec.path so we can ask
+	// "does any parent's path cover this file?" cheaply.
+	type parentPath struct {
+		id   manifest.NamedResource
+		path string
+	}
+	var parents []parentPath
+	for _, obj := range o.store.ListObjects(manifest.KindKustomization) {
+		ks, ok := obj.(*manifest.Kustomization)
+		if !ok || ks.Path == "" {
+			continue
+		}
+		parents = append(parents, parentPath{
+			id:   ks.Named(),
+			path: filepath.ToSlash(strings.TrimPrefix(strings.TrimSuffix(ks.Path, "/"), "./")) + "/",
+		})
+	}
+	for id := range failed {
+		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
+			continue
+		}
+		// A resource that any parent's render also emitted is by
+		// definition not orphaned — kustomize-controller saw it.
+		if o.store.WasRendered(id) {
+			continue
+		}
+		file, ok := o.sourceFiles[id]
+		if !ok {
+			continue
+		}
+		slashFile := filepath.ToSlash(file)
+		var covered bool
+		for _, p := range parents {
+			if p.id == id {
+				continue
+			}
+			if strings.HasPrefix(slashFile, p.path) {
+				covered = true
+				break
+			}
+		}
+		if covered {
+			out[id] = struct{}{}
+		}
+	}
+	return out
+}
+
 // markExistenceOnlyReady marks HelmRepository (always) and
 // OCIRepository (when source-controller is disabled) as Ready so
 // HelmRelease waits can resolve without a real fetch.
@@ -373,6 +429,21 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.tasks.BlockTillDone()
 
 	failed := o.store.FailedResources()
+	// Filter out orphans: Kustomizations / HelmReleases whose source
+	// files sit under another Kustomization's spec.path but were never
+	// emitted by that parent's render. Real Flux would not reconcile
+	// them either — the file walker only loaded them because flate
+	// scans the whole tree. Surface as warnings instead of failures so
+	// the test isn't gated on stale on-disk files the user has not
+	// wired into their kustomize tree.
+	for id := range o.detectOrphans(failed) {
+		info := failed[id]
+		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
+		slog.Warn("resource orphaned", "id", id.String(),
+			"file", o.sourceFiles[id],
+			"underlying_error", info.Message)
+		delete(failed, id)
+	}
 	slog.Info("reconcile complete",
 		"kustomizations", len(o.store.ListObjects(manifest.KindKustomization)),
 		"helmReleases", len(o.store.ListObjects(manifest.KindHelmRelease)),

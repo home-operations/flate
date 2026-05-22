@@ -32,6 +32,12 @@ func (l LocalGitRepository) RepoName() string {
 	return l.Repo.RepoName()
 }
 
+// SecretGetter resolves a Secret CR by namespace + name. The helm
+// Client uses this to look up HelmRepository.SecretRef credentials at
+// pull time. Orchestrator wires it to Store.GetByName; nil is OK when
+// no HelmRepositories use SecretRef.
+type SecretGetter func(namespace, name string) *manifest.Secret
+
 // Client renders HelmReleases. Construct with NewClient.
 type Client struct {
 	tmpDir   string
@@ -42,6 +48,7 @@ type Client struct {
 	ociRepos map[string]*manifest.OCIRepository
 	gitRepos map[string]LocalGitRepository
 	registry *registry.Client
+	secrets  SecretGetter
 }
 
 // NewClient constructs a Client. tmpDir and cacheDir are used for
@@ -67,6 +74,15 @@ func NewClient(tmpDir, cacheDir string) (*Client, error) {
 		gitRepos: map[string]LocalGitRepository{},
 		registry: reg,
 	}, nil
+}
+
+// SetSecretGetter installs a Secret lookup function so HelmRepository
+// SecretRef credentials can be resolved at pull time. Safe to call
+// before any Add* — typically once at orchestrator construction.
+func (c *Client) SetSecretGetter(g SecretGetter) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.secrets = g
 }
 
 // AddRepo registers a HelmRepository so chart lookups can resolve it.

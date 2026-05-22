@@ -80,7 +80,8 @@ func (c *Client) locateGitChart(hr *manifest.HelmRelease) (string, error) {
 
 // locateHelmRepoChart resolves a chart from a HelmRepository. For OCI
 // HelmRepositories the URL is `oci://...` and we delegate to the OCI
-// path. Otherwise we download the chart tarball via getter.
+// path. Otherwise we download the chart tarball via getter, applying
+// any SecretRef credentials.
 func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
 	c.mu.RLock()
 	r, ok := c.repos[hr.RepoName()]
@@ -91,11 +92,22 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	}
 
 	if r.RepoType == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://") {
+		if r.SecretRef != nil {
+			return "", fmt.Errorf(
+				"HelmRepository %s/%s: SecretRef on OCI HelmRepositories is not yet implemented; "+
+					"reference the chart via a sibling OCIRepository CR instead",
+				r.Namespace, r.Name)
+		}
 		return c.fetchOCIChart(ctx, r.URL+"/"+hr.Chart.Name, hr.Chart.Version)
 	}
 
+	authOpts, err := c.helmRepoAuthOptions(r)
+	if err != nil {
+		return "", err
+	}
+
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	idx, err := c.fetchIndex(indexURL)
+	idx, err := c.fetchIndex(indexURL, authOpts)
 	if err != nil {
 		return "", err
 	}
@@ -125,7 +137,7 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	if err != nil {
 		return "", err
 	}
-	buf, err := g.Get(chartURL)
+	buf, err := g.Get(chartURL, authOpts...)
 	if err != nil {
 		return "", fmt.Errorf("download %s: %w", chartURL, err)
 	}
@@ -135,13 +147,67 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	return target, nil
 }
 
+// helmRepoAuthOptions resolves SecretRef credentials for a HelmRepository
+// into helm getter options. Returns nil options when no SecretRef is
+// configured (anonymous). Username/password basic auth + optional
+// PassCredentials forwarding. Insecure flag is OCI-only per Flux's
+// schema so it is intentionally not surfaced here.
+func (c *Client) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Option, error) {
+	if r.SecretRef == nil {
+		return nil, nil
+	}
+	c.mu.RLock()
+	getSec := c.secrets
+	c.mu.RUnlock()
+	if getSec == nil {
+		return nil, fmt.Errorf("HelmRepository %s/%s references secretRef but no SecretGetter is wired",
+			r.Namespace, r.Name)
+	}
+	sec := getSec(r.Namespace, r.SecretRef.Name)
+	if sec == nil {
+		return nil, fmt.Errorf("HelmRepository %s/%s: secret %s/%s not found",
+			r.Namespace, r.Name, r.Namespace, r.SecretRef.Name)
+	}
+	username := stringFromHelmSecret(sec, "username")
+	password := stringFromHelmSecret(sec, "password")
+	if username == "" || password == "" {
+		return nil, fmt.Errorf("HelmRepository %s/%s: secret %s/%s missing username/password",
+			r.Namespace, r.Name, r.Namespace, r.SecretRef.Name)
+	}
+	opts := []getter.Option{getter.WithBasicAuth(username, password)}
+	if r.PassCredentials {
+		opts = append(opts, getter.WithPassCredentialsAll(true))
+	}
+	return opts, nil
+}
+
+// stringFromHelmSecret reads a Secret key, preferring StringData and
+// treating wiped PLACEHOLDER values as missing. Local copy to avoid a
+// cross-package dep on pkg/source.
+func stringFromHelmSecret(sec *manifest.Secret, key string) string {
+	bag := func(m map[string]any) string {
+		v, ok := m[key].(string)
+		if !ok {
+			return ""
+		}
+		if strings.HasPrefix(v, "..PLACEHOLDER_") {
+			return ""
+		}
+		return v
+	}
+	if v := bag(sec.StringData); v != "" {
+		return v
+	}
+	return bag(sec.Data)
+}
+
 // fetchIndex downloads and parses a HelmRepository index.yaml.
-func (c *Client) fetchIndex(indexURL string) (*repo.IndexFile, error) {
+func (c *Client) fetchIndex(indexURL string, opts []getter.Option) (*repo.IndexFile, error) {
 	g, err := getter.NewHTTPGetter()
 	if err != nil {
 		return nil, err
 	}
-	buf, err := g.Get(indexURL)
+	buf, err := g.Get(indexURL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", indexURL, err)
 	}

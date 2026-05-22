@@ -108,6 +108,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		s, _ := obj.(*manifest.Secret)
 		return s
 	}
+	helmClient.SetSecretGetter(helm.SecretGetter(secretGet))
 	fetchers := map[string]source.Fetcher{
 		manifest.KindGitRepository:    &source.GitFetcher{Cache: cache, Secrets: secretGet},
 		manifest.KindExternalArtifact: &source.ExternalArtifactFetcher{},

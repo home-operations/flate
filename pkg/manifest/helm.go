@@ -358,8 +358,12 @@ type HelmRepository struct {
 	Namespace string `json:"namespace" yaml:"namespace"`
 	URL       string `json:"url" yaml:"url"`
 	// RepoType is "default" or "oci".
-	RepoType string `json:"repoType,omitempty" yaml:"repoType,omitempty"`
-	Suspend  bool   `json:"-" yaml:"-"`
+	RepoType        string                `json:"repoType,omitempty" yaml:"repoType,omitempty"`
+	Provider        string                `json:"provider,omitempty" yaml:"provider,omitempty"`
+	SecretRef       *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	PassCredentials bool                  `json:"-" yaml:"-"`
+	Insecure        bool                  `json:"-" yaml:"-"`
+	Suspend         bool                  `json:"-" yaml:"-"`
 }
 
 // Named identifies the repo.
@@ -399,11 +403,18 @@ func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	if repoType == "" {
 		repoType = RepoTypeDefault
 	}
-	return &HelmRepository{
-		Name:      cr.Name,
-		Namespace: cr.Namespace,
-		URL:       cr.Spec.URL,
-		RepoType:  repoType,
-		Suspend:   cr.Spec.Suspend,
-	}, nil
+	out := &HelmRepository{
+		Name:            cr.Name,
+		Namespace:       cr.Namespace,
+		URL:             cr.Spec.URL,
+		RepoType:        repoType,
+		Provider:        cr.Spec.Provider,
+		PassCredentials: cr.Spec.PassCredentials,
+		Insecure:        cr.Spec.Insecure,
+		Suspend:         cr.Spec.Suspend,
+	}
+	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
+		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
+	}
+	return out, nil
 }

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"helm.sh/helm/v4/pkg/action"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/common"
@@ -52,7 +53,14 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	case "Create", "CreateReplace":
 		inst.IncludeCRDs = true
 	}
-	inst.DisableHooks = opts.NoHooks
+	// HR-scoped install/upgrade.disableHooks OR'd with the CLI flag,
+	// mirroring helm-controller. Either side forces hooks off — and
+	// the same effective flag drives the post-render hook filter at
+	// the bottom of this function so they don't leak into the output.
+	disableHooks := opts.NoHooks ||
+		(hr.Install != nil && hr.Install.DisableHooks) ||
+		(hr.Upgrade != nil && hr.Upgrade.DisableHooks)
+	inst.DisableHooks = disableHooks
 	inst.IsUpgrade = opts.IsUpgrade
 	inst.EnableDNS = opts.EnableDNS
 	inst.Replace = true
@@ -99,7 +107,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		return "", fmt.Errorf("helm template %s/%s: unexpected release type %T", hr.Namespace, hr.Name, rel)
 	}
 
-	return releaseManifest(relV1, opts), nil
+	// spec.test.enable defaults to false; tests only land in the
+	// rendered output when the HR explicitly enables them or the
+	// CLI overrides. CLI --skip-tests always wins.
+	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
+	return releaseManifest(relV1, opts, disableHooks, skipTests), nil
 }
 
 // mergeChartValuesFiles merges the named values files (relative paths
@@ -142,6 +154,7 @@ func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, val
 	if err != nil {
 		return nil, err
 	}
+	applyHRCommonMetadata(docs, hr.CommonMetadata)
 	skip := opts.SkipResourceKinds()
 	if len(skip) == 0 {
 		return docs, nil
@@ -151,15 +164,48 @@ func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, val
 	}), nil
 }
 
+// applyHRCommonMetadata merges spec.commonMetadata.labels and .annotations
+// onto every rendered doc's metadata, mirroring helm-controller's
+// CommonRenderer pass. commonMetadata wins on conflict, matching
+// controller semantics.
+func applyHRCommonMetadata(docs []map[string]any, cm *helmv2.CommonMetadata) {
+	if cm == nil || (len(cm.Labels) == 0 && len(cm.Annotations) == 0) {
+		return
+	}
+	for _, doc := range docs {
+		md, _ := doc["metadata"].(map[string]any)
+		if md == nil {
+			md = map[string]any{}
+			doc["metadata"] = md
+		}
+		mergeStringMap(md, "labels", cm.Labels)
+		mergeStringMap(md, "annotations", cm.Annotations)
+	}
+}
+
+func mergeStringMap(md map[string]any, key string, in map[string]string) {
+	if len(in) == 0 {
+		return
+	}
+	out, _ := md[key].(map[string]any)
+	if out == nil {
+		out = make(map[string]any, len(in))
+	}
+	for k, v := range in {
+		out[k] = v
+	}
+	md[key] = out
+}
+
 // releaseManifest joins rel.Manifest with hooks (when allowed) and
 // returns a single YAML string. ShowOnly filters by template path,
 // mirroring `helm template --show-only`.
-func releaseManifest(rel *release.Release, opts Options) string {
+func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests bool) string {
 	var b strings.Builder
 	b.WriteString(rel.Manifest)
-	if !opts.NoHooks {
+	if !disableHooks {
 		for _, h := range rel.Hooks {
-			if opts.SkipTests && isTestHook(h) {
+			if skipTests && isTestHook(h) {
 				continue
 			}
 			if !strings.HasSuffix(b.String(), "\n") {

@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"strings"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -132,11 +131,11 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		w := &depwait.Waiter{Store: c.Store, Parent: id}
 		sum := depwait.WaitAll(w.Watch(ctx, deps))
 		if sum.AnyFailed() {
-			var msgs []string
-			for _, f := range sum.Failed {
-				msgs = append(msgs, f.String()+": "+sum.Messages[f])
+			return &manifest.DependencyFailedError{
+				Parent:  id,
+				Failed:  sum.Failed,
+				Reasons: sum.Messages,
 			}
-			return fmt.Errorf("dependencies failed: %s", strings.Join(msgs, "; "))
 		}
 	}
 
@@ -157,7 +156,8 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	w := &depwait.Waiter{Store: c.Store, Parent: id}
 	sum := depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: srcID}}))
 	if sum.AnyFailed() {
-		return fmt.Errorf("chart source %s not ready: %s", srcID.String(), sum.Messages[srcID])
+		return fmt.Errorf("%w: chart source %s not ready: %s",
+			manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving values")

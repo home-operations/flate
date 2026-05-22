@@ -6,11 +6,9 @@ package kustomization
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"strings"
 
 	yaml "go.yaml.in/yaml/v4"
 
@@ -93,11 +91,11 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		w := &depwait.Waiter{Store: c.Store, Parent: id}
 		sum := depwait.WaitAll(w.Watch(ctx, deps))
 		if sum.AnyFailed() {
-			var msgs []string
-			for _, f := range sum.Failed {
-				msgs = append(msgs, f.String()+": "+sum.Messages[f])
+			return &manifest.DependencyFailedError{
+				Parent:  id,
+				Failed:  sum.Failed,
+				Reasons: sum.Messages,
 			}
-			return fmt.Errorf("dependencies failed: %s", strings.Join(msgs, "; "))
 		}
 	}
 
@@ -298,7 +296,8 @@ func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, erro
 		// No source — use ks.Path directly. This handles bootstrap
 		// kustomizations whose source is implicit.
 		if ks.Path == "" {
-			return "", errors.New("kustomization has no path and no source")
+			return "", fmt.Errorf("%w: kustomization %s has no path and no source",
+				manifest.ErrInput, ks.NamespacedName())
 		}
 		return ks.Path, nil
 	}
@@ -310,5 +309,6 @@ func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, erro
 	if sa, ok := art.(*store.SourceArtifact); ok {
 		return sa.LocalPath, nil
 	}
-	return "", fmt.Errorf("unsupported source artifact type %T for %s", art, srcID.String())
+	return "", fmt.Errorf("%w: unsupported source artifact type %T for %s",
+		manifest.ErrFlux, art, srcID.String())
 }

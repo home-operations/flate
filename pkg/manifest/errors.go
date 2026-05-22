@@ -3,6 +3,7 @@ package manifest
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Sentinel errors. Callers branch on these with errors.Is. Every error
@@ -42,18 +43,27 @@ func (*ResourceFailedError) Unwrap() error { return ErrFlux }
 // DependencyFailedError signals that a parent resource cannot proceed
 // because one of its dependencies has failed.
 type DependencyFailedError struct {
-	Kustomization string
-	Dependency    string
-	Reason        string
+	// Parent is the resource whose reconcile is being aborted.
+	Parent NamedResource
+	// Failed is the ordered list of dependency IDs that failed.
+	Failed []NamedResource
+	// Reasons maps each failed ID to its underlying message.
+	Reasons map[NamedResource]string
 }
 
 func (e *DependencyFailedError) Error() string {
-	reason := e.Reason
-	if reason == "" {
-		reason = "unknown error"
+	if len(e.Failed) == 0 {
+		return fmt.Sprintf("%s: dependencies failed", e.Parent.String())
 	}
-	return fmt.Sprintf("kustomization %s dependency %s failed: %s",
-		e.Kustomization, e.Dependency, reason)
+	parts := make([]string, 0, len(e.Failed))
+	for _, f := range e.Failed {
+		reason := e.Reasons[f]
+		if reason == "" {
+			reason = "unknown error"
+		}
+		parts = append(parts, f.String()+": "+reason)
+	}
+	return "dependencies failed: " + strings.Join(parts, "; ")
 }
 
 func (*DependencyFailedError) Unwrap() error { return ErrInput }

@@ -104,6 +104,39 @@ func TestService_PanicCountedAndRecovered(t *testing.T) {
 	}
 }
 
+// TestCoalescer_RecoversSlotAfterPanic guards a stuck-slot bug: if
+// fn(ctx) panicked, the Service-level recover absorbed the panic but
+// the per-key slot stayed running=true forever, so every subsequent
+// Submit on that key would mark pending and exit without ever
+// re-running. The recover in Coalescer.Submit now resets the slot
+// before re-raising for the Service-level logger to catch.
+func TestCoalescer_RecoversSlotAfterPanic(t *testing.T) {
+	s := New()
+	c := NewCoalescer[string](s)
+
+	var calls atomic.Int64
+	c.Submit(context.Background(), "boom", "k", func(_ context.Context) {
+		calls.Add(1)
+		panic("boom")
+	})
+	s.BlockTillDone()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("panicking call: expected 1 run, got %d", got)
+	}
+	if got := s.Failures(); got != 1 {
+		t.Errorf("Service.Failures: expected 1, got %d", got)
+	}
+
+	// Slot must be unlocked: a fresh Submit on the same key runs.
+	c.Submit(context.Background(), "recovery", "k", func(_ context.Context) {
+		calls.Add(1)
+	})
+	s.BlockTillDone()
+	if got := calls.Load(); got != 2 {
+		t.Errorf("post-panic Submit blocked: expected 2 runs total, got %d", got)
+	}
+}
+
 func TestCoalescer_SerializesPerKey(t *testing.T) {
 	s := New()
 	c := NewCoalescer[string](s)

@@ -195,6 +195,19 @@ func (c *Coalescer[K]) Submit(ctx context.Context, name string, key K, fn func(c
 	c.mu.Unlock()
 
 	c.svc.Go(ctx, name, func(ctx context.Context) {
+		// On panic, Service.Go's recover catches it; we still need to
+		// clear running so a future Submit on this key is dispatched
+		// instead of silently coalescing into a slot that no longer
+		// has a runner.
+		defer func() {
+			if r := recover(); r != nil {
+				c.mu.Lock()
+				s.running = false
+				s.pending = false
+				c.mu.Unlock()
+				panic(r)
+			}
+		}()
 		for {
 			fn(ctx)
 			c.mu.Lock()

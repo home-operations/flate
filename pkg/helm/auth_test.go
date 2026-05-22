@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -12,7 +14,10 @@ func TestHelmRepoTLS_NoCertSecretIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	r := &manifest.HelmRepository{Name: "r", Namespace: "ns", URL: "https://charts.example"}
+	r := &manifest.HelmRepository{
+		Name: "r", Namespace: "ns",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example"},
+	}
 	opts, cleanup, err := c.helmRepoTLSOptions(r)
 	defer cleanup()
 	if err != nil {
@@ -38,8 +43,11 @@ func TestHelmRepoTLS_FromSecret(t *testing.T) {
 		}
 	})
 	r := &manifest.HelmRepository{
-		Name: "r", Namespace: "ns", URL: "https://charts.example",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls-creds"},
+		Name: "r", Namespace: "ns",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			URL:           "https://charts.example",
+			CertSecretRef: &manifest.LocalObjectReference{Name: "tls-creds"},
+		},
 	}
 	opts, cleanup, err := c.helmRepoTLSOptions(r)
 	defer cleanup()
@@ -61,7 +69,9 @@ func TestHelmRepoTLS_AllKeysMissing(t *testing.T) {
 	})
 	r := &manifest.HelmRepository{
 		Name: "r", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "wrong-shape"},
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			CertSecretRef: &manifest.LocalObjectReference{Name: "wrong-shape"},
+		},
 	}
 	_, cleanup, err := c.helmRepoTLSOptions(r)
 	cleanup()
@@ -78,7 +88,9 @@ func TestHelmRepoTLS_CertSecretNotFound(t *testing.T) {
 	c.SetSecretGetter(func(_, _ string) *manifest.Secret { return nil })
 	r := &manifest.HelmRepository{
 		Name: "r", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "missing"},
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			CertSecretRef: &manifest.LocalObjectReference{Name: "missing"},
+		},
 	}
 	_, cleanup, err := c.helmRepoTLSOptions(r)
 	cleanup()
@@ -92,7 +104,10 @@ func TestHelmRepoAuth_NoSecretIsAnonymous(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	r := &manifest.HelmRepository{Name: "r", Namespace: "ns", URL: "https://charts.example"}
+	r := &manifest.HelmRepository{
+		Name: "r", Namespace: "ns",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example"},
+	}
 	opts, err := c.helmRepoAuthOptions(r)
 	if err != nil {
 		t.Fatalf("helmRepoAuthOptions: %v", err)
@@ -116,8 +131,11 @@ func TestHelmRepoAuth_BasicAuthFromSecret(t *testing.T) {
 		}
 	})
 	r := &manifest.HelmRepository{
-		Name: "r", Namespace: "ns", URL: "https://charts.example",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		Name: "r", Namespace: "ns",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			URL:       "https://charts.example",
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	opts, err := c.helmRepoAuthOptions(r)
 	if err != nil {
@@ -140,7 +158,9 @@ func TestHelmRepoAuth_MissingCreds(t *testing.T) {
 	})
 	r := &manifest.HelmRepository{
 		Name: "r", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	_, err = c.helmRepoAuthOptions(r)
 	if err == nil || !strings.Contains(err.Error(), "missing username/password") {
@@ -163,7 +183,9 @@ func TestHelmRepoAuth_SecretWipedTreatedAsMissing(t *testing.T) {
 	})
 	r := &manifest.HelmRepository{
 		Name: "r", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	_, err = c.helmRepoAuthOptions(r)
 	if err == nil || !strings.Contains(err.Error(), "missing username/password") {
@@ -178,7 +200,9 @@ func TestHelmRepoAuth_NoGetter(t *testing.T) {
 	}
 	r := &manifest.HelmRepository{
 		Name: "r", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	_, err = c.helmRepoAuthOptions(r)
 	if err == nil || !strings.Contains(err.Error(), "SecretGetter") {
@@ -194,7 +218,9 @@ func TestHelmRepoAuth_SecretNotFound(t *testing.T) {
 	c.SetSecretGetter(func(_, _ string) *manifest.Secret { return nil })
 	r := &manifest.HelmRepository{
 		Name: "r", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "missing"},
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			SecretRef: &manifest.LocalObjectReference{Name: "missing"},
+		},
 	}
 	_, err = c.helmRepoAuthOptions(r)
 	if err == nil || !strings.Contains(err.Error(), "secret ns/missing not found") {

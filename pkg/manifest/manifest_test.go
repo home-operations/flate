@@ -646,8 +646,8 @@ spec:
 	if err != nil {
 		t.Fatalf("ParseHelmRepository: %v", err)
 	}
-	if r.RepoType != "oci" {
-		t.Errorf("RepoType = %q", r.RepoType)
+	if r.Type != "oci" {
+		t.Errorf("RepoType = %q", r.Type)
 	}
 	if got, want := r.HelmChartName(HelmChart{Name: "podinfo"}), "oci://ghcr.io/stefanprodan/charts/podinfo"; got != want {
 		t.Errorf("HelmChartName = %q, want %q", got, want)

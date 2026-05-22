@@ -372,19 +372,15 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	}, nil
 }
 
-// HelmRepository is the Flux HelmRepository CRD.
+// HelmRepository is the Flux HelmRepository CRD. The embedded
+// sourcev1.HelmRepositorySpec promotes URL, Type, Provider, SecretRef,
+// CertSecretRef, PassCredentials, Insecure, Suspend, etc. to the top
+// level so consumers write h.URL / h.Type rather than h.Spec.URL.
 type HelmRepository struct {
-	Name      string `json:"name" yaml:"name"`
+	Name      string `json:"name"      yaml:"name"`
 	Namespace string `json:"namespace" yaml:"namespace"`
-	URL       string `json:"url" yaml:"url"`
-	// RepoType is "default" or "oci".
-	RepoType        string                `json:"repoType,omitempty" yaml:"repoType,omitempty"`
-	Provider        string                `json:"provider,omitempty" yaml:"provider,omitempty"`
-	SecretRef       *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-	CertSecretRef   *LocalObjectReference `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
-	PassCredentials bool                  `json:"-" yaml:"-"`
-	Insecure        bool                  `json:"-" yaml:"-"`
-	Suspend         bool                  `json:"-" yaml:"-"`
+
+	sourcev1.HelmRepositorySpec `json:",inline" yaml:",inline"`
 }
 
 // Named identifies the repo.
@@ -398,7 +394,7 @@ func (h *HelmRepository) RepoName() string { return h.Namespace + "-" + h.Name }
 // HelmChartName returns the chart ref used with the helm SDK. For OCI
 // repos the chart name is appended to the URL.
 func (h *HelmRepository) HelmChartName(chart HelmChart) string {
-	if h.RepoType == RepoTypeOCI {
+	if h.Type == RepoTypeOCI {
 		return h.URL + "/" + chart.Name
 	}
 	return chart.ChartName()
@@ -420,25 +416,12 @@ func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("HelmRepository missing spec.url")
 	}
-	repoType := cr.Spec.Type
-	if repoType == "" {
-		repoType = RepoTypeDefault
+	if cr.Spec.Type == "" {
+		cr.Spec.Type = RepoTypeDefault
 	}
-	out := &HelmRepository{
-		Name:            cr.Name,
-		Namespace:       cr.Namespace,
-		URL:             cr.Spec.URL,
-		RepoType:        repoType,
-		Provider:        cr.Spec.Provider,
-		PassCredentials: cr.Spec.PassCredentials,
-		Insecure:        cr.Spec.Insecure,
-		Suspend:         cr.Spec.Suspend,
-	}
-	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
-		out.SecretRef = cr.Spec.SecretRef
-	}
-	if cr.Spec.CertSecretRef != nil && cr.Spec.CertSecretRef.Name != "" {
-		out.CertSecretRef = cr.Spec.CertSecretRef
-	}
-	return out, nil
+	return &HelmRepository{
+		Name:               cr.Name,
+		Namespace:          cr.Namespace,
+		HelmRepositorySpec: cr.Spec,
+	}, nil
 }

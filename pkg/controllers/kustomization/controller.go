@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -76,24 +77,7 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 			return
 		}
 		c.coal.Submit(ctx, "kustomization/"+id.String(), id, func(ctx context.Context) {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("kustomization: panic during reconcile", "id", id.String(), "panic", r)
-					c.Store.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
-				}
-			}()
-			// Re-read the spec each iteration so a coalesced re-run
-			// picks up patches a parent KS installed mid-flight rather
-			// than the stale payload from the original event.
-			ks, _ := c.Store.GetObject(id).(*manifest.Kustomization)
-			if ks == nil {
-				return
-			}
-			if err := c.reconcile(ctx, ks); err != nil {
-				c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
-				return
-			}
-			c.Store.UpdateStatus(id, store.StatusReady, "")
+			base.RunWithStatus(ctx, c.Store, id, "kustomization", c.reconcile)
 		})
 	}
 }

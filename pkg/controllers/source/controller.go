@@ -6,10 +6,10 @@ package source
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
@@ -67,7 +67,7 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 				return
 			}
 			c.Tasks.Go(ctx, "source/"+id.String(), func(ctx context.Context) {
-				defer c.recoverPanic(id)
+				defer base.Recover(c.Store, id, "source")
 				c.reconcileGit(ctx, id, repo)
 			})
 		case manifest.KindOCIRepository:
@@ -86,17 +86,10 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 				return
 			}
 			c.Tasks.Go(ctx, "source/"+id.String(), func(ctx context.Context) {
-				defer c.recoverPanic(id)
+				defer base.Recover(c.Store, id, "source")
 				c.reconcileOCI(ctx, id, repo)
 			})
 		}
-	}
-}
-
-func (c *Controller) recoverPanic(id manifest.NamedResource) {
-	if r := recover(); r != nil {
-		slog.Error("source: panic during reconcile", "id", id.String(), "panic", r)
-		c.Store.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
 	}
 }
 

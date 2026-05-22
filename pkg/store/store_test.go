@@ -169,6 +169,7 @@ func TestStore_WatchReady_TransitionsToReady(t *testing.T) {
 }
 
 func TestStore_WatchReady_FailedYieldsError(t *testing.T) {
+	withFailedGrace(t, 50*time.Millisecond)
 	s := New()
 	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}
 	s.UpdateStatus(id, StatusFailed, "denied")
@@ -181,6 +182,42 @@ func TestStore_WatchReady_FailedYieldsError(t *testing.T) {
 	if rfe.Reason != "denied" {
 		t.Errorf("reason: %q", rfe.Reason)
 	}
+}
+
+// TestStore_WatchReady_FailedFlipsBeforeGrace asserts the race-fix
+// behavior: a resource that briefly enters Failed before being
+// re-reconciled to Ready (parent Kustomization re-emits a child with
+// patched substituteFrom) does NOT propagate the transient failure
+// to dependents.
+func TestStore_WatchReady_FailedFlipsBeforeGrace(t *testing.T) {
+	withFailedGrace(t, 200*time.Millisecond)
+	s := New()
+	id := manifest.NamedResource{Kind: "Kustomization", Namespace: "ns", Name: "k"}
+	s.UpdateStatus(id, StatusFailed, "transient")
+
+	// Flip to Ready inside the grace window.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		s.UpdateStatus(id, StatusReady, "")
+	}()
+
+	info, err := s.WatchReady(context.Background(), id)
+	if err != nil {
+		t.Fatalf("expected nil err after Failed→Ready flip, got %v", err)
+	}
+	if info.Status != StatusReady {
+		t.Errorf("status = %v, want Ready", info.Status)
+	}
+}
+
+// withFailedGrace temporarily shrinks FailedGrace for a single test
+// and restores it on cleanup. Keeps unit-test wall time bounded
+// without leaking the shorter value into other tests.
+func withFailedGrace(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := FailedGrace
+	FailedGrace = d
+	t.Cleanup(func() { FailedGrace = prev })
 }
 
 func TestStore_WatchReady_ContextCancel(t *testing.T) {

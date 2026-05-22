@@ -3,26 +3,41 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// WatchReady blocks until the resource reaches Ready or Failed status,
-// then returns the StatusInfo. If the status is Failed it also returns
-// a *manifest.ResourceFailedError. Cancellation via ctx returns
-// ctx.Err().
+// FailedGrace is how long WatchReady will wait, after observing a
+// Failed status, for the resource to potentially flip back to Ready.
+// flate's reconcile model allows a resource to be re-emitted (and
+// re-reconciled) by a parent Kustomization's render after an initial
+// failure — most commonly when the parent's strategic-merge patches
+// inject the postBuild.substituteFrom the child needs. The grace
+// window absorbs that brief Failed→Ready transition so dependents
+// don't propagate a transient failure.
 //
-// If the resource is already in a terminal status when called, the
-// function returns immediately.
+// Tuned to be much shorter than the per-dep DefaultTimeout (30s) so
+// genuinely broken resources still fail relatively fast, but long
+// enough to cover the parent-render re-emission (usually <1s).
+//
+// Exposed as a var so tests can shrink it to keep their wall time
+// down.
+var FailedGrace = 3 * time.Second
+
+// WatchReady blocks until the resource reaches Ready status — or
+// stays Failed for FailedGrace without flipping to Ready, in which
+// case it returns the Failed StatusInfo and a *ResourceFailedError.
+// Cancellation via ctx returns ctx.Err().
+//
+// A Failed transition does not short-circuit immediately because
+// flate's parent-Kustomization render can re-emit a child after the
+// child's initial reconcile has already failed; the grace window
+// lets that recovery land before dependents propagate the failure.
 func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (StatusInfo, error) {
-	// Short-circuit on already-terminal status.
-	if info, ok := s.GetStatus(id); ok {
-		switch info.Status {
-		case StatusReady:
-			return info, nil
-		case StatusFailed:
-			return info, &manifest.ResourceFailedError{Resource: id.String(), Reason: info.Message}
-		}
+	// Short-circuit on Ready — no transition to wait for.
+	if info, ok := s.GetStatus(id); ok && info.Status == StatusReady {
+		return info, nil
 	}
 
 	// Subscribe and then re-check (avoids the gap between GetStatus and
@@ -46,23 +61,50 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 	defer unsub()
 
 	// Re-check after subscribing to close the race window.
+	var currentFailed *StatusInfo
 	if info, ok := s.GetStatus(id); ok {
 		if info.Status == StatusReady {
 			return info, nil
 		}
 		if info.Status == StatusFailed {
-			return info, &manifest.ResourceFailedError{Resource: id.String(), Reason: info.Message}
+			f := info
+			currentFailed = &f
 		}
 	}
 
-	select {
-	case info := <-ch:
-		if info.Status == StatusFailed {
-			return info, &manifest.ResourceFailedError{Resource: id.String(), Reason: info.Message}
+	// graceCh fires when the post-Failed grace window expires. We
+	// arm it only once a Failed has been observed.
+	var graceCh <-chan time.Time
+	if currentFailed != nil {
+		graceCh = time.After(FailedGrace)
+	}
+
+	for {
+		select {
+		case info := <-ch:
+			if info.Status == StatusReady {
+				return info, nil
+			}
+			// Another Failed update — track the latest reason but
+			// don't reset the grace timer (the resource is still
+			// failing; we don't want to wait forever).
+			f := info
+			currentFailed = &f
+			if graceCh == nil {
+				graceCh = time.After(FailedGrace)
+			}
+		case <-graceCh:
+			return *currentFailed, &manifest.ResourceFailedError{
+				Resource: id.String(), Reason: currentFailed.Message,
+			}
+		case <-ctx.Done():
+			if currentFailed != nil {
+				return *currentFailed, &manifest.ResourceFailedError{
+					Resource: id.String(), Reason: currentFailed.Message,
+				}
+			}
+			return StatusInfo{}, ctx.Err()
 		}
-		return info, nil
-	case <-ctx.Done():
-		return StatusInfo{}, ctx.Err()
 	}
 }
 

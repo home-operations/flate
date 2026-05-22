@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -44,6 +45,13 @@ type Config struct {
 	// CacheDir overrides the default on-disk cache root
 	// (os.TempDir()/flate-cache).
 	CacheDir string
+	// SourceCache, when non-nil, is shared across orchestrators. The
+	// `flate diff` flow constructs two orchestrators that point at the
+	// same on-disk source-cache root; they MUST share one *Cache so the
+	// internal mutex serializes concurrent slot allocation. When nil a
+	// per-orchestrator cache is constructed (fine for single-orchestrator
+	// commands like `build` / `get`).
+	SourceCache *source.Cache
 	// ExternalChanges, when non-nil, supplies the file-level diff so
 	// the orchestrator skips its built-in change.Detect step. The
 	// filter is still built from this set + the loaded SourceFiles
@@ -101,7 +109,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		src: &sourcectrl.Controller{
 			Store:          st,
 			Tasks:          ts,
-			Cache:          source.NewCache(filepath.Join(cacheRoot, "sources")),
+			Cache:          cmp.Or(cfg.SourceCache, source.NewCache(filepath.Join(cacheRoot, "sources"))),
 			RegistryConfig: cfg.RegistryConfig,
 			EnableOCI:      cfg.EnableOCI,
 		},

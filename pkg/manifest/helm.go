@@ -97,13 +97,16 @@ func HelmChartFromSource(src *HelmChartSource) HelmChart {
 // HelmChartSource is the standalone HelmChart CRD
 // (source.toolkit.fluxcd.io/v1 HelmChart).
 type HelmChartSource struct {
-	Name          string `json:"name" yaml:"name"`
-	Namespace     string `json:"namespace" yaml:"namespace"`
-	Chart         string `json:"chart" yaml:"chart"`
-	Version       string `json:"version,omitempty" yaml:"version,omitempty"`
-	RepoName      string `json:"repoName" yaml:"repoName"`
-	RepoNamespace string `json:"repoNamespace" yaml:"repoNamespace"`
-	RepoKind      string `json:"repoKind" yaml:"repoKind"`
+	Name                     string   `json:"name" yaml:"name"`
+	Namespace                string   `json:"namespace" yaml:"namespace"`
+	Chart                    string   `json:"chart" yaml:"chart"`
+	Version                  string   `json:"version,omitempty" yaml:"version,omitempty"`
+	RepoName                 string   `json:"repoName" yaml:"repoName"`
+	RepoNamespace            string   `json:"repoNamespace" yaml:"repoNamespace"`
+	RepoKind                 string   `json:"repoKind" yaml:"repoKind"`
+	Suspend                  bool     `json:"-" yaml:"-"`
+	ValuesFiles              []string `json:"-" yaml:"-"`
+	IgnoreMissingValuesFiles bool     `json:"-" yaml:"-"`
 }
 
 // Named identifies the chart resource.
@@ -144,13 +147,16 @@ func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 		repoKind = KindHelmRepository
 	}
 	return &HelmChartSource{
-		Name:          cr.Name,
-		Namespace:     ns,
-		Chart:         cr.Spec.Chart,
-		Version:       cr.Spec.Version,
-		RepoName:      cr.Spec.SourceRef.Name,
-		RepoNamespace: ns,
-		RepoKind:      repoKind,
+		Name:                     cr.Name,
+		Namespace:                ns,
+		Chart:                    cr.Spec.Chart,
+		Version:                  cr.Spec.Version,
+		RepoName:                 cr.Spec.SourceRef.Name,
+		RepoNamespace:            ns,
+		RepoKind:                 repoKind,
+		Suspend:                  cr.Spec.Suspend,
+		ValuesFiles:              cr.Spec.ValuesFiles,
+		IgnoreMissingValuesFiles: cr.Spec.IgnoreMissingValuesFiles,
 	}, nil
 }
 
@@ -187,8 +193,19 @@ type HelmRelease struct {
 	ValuesFrom               []ValuesReference `json:"-" yaml:"-"`
 	Images                   []string          `json:"images,omitempty" yaml:"images,omitempty"`
 	Labels                   map[string]string `json:"-" yaml:"-"`
+	DependsOn                []string          `json:"-" yaml:"-"`
+	Suspend                  bool              `json:"-" yaml:"-"`
 	DisableSchemaValidation  bool              `json:"-" yaml:"-"`
 	DisableOpenAPIValidation bool              `json:"-" yaml:"-"`
+	// ChartValuesFiles are values files baked into the chart that
+	// should be merged BEFORE the HR's own Values overrides. Sourced
+	// from either spec.chart.spec.valuesFiles (inline template) or the
+	// referenced HelmChart CRD's spec.valuesFiles (when chartRef is
+	// used; populated by ResolveChartRef).
+	ChartValuesFiles []string `json:"-" yaml:"-"`
+	// IgnoreMissingValuesFiles: when true, missing ChartValuesFiles
+	// entries are skipped instead of erroring.
+	IgnoreMissingValuesFiles bool `json:"-" yaml:"-"`
 }
 
 // Named identifies the release.
@@ -234,6 +251,9 @@ func (h *HelmRelease) ResourceDependencies() []NamedResource {
 
 // ResolveChartRef replaces a chartRef placeholder with the resolved source
 // when version was not pinned. helmCharts is keyed by ResourceFullName.
+// When the chartRef resolves to a HelmChart CRD, its spec.valuesFiles +
+// spec.ignoreMissingValuesFiles propagate onto the HelmRelease so the
+// rendering pipeline can merge them ahead of HR.Values.
 func (h *HelmRelease) ResolveChartRef(helmCharts map[string]*HelmChartSource) error {
 	if h.Chart.RepoKind != KindHelmChart || h.Chart.Version != "" {
 		return nil
@@ -245,6 +265,10 @@ func (h *HelmRelease) ResolveChartRef(helmCharts map[string]*HelmChartSource) er
 	}
 	if src.Version != "" {
 		h.Chart = HelmChartFromSource(src)
+	}
+	if len(src.ValuesFiles) > 0 {
+		h.ChartValuesFiles = src.ValuesFiles
+		h.IgnoreMissingValuesFiles = src.IgnoreMissingValuesFiles
 	}
 	return nil
 }
@@ -290,6 +314,27 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableSchemaValidation)
 	disableOpenAPI := (cr.Spec.Install != nil && cr.Spec.Install.DisableOpenAPIValidation) ||
 		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableOpenAPIValidation)
+	var dependsOn []string
+	for _, dep := range cr.Spec.DependsOn {
+		if dep.Name == "" {
+			return nil, inputf("HelmRelease missing dependsOn.name")
+		}
+		depNS := dep.Namespace
+		if depNS == "" {
+			depNS = cr.Namespace
+		}
+		dependsOn = append(dependsOn, depNS+"/"+dep.Name)
+	}
+	// spec.chart.spec.valuesFiles (inline template). spec.chartRef
+	// case is handled later by ResolveChartRef once HelmChartSource is
+	// available in the store.
+	var chartValuesFiles []string
+	var ignoreMissingValuesFiles bool
+	if cr.Spec.Chart != nil {
+		chartValuesFiles = cr.Spec.Chart.Spec.ValuesFiles
+		ignoreMissingValuesFiles = cr.Spec.Chart.Spec.IgnoreMissingValuesFiles
+	}
+
 	return &HelmRelease{
 		Name:                     cr.Name,
 		Namespace:                cr.Namespace,
@@ -298,8 +343,12 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		Values:                   values,
 		ValuesFrom:               vfs,
 		Labels:                   cr.Labels,
+		DependsOn:                dependsOn,
+		Suspend:                  cr.Spec.Suspend,
 		DisableSchemaValidation:  disableSchema,
 		DisableOpenAPIValidation: disableOpenAPI,
+		ChartValuesFiles:         chartValuesFiles,
+		IgnoreMissingValuesFiles: ignoreMissingValuesFiles,
 	}, nil
 }
 
@@ -310,6 +359,7 @@ type HelmRepository struct {
 	URL       string `json:"url" yaml:"url"`
 	// RepoType is "default" or "oci".
 	RepoType string `json:"repoType,omitempty" yaml:"repoType,omitempty"`
+	Suspend  bool   `json:"-" yaml:"-"`
 }
 
 // Named identifies the repo.
@@ -354,5 +404,6 @@ func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 		Namespace: cr.Namespace,
 		URL:       cr.Spec.URL,
 		RepoType:  repoType,
+		Suspend:   cr.Spec.Suspend,
 	}, nil
 }

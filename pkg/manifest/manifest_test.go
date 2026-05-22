@@ -43,6 +43,73 @@ func TestNamedResource(t *testing.T) {
 	}
 }
 
+func TestParseHelmRelease_Suspend(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: hr, namespace: ns}
+spec:
+  suspend: true
+  chart:
+    spec:
+      chart: c
+      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
+`)
+	hr, err := ParseHelmRelease(doc)
+	if err != nil {
+		t.Fatalf("ParseHelmRelease: %v", err)
+	}
+	if !hr.Suspend {
+		t.Errorf("expected Suspend=true; got false")
+	}
+}
+
+func TestParseKustomization_Suspend(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: ks, namespace: ns}
+spec:
+  suspend: true
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: src, namespace: ns}
+  interval: 5m
+`)
+	ks, err := ParseKustomization(doc)
+	if err != nil {
+		t.Fatalf("ParseKustomization: %v", err)
+	}
+	if !ks.Suspend {
+		t.Errorf("expected Suspend=true; got false")
+	}
+}
+
+func TestParseHelmRelease_DependsOn(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: hr, namespace: ns}
+spec:
+  dependsOn:
+    - name: other
+    - {name: cross, namespace: other-ns}
+  chart:
+    spec:
+      chart: c
+      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
+`)
+	hr, err := ParseHelmRelease(doc)
+	if err != nil {
+		t.Fatalf("ParseHelmRelease: %v", err)
+	}
+	if got, want := len(hr.DependsOn), 2; got != want {
+		t.Fatalf("DependsOn len = %d, want %d", got, want)
+	}
+	if hr.DependsOn[0] != "ns/other" {
+		t.Errorf("DependsOn[0] = %q, want ns/other", hr.DependsOn[0])
+	}
+}
+
 func TestParseHelmRelease_Inline(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: helm.toolkit.fluxcd.io/v2

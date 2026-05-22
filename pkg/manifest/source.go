@@ -37,6 +37,7 @@ type GitRepository struct {
 	Namespace string           `json:"namespace" yaml:"namespace"`
 	URL       string           `json:"url" yaml:"url"`
 	Ref       GitRepositoryRef `json:"ref,omitzero" yaml:"ref,omitempty"`
+	Suspend   bool             `json:"-" yaml:"-"`
 }
 
 // Named identifies the GitRepository.
@@ -78,6 +79,7 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 		Namespace: cr.Namespace,
 		URL:       cr.Spec.URL,
 		Ref:       ref,
+		Suspend:   cr.Spec.Suspend,
 	}, nil
 }
 
@@ -99,6 +101,7 @@ type OCIRepository struct {
 	URL       string                `json:"url" yaml:"url"`
 	Ref       OCIRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
 	SecretRef *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	Suspend   bool                  `json:"-" yaml:"-"`
 }
 
 // Named identifies the OCIRepository.
@@ -109,14 +112,12 @@ func (o *OCIRepository) Named() NamedResource {
 // RepoName is "<namespace>-<name>".
 func (o *OCIRepository) RepoName() string { return o.Namespace + "-" + o.Name }
 
-// Version returns the digest, tag, or semver in that order. semverFilter
-// is not supported and will return an error.
+// Version returns the digest, tag, or semver expression in that order.
+// A semver expression is returned verbatim — callers wanting a concrete
+// tag must resolve it against remote tag listing (pkg/source).
 func (o *OCIRepository) Version() (string, error) {
 	if o.Ref.IsEmpty() {
 		return "", nil
-	}
-	if o.Ref.SemverFilter != "" {
-		return "", inputf("OCIRepository semverFilter is not supported")
 	}
 	switch {
 	case o.Ref.Digest != "":
@@ -165,6 +166,7 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		Name:      cr.Name,
 		Namespace: cr.Namespace,
 		URL:       cr.Spec.URL,
+		Suspend:   cr.Spec.Suspend,
 	}
 	if r := cr.Spec.Reference; r != nil {
 		out.Ref = OCIRepositoryRef{

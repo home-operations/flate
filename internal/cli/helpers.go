@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/home-operations/flate/pkg/image"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -93,6 +96,19 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (*o
 	currentCfg := buildOrchCfg(*c, *h)
 	origCfg := currentCfg
 	origCfg.Path, origCfg.PathOrig = c.pathOrig, c.path
+
+	// One source.Cache shared across both orchestrators. They write into
+	// the same on-disk cache root; without a shared *Cache each side has
+	// its own mutex, and concurrent first-time clones of the same
+	// (url, ref) slot can race past the mkdir/Readdirnames check and
+	// step on each other.
+	cacheRoot := currentCfg.CacheDir
+	if cacheRoot == "" {
+		cacheRoot = filepath.Join(os.TempDir(), "flate-cache")
+	}
+	shared := source.NewCache(filepath.Join(cacheRoot, "sources"))
+	currentCfg.SourceCache = shared
+	origCfg.SourceCache = shared
 
 	var orig, current *orchestrator.Orchestrator
 	g, gctx := errgroup.WithContext(ctx)

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"strings"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -83,7 +84,12 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 				c.chartSourcesMu.Unlock()
 			}
 		case manifest.KindHelmRelease:
-			if _, ok := payload.(*manifest.HelmRelease); !ok {
+			hr, ok := payload.(*manifest.HelmRelease)
+			if !ok {
+				return
+			}
+			if hr.Suspend {
+				c.Store.UpdateStatus(id, store.StatusReady, "suspended")
 				return
 			}
 			if c.Filter.Enabled() && !c.Filter.ShouldReconcile(id) {
@@ -133,6 +139,22 @@ func (c *Controller) onArtifactUpdated(id manifest.NamedResource, payload any) {
 
 func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) error {
 	id := hr.Named()
+
+	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
+	// each dependency reaching Ready before this HR reconciles.
+	if deps := c.collectHRDeps(hr); len(deps) > 0 {
+		c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
+		w := &depwait.Waiter{Store: c.Store, Parent: id}
+		sum := depwait.WaitAll(w.Watch(ctx, deps))
+		if sum.AnyFailed() {
+			var msgs []string
+			for _, f := range sum.Failed {
+				msgs = append(msgs, f.String()+": "+sum.Messages[f])
+			}
+			return fmt.Errorf("dependencies failed: %s", strings.Join(msgs, "; "))
+		}
+	}
+
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving chart")
 
 	// Resolve chartRef if applicable.
@@ -182,6 +204,26 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		Values:    hr.Values,
 	})
 	return nil
+}
+
+// collectHRDeps converts hr.DependsOn ("namespace/name" entries) into
+// NamedResources for the depwait Waiter. dependsOn on a HelmRelease
+// references other HelmReleases only (per Flux spec).
+func (c *Controller) collectHRDeps(hr *manifest.HelmRelease) []manifest.NamedResource {
+	if len(hr.DependsOn) == 0 {
+		return nil
+	}
+	out := make([]manifest.NamedResource, 0, len(hr.DependsOn))
+	for _, dep := range hr.DependsOn {
+		ns, name, ok := manifest.SplitNamespacedName(dep, hr.Namespace)
+		if !ok {
+			continue
+		}
+		out = append(out, manifest.NamedResource{
+			Kind: manifest.KindHelmRelease, Namespace: ns, Name: name,
+		})
+	}
+	return out
 }
 
 // gatherHelmChartSources returns a snapshot of the HelmChart lookup

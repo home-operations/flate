@@ -63,7 +63,12 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 		if id.Kind != manifest.KindKustomization {
 			return
 		}
-		if _, ok := payload.(*manifest.Kustomization); !ok {
+		ks, ok := payload.(*manifest.Kustomization)
+		if !ok {
+			return
+		}
+		if ks.Suspend {
+			c.Store.UpdateStatus(id, store.StatusReady, "suspended")
 			return
 		}
 		if c.Filter.Enabled() && !c.Filter.ShouldReconcile(id) {

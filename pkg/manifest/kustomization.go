@@ -45,6 +45,8 @@ type Kustomization struct {
 	// Components is Flux v1's spec.components — paths to kustomize
 	// components injected on top of spec.path at reconcile time.
 	Components []string `json:"-" yaml:"-"`
+	// Suspend mirrors spec.suspend — controllers skip suspended objects.
+	Suspend bool `json:"-" yaml:"-"`
 
 	Images []string `json:"images,omitempty" yaml:"images,omitempty"`
 }
@@ -178,5 +180,6 @@ func ParseKustomization(doc map[string]any) (*Kustomization, error) {
 		DependsOn:               dependsOn,
 		Labels:                  cr.Labels,
 		Components:              cr.Spec.Components,
+		Suspend:                 cr.Spec.Suspend,
 	}, nil
 }

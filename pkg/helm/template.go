@@ -7,16 +7,19 @@ import (
 	"strings"
 
 	"helm.sh/helm/v4/pkg/action"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/common"
 	"helm.sh/helm/v4/pkg/cli"
 	release "helm.sh/helm/v4/pkg/release/v1"
+	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // Template renders a HelmRelease and returns the rendered manifest as a
 // single YAML string (multiple documents separated by "---" lines).
-func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, values map[string]any, opts Options) (string, error) {
+func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, opts Options) (string, error) {
 	loaded, err := c.LoadChart(ctx, hr)
 	if err != nil {
 		return "", err
@@ -53,15 +56,27 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, values 
 		}
 		inst.KubeVersion = kv
 	}
-	if values == nil {
-		values = map[string]any{}
+	if hrValues == nil {
+		hrValues = map[string]any{}
 	}
 
 	if hr.Chart.Version != "" {
 		inst.Version = hr.Chart.Version
 	}
 
-	rel, err := inst.RunWithContext(ctx, loaded.Chart, values)
+	// Apply chart valuesFiles BEFORE HR.Values so HR overrides win.
+	// Mirrors helm-controller's CoalesceValues layering: chart defaults
+	// (handled internally by helm) → chart-named valuesFiles → HR.Values.
+	finalValues := hrValues
+	if len(hr.ChartValuesFiles) > 0 {
+		base, err := mergeChartValuesFiles(loaded.Chart, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		if err != nil {
+			return "", fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
+		}
+		finalValues = values.DeepMerge(base, hrValues)
+	}
+
+	rel, err := inst.RunWithContext(ctx, loaded.Chart, finalValues)
 	if err != nil {
 		return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
 	}
@@ -71,6 +86,36 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, values 
 	}
 
 	return releaseManifest(relV1, opts), nil
+}
+
+// mergeChartValuesFiles merges the named values files (relative paths
+// inside the chart archive) in the supplied order. Missing files are
+// skipped when ignoreMissing is true; otherwise the first missing file
+// is an error. Mirrors helm-controller's chartutil layering: each file
+// is merged on top of the previous one.
+func mergeChartValuesFiles(c *chart.Chart, names []string, ignoreMissing bool) (map[string]any, error) {
+	out := map[string]any{}
+	for _, name := range names {
+		var data []byte
+		for _, f := range c.Files {
+			if f != nil && f.Name == name {
+				data = f.Data
+				break
+			}
+		}
+		if data == nil {
+			if ignoreMissing {
+				continue
+			}
+			return nil, fmt.Errorf("values file %q not found in chart", name)
+		}
+		var m map[string]any
+		if err := yaml.Unmarshal(data, &m); err != nil {
+			return nil, fmt.Errorf("parse values file %q: %w", name, err)
+		}
+		out = values.DeepMerge(out, m)
+	}
+	return out, nil
 }
 
 // TemplateDocs renders and returns each document parsed as a generic map.

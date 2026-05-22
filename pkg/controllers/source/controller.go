@@ -59,6 +59,10 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 			if !ok {
 				return
 			}
+			if repo.Suspend {
+				c.Store.UpdateStatus(id, store.StatusReady, "suspended")
+				return
+			}
 			if c.skip(id) {
 				return
 			}
@@ -72,6 +76,10 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 			}
 			repo, ok := payload.(*manifest.OCIRepository)
 			if !ok {
+				return
+			}
+			if repo.Suspend {
+				c.Store.UpdateStatus(id, store.StatusReady, "suspended")
 				return
 			}
 			if c.skip(id) {

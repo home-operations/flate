@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/kustomize/api/resmap"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -38,9 +40,12 @@ func lockPath(path string) *sync.Mutex {
 // using the same library that Flux's kustomize-controller uses
 // (`github.com/fluxcd/pkg/kustomize`).
 //
-// Every spec feature is honored: patches, images, components,
-// targetNamespace, commonMetadata, plus the auto-generation of a
-// kustomization.yaml when one is absent at spec.path.
+// The Generator merges spec.patches / spec.images / spec.components /
+// spec.targetNamespace / spec.namePrefix / spec.nameSuffix into the
+// kustomization.yaml before krusty runs. spec.commonMetadata is
+// applied post-build (see applyCommonMetadata) because the Generator
+// does not handle it — kustomize-controller does it after build via
+// ssautil.SetCommonMetadata.
 //
 // ctx is honored at coarse boundaries — between path validation,
 // after acquiring the per-path lock, and before/after SecureBuild —
@@ -121,11 +126,65 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath st
 	if err != nil {
 		return nil, fmt.Errorf("kustomize build %s: %w", subPath, err)
 	}
+	if err := applyCommonMetadata(rm, rawSpec); err != nil {
+		return nil, fmt.Errorf("apply commonMetadata %s: %w", subPath, err)
+	}
 	out, err := rm.AsYaml()
 	if err != nil {
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
 	return out, nil
+}
+
+// applyCommonMetadata merges spec.commonMetadata.labels and
+// spec.commonMetadata.annotations into every rendered resource —
+// mirroring kustomize-controller's ssautil.SetCommonMetadata pass,
+// which fluxcd/pkg/kustomize.Generator does NOT perform.
+func applyCommonMetadata(rm resmap.ResMap, rawSpec map[string]any) error {
+	spec, _ := rawSpec["spec"].(map[string]any)
+	cm, _ := spec["commonMetadata"].(map[string]any)
+	labels := stringMap(cm["labels"])
+	annotations := stringMap(cm["annotations"])
+	if len(labels) == 0 && len(annotations) == 0 {
+		return nil
+	}
+	for _, r := range rm.Resources() {
+		if len(labels) > 0 {
+			merged := maps.Clone(r.GetLabels())
+			if merged == nil {
+				merged = map[string]string{}
+			}
+			maps.Copy(merged, labels)
+			if err := r.SetLabels(merged); err != nil {
+				return err
+			}
+		}
+		if len(annotations) > 0 {
+			merged := maps.Clone(r.GetAnnotations())
+			if merged == nil {
+				merged = map[string]string{}
+			}
+			maps.Copy(merged, annotations)
+			if err := r.SetAnnotations(merged); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func stringMap(v any) map[string]string {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, val := range m {
+		if s, ok := val.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
 }
 
 // restoreKustomizationFile copies the source kustomization.yaml (if

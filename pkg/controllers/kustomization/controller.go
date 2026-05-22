@@ -112,9 +112,6 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering")
-	// Flux's Generator merges spec.patches / spec.images / spec.components /
-	// spec.targetNamespace / spec.commonMetadata into the kustomization.yaml
-	// before krusty runs — none of which the bare kustomize SDK applies.
 	data, err := kustomize.RenderFlux(ctx, c.Staging, sourceRoot, ks.Path, ks.Contents)
 	if err != nil {
 		return err

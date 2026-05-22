@@ -203,7 +203,9 @@ Every fetch path resolves credentials from a Flux-style `spec.secretRef` pointin
 
 ## SOPS, suspend, dependsOn
 
-**SOPS-encrypted resources fail-loud.** flate doesn't implement `spec.decryption`. When rendered output contains a Secret (or other resource) with a SOPS `sops:` block, the parent Kustomization/HelmRelease is marked `Failed` with a clear pointer at the offending document. Pre-decrypt your manifests, or remove the encrypted resource.
+**SOPS-encrypted resources are wiped to PLACEHOLDER.** flate doesn't implement `spec.decryption`. Instead of failing the whole reconcile, encrypted Secret values get replaced with the literal `..PLACEHOLDER_<key>..` token (the same wipe `--wipe-secrets` performs on cleartext values). Downstream `postBuild.substituteFrom` lookups against a SOPS Secret resolve to the placeholder string rather than failing — so `${SECRET_DOMAIN}` becomes `..PLACEHOLDER_SECRET_DOMAIN..` in rendered output. Pre-decrypt your manifests if you need real values in the diff.
+
+**Per-resource substitution opt-out:** flate honors the `kustomize.toolkit.fluxcd.io/substitute: disabled` label or annotation. Resources carrying it are skipped during the postBuild substitute pass — used in real repos for ConfigMaps that embed shell scripts with bash array expansions (`${ARR[@]}`) that envsubst's parser can't handle.
 
 **`spec.suspend: true` is honored** on every reconcilable CR (Kustomization, HelmRelease, GitRepository, OCIRepository). Suspended resources mark themselves `Ready` with a `"suspended"` message and produce no rendered output — matching cluster behavior.
 
@@ -364,12 +366,19 @@ Tool versions are pinned via [mise](https://mise.jdx.dev) (`mise install`).
 
 Testdata lives in [`testdata/`](testdata/); the [`test/e2e`](test/e2e/) suite runs the cobra command tree in-process via `cli.Run` — no fork/exec, no freshly built binary required.
 
+## Signature verification
+
+| Source kind | Mechanism | Notes |
+| --- | --- | --- |
+| `OCIRepository` | cosign keyed mode | `spec.verify.secretRef` carries one or more PEM-encoded public keys; flate verifies the cosign signature artifact (`sha256-<hex>.sig` tag) using stdlib crypto — no sigstore dep tree. Keyless (Fulcio/Rekor) and `notation` provider fail loud. |
+| `GitRepository` | PGP | `spec.verify` (`mode: HEAD` / `Tag` / `TagAndHEAD`) verifies the resolved commit and/or annotated tag against the keyring in `spec.verify.secretRef`. |
+
 ## Deferred
 
 - `diff --branch-orig <branch>` (auto-worktree)
 - `shell` interactive REPL
 - ResourceSet (Flux Operator)
-- Cosign / notation signature verification (`spec.verify` on GitRepository / OCIRepository / HelmChart)
+- Cosign keyless / Notation (`spec.verify.provider: notation`) on OCIRepository — fail loud rather than silently pass
 - Bucket `aws` / `gcp` / `azure` providers (workload-identity / IRSA — out of scope offline; use `provider: generic` with static creds)
 - HelmRepository OCI-flavored `spec.secretRef` (use a sibling `OCIRepository` instead)
 

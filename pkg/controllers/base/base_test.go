@@ -18,7 +18,7 @@ func TestRunWithStatus_Success(t *testing.T) {
 	id := hr.Named()
 
 	base.RunWithStatus(t.Context(), s, id, "helmrelease",
-		func(ctx context.Context, obj *manifest.HelmRelease) error {
+		func(_ context.Context, obj *manifest.HelmRelease) error {
 			if obj.Name != "app" {
 				t.Errorf("re-read got %q, want app", obj.Name)
 			}
@@ -38,7 +38,7 @@ func TestRunWithStatus_Failure(t *testing.T) {
 	id := hr.Named()
 
 	base.RunWithStatus(t.Context(), s, id, "helmrelease",
-		func(ctx context.Context, obj *manifest.HelmRelease) error {
+		func(_ context.Context, _ *manifest.HelmRelease) error {
 			return errors.New("render failed")
 		},
 	)
@@ -59,7 +59,7 @@ func TestRunWithStatus_Panic(t *testing.T) {
 
 	// Panic must be caught and converted into StatusFailed; no re-panic.
 	base.RunWithStatus(t.Context(), s, id, "helmrelease",
-		func(ctx context.Context, obj *manifest.HelmRelease) error {
+		func(_ context.Context, _ *manifest.HelmRelease) error {
 			panic("kaboom")
 		},
 	)
@@ -77,7 +77,7 @@ func TestRunWithStatus_MissingObject(t *testing.T) {
 	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "ghost"}
 	called := false
 	base.RunWithStatus(t.Context(), s, id, "helmrelease",
-		func(ctx context.Context, obj *manifest.HelmRelease) error {
+		func(_ context.Context, _ *manifest.HelmRelease) error {
 			called = true
 			return nil
 		},

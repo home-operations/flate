@@ -129,6 +129,9 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath st
 	if err := applyCommonMetadata(rm, rawSpec); err != nil {
 		return nil, fmt.Errorf("apply commonMetadata %s: %w", subPath, err)
 	}
+	if err := applyOwnerLabels(rm, rawSpec); err != nil {
+		return nil, fmt.Errorf("apply owner labels %s: %w", subPath, err)
+	}
 	out, err := rm.AsYaml()
 	if err != nil {
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
@@ -168,6 +171,43 @@ func applyCommonMetadata(rm resmap.ResMap, rawSpec map[string]any) error {
 			if err := r.SetAnnotations(merged); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// applyOwnerLabels stamps every rendered resource with the parent's
+// "kustomize.toolkit.fluxcd.io/name" + "/namespace" labels — matching
+// what kustomize-controller injects via ssa.ResourceManager.SetOwnerLabels
+// before apply. These labels are how real Flux tracks ownership for
+// pruning + selection (kubectl get -l kustomize.toolkit.fluxcd.io/name=...).
+//
+// Inject during render so flate's output matches what lands in-cluster
+// rather than what's on disk.
+func applyOwnerLabels(rm resmap.ResMap, rawSpec map[string]any) error {
+	md, _ := rawSpec["metadata"].(map[string]any)
+	name, _ := md["name"].(string)
+	if name == "" {
+		return nil
+	}
+	namespace, _ := md["namespace"].(string)
+	const group = "kustomize.toolkit.fluxcd.io"
+	owner := map[string]string{
+		group + "/name":      name,
+		group + "/namespace": namespace,
+	}
+	for _, r := range rm.Resources() {
+		merged := maps.Clone(r.GetLabels())
+		if merged == nil {
+			merged = map[string]string{}
+		}
+		for k, v := range owner {
+			if v != "" {
+				merged[k] = v
+			}
+		}
+		if err := r.SetLabels(merged); err != nil {
+			return err
 		}
 	}
 	return nil

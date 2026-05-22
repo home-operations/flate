@@ -186,4 +186,56 @@ func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 	if annotations["note"] != "y" {
 		t.Errorf("existing annotations dropped: %v", annotations)
 	}
+	// applyOwnerLabels: every rendered resource should carry the parent
+	// Kustomization's name + namespace under kustomize.toolkit.fluxcd.io/*.
+	if labels["kustomize.toolkit.fluxcd.io/name"] != "k" {
+		t.Errorf("owner name label missing: %v", labels)
+	}
+	if labels["kustomize.toolkit.fluxcd.io/namespace"] != "ns" {
+		t.Errorf("owner namespace label missing: %v", labels)
+	}
+}
+
+// TestRenderFlux_InjectsOwnerLabels guards that
+// kustomize.toolkit.fluxcd.io/{name,namespace} land on rendered
+// resources even without spec.commonMetadata.
+func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "cm.yaml"), []byte(
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n",
+	), 0o600); err != nil {
+		t.Fatalf("write cm: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "kustomization.yaml"), []byte(
+		"resources:\n- cm.yaml\n",
+	), 0o600); err != nil {
+		t.Fatalf("write kustomization: %v", err)
+	}
+	cache, err := NewStagingCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	out, err := RenderFlux(context.Background(), cache, src, ".", map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   map[string]any{"name": "infra", "namespace": "flux-system"},
+		"spec":       map[string]any{"path": "./"},
+	})
+	if err != nil {
+		t.Fatalf("RenderFlux: %v", err)
+	}
+	var got map[string]any
+	if err := yaml.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal output: %v\n%s", err, out)
+	}
+	md, _ := got["metadata"].(map[string]any)
+	labels, _ := md["labels"].(map[string]any)
+	if labels["kustomize.toolkit.fluxcd.io/name"] != "infra" {
+		t.Errorf("owner name label = %v, want infra", labels["kustomize.toolkit.fluxcd.io/name"])
+	}
+	if labels["kustomize.toolkit.fluxcd.io/namespace"] != "flux-system" {
+		t.Errorf("owner namespace label = %v, want flux-system", labels["kustomize.toolkit.fluxcd.io/namespace"])
+	}
 }

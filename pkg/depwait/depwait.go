@@ -72,6 +72,15 @@ type Waiter struct {
 	Store   *store.Store
 	Parent  manifest.NamedResource
 	Timeout time.Duration
+
+	// AdditiveReadyExpr toggles Flux's AdditiveCELDependencyCheck
+	// feature gate. When false (the default, matching Flux), a
+	// dep's ReadyExpr REPLACES the built-in Ready check — flate
+	// re-evaluates the expression on every status update for the
+	// dep and treats the dep as Ready when the expression returns
+	// true. When true, the dep must satisfy both the built-in
+	// Ready check AND the ReadyExpr (additive mode).
+	AdditiveReadyExpr bool
 }
 
 // Watch concurrently watches each dep and returns a channel of Events.
@@ -80,8 +89,9 @@ type Waiter struct {
 //
 // Watch picks WatchReady vs WatchExists per-dep based on
 // store.SupportsStatus. When dep.ReadyExpr is non-empty the built-in
-// Ready check is *replaced* by the CEL evaluation (matching Flux's
-// non-additive default; AdditiveCELDependencyCheck is not implemented).
+// Ready check is *replaced* by the CEL evaluation (Flux's default).
+// Set Waiter.AdditiveReadyExpr=true to require BOTH (Flux's
+// AdditiveCELDependencyCheck=true mode).
 func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-chan Event {
 	out := make(chan Event, len(deps))
 	if len(deps) == 0 {
@@ -139,18 +149,22 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 		return classify(id, err, "")
 	}
 
+	// Non-additive ReadyExpr: ignore the built-in Ready check entirely.
+	// Subscribe to status updates and re-evaluate the CEL on each fire
+	// until it returns true (or the per-dep timeout / parent ctx
+	// expires). Matches Flux's default semantics — the CEL is the
+	// authoritative readiness signal.
+	if dep.ReadyExpr != "" && !w.AdditiveReadyExpr {
+		return w.watchReadyExpr(ctx, id, dep.ReadyExpr)
+	}
+
 	info, err := w.Store.WatchReady(ctx, id)
 	if err != nil {
 		return classify(id, err, info.Message)
 	}
 
-	// Built-in check passed. If the dep specified a ReadyExpr, evaluate
-	// it against the dep's projected status. Per Flux semantics, a
-	// ReadyExpr REPLACES the built-in check — but we already require
-	// the built-in to pass, so this is effectively additive. That
-	// matches what most users want; Flux's non-additive mode would
-	// require failing the built-in then deferring to CEL, which is a
-	// narrow edge case.
+	// Additive mode: built-in Ready check passed AND the CEL must also
+	// agree. Flux's AdditiveCELDependencyCheck=true behavior.
 	if dep.ReadyExpr != "" {
 		ok, evalErr := evaluateReadyExpr(dep.ReadyExpr, w.Store, id)
 		if evalErr != nil {
@@ -161,6 +175,52 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 		}
 	}
 	return Event{Dep: id, Status: DepReady, Reason: info.Message}
+}
+
+// watchReadyExpr evaluates expr against id's projected state and
+// returns DepReady when it produces true. On false / eval error it
+// blocks on the next EventStatusUpdated for id and re-evaluates.
+// Surfaces the parent ctx's timeout/cancel.
+func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, expr string) Event {
+	// Initial evaluation against current state.
+	if ok, err := evaluateReadyExpr(expr, w.Store, id); err != nil {
+		return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}
+	} else if ok {
+		return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}
+	}
+
+	// Subscribe and re-check after subscribing to close the race window.
+	ch := make(chan struct{}, 1)
+	unsub := w.Store.AddListener(store.EventStatusUpdated, func(other manifest.NamedResource, _ any) {
+		if other != id {
+			return
+		}
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}, false)
+	defer unsub()
+	if ok, err := evaluateReadyExpr(expr, w.Store, id); err != nil {
+		return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}
+	} else if ok {
+		return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}
+	}
+
+	for {
+		select {
+		case <-ch:
+			ok, err := evaluateReadyExpr(expr, w.Store, id)
+			if err != nil {
+				return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}
+			}
+			if ok {
+				return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}
+			}
+		case <-ctx.Done():
+			return Event{Dep: id, Status: DepTimeout, Reason: "readyExpr timeout: " + ctx.Err().Error()}
+		}
+	}
 }
 
 // depExists reports whether a dep is known to the store via either an

@@ -70,7 +70,12 @@ func TestStore_UpdateStatus_Idempotent(t *testing.T) {
 	}
 }
 
-func TestStore_SetCondition_NonReadyDoesNotFireStatusEvent(t *testing.T) {
+func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
+	// Non-Ready conditions DO fire EventStatusUpdated so CEL-based
+	// ReadyExpr waiters can react to Healthy / per-target health
+	// transitions. The Ready-derived StatusInfo payload doesn't change,
+	// but listeners that need finer granularity (depwait's CEL path)
+	// re-query GetConditions to see the change.
 	s := New()
 	id := manifest.NamedResource{Kind: "Kustomization", Name: "k", Namespace: "ns"}
 	s.UpdateStatus(id, StatusPending, "starting")
@@ -78,10 +83,9 @@ func TestStore_SetCondition_NonReadyDoesNotFireStatusEvent(t *testing.T) {
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
 		statusEvents++
 	}, false)
-	// A non-Ready condition should land silently.
 	s.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue, Reason: "Healthy"})
-	if statusEvents != 0 {
-		t.Errorf("non-Ready SetCondition fired StatusUpdated event %d times", statusEvents)
+	if statusEvents != 1 {
+		t.Errorf("non-Ready SetCondition fired %d events; want 1", statusEvents)
 	}
 	got := s.GetConditions(id)
 	if len(got) != 2 {

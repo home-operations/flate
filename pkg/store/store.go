@@ -151,12 +151,16 @@ func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, message s
 
 // SetCondition upserts cond into the resource's condition list keyed
 // by cond.Type. Dispatches a StatusUpdated event with the *StatusInfo
-// rollup* (derived from Ready) when the rollup changed — non-Ready
-// conditions land silently to avoid event spam.
+// rollup* (derived from Ready) on every observable condition change,
+// not just Ready transitions. Listeners that only care about Ready
+// can filter on the StatusInfo payload; CEL-based ReadyExpr watchers
+// need the broader notification so a Healthy condition flip (for
+// example) wakes them.
+//
+// An identical re-write of the same condition is a no-op (no event).
 func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
 	s.mu.Lock()
 	prev := s.conditions[id]
-	prevInfo, _ := statusInfoFromConditions(prev)
 
 	updated := make([]Condition, 0, len(prev)+1)
 	replaced := false
@@ -177,13 +181,10 @@ func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
 		updated = append(updated, cond)
 	}
 	s.conditions[id] = updated
-
 	newInfo, _ := statusInfoFromConditions(updated)
 	s.mu.Unlock()
 
-	if cond.Type == ConditionReady && prevInfo != newInfo {
-		s.fire(EventStatusUpdated, id, newInfo)
-	}
+	s.fire(EventStatusUpdated, id, newInfo)
 }
 
 // GetStatus returns the Ready-derived StatusInfo for id and whether

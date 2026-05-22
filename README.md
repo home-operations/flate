@@ -20,6 +20,9 @@
   - [`flate diff`](#flate-diff)
   - [`flate test`](#flate-test)
   - [`flate diag`](#flate-diag)
+- [Source kinds](#source-kinds)
+- [Authentication](#authentication)
+- [SOPS, suspend, dependsOn](#sops-suspend-dependson)
 - [Changed-only mode](#changed-only-mode)
 - [Output formats](#output-formats)
 - [Configuration](#configuration)
@@ -171,6 +174,49 @@ Static sanity checks that don't require reconciliation — YAML parseability, `.
 flate diag --path ./kubernetes
 ```
 
+## Source kinds
+
+flate recognizes every source CR Flux's source-controller ships:
+
+| Kind | Status | Notes |
+|---|---|---|
+| `GitRepository` | ✅ full | HTTPS / SSH / file://, `SecretRef`, `recurseSubmodules`, `spec.ref.{branch,tag,commit,semver,name}` |
+| `OCIRepository` | ✅ full | oras-go, `SecretRef` (dockerconfigjson), `--registry-config`, semver via remote tag walk |
+| `HelmRepository` | ✅ full | HTTP basic / bearer auth, `passCredentials`, OCI via underlying registry client |
+| `HelmChart` | ✅ full | Embedded (`HR.spec.chart`) and standalone CRD; `valuesFiles` honored |
+| `Bucket` | ✅ generic | S3-API-compatible via minio-go (`SecretRef` with `accesskey`/`secretkey`). `aws`/`gcp`/`azure` providers parse but fail-loud — switch to `provider: generic` |
+| `ExternalArtifact` | ✅ file:// | flate has no live cluster, so the third-party-published `status.artifact.url` must point at a local `file://` path. Other schemes fail-loud |
+
+Cloud-side workload-identity providers (Azure Managed Identity for Git, GitHub App for Git, AWS IRSA for OCI / Bucket) are intentionally out of scope — flate runs offline. Use static credentials in a Secret instead.
+
+## Authentication
+
+Every fetch path resolves credentials from a Flux-style `spec.secretRef` pointing at a Secret in the same flate-tracked tree. PLACEHOLDER-wiped values (the default with `--skip-secrets`) are treated as missing — you get a clear "missing username/password" rather than a misleading auth attempt with the literal placeholder.
+
+| Source | Secret keys |
+|---|---|
+| GitRepository (HTTPS) | `username` + `password`, or `bearerToken` (takes precedence) |
+| GitRepository (SSH) | `identity` (PEM), optional `password`, optional `known_hosts` (else `insecureIgnoreHostKey`) |
+| OCIRepository | `.dockerconfigjson` (per-repo); falls back to `--registry-config` then `~/.docker/config.json` |
+| HelmRepository (HTTP) | `username` + `password` |
+| Bucket | `accesskey` + `secretkey` |
+
+## SOPS, suspend, dependsOn
+
+**SOPS-encrypted resources fail-loud.** flate doesn't implement `spec.decryption`. When rendered output contains a Secret (or other resource) with a SOPS `sops:` block, the parent Kustomization/HelmRelease is marked `Failed` with a clear pointer at the offending document. Pre-decrypt your manifests, or remove the encrypted resource.
+
+**`spec.suspend: true` is honored** on every reconcilable CR (Kustomization, HelmRelease, GitRepository, OCIRepository). Suspended resources mark themselves `Ready` with a `"suspended"` message and produce no rendered output — matching cluster behavior.
+
+**`spec.dependsOn[].readyExpr` (CEL)** is evaluated against the dependency's projected `object` view (kind, apiVersion, metadata, status.conditions). When set, replaces the built-in `Ready=True` check per Flux's default semantics:
+
+```yaml
+spec:
+  dependsOn:
+    - name: infra-controllers
+      readyExpr: |
+        object.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")
+```
+
 ## Changed-only mode
 
 Pass `--path-orig` to compare a working tree against a baseline. flate diffs files, picks the **most-specific Flux Kustomization that owns each change** (longest matching `spec.path`, including `spec.components`), and reconciles only that subtree.
@@ -294,11 +340,13 @@ Apply to `get all`:
               └──┬──────┬────────┬───┘             │
                  │      │        │                 │
                  ▼      ▼        ▼                 │
-       ┌────────────┐ ┌──────────────┐ ┌──────────────────┐
-       │ SourceCtrl │ │ KSController │ │ HRController     │
-       │ go-git +   │ │ krusty +     │ │ helm v4          │
-       │ oras-go    │ │ Flux gen     │ │ (ClientOnly)     │
-       └────────────┘ └──────────────┘ └──────────────────┘
+       ┌─────────────┐ ┌──────────────┐ ┌──────────────────┐
+       │ SourceCtrl  │ │ KSController │ │ HRController     │
+       │ Fetchers:   │ │ krusty +     │ │ helm v4          │
+       │  git/oci/   │ │ Flux gen     │ │ (ClientOnly)     │
+       │  bucket/    │ │              │ │                  │
+       │  external   │ │              │ │                  │
+       └─────────────┘ └──────────────┘ └──────────────────┘
 ```
 
 Orchestrator pipeline: load → iterative `spec.path` discovery → namespace inheritance → `dependsOn` validation → existence-only-ready → change-filter resolution → controllers → diff / build / get.
@@ -320,7 +368,10 @@ Testdata lives in [`testdata/`](testdata/); the [`test/e2e`](test/e2e/) suite ru
 
 - `diff --branch-orig <branch>` (auto-worktree)
 - `shell` interactive REPL
-- Bucket sources, ResourceSet (Flux Operator), in-cluster `secretRef` for OCI auth
+- ResourceSet (Flux Operator)
+- Cosign / notation signature verification (`spec.verify` on GitRepository / OCIRepository / HelmChart)
+- Bucket `aws` / `gcp` / `azure` providers (workload-identity / IRSA — out of scope offline; use `provider: generic` with static creds)
+- HelmRepository OCI-flavored `spec.secretRef` (use a sibling `OCIRepository` instead)
 
 ## License
 

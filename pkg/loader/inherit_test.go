@@ -3,6 +3,8 @@ package loader
 import (
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -16,10 +18,12 @@ func TestApplyNamespaceInheritance_FluxTargetNamespaceWins(t *testing.T) {
 
 	s := store.New()
 	parent := &manifest.Kustomization{
-		Name:            "plex",
-		Namespace:       "flux-system",
-		Path:            "apps/plex",
-		TargetNamespace: "media",
+		Name:      "plex",
+		Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path:            "apps/plex",
+			TargetNamespace: "media",
+		},
 	}
 	hr := &manifest.HelmRelease{
 		Name:      "plex",

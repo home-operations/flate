@@ -11,36 +11,59 @@ import (
 // Kustomization is the Flux Kustomization CR. It bundles the path of a
 // local kustomize tree together with the in-cluster materials it produces
 // (HelmReleases, HelmRepositories, ConfigMaps, Secrets, ...).
+//
+// The embedded kustomizev1.KustomizationSpec promotes Path, Suspend,
+// TargetNamespace, Components, SourceRef, PostBuild, Patches, Images,
+// CommonMetadata, NamePrefix, NameSuffix, Wait, Prune, Force,
+// HealthChecks, etc. to the top level. Shadowed by flate-only fields
+// where the projected shape differs from the upstream (DependsOn,
+// PostBuildSubstitute, PostBuildSubstituteFrom — see field docs).
 type Kustomization struct {
-	Name      string `json:"name" yaml:"name"`
+	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Path      string `json:"path" yaml:"path"`
 
-	HelmRepos        []*HelmRepository  `json:"helmRepos,omitempty" yaml:"helmRepos,omitempty"`
-	OCIRepos         []*OCIRepository   `json:"ociRepos,omitempty" yaml:"ociRepos,omitempty"`
-	HelmReleases     []*HelmRelease     `json:"helmReleases,omitempty" yaml:"helmReleases,omitempty"`
-	ConfigMaps       []*ConfigMap       `json:"configMaps,omitempty" yaml:"configMaps,omitempty"`
-	Secrets          []*Secret          `json:"secrets,omitempty" yaml:"secrets,omitempty"`
+	kustomizev1.KustomizationSpec `json:",inline" yaml:",inline"`
+
+	HelmRepos        []*HelmRepository  `json:"helmRepos,omitempty"        yaml:"helmRepos,omitempty"`
+	OCIRepos         []*OCIRepository   `json:"ociRepos,omitempty"         yaml:"ociRepos,omitempty"`
+	HelmReleases     []*HelmRelease     `json:"helmReleases,omitempty"     yaml:"helmReleases,omitempty"`
+	ConfigMaps       []*ConfigMap       `json:"configMaps,omitempty"       yaml:"configMaps,omitempty"`
+	Secrets          []*Secret          `json:"secrets,omitempty"          yaml:"secrets,omitempty"`
 	HelmChartSources []*HelmChartSource `json:"helmChartSources,omitempty" yaml:"helmChartSources,omitempty"`
 
-	// Internal-only fields (not emitted to YAML output).
-	SourcePath              string                `json:"-" yaml:"-"`
-	SourceKind              string                `json:"-" yaml:"-"`
-	SourceName              string                `json:"-" yaml:"-"`
-	SourceNamespace         string                `json:"-" yaml:"-"`
-	TargetNamespace         string                `json:"-" yaml:"-"`
-	Contents                map[string]any        `json:"-" yaml:"-"`
-	PostBuildSubstitute     map[string]any        `json:"-" yaml:"-"`
-	PostBuildSubstituteFrom []SubstituteReference `json:"-" yaml:"-"`
-	DependsOn               []DependencyRef       `json:"-" yaml:"-"`
-	Labels                  map[string]string     `json:"-" yaml:"-"`
-	// Components is Flux v1's spec.components — paths to kustomize
-	// components injected on top of spec.path at reconcile time.
-	Components []string `json:"-" yaml:"-"`
-	// Suspend mirrors spec.suspend — controllers skip suspended objects.
-	Suspend bool `json:"-" yaml:"-"`
+	// SourcePath is the location on disk this Kustomization was loaded
+	// from (config.kubernetes.io/path annotation).
+	SourcePath string `json:"-" yaml:"-"`
 
-	Images []string `json:"images,omitempty" yaml:"images,omitempty"`
+	// SourceKind / SourceName / SourceNamespace mirror the embedded
+	// Spec.SourceRef with the namespace defaulted to the Kustomization's
+	// own namespace (matching Flux's behavior). The embedded struct's
+	// SourceRef is accessible at k.SourceRef when callers need the raw
+	// upstream typed form.
+	SourceKind      string `json:"-" yaml:"-"`
+	SourceName      string `json:"-" yaml:"-"`
+	SourceNamespace string `json:"-" yaml:"-"`
+
+	// Contents is the raw decoded YAML document. Retained because
+	// RenderFlux still feeds it to fluxcd/pkg/kustomize.NewGenerator
+	// as an unstructured.Unstructured.
+	Contents map[string]any `json:"-" yaml:"-"`
+
+	// PostBuildSubstitute holds the resolved substitution variables
+	// (after evaluating spec.postBuild.substituteFrom against the
+	// store). Shadows the upstream Spec.PostBuild.Substitute (which
+	// holds the spec'd unresolved values).
+	PostBuildSubstitute map[string]any `json:"-" yaml:"-"`
+
+	// PostBuildSubstituteFrom captures the typed substituteFrom refs
+	// from spec.postBuild.
+	PostBuildSubstituteFrom []SubstituteReference `json:"-" yaml:"-"`
+
+	// DependsOn is the normalized form of spec.dependsOn carrying any
+	// ReadyExpr. Shadows the embedded Spec.DependsOn ([]DependencyReference).
+	DependsOn []DependencyRef `json:"-" yaml:"-"`
+
+	Labels map[string]string `json:"-" yaml:"-"`
 }
 
 // Named identifies the Kustomization.
@@ -164,18 +187,15 @@ func ParseKustomization(doc map[string]any) (*Kustomization, error) {
 	return &Kustomization{
 		Name:                    cr.Name,
 		Namespace:               ns,
-		Path:                    cr.Spec.Path,
+		KustomizationSpec:       cr.Spec,
 		SourcePath:              cr.Annotations["config.kubernetes.io/path"],
 		SourceKind:              cr.Spec.SourceRef.Kind,
 		SourceName:              cr.Spec.SourceRef.Name,
 		SourceNamespace:         srcNamespace,
-		TargetNamespace:         cr.Spec.TargetNamespace,
 		Contents:                doc,
 		PostBuildSubstitute:     subst,
 		PostBuildSubstituteFrom: substituteFrom,
 		DependsOn:               dependsOn,
 		Labels:                  cr.Labels,
-		Components:              cr.Spec.Components,
-		Suspend:                 cr.Spec.Suspend,
 	}, nil
 }

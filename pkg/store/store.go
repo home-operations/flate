@@ -11,10 +11,10 @@ import (
 
 // Store is the central in-memory state container.
 type Store struct {
-	mu        sync.RWMutex
-	objects   map[manifest.NamedResource]manifest.BaseManifest
-	status    map[manifest.NamedResource]StatusInfo
-	artifacts map[manifest.NamedResource]Artifact
+	mu         sync.RWMutex
+	objects    map[manifest.NamedResource]manifest.BaseManifest
+	conditions map[manifest.NamedResource][]Condition
+	artifacts  map[manifest.NamedResource]Artifact
 
 	// byName is a secondary index keyed by kind, then "namespace/name".
 	// It makes hot-path namespaced lookups (e.g. valuesFrom ConfigMap /
@@ -32,10 +32,10 @@ type Store struct {
 // New constructs an empty Store.
 func New() *Store {
 	return &Store{
-		objects:   make(map[manifest.NamedResource]manifest.BaseManifest),
-		status:    make(map[manifest.NamedResource]StatusInfo),
-		artifacts: make(map[manifest.NamedResource]Artifact),
-		byName:    make(map[string]map[string]manifest.BaseManifest),
+		objects:    make(map[manifest.NamedResource]manifest.BaseManifest),
+		conditions: make(map[manifest.NamedResource][]Condition),
+		artifacts:  make(map[manifest.NamedResource]Artifact),
+		byName:     make(map[string]map[string]manifest.BaseManifest),
 		listeners: map[EventKind]*listenerSet{
 			EventObjectAdded:     newListenerSet(),
 			EventStatusUpdated:   newListenerSet(),
@@ -105,7 +105,7 @@ func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 		return false
 	}
 	delete(s.objects, id)
-	delete(s.status, id)
+	delete(s.conditions, id)
 	delete(s.artifacts, id)
 	if inner := s.byName[id.Kind]; inner != nil {
 		delete(inner, nameKey(id.Namespace, id.Name))
@@ -140,27 +140,84 @@ func (s *Store) ListObjects(kind string) []manifest.BaseManifest {
 	return out
 }
 
-// UpdateStatus records a status transition and dispatches a
-// StatusUpdated event when the status info changes.
+// UpdateStatus records a Ready-condition transition and dispatches a
+// StatusUpdated event when the StatusInfo rollup changes. Internally
+// the (status, message) pair is stored as a metav1.Condition so
+// future callers (ReadyExpr CEL, SOPS detection, healthChecks) can
+// see the rich state via GetConditions.
 func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, message string) {
-	info := StatusInfo{Status: status, Message: message}
-	s.mu.Lock()
-	prev, exists := s.status[id]
-	if exists && prev == info {
-		s.mu.Unlock()
-		return
-	}
-	s.status[id] = info
-	s.mu.Unlock()
-	s.fire(EventStatusUpdated, id, info)
+	s.SetCondition(id, readyCondition(status, message))
 }
 
-// GetStatus returns the status for id and whether it was present.
+// SetCondition upserts cond into the resource's condition list keyed
+// by cond.Type. Dispatches a StatusUpdated event with the *StatusInfo
+// rollup* (derived from Ready) when the rollup changed — non-Ready
+// conditions land silently to avoid event spam.
+func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
+	s.mu.Lock()
+	prev := s.conditions[id]
+	prevInfo, _ := statusInfoFromConditions(prev)
+
+	updated := make([]Condition, 0, len(prev)+1)
+	replaced := false
+	for _, c := range prev {
+		if c.Type == cond.Type {
+			if conditionEqual(c, cond) {
+				// Identical condition — nothing to do, including no event.
+				s.mu.Unlock()
+				return
+			}
+			updated = append(updated, cond)
+			replaced = true
+			continue
+		}
+		updated = append(updated, c)
+	}
+	if !replaced {
+		updated = append(updated, cond)
+	}
+	s.conditions[id] = updated
+
+	newInfo, _ := statusInfoFromConditions(updated)
+	s.mu.Unlock()
+
+	if cond.Type == ConditionReady && prevInfo != newInfo {
+		s.fire(EventStatusUpdated, id, newInfo)
+	}
+}
+
+// GetStatus returns the Ready-derived StatusInfo for id and whether
+// a Ready condition was present.
 func (s *Store) GetStatus(id manifest.NamedResource) (StatusInfo, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	info, ok := s.status[id]
-	return info, ok
+	return statusInfoFromConditions(s.conditions[id])
+}
+
+// GetConditions returns a copy of id's condition list. Empty for
+// unknown ids.
+func (s *Store) GetConditions(id manifest.NamedResource) []Condition {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	conds := s.conditions[id]
+	if len(conds) == 0 {
+		return nil
+	}
+	out := make([]Condition, len(conds))
+	copy(out, conds)
+	return out
+}
+
+// conditionEqual reports whether two conditions carry the same
+// observable state. LastTransitionTime is intentionally ignored — it
+// is reset on every transition by the controller-runtime libraries
+// and would otherwise prevent the no-op short-circuit from firing.
+func conditionEqual(a, b Condition) bool {
+	return a.Type == b.Type &&
+		a.Status == b.Status &&
+		a.Reason == b.Reason &&
+		a.Message == b.Message &&
+		a.ObservedGeneration == b.ObservedGeneration
 }
 
 // SetArtifact stores an artifact for id and dispatches an
@@ -184,12 +241,12 @@ func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
 	return s.artifacts[id]
 }
 
-// HasFailedResources reports whether any tracked status is Failed.
+// HasFailedResources reports whether any tracked Ready condition is False.
 func (s *Store) HasFailedResources() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, info := range s.status {
-		if info.Status == StatusFailed {
+	for _, conds := range s.conditions {
+		if info, ok := statusInfoFromConditions(conds); ok && info.Status == StatusFailed {
 			return true
 		}
 	}
@@ -201,8 +258,8 @@ func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make(map[manifest.NamedResource]StatusInfo)
-	for id, info := range s.status {
-		if info.Status == StatusFailed {
+	for id, conds := range s.conditions {
+		if info, ok := statusInfoFromConditions(conds); ok && info.Status == StatusFailed {
 			out[id] = info
 		}
 	}
@@ -240,8 +297,12 @@ func (s *Store) replayInto(event EventKind, fn Listener) {
 		}
 	case EventStatusUpdated:
 		s.mu.RLock()
-		snap := make(map[manifest.NamedResource]StatusInfo, len(s.status))
-		maps.Copy(snap, s.status)
+		snap := make(map[manifest.NamedResource]StatusInfo, len(s.conditions))
+		for id, conds := range s.conditions {
+			if info, ok := statusInfoFromConditions(conds); ok {
+				snap[id] = info
+			}
+		}
 		s.mu.RUnlock()
 		for id, info := range snap {
 			fn(id, info)

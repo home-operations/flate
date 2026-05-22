@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -19,7 +20,9 @@ func TestVerifySignatures_NilVerifyIsNoOp(t *testing.T) {
 func TestVerifySignatures_RequiresSecretRef(t *testing.T) {
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
-		Verify: &manifest.GitRepositoryVerify{Mode: manifest.GitVerifyModeHEAD},
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			Verification: &manifest.GitRepositoryVerify{Mode: manifest.GitVerifyModeHEAD},
+		},
 	}
 	err := verifySignatures(nil, repo, nil, plumbing.ZeroHash)
 	if err == nil || !strings.Contains(err.Error(), "secretRef is required") {
@@ -30,9 +33,11 @@ func TestVerifySignatures_RequiresSecretRef(t *testing.T) {
 func TestVerifySignatures_RequiresSecretGetter(t *testing.T) {
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
-		Verify: &manifest.GitRepositoryVerify{
-			Mode:      manifest.GitVerifyModeHEAD,
-			SecretRef: &manifest.LocalObjectReference{Name: "keys"},
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			Verification: &manifest.GitRepositoryVerify{
+				Mode:      manifest.GitVerifyModeHEAD,
+				SecretRef: manifest.LocalObjectReference{Name: "keys"},
+			},
 		},
 	}
 	err := verifySignatures(nil, repo, nil, plumbing.ZeroHash)
@@ -44,9 +49,11 @@ func TestVerifySignatures_RequiresSecretGetter(t *testing.T) {
 func TestVerifySignatures_SecretNotFound(t *testing.T) {
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
-		Verify: &manifest.GitRepositoryVerify{
-			Mode:      manifest.GitVerifyModeHEAD,
-			SecretRef: &manifest.LocalObjectReference{Name: "missing"},
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			Verification: &manifest.GitRepositoryVerify{
+				Mode:      manifest.GitVerifyModeHEAD,
+				SecretRef: manifest.LocalObjectReference{Name: "missing"},
+			},
 		},
 	}
 	getter := func(_, _ string) *manifest.Secret { return nil }
@@ -104,7 +111,7 @@ func TestBuildPGPKeyring(t *testing.T) {
 
 func TestVerifyHEAD_Tag_HelperMatrix(t *testing.T) {
 	cases := []struct {
-		mode    string
+		mode    sourcev1.GitVerificationMode
 		wantH   bool
 		wantTag bool
 	}{

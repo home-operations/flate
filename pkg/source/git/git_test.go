@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
@@ -20,9 +21,8 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 
 	cache := source.NewCache(t.TempDir())
 	repo := &manifest.GitRepository{
-		Name:      "test",
-		Namespace: "flux-system",
-		URL:       "file://" + src,
+		Name: "test", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
 	}
 
 	f := &Fetcher{Cache: cache}
@@ -59,8 +59,10 @@ func TestFetcher_RefByName(t *testing.T) {
 	cache := source.NewCache(t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		URL: "file://" + src,
-		Ref: manifest.GitRepositoryRef{Name: "refs/tags/v0.1.0"},
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:       "file://" + src,
+			Reference: &sourcev1.GitRepositoryRef{Name: "refs/tags/v0.1.0"},
+		},
 	}
 	f := &Fetcher{Cache: cache}
 	art, err := f.Fetch(context.Background(), repo)
@@ -81,8 +83,10 @@ func TestFetcher_RefByName_Unresolvable(t *testing.T) {
 	cache := source.NewCache(t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		URL: "file://" + src,
-		Ref: manifest.GitRepositoryRef{Name: "refs/heads/does-not-exist"},
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:       "file://" + src,
+			Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/does-not-exist"},
+		},
 	}
 	f := &Fetcher{Cache: cache}
 	_, err := f.Fetch(context.Background(), repo)
@@ -106,8 +110,10 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 	cache := source.NewCache(t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		URL:            "file://" + src,
-		SparseCheckout: []string{"apps/a"},
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:            "file://" + src,
+			SparseCheckout: []string{"apps/a"},
+		},
 	}
 	f := &Fetcher{Cache: cache}
 	art, err := f.Fetch(context.Background(), repo)

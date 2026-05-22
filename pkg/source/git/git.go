@@ -82,7 +82,7 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	if err != nil {
 		return nil, err
 	}
-	if repo.Verify != nil {
+	if repo.Verification != nil {
 		cloned, oerr := git.PlainOpen(art.LocalPath)
 		if oerr != nil {
 			return nil, fmt.Errorf("verify: reopen %s: %w", art.LocalPath, oerr)
@@ -228,9 +228,11 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 		return nil, fmt.Errorf("%w: GitRepository %s missing url", manifest.ErrInput, repo.RepoName())
 	}
 
-	refStr := manifest.GitRefString(repo.Ref)
-	if refStr == "" {
-		refStr = "HEAD"
+	refStr := "HEAD"
+	if repo.Reference != nil {
+		if s := manifest.GitRefString(*repo.Reference); s != "" {
+			refStr = s
+		}
 	}
 
 	slot, exists, err := cache.Slot(repo.URL, refStr)
@@ -277,7 +279,11 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 		return nil, fmt.Errorf("clone %s: %w", url, err)
 	}
 
-	if err := checkoutRef(cloned, repo.Ref, repo.SparseCheckout); err != nil {
+	var ref manifest.GitRepositoryRef
+	if repo.Reference != nil {
+		ref = *repo.Reference
+	}
+	if err := checkoutRef(cloned, ref, repo.SparseCheckout); err != nil {
 		return nil, fmt.Errorf("checkout %s: %w", refStr, err)
 	}
 	if repo.RecurseSubmodules {

@@ -3,6 +3,7 @@ package git
 import (
 	"fmt"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 
@@ -19,15 +20,12 @@ import (
 // ASCII-armored public keys (any *.asc filename); they're
 // concatenated into a single keyring before verification.
 func verifySignatures(secrets source.SecretGetter, repo *manifest.GitRepository, cloned *git.Repository, resolvedRef plumbing.Hash) error {
-	if repo.Verify == nil {
+	if repo.Verification == nil {
 		return nil
 	}
-	v := repo.Verify
-	mode := v.Mode
-	if mode == "" {
-		mode = manifest.GitVerifyModeHEAD
-	}
-	if v.SecretRef == nil {
+	v := repo.Verification
+	mode := v.GetMode()
+	if v.SecretRef.Name == "" {
 		return fmt.Errorf("GitRepository %s/%s: spec.verify.secretRef is required",
 			repo.Namespace, repo.Name)
 	}
@@ -52,7 +50,10 @@ func verifySignatures(secrets source.SecretGetter, repo *manifest.GitRepository,
 		}
 	}
 	if verifyTag(mode) {
-		tagName := repo.Ref.Tag
+		tagName := ""
+		if repo.Reference != nil {
+			tagName = repo.Reference.Tag
+		}
 		if tagName == "" {
 			return fmt.Errorf("GitRepository %s/%s: verify mode %q requires spec.ref.tag",
 				repo.Namespace, repo.Name, mode)
@@ -65,12 +66,12 @@ func verifySignatures(secrets source.SecretGetter, repo *manifest.GitRepository,
 	return nil
 }
 
-func verifyHEAD(mode string) bool {
-	return mode == manifest.GitVerifyModeHEAD || mode == manifest.GitVerifyModeTagAndHEAD
+func verifyHEAD(mode sourcev1.GitVerificationMode) bool {
+	return mode == sourcev1.ModeGitHEAD || mode == sourcev1.ModeGitTagAndHEAD
 }
 
-func verifyTag(mode string) bool {
-	return mode == manifest.GitVerifyModeTag || mode == manifest.GitVerifyModeTagAndHEAD
+func verifyTag(mode sourcev1.GitVerificationMode) bool {
+	return mode == sourcev1.ModeGitTag || mode == sourcev1.ModeGitTagAndHEAD
 }
 
 // buildPGPKeyring concatenates every string value in the Secret into

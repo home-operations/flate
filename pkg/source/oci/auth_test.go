@@ -12,9 +12,17 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func ociRepo(name string, set func(s *sourcev1.OCIRepositorySpec)) *manifest.OCIRepository {
+	r := &manifest.OCIRepository{Name: name, Namespace: "ns"}
+	if set != nil {
+		set(&r.OCIRepositorySpec)
+	}
+	return r
+}
+
 func TestFetcher_ResolveTLS_NoCertSecretIsNil(t *testing.T) {
 	f := &Fetcher{}
-	repo := &manifest.OCIRepository{Name: "o", Namespace: "ns"}
+	repo := ociRepo("o", nil)
 	cfg, err := f.resolveTLS(repo)
 	if err != nil {
 		t.Fatalf("resolveTLS: %v", err)
@@ -26,7 +34,7 @@ func TestFetcher_ResolveTLS_NoCertSecretIsNil(t *testing.T) {
 
 func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
 	f := &Fetcher{}
-	repo := &manifest.OCIRepository{Name: "o", Namespace: "ns", Insecure: true}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) { s.Insecure = true })
 	cfg, err := f.resolveTLS(repo)
 	if err != nil {
 		t.Fatalf("resolveTLS: %v", err)
@@ -51,10 +59,9 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 			}
 		},
 	}
-	repo := &manifest.OCIRepository{
-		Name: "o", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
-	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+	})
 	cfg, err := f.resolveTLS(repo)
 	if err != nil {
 		t.Fatalf("resolveTLS: %v", err)
@@ -76,10 +83,9 @@ func TestFetcher_ResolveTLS_PartialCertKey(t *testing.T) {
 			return &manifest.Secret{StringData: map[string]any{"tls.crt": "-only-cert-"}}
 		},
 	}
-	repo := &manifest.OCIRepository{
-		Name: "o", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
-	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+	})
 	_, err := f.resolveTLS(repo)
 	if err == nil || !strings.Contains(err.Error(), "must provide both") {
 		t.Errorf("expected partial cert/key error; got %v", err)
@@ -92,24 +98,21 @@ func TestFetcher_ResolveTLS_AllKeysMissing(t *testing.T) {
 			return &manifest.Secret{StringData: map[string]any{"unrelated": "x"}}
 		},
 	}
-	repo := &manifest.OCIRepository{
-		Name: "o", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
-	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+	})
 	_, err := f.resolveTLS(repo)
 	if err == nil || !strings.Contains(err.Error(), "tls.crt") {
 		t.Errorf("expected missing-keys error; got %v", err)
 	}
 }
 
-
 func TestFetcher_NonGenericProvider(t *testing.T) {
 	f := &Fetcher{}
-	repo := &manifest.OCIRepository{
-		Name: "o", Namespace: "ns",
-		URL:      "oci://ghcr.io/x/y",
-		Provider: sourcev1.AmazonOCIProvider,
-	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.URL = "oci://ghcr.io/x/y"
+		s.Provider = sourcev1.AmazonOCIProvider
+	})
 	_, err := f.Fetch(context.Background(), repo)
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
@@ -121,7 +124,7 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 
 func TestFetcher_ResolveConfig_NoSecretFallsBackToGlobal(t *testing.T) {
 	f := &Fetcher{RegistryConfig: "/etc/docker/config.json"}
-	repo := &manifest.OCIRepository{Name: "o", Namespace: "ns"}
+	repo := ociRepo("o", nil)
 	path, cleanup, err := f.resolveRegistryConfig(repo)
 	defer cleanup()
 	if err != nil {
@@ -141,11 +144,10 @@ func TestFetcher_ResolveConfig_SecretWritesTempFile(t *testing.T) {
 			}
 		},
 	}
-	repo := &manifest.OCIRepository{
-		Name: "o", Namespace: "ns",
-		URL:       "oci://ghcr.io/x/y",
-		SecretRef: &manifest.LocalObjectReference{Name: "ghcr-creds"},
-	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.URL = "oci://ghcr.io/x/y"
+		s.SecretRef = &manifest.LocalObjectReference{Name: "ghcr-creds"}
+	})
 	path, cleanup, err := f.resolveRegistryConfig(repo)
 	defer cleanup()
 	if err != nil {
@@ -176,10 +178,9 @@ func TestFetcher_ResolveConfig_SecretMissingDockerConfigJSON(t *testing.T) {
 			}
 		},
 	}
-	repo := &manifest.OCIRepository{
-		Name: "o", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "wrong-shape"},
-	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.SecretRef = &manifest.LocalObjectReference{Name: "wrong-shape"}
+	})
 	_, cleanup, err := f.resolveRegistryConfig(repo)
 	cleanup()
 	if err == nil || !strings.Contains(err.Error(), ".dockerconfigjson") {
@@ -189,10 +190,9 @@ func TestFetcher_ResolveConfig_SecretMissingDockerConfigJSON(t *testing.T) {
 
 func TestFetcher_ResolveConfig_SecretRefWithoutGetter(t *testing.T) {
 	f := &Fetcher{} // no Secrets
-	repo := &manifest.OCIRepository{
-		Name: "o", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+	})
 	_, cleanup, err := f.resolveRegistryConfig(repo)
 	cleanup()
 	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {
@@ -204,10 +204,9 @@ func TestFetcher_ResolveConfig_SecretNotFound(t *testing.T) {
 	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret { return nil },
 	}
-	repo := &manifest.OCIRepository{
-		Name: "o", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "missing"},
-	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
+	})
 	_, cleanup, err := f.resolveRegistryConfig(repo)
 	cleanup()
 	if err == nil || !strings.Contains(err.Error(), "secret ns/missing not found") {

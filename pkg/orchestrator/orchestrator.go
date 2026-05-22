@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
@@ -181,7 +183,7 @@ func (o *Orchestrator) seedBootstrapSource() (string, error) {
 
 	repo := &manifest.GitRepository{
 		Name: "flux-system", Namespace: "flux-system",
-		URL: "file://" + root,
+		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + root},
 	}
 	id := repo.Named()
 	o.store.AddObject(repo)

@@ -84,34 +84,34 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string)
 	}, nil
 }
 
-// HelmChartFromSource constructs a HelmChart from a resolved HelmChartSource.
+// HelmChartFromSource constructs a HelmChart from a resolved
+// HelmChartSource. The Repo* fields are read from the embedded
+// SourceRef (which always shares the HelmChart's namespace per Flux
+// schema).
 func HelmChartFromSource(src *HelmChartSource) HelmChart {
+	kind := src.SourceRef.Kind
+	if kind == "" {
+		kind = KindHelmRepository
+	}
 	return HelmChart{
 		Name:          src.Chart,
 		Version:       src.Version,
-		RepoName:      src.RepoName,
-		RepoNamespace: src.RepoNamespace,
-		RepoKind:      src.RepoKind,
+		RepoName:      src.SourceRef.Name,
+		RepoNamespace: src.Namespace,
+		RepoKind:      kind,
 	}
 }
 
 // HelmChartSource is the standalone HelmChart CRD
-// (source.toolkit.fluxcd.io/v1 HelmChart).
+// (source.toolkit.fluxcd.io/v1 HelmChart). The embedded HelmChartSpec
+// promotes Chart, Version, SourceRef, ValuesFiles,
+// IgnoreMissingValuesFiles, ReconcileStrategy, Suspend, Verify to the
+// top level for ergonomic access.
 type HelmChartSource struct {
-	Name                     string   `json:"name" yaml:"name"`
-	Namespace                string   `json:"namespace" yaml:"namespace"`
-	Chart                    string   `json:"chart" yaml:"chart"`
-	Version                  string   `json:"version,omitempty" yaml:"version,omitempty"`
-	RepoName                 string   `json:"repoName" yaml:"repoName"`
-	RepoNamespace            string   `json:"repoNamespace" yaml:"repoNamespace"`
-	RepoKind                 string   `json:"repoKind" yaml:"repoKind"`
-	Suspend                  bool     `json:"-" yaml:"-"`
-	ValuesFiles              []string `json:"-" yaml:"-"`
-	IgnoreMissingValuesFiles bool     `json:"-" yaml:"-"`
-	// ReconcileStrategy is "ChartVersion" (default) or "Revision". Flate
-	// does not re-trigger reconciles; this is parsed for round-tripping
-	// fidelity so consumers can observe the upstream intent.
-	ReconcileStrategy string `json:"-" yaml:"-"`
+	Name      string `json:"name"      yaml:"name"`
+	Namespace string `json:"namespace" yaml:"namespace"`
+
+	sourcev1.HelmChartSpec `json:",inline" yaml:",inline"`
 }
 
 // Named identifies the chart resource.
@@ -147,22 +147,13 @@ func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	if cr.Spec.SourceRef.Name == "" {
 		return nil, inputf("HelmChart missing spec.sourceRef.name")
 	}
-	repoKind := cr.Spec.SourceRef.Kind
-	if repoKind == "" {
-		repoKind = KindHelmRepository
+	if cr.Spec.SourceRef.Kind == "" {
+		cr.Spec.SourceRef.Kind = KindHelmRepository
 	}
 	return &HelmChartSource{
-		Name:                     cr.Name,
-		Namespace:                ns,
-		Chart:                    cr.Spec.Chart,
-		Version:                  cr.Spec.Version,
-		RepoName:                 cr.Spec.SourceRef.Name,
-		RepoNamespace:            ns,
-		RepoKind:                 repoKind,
-		Suspend:                  cr.Spec.Suspend,
-		ValuesFiles:              cr.Spec.ValuesFiles,
-		IgnoreMissingValuesFiles: cr.Spec.IgnoreMissingValuesFiles,
-		ReconcileStrategy:        cr.Spec.ReconcileStrategy,
+		Name:           cr.Name,
+		Namespace:      ns,
+		HelmChartSpec:  cr.Spec,
 	}, nil
 }
 

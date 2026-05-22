@@ -31,40 +31,25 @@ func GitRefString(r GitRepositoryRef) string {
 
 
 // GitRepository is the Flux GitRepository CRD.
+// GitRepository is the Flux GitRepository CRD. The embedded
+// sourcev1.GitRepositorySpec promotes URL, Reference, Verification,
+// Provider, SecretRef, ProxySecretRef, RecurseSubmodules,
+// SparseCheckout, Suspend etc. to the top level.
 type GitRepository struct {
-	Name              string                `json:"name" yaml:"name"`
-	Namespace         string                `json:"namespace" yaml:"namespace"`
-	URL               string                `json:"url" yaml:"url"`
-	Ref               GitRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
-	Provider          string                `json:"provider,omitempty" yaml:"provider,omitempty"`
-	SecretRef         *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-	ProxySecretRef    *LocalObjectReference `json:"proxySecretRef,omitempty" yaml:"proxySecretRef,omitempty"`
-	Verify            *GitRepositoryVerify  `json:"verify,omitempty" yaml:"verify,omitempty"`
-	RecurseSubmodules bool                  `json:"recurseSubmodules,omitempty" yaml:"recurseSubmodules,omitempty"`
-	// SparseCheckout limits the checkout to the listed repo-relative
-	// directories. When empty, the full tree is checked out (default).
-	SparseCheckout []string `json:"sparseCheckout,omitempty" yaml:"sparseCheckout,omitempty"`
-	Suspend        bool     `json:"-" yaml:"-"`
+	Name      string `json:"name"      yaml:"name"`
+	Namespace string `json:"namespace" yaml:"namespace"`
+
+	sourcev1.GitRepositorySpec `json:",inline" yaml:",inline"`
 }
 
-// GitRepositoryVerify mirrors source-controller's GitRepositoryVerification.
-// The Secret named by SecretRef holds one or more PEM-armored PGP
-// public keys (typically "*.asc"); flate concatenates them into a
-// single keyring and verifies the resolved commit/tag signatures
-// against it.
-type GitRepositoryVerify struct {
-	// Mode is "HEAD", "Tag", or "TagAndHEAD". The legacy "head"
-	// alias normalizes to "HEAD" during parse.
-	Mode      string                `json:"mode,omitempty" yaml:"mode,omitempty"`
-	SecretRef *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-}
+// GitRepositoryVerify is the Flux GitRepositoryVerification type.
+type GitRepositoryVerify = sourcev1.GitRepositoryVerification
 
-// Git verification modes — sourced from sourcev1.GitVerificationMode so
-// flate's bare-string Mode field interops with the typed upstream API.
-var (
-	GitVerifyModeHEAD       = string(sourcev1.ModeGitHEAD)
-	GitVerifyModeTag        = string(sourcev1.ModeGitTag)
-	GitVerifyModeTagAndHEAD = string(sourcev1.ModeGitTagAndHEAD)
+// Git verification modes — typed re-exports of sourcev1.GitVerificationMode.
+const (
+	GitVerifyModeHEAD       = sourcev1.ModeGitHEAD
+	GitVerifyModeTag        = sourcev1.ModeGitTag
+	GitVerifyModeTagAndHEAD = sourcev1.ModeGitTagAndHEAD
 )
 
 // Named identifies the GitRepository.
@@ -95,42 +80,20 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("GitRepository missing spec.url")
 	}
-	var ref GitRepositoryRef
-	if r := cr.Spec.Reference; r != nil {
-		ref = *r
-	}
-	provider := cr.Spec.Provider
-	if provider == "" {
-		provider = sourcev1.GitProviderGeneric
-	}
-	out := &GitRepository{
-		Name:              cr.Name,
-		Namespace:         cr.Namespace,
-		URL:               cr.Spec.URL,
-		Ref:               ref,
-		Provider:          provider,
-		RecurseSubmodules: cr.Spec.RecurseSubmodules,
-		SparseCheckout:    cr.Spec.SparseCheckout,
-		Suspend:           cr.Spec.Suspend,
-	}
-	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
-		out.SecretRef = cr.Spec.SecretRef
-	}
-	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
-		out.ProxySecretRef = cr.Spec.ProxySecretRef
+	if cr.Spec.Provider == "" {
+		cr.Spec.Provider = sourcev1.GitProviderGeneric
 	}
 	if v := cr.Spec.Verification; v != nil {
-		mode := string(v.GetMode())
-		if mode == "head" { // legacy alias
-			mode = GitVerifyModeHEAD
-		}
-		out.Verify = &GitRepositoryVerify{Mode: mode}
-		if v.SecretRef.Name != "" {
-			ref := v.SecretRef
-			out.Verify.SecretRef = &ref
-		}
+		// GetMode normalizes the legacy "head" alias to "HEAD" and
+		// applies the schema default. Write it back so consumers see a
+		// canonical mode regardless of source casing.
+		v.Mode = v.GetMode()
 	}
-	return out, nil
+	return &GitRepository{
+		Name:              cr.Name,
+		Namespace:         cr.Namespace,
+		GitRepositorySpec: cr.Spec,
+	}, nil
 }
 
 // OCIRepositoryRef is the Flux OCIRepositoryRef from source-controller.
@@ -139,20 +102,15 @@ type OCIRepositoryRef = sourcev1.OCIRepositoryRef
 // OCIRefIsEmpty reports whether the ref is empty.
 func OCIRefIsEmpty(r OCIRepositoryRef) bool { return r == OCIRepositoryRef{} }
 
-// OCIRepository is the Flux OCIRepository CRD.
+// OCIRepository is the Flux OCIRepository CRD. The embedded
+// sourcev1.OCIRepositorySpec promotes URL, Reference, LayerSelector,
+// Provider, SecretRef, CertSecretRef, ProxySecretRef, Verify, Insecure,
+// Suspend etc. to the top level.
 type OCIRepository struct {
-	Name           string                `json:"name" yaml:"name"`
-	Namespace      string                `json:"namespace" yaml:"namespace"`
-	URL            string                `json:"url" yaml:"url"`
-	Ref            OCIRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
-	Provider       string                `json:"provider,omitempty" yaml:"provider,omitempty"`
-	SecretRef      *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-	CertSecretRef  *LocalObjectReference `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
-	ProxySecretRef *LocalObjectReference `json:"proxySecretRef,omitempty" yaml:"proxySecretRef,omitempty"`
-	Verify         *OCIRepositoryVerify  `json:"verify,omitempty" yaml:"verify,omitempty"`
-	LayerSelector  *OCILayerSelector     `json:"layerSelector,omitempty" yaml:"layerSelector,omitempty"`
-	Insecure       bool                  `json:"insecure,omitempty" yaml:"insecure,omitempty"`
-	Suspend        bool                  `json:"-" yaml:"-"`
+	Name      string `json:"name"      yaml:"name"`
+	Namespace string `json:"namespace" yaml:"namespace"`
+
+	sourcev1.OCIRepositorySpec `json:",inline" yaml:",inline"`
 }
 
 // OCILayerSelector is the Flux OCILayerSelector from source-controller.
@@ -193,16 +151,17 @@ func (o *OCIRepository) RepoName() string { return o.Namespace + "-" + o.Name }
 // A semver expression is returned verbatim — callers wanting a concrete
 // tag must resolve it against remote tag listing (pkg/source).
 func (o *OCIRepository) Version() (string, error) {
-	if OCIRefIsEmpty(o.Ref) {
+	r := o.Reference
+	if r == nil {
 		return "", nil
 	}
 	switch {
-	case o.Ref.Digest != "":
-		return o.Ref.Digest, nil
-	case o.Ref.Tag != "":
-		return o.Ref.Tag, nil
-	case o.Ref.SemVer != "":
-		return o.Ref.SemVer, nil
+	case r.Digest != "":
+		return r.Digest, nil
+	case r.Tag != "":
+		return r.Tag, nil
+	case r.SemVer != "":
+		return r.SemVer, nil
 	}
 	return "", nil
 }
@@ -210,16 +169,17 @@ func (o *OCIRepository) Version() (string, error) {
 // VersionedURL appends the version with the correct separator: "@" for
 // digests, ":" for tags and semver.
 func (o *OCIRepository) VersionedURL() string {
-	if OCIRefIsEmpty(o.Ref) {
+	r := o.Reference
+	if r == nil {
 		return o.URL
 	}
 	switch {
-	case o.Ref.Digest != "":
-		return o.URL + "@" + o.Ref.Digest
-	case o.Ref.Tag != "":
-		return o.URL + ":" + o.Ref.Tag
-	case o.Ref.SemVer != "":
-		return o.URL + ":" + o.Ref.SemVer
+	case r.Digest != "":
+		return o.URL + "@" + r.Digest
+	case r.Tag != "":
+		return o.URL + ":" + r.Tag
+	case r.SemVer != "":
+		return o.URL + ":" + r.SemVer
 	}
 	return o.URL
 }
@@ -239,40 +199,17 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("OCIRepository missing spec.url")
 	}
-	provider := cr.Spec.Provider
-	if provider == "" {
-		provider = sourcev1.GenericOCIProvider
-	}
-	out := &OCIRepository{
-		Name:      cr.Name,
-		Namespace: cr.Namespace,
-		URL:       cr.Spec.URL,
-		Provider:  provider,
-		Insecure:  cr.Spec.Insecure,
-		Suspend:   cr.Spec.Suspend,
-	}
-	if cr.Spec.CertSecretRef != nil && cr.Spec.CertSecretRef.Name != "" {
-		out.CertSecretRef = cr.Spec.CertSecretRef
-	}
-	if r := cr.Spec.Reference; r != nil {
-		out.Ref = *r
-	}
-	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
-		out.SecretRef = cr.Spec.SecretRef
-	}
-	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
-		out.ProxySecretRef = cr.Spec.ProxySecretRef
+	if cr.Spec.Provider == "" {
+		cr.Spec.Provider = sourcev1.GenericOCIProvider
 	}
 	if v := cr.Spec.Verify; v != nil {
-		clone := *v
-		clone.MatchOIDCIdentity = slices.Clone(v.MatchOIDCIdentity)
-		out.Verify = &clone
+		v.MatchOIDCIdentity = slices.Clone(v.MatchOIDCIdentity)
 	}
-	if ls := cr.Spec.LayerSelector; ls != nil {
-		clone := *ls
-		out.LayerSelector = &clone
-	}
-	return out, nil
+	return &OCIRepository{
+		Name:              cr.Name,
+		Namespace:         cr.Namespace,
+		OCIRepositorySpec: cr.Spec,
+	}, nil
 }
 
 // ExternalArtifactSourceRef identifies the upstream CR that produces

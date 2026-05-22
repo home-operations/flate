@@ -11,31 +11,31 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
 
-// ApplyIgnore deletes every file under root that matches the gitignore-
-// style patterns in ignore, mirroring source-controller's spec.ignore
-// behavior. Empty/nil ignore is a no-op.
+// ApplyIgnore deletes every file under root that matches the source-
+// controller ignore matcher: VCS + Default excludes (.git/, .github/,
+// *.jpg/png/zip, .sops.yaml, .flux.yaml, ...) PLUS any in-tree
+// .sourceignore files PLUS the user-supplied spec.ignore patterns when
+// non-nil. Mirrors source-controller's artifact-build behavior.
 //
-// flate intentionally applies ONLY user-supplied patterns from
-// spec.ignore — source-controller's default VCS/extension excludes are
-// skipped so repos that never set spec.ignore see no behavior change.
-// Files that real Flux would have excluded by default remain visible
-// in the staged artifact; users wanting full fidelity should set
-// spec.ignore explicitly.
+// nil spec.ignore is NOT a no-op — the VCS + Default patterns still
+// apply, matching what real Flux ships in an artifact tarball.
 func ApplyIgnore(root string, ignore *string) error {
-	if ignore == nil || strings.TrimSpace(*ignore) == "" {
-		return nil
-	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return fmt.Errorf("sourceignore abs: %w", err)
 	}
 	domain := strings.Split(abs, string(filepath.Separator))
-	patterns := sourceignore.ReadPatterns(strings.NewReader(*ignore), domain)
-	if len(patterns) == 0 {
-		return nil
+
+	// Default to VCS + extension excludes + any .sourceignore files
+	// reachable from root, then layer user patterns on top.
+	patterns, err := sourceignore.LoadIgnorePatterns(abs, domain)
+	if err != nil {
+		return fmt.Errorf("sourceignore load: %w", err)
 	}
-	matcher := sourceignore.NewMatcher(patterns)
-	return walkAndDelete(abs, domain, matcher)
+	if ignore != nil && strings.TrimSpace(*ignore) != "" {
+		patterns = append(patterns, sourceignore.ReadPatterns(strings.NewReader(*ignore), domain)...)
+	}
+	return walkAndDelete(abs, domain, sourceignore.NewDefaultMatcher(patterns, domain))
 }
 
 func walkAndDelete(root string, domain []string, matcher gitignore.Matcher) error {
@@ -51,8 +51,6 @@ func walkAndDelete(root string, domain []string, matcher gitignore.Matcher) erro
 		if err != nil {
 			return err
 		}
-		// gitignore.Matcher expects path segments relative to the
-		// scope root, combined with the absolute domain.
 		segments := append(append([]string{}, domain...), strings.Split(rel, string(filepath.Separator))...)
 		if matcher.Match(segments, d.IsDir()) {
 			toRemove = append(toRemove, p)

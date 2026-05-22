@@ -246,11 +246,18 @@ func (h *HelmRelease) RepoName() string {
 // NamespacedName is "<namespace>/<name>".
 func (h *HelmRelease) NamespacedName() string { return h.Namespace + "/" + h.Name }
 
-// ResolveChartRef replaces a chartRef placeholder with the resolved source
-// when version was not pinned. helmCharts is keyed by ResourceFullName.
-// When the chartRef resolves to a HelmChart CRD, its spec.valuesFiles +
+// ResolveChartRef replaces a chartRef placeholder with the resolved
+// source. helmCharts is keyed by ResourceFullName. When the chartRef
+// resolves to a HelmChart CRD, its spec.valuesFiles +
 // spec.ignoreMissingValuesFiles propagate onto the HelmRelease so the
 // rendering pipeline can merge them ahead of HR.Values.
+//
+// The chart rewrite is unconditional once we find the source — even
+// when the HelmChart CRD has no spec.version, we need RepoKind to flip
+// from KindHelmChart to the underlying real source (HelmRepository /
+// OCIRepository / GitRepository) so downstream chart loading can
+// dispatch. Without it, LocateChart would see RepoKind=HelmChart and
+// fall through with an "unsupported chart repo kind" error.
 func (h *HelmRelease) ResolveChartRef(helmCharts map[string]*HelmChartSource) error {
 	if h.Chart.RepoKind != KindHelmChart || h.Chart.Version != "" {
 		return nil
@@ -260,9 +267,7 @@ func (h *HelmRelease) ResolveChartRef(helmCharts map[string]*HelmChartSource) er
 		return fmt.Errorf("%w: HelmChartSource %s not found for HelmRelease %s",
 			ErrObjectNotFound, h.Chart.RepoFullName(), h.NamespacedName())
 	}
-	if src.Version != "" {
-		h.Chart = HelmChartFromSource(src)
-	}
+	h.Chart = HelmChartFromSource(src)
 	if len(src.ValuesFiles) > 0 {
 		h.ChartValuesFiles = src.ValuesFiles
 		h.IgnoreMissingValuesFiles = src.IgnoreMissingValuesFiles

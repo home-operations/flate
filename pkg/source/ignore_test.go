@@ -31,19 +31,30 @@ func exists(t *testing.T, p string) bool {
 	return false
 }
 
-func TestApplyIgnore_NilOrEmptyIsNoop(t *testing.T) {
+// TestApplyIgnore_AppliesDefaultsWhenIgnoreNil asserts the source-
+// controller default exclusions (VCS + ExcludeExt + ExcludeCI +
+// ExcludeExtra) fire even when spec.ignore is nil, matching real
+// Flux's artifact-build behavior.
+func TestApplyIgnore_AppliesDefaultsWhenIgnoreNil(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "keep.yaml")
 	writeFile(t, root, "docs/readme.md")
+	writeFile(t, root, ".git/HEAD")
+	writeFile(t, root, ".github/workflows/ci.yml")
+	writeFile(t, root, "img.png")
+	writeFile(t, root, ".sops.yaml")
 
-	for _, ig := range []*string{nil, ptr("")} {
-		if err := source.ApplyIgnore(root, ig); err != nil {
-			t.Fatalf("ApplyIgnore: %v", err)
+	if err := source.ApplyIgnore(root, nil); err != nil {
+		t.Fatalf("ApplyIgnore: %v", err)
+	}
+	for _, gone := range []string{".git", ".github", "img.png", ".sops.yaml"} {
+		if exists(t, filepath.Join(root, gone)) {
+			t.Errorf("default exclude should remove %s", gone)
 		}
 	}
-	for _, rel := range []string{"keep.yaml", "docs/readme.md"} {
-		if !exists(t, filepath.Join(root, rel)) {
-			t.Errorf("expected %s to remain", rel)
+	for _, kept := range []string{"keep.yaml", "docs/readme.md"} {
+		if !exists(t, filepath.Join(root, kept)) {
+			t.Errorf("expected %s to remain", kept)
 		}
 	}
 }
@@ -111,4 +122,43 @@ func TestApplyIgnore_CommentsAndBlankLines(t *testing.T) {
 	}
 }
 
-func ptr(s string) *string { return &s }
+func TestApplyIgnore_DoubleStarMatchesAtAnyDepth(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "vendor/lib/x")
+	writeFile(t, root, "apps/a/vendor/lib/x")
+	writeFile(t, root, "apps/b/manifest.yaml")
+
+	patterns := "**/vendor/\n"
+	if err := source.ApplyIgnore(root, &patterns); err != nil {
+		t.Fatalf("ApplyIgnore: %v", err)
+	}
+	if exists(t, filepath.Join(root, "vendor")) {
+		t.Errorf("**/vendor must remove root-level vendor")
+	}
+	if exists(t, filepath.Join(root, "apps/a/vendor")) {
+		t.Errorf("**/vendor must remove nested vendor")
+	}
+	if !exists(t, filepath.Join(root, "apps/b/manifest.yaml")) {
+		t.Errorf("non-matching path should remain")
+	}
+}
+
+func TestApplyIgnore_LeadingSlashAnchorsToRoot(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "config.yaml")
+	writeFile(t, root, "subdir/config.yaml")
+
+	// /config.yaml should match only the root-level file, not the
+	// nested one. gitignore semantics: a leading "/" anchors.
+	patterns := "/config.yaml\n"
+	if err := source.ApplyIgnore(root, &patterns); err != nil {
+		t.Fatalf("ApplyIgnore: %v", err)
+	}
+	if exists(t, filepath.Join(root, "config.yaml")) {
+		t.Errorf("root-anchored /config.yaml must remove root file")
+	}
+	if !exists(t, filepath.Join(root, "subdir/config.yaml")) {
+		t.Errorf("root-anchored /config.yaml must NOT remove nested file")
+	}
+}
+

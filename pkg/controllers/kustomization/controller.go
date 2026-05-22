@@ -88,8 +88,15 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 
 	deps := c.collectDeps(ks)
 	if len(deps) > 0 {
-		w := &depwait.Waiter{Store: c.Store, Parent: id}
-		sum := depwait.WaitAll(w.Watch(ctx, deps))
+		// Release our worker slot for the duration of the dep wait so
+		// children we depend on can acquire one and make progress.
+		// Without this, N parents on a bounded Service consume all
+		// slots while waiting for children that need a slot to run.
+		var sum depwait.Summary
+		c.Tasks.YieldSlot(func() {
+			w := &depwait.Waiter{Store: c.Store, Parent: id}
+			sum = depwait.WaitAll(w.Watch(ctx, deps))
+		})
 		if sum.AnyFailed() {
 			return &manifest.DependencyFailedError{
 				Parent:  id,

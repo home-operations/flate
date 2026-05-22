@@ -101,6 +101,26 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 	}()
 }
 
+// YieldSlot releases the worker-pool slot held by the current goroutine,
+// runs fn, then re-acquires a slot before returning. Use this around
+// blocking waits (e.g. depwait) so queued tasks can make progress while
+// the holder is parked on external state. Without this, N tasks waiting
+// on each other for slot-gated work deadlock under NewBounded(N).
+//
+// MUST be called only from inside a body launched by Service.Go —
+// calling from outside corrupts the semaphore accounting.
+//
+// On an unbounded Service (New or NewBounded(<=0)), fn runs unchanged.
+func (s *Service) YieldSlot(fn func()) {
+	if s.sem == nil {
+		fn()
+		return
+	}
+	<-s.sem
+	fn()
+	s.sem <- struct{}{}
+}
+
 // GoBackground launches a long-lived task whose completion is not
 // counted toward BlockTillDone.
 func (s *Service) GoBackground(ctx context.Context, name string, fn func(context.Context)) {

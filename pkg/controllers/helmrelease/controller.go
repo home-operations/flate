@@ -126,10 +126,15 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
+	// YieldSlot releases the worker-pool slot during the wait so the
+	// dependencies can themselves acquire one.
 	if deps := c.collectHRDeps(hr); len(deps) > 0 {
 		c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
-		w := &depwait.Waiter{Store: c.Store, Parent: id}
-		sum := depwait.WaitAll(w.Watch(ctx, deps))
+		var sum depwait.Summary
+		c.Tasks.YieldSlot(func() {
+			w := &depwait.Waiter{Store: c.Store, Parent: id}
+			sum = depwait.WaitAll(w.Watch(ctx, deps))
+		})
 		if sum.AnyFailed() {
 			return &manifest.DependencyFailedError{
 				Parent:  id,
@@ -153,8 +158,11 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	srcID := manifest.NamedResource{
 		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
 	}
-	w := &depwait.Waiter{Store: c.Store, Parent: id}
-	sum := depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: srcID}}))
+	var sum depwait.Summary
+	c.Tasks.YieldSlot(func() {
+		w := &depwait.Waiter{Store: c.Store, Parent: id}
+		sum = depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: srcID}}))
+	})
 	if sum.AnyFailed() {
 		return fmt.Errorf("%w: chart source %s not ready: %s",
 			manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])

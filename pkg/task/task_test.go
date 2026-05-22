@@ -207,6 +207,69 @@ func TestCoalescer_DistinctKeysRunConcurrently(t *testing.T) {
 	s.BlockTillDone()
 }
 
+// TestYieldSlot_AllowsChildrenWhenParentsFillPool simulates the
+// parent/child Kustomization deadlock: two parents each take a slot in
+// a 2-worker pool, then block waiting on a child. Without YieldSlot
+// the children can never acquire a slot and the whole run hangs.
+func TestYieldSlot_AllowsChildrenWhenParentsFillPool(t *testing.T) {
+	s := NewBounded(2)
+	childrenStarted := make(chan struct{}, 2)
+	childrenDone := make(chan struct{})
+
+	// Two children that will run once they get a slot.
+	for range 2 {
+		s.Go(context.Background(), "child", func(_ context.Context) {
+			childrenStarted <- struct{}{}
+			<-childrenDone
+		})
+	}
+
+	// Two parents that occupy the slots and wait for the children.
+	parentsDone := make(chan struct{})
+	for range 2 {
+		s.Go(context.Background(), "parent", func(_ context.Context) {
+			s.YieldSlot(func() {
+				// Wait until both children have started — which can only
+				// happen if YieldSlot actually released our slot.
+				<-childrenStarted
+			})
+		})
+	}
+
+	go func() {
+		s.BlockTillDone()
+		close(parentsDone)
+	}()
+
+	// Both children must have started under YieldSlot.
+	select {
+	case <-time.After(2 * time.Second):
+		t.Fatal("children never started — YieldSlot did not release slots")
+	case <-parentsDone:
+		t.Fatal("parents finished before children started — unexpected ordering")
+	default:
+	}
+
+	// Release children; parents should reclaim slots and finish.
+	close(childrenDone)
+	select {
+	case <-parentsDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("parents never finished after children completed")
+	}
+}
+
+// TestYieldSlot_UnboundedIsNoOp asserts the no-pool path runs fn
+// transparently.
+func TestYieldSlot_UnboundedIsNoOp(t *testing.T) {
+	s := New()
+	called := false
+	s.YieldSlot(func() { called = true })
+	if !called {
+		t.Errorf("YieldSlot did not invoke fn on unbounded Service")
+	}
+}
+
 func TestService_ActiveNames(t *testing.T) {
 	s := New()
 	gate := make(chan struct{})

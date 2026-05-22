@@ -86,6 +86,10 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 		_ = f.Cache.Reset(slot)
 		return nil, fmt.Errorf("bucket %s/%s walk: %w", b.Namespace, b.Name, err)
 	}
+	if err := source.ApplyIgnore(slot, b.Ignore); err != nil {
+		_ = f.Cache.Reset(slot)
+		return nil, fmt.Errorf("bucket %s/%s: %w", b.Namespace, b.Name, err)
+	}
 
 	return &store.SourceArtifact{
 		Kind:      manifest.KindBucket,

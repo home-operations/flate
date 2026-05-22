@@ -271,6 +271,10 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		_ = os.RemoveAll(slot)
 		return nil, fmt.Errorf("OCIRepository %s/%s: layer select: %w", repo.Namespace, repo.Name, err)
 	}
+	if err := source.ApplyIgnore(slot, repo.Ignore); err != nil {
+		_ = os.RemoveAll(slot)
+		return nil, fmt.Errorf("OCIRepository %s/%s: %w", repo.Namespace, repo.Name, err)
+	}
 	// Persist the resolved digest so a subsequent cache hit can
 	// re-verify against the exact bytes we wrote, even when the spec
 	// pinned only a tag.

@@ -96,6 +96,9 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 			return nil, err
 		}
 	}
+	if err := source.ApplyIgnore(art.LocalPath, repo.Ignore); err != nil {
+		return nil, fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
+	}
 	return art, nil
 }
 

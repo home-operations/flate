@@ -42,6 +42,16 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	inst.ReleaseName = hr.Name
 	inst.Namespace = hr.ReleaseNamespace()
 	inst.IncludeCRDs = !opts.SkipCRDs
+	// HR-scoped policy wins: spec.install.crds / spec.upgrade.crds set
+	// to "Skip" suppresses CRDs even when the CLI requests them.
+	// "Create" / "CreateReplace" force them on. An empty policy lets
+	// the CLI flag decide.
+	switch hr.CRDsPolicy {
+	case "Skip":
+		inst.IncludeCRDs = false
+	case "Create", "CreateReplace":
+		inst.IncludeCRDs = true
+	}
 	inst.DisableHooks = opts.NoHooks
 	inst.IsUpgrade = opts.IsUpgrade
 	inst.EnableDNS = opts.EnableDNS

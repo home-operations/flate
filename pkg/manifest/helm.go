@@ -202,6 +202,14 @@ type HelmRelease struct {
 	Suspend                  bool              `json:"-" yaml:"-"`
 	DisableSchemaValidation  bool              `json:"-" yaml:"-"`
 	DisableOpenAPIValidation bool              `json:"-" yaml:"-"`
+	// CRDsPolicy mirrors spec.install.crds / spec.upgrade.crds. One of
+	// "" (chart's helm default), "Skip", "Create", "CreateReplace".
+	// "Skip" suppresses CRDs from the rendered output. "Create" and
+	// "CreateReplace" both include CRDs — they differ only in
+	// cluster-apply semantics which flate doesn't perform.
+	// Upgrade wins over Install when both are set, matching
+	// helm-controller's "upgrade-after-install" model.
+	CRDsPolicy string `json:"-" yaml:"-"`
 	// ServiceAccountName is the SA Flux's helm-controller impersonates
 	// when applying the release. Flate renders offline so it has no
 	// effect here, but the field is preserved for fidelity with the
@@ -324,6 +332,17 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableSchemaValidation)
 	disableOpenAPI := (cr.Spec.Install != nil && cr.Spec.Install.DisableOpenAPIValidation) ||
 		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableOpenAPIValidation)
+	// Upgrade.CRDs wins over Install.CRDs — helm-controller's
+	// upgrade-after-install model means the upgrade policy is what
+	// the running cluster sees once any release is past its first
+	// install.
+	crdsPolicy := ""
+	if cr.Spec.Install != nil {
+		crdsPolicy = string(cr.Spec.Install.CRDs)
+	}
+	if cr.Spec.Upgrade != nil && cr.Spec.Upgrade.CRDs != "" {
+		crdsPolicy = string(cr.Spec.Upgrade.CRDs)
+	}
 	var dependsOn []DependencyRef
 	for _, dep := range cr.Spec.DependsOn {
 		if dep.Name == "" {
@@ -363,6 +382,7 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		ChartValuesFiles:         chartValuesFiles,
 		IgnoreMissingValuesFiles: ignoreMissingValuesFiles,
 		ServiceAccountName:       cr.Spec.ServiceAccountName,
+		CRDsPolicy:               crdsPolicy,
 	}, nil
 }
 

@@ -85,6 +85,86 @@ spec:
 	}
 }
 
+func TestParseHelmRelease_CRDsPolicy(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "install only",
+			yaml: `
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: hr, namespace: ns}
+spec:
+  install: {crds: Create}
+  chart:
+    spec:
+      chart: c
+      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
+`,
+			want: "Create",
+		},
+		{
+			name: "upgrade wins over install",
+			yaml: `
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: hr, namespace: ns}
+spec:
+  install: {crds: Create}
+  upgrade: {crds: CreateReplace}
+  chart:
+    spec:
+      chart: c
+      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
+`,
+			want: "CreateReplace",
+		},
+		{
+			name: "skip suppresses",
+			yaml: `
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: hr, namespace: ns}
+spec:
+  upgrade: {crds: Skip}
+  chart:
+    spec:
+      chart: c
+      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
+`,
+			want: "Skip",
+		},
+		{
+			name: "empty when neither set",
+			yaml: `
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: hr, namespace: ns}
+spec:
+  chart:
+    spec:
+      chart: c
+      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
+`,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hr, err := ParseHelmRelease(mustYAML(t, tc.yaml))
+			if err != nil {
+				t.Fatalf("ParseHelmRelease: %v", err)
+			}
+			if hr.CRDsPolicy != tc.want {
+				t.Errorf("CRDsPolicy = %q, want %q", hr.CRDsPolicy, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseHelmChartSource_ReconcileStrategy(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: source.toolkit.fluxcd.io/v1

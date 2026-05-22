@@ -11,6 +11,7 @@ require (
 	github.com/fluxcd/pkg/apis/meta v1.25.1
 	github.com/fluxcd/pkg/envsubst v1.7.0
 	github.com/fluxcd/pkg/kustomize v1.32.0
+	github.com/fluxcd/pkg/sourceignore v0.18.0
 	github.com/fluxcd/source-controller/api v1.8.5
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/google/cel-go v0.28.1
@@ -60,7 +61,6 @@ require (
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fluxcd/cli-utils v1.2.0 // indirect
 	github.com/fluxcd/pkg/apis/acl v0.9.0 // indirect
-	github.com/fluxcd/pkg/sourceignore v0.18.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect

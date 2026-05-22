@@ -5,7 +5,41 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// ResolveCertSecret reads ref's Secret and builds a *tls.Config from
+// its tls.crt + tls.key (client cert) and/or ca.crt (server CA) keys —
+// mirroring source-controller's certSecretRef schema.
+//
+// Returns (nil, nil) when ref is nil. Loud errors when ref is set but
+// SecretGetter is unwired or the Secret is missing/unparseable.
+// ownerKind+ownerID are formatted into errors for diagnosability.
+func ResolveCertSecret(secrets SecretGetter, ns, ownerKind, ownerID string, ref *manifest.LocalObjectReference) (*tls.Config, error) {
+	if ref == nil {
+		return nil, nil
+	}
+	if secrets == nil {
+		return nil, fmt.Errorf("%s %s references certSecretRef but no source.SecretGetter is wired",
+			ownerKind, ownerID)
+	}
+	sec := secrets(ns, ref.Name)
+	if sec == nil {
+		return nil, fmt.Errorf("%s %s: cert secret %s/%s not found",
+			ownerKind, ownerID, ns, ref.Name)
+	}
+	cfg, err := BuildTLSConfig(
+		StringFromSecret(sec, "tls.crt"),
+		StringFromSecret(sec, "tls.key"),
+		StringFromSecret(sec, "ca.crt"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%s %s: certSecretRef %s/%s: %w",
+			ownerKind, ownerID, ns, ref.Name, err)
+	}
+	return cfg, nil
+}
 
 // BuildTLSConfig assembles a *tls.Config from PEM-armored secret
 // material. Any subset of (client cert + key) and (CA) is acceptable;

@@ -5,7 +5,6 @@ package bucket
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -115,7 +114,8 @@ func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) 
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	if b.CertSecretRef != nil {
-		cfg, terr := f.resolveTLSConfig(b)
+		cfg, terr := source.ResolveCertSecret(f.Secrets, b.Namespace, "Bucket",
+			b.Namespace+"/"+b.Name, b.CertSecretRef)
 		if terr != nil {
 			return nil, terr
 		}
@@ -129,28 +129,6 @@ func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) 
 		tr.Proxy = pfn
 	}
 	return tr, nil
-}
-
-func (f *Fetcher) resolveTLSConfig(b *manifest.Bucket) (*tls.Config, error) {
-	if f.Secrets == nil {
-		return nil, fmt.Errorf("bucket %s/%s references certSecretRef but no source.SecretGetter is wired",
-			b.Namespace, b.Name)
-	}
-	sec := f.Secrets(b.Namespace, b.CertSecretRef.Name)
-	if sec == nil {
-		return nil, fmt.Errorf("bucket %s/%s: cert secret %s/%s not found",
-			b.Namespace, b.Name, b.Namespace, b.CertSecretRef.Name)
-	}
-	cfg, err := source.BuildTLSConfig(
-		source.StringFromSecret(sec, "tls.crt"),
-		source.StringFromSecret(sec, "tls.key"),
-		source.StringFromSecret(sec, "ca.crt"),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("bucket %s/%s: certSecretRef %s/%s: %w",
-			b.Namespace, b.Name, b.Namespace, b.CertSecretRef.Name, err)
-	}
-	return cfg, nil
 }
 
 // resolveCredentials picks up accesskey/secretkey from the SecretRef

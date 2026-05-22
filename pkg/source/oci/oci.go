@@ -77,36 +77,16 @@ func (f *Fetcher) resolveTLS(repo *manifest.OCIRepository) (*tls.Config, error) 
 	if repo.CertSecretRef == nil && !repo.Insecure {
 		return nil, nil
 	}
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	cfg, err := source.ResolveCertSecret(f.Secrets, repo.Namespace, "OCIRepository",
+		repo.Namespace+"/"+repo.Name, repo.CertSecretRef)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		cfg = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
 	if repo.Insecure {
 		cfg.InsecureSkipVerify = true //nolint:gosec // honoring user-declared spec.insecure
-	}
-	if repo.CertSecretRef == nil {
-		return cfg, nil
-	}
-	if f.Secrets == nil {
-		return nil, fmt.Errorf("OCIRepository %s/%s references certSecretRef but no source.SecretGetter is wired",
-			repo.Namespace, repo.Name)
-	}
-	sec := f.Secrets(repo.Namespace, repo.CertSecretRef.Name)
-	if sec == nil {
-		return nil, fmt.Errorf("OCIRepository %s/%s: cert secret %s/%s not found",
-			repo.Namespace, repo.Name, repo.Namespace, repo.CertSecretRef.Name)
-	}
-	mtls, err := source.BuildTLSConfig(
-		source.StringFromSecret(sec, "tls.crt"),
-		source.StringFromSecret(sec, "tls.key"),
-		source.StringFromSecret(sec, "ca.crt"),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("OCIRepository %s/%s: certSecretRef %s/%s: %w",
-			repo.Namespace, repo.Name, repo.Namespace, repo.CertSecretRef.Name, err)
-	}
-	if mtls.Certificates != nil {
-		cfg.Certificates = mtls.Certificates
-	}
-	if mtls.RootCAs != nil {
-		cfg.RootCAs = mtls.RootCAs
 	}
 	return cfg, nil
 }

@@ -1,5 +1,9 @@
 package manifest
 
+import (
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+)
+
 // GitRepositoryRef defines the ref used for pull and checkout.
 type GitRepositoryRef struct {
 	Branch string `json:"branch,omitempty" yaml:"branch,omitempty"`
@@ -27,16 +31,6 @@ func (r GitRepositoryRef) RefString() string {
 // IsEmpty reports whether the ref selects no specific commit.
 func (r GitRepositoryRef) IsEmpty() bool { return r == GitRepositoryRef{} }
 
-// ParseGitRepositoryRef decodes a GitRepositoryRef from spec.ref.
-func ParseGitRepositoryRef(m map[string]any) GitRepositoryRef {
-	return GitRepositoryRef{
-		Branch: stringOr(m, "branch", ""),
-		Tag:    stringOr(m, "tag", ""),
-		Semver: stringOr(m, "semver", ""),
-		Commit: stringOr(m, "commit", ""),
-	}
-}
-
 // GitRepository is the Flux GitRepository CRD.
 type GitRepository struct {
 	Name      string           `json:"name" yaml:"name"`
@@ -53,28 +47,38 @@ func (g *GitRepository) Named() NamedResource {
 // RepoName is "<namespace>-<name>".
 func (g *GitRepository) RepoName() string { return g.Namespace + "-" + g.Name }
 
-// ParseGitRepository decodes a GitRepository CR.
+// ParseGitRepository decodes a GitRepository CR via the Flux typed
+// schema (source-controller/api/v1), then projects the fields flate
+// uses into the local struct.
 func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
 		return nil, err
 	}
-	_, name, ns, err := requireMetadata("GitRepository", doc)
-	if err != nil {
-		return nil, err
+	var cr sourcev1.GitRepository
+	if err := decodeTyped(doc, &cr); err != nil {
+		return nil, inputf("GitRepository decode: %v", err)
 	}
-	spec, err := requireSpec("GitRepository", doc)
-	if err != nil {
-		return nil, err
+	if cr.Name == "" {
+		return nil, inputf("GitRepository missing metadata.name")
 	}
-	url, _ := spec["url"].(string)
-	if url == "" {
+	if cr.Spec.URL == "" {
 		return nil, inputf("GitRepository missing spec.url")
 	}
 	var ref GitRepositoryRef
-	if r, ok := spec["ref"].(map[string]any); ok {
-		ref = ParseGitRepositoryRef(r)
+	if r := cr.Spec.Reference; r != nil {
+		ref = GitRepositoryRef{
+			Branch: r.Branch,
+			Tag:    r.Tag,
+			Semver: r.SemVer,
+			Commit: r.Commit,
+		}
 	}
-	return &GitRepository{Name: name, Namespace: ns, URL: url, Ref: ref}, nil
+	return &GitRepository{
+		Name:      cr.Name,
+		Namespace: cr.Namespace,
+		URL:       cr.Spec.URL,
+		Ref:       ref,
+	}, nil
 }
 
 // OCIRepositoryRef points at a specific OCI artifact version.
@@ -87,16 +91,6 @@ type OCIRepositoryRef struct {
 
 // IsEmpty reports whether the ref is empty.
 func (r OCIRepositoryRef) IsEmpty() bool { return r == OCIRepositoryRef{} }
-
-// ParseOCIRepositoryRef decodes from spec.ref.
-func ParseOCIRepositoryRef(m map[string]any) OCIRepositoryRef {
-	return OCIRepositoryRef{
-		Digest:       stringOr(m, "digest", ""),
-		Tag:          stringOr(m, "tag", ""),
-		Semver:       stringOr(m, "semver", ""),
-		SemverFilter: stringOr(m, "semverFilter", ""),
-	}
-}
 
 // OCIRepository is the Flux OCIRepository CRD.
 type OCIRepository struct {
@@ -157,26 +151,31 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
 		return nil, err
 	}
-	_, name, ns, err := requireMetadata("OCIRepository", doc)
-	if err != nil {
-		return nil, err
+	var cr sourcev1.OCIRepository
+	if err := decodeTyped(doc, &cr); err != nil {
+		return nil, inputf("OCIRepository decode: %v", err)
 	}
-	spec, err := requireSpec("OCIRepository", doc)
-	if err != nil {
-		return nil, err
+	if cr.Name == "" {
+		return nil, inputf("OCIRepository missing metadata.name")
 	}
-	url, _ := spec["url"].(string)
-	if url == "" {
+	if cr.Spec.URL == "" {
 		return nil, inputf("OCIRepository missing spec.url")
 	}
-	out := &OCIRepository{Name: name, Namespace: ns, URL: url}
-	if r, ok := spec["ref"].(map[string]any); ok {
-		out.Ref = ParseOCIRepositoryRef(r)
+	out := &OCIRepository{
+		Name:      cr.Name,
+		Namespace: cr.Namespace,
+		URL:       cr.Spec.URL,
 	}
-	if s, ok := spec["secretRef"].(map[string]any); ok {
-		if n, ok := s["name"].(string); ok && n != "" {
-			out.SecretRef = &LocalObjectReference{Name: n}
+	if r := cr.Spec.Reference; r != nil {
+		out.Ref = OCIRepositoryRef{
+			Digest:       r.Digest,
+			Tag:          r.Tag,
+			Semver:       r.SemVer,
+			SemverFilter: r.SemverFilter,
 		}
+	}
+	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
+		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
 	}
 	return out, nil
 }

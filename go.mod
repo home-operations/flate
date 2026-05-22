@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/distribution/reference v0.6.0
 	github.com/fluxcd/pkg/kustomize v1.32.0
+	github.com/fluxcd/source-controller/api v1.8.5
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/spf13/cobra v1.10.2
@@ -42,7 +43,11 @@ require (
 	github.com/extism/go-sdk v1.7.1 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fluxcd/cli-utils v1.2.0 // indirect
+	github.com/fluxcd/helm-controller/api v1.5.5 // indirect
+	github.com/fluxcd/kustomize-controller/api v1.8.5 // indirect
+	github.com/fluxcd/pkg/apis/acl v0.9.0 // indirect
 	github.com/fluxcd/pkg/apis/kustomize v1.18.0 // indirect
+	github.com/fluxcd/pkg/apis/meta v1.25.1 // indirect
 	github.com/fluxcd/pkg/envsubst v1.7.0 // indirect
 	github.com/fluxcd/pkg/sourceignore v0.18.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect

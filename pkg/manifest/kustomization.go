@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 )
 
 // SubstituteReference contains a reference to a resource supplying the
@@ -110,96 +112,71 @@ func (k *Kustomization) UpdatePostBuildSubstitutions(subs map[string]any) {
 	maps.Copy(sub, subs)
 }
 
-// ParseKustomization decodes a Flux Kustomization CR.
+// ParseKustomization decodes a Flux Kustomization CR via the
+// kustomize-controller typed schema. The raw doc is retained in
+// Contents because RenderFlux still feeds it to fluxcd/pkg/kustomize
+// as an unstructured.Unstructured.
 func ParseKustomization(doc map[string]any) (*Kustomization, error) {
 	if err := checkAPIVersion(doc, FluxKustomizeDomain); err != nil {
 		return nil, err
 	}
-	metadata, name, ns, err := requireMetadata("Kustomization", doc)
-	if err != nil {
-		return nil, err
+	var cr kustomizev1.Kustomization
+	if err := decodeTyped(doc, &cr); err != nil {
+		return nil, inputf("Kustomization decode: %v", err)
+	}
+	if cr.Name == "" {
+		return nil, inputf("Kustomization missing metadata.name")
 	}
 	// namespace is optional — a parent Kustomization's
 	// spec.targetNamespace may fill it in at apply time.
-	spec, err := requireSpec("Kustomization", doc)
-	if err != nil {
-		return nil, err
+	ns := cr.Namespace
+	srcNamespace := cr.Spec.SourceRef.Namespace
+	if srcNamespace == "" {
+		srcNamespace = ns
 	}
-
-	path, _ := spec["path"].(string)
-
-	var sourcePath string
-	if annotations, ok := metadata["annotations"].(map[string]any); ok {
-		sourcePath, _ = annotations["config.kubernetes.io/path"].(string)
-	}
-
-	sourceRef, _ := spec["sourceRef"].(map[string]any)
-	postBuild, _ := spec["postBuild"].(map[string]any)
 
 	var substituteFrom []SubstituteReference
-	if raw, ok := postBuild["substituteFrom"].([]any); ok {
-		for _, e := range raw {
-			m, ok := e.(map[string]any)
-			if !ok {
-				continue
+	var subst map[string]any
+	if pb := cr.Spec.PostBuild; pb != nil {
+		for _, ref := range pb.SubstituteFrom {
+			substituteFrom = append(substituteFrom, SubstituteReference{
+				Kind: ref.Kind, Name: ref.Name, Optional: ref.Optional,
+			})
+		}
+		if len(pb.Substitute) > 0 {
+			subst = make(map[string]any, len(pb.Substitute))
+			for k, v := range pb.Substitute {
+				subst[k] = v
 			}
-			ref := SubstituteReference{
-				Kind: stringOr(m, "kind", ""),
-				Name: stringOr(m, "name", ""),
-			}
-			if opt, ok := m["optional"].(bool); ok {
-				ref.Optional = opt
-			}
-			substituteFrom = append(substituteFrom, ref)
 		}
 	}
 
 	var dependsOn []string
-	if raw, ok := spec["dependsOn"].([]any); ok {
-		for _, e := range raw {
-			m, ok := e.(map[string]any)
-			if !ok {
-				continue
-			}
-			depName, _ := m["name"].(string)
-			if depName == "" {
-				return nil, inputf("Kustomization missing dependsOn.name")
-			}
-			depNS := stringOr(m, "namespace", ns)
-			dependsOn = append(dependsOn, depNS+"/"+depName)
+	for _, dep := range cr.Spec.DependsOn {
+		if dep.Name == "" {
+			return nil, inputf("Kustomization missing dependsOn.name")
 		}
-	}
-
-	srcKind, _ := sourceRef["kind"].(string)
-	srcName, _ := sourceRef["name"].(string)
-	srcNamespace := stringOr(sourceRef, "namespace", ns)
-
-	target, _ := spec["targetNamespace"].(string)
-	subst, _ := postBuild["substitute"].(map[string]any)
-
-	var components []string
-	if raw, ok := spec["components"].([]any); ok {
-		for _, e := range raw {
-			if s, ok := e.(string); ok && s != "" {
-				components = append(components, s)
-			}
+		depNS := dep.Namespace
+		if depNS == "" {
+			depNS = ns
 		}
+		dependsOn = append(dependsOn, depNS+"/"+dep.Name)
 	}
 
 	return &Kustomization{
-		Name:                    name,
+		Name:                    cr.Name,
 		Namespace:               ns,
-		Path:                    path,
-		SourcePath:              sourcePath,
-		SourceKind:              srcKind,
-		SourceName:              srcName,
+		Path:                    cr.Spec.Path,
+		SourcePath:              cr.Annotations["config.kubernetes.io/path"],
+		SourceKind:              cr.Spec.SourceRef.Kind,
+		SourceName:              cr.Spec.SourceRef.Name,
 		SourceNamespace:         srcNamespace,
-		TargetNamespace:         target,
+		TargetNamespace:         cr.Spec.TargetNamespace,
 		Contents:                doc,
 		PostBuildSubstitute:     subst,
 		PostBuildSubstituteFrom: substituteFrom,
 		DependsOn:               dependsOn,
-		Labels:                  asStringMap(metadata["labels"]),
-		Components:              components,
+		Labels:                  cr.Labels,
+		Components:              cr.Spec.Components,
 	}, nil
 }

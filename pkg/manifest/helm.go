@@ -1,6 +1,12 @@
 package manifest
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+)
 
 // HelmChart is the embedded chart template inside a HelmRelease.spec.chart
 // (or the resolved form of HelmRelease.spec.chartRef). It is NOT the
@@ -26,67 +32,51 @@ func (h HelmChart) ChartName() string {
 	return h.RepoFullName() + "/" + h.Name
 }
 
-// ParseHelmChart pulls the chart template out of a HelmRelease document.
-// `defaultNamespace` is used when the chart ref omits a namespace.
-func ParseHelmChart(doc map[string]any, defaultNamespace string) (HelmChart, error) {
-	if err := checkAPIVersion(doc, HelmReleaseDomain); err != nil {
-		return HelmChart{}, err
-	}
-	spec, err := requireSpec("HelmRelease", doc)
-	if err != nil {
-		return HelmChart{}, err
-	}
-
-	if chartRef, ok := spec["chartRef"].(map[string]any); ok {
-		kind, _ := chartRef["kind"].(string)
-		if kind == "" {
+// chartFromHelmRelease projects the chart reference out of a typed
+// HelmRelease spec, unifying spec.chartRef and spec.chart into one
+// resolved shape. defaultNamespace fills in an omitted ref namespace.
+func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string) (HelmChart, error) {
+	if ref := spec.ChartRef; ref != nil {
+		if ref.Kind == "" {
 			return HelmChart{}, inputf("HelmRelease missing spec.chartRef.kind")
 		}
-		name, _ := chartRef["name"].(string)
-		if name == "" {
+		if ref.Name == "" {
 			return HelmChart{}, inputf("HelmRelease missing spec.chartRef.name")
 		}
-		ns, _ := chartRef["namespace"].(string)
+		ns := ref.Namespace
 		if ns == "" {
 			ns = defaultNamespace
 		}
 		return HelmChart{
-			Name:          name,
-			RepoName:      name,
+			Name:          ref.Name,
+			RepoName:      ref.Name,
 			RepoNamespace: ns,
-			RepoKind:      kind,
+			RepoKind:      ref.Kind,
 		}, nil
 	}
-
-	chart, ok := spec["chart"].(map[string]any)
-	if !ok {
+	tmpl := spec.Chart
+	if tmpl == nil {
 		return HelmChart{}, inputf("HelmRelease missing spec.chart or spec.chartRef")
 	}
-	chartSpec, ok := chart["spec"].(map[string]any)
-	if !ok {
-		return HelmChart{}, inputf("HelmRelease missing spec.chart.spec")
-	}
-	chartName, _ := chartSpec["chart"].(string)
+	chartName := tmpl.Spec.Chart
 	if chartName == "" {
 		return HelmChart{}, inputf("HelmRelease missing spec.chart.spec.chart")
 	}
-	version, _ := chartSpec["version"].(string)
-	sourceRef, ok := chartSpec["sourceRef"].(map[string]any)
-	if !ok {
-		return HelmChart{}, inputf("HelmRelease missing spec.chart.spec.sourceRef")
-	}
-	srcName, _ := sourceRef["name"].(string)
+	srcName := tmpl.Spec.SourceRef.Name
 	if srcName == "" {
 		return HelmChart{}, inputf("HelmRelease missing spec.chart.spec.sourceRef.name")
 	}
-	srcNamespace, _ := sourceRef["namespace"].(string)
+	srcNamespace := tmpl.Spec.SourceRef.Namespace
 	if srcNamespace == "" {
 		srcNamespace = defaultNamespace
 	}
-	repoKind := stringOr(sourceRef, "kind", KindHelmRepository)
+	repoKind := tmpl.Spec.SourceRef.Kind
+	if repoKind == "" {
+		repoKind = KindHelmRepository
+	}
 	return HelmChart{
 		Name:          chartName,
-		Version:       version,
+		Version:       tmpl.Spec.Version,
 		RepoName:      srcName,
 		RepoNamespace: srcNamespace,
 		RepoKind:      repoKind,
@@ -126,48 +116,40 @@ func (h *HelmChartSource) ResourceFullName() string {
 	return h.Namespace + "-" + h.Name
 }
 
-// ParseHelmChartSource decodes a standalone HelmChart CRD.
+// ParseHelmChartSource decodes a standalone HelmChart CRD via the
+// source-controller typed schema.
 func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
 		return nil, err
 	}
-	metadata, name, ns, err := requireMetadata("HelmChart", doc)
-	if err != nil {
-		return nil, err
+	var cr sourcev1.HelmChart
+	if err := decodeTyped(doc, &cr); err != nil {
+		return nil, inputf("HelmChart decode: %v", err)
 	}
+	if cr.Name == "" {
+		return nil, inputf("HelmChart missing metadata.name")
+	}
+	ns := cr.Namespace
 	if ns == "" {
 		ns = DefaultNamespace
 	}
-	spec, err := requireSpec("HelmChart", doc)
-	if err != nil {
-		return nil, err
-	}
-	chart, _ := spec["chart"].(string)
-	if chart == "" {
+	if cr.Spec.Chart == "" {
 		return nil, inputf("HelmChart missing spec.chart")
 	}
-	version, _ := spec["version"].(string)
-	sourceRef, ok := spec["sourceRef"].(map[string]any)
-	if !ok {
-		return nil, inputf("HelmChart missing spec.sourceRef")
-	}
-	srcName, _ := sourceRef["name"].(string)
-	if srcName == "" {
+	if cr.Spec.SourceRef.Name == "" {
 		return nil, inputf("HelmChart missing spec.sourceRef.name")
 	}
-	srcNamespace, _ := sourceRef["namespace"].(string)
-	if srcNamespace == "" {
-		srcNamespace = ns
+	repoKind := cr.Spec.SourceRef.Kind
+	if repoKind == "" {
+		repoKind = KindHelmRepository
 	}
-	repoKind := stringOr(sourceRef, "kind", KindHelmRepository)
-	_ = metadata
 	return &HelmChartSource{
-		Name:          name,
+		Name:          cr.Name,
 		Namespace:     ns,
-		Chart:         chart,
-		Version:       version,
-		RepoName:      srcName,
-		RepoNamespace: srcNamespace,
+		Chart:         cr.Spec.Chart,
+		Version:       cr.Spec.Version,
+		RepoName:      cr.Spec.SourceRef.Name,
+		RepoNamespace: ns,
 		RepoKind:      repoKind,
 	}, nil
 }
@@ -267,77 +249,58 @@ func (h *HelmRelease) ResolveChartRef(helmCharts map[string]*HelmChartSource) er
 	return nil
 }
 
-// ParseHelmRelease decodes a HelmRelease CR from a raw YAML document.
+// ParseHelmRelease decodes a HelmRelease CR via the helm-controller
+// typed schema (helm-controller/api/v2). The chart vs chartRef
+// normalization is preserved by chartFromHelmRelease.
 func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	if err := checkAPIVersion(doc, HelmReleaseDomain); err != nil {
 		return nil, err
 	}
-	metadata, name, ns, err := requireMetadata("HelmRelease", doc)
-	if err != nil {
-		return nil, err
+	var cr helmv2.HelmRelease
+	if err := decodeTyped(doc, &cr); err != nil {
+		return nil, inputf("HelmRelease decode: %v", err)
+	}
+	if cr.Name == "" {
+		return nil, inputf("HelmRelease missing metadata.name")
 	}
 	// metadata.namespace is optional — Flux Kustomizations commonly
 	// inject it via spec.targetNamespace. Treat the empty string as
 	// "inherit later".
-	chart, err := ParseHelmChart(doc, ns)
+	chart, err := chartFromHelmRelease(&cr.Spec, cr.Namespace)
 	if err != nil {
 		return nil, err
 	}
-	spec := doc["spec"].(map[string]any)
-
-	var vfs []ValuesReference
-	if raw, ok := spec["valuesFrom"].([]any); ok {
-		vfs = make([]ValuesReference, 0, len(raw))
-		for _, e := range raw {
-			m, ok := e.(map[string]any)
-			if !ok {
-				continue
-			}
-			vr := ValuesReference{
-				Kind:       stringOr(m, "kind", ""),
-				Name:       stringOr(m, "name", ""),
-				ValuesKey:  stringOr(m, "valuesKey", ""),
-				TargetPath: stringOr(m, "targetPath", ""),
-			}
-			if opt, ok := m["optional"].(bool); ok {
-				vr.Optional = opt
-			}
-			vfs = append(vfs, vr)
+	vfs := make([]ValuesReference, 0, len(cr.Spec.ValuesFrom))
+	for _, ref := range cr.Spec.ValuesFrom {
+		vfs = append(vfs, ValuesReference{
+			Kind:       ref.Kind,
+			Name:       ref.Name,
+			ValuesKey:  ref.ValuesKey,
+			TargetPath: ref.TargetPath,
+			Optional:   ref.Optional,
+		})
+	}
+	var values map[string]any
+	if cr.Spec.Values != nil && len(cr.Spec.Values.Raw) > 0 {
+		if err := json.Unmarshal(cr.Spec.Values.Raw, &values); err != nil {
+			return nil, inputf("HelmRelease spec.values: %v", err)
 		}
 	}
-
-	var values map[string]any
-	if v, ok := spec["values"].(map[string]any); ok {
-		values = v
-	}
-
-	disableSchema := readBoolAny(spec, "install", "disableSchemaValidation") ||
-		readBoolAny(spec, "upgrade", "disableSchemaValidation")
-	disableOpenAPI := readBoolAny(spec, "install", "disableOpenAPIValidation") ||
-		readBoolAny(spec, "upgrade", "disableOpenAPIValidation")
-
-	target, _ := spec["targetNamespace"].(string)
+	disableSchema := (cr.Spec.Install != nil && cr.Spec.Install.DisableSchemaValidation) ||
+		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableSchemaValidation)
+	disableOpenAPI := (cr.Spec.Install != nil && cr.Spec.Install.DisableOpenAPIValidation) ||
+		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableOpenAPIValidation)
 	return &HelmRelease{
-		Name:                     name,
-		Namespace:                ns,
+		Name:                     cr.Name,
+		Namespace:                cr.Namespace,
 		Chart:                    chart,
-		TargetNamespace:          target,
+		TargetNamespace:          cr.Spec.TargetNamespace,
 		Values:                   values,
 		ValuesFrom:               vfs,
-		Labels:                   asStringMap(metadata["labels"]),
+		Labels:                   cr.Labels,
 		DisableSchemaValidation:  disableSchema,
 		DisableOpenAPIValidation: disableOpenAPI,
 	}, nil
-}
-
-// readBoolAny safely reads spec[parent][key] as bool.
-func readBoolAny(spec map[string]any, parent, key string) bool {
-	bag, ok := spec[parent].(map[string]any)
-	if !ok {
-		return false
-	}
-	v, _ := bag[key].(bool)
-	return v
 }
 
 // HelmRepository is the Flux HelmRepository CRD.
@@ -366,27 +329,30 @@ func (h *HelmRepository) HelmChartName(chart HelmChart) string {
 	return chart.ChartName()
 }
 
-// ParseHelmRepository decodes a HelmRepository CR.
+// ParseHelmRepository decodes a HelmRepository CR via the
+// source-controller typed schema.
 func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
 		return nil, err
 	}
-	_, name, ns, err := requireMetadata("HelmRepository", doc)
-	if err != nil {
-		return nil, err
+	var cr sourcev1.HelmRepository
+	if err := decodeTyped(doc, &cr); err != nil {
+		return nil, inputf("HelmRepository decode: %v", err)
 	}
-	spec, err := requireSpec("HelmRepository", doc)
-	if err != nil {
-		return nil, err
+	if cr.Name == "" {
+		return nil, inputf("HelmRepository missing metadata.name")
 	}
-	url, _ := spec["url"].(string)
-	if url == "" {
+	if cr.Spec.URL == "" {
 		return nil, inputf("HelmRepository missing spec.url")
 	}
+	repoType := cr.Spec.Type
+	if repoType == "" {
+		repoType = RepoTypeDefault
+	}
 	return &HelmRepository{
-		Name:      name,
-		Namespace: ns,
-		URL:       url,
-		RepoType:  stringOr(spec, "type", RepoTypeDefault),
+		Name:      cr.Name,
+		Namespace: cr.Namespace,
+		URL:       cr.Spec.URL,
+		RepoType:  repoType,
 	}, nil
 }

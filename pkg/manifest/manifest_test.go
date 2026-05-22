@@ -104,6 +104,67 @@ spec:
 	}
 }
 
+func TestParseGitRepository_ProxySecretRef(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: r, namespace: flux-system}
+spec:
+  url: https://github.com/owner/repo.git
+  proxySecretRef:
+    name: corp-proxy
+  interval: 5m
+`)
+	g, err := ParseGitRepository(doc)
+	if err != nil {
+		t.Fatalf("ParseGitRepository: %v", err)
+	}
+	if g.ProxySecretRef == nil || g.ProxySecretRef.Name != "corp-proxy" {
+		t.Errorf("ProxySecretRef = %+v, want {Name: corp-proxy}", g.ProxySecretRef)
+	}
+}
+
+func TestParseOCIRepository_ProxySecretRef(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: r, namespace: ns}
+spec:
+  url: oci://ghcr.io/x/y
+  proxySecretRef:
+    name: corp-proxy
+  interval: 5m
+`)
+	o, err := ParseOCIRepository(doc)
+	if err != nil {
+		t.Fatalf("ParseOCIRepository: %v", err)
+	}
+	if o.ProxySecretRef == nil || o.ProxySecretRef.Name != "corp-proxy" {
+		t.Errorf("ProxySecretRef = %+v", o.ProxySecretRef)
+	}
+}
+
+func TestParseBucket_ProxySecretRef(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: Bucket
+metadata: {name: b, namespace: ns}
+spec:
+  bucketName: x
+  endpoint: minio:9000
+  proxySecretRef:
+    name: corp-proxy
+  interval: 5m
+`)
+	b, err := ParseBucket(doc)
+	if err != nil {
+		t.Fatalf("ParseBucket: %v", err)
+	}
+	if b.ProxySecretRef == nil || b.ProxySecretRef.Name != "corp-proxy" {
+		t.Errorf("ProxySecretRef = %+v", b.ProxySecretRef)
+	}
+}
+
 func TestParseGitRepository_SparseCheckout(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: source.toolkit.fluxcd.io/v1

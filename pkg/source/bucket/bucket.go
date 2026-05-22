@@ -100,14 +100,39 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 }
 
 // resolveTransport builds a custom *http.Transport from
-// spec.certSecretRef when configured. Returns nil to let minio-go
-// use its default transport. The Insecure flag is intentionally
-// applied at the protocol level (normalizeEndpoint) rather than the
-// TLS layer, mirroring Flux's source-controller behavior.
+// spec.certSecretRef and/or spec.proxySecretRef. Returns nil to let
+// minio-go use its default transport. The Insecure flag is
+// intentionally applied at the protocol level (normalizeEndpoint)
+// rather than the TLS layer, mirroring Flux's source-controller
+// behavior.
 func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) {
-	if b.CertSecretRef == nil {
+	proxy, err := source.ResolveProxy(f.Secrets, b.Namespace, "Bucket",
+		b.Namespace+"/"+b.Name, b.ProxySecretRef)
+	if err != nil {
+		return nil, err
+	}
+	if b.CertSecretRef == nil && proxy == nil {
 		return nil, nil
 	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if b.CertSecretRef != nil {
+		cfg, terr := f.resolveTLSConfig(b)
+		if terr != nil {
+			return nil, terr
+		}
+		tr.TLSClientConfig = cfg
+	}
+	if proxy != nil {
+		pfn, perr := proxy.HTTPProxyFunc()
+		if perr != nil {
+			return nil, perr
+		}
+		tr.Proxy = pfn
+	}
+	return tr, nil
+}
+
+func (f *Fetcher) resolveTLSConfig(b *manifest.Bucket) (*tls.Config, error) {
 	if f.Secrets == nil {
 		return nil, fmt.Errorf("bucket %s/%s references certSecretRef but no source.SecretGetter is wired",
 			b.Namespace, b.Name)
@@ -145,9 +170,7 @@ func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) 
 		}
 		cfg.RootCAs = pool
 	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.TLSClientConfig = cfg
-	return tr, nil
+	return cfg, nil
 }
 
 // resolveCredentials picks up accesskey/secretkey from the SecretRef

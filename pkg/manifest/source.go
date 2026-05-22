@@ -47,6 +47,7 @@ type GitRepository struct {
 	Ref               GitRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
 	Provider          string                `json:"provider,omitempty" yaml:"provider,omitempty"`
 	SecretRef         *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	ProxySecretRef    *LocalObjectReference `json:"proxySecretRef,omitempty" yaml:"proxySecretRef,omitempty"`
 	RecurseSubmodules bool                  `json:"recurseSubmodules,omitempty" yaml:"recurseSubmodules,omitempty"`
 	// SparseCheckout limits the checkout to the listed repo-relative
 	// directories. When empty, the full tree is checked out (default).
@@ -109,6 +110,9 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
 		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
 	}
+	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
+		out.ProxySecretRef = &LocalObjectReference{Name: cr.Spec.ProxySecretRef.Name}
+	}
 	return out, nil
 }
 
@@ -125,17 +129,18 @@ func (r OCIRepositoryRef) IsEmpty() bool { return r == OCIRepositoryRef{} }
 
 // OCIRepository is the Flux OCIRepository CRD.
 type OCIRepository struct {
-	Name          string                `json:"name" yaml:"name"`
-	Namespace     string                `json:"namespace" yaml:"namespace"`
-	URL           string                `json:"url" yaml:"url"`
-	Ref           OCIRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
-	Provider      string                `json:"provider,omitempty" yaml:"provider,omitempty"`
-	SecretRef     *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-	CertSecretRef *LocalObjectReference `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
-	Verify        *OCIRepositoryVerify  `json:"verify,omitempty" yaml:"verify,omitempty"`
-	LayerSelector *OCILayerSelector     `json:"layerSelector,omitempty" yaml:"layerSelector,omitempty"`
-	Insecure      bool                  `json:"insecure,omitempty" yaml:"insecure,omitempty"`
-	Suspend       bool                  `json:"-" yaml:"-"`
+	Name           string                `json:"name" yaml:"name"`
+	Namespace      string                `json:"namespace" yaml:"namespace"`
+	URL            string                `json:"url" yaml:"url"`
+	Ref            OCIRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
+	Provider       string                `json:"provider,omitempty" yaml:"provider,omitempty"`
+	SecretRef      *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	CertSecretRef  *LocalObjectReference `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
+	ProxySecretRef *LocalObjectReference `json:"proxySecretRef,omitempty" yaml:"proxySecretRef,omitempty"`
+	Verify         *OCIRepositoryVerify  `json:"verify,omitempty" yaml:"verify,omitempty"`
+	LayerSelector  *OCILayerSelector     `json:"layerSelector,omitempty" yaml:"layerSelector,omitempty"`
+	Insecure       bool                  `json:"insecure,omitempty" yaml:"insecure,omitempty"`
+	Suspend        bool                  `json:"-" yaml:"-"`
 }
 
 // OCILayerSelector mirrors source-controller's spec.layerSelector.
@@ -265,6 +270,9 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
 		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
+	}
+	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
+		out.ProxySecretRef = &LocalObjectReference{Name: cr.Spec.ProxySecretRef.Name}
 	}
 	if v := cr.Spec.Verify; v != nil {
 		out.Verify = &OCIRepositoryVerify{Provider: v.Provider}

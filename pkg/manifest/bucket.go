@@ -27,7 +27,11 @@ type Bucket struct {
 	// CertSecretRef points at a Secret with tls.crt + tls.key
 	// (client cert) and/or ca.crt (server CA) for mTLS endpoints.
 	CertSecretRef *LocalObjectReference `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
-	Suspend       bool                  `json:"-" yaml:"-"`
+	// ProxySecretRef points at a Secret carrying an HTTP proxy
+	// configuration (address + optional username/password) used when
+	// reaching the bucket endpoint.
+	ProxySecretRef *LocalObjectReference `json:"proxySecretRef,omitempty" yaml:"proxySecretRef,omitempty"`
+	Suspend        bool                  `json:"-" yaml:"-"`
 }
 
 // Named identifies the Bucket.
@@ -77,6 +81,9 @@ func ParseBucket(doc map[string]any) (*Bucket, error) {
 	}
 	if cr.Spec.CertSecretRef != nil && cr.Spec.CertSecretRef.Name != "" {
 		out.CertSecretRef = &LocalObjectReference{Name: cr.Spec.CertSecretRef.Name}
+	}
+	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
+		out.ProxySecretRef = &LocalObjectReference{Name: cr.Spec.ProxySecretRef.Name}
 	}
 	return out, nil
 }

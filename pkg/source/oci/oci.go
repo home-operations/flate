@@ -63,7 +63,12 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	if err != nil {
 		return nil, err
 	}
-	return fetch(ctx, f, repo, configPath, tlsCfg)
+	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "OCIRepository",
+		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
+	if err != nil {
+		return nil, err
+	}
+	return fetch(ctx, f, repo, configPath, tlsCfg, proxy)
 }
 
 // resolveTLS builds a *tls.Config from spec.certSecretRef (PEM-encoded
@@ -173,7 +178,7 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 // is listed and the highest matching tag (filtered by semverFilter, if
 // any) is resolved before pulling. When spec.verify is set, the pulled
 // digest is verified against the trusted public keys before returning.
-func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, registryConfig string, tlsCfg *tls.Config) (*store.SourceArtifact, error) {
+func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, registryConfig string, tlsCfg *tls.Config, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
 	cache := f.Cache
 	if repo == nil {
 		return nil, errors.New("oci repository is nil")
@@ -195,12 +200,21 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		return nil, err
 	}
 	// Compose the http.Client transport: oras's retry transport over a
-	// (TLS-customized) http.Transport when needed. Without TLS overrides
-	// oras's default is used.
+	// customized http.Transport when TLS or proxy is configured. Without
+	// either, oras's default is used.
 	var httpClient *http.Client
-	if tlsCfg != nil {
+	if tlsCfg != nil || proxy != nil {
 		baseTransport := http.DefaultTransport.(*http.Transport).Clone()
-		baseTransport.TLSClientConfig = tlsCfg
+		if tlsCfg != nil {
+			baseTransport.TLSClientConfig = tlsCfg
+		}
+		if proxy != nil {
+			pfn, perr := proxy.HTTPProxyFunc()
+			if perr != nil {
+				return nil, perr
+			}
+			baseTransport.Proxy = pfn
+		}
 		httpClient = &http.Client{Transport: retry.NewTransport(baseTransport)}
 	}
 	if credStore != nil {

@@ -58,14 +58,27 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	if err != nil {
 		return nil, err
 	}
+	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "GitRepository",
+		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
+	if err != nil {
+		return nil, err
+	}
 	if tlsCfg != nil {
 		f.httpsMu.Lock()
 		defer f.httpsMu.Unlock()
-		httpsClient := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+		tr := &http.Transport{TLSClientConfig: tlsCfg}
+		if proxy != nil {
+			pfn, perr := proxy.HTTPProxyFunc()
+			if perr != nil {
+				return nil, perr
+			}
+			tr.Proxy = pfn
+		}
+		httpsClient := &http.Client{Transport: tr}
 		client.InstallProtocol("https", githttp.NewClient(httpsClient))
 		defer client.InstallProtocol("https", githttp.DefaultClient)
 	}
-	return fetch(ctx, f.Cache, repo, auth)
+	return fetch(ctx, f.Cache, repo, auth, proxy)
 }
 
 // resolveTLS builds a *tls.Config from spec.secretRef for HTTPS GitRepositories
@@ -185,11 +198,11 @@ func sshUserFromURL(url string) string {
 // fetch clones the GitRepository referenced by repo into the supplied
 // cache and returns a populated *store.SourceArtifact. If a usable
 // cached copy already exists, it is reused. auth may be nil for
-// anonymous clones.
+// anonymous clones; proxy may be nil for direct connections.
 //
 // Supported transports: HTTPS (anonymous, basic, bearer), SSH (key
 // from SecretRef or ssh-agent), and file:// URLs.
-func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepository, auth transport.AuthMethod) (*store.SourceArtifact, error) {
+func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepository, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
 	if repo == nil {
 		return nil, errors.New("git repository is nil")
 	}
@@ -230,6 +243,13 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 	}
 
 	cloneOpts := &git.CloneOptions{URL: url, NoCheckout: true, Auth: auth}
+	if proxy != nil {
+		cloneOpts.ProxyOptions = transport.ProxyOptions{
+			URL:      proxy.Address,
+			Username: proxy.Username,
+			Password: proxy.Password,
+		}
+	}
 	if repo.RecurseSubmodules {
 		cloneOpts.RecurseSubmodules = git.DefaultSubmoduleRecursionDepth
 	}

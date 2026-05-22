@@ -18,6 +18,7 @@ const (
 	KindGitRepository            = "GitRepository"
 	KindOCIRepository            = "OCIRepository"
 	KindExternalArtifact         = "ExternalArtifact"
+	KindBucket                   = "Bucket"
 	KindConfigMap                = "ConfigMap"
 	KindSecret                   = "Secret"
 	KindCustomResourceDefinition = "CustomResourceDefinition"
@@ -31,6 +32,16 @@ const DefaultNamespace = "flux-system"
 const (
 	RepoTypeDefault = "default"
 	RepoTypeOCI     = "oci"
+)
+
+// Bucket providers as understood by Flux. flate currently supports
+// only "generic" (S3-compatible via minio-go); the others (aws, gcp,
+// azure) parse correctly but fail-loud at fetch time.
+const (
+	BucketProviderGeneric = "generic"
+	BucketProviderAmazon  = "aws"
+	BucketProviderGoogle  = "gcp"
+	BucketProviderAzure   = "azure"
 )
 
 // ValuePlaceholderTemplate is the format string used when wiping Secret

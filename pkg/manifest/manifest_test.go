@@ -84,6 +84,67 @@ spec:
 	}
 }
 
+func TestParseBucket_GenericWithSecret(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: Bucket
+metadata:
+  name: assets
+  namespace: apps
+spec:
+  bucketName: my-bucket
+  endpoint: minio.minio.svc:9000
+  insecure: true
+  prefix: configs/
+  region: us-east-1
+  secretRef:
+    name: minio-creds
+  interval: 5m
+`)
+	b, err := ParseBucket(doc)
+	if err != nil {
+		t.Fatalf("ParseBucket: %v", err)
+	}
+	if b.Provider != "generic" {
+		t.Errorf("default Provider should be 'generic', got %q", b.Provider)
+	}
+	if b.BucketName != "my-bucket" {
+		t.Errorf("BucketName: %q", b.BucketName)
+	}
+	if b.Endpoint != "minio.minio.svc:9000" {
+		t.Errorf("Endpoint: %q", b.Endpoint)
+	}
+	if !b.Insecure {
+		t.Errorf("Insecure should be true")
+	}
+	if b.Prefix != "configs/" {
+		t.Errorf("Prefix: %q", b.Prefix)
+	}
+	if b.SecretRef == nil || b.SecretRef.Name != "minio-creds" {
+		t.Errorf("SecretRef: %+v", b.SecretRef)
+	}
+}
+
+func TestParseBucket_Suspend(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: Bucket
+metadata: {name: b, namespace: ns}
+spec:
+  suspend: true
+  bucketName: x
+  endpoint: e
+  interval: 5m
+`)
+	b, err := ParseBucket(doc)
+	if err != nil {
+		t.Fatalf("ParseBucket: %v", err)
+	}
+	if !b.Suspend {
+		t.Errorf("expected Suspend=true")
+	}
+}
+
 func TestParseExternalArtifact(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: source.toolkit.fluxcd.io/v1

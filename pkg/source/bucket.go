@@ -1,0 +1,225 @@
+package source
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+)
+
+// BucketFetcher pulls a Flux Bucket CR into the on-disk cache. Only
+// the "generic" provider (any S3-API-compatible storage) is wired up
+// today via minio-go. The aws/gcp/azure providers parse and route
+// here but return a clear "not implemented" error rather than silently
+// falling back.
+type BucketFetcher struct {
+	Cache   *Cache
+	Secrets SecretGetter
+}
+
+// Fetch implements source.Fetcher for *manifest.Bucket.
+func (f *BucketFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+	b, ok := obj.(*manifest.Bucket)
+	if !ok {
+		return nil, fmt.Errorf("%w: BucketFetcher: unexpected payload %T", manifest.ErrInput, obj)
+	}
+	if b.Provider != "" && b.Provider != manifest.BucketProviderGeneric {
+		return nil, fmt.Errorf(
+			"bucket %s/%s provider %q is not implemented; flate currently supports only %q (S3-compatible)",
+			b.Namespace, b.Name, b.Provider, manifest.BucketProviderGeneric,
+		)
+	}
+
+	creds, err := f.resolveCredentials(b)
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint, secure, err := normalizeEndpoint(b.Endpoint, b.Insecure)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  creds,
+		Secure: secure,
+		Region: b.Region,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bucket %s/%s: minio client: %w", b.Namespace, b.Name, err)
+	}
+
+	// Cache key: bucket+prefix; reset on first error so retries start
+	// clean. The revision identifier (sha256 over sorted etags) is
+	// recomputed after listing.
+	slot, _, err := f.Cache.Slot(endpoint+"/"+b.BucketName, b.Prefix)
+	if err != nil {
+		return nil, fmt.Errorf("bucket %s/%s cache slot: %w", b.Namespace, b.Name, err)
+	}
+
+	keys, revHash, err := walkBucket(ctx, client, b.BucketName, b.Prefix, slot)
+	if err != nil {
+		_ = f.Cache.Reset(slot)
+		return nil, fmt.Errorf("bucket %s/%s walk: %w", b.Namespace, b.Name, err)
+	}
+
+	return &store.SourceArtifact{
+		Kind:      manifest.KindBucket,
+		URL:       fmt.Sprintf("%s://%s/%s", schemeFor(secure), endpoint, b.BucketName),
+		LocalPath: slot,
+		Revision:  revHash,
+		Metadata: map[string]string{
+			"objectCount": fmt.Sprintf("%d", len(keys)),
+		},
+	}, nil
+}
+
+// resolveCredentials picks up accesskey/secretkey from the SecretRef
+// or falls back to anonymous (which is valid for public buckets).
+func (f *BucketFetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentials, error) {
+	if b.SecretRef == nil {
+		return credentials.NewStaticV4("", "", ""), nil
+	}
+	if f.Secrets == nil {
+		return nil, fmt.Errorf("bucket %s/%s references secretRef but no SecretGetter is wired",
+			b.Namespace, b.Name)
+	}
+	sec := f.Secrets(b.Namespace, b.SecretRef.Name)
+	if sec == nil {
+		return nil, fmt.Errorf("bucket %s/%s: secret %s/%s not found",
+			b.Namespace, b.Name, b.Namespace, b.SecretRef.Name)
+	}
+	access := stringFromSecret(sec, "accesskey")
+	secret := stringFromSecret(sec, "secretkey")
+	if access == "" || secret == "" {
+		return nil, fmt.Errorf("bucket %s/%s: secret %s/%s missing accesskey/secretkey",
+			b.Namespace, b.Name, b.Namespace, b.SecretRef.Name)
+	}
+	return credentials.NewStaticV4(access, secret, ""), nil
+}
+
+// stringFromSecret looks up a key from either Secret.StringData
+// (plain) or Secret.Data (which may have been wiped to a placeholder
+// by ParseSecret when WipeSecrets=true). A placeholder is treated as
+// empty so the caller surfaces a clear "missing keys" error.
+func stringFromSecret(sec *manifest.Secret, key string) string {
+	if v, ok := sec.StringData[key].(string); ok {
+		if strings.HasPrefix(v, "..PLACEHOLDER_") {
+			return ""
+		}
+		return v
+	}
+	if v, ok := sec.Data[key].(string); ok {
+		if strings.HasPrefix(v, "..PLACEHOLDER_") {
+			return ""
+		}
+		return v
+	}
+	return ""
+}
+
+// normalizeEndpoint splits a Flux-style endpoint into the
+// host[:port] form minio-go expects and a tls flag.
+func normalizeEndpoint(endpoint string, insecure bool) (host string, secure bool, err error) {
+	switch {
+	case strings.HasPrefix(endpoint, "https://"):
+		host = strings.TrimPrefix(endpoint, "https://")
+		secure = true
+	case strings.HasPrefix(endpoint, "http://"):
+		host = strings.TrimPrefix(endpoint, "http://")
+		secure = false
+	default:
+		host = endpoint
+		secure = !insecure
+	}
+	host = strings.TrimRight(host, "/")
+	if host == "" {
+		return "", false, errors.New("bucket endpoint is empty")
+	}
+	if _, perr := url.Parse(schemeFor(secure) + "://" + host); perr != nil {
+		return "", false, fmt.Errorf("parse Bucket endpoint %q: %w", endpoint, perr)
+	}
+	return host, secure, nil
+}
+
+func schemeFor(secure bool) string {
+	if secure {
+		return "https"
+	}
+	return "http"
+}
+
+// walkBucket lists the bucket under prefix, downloads each object
+// into slot preserving the prefix-relative path, and returns the
+// sorted key list + a content-addressed revision (sha256 of
+// "<key>\t<etag>\n" pairs, sorted).
+func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot string) ([]string, string, error) {
+	type entry struct{ key, etag string }
+	var entries []entry
+
+	for obj := range client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix: prefix, Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return nil, "", obj.Err
+		}
+		if strings.HasSuffix(obj.Key, "/") {
+			// "Directory" placeholder — skip.
+			continue
+		}
+		entries = append(entries, entry{key: obj.Key, etag: obj.ETag})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
+
+	for _, e := range entries {
+		rel := strings.TrimPrefix(strings.TrimPrefix(e.key, prefix), "/")
+		if rel == "" {
+			rel = filepath.Base(e.key)
+		}
+		dst := filepath.Join(slot, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+			return nil, "", err
+		}
+		if err := downloadObject(ctx, client, bucket, e.key, dst); err != nil {
+			return nil, "", err
+		}
+	}
+
+	h := sha256.New()
+	keys := make([]string, 0, len(entries))
+	for _, e := range entries {
+		_, _ = fmt.Fprintf(h, "%s\t%s\n", e.key, e.etag)
+		keys = append(keys, e.key)
+	}
+	return keys, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func downloadObject(ctx context.Context, client *minio.Client, bucket, key, dst string) error {
+	obj, err := client.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = obj.Close() }()
+	f, err := os.Create(dst) //nolint:gosec // dst is composed from cache slot + bucket key
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := io.Copy(f, obj); err != nil {
+		return fmt.Errorf("copy %s: %w", key, err)
+	}
+	return nil
+}

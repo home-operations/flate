@@ -103,9 +103,15 @@ func New(cfg Config) (*Orchestrator, error) {
 	st := store.New()
 	ts := task.New()
 	cache := cmp.Or(cfg.SourceCache, source.NewCache(filepath.Join(cacheRoot, "sources")))
+	secretGet := func(ns, name string) *manifest.Secret {
+		obj := st.GetByName(manifest.KindSecret, ns, name)
+		s, _ := obj.(*manifest.Secret)
+		return s
+	}
 	fetchers := map[string]source.Fetcher{
 		manifest.KindGitRepository:    &source.GitFetcher{Cache: cache},
 		manifest.KindExternalArtifact: &source.ExternalArtifactFetcher{},
+		manifest.KindBucket:           &source.BucketFetcher{Cache: cache, Secrets: secretGet},
 	}
 	if cfg.EnableOCI {
 		fetchers[manifest.KindOCIRepository] = &source.OCIFetcher{

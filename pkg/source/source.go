@@ -37,3 +37,10 @@ type Fetcher interface {
 type Suspendable interface {
 	Suspended() bool
 }
+
+// SecretGetter resolves a Secret CR by namespace + name. Fetchers that
+// read authentication credentials (Bucket; future GitRepository
+// SecretRef; future OCIRepository SecretRef) accept one of these so
+// they don't need a back-reference to the Store. The orchestrator
+// wires it to Store.GetByName at construction time.
+type SecretGetter func(namespace, name string) *manifest.Secret

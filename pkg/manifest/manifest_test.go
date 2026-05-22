@@ -104,6 +104,48 @@ spec:
 	}
 }
 
+func TestParseGitRepository_Verify(t *testing.T) {
+	cases := []struct {
+		name     string
+		modeYAML string
+		want     string
+	}{
+		{"HEAD", "HEAD", "HEAD"},
+		{"head legacy lowercase normalizes", "head", "HEAD"},
+		{"Tag", "Tag", "Tag"},
+		{"TagAndHEAD", "TagAndHEAD", "TagAndHEAD"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: r, namespace: flux-system}
+spec:
+  url: https://github.com/owner/repo.git
+  verify:
+    mode: `+tc.modeYAML+`
+    secretRef:
+      name: trusted-pgp-keys
+  interval: 5m
+`)
+			g, err := ParseGitRepository(doc)
+			if err != nil {
+				t.Fatalf("ParseGitRepository: %v", err)
+			}
+			if g.Verify == nil {
+				t.Fatalf("expected Verify parsed")
+			}
+			if g.Verify.Mode != tc.want {
+				t.Errorf("Mode = %q, want %q", g.Verify.Mode, tc.want)
+			}
+			if g.Verify.SecretRef == nil || g.Verify.SecretRef.Name != "trusted-pgp-keys" {
+				t.Errorf("SecretRef = %+v", g.Verify.SecretRef)
+			}
+		})
+	}
+}
+
 func TestParseGitRepository_ProxySecretRef(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: source.toolkit.fluxcd.io/v1

@@ -78,7 +78,25 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 		client.InstallProtocol("https", githttp.NewClient(httpsClient))
 		defer client.InstallProtocol("https", githttp.DefaultClient)
 	}
-	return fetch(ctx, f.Cache, repo, auth, proxy)
+	art, err := fetch(ctx, f.Cache, repo, auth, proxy)
+	if err != nil {
+		return nil, err
+	}
+	if repo.Verify != nil {
+		cloned, oerr := git.PlainOpen(art.LocalPath)
+		if oerr != nil {
+			return nil, fmt.Errorf("verify: reopen %s: %w", art.LocalPath, oerr)
+		}
+		head, herr := cloned.Head()
+		if herr != nil {
+			return nil, fmt.Errorf("verify: resolve HEAD: %w", herr)
+		}
+		if err := verifySignatures(f.Secrets, repo, cloned, head.Hash()); err != nil {
+			_ = f.Cache.Reset(art.LocalPath)
+			return nil, err
+		}
+	}
+	return art, nil
 }
 
 // resolveTLS builds a *tls.Config from spec.secretRef for HTTPS GitRepositories

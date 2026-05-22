@@ -48,12 +48,32 @@ type GitRepository struct {
 	Provider          string                `json:"provider,omitempty" yaml:"provider,omitempty"`
 	SecretRef         *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
 	ProxySecretRef    *LocalObjectReference `json:"proxySecretRef,omitempty" yaml:"proxySecretRef,omitempty"`
+	Verify            *GitRepositoryVerify  `json:"verify,omitempty" yaml:"verify,omitempty"`
 	RecurseSubmodules bool                  `json:"recurseSubmodules,omitempty" yaml:"recurseSubmodules,omitempty"`
 	// SparseCheckout limits the checkout to the listed repo-relative
 	// directories. When empty, the full tree is checked out (default).
 	SparseCheckout []string `json:"sparseCheckout,omitempty" yaml:"sparseCheckout,omitempty"`
 	Suspend        bool     `json:"-" yaml:"-"`
 }
+
+// GitRepositoryVerify mirrors source-controller's GitRepositoryVerification.
+// The Secret named by SecretRef holds one or more PEM-armored PGP
+// public keys (typically "*.asc"); flate concatenates them into a
+// single keyring and verifies the resolved commit/tag signatures
+// against it.
+type GitRepositoryVerify struct {
+	// Mode is "HEAD", "Tag", or "TagAndHEAD". The legacy "head"
+	// alias normalizes to "HEAD" during parse.
+	Mode      string                `json:"mode,omitempty" yaml:"mode,omitempty"`
+	SecretRef *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+}
+
+// Git verification modes accepted on spec.verify.mode.
+const (
+	GitVerifyModeHEAD       = "HEAD"
+	GitVerifyModeTag        = "Tag"
+	GitVerifyModeTagAndHEAD = "TagAndHEAD"
+)
 
 // Named identifies the GitRepository.
 func (g *GitRepository) Named() NamedResource {
@@ -112,6 +132,16 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 	}
 	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
 		out.ProxySecretRef = &LocalObjectReference{Name: cr.Spec.ProxySecretRef.Name}
+	}
+	if v := cr.Spec.Verification; v != nil {
+		mode := string(v.GetMode())
+		if mode == "head" { // legacy alias
+			mode = GitVerifyModeHEAD
+		}
+		out.Verify = &GitRepositoryVerify{Mode: mode}
+		if v.SecretRef.Name != "" {
+			out.Verify.SecretRef = &LocalObjectReference{Name: v.SecretRef.Name}
+		}
 	}
 	return out, nil
 }

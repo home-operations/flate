@@ -2,12 +2,135 @@ package oci
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestFetcher_ResolveTLS_NoCertSecretIsNil(t *testing.T) {
+	f := &Fetcher{}
+	repo := &manifest.OCIRepository{Name: "o", Namespace: "ns"}
+	cfg, err := f.resolveTLS(repo)
+	if err != nil {
+		t.Fatalf("resolveTLS: %v", err)
+	}
+	if cfg != nil {
+		t.Errorf("expected nil TLS config when no CertSecretRef + Insecure=false")
+	}
+}
+
+func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
+	f := &Fetcher{}
+	repo := &manifest.OCIRepository{Name: "o", Namespace: "ns", Insecure: true}
+	cfg, err := f.resolveTLS(repo)
+	if err != nil {
+		t.Fatalf("resolveTLS: %v", err)
+	}
+	if cfg == nil || !cfg.InsecureSkipVerify {
+		t.Errorf("expected Insecure to set InsecureSkipVerify: %+v", cfg)
+	}
+}
+
+// TestFetcher_ResolveTLS_FromSecret uses a real ephemeral cert/key
+// pair — tls.X509KeyPair actually parses it so we can't hardcode.
+func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
+	certPEM, keyPEM := generateSelfSignedCert(t)
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{
+				StringData: map[string]any{
+					"tls.crt": certPEM,
+					"tls.key": keyPEM,
+					"ca.crt":  certPEM,
+				},
+			}
+		},
+	}
+	repo := &manifest.OCIRepository{
+		Name: "o", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+	}
+	cfg, err := f.resolveTLS(repo)
+	if err != nil {
+		t.Fatalf("resolveTLS: %v", err)
+	}
+	if cfg == nil {
+		t.Fatalf("expected non-nil TLS config")
+	}
+	if len(cfg.Certificates) != 1 {
+		t.Errorf("expected 1 client certificate, got %d", len(cfg.Certificates))
+	}
+	if cfg.RootCAs == nil {
+		t.Errorf("expected RootCAs populated from ca.crt")
+	}
+}
+
+func TestFetcher_ResolveTLS_PartialCertKey(t *testing.T) {
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{StringData: map[string]any{"tls.crt": "-only-cert-"}}
+		},
+	}
+	repo := &manifest.OCIRepository{
+		Name: "o", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+	}
+	_, err := f.resolveTLS(repo)
+	if err == nil || !strings.Contains(err.Error(), "must provide both") {
+		t.Errorf("expected partial cert/key error; got %v", err)
+	}
+}
+
+func TestFetcher_ResolveTLS_AllKeysMissing(t *testing.T) {
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{StringData: map[string]any{"unrelated": "x"}}
+		},
+	}
+	repo := &manifest.OCIRepository{
+		Name: "o", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+	}
+	_, err := f.resolveTLS(repo)
+	if err == nil || !strings.Contains(err.Error(), "tls.crt") {
+		t.Errorf("expected missing-keys error; got %v", err)
+	}
+}
+
+func generateSelfSignedCert(t *testing.T) (string, string) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "flate-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		IsCA:         true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	}))
+	return certPEM, keyPEM
+}
 
 func TestFetcher_NonGenericProvider(t *testing.T) {
 	f := &Fetcher{}

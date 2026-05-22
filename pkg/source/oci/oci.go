@@ -5,8 +5,11 @@ package oci
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -19,6 +22,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
+	"oras.land/oras-go/v2/registry/remote/retry"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -54,7 +58,64 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 		return nil, err
 	}
 	defer cleanup()
-	return fetch(ctx, f.Cache, repo, configPath)
+	tlsCfg, err := f.resolveTLS(repo)
+	if err != nil {
+		return nil, err
+	}
+	return fetch(ctx, f.Cache, repo, configPath, tlsCfg)
+}
+
+// resolveTLS builds a *tls.Config from spec.certSecretRef (PEM-encoded
+// tls.crt + tls.key + ca.crt — any subset acceptable) and/or
+// spec.insecure. Returns nil when no TLS customization is needed.
+func (f *Fetcher) resolveTLS(repo *manifest.OCIRepository) (*tls.Config, error) {
+	if repo.CertSecretRef == nil && !repo.Insecure {
+		return nil, nil
+	}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if repo.Insecure {
+		cfg.InsecureSkipVerify = true //nolint:gosec // honoring user-declared spec.insecure
+	}
+	if repo.CertSecretRef == nil {
+		return cfg, nil
+	}
+	if f.Secrets == nil {
+		return nil, fmt.Errorf("OCIRepository %s/%s references certSecretRef but no source.SecretGetter is wired",
+			repo.Namespace, repo.Name)
+	}
+	sec := f.Secrets(repo.Namespace, repo.CertSecretRef.Name)
+	if sec == nil {
+		return nil, fmt.Errorf("OCIRepository %s/%s: cert secret %s/%s not found",
+			repo.Namespace, repo.Name, repo.Namespace, repo.CertSecretRef.Name)
+	}
+	crt := source.StringFromSecret(sec, "tls.crt")
+	key := source.StringFromSecret(sec, "tls.key")
+	ca := source.StringFromSecret(sec, "ca.crt")
+	if crt == "" && key == "" && ca == "" {
+		return nil, fmt.Errorf("OCIRepository %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
+			repo.Namespace, repo.Name, repo.Namespace, repo.CertSecretRef.Name)
+	}
+	if (crt == "") != (key == "") {
+		return nil, fmt.Errorf("OCIRepository %s/%s: certSecretRef %s/%s must provide both tls.crt and tls.key together",
+			repo.Namespace, repo.Name, repo.Namespace, repo.CertSecretRef.Name)
+	}
+	if crt != "" {
+		cert, err := tls.X509KeyPair([]byte(crt), []byte(key))
+		if err != nil {
+			return nil, fmt.Errorf("OCIRepository %s/%s: parse tls.crt/tls.key: %w",
+				repo.Namespace, repo.Name, err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	if ca != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(ca)) {
+			return nil, fmt.Errorf("OCIRepository %s/%s: ca.crt did not parse as PEM",
+				repo.Namespace, repo.Name)
+		}
+		cfg.RootCAs = pool
+	}
+	return cfg, nil
 }
 
 // resolveRegistryConfig picks the credential source for a fetch.
@@ -110,7 +171,7 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 // credentials.NewFileStore. When spec.ref.semver is set, the registry
 // is listed and the highest matching tag (filtered by semverFilter, if
 // any) is resolved before pulling.
-func fetch(ctx context.Context, cache *source.Cache, repo *manifest.OCIRepository, registryConfig string) (*store.SourceArtifact, error) {
+func fetch(ctx context.Context, cache *source.Cache, repo *manifest.OCIRepository, registryConfig string, tlsCfg *tls.Config) (*store.SourceArtifact, error) {
 	if repo == nil {
 		return nil, errors.New("oci repository is nil")
 	}
@@ -130,8 +191,24 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.OCIRepositor
 	if err != nil {
 		return nil, err
 	}
+	// Compose the http.Client transport: oras's retry transport over a
+	// (TLS-customized) http.Transport when needed. Without TLS overrides
+	// oras's default is used.
+	var httpClient *http.Client
+	if tlsCfg != nil {
+		baseTransport := http.DefaultTransport.(*http.Transport).Clone()
+		baseTransport.TLSClientConfig = tlsCfg
+		httpClient = &http.Client{Transport: retry.NewTransport(baseTransport)}
+	}
 	if credStore != nil {
-		repoClient.Client = &auth.Client{Credential: credentials.Credential(credStore)}
+		ac := &auth.Client{Credential: credentials.Credential(credStore)}
+		if httpClient != nil {
+			ac.Client = httpClient
+		}
+		repoClient.Client = ac
+	} else if httpClient != nil {
+		// No auth needed but TLS still has to be configured.
+		repoClient.Client = &auth.Client{Client: httpClient}
 	}
 
 	// Resolve spec.ref into a concrete (tag-or-digest) BEFORE choosing

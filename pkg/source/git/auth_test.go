@@ -15,8 +15,10 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
-		URL:      "https://github.com/x/y.git",
-		Provider: sourcev1.GitProviderGitHub,
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:      "https://github.com/x/y.git",
+			Provider: sourcev1.GitProviderGitHub,
+		},
 	}
 	_, err := f.Fetch(context.Background(), repo)
 	if err == nil {
@@ -40,8 +42,10 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 	}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
-		URL:       "https://github.com/x/y.git",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:       "https://github.com/x/y.git",
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	auth, err := f.resolveAuth(repo)
 	if err != nil {
@@ -69,8 +73,11 @@ func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 		},
 	}
 	repo := &manifest.GitRepository{
-		URL: "https://github.com/x/y.git", Name: "g", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		Name: "g", Namespace: "ns",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:       "https://github.com/x/y.git",
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	auth, err := f.resolveAuth(repo)
 	if err != nil {
@@ -92,8 +99,11 @@ func TestFetcher_HTTPSMissingCreds(t *testing.T) {
 		},
 	}
 	repo := &manifest.GitRepository{
-		URL: "https://github.com/x/y.git", Name: "g", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		Name: "g", Namespace: "ns",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:       "https://github.com/x/y.git",
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	_, err := f.resolveAuth(repo)
 	if err == nil || !strings.Contains(err.Error(), "missing username/password") {
@@ -103,7 +113,10 @@ func TestFetcher_HTTPSMissingCreds(t *testing.T) {
 
 func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 	f := &Fetcher{}
-	repo := &manifest.GitRepository{URL: "https://github.com/x/y.git", Name: "g", Namespace: "ns"}
+	repo := &manifest.GitRepository{
+		Name: "g", Namespace: "ns",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "https://github.com/x/y.git"},
+	}
 	auth, err := f.resolveAuth(repo)
 	if err != nil {
 		t.Fatalf("resolveAuth: %v", err)
@@ -116,8 +129,11 @@ func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 func TestFetcher_SecretRefMissingGetter(t *testing.T) {
 	f := &Fetcher{} // no Secrets
 	repo := &manifest.GitRepository{
-		URL: "https://github.com/x/y.git", Name: "g", Namespace: "ns",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		Name: "g", Namespace: "ns",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:       "https://github.com/x/y.git",
+			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+		},
 	}
 	_, err := f.resolveAuth(repo)
 	if err == nil || !strings.Contains(err.Error(), "SecretGetter") {
@@ -127,10 +143,10 @@ func TestFetcher_SecretRefMissingGetter(t *testing.T) {
 
 func TestSshUserFromURL(t *testing.T) {
 	cases := map[string]string{
-		"git@github.com:owner/repo.git":      "git",
-		"ssh://buildbot@example.com/r.git":   "buildbot",
-		"https://github.com/x/y.git":         "git", // not actually SSH, but tests default
-		"":                                   "git",
+		"git@github.com:owner/repo.git":    "git",
+		"ssh://buildbot@example.com/r.git": "buildbot",
+		"https://github.com/x/y.git":       "git", // not actually SSH, but tests default
+		"":                                 "git",
 	}
 	for url, want := range cases {
 		if got := sshUserFromURL(url); got != want {

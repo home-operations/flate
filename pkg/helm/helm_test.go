@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -33,7 +35,7 @@ data:
 	cli.AddLocalGit(LocalGitRepository{
 		Repo: &manifest.GitRepository{
 			Name: "chart-repo", Namespace: "flux-system",
-			URL: "file://" + dir,
+			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + dir},
 		},
 		Artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir},
 	})

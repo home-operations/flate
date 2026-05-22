@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -117,8 +119,10 @@ func TestLoadCosignPublicKeys_NoSecretGetter(t *testing.T) {
 	f := &Fetcher{}
 	repo := &manifest.OCIRepository{
 		Name: "o", Namespace: "ns",
-		Verify: &manifest.OCIRepositoryVerify{
-			SecretRef: &manifest.LocalObjectReference{Name: "keys"},
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			Verify: &manifest.OCIRepositoryVerify{
+				SecretRef: &manifest.LocalObjectReference{Name: "keys"},
+			},
 		},
 	}
 	_, err := f.loadCosignPublicKeys(repo)
@@ -133,8 +137,10 @@ func TestLoadCosignPublicKeys_SecretNotFound(t *testing.T) {
 	}
 	repo := &manifest.OCIRepository{
 		Name: "o", Namespace: "ns",
-		Verify: &manifest.OCIRepositoryVerify{
-			SecretRef: &manifest.LocalObjectReference{Name: "missing"},
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			Verify: &manifest.OCIRepositoryVerify{
+				SecretRef: &manifest.LocalObjectReference{Name: "missing"},
+			},
 		},
 	}
 	_, err := f.loadCosignPublicKeys(repo)
@@ -158,8 +164,10 @@ func TestLoadCosignPublicKeys_ParsesPEM(t *testing.T) {
 	}
 	repo := &manifest.OCIRepository{
 		Name: "o", Namespace: "ns",
-		Verify: &manifest.OCIRepositoryVerify{
-			SecretRef: &manifest.LocalObjectReference{Name: "keys"},
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			Verify: &manifest.OCIRepositoryVerify{
+				SecretRef: &manifest.LocalObjectReference{Name: "keys"},
+			},
 		},
 	}
 	keys, err := f.loadCosignPublicKeys(repo)

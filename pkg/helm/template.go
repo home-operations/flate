@@ -57,6 +57,10 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	inst.EnableDNS = opts.EnableDNS
 	inst.Replace = true
 	inst.DisableOpenAPIValidation = hr.DisableOpenAPIValidation
+	// spec.postRenderers — pipe rendered output through one or more
+	// kustomize patch+image transforms. helm-controller does this via
+	// the same postrenderer.PostRenderer hook.
+	inst.PostRenderer = newPostRenderer(hr.PostRenderers)
 	// action.Install consults its own KubeVersion field for chart
 	// compatibility checks and ignores cfg.Capabilities for that purpose.
 	if opts.KubeVersion != "" {

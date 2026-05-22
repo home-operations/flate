@@ -206,6 +206,10 @@ type HelmRelease struct {
 	// IgnoreMissingValuesFiles: when true, missing ChartValuesFiles
 	// entries are skipped instead of erroring.
 	IgnoreMissingValuesFiles bool `json:"-" yaml:"-"`
+	// PostRenderers are the spec.postRenderers entries applied to the
+	// rendered chart output, mirroring helm-controller's behavior. Each
+	// renderer is a kustomize-based patch+image transform.
+	PostRenderers []helmv2.PostRenderer `json:"-" yaml:"-"`
 }
 
 // Named identifies the release.
@@ -352,6 +356,7 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		Namespace:                cr.Namespace,
 		Chart:                    chart,
 		ReleaseNameOverride:      cr.Spec.ReleaseName,
+		PostRenderers:            slices.Clone(cr.Spec.PostRenderers),
 		TargetNamespace:          cr.Spec.TargetNamespace,
 		Values:                   values,
 		ValuesFrom:               vfs,

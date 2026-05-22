@@ -243,6 +243,63 @@ func TestStore_WatchReady_FailedFlipsBeforeGrace(t *testing.T) {
 	}
 }
 
+// TestStore_WatchReady_FailedFailedReady verifies multi-Failed-then-Ready:
+// the grace timer arms on the first Failed and persists through subsequent
+// Failed updates (does NOT reset). If Ready arrives before the original
+// timer expires, dependents see Ready and proceed. Guards an invariant
+// the grace-period comment in pkg/store/watch.go calls out.
+func TestStore_WatchReady_FailedFailedReady(t *testing.T) {
+	withFailedGrace(t, 300*time.Millisecond)
+	s := New()
+	id := manifest.NamedResource{Kind: "Kustomization", Namespace: "ns", Name: "k"}
+	s.UpdateStatus(id, StatusFailed, "first failure")
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		s.UpdateStatus(id, StatusFailed, "second failure")
+		time.Sleep(50 * time.Millisecond)
+		s.UpdateStatus(id, StatusReady, "")
+	}()
+
+	info, err := s.WatchReady(context.Background(), id)
+	if err != nil {
+		t.Fatalf("expected nil err after Failed→Failed→Ready flip, got %v", err)
+	}
+	if info.Status != StatusReady {
+		t.Errorf("status = %v, want Ready", info.Status)
+	}
+}
+
+// TestStore_WatchReady_GraceExpiresOnSustainedFailed verifies the
+// opposite: when Ready never arrives, the original grace window
+// expires and WatchReady returns the most-recently-observed Failed.
+func TestStore_WatchReady_GraceExpiresOnSustainedFailed(t *testing.T) {
+	withFailedGrace(t, 50*time.Millisecond)
+	s := New()
+	id := manifest.NamedResource{Kind: "Kustomization", Namespace: "ns", Name: "k"}
+	s.UpdateStatus(id, StatusFailed, "first")
+	go func() {
+		time.Sleep(15 * time.Millisecond)
+		s.UpdateStatus(id, StatusFailed, "second")
+	}()
+
+	info, err := s.WatchReady(context.Background(), id)
+	if err == nil {
+		t.Fatalf("expected ResourceFailedError after grace expiration")
+	}
+	var rfe *manifest.ResourceFailedError
+	if !errors.As(err, &rfe) {
+		t.Fatalf("expected *ResourceFailedError, got %T", err)
+	}
+	if info.Status != StatusFailed {
+		t.Errorf("status = %v, want Failed", info.Status)
+	}
+	// The latest reason should be reported, not the first.
+	if rfe.Reason != "second" {
+		t.Errorf("reason = %q, want %q (latest observed failure)", rfe.Reason, "second")
+	}
+}
+
 // withFailedGrace temporarily shrinks FailedGrace for a single test
 // and restores it on cleanup. Keeps unit-test wall time bounded
 // without leaking the shorter value into other tests.

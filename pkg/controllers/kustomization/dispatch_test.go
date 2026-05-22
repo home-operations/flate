@@ -1,0 +1,102 @@
+package kustomization
+
+import (
+	"testing"
+
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+// TestShouldDispatchAsObject_KnownKinds documents which kinds the
+// parent Kustomization controller routes through AddObject vs.
+// AddRendered. Pinning this matrix prevents a future contributor
+// from accidentally widening or narrowing the set — a regression
+// here would either re-introduce the two-phase emission race (by
+// excluding a data kind) or trigger spurious reconciles on
+// non-reconcilable kinds.
+func TestShouldDispatchAsObject_KnownKinds(t *testing.T) {
+	cases := []struct {
+		name string
+		obj  manifest.BaseManifest
+		want bool
+	}{
+		{"Kustomization", &manifest.Kustomization{}, true},
+		{"HelmRelease", &manifest.HelmRelease{}, true},
+		{"HelmRepository", &manifest.HelmRepository{}, true},
+		{"OCIRepository", &manifest.OCIRepository{}, true},
+		{"GitRepository", &manifest.GitRepository{}, true},
+		{"Bucket", &manifest.Bucket{}, true},
+		{"HelmChartSource", &manifest.HelmChartSource{}, true},
+		{"ExternalArtifact", &manifest.ExternalArtifact{}, true},
+		{"ConfigMap", &manifest.ConfigMap{}, true},
+		{"Secret", &manifest.Secret{}, true},
+		{"RawObject falls through", &manifest.RawObject{Kind: "Service"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldDispatchAsObject(tc.obj); got != tc.want {
+				t.Errorf("shouldDispatchAsObject(%T) = %v, want %v", tc.obj, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsLeafReconcilable defines the pass-1 vs pass-2 split. Only
+// Kustomization and HelmRelease are "leaf reconcilables" — their
+// controllers fire AS SOON AS AddObject lands and immediately try
+// to expand substituteFrom / resolve chart sources, so they must be
+// emitted in pass 2 (after ConfigMap / Secret / sources from pass 1
+// are already in the store).
+func TestIsLeafReconcilable(t *testing.T) {
+	cases := []struct {
+		name string
+		obj  manifest.BaseManifest
+		want bool
+	}{
+		// Pass 2 — wait for pass-1 data first.
+		{"Kustomization is leaf", &manifest.Kustomization{}, true},
+		{"HelmRelease is leaf", &manifest.HelmRelease{}, true},
+
+		// Pass 1 — supply data that pass-2 leaves consume.
+		{"ConfigMap is data, not leaf", &manifest.ConfigMap{}, false},
+		{"Secret is data, not leaf", &manifest.Secret{}, false},
+		{"HelmRepository is source, not leaf", &manifest.HelmRepository{}, false},
+		{"OCIRepository is source, not leaf", &manifest.OCIRepository{}, false},
+		{"GitRepository is source, not leaf", &manifest.GitRepository{}, false},
+		{"Bucket is source, not leaf", &manifest.Bucket{}, false},
+		{"HelmChartSource is source, not leaf", &manifest.HelmChartSource{}, false},
+		{"ExternalArtifact is source, not leaf", &manifest.ExternalArtifact{}, false},
+		{"RawObject is neither", &manifest.RawObject{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isLeafReconcilable(tc.obj); got != tc.want {
+				t.Errorf("isLeafReconcilable(%T) = %v, want %v", tc.obj, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPass1Vs Pass2Categories — the two helpers must agree on the
+// pass-1-vs-pass-2 contract. Every leaf reconcilable must also be
+// dispatch-as-object (otherwise it'd be silently swallowed by
+// AddRendered). Non-leaf reconcilables can be either.
+func TestPass1Pass2Categories(t *testing.T) {
+	kinds := []manifest.BaseManifest{
+		&manifest.Kustomization{},
+		&manifest.HelmRelease{},
+		&manifest.HelmRepository{},
+		&manifest.OCIRepository{},
+		&manifest.GitRepository{},
+		&manifest.Bucket{},
+		&manifest.HelmChartSource{},
+		&manifest.ExternalArtifact{},
+		&manifest.ConfigMap{},
+		&manifest.Secret{},
+		&manifest.RawObject{},
+	}
+	for _, k := range kinds {
+		if isLeafReconcilable(k) && !shouldDispatchAsObject(k) {
+			t.Errorf("%T is a leaf reconcilable but not dispatch-as-object", k)
+		}
+	}
+}

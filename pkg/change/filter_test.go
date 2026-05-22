@@ -167,7 +167,9 @@ func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
-		DependsOn: []string{"flux-system/repositories"},
+		DependsOn: []manifest.DependencyRef{{
+			NamedResource: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "repositories"},
+		}},
 	}
 	ksID := ks.Named()
 	gitID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"}
@@ -197,7 +199,9 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 	a := &manifest.Kustomization{
 		Name: "a", Namespace: "flux-system",
 		SourceKind: manifest.KindGitRepository, SourceName: "src", SourceNamespace: "flux-system",
-		DependsOn: []string{"flux-system/b"},
+		DependsOn: []manifest.DependencyRef{{
+			NamedResource: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "b"},
+		}},
 	}
 	b := &manifest.Kustomization{Name: "b", Namespace: "flux-system"}
 	aID, bID := a.Named(), b.Named()

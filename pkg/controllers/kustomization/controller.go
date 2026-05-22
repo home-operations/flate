@@ -162,23 +162,16 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	return nil
 }
 
-// collectDeps assembles the NamedResources whose readiness must
-// precede this Kustomization: explicit dependsOn entries + the source
-// ref.
-func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.NamedResource {
-	var deps []manifest.NamedResource
-	for _, dep := range ks.DependsOn {
-		ns, name, ok := manifest.SplitNamespacedName(dep, ks.Namespace)
-		if !ok {
-			continue
-		}
-		deps = append(deps, manifest.NamedResource{
-			Kind: manifest.KindKustomization, Namespace: ns, Name: name,
-		})
-	}
+// collectDeps assembles the dependency refs whose readiness must
+// precede this Kustomization: explicit dependsOn entries (carrying any
+// CEL ReadyExpr) + the source ref.
+func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
+	deps := append([]manifest.DependencyRef(nil), ks.DependsOn...)
 	if ks.SourceKind != "" && ks.SourceName != "" {
-		deps = append(deps, manifest.NamedResource{
-			Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
+		deps = append(deps, manifest.DependencyRef{
+			NamedResource: manifest.NamedResource{
+				Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
+			},
 		})
 	}
 	return deps

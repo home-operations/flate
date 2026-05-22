@@ -182,6 +182,35 @@ status:
 	}
 }
 
+func TestParseKustomization_DependsOnReadyExpr(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: src}
+  dependsOn:
+    - name: infra
+      readyExpr: |
+        object.status.conditions.exists(c, c.type == "InfraInitialized" && c.status == "True")
+  interval: 5m
+`)
+	k, err := ParseKustomization(doc)
+	if err != nil {
+		t.Fatalf("ParseKustomization: %v", err)
+	}
+	if len(k.DependsOn) != 1 {
+		t.Fatalf("DependsOn len = %d", len(k.DependsOn))
+	}
+	if k.DependsOn[0].Name != "infra" {
+		t.Errorf("name: %q", k.DependsOn[0].Name)
+	}
+	if !strings.Contains(k.DependsOn[0].ReadyExpr, "InfraInitialized") {
+		t.Errorf("ReadyExpr lost: %q", k.DependsOn[0].ReadyExpr)
+	}
+}
+
 func TestParseHelmRelease_DependsOn(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -203,8 +232,11 @@ spec:
 	if got, want := len(hr.DependsOn), 2; got != want {
 		t.Fatalf("DependsOn len = %d, want %d", got, want)
 	}
-	if hr.DependsOn[0] != "ns/other" {
-		t.Errorf("DependsOn[0] = %q, want ns/other", hr.DependsOn[0])
+	if got := hr.DependsOn[0].NamespacedName(); got != "ns/other" {
+		t.Errorf("DependsOn[0] = %q, want ns/other", got)
+	}
+	if hr.DependsOn[1].Namespace != "other-ns" || hr.DependsOn[1].Name != "cross" {
+		t.Errorf("DependsOn[1] = %+v", hr.DependsOn[1])
 	}
 }
 
@@ -413,9 +445,14 @@ spec:
 	if err != nil {
 		t.Fatalf("ParseKustomization: %v", err)
 	}
-	wantDeps := []string{"flux-system/infra", "other/extras"}
-	if !slices.Equal(k.DependsOn, wantDeps) {
-		t.Errorf("DependsOn = %v, want %v", k.DependsOn, wantDeps)
+	if len(k.DependsOn) != 2 {
+		t.Fatalf("DependsOn len = %d, want 2", len(k.DependsOn))
+	}
+	if got := k.DependsOn[0].NamespacedName(); got != "flux-system/infra" {
+		t.Errorf("DependsOn[0] = %q, want flux-system/infra", got)
+	}
+	if got := k.DependsOn[1].NamespacedName(); got != "other/extras" {
+		t.Errorf("DependsOn[1] = %q, want other/extras", got)
 	}
 	if len(k.PostBuildSubstituteFrom) != 1 || !k.PostBuildSubstituteFrom[0].Optional {
 		t.Errorf("substituteFrom = %+v", k.PostBuildSubstituteFrom)
@@ -425,7 +462,7 @@ spec:
 	}
 
 	k.ValidateDependsOn(map[string]struct{}{"flux-system/infra": {}})
-	if !slices.Equal(k.DependsOn, []string{"flux-system/infra"}) {
+	if len(k.DependsOn) != 1 || k.DependsOn[0].NamespacedName() != "flux-system/infra" {
 		t.Errorf("ValidateDependsOn left %v", k.DependsOn)
 	}
 }

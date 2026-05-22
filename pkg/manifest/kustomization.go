@@ -40,7 +40,7 @@ type Kustomization struct {
 	Contents                map[string]any        `json:"-" yaml:"-"`
 	PostBuildSubstitute     map[string]any        `json:"-" yaml:"-"`
 	PostBuildSubstituteFrom []SubstituteReference `json:"-" yaml:"-"`
-	DependsOn               []string              `json:"-" yaml:"-"`
+	DependsOn               []DependencyRef       `json:"-" yaml:"-"`
 	Labels                  map[string]string     `json:"-" yaml:"-"`
 	// Components is Flux v1's spec.components — paths to kustomize
 	// components injected on top of spec.path at reconcile time.
@@ -68,8 +68,8 @@ func (k *Kustomization) ValidateDependsOn(allKS map[string]struct{}) {
 	if len(k.DependsOn) == 0 {
 		return
 	}
-	kept := slices.DeleteFunc(slices.Clone(k.DependsOn), func(dep string) bool {
-		_, ok := allKS[dep]
+	kept := slices.DeleteFunc(slices.Clone(k.DependsOn), func(dep DependencyRef) bool {
+		_, ok := allKS[dep.NamespacedName()]
 		return !ok
 	})
 	if missing := len(k.DependsOn) - len(kept); missing > 0 {
@@ -153,7 +153,7 @@ func ParseKustomization(doc map[string]any) (*Kustomization, error) {
 		}
 	}
 
-	var dependsOn []string
+	var dependsOn []DependencyRef
 	for _, dep := range cr.Spec.DependsOn {
 		if dep.Name == "" {
 			return nil, inputf("Kustomization missing dependsOn.name")
@@ -162,7 +162,10 @@ func ParseKustomization(doc map[string]any) (*Kustomization, error) {
 		if depNS == "" {
 			depNS = ns
 		}
-		dependsOn = append(dependsOn, depNS+"/"+dep.Name)
+		dependsOn = append(dependsOn, DependencyRef{
+			NamedResource: NamedResource{Kind: KindKustomization, Namespace: depNS, Name: dep.Name},
+			ReadyExpr:     dep.ReadyExpr,
+		})
 	}
 
 	return &Kustomization{

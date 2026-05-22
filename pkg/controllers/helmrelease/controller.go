@@ -155,7 +155,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
 	}
 	w := &depwait.Waiter{Store: c.Store, Parent: id}
-	sum := depwait.WaitAll(w.Watch(ctx, []manifest.NamedResource{srcID}))
+	sum := depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: srcID}}))
 	if sum.AnyFailed() {
 		return fmt.Errorf("chart source %s not ready: %s", srcID.String(), sum.Messages[srcID])
 	}
@@ -201,24 +201,14 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	return nil
 }
 
-// collectHRDeps converts hr.DependsOn ("namespace/name" entries) into
-// NamedResources for the depwait Waiter. dependsOn on a HelmRelease
+// collectHRDeps returns hr's typed dependsOn entries (carrying any
+// ReadyExpr) for the depwait Waiter. dependsOn on a HelmRelease
 // references other HelmReleases only (per Flux spec).
-func (c *Controller) collectHRDeps(hr *manifest.HelmRelease) []manifest.NamedResource {
+func (c *Controller) collectHRDeps(hr *manifest.HelmRelease) []manifest.DependencyRef {
 	if len(hr.DependsOn) == 0 {
 		return nil
 	}
-	out := make([]manifest.NamedResource, 0, len(hr.DependsOn))
-	for _, dep := range hr.DependsOn {
-		ns, name, ok := manifest.SplitNamespacedName(dep, hr.Namespace)
-		if !ok {
-			continue
-		}
-		out = append(out, manifest.NamedResource{
-			Kind: manifest.KindHelmRelease, Namespace: ns, Name: name,
-		})
-	}
-	return out
+	return append([]manifest.DependencyRef(nil), hr.DependsOn...)
 }
 
 // gatherHelmChartSources returns a snapshot of the HelmChart lookup

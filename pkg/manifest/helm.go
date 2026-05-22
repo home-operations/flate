@@ -193,7 +193,7 @@ type HelmRelease struct {
 	ValuesFrom               []ValuesReference `json:"-" yaml:"-"`
 	Images                   []string          `json:"images,omitempty" yaml:"images,omitempty"`
 	Labels                   map[string]string `json:"-" yaml:"-"`
-	DependsOn                []string          `json:"-" yaml:"-"`
+	DependsOn                []DependencyRef   `json:"-" yaml:"-"`
 	Suspend                  bool              `json:"-" yaml:"-"`
 	DisableSchemaValidation  bool              `json:"-" yaml:"-"`
 	DisableOpenAPIValidation bool              `json:"-" yaml:"-"`
@@ -314,7 +314,7 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableSchemaValidation)
 	disableOpenAPI := (cr.Spec.Install != nil && cr.Spec.Install.DisableOpenAPIValidation) ||
 		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableOpenAPIValidation)
-	var dependsOn []string
+	var dependsOn []DependencyRef
 	for _, dep := range cr.Spec.DependsOn {
 		if dep.Name == "" {
 			return nil, inputf("HelmRelease missing dependsOn.name")
@@ -323,7 +323,10 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		if depNS == "" {
 			depNS = cr.Namespace
 		}
-		dependsOn = append(dependsOn, depNS+"/"+dep.Name)
+		dependsOn = append(dependsOn, DependencyRef{
+			NamedResource: NamedResource{Kind: KindHelmRelease, Namespace: depNS, Name: dep.Name},
+			ReadyExpr:     dep.ReadyExpr,
+		})
 	}
 	// spec.chart.spec.valuesFiles (inline template). spec.chartRef
 	// case is handled later by ResolveChartRef once HelmChartSource is

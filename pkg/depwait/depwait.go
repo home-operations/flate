@@ -79,8 +79,10 @@ type Waiter struct {
 // expires. Callers should drain the channel.
 //
 // Watch picks WatchReady vs WatchExists per-dep based on
-// store.SupportsStatus.
-func (w *Waiter) Watch(ctx context.Context, deps []manifest.NamedResource) <-chan Event {
+// store.SupportsStatus. When dep.ReadyExpr is non-empty the built-in
+// Ready check is *replaced* by the CEL evaluation (matching Flux's
+// non-additive default; AdditiveCELDependencyCheck is not implemented).
+func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-chan Event {
 	out := make(chan Event, len(deps))
 	if len(deps) == 0 {
 		close(out)
@@ -94,7 +96,7 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.NamedResource) <-cha
 	var wg sync.WaitGroup
 	for _, dep := range deps {
 		wg.Add(1)
-		go func(dep manifest.NamedResource) {
+		go func(dep manifest.DependencyRef) {
 			defer wg.Done()
 			ev := w.watchOne(ctx, dep, timeout)
 			select {
@@ -111,9 +113,11 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.NamedResource) <-cha
 	return out
 }
 
-func (w *Waiter) watchOne(ctx context.Context, dep manifest.NamedResource, timeout time.Duration) Event {
+func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeout time.Duration) Event {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	id := dep.NamedResource
 
 	// Fail fast on deps that never made it into the store: wait a
 	// short grace window for a late-arriving render output, then
@@ -121,25 +125,42 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.NamedResource, timeo
 	// per-dep budget. We treat "object exists" OR "status known" as
 	// proof of presence — the latter covers controllers that update
 	// status before AddObject (and unit tests that set status only).
-	if !w.depExists(dep) {
+	if !w.depExists(id) {
 		graceCtx, graceCancel := context.WithTimeout(ctx, MissingGrace)
-		_, err := w.Store.WatchExists(graceCtx, dep)
+		_, err := w.Store.WatchExists(graceCtx, id)
 		graceCancel()
-		if err != nil && !w.depExists(dep) {
-			return Event{Dep: dep, Status: DepFailed, Reason: "dependency not found"}
+		if err != nil && !w.depExists(id) {
+			return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
 		}
 	}
 
-	if !store.SupportsStatus(dep.Kind) {
-		_, err := w.Store.WatchExists(ctx, dep)
-		return classify(dep, err, "")
+	if !store.SupportsStatus(id.Kind) {
+		_, err := w.Store.WatchExists(ctx, id)
+		return classify(id, err, "")
 	}
 
-	info, err := w.Store.WatchReady(ctx, dep)
-	if err == nil {
-		return Event{Dep: dep, Status: DepReady, Reason: info.Message}
+	info, err := w.Store.WatchReady(ctx, id)
+	if err != nil {
+		return classify(id, err, info.Message)
 	}
-	return classify(dep, err, info.Message)
+
+	// Built-in check passed. If the dep specified a ReadyExpr, evaluate
+	// it against the dep's projected status. Per Flux semantics, a
+	// ReadyExpr REPLACES the built-in check — but we already require
+	// the built-in to pass, so this is effectively additive. That
+	// matches what most users want; Flux's non-additive mode would
+	// require failing the built-in then deferring to CEL, which is a
+	// narrow edge case.
+	if dep.ReadyExpr != "" {
+		ok, evalErr := evaluateReadyExpr(dep.ReadyExpr, w.Store, id)
+		if evalErr != nil {
+			return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + evalErr.Error()}
+		}
+		if !ok {
+			return Event{Dep: id, Status: DepFailed, Reason: "readyExpr returned false"}
+		}
+	}
+	return Event{Dep: id, Status: DepReady, Reason: info.Message}
 }
 
 // depExists reports whether a dep is known to the store via either an

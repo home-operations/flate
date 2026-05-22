@@ -9,6 +9,16 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+// refs wraps NamedResources as bare DependencyRefs (no ReadyExpr)
+// so test cases keep their original shape.
+func refs(ids ...manifest.NamedResource) []manifest.DependencyRef {
+	out := make([]manifest.DependencyRef, len(ids))
+	for i, id := range ids {
+		out[i] = manifest.DependencyRef{NamedResource: id}
+	}
+	return out
+}
+
 func TestWaiter_AllReady(t *testing.T) {
 	s := store.New()
 	dep1 := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "ns", Name: "a"}
@@ -17,7 +27,7 @@ func TestWaiter_AllReady(t *testing.T) {
 	s.UpdateStatus(dep2, store.StatusReady, "")
 
 	w := &Waiter{Store: s, Timeout: time.Second}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.NamedResource{dep1, dep2}))
+	sum := WaitAll(w.Watch(context.Background(), refs(dep1, dep2)))
 	if !sum.AllReady() {
 		t.Errorf("expected all ready: %+v", sum)
 	}
@@ -31,7 +41,7 @@ func TestWaiter_OneFails(t *testing.T) {
 	s.UpdateStatus(dep2, store.StatusFailed, "denied")
 
 	w := &Waiter{Store: s, Timeout: time.Second}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.NamedResource{dep1, dep2}))
+	sum := WaitAll(w.Watch(context.Background(), refs(dep1, dep2)))
 	if !sum.AnyFailed() {
 		t.Errorf("expected failure: %+v", sum)
 	}
@@ -46,7 +56,7 @@ func TestWaiter_Exists_NonStatusKind(t *testing.T) {
 	go s.AddObject(&manifest.ConfigMap{Name: "cm", Namespace: "ns"})
 
 	w := &Waiter{Store: s, Timeout: time.Second}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.NamedResource{id}))
+	sum := WaitAll(w.Watch(context.Background(), refs(id)))
 	if !sum.AllReady() {
 		t.Errorf("expected ConfigMap to become ready: %+v", sum)
 	}
@@ -56,7 +66,7 @@ func TestWaiter_Timeout(t *testing.T) {
 	s := store.New()
 	dep := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "absent"}
 	w := &Waiter{Store: s, Timeout: 20 * time.Millisecond}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.NamedResource{dep}))
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
 	if !sum.AnyFailed() {
 		t.Errorf("expected timeout failure: %+v", sum)
 	}
@@ -71,7 +81,7 @@ func TestWaiter_MissingDepFailsFast(t *testing.T) {
 	w := &Waiter{Store: s, Timeout: 30 * time.Second}
 
 	start := time.Now()
-	sum := WaitAll(w.Watch(context.Background(), []manifest.NamedResource{dep}))
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
 	elapsed := time.Since(start)
 
 	if !sum.AnyFailed() {

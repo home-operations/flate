@@ -58,6 +58,17 @@ type BaseManifest interface {
 	Named() NamedResource
 }
 
+// DependencyRef is a Kustomization or HelmRelease dependency entry —
+// the target resource plus an optional CEL expression that overrides
+// the built-in Ready check (per Flux's spec.dependsOn[].readyExpr).
+type DependencyRef struct {
+	NamedResource
+	// ReadyExpr is the CEL expression to evaluate against the dep's
+	// projected status. When non-empty, the built-in Ready=True check
+	// is replaced. Empty means "use the built-in check."
+	ReadyExpr string
+}
+
 // RawObject is the fallback for any Kubernetes document that doesn't
 // match a more specific type.
 type RawObject struct {

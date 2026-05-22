@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/home-operations/flate/compare/0.1.1...0.1.2) (2026-05-22)
+
+
+### Bug Fixes
+
+* use cosign bundle format and drop redundant checksum name_template ([bb7e39d](https://github.com/home-operations/flate/commit/bb7e39ded817d999fd594f3eea9684cb5b9ee213))
+
 ## [0.1.1](https://github.com/home-operations/flate/compare/0.1.0...0.1.1) (2026-05-22)
 
 

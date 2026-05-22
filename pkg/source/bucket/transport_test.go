@@ -1,0 +1,146 @@
+package bucket
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+func TestFetcher_ResolveTransport_NoCertSecretIsNil(t *testing.T) {
+	f := &Fetcher{}
+	b := &manifest.Bucket{Name: "b", Namespace: "ns"}
+	tr, err := f.resolveTransport(b)
+	if err != nil {
+		t.Fatalf("resolveTransport: %v", err)
+	}
+	if tr != nil {
+		t.Errorf("expected nil transport when no CertSecretRef")
+	}
+}
+
+func TestFetcher_ResolveTransport_FromSecret(t *testing.T) {
+	certPEM, keyPEM := generateSelfSignedCertForBucket(t)
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{
+				StringData: map[string]any{
+					"tls.crt": certPEM,
+					"tls.key": keyPEM,
+					"ca.crt":  certPEM,
+				},
+			}
+		},
+	}
+	b := &manifest.Bucket{
+		Name: "b", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+	}
+	tr, err := f.resolveTransport(b)
+	if err != nil {
+		t.Fatalf("resolveTransport: %v", err)
+	}
+	if tr == nil {
+		t.Fatalf("expected non-nil transport")
+	}
+	if tr.TLSClientConfig == nil {
+		t.Fatalf("expected TLSClientConfig set")
+	}
+	if len(tr.TLSClientConfig.Certificates) != 1 {
+		t.Errorf("expected 1 client cert, got %d", len(tr.TLSClientConfig.Certificates))
+	}
+	if tr.TLSClientConfig.RootCAs == nil {
+		t.Errorf("expected RootCAs populated from ca.crt")
+	}
+}
+
+func TestFetcher_ResolveTransport_PartialCertKey(t *testing.T) {
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{StringData: map[string]any{"tls.crt": "-only-cert-"}}
+		},
+	}
+	b := &manifest.Bucket{
+		Name: "b", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+	}
+	_, err := f.resolveTransport(b)
+	if err == nil || !strings.Contains(err.Error(), "must provide both") {
+		t.Errorf("expected partial cert/key error; got %v", err)
+	}
+}
+
+func TestFetcher_ResolveTransport_AllKeysMissing(t *testing.T) {
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{StringData: map[string]any{"unrelated": "x"}}
+		},
+	}
+	b := &manifest.Bucket{
+		Name: "b", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+	}
+	_, err := f.resolveTransport(b)
+	if err == nil || !strings.Contains(err.Error(), "tls.crt") {
+		t.Errorf("expected missing-keys error; got %v", err)
+	}
+}
+
+func TestFetcher_ResolveTransport_SecretNotFound(t *testing.T) {
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret { return nil },
+	}
+	b := &manifest.Bucket{
+		Name: "b", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "missing"},
+	}
+	_, err := f.resolveTransport(b)
+	if err == nil || !strings.Contains(err.Error(), "secret ns/missing not found") {
+		t.Errorf("expected secret-not-found error; got %v", err)
+	}
+}
+
+func TestFetcher_ResolveTransport_CertSecretRefWithoutGetter(t *testing.T) {
+	f := &Fetcher{} // no Secrets
+	b := &manifest.Bucket{
+		Name: "b", Namespace: "ns",
+		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+	}
+	_, err := f.resolveTransport(b)
+	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {
+		t.Errorf("expected source.SecretGetter error; got %v", err)
+	}
+}
+
+func generateSelfSignedCertForBucket(t *testing.T) (string, string) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "flate-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		IsCA:         true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	}))
+	return certPEM, keyPEM
+}

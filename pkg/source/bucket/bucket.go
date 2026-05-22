@@ -5,10 +5,13 @@ package bucket
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -56,10 +59,16 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 		return nil, err
 	}
 
+	transport, err := f.resolveTransport(b)
+	if err != nil {
+		return nil, err
+	}
+
 	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  creds,
-		Secure: secure,
-		Region: b.Region,
+		Creds:     creds,
+		Secure:    secure,
+		Region:    b.Region,
+		Transport: transport,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("bucket %s/%s: minio client: %w", b.Namespace, b.Name, err)
@@ -88,6 +97,57 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 			"objectCount": fmt.Sprintf("%d", len(keys)),
 		},
 	}, nil
+}
+
+// resolveTransport builds a custom *http.Transport from
+// spec.certSecretRef when configured. Returns nil to let minio-go
+// use its default transport. The Insecure flag is intentionally
+// applied at the protocol level (normalizeEndpoint) rather than the
+// TLS layer, mirroring Flux's source-controller behavior.
+func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) {
+	if b.CertSecretRef == nil {
+		return nil, nil
+	}
+	if f.Secrets == nil {
+		return nil, fmt.Errorf("bucket %s/%s references certSecretRef but no source.SecretGetter is wired",
+			b.Namespace, b.Name)
+	}
+	sec := f.Secrets(b.Namespace, b.CertSecretRef.Name)
+	if sec == nil {
+		return nil, fmt.Errorf("bucket %s/%s: cert secret %s/%s not found",
+			b.Namespace, b.Name, b.Namespace, b.CertSecretRef.Name)
+	}
+	crt := source.StringFromSecret(sec, "tls.crt")
+	key := source.StringFromSecret(sec, "tls.key")
+	ca := source.StringFromSecret(sec, "ca.crt")
+	if crt == "" && key == "" && ca == "" {
+		return nil, fmt.Errorf("bucket %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
+			b.Namespace, b.Name, b.Namespace, b.CertSecretRef.Name)
+	}
+	if (crt == "") != (key == "") {
+		return nil, fmt.Errorf("bucket %s/%s: certSecretRef %s/%s must provide both tls.crt and tls.key together",
+			b.Namespace, b.Name, b.Namespace, b.CertSecretRef.Name)
+	}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if crt != "" {
+		cert, err := tls.X509KeyPair([]byte(crt), []byte(key))
+		if err != nil {
+			return nil, fmt.Errorf("bucket %s/%s: parse tls.crt/tls.key: %w",
+				b.Namespace, b.Name, err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	if ca != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(ca)) {
+			return nil, fmt.Errorf("bucket %s/%s: ca.crt did not parse as PEM",
+				b.Namespace, b.Name)
+		}
+		cfg.RootCAs = pool
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = cfg
+	return tr, nil
 }
 
 // resolveCredentials picks up accesskey/secretkey from the SecretRef

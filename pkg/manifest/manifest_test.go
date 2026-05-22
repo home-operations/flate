@@ -550,9 +550,12 @@ spec:
 		t.Errorf("substitute = %+v", k.PostBuildSubstitute)
 	}
 
-	k.ValidateDependsOn(map[string]struct{}{"flux-system/infra": {}})
-	if len(k.DependsOn) != 1 || k.DependsOn[0].NamespacedName() != "flux-system/infra" {
-		t.Errorf("ValidateDependsOn left %v", k.DependsOn)
+	kept, dropped := k.FilterDependsOn(map[string]struct{}{"flux-system/infra": {}})
+	if len(kept) != 1 || kept[0].NamespacedName() != "flux-system/infra" {
+		t.Errorf("FilterDependsOn kept = %v", kept)
+	}
+	if dropped == 0 {
+		t.Errorf("expected at least one dropped entry")
 	}
 }
 

@@ -36,6 +36,39 @@ func TestStore_AddObjectIdempotent(t *testing.T) {
 	}
 }
 
+// TestStore_AddObject_CloneTriggersUpdate guards the immutability
+// contract: callers that need to "mutate" a stored object must clone
+// it, mutate the clone, and re-AddObject. The store's reflect.DeepEqual
+// dedup recognizes the clone as different and fires EventObjectAdded.
+func TestStore_AddObject_CloneTriggersUpdate(t *testing.T) {
+	s := New()
+	cm := newCM("a", "ns")
+	id := cm.Named()
+
+	var seen int
+	s.AddListener(EventObjectAdded, func(other manifest.NamedResource, _ any) {
+		if other == id {
+			seen++
+		}
+	}, false)
+
+	s.AddObject(cm)
+	clone := *cm
+	clone.Data = map[string]any{"k": "v"}
+	s.AddObject(&clone)
+
+	if seen != 2 {
+		t.Errorf("expected two AddObject events (initial + clone), got %d", seen)
+	}
+	got, ok := s.GetObject(id).(*manifest.ConfigMap)
+	if !ok {
+		t.Fatalf("expected *manifest.ConfigMap, got %T", s.GetObject(id))
+	}
+	if got.Data["k"] != "v" {
+		t.Errorf("store did not pick up the cloned value: %+v", got.Data)
+	}
+}
+
 func TestStore_AddListener_Flush(t *testing.T) {
 	s := New()
 	s.AddObject(newCM("a", "ns"))

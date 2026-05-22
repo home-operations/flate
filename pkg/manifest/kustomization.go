@@ -62,17 +62,25 @@ func (k *Kustomization) IDName() string { return k.Path }
 // NamespacedName is "<namespace>/<name>".
 func (k *Kustomization) NamespacedName() string { return k.Namespace + "/" + k.Name }
 
-// ValidateDependsOn drops any dependency that is not present in allKS.
-// allKS is a set of "namespace/name" identifiers.
-func (k *Kustomization) ValidateDependsOn(allKS map[string]struct{}) {
+// FilterDependsOn returns a copy of k.DependsOn with any entries
+// whose target is not present in allKS removed. allKS is a set of
+// "namespace/name" identifiers. The second return value is the count
+// of entries that were dropped.
+//
+// Pure function — does not mutate k. Callers wanting to update a
+// stored Kustomization should follow the Store's immutability
+// contract: shallow-copy k, set the new DependsOn on the copy, then
+// re-AddObject the copy.
+func (k *Kustomization) FilterDependsOn(allKS map[string]struct{}) ([]DependencyRef, int) {
 	if len(k.DependsOn) == 0 {
-		return
+		return k.DependsOn, 0
 	}
 	kept := slices.DeleteFunc(slices.Clone(k.DependsOn), func(dep DependencyRef) bool {
 		_, ok := allKS[dep.NamespacedName()]
 		return !ok
 	})
-	if missing := len(k.DependsOn) - len(kept); missing > 0 {
+	dropped := len(k.DependsOn) - len(kept)
+	if dropped > 0 {
 		// Demoted to Debug: dependsOn references often dangle in a
 		// statically-loaded view because parent-Kustomization
 		// targetNamespace inheritance happens lazily. Real Flux resolves
@@ -80,9 +88,9 @@ func (k *Kustomization) ValidateDependsOn(allKS map[string]struct{}) {
 		// wait order during flate's reconcile.
 		slog.Debug("kustomization dependsOn entries dropped",
 			"kustomization", k.NamespacedName(),
-			"dropped", missing, "kept", len(kept))
+			"dropped", dropped, "kept", len(kept))
 	}
-	k.DependsOn = kept
+	return kept, dropped
 }
 
 // UpdatePostBuildSubstitutions merges the given map into the substitution

@@ -55,15 +55,14 @@ func ApplyNamespaceInheritance(s *store.Store, sourceFiles map[manifest.NamedRes
 		if obj == nil {
 			continue
 		}
-		setNamespace(obj, u.new.Namespace)
-		if hr, ok := obj.(*manifest.HelmRelease); ok && hr.Chart.RepoNamespace == "" {
-			// chartRef.namespace wasn't explicit in the YAML so it
-			// implicitly tracks the HR's namespace; carry the new
-			// namespace through.
-			hr.Chart.RepoNamespace = u.new.Namespace
+		// Store immutability contract (pkg/store doc): clone before
+		// mutating, then DeleteObject(old) + AddObject(new).
+		updated := cloneWithNamespace(obj, u.new.Namespace)
+		if updated == nil {
+			continue
 		}
 		s.DeleteObject(u.old)
-		s.AddObject(obj)
+		s.AddObject(updated)
 		delete(sourceFiles, u.old)
 		sourceFiles[u.new] = u.file
 	}
@@ -165,23 +164,50 @@ func normalizePrefix(p string) string {
 	return strings.TrimSuffix(p, "/") + "/"
 }
 
-func setNamespace(obj manifest.BaseManifest, ns string) {
+// cloneWithNamespace returns a shallow copy of obj with metadata.namespace
+// (and HelmRelease.Chart.RepoNamespace, when implicit) rewritten to ns.
+// Returns nil for kinds the loader doesn't reposition. Honors the Store
+// immutability contract — the caller AddObjects the returned pointer
+// rather than mutating the stored object in place.
+func cloneWithNamespace(obj manifest.BaseManifest, ns string) manifest.BaseManifest {
 	switch o := obj.(type) {
 	case *manifest.Kustomization:
-		o.Namespace = ns
+		c := *o
+		c.Namespace = ns
+		return &c
 	case *manifest.HelmRelease:
-		o.Namespace = ns
+		c := *o
+		c.Namespace = ns
+		if c.Chart.RepoNamespace == "" {
+			// chartRef.namespace wasn't explicit in the YAML so it
+			// implicitly tracks the HR's namespace.
+			c.Chart.RepoNamespace = ns
+		}
+		return &c
 	case *manifest.HelmRepository:
-		o.Namespace = ns
+		c := *o
+		c.Namespace = ns
+		return &c
 	case *manifest.OCIRepository:
-		o.Namespace = ns
+		c := *o
+		c.Namespace = ns
+		return &c
 	case *manifest.GitRepository:
-		o.Namespace = ns
+		c := *o
+		c.Namespace = ns
+		return &c
 	case *manifest.HelmChartSource:
-		o.Namespace = ns
+		c := *o
+		c.Namespace = ns
+		return &c
 	case *manifest.ConfigMap:
-		o.Namespace = ns
+		c := *o
+		c.Namespace = ns
+		return &c
 	case *manifest.Secret:
-		o.Namespace = ns
+		c := *o
+		c.Namespace = ns
+		return &c
 	}
+	return nil
 }

@@ -10,6 +10,29 @@ import (
 )
 
 // Store is the central in-memory state container.
+//
+// # Immutability contract
+//
+// Objects passed to AddObject (and returned by GetObject / GetByName /
+// ListObjects) are treated as IMMUTABLE after insertion. The store
+// returns shared pointers rather than defensive copies for performance:
+// rendering pipelines read millions of fields per reconcile, and
+// cloning the full manifest tree on every read would dominate CPU.
+//
+// Callers that need to "modify" a stored object must:
+//
+//  1. Shallow-copy the struct (most manifest types are flat enough
+//     that *clone := *orig works).
+//  2. Mutate the copy's fields.
+//  3. Re-AddObject the modified copy. AddObject's reflect.DeepEqual
+//     dedup avoids spurious events, and the second-pass dispatch
+//     reaches downstream controllers.
+//
+// Mutating an object after AddObject is a bug — concurrent readers
+// will see torn state and AddObject's dedup will compare against
+// a moving target. The loader (pkg/loader/inherit.go) and
+// orchestrator (pkg/orchestrator/orchestrator.go) follow the
+// clone-then-AddObject pattern; any new mutation site should too.
 type Store struct {
 	mu         sync.RWMutex
 	objects    map[manifest.NamedResource]manifest.BaseManifest

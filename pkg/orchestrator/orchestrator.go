@@ -290,9 +290,21 @@ func (o *Orchestrator) validateDependsOn() {
 		}
 	}
 	for _, obj := range ksList {
-		if ks, ok := obj.(*manifest.Kustomization); ok {
-			ks.ValidateDependsOn(known)
+		ks, ok := obj.(*manifest.Kustomization)
+		if !ok {
+			continue
 		}
+		kept, dropped := ks.FilterDependsOn(known)
+		if dropped == 0 {
+			continue
+		}
+		// Store immutability contract: clone the struct, set the new
+		// slice on the clone, then re-AddObject so listeners see the
+		// transition cleanly and the existing pointer stays valid for
+		// any in-flight readers.
+		clone := *ks
+		clone.DependsOn = kept
+		o.store.AddObject(&clone)
 	}
 }
 

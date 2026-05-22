@@ -654,9 +654,6 @@ spec:
 	if r.Type != "oci" {
 		t.Errorf("RepoType = %q", r.Type)
 	}
-	if got, want := r.HelmChartName(HelmChart{Name: "podinfo"}), "oci://ghcr.io/stefanprodan/charts/podinfo"; got != want {
-		t.Errorf("HelmChartName = %q, want %q", got, want)
-	}
 }
 
 func TestParseGitRepository_Ref(t *testing.T) {
@@ -680,44 +677,6 @@ spec:
 	}
 	if got, want := GitRefString(*g.Reference), "tag:v1.2.3"; got != want {
 		t.Errorf("RefString = %q, want %q", got, want)
-	}
-}
-
-func TestParseOCIRepository_VersionedURL(t *testing.T) {
-	cases := []struct {
-		name string
-		yaml string
-		want string
-	}{
-		{"tag", `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: OCIRepository
-metadata: {name: x, namespace: ns}
-spec: {url: oci://example/x, ref: {tag: v1}}
-`, "oci://example/x:v1"},
-		{"digest", `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: OCIRepository
-metadata: {name: x, namespace: ns}
-spec: {url: oci://example/x, ref: {digest: sha256:abc}}
-`, "oci://example/x@sha256:abc"},
-		{"no-ref", `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: OCIRepository
-metadata: {name: x, namespace: ns}
-spec: {url: oci://example/x}
-`, "oci://example/x"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			r, err := ParseOCIRepository(mustYAML(t, tc.yaml))
-			if err != nil {
-				t.Fatalf("ParseOCIRepository: %v", err)
-			}
-			if got := r.VersionedURL(); got != tc.want {
-				t.Errorf("VersionedURL = %q, want %q", got, tc.want)
-			}
-		})
 	}
 }
 

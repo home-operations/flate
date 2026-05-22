@@ -30,7 +30,6 @@ func GitRefString(r GitRepositoryRef) string {
 }
 
 
-// GitRepository is the Flux GitRepository CRD.
 // GitRepository is the Flux GitRepository CRD. The embedded
 // sourcev1.GitRepositorySpec promotes URL, Reference, Verification,
 // Provider, SecretRef, ProxySecretRef, RecurseSubmodules,
@@ -99,9 +98,6 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 // OCIRepositoryRef is the Flux OCIRepositoryRef from source-controller.
 type OCIRepositoryRef = sourcev1.OCIRepositoryRef
 
-// OCIRefIsEmpty reports whether the ref is empty.
-func OCIRefIsEmpty(r OCIRepositoryRef) bool { return r == OCIRepositoryRef{} }
-
 // OCIRepository is the Flux OCIRepository CRD. The embedded
 // sourcev1.OCIRepositorySpec promotes URL, Reference, LayerSelector,
 // Provider, SecretRef, CertSecretRef, ProxySecretRef, Verify, Insecure,
@@ -166,23 +162,6 @@ func (o *OCIRepository) Version() (string, error) {
 	return "", nil
 }
 
-// VersionedURL appends the version with the correct separator: "@" for
-// digests, ":" for tags and semver.
-func (o *OCIRepository) VersionedURL() string {
-	r := o.Reference
-	if r == nil {
-		return o.URL
-	}
-	switch {
-	case r.Digest != "":
-		return o.URL + "@" + r.Digest
-	case r.Tag != "":
-		return o.URL + ":" + r.Tag
-	case r.SemVer != "":
-		return o.URL + ":" + r.SemVer
-	}
-	return o.URL
-}
 
 // ParseOCIRepository decodes an OCIRepository CR.
 func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {

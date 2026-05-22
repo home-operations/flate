@@ -165,12 +165,14 @@ func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 //
 // Several flate-specific projection fields live alongside the
 // embedded Spec:
-//   - Chart is the union of spec.chart and spec.chartRef (the
-//     upstream's Spec.Chart and Spec.ChartRef are dropped via
-//     shadowing — accessible via h.HelmReleaseSpec.Chart if needed).
+//   - Chart is the union of spec.chart and spec.chartRef. Shadows the
+//     embedded Spec.Chart (*HelmChartTemplate) — Spec.ChartRef is
+//     untouched and still accessible if a consumer needs the raw ref.
 //   - Values is the decoded form of spec.values (map[string]any) so
-//     consumers don't have to JSON-decode on every access.
+//     consumers don't have to JSON-decode on every access. Shadows
+//     the embedded Spec.Values (*apiextensionsv1.JSON).
 //   - DependsOn is normalized to []DependencyRef (with ReadyExpr).
+//     Shadows the embedded Spec.DependsOn ([]DependencyReference).
 //   - CRDsPolicy collapses spec.install.crds vs spec.upgrade.crds.
 //   - DisableSchema/OpenAPIValidation collapse Install vs Upgrade.
 //   - ChartValuesFiles + IgnoreMissingValuesFiles are sourced from
@@ -243,23 +245,6 @@ func (h *HelmRelease) RepoName() string {
 
 // NamespacedName is "<namespace>/<name>".
 func (h *HelmRelease) NamespacedName() string { return h.Namespace + "/" + h.Name }
-
-// ResourceDependencies returns the resources whose readiness gates this
-// HelmRelease's reconciliation: the release itself, its chart repo, and
-// any valuesFrom references.
-func (h *HelmRelease) ResourceDependencies() []NamedResource {
-	deps := []NamedResource{h.Named()}
-	deps = append(deps, NamedResource{Kind: h.Chart.RepoKind, Namespace: h.Chart.RepoNamespace, Name: h.Chart.RepoName})
-	seen := make(map[string]struct{})
-	for _, ref := range h.ValuesFrom {
-		if _, ok := seen[ref.Name]; ok {
-			continue
-		}
-		seen[ref.Name] = struct{}{}
-		deps = append(deps, NamedResource{Kind: ref.Kind, Namespace: h.Namespace, Name: ref.Name})
-	}
-	return deps
-}
 
 // ResolveChartRef replaces a chartRef placeholder with the resolved source
 // when version was not pinned. helmCharts is keyed by ResourceFullName.
@@ -391,15 +376,6 @@ func (h *HelmRepository) Named() NamedResource {
 
 // RepoName is "<namespace>-<name>".
 func (h *HelmRepository) RepoName() string { return h.Namespace + "-" + h.Name }
-
-// HelmChartName returns the chart ref used with the helm SDK. For OCI
-// repos the chart name is appended to the URL.
-func (h *HelmRepository) HelmChartName(chart HelmChart) string {
-	if h.Type == RepoTypeOCI {
-		return h.URL + "/" + chart.Name
-	}
-	return chart.ChartName()
-}
 
 // ParseHelmRepository decodes a HelmRepository CR via the
 // source-controller typed schema.

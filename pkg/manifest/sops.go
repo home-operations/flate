@@ -7,10 +7,11 @@ package manifest
 // field is the unambiguous signal.
 //
 // flate runs offline and cannot decrypt; the kustomization and
-// helmrelease controllers call this to fail-loud when their rendered
-// output still contains encrypted content, mirroring Flux's
-// kustomize-controller refusal to apply un-decrypted Secrets when
-// spec.decryption is absent.
+// helmrelease controllers call this to log the encrypted resource
+// then wipe its data fields to ValuePlaceholderTemplate via
+// ParseSecret, mirroring the --wipe-secrets cleartext behavior.
+// flate ignores spec.decryption entirely — there is no path that
+// reads the decryption Secret.
 func IsEncryptedSecret(doc map[string]any) bool {
 	sops, ok := doc["sops"].(map[string]any)
 	if !ok {

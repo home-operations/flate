@@ -146,7 +146,6 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving chart")
 
-	// Resolve chartRef if applicable.
 	helmCharts := c.gatherHelmChartSources()
 	if err := hr.ResolveChartRef(helmCharts); err != nil {
 		return err

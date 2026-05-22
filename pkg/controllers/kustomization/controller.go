@@ -133,6 +133,19 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
+	// Two-pass emission. Pass 1 lands "data" kinds (ConfigMap, Secret,
+	// sources) into the store so child Kustomization / HelmRelease
+	// reconciles in pass 2 see a complete store — substituteFrom and
+	// chart-source lookups would race otherwise, since AddObject for a
+	// reconcilable kind fires its controller on a separate goroutine
+	// immediately. Within each pass the controller renders the docs in
+	// kustomize's emission order; passes themselves are ordered so the
+	// data backing a reconcile always arrives first.
+	type parsed struct {
+		obj         manifest.BaseManifest
+		reconcilable bool
+	}
+	objs := make([]parsed, 0, len(docs))
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
 			// flate can't decrypt SOPS offline. ParseSecret will wipe
@@ -152,16 +165,27 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 			slog.Debug("kustomization: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
-		// When a parent Kustomization renders a Flux resource that has
-		// its own controller (child Kustomization, HelmRelease, sources),
-		// route through AddObject so the rendered version (with patches,
-		// commonMetadata, targetNamespace, etc. applied) supersedes any
-		// statically-loaded copy and triggers a fresh reconcile.
-		// Non-reconcilable leaves keep the cheaper AddRendered path.
-		if shouldDispatchAsObject(obj) {
-			c.Store.AddObject(obj)
+		objs = append(objs, parsed{obj: obj, reconcilable: shouldDispatchAsObject(obj)})
+	}
+	// Pass 1 — data first. Sources go through AddObject because they
+	// have their own status to track; ConfigMap/Secret have no
+	// controller, so AddObject's event dispatch is a no-op for them.
+	// Either way they're in the store before pass 2 fires.
+	for _, p := range objs {
+		if p.reconcilable && isLeafReconcilable(p.obj) {
+			continue
+		}
+		if p.reconcilable {
+			c.Store.AddObject(p.obj)
 		} else {
-			c.Store.AddRendered(obj)
+			c.Store.AddRendered(p.obj)
+		}
+	}
+	// Pass 2 — leaf reconcilables (Kustomization, HelmRelease). Their
+	// substituteFrom / chartRef lookups now see the data from pass 1.
+	for _, p := range objs {
+		if p.reconcilable && isLeafReconcilable(p.obj) {
+			c.Store.AddObject(p.obj)
 		}
 	}
 
@@ -191,6 +215,19 @@ func shouldDispatchAsObject(obj manifest.BaseManifest) bool {
 		*manifest.ExternalArtifact,
 		*manifest.ConfigMap,
 		*manifest.Secret:
+		return true
+	}
+	return false
+}
+
+// isLeafReconcilable reports whether an emitted object should be held
+// for pass 2. Kustomization + HelmRelease have controllers that fire
+// substituteFrom / chartRef lookups against the store the instant
+// their AddObject event arrives; emitting them after all "data" kinds
+// guarantees those lookups succeed.
+func isLeafReconcilable(obj manifest.BaseManifest) bool {
+	switch obj.(type) {
+	case *manifest.Kustomization, *manifest.HelmRelease:
 		return true
 	}
 	return false

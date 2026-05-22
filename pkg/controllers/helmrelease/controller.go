@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -97,23 +98,7 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 				return
 			}
 			c.coal.Submit(ctx, "helmrelease/"+id.String(), id, func(ctx context.Context) {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("helmrelease: panic during reconcile", "id", id.String(), "panic", r)
-						c.Store.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
-					}
-				}()
-				// Re-read each iteration so a coalesced re-run picks up
-				// a parent KS's patches rather than the stale payload.
-				hr, _ := c.Store.GetObject(id).(*manifest.HelmRelease)
-				if hr == nil {
-					return
-				}
-				if err := c.reconcile(ctx, hr); err != nil {
-					c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
-					return
-				}
-				c.Store.UpdateStatus(id, store.StatusReady, "")
+				base.RunWithStatus(ctx, c.Store, id, "helmrelease", c.reconcile)
 			})
 		}
 	}

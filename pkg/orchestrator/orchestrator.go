@@ -104,7 +104,8 @@ func New(cfg Config) (*Orchestrator, error) {
 	ts := task.New()
 	cache := cmp.Or(cfg.SourceCache, source.NewCache(filepath.Join(cacheRoot, "sources")))
 	fetchers := map[string]source.Fetcher{
-		manifest.KindGitRepository: &source.GitFetcher{Cache: cache},
+		manifest.KindGitRepository:    &source.GitFetcher{Cache: cache},
+		manifest.KindExternalArtifact: &source.ExternalArtifactFetcher{},
 	}
 	if cfg.EnableOCI {
 		fetchers[manifest.KindOCIRepository] = &source.OCIFetcher{

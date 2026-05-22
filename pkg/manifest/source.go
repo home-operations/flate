@@ -187,3 +187,75 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	}
 	return out, nil
 }
+
+// ExternalArtifactSourceRef identifies the upstream CR that produces
+// the artifact. Mirrors Flux's meta.NamespacedObjectKindReference.
+type ExternalArtifactSourceRef struct {
+	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
+	Kind       string `json:"kind" yaml:"kind"`
+	Namespace  string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Name       string `json:"name" yaml:"name"`
+}
+
+// ExternalArtifact is the Flux ExternalArtifact CRD
+// (source.toolkit.fluxcd.io/v1). It is the contract a third-party
+// controller uses to publish an on-cluster artifact under Flux's
+// source-controller schema. flate's offline reconcile cannot fetch
+// from a live cluster — if a downstream Kustomization or HelmRelease
+// references an ExternalArtifact via sourceRef.kind=ExternalArtifact,
+// the user must supply status.artifact in the YAML (typical workflow:
+// pre-bake a file:// URL) for flate to resolve a local path.
+type ExternalArtifact struct {
+	Name      string                     `json:"name" yaml:"name"`
+	Namespace string                     `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	SourceRef *ExternalArtifactSourceRef `json:"sourceRef,omitempty" yaml:"sourceRef,omitempty"`
+	// ArtifactURL / Revision / Digest come from status.artifact when
+	// pre-populated in the YAML. Empty otherwise (the normal case for a
+	// freshly-written CR); flate then fails to resolve any consumer.
+	ArtifactURL string `json:"-" yaml:"-"`
+	Revision    string `json:"-" yaml:"-"`
+	Digest      string `json:"-" yaml:"-"`
+}
+
+// Named identifies the ExternalArtifact.
+func (e *ExternalArtifact) Named() NamedResource {
+	return NamedResource{Kind: KindExternalArtifact, Namespace: e.Namespace, Name: e.Name}
+}
+
+// Suspended is always false for ExternalArtifact — the CR has no
+// spec.suspend field per Flux's schema. Defined so the source
+// controller's Suspendable check is uniform.
+func (e *ExternalArtifact) Suspended() bool { return false }
+
+// ParseExternalArtifact decodes an ExternalArtifact CR via the
+// source-controller typed schema.
+func ParseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
+	if err := checkAPIVersion(doc, SourceDomain); err != nil {
+		return nil, err
+	}
+	var cr sourcev1.ExternalArtifact
+	if err := decodeTyped(doc, &cr); err != nil {
+		return nil, inputf("ExternalArtifact decode: %v", err)
+	}
+	if cr.Name == "" {
+		return nil, inputf("ExternalArtifact missing metadata.name")
+	}
+	out := &ExternalArtifact{
+		Name:      cr.Name,
+		Namespace: cr.Namespace,
+	}
+	if cr.Spec.SourceRef != nil {
+		out.SourceRef = &ExternalArtifactSourceRef{
+			APIVersion: cr.Spec.SourceRef.APIVersion,
+			Kind:       cr.Spec.SourceRef.Kind,
+			Namespace:  cr.Spec.SourceRef.Namespace,
+			Name:       cr.Spec.SourceRef.Name,
+		}
+	}
+	if a := cr.Status.Artifact; a != nil {
+		out.ArtifactURL = a.URL
+		out.Revision = a.Revision
+		out.Digest = a.Digest
+	}
+	return out, nil
+}

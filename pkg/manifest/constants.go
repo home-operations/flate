@@ -17,6 +17,7 @@ const (
 	KindHelmChart                = "HelmChart"
 	KindGitRepository            = "GitRepository"
 	KindOCIRepository            = "OCIRepository"
+	KindExternalArtifact         = "ExternalArtifact"
 	KindConfigMap                = "ConfigMap"
 	KindSecret                   = "Secret"
 	KindCustomResourceDefinition = "CustomResourceDefinition"

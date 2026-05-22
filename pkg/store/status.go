@@ -56,7 +56,8 @@ func SupportsStatus(kind string) bool {
 		manifest.KindGitRepository,
 		manifest.KindHelmRelease,
 		manifest.KindHelmRepository,
-		manifest.KindOCIRepository:
+		manifest.KindOCIRepository,
+		manifest.KindExternalArtifact:
 		return true
 	}
 	return false

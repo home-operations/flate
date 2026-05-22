@@ -266,7 +266,7 @@ func TestStore_AddListener_Unsubscribe(t *testing.T) {
 func TestStore_SetArtifact(t *testing.T) {
 	s := New()
 	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}
-	art := &GitArtifact{URL: "https://example", LocalPath: "/tmp/x"}
+	art := &SourceArtifact{Kind: "GitRepository", URL: "https://example", LocalPath: "/tmp/x"}
 
 	count := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) {

@@ -1,7 +1,5 @@
 package store
 
-import "github.com/home-operations/flate/pkg/manifest"
-
 // Artifact is a marker interface implemented by every artifact type.
 // Controllers type-assert to the concrete type they expect.
 type Artifact interface {
@@ -17,27 +15,28 @@ type RenderedArtifact interface {
 	RenderedManifests() []map[string]any
 }
 
-// GitArtifact is the working tree produced by SourceController for a
-// GitRepository.
-type GitArtifact struct {
+// SourceArtifact is the unified working-tree artifact produced by
+// source fetchers (GitRepository, OCIRepository, Bucket, ExternalArtifact, …).
+// Kind identifies which CR kind produced it so consumers that care
+// (e.g. the helm-controller's local-git registration) can filter
+// without the previous per-kind type union.
+//
+// Mirrors Flux's meta.Artifact contract: URL is the upstream address,
+// Revision is the human-readable identifier (branch:main, tag:v1.2.3,
+// commit sha), Digest is the content-addressed verification value,
+// Size is the artifact size in bytes when known, and Metadata holds
+// kind-specific annotations (OCI image annotations, bucket ETag…).
+type SourceArtifact struct {
+	Kind      string
 	URL       string
 	LocalPath string
-	Ref       manifest.GitRepositoryRef
-	Revision  string // resolved commit SHA, when known
-}
-
-func (*GitArtifact) artifact() {}
-
-// OCIArtifact is the working tree produced by SourceController for an
-// OCIRepository.
-type OCIArtifact struct {
-	URL       string
-	LocalPath string
-	Ref       manifest.OCIRepositoryRef
+	Revision  string
 	Digest    string
+	Size      int64
+	Metadata  map[string]string
 }
 
-func (*OCIArtifact) artifact() {}
+func (*SourceArtifact) artifact() {}
 
 // KustomizationArtifact is the rendered output of a Kustomization build.
 type KustomizationArtifact struct {

@@ -191,11 +191,8 @@ func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, erro
 	if art == nil {
 		return "", fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
 	}
-	switch a := art.(type) {
-	case *store.GitArtifact:
-		return a.LocalPath, nil
-	case *store.OCIArtifact:
-		return a.LocalPath, nil
+	if sa, ok := art.(*store.SourceArtifact); ok {
+		return sa.LocalPath, nil
 	}
 	return "", fmt.Errorf("unsupported source artifact type %T for %s", art, srcID.String())
 }

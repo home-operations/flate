@@ -21,12 +21,27 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+// OCIFetcher is the Fetcher implementation for KindOCIRepository.
+type OCIFetcher struct {
+	Cache          *Cache
+	RegistryConfig string
+}
+
+// Fetch implements source.Fetcher for *manifest.OCIRepository.
+func (f *OCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+	repo, ok := obj.(*manifest.OCIRepository)
+	if !ok {
+		return nil, fmt.Errorf("%w: OCIFetcher: unexpected payload %T", manifest.ErrInput, obj)
+	}
+	return FetchOCI(ctx, f.Cache, repo, f.RegistryConfig)
+}
+
 // FetchOCI pulls the OCIRepository artifact into cache. Credentials are
 // read from a docker-style config.json honored by oras-go's
 // credentials.NewFileStore. When spec.ref.semver is set, the registry
 // is listed and the highest matching tag (filtered by semverFilter, if
 // any) is resolved before pulling.
-func FetchOCI(ctx context.Context, cache *Cache, repo *manifest.OCIRepository, registryConfig string) (*store.OCIArtifact, error) {
+func FetchOCI(ctx context.Context, cache *Cache, repo *manifest.OCIRepository, registryConfig string) (*store.SourceArtifact, error) {
 	if repo == nil {
 		return nil, errors.New("oci repository is nil")
 	}
@@ -67,7 +82,12 @@ func FetchOCI(ctx context.Context, cache *Cache, repo *manifest.OCIRepository, r
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}
 	if exists {
-		return &store.OCIArtifact{URL: repo.URL, LocalPath: slot, Ref: ref, Digest: ref.Digest}, nil
+		return &store.SourceArtifact{
+			Kind: manifest.KindOCIRepository,
+			URL:  repo.URL, LocalPath: slot,
+			Revision: ociRevision(ref, ref.Digest),
+			Digest:   ref.Digest,
+		}, nil
 	}
 
 	tag := versionTag(ref)
@@ -87,7 +107,32 @@ func FetchOCI(ctx context.Context, cache *Cache, repo *manifest.OCIRepository, r
 		return nil, fmt.Errorf("oras copy %s: %w", versioned, err)
 	}
 
-	return &store.OCIArtifact{URL: repo.URL, LocalPath: slot, Ref: ref, Digest: desc.Digest.String()}, nil
+	digest := desc.Digest.String()
+	return &store.SourceArtifact{
+		Kind: manifest.KindOCIRepository,
+		URL:  repo.URL, LocalPath: slot,
+		Revision: ociRevision(ref, digest),
+		Digest:   digest,
+		Size:     desc.Size,
+	}, nil
+}
+
+// ociRevision composes a Flux-style "<tag>@<digest>" revision string.
+// When tag is empty, falls back to bare digest; when digest is empty,
+// returns just the tag. Matches source-controller's ocirepository
+// revision conventions.
+func ociRevision(ref manifest.OCIRepositoryRef, digest string) string {
+	tag := ref.Tag
+	if tag == "" && ref.Digest == "" {
+		tag = "latest"
+	}
+	switch {
+	case tag != "" && digest != "":
+		return tag + "@" + digest
+	case digest != "":
+		return digest
+	}
+	return tag
 }
 
 // versionedURL composes a Flux-style versioned URL from a base + ref.

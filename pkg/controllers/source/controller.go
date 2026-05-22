@@ -1,7 +1,12 @@
 // Package source reconciles Flux source CRs (GitRepository,
-// OCIRepository) into on-disk artifacts via the pkg/source SDK adapter,
-// then publishes the result to the Store. It mirrors
+// OCIRepository, future: Bucket, ExternalArtifact, …) into on-disk
+// artifacts via per-kind Fetcher implementations from pkg/source, then
+// publishes the result to the Store. Mirrors
 // pkg/controllers/{kustomization,helmrelease}.
+//
+// The controller does not know about individual source kinds — it
+// dispatches via the Fetchers map keyed by id.Kind, so adding a new
+// kind is a one-line registration at orchestrator-construction time.
 package source
 
 import (
@@ -16,21 +21,21 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-// Controller watches the Store for GitRepository and OCIRepository
-// objects, reconciles each into an on-disk artifact, and updates the
+// Controller watches the Store for source-kind objects, fetches each
+// into an on-disk artifact via the matching Fetcher, and updates the
 // Store with the result.
 type Controller struct {
-	Store          *store.Store
-	Tasks          *task.Service
-	Cache          *src.Cache
-	RegistryConfig string
+	Store *store.Store
+	Tasks *task.Service
 	// Filter, when non-nil and enabled, narrows fetches to only
 	// sources referenced by changed resources.
 	Filter *change.Filter
 
-	// EnableOCI controls whether OCIRepository reconciliation is active.
-	// The upstream Python defaults to off so behavior matches.
-	EnableOCI bool
+	// Fetchers maps source CR kind → Fetcher implementation. Source
+	// kinds with no entry are ignored, which is also how a flate caller
+	// disables a kind (e.g. EnableOCI=false simply omits OCIRepository
+	// from the map).
+	Fetchers map[string]src.Fetcher
 
 	unsubscribers []store.Unsubscribe
 }
@@ -53,43 +58,25 @@ func (c *Controller) Close() {
 
 func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 	return func(id manifest.NamedResource, payload any) {
-		switch id.Kind {
-		case manifest.KindGitRepository:
-			repo, ok := payload.(*manifest.GitRepository)
-			if !ok {
-				return
-			}
-			if repo.Suspend {
-				c.Store.UpdateStatus(id, store.StatusReady, "suspended")
-				return
-			}
-			if c.skip(id) {
-				return
-			}
-			c.Tasks.Go(ctx, "source/"+id.String(), func(ctx context.Context) {
-				defer base.Recover(c.Store, id, "source")
-				c.reconcileGit(ctx, id, repo)
-			})
-		case manifest.KindOCIRepository:
-			if !c.EnableOCI {
-				return
-			}
-			repo, ok := payload.(*manifest.OCIRepository)
-			if !ok {
-				return
-			}
-			if repo.Suspend {
-				c.Store.UpdateStatus(id, store.StatusReady, "suspended")
-				return
-			}
-			if c.skip(id) {
-				return
-			}
-			c.Tasks.Go(ctx, "source/"+id.String(), func(ctx context.Context) {
-				defer base.Recover(c.Store, id, "source")
-				c.reconcileOCI(ctx, id, repo)
-			})
+		fetcher, registered := c.Fetchers[id.Kind]
+		if !registered {
+			return
 		}
+		obj, ok := payload.(manifest.BaseManifest)
+		if !ok {
+			return
+		}
+		if sus, ok := obj.(src.Suspendable); ok && sus.Suspended() {
+			c.Store.UpdateStatus(id, store.StatusReady, "suspended")
+			return
+		}
+		if c.skip(id) {
+			return
+		}
+		c.Tasks.Go(ctx, "source/"+id.String(), func(ctx context.Context) {
+			defer base.Recover(c.Store, id, "source")
+			c.runFetch(ctx, id, obj, fetcher)
+		})
 	}
 }
 
@@ -106,30 +93,17 @@ func (c *Controller) skip(id manifest.NamedResource) bool {
 	return true
 }
 
-func (c *Controller) reconcileGit(ctx context.Context, id manifest.NamedResource, repo *manifest.GitRepository) {
+// runFetch invokes the registered Fetcher and translates the result
+// into Store status + artifact writes. Generic over kind: the only
+// per-kind decision (which Fetcher to call) was made above.
+func (c *Controller) runFetch(ctx context.Context, id manifest.NamedResource, obj manifest.BaseManifest, fetcher src.Fetcher) {
 	c.Store.UpdateStatus(id, store.StatusPending, "fetching")
 	if art := c.Store.GetArtifact(id); art != nil {
 		c.Store.UpdateStatus(id, store.StatusReady, "")
 		return
 	}
-	slog.Debug("source: git fetch", "id", id.String(), "url", repo.URL)
-	artifact, err := src.FetchGit(ctx, c.Cache, repo)
-	if err != nil {
-		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
-		return
-	}
-	c.Store.SetArtifact(id, artifact)
-	c.Store.UpdateStatus(id, store.StatusReady, "")
-}
-
-func (c *Controller) reconcileOCI(ctx context.Context, id manifest.NamedResource, repo *manifest.OCIRepository) {
-	c.Store.UpdateStatus(id, store.StatusPending, "fetching")
-	if art := c.Store.GetArtifact(id); art != nil {
-		c.Store.UpdateStatus(id, store.StatusReady, "")
-		return
-	}
-	slog.Debug("source: oci fetch", "id", id.String(), "url", repo.URL)
-	artifact, err := src.FetchOCI(ctx, c.Cache, repo, c.RegistryConfig)
+	slog.Debug("source: fetch", "id", id.String())
+	artifact, err := fetcher.Fetch(ctx, obj)
 	if err != nil {
 		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
 		return

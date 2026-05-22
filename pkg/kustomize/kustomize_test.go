@@ -3,8 +3,12 @@ package kustomize
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 // TestRenderFlux_RespectsCanceledContext asserts the renderer bails
@@ -120,5 +124,66 @@ func TestSubstitute_BashSubstringRemoval(t *testing.T) {
 	}
 	if string(out) != "host=example.com" {
 		t.Errorf("Substitute = %q, want %q", out, "host=example.com")
+	}
+}
+
+// TestRenderFlux_HonorsCommonMetadata asserts that
+// spec.commonMetadata.labels and spec.commonMetadata.annotations are
+// merged into every rendered resource — kustomize-controller does this
+// via ssautil.SetCommonMetadata after build, fluxcd/pkg/kustomize.Generator
+// itself does not.
+func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "cm.yaml"), []byte(
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\n  labels:\n    app: x\n  annotations:\n    note: y\ndata:\n  k: v\n",
+	), 0o600); err != nil {
+		t.Fatalf("write cm: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "kustomization.yaml"), []byte(
+		"resources:\n- cm.yaml\n",
+	), 0o600); err != nil {
+		t.Fatalf("write kustomization: %v", err)
+	}
+
+	cache, err := NewStagingCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	out, err := RenderFlux(context.Background(), cache, src, ".", map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
+		"spec": map[string]any{
+			"path": "./",
+			"commonMetadata": map[string]any{
+				"labels":      map[string]any{"team": "flate", "app": "override"},
+				"annotations": map[string]any{"managed-by": "flate"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RenderFlux: %v", err)
+	}
+
+	var got map[string]any
+	if err := yaml.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal output: %v\n%s", err, out)
+	}
+	md, _ := got["metadata"].(map[string]any)
+	labels, _ := md["labels"].(map[string]any)
+	annotations, _ := md["annotations"].(map[string]any)
+	if labels["team"] != "flate" {
+		t.Errorf("commonMetadata.labels not merged: %v", labels)
+	}
+	if labels["app"] != "override" {
+		t.Errorf("commonMetadata.labels did not override existing: %v", labels)
+	}
+	if annotations["managed-by"] != "flate" {
+		t.Errorf("commonMetadata.annotations not merged: %v", annotations)
+	}
+	if annotations["note"] != "y" {
+		t.Errorf("existing annotations dropped: %v", annotations)
 	}
 }

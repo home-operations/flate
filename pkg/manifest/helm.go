@@ -3,7 +3,6 @@ package manifest
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -84,11 +83,11 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string)
 	}, nil
 }
 
-// HelmChartFromSource constructs a HelmChart from a resolved
+// helmChartFromSource constructs a HelmChart from a resolved
 // HelmChartSource. The Repo* fields are read from the embedded
 // SourceRef (which always shares the HelmChart's namespace per Flux
 // schema).
-func HelmChartFromSource(src *HelmChartSource) HelmChart {
+func helmChartFromSource(src *HelmChartSource) HelmChart {
 	kind := src.SourceRef.Kind
 	if kind == "" {
 		kind = KindHelmRepository
@@ -195,8 +194,7 @@ type HelmRelease struct {
 	// ReadyExpr). Shadows the embedded Spec.DependsOn ([]DependencyReference).
 	DependsOn []DependencyRef `json:"-" yaml:"-"`
 
-	Images []string          `json:"images,omitempty" yaml:"images,omitempty"`
-	Labels map[string]string `json:"-"                yaml:"-"`
+	Labels map[string]string `json:"-" yaml:"-"`
 
 	// CRDsPolicy collapses spec.install.crds vs spec.upgrade.crds. One
 	// of "" (chart's helm default), "Skip", "Create", "CreateReplace".
@@ -238,11 +236,6 @@ func (h *HelmRelease) ReleaseNamespace() string {
 	return h.Namespace
 }
 
-// RepoName is the HelmRepository identifier (namespace-name).
-func (h *HelmRelease) RepoName() string {
-	return h.Chart.RepoNamespace + "-" + h.Chart.RepoName
-}
-
 // NamespacedName is "<namespace>/<name>".
 func (h *HelmRelease) NamespacedName() string { return h.Namespace + "/" + h.Name }
 
@@ -267,7 +260,7 @@ func (h *HelmRelease) ResolveChartRef(helmCharts map[string]*HelmChartSource) er
 		return fmt.Errorf("%w: HelmChartSource %s not found for HelmRelease %s",
 			ErrObjectNotFound, h.Chart.RepoFullName(), h.NamespacedName())
 	}
-	h.Chart = HelmChartFromSource(src)
+	h.Chart = helmChartFromSource(src)
 	if len(src.ValuesFiles) > 0 {
 		h.ChartValuesFiles = src.ValuesFiles
 		h.IgnoreMissingValuesFiles = src.IgnoreMissingValuesFiles
@@ -296,7 +289,6 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	if err != nil {
 		return nil, err
 	}
-	vfs := slices.Clone(cr.Spec.ValuesFrom)
 	var values map[string]any
 	if cr.Spec.Values != nil && len(cr.Spec.Values.Raw) > 0 {
 		if err := json.Unmarshal(cr.Spec.Values.Raw, &values); err != nil {
@@ -341,11 +333,6 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		chartValuesFiles = cr.Spec.Chart.Spec.ValuesFiles
 		ignoreMissingValuesFiles = cr.Spec.Chart.Spec.IgnoreMissingValuesFiles
 	}
-
-	// Ensure ValuesFrom is a defensive clone — Spec is embedded by
-	// value so this is the only slice that could escape via aliasing.
-	cr.Spec.ValuesFrom = vfs
-	cr.Spec.PostRenderers = slices.Clone(cr.Spec.PostRenderers)
 
 	return &HelmRelease{
 		Name:                     cr.Name,

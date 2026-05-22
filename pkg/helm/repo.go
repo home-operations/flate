@@ -52,11 +52,11 @@ type ChartLoadResult struct {
 // chart lives at <artifact.LocalPath>/<chart.Name>.
 func (c *Client) locateGitChart(hr *manifest.HelmRelease) (string, error) {
 	c.mu.RLock()
-	g, ok := c.gitRepos[hr.RepoName()]
+	g, ok := c.gitRepos[hr.Chart.RepoFullName()]
 	c.mu.RUnlock()
 	if !ok || g.Artifact == nil {
 		return "", fmt.Errorf("%w: GitRepository %s not available for HelmRelease %s",
-			manifest.ErrObjectNotFound, hr.RepoName(), hr.NamespacedName())
+			manifest.ErrObjectNotFound, hr.Chart.RepoFullName(), hr.NamespacedName())
 	}
 	path := filepath.Join(g.Artifact.LocalPath, hr.Chart.Name)
 	if _, err := os.Stat(filepath.Join(path, "Chart.yaml")); err != nil {
@@ -71,11 +71,11 @@ func (c *Client) locateGitChart(hr *manifest.HelmRelease) (string, error) {
 // any SecretRef credentials.
 func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
 	c.mu.RLock()
-	r, ok := c.repos[hr.RepoName()]
+	r, ok := c.repos[hr.Chart.RepoFullName()]
 	c.mu.RUnlock()
 	if !ok {
 		return "", fmt.Errorf("%w: HelmRepository %s not registered for HelmRelease %s",
-			manifest.ErrObjectNotFound, hr.RepoName(), hr.NamespacedName())
+			manifest.ErrObjectNotFound, hr.Chart.RepoFullName(), hr.NamespacedName())
 	}
 
 	if r.Type == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://") {
@@ -287,10 +287,10 @@ func (c *Client) fetchIndex(indexURL string, opts []getter.Option) (*repo.IndexF
 // short name from the HelmRelease is metadata, not part of the URL.
 func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
 	c.mu.RLock()
-	r, ok := c.ociRepos[hr.RepoName()]
+	r, ok := c.ociRepos[hr.Chart.RepoFullName()]
 	c.mu.RUnlock()
 	if !ok {
-		return "", fmt.Errorf("%w: OCIRepository %s not registered", manifest.ErrObjectNotFound, hr.RepoName())
+		return "", fmt.Errorf("%w: OCIRepository %s not registered", manifest.ErrObjectNotFound, hr.Chart.RepoFullName())
 	}
 	ver, err := r.Version()
 	if err != nil {

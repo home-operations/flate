@@ -142,64 +142,6 @@ func (s *Store) WatchExists(ctx context.Context, id manifest.NamedResource) (man
 	}
 }
 
-// AddedEvent is the value yielded by WatchAdded.
-type AddedEvent struct {
-	ID     manifest.NamedResource
-	Object manifest.BaseManifest
-}
-
-// WatchAdded returns a channel that yields every object of the given
-// kind, starting with everything already in the store. The channel is
-// closed when ctx is cancelled. The channel has buffer size bufSize;
-// values are dropped if the consumer falls behind to keep dispatch
-// non-blocking. Use bufSize generously for slow consumers.
-func (s *Store) WatchAdded(ctx context.Context, kind string, bufSize int) <-chan AddedEvent {
-	if bufSize < 1 {
-		bufSize = 16
-	}
-	out := make(chan AddedEvent, bufSize)
-
-	go func() {
-		defer close(out)
-
-		// Seed with existing objects.
-		for _, obj := range s.ListObjects(kind) {
-			id := obj.Named()
-			select {
-			case out <- AddedEvent{ID: id, Object: obj}:
-			case <-ctx.Done():
-				return
-			}
-		}
-
-		// Subscribe for new objects.
-		seen := make(map[manifest.NamedResource]struct{})
-		for _, obj := range s.ListObjects(kind) {
-			seen[obj.Named()] = struct{}{}
-		}
-
-		unsub := s.AddListener(EventObjectAdded, func(other manifest.NamedResource, payload any) {
-			if kind != "" && other.Kind != kind {
-				return
-			}
-			obj, ok := payload.(manifest.BaseManifest)
-			if !ok {
-				return
-			}
-			select {
-			case out <- AddedEvent{ID: other, Object: obj}:
-			default:
-				// Consumer too slow — drop. Could optionally log here.
-			}
-		}, false)
-		defer unsub()
-
-		<-ctx.Done()
-	}()
-
-	return out
-}
-
 // String formatter is occasionally useful for tests.
 func (s *Store) String() string {
 	s.mu.RLock()

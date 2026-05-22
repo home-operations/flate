@@ -1,9 +1,6 @@
 package manifest
 
 import (
-	"slices"
-
-	meta "github.com/fluxcd/pkg/apis/meta"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
@@ -128,10 +125,6 @@ const (
 // enforced at Fetch time.
 type OCIRepositoryVerify = sourcev1.OCIRepositoryVerification
 
-// OIDCIdentityMatch is the keyless-mode identity matcher. Parsed for
-// fidelity; flate does not perform keyless verification.
-type OIDCIdentityMatch = sourcev1.OIDCIdentityMatch
-
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {
 	return NamedResource{Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
@@ -181,19 +174,12 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	if cr.Spec.Provider == "" {
 		cr.Spec.Provider = sourcev1.GenericOCIProvider
 	}
-	if v := cr.Spec.Verify; v != nil {
-		v.MatchOIDCIdentity = slices.Clone(v.MatchOIDCIdentity)
-	}
 	return &OCIRepository{
 		Name:              cr.Name,
 		Namespace:         cr.Namespace,
 		OCIRepositorySpec: cr.Spec,
 	}, nil
 }
-
-// ExternalArtifactSourceRef identifies the upstream CR that produces
-// the artifact — Flux's meta.NamespacedObjectKindReference.
-type ExternalArtifactSourceRef = meta.NamespacedObjectKindReference
 
 // ExternalArtifact is the Flux ExternalArtifact CRD
 // (source.toolkit.fluxcd.io/v1). It is the contract a third-party

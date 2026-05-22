@@ -351,35 +351,6 @@ func TestStore_WatchExists(t *testing.T) {
 	}
 }
 
-func TestStore_WatchAdded(t *testing.T) {
-	s := New()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ch := s.WatchAdded(ctx, "ConfigMap", 16)
-
-	s.AddObject(newCM("a", "ns"))
-	s.AddObject(newCM("b", "ns"))
-	// A non-CM object should not appear.
-	s.AddObject(&manifest.Secret{Name: "z", Namespace: "ns"})
-
-	got := make(map[string]struct{})
-	timeout := time.After(time.Second)
-	for len(got) < 2 {
-		select {
-		case ev := <-ch:
-			got[ev.ID.Name] = struct{}{}
-		case <-timeout:
-			t.Fatalf("timed out, got %v", got)
-		}
-	}
-	if _, ok := got["a"]; !ok {
-		t.Errorf("missing 'a'")
-	}
-	if _, ok := got["b"]; !ok {
-		t.Errorf("missing 'b'")
-	}
-}
-
 func TestStore_AddListener_Unsubscribe(t *testing.T) {
 	s := New()
 	count := 0

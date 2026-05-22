@@ -21,7 +21,7 @@ import (
 // resolve charts whose sourceRef.kind is GitRepository.
 type LocalGitRepository struct {
 	Repo     *manifest.GitRepository
-	Artifact *store.GitArtifact
+	Artifact *store.SourceArtifact
 }
 
 // RepoName mirrors HelmRepository.RepoName for convenience in lookups.

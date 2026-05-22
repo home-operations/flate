@@ -111,8 +111,8 @@ func (c *Controller) onArtifactUpdated(id manifest.NamedResource, payload any) {
 	if id.Kind != manifest.KindGitRepository {
 		return
 	}
-	gitArt, ok := payload.(*store.GitArtifact)
-	if !ok {
+	gitArt, ok := payload.(*store.SourceArtifact)
+	if !ok || gitArt.Kind != manifest.KindGitRepository {
 		return
 	}
 	repo, _ := c.Store.GetObject(id).(*manifest.GitRepository)

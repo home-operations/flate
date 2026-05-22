@@ -14,14 +14,30 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+// GitFetcher is the Fetcher implementation for KindGitRepository.
+// It owns a shared Cache so multiple GitRepository CRs writing to the
+// same cache root serialize on slot allocation correctly.
+type GitFetcher struct {
+	Cache *Cache
+}
+
+// Fetch implements source.Fetcher for *manifest.GitRepository.
+func (f *GitFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+	repo, ok := obj.(*manifest.GitRepository)
+	if !ok {
+		return nil, fmt.Errorf("%w: GitFetcher: unexpected payload %T", manifest.ErrInput, obj)
+	}
+	return FetchGit(ctx, f.Cache, repo)
+}
+
 // FetchGit clones the GitRepository referenced by repo into the supplied
-// cache and returns a populated *store.GitArtifact. If a usable cached
+// cache and returns a populated *store.SourceArtifact. If a usable cached
 // copy already exists, it is reused.
 //
 // Supported transports: public HTTPS, ssh-with-agent (handled by go-git
 // transparently), and file:// URLs. Per-host credential lookups via a
 // Secret reference will be added when a use case demands it.
-func FetchGit(ctx context.Context, cache *Cache, repo *manifest.GitRepository) (*store.GitArtifact, error) {
+func FetchGit(ctx context.Context, cache *Cache, repo *manifest.GitRepository) (*store.SourceArtifact, error) {
 	if repo == nil {
 		return nil, errors.New("git repository is nil")
 	}
@@ -43,8 +59,9 @@ func FetchGit(ctx context.Context, cache *Cache, repo *manifest.GitRepository) (
 		// Validate it's a usable repo before reusing.
 		if _, err := git.PlainOpen(slot); err == nil {
 			rev, _ := readResolvedRevision(slot)
-			return &store.GitArtifact{
-				URL: repo.URL, LocalPath: slot, Ref: repo.Ref, Revision: rev,
+			return &store.SourceArtifact{
+				Kind: manifest.KindGitRepository,
+				URL:  repo.URL, LocalPath: slot, Revision: rev,
 			}, nil
 		}
 		// Stale slot — wipe and re-clone.
@@ -72,8 +89,9 @@ func FetchGit(ctx context.Context, cache *Cache, repo *manifest.GitRepository) (
 	}
 
 	rev, _ := readResolvedRevision(slot)
-	return &store.GitArtifact{
-		URL: repo.URL, LocalPath: slot, Ref: repo.Ref, Revision: rev,
+	return &store.SourceArtifact{
+		Kind: manifest.KindGitRepository,
+		URL:  repo.URL, LocalPath: slot, Revision: rev,
 	}, nil
 }
 

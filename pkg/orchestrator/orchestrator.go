@@ -102,16 +102,23 @@ func New(cfg Config) (*Orchestrator, error) {
 
 	st := store.New()
 	ts := task.New()
+	cache := cmp.Or(cfg.SourceCache, source.NewCache(filepath.Join(cacheRoot, "sources")))
+	fetchers := map[string]source.Fetcher{
+		manifest.KindGitRepository: &source.GitFetcher{Cache: cache},
+	}
+	if cfg.EnableOCI {
+		fetchers[manifest.KindOCIRepository] = &source.OCIFetcher{
+			Cache: cache, RegistryConfig: cfg.RegistryConfig,
+		}
+	}
 	o := &Orchestrator{
 		cfg:   cfg,
 		store: st,
 		tasks: ts,
 		src: &sourcectrl.Controller{
-			Store:          st,
-			Tasks:          ts,
-			Cache:          cmp.Or(cfg.SourceCache, source.NewCache(filepath.Join(cacheRoot, "sources"))),
-			RegistryConfig: cfg.RegistryConfig,
-			EnableOCI:      cfg.EnableOCI,
+			Store:    st,
+			Tasks:    ts,
+			Fetchers: fetchers,
 		},
 		ksc:     &kustomization.Controller{Store: st, Tasks: ts, Staging: staging, WipeSecrets: cfg.WipeSecrets},
 		hrc:     &helmrelease.Controller{Store: st, Tasks: ts, Helm: helmClient, Options: cfg.HelmOptions, WipeSecrets: cfg.WipeSecrets},
@@ -162,7 +169,10 @@ func (o *Orchestrator) seedBootstrapSource() (string, error) {
 	}
 	id := repo.Named()
 	o.store.AddObject(repo)
-	o.store.SetArtifact(id, &store.GitArtifact{URL: repo.URL, LocalPath: root})
+	o.store.SetArtifact(id, &store.SourceArtifact{
+		Kind: manifest.KindGitRepository,
+		URL:  repo.URL, LocalPath: root,
+	})
 	o.store.UpdateStatus(id, store.StatusReady, "bootstrap")
 	return root, nil
 }

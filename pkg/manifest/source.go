@@ -45,6 +45,9 @@ func (g *GitRepository) Named() NamedResource {
 	return NamedResource{Kind: KindGitRepository, Namespace: g.Namespace, Name: g.Name}
 }
 
+// Suspended reports whether reconciliation is paused on this resource.
+func (g *GitRepository) Suspended() bool { return g.Suspend }
+
 // RepoName is "<namespace>-<name>".
 func (g *GitRepository) RepoName() string { return g.Namespace + "-" + g.Name }
 
@@ -108,6 +111,9 @@ type OCIRepository struct {
 func (o *OCIRepository) Named() NamedResource {
 	return NamedResource{Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
 }
+
+// Suspended reports whether reconciliation is paused on this resource.
+func (o *OCIRepository) Suspended() bool { return o.Suspend }
 
 // RepoName is "<namespace>-<name>".
 func (o *OCIRepository) RepoName() string { return o.Namespace + "-" + o.Name }

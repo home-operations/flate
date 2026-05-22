@@ -35,7 +35,7 @@ data:
 			Name: "chart-repo", Namespace: "flux-system",
 			URL: "file://" + dir,
 		},
-		Artifact: &store.GitArtifact{URL: "file://" + dir, LocalPath: dir},
+		Artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir},
 	})
 
 	hr := &manifest.HelmRelease{

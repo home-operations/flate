@@ -23,7 +23,7 @@ func ParseConfigMap(doc map[string]any) (*ConfigMap, error) {
 	if err := checkAPIVersion(doc, "v1"); err != nil {
 		return nil, err
 	}
-	_, name, ns, err := requireMetadata("ConfigMap", doc)
+	name, ns, err := requireMetadata("ConfigMap", doc)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func ParseSecret(doc map[string]any, wipeSecrets bool) (*Secret, error) {
 	if err := checkAPIVersion(doc, "v1"); err != nil {
 		return nil, err
 	}
-	_, name, ns, err := requireMetadata("Secret", doc)
+	name, ns, err := requireMetadata("Secret", doc)
 	if err != nil {
 		return nil, err
 	}

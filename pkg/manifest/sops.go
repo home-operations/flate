@@ -24,3 +24,31 @@ func IsEncryptedSecret(doc map[string]any) bool {
 	}
 	return false
 }
+
+// SubstituteAnnotationKey is Flux kustomize-controller's per-resource
+// opt-out for postBuild substitution. A resource carrying this label
+// or annotation with value "disabled" is excluded from envsubst,
+// commonly used for ConfigMaps that embed shell scripts whose
+// $${VAR[@]} bash array expansions would otherwise crash the parser.
+const SubstituteAnnotationKey = "kustomize.toolkit.fluxcd.io/substitute"
+
+// SubstituteDisabledValue is the literal value that opts a resource
+// out of postBuild substitution. Matches Flux's `DisabledValue`.
+const SubstituteDisabledValue = "disabled"
+
+// HasSubstituteDisabled reports whether a manifest doc carries the
+// substitute-disabled label or annotation. flate skips envsubst on
+// such resources, mirroring Flux's per-resource opt-out.
+func HasSubstituteDisabled(doc map[string]any) bool {
+	md, _ := doc["metadata"].(map[string]any)
+	if md == nil {
+		return false
+	}
+	for _, field := range []string{"labels", "annotations"} {
+		m, _ := md[field].(map[string]any)
+		if v, _ := m[SubstituteAnnotationKey].(string); v == SubstituteDisabledValue {
+			return true
+		}
+	}
+	return false
+}

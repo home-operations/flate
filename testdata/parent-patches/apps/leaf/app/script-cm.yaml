@@ -1,0 +1,18 @@
+# A ConfigMap embedding a shell script with bash-only constructs
+# (${ARR[@]}) that the envsubst parser cannot handle. The
+# substitute-disabled annotation tells Flux's kustomize-controller
+# to skip envsubst for this resource — flate honors the same
+# annotation, so the script body survives the build untouched.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: leaf-script
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    EXCLUDE_ARRAY=("a" "b" "c")
+    for x in "${EXCLUDE_ARRAY[@]}"; do
+      echo "$x"
+    done

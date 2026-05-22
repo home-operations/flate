@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	yaml "go.yaml.in/yaml/v4"
+
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -119,16 +121,30 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	if err != nil {
 		return err
 	}
-	if vars := values.VarsMap(ks.PostBuildSubstitute); len(vars) > 0 && kustomize.HasSubstitutions(data) {
-		data, err = kustomize.Substitute(data, vars)
-		if err != nil {
-			return err
-		}
-	}
-
 	docs, err := manifest.SplitDocs(data)
 	if err != nil {
 		return err
+	}
+
+	// Per-resource envsubst. Flux's kustomize-controller skips
+	// substitution on any resource carrying the
+	// "kustomize.toolkit.fluxcd.io/substitute: disabled" label or
+	// annotation — used in real repos for ConfigMaps that embed
+	// shell scripts with bash array expansions (${ARR[@]}) that
+	// envsubst's parser cannot handle. Mirror that behavior here:
+	// substitute per-doc, skip opted-out resources, so we match Flux
+	// bit-for-bit.
+	if vars := values.VarsMap(ks.PostBuildSubstitute); len(vars) > 0 {
+		for i, doc := range docs {
+			if manifest.HasSubstituteDisabled(doc) {
+				continue
+			}
+			substituted, sErr := substituteDoc(doc, vars)
+			if sErr != nil {
+				return sErr
+			}
+			docs[i] = substituted
+		}
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
@@ -194,6 +210,30 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		Manifests: docs,
 	})
 	return nil
+}
+
+// substituteDoc marshals a single manifest doc, runs envsubst over it,
+// and unmarshals the result back. Per-doc substitution (rather than
+// substitute-the-whole-blob) lets us honor Flux's
+// "kustomize.toolkit.fluxcd.io/substitute: disabled" opt-out, which is
+// scoped to individual resources.
+func substituteDoc(doc map[string]any, vars map[string]string) (map[string]any, error) {
+	raw, err := yaml.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("substitute: marshal doc: %w", err)
+	}
+	if !kustomize.HasSubstitutions(raw) {
+		return doc, nil
+	}
+	out, err := kustomize.Substitute(raw, vars)
+	if err != nil {
+		return nil, err
+	}
+	var next map[string]any
+	if err := yaml.Unmarshal(out, &next); err != nil {
+		return nil, fmt.Errorf("substitute: unmarshal doc: %w", err)
+	}
+	return next, nil
 }
 
 // shouldDispatchAsObject reports whether a render-emitted Flux

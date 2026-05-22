@@ -273,6 +273,28 @@ func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
 	}
 }
 
+// TestE2E_SubstituteDisabledAnnotation reproduces the Flux opt-out
+// pattern: a ConfigMap embedding a shell script with bash array
+// expansions (${ARR[@]}) that the envsubst parser can't handle is
+// flagged with kustomize.toolkit.fluxcd.io/substitute: disabled,
+// instructing flate (and Flux) to skip substitution on that
+// resource. Without this opt-out, envsubst would fail with
+// "missing closing brace" and abort the whole Kustomization.
+func TestE2E_SubstituteDisabledAnnotation(t *testing.T) {
+	src := testdataPath(t, "parent-patches")
+	root := copyTree(t, src)
+
+	out := runCLI(t, "test", "ks", "--path", root)
+
+	leafLine := mustExtractLine(t, out, "Kustomization/flux-system/leaf")
+	if !strings.Contains(leafLine, "PASSED") {
+		t.Errorf("leaf should pass — the script ConfigMap opts out of substitution; got: %s", leafLine)
+	}
+	if strings.Contains(out, "missing closing brace") {
+		t.Errorf("substitute-disabled annotation should prevent the parse error:\n%s", out)
+	}
+}
+
 func mustExtractLine(t *testing.T, haystack, needle string) string {
 	t.Helper()
 	for _, line := range strings.Split(haystack, "\n") {

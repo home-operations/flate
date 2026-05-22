@@ -4,14 +4,12 @@ name: Release
 
 on:
   push:
+    # Trigger on tag push, not the `release` event: org-enforced release
+    # immutability locks assets the moment a release is published, so we
+    # upload to the still-draft release release-please created and flip it
+    # to published in the final job.
     tags:
       - "*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Tag/release to (re)build
-        type: string
-        required: true
 
 jobs:
   build:
@@ -225,7 +223,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TAG: ${{ inputs.tag || github.ref_name }}
+      TAG: ${{ github.ref_name }}
     steps:
       - name: Mark release as published
         run: gh release edit "$TAG" --draft=false --repo "${{ github.repository }}"

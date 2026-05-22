@@ -109,7 +109,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		return s
 	}
 	fetchers := map[string]source.Fetcher{
-		manifest.KindGitRepository:    &source.GitFetcher{Cache: cache},
+		manifest.KindGitRepository:    &source.GitFetcher{Cache: cache, Secrets: secretGet},
 		manifest.KindExternalArtifact: &source.ExternalArtifactFetcher{},
 		manifest.KindBucket:           &source.BucketFetcher{Cache: cache, Secrets: secretGet},
 	}

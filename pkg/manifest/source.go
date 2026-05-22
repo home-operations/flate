@@ -33,11 +33,13 @@ func (r GitRepositoryRef) IsEmpty() bool { return r == GitRepositoryRef{} }
 
 // GitRepository is the Flux GitRepository CRD.
 type GitRepository struct {
-	Name      string           `json:"name" yaml:"name"`
-	Namespace string           `json:"namespace" yaml:"namespace"`
-	URL       string           `json:"url" yaml:"url"`
-	Ref       GitRepositoryRef `json:"ref,omitzero" yaml:"ref,omitempty"`
-	Suspend   bool             `json:"-" yaml:"-"`
+	Name      string                `json:"name" yaml:"name"`
+	Namespace string                `json:"namespace" yaml:"namespace"`
+	URL       string                `json:"url" yaml:"url"`
+	Ref       GitRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
+	Provider  string                `json:"provider,omitempty" yaml:"provider,omitempty"`
+	SecretRef *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	Suspend   bool                  `json:"-" yaml:"-"`
 }
 
 // Named identifies the GitRepository.
@@ -77,13 +79,22 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 			Commit: r.Commit,
 		}
 	}
-	return &GitRepository{
+	provider := cr.Spec.Provider
+	if provider == "" {
+		provider = GitProviderGeneric
+	}
+	out := &GitRepository{
 		Name:      cr.Name,
 		Namespace: cr.Namespace,
 		URL:       cr.Spec.URL,
 		Ref:       ref,
+		Provider:  provider,
 		Suspend:   cr.Spec.Suspend,
-	}, nil
+	}
+	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
+		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
+	}
+	return out, nil
 }
 
 // OCIRepositoryRef points at a specific OCI artifact version.

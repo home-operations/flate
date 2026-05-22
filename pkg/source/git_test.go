@@ -24,7 +24,7 @@ func TestFetchGit_LocalFileURL(t *testing.T) {
 		URL:       "file://" + src,
 	}
 
-	art, err := FetchGit(context.Background(), cache, repo)
+	art, err := FetchGit(context.Background(), cache, repo, nil)
 	if err != nil {
 		t.Fatalf("FetchGit: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestFetchGit_LocalFileURL(t *testing.T) {
 	}
 
 	// Second call should reuse cache.
-	art2, err := FetchGit(context.Background(), cache, repo)
+	art2, err := FetchGit(context.Background(), cache, repo, nil)
 	if err != nil {
 		t.Fatalf("FetchGit second: %v", err)
 	}

@@ -44,6 +44,16 @@ const (
 	BucketProviderAzure   = "azure"
 )
 
+// GitRepository providers as understood by Flux. flate currently
+// supports only "generic" (SecretRef-based username/password / bearer
+// / SSH identity); azure (Managed Identity) and github (GitHub App)
+// require live cloud-provider auth flows and fail-loud at fetch time.
+const (
+	GitProviderGeneric = "generic"
+	GitProviderAzure   = "azure"
+	GitProviderGitHub  = "github"
+)
+
 // ValuePlaceholderTemplate is the format string used when wiping Secret
 // values. The "{name}" token is replaced with the data key.
 const ValuePlaceholderTemplate = "..PLACEHOLDER_%s.."

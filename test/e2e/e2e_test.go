@@ -72,6 +72,28 @@ func TestE2E_GetKS(t *testing.T) {
 	}
 }
 
+func TestE2E_GetKS_YAMLExposesProjectedFields(t *testing.T) {
+	out := runCLI(t, "get", "ks", "--path", testdataPath(t, "simple"), "-o", "yaml")
+	// Asserts the structured projection includes the new fields:
+	// sourceRef block (kind/name/namespace), prune, wait.
+	for _, want := range []string{"sourceRef:", "kind: GitRepository", "prune: true", "wait:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in projected ks YAML:\n%s", want, out)
+		}
+	}
+}
+
+func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
+	out := runCLI(t, "get", "hr", "--path", testdataPath(t, "simple"), "-o", "yaml")
+	// HelmRelease projection should carry sourceRef (chart's resolved
+	// ref) and releaseName.
+	for _, want := range []string{"sourceRef:", "releaseName:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in projected hr YAML:\n%s", want, out)
+		}
+	}
+}
+
 func TestE2E_BuildKS(t *testing.T) {
 	out := runCLI(t, "build", "ks", "--path", copyTree(t, testdataPath(t, "simple")))
 	if !strings.Contains(out, "kind: ConfigMap") {

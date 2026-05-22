@@ -26,13 +26,26 @@ func newGetKSCmd() *cobra.Command {
 	return resourceListCmd("ks", []string{"kustomization", "kustomizations"},
 		"List Kustomizations", manifest.KindKustomization, ksColumns,
 		func(o *manifest.Kustomization) (row map[string]string, doc map[string]any) {
-			return map[string]string{
-					"namespace": o.Namespace, "name": o.Name, "path": o.Path,
+			doc = map[string]any{
+				"kind": manifest.KindKustomization, "namespace": o.Namespace,
+				"name": o.Name, "path": o.Path,
+				"sourceRef": map[string]string{
+					"kind":      o.SourceKind,
+					"name":      o.SourceName,
+					"namespace": o.SourceNamespace,
 				},
-				map[string]any{
-					"kind": manifest.KindKustomization, "namespace": o.Namespace,
-					"name": o.Name, "path": o.Path,
-				}
+				"prune": o.Prune,
+				"wait":  o.Wait,
+			}
+			if o.Suspend {
+				doc["suspend"] = true
+			}
+			if o.TargetNamespace != "" {
+				doc["targetNamespace"] = o.TargetNamespace
+			}
+			return map[string]string{
+				"namespace": o.Namespace, "name": o.Name, "path": o.Path,
+			}, doc
 		},
 	)
 }
@@ -41,16 +54,28 @@ func newGetHRCmd() *cobra.Command {
 	return resourceListCmd("hr", []string{"helmrelease", "helmreleases"},
 		"List HelmReleases", manifest.KindHelmRelease, hrColumns,
 		func(o *manifest.HelmRelease) (row map[string]string, doc map[string]any) {
-			return map[string]string{
-					"namespace": o.Namespace, "name": o.Name,
-					"chart": o.Chart.ChartName(), "version": o.Chart.Version,
-					"source": o.Chart.RepoName,
+			doc = map[string]any{
+				"kind": manifest.KindHelmRelease, "namespace": o.Namespace,
+				"name": o.Name, "chart": o.Chart.ChartName(),
+				"version": o.Chart.Version, "source": o.Chart.RepoName,
+				"sourceRef": map[string]string{
+					"kind":      o.Chart.RepoKind,
+					"name":      o.Chart.RepoName,
+					"namespace": o.Chart.RepoNamespace,
 				},
-				map[string]any{
-					"kind": manifest.KindHelmRelease, "namespace": o.Namespace,
-					"name": o.Name, "chart": o.Chart.ChartName(),
-					"version": o.Chart.Version, "source": o.Chart.RepoName,
-				}
+				"releaseName": o.ReleaseName(),
+			}
+			if o.Suspend {
+				doc["suspend"] = true
+			}
+			if o.TargetNamespace != "" {
+				doc["targetNamespace"] = o.TargetNamespace
+			}
+			return map[string]string{
+				"namespace": o.Namespace, "name": o.Name,
+				"chart": o.Chart.ChartName(), "version": o.Chart.Version,
+				"source": o.Chart.RepoName,
+			}, doc
 		})
 }
 

@@ -48,6 +48,67 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	}
 }
 
+// TestFetcher_RefByName exercises spec.ref.name handling — flate
+// resolves it to a commit via git.ResolveRevision and checks out the
+// resulting hash.
+func TestFetcher_RefByName(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	tagged := mustTagHEAD(t, src, "v0.1.0")
+
+	cache := source.NewCache(t.TempDir())
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		URL: "file://" + src,
+		Ref: manifest.GitRepositoryRef{Name: "refs/tags/v0.1.0"},
+	}
+	f := &Fetcher{Cache: cache}
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch by ref.name: %v", err)
+	}
+	if art.Revision != tagged {
+		t.Errorf("Revision = %q, want %q (tag → commit)", art.Revision, tagged)
+	}
+}
+
+// TestFetcher_RefByName_Unresolvable surfaces a clear error when the
+// ref name can't be resolved.
+func TestFetcher_RefByName_Unresolvable(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+
+	cache := source.NewCache(t.TempDir())
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		URL: "file://" + src,
+		Ref: manifest.GitRepositoryRef{Name: "refs/heads/does-not-exist"},
+	}
+	f := &Fetcher{Cache: cache}
+	_, err := f.Fetch(context.Background(), repo)
+	if err == nil {
+		t.Fatalf("expected unresolvable-ref error")
+	}
+}
+
+// mustTagHEAD creates an annotated tag pointing at the worktree HEAD
+// and returns the tagged commit SHA.
+func mustTagHEAD(t *testing.T, dir, tag string) string {
+	t.Helper()
+	r, err := git.PlainOpen(dir)
+	if err != nil {
+		t.Fatalf("PlainOpen: %v", err)
+	}
+	head, err := r.Head()
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	if _, err := r.CreateTag(tag, head.Hash(), nil); err != nil {
+		t.Fatalf("CreateTag: %v", err)
+	}
+	return head.Hash().String()
+}
+
 // mustInitRepo creates a minimal git repo at dir with one file and one
 // commit.
 func mustInitRepo(t *testing.T, dir string) {

@@ -10,12 +10,20 @@ type GitRepositoryRef struct {
 	Tag    string `json:"tag,omitempty" yaml:"tag,omitempty"`
 	Semver string `json:"semver,omitempty" yaml:"semver,omitempty"`
 	Commit string `json:"commit,omitempty" yaml:"commit,omitempty"`
+	// Name is the full Git reference (e.g. "refs/pull/420/head" or
+	// "refs/tags/v0.1.0"). When set, takes precedence over
+	// Branch/Tag/SemVer and any Commit specified — flate resolves the
+	// remote ref to a commit before checkout.
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
 }
 
-// RefString returns "branch:main", "tag:v1.2.3", etc., or empty when the
-// ref is empty. Precedence: commit > tag > branch > semver.
+// RefString returns "branch:main", "tag:v1.2.3", etc., or empty when
+// the ref is empty. Precedence (matches Flux source-controller):
+// name > commit > tag > branch > semver.
 func (r GitRepositoryRef) RefString() string {
 	switch {
+	case r.Name != "":
+		return "name:" + r.Name
 	case r.Commit != "":
 		return "commit:" + r.Commit
 	case r.Tag != "":
@@ -33,13 +41,14 @@ func (r GitRepositoryRef) IsEmpty() bool { return r == GitRepositoryRef{} }
 
 // GitRepository is the Flux GitRepository CRD.
 type GitRepository struct {
-	Name      string                `json:"name" yaml:"name"`
-	Namespace string                `json:"namespace" yaml:"namespace"`
-	URL       string                `json:"url" yaml:"url"`
-	Ref       GitRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
-	Provider  string                `json:"provider,omitempty" yaml:"provider,omitempty"`
-	SecretRef *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-	Suspend   bool                  `json:"-" yaml:"-"`
+	Name              string                `json:"name" yaml:"name"`
+	Namespace         string                `json:"namespace" yaml:"namespace"`
+	URL               string                `json:"url" yaml:"url"`
+	Ref               GitRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
+	Provider          string                `json:"provider,omitempty" yaml:"provider,omitempty"`
+	SecretRef         *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	RecurseSubmodules bool                  `json:"recurseSubmodules,omitempty" yaml:"recurseSubmodules,omitempty"`
+	Suspend           bool                  `json:"-" yaml:"-"`
 }
 
 // Named identifies the GitRepository.
@@ -77,6 +86,7 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 			Tag:    r.Tag,
 			Semver: r.SemVer,
 			Commit: r.Commit,
+			Name:   r.Name,
 		}
 	}
 	provider := cr.Spec.Provider
@@ -84,12 +94,13 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 		provider = GitProviderGeneric
 	}
 	out := &GitRepository{
-		Name:      cr.Name,
-		Namespace: cr.Namespace,
-		URL:       cr.Spec.URL,
-		Ref:       ref,
-		Provider:  provider,
-		Suspend:   cr.Spec.Suspend,
+		Name:              cr.Name,
+		Namespace:         cr.Namespace,
+		URL:               cr.Spec.URL,
+		Ref:               ref,
+		Provider:          provider,
+		RecurseSubmodules: cr.Spec.RecurseSubmodules,
+		Suspend:           cr.Spec.Suspend,
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
 		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}

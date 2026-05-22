@@ -171,6 +171,9 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 	}
 
 	cloneOpts := &git.CloneOptions{URL: url, NoCheckout: true, Auth: auth}
+	if repo.RecurseSubmodules {
+		cloneOpts.RecurseSubmodules = git.DefaultSubmoduleRecursionDepth
+	}
 	cloned, err := git.PlainCloneContext(ctx, slot, false, cloneOpts)
 	if err != nil {
 		_ = cache.Reset(slot)
@@ -179,6 +182,11 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 
 	if err := checkoutRef(cloned, repo.Ref); err != nil {
 		return nil, fmt.Errorf("checkout %s: %w", refStr, err)
+	}
+	if repo.RecurseSubmodules {
+		if err := updateSubmodules(cloned, auth); err != nil {
+			return nil, fmt.Errorf("submodules: %w", err)
+		}
 	}
 
 	rev, _ := readResolvedRevision(slot)
@@ -194,6 +202,25 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef) error {
 		return err
 	}
 	switch {
+	case ref.Name != "":
+		// Full ref name takes precedence (e.g. "refs/pull/420/head",
+		// "refs/tags/v1.2.3"). Resolve against the cloned repo so the
+		// remote-tracking layer (refs/remotes/origin/...) is checked
+		// too — go-git's PlainClone fetches all refs but normalizes
+		// branches under refs/remotes/origin.
+		rev := plumbing.Revision(ref.Name)
+		if h, err := repo.ResolveRevision(rev); err == nil {
+			return wt.Checkout(&git.CheckoutOptions{Hash: *h})
+		}
+		// Fall through: try resolving as a remote-tracking ref. This
+		// handles refs/heads/<branch> by mapping to refs/remotes/origin/<branch>.
+		if rest, ok := strings.CutPrefix(ref.Name, "refs/heads/"); ok {
+			remote := plumbing.NewRemoteReferenceName("origin", rest)
+			if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
+				return wt.Checkout(&git.CheckoutOptions{Hash: *h})
+			}
+		}
+		return fmt.Errorf("%w: unable to resolve git ref %q", manifest.ErrInput, ref.Name)
 	case ref.Commit != "":
 		return wt.Checkout(&git.CheckoutOptions{Hash: plumbing.NewHash(ref.Commit)})
 	case ref.Tag != "":
@@ -216,6 +243,27 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef) error {
 	}
 	// No ref: just check out HEAD.
 	return wt.Checkout(&git.CheckoutOptions{})
+}
+
+// updateSubmodules initializes and pulls submodules in the cloned
+// worktree. Mirrors `git submodule update --init --recursive`. The
+// parent's auth is reused for each submodule's fetch — Flux's
+// behavior assumes a single credential source per GitRepository CR,
+// even when submodules live on different hosts.
+func updateSubmodules(repo *git.Repository, auth transport.AuthMethod) error {
+	wt, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	subs, err := wt.Submodules()
+	if err != nil {
+		return err
+	}
+	return subs.Update(&git.SubmoduleUpdateOptions{
+		Init:              true,
+		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
+		Auth:              auth,
+	})
 }
 
 // readResolvedRevision returns the current commit SHA at the worktree.

@@ -64,6 +64,33 @@ spec:
 	}
 }
 
+func TestParseGitRepository_RefNameAndSubmodules(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: pr, namespace: flux-system}
+spec:
+  url: https://github.com/owner/repo.git
+  ref:
+    name: refs/pull/420/head
+  recurseSubmodules: true
+  interval: 5m
+`)
+	g, err := ParseGitRepository(doc)
+	if err != nil {
+		t.Fatalf("ParseGitRepository: %v", err)
+	}
+	if g.Ref.Name != "refs/pull/420/head" {
+		t.Errorf("Ref.Name = %q", g.Ref.Name)
+	}
+	if !g.RecurseSubmodules {
+		t.Errorf("RecurseSubmodules should be true")
+	}
+	if want := "name:refs/pull/420/head"; g.Ref.RefString() != want {
+		t.Errorf("RefString = %q, want %q", g.Ref.RefString(), want)
+	}
+}
+
 func TestParseKustomization_Suspend(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: kustomize.toolkit.fluxcd.io/v1

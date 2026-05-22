@@ -282,6 +282,10 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 			return nil, err
 		}
 	}
+	if err := applyLayerSelector(ctx, repoClient, slot, desc.Digest.String(), repo.LayerSelector); err != nil {
+		_ = os.RemoveAll(slot)
+		return nil, fmt.Errorf("OCIRepository %s/%s: layer select: %w", repo.Namespace, repo.Name, err)
+	}
 	// Persist the resolved digest so a subsequent cache hit can
 	// re-verify against the exact bytes we wrote, even when the spec
 	// pinned only a tag.

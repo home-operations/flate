@@ -207,6 +207,36 @@ func TestParseOCIRepository_VerifyCosign(t *testing.T) {
 	}
 }
 
+func TestParseOCIRepository_LayerSelector(t *testing.T) {
+	doc := map[string]any{
+		"apiVersion": "source.toolkit.fluxcd.io/v1",
+		"kind":       "OCIRepository",
+		"metadata":   map[string]any{"name": "o", "namespace": "ns"},
+		"spec": map[string]any{
+			"url":      "oci://ghcr.io/x/y",
+			"interval": "5m",
+			"ref":      map[string]any{"tag": "v1"},
+			"layerSelector": map[string]any{
+				"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+				"operation": "copy",
+			},
+		},
+	}
+	repo, err := manifest.ParseOCIRepository(doc)
+	if err != nil {
+		t.Fatalf("ParseOCIRepository: %v", err)
+	}
+	if repo.LayerSelector == nil {
+		t.Fatalf("expected LayerSelector parsed")
+	}
+	if got, want := repo.LayerSelector.MediaType, "application/vnd.cncf.helm.chart.content.v1.tar+gzip"; got != want {
+		t.Errorf("MediaType = %q, want %q", got, want)
+	}
+	if got, want := repo.LayerSelector.Operation, "copy"; got != want {
+		t.Errorf("Operation = %q, want %q", got, want)
+	}
+}
+
 func mustPEMPublicKey(t *testing.T, pub crypto.PublicKey) []byte {
 	t.Helper()
 	der, err := x509.MarshalPKIXPublicKey(pub)

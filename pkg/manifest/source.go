@@ -125,17 +125,37 @@ func (r OCIRepositoryRef) IsEmpty() bool { return r == OCIRepositoryRef{} }
 
 // OCIRepository is the Flux OCIRepository CRD.
 type OCIRepository struct {
-	Name          string                 `json:"name" yaml:"name"`
-	Namespace     string                 `json:"namespace" yaml:"namespace"`
-	URL           string                 `json:"url" yaml:"url"`
-	Ref           OCIRepositoryRef       `json:"ref,omitzero" yaml:"ref,omitempty"`
-	Provider      string                 `json:"provider,omitempty" yaml:"provider,omitempty"`
-	SecretRef     *LocalObjectReference  `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-	CertSecretRef *LocalObjectReference  `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
-	Verify        *OCIRepositoryVerify   `json:"verify,omitempty" yaml:"verify,omitempty"`
-	Insecure      bool                   `json:"insecure,omitempty" yaml:"insecure,omitempty"`
-	Suspend       bool                   `json:"-" yaml:"-"`
+	Name          string                `json:"name" yaml:"name"`
+	Namespace     string                `json:"namespace" yaml:"namespace"`
+	URL           string                `json:"url" yaml:"url"`
+	Ref           OCIRepositoryRef      `json:"ref,omitzero" yaml:"ref,omitempty"`
+	Provider      string                `json:"provider,omitempty" yaml:"provider,omitempty"`
+	SecretRef     *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	CertSecretRef *LocalObjectReference `json:"certSecretRef,omitempty" yaml:"certSecretRef,omitempty"`
+	Verify        *OCIRepositoryVerify  `json:"verify,omitempty" yaml:"verify,omitempty"`
+	LayerSelector *OCILayerSelector     `json:"layerSelector,omitempty" yaml:"layerSelector,omitempty"`
+	Insecure      bool                  `json:"insecure,omitempty" yaml:"insecure,omitempty"`
+	Suspend       bool                  `json:"-" yaml:"-"`
 }
+
+// OCILayerSelector mirrors source-controller's spec.layerSelector.
+// When set, the fetcher selects the first layer matching MediaType
+// and processes it per Operation:
+//   - "extract" (default): the layer's tarball is unpacked into the
+//     artifact directory.
+//   - "copy": the layer's compressed blob is persisted verbatim,
+//     under the filename "layer.tar.gz".
+type OCILayerSelector struct {
+	MediaType string `json:"mediaType,omitempty" yaml:"mediaType,omitempty"`
+	Operation string `json:"operation,omitempty" yaml:"operation,omitempty"`
+}
+
+// OCILayerOperationExtract and OCILayerOperationCopy are the two
+// values source-controller accepts on LayerSelector.Operation.
+const (
+	OCILayerOperationExtract = "extract"
+	OCILayerOperationCopy    = "copy"
+)
 
 // OCIRepositoryVerify mirrors source-controller's spec.verify on
 // OCIRepository. Flate implements keyed mode only:
@@ -254,6 +274,12 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		for _, m := range v.MatchOIDCIdentity {
 			out.Verify.MatchOIDCIdentity = append(out.Verify.MatchOIDCIdentity,
 				OIDCIdentityMatch{Issuer: m.Issuer, Subject: m.Subject})
+		}
+	}
+	if ls := cr.Spec.LayerSelector; ls != nil {
+		out.LayerSelector = &OCILayerSelector{
+			MediaType: ls.MediaType,
+			Operation: ls.Operation,
 		}
 	}
 	return out, nil

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/home-operations/flate/compare/0.1.2...0.1.3) (2026-05-22)
+
+
+### Bug Fixes
+
+* create tag in release please workflow ([5726b91](https://github.com/home-operations/flate/commit/5726b9179f10a2a007a9cafa7215e614b031cf7c))
+
 ## [0.4.0](https://github.com/home-operations/flate/compare/0.3.0...0.4.0) (2026-05-22)
 
 

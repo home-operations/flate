@@ -132,6 +132,16 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
+	for _, doc := range docs {
+		if manifest.IsEncryptedSecret(doc) {
+			name, ns := manifest.DocMetadata(doc)
+			return fmt.Errorf(
+				"SOPS-encrypted %s %s/%s in rendered output: flate does not implement spec.decryption — "+
+					"render against pre-decrypted manifests or remove the encrypted resource",
+				manifest.DocKind(doc), ns, name,
+			)
+		}
+	}
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
 	for _, doc := range docs {
 		obj, err := manifest.ParseDoc(doc, opts)

@@ -155,7 +155,7 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 		return "", nil
 	}
 
-	key := ref.EffectiveValuesKey()
+	key := ref.GetValuesKey()
 	val, ok := data[key]
 	if !ok {
 		return "", fmt.Errorf("%w: key %q not found in %s/%s",

@@ -128,10 +128,10 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 		Suspend:           cr.Spec.Suspend,
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
-		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
+		out.SecretRef = cr.Spec.SecretRef
 	}
 	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
-		out.ProxySecretRef = &LocalObjectReference{Name: cr.Spec.ProxySecretRef.Name}
+		out.ProxySecretRef = cr.Spec.ProxySecretRef
 	}
 	if v := cr.Spec.Verification; v != nil {
 		mode := string(v.GetMode())
@@ -140,7 +140,8 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 		}
 		out.Verify = &GitRepositoryVerify{Mode: mode}
 		if v.SecretRef.Name != "" {
-			out.Verify.SecretRef = &LocalObjectReference{Name: v.SecretRef.Name}
+			ref := v.SecretRef
+			out.Verify.SecretRef = &ref
 		}
 	}
 	return out, nil
@@ -288,7 +289,7 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		Suspend:   cr.Spec.Suspend,
 	}
 	if cr.Spec.CertSecretRef != nil && cr.Spec.CertSecretRef.Name != "" {
-		out.CertSecretRef = &LocalObjectReference{Name: cr.Spec.CertSecretRef.Name}
+		out.CertSecretRef = cr.Spec.CertSecretRef
 	}
 	if r := cr.Spec.Reference; r != nil {
 		out.Ref = OCIRepositoryRef{
@@ -299,15 +300,15 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		}
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
-		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
+		out.SecretRef = cr.Spec.SecretRef
 	}
 	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
-		out.ProxySecretRef = &LocalObjectReference{Name: cr.Spec.ProxySecretRef.Name}
+		out.ProxySecretRef = cr.Spec.ProxySecretRef
 	}
 	if v := cr.Spec.Verify; v != nil {
 		out.Verify = &OCIRepositoryVerify{Provider: v.Provider}
 		if v.SecretRef != nil && v.SecretRef.Name != "" {
-			out.Verify.SecretRef = &LocalObjectReference{Name: v.SecretRef.Name}
+			out.Verify.SecretRef = v.SecretRef
 		}
 		for _, m := range v.MatchOIDCIdentity {
 			out.Verify.MatchOIDCIdentity = append(out.Verify.MatchOIDCIdentity,

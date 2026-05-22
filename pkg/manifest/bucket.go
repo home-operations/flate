@@ -77,13 +77,13 @@ func ParseBucket(doc map[string]any) (*Bucket, error) {
 		Suspend:    cr.Spec.Suspend,
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
-		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
+		out.SecretRef = cr.Spec.SecretRef
 	}
 	if cr.Spec.CertSecretRef != nil && cr.Spec.CertSecretRef.Name != "" {
-		out.CertSecretRef = &LocalObjectReference{Name: cr.Spec.CertSecretRef.Name}
+		out.CertSecretRef = cr.Spec.CertSecretRef
 	}
 	if cr.Spec.ProxySecretRef != nil && cr.Spec.ProxySecretRef.Name != "" {
-		out.ProxySecretRef = &LocalObjectReference{Name: cr.Spec.ProxySecretRef.Name}
+		out.ProxySecretRef = cr.Spec.ProxySecretRef
 	}
 	return out, nil
 }

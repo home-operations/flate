@@ -3,7 +3,25 @@ package manifest
 import (
 	"cmp"
 	"strings"
+
+	meta "github.com/fluxcd/pkg/apis/meta"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 )
+
+// LocalObjectReference is a name-only reference to a same-namespace
+// resource (Secret, ConfigMap, ...). Aliased to fluxcd/pkg/apis/meta
+// so flate's structs unmarshal Flux CRs without a field-by-field copy.
+type LocalObjectReference = meta.LocalObjectReference
+
+// ValuesReference is a reference to a values-bearing ConfigMap or
+// Secret on a HelmRelease.spec.valuesFrom. Aliased to upstream meta
+// for the same reason — and to inherit GetValuesKey().
+type ValuesReference = meta.ValuesReference
+
+// SubstituteReference is a postBuild.substituteFrom entry. Aliased to
+// kustomize-controller's own type — flate's parser previously copied
+// the same three fields (Kind, Name, Optional) into a local twin.
+type SubstituteReference = kustomizev1.SubstituteReference
 
 // NamedResource uniquely identifies a Kubernetes resource by kind +
 // namespace + name. Values are comparable and safe to use as map keys.

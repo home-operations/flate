@@ -8,14 +8,6 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 )
 
-// SubstituteReference contains a reference to a resource supplying the
-// variable name/value pairs used by postBuild.substitute.
-type SubstituteReference struct {
-	Kind     string `json:"kind" yaml:"kind"`
-	Name     string `json:"name" yaml:"name"`
-	Optional bool   `json:"optional,omitempty" yaml:"optional,omitempty"`
-}
-
 // Kustomization is the Flux Kustomization CR. It bundles the path of a
 // local kustomize tree together with the in-cluster materials it produces
 // (HelmReleases, HelmRepositories, ConfigMaps, Secrets, ...).
@@ -148,11 +140,7 @@ func ParseKustomization(doc map[string]any) (*Kustomization, error) {
 	var substituteFrom []SubstituteReference
 	var subst map[string]any
 	if pb := cr.Spec.PostBuild; pb != nil {
-		for _, ref := range pb.SubstituteFrom {
-			substituteFrom = append(substituteFrom, SubstituteReference{
-				Kind: ref.Kind, Name: ref.Name, Optional: ref.Optional,
-			})
-		}
+		substituteFrom = slices.Clone(pb.SubstituteFrom)
 		if len(pb.Substitute) > 0 {
 			subst = make(map[string]any, len(pb.Substitute))
 			for k, v := range pb.Substitute {

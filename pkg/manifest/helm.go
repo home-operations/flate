@@ -3,6 +3,7 @@ package manifest
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -165,29 +166,6 @@ func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	}, nil
 }
 
-// ValuesReference points at a ConfigMap or Secret supplying values to a
-// HelmRelease via .spec.valuesFrom.
-type ValuesReference struct {
-	Kind       string `json:"kind" yaml:"kind"`
-	Name       string `json:"name" yaml:"name"`
-	ValuesKey  string `json:"valuesKey,omitempty" yaml:"valuesKey,omitempty"`
-	TargetPath string `json:"targetPath,omitempty" yaml:"targetPath,omitempty"`
-	Optional   bool   `json:"optional,omitempty" yaml:"optional,omitempty"`
-}
-
-// EffectiveValuesKey returns ValuesKey or the default "values.yaml".
-func (v ValuesReference) EffectiveValuesKey() string {
-	if v.ValuesKey == "" {
-		return "values.yaml"
-	}
-	return v.ValuesKey
-}
-
-// LocalObjectReference matches Kubernetes' core/v1 LocalObjectReference.
-type LocalObjectReference struct {
-	Name string `json:"name" yaml:"name"`
-}
-
 // HelmRelease is the Flux HelmRelease CRD.
 type HelmRelease struct {
 	Name                     string            `json:"name" yaml:"name"`
@@ -312,16 +290,7 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	if err != nil {
 		return nil, err
 	}
-	vfs := make([]ValuesReference, 0, len(cr.Spec.ValuesFrom))
-	for _, ref := range cr.Spec.ValuesFrom {
-		vfs = append(vfs, ValuesReference{
-			Kind:       ref.Kind,
-			Name:       ref.Name,
-			ValuesKey:  ref.ValuesKey,
-			TargetPath: ref.TargetPath,
-			Optional:   ref.Optional,
-		})
-	}
+	vfs := slices.Clone(cr.Spec.ValuesFrom)
 	var values map[string]any
 	if cr.Spec.Values != nil && len(cr.Spec.Values.Raw) > 0 {
 		if err := json.Unmarshal(cr.Spec.Values.Raw, &values); err != nil {
@@ -449,10 +418,10 @@ func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 		Suspend:         cr.Spec.Suspend,
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
-		out.SecretRef = &LocalObjectReference{Name: cr.Spec.SecretRef.Name}
+		out.SecretRef = cr.Spec.SecretRef
 	}
 	if cr.Spec.CertSecretRef != nil && cr.Spec.CertSecretRef.Name != "" {
-		out.CertSecretRef = &LocalObjectReference{Name: cr.Spec.CertSecretRef.Name}
+		out.CertSecretRef = cr.Spec.CertSecretRef
 	}
 	return out, nil
 }

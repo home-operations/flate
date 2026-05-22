@@ -228,7 +228,7 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 		return nil, fmt.Errorf("%w: GitRepository %s missing url", manifest.ErrInput, repo.RepoName())
 	}
 
-	refStr := repo.Ref.RefString()
+	refStr := manifest.GitRefString(repo.Ref)
 	if refStr == "" {
 		refStr = "HEAD"
 	}
@@ -346,7 +346,7 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
 		}
 		return checkout(func(o *git.CheckoutOptions) { o.Branch = plumbing.NewBranchReferenceName(ref.Branch) })
-	case ref.Semver != "":
+	case ref.SemVer != "":
 		return fmt.Errorf("%w: GitRepository semver ref is not supported yet", manifest.ErrInput)
 	}
 	// No ref: just check out HEAD (with sparse, if configured).

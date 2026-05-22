@@ -1,26 +1,19 @@
 package manifest
 
 import (
+	"slices"
+
+	meta "github.com/fluxcd/pkg/apis/meta"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
-// GitRepositoryRef defines the ref used for pull and checkout.
-type GitRepositoryRef struct {
-	Branch string `json:"branch,omitempty" yaml:"branch,omitempty"`
-	Tag    string `json:"tag,omitempty" yaml:"tag,omitempty"`
-	Semver string `json:"semver,omitempty" yaml:"semver,omitempty"`
-	Commit string `json:"commit,omitempty" yaml:"commit,omitempty"`
-	// Name is the full Git reference (e.g. "refs/pull/420/head" or
-	// "refs/tags/v0.1.0"). When set, takes precedence over
-	// Branch/Tag/SemVer and any Commit specified — flate resolves the
-	// remote ref to a commit before checkout.
-	Name string `json:"name,omitempty" yaml:"name,omitempty"`
-}
+// GitRepositoryRef is the Flux GitRepositoryRef from source-controller.
+type GitRepositoryRef = sourcev1.GitRepositoryRef
 
-// RefString returns "branch:main", "tag:v1.2.3", etc., or empty when
+// GitRefString returns "branch:main", "tag:v1.2.3", etc., or empty when
 // the ref is empty. Precedence (matches Flux source-controller):
 // name > commit > tag > branch > semver.
-func (r GitRepositoryRef) RefString() string {
+func GitRefString(r GitRepositoryRef) string {
 	switch {
 	case r.Name != "":
 		return "name:" + r.Name
@@ -30,14 +23,12 @@ func (r GitRepositoryRef) RefString() string {
 		return "tag:" + r.Tag
 	case r.Branch != "":
 		return "branch:" + r.Branch
-	case r.Semver != "":
-		return "semver:" + r.Semver
+	case r.SemVer != "":
+		return "semver:" + r.SemVer
 	}
 	return ""
 }
 
-// IsEmpty reports whether the ref selects no specific commit.
-func (r GitRepositoryRef) IsEmpty() bool { return r == GitRepositoryRef{} }
 
 // GitRepository is the Flux GitRepository CRD.
 type GitRepository struct {
@@ -106,13 +97,7 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 	}
 	var ref GitRepositoryRef
 	if r := cr.Spec.Reference; r != nil {
-		ref = GitRepositoryRef{
-			Branch: r.Branch,
-			Tag:    r.Tag,
-			Semver: r.SemVer,
-			Commit: r.Commit,
-			Name:   r.Name,
-		}
+		ref = *r
 	}
 	provider := cr.Spec.Provider
 	if provider == "" {
@@ -148,16 +133,11 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 	return out, nil
 }
 
-// OCIRepositoryRef points at a specific OCI artifact version.
-type OCIRepositoryRef struct {
-	Digest       string `json:"digest,omitempty" yaml:"digest,omitempty"`
-	Tag          string `json:"tag,omitempty" yaml:"tag,omitempty"`
-	Semver       string `json:"semver,omitempty" yaml:"semver,omitempty"`
-	SemverFilter string `json:"semverFilter,omitempty" yaml:"semverFilter,omitempty"`
-}
+// OCIRepositoryRef is the Flux OCIRepositoryRef from source-controller.
+type OCIRepositoryRef = sourcev1.OCIRepositoryRef
 
-// IsEmpty reports whether the ref is empty.
-func (r OCIRepositoryRef) IsEmpty() bool { return r == OCIRepositoryRef{} }
+// OCIRefIsEmpty reports whether the ref is empty.
+func OCIRefIsEmpty(r OCIRepositoryRef) bool { return r == OCIRepositoryRef{} }
 
 // OCIRepository is the Flux OCIRepository CRD.
 type OCIRepository struct {
@@ -175,17 +155,11 @@ type OCIRepository struct {
 	Suspend        bool                  `json:"-" yaml:"-"`
 }
 
-// OCILayerSelector mirrors source-controller's spec.layerSelector.
-// When set, the fetcher selects the first layer matching MediaType
-// and processes it per Operation:
-//   - "extract" (default): the layer's tarball is unpacked into the
-//     artifact directory.
-//   - "copy": the layer's compressed blob is persisted verbatim,
-//     under the filename "layer.tar.gz".
-type OCILayerSelector struct {
-	MediaType string `json:"mediaType,omitempty" yaml:"mediaType,omitempty"`
-	Operation string `json:"operation,omitempty" yaml:"operation,omitempty"`
-}
+// OCILayerSelector is the Flux OCILayerSelector from source-controller.
+// "extract" (default) unpacks the layer's tarball into the artifact
+// directory; "copy" persists the compressed blob verbatim under the
+// filename "layer.tar.gz".
+type OCILayerSelector = sourcev1.OCILayerSelector
 
 // OCILayerOperationExtract and OCILayerOperationCopy are the two
 // values source-controller accepts on LayerSelector.Operation.
@@ -194,27 +168,15 @@ const (
 	OCILayerOperationCopy    = "copy"
 )
 
-// OCIRepositoryVerify mirrors source-controller's spec.verify on
-// OCIRepository. Flate implements keyed mode only:
-//   - Provider: "cosign" (the upstream default)
-//   - SecretRef: a Secret whose keys hold one or more PEM-encoded
-//     public keys (cosign.pub or any *.pub key).
-//
-// The "notation" provider and keyless (OIDC) flows parse here for
-// round-trip fidelity but are not enforced at Fetch time. MatchOIDCIdentity
-// is preserved verbatim for the same reason.
-type OCIRepositoryVerify struct {
-	Provider          string                `json:"provider,omitempty" yaml:"provider,omitempty"`
-	SecretRef         *LocalObjectReference `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
-	MatchOIDCIdentity []OIDCIdentityMatch   `json:"matchOIDCIdentity,omitempty" yaml:"matchOIDCIdentity,omitempty"`
-}
+// OCIRepositoryVerify is the Flux OCIRepositoryVerification from
+// source-controller. Flate implements keyed cosign mode only: keyless
+// (OIDC) and notation parse for round-trip fidelity but are not
+// enforced at Fetch time.
+type OCIRepositoryVerify = sourcev1.OCIRepositoryVerification
 
 // OIDCIdentityMatch is the keyless-mode identity matcher. Parsed for
 // fidelity; flate does not perform keyless verification.
-type OIDCIdentityMatch struct {
-	Issuer  string `json:"issuer" yaml:"issuer"`
-	Subject string `json:"subject" yaml:"subject"`
-}
+type OIDCIdentityMatch = sourcev1.OIDCIdentityMatch
 
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {
@@ -231,7 +193,7 @@ func (o *OCIRepository) RepoName() string { return o.Namespace + "-" + o.Name }
 // A semver expression is returned verbatim — callers wanting a concrete
 // tag must resolve it against remote tag listing (pkg/source).
 func (o *OCIRepository) Version() (string, error) {
-	if o.Ref.IsEmpty() {
+	if OCIRefIsEmpty(o.Ref) {
 		return "", nil
 	}
 	switch {
@@ -239,8 +201,8 @@ func (o *OCIRepository) Version() (string, error) {
 		return o.Ref.Digest, nil
 	case o.Ref.Tag != "":
 		return o.Ref.Tag, nil
-	case o.Ref.Semver != "":
-		return o.Ref.Semver, nil
+	case o.Ref.SemVer != "":
+		return o.Ref.SemVer, nil
 	}
 	return "", nil
 }
@@ -248,7 +210,7 @@ func (o *OCIRepository) Version() (string, error) {
 // VersionedURL appends the version with the correct separator: "@" for
 // digests, ":" for tags and semver.
 func (o *OCIRepository) VersionedURL() string {
-	if o.Ref.IsEmpty() {
+	if OCIRefIsEmpty(o.Ref) {
 		return o.URL
 	}
 	switch {
@@ -256,8 +218,8 @@ func (o *OCIRepository) VersionedURL() string {
 		return o.URL + "@" + o.Ref.Digest
 	case o.Ref.Tag != "":
 		return o.URL + ":" + o.Ref.Tag
-	case o.Ref.Semver != "":
-		return o.URL + ":" + o.Ref.Semver
+	case o.Ref.SemVer != "":
+		return o.URL + ":" + o.Ref.SemVer
 	}
 	return o.URL
 }
@@ -293,12 +255,7 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		out.CertSecretRef = cr.Spec.CertSecretRef
 	}
 	if r := cr.Spec.Reference; r != nil {
-		out.Ref = OCIRepositoryRef{
-			Digest:       r.Digest,
-			Tag:          r.Tag,
-			Semver:       r.SemVer,
-			SemverFilter: r.SemverFilter,
-		}
+		out.Ref = *r
 	}
 	if cr.Spec.SecretRef != nil && cr.Spec.SecretRef.Name != "" {
 		out.SecretRef = cr.Spec.SecretRef
@@ -307,32 +264,20 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		out.ProxySecretRef = cr.Spec.ProxySecretRef
 	}
 	if v := cr.Spec.Verify; v != nil {
-		out.Verify = &OCIRepositoryVerify{Provider: v.Provider}
-		if v.SecretRef != nil && v.SecretRef.Name != "" {
-			out.Verify.SecretRef = v.SecretRef
-		}
-		for _, m := range v.MatchOIDCIdentity {
-			out.Verify.MatchOIDCIdentity = append(out.Verify.MatchOIDCIdentity,
-				OIDCIdentityMatch{Issuer: m.Issuer, Subject: m.Subject})
-		}
+		clone := *v
+		clone.MatchOIDCIdentity = slices.Clone(v.MatchOIDCIdentity)
+		out.Verify = &clone
 	}
 	if ls := cr.Spec.LayerSelector; ls != nil {
-		out.LayerSelector = &OCILayerSelector{
-			MediaType: ls.MediaType,
-			Operation: ls.Operation,
-		}
+		clone := *ls
+		out.LayerSelector = &clone
 	}
 	return out, nil
 }
 
 // ExternalArtifactSourceRef identifies the upstream CR that produces
-// the artifact. Mirrors Flux's meta.NamespacedObjectKindReference.
-type ExternalArtifactSourceRef struct {
-	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
-	Kind       string `json:"kind" yaml:"kind"`
-	Namespace  string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Name       string `json:"name" yaml:"name"`
-}
+// the artifact — Flux's meta.NamespacedObjectKindReference.
+type ExternalArtifactSourceRef = meta.NamespacedObjectKindReference
 
 // ExternalArtifact is the Flux ExternalArtifact CRD
 // (source.toolkit.fluxcd.io/v1). It is the contract a third-party
@@ -382,12 +327,8 @@ func ParseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 		Namespace: cr.Namespace,
 	}
 	if cr.Spec.SourceRef != nil {
-		out.SourceRef = &ExternalArtifactSourceRef{
-			APIVersion: cr.Spec.SourceRef.APIVersion,
-			Kind:       cr.Spec.SourceRef.Kind,
-			Namespace:  cr.Spec.SourceRef.Namespace,
-			Name:       cr.Spec.SourceRef.Name,
-		}
+		ref := *cr.Spec.SourceRef
+		out.SourceRef = &ref
 	}
 	if a := cr.Status.Artifact; a != nil {
 		out.ArtifactURL = a.URL

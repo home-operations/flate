@@ -199,8 +199,8 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	// Resolve spec.ref into a concrete (tag-or-digest) BEFORE choosing
 	// the cache slot, so different semver matches don't share a slot.
 	ref := repo.Ref
-	if ref.Semver != "" {
-		resolved, err := resolveOCISemver(ctx, repoClient, ref.Semver, ref.SemverFilter)
+	if ref.SemVer != "" {
+		resolved, err := resolveOCISemver(ctx, repoClient, ref.SemVer, ref.SemverFilter)
 		if err != nil {
 			return nil, fmt.Errorf("OCIRepository %s semver: %w", repo.RepoName(), err)
 		}
@@ -427,8 +427,8 @@ func versionTag(ref manifest.OCIRepositoryRef) string {
 		return ref.Digest
 	case ref.Tag != "":
 		return ref.Tag
-	case ref.Semver != "":
-		return ref.Semver
+	case ref.SemVer != "":
+		return ref.SemVer
 	}
 	return ""
 }

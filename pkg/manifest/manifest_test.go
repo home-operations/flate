@@ -331,8 +331,8 @@ spec:
 	if !g.RecurseSubmodules {
 		t.Errorf("RecurseSubmodules should be true")
 	}
-	if want := "name:refs/pull/420/head"; g.Ref.RefString() != want {
-		t.Errorf("RefString = %q, want %q", g.Ref.RefString(), want)
+	if want := "name:refs/pull/420/head"; GitRefString(g.Ref) != want {
+		t.Errorf("RefString = %q, want %q", GitRefString(g.Ref), want)
 	}
 }
 
@@ -670,7 +670,7 @@ spec:
 	if err != nil {
 		t.Fatalf("ParseGitRepository: %v", err)
 	}
-	if got, want := g.Ref.RefString(), "tag:v1.2.3"; got != want {
+	if got, want := GitRefString(g.Ref), "tag:v1.2.3"; got != want {
 		t.Errorf("RefString = %q, want %q", got, want)
 	}
 }

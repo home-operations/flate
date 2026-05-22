@@ -1,0 +1,24 @@
+---
+# leaf Flux Kustomization deliberately omits postBuild.substituteFrom —
+# it relies on the parent cluster-apps Kustomization's spec.patches to
+# inject the cluster-settings reference at render time.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: leaf
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./apps/leaf/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  targetNamespace: leaf
+  # Inline substitute makes the substitution pass active. Without
+  # this, the orchestrator skips Substitute entirely when vars is
+  # empty — so leaf wouldn't actually exercise the "${MY_VAR} comes
+  # from a parent-injected substituteFrom" path.
+  postBuild:
+    substitute:
+      APP: leaf

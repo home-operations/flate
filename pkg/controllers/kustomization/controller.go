@@ -132,18 +132,14 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
+	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
+	var sopsRefs []string
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
 			name, ns := manifest.DocMetadata(doc)
-			return fmt.Errorf(
-				"SOPS-encrypted %s %s/%s in rendered output: flate does not implement spec.decryption — "+
-					"render against pre-decrypted manifests or remove the encrypted resource",
-				manifest.DocKind(doc), ns, name,
-			)
+			sopsRefs = append(sopsRefs, fmt.Sprintf("%s %s/%s", manifest.DocKind(doc), ns, name))
+			continue
 		}
-	}
-	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
-	for _, doc := range docs {
 		obj, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
 			// Don't fail on parse errors of inline resources — they may
@@ -152,7 +148,27 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 			slog.Debug("kustomization: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
-		c.Store.AddRendered(obj)
+		// When a parent Kustomization renders a Flux resource that has
+		// its own controller (child Kustomization, HelmRelease, sources),
+		// route through AddObject so the rendered version (with patches,
+		// commonMetadata, targetNamespace, etc. applied) supersedes any
+		// statically-loaded copy and triggers a fresh reconcile.
+		// Non-reconcilable leaves keep the cheaper AddRendered path.
+		if shouldDispatchAsObject(obj) {
+			c.Store.AddObject(obj)
+		} else {
+			c.Store.AddRendered(obj)
+		}
+	}
+	if len(sopsRefs) > 0 {
+		// Surface SOPS docs as the Kustomization's failure reason but
+		// keep the non-SOPS docs in the store so downstream consumers
+		// can still reconcile against the parts flate could render.
+		return fmt.Errorf(
+			"SOPS-encrypted resource(s) in rendered output: %s — flate does not implement spec.decryption; "+
+				"render against pre-decrypted manifests or remove the encrypted resource",
+			strings.Join(sopsRefs, ", "),
+		)
 	}
 
 	c.Store.SetArtifact(id, &store.KustomizationArtifact{
@@ -160,6 +176,30 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		Manifests: docs,
 	})
 	return nil
+}
+
+// shouldDispatchAsObject reports whether a render-emitted Flux
+// resource needs to fire EventObjectAdded so its own controller picks
+// it up. The pattern is: parent Kustomization renders → emits a
+// child Flux resource (e.g. another Kustomization with parent patches
+// applied, a HelmRelease, an OCIRepository fanned out from a kustomize
+// component) → that child's controller must reconcile the patched
+// version, not the statically-loaded one.
+func shouldDispatchAsObject(obj manifest.BaseManifest) bool {
+	switch obj.(type) {
+	case *manifest.Kustomization,
+		*manifest.HelmRelease,
+		*manifest.HelmRepository,
+		*manifest.OCIRepository,
+		*manifest.GitRepository,
+		*manifest.Bucket,
+		*manifest.HelmChartSource,
+		*manifest.ExternalArtifact,
+		*manifest.ConfigMap,
+		*manifest.Secret:
+		return true
+	}
+	return false
 }
 
 // collectDeps assembles the dependency refs whose readiness must

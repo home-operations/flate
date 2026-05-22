@@ -223,6 +223,56 @@ func TestE2E_NonSharedChangeDoesNotPropagate(t *testing.T) {
 	}
 }
 
+// TestE2E_ParentPatchesPropagateToChildren reproduces the bjw-s
+// home-ops cluster-apps pattern: a top-level Flux Kustomization with
+// spec.patches that inject postBuild.substituteFrom into every child
+// Kustomization. Children carry only inline substitute.* — they rely
+// on the parent's patches to wire the ConfigMap reference at render
+// time. The fixture's leaf KS references ${MY_VAR}, which only
+// resolves if the parent's render-emitted (patched) child KS
+// supersedes the statically-loaded one and triggers a fresh reconcile.
+//
+// A SOPS-encrypted Secret in the same parent kustomize tree exercises
+// the secondary fix: render must continue past the SOPS doc so the
+// (non-SOPS) patched children still reach the store.
+func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
+	src := testdataPath(t, "parent-patches")
+	root := copyTree(t, src)
+
+	// `flate test ks` exits non-zero because cluster-apps reports the
+	// SOPS Secret it could not decrypt — that's the intended fail-loud.
+	// What matters here is that leaf still PASSED.
+	out, _ := runCLIExpectErr(t, "test", "ks", "--path", root)
+
+	if !strings.Contains(out, "Kustomization/flux-system/leaf") {
+		t.Fatalf("leaf KS missing from output:\n%s", out)
+	}
+	leafLine := mustExtractLine(t, out, "Kustomization/flux-system/leaf")
+	if !strings.Contains(leafLine, "PASSED") {
+		t.Errorf("leaf should pass once parent patches inject substituteFrom; got: %s", leafLine)
+	}
+	if strings.Contains(out, `variable "MY_VAR" is undefined`) {
+		t.Errorf("MY_VAR should be resolved via parent-injected substituteFrom:\n%s", out)
+	}
+	// cluster-apps itself stays FAILED so users see the SOPS warning,
+	// but the failure mode is the collected-and-reported one, not the
+	// early-abort that previously dropped all other rendered docs.
+	if !strings.Contains(out, "SOPS-encrypted resource(s)") {
+		t.Errorf("cluster-apps should still surface a SOPS warning:\n%s", out)
+	}
+}
+
+func mustExtractLine(t *testing.T, haystack, needle string) string {
+	t.Helper()
+	for _, line := range strings.Split(haystack, "\n") {
+		if strings.Contains(line, needle) && (strings.Contains(line, "PASSED") || strings.Contains(line, "FAILED")) {
+			return line
+		}
+	}
+	t.Fatalf("status line for %q not found in:\n%s", needle, haystack)
+	return ""
+}
+
 // copyTree shallow-copies src into a fresh tempdir, preserving the
 // relative path layout. Used so each test can mutate its own copy.
 func copyTree(t *testing.T, src string) string {

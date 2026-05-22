@@ -1,0 +1,47 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: https://example.test/cluster.git
+  ref:
+    branch: main
+---
+# cluster-apps mirrors the bjw-s home-ops top-level Flux Kustomization.
+# Its spec.patches inject postBuild.substituteFrom into every child
+# Kustomization CR rendered from ./apps so leaves don't have to
+# repeat the boilerplate.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./apps
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings
+        optional: false
+  patches:
+    - patch: |-
+        apiVersion: kustomize.toolkit.fluxcd.io/v1
+        kind: Kustomization
+        metadata:
+          name: not-used
+        spec:
+          postBuild:
+            substituteFrom:
+              - kind: ConfigMap
+                name: cluster-settings
+                optional: false
+      target:
+        group: kustomize.toolkit.fluxcd.io
+        kind: Kustomization

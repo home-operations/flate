@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: leaf-cm
+data:
+  value: ${MY_VAR}
+  app: ${APP}

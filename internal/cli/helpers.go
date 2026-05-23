@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/image"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
@@ -176,6 +177,13 @@ func joinRunErrors(orig, curr error) error {
 // shows it for KS parents).
 func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) []diff.Doc {
 	var out []diff.Doc
+	// Drop kinds the user opted out of (--skip-secrets / --skip-crds /
+	// --skip-kinds). KS-rendered docs reach Result.Manifests unfiltered;
+	// see comment in writeRendered. See #169.
+	var skip []string
+	if c != nil {
+		skip = c.skipResourceKinds()
+	}
 	for id, docs := range res.Manifests {
 		if id.Kind != kind {
 			continue
@@ -190,7 +198,7 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 		if ks, ok := o.Store().GetObject(id).(*manifest.Kustomization); ok {
 			parent.Path = strings.TrimPrefix(ks.Path, "./")
 		}
-		for _, m := range docs {
+		for _, m := range kustomize.DropKinds(docs, skip) {
 			out = append(out, diff.Doc{Manifest: m, Parent: parent})
 		}
 	}

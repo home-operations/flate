@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kept-cm
+  namespace: default
+data:
+  greeting: hello

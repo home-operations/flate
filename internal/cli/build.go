@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
@@ -131,6 +132,17 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.
 		slices.SortStableFunc(docs, compareDocs)
 		if b.onlyCRDs {
 			docs = filterCRDsOnly(docs)
+			if len(docs) == 0 {
+				continue
+			}
+		} else {
+			// --skip-secrets / --skip-crds / --skip-kinds apply across
+			// every source. HelmRelease output was pre-filtered by
+			// helm.TemplateDocs (no-op here), but KS-rendered docs
+			// reach the store unfiltered (downstream KS / HR resolve
+			// valuesFrom / substituteFrom against them). This emit-time
+			// drop ensures the user sees consistent filtering. See #169.
+			docs = kustomize.DropKinds(docs, c.skipResourceKinds())
 			if len(docs) == 0 {
 				continue
 			}

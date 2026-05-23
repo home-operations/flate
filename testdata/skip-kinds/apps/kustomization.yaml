@@ -1,0 +1,4 @@
+resources:
+  - configmap.yaml
+  - secret.yaml
+  - crd.yaml

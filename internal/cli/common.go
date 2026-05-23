@@ -46,6 +46,27 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 		"max parallel reconcile bodies (0 = unbounded)")
 }
 
+// skipResourceKinds returns the union of canonical kinds (CRDs +
+// Secrets when their corresponding boolean flags are set) and any
+// user-supplied `--skip-kinds` entries. Build / diff write paths
+// apply this against rendered docs from BOTH HelmRelease and
+// Kustomization sources — helm.TemplateDocs pre-filters HR output
+// inside the controller, but KS-rendered docs go through unfiltered
+// (the docs must reach the Store unfiltered so downstream HRs can
+// resolve valuesFrom / substituteFrom against them). The CLI applies
+// this union at emit time so the user sees consistent filtering
+// regardless of which controller produced the resource.
+func (c *commonFlags) skipResourceKinds() []string {
+	out := append([]string{}, c.skipKinds...)
+	if c.skipCRDs {
+		out = append(out, "CustomResourceDefinition")
+	}
+	if c.skipSecrets {
+		out = append(out, "Secret")
+	}
+	return out
+}
+
 // bindSelector wires the `-l/--selector` flag. Scoped to commands that
 // actually filter by labels — today, only `get`. Binding it on
 // commands that ignore it (build/diff/test) would silently accept

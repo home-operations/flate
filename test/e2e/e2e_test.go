@@ -323,6 +323,57 @@ func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
 	}
 }
 
+// TestE2E_SkipKindsAppliesToKustomizationOutput is the regression
+// test for issue #169 — `--skip-secrets`, `--skip-crds`, and
+// `--skip-kinds` were silently ignored for Kustomization-rendered
+// docs. helm.TemplateDocs pre-filtered HR output but KS docs reached
+// stdout unfiltered.
+//
+// The fixture contains one Kustomization that emits a ConfigMap, a
+// Secret, and a CRD straight from kustomize (no HelmRelease). With
+// default flags (--skip-secrets=true, --skip-crds=true) only the
+// ConfigMap should reach stdout. Lifting the flags brings everything
+// back.
+func TestE2E_SkipKindsAppliesToKustomizationOutput(t *testing.T) {
+	src := testdataPath(t, "skip-kinds")
+	root := copyTree(t, src)
+
+	t.Run("DefaultsDropSecretsAndCRDs", func(t *testing.T) {
+		out := runCLIStdout(t, "build", "all", "--path", root, "-o", "yaml")
+		if !strings.Contains(out, "name: kept-cm") {
+			t.Errorf("ConfigMap should reach output: %s", out)
+		}
+		if strings.Contains(out, "name: dropped-secret") {
+			t.Errorf("--skip-secrets (default true) failed to drop KS-rendered Secret:\n%s", out)
+		}
+		if strings.Contains(out, "kind: CustomResourceDefinition") {
+			t.Errorf("--skip-crds (default true) failed to drop KS-rendered CRD:\n%s", out)
+		}
+	})
+
+	t.Run("ExplicitFlagsAllowEverything", func(t *testing.T) {
+		out := runCLIStdout(t, "build", "all", "--path", root, "-o", "yaml",
+			"--skip-secrets=false", "--skip-crds=false")
+		for _, want := range []string{"name: kept-cm", "name: dropped-secret", "kind: CustomResourceDefinition"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("expected %q with --skip-* disabled:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("SkipKindsListDropsArbitraryKinds", func(t *testing.T) {
+		out := runCLIStdout(t, "build", "all", "--path", root, "-o", "yaml",
+			"--skip-secrets=false", "--skip-crds=false",
+			"--skip-kinds=ConfigMap")
+		if strings.Contains(out, "name: kept-cm") {
+			t.Errorf("--skip-kinds=ConfigMap failed to drop KS-rendered ConfigMap:\n%s", out)
+		}
+		if !strings.Contains(out, "name: dropped-secret") {
+			t.Errorf("Secret should remain when only ConfigMap was skipped:\n%s", out)
+		}
+	})
+}
+
 // TestE2E_SOPSValueWipedToPlaceholder verifies the rendered output
 // actually contains the PLACEHOLDER token where a SOPS-encrypted value
 // would have lived. Without the wipe-to-placeholder behavior, this

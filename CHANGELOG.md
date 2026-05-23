@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.6](https://github.com/home-operations/flate/compare/0.1.5...0.1.6) (2026-05-23)
+
+
+### Features
+
+* **orchestrator:** --allow-missing-secrets for ExternalSecret-shaped repos ([#191](https://github.com/home-operations/flate/issues/191)) ([665870e](https://github.com/home-operations/flate/commit/665870ec980dc6d28e4bee53e5da7dcedbcf21fb))
+
+
+### Bug Fixes
+
+* **helm:** use @ separator for OCIRepository digest refs ([#189](https://github.com/home-operations/flate/issues/189)) ([14d476b](https://github.com/home-operations/flate/commit/14d476b4956f31108c7e771e88e7a4a7f328b8b3))
+* **loader:** skip configMapGenerator/secretGenerator data files ([#194](https://github.com/home-operations/flate/issues/194)) ([3bca98b](https://github.com/home-operations/flate/commit/3bca98b4adfd6119f9f6dfa7372d8c87acdd2ffa))
+
 ## [0.1.5](https://github.com/home-operations/flate/compare/0.1.4...0.1.5) (2026-05-23)
 
 

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/registry"
 
@@ -49,6 +50,15 @@ type Client struct {
 	gitRepos map[string]LocalGitRepository
 	registry *registry.Client
 	secrets  SecretGetter
+
+	// chartCache memoizes parsed *chart.Chart by on-disk path. Helm's
+	// loader.Load reparses the entire tgz on every call — for repos
+	// where many HelmReleases share a base chart (e.g. bjw-s
+	// app-template referenced by 30+ HRs), the same chart was being
+	// re-parsed once per HR. Cache by path; the upstream cache key is
+	// already content-addressed (name-version-digest in the filename).
+	chartMu    sync.Mutex
+	chartCache map[string]*chart.Chart
 }
 
 // NewClient constructs a Client. tmpDir and cacheDir are used for
@@ -135,14 +145,32 @@ func (c *Client) LocateChart(ctx context.Context, hr *manifest.HelmRelease) (str
 }
 
 // LoadChart resolves and loads the chart into helm's in-memory model.
+// Parsed *chart.Chart values are cached by path — Helm's loader.Load
+// reparses the tgz (and recompiles values.schema.json) on every call,
+// which is a significant render-time hot spot when many HelmReleases
+// share a base chart (bjw-s app-template, podinfo, common-library, …).
+// Path is content-addressed by Helm's own cacher (name-version-digest),
+// so this is safe across reconciles.
 func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (ChartLoadResult, error) {
 	path, err := c.LocateChart(ctx, hr)
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
-	ch, err := loader.Load(path)
+	c.chartMu.Lock()
+	if c.chartCache == nil {
+		c.chartCache = make(map[string]*chart.Chart)
+	}
+	ch, ok := c.chartCache[path]
+	c.chartMu.Unlock()
+	if ok {
+		return ChartLoadResult{Path: path, Chart: ch}, nil
+	}
+	ch, err = loader.Load(path)
 	if err != nil {
 		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", path, err)
 	}
+	c.chartMu.Lock()
+	c.chartCache[path] = ch
+	c.chartMu.Unlock()
 	return ChartLoadResult{Path: path, Chart: ch}, nil
 }

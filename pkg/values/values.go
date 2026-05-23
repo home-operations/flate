@@ -301,7 +301,12 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 			continue
 		}
 		for k, v := range data {
-			values[k] = v
+			// Match upstream kustomize-controller: every substituteFrom
+			// var value has \n stripped (multi-line ConfigMap entries
+			// would otherwise break inline substitution into single-line
+			// YAML fields like `image:`). See
+			// fluxcd/pkg/kustomize/kustomize_varsub.go.
+			values[k] = strings.ReplaceAll(v, "\n", "")
 		}
 	}
 	ks.UpdatePostBuildSubstitutions(values)
@@ -309,19 +314,24 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 }
 
 // VarsMap returns the substitution variables for use with
-// kustomize.Substitute. Non-string values are stringified.
+// kustomize.Substitute. Non-string values are stringified. Newline
+// characters are stripped from every value — upstream kustomize-
+// controller does the same so multi-line entries can't break inline
+// substitution into single-line YAML fields.
 func VarsMap(in map[string]any) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(in))
 	for k, v := range in {
+		var s string
 		switch tv := v.(type) {
 		case string:
-			out[k] = tv
+			s = tv
 		default:
-			out[k] = fmt.Sprint(v)
+			s = fmt.Sprint(v)
 		}
+		out[k] = strings.ReplaceAll(s, "\n", "")
 	}
 	return out
 }

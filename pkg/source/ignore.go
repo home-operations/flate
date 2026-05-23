@@ -15,19 +15,40 @@ import (
 // controller ignore matcher: VCS + Default excludes (.git/, .github/,
 // *.jpg/png/zip, .sops.yaml, .flux.yaml, ...) PLUS any in-tree
 // .sourceignore files PLUS the user-supplied spec.ignore patterns when
-// non-nil. Mirrors source-controller's artifact-build behavior.
+// non-nil. Mirrors source-controller's GitRepository / OCIRepository
+// artifact-build behavior.
 //
 // nil spec.ignore is NOT a no-op — the VCS + Default patterns still
-// apply, matching what real Flux ships in an artifact tarball.
+// apply, matching what real Flux ships in a Git/OCI artifact tarball.
+//
+// Bucket sources use ApplyIgnoreNoDefaults instead — see that function
+// for the rationale.
 func ApplyIgnore(root string, ignore *string) error {
+	return applyIgnore(root, ignore, true)
+}
+
+// ApplyIgnoreNoDefaults is the Bucket-flavored variant: it skips the
+// VCS + Default exclude patterns and applies ONLY the in-tree
+// .sourceignore plus the user-supplied spec.ignore. Mirrors
+// fluxcd/source-controller/internal/controller/bucket_controller.go
+// which uses sourceignore.NewMatcher (no defaults) rather than the
+// NewDefaultMatcher that GitRepository / OCIRepository use.
+//
+// The rationale: Bucket has no VCS semantics. An object store can
+// legitimately carry .git/-named keys, .jpg/.png images, .flux.yaml,
+// etc., and source-controller delivers them as-is. Stripping them
+// would diverge from what a cluster Bucket reconcile produces.
+func ApplyIgnoreNoDefaults(root string, ignore *string) error {
+	return applyIgnore(root, ignore, false)
+}
+
+func applyIgnore(root string, ignore *string, withDefaults bool) error {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return fmt.Errorf("sourceignore abs: %w", err)
 	}
 	domain := strings.Split(abs, string(filepath.Separator))
 
-	// Default to VCS + extension excludes + any .sourceignore files
-	// reachable from root, then layer user patterns on top.
 	patterns, err := sourceignore.LoadIgnorePatterns(abs, domain)
 	if err != nil {
 		return fmt.Errorf("sourceignore load: %w", err)
@@ -35,7 +56,13 @@ func ApplyIgnore(root string, ignore *string) error {
 	if ignore != nil && strings.TrimSpace(*ignore) != "" {
 		patterns = append(patterns, sourceignore.ReadPatterns(strings.NewReader(*ignore), domain)...)
 	}
-	return walkAndDelete(abs, domain, sourceignore.NewDefaultMatcher(patterns, domain))
+	var matcher gitignore.Matcher
+	if withDefaults {
+		matcher = sourceignore.NewDefaultMatcher(patterns, domain)
+	} else {
+		matcher = sourceignore.NewMatcher(patterns)
+	}
+	return walkAndDelete(abs, domain, matcher)
 }
 
 func walkAndDelete(root string, domain []string, matcher gitignore.Matcher) error {

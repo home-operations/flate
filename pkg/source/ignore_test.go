@@ -31,6 +31,50 @@ func exists(t *testing.T, p string) bool {
 	return false
 }
 
+// TestApplyIgnoreNoDefaults_PreservesVCSAndExtensions locks the
+// Bucket-flavored ignore variant: when ApplyIgnoreNoDefaults runs
+// with a nil spec.ignore, files that the default-matcher would
+// exclude (VCS-named, image extensions, .flux.yaml) are left in
+// place. Mirrors upstream source-controller's bucket_controller.go
+// using sourceignore.NewMatcher instead of NewDefaultMatcher —
+// buckets can legitimately carry these as regular objects.
+func TestApplyIgnoreNoDefaults_PreservesVCSAndExtensions(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "image.jpg")
+	writeFile(t, root, "kept/.flux.yaml")
+	writeFile(t, root, "kept/keep.txt")
+	writeFile(t, root, ".sops.yaml")
+
+	if err := source.ApplyIgnoreNoDefaults(root, nil); err != nil {
+		t.Fatalf("ApplyIgnoreNoDefaults: %v", err)
+	}
+
+	for _, rel := range []string{"image.jpg", "kept/.flux.yaml", "kept/keep.txt", ".sops.yaml"} {
+		if !exists(t, filepath.Join(root, rel)) {
+			t.Errorf("ApplyIgnoreNoDefaults stripped %q which Bucket should preserve", rel)
+		}
+	}
+}
+
+// TestApplyIgnoreNoDefaults_HonorsUserSpecIgnore confirms that the
+// no-defaults variant still applies user-supplied spec.ignore.
+func TestApplyIgnoreNoDefaults_HonorsUserSpecIgnore(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "image.jpg")
+	writeFile(t, root, "kept.txt")
+	patterns := "*.jpg"
+
+	if err := source.ApplyIgnoreNoDefaults(root, &patterns); err != nil {
+		t.Fatalf("ApplyIgnoreNoDefaults: %v", err)
+	}
+	if exists(t, filepath.Join(root, "image.jpg")) {
+		t.Error("user-supplied *.jpg pattern was not honored")
+	}
+	if !exists(t, filepath.Join(root, "kept.txt")) {
+		t.Error("kept.txt was stripped despite not matching user pattern")
+	}
+}
+
 // TestApplyIgnore_AppliesDefaultsWhenIgnoreNil asserts the source-
 // controller default exclusions (VCS + ExcludeExt + ExcludeCI +
 // ExcludeExtra) fire even when spec.ignore is nil, matching real

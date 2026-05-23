@@ -88,7 +88,12 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 		_ = f.Cache.Reset(slot)
 		return nil, fmt.Errorf("bucket %s/%s walk: %w", b.Namespace, b.Name, err)
 	}
-	if err := source.ApplyIgnore(slot, b.Ignore); err != nil {
+	// Bucket uses the no-defaults ignore variant — matches upstream
+	// source-controller's bucket_controller.go, which constructs an
+	// ignore Matcher without VCS / extension defaults. Buckets are
+	// object stores with no VCS semantics; .jpg / .flux.yaml / etc.
+	// are legitimate content and must reach the artifact.
+	if err := source.ApplyIgnoreNoDefaults(slot, b.Ignore); err != nil {
 		_ = f.Cache.Reset(slot)
 		return nil, fmt.Errorf("bucket %s/%s: %w", b.Namespace, b.Name, err)
 	}

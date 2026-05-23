@@ -225,8 +225,8 @@ func TestTemplateDocs_OriginLabelsWinOverCommonMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TemplateDocs: %v", err)
 	}
-	md := docs[0]["metadata"].(map[string]any)
-	labels := md["labels"].(map[string]any)
+	md, _ := docs[0]["metadata"].(map[string]any)
+	labels, _ := md["labels"].(map[string]any)
 	if labels["helm.toolkit.fluxcd.io/name"] != hr.Name {
 		t.Errorf("origin label should win; got %v", labels["helm.toolkit.fluxcd.io/name"])
 	}

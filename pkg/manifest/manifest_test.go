@@ -799,6 +799,35 @@ spec:
 	}
 }
 
+// FilterDependsOn is the free function shared by KS and HR pruning;
+// verify it works on a synthetic HR-style dep list too.
+func TestFilterDependsOn_AcrossKinds(t *testing.T) {
+	deps := []DependencyRef{
+		{NamedResource: NamedResource{Kind: KindHelmRelease, Namespace: "media", Name: "plex"}},
+		{NamedResource: NamedResource{Kind: KindHelmRelease, Namespace: "media", Name: "gone"}},
+	}
+	known := map[string]struct{}{"media/plex": {}}
+	kept, dropped := FilterDependsOn(deps, known)
+	if len(kept) != 1 || kept[0].NamespacedName() != "media/plex" {
+		t.Errorf("kept = %v", kept)
+	}
+	if dropped != 1 {
+		t.Errorf("dropped = %d, want 1", dropped)
+	}
+
+	// nil-known: every dep dropped.
+	_, dropped = FilterDependsOn(deps, nil)
+	if dropped != 2 {
+		t.Errorf("nil-known dropped = %d, want 2", dropped)
+	}
+
+	// empty deps: no work, no allocation.
+	out, dropped := FilterDependsOn(nil, known)
+	if out != nil || dropped != 0 {
+		t.Errorf("empty deps: out=%v dropped=%d", out, dropped)
+	}
+}
+
 func TestKustomization_UpdatePostBuildSubstitutions(t *testing.T) {
 	k := &Kustomization{Contents: map[string]any{"spec": map[string]any{}}}
 	k.UpdatePostBuildSubstitutions(map[string]any{"K": "v"})

@@ -172,6 +172,31 @@ func TestStore_FailedResources(t *testing.T) {
 	}
 }
 
+// PR125 switched ListObjects(kind) to a byName-index walk when kind is
+// non-empty. Verify it returns exactly the entries for that kind, that
+// the empty-kind path still walks everything, and that DeleteObject
+// keeps the secondary index consistent.
+func TestStore_ListObjects_ByKindIndex(t *testing.T) {
+	s := New()
+	s.AddObject(newCM("a", "ns1"))
+	s.AddObject(newCM("b", "ns2"))
+	s.AddObject(&manifest.Secret{Name: "s", Namespace: "ns1"})
+
+	if got := len(s.ListObjects(manifest.KindConfigMap)); got != 2 {
+		t.Errorf("ListObjects(KindConfigMap) = %d, want 2", got)
+	}
+	if got := len(s.ListObjects(manifest.KindSecret)); got != 1 {
+		t.Errorf("ListObjects(KindSecret) = %d, want 1", got)
+	}
+	if got := len(s.ListObjects("")); got != 3 {
+		t.Errorf("ListObjects(\"\") = %d, want 3", got)
+	}
+	s.DeleteObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns1", Name: "a"})
+	if got := len(s.ListObjects(manifest.KindConfigMap)); got != 1 {
+		t.Errorf("after Delete: ListObjects(KindConfigMap) = %d, want 1", got)
+	}
+}
+
 func TestStore_WatchReady_AlreadyReady(t *testing.T) {
 	s := New()
 	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}

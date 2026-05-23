@@ -56,6 +56,11 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
 			applyBuildFlags(c, b)
+			// build only emits manifest streams; reject -o values that
+			// don't make sense (e.g. name, which is a get-only concept).
+			if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
+				return err
+			}
 			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
@@ -128,7 +133,7 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string,
 				continue
 			}
 		}
-		if err := format.YAMLMulti(w, docs); err != nil {
+		if err := emitDocs(w, docs, c.outputOrDefault(format.OutputYAML)); err != nil {
 			return err
 		}
 	}
@@ -139,6 +144,19 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string,
 		return fmt.Errorf("no %s named %q in --path", kind, name)
 	}
 	return nil
+}
+
+// emitDocs writes a sequence of rendered docs as either multi-doc YAML
+// (the default for `flate build`) or a single JSON array — the two
+// formats the agent quorum agreed make sense for build output. Other
+// -o values are rejected earlier by requireOutput.
+func emitDocs(w io.Writer, docs []map[string]any, out format.Output) error {
+	switch out {
+	case format.OutputJSON:
+		return format.JSON(w, docs)
+	default:
+		return format.YAMLMulti(w, docs)
+	}
 }
 
 // compareDocs orders rendered docs by (kind, namespace, name).

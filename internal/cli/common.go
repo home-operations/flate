@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -150,6 +152,40 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 		return nil, err
 	}
 	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
+}
+
+// outputOrDefault returns the user's -o choice, or fallback when -o
+// is at its CLI default ("table"). Subcommands like build/diff have
+// no table representation, so "table" effectively means "the
+// subcommand-natural default" (yaml for build, diff for diff).
+func (c *commonFlags) outputOrDefault(fallback format.Output) format.Output {
+	if c.output == string(format.OutputTable) {
+		return fallback
+	}
+	return format.Output(c.output)
+}
+
+// requireOutput rejects an -o value that's outside the subcommand's
+// supported set. Use for subcommands that don't honor every global -o
+// value (e.g. build has no concept of "name"; diff has no concept of
+// "name"). Treats "table" as accepted so the global default doesn't
+// trigger this check — callers downstream coerce "table" to their
+// own natural default via outputOrDefault.
+func (c *commonFlags) requireOutput(allowed ...format.Output) error {
+	if c.output == string(format.OutputTable) {
+		return nil
+	}
+	for _, a := range allowed {
+		if format.Output(c.output) == a {
+			return nil
+		}
+	}
+	names := make([]string, len(allowed))
+	for i, a := range allowed {
+		names[i] = string(a)
+	}
+	return fmt.Errorf("--output %q not supported by this subcommand (want one of: table, %s)",
+		c.output, strings.Join(names, ", "))
 }
 
 // runOrchestratorCfg returns a non-nil orchestrator whenever Bootstrap

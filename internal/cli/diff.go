@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -81,6 +82,10 @@ func newDiffImagesCmd() *cobra.Command {
 }
 
 func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemoved bool) error {
+	// diff images emits a flat list — only json/yaml are honored.
+	if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
+		return err
+	}
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
 	if orig == nil || current == nil {
 		return runErr
@@ -113,6 +118,12 @@ func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []stri
 }
 
 func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kind, name string) error {
+	// diff has no `name` output mode; only diff/yaml/json/object are
+	// meaningful. Reject early so the user sees a clear error instead
+	// of "unknown diff format" from pkg/diff.
+	if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
+		return err
+	}
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
 	if orig == nil || current == nil {
 		return runErr

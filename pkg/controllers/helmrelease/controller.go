@@ -199,11 +199,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		c.Store.AddRendered(obj)
 	}
 
-	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{
-		ChartName: hr.Chart.ChartName(),
-		Manifests: docs,
-		Values:    hr.Values,
-	})
+	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs})
 	return nil
 }
 

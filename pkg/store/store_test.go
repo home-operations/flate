@@ -160,18 +160,15 @@ func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
 	}
 }
 
-func TestStore_HasFailedResources(t *testing.T) {
+func TestStore_FailedResources(t *testing.T) {
 	s := New()
-	if s.HasFailedResources() {
+	if len(s.FailedResources()) != 0 {
 		t.Errorf("empty store should not have failures")
 	}
 	id := manifest.NamedResource{Kind: "Kustomization", Name: "x"}
 	s.UpdateStatus(id, StatusFailed, "boom")
-	if !s.HasFailedResources() {
-		t.Errorf("expected failures after Failed status")
-	}
-	if len(s.FailedResources()) != 1 {
-		t.Errorf("FailedResources count: %d", len(s.FailedResources()))
+	if got := len(s.FailedResources()); got != 1 {
+		t.Errorf("FailedResources count: %d, want 1", got)
 	}
 }
 

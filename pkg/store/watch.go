@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -142,10 +141,3 @@ func (s *Store) WatchExists(ctx context.Context, id manifest.NamedResource) (man
 	}
 }
 
-// String formatter is occasionally useful for tests.
-func (s *Store) String() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return fmt.Sprintf("Store{objects:%d, conditions:%d, artifacts:%d}",
-		len(s.objects), len(s.conditions), len(s.artifacts))
-}

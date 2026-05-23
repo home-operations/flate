@@ -300,18 +300,6 @@ func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
 	return s.artifacts[id]
 }
 
-// HasFailedResources reports whether any tracked Ready condition is False.
-func (s *Store) HasFailedResources() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, conds := range s.conditions {
-		if info, ok := statusInfoFromConditions(conds); ok && info.Status == StatusFailed {
-			return true
-		}
-	}
-	return false
-}
-
 // FailedResources returns every (id, info) currently in Failed state.
 func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 	s.mu.RLock()

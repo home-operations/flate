@@ -2,8 +2,8 @@
 // flate never invokes the `kustomize` CLI. It provides:
 //
 //   - Build: renders a kustomization directory to YAML documents.
-//   - Filtering helpers (FilterKinds / ExcludeKinds) that mirror
-//     flux-local's chainable Kustomize wrapper.
+//   - Filtering helpers (FilterKinds) that mirror flux-local's
+//     chainable Kustomize wrapper.
 //   - Variable substitution (envsubst-style "${VAR}" and "${VAR:=default}")
 //     for Flux post-build substitutions.
 //

@@ -40,7 +40,7 @@ func TestNamedResource(t *testing.T) {
 
 	a := NamedResource{Kind: "A", Namespace: "ns", Name: "1"}
 	b := NamedResource{Kind: "A", Namespace: "ns", Name: "2"}
-	if !a.Less(b) || a.Compare(b) >= 0 {
+	if a.Compare(b) >= 0 {
 		t.Errorf("expected a < b for %v / %v", a, b)
 	}
 }

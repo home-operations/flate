@@ -35,9 +35,8 @@ type Condition = metav1.Condition
 // conventions so a future watch-mode could publish to a real cluster
 // without translating.
 const (
-	ConditionReady       = "Ready"
-	ConditionReconciling = "Reconciling"
-	ConditionHealthy     = "Healthy"
+	ConditionReady   = "Ready"
+	ConditionHealthy = "Healthy"
 )
 
 // Condition reasons attached to the Ready condition.

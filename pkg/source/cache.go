@@ -29,9 +29,6 @@ func NewCache(dir string) *Cache {
 	return &Cache{root: cmp.Or(dir, filepath.Join(os.TempDir(), "flate-cache"))}
 }
 
-// Root returns the cache root directory.
-func (c *Cache) Root() string { return c.root }
-
 // Slot returns the path under which (url, ref) should be cached. The
 // returned directory is created if it does not already exist. The
 // returned exists flag is true when the directory was already populated.

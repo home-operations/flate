@@ -47,14 +47,6 @@ type Event struct {
 	Reason string
 }
 
-// Success reports whether the dependency reached DepReady.
-func (e Event) Success() bool { return e.Status == DepReady }
-
-// Failure reports whether the dependency reached a terminal non-success state.
-func (e Event) Failure() bool {
-	return e.Status == DepFailed || e.Status == DepTimeout || e.Status == DepCancelled
-}
-
 // Summary tallies the final state of a Waiter run.
 type Summary struct {
 	Ready    []manifest.NamedResource

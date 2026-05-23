@@ -46,10 +46,6 @@ func TestFilterKinds(t *testing.T) {
 	if len(out) != 1 || out[0]["kind"] != "ConfigMap" {
 		t.Errorf("FilterKinds: %+v", out)
 	}
-	out = ExcludeKinds(docs, []string{"Secret", "Service"})
-	if len(out) != 1 || out[0]["kind"] != "ConfigMap" {
-		t.Errorf("ExcludeKinds: %+v", out)
-	}
 }
 
 func TestSubstitute(t *testing.T) {

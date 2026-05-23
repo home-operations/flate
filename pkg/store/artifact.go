@@ -42,22 +42,17 @@ func (*SourceArtifact) artifact() {}
 type KustomizationArtifact struct {
 	Path      string
 	Manifests []map[string]any
-	Revision  string
 }
 
 func (*KustomizationArtifact) artifact() {}
 
-// RenderedManifests returns the manifests rendered by the Kustomization.
 func (a *KustomizationArtifact) RenderedManifests() []map[string]any { return a.Manifests }
 
 // HelmReleaseArtifact is the rendered output of a HelmRelease template.
 type HelmReleaseArtifact struct {
-	ChartName string
 	Manifests []map[string]any
-	Values    map[string]any
 }
 
 func (*HelmReleaseArtifact) artifact() {}
 
-// RenderedManifests returns the manifests rendered by the HelmRelease.
 func (a *HelmReleaseArtifact) RenderedManifests() []map[string]any { return a.Manifests }

@@ -17,16 +17,6 @@ func FilterKinds(docs []map[string]any, keep []string) []map[string]any {
 	})
 }
 
-// ExcludeKinds returns a new slice with documents whose `kind` is NOT
-// in skip.
-func ExcludeKinds(docs []map[string]any, skip []string) []map[string]any {
-	if len(skip) == 0 {
-		return docs
-	}
-	return filter(docs, func(doc map[string]any) bool {
-		return !slices.Contains(skip, manifest.DocKind(doc))
-	})
-}
 
 // filter returns the elements of docs for which pred is true, without
 // mutating the input slice.

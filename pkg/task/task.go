@@ -103,9 +103,6 @@ func (s *Service) YieldSlot(fn func()) {
 	fn()
 }
 
-// ActiveCount returns the number of currently active tasks.
-func (s *Service) ActiveCount() int64 { return s.active.Load() }
-
 // Failures returns the number of panicked tasks observed.
 func (s *Service) Failures() int64 { return s.failures.Load() }
 

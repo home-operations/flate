@@ -56,9 +56,6 @@ func (n NamedResource) Compare(other NamedResource) int {
 	return cmp.Compare(n.Name, other.Name)
 }
 
-// Less is the sort.Interface-style predicate.
-func (n NamedResource) Less(other NamedResource) bool { return n.Compare(other) < 0 }
-
 // BaseManifest is the marker interface every domain object implements.
 // Concrete handling is done via type assertions in each controller.
 type BaseManifest interface {

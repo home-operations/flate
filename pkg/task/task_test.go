@@ -69,9 +69,6 @@ func TestService_BlockTillDone(t *testing.T) {
 	if n.Load() != 50 {
 		t.Errorf("expected 50, got %d", n.Load())
 	}
-	if s.ActiveCount() != 0 {
-		t.Errorf("ActiveCount: %d", s.ActiveCount())
-	}
 }
 
 func TestService_PanicCountedAndRecovered(t *testing.T) {

@@ -133,6 +133,19 @@ func TestE2E_BuildHR(t *testing.T) {
 	}
 }
 
+// build hr emits identical bytes on repeated runs against the same
+// tree. Pins the per-artifact sort that's needed because some Helm
+// charts use `range $name, $v := .Values.*` which iterates Go maps
+// randomly — without the sort, byte-stable diffs in CI would break.
+func TestE2E_BuildHR_Deterministic(t *testing.T) {
+	dir := copyTree(t, testdataPath(t, "simple"))
+	out1 := runCLIStdout(t, "build", "hr", "--path", dir)
+	out2 := runCLIStdout(t, "build", "hr", "--path", dir)
+	if out1 != out2 {
+		t.Errorf("build hr output differs between runs (length %d vs %d)", len(out1), len(out2))
+	}
+}
+
 func TestE2E_GetAll_JSON(t *testing.T) {
 	out := runCLI(t, "get", "all", "--path", testdataPath(t, "simple"), "-o", "json")
 	if !strings.Contains(out, `"kustomizations"`) {

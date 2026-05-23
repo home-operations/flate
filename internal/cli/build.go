@@ -1,13 +1,14 @@
 package cli
 
 import (
+	"cmp"
 	"io"
+	"slices"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/format"
-	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
@@ -81,8 +82,16 @@ func applyBuildFlags(c *commonFlags, b *buildFlags) {
 }
 
 func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string, c *commonFlags, b *buildFlags) error {
-	var all []map[string]any
-	for _, obj := range o.Store().ListObjects(kind) {
+	// Sort by (namespace, name) so `build` output is deterministic
+	// across runs — `Store.ListObjects` iterates the byName map and
+	// would otherwise produce a different ordering each invocation,
+	// breaking shell-piped diffs and CI consumers.
+	objs := o.Store().ListObjects(kind)
+	slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
+		ai, bi := a.Named(), b.Named()
+		return cmp.Or(cmp.Compare(ai.Namespace, bi.Namespace), cmp.Compare(ai.Name, bi.Name))
+	})
+	for _, obj := range objs {
 		id := obj.Named()
 		if name != "" && id.Name != name {
 			continue
@@ -90,12 +99,58 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string,
 		if !c.includeNamespace(o.Filter(), id.Namespace) {
 			continue
 		}
-		if a, ok := o.Store().GetArtifact(id).(store.RenderedArtifact); ok {
-			all = append(all, a.RenderedManifests()...)
+		a, ok := o.Store().GetArtifact(id).(store.RenderedArtifact)
+		if !ok {
+			continue
+		}
+		// Stream per-artifact rather than accumulating every doc into a
+		// single slice — keeps the working set small on big repos and
+		// lets onlyCRDs filter run incrementally instead of building a
+		// throw-away intermediate.
+		//
+		// Clone-and-sort per-artifact so output is byte-stable across
+		// runs even when a Helm chart uses `range $name, $svc := .Values`
+		// (Go map iteration is randomized — the chart still emits the
+		// same set but in arbitrary order). Sort by (kind, ns, name).
+		// SSA-applied output doesn't care about order; CI / diff
+		// consumers do.
+		docs := slices.Clone(a.RenderedManifests())
+		slices.SortStableFunc(docs, compareDocs)
+		if b.onlyCRDs {
+			docs = filterCRDsOnly(docs)
+			if len(docs) == 0 {
+				continue
+			}
+		}
+		if err := format.YAMLMulti(w, docs); err != nil {
+			return err
 		}
 	}
-	if b.onlyCRDs {
-		all = kustomize.FilterKinds(all, []string{manifest.KindCustomResourceDefinition})
+	return nil
+}
+
+// compareDocs orders rendered docs by (kind, namespace, name).
+func compareDocs(a, b map[string]any) int {
+	an, ans := manifest.DocMetadata(a)
+	bn, bns := manifest.DocMetadata(b)
+	return cmp.Or(
+		cmp.Compare(manifest.DocKind(a), manifest.DocKind(b)),
+		cmp.Compare(ans, bns),
+		cmp.Compare(an, bn),
+	)
+}
+
+// filterCRDsOnly returns the subset of docs whose `kind` is
+// CustomResourceDefinition. Inlined here (rather than via
+// kustomize.FilterKinds) to skip the slice-copy when nothing matches:
+// most rendered artifacts contain zero CRDs, so the common case is to
+// return a length-0 slice without allocation.
+func filterCRDsOnly(docs []map[string]any) []map[string]any {
+	var out []map[string]any
+	for _, doc := range docs {
+		if manifest.DocKind(doc) == manifest.KindCustomResourceDefinition {
+			out = append(out, doc)
+		}
 	}
-	return format.YAMLMulti(w, all)
+	return out
 }

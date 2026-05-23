@@ -45,11 +45,10 @@ type Result struct {
 	ParentOf map[manifest.NamedResource]manifest.NamedResource
 }
 
-// Config is the input contract for Run. Store and Loader are mandatory.
+// Config is the input contract for Run. Store is mandatory.
 type Config struct {
 	Path        string
 	Store       *store.Store
-	Loader      *loader.Loader
 	WipeSecrets bool
 }
 
@@ -57,10 +56,16 @@ type Config struct {
 // into cfg.Store. Returns the structural metadata the orchestrator
 // needs for change-filter construction and controller wiring.
 func Run(ctx context.Context, cfg Config) (*Result, error) {
-	if cfg.Store == nil || cfg.Loader == nil {
-		return nil, errors.New("discovery: Store and Loader are required")
+	if cfg.Store == nil {
+		return nil, errors.New("discovery: Store is required")
 	}
-	d := &discoverer{cfg: cfg, sourceFiles: map[manifest.NamedResource]string{}}
+	l := loader.New(cfg.Store)
+	l.Options.WipeSecrets = cfg.WipeSecrets
+	d := &discoverer{
+		cfg:         cfg,
+		loader:      l,
+		sourceFiles: map[manifest.NamedResource]string{},
+	}
 	repoRoot, err := d.seedBootstrapSource()
 	if err != nil {
 		return nil, err
@@ -80,6 +85,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 type discoverer struct {
 	cfg         Config
+	loader      *loader.Loader
 	sourceFiles map[manifest.NamedResource]string
 }
 
@@ -113,7 +119,7 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 // KS may emit a ResourceSet which itself emits child Kustomizations
 // referencing new spec.paths the file walker hasn't visited yet.
 func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
-	l := d.cfg.Loader
+	l := d.loader
 	l.SourceRoot = repoRoot
 	l.SourceFiles = d.sourceFiles
 

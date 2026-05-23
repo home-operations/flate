@@ -16,7 +16,6 @@ import (
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/kustomize"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
@@ -125,7 +124,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		s, _ := obj.(*manifest.Secret)
 		return s
 	}
-	helmClient.SetSecretGetter(helm.SecretGetter(secretGet))
+	helmClient.SetSecretGetter(secretGet)
 	srcCtrl := sourcectrl.New(st, ts)
 	srcCtrl.Fetchers[manifest.KindGitRepository] = &git.Fetcher{Cache: cache, Secrets: secretGet}
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = &external.Fetcher{}
@@ -185,11 +184,8 @@ func (o *Orchestrator) Filter() *change.Filter { return o.filter }
 // Delegates the load / expand / alias phase to pkg/discovery; the
 // remainder is dependency validation + change-filter construction.
 func (o *Orchestrator) Bootstrap(ctx context.Context) error {
-	l := loader.New(o.store)
-	l.Options.WipeSecrets = o.cfg.WipeSecrets
-
 	res, err := discovery.Run(ctx, discovery.Config{
-		Path: o.cfg.Path, Store: o.store, Loader: l, WipeSecrets: o.cfg.WipeSecrets,
+		Path: o.cfg.Path, Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
 	})
 	if err != nil {
 		return err

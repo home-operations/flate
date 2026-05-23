@@ -14,6 +14,7 @@ import (
 	"helm.sh/helm/v4/pkg/registry"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -37,11 +38,10 @@ func (l LocalSource) RepoFullName() string {
 	return l.Namespace + "-" + l.Name
 }
 
-// SecretGetter resolves a Secret CR by namespace + name. The helm
-// Client uses this to look up HelmRepository.SecretRef credentials at
-// pull time. Orchestrator wires it to Store.GetByName; nil is OK when
-// no HelmRepositories use SecretRef.
-type SecretGetter func(namespace, name string) *manifest.Secret
+// SecretGetter is the same shape as source.SecretGetter; aliased so
+// the helm Client and the source Fetchers consume one canonical type.
+// The orchestrator wires the same closure into both.
+type SecretGetter = source.SecretGetter
 
 // Client renders HelmReleases. Construct with NewClient.
 type Client struct {

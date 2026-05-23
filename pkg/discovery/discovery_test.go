@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/pkg/discovery"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -52,9 +51,8 @@ spec:
 `)
 
 	st := store.New()
-	l := loader.New(st)
 	res, err := discovery.Run(context.Background(), discovery.Config{
-		Path: dir, Store: st, Loader: l, WipeSecrets: true,
+		Path: dir, Store: st, WipeSecrets: true,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

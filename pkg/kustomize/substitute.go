@@ -2,7 +2,6 @@ package kustomize
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 
 	"github.com/fluxcd/pkg/envsubst"
@@ -35,12 +34,6 @@ func Substitute(data []byte, vars map[string]string) ([]byte, error) {
 	}
 	return []byte(out), nil
 }
-
-// ErrSubstitution wraps any non-missing-var failure from the
-// underlying envsubst engine (e.g. parse errors). Kept exported so
-// callers can errors.Is against it if they need to distinguish
-// envsubst failures from store / source errors in the future.
-var ErrSubstitution = errors.New("substitution failed")
 
 // HasSubstitutions returns whether data contains any ${...} placeholder.
 // Useful when callers want to short-circuit costly substitution work.

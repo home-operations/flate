@@ -106,3 +106,97 @@ func statusInfoFromConditions(conds []metav1.Condition) (StatusInfo, bool) {
 	}
 	return StatusInfo{}, false
 }
+
+// UpdateStatus records a Ready-condition transition and dispatches a
+// StatusUpdated event when the StatusInfo rollup changes. Internally
+// the (status, message) pair is stored as a metav1.Condition so future
+// callers (ReadyExpr CEL, SOPS detection, healthChecks) can see the
+// rich state via GetConditions.
+func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, message string) {
+	s.SetCondition(id, readyCondition(status, message))
+}
+
+// SetCondition upserts cond into the resource's condition list keyed
+// by cond.Type. Dispatches a StatusUpdated event with the StatusInfo
+// rollup (derived from Ready) on every observable condition change,
+// not just Ready transitions. Listeners that only care about Ready
+// can filter on the StatusInfo payload; CEL-based ReadyExpr watchers
+// need the broader notification so a Healthy condition flip (for
+// example) wakes them.
+//
+// An identical re-write of the same condition is a no-op (no event).
+func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
+	s.mu.Lock()
+	prev := s.conditions[id]
+
+	updated := make([]Condition, 0, len(prev)+1)
+	replaced := false
+	for _, c := range prev {
+		if c.Type == cond.Type {
+			if conditionEqual(c, cond) {
+				// Identical condition — nothing to do, including no event.
+				s.mu.Unlock()
+				return
+			}
+			updated = append(updated, cond)
+			replaced = true
+			continue
+		}
+		updated = append(updated, c)
+	}
+	if !replaced {
+		updated = append(updated, cond)
+	}
+	s.conditions[id] = updated
+	newInfo, _ := statusInfoFromConditions(updated)
+	s.mu.Unlock()
+
+	s.fire(EventStatusUpdated, id, newInfo)
+}
+
+// GetStatus returns the Ready-derived StatusInfo for id and whether
+// a Ready condition was present.
+func (s *Store) GetStatus(id manifest.NamedResource) (StatusInfo, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return statusInfoFromConditions(s.conditions[id])
+}
+
+// GetConditions returns a copy of id's condition list. Empty for
+// unknown ids.
+func (s *Store) GetConditions(id manifest.NamedResource) []Condition {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	conds := s.conditions[id]
+	if len(conds) == 0 {
+		return nil
+	}
+	out := make([]Condition, len(conds))
+	copy(out, conds)
+	return out
+}
+
+// conditionEqual reports whether two conditions carry the same
+// observable state. LastTransitionTime is intentionally ignored — it
+// is reset on every transition by the controller-runtime libraries
+// and would otherwise prevent the no-op short-circuit from firing.
+func conditionEqual(a, b Condition) bool {
+	return a.Type == b.Type &&
+		a.Status == b.Status &&
+		a.Reason == b.Reason &&
+		a.Message == b.Message &&
+		a.ObservedGeneration == b.ObservedGeneration
+}
+
+// FailedResources returns every (id, info) currently in Failed state.
+func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[manifest.NamedResource]StatusInfo)
+	for id, conds := range s.conditions {
+		if info, ok := statusInfoFromConditions(conds); ok && info.Status == StatusFailed {
+			out[id] = info
+		}
+	}
+	return out
+}

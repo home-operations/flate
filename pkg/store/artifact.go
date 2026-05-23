@@ -1,5 +1,11 @@
 package store
 
+import (
+	"reflect"
+
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
 // Artifact is a marker interface implemented by every artifact type.
 // Controllers type-assert to the concrete type they expect.
 type Artifact interface {
@@ -58,3 +64,26 @@ func (*HelmReleaseArtifact) artifact() {}
 
 // RenderedManifests implements RenderedArtifact.
 func (a *HelmReleaseArtifact) RenderedManifests() []map[string]any { return a.Manifests }
+
+// --- Store operations on artifacts ---
+
+// SetArtifact stores an artifact for id and dispatches an
+// ArtifactUpdated event. Re-setting with a deep-equal value is a no-op.
+func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
+	s.mu.Lock()
+	prev, exists := s.artifacts[id]
+	if exists && reflect.DeepEqual(prev, artifact) {
+		s.mu.Unlock()
+		return
+	}
+	s.artifacts[id] = artifact
+	s.mu.Unlock()
+	s.fire(EventArtifactUpdated, id, artifact)
+}
+
+// GetArtifact returns the artifact for id, or nil if none was set.
+func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.artifacts[id]
+}

@@ -165,6 +165,50 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 	}
 }
 
+// `.flate-git-revision` marker survives ApplyIgnore (the default
+// sourceignore patterns don't match `.flate-*`) and lets the next
+// Fetch validate the cache without `.git/` — which the ignore step
+// itself wipes via the VCS-excludes preset.
+func TestFetcher_CacheMarkerSurvivesIgnore(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+
+	cache := source.NewCache(t.TempDir())
+	patterns := "/*\n!/hello.txt\n"
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:    "file://" + src,
+			Ignore: &patterns,
+		},
+	}
+	f := &Fetcher{Cache: cache}
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	marker := filepath.Join(art.LocalPath, cachedRevisionFile)
+	b, err := os.ReadFile(marker) //nolint:gosec // test path
+	if err != nil {
+		t.Fatalf("expected marker %s to exist after Fetch with restrictive ignore: %v", cachedRevisionFile, err)
+	}
+	if string(b) == "" {
+		t.Errorf("marker exists but is empty")
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, ".git")); err == nil {
+		t.Errorf("expected .git/ to be wiped by ApplyIgnore but it still exists")
+	}
+
+	// Second Fetch should hit the cache via the marker.
+	art2, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch second: %v", err)
+	}
+	if art2.Revision != string(b) {
+		t.Errorf("warm Fetch returned a different revision: %q vs %q", art2.Revision, string(b))
+	}
+}
+
 // mustInitRepoWithFiles creates a git repo at dir with the given
 // {path: contents} entries committed as one revision.
 func mustInitRepoWithFiles(t *testing.T, dir string, files map[string]string) {

@@ -53,6 +53,12 @@ const (
 // values. The "{name}" token is replaced with the data key.
 const ValuePlaceholderTemplate = "..PLACEHOLDER_%s.."
 
+// ValuePlaceholderPrefix is the literal prefix produced by
+// ValuePlaceholderTemplate; consumers checking whether a string is a
+// wipe placeholder should use ContainsValuePlaceholder / IsValuePlaceholder
+// rather than hard-coding the prefix.
+const ValuePlaceholderPrefix = "..PLACEHOLDER_"
+
 // StripAttributes is the canonical list of metadata annotations that
 // kustomize injects and which contribute only noise to diffs.
 var StripAttributes = []string{

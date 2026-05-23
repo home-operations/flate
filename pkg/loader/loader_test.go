@@ -67,6 +67,40 @@ metadata: {name: a, namespace: ns}
 	}
 }
 
+// A directory whose kustomization.yaml declares `kind: Component` is
+// a template fragment — parents reference it via spec.components and
+// kustomize materializes it at parent-render time. flate's standalone
+// loader must skip such subtrees, otherwise unresolved template names
+// (e.g. `${APP}-db`) land in the store as bogus standalone resources.
+func TestLoader_SkipsKustomizeComponentSubtree(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "components/db/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
+	testutil.WriteFile(t, dir, "components/db/template.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: "${APP}-db", namespace: ns}
+spec:
+  path: ./does/not/matter
+  sourceRef: {kind: GitRepository, name: flux-system}
+  interval: 1h
+`)
+	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: real, namespace: ns}
+`)
+	s := store.New()
+	n, err := New(s).Load(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 object loaded (only the real ConfigMap); got %d", n)
+	}
+	if got := s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-db"}); got != nil {
+		t.Errorf("Component-subtree resource should not be loaded; got %v", got)
+	}
+}
+
 // TestLoader_RespectsCanceledContext asserts the walk bails out on
 // context cancellation. Useful when a stuck NFS mount or symlink
 // loop would otherwise block Bootstrap indefinitely.

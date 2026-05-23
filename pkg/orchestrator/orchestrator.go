@@ -179,7 +179,28 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		return err
 	}
 	o.validateDependsOn()
+	o.warnSilentlySkippedVerification()
 	return o.buildChangeFilter(repoRoot)
+}
+
+// warnSilentlySkippedVerification surfaces cases where a user-configured
+// spec.verify won't actually run: today, OCIRepository.spec.verify when
+// EnableOCI=false (the existence-fetcher path renders Ready without
+// invoking the cosign verifier). Pre-existing behavior — flagging it
+// in a log line so the user knows their verification policy is dormant.
+func (o *Orchestrator) warnSilentlySkippedVerification() {
+	if o.cfg.EnableOCI {
+		return
+	}
+	for _, obj := range o.store.ListObjects(manifest.KindOCIRepository) {
+		repo, ok := obj.(*manifest.OCIRepository)
+		if !ok || repo.Verify == nil {
+			continue
+		}
+		slog.Warn("OCIRepository spec.verify skipped: --enable-oci=false",
+			"ociRepository", repo.Namespace+"/"+repo.Name,
+			"provider", repo.Verify.Provider)
+	}
 }
 
 // seedBootstrapSource publishes a synthetic GitRepository pointing at
@@ -402,8 +423,6 @@ func (o *Orchestrator) resolveInputProvider(ref fluxopv1.InputProviderReference,
 // validateDependsOn drops dangling dependsOn references on both
 // Kustomizations and HelmReleases so the dependency-wait phase fails
 // fast on typos instead of stalling out the full per-dep budget.
-// Pre-2026-05-23 only Kustomizations were pruned, so a dangling
-// HR→HR dependsOn would hit the 30-second timeout.
 func (o *Orchestrator) validateDependsOn() {
 	known := map[string]map[string]struct{}{
 		manifest.KindKustomization: {},
@@ -537,7 +556,7 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 			cs = cs.Reroot(rel)
 		}
 		slog.Info("changed-only mode",
-			"baseline", origAbs, "current", currAbs, "changed_files", cs.Len())
+			"baseline", origAbs, "current", currAbs, "changedFiles", cs.Len())
 		if cs.Len() == 0 {
 			slog.Warn("no changes detected between --path and --path-orig — output will be empty; verify both paths reference distinct snapshots")
 		}

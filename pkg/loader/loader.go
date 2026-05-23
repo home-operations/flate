@@ -186,10 +186,9 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 	// template fragment that real Flux only materializes via a parent
 	// Kustomization's spec.components reference. Standalone-loading the
 	// children would surface literal `${APP}` placeholders in metadata
-	// names as bogus Kustomization / HelmRelease objects — exactly
-	// what m00nwtchr's `${APP}-db`, `migadu-${APP}`, `${APP}-anubis`
-	// were doing. The parent's kustomize render still picks them up
-	// (it follows `spec.components` directly).
+	// names as bogus Kustomization / HelmRelease objects. The parent's
+	// kustomize render still picks them up — it follows spec.components
+	// directly without going through flate's standalone loader.
 	return isKustomizeComponent(full)
 }
 

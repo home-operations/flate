@@ -73,7 +73,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	// validation error against a value flate fabricated. Real Flux
 	// resolves the secret to the actual value and validates normally —
 	// flate can't, so this short-circuits the failure mode.
-	inst.SkipSchemaValidation = hr.DisableSchemaValidation || containsWipePlaceholder(hrValues)
+	inst.SkipSchemaValidation = hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(hrValues)
 	// spec.postRenderers — pipe rendered output through one or more
 	// kustomize patch+image transforms. helm-controller does this via
 	// the same postrenderer.PostRenderer hook.
@@ -287,26 +287,3 @@ func isTestHook(h *release.Hook) bool {
 	return slices.Contains(h.Events, release.HookTest)
 }
 
-// containsWipePlaceholder reports whether any string leaf in v matches
-// the secret-wipe marker `..PLACEHOLDER_<key>..`. Used to short-circuit
-// chart schema validation when flate has fabricated values that real
-// Flux would have resolved from a SOPS-encrypted secret.
-func containsWipePlaceholder(v any) bool {
-	switch t := v.(type) {
-	case string:
-		return strings.Contains(t, "..PLACEHOLDER_")
-	case map[string]any:
-		for _, vv := range t {
-			if containsWipePlaceholder(vv) {
-				return true
-			}
-		}
-	case []any:
-		for _, vv := range t {
-			if containsWipePlaceholder(vv) {
-				return true
-			}
-		}
-	}
-	return false
-}

@@ -2,7 +2,6 @@ package source
 
 import (
 	"encoding/base64"
-	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -21,7 +20,7 @@ import (
 // at.
 func StringFromSecret(sec *manifest.Secret, key string) string {
 	if v, ok := sec.StringData[key].(string); ok {
-		if strings.HasPrefix(v, "..PLACEHOLDER_") {
+		if manifest.IsValuePlaceholder(v) {
 			return ""
 		}
 		return v
@@ -36,7 +35,7 @@ func StringFromSecret(sec *manifest.Secret, key string) string {
 			return ""
 		}
 		s := string(decoded)
-		if strings.HasPrefix(s, "..PLACEHOLDER_") {
+		if manifest.IsValuePlaceholder(s) {
 			return ""
 		}
 		return s

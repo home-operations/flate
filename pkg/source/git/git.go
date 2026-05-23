@@ -39,9 +39,8 @@ type Fetcher struct {
 // has no per-CloneOptions TLS hook, so custom-CA fetches must hold
 // this lock across InstallProtocol → clone → restore. The lock is
 // package-global because `client.InstallProtocol` is itself
-// process-global: a per-Fetcher mutex (as flate had pre-2026-05-23)
-// raced when `flate diff` ran two Fetchers concurrently and clobbered
-// each other's transport.
+// process-global — a per-Fetcher mutex would race when two Fetchers
+// run concurrently and clobber each other's transport.
 var httpsTransportMu sync.Mutex
 
 // Fetch implements source.Fetcher for *manifest.GitRepository.

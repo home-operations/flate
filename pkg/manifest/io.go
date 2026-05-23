@@ -26,7 +26,7 @@ func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 			if errors.Is(err, io.EOF) {
 				return out, nil
 			}
-			return nil, fmt.Errorf("%w: %v", ErrInput, err)
+			return nil, fmt.Errorf("%w: %w", ErrInput, err)
 		}
 		if len(m) == 0 {
 			continue

@@ -218,7 +218,7 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 	// — treat as empty so a wiped values-file (common pattern: kustomize
 	// `secretGenerator` wrapping a SOPS-encrypted values.yaml) doesn't
 	// block the whole HR render.
-	if strings.Contains(found, "..PLACEHOLDER_") {
+	if manifest.IsValuePlaceholder(found) {
 		return values, nil
 	}
 	var parsed map[string]any

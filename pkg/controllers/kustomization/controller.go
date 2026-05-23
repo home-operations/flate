@@ -252,7 +252,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 // as int rather than string. Cheap pre-check on the decoded tree skips
 // the round-trip for the (common) case of docs with no `${` anywhere.
 func substituteDoc(doc map[string]any, vars map[string]string) (map[string]any, error) {
-	if !containsSubstitution(doc) {
+	if !manifest.AnyStringLeaf(doc, func(s string) bool { return strings.Contains(s, "${") }) {
 		return doc, nil
 	}
 	raw, err := yaml.Marshal(doc)
@@ -268,30 +268,6 @@ func substituteDoc(doc map[string]any, vars map[string]string) (map[string]any, 
 		return nil, fmt.Errorf("substitute: unmarshal doc: %w", err)
 	}
 	return next, nil
-}
-
-// containsSubstitution scans the decoded tree for any string leaf
-// containing `${`. Cheap walk over the parsed map avoids the
-// allocate-marshal-scan-discard pattern that dominated CPU on
-// kustomization reconciles when most docs had no substitutions at all.
-func containsSubstitution(v any) bool {
-	switch t := v.(type) {
-	case string:
-		return strings.Contains(t, "${")
-	case map[string]any:
-		for _, vv := range t {
-			if containsSubstitution(vv) {
-				return true
-			}
-		}
-	case []any:
-		for _, vv := range t {
-			if containsSubstitution(vv) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // shouldDispatchAsObject reports whether a render-emitted Flux

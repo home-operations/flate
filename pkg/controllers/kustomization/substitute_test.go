@@ -1,11 +1,17 @@
 package kustomization
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/home-operations/flate/pkg/manifest"
+)
 
 // containsSubstitution gates whether substituteDoc pays for a full
-// YAML marshal/unmarshal round-trip. Walks the decoded tree looking
-// for any string leaf containing `${`. Test the obvious shapes.
+// YAML marshal/unmarshal round-trip. The check lives as a closure
+// passed to manifest.AnyStringLeaf — pin its behavior here.
 func TestContainsSubstitution(t *testing.T) {
+	hasDollar := func(s string) bool { return strings.Contains(s, "${") }
 	cases := []struct {
 		name string
 		in   any
@@ -33,8 +39,8 @@ func TestContainsSubstitution(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := containsSubstitution(tc.in); got != tc.want {
-				t.Errorf("containsSubstitution = %v, want %v", got, tc.want)
+			if got := manifest.AnyStringLeaf(tc.in, hasDollar); got != tc.want {
+				t.Errorf("AnyStringLeaf(${) = %v, want %v", got, tc.want)
 			}
 		})
 	}

@@ -67,10 +67,12 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	if _, ok := f.keep[id]; ok {
 		return true
 	}
-	if id.Namespace != "" {
-		if _, ok := f.keepByName[nameKey{id.Kind, id.Name}]; ok {
-			return true
-		}
+	// Fall back to a (Kind, Name)-only lookup when EITHER side has an
+	// empty namespace — parent-KS targetNamespace inheritance is lazy,
+	// so a keep-set entry from disk-load (namespace=="") and a lookup
+	// after inheritance (namespace set) refer to the same resource.
+	if _, ok := f.keepByName[nameKey{id.Kind, id.Name}]; ok {
+		return true
 	}
 	return false
 }
@@ -157,11 +159,13 @@ func (f *Filter) resolve(objs ObjectLister) {
 	}
 	f.keep = keep
 
+	// Index every keep-set entry by (kind, name) so the namespace-tolerant
+	// lookup path (ShouldReconcile when either side's namespace is empty)
+	// finds it. The full id is still required for the primary keep map —
+	// this is purely the namespace-degenerate fallback.
 	f.keepByName = make(map[nameKey]struct{}, len(keep))
 	for id := range keep {
-		if id.Namespace == "" {
-			f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
-		}
+		f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
 	}
 }
 

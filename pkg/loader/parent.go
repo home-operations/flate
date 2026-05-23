@@ -2,6 +2,7 @@ package loader
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -36,6 +37,13 @@ func BuildParentIndex(s *store.Store, sourceFiles map[manifest.NamedResource]str
 		}
 		owners = append(owners, owner{prefix: normalizePrefix(ks.Path), id: ks.Named()})
 	}
+	// Sort by prefix length descending so the longest-prefix parent
+	// (the most specific structural owner) is the first match in the
+	// inner loop; we can short-circuit on first hit. Drops the worst
+	// case from O(K²) to O(K · depth) and the typical case to O(K).
+	sort.Slice(owners, func(i, j int) bool {
+		return len(owners[i].prefix) > len(owners[j].prefix)
+	})
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for _, obj := range s.ListObjects(manifest.KindKustomization) {
 		ks, ok := obj.(*manifest.Kustomization)
@@ -48,20 +56,14 @@ func BuildParentIndex(s *store.Store, sourceFiles map[manifest.NamedResource]str
 			continue
 		}
 		slashFile := filepath.ToSlash(file)
-		var best owner
 		for _, o := range owners {
 			if o.id == id {
 				continue
 			}
-			if !strings.HasPrefix(slashFile, o.prefix) {
-				continue
+			if strings.HasPrefix(slashFile, o.prefix) {
+				out[id] = o.id
+				break
 			}
-			if len(o.prefix) > len(best.prefix) {
-				best = o
-			}
-		}
-		if best.prefix != "" {
-			out[id] = best.id
 		}
 	}
 	return out

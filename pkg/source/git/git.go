@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -103,6 +104,13 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	}
 	if err := source.ApplyIgnore(art.LocalPath, repo.Ignore); err != nil {
 		return nil, fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
+	}
+	// Write the revision marker AFTER ApplyIgnore so it survives any
+	// user-supplied "exclude all" patterns (common — `/*` + reincludes).
+	// Next run's cache-hit check (readCachedRevision) avoids the
+	// expensive re-clone for big repos whose .git/ was wiped by ignore.
+	if art.Revision != "" {
+		_ = writeCachedRevision(art.LocalPath, art.Revision)
 	}
 	return art, nil
 }
@@ -249,9 +257,13 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 	}
 
 	if exists {
-		// Validate it's a usable repo before reusing.
-		if _, err := git.PlainOpen(slot); err == nil {
-			rev, _ := readResolvedRevision(slot)
+		// The flate-revision marker is written AFTER a successful
+		// clone+checkout, and survives ApplyIgnore (the caller wipes
+		// .git/ as part of source-controller-compatible artifact
+		// shaping; a `git.PlainOpen` check here would always fail on
+		// a previously-cached slot). Presence + non-empty content is
+		// enough to declare the slot valid.
+		if rev := readCachedRevision(slot); rev != "" {
 			return &store.SourceArtifact{
 				Kind: manifest.KindGitRepository,
 				URL:  repo.URL, LocalPath: slot, Revision: rev,
@@ -307,6 +319,24 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 		Kind: manifest.KindGitRepository,
 		URL:  repo.URL, LocalPath: slot, Revision: rev,
 	}, nil
+}
+
+// cachedRevisionFile holds the resolved commit SHA of a fetched slot.
+// Written post-clone, BEFORE the caller's ApplyIgnore wipes .git/, so
+// future cache-hit checks can validate the slot without re-running
+// git.PlainOpen.
+const cachedRevisionFile = ".flate-git-revision"
+
+func writeCachedRevision(slot, rev string) error {
+	return os.WriteFile(filepath.Join(slot, cachedRevisionFile), []byte(rev), 0o600)
+}
+
+func readCachedRevision(slot string) string {
+	b, err := os.ReadFile(filepath.Join(slot, cachedRevisionFile)) //nolint:gosec // slot is fetcher-owned cache path
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []string) error {

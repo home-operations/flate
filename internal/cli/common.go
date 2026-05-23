@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -140,6 +141,9 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, error) {
 	if c.path == "" {
 		return nil, errors.New("path is required")
+	}
+	if _, err := format.ParseOutput(c.output); err != nil {
+		return nil, err
 	}
 	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
 }

@@ -422,6 +422,32 @@ func TestStore_ListenerPanicIsolated(t *testing.T) {
 	}
 }
 
+// AddListener with flush=true replays existing store contents into the
+// new listener. A panic in the listener during replay must not crash
+// the caller — controllers attach with flush=true in Start() and a
+// crash here would tear down the whole reconcile pipeline before the
+// orchestrator's Run loop ever ticked. Parity with the live `fire`
+// path in TestStore_ListenerPanicIsolated.
+func TestStore_ListenerPanicRecoveredDuringReplay(t *testing.T) {
+	s := New()
+	s.AddObject(newCM("a", "ns"))
+	s.AddObject(newCM("b", "ns"))
+	// The panicky listener attaches with flush=true → replay fires
+	// against every existing object. Without panic recovery the test
+	// would fail with a runtime panic.
+	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+		panic("boom during replay")
+	}, true)
+	// Confirm the Store is still healthy after the recovered panic.
+	other := 0
+	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+		other++
+	}, true)
+	if other != 2 {
+		t.Errorf("post-panic listener should replay 2 objects, got %d", other)
+	}
+}
+
 func TestStore_Concurrency(_ *testing.T) {
 	s := New()
 	const N = 200

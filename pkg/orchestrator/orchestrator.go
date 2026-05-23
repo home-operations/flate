@@ -3,7 +3,9 @@ package orchestrator
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -256,7 +258,7 @@ func (o *Orchestrator) warnSilentlySkippedVerification() {
 // seedBootstrapSource publishes a synthetic GitRepository pointing at
 // the working tree's repo root, the anchor for spec.path resolution.
 func (o *Orchestrator) seedBootstrapSource() (string, error) {
-	abs, err := filepath.Abs(o.cfg.Path)
+	abs, err := resolveScanPath(o.cfg.Path)
 	if err != nil {
 		return "", err
 	}
@@ -290,7 +292,7 @@ func (o *Orchestrator) loadManifests(ctx context.Context, repoRoot string) error
 
 	scanRoot := repoRoot
 	if o.cfg.Path != "" {
-		if abs, err := filepath.Abs(o.cfg.Path); err == nil {
+		if abs, err := resolveScanPath(o.cfg.Path); err == nil {
 			scanRoot = abs
 		}
 	}
@@ -585,13 +587,23 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	changes := o.cfg.ExternalChanges
 	if changes == nil && o.cfg.PathOrig != "" {
-		origAbs, err := filepath.Abs(o.cfg.PathOrig)
+		origAbs, err := resolveScanPath(o.cfg.PathOrig)
 		if err != nil {
 			return fmt.Errorf("--path-orig: %w", err)
 		}
-		currAbs, err := filepath.Abs(o.cfg.Path)
+		currAbs, err := resolveScanPath(o.cfg.Path)
 		if err != nil {
 			return fmt.Errorf("--path: %w", err)
+		}
+		// Both paths resolved to the same directory (e.g. a symlink and
+		// its target, or literally the same arg twice). Changed-only mode
+		// would diff a tree against itself producing an empty change set.
+		// Skip filter build so the user's `--path-orig` typo doesn't
+		// silently render zero output.
+		if origAbs == currAbs {
+			slog.Warn("--path and --path-orig resolve to the same directory; ignoring --path-orig",
+				"resolvedPath", currAbs)
+			return nil
 		}
 		// Diff the literal user-supplied paths so subdir-vs-subdir
 		// comparisons inside one repo work. Walking up to .git would
@@ -654,10 +666,18 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 			"reason", info.Message)
 		delete(failed, id)
 	}
+	ksCount := len(o.store.ListObjects(manifest.KindKustomization))
+	hrCount := len(o.store.ListObjects(manifest.KindHelmRelease))
 	slog.Info("reconcile complete",
-		"kustomizations", len(o.store.ListObjects(manifest.KindKustomization)),
-		"helmReleases", len(o.store.ListObjects(manifest.KindHelmRelease)),
+		"kustomizations", ksCount,
+		"helmReleases", hrCount,
 		"failed", len(failed))
+	// Surface a clear warning when the scan turned up nothing — covers
+	// the "typo'd --path that happens to be an empty directory" case
+	// where flate would otherwise look like a silent success.
+	if ksCount == 0 && hrCount == 0 {
+		slog.Warn("no Flux Kustomization or HelmRelease objects found under --path; check the path is correct")
+	}
 
 	for id, info := range failed {
 		slog.Warn("resource failed", "id", id.String(), "reason", info.Message)
@@ -690,6 +710,29 @@ func (o *Orchestrator) Stop() {
 	if o.staging != nil {
 		_ = o.staging.Close()
 	}
+}
+
+// resolveScanPath normalizes a user-supplied --path / --path-orig:
+// absolute, with symlinks resolved. Without symlink resolution flate
+// would walk through the symlink itself (Go's filepath.WalkDir does
+// not follow root-level symlinks), producing an empty manifest set
+// without any error indication — a footgun.
+func resolveScanPath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		// Pass through the unresolved absolute path so the caller can
+		// produce a clearer "no such file or directory" error on Stat
+		// than the symlink-resolution failure.
+		if errors.Is(err, fs.ErrNotExist) {
+			return abs, nil
+		}
+		return "", fmt.Errorf("resolve --path %q: %w", p, err)
+	}
+	return resolved, nil
 }
 
 // findRepoRoot walks upward from p looking for a .git directory; falls

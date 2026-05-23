@@ -23,6 +23,22 @@ const (
 	OutputName  Output = "name"
 )
 
+// ValidOutputs returns the supported -o values, suitable for help text
+// and CLI validation.
+func ValidOutputs() []string {
+	return []string{string(OutputTable), string(OutputYAML), string(OutputJSON), string(OutputName)}
+}
+
+// ParseOutput validates a user-supplied -o value. Returns an error
+// listing the supported values when unrecognized.
+func ParseOutput(s string) (Output, error) {
+	switch Output(s) {
+	case OutputTable, OutputYAML, OutputJSON, OutputName:
+		return Output(s), nil
+	}
+	return "", fmt.Errorf("invalid -o %q: want one of %s", s, strings.Join(ValidOutputs(), ", "))
+}
+
 // Column describes a single table column.
 type Column struct {
 	Header string

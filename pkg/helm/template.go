@@ -236,7 +236,20 @@ func mergeStringMap(md map[string]any, key string, in map[string]string) {
 // returns a single YAML string. ShowOnly filters by template path,
 // mirroring `helm template --show-only`.
 func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests bool) string {
+	// Pre-size the builder: rendered manifest + every hook body. Saves
+	// the geometric bytes.Buffer.grow walk on big releases — measured
+	// at ~300 MB of allocations on a 200-HR drag0n141 run.
+	size := len(rel.Manifest)
+	if !disableHooks {
+		for _, h := range rel.Hooks {
+			if skipTests && isTestHook(h) {
+				continue
+			}
+			size += len("---\n# Source: \n") + len(h.Path) + len(h.Manifest) + 1
+		}
+	}
 	var b strings.Builder
+	b.Grow(size)
 	b.WriteString(rel.Manifest)
 	if !disableHooks {
 		for _, h := range rel.Hooks {

@@ -68,17 +68,26 @@ func (c *Controller) Close() {
 
 func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 	return func(id manifest.NamedResource, payload any) {
+		// Source-kind listeners re-read from the Store rather than
+		// trusting payload, because s.fire dispatches AFTER s.mu is
+		// released — two concurrent AddObject calls for the same id
+		// could deliver listener payloads in reverse of write order.
+		// The store always reflects the latest write under its own
+		// lock, so a fresh GetObject is authoritative.
 		switch id.Kind {
 		case manifest.KindHelmRepository:
-			if r, ok := payload.(*manifest.HelmRepository); ok {
+			_ = payload
+			if r, ok := c.Store.GetObject(id).(*manifest.HelmRepository); ok {
 				c.Helm.AddRepo(r)
 			}
 		case manifest.KindOCIRepository:
-			if r, ok := payload.(*manifest.OCIRepository); ok {
+			_ = payload
+			if r, ok := c.Store.GetObject(id).(*manifest.OCIRepository); ok {
 				c.Helm.AddOCIRepo(r)
 			}
 		case manifest.KindHelmChart:
-			if s, ok := payload.(*manifest.HelmChartSource); ok {
+			_ = payload
+			if s, ok := c.Store.GetObject(id).(*manifest.HelmChartSource); ok {
 				c.chartSourcesMu.Lock()
 				c.chartSources[s.ResourceFullName()] = s
 				c.chartSourcesMu.Unlock()

@@ -315,8 +315,11 @@ func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 
 // AddListener registers a callback for the given event kind. When
 // flush==true, the listener is immediately invoked with every matching
-// object already in the store before the call returns, in deterministic
-// order. The returned Unsubscribe removes the listener.
+// object already in the store before the call returns. Replay order is
+// unspecified (Go-map iteration); listeners that need a deterministic
+// order must sort what they receive. Listener panics during replay
+// are recovered, same as live dispatch. The returned Unsubscribe
+// removes the listener.
 func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscribe {
 	set, ok := s.listeners[event]
 	if !ok {
@@ -331,7 +334,9 @@ func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscrib
 }
 
 // replayInto delivers existing state to a fresh listener so it can catch
-// up. Called under no lock; takes its own RLock.
+// up. Called under no lock; takes its own RLock. Listener panics are
+// recovered via safeInvoke — replay must NOT crash the controller that
+// just attached the listener (parity with live `fire` dispatch).
 func (s *Store) replayInto(event EventKind, fn Listener) {
 	switch event {
 	case EventObjectAdded:
@@ -340,7 +345,7 @@ func (s *Store) replayInto(event EventKind, fn Listener) {
 		maps.Copy(snap, s.objects)
 		s.mu.RUnlock()
 		for id, obj := range snap {
-			fn(id, obj)
+			safeInvoke(fn, id, obj)
 		}
 	case EventStatusUpdated:
 		s.mu.RLock()
@@ -352,7 +357,7 @@ func (s *Store) replayInto(event EventKind, fn Listener) {
 		}
 		s.mu.RUnlock()
 		for id, info := range snap {
-			fn(id, info)
+			safeInvoke(fn, id, info)
 		}
 	case EventArtifactUpdated:
 		s.mu.RLock()
@@ -360,7 +365,7 @@ func (s *Store) replayInto(event EventKind, fn Listener) {
 		maps.Copy(snap, s.artifacts)
 		s.mu.RUnlock()
 		for id, art := range snap {
-			fn(id, art)
+			safeInvoke(fn, id, art)
 		}
 	}
 }

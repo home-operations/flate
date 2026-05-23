@@ -13,6 +13,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/registry"
 
+	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
@@ -61,8 +62,14 @@ type Client struct {
 	// app-template referenced by 30+ HRs), the same chart was being
 	// re-parsed once per HR. Cache by path; the upstream cache key is
 	// already content-addressed (name-version-digest in the filename).
-	chartMu    sync.Mutex
-	chartCache map[string]*chart.Chart
+	//
+	// chartLoadLocks serializes first-time loads per-path so N parallel
+	// reconciles of the same chart issue exactly one loader.Load
+	// (thundering-herd coalesce); the rest hit the populated cache.
+	// Distinct paths still parse in parallel.
+	chartMu        sync.Mutex
+	chartCache     map[string]*chart.Chart
+	chartLoadLocks *keylock.KeyMap[string]
 }
 
 // NewClient constructs a Client. tmpDir and cacheDir are used for
@@ -81,12 +88,14 @@ func NewClient(tmpDir, cacheDir string) (*Client, error) {
 		return nil, fmt.Errorf("helm registry: %w", err)
 	}
 	return &Client{
-		tmpDir:       tmpDir,
-		cacheDir:     cacheDir,
-		repos:        map[string]*manifest.HelmRepository{},
-		ociRepos:     map[string]*manifest.OCIRepository{},
-		localSources: map[string]LocalSource{},
-		registry:     reg,
+		tmpDir:         tmpDir,
+		cacheDir:       cacheDir,
+		repos:          map[string]*manifest.HelmRepository{},
+		ociRepos:       map[string]*manifest.OCIRepository{},
+		localSources:   map[string]LocalSource{},
+		registry:       reg,
+		chartCache:     map[string]*chart.Chart{},
+		chartLoadLocks: keylock.New[string](),
 	}, nil
 }
 
@@ -161,16 +170,34 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
+	// Fast path: already parsed.
 	c.chartMu.Lock()
-	if c.chartCache == nil {
-		c.chartCache = make(map[string]*chart.Chart)
-	}
-	ch, ok := c.chartCache[path]
-	c.chartMu.Unlock()
-	if ok {
+	if ch, ok := c.chartCache[path]; ok {
+		c.chartMu.Unlock()
 		return ChartLoadResult{Path: path, Chart: ch}, nil
 	}
-	ch, err = loader.Load(path)
+	c.chartMu.Unlock()
+
+	// Coalesce parallel first-loads of the same chart so N concurrent
+	// reconciles of the same base chart (bjw-s app-template referenced
+	// by 30+ HRs, podinfo across multiple test envs) issue exactly one
+	// loader.Load instead of N. Distinct paths still parse in parallel.
+	release, err := c.chartLoadLocks.Acquire(ctx, path)
+	if err != nil {
+		return ChartLoadResult{}, err
+	}
+	defer release()
+
+	// Re-check under the per-path lock — another goroutine may have
+	// populated the cache while we waited.
+	c.chartMu.Lock()
+	if ch, ok := c.chartCache[path]; ok {
+		c.chartMu.Unlock()
+		return ChartLoadResult{Path: path, Chart: ch}, nil
+	}
+	c.chartMu.Unlock()
+
+	ch, err := loader.Load(path)
 	if err != nil {
 		// A truncated/corrupt chart tgz left on disk (process killed
 		// mid-download, fs fault, manual delete-then-recreate) would

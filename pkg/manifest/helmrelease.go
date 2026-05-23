@@ -7,7 +7,6 @@ import (
 	"slices"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
 // HelmChart is the embedded chart template inside a HelmRelease.spec.chart
@@ -101,61 +100,6 @@ func helmChartFromSource(src *HelmChartSource) HelmChart {
 		RepoNamespace: src.Namespace,
 		RepoKind:      kind,
 	}
-}
-
-// HelmChartSource is the standalone HelmChart CRD
-// (source.toolkit.fluxcd.io/v1 HelmChart). The embedded HelmChartSpec
-// promotes Chart, Version, SourceRef, ValuesFiles,
-// IgnoreMissingValuesFiles, ReconcileStrategy, Suspend, Verify to the
-// top level for ergonomic access.
-type HelmChartSource struct {
-	Name      string `json:"name"      yaml:"name"`
-	Namespace string `json:"namespace" yaml:"namespace"`
-
-	sourcev1.HelmChartSpec `json:",inline" yaml:",inline"`
-}
-
-// Named identifies the chart resource.
-func (h *HelmChartSource) Named() NamedResource {
-	return NamedResource{Kind: KindHelmChart, Namespace: h.Namespace, Name: h.Name}
-}
-
-// ResourceFullName is "<namespace>-<name>".
-func (h *HelmChartSource) ResourceFullName() string {
-	return h.Namespace + "-" + h.Name
-}
-
-// ParseHelmChartSource decodes a standalone HelmChart CRD via the
-// source-controller typed schema.
-func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
-	if err := checkAPIVersion(doc, SourceDomain); err != nil {
-		return nil, err
-	}
-	var cr sourcev1.HelmChart
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("HelmChart decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("HelmChart missing metadata.name")
-	}
-	ns := cr.Namespace
-	if ns == "" {
-		ns = DefaultNamespace
-	}
-	if cr.Spec.Chart == "" {
-		return nil, inputf("HelmChart missing spec.chart")
-	}
-	if cr.Spec.SourceRef.Name == "" {
-		return nil, inputf("HelmChart missing spec.sourceRef.name")
-	}
-	if cr.Spec.SourceRef.Kind == "" {
-		cr.Spec.SourceRef.Kind = KindHelmRepository
-	}
-	return &HelmChartSource{
-		Name:          cr.Name,
-		Namespace:     ns,
-		HelmChartSpec: cr.Spec,
-	}, nil
 }
 
 // HelmRelease is the Flux HelmRelease CRD. The embedded
@@ -395,50 +339,5 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		ChartValuesFiles:         chartValuesFiles,
 		IgnoreMissingValuesFiles: ignoreMissingValuesFiles,
 		CRDsPolicy:               crdsPolicy,
-	}, nil
-}
-
-// HelmRepository is the Flux HelmRepository CRD. The embedded
-// sourcev1.HelmRepositorySpec promotes URL, Type, Provider, SecretRef,
-// CertSecretRef, PassCredentials, Insecure, Suspend, etc. to the top
-// level so consumers write h.URL / h.Type rather than h.Spec.URL.
-type HelmRepository struct {
-	Name      string `json:"name"      yaml:"name"`
-	Namespace string `json:"namespace" yaml:"namespace"`
-
-	sourcev1.HelmRepositorySpec `json:",inline" yaml:",inline"`
-}
-
-// Named identifies the repo.
-func (h *HelmRepository) Named() NamedResource {
-	return NamedResource{Kind: KindHelmRepository, Namespace: h.Namespace, Name: h.Name}
-}
-
-// RepoName is "<namespace>-<name>".
-func (h *HelmRepository) RepoName() string { return h.Namespace + "-" + h.Name }
-
-// ParseHelmRepository decodes a HelmRepository CR via the
-// source-controller typed schema.
-func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
-	if err := checkAPIVersion(doc, SourceDomain); err != nil {
-		return nil, err
-	}
-	var cr sourcev1.HelmRepository
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("HelmRepository decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("HelmRepository missing metadata.name")
-	}
-	if cr.Spec.URL == "" {
-		return nil, inputf("HelmRepository missing spec.url")
-	}
-	if cr.Spec.Type == "" {
-		cr.Spec.Type = RepoTypeDefault
-	}
-	return &HelmRepository{
-		Name:               cr.Name,
-		Namespace:          cr.Namespace,
-		HelmRepositorySpec: cr.Spec,
 	}, nil
 }

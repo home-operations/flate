@@ -24,6 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/external"
 	"github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/oci"
+	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -225,12 +226,16 @@ func (o *Orchestrator) loadManifests(ctx context.Context, repoRoot string) error
 	}
 	// Iteratively follow each loaded Flux KS's spec.path so a narrow
 	// entry (e.g. ./kubernetes/flux/cluster) still discovers the
-	// apps/ tree it references. A frontier index tracks which KSes
-	// have been expanded so we don't rescan the store on every pass.
+	// apps/ tree it references, AND render any unrendered ResourceSet
+	// CRs so their generated children become visible to further
+	// passes (a ResourceSet may emit Flux Kustomizations whose
+	// spec.path then needs expansion). Frontier indexes track what's
+	// been handled so we don't rescan or rerender on every pass.
 	// PreferExisting protects the initial scan's data from being
 	// overwritten if a discovered path aliases a different snapshot.
 	l.PreferExisting = true
-	expanded := make(map[manifest.NamedResource]struct{})
+	ksExpanded := make(map[manifest.NamedResource]struct{})
+	rsExpanded := make(map[manifest.NamedResource]struct{})
 	for {
 		var added int
 		for _, obj := range o.store.ListObjects(manifest.KindKustomization) {
@@ -239,10 +244,10 @@ func (o *Orchestrator) loadManifests(ctx context.Context, repoRoot string) error
 				continue
 			}
 			id := ks.Named()
-			if _, ok := expanded[id]; ok {
+			if _, ok := ksExpanded[id]; ok {
 				continue
 			}
-			expanded[id] = struct{}{}
+			ksExpanded[id] = struct{}{}
 			target := filepath.Join(repoRoot, filepath.FromSlash(strings.TrimPrefix(ks.Path, "./")))
 			if _, seen := scanned[target]; seen {
 				continue
@@ -254,6 +259,25 @@ func (o *Orchestrator) loadManifests(ctx context.Context, repoRoot string) error
 				return err
 			}
 			added++
+		}
+		for _, obj := range o.store.ListObjects(manifest.KindResourceSet) {
+			rs, ok := obj.(*manifest.ResourceSet)
+			if !ok {
+				continue
+			}
+			id := rs.Named()
+			if _, ok := rsExpanded[id]; ok {
+				continue
+			}
+			rsExpanded[id] = struct{}{}
+			n, err := o.renderResourceSet(rs)
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				added++
+				total += n
+			}
 		}
 		if added == 0 {
 			break
@@ -286,6 +310,46 @@ func (o *Orchestrator) loadAt(ctx context.Context, l *loader.Loader, dir string,
 	}
 	*total += n
 	return nil
+}
+
+// renderResourceSet evaluates rs.Spec across its inputs and AddObjects
+// every resulting recognized Flux resource into the store. The rendered
+// children are attributed to the ResourceSet's own source file so the
+// change filter treats them as siblings of the ResourceSet definition
+// (a ResourceSet change reruns its children's reconciles). Returns
+// the count of new objects added so the caller can detect a fixed
+// point in the expansion loop.
+func (o *Orchestrator) renderResourceSet(rs *manifest.ResourceSet) (int, error) {
+	docs, err := resourceset.Render(rs)
+	if err != nil {
+		return 0, err
+	}
+	srcFile := o.sourceFiles[rs.Named()]
+	opts := manifest.ParseDocOptions{WipeSecrets: o.cfg.WipeSecrets}
+	added := 0
+	for _, doc := range docs {
+		obj, err := manifest.ParseDoc(doc, opts)
+		if err != nil {
+			slog.Debug("resourceset: skipped doc", "rs", rs.NamespacedName(), "err", err)
+			continue
+		}
+		if _, ok := obj.(*manifest.RawObject); ok {
+			// Generic / unrecognized kinds: not something flate
+			// reconciles further. Skip them rather than polluting the
+			// store with opaque entries.
+			continue
+		}
+		id := obj.Named()
+		if o.store.GetObject(id) != nil {
+			continue
+		}
+		o.store.AddObject(obj)
+		if srcFile != "" {
+			o.sourceFiles[id] = srcFile
+		}
+		added++
+	}
+	return added, nil
 }
 
 // validateDependsOn drops dangling dependsOn references so the

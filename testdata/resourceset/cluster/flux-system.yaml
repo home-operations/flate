@@ -1,0 +1,28 @@
+---
+# GitRepository the cluster-tenants Kustomization pulls from. URL is a
+# placeholder — flate doesn't fetch in tests, the on-disk path is
+# resolved via spec.path.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: https://example.test/cluster.git
+  ref:
+    branch: main
+---
+# cluster-tenants is the entry point — it renders the tenants/ tree,
+# which contains a ResourceSet that fans out per-tenant resources.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-tenants
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./tenants
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

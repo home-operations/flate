@@ -72,6 +72,25 @@ func TestE2E_GetKS(t *testing.T) {
 	}
 }
 
+func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
+	// The resourceset/ fixture has one ResourceSet that templates a
+	// Namespace + a Kustomization per tenant (frontend, backend). After
+	// loading, flate should expose the rendered child Kustomizations
+	// via `get ks` alongside the static parent — confirming the
+	// load-time expansion pass plumbed each rendered doc through the
+	// store.
+	out := runCLI(t, "get", "ks", "--path", testdataPath(t, "resourceset"))
+	for _, want := range []string{
+		"cluster-tenants", // parent KS from cluster/flux-system.yaml
+		"apps-frontend",   // emitted by ResourceSet for tenant=frontend
+		"apps-backend",    // emitted by ResourceSet for tenant=backend
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in ks listing:\n%s", want, out)
+		}
+	}
+}
+
 func TestE2E_GetKS_YAMLExposesProjectedFields(t *testing.T) {
 	out := runCLI(t, "get", "ks", "--path", testdataPath(t, "simple"), "-o", "yaml")
 	// Asserts the structured projection includes the new fields:

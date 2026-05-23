@@ -1,0 +1,35 @@
+---
+# Minimal d2-fleet-style ResourceSet: a static input matrix and a
+# template that emits one Namespace + one Kustomization per tenant.
+# The generated Kustomization CRs are recognized by flate's normal
+# reconcile pipeline, completing the round-trip.
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  commonMetadata:
+    labels:
+      app.kubernetes.io/managed-by: flate
+  inputs:
+    - tenant: frontend
+    - tenant: backend
+  resources:
+    - apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: << inputs.tenant >>
+    - apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata:
+        name: apps-<< inputs.tenant >>
+        namespace: << inputs.tenant >>
+      spec:
+        interval: 10m
+        path: ./tenants/<< inputs.tenant >>
+        prune: true
+        sourceRef:
+          kind: GitRepository
+          name: flux-system
+          namespace: flux-system

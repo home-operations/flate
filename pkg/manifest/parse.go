@@ -91,6 +91,8 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
 		return ParseExternalArtifact(doc)
 	case kind == KindBucket && strings.HasPrefix(apiVersion, SourceDomain):
 		return ParseBucket(doc)
+	case kind == KindResourceSet && strings.HasPrefix(apiVersion, FluxOperatorDomain):
+		return ParseResourceSet(doc)
 	case kind == KindConfigMap:
 		return ParseConfigMap(doc)
 	case kind == KindSecret:

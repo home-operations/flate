@@ -7,6 +7,9 @@ const (
 	KustomizeDomain     = "kustomize.config.k8s.io"
 	HelmReleaseDomain   = "helm.toolkit.fluxcd.io"
 	SourceDomain        = "source.toolkit.fluxcd.io"
+	// FluxOperatorDomain is the API group for flux-operator (controlplane.io)
+	// resources — ResourceSet, ResourceSetInputProvider, FluxInstance.
+	FluxOperatorDomain = "fluxcd.controlplane.io"
 )
 
 // Kubernetes kinds we recognize.
@@ -22,6 +25,7 @@ const (
 	KindConfigMap                = "ConfigMap"
 	KindSecret                   = "Secret"
 	KindCustomResourceDefinition = "CustomResourceDefinition"
+	KindResourceSet              = "ResourceSet"
 )
 
 // DefaultNamespace mirrors Flux's convention of placing top-level resources

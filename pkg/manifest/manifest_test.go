@@ -436,6 +436,55 @@ spec:
 	}
 }
 
+func TestParseResourceSet(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  inputs:
+    - tenant: frontend
+    - tenant: backend
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: << inputs.tenant >>-cm
+`)
+	rs, err := ParseResourceSet(doc)
+	if err != nil {
+		t.Fatalf("ParseResourceSet: %v", err)
+	}
+	if rs.Name != "apps" || rs.Namespace != "flux-system" {
+		t.Errorf("unexpected name/ns: %s/%s", rs.Namespace, rs.Name)
+	}
+	if len(rs.Inputs) != 2 {
+		t.Errorf("expected 2 inputs, got %d", len(rs.Inputs))
+	}
+	if len(rs.Resources) != 1 {
+		t.Errorf("expected 1 templated resource, got %d", len(rs.Resources))
+	}
+}
+
+func TestParseResourceSet_DefaultsNamespace(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: apps
+spec: {}
+`)
+	rs, err := ParseResourceSet(doc)
+	if err != nil {
+		t.Fatalf("ParseResourceSet: %v", err)
+	}
+	if rs.Namespace != DefaultNamespace {
+		t.Errorf("namespace=%q want %q", rs.Namespace, DefaultNamespace)
+	}
+}
+
 func TestParseExternalArtifact(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: source.toolkit.fluxcd.io/v1

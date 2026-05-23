@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -27,6 +29,18 @@ const DefaultTimeout = 30 * time.Second
 // failing — it covers the legitimate case where a KS render produces
 // the dep slightly later in the same run.
 const MissingGrace = 2 * time.Second
+
+// TimeoutFromSpec resolves a Flux spec.timeout (`*metav1.Duration` —
+// the shape used by both Kustomization and HelmRelease) into the
+// effective per-dep wait. Honors a user-supplied value when set; falls
+// back to flate's offline-tuned DefaultTimeout otherwise. Matches the
+// principle that a real Flux reconcile would respect spec.timeout.
+func TimeoutFromSpec(d *metav1.Duration) time.Duration {
+	if d == nil || d.Duration <= 0 {
+		return DefaultTimeout
+	}
+	return d.Duration
+}
 
 // DepStatus enumerates the per-dependency resolution result.
 type DepStatus int

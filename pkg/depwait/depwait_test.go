@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -116,5 +118,21 @@ func TestWaiter_PanicReportedAsFailed(t *testing.T) {
 	}
 	if msg := sum.Messages[dep]; !strings.Contains(msg, "depwait panic:") {
 		t.Errorf("expected 'depwait panic:' prefix, got %q", msg)
+	}
+}
+
+// TimeoutFromSpec mirrors Flux KS/HR's `*metav1.Duration` shape: nil
+// and zero fall back to DefaultTimeout; user-supplied values win.
+func TestTimeoutFromSpec(t *testing.T) {
+	if got := TimeoutFromSpec(nil); got != DefaultTimeout {
+		t.Errorf("nil → %v, want DefaultTimeout (%v)", got, DefaultTimeout)
+	}
+	zero := &metav1.Duration{Duration: 0}
+	if got := TimeoutFromSpec(zero); got != DefaultTimeout {
+		t.Errorf("zero → %v, want DefaultTimeout", got)
+	}
+	custom := &metav1.Duration{Duration: 5 * time.Minute}
+	if got := TimeoutFromSpec(custom); got != 5*time.Minute {
+		t.Errorf("5m → %v", got)
 	}
 }

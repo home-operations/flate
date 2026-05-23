@@ -132,7 +132,11 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
 		var sum depwait.Summary
 		c.Tasks.YieldSlot(func() {
-			w := &depwait.Waiter{Store: c.Store, Parent: id}
+			w := &depwait.Waiter{
+				Store:   c.Store,
+				Parent:  id,
+				Timeout: depwait.TimeoutFromSpec(hr.Timeout),
+			}
 			sum = depwait.WaitAll(w.Watch(ctx, deps))
 		})
 		if sum.AnyFailed() {
@@ -164,7 +168,11 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 	var sum depwait.Summary
 	c.Tasks.YieldSlot(func() {
-		w := &depwait.Waiter{Store: c.Store, Parent: id}
+		w := &depwait.Waiter{
+			Store:   c.Store,
+			Parent:  id,
+			Timeout: depwait.TimeoutFromSpec(hr.Timeout),
+		}
 		sum = depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: srcID}}))
 	})
 	if sum.AnyFailed() {

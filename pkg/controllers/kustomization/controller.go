@@ -105,7 +105,11 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		// slots while waiting for children that need a slot to run.
 		var sum depwait.Summary
 		c.Tasks.YieldSlot(func() {
-			w := &depwait.Waiter{Store: c.Store, Parent: id}
+			w := &depwait.Waiter{
+				Store:   c.Store,
+				Parent:  id,
+				Timeout: depwait.TimeoutFromSpec(ks.Timeout),
+			}
 			sum = depwait.WaitAll(w.Watch(ctx, deps))
 		})
 		if sum.AnyFailed() {

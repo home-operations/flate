@@ -196,7 +196,8 @@ type HelmRelease struct {
 	// ReadyExpr). Shadows the embedded Spec.DependsOn ([]DependencyReference).
 	DependsOn []DependencyRef `json:"-" yaml:"-"`
 
-	Labels map[string]string `json:"-" yaml:"-"`
+	Labels      map[string]string `json:"-" yaml:"-"`
+	Annotations map[string]string `json:"-" yaml:"-"`
 
 	// CRDsPolicy collapses spec.install.crds vs spec.upgrade.crds. One
 	// of "" (chart's helm default), "Skip", "Create", "CreateReplace".
@@ -231,6 +232,13 @@ func (h *HelmRelease) Clone() *HelmRelease {
 	out.DependsOn = slices.Clone(h.DependsOn)
 	return &out
 }
+
+// GetLabels returns the HelmRelease's metadata.labels. Implements the
+// shared accessor pkg/depwait projectObject uses for CEL exposure.
+func (h *HelmRelease) GetLabels() map[string]string { return h.Labels }
+
+// GetAnnotations returns the HelmRelease's metadata.annotations.
+func (h *HelmRelease) GetAnnotations() map[string]string { return h.Annotations }
 
 // ReleaseName returns the resolved Helm release name — spec.releaseName
 // when set, otherwise metadata.name — passed through release.ShortenName
@@ -375,6 +383,7 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		Values:                   values,
 		DependsOn:                dependsOn,
 		Labels:                   cr.Labels,
+		Annotations:              cr.Annotations,
 		DisableSchemaValidation:  disableSchema,
 		DisableOpenAPIValidation: disableOpenAPI,
 		ChartValuesFiles:         chartValuesFiles,

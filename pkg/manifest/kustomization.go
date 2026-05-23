@@ -63,8 +63,16 @@ type Kustomization struct {
 	// ReadyExpr. Shadows the embedded Spec.DependsOn ([]DependencyReference).
 	DependsOn []DependencyRef `json:"-" yaml:"-"`
 
-	Labels map[string]string `json:"-" yaml:"-"`
+	Labels      map[string]string `json:"-" yaml:"-"`
+	Annotations map[string]string `json:"-" yaml:"-"`
 }
+
+// GetLabels returns the Kustomization's metadata.labels. Implements
+// the shared accessor pkg/depwait projectObject uses for CEL exposure.
+func (k *Kustomization) GetLabels() map[string]string { return k.Labels }
+
+// GetAnnotations returns the Kustomization's metadata.annotations.
+func (k *Kustomization) GetAnnotations() map[string]string { return k.Annotations }
 
 // Named identifies the Kustomization.
 func (k *Kustomization) Named() NamedResource {
@@ -205,5 +213,6 @@ func ParseKustomization(doc map[string]any) (*Kustomization, error) {
 		PostBuildSubstituteFrom: substituteFrom,
 		DependsOn:               dependsOn,
 		Labels:                  cr.Labels,
+		Annotations:             cr.Annotations,
 	}, nil
 }

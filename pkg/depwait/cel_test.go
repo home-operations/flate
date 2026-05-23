@@ -183,6 +183,37 @@ func TestReadyExpr_NonBoolResult(t *testing.T) {
 	}
 }
 
+// TestReadyExpr_ReadsLabelsAndAnnotations locks the upstream Flux
+// contract that readyExpr can read dep.metadata.{labels,annotations}.
+// The HR/KS manifest types now carry these maps and the CEL projection
+// surfaces them under metadata.labels / metadata.annotations.
+func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
+	// AddObject the typed manifest so projectObject can read labels.
+	s.AddObject(&manifest.Kustomization{
+		Name: "child", Namespace: "ns",
+		Labels:      map[string]string{"tier": "data"},
+		Annotations: map[string]string{"app.kubernetes.io/version": "1.2.3"},
+	})
+	s.UpdateStatus(dep, store.StatusReady, "")
+
+	w := &Waiter{Store: s, Timeout: time.Second}
+	cases := []string{
+		`dep.metadata.labels["tier"] == "data"`,
+		`dep.metadata.annotations["app.kubernetes.io/version"] == "1.2.3"`,
+	}
+	for _, expr := range cases {
+		sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
+			NamedResource: dep,
+			ReadyExpr:     expr,
+		}}))
+		if !sum.AllReady() {
+			t.Errorf("expr %q: not Ready: %+v", expr, sum)
+		}
+	}
+}
+
 // TestReadyExpr_BindsSelfAndDep locks the upstream Flux contract:
 // readyExpr sees both `self` (the consumer / Waiter.Parent) and `dep`
 // (the current dependency). The kustomize/helm controller idiom

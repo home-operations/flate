@@ -231,6 +231,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.parentOf = res.ParentOf
 
 	o.validateDependsOn()
+	o.breakDependsOnCycles()
 	return o.buildChangeFilter(res.RepoRoot)
 }
 

@@ -41,7 +41,16 @@ type Controller struct {
 	WipeSecrets bool
 
 	// Set via Configure() — see Options.
-	parentOf map[manifest.NamedResource]manifest.NamedResource
+	parentOf      map[manifest.NamedResource]manifest.NamedResource
+	renderTracker RenderTracker
+}
+
+// RenderTracker is the tiny seam the controller uses to report
+// "this id was emitted by a parent KS render" to the orchestrator.
+// Nil is OK — the controller no-ops. Used by orchestrator.detectOrphans
+// to distinguish stale-on-disk KSes from real failures.
+type RenderTracker interface {
+	MarkRendered(id manifest.NamedResource)
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto
@@ -51,10 +60,12 @@ type Controller struct {
 // parent's Ready before rendering (so any parent-render-time spec
 // mutations — e.g. `replacements:` injecting spec.targetNamespace —
 // are observable when the child renders). A nil ParentOf disables
-// parent-enforcement, matching pre-#102 behavior.
+// parent-enforcement, matching pre-#102 behavior. RenderTracker
+// receives every reconcilable child this KS emits during render.
 type Options struct {
-	Filter   *change.Filter
-	ParentOf map[manifest.NamedResource]manifest.NamedResource
+	Filter        *change.Filter
+	ParentOf      map[manifest.NamedResource]manifest.NamedResource
+	RenderTracker RenderTracker
 }
 
 // New constructs a Kustomization controller.
@@ -72,6 +83,16 @@ func New(s *store.Store, t *task.Service, staging *kustomize.StagingCache, wipeS
 func (c *Controller) Configure(opts Options) {
 	c.SetFilter(opts.Filter)
 	c.parentOf = opts.ParentOf
+	c.renderTracker = opts.RenderTracker
+}
+
+// markRendered reports id to the orchestrator's render tracker if one
+// is wired; no-op otherwise. Centralizes the nil-check so the
+// reconcile body stays readable.
+func (c *Controller) markRendered(id manifest.NamedResource) {
+	if c.renderTracker != nil {
+		c.renderTracker.MarkRendered(id)
+	}
 }
 
 // Start registers the listener that drives reconciliation.
@@ -228,7 +249,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		}
 		if p.reconcilable {
 			c.Store.AddObject(p.obj)
-			c.Store.MarkRendered(p.obj.Named())
+			c.markRendered(p.obj.Named())
 		} else {
 			c.Store.AddRendered(p.obj)
 		}
@@ -238,7 +259,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			c.Store.AddObject(p.obj)
-			c.Store.MarkRendered(p.obj.Named())
+			c.markRendered(p.obj.Named())
 		}
 	}
 

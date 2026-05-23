@@ -42,14 +42,6 @@ type Store struct {
 	// Secret resolution) O(1) instead of O(total objects of that kind).
 	byName map[string]map[string]manifest.BaseManifest
 
-	// rendered tracks IDs that were emitted by a parent Kustomization's
-	// render output (in addition to or instead of the file walker's
-	// static load). Used by the orchestrator to detect orphan
-	// Kustomizations — files that exist on disk but no parent
-	// kustomization.yaml ever references, so Flux would never
-	// reconcile them either.
-	rendered map[manifest.NamedResource]struct{}
-
 	// listeners is keyed by EventKind. Each entry is a slice of
 	// (id, listener) pairs. We use a slice + linear scan because:
 	//   - listener counts are tiny (a handful per event)
@@ -65,7 +57,6 @@ func New() *Store {
 		conditions: make(map[manifest.NamedResource][]Condition),
 		artifacts:  make(map[manifest.NamedResource]Artifact),
 		byName:     make(map[string]map[string]manifest.BaseManifest),
-		rendered:   make(map[manifest.NamedResource]struct{}),
 		listeners: map[EventKind]*listenerSet{
 			EventObjectAdded:     newListenerSet(),
 			EventStatusUpdated:   newListenerSet(),

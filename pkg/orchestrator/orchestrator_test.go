@@ -38,7 +38,8 @@ func TestDetectOrphans(t *testing.T) {
 	}
 
 	o := &Orchestrator{
-		store: store.New(),
+		store:    store.New(),
+		rendered: newRenderedSet(),
 		sourceFiles: map[manifest.NamedResource]string{
 			parent.Named():       "kubernetes/flux/cluster/ks.yaml",
 			orphan.Named():       "kubernetes/apps/orphan/ks.yaml",
@@ -51,7 +52,7 @@ func TestDetectOrphans(t *testing.T) {
 	}
 	// Mark emittedChild as rendered by its parent — simulates the
 	// AddObject + MarkRendered call cluster-apps's render would make.
-	o.store.MarkRendered(emittedChild.Named())
+	o.rendered.MarkRendered(emittedChild.Named())
 
 	failed := map[manifest.NamedResource]store.StatusInfo{
 		orphan.Named():       {Status: store.StatusFailed, Message: "TIMEZONE undefined"},

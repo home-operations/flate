@@ -94,6 +94,13 @@ type Orchestrator struct {
 	// kustomization controller at Run-time, never mutated thereafter.
 	parentOf map[manifest.NamedResource]manifest.NamedResource
 
+	// rendered tracks IDs the KS controller emitted from a parent
+	// render (vs. only loaded by the file walker). detectOrphans reads
+	// it to demote stale-on-disk resources to "orphan" rather than
+	// failing the run. Lives here, not on Store — iter-15 carved this
+	// orchestrator-internal bookkeeping out of the data substrate.
+	rendered *renderedSet
+
 	// orphans records resources Run demoted from Failed → Ready because
 	// they aren't referenced by any parent KS. Populated during Run,
 	// surfaced via Render() so embedders can distinguish orphan-skips
@@ -173,12 +180,13 @@ func New(cfg Config) (*Orchestrator, error) {
 		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.ExistenceFetcher{}
 	}
 	o := &Orchestrator{
-		cfg:     cfg,
-		store:   st,
-		tasks:   ts,
-		src:     srcCtrl,
-		ksc:     kustomization.New(st, ts, staging, cfg.WipeSecrets),
-		hrc:     helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		cfg:      cfg,
+		store:    st,
+		tasks:    ts,
+		src:      srcCtrl,
+		ksc:      kustomization.New(st, ts, staging, cfg.WipeSecrets),
+		hrc:      helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		rendered: newRenderedSet(),
 		helm:    helmClient,
 		staging: staging,
 	}
@@ -303,7 +311,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		}
 		// A resource that any parent's render also emitted is by
 		// definition not orphaned — kustomize-controller saw it.
-		if o.store.WasRendered(id) {
+		if o.rendered.has(id) {
 			continue
 		}
 		file, ok := o.sourceFiles[id]
@@ -391,7 +399,11 @@ func (o *Orchestrator) attachFilter(f *change.Filter) {
 // then aggregates and returns any failures.
 func (o *Orchestrator) Run(ctx context.Context) error {
 	o.src.Configure(sourcectrl.FetchOptions{Filter: o.filter})
-	o.ksc.Configure(kustomization.Options{Filter: o.filter, ParentOf: o.parentOf})
+	o.ksc.Configure(kustomization.Options{
+		Filter:        o.filter,
+		ParentOf:      o.parentOf,
+		RenderTracker: o.rendered,
+	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{Filter: o.filter})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)

@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -178,5 +179,38 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 	if strings.HasPrefix(name, ".") && name != "." {
 		return true
 	}
-	return ignore.matchesDir(full, root)
+	if ignore.matchesDir(full, root) {
+		return true
+	}
+	// A `kind: Component` kustomization.yaml means everything below is a
+	// template fragment that real Flux only materializes via a parent
+	// Kustomization's spec.components reference. Standalone-loading the
+	// children would surface literal `${APP}` placeholders in metadata
+	// names as bogus Kustomization / HelmRelease objects — exactly
+	// what m00nwtchr's `${APP}-db`, `migadu-${APP}`, `${APP}-anubis`
+	// were doing. The parent's kustomize render still picks them up
+	// (it follows `spec.components` directly).
+	return isKustomizeComponent(full)
+}
+
+// isKustomizeComponent reports whether dir contains a kustomization
+// file declaring `kind: Component`. Reads at most the file's first
+// ~256 bytes — enough for `apiVersion` + `kind` to land.
+func isKustomizeComponent(dir string) bool {
+	for _, name := range []string{"kustomization.yaml", "kustomization.yml", "kustomization.json"} {
+		path := filepath.Join(dir, name)
+		f, err := os.Open(path) //nolint:gosec // path joined under the user-supplied scan root
+		if err != nil {
+			continue
+		}
+		head := make([]byte, 256)
+		n, _ := f.Read(head)
+		_ = f.Close()
+		// Cheap substring check — formal YAML decode would catch more
+		// shapes but adds a parser round-trip per directory.
+		if bytes.Contains(head[:n], []byte("kind: Component")) {
+			return true
+		}
+	}
+	return false
 }

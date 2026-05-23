@@ -46,6 +46,7 @@ type KustomizationArtifact struct {
 
 func (*KustomizationArtifact) artifact() {}
 
+// RenderedManifests implements RenderedArtifact.
 func (a *KustomizationArtifact) RenderedManifests() []map[string]any { return a.Manifests }
 
 // HelmReleaseArtifact is the rendered output of a HelmRelease template.
@@ -55,4 +56,5 @@ type HelmReleaseArtifact struct {
 
 func (*HelmReleaseArtifact) artifact() {}
 
+// RenderedManifests implements RenderedArtifact.
 func (a *HelmReleaseArtifact) RenderedManifests() []map[string]any { return a.Manifests }

@@ -48,6 +48,7 @@ type Suspendable interface {
 // the controller package.
 type ExistenceFetcher struct{}
 
+// Fetch implements source.Fetcher as a no-op — see ExistenceFetcher.
 func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*store.SourceArtifact, error) {
 	return nil, nil
 }

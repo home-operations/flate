@@ -461,7 +461,7 @@ metadata:
 `,
 		},
 	}
-	resolver := func(ref fluxopv1.InputProviderReference, ns string) ([]*manifest.ResourceSetInputProvider, error) {
+	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{rsip}, nil
 	}
 	docs, err := resourceset.Render(rs, resolver)

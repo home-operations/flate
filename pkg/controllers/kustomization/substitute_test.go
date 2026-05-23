@@ -53,12 +53,10 @@ func TestSubstituteDoc_NoSubstitutionShortCircuits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("substituteDoc: %v", err)
 	}
-	// Same pointer identity: short-circuit returned the input untouched.
-	if &out == &doc {
-		// Note: maps are reference types; &doc compares header addresses
-		// which are stack-local. The real assertion is that the returned
-		// map is the SAME map, which we verify via mutation visibility.
-	}
+	// Short-circuit returned the input map untouched. Maps are
+	// reference types so we can't compare pointer identity via &out;
+	// the real assertion is mutation visibility: writing to out must
+	// be visible on doc.
 	out["data"].(map[string]any)["new"] = "marker"
 	if doc["data"].(map[string]any)["new"] != "marker" {
 		t.Errorf("expected short-circuit to return the input map; got a copy")

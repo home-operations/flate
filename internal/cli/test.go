@@ -37,7 +37,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		Short:   short,
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
-			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, _, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}

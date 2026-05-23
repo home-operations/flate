@@ -19,7 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // firstArg returns the first positional arg, or "" when none was given.
@@ -42,25 +41,22 @@ func sortRows(rows []map[string]string) {
 }
 
 // collectImages returns the union of images extracted from every
-// rendered Kustomization and HelmRelease artifact. Namespace scope on
-// c is honored.
-func collectImages(o *orchestrator.Orchestrator, c *commonFlags) map[string]struct{} {
+// rendered Kustomization and HelmRelease document. Namespace scope on
+// c is honored. Walks Result.Manifests directly (no Store
+// GetArtifact + type-assertion dance).
+func collectImages(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags) map[string]struct{} {
 	set := map[string]struct{}{}
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		for _, obj := range o.Store().ListObjects(kind) {
-			id := obj.Named()
-			if !c.includeNamespace(o.Filter(), id.Namespace) {
-				continue
-			}
-			art, ok := o.Store().GetArtifact(id).(store.RenderedArtifact)
-			if !ok {
-				continue
-			}
-			for _, doc := range art.RenderedManifests() {
-				imgs, _ := image.Extract(doc)
-				for _, img := range imgs {
-					set[img] = struct{}{}
-				}
+	for id, docs := range res.Manifests {
+		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
+			continue
+		}
+		if !c.includeNamespace(o.Filter(), id.Namespace) {
+			continue
+		}
+		for _, doc := range docs {
+			imgs, _ := image.Extract(doc)
+			for _, img := range imgs {
+				set[img] = struct{}{}
 			}
 		}
 	}
@@ -90,9 +86,17 @@ func emitImageList(w io.Writer, imgs []string, out string) error {
 // sides are independent (separate task service, helm client, staging
 // cache, store), so they run concurrently — wall time roughly halves on
 // changed-only diffs.
-func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (*orchestrator.Orchestrator, *orchestrator.Orchestrator, error) {
+// diffSide pairs an Orchestrator with its render Result. Diff
+// commands need both — orchestrator for filter/object lookup, Result
+// for the rendered docs feeding the diff.
+type diffSide struct {
+	O   *orchestrator.Orchestrator
+	Res *orchestrator.Result
+}
+
+func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (diffSide, diffSide, error) {
 	if c.pathOrig == "" {
-		return nil, nil, errors.New("diff requires --path-orig")
+		return diffSide{}, diffSide{}, errors.New("diff requires --path-orig")
 	}
 	currentCfg := buildOrchCfg(*c, *h)
 	origCfg := currentCfg
@@ -112,13 +116,13 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (*o
 	origCfg.SourceCache = shared
 
 	var (
-		orig, current     *orchestrator.Orchestrator
-		origErr, currErr  error
+		orig, current    diffSide
+		origErr, currErr error
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		o, err := runOrchestratorCfg(gctx, currentCfg)
-		current = o
+		o, res, err := runOrchestratorCfg(gctx, currentCfg)
+		current = diffSide{O: o, Res: res}
 		currErr = err
 		// Fatal Bootstrap errors return nil orchestrator — propagate
 		// those so the errgroup cancels its sibling. Per-resource Run
@@ -130,8 +134,8 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (*o
 		return nil
 	})
 	g.Go(func() error {
-		o, err := runOrchestratorCfg(gctx, origCfg)
-		orig = o
+		o, res, err := runOrchestratorCfg(gctx, origCfg)
+		orig = diffSide{O: o, Res: res}
 		origErr = err
 		if o == nil {
 			return err
@@ -139,7 +143,7 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (*o
 		return nil
 	})
 	if err := g.Wait(); err != nil {
-		return nil, nil, err
+		return diffSide{}, diffSide{}, err
 	}
 	// Either side may have reconcile failures — return the combined
 	// run-error alongside the orchestrators so the diff caller can
@@ -162,14 +166,20 @@ func joinRunErrors(orig, curr error) error {
 }
 
 // gatherArtifacts collects every rendered manifest produced by the
-// stored Kustomization or HelmRelease artifacts of the given kind,
-// tagged with the parent that produced them. name optionally filters
-// to a single resource. When c is non-nil the namespace scope from
-// commonFlags + the orchestrator's change filter is honored.
-func gatherArtifacts(o *orchestrator.Orchestrator, kind, name string, c *commonFlags) []diff.Doc {
+// Kustomizations or HelmReleases of the given kind, tagged with the
+// parent that produced them. name optionally filters to a single
+// resource. When c is non-nil the namespace scope from commonFlags +
+// the orchestrator's change filter is honored.
+//
+// Reads res.Manifests for the rendered docs; falls back to the Store
+// only to recover the producing object's spec.path (the diff header
+// shows it for KS parents).
+func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) []diff.Doc {
 	var out []diff.Doc
-	for _, obj := range o.Store().ListObjects(kind) {
-		id := obj.Named()
+	for id, docs := range res.Manifests {
+		if id.Kind != kind {
+			continue
+		}
 		if name != "" && id.Name != name {
 			continue
 		}
@@ -177,13 +187,11 @@ func gatherArtifacts(o *orchestrator.Orchestrator, kind, name string, c *commonF
 			continue
 		}
 		parent := diff.Parent{Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
-		if ks, ok := obj.(*manifest.Kustomization); ok {
+		if ks, ok := o.Store().GetObject(id).(*manifest.Kustomization); ok {
 			parent.Path = strings.TrimPrefix(ks.Path, "./")
 		}
-		if a, ok := o.Store().GetArtifact(id).(store.RenderedArtifact); ok {
-			for _, m := range a.RenderedManifests() {
-				out = append(out, diff.Doc{Manifest: m, Parent: parent})
-			}
+		for _, m := range docs {
+			out = append(out, diff.Doc{Manifest: m, Parent: parent})
 		}
 	}
 	return out

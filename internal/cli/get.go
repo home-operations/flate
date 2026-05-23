@@ -122,7 +122,7 @@ func newGetAllCmd() *cobra.Command {
 		Use:   "all",
 		Short: "Summarize every Kustomization and HelmRelease",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, _, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
@@ -148,11 +148,11 @@ func newGetImagesCmd() *cobra.Command {
 		Use:   "images",
 		Short: "List container images across the cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
-			imgs := slices.Sorted(maps.Keys(collectImages(o, c)))
+			imgs := slices.Sorted(maps.Keys(collectImages(o, res, c)))
 			if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
 				return err
 			}
@@ -180,7 +180,7 @@ func resourceListCmd[T manifest.BaseManifest](
 		Short:   short,
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, _, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}

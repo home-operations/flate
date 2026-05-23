@@ -144,12 +144,12 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	}
 }
 
-func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, error) {
+func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
 	if c.path == "" {
-		return nil, errors.New("path is required")
+		return nil, nil, errors.New("path is required")
 	}
 	if _, err := format.ParseOutput(c.output); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
 }
@@ -188,25 +188,26 @@ func (c *commonFlags) requireOutput(allowed ...format.Output) error {
 		c.output, strings.Join(names, ", "))
 }
 
-// runOrchestratorCfg returns a non-nil orchestrator whenever Bootstrap
-// succeeds, even if Run had per-resource failures — the partial Store
-// still backs `build`/`get`/`diff` output. The returned error carries
-// any Run failure so the CLI can flip its exit code while still
-// emitting whatever partial output rendered. A nil orchestrator
-// indicates a fatal init/bootstrap problem (callers should bail).
+// runOrchestratorCfg routes the CLI through the embed-friendly
+// Orchestrator.Render entry point. Returns the populated orchestrator
+// (for Store lookups the CLI legitimately needs — object listings,
+// status queries, filter scope) AND the structured render Result.
+// Both stay non-nil when Bootstrap succeeded, even if Run had per-
+// resource failures: the partial output is still usable. A nil
+// orchestrator indicates a fatal init/bootstrap error and callers
+// should bail.
 //
-// Discarding the Run error here is what previously let `flate build`
-// exit 0 against a repo where every Kustomization failed — CI would
-// pipe the partial YAML to kubectl apply and notice nothing wrong.
-func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestrator.Orchestrator, error) {
+// Dogfooding Render here closes a drift hazard the iter-13 review
+// flagged: the embed API and the CLI used to read rendered artifacts
+// through different code paths (CLI reached straight into the Store
+// with a type assertion). Now there's one path.
+func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
 	o, err := orchestrator.New(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := o.Bootstrap(ctx); err != nil {
-		return nil, err
-	}
-	return o, o.Run(ctx)
+	res, err := o.Render(ctx)
+	return o, res, err
 }
 
 func cmdContext(cmd *cobra.Command) context.Context {

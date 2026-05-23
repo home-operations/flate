@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // buildFlags holds flags shared across `build ks`, `build hr`, and
@@ -61,14 +60,14 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
 				return err
 			}
-			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
 			w := cmd.OutOrStdout()
 			name := firstArg(argv)
 			for _, kind := range kinds {
-				if err := writeRendered(w, o, kind, name, c, b); err != nil {
+				if err := writeRendered(w, o, res, kind, name, c, b); err != nil {
 					return err
 				}
 			}
@@ -90,12 +89,16 @@ func applyBuildFlags(c *commonFlags, b *buildFlags) {
 	}
 }
 
-func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string, c *commonFlags, b *buildFlags) error {
-	// Sort by (namespace, name) so `build` output is deterministic
-	// across runs — `Store.ListObjects` iterates the byName map and
-	// would otherwise produce a different ordering each invocation,
-	// breaking shell-piped diffs and CI consumers.
+func writeRendered(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags, b *buildFlags) error {
+	// Walk every loaded object of this kind so an explicit name positional
+	// that didn't render (failed reconcile, suspended, no docs) still
+	// counts as a match — without this the typo-detection error below
+	// would also fire for failed-but-existing resources.
 	objs := o.Store().ListObjects(kind)
+	// Sort by (namespace, name) so output is deterministic across runs
+	// — Store.ListObjects iterates the byName map and would otherwise
+	// produce a different ordering each invocation, breaking shell-piped
+	// diffs and CI consumers.
 	slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
 		ai, bi := a.Named(), b.Named()
 		return cmp.Or(cmp.Compare(ai.Namespace, bi.Namespace), cmp.Compare(ai.Name, bi.Name))
@@ -110,22 +113,21 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string,
 			continue
 		}
 		matched++
-		a, ok := o.Store().GetArtifact(id).(store.RenderedArtifact)
-		if !ok {
+		// res.Manifests is the structured render output keyed by
+		// NamedResource — no more Store.GetArtifact + type-assertion
+		// dance. A missing entry means the resource didn't render
+		// (failed, suspended, or produced zero docs).
+		mans, ok := res.Manifests[id]
+		if !ok || len(mans) == 0 {
 			continue
 		}
-		// Stream per-artifact rather than accumulating every doc into a
-		// single slice — keeps the working set small on big repos and
-		// lets onlyCRDs filter run incrementally instead of building a
-		// throw-away intermediate.
-		//
 		// Clone-and-sort per-artifact so output is byte-stable across
 		// runs even when a Helm chart uses `range $name, $svc := .Values`
 		// (Go map iteration is randomized — the chart still emits the
 		// same set but in arbitrary order). Sort by (kind, ns, name).
 		// SSA-applied output doesn't care about order; CI / diff
 		// consumers do.
-		docs := slices.Clone(a.RenderedManifests())
+		docs := slices.Clone(mans)
 		slices.SortStableFunc(docs, compareDocs)
 		if b.onlyCRDs {
 			docs = filterCRDsOnly(docs)

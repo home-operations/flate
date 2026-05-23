@@ -87,10 +87,10 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 		return err
 	}
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
-	if orig == nil || current == nil {
+	if orig.O == nil || current.O == nil {
 		return runErr
 	}
-	imgs := imageSetDiff(collectImages(orig, c), collectImages(current, c), includeRemoved)
+	imgs := imageSetDiff(collectImages(orig.O, orig.Res, c), collectImages(current.O, current.Res, c), includeRemoved)
 	if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
 		return err
 	}
@@ -125,11 +125,11 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 		return err
 	}
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
-	if orig == nil || current == nil {
+	if orig.O == nil || current.O == nil {
 		return runErr
 	}
-	origDocs := gatherArtifacts(orig, kind, name, c)
-	currentDocs := gatherArtifacts(current, kind, name, c)
+	origDocs := gatherArtifacts(orig.O, orig.Res, kind, name, c)
+	currentDocs := gatherArtifacts(current.O, current.Res, kind, name, c)
 
 	outFormat := c.output
 	if outFormat == "table" {

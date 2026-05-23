@@ -18,7 +18,6 @@ type Output string
 // Output values understood by the -o flag.
 const (
 	OutputTable Output = "table"
-	OutputWide  Output = "wide"
 	OutputYAML  Output = "yaml"
 	OutputJSON  Output = "json"
 	OutputName  Output = "name"

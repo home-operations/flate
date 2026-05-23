@@ -355,6 +355,32 @@ spec:
 	}
 }
 
+// TestParseKustomization_SourceRefMissingNameRejected locks the
+// truncated-YAML guard: a Kustomization with sourceRef.kind set but
+// sourceRef.name empty (common shape for files that end mid-mapping)
+// must fail at parse time with a clear "check for truncated YAML"
+// hint, not 30 lines later as a misleading "path does not exist".
+func TestParseKustomization_SourceRefMissingNameRejected(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: ks, namespace: ns}
+spec:
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: ""
+  interval: 5m
+`)
+	_, err := ParseKustomization(doc)
+	if err == nil {
+		t.Fatal("expected parse error for empty sourceRef.name with kind set")
+	}
+	if !strings.Contains(err.Error(), "sourceRef.name is empty") {
+		t.Errorf("error should mention sourceRef.name being empty; got %v", err)
+	}
+}
+
 func TestParseKustomization_Suspend(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: kustomize.toolkit.fluxcd.io/v1

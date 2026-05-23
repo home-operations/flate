@@ -165,6 +165,15 @@ func ParseKustomization(doc map[string]any) (*Kustomization, error) {
 	if cr.Name == "" {
 		return nil, inputf("Kustomization missing metadata.name")
 	}
+	// sourceRef validation catches the truncated-YAML case where
+	// `name:` (no value, e.g. file ends mid-mapping) decodes silently
+	// as empty string. Without this, the failure surfaces as a
+	// misleading "kustomization path does not exist" 30 lines later
+	// in the reconcile flow.
+	if cr.Spec.SourceRef.Kind != "" && cr.Spec.SourceRef.Name == "" {
+		return nil, inputf("Kustomization %s/%s: spec.sourceRef.kind=%q but spec.sourceRef.name is empty (check for truncated YAML)",
+			cr.Namespace, cr.Name, cr.Spec.SourceRef.Kind)
+	}
 	// namespace is optional — a parent Kustomization's
 	// spec.targetNamespace may fill it in at apply time.
 	ns := cr.Namespace

@@ -23,17 +23,19 @@ var (
 )
 
 // celEnv is the singleton CEL environment used by all ReadyExpr
-// evaluations. The single declared variable `object` mirrors what
-// Flux's kustomize/helm controllers expose — a generic JSON-shaped
-// view of the dep's resource. We use map[string]any (DynType) rather
-// than the typed Kubernetes proto descriptors so user expressions
-// remain stable across Kind changes and avoid pulling in
+// evaluations. The declared variables `self` and `dep` mirror what
+// Flux's kustomize/helm controllers expose (cel.WithStructVariables
+// in upstream evalReadyExpr): the consumer (self) and the dependency
+// (dep), each as a generic JSON-shaped view. We use map[string]any
+// (DynType) rather than typed Kubernetes proto descriptors so user
+// expressions remain stable across Kind changes and avoid pulling in
 // k8s.io/api OpenAPI schemas.
 var celEnv = mustCELEnv()
 
 func mustCELEnv() *cel.Env {
 	env, err := cel.NewEnv(
-		cel.Variable("object", cel.DynType),
+		cel.Variable("self", cel.DynType),
+		cel.Variable("dep", cel.DynType),
 	)
 	if err != nil {
 		panic("depwait: build CEL env: " + err.Error())
@@ -42,15 +44,18 @@ func mustCELEnv() *cel.Env {
 }
 
 // evaluateReadyExpr compiles (memoized) and evaluates expr against the
-// projected view of id. Returns true iff the program produces a bool
-// true. Any compile, eval, or type-shape error is returned verbatim.
-func evaluateReadyExpr(expr string, s *store.Store, id manifest.NamedResource) (bool, error) {
+// projected views of self (consumer) and dep (dependency). Returns true
+// iff the program produces a bool true. Any compile, eval, or type-
+// shape error is returned verbatim.
+func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedResource) (bool, error) {
 	prog, err := compileReadyExpr(expr)
 	if err != nil {
 		return false, err
 	}
-	object := projectObject(s, id)
-	val, _, err := prog.Eval(map[string]any{"object": object})
+	val, _, err := prog.Eval(map[string]any{
+		"self": projectObject(s, self),
+		"dep":  projectObject(s, dep),
+	})
 	if err != nil {
 		return false, fmt.Errorf("eval: %w", err)
 	}

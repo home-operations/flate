@@ -1,7 +1,7 @@
 package values
 
 import (
-	"slices"
+	"strings"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -121,20 +121,80 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	}
 }
 
-func TestSplitDottedPath(t *testing.T) {
+// TestReplaceValueAtPath_TypeCoercion locks the upstream Flux contract
+// (chartutil.ReplacePathValue → strvals.ParseInto): a value flowing
+// in through ValuesReference.TargetPath is parsed as a Helm CLI
+// `--set foo=value` would be, with full type coercion. Without this,
+// `replicaCount` came back as the string "3" and chart schemas with
+// `replicaCount: integer` rejected the HR.
+func TestReplaceValueAtPath_TypeCoercion(t *testing.T) {
 	cases := []struct {
-		in   string
-		want []string
+		name string
+		path string
+		val  string
+		want any
 	}{
-		{"a.b.c", []string{"a", "b", "c"}},
-		{`a\.b.c`, []string{"a.b", "c"}},
-		{"single", []string{"single"}},
+		{"int", "replicaCount", "3", float64(3)},
+		{"bool", "enabled", "true", true},
+		{"null", "extra", "null", nil},
+		{"nested map", "image.repository", "nginx", "nginx"},
+		{"quoted string forces string", "tag", `"123"`, "123"},
+		{"list index", "ports[0]", "8080", float64(8080)},
 	}
 	for _, tc := range cases {
-		t.Run(tc.in, func(t *testing.T) {
-			if got := splitDottedPath(tc.in); !slices.Equal(got, tc.want) {
-				t.Errorf("got %v, want %v", got, tc.want)
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := replaceValueAtPath(map[string]any{}, tc.path, tc.val)
+			if err != nil {
+				t.Fatalf("replaceValueAtPath: %v", err)
+			}
+			// Walk got along path to extract the leaf.
+			leaf := walkPath(t, got, tc.path)
+			if !equalish(leaf, tc.want) {
+				t.Errorf("path %q: got %v (%T), want %v (%T)", tc.path, leaf, leaf, tc.want, tc.want)
 			}
 		})
 	}
+}
+
+func walkPath(t *testing.T, m map[string]any, path string) any {
+	t.Helper()
+	cur := any(m)
+	parts := strings.Split(path, ".")
+	for _, p := range parts {
+		if idx := strings.IndexByte(p, '['); idx >= 0 {
+			key := p[:idx]
+			if cm, ok := cur.(map[string]any); ok {
+				cur = cm[key]
+			}
+			// Strip "[0]" → 0 and index.
+			cur = cur.([]any)[0]
+			continue
+		}
+		if cm, ok := cur.(map[string]any); ok {
+			cur = cm[p]
+		}
+	}
+	return cur
+}
+
+func equalish(a, b any) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	// strvals.ParseInto returns int64 for integers; allow comparison
+	// against float64 literals in test cases.
+	switch av := a.(type) {
+	case int64:
+		if bv, ok := b.(float64); ok {
+			return float64(av) == bv
+		}
+	case int:
+		if bv, ok := b.(float64); ok {
+			return float64(av) == bv
+		}
+	}
+	return a == b
 }

@@ -195,7 +195,7 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 	// Additive mode: built-in Ready check passed AND the CEL must also
 	// agree. Flux's AdditiveCELDependencyCheck=true behavior.
 	if dep.ReadyExpr != "" {
-		ok, evalErr := evaluateReadyExpr(dep.ReadyExpr, w.Store, id)
+		ok, evalErr := evaluateReadyExpr(dep.ReadyExpr, w.Store, w.Parent, id)
 		if evalErr != nil {
 			return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + evalErr.Error()}
 		}
@@ -212,7 +212,7 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 // Surfaces the parent ctx's timeout/cancel.
 func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, expr string) Event {
 	// Initial evaluation against current state.
-	if ok, err := evaluateReadyExpr(expr, w.Store, id); err != nil {
+	if ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id); err != nil {
 		return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}
 	} else if ok {
 		return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}
@@ -230,7 +230,7 @@ func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, 
 		}
 	}, false)
 	defer unsub()
-	if ok, err := evaluateReadyExpr(expr, w.Store, id); err != nil {
+	if ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id); err != nil {
 		return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}
 	} else if ok {
 		return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}
@@ -239,7 +239,7 @@ func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, 
 	for {
 		select {
 		case <-ch:
-			ok, err := evaluateReadyExpr(expr, w.Store, id)
+			ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id)
 			if err != nil {
 				return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}
 			}

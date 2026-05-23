@@ -319,6 +319,17 @@ func renderSingle(tmplStr string, inputSet map[string]any) (map[string]any, erro
 	return doc, nil
 }
 
+// init mirrors upstream flux-operator's slugify configuration
+// (internal/builder/resourceset.go init): 63-char max with smart-
+// truncate, matching Kubernetes label-value limits. Without this,
+// slugify on inputs ≥64 chars renders the full slug in flate but a
+// truncated 63-char prefix in cluster — different downstream resource
+// names for the same ResourceSet input.
+func init() {
+	slug.MaxLength = 63
+	slug.EnableSmartTruncate = true
+}
+
 func execute(tmplStr string, inputSet map[string]any) ([]byte, error) {
 	tmpl, err := template.New("resourceset").
 		Delims("<<", ">>").

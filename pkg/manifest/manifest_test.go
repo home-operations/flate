@@ -659,6 +659,35 @@ spec:
 	}
 }
 
+// TestReleaseName_Shortens locks the helm-controller release.ShortenName
+// contract: names ≤53 chars pass through; longer names become a 40-char
+// prefix + "-" + 12 hex chars of sha256(name). Without this flate's
+// `.Release.Name` diverges from a real cluster's for long HR names.
+func TestReleaseName_Shortens(t *testing.T) {
+	short := &HelmRelease{Name: "short-name"}
+	if got := short.ReleaseName(); got != "short-name" {
+		t.Errorf("short name should pass through: got %q", got)
+	}
+
+	// 60-char name exceeds the 53 threshold.
+	longName := "this-is-a-very-long-helmrelease-name-that-exceeds-53-chars"
+	if len(longName) <= 53 {
+		t.Fatalf("test setup: longName should be >53 chars, got %d", len(longName))
+	}
+	hr := &HelmRelease{Name: longName}
+	got := hr.ReleaseName()
+	if len(got) != 53 {
+		t.Errorf("shortened name should be exactly 53 chars; got %d (%q)", len(got), got)
+	}
+	if got == longName {
+		t.Errorf("expected shortening; got %q", got)
+	}
+	// Deterministic: same input → same hash suffix.
+	if got2 := hr.ReleaseName(); got2 != got {
+		t.Errorf("non-deterministic shortening: %q vs %q", got, got2)
+	}
+}
+
 func TestParseHelmRelease_ChartRef(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: helm.toolkit.fluxcd.io/v2

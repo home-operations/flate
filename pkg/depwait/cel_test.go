@@ -26,7 +26,7 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
 		NamedResource: dep,
 		// Common Flux readiness idiom.
-		ReadyExpr: `object.status.observedGeneration == object.metadata.generation`,
+		ReadyExpr: `dep.status.observedGeneration == dep.metadata.generation`,
 	}}))
 	if !sum.AllReady() {
 		t.Errorf("observedGeneration projection should match metadata.generation: %+v", sum)
@@ -46,7 +46,7 @@ func TestReadyExpr_NonAdditive_PassesOnTrue(t *testing.T) {
 	w := &Waiter{Store: s, Timeout: time.Second}
 	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
 		NamedResource: dep,
-		ReadyExpr:     `object.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
+		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}}))
 	if !sum.AllReady() {
 		t.Errorf("non-additive ReadyExpr should override Failed Ready: %+v", sum)
@@ -73,7 +73,7 @@ func TestReadyExpr_NonAdditive_FlipsOnStatusUpdate(t *testing.T) {
 	w := &Waiter{Store: s, Timeout: 2 * time.Second}
 	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
 		NamedResource: dep,
-		ReadyExpr:     `object.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
+		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}}))
 	if !sum.AllReady() {
 		t.Errorf("expected to satisfy after status update: %+v", sum)
@@ -91,7 +91,7 @@ func TestReadyExpr_NonAdditive_TimesOutOnFalse(t *testing.T) {
 	w := &Waiter{Store: s, Timeout: 100 * time.Millisecond}
 	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
 		NamedResource: dep,
-		ReadyExpr:     `object.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
+		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}}))
 	if sum.AllReady() {
 		t.Fatalf("expected timeout: %+v", sum)
@@ -114,7 +114,7 @@ func TestReadyExpr_Additive_BothMustPass(t *testing.T) {
 	w := &Waiter{Store: s, Timeout: time.Second, AdditiveReadyExpr: true}
 	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
 		NamedResource: dep,
-		ReadyExpr:     `object.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
+		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}}))
 	if !sum.AllReady() {
 		t.Errorf("expected AllReady when both checks pass: %+v", sum)
@@ -133,7 +133,7 @@ func TestReadyExpr_Additive_FalseFails(t *testing.T) {
 	w := &Waiter{Store: s, Timeout: time.Second, AdditiveReadyExpr: true}
 	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
 		NamedResource: dep,
-		ReadyExpr:     `object.status.conditions.exists(c, c.type == "Healthy")`,
+		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy")`,
 	}}))
 	if !sum.AnyFailed() {
 		t.Fatalf("expected failure: %+v", sum)
@@ -173,13 +173,37 @@ func TestReadyExpr_NonBoolResult(t *testing.T) {
 	w := &Waiter{Store: s, Timeout: 100 * time.Millisecond}
 	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
 		NamedResource: dep,
-		ReadyExpr:     `object.metadata.name`, // string, not bool
+		ReadyExpr:     `dep.metadata.name`, // string, not bool
 	}}))
 	if !sum.AnyFailed() {
 		t.Fatalf("expected failure for non-bool result: %+v", sum)
 	}
 	if !strings.Contains(sum.Messages[dep], "must return bool") {
 		t.Errorf("expected non-bool error; got %q", sum.Messages[dep])
+	}
+}
+
+// TestReadyExpr_BindsSelfAndDep locks the upstream Flux contract:
+// readyExpr sees both `self` (the consumer / Waiter.Parent) and `dep`
+// (the current dependency). The kustomize/helm controller idiom
+// `dep.status.lastAppliedRevision == self.spec.sourceRef.revision`
+// must compile and have access to both names.
+func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
+	s := store.New()
+	self := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
+	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
+	s.UpdateStatus(self, store.StatusReady, "")
+	s.UpdateStatus(dep, store.StatusReady, "")
+
+	w := &Waiter{Store: s, Parent: self, Timeout: time.Second}
+	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
+		NamedResource: dep,
+		// Reads both self and dep — would fail to compile under the old
+		// `object`-only binding.
+		ReadyExpr: `self.metadata.namespace == dep.metadata.namespace`,
+	}}))
+	if !sum.AllReady() {
+		t.Errorf("expected self/dep CEL to evaluate true: %+v", sum)
 	}
 }
 

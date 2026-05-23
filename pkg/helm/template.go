@@ -42,6 +42,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	inst.DryRunStrategy = action.DryRunClient
 	inst.ReleaseName = hr.ReleaseName()
 	inst.Namespace = hr.ReleaseNamespace()
+	// Match helm-controller: Devel=true so chart references pinned to a
+	// prerelease semver (e.g. `1.0.0-beta`) resolve. Without this, the
+	// HR renders cleanly in flate (which doesn't consult Devel for local
+	// chart resolution) but fails in cluster, or vice versa.
+	inst.Devel = true
 	inst.IncludeCRDs = !opts.SkipCRDs
 	// HR-scoped policy wins: spec.install.crds / spec.upgrade.crds set
 	// to "Skip" suppresses CRDs even when the CLI requests them.

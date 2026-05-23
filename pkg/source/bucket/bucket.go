@@ -229,10 +229,15 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 		}
 	}
 
+	// Format matches source-controller's internal/index/digest.go:
+	// `"%s %s\n"` (single space delimiter). Using a tab made flate's
+	// revision diverge silently from what a cluster Bucket reports
+	// for identical contents — change detection across runs and any
+	// readyExpr keyed off status.artifact.revision would never align.
 	h := sha256.New()
 	keys := make([]string, 0, len(entries))
 	for _, e := range entries {
-		_, _ = fmt.Fprintf(h, "%s\t%s\n", e.key, e.etag)
+		_, _ = fmt.Fprintf(h, "%s %s\n", e.key, e.etag)
 		keys = append(keys, e.key)
 	}
 	return keys, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil

@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -232,13 +233,32 @@ func (h *HelmRelease) Clone() *HelmRelease {
 }
 
 // ReleaseName returns the resolved Helm release name — spec.releaseName
-// when set, otherwise metadata.name. Mirrors helm-controller's behavior
-// at template time. Always non-empty.
+// when set, otherwise metadata.name — passed through release.ShortenName
+// so HRs whose effective name is >53 characters get the same hash-
+// suffixed shortened form a real cluster sees. Mirrors helm-controller's
+// internal/release.ShortenName (a 40-char prefix + "-" + 12 hex chars of
+// sha256(name)). Without shortening, charts referencing `.Release.Name`
+// rendered different resource names/labels in flate vs cluster.
+// Always non-empty.
 func (h *HelmRelease) ReleaseName() string {
-	if h.HelmReleaseSpec.ReleaseName != "" {
-		return h.HelmReleaseSpec.ReleaseName
+	name := h.HelmReleaseSpec.ReleaseName
+	if name == "" {
+		name = h.Name
 	}
-	return h.Name
+	return shortenReleaseName(name)
+}
+
+// shortenReleaseName mirrors helm-controller/internal/release.ShortenName.
+// Inlined to keep pkg/manifest free of a helm-controller import (the
+// canonical impl lives in an internal/ tree we cannot reference).
+func shortenReleaseName(name string) string {
+	if len(name) <= 53 {
+		return name
+	}
+	const maxLength = 53
+	const shortHashLength = 12
+	sum := fmt.Sprintf("%x", sha256.Sum256([]byte(name)))
+	return name[:maxLength-(shortHashLength+1)] + "-" + sum[:shortHashLength]
 }
 
 // ReleaseNamespace returns TargetNamespace when set, otherwise Namespace.

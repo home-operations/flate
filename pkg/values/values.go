@@ -7,6 +7,7 @@ import (
 	"maps"
 	"strings"
 
+	"helm.sh/helm/v4/pkg/strvals"
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -194,23 +195,18 @@ func decodeBag(stringData, binaryData map[string]any) (map[string]string, error)
 
 // updateHelmReleaseValues writes found into values using ref.TargetPath
 // when set; otherwise the found YAML is parsed and deep-merged.
+//
+// When targetPath is set, write through Helm's strvals parser
+// (path=value form). This matches upstream Flux's
+// chartutil.ChartValuesFromReferences (which calls strvals.ParseInto)
+// and gives the correct type coercion: "3" → int 3, "true" → bool,
+// "null" → nil. Single/double-quoted values force string-coercion
+// (strvals.ParseIntoString). A naive `inner[k] = found` left every
+// targetPath value as a literal string, which broke chart-schema
+// validation against `replicaCount: integer` and similar.
 func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any) (map[string]any, error) {
 	if ref.TargetPath != "" {
-		parts := splitDottedPath(ref.TargetPath)
-		inner := values
-		for _, p := range parts[:len(parts)-1] {
-			next, ok := inner[p].(map[string]any)
-			if !ok {
-				if _, alreadyHas := inner[p]; alreadyHas {
-					return nil, fmt.Errorf("expected '%s' at %q to be a map", ref.Name, ref.TargetPath)
-				}
-				next = map[string]any{}
-				inner[p] = next
-			}
-			inner = next
-		}
-		inner[parts[len(parts)-1]] = found
-		return values, nil
+		return replaceValueAtPath(values, ref.TargetPath, found)
 	}
 
 	// Wiped Secret values surface here as the literal placeholder
@@ -231,28 +227,29 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 	return DeepMerge(values, parsed), nil
 }
 
-// splitDottedPath splits a target_path on unescaped dots. Backslash
-// escapes a literal dot in a key name.
-func splitDottedPath(s string) []string {
-	var out []string
-	var cur strings.Builder
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '\\':
-			if i+1 < len(s) {
-				cur.WriteByte(s[i+1])
-				i++
-				continue
-			}
-		case '.':
-			out = append(out, cur.String())
-			cur.Reset()
-		default:
-			cur.WriteByte(s[i])
-		}
+// replaceValueAtPath writes value into values at path using Helm's
+// strvals parser. Matches upstream Flux's chartutil.ReplacePathValue:
+// single/double-quoted values use ParseIntoString (forced string);
+// bare values use ParseInto (type-coerced: "3" → int, "true" → bool,
+// "null" → nil). Strvals also handles list indices (foo.bar[0]) and
+// escaped dot keys (foo\\.bar).
+func replaceValueAtPath(values map[string]any, path, value string) (map[string]any, error) {
+	const (
+		singleQuote = "'"
+		doubleQuote = `"`
+	)
+	var err error
+	if (strings.HasPrefix(value, singleQuote) && strings.HasSuffix(value, singleQuote)) ||
+		(strings.HasPrefix(value, doubleQuote) && strings.HasSuffix(value, doubleQuote)) {
+		stripped := value[1 : len(value)-1]
+		err = strvals.ParseIntoString(path+"="+stripped, values)
+	} else {
+		err = strvals.ParseInto(path+"="+value, values)
 	}
-	out = append(out, cur.String())
-	return out
+	if err != nil {
+		return nil, fmt.Errorf("targetPath %q: %w", path, err)
+	}
+	return values, nil
 }
 
 // ExpandPostBuildSubstituteReference resolves substituteFrom references

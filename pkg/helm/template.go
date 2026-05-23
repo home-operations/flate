@@ -191,8 +191,10 @@ func applyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
 
 // applyHRCommonMetadata merges spec.commonMetadata.labels and .annotations
 // onto every rendered doc's metadata, mirroring helm-controller's
-// CommonRenderer pass. commonMetadata wins on conflict, matching
-// controller semantics.
+// CommonRenderer pass. commonMetadata overwrites chart-template defaults
+// but loses to origin labels on collision — applyHROriginLabels runs
+// AFTER this and reasserts the helm.toolkit.fluxcd.io/{name,namespace}
+// keys, matching helm-controller's build.go:46 comment.
 func applyHRCommonMetadata(docs []map[string]any, cm *helmv2.CommonMetadata) {
 	if cm == nil || (len(cm.Labels) == 0 && len(cm.Annotations) == 0) {
 		return

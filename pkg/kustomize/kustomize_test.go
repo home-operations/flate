@@ -196,6 +196,66 @@ func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 	}
 }
 
+// TestRenderFlux_CommonMetadataOverridesOwnerLabels pins the
+// kustomize-controller-matching precedence rule: when commonMetadata
+// supplies a key that collides with the owner-label keys
+// (kustomize.toolkit.fluxcd.io/{name,namespace}), commonMetadata wins.
+// Upstream applies SetOwnerLabels at reconcile setup, then
+// SetCommonMetadata at apply time — so a future revert of the
+// applyOwnerLabels/applyCommonMetadata ordering in flux.go would be
+// caught here.
+func TestRenderFlux_CommonMetadataOverridesOwnerLabels(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "cm.yaml"), []byte(
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n",
+	), 0o600); err != nil {
+		t.Fatalf("write cm: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "kustomization.yaml"), []byte(
+		"resources:\n- cm.yaml\n",
+	), 0o600); err != nil {
+		t.Fatalf("write kustomization: %v", err)
+	}
+	cache, err := NewStagingCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	out, err := RenderFlux(context.Background(), cache, src, ".", map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   map[string]any{"name": "owner-name", "namespace": "owner-ns"},
+		"spec": map[string]any{
+			"path": "./",
+			"commonMetadata": map[string]any{
+				"labels": map[string]any{
+					"kustomize.toolkit.fluxcd.io/name":      "user-override",
+					"kustomize.toolkit.fluxcd.io/namespace": "user-ns-override",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RenderFlux: %v", err)
+	}
+
+	var got map[string]any
+	if err := yaml.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal output: %v\n%s", err, out)
+	}
+	md, _ := got["metadata"].(map[string]any)
+	labels, _ := md["labels"].(map[string]any)
+	if labels["kustomize.toolkit.fluxcd.io/name"] != "user-override" {
+		t.Errorf("commonMetadata should win on owner-name collision; got %v",
+			labels["kustomize.toolkit.fluxcd.io/name"])
+	}
+	if labels["kustomize.toolkit.fluxcd.io/namespace"] != "user-ns-override" {
+		t.Errorf("commonMetadata should win on owner-namespace collision; got %v",
+			labels["kustomize.toolkit.fluxcd.io/namespace"])
+	}
+}
+
 // TestRenderFlux_InjectsOwnerLabels guards that
 // kustomize.toolkit.fluxcd.io/{name,namespace} land on rendered
 // resources even without spec.commonMetadata.

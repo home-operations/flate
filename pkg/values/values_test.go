@@ -59,6 +59,36 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 	}
 }
 
+// TestExpandValueReferences_IgnoresConfigMapBinaryData locks the
+// upstream contract: valuesFrom on a ConfigMap reads only .data,
+// never .binaryData. fluxcd/pkg/chartutil/values.go's
+// ChartValuesFromReferences pulls from typedRes.Data exclusively.
+// A ConfigMap carrying binaryData must not leak those entries into
+// hr.Values — that would render keys real Flux never sees.
+func TestExpandValueReferences_IgnoresConfigMapBinaryData(t *testing.T) {
+	cm := &manifest.ConfigMap{
+		Name: "mixed", Namespace: "default",
+		Data:       map[string]any{"values.yaml": "fromData: \"yes\"\n"},
+		BinaryData: map[string]any{"hidden.yaml": "fromBinary: \"leaked\"\n"},
+	}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "mixed"}},
+		},
+	}
+	if err := ExpandValueReferences(hr, provider); err != nil {
+		t.Fatalf("ExpandValueReferences: %v", err)
+	}
+	if hr.Values["fromData"] != "yes" {
+		t.Errorf("data key should have merged; got %v", hr.Values["fromData"])
+	}
+	if _, leaked := hr.Values["fromBinary"]; leaked {
+		t.Errorf("binaryData key leaked into hr.Values: %+v", hr.Values)
+	}
+}
+
 func TestExpandValueReferences_TargetPath(t *testing.T) {
 	cm := &manifest.ConfigMap{
 		Name: "k", Namespace: "default",

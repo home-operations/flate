@@ -148,7 +148,14 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 	case manifest.KindConfigMap:
 		c := p.ConfigMap(namespace, ref.Name)
 		if c != nil {
-			data, err = decodeBag(c.Data, c.BinaryData)
+			// valuesFrom reads only ConfigMap.data; upstream
+			// fluxcd/pkg/chartutil/values.go ChartValuesFromReferences
+			// pulls from typedRes.Data[ref.GetValuesKey()] and never
+			// touches BinaryData. Pass nil so a ConfigMap carrying
+			// binaryData doesn't quietly leak base64-decoded entries
+			// into hr.Values — flate would render with keys real Flux
+			// never sees.
+			data, err = decodeBag(c.Data, nil)
 		}
 	default:
 		return "", fmt.Errorf("%w: unsupported valuesFrom kind %s", manifest.ErrInvalidValuesReference, ref.Kind)

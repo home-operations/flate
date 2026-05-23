@@ -68,7 +68,15 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	inst.DisableHooks = disableHooks
 	inst.IsUpgrade = opts.IsUpgrade
 	inst.EnableDNS = opts.EnableDNS
-	inst.Replace = true
+	// Honor spec.install.replace per helm-controller's
+	// internal/action/install.go: install.Replace = obj.GetInstall().Replace.
+	// Default false (the chart fields' zero value); set true only when
+	// the HR explicitly asks. Mostly a no-op under DryRunClient but
+	// keeps flate's render path matching upstream so any future
+	// validation behavior change in helm.action lands consistently.
+	if hr.Install != nil {
+		inst.Replace = hr.Install.Replace
+	}
 	inst.DisableOpenAPIValidation = hr.DisableOpenAPIValidation
 	// When flate's wipe-secrets has replaced a substituteFrom / valuesFrom
 	// value with the ..PLACEHOLDER_KEY.. token, chart schemas with DNS /

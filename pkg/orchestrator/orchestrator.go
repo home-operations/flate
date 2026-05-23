@@ -285,7 +285,7 @@ func (o *Orchestrator) loadManifests(ctx context.Context, repoRoot string) error
 		}
 	}
 	l.PreferExisting = false
-	slog.Debug("orchestrator: loaded objects", "count", total, "scan", scanRoot, "source-root", repoRoot)
+	slog.Debug("orchestrator: loaded objects", "count", total, "scanRoot", scanRoot, "sourceRoot", repoRoot)
 
 	loader.ApplyNamespaceInheritance(o.store, o.sourceFiles, repoRoot)
 	// Build the parent index after namespace inheritance so the
@@ -589,7 +589,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
 		slog.Warn("resource orphaned", "id", id.String(),
 			"file", o.sourceFiles[id],
-			"underlying_error", info.Message)
+			"reason", info.Message)
 		delete(failed, id)
 	}
 	slog.Info("reconcile complete",

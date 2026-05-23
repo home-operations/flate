@@ -204,7 +204,7 @@ Every fetch path resolves credentials from a Flux-style `spec.secretRef` pointin
 
 ## SOPS, suspend, dependsOn
 
-**SOPS-encrypted resources are wiped to PLACEHOLDER.** flate doesn't implement `spec.decryption`. Instead of failing the whole reconcile, encrypted Secret values get replaced with the literal `..PLACEHOLDER_<key>..` token (the same wipe `--wipe-secrets` performs on cleartext values). Downstream `postBuild.substituteFrom` lookups against a SOPS Secret resolve to the placeholder string rather than failing — so `${SECRET_DOMAIN}` becomes `..PLACEHOLDER_SECRET_DOMAIN..` in rendered output. Pre-decrypt your manifests if you need real values in the diff.
+**SOPS-encrypted resources are wiped to PLACEHOLDER.** flate doesn't implement `spec.decryption`. Encrypted Secret values get replaced with the literal `..PLACEHOLDER_<key>..` token — the same wipe applied to cleartext Secret values, which is always on. Downstream `postBuild.substituteFrom` lookups against a SOPS Secret resolve to the placeholder string rather than failing — so `${SECRET_DOMAIN}` becomes `..PLACEHOLDER_SECRET_DOMAIN..` in rendered output. Pre-decrypt your manifests if you need real values in the diff.
 
 **Per-resource substitution opt-out:** flate honors the `kustomize.toolkit.fluxcd.io/substitute: disabled` label or annotation. Resources carrying it are skipped during the postBuild substitute pass — used in real repos for ConfigMaps that embed shell scripts with bash array expansions (`${ARR[@]}`) that envsubst's parser can't handle.
 
@@ -272,6 +272,7 @@ All output is written to stdout — redirect with `> file.yaml` to capture it. L
 | `--skip-kinds` | _(none)_ | Extra kinds to drop, repeatable. |
 | `--enable-oci` | `true` | Reconcile OCIRepository sources. |
 | `--registry-config` | _(none)_ | Docker `config.json` for OCI auth. |
+| `--concurrency` | `NumCPU * 4` | Worker pool size for parallel reconciles. |
 | `--log-level` | `info` | `debug` / `info` / `warn` / `error`. |
 
 ### Helm rendering
@@ -361,15 +362,16 @@ Testdata lives in [`testdata/`](testdata/); the [`test/e2e`](test/e2e/) suite ru
 
 | Source kind | Mechanism | Notes |
 | --- | --- | --- |
-| `OCIRepository` | cosign keyed mode | `spec.verify.secretRef` carries one or more PEM-encoded public keys; flate verifies the cosign signature artifact (`sha256-<hex>.sig` tag) using stdlib crypto — no sigstore dep tree. Keyless (Fulcio/Rekor) and `notation` provider fail loud. |
+| `OCIRepository` | cosign keyed mode | `spec.verify.secretRef` carries one or more PEM-encoded public keys; flate verifies the cosign signature artifact (`sha256-<hex>.sig` tag) using stdlib crypto — no sigstore dep tree. Keyless (Fulcio/Rekor) is logged at warn and skipped (no offline trust roots); `notation` provider fails loud. |
 | `GitRepository` | PGP | `spec.verify` (`mode: HEAD` / `Tag` / `TagAndHEAD`) verifies the resolved commit and/or annotated tag against the keyring in `spec.verify.secretRef`. |
 
 ## Deferred
 
 - `diff --branch-orig <branch>` (auto-worktree)
 - `shell` interactive REPL
-- ResourceSet (Flux Operator)
-- Cosign keyless / Notation (`spec.verify.provider: notation`) on OCIRepository — fail loud rather than silently pass
+- Cosign keyless on OCIRepository — currently warn-and-skip (no offline trust roots)
+- Notation provider (`spec.verify.provider: notation`) — fails loud
+- `ResourceSetInputProvider` dynamic types (GitHub*, GitLab*, OCIArtifactTag, ExternalService, …) — `Static` is supported, dynamic providers contribute zero inputs offline
 - Bucket `aws` / `gcp` / `azure` providers (workload-identity / IRSA — out of scope offline; use `provider: generic` with static creds)
 - HelmRepository OCI-flavored `spec.secretRef` (use a sibling `OCIRepository` instead)
 

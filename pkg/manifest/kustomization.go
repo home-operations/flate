@@ -141,7 +141,7 @@ func ParseKustomization(doc map[string]any) (*Kustomization, error) {
 	}
 	var cr kustomizev1.Kustomization
 	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("Kustomization decode: %v", err)
+		return nil, inputf("Kustomization decode: %w", err)
 	}
 	if cr.Name == "" {
 		return nil, inputf("Kustomization missing metadata.name")

@@ -67,7 +67,7 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 	}
 	var cr sourcev1.GitRepository
 	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("GitRepository decode: %v", err)
+		return nil, inputf("GitRepository decode: %w", err)
 	}
 	if cr.Name == "" {
 		return nil, inputf("GitRepository missing metadata.name")
@@ -161,7 +161,7 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	}
 	var cr sourcev1.OCIRepository
 	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("OCIRepository decode: %v", err)
+		return nil, inputf("OCIRepository decode: %w", err)
 	}
 	if cr.Name == "" {
 		return nil, inputf("OCIRepository missing metadata.name")
@@ -221,7 +221,7 @@ func ParseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 	}
 	var cr sourcev1.ExternalArtifact
 	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("ExternalArtifact decode: %v", err)
+		return nil, inputf("ExternalArtifact decode: %w", err)
 	}
 	if cr.Name == "" {
 		return nil, inputf("ExternalArtifact missing metadata.name")

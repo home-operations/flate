@@ -131,7 +131,7 @@ func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	}
 	var cr sourcev1.HelmChart
 	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("HelmChart decode: %v", err)
+		return nil, inputf("HelmChart decode: %w", err)
 	}
 	if cr.Name == "" {
 		return nil, inputf("HelmChart missing metadata.name")
@@ -277,7 +277,7 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	}
 	var cr helmv2.HelmRelease
 	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("HelmRelease decode: %v", err)
+		return nil, inputf("HelmRelease decode: %w", err)
 	}
 	if cr.Name == "" {
 		return nil, inputf("HelmRelease missing metadata.name")
@@ -292,7 +292,7 @@ func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	var values map[string]any
 	if cr.Spec.Values != nil && len(cr.Spec.Values.Raw) > 0 {
 		if err := json.Unmarshal(cr.Spec.Values.Raw, &values); err != nil {
-			return nil, inputf("HelmRelease spec.values: %v", err)
+			return nil, inputf("HelmRelease spec.values: %w", err)
 		}
 	}
 	disableSchema := (cr.Spec.Install != nil && cr.Spec.Install.DisableSchemaValidation) ||
@@ -377,7 +377,7 @@ func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	}
 	var cr sourcev1.HelmRepository
 	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("HelmRepository decode: %v", err)
+		return nil, inputf("HelmRepository decode: %w", err)
 	}
 	if cr.Name == "" {
 		return nil, inputf("HelmRepository missing metadata.name")

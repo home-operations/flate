@@ -43,7 +43,7 @@ func ParseResourceSet(doc map[string]any) (*ResourceSet, error) {
 	}
 	var cr fluxopv1.ResourceSet
 	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("ResourceSet decode: %v", err)
+		return nil, inputf("ResourceSet decode: %w", err)
 	}
 	if cr.Name == "" {
 		return nil, inputf("ResourceSet missing metadata.name")

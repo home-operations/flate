@@ -38,7 +38,7 @@ func ParseBucket(doc map[string]any) (*Bucket, error) {
 	}
 	var cr sourcev1.Bucket
 	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("Bucket decode: %v", err)
+		return nil, inputf("Bucket decode: %w", err)
 	}
 	if cr.Name == "" {
 		return nil, inputf("Bucket missing metadata.name")

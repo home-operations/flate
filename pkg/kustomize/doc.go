@@ -1,10 +1,15 @@
 // Package kustomize wraps sigs.k8s.io/kustomize/api so the rest of
 // flate never invokes the `kustomize` CLI. It provides:
 //
-//   - Build: renders a kustomization directory to YAML documents.
-//   - Filtering helpers (FilterKinds) that mirror flux-local's
-//     chainable Kustomize wrapper.
-//   - Variable substitution (envsubst-style "${VAR}" and "${VAR:=default}")
+//   - Build / RenderFlux: render a kustomization directory to YAML
+//     documents. Build is the plain krusty surface; RenderFlux adds
+//     the Flux generator that handles spec.components and embedded
+//     inline Contents.
+//   - Prepare: the standard pre-render dance (Clone + expand
+//     postBuild.substituteFrom) for embedders rendering a single
+//     Kustomization. Mirrors helm.Prepare for HelmReleases.
+//   - FilterKinds: chainable kind filter that mirrors flux-local.
+//   - Substitute: envsubst-style "${VAR}" / "${VAR:=default}" used
 //     for Flux post-build substitutions.
 //
 // Concurrent builds against the same path are serialized via an

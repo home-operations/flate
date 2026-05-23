@@ -111,7 +111,7 @@ Other entry points worth knowing:
 
 - `Orchestrator.WithFetcher(kind, f)` — swap any source fetcher (in-memory fakes for tests, custom kinds).
 - `Store.OnObject` / `OnStatus` / `OnArtifact` — typed listeners; payloads are pre-cast.
-- `helm.Prepare(hr, charts, provider)` then `helmClient.TemplateDocs(...)` — render one HelmRelease without the orchestrator.
+- `helm.Prepare(hr, charts, provider)` then `helmClient.TemplateDocs(...)` — render one HelmRelease without the orchestrator. `kustomize.Prepare(ks, provider)` is the symmetric helper for Kustomizations.
 - `discovery.Run(ctx, Config{Path, Store, WipeSecrets})` — load phase as a standalone unit.
 - `Store.Mutate[T]` — clone-then-AddObject helper encoding the immutability contract. See [`pkg/manifest/doc.go`](pkg/manifest/doc.go) for the full rule.
 

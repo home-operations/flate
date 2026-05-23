@@ -178,9 +178,59 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if err := o.loadManifests(ctx, repoRoot); err != nil {
 		return err
 	}
+	o.aliasBootstrapSources(repoRoot)
 	o.validateDependsOn()
 	o.warnSilentlySkippedVerification()
 	return o.buildChangeFilter(repoRoot)
+}
+
+// aliasBootstrapSources seeds a working-tree SourceArtifact for every
+// `flux-system/<name>` GitRepository referenced by a loaded Kustomization
+// whose definition isn't in the repo itself. This is the chkpwd-ops /
+// flux-bootstrap pattern: the user's entry-point KSes reference a
+// custom-named GitRepository (e.g. `chkpwd-ops`, `home-ops`) installed
+// by `flux bootstrap` into the cluster but never committed to the repo.
+// Without aliasing, every downstream KS fails with "source artifact not
+// found". Aliasing makes them all resolve to the working tree.
+func (o *Orchestrator) aliasBootstrapSources(repoRoot string) {
+	known := make(map[manifest.NamedResource]struct{})
+	for _, obj := range o.store.ListObjects(manifest.KindGitRepository) {
+		known[obj.Named()] = struct{}{}
+	}
+	seen := make(map[manifest.NamedResource]struct{})
+	for _, obj := range o.store.ListObjects(manifest.KindKustomization) {
+		ks, ok := obj.(*manifest.Kustomization)
+		if !ok || ks.SourceKind != manifest.KindGitRepository {
+			continue
+		}
+		// Only alias flux-system-namespaced GRs — that's the convention
+		// for the bootstrap source. A KS pointing at a GR in another
+		// namespace is a legitimate cross-tree reference and should fail
+		// if missing rather than silently aliasing to the working tree.
+		if ks.SourceNamespace != manifest.DefaultNamespace {
+			continue
+		}
+		id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+		if _, ok := known[id]; ok {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		alias := &manifest.GitRepository{
+			Name: id.Name, Namespace: id.Namespace,
+			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + repoRoot},
+		}
+		o.store.AddObject(alias)
+		o.store.SetArtifact(id, &store.SourceArtifact{
+			Kind: manifest.KindGitRepository,
+			URL:  alias.URL, LocalPath: repoRoot,
+		})
+		o.store.UpdateStatus(id, store.StatusReady, "bootstrap alias")
+		slog.Debug("orchestrator: aliased bootstrap GitRepository",
+			"id", id.String(), "localPath", repoRoot)
+	}
 }
 
 // warnSilentlySkippedVerification surfaces cases where a user-configured

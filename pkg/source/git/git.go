@@ -83,35 +83,7 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 		client.InstallProtocol("https", githttp.NewClient(httpsClient))
 		defer client.InstallProtocol("https", githttp.DefaultClient)
 	}
-	art, err := fetch(ctx, f.Cache, repo, auth, proxy)
-	if err != nil {
-		return nil, err
-	}
-	if repo.Verification != nil {
-		cloned, oerr := git.PlainOpen(art.LocalPath)
-		if oerr != nil {
-			return nil, fmt.Errorf("verify: reopen %s: %w", art.LocalPath, oerr)
-		}
-		head, herr := cloned.Head()
-		if herr != nil {
-			return nil, fmt.Errorf("verify: resolve HEAD: %w", herr)
-		}
-		if err := verifySignatures(f.Secrets, repo, cloned, head.Hash()); err != nil {
-			_ = f.Cache.Reset(art.LocalPath)
-			return nil, err
-		}
-	}
-	if err := source.ApplyIgnore(art.LocalPath, repo.Ignore); err != nil {
-		return nil, fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
-	}
-	// Write the revision marker AFTER ApplyIgnore so it survives any
-	// user-supplied "exclude all" patterns (common — `/*` + reincludes).
-	// Next run's cache-hit check (readCachedRevision) avoids the
-	// expensive re-clone for big repos whose .git/ was wiped by ignore.
-	if art.Revision != "" {
-		_ = writeCachedRevision(art.LocalPath, art.Revision)
-	}
-	return art, nil
+	return f.fetch(ctx, repo, auth, proxy)
 }
 
 // resolveTLS builds a *tls.Config from spec.secretRef for HTTPS GitRepositories
@@ -228,14 +200,18 @@ func sshUserFromURL(url string) string {
 	return "git"
 }
 
-// fetch clones the GitRepository referenced by repo into the supplied
-// cache and returns a populated *store.SourceArtifact. If a usable
-// cached copy already exists, it is reused. auth may be nil for
-// anonymous clones; proxy may be nil for direct connections.
+// fetch clones the GitRepository, then runs verification, ignore, and
+// the cache-marker write — ALL inside the per-slot critical section.
+// Holding the slot lock across post-clone work prevents another
+// fetcher with the same (url, ref) from observing torn state (an
+// in-progress clone, a missing marker, an unverified slot) or from
+// racing a sibling cache.Reset against an in-flight write.
 //
+// auth may be nil for anonymous clones; proxy may be nil for direct.
 // Supported transports: HTTPS (anonymous, basic, bearer), SSH (key
 // from SecretRef or ssh-agent), and file:// URLs.
-func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepository, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
+	cache := f.Cache
 	if repo == nil {
 		return nil, errors.New("git repository is nil")
 	}
@@ -315,10 +291,49 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 	}
 
 	rev, _ := readResolvedRevision(slot)
-	return &store.SourceArtifact{
+	art := &store.SourceArtifact{
 		Kind: manifest.KindGitRepository,
 		URL:  repo.URL, LocalPath: slot, Revision: rev,
-	}, nil
+	}
+	// Post-clone work — verification, ignore, marker — runs under the
+	// slot lock so a sibling Fetcher of the same (url, ref) can't race
+	// our writes or our error-path cache.Reset.
+	if err := f.finalize(repo, art); err != nil {
+		_ = cache.Reset(slot)
+		return nil, err
+	}
+	return art, nil
+}
+
+// finalize runs PGP verification (when configured), applies the
+// source-controller-compatible ignore patterns, and writes the cache-
+// hit marker. Returns the first error encountered; the caller is
+// expected to Reset the slot on error while still holding the lock.
+func (f *Fetcher) finalize(repo *manifest.GitRepository, art *store.SourceArtifact) error {
+	if repo.Verification != nil {
+		cloned, oerr := git.PlainOpen(art.LocalPath)
+		if oerr != nil {
+			return fmt.Errorf("verify: reopen %s: %w", art.LocalPath, oerr)
+		}
+		head, herr := cloned.Head()
+		if herr != nil {
+			return fmt.Errorf("verify: resolve HEAD: %w", herr)
+		}
+		if err := verifySignatures(f.Secrets, repo, cloned, head.Hash()); err != nil {
+			return err
+		}
+	}
+	if err := source.ApplyIgnore(art.LocalPath, repo.Ignore); err != nil {
+		return fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
+	}
+	// Write the revision marker AFTER ApplyIgnore so it survives any
+	// user-supplied "exclude all" patterns (common — `/*` + reincludes).
+	// Next run's cache-hit check (readCachedRevision) avoids the
+	// expensive re-clone for big repos whose .git/ was wiped by ignore.
+	if art.Revision != "" {
+		_ = writeCachedRevision(art.LocalPath, art.Revision)
+	}
+	return nil
 }
 
 // cachedRevisionFile holds the resolved commit SHA of a fetched slot.

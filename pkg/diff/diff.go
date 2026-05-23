@@ -227,38 +227,11 @@ func applyStrip(docs []Doc, attrs []string) []Doc {
 	}
 	out := make([]Doc, len(docs))
 	for i, d := range docs {
-		copyDoc := deepCopy(d.Manifest)
+		copyDoc := manifest.DeepCopyMap(d.Manifest)
 		manifest.StripResourceAttributes(copyDoc, attrs)
 		out[i] = Doc{Manifest: copyDoc, Parent: d.Parent}
 	}
 	return out
-}
-
-// deepCopy clones a parsed YAML document. The shapes we see are
-// JSON-equivalent (map[string]any / []any / scalars) so a structural
-// walk is enough and avoids the marshal/unmarshal round-trip cost on
-// the hot path.
-func deepCopy(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = deepCopyValue(v)
-	}
-	return out
-}
-
-func deepCopyValue(v any) any {
-	switch t := v.(type) {
-	case map[string]any:
-		return deepCopy(t)
-	case []any:
-		out := make([]any, len(t))
-		for i, e := range t {
-			out[i] = deepCopyValue(e)
-		}
-		return out
-	default:
-		return v
-	}
 }
 
 // marshalSide serializes one side of a paired manifest. A nil manifest

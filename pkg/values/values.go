@@ -267,10 +267,12 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 		return fmt.Errorf("%w: Kustomization with substituteFrom has no namespace", manifest.ErrInvalidSubstituteReference)
 	}
 
-	values := maps.Clone(ks.PostBuildSubstitute)
-	if values == nil {
-		values = map[string]any{}
-	}
+	// Upstream kustomize-controller's LoadVariables merges substituteFrom
+	// refs first, then OVERWRITES with inline spec.postBuild.substitute —
+	// inline values win on key collision. flate previously inverted this
+	// (seeded from inline, then substituteFrom overwrote). Match upstream:
+	// substituteFrom first into a fresh map, then layer inline on top.
+	values := map[string]any{}
 	for _, ref := range ks.PostBuildSubstituteFrom {
 		var data map[string]string
 		var err error
@@ -283,7 +285,10 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 		case manifest.KindConfigMap:
 			c := p.ConfigMap(ks.Namespace, ref.Name)
 			if c != nil {
-				data, err = decodeBag(c.Data, c.BinaryData)
+				// substituteFrom only reads cm.Data — upstream
+				// kustomize-controller does NOT expose binaryData as
+				// substitution vars. Pass nil to skip that branch.
+				data, err = decodeBag(c.Data, nil)
 			}
 		default:
 			slog.Debug("values: unsupported SubstituteReference kind",
@@ -309,6 +314,9 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 			values[k] = strings.ReplaceAll(v, "\n", "")
 		}
 	}
+	// Layer inline spec.postBuild.substitute on top — inline wins on
+	// key collision per upstream LoadVariables order.
+	maps.Copy(values, ks.PostBuildSubstitute)
 	ks.UpdatePostBuildSubstitutions(values)
 	return nil
 }

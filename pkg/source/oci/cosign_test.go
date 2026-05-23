@@ -77,12 +77,12 @@ func TestVerifyCosignSignatureBytes_ECDSA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignASN1: %v", err)
 	}
-	if err := verifyCosignSignatureBytes(&priv.PublicKey, hash[:], sig); err != nil {
+	if err := verifyCosignSignatureBytes(&priv.PublicKey, payload, sig); err != nil {
 		t.Errorf("verify failed for valid signature: %v", err)
 	}
 	// Flip a byte; verify should fail.
 	sig[0] ^= 0x01
-	if err := verifyCosignSignatureBytes(&priv.PublicKey, hash[:], sig); err == nil {
+	if err := verifyCosignSignatureBytes(&priv.PublicKey, payload, sig); err == nil {
 		t.Errorf("verify should fail for tampered signature")
 	}
 }
@@ -95,17 +95,26 @@ func TestVerifyCosignSignatureBytes_RSA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rsa.SignPKCS1v15: %v", err)
 	}
-	if err := verifyCosignSignatureBytes(&priv.PublicKey, hash[:], sig); err != nil {
+	if err := verifyCosignSignatureBytes(&priv.PublicKey, payload, sig); err != nil {
 		t.Errorf("verify failed for valid RSA signature: %v", err)
 	}
 }
 
+// Cosign keyed-mode ed25519 signs the RAW payload (PureEdDSA), not a
+// pre-computed digest. Verifying must feed the same raw payload back.
+// flate previously fed SHA-256(payload), which produced false-negatives
+// for every legitimate ed25519 signature.
 func TestVerifyCosignSignatureBytes_Ed25519(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	digest := sha256.Sum256([]byte("payload"))
-	sig := ed25519.Sign(priv, digest[:])
-	if err := verifyCosignSignatureBytes(pub, digest[:], sig); err != nil {
+	payload := []byte(`{"critical":{"image":{"docker-manifest-digest":"sha256:abc"}}}`)
+	sig := ed25519.Sign(priv, payload)
+	if err := verifyCosignSignatureBytes(pub, payload, sig); err != nil {
 		t.Errorf("verify failed for valid Ed25519 signature: %v", err)
+	}
+	// Sanity: tamper rejects.
+	sig[0] ^= 0x01
+	if err := verifyCosignSignatureBytes(pub, payload, sig); err == nil {
+		t.Errorf("verify should fail for tampered ed25519 signature")
 	}
 }
 

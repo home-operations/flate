@@ -33,7 +33,6 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 		"baseline path; when set, every command runs in changed-only mode")
 	fs.StringVarP(&f.namespace, "namespace", "n", "",
 		"limit to this namespace (default: every namespace, or just the changed ones when --path-orig is set)")
-	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "label selector (key=value, repeatable)")
 	fs.BoolVar(&f.skipCRDs, "skip-crds", true, "exclude CRD objects from rendered output")
 	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
@@ -42,6 +41,14 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
+}
+
+// bindSelector wires the `-l/--selector` flag. Scoped to commands that
+// actually filter by labels — today, only `get`. Binding it on
+// commands that ignore it (build/diff/test) would silently accept
+// `-l foo=bar` and do nothing.
+func bindSelector(fs *pflag.FlagSet, f *commonFlags) {
+	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "label selector (key=value, repeatable)")
 }
 
 // scopedNamespaces returns the namespace filter the command should

@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 // TestCache_ResetSerializesAgainstSlot exercises the mutex Cache.Reset
@@ -62,9 +61,14 @@ func TestCache_ResetSerializesAgainstSlot(t *testing.T) {
 // allowed.
 func TestCache_SlotSerializesSameKey(t *testing.T) {
 	c := NewCache(t.TempDir())
-	var seq int32
-	var firstReleased, secondAcquired int32
+	var firstReleased, secondAcquired atomic.Bool
 
+	// g1Entered closes when G1 has acquired the slot lock; g2Start
+	// closes after G2 may begin attempting acquisition. Deterministic
+	// — no sleeps — so the test pins the serialization invariant
+	// without depending on scheduler timing.
+	g1Entered := make(chan struct{})
+	g2Start := make(chan struct{})
 	done := make(chan struct{}, 2)
 	go func() {
 		path, _, release, err := c.Slot("https://shared.example/repo", "main")
@@ -73,16 +77,16 @@ func TestCache_SlotSerializesSameKey(t *testing.T) {
 			done <- struct{}{}
 			return
 		}
-		// Hold the lock briefly while a sibling fetcher tries to enter.
-		atomic.AddInt32(&seq, 1)
-		// Write a tiny file to simulate in-progress fetch state.
+		close(g1Entered)
+		// Hold until the harness has launched G2 and confirmed it is
+		// blocked on acquisition.
+		<-g2Start
 		_ = os.WriteFile(filepath.Join(path, ".inprogress"), []byte("x"), 0o600)
-		atomic.StoreInt32(&firstReleased, 1)
+		firstReleased.Store(true)
 		release()
 		done <- struct{}{}
 	}()
-	// Give G1 a moment to take the lock.
-	time.Sleep(5 * time.Millisecond)
+	<-g1Entered // G1 holds the lock.
 	go func() {
 		_, exists, release, err := c.Slot("https://shared.example/repo", "main")
 		if err != nil {
@@ -90,22 +94,24 @@ func TestCache_SlotSerializesSameKey(t *testing.T) {
 			done <- struct{}{}
 			return
 		}
-		// We acquired only after G1 released, so should see exists=true
-		// (G1 wrote a marker file).
-		if atomic.LoadInt32(&firstReleased) != 1 {
-			t.Errorf("second goroutine acquired before first released — serialization failed")
+		// G1 must have released by the time we got the lock.
+		if !firstReleased.Load() {
+			t.Errorf("G2 acquired before G1 released — serialization failed")
 		}
-		atomic.StoreInt32(&secondAcquired, 1)
+		secondAcquired.Store(true)
 		if !exists {
-			t.Errorf("expected exists=true on second acquisition after first wrote a file")
+			t.Errorf("expected exists=true on second acquisition after G1 wrote a file")
 		}
 		release()
 		done <- struct{}{}
 	}()
+	// G2 has been launched and is now blocking on the slot lock. Tell
+	// G1 to finish and release.
+	close(g2Start)
 	<-done
 	<-done
-	if atomic.LoadInt32(&secondAcquired) != 1 {
-		t.Errorf("second goroutine never acquired the slot")
+	if !secondAcquired.Load() {
+		t.Errorf("G2 never acquired the slot")
 	}
 }
 

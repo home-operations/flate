@@ -177,9 +177,8 @@ func (f *Fetcher) verifyCosignSignature(
 			continue
 		}
 		// Try every trusted key — first success wins.
-		hash := sha256.Sum256(payload)
 		for _, k := range keys {
-			verr := verifyCosignSignatureBytes(k, hash[:], sigBytes)
+			verr := verifyCosignSignatureBytes(k, payload, sigBytes)
 			if verr == nil {
 				return nil
 			}
@@ -263,22 +262,28 @@ func parsePEMPublicKeys(b []byte) []crypto.PublicKey {
 	return keys
 }
 
-// verifyCosignSignatureBytes verifies sig over digest using key. Supports
-// the three algorithms cosign's keyed mode emits: ECDSA-P256-SHA256
-// (default), RSA-PKCS1v15-SHA256, and Ed25519 (over the raw payload —
-// here we approximate by feeding the SHA-256 digest, which matches
-// cosign's "PreHashed" flow used for ed25519 signatures).
-func verifyCosignSignatureBytes(key crypto.PublicKey, digest, sig []byte) error {
+// verifyCosignSignatureBytes verifies sig over payload using key.
+// Supports the three algorithms cosign's keyed mode emits:
+//   - ECDSA-P256-SHA256 (default): verify SHA-256(payload).
+//   - RSA-PKCS1v15-SHA256: verify SHA-256(payload).
+//   - Ed25519: verify the RAW payload — ed25519.Verify hashes
+//     internally via the algorithm's PureEdDSA mode, so feeding it a
+//     pre-computed digest (as flate previously did) is wrong and
+//     fails for every legitimate signature. Cosign's keyed mode signs
+//     the raw payload bytes; verification must match.
+func verifyCosignSignatureBytes(key crypto.PublicKey, payload, sig []byte) error {
 	switch k := key.(type) {
 	case *ecdsa.PublicKey:
-		if !ecdsa.VerifyASN1(k, digest, sig) {
+		h := sha256.Sum256(payload)
+		if !ecdsa.VerifyASN1(k, h[:], sig) {
 			return fmt.Errorf("ecdsa verify failed")
 		}
 		return nil
 	case *rsa.PublicKey:
-		return rsa.VerifyPKCS1v15(k, crypto.SHA256, digest, sig)
+		h := sha256.Sum256(payload)
+		return rsa.VerifyPKCS1v15(k, crypto.SHA256, h[:], sig)
 	case ed25519.PublicKey:
-		if !ed25519.Verify(k, digest, sig) {
+		if !ed25519.Verify(k, payload, sig) {
 			return fmt.Errorf("ed25519 verify failed")
 		}
 		return nil

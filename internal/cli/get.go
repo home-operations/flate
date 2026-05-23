@@ -149,6 +149,7 @@ func resourceListCmd[T manifest.BaseManifest](
 		},
 	}
 	bindCommon(cmd.Flags(), c)
+	bindSelector(cmd.Flags(), c)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }

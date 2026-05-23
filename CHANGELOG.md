@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.1.5](https://github.com/home-operations/flate/compare/0.1.4...0.1.5) (2026-05-23)
+
+
+### Bug Fixes
+
+* **bucket:** SECURITY — reject path-traversal escapes from S3 keys ([#171](https://github.com/home-operations/flate/issues/171)) ([42e177b](https://github.com/home-operations/flate/commit/42e177b031c6bc85d12c5aebf524ff7407348e8e))
+* **bucket:** skip VCS/extension default excludes — match source-controller ([#174](https://github.com/home-operations/flate/issues/174)) ([76f7e67](https://github.com/home-operations/flate/commit/76f7e67a595d58c1587c65cefe45cdb9d71f2adc))
+* **cli:** apply --skip-secrets/--skip-crds/--skip-kinds to KS-sourced output ([#182](https://github.com/home-operations/flate/issues/182)) ([dfc4f8f](https://github.com/home-operations/flate/commit/dfc4f8f8e66069a6ff397efe30d381a19bf67f3c))
+* **cli:** gate helm-only flags off KS-only subcommands ([#186](https://github.com/home-operations/flate/issues/186)) ([25f92e5](https://github.com/home-operations/flate/commit/25f92e56afcdfef61b1975fe4d7602828fdb6d56))
+* **depwait:** surface metadata.labels + metadata.annotations to readyExpr CEL ([#172](https://github.com/home-operations/flate/issues/172)) ([5dc3570](https://github.com/home-operations/flate/commit/5dc357077708b0f19b1a123e1c426492a213353d))
+* **helm,values:** honor spec.install.replace; valuesFrom ignores ConfigMap.binaryData ([#180](https://github.com/home-operations/flate/issues/180)) ([bc35489](https://github.com/home-operations/flate/commit/bc35489eacc463d63c2331d33339609d0ef7ffc7))
+* **helm:** exclude CRDs from commonMetadata stamping ([#175](https://github.com/home-operations/flate/issues/175)) ([632e917](https://github.com/home-operations/flate/commit/632e9177126882e03f912527175e65c2dc0dee5f))
+* **helm:** exclude Helm hooks from commonMetadata + origin-label stamps ([#173](https://github.com/home-operations/flate/issues/173)) ([e08e20e](https://github.com/home-operations/flate/commit/e08e20e60c5a2a3538ce0e8dd7c747ceb1719d1f))
+* **manifest:** reject Kustomization with empty sourceRef.name at parse time ([#179](https://github.com/home-operations/flate/issues/179)) ([70648e6](https://github.com/home-operations/flate/commit/70648e6464000755733b3513fdddd410ee57f941))
+* **orchestrator:** apply --skip-kinds in Render() so embedders match CLI ([#183](https://github.com/home-operations/flate/issues/183)) ([87926cc](https://github.com/home-operations/flate/commit/87926ccff4b83c5f31aadd7948912262123df4c8))
+* **orchestrator:** detect dependsOn cycles up-front, strip cycle edges ([#178](https://github.com/home-operations/flate/issues/178)) ([bd25c6b](https://github.com/home-operations/flate/commit/bd25c6b88c1f998c40b42018b2e1823baaf464f1))
+* **resourceset:** reject inputStrategy=Permute instead of silent fall-through ([#176](https://github.com/home-operations/flate/issues/176)) ([ac548dc](https://github.com/home-operations/flate/commit/ac548dc026cc47fb9d39880ebbae687c7cafeeb9))
+* **testrunner,orchestrator:** apply TrimSentinelPrefix at user-facing boundaries ([#185](https://github.com/home-operations/flate/issues/185)) ([d63ba9e](https://github.com/home-operations/flate/commit/d63ba9e655e0f8cb5f18c2e22f0269b78e781434))
+
+
+### Documentation
+
+* strip README to elegant, concise, digestible form ([#163](https://github.com/home-operations/flate/issues/163)) ([a5b3f3e](https://github.com/home-operations/flate/commit/a5b3f3eff679e8afa02ed0a29fa59beada923669))
+* surface kustomize.Prepare alongside helm.Prepare ([#168](https://github.com/home-operations/flate/issues/168)) ([97f9116](https://github.com/home-operations/flate/commit/97f91169aa6c046a2a83b49c2b355adf7df943ee))
+
+
+### Miscellaneous Chores
+
+* add flate install gh action ([39ecdfe](https://github.com/home-operations/flate/commit/39ecdfeb38a313394f46c291475ca9d943dc6e20))
+
+
+### Code Refactoring
+
+* **cli:** consume Orchestrator.Render() instead of reaching into Store ([#166](https://github.com/home-operations/flate/issues/166)) ([03ee28d](https://github.com/home-operations/flate/commit/03ee28deeacfb87b12c349d0590cb5e77ee1a955))
+* **helm:** route HelmChartSource through SourceResolver ([#184](https://github.com/home-operations/flate/issues/184)) ([2e212d9](https://github.com/home-operations/flate/commit/2e212d9daa6127a3e8d4a9fe6205a6ffe9345254))
+* **kustomize:** add Prepare helper symmetric to helm.Prepare ([#167](https://github.com/home-operations/flate/issues/167)) ([00a5633](https://github.com/home-operations/flate/commit/00a563345b31ab9bfa96f22ed44154862e50a2be))
+* **manifest:** move trimFluxPrefix → manifest.TrimSentinelPrefix ([#181](https://github.com/home-operations/flate/issues/181)) ([6135708](https://github.com/home-operations/flate/commit/61357088a2aeaeef92165ef45adc018cafcfa494))
+* **manifest:** split helm.go into per-kind files ([#188](https://github.com/home-operations/flate/issues/188)) ([1126153](https://github.com/home-operations/flate/commit/1126153bcf214179868cdf11102229be76803d28))
+* **orchestrator,kustomization:** extract finalize + emitRenderedChildren ([#187](https://github.com/home-operations/flate/issues/187)) ([3389fdf](https://github.com/home-operations/flate/commit/3389fdfb7e2445bc09509862b501565710510d14))
+* **store:** move rendered-set bookkeeping out into orchestrator ([#177](https://github.com/home-operations/flate/issues/177)) ([4d92319](https://github.com/home-operations/flate/commit/4d92319ebfdce7c6d5e39dfd31a4e0341524b4ef))
+* **store:** split methods across topic files (objects/status/artifacts/events/rendered) ([#170](https://github.com/home-operations/flate/issues/170)) ([372f366](https://github.com/home-operations/flate/commit/372f36613140474b954bd8e7a7451e5ecd074295))
+
 ## [0.1.4](https://github.com/home-operations/flate/compare/0.1.3...0.1.4) (2026-05-23)
 
 

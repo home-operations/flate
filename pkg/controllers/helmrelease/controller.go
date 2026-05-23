@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
-	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -28,9 +27,9 @@ import (
 // Controller orchestrates HelmRelease reconciliation. Reconcile-shaping
 // state (Filter) flows in via Configure exactly once before Start.
 type Controller struct {
-	Store *store.Store
-	Tasks *task.Service
-	Helm  *helm.Client
+	*base.Controller
+
+	Helm *helm.Client
 
 	// Options applied to every template call.
 	Options helm.Options
@@ -38,13 +37,6 @@ type Controller struct {
 	// WipeSecrets controls whether secrets are wiped from rendered
 	// templates.
 	WipeSecrets bool
-
-	// Set via Configure() — see Options.
-	filter *change.Filter
-
-	started atomic.Bool
-	unsub   []store.Unsubscribe
-	coal    *task.Coalescer[manifest.NamedResource]
 
 	chartSourcesMu sync.RWMutex
 	chartSources   map[string]*manifest.HelmChartSource
@@ -58,33 +50,29 @@ type ReconcileOptions struct {
 	Filter *change.Filter
 }
 
+// New constructs a HelmRelease controller.
+func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wipeSecrets bool) *Controller {
+	return &Controller{
+		Controller:   base.New(s, t),
+		Helm:         h,
+		Options:      opts,
+		WipeSecrets:  wipeSecrets,
+		chartSources: map[string]*manifest.HelmChartSource{},
+	}
+}
+
 // Configure installs the post-bootstrap state. Panics if called after
 // Start — encodes the invariant that reconcile-shaping config is
 // read-only once dispatch begins.
 func (c *Controller) Configure(opts ReconcileOptions) {
-	if c.started.Load() {
-		panic("helmrelease controller: Configure called after Start")
-	}
-	c.filter = opts.Filter
+	c.SetFilter(opts.Filter)
 }
 
 // Start registers the listeners. The controller runs until Close.
 func (c *Controller) Start(ctx context.Context) {
-	c.started.Store(true)
-	c.coal = task.NewCoalescer[manifest.NamedResource](c.Tasks)
-	c.chartSources = map[string]*manifest.HelmChartSource{}
-	c.unsub = append(c.unsub,
-		c.Store.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx), true),
-		c.Store.AddListener(store.EventArtifactUpdated, c.onArtifactUpdated, true),
-	)
-}
-
-// Close removes listeners.
-func (c *Controller) Close() {
-	for _, u := range c.unsub {
-		u()
-	}
-	c.unsub = nil
+	c.StartLifecycle("helmrelease")
+	c.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx))
+	c.AddListener(store.EventArtifactUpdated, c.onArtifactUpdated)
 }
 
 func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
@@ -118,15 +106,10 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 			if !ok {
 				return
 			}
-			if hr.Suspend {
-				c.Store.UpdateStatus(id, store.StatusReady, "suspended")
+			if c.PreGate(id, hr.Suspend) {
 				return
 			}
-			if c.filter.Enabled() && !c.filter.ShouldReconcile(id) {
-				c.Store.UpdateStatus(id, store.StatusReady, "unchanged")
-				return
-			}
-			c.coal.Submit(ctx, "helmrelease/"+id.String(), id, func(ctx context.Context) {
+			c.Submit(ctx, id, func(ctx context.Context) {
 				base.RunWithStatus(ctx, c.Store, id, "helmrelease", c.reconcile)
 			})
 		}

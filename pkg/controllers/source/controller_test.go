@@ -33,7 +33,10 @@ func newController(t *testing.T, fetchers map[string]src.Fetcher) (*Controller, 
 	t.Helper()
 	st := store.New()
 	ts := task.New()
-	c := &Controller{Store: st, Tasks: ts, Fetchers: fetchers}
+	c := New(st, ts)
+	for k, f := range fetchers {
+		c.Fetchers[k] = f
+	}
 	c.Start(context.Background())
 	t.Cleanup(func() {
 		c.Close()
@@ -152,7 +155,8 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 		"",
 		mapLister{},
 	)
-	c := &Controller{Store: st, Tasks: ts, Fetchers: map[string]src.Fetcher{manifest.KindGitRepository: f}}
+	c := New(st, ts)
+	c.Fetchers[manifest.KindGitRepository] = f
 	c.Configure(FetchOptions{Filter: filter})
 	c.Start(context.Background())
 	t.Cleanup(func() {

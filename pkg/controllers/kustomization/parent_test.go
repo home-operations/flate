@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // TestCollectDeps_AppendsStructuralParent locks the contract that
@@ -16,7 +17,7 @@ func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
 	}
 	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
 
-	c := &Controller{}
+	c := New(store.New(), nil, nil, false)
 	c.Configure(Options{ParentOf: map[manifest.NamedResource]manifest.NamedResource{
 		child.Named(): parent,
 	}})
@@ -33,7 +34,7 @@ func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
 // controllers (e.g. unit-test setups) panicking on a nil map.
 func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
 	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
-	c := &Controller{} // ParentOf nil
+	c := New(store.New(), nil, nil, false) // ParentOf nil
 	deps := c.collectDeps(child)
 	if len(deps) != 0 {
 		t.Errorf("expected no deps for KS without sourceRef/dependsOn/parent; got %+v", deps)

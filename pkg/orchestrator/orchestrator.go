@@ -126,36 +126,31 @@ func New(cfg Config) (*Orchestrator, error) {
 		return s
 	}
 	helmClient.SetSecretGetter(helm.SecretGetter(secretGet))
-	fetchers := map[string]source.Fetcher{
-		manifest.KindGitRepository:    &git.Fetcher{Cache: cache, Secrets: secretGet},
-		manifest.KindExternalArtifact: &external.Fetcher{},
-		manifest.KindBucket:           &bucket.Fetcher{Cache: cache, Secrets: secretGet},
-		// HelmRepository: existence-only — flate resolves charts via the
-		// Helm client's registry/repo machinery directly, the controller
-		// just needs the resource to land in Ready so HelmRelease deps
-		// unblock.
-		manifest.KindHelmRepository: source.ExistenceFetcher{},
-	}
+	srcCtrl := sourcectrl.New(st, ts)
+	srcCtrl.Fetchers[manifest.KindGitRepository] = &git.Fetcher{Cache: cache, Secrets: secretGet}
+	srcCtrl.Fetchers[manifest.KindExternalArtifact] = &external.Fetcher{}
+	srcCtrl.Fetchers[manifest.KindBucket] = &bucket.Fetcher{Cache: cache, Secrets: secretGet}
+	// HelmRepository: existence-only — flate resolves charts via the
+	// Helm client's registry/repo machinery directly, the controller
+	// just needs the resource to land in Ready so HelmRelease deps
+	// unblock.
+	srcCtrl.Fetchers[manifest.KindHelmRepository] = source.ExistenceFetcher{}
 	if cfg.EnableOCI {
-		fetchers[manifest.KindOCIRepository] = &oci.Fetcher{
+		srcCtrl.Fetchers[manifest.KindOCIRepository] = &oci.Fetcher{
 			Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet,
 		}
 	} else {
 		// --enable-oci=false: skip the real fetch but still mark each
 		// OCIRepository Ready so HRs that dependsOn one don't time out.
-		fetchers[manifest.KindOCIRepository] = source.ExistenceFetcher{}
+		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.ExistenceFetcher{}
 	}
 	o := &Orchestrator{
-		cfg:   cfg,
-		store: st,
-		tasks: ts,
-		src: &sourcectrl.Controller{
-			Store:    st,
-			Tasks:    ts,
-			Fetchers: fetchers,
-		},
-		ksc:     &kustomization.Controller{Store: st, Tasks: ts, Staging: staging, WipeSecrets: cfg.WipeSecrets},
-		hrc:     &helmrelease.Controller{Store: st, Tasks: ts, Helm: helmClient, Options: cfg.HelmOptions, WipeSecrets: cfg.WipeSecrets},
+		cfg:     cfg,
+		store:   st,
+		tasks:   ts,
+		src:     srcCtrl,
+		ksc:     kustomization.New(st, ts, staging, cfg.WipeSecrets),
+		hrc:     helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
 		helm:    helmClient,
 		staging: staging,
 	}

@@ -30,7 +30,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 		Kind: manifest.KindGitRepository, URL: "file:///repo", LocalPath: "/repo",
 	})
 
-	c := &Controller{Store: s}
+	c := New(s, nil, nil, false)
 	ks := &manifest.Kustomization{
 		Name: "foo", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{
@@ -71,7 +71,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 		Kind: manifest.KindGitRepository, URL: "file:///repo", LocalPath: "/repo",
 	})
 
-	c := &Controller{Store: s}
+	c := New(s, nil, nil, false)
 	ks := &manifest.Kustomization{
 		Name: "foo", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./app"},
@@ -92,7 +92,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 // net for setups that genuinely have neither — error rather than mis-
 // resolve.
 func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
-	c := &Controller{Store: store.New()}
+	c := New(store.New(), nil, nil, false)
 	ks := &manifest.Kustomization{
 		Name: "foo", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./app"},

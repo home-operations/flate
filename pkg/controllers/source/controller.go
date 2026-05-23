@@ -1,5 +1,5 @@
 // Package source reconciles Flux source CRs (GitRepository,
-// OCIRepository, future: Bucket, ExternalArtifact, …) into on-disk
+// OCIRepository, Bucket, ExternalArtifact, HelmRepository) into on-disk
 // artifacts via per-kind Fetcher implementations from pkg/source, then
 // publishes the result to the Store. Mirrors
 // pkg/controllers/{kustomization,helmrelease}.
@@ -12,7 +12,6 @@ package source
 import (
 	"context"
 	"log/slog"
-	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -24,24 +23,15 @@ import (
 
 // Controller watches the Store for source-kind objects, fetches each
 // into an on-disk artifact via the matching Fetcher, and updates the
-// Store with the result. Reconcile-shaping state (Filter) flows in
-// via Configure exactly once before Start.
+// Store with the result.
 type Controller struct {
-	Store *store.Store
-	Tasks *task.Service
+	*base.Controller
 
 	// Fetchers maps source CR kind → Fetcher implementation. Source
 	// kinds with no entry are ignored, which is also how a flate caller
 	// disables a kind (e.g. EnableOCI=false simply omits OCIRepository
-	// from the map).
+	// from the map). Exposed for Orchestrator.WithFetcher.
 	Fetchers map[string]src.Fetcher
-
-	// Set via Configure() — see FetchOptions.
-	filter *change.Filter
-
-	started       atomic.Bool
-	unsubscribers []store.Unsubscribe
-	coal          *task.Coalescer[manifest.NamedResource]
 }
 
 // FetchOptions carries the post-bootstrap state the orchestrator wires
@@ -51,31 +41,26 @@ type FetchOptions struct {
 	Filter *change.Filter
 }
 
+// New constructs a source controller. Register fetchers on the
+// returned struct's Fetchers map before Start.
+func New(s *store.Store, t *task.Service) *Controller {
+	return &Controller{
+		Controller: base.New(s, t),
+		Fetchers:   map[string]src.Fetcher{},
+	}
+}
+
 // Configure installs the post-bootstrap state. Panics if called after
 // Start.
 func (c *Controller) Configure(opts FetchOptions) {
-	if c.started.Load() {
-		panic("source controller: Configure called after Start")
-	}
-	c.filter = opts.Filter
+	c.SetFilter(opts.Filter)
 }
 
 // Start registers listeners on the Store. The controller runs until
 // Close is called.
 func (c *Controller) Start(ctx context.Context) {
-	c.started.Store(true)
-	c.coal = task.NewCoalescer[manifest.NamedResource](c.Tasks)
-	c.unsubscribers = append(c.unsubscribers,
-		c.Store.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx), true),
-	)
-}
-
-// Close removes all listeners.
-func (c *Controller) Close() {
-	for _, u := range c.unsubscribers {
-		u()
-	}
-	c.unsubscribers = nil
+	c.StartLifecycle("source")
+	c.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx))
 }
 
 func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
@@ -88,34 +73,18 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 		if !ok {
 			return
 		}
-		if sus, ok := obj.(src.Suspendable); ok && sus.Suspended() {
-			c.Store.UpdateStatus(id, store.StatusReady, "suspended")
-			return
-		}
-		if c.skip(id) {
+		sus, _ := obj.(src.Suspendable)
+		if c.PreGate(id, sus != nil && sus.Suspended()) {
 			return
 		}
 		// Coalesce per-id so a duplicate AddObject for the same source
 		// (e.g. a parent KS re-emits a child source on re-render)
 		// doesn't race two concurrent fetches into the same cache slot.
-		c.coal.Submit(ctx, "source/"+id.String(), id, func(ctx context.Context) {
+		c.Submit(ctx, id, func(ctx context.Context) {
 			defer base.Recover(c.Store, id, "source")
 			c.runFetch(ctx, id, obj, fetcher)
 		})
 	}
-}
-
-// skip applies the change filter and marks unaffected sources Ready
-// without fetching so dependsOn waits succeed instantly.
-func (c *Controller) skip(id manifest.NamedResource) bool {
-	if !c.filter.Enabled() {
-		return false
-	}
-	if c.filter.ShouldReconcile(id) {
-		return false
-	}
-	c.Store.UpdateStatus(id, store.StatusReady, "unchanged")
-	return true
 }
 
 // runFetch invokes the registered Fetcher and translates the result

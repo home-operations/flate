@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 
 	yaml "go.yaml.in/yaml/v4"
 
@@ -25,14 +24,13 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// Controller orchestrates Kustomization reconciliation. Construction
-// args are immutable from the outside; reconcile-shaping state (Filter,
-// ParentOf) flows in via Configure exactly once before Start. The
-// invariant — "config is read-only after Start" — is encoded in the
-// type, not just in code review.
+// Controller orchestrates Kustomization reconciliation. Reconcile-
+// shaping state (Filter, ParentOf) flows in via Configure exactly once
+// before Start. The invariant — "config is read-only after Start" — is
+// encoded in the embedded *base.Controller, not just in code review.
 type Controller struct {
-	Store *store.Store
-	Tasks *task.Service
+	*base.Controller
+
 	// Staging is a process-wide cache that materializes source roots
 	// into writable copies so Flux's Generator can write the merged
 	// kustomization.yaml without touching the user's working tree.
@@ -43,12 +41,7 @@ type Controller struct {
 	WipeSecrets bool
 
 	// Set via Configure() — see Options.
-	filter   *change.Filter
 	parentOf map[manifest.NamedResource]manifest.NamedResource
-
-	started atomic.Bool
-	unsub   []store.Unsubscribe
-	coal    *task.Coalescer[manifest.NamedResource]
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto
@@ -64,32 +57,27 @@ type Options struct {
 	ParentOf map[manifest.NamedResource]manifest.NamedResource
 }
 
+// New constructs a Kustomization controller.
+func New(s *store.Store, t *task.Service, staging *kustomize.StagingCache, wipeSecrets bool) *Controller {
+	return &Controller{
+		Controller:  base.New(s, t),
+		Staging:     staging,
+		WipeSecrets: wipeSecrets,
+	}
+}
+
 // Configure installs the post-bootstrap state. Panics if called after
 // Start — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
 func (c *Controller) Configure(opts Options) {
-	if c.started.Load() {
-		panic("kustomization controller: Configure called after Start")
-	}
-	c.filter = opts.Filter
+	c.SetFilter(opts.Filter)
 	c.parentOf = opts.ParentOf
 }
 
 // Start registers the listener that drives reconciliation.
 func (c *Controller) Start(ctx context.Context) {
-	c.started.Store(true)
-	c.coal = task.NewCoalescer[manifest.NamedResource](c.Tasks)
-	c.unsub = append(c.unsub,
-		c.Store.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx), true),
-	)
-}
-
-// Close removes listeners.
-func (c *Controller) Close() {
-	for _, u := range c.unsub {
-		u()
-	}
-	c.unsub = nil
+	c.StartLifecycle("kustomization")
+	c.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx))
 }
 
 func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
@@ -101,15 +89,10 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 		if !ok {
 			return
 		}
-		if ks.Suspend {
-			c.Store.UpdateStatus(id, store.StatusReady, "suspended")
+		if c.PreGate(id, ks.Suspend) {
 			return
 		}
-		if c.filter.Enabled() && !c.filter.ShouldReconcile(id) {
-			c.Store.UpdateStatus(id, store.StatusReady, "unchanged")
-			return
-		}
-		c.coal.Submit(ctx, "kustomization/"+id.String(), id, func(ctx context.Context) {
+		c.Submit(ctx, id, func(ctx context.Context) {
 			base.RunWithStatus(ctx, c.Store, id, "kustomization", c.reconcile)
 		})
 	}

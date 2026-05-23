@@ -220,7 +220,10 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 		if rel == "" {
 			rel = filepath.Base(e.key)
 		}
-		dst := filepath.Join(slot, filepath.FromSlash(rel))
+		dst, err := safeJoinUnderSlot(slot, rel)
+		if err != nil {
+			return nil, "", fmt.Errorf("bucket key %q: %w", e.key, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 			return nil, "", err
 		}
@@ -241,6 +244,27 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 		keys = append(keys, e.key)
 	}
 	return keys, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// safeJoinUnderSlot resolves rel against slot and rejects any result
+// that would escape slot via path traversal (`..` segments) or absolute
+// paths. S3 keys are arbitrary strings; a bucket owner — accidentally
+// or deliberately — can produce a key whose filepath.FromSlash form
+// contains ../ enough times to climb past slot, and filepath.Join
+// happily cleans the climb-out without complaint. Without this guard,
+// such a key writes arbitrary files on the host. Mirrors the
+// extractTarGz protection in pkg/source/oci/layer.go.
+func safeJoinUnderSlot(slot, rel string) (string, error) {
+	joined := filepath.Join(slot, filepath.FromSlash(rel))
+	cleanSlot := filepath.Clean(slot)
+	relInside, err := filepath.Rel(cleanSlot, joined)
+	if err != nil {
+		return "", fmt.Errorf("path resolution: %w", err)
+	}
+	if relInside == ".." || strings.HasPrefix(relInside, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path traversal: %q escapes cache slot", rel)
+	}
+	return joined, nil
 }
 
 func downloadObject(ctx context.Context, client *minio.Client, bucket, key, dst string) error {

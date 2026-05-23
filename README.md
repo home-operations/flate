@@ -248,7 +248,6 @@ One-file PRs in a 70-Kustomization repo drop reconcile time from seconds to tens
 | `-o` | Effect |
 |---|---|
 | `table` _(default for `get`)_ | Aligned columns. |
-| `wide` | Extra columns (`get` only). |
 | `yaml` | Multi-document YAML. |
 | `json` | One JSON array. |
 | `name` | `<namespace>/<name>` per line — script-friendly. |
@@ -266,7 +265,7 @@ All output is written to stdout — redirect with `> file.yaml` to capture it. L
 | `--path-orig` | _(unset)_ | Baseline path; enables changed-only mode for every command. |
 | `-n`, `--namespace` | _(all)_ | Limit to a single namespace. Auto-scopes to the touched namespaces in changed-only mode. |
 | `-l`, `--selector` | _(none)_ | `key=value` label selector, repeatable. |
-| `-o`, `--output` | `table` | `table` / `wide` / `yaml` / `json` / `name`. |
+| `-o`, `--output` | `table` | `table` / `yaml` / `json` / `name`. |
 | `--skip-crds` | `true` | Drop CRD objects from rendered output. |
 | `--skip-secrets` | `true` | Drop Secret objects from rendered output. |
 | `--skip-kinds` | _(none)_ | Extra kinds to drop, repeatable. |

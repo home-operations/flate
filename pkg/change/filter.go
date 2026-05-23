@@ -35,7 +35,10 @@ type nameKey struct{ kind, name string }
 //     owns it (longest matching spec.path, including spec.components)
 //     is kept — along with every resource whose source file shares
 //     the same owner.
-//  3. BFS over chart sources, sourceRef, and valuesFrom to pull in
+//  3. Ancestor Kustomizations (shorter-prefix spec.path matches) are
+//     also kept so parent-injected patches / postBuild.substituteFrom
+//     land before the leaf renders. See #58.
+//  4. BFS over chart sources, sourceRef, and valuesFrom to pull in
 //     upstream dependencies. dependsOn is intentionally excluded.
 func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister) *Filter {
 	f := &Filter{

@@ -37,7 +37,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.BoolVar(&f.skipCRDs, "skip-crds", true, "exclude CRD objects from rendered output")
 	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
-	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, wide, yaml, json, name")
+	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, yaml, json, name")
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,

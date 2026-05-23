@@ -1,7 +1,8 @@
 // Package kustomization reconciles Flux Kustomizations: wait on
-// dependsOn/sourceRef, resolve postBuild substitutions, run the
-// kustomize SDK, parse the result back into the Store, and publish a
-// KustomizationArtifact. Failures bubble up to the orchestrator.
+// dependsOn / sourceRef / structural parent, resolve postBuild
+// substitutions, run the kustomize SDK, parse the result back into the
+// Store, and publish a KustomizationArtifact. Failures bubble up to
+// the orchestrator.
 package kustomization
 
 import (

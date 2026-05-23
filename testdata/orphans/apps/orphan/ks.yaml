@@ -1,7 +1,8 @@
 # This ks.yaml exists in the file tree but the parent
 # ./apps/kustomization.yaml never references it. Real Flux would not
 # reconcile it. flate should treat it as an orphan: warning, not failure.
-# The unresolved ${MISSING} would otherwise fail the build.
+# The non-existent spec.path would otherwise fail the build with
+# "kustomization path does not exist".
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -9,12 +10,9 @@ metadata:
   namespace: flux-system
 spec:
   interval: 10m
-  path: ./apps/orphan/app
+  path: ./apps/orphan/does-not-exist
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
   targetNamespace: orphan
-  postBuild:
-    substitute:
-      EXISTS: present

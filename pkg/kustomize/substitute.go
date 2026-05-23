@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/fluxcd/pkg/envsubst"
 )
@@ -20,36 +19,21 @@ import (
 //     recognized by envsubst are emitted literally, not erroneously
 //     matched as bare variable references (a divergence the
 //     previous regex-based implementation had).
-//   - Undefined ${VAR} without a default returns a "postBuild:
-//     variable %q is undefined and has no default" error, matching
-//     the message flate has always surfaced.
+//   - Undefined ${VAR} without a default expands to the empty string,
+//     matching kustomize-controller's default (strict mode is the
+//     opt-in `StrictPostBuildSubstitutions` feature gate, off by
+//     default). Returning the empty string with exists=true keeps
+//     envsubst out of its strict-mode error path and lines flate up
+//     with what real Flux renders against an incomplete substitute
+//     map.
 func Substitute(data []byte, vars map[string]string) ([]byte, error) {
 	out, err := envsubst.Eval(string(data), func(s string) (string, bool) {
-		v, exists := vars[s]
-		return v, exists
+		return vars[s], true
 	})
 	if err != nil {
-		if name, ok := extractMissingVar(err); ok {
-			return nil, fmt.Errorf("postBuild: variable %q is undefined and has no default", name)
-		}
 		return nil, fmt.Errorf("postBuild: %w", err)
 	}
 	return []byte(out), nil
-}
-
-// extractMissingVar pulls the variable name out of envsubst's
-// "variable not set (strict mode): \"NAME\"" error so flate can
-// surface the same diagnostic shape it always has.
-func extractMissingVar(err error) (string, bool) {
-	_, rest, found := strings.Cut(err.Error(), `(strict mode): "`)
-	if !found {
-		return "", false
-	}
-	name, _, ok := strings.Cut(rest, `"`)
-	if !ok {
-		return "", false
-	}
-	return name, true
 }
 
 // ErrSubstitution wraps any non-missing-var failure from the

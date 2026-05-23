@@ -34,7 +34,9 @@ func TrimSentinelPrefix(msg string) string {
 		"object not found",
 		"invalid values reference",
 		"invalid substitute reference",
-		"command error":
+		"command error",
+		"missing secret",
+		"source skipped":
 		return rest[i+2:]
 	}
 	return rest
@@ -50,6 +52,24 @@ var (
 	ErrInvalidValuesReference     = fmt.Errorf("%w: invalid values reference", ErrFlux)
 	ErrInvalidSubstituteReference = fmt.Errorf("%w: invalid substitute reference", ErrFlux)
 	ErrCommand                    = fmt.Errorf("%w: command error", ErrFlux)
+	// ErrMissingSecret signals that a source's auth SecretRef couldn't
+	// be resolved — either the referenced Secret isn't in the offline
+	// tree, or it's present but its values were wiped to PLACEHOLDER
+	// strings by --wipe-secrets (the typical ExternalSecret case: the
+	// Secret manifest exists but its data is materialized live, not in
+	// git). The orchestrator's --allow-missing-secrets flag turns this
+	// into a skip rather than a failure.
+	//
+	// Scope: auth secretRef ONLY. Verify (cosign/PGP), certSecretRef,
+	// and proxySecretRef sites intentionally still fail loud — silently
+	// dropping verification or proxy/TLS material is a security
+	// downgrade flate refuses to make implicit.
+	ErrMissingSecret = fmt.Errorf("%w: missing secret", ErrFlux)
+	// ErrSourceSkipped signals that a downstream consumer (KS sourceRef,
+	// HR chartRef) cannot proceed because its source was skipped —
+	// typically by --allow-missing-secrets. Consumers translate this
+	// into their own skip rather than a hard failure.
+	ErrSourceSkipped = fmt.Errorf("%w: source skipped", ErrFlux)
 )
 
 // inputf formats an input error.

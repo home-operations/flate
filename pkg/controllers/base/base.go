@@ -14,6 +14,7 @@ package base
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -150,6 +151,16 @@ func RunWithStatus[T manifest.BaseManifest](
 		return
 	}
 	if err := fn(ctx, obj); err != nil {
+		// ErrSourceSkipped propagates a soft-skip from a referenced
+		// source (e.g. --allow-missing-secrets on its auth secret) up
+		// to this consumer. Mark Ready with a "skipped:" message
+		// rather than Failed so depwait treats us as ready and the
+		// test runner reports SKIPPED, matching the source's outcome.
+		if errors.Is(err, manifest.ErrSourceSkipped) {
+			s.UpdateStatus(id, store.StatusReady,
+				store.SkippedPrefix+" "+manifest.TrimSentinelPrefix(err.Error()))
+			return
+		}
 		s.UpdateStatus(id, store.StatusFailed, err.Error())
 		return
 	}

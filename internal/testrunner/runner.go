@@ -124,6 +124,15 @@ func classify(s *store.Store, id manifest.NamedResource) Case {
 		return Case{ID: id, Outcome: OutcomeFailed, Reason: manifest.TrimSentinelPrefix(info.Message)}
 	case info.Status == store.StatusReady && info.Message == "unchanged":
 		return Case{ID: id, Outcome: OutcomeSkipped, Reason: "unchanged"}
+	case store.IsSkipped(info):
+		// Strip the `skipped: ` convention prefix from the stored
+		// message — the column already prints SKIPPED, so leading the
+		// reason with "skipped:" again is duplicate labeling. Inner
+		// propagated "skipped:" prefixes (a consumer wrapping its
+		// source's skip message) survive verbatim — they're load-
+		// bearing for the user (KS → which OCIRepo? why?).
+		return Case{ID: id, Outcome: OutcomeSkipped,
+			Reason: strings.TrimSpace(strings.TrimPrefix(info.Message, store.SkippedPrefix))}
 	case info.Status == store.StatusReady:
 		return Case{ID: id, Outcome: OutcomePassed}
 	default:

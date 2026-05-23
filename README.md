@@ -71,13 +71,15 @@ flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
 | `Bucket` | `generic` only | `accesskey` + `secretkey`. `aws`/`gcp`/`azure` fail loud — use static creds. |
 | `ExternalArtifact` | `file://` only | `status.artifact.url` must be a local path. |
 
-PLACEHOLDER-wiped values (the always-on `--skip-secrets` behavior) are treated as missing — auth fails with a clear "missing username/password" instead of attempting auth with the placeholder string.
+PLACEHOLDER-wiped values (the always-on wipe of cleartext Secret data) are treated as missing — auth fails with a clear "missing username/password" instead of attempting auth with the placeholder string. Pass `--allow-missing-secrets` to convert these failures (and Secrets absent from the tree entirely) into a SKIPPED outcome; downstream Kustomizations and HelmReleases propagate the skip. Verify, cert, and proxy `secretRef`s are out of scope — they still fail loud, since silently dropping verification or TLS material is a security downgrade.
 
 ## Behaviors
 
 **SOPS** — `spec.decryption` is not implemented. Encrypted Secret values get wiped to `..PLACEHOLDER_<key>..`, same as cleartext values under the always-on wipe. Downstream `postBuild.substituteFrom` lookups resolve to the placeholder string rather than failing.
 
 **`spec.suspend`** — honored on every reconcilable CR. Suspended resources mark `Ready / "suspended"` and produce no rendered output.
+
+**`--allow-missing-secrets`** — off by default. When set, a source whose auth `secretRef` is missing or PLACEHOLDER-wiped marks `Ready / "skipped: …"` instead of `Failed`, and consumers (KS `sourceRef`, HR `chartRef`) propagate the skip so `flate test` reports SKIPPED rather than a cascade of FAILED. Intended for repos that materialize auth on the live cluster via ExternalSecret / SealedSecret. Typos in `secretRef.name` are rejected at parse time so they don't silently fall into this path.
 
 **`spec.dependsOn[].readyExpr` (CEL)** — evaluated against `self` and `dep` projections, matching upstream kustomize- and helm-controller binding:
 

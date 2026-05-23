@@ -3,6 +3,8 @@ package source
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,6 +142,54 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 	}
 	st.AddObject(oci)
 	waitForStatus(t, st, oci.Named(), store.StatusReady)
+}
+
+func TestController_AllowMissingSecretsConvertsFailureToSkip(t *testing.T) {
+	f := &fakeFetcher{err: fmt.Errorf("%w: OCIRepository ns/r: secret ns/ghcr-creds not found",
+		manifest.ErrMissingSecret)}
+
+	st := store.New()
+	ts := task.New()
+	c := New(st, ts)
+	c.Fetchers[manifest.KindOCIRepository] = f
+	c.Configure(FetchOptions{AllowMissingSecrets: true})
+	c.Start(context.Background())
+	t.Cleanup(func() {
+		c.Close()
+		ts.BlockTillDone()
+	})
+
+	repo := &manifest.OCIRepository{
+		Name: "r", Namespace: "ns",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+	}
+	st.AddObject(repo)
+
+	info := waitForStatus(t, st, repo.Named(), store.StatusReady)
+	if !store.IsSkipped(info) {
+		t.Errorf("expected skipped status, got %+v", info)
+	}
+	if !strings.Contains(info.Message, "ghcr-creds") {
+		t.Errorf("skip message should preserve the underlying error; got %q", info.Message)
+	}
+	if art := st.GetArtifact(repo.Named()); art != nil {
+		t.Errorf("skipped source must not produce an artifact; got %+v", art)
+	}
+}
+
+func TestController_AllowMissingSecretsOffStillFails(t *testing.T) {
+	// Same error, but flag is off — should fail.
+	f := &fakeFetcher{err: fmt.Errorf("%w: OCIRepository ns/r: secret ns/ghcr-creds not found",
+		manifest.ErrMissingSecret)}
+	_, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
+
+	repo := &manifest.OCIRepository{
+		Name: "r", Namespace: "ns",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+	}
+	st.AddObject(repo)
+
+	waitForStatus(t, st, repo.Named(), store.StatusFailed)
 }
 
 func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {

@@ -41,6 +41,17 @@ func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	if cr.Spec.Type == "" {
 		cr.Spec.Type = RepoTypeDefault
 	}
+	owner := cr.Namespace + "/" + cr.Name
+	if r := cr.Spec.SecretRef; r != nil {
+		if err := validateSecretRefName("HelmRepository", owner, "spec.secretRef", r.Name); err != nil {
+			return nil, err
+		}
+	}
+	if r := cr.Spec.CertSecretRef; r != nil {
+		if err := validateSecretRefName("HelmRepository", owner, "spec.certSecretRef", r.Name); err != nil {
+			return nil, err
+		}
+	}
 	return &HelmRepository{
 		Name:               cr.Name,
 		Namespace:          cr.Namespace,

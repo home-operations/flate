@@ -1,10 +1,25 @@
 package store
 
 import (
+	"strings"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// SkippedPrefix is the message prefix UpdateStatus carries when a
+// resource was soft-skipped (e.g. by --allow-missing-secrets). Status
+// remains StatusReady — depwait treats the resource as ready so deps
+// unblock — but consumers can detect the skip via IsSkipped to
+// propagate it (KS resolveSourceRoot, test runner classification).
+const SkippedPrefix = "skipped:"
+
+// IsSkipped reports whether info represents a soft-skip — i.e. a
+// StatusReady whose message starts with SkippedPrefix.
+func IsSkipped(info StatusInfo) bool {
+	return info.Status == StatusReady && strings.HasPrefix(info.Message, SkippedPrefix)
+}
 
 // Status is the processing state of a resource as projected from its
 // Ready condition. Kept as a high-level rollup for callers (depwait,

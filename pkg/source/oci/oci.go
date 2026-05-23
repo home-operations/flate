@@ -113,15 +113,23 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
-		return "", noCleanup, fmt.Errorf("OCIRepository %s/%s: secret %s/%s not found",
-			repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
+		return "", noCleanup, fmt.Errorf("%w: OCIRepository %s/%s: secret %s/%s not found",
+			manifest.ErrMissingSecret, repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
 	}
 	configJSON := source.StringFromSecret(sec, ".dockerconfigjson")
 	if configJSON == "" {
+		// Empty here covers both (a) the Secret has no .dockerconfigjson
+		// key at all and (b) the key exists but `--wipe-secrets` (always
+		// on) replaced its value with PLACEHOLDER, which StringFromSecret
+		// returns as "". The ExternalSecret case in #190 hits (b): the
+		// Secret manifest is in-tree but its data is materialized live.
+		// Same ErrMissingSecret sentinel so --allow-missing-secrets
+		// covers both — matching only the literal "secret not found"
+		// path would leave the actual reporter's case still failing.
 		return "", noCleanup, fmt.Errorf(
-			"OCIRepository %s/%s: secret %s/%s missing .dockerconfigjson "+
+			"%w: OCIRepository %s/%s: secret %s/%s missing .dockerconfigjson "+
 				"(must be type kubernetes.io/dockerconfigjson)",
-			repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
+			manifest.ErrMissingSecret, repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
 	}
 	tmp, err := os.CreateTemp("", "flate-oci-creds-*.json")
 	if err != nil {

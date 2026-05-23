@@ -41,6 +41,26 @@ func TestRun_OneFailed(t *testing.T) {
 	}
 }
 
+func TestRun_SkippedReasonReportedAsSkipped(t *testing.T) {
+	// A KS that soft-skipped (e.g. source was --allow-missing-secrets'd)
+	// reports as SKIPPED, not PASSED or FAILED.
+	s := store.New()
+	s.AddObject(&manifest.Kustomization{Name: "apps", Namespace: "flux-system"})
+	s.UpdateStatus(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"},
+		store.StatusReady, "skipped: source GitRepository/flux-system/sealed missing auth")
+
+	rep := Run(Job{Store: s})
+	if rep.AnyFailed() {
+		t.Errorf("skipped-reason case must not fail: %+v", rep)
+	}
+	if rep.Skipped != 1 || rep.Passed != 0 {
+		t.Errorf("expected 1 skipped, 0 passed; got %+v", rep)
+	}
+	if !strings.Contains(rep.Cases[0].Reason, "missing auth") {
+		t.Errorf("skip reason should carry the underlying message; got %q", rep.Cases[0].Reason)
+	}
+}
+
 func TestRun_NoStatus(t *testing.T) {
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{Name: "x", Namespace: "ns"})

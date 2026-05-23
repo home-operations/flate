@@ -148,6 +148,14 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return fmt.Errorf("%w: chart source %s not ready: %s",
 			manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
 	}
+	// A chart source that soft-skipped (--allow-missing-secrets on its
+	// auth) marks Ready but writes no artifact and almost certainly
+	// can't be pulled anonymously either. Propagate the skip instead
+	// of letting TemplateDocs fail at the registry.
+	if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
+		return fmt.Errorf("%w: chart source %s %s",
+			manifest.ErrSourceSkipped, srcID.String(), info.Message)
+	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering chart")
 	docs, err := c.Helm.TemplateDocs(ctx, hr, hr.Values, c.Options)

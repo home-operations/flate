@@ -2,6 +2,7 @@ package oci
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -186,6 +187,14 @@ func TestFetcher_ResolveConfig_SecretMissingDockerConfigJSON(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), ".dockerconfigjson") {
 		t.Errorf("expected missing-.dockerconfigjson error; got %v", err)
 	}
+	// The wrong-shape / placeholder case must wrap ErrMissingSecret so
+	// --allow-missing-secrets covers it. This is the actual #190 case:
+	// an ExternalSecret materializes the Secret manifest in-tree but
+	// the values get PLACEHOLDER-wiped, so StringFromSecret returns ""
+	// and we land here, not in the "not found" branch.
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("expected ErrMissingSecret wrap so --allow-missing-secrets handles ExternalSecret/placeholder case; got %v", err)
+	}
 }
 
 func TestFetcher_ResolveConfig_SecretRefWithoutGetter(t *testing.T) {
@@ -211,5 +220,8 @@ func TestFetcher_ResolveConfig_SecretNotFound(t *testing.T) {
 	cleanup()
 	if err == nil || !strings.Contains(err.Error(), "secret ns/missing not found") {
 		t.Errorf("expected secret-not-found error; got %v", err)
+	}
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("expected ErrMissingSecret wrap; got %v", err)
 	}
 }

@@ -22,8 +22,15 @@ func newTestCmd() *cobra.Command {
 			"Validate HelmReleases", cobra.MaximumNArgs(1),
 			manifest.KindHelmRelease),
 		testCmd("all", nil,
-			"Validate every Kustomization and HelmRelease", cobra.NoArgs,
-			manifest.KindKustomization, manifest.KindHelmRelease),
+			"Validate every Kustomization, HelmRelease, and Flux source CR", cobra.NoArgs,
+			// Source kinds are included so a soft-skipped source (e.g.
+			// --allow-missing-secrets on an OCIRepository whose auth Secret
+			// is materialized live via ExternalSecret) shows up on its own
+			// line as SKIPPED instead of only as a parenthetical reason
+			// on its downstream KS/HR.
+			manifest.KindKustomization, manifest.KindHelmRelease,
+			manifest.KindGitRepository, manifest.KindOCIRepository,
+			manifest.KindHelmRepository, manifest.KindBucket),
 	)
 	return cmd
 }

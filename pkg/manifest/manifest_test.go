@@ -442,6 +442,78 @@ spec:
 	}
 }
 
+// TestParse_EmptySecretRefNameRejected pins the schema check that
+// turns a typo'd `secretRef: {}` into a hard parse error. Without
+// it, the empty name would fall through to a runtime lookup of
+// "<ns>/" → "secret not found" → with --allow-missing-secrets on,
+// silent soft-skip — masking the typo entirely.
+func TestParse_EmptySecretRefNameRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want string
+		parse func(map[string]any) error
+	}{
+		{
+			name: "OCIRepository spec.secretRef.name empty",
+			yaml: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: x, namespace: ns}
+spec:
+  url: oci://example/x
+  secretRef: {name: ""}`,
+			want:  "spec.secretRef.name is empty",
+			parse: func(d map[string]any) error { _, err := ParseOCIRepository(d); return err },
+		},
+		{
+			name: "GitRepository spec.secretRef.name empty",
+			yaml: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: x, namespace: ns}
+spec:
+  url: https://example/x.git
+  secretRef: {name: ""}`,
+			want:  "spec.secretRef.name is empty",
+			parse: func(d map[string]any) error { _, err := ParseGitRepository(d); return err },
+		},
+		{
+			name: "HelmRepository spec.secretRef.name empty",
+			yaml: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: x, namespace: ns}
+spec:
+  url: https://example.com/charts
+  secretRef: {name: ""}`,
+			want:  "spec.secretRef.name is empty",
+			parse: func(d map[string]any) error { _, err := ParseHelmRepository(d); return err },
+		},
+		{
+			name: "Bucket spec.secretRef.name empty",
+			yaml: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: Bucket
+metadata: {name: x, namespace: ns}
+spec:
+  bucketName: b
+  endpoint: e
+  secretRef: {name: ""}`,
+			want:  "spec.secretRef.name is empty",
+			parse: func(d map[string]any) error { _, err := ParseBucket(d); return err },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := mustYAML(t, tc.yaml)
+			err := tc.parse(doc)
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("expected error containing %q, got %q", tc.want, err.Error())
+			}
+		})
+	}
+}
+
 func TestParseBucket_Suspend(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: source.toolkit.fluxcd.io/v1

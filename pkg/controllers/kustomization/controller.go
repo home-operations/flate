@@ -380,6 +380,13 @@ func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, erro
 	}
 	art := c.Store.GetArtifact(srcID)
 	if art == nil {
+		// A source that soft-skipped (--allow-missing-secrets) reports
+		// Ready with a "skipped:" reason but writes no artifact. Surface
+		// that as a typed skip so the caller can mark the KS skipped too
+		// rather than reporting a generic "artifact not found" failure.
+		if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
+			return "", fmt.Errorf("%w: source %s %s", manifest.ErrSourceSkipped, srcID.String(), info.Message)
+		}
 		return "", fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
 	}
 	if sa, ok := art.(*store.SourceArtifact); ok {

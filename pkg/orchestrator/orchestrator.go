@@ -44,6 +44,14 @@ type Config struct {
 	WipeSecrets bool
 	// EnableOCI turns on OCIRepository reconciliation.
 	EnableOCI bool
+	// AllowMissingSecrets converts auth-secret-not-found errors during
+	// source fetch into a skip rather than a failure. Use when secrets
+	// are materialized on the live cluster (ExternalSecret, etc.) and
+	// can't appear in the offline tree. Skipped sources mark Ready with
+	// a "skipped:" reason and produce no artifact; downstream KS / HR
+	// consumers propagate the skip so the dependency chain doesn't
+	// surface as a cascade of failures in `flate test`.
+	AllowMissingSecrets bool
 
 	// RegistryConfig is the docker config.json used for OCI auth.
 	RegistryConfig string
@@ -401,7 +409,10 @@ func (o *Orchestrator) attachFilter(f *change.Filter) {
 // + error-string assembly lives in finalize so Run reads as a clean
 // start → drain → finalize sequence.
 func (o *Orchestrator) Run(ctx context.Context) error {
-	o.src.Configure(sourcectrl.FetchOptions{Filter: o.filter})
+	o.src.Configure(sourcectrl.FetchOptions{
+		Filter:             o.filter,
+		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
+	})
 	o.ksc.Configure(kustomization.Options{
 		Filter:        o.filter,
 		ParentOf:      o.parentOf,

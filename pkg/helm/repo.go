@@ -157,14 +157,17 @@ func (c *Client) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Optio
 	}
 	sec := getSec(r.Namespace, r.SecretRef.Name)
 	if sec == nil {
-		return nil, fmt.Errorf("HelmRepository %s/%s: secret %s/%s not found",
-			r.Namespace, r.Name, r.Namespace, r.SecretRef.Name)
+		return nil, fmt.Errorf("%w: HelmRepository %s/%s: secret %s/%s not found",
+			manifest.ErrMissingSecret, r.Namespace, r.Name, r.Namespace, r.SecretRef.Name)
 	}
 	username := source.StringFromSecret(sec, "username")
 	password := source.StringFromSecret(sec, "password")
 	if username == "" || password == "" {
-		return nil, fmt.Errorf("HelmRepository %s/%s: secret %s/%s missing username/password",
-			r.Namespace, r.Name, r.Namespace, r.SecretRef.Name)
+		// Empty covers both missing-key and PLACEHOLDER-wiped values
+		// (the ExternalSecret case). Same sentinel so
+		// --allow-missing-secrets covers both shapes.
+		return nil, fmt.Errorf("%w: HelmRepository %s/%s: secret %s/%s missing username/password",
+			manifest.ErrMissingSecret, r.Namespace, r.Name, r.Namespace, r.SecretRef.Name)
 	}
 	opts := []getter.Option{getter.WithBasicAuth(username, password)}
 	if r.PassCredentials {

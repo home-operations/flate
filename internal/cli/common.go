@@ -17,17 +17,18 @@ import (
 )
 
 type commonFlags struct {
-	path           string
-	pathOrig       string
-	namespace      string
-	labels         map[string]string
-	skipCRDs       bool
-	skipSecrets    bool
-	skipKinds      []string
-	output         string
-	enableOCI      bool
-	registryConfig string
-	concurrency    int
+	path               string
+	pathOrig           string
+	namespace          string
+	labels             map[string]string
+	skipCRDs           bool
+	skipSecrets        bool
+	allowMissingSecrets bool
+	skipKinds          []string
+	output             string
+	enableOCI          bool
+	registryConfig     string
+	concurrency        int
 }
 
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
@@ -38,6 +39,10 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 		"limit to this namespace (default: every namespace, or just the changed ones when --path-orig is set)")
 	fs.BoolVar(&f.skipCRDs, "skip-crds", true, "exclude CRD objects from rendered output")
 	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
+	fs.BoolVar(&f.allowMissingSecrets, "allow-missing-secrets", false,
+		"soft-skip sources whose auth Secret is missing or has PLACEHOLDER-wiped values "+
+			"(typical when the live cluster materializes auth via ExternalSecret); dependent "+
+			"Kustomizations/HelmReleases propagate the skip. Verify/cert/proxy secretRefs still fail loud.")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
 	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, yaml, json, name")
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
@@ -171,13 +176,14 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
-		Path:           c.path,
-		PathOrig:       c.pathOrig,
-		HelmOptions:    c.helmOptions(h),
-		WipeSecrets:    true,
-		EnableOCI:      c.enableOCI,
-		RegistryConfig: c.registryConfig,
-		Concurrency:    c.concurrency,
+		Path:               c.path,
+		PathOrig:           c.pathOrig,
+		HelmOptions:        c.helmOptions(h),
+		WipeSecrets:        true,
+		EnableOCI:          c.enableOCI,
+		RegistryConfig:     c.registryConfig,
+		Concurrency:        c.concurrency,
+		AllowMissingSecrets: c.allowMissingSecrets,
 	}
 }
 

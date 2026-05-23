@@ -11,6 +11,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -32,13 +33,19 @@ type Controller struct {
 	// disables a kind (e.g. EnableOCI=false simply omits OCIRepository
 	// from the map). Exposed for Orchestrator.WithFetcher.
 	Fetchers map[string]src.Fetcher
+
+	// allowMissingSecrets converts ErrMissingSecret fetch errors into a
+	// skip (StatusReady with reason starting "skipped: "). Wired from
+	// Config.AllowMissingSecrets via Configure.
+	allowMissingSecrets bool
 }
 
 // FetchOptions carries the post-bootstrap state the orchestrator wires
 // onto the controller. Filter narrows fetches to sources referenced by
 // changed resources in changed-only mode.
 type FetchOptions struct {
-	Filter *change.Filter
+	Filter             *change.Filter
+	AllowMissingSecrets bool
 }
 
 // New constructs a source controller. Register fetchers on the
@@ -54,6 +61,7 @@ func New(s *store.Store, t *task.Service) *Controller {
 // Start.
 func (c *Controller) Configure(opts FetchOptions) {
 	c.SetFilter(opts.Filter)
+	c.allowMissingSecrets = opts.AllowMissingSecrets
 }
 
 // Start registers listeners on the Store. The controller runs until
@@ -99,6 +107,14 @@ func (c *Controller) runFetch(ctx context.Context, id manifest.NamedResource, ob
 	slog.Debug("source: fetch", "id", id.String())
 	artifact, err := fetcher.Fetch(ctx, obj)
 	if err != nil {
+		if c.allowMissingSecrets && errors.Is(err, manifest.ErrMissingSecret) {
+			// Soft-skip: leave the artifact slot empty so consumers see
+			// "no artifact" + Ready+"skipped:" status and propagate.
+			c.Store.UpdateStatus(id, store.StatusReady,
+				"skipped: "+manifest.TrimSentinelPrefix(err.Error()))
+			slog.Info("source: skipped (missing secret)", "id", id.String(), "err", err)
+			return
+		}
 		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
 		return
 	}

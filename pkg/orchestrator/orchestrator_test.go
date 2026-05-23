@@ -269,6 +269,133 @@ stringData: {password: hunter2}
 	}
 }
 
+// TestOrchestrator_AllowMissingSecretsPropagates locks the #190 fix:
+// when --allow-missing-secrets is on AND a source's auth Secret isn't
+// in the offline tree, the source soft-skips (Ready+"skipped:") and
+// the downstream KS that consumes it propagates the skip rather than
+// failing with "source artifact not found". `flate test` then reports
+// SKIPPED, not FAILED.
+func TestOrchestrator_AllowMissingSecretsPropagates(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "oci.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: private-app
+  namespace: default
+spec:
+  interval: 5m
+  url: oci://example.invalid/private/app
+  secretRef:
+    name: ghcr-creds
+`)
+	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: private-app
+  namespace: default
+spec:
+  interval: 5m
+  path: ./
+  sourceRef:
+    kind: OCIRepository
+    name: private-app
+    namespace: default
+`)
+
+	o, err := New(Config{
+		Path:                dir,
+		EnableOCI:           true,
+		AllowMissingSecrets: true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	ociID := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "default", Name: "private-app"}
+	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "default", Name: "private-app"}
+
+	if _, failed := res.Failed[ociID]; failed {
+		t.Errorf("OCIRepository must not be in Failed when --allow-missing-secrets is on; got %v", res.Failed[ociID])
+	}
+	if _, failed := res.Failed[ksID]; failed {
+		t.Errorf("dependent KS must propagate skip, not fail; got %v", res.Failed[ksID])
+	}
+
+	ociInfo, ok := o.Store().GetStatus(ociID)
+	if !ok || !store.IsSkipped(ociInfo) {
+		t.Errorf("OCIRepository should be Ready+skipped; got %+v", ociInfo)
+	}
+	ksInfo, ok := o.Store().GetStatus(ksID)
+	if !ok || !store.IsSkipped(ksInfo) {
+		t.Errorf("KS should be Ready+skipped; got %+v", ksInfo)
+	}
+}
+
+// TestOrchestrator_AllowMissingSecretsHRSkipsBeforePull locks the
+// silent-anonymous-pull regression the iter-17 edge-case review
+// flagged: an HR with chartRef → OCIRepository whose auth Secret is
+// missing MUST propagate the skip BEFORE helm.TemplateDocs runs.
+// Without the pre-check, the source-controller's soft-skip leaves
+// no on-disk artifact but the helm client's locateOCIChart would
+// still try an oras-pull against the registry — succeeding silently
+// against a public mirror, or failing with an opaque registry error.
+// Either way the user's "the auth is missing" signal is lost.
+func TestOrchestrator_AllowMissingSecretsHRSkipsBeforePull(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "oci.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: app-template
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: oci://example.invalid/private/chart
+  secretRef:
+    name: ghcr-creds
+`)
+	testutil.WriteFile(t, dir, "hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: demo
+  namespace: default
+spec:
+  interval: 5m
+  chartRef:
+    kind: OCIRepository
+    name: app-template
+    namespace: flux-system
+`)
+
+	o, err := New(Config{
+		Path:                dir,
+		EnableOCI:           true,
+		AllowMissingSecrets: true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
+	if _, failed := res.Failed[hrID]; failed {
+		t.Errorf("HR must propagate skip before helm.TemplateDocs runs; got %v", res.Failed[hrID])
+	}
+	hrInfo, ok := o.Store().GetStatus(hrID)
+	if !ok || !store.IsSkipped(hrInfo) {
+		t.Errorf("HR should be Ready+skipped (chart source skipped); got %+v. "+
+			"If status is Failed with a registry-pull error, the pre-check is missing and "+
+			"helm tried an anonymous pull — exactly the silent-downgrade the pre-check exists to prevent.",
+			hrInfo)
+	}
+}
+
 func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 	out := make([]manifest.NamedResource, 0, len(m))
 	for k := range m {

@@ -58,6 +58,22 @@ func (g *GitRepository) Suspended() bool { return g.Suspend }
 // RepoName is "<namespace>-<name>".
 func (g *GitRepository) RepoName() string { return g.Namespace + "-" + g.Name }
 
+// validateSecretRefName rejects a Secret/LocalObjectReference whose
+// Name is empty. Without this check, a typo'd YAML like
+// `secretRef: {}` would fall through to a runtime lookup of
+// "<ns>/" — and with --allow-missing-secrets enabled, would silently
+// soft-skip the source. That converts a schema typo into invisible
+// behavior change. Reject upfront with a clear pointer to the field.
+//
+// kind/owner/field are formatted into the error: e.g. ("OCIRepository",
+// "default/private-app", "spec.secretRef").
+func validateSecretRefName(kind, owner, field, name string) error {
+	if name == "" {
+		return inputf("%s %s: %s.name is empty", kind, owner, field)
+	}
+	return nil
+}
+
 // ParseGitRepository decodes a GitRepository CR via the Flux typed
 // schema (source-controller/api/v1), then projects the fields flate
 // uses into the local struct.
@@ -83,6 +99,22 @@ func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
 		// applies the schema default. Write it back so consumers see a
 		// canonical mode regardless of source casing.
 		v.Mode = v.GetMode()
+	}
+	owner := cr.Namespace + "/" + cr.Name
+	if r := cr.Spec.SecretRef; r != nil {
+		if err := validateSecretRefName("GitRepository", owner, "spec.secretRef", r.Name); err != nil {
+			return nil, err
+		}
+	}
+	if r := cr.Spec.ProxySecretRef; r != nil {
+		if err := validateSecretRefName("GitRepository", owner, "spec.proxySecretRef", r.Name); err != nil {
+			return nil, err
+		}
+	}
+	if v := cr.Spec.Verification; v != nil {
+		if err := validateSecretRefName("GitRepository", owner, "spec.verify.secretRef", v.SecretRef.Name); err != nil {
+			return nil, err
+		}
 	}
 	return &GitRepository{
 		Name:              cr.Name,
@@ -171,6 +203,27 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	}
 	if cr.Spec.Provider == "" {
 		cr.Spec.Provider = sourcev1.GenericOCIProvider
+	}
+	owner := cr.Namespace + "/" + cr.Name
+	if r := cr.Spec.SecretRef; r != nil {
+		if err := validateSecretRefName("OCIRepository", owner, "spec.secretRef", r.Name); err != nil {
+			return nil, err
+		}
+	}
+	if r := cr.Spec.CertSecretRef; r != nil {
+		if err := validateSecretRefName("OCIRepository", owner, "spec.certSecretRef", r.Name); err != nil {
+			return nil, err
+		}
+	}
+	if r := cr.Spec.ProxySecretRef; r != nil {
+		if err := validateSecretRefName("OCIRepository", owner, "spec.proxySecretRef", r.Name); err != nil {
+			return nil, err
+		}
+	}
+	if v := cr.Spec.Verify; v != nil && v.SecretRef != nil {
+		if err := validateSecretRefName("OCIRepository", owner, "spec.verify.secretRef", v.SecretRef.Name); err != nil {
+			return nil, err
+		}
 	}
 	return &OCIRepository{
 		Name:              cr.Name,

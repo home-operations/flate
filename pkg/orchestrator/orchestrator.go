@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,29 @@ type Orchestrator struct {
 	// loadManifests + namespace inheritance. Configured onto the
 	// kustomization controller at Run-time, never mutated thereafter.
 	parentOf map[manifest.NamedResource]manifest.NamedResource
+
+	// orphans records resources Run demoted from Failed → Ready because
+	// they aren't referenced by any parent KS. Populated during Run,
+	// surfaced via Render() so embedders can distinguish orphan-skips
+	// from genuine successes. Keyed by id, value is the original
+	// failure message.
+	orphans map[manifest.NamedResource]string
+}
+
+// Result is the structured output of Orchestrator.Render: the rendered
+// manifests keyed by the originating Kustomization / HelmRelease, the
+// set of resources that failed reconcile, and the orphans flate
+// detected (sources sitting under a parent KS's spec.path but never
+// emitted by that parent's render — real Flux would not reconcile
+// them either).
+//
+// Manifests is empty for an HR that had nothing to render or a KS
+// whose render produced zero docs; Failed/Orphans are empty when
+// everything reconciled cleanly.
+type Result struct {
+	Manifests map[manifest.NamedResource][]map[string]any
+	Failed    map[manifest.NamedResource]store.StatusInfo
+	Orphans   map[manifest.NamedResource]string
 }
 
 // New constructs an Orchestrator. It allocates the Store and TaskService
@@ -383,8 +407,10 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	// scans the whole tree. Surface as warnings instead of failures so
 	// the test isn't gated on stale on-disk files the user has not
 	// wired into their kustomize tree.
+	o.orphans = map[manifest.NamedResource]string{}
 	for id := range o.detectOrphans(failed) {
 		info := failed[id]
+		o.orphans[id] = info.Message
 		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
 		slog.Warn("resource orphaned", "id", id.String(),
 			"file", o.sourceFiles[id],
@@ -424,6 +450,43 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}
 	return fmt.Errorf("reconcile completed with %d failure(s):\n  %s",
 		len(msgs), strings.Join(msgs, "\n  "))
+}
+
+// Render is the structured embed-friendly entry point: Bootstrap +
+// Run + collect everything an external caller needs to consume the
+// reconcile result. CLI / Run() ergonomics remain unchanged; callers
+// who want a single function that returns a typed Result use this.
+//
+// The returned Result is non-nil even when err is non-nil — failures
+// during reconcile populate Result.Failed without aborting collection,
+// so the caller sees both the partial output and the failure list.
+// An error from Bootstrap (the load phase) is fatal and returns
+// (nil, err); errors from Run yield (result, err).
+func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
+	if err := o.Bootstrap(ctx); err != nil {
+		return nil, err
+	}
+	runErr := o.Run(ctx)
+	res := &Result{
+		Manifests: map[manifest.NamedResource][]map[string]any{},
+		Failed:    map[manifest.NamedResource]store.StatusInfo{},
+		Orphans:   map[manifest.NamedResource]string{},
+	}
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+		for _, obj := range o.store.ListObjects(kind) {
+			id := obj.Named()
+			if art, ok := o.store.GetArtifact(id).(store.RenderedArtifact); ok {
+				if mans := art.RenderedManifests(); len(mans) > 0 {
+					res.Manifests[id] = mans
+				}
+			}
+		}
+	}
+	for id, info := range o.store.FailedResources() {
+		res.Failed[id] = info
+	}
+	maps.Copy(res.Orphans, o.orphans)
+	return res, runErr
 }
 
 // Stop shuts the controllers down in reverse-construction order and

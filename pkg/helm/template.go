@@ -180,12 +180,19 @@ func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, val
 }
 
 // applyHROriginLabels stamps the helm.toolkit.fluxcd.io/{name,namespace}
-// ownership labels onto every rendered doc, mirroring helm-controller's
-// OriginLabels post-renderer. Real Flux uses these to track which HR
+// ownership labels onto every non-hook rendered doc, mirroring
+// helm-controller's OriginLabels post-renderer fed through
+// PostRenderStrategyNoHooks. Real Flux uses these to track which HR
 // owns each in-cluster resource for pruning + selection
 // (`kubectl get -l helm.toolkit.fluxcd.io/name=...`), and they take
 // precedence over CommonMetadata when keys collide — so we apply this
 // pass AFTER applyHRCommonMetadata, matching the upstream order.
+//
+// Helm hooks (Job / ConfigMap with helm.sh/hook annotation) are
+// intentionally NOT stamped — upstream's BuildPostRenderers chain is
+// fed only the non-hook stream via PostRenderStrategyNoHooks. Stamping
+// hooks in flate would produce labels real Flux never applies in
+// cluster.
 func applyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
 	group := helmv2.GroupVersion.Group
 	origin := map[string]string{
@@ -193,6 +200,9 @@ func applyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
 		group + "/namespace": hr.Namespace,
 	}
 	for _, doc := range docs {
+		if isHookDoc(doc) {
+			continue
+		}
 		md, _ := doc["metadata"].(map[string]any)
 		if md == nil {
 			md = map[string]any{}
@@ -203,16 +213,23 @@ func applyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
 }
 
 // applyHRCommonMetadata merges spec.commonMetadata.labels and .annotations
-// onto every rendered doc's metadata, mirroring helm-controller's
-// CommonRenderer pass. commonMetadata overwrites chart-template defaults
-// but loses to origin labels on collision — applyHROriginLabels runs
-// AFTER this and reasserts the helm.toolkit.fluxcd.io/{name,namespace}
-// keys, matching helm-controller's build.go:46 comment.
+// onto every non-hook rendered doc's metadata, mirroring helm-controller's
+// CommonRenderer pass fed through PostRenderStrategyNoHooks. commonMetadata
+// overwrites chart-template defaults but loses to origin labels on
+// collision — applyHROriginLabels runs AFTER this and reasserts the
+// helm.toolkit.fluxcd.io/{name,namespace} keys, matching helm-controller's
+// build.go:46 comment.
+//
+// Hooks are excluded for the same reason applyHROriginLabels excludes
+// them: upstream's post-render chain runs after hook separation.
 func applyHRCommonMetadata(docs []map[string]any, cm *helmv2.CommonMetadata) {
 	if cm == nil || (len(cm.Labels) == 0 && len(cm.Annotations) == 0) {
 		return
 	}
 	for _, doc := range docs {
+		if isHookDoc(doc) {
+			continue
+		}
 		md, _ := doc["metadata"].(map[string]any)
 		if md == nil {
 			md = map[string]any{}
@@ -221,6 +238,24 @@ func applyHRCommonMetadata(docs []map[string]any, cm *helmv2.CommonMetadata) {
 		mergeStringMap(md, "labels", cm.Labels)
 		mergeStringMap(md, "annotations", cm.Annotations)
 	}
+}
+
+// isHookDoc reports whether a rendered manifest is a Helm hook
+// (carrying the helm.sh/hook annotation). Used to gate the
+// commonMetadata + origin-label post-render passes so they only apply
+// to "real" workload resources — matching upstream helm-controller's
+// PostRenderStrategyNoHooks contract.
+func isHookDoc(doc map[string]any) bool {
+	md, _ := doc["metadata"].(map[string]any)
+	if md == nil {
+		return false
+	}
+	anns, _ := md["annotations"].(map[string]any)
+	if anns == nil {
+		return false
+	}
+	_, has := anns["helm.sh/hook"]
+	return has
 }
 
 func mergeStringMap(md map[string]any, key string, in map[string]string) {

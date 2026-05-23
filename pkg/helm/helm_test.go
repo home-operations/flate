@@ -299,6 +299,77 @@ func TestApplyHRCommonMetadata_CreatesMetadataWhenMissing(t *testing.T) {
 	}
 }
 
+// TestApplyHRCommonMetadata_SkipsHooks locks the upstream contract:
+// commonMetadata + origin labels apply only to "real" workload
+// resources. Helm hooks (helm.sh/hook annotation) are skipped because
+// helm-controller's PostRenderStrategy is NoHooks — the chain is fed
+// only non-hook templates. Without this, flate stamped labels on
+// hooks that cluster-side Flux never adds.
+func TestApplyHRCommonMetadata_SkipsHooks(t *testing.T) {
+	docs := []map[string]any{
+		{
+			"kind": "Deployment",
+			"metadata": map[string]any{
+				"name": "real-workload",
+			},
+		},
+		{
+			"kind": "ConfigMap",
+			"metadata": map[string]any{
+				"name": "hook-cm",
+				"annotations": map[string]any{
+					"helm.sh/hook": "pre-install",
+				},
+			},
+		},
+	}
+	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+		Labels: map[string]string{"team": "platform"},
+	})
+
+	workloadLabels := docs[0]["metadata"].(map[string]any)["labels"]
+	if workloadLabels == nil {
+		t.Fatal("workload doc lost its labels stamp")
+	}
+	if workloadLabels.(map[string]any)["team"] != "platform" {
+		t.Errorf("workload doc labels: %v", workloadLabels)
+	}
+
+	hookMd := docs[1]["metadata"].(map[string]any)
+	if _, ok := hookMd["labels"]; ok {
+		t.Errorf("hook doc should not receive commonMetadata stamp; got labels %v", hookMd["labels"])
+	}
+}
+
+// TestApplyHROriginLabels_SkipsHooks mirrors the commonMetadata
+// hook-exclusion above for the origin-labels pass.
+func TestApplyHROriginLabels_SkipsHooks(t *testing.T) {
+	docs := []map[string]any{
+		{
+			"kind":     "Deployment",
+			"metadata": map[string]any{"name": "real"},
+		},
+		{
+			"kind": "Job",
+			"metadata": map[string]any{
+				"name": "hook-job",
+				"annotations": map[string]any{
+					"helm.sh/hook": "pre-install",
+				},
+			},
+		},
+	}
+	applyHROriginLabels(docs, &manifest.HelmRelease{Name: "demo", Namespace: "apps"})
+
+	if _, ok := docs[0]["metadata"].(map[string]any)["labels"]; !ok {
+		t.Error("workload doc lost its origin labels")
+	}
+	hookMd := docs[1]["metadata"].(map[string]any)
+	if _, ok := hookMd["labels"]; ok {
+		t.Errorf("hook doc should not receive origin labels; got %v", hookMd["labels"])
+	}
+}
+
 func TestMergeChartValuesFiles(t *testing.T) {
 	chartWith := func(files map[string]string) *chart.Chart {
 		c := &chart.Chart{}

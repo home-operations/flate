@@ -315,20 +315,32 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	return deps
 }
 
+// bootstrapSourceID is the synthetic GitRepository the orchestrator
+// seeds for the user's working tree. Children that inherit sourceRef
+// only from a parent's render patches (a common onedr0p-style pattern)
+// look empty until the parent reconciles, so resolveSourceRoot uses
+// this as the fallback rather than mis-joining ks.Path against itself.
+var bootstrapSourceID = manifest.NamedResource{
+	Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system",
+}
+
 // resolveSourceRoot returns the on-disk root the kustomization should
 // be built from — i.e. the source artifact's local path. The Flux
 // renderer then joins ks.Path onto this root.
 func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, error) {
+	srcID := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 	if ks.SourceKind == "" || ks.SourceName == "" {
-		// No source — use ks.Path directly. This handles bootstrap
-		// kustomizations whose source is implicit.
+		// Child Kustomizations that inherit sourceRef from a parent's
+		// render patches show empty here until that parent reconciles.
+		// Fall back to the seeded bootstrap GitRepository (the user's
+		// working tree) so the first reconcile resolves to the repo
+		// root instead of doubling ks.Path against itself (#105).
 		if ks.Path == "" {
 			return "", fmt.Errorf("%w: kustomization %s has no path and no source",
 				manifest.ErrInput, ks.NamespacedName())
 		}
-		return ks.Path, nil
+		srcID = bootstrapSourceID
 	}
-	srcID := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 	art := c.Store.GetArtifact(srcID)
 	if art == nil {
 		return "", fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())

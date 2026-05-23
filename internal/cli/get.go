@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"cmp"
 	"io"
 	"maps"
 	"slices"
@@ -9,16 +8,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/home-operations/flate/internal/format"
-	"github.com/home-operations/flate/pkg/image"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/selector"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func newGetCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "get", Short: "List Flux objects"}
-	cmd.AddCommand(newGetKSCmd(), newGetHRCmd(), newGetAllCmd())
+	cmd := &cobra.Command{
+		Use:   "get",
+		Short: "List Kustomizations, HelmReleases, container images, or a cluster summary",
+	}
+	cmd.AddCommand(newGetKSCmd(), newGetHRCmd(), newGetImagesCmd(), newGetAllCmd())
 	return cmd
 }
 
@@ -82,7 +82,6 @@ func newGetHRCmd() *cobra.Command {
 func newGetAllCmd() *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
-	var enableImages, onlyImages bool
 	cmd := &cobra.Command{
 		Use:   "all",
 		Short: "Summarize every Kustomization and HelmRelease",
@@ -91,17 +90,35 @@ func newGetAllCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			w := cmd.OutOrStdout()
-			if enableImages || onlyImages {
-				return printClusterImages(w, o, c, onlyImages)
-			}
-			return printCluster(w, o, c.output)
+			return printCluster(cmd.OutOrStdout(), o, c.output)
 		},
 	}
 	bindCommon(cmd.Flags(), c)
 	bindHelmFlags(cmd.Flags(), h)
-	cmd.Flags().BoolVar(&enableImages, "enable-images", false, "include container images in the output")
-	cmd.Flags().BoolVar(&onlyImages, "only-images", false, "emit only the deduplicated list of images")
+	return cmd
+}
+
+// newGetImagesCmd emits a deduplicated list of container images
+// extracted from every rendered Kustomization and HelmRelease — the
+// symmetric counterpart of `flate diff images`, which emits the same
+// shape filtered to images that actually changed between paths.
+func newGetImagesCmd() *cobra.Command {
+	c := &commonFlags{}
+	h := &helmFlags{}
+	cmd := &cobra.Command{
+		Use:   "images",
+		Short: "List container images across the cluster",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
+			if err != nil {
+				return err
+			}
+			imgs := slices.Sorted(maps.Keys(collectImages(o, c)))
+			return emitImageList(cmd.OutOrStdout(), imgs, c.output)
+		},
+	}
+	bindCommon(cmd.Flags(), c)
+	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
 
@@ -199,45 +216,3 @@ func printCluster(w io.Writer, o *orchestrator.Orchestrator, out string) error {
 	return format.YAML(w, summary)
 }
 
-type imageEntry struct {
-	HelmRelease string   `json:"helmRelease" yaml:"helmRelease"`
-	Images      []string `json:"images"      yaml:"images"`
-}
-
-func printClusterImages(w io.Writer, o *orchestrator.Orchestrator, c *commonFlags, onlyImages bool) error {
-	if onlyImages {
-		return emitImageList(w, slices.Sorted(maps.Keys(collectImages(o, c))), c.output)
-	}
-
-	var releases []imageEntry
-	for _, obj := range o.Store().ListObjects(manifest.KindHelmRelease) {
-		hr := obj.(*manifest.HelmRelease)
-		if !c.includeNamespace(o.Filter(), hr.Namespace) {
-			continue
-		}
-		art, ok := o.Store().GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
-		if !ok {
-			continue
-		}
-		set := map[string]struct{}{}
-		for _, doc := range art.Manifests {
-			imgs, _ := image.Extract(doc)
-			for _, img := range imgs {
-				set[img] = struct{}{}
-			}
-		}
-		if len(set) == 0 {
-			continue
-		}
-		releases = append(releases, imageEntry{
-			HelmRelease: hr.NamespacedName(),
-			Images:      slices.Sorted(maps.Keys(set)),
-		})
-	}
-	slices.SortFunc(releases, func(a, b imageEntry) int { return cmp.Compare(a.HelmRelease, b.HelmRelease) })
-
-	if format.Output(c.output) == format.OutputJSON {
-		return format.JSON(w, releases)
-	}
-	return format.YAML(w, releases)
-}

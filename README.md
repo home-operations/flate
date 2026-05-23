@@ -76,7 +76,8 @@ flate diff images  --path ./kubernetes --path-orig ../baseline/kubernetes -o jso
 |---|---|---|
 | `flate get ks` | `kustomization`, `kustomizations` | List Kustomizations |
 | `flate get hr` | `helmrelease`, `helmreleases` | List HelmReleases |
-| `flate get all` | | Cluster summary (`--enable-images`, `--only-images`) |
+| `flate get images` | | List container images across the cluster |
+| `flate get all` | | Kustomization + HelmRelease cluster summary |
 | `flate build ks` | | Render Kustomizations to YAML |
 | `flate build hr` | | Render HelmReleases to YAML |
 | `flate build all` | | Render every Kustomization and HelmRelease |
@@ -95,10 +96,10 @@ Every command takes `--path <dir>` (default `.`). Add `--path-orig <dir>` to swi
 ```bash
 flate get ks --path ./kubernetes -o json
 flate get hr --path ./kubernetes -l app.kubernetes.io/part-of=media
-flate get all --path ./kubernetes --only-images
+flate get images --path ./kubernetes
 ```
 
-`get all --enable-images` groups images per HelmRelease; `--only-images` emits a flat, deduplicated list across both HelmReleases and Kustomization-managed workloads (Deployments, StatefulSets, Pods, Jobs).
+`get images` emits a flat, deduplicated list across both HelmReleases and Kustomization-managed workloads (Deployments, StatefulSets, Pods, Jobs). The same shape as [`diff images`](#flate-diff-images) — that one filters down to images that actually changed.
 
 ### `flate build`
 
@@ -142,7 +143,7 @@ The header always shows the **parent** (HelmRelease or Kustomization) and the re
 
 #### `flate diff images`
 
-A diff-aware companion to `get all --only-images`. Emits images whose string actually changed between `--path` and `--path-orig` — touching an env var doesn't produce noise.
+A diff-aware companion to `get images`. Emits images whose string actually changed between `--path` and `--path-orig` — touching an env var doesn't produce noise.
 
 | Flag | Effect |
 |---|---|
@@ -307,15 +308,6 @@ Apply to `diff ks` / `diff hr`:
 | Flag | Default | Description |
 |---|---|---|
 | `--include-removed` | `false` | Emit images dropped from `--path-orig` alongside newly added ones. |
-
-### Get flags
-
-Apply to `get all`:
-
-| Flag | Default | Description |
-|---|---|---|
-| `--enable-images` | `false` | Group container images per HelmRelease in the summary. |
-| `--only-images` | `false` | Emit only the deduplicated image list (no counts or HelmRelease grouping). |
 
 ## Defaults
 

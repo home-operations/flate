@@ -126,6 +126,46 @@ func TestFilter_AncestorKSAlsoKept(t *testing.T) {
 	}
 }
 
+// TestFilter_StructuralParentOfOwnerKSAlsoKept covers the home-ops
+// cross-tree pattern (joryirving-style): a leaf Flux KS in apps/base/
+// is registered by a parent KS rendering apps/main/. The leaf's
+// source file lives under the parent's spec.path, so the parent has
+// to reconcile too — otherwise the namespace-scoped sources it emits
+// (e.g. components/namespace producing one OCIRepository per tenant
+// ns) never land in the store and the leaf can't resolve its chart
+// ref. The changed file itself stays in apps/base/, which the parent
+// does NOT cover via spec.path, so ancestorsOf(file) wouldn't catch
+// the parent — only ownersOf(leaf-KS source file) does.
+func TestFilter_StructuralParentOfOwnerKSAlsoKept(t *testing.T) {
+	parent := &manifest.Kustomization{
+		Name: "cluster-apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/main"},
+	}
+	leaf := &manifest.Kustomization{
+		Name: "actual", Namespace: "self-hosted",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/base/self-hosted/actual"},
+	}
+	hrActual := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "self-hosted", Name: "actual"}
+	parentID, leafID := parent.Named(), leaf.Named()
+
+	f := NewFilter(
+		NewSet([]string{"apps/base/self-hosted/actual/helmrelease.yaml"}),
+		map[manifest.NamedResource]string{
+			parentID: "clusters/main/apps.yaml",
+			leafID:   "apps/main/self-hosted/actual.yaml",
+			hrActual: "apps/base/self-hosted/actual/helmrelease.yaml",
+		},
+		"",
+		mapLister{parentID: parent, leafID: leaf},
+	)
+
+	for _, id := range []manifest.NamedResource{hrActual, leafID, parentID} {
+		if !f.ShouldReconcile(id) {
+			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
+		}
+	}
+}
+
 func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 	// Two leaf KSes under the same meta-KS. Only plex changes. plex
 	// + meta are kept; atuin (an unrelated sibling under the meta-KS)

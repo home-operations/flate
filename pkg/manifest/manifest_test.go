@@ -1005,3 +1005,35 @@ metadata: {name: b, namespace: ns}
 		t.Errorf("names = %v", names)
 	}
 }
+
+// TestSplitDocs_AliasAsMapKey pins the home-ops pattern of using a
+// YAML anchor as a mapping key (e.g. `&app sonarr` in metadata.name,
+// referenced later as `*app :` to share the literal across the doc).
+// Sigs/Flux YAML parsers resolve the alias to its underlying scalar
+// before assigning into the map; flate's manual node walk used to
+// reject any non-scalar key kind. See m00nwtchr/homelab-cluster
+// apps/media/sonarr/app/helmrelease.yaml.
+func TestSplitDocs_AliasAsMapKey(t *testing.T) {
+	data := []byte(`
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: &app sonarr
+spec:
+  values:
+    controllers:
+      *app :
+        replicas: 2
+`)
+	docs, err := SplitDocs(data)
+	if err != nil {
+		t.Fatalf("SplitDocs: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc, got %d", len(docs))
+	}
+	controllers, _ := docs[0]["spec"].(map[string]any)["values"].(map[string]any)["controllers"].(map[string]any)
+	if _, ok := controllers["sonarr"]; !ok {
+		t.Errorf("alias key not resolved to scalar; controllers=%v", controllers)
+	}
+}

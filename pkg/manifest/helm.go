@@ -280,11 +280,17 @@ func (h *HelmRelease) ReleaseNamespace() string {
 // NamespacedName is "<namespace>/<name>".
 func (h *HelmRelease) NamespacedName() string { return h.Namespace + "/" + h.Name }
 
+// HelmChartLookup returns the HelmChartSource at (namespace, name) or
+// nil when not present. The shape ResolveChartRef accepts so callers
+// can pass either a SourceResolver method (orchestrator path) or a
+// custom lookup (embedders with their own source registry).
+type HelmChartLookup func(namespace, name string) *HelmChartSource
+
 // ResolveChartRef replaces a chartRef placeholder with the resolved
-// source. helmCharts is keyed by ResourceFullName. When the chartRef
-// resolves to a HelmChart CRD, its spec.valuesFiles +
-// spec.ignoreMissingValuesFiles propagate onto the HelmRelease so the
-// rendering pipeline can merge them ahead of HR.Values.
+// source. When the chartRef resolves to a HelmChart CRD, its
+// spec.valuesFiles + spec.ignoreMissingValuesFiles propagate onto the
+// HelmRelease so the rendering pipeline can merge them ahead of
+// HR.Values.
 //
 // The chart rewrite is unconditional once we find the source — even
 // when the HelmChart CRD has no spec.version, we need RepoKind to flip
@@ -292,12 +298,12 @@ func (h *HelmRelease) NamespacedName() string { return h.Namespace + "/" + h.Nam
 // OCIRepository / GitRepository) so downstream chart loading can
 // dispatch. Without it, LocateChart would see RepoKind=HelmChart and
 // fall through with an "unsupported chart repo kind" error.
-func (h *HelmRelease) ResolveChartRef(helmCharts map[string]*HelmChartSource) error {
+func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
 	if h.Chart.RepoKind != KindHelmChart || h.Chart.Version != "" {
 		return nil
 	}
-	src, ok := helmCharts[h.Chart.RepoFullName()]
-	if !ok {
+	src := lookup(h.Chart.RepoNamespace, h.Chart.RepoName)
+	if src == nil {
 		return fmt.Errorf("%w: HelmChartSource %s not found for HelmRelease %s",
 			ErrObjectNotFound, h.Chart.RepoFullName(), h.NamespacedName())
 	}

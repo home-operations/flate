@@ -23,6 +23,10 @@ func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
 	}
+	// Mirror the orchestrator's production wiring: the HR controller
+	// resolves source CRs (HelmRepository, OCIRepository, HelmChart)
+	// through the Store via the helm client's SourceResolver.
+	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
 	c := New(st, ts, hc, helm.Options{}, false)
 	c.Configure(ReconcileOptions{Filter: filter})
 	c.Start(context.Background())
@@ -78,7 +82,13 @@ func TestController_FilterUnchangedShortCircuitsToReady(t *testing.T) {
 	}
 }
 
-func TestController_HelmChartSourceIndexed(t *testing.T) {
+// TestController_HelmChartSourceResolvedViaResolver locks the iter-16
+// contract: the HR controller no longer maintains a chartSources
+// push-registry; HelmChartSource lookups go through
+// helm.Client.Resolver().HelmChart against the canonical Store. After
+// AddObject lands a HelmChartSource the resolver MUST surface it
+// immediately — that's what helm.Prepare relies on at reconcile time.
+func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 	c, st := newTestController(t, nil)
 	src := &manifest.HelmChartSource{
 		Name: "podinfo", Namespace: "flux-system",
@@ -90,19 +100,17 @@ func TestController_HelmChartSourceIndexed(t *testing.T) {
 	}
 	st.AddObject(src)
 
-	// Listener handles AddObject synchronously from the store mu wake;
-	// give the dispatch a tick.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		c.chartSourcesMu.RLock()
-		_, ok := c.chartSources[src.ResourceFullName()]
-		c.chartSourcesMu.RUnlock()
-		if ok {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+	resolver := c.Helm.Resolver()
+	if resolver == nil {
+		t.Fatal("HelmClient has no resolver wired")
 	}
-	t.Fatal("HelmChartSource was not indexed in chartSources map")
+	got := resolver.HelmChart(src.Namespace, src.Name)
+	if got == nil {
+		t.Fatalf("resolver.HelmChart(%q, %q) returned nil; expected the just-added source", src.Namespace, src.Name)
+	}
+	if got.Chart != "podinfo" {
+		t.Errorf("resolver returned wrong source: %+v", got)
+	}
 }
 
 func TestController_CollectHRDepsClone(t *testing.T) {

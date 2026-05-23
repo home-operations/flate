@@ -98,6 +98,16 @@ func (c *Client) SetSourceResolver(r SourceResolver) {
 	c.resolver = r
 }
 
+// Resolver returns the configured SourceResolver, or nil when none
+// has been wired. Exposed so the HelmRelease controller (and embedders
+// calling Prepare) can pass resolver.HelmChart into ResolveChartRef
+// without holding a separate reference to the resolver.
+func (c *Client) Resolver() SourceResolver {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.resolver
+}
+
 func (c *Client) resolveHelmRepo(hr *manifest.HelmRelease) *manifest.HelmRepository {
 	c.mu.RLock()
 	resolver := c.resolver

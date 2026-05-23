@@ -744,7 +744,13 @@ spec:
 			},
 		},
 	}
-	if err := hr.ResolveChartRef(map[string]*HelmChartSource{src.ResourceFullName(): src}); err != nil {
+	lookup := func(namespace, name string) *HelmChartSource {
+		if namespace == src.Namespace && name == src.Name {
+			return src
+		}
+		return nil
+	}
+	if err := hr.ResolveChartRef(lookup); err != nil {
 		t.Fatalf("ResolveChartRef: %v", err)
 	}
 	if hr.Chart.Version != "6.3.2" || hr.Chart.Name != "podinfo" {
@@ -752,7 +758,8 @@ spec:
 	}
 
 	missing := &HelmRelease{Chart: HelmChart{RepoKind: KindHelmChart, RepoName: "absent", RepoNamespace: "ns"}}
-	if err := missing.ResolveChartRef(map[string]*HelmChartSource{}); !errors.Is(err, ErrObjectNotFound) {
+	none := func(_, _ string) *HelmChartSource { return nil }
+	if err := missing.ResolveChartRef(none); !errors.Is(err, ErrObjectNotFound) {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
 	}
 }

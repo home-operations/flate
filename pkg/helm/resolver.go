@@ -28,6 +28,10 @@ type SourceResolver interface {
 	// live at <artifact.LocalPath>/<hr.Chart.Name> for any of those
 	// three sourceRef.kind values.
 	LocalSourceArtifact(kind, namespace, name string) *store.SourceArtifact
+	// HelmChart returns the HelmChartSource at the given (ns, name) or
+	// nil. Used by HelmRelease.ResolveChartRef to materialize a
+	// spec.chartRef into a concrete chart reference.
+	HelmChart(namespace, name string) *manifest.HelmChartSource
 }
 
 // NewStoreSourceResolver returns a SourceResolver backed by the
@@ -55,4 +59,9 @@ func (r *storeResolver) LocalSourceArtifact(kind, namespace, name string) *store
 	id := manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name}
 	art, _ := r.store.GetArtifact(id).(*store.SourceArtifact)
 	return art
+}
+
+func (r *storeResolver) HelmChart(namespace, name string) *manifest.HelmChartSource {
+	obj, _ := r.store.GetByName(manifest.KindHelmChart, namespace, name).(*manifest.HelmChartSource)
+	return obj
 }

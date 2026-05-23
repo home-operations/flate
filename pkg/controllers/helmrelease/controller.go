@@ -11,8 +11,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"maps"
-	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -38,8 +36,6 @@ type Controller struct {
 	// templates.
 	WipeSecrets bool
 
-	chartSourcesMu sync.RWMutex
-	chartSources   map[string]*manifest.HelmChartSource
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -53,11 +49,10 @@ type ReconcileOptions struct {
 // New constructs a HelmRelease controller.
 func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wipeSecrets bool) *Controller {
 	return &Controller{
-		Controller:   base.New(s, t),
-		Helm:         h,
-		Options:      opts,
-		WipeSecrets:  wipeSecrets,
-		chartSources: map[string]*manifest.HelmChartSource{},
+		Controller:  base.New(s, t),
+		Helm:        h,
+		Options:     opts,
+		WipeSecrets: wipeSecrets,
 	}
 }
 
@@ -81,31 +76,19 @@ func (c *Controller) Start(ctx context.Context) {
 
 func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 	return func(id manifest.NamedResource, payload any) {
-		switch id.Kind {
-		case manifest.KindHelmChart:
-			// HelmChartSource is a flate-internal projection of a Flux
-			// HelmChart CR. Maintain an index so HR.ResolveChartRef can
-			// look up the producing source for a chartRef reference.
-			// Re-read from the Store to win the listener-ordering race
-			// (s.fire dispatches after s.mu releases).
-			_ = payload
-			if s, ok := c.Store.GetObject(id).(*manifest.HelmChartSource); ok {
-				c.chartSourcesMu.Lock()
-				c.chartSources[s.ResourceFullName()] = s
-				c.chartSourcesMu.Unlock()
-			}
-		case manifest.KindHelmRelease:
-			hr, ok := payload.(*manifest.HelmRelease)
-			if !ok {
-				return
-			}
-			if c.PreGate(id, hr.Suspend) {
-				return
-			}
-			c.Submit(ctx, id, func(ctx context.Context) {
-				base.RunWithStatus(ctx, c.Store, id, "helmrelease", c.reconcile)
-			})
+		if id.Kind != manifest.KindHelmRelease {
+			return
 		}
+		hr, ok := payload.(*manifest.HelmRelease)
+		if !ok {
+			return
+		}
+		if c.PreGate(id, hr.Suspend) {
+			return
+		}
+		c.Submit(ctx, id, func(ctx context.Context) {
+			base.RunWithStatus(ctx, c.Store, id, "helmrelease", c.reconcile)
+		})
 	}
 }
 
@@ -141,7 +124,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// the same pre-render dance an embedder calling TemplateDocs
 	// directly performs. Keeping one canonical implementation here
 	// means changes to the contract only land in one place.
-	hr, err := helm.Prepare(hr, c.gatherHelmChartSources(), values.NewStoreProvider(c.Store))
+	hr, err := helm.Prepare(hr, c.Helm.Resolver().HelmChart, values.NewStoreProvider(c.Store))
 	if err != nil {
 		return err
 	}
@@ -206,14 +189,3 @@ func (c *Controller) collectHRDeps(hr *manifest.HelmRelease) []manifest.Dependen
 	return append([]manifest.DependencyRef(nil), hr.DependsOn...)
 }
 
-// gatherHelmChartSources returns a snapshot of the HelmChart lookup
-// map. The cache is maintained incrementally by onObjectAdded — every
-// HelmChart added to the store (initial parse phase or later, e.g. via
-// a Kustomization render) flows through the same listener.
-func (c *Controller) gatherHelmChartSources() map[string]*manifest.HelmChartSource {
-	c.chartSourcesMu.RLock()
-	defer c.chartSourcesMu.RUnlock()
-	out := make(map[string]*manifest.HelmChartSource, len(c.chartSources))
-	maps.Copy(out, c.chartSources)
-	return out
-}

@@ -208,38 +208,6 @@ func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 	return out
 }
 
-// TestTrimFluxPrefix verifies the user-facing error format strips
-// the two-layer `flux error: <subcategory>:` chain so the actual
-// cause leads. Sentinel-wrapped errors used for errors.Is branching
-// keep working; only the rendered string is reshaped.
-func TestTrimFluxPrefix(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{
-			in:   "flux error: input error: kustomization path does not exist: /a/b",
-			want: "kustomization path does not exist: /a/b",
-		},
-		{
-			in:   "flux error: object not found: source flux-system/foo artifact not found",
-			want: "source flux-system/foo artifact not found",
-		},
-		{
-			in:   "chart not found at /tmp/x: stat /tmp/x/Chart.yaml: no such file",
-			want: "chart not found at /tmp/x: stat /tmp/x/Chart.yaml: no such file",
-		},
-		{
-			in:   "flux error: unknown subcategory: keep me intact",
-			want: "unknown subcategory: keep me intact",
-		},
-	}
-	for _, tc := range cases {
-		if got := trimFluxPrefix(tc.in); got != tc.want {
-			t.Errorf("trimFluxPrefix(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
 // TestOrchestrator_TypedListener verifies Store.OnStatus delivers a
 // typed StatusInfo payload (no `any` type-switching needed by the
 // embedder).

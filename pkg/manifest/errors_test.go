@@ -6,6 +6,39 @@ import (
 	"testing"
 )
 
+// TestTrimSentinelPrefix locks the user-facing error format: strip
+// the two-layer `flux error: <subcategory>:` chain produced by
+// sentinel-wrapped errors so the actual cause leads. Sentinel chains
+// used for errors.Is branching keep working; only the rendered
+// string is reshaped.
+func TestTrimSentinelPrefix(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{
+			in:   "flux error: input error: kustomization path does not exist: /a/b",
+			want: "kustomization path does not exist: /a/b",
+		},
+		{
+			in:   "flux error: object not found: source flux-system/foo artifact not found",
+			want: "source flux-system/foo artifact not found",
+		},
+		{
+			in:   "chart not found at /tmp/x: stat /tmp/x/Chart.yaml: no such file",
+			want: "chart not found at /tmp/x: stat /tmp/x/Chart.yaml: no such file",
+		},
+		{
+			in:   "flux error: unknown subcategory: keep me intact",
+			want: "unknown subcategory: keep me intact",
+		},
+	}
+	for _, tc := range cases {
+		if got := TrimSentinelPrefix(tc.in); got != tc.want {
+			t.Errorf("TrimSentinelPrefix(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestDependencyFailedError_Format(t *testing.T) {
 	parent := NamedResource{Kind: KindKustomization, Namespace: "default", Name: "child"}
 	depA := NamedResource{Kind: KindKustomization, Namespace: "security", Name: "pocket-id-instance"}

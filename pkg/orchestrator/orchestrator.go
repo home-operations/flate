@@ -449,7 +449,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		// jump straight to the offending YAML — `flux error: input error:`
 		// chains alone don't reveal which spec.path declared a missing
 		// directory.
-		args := []any{"id", id.String(), "reason", trimFluxPrefix(info.Message)}
+		args := []any{"id", id.String(), "reason", manifest.TrimSentinelPrefix(info.Message)}
 		if f := o.sourceFiles[id]; f != "" {
 			args = append(args, "file", f)
 		}
@@ -473,7 +473,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		// sentinels are still wired up for errors.Is callers (e.g.
 		// embedders branching on ErrObjectNotFound), this only affects
 		// the formatted text the CLI ultimately prints.
-		msg := trimFluxPrefix(info.Message)
+		msg := manifest.TrimSentinelPrefix(info.Message)
 		if f := o.sourceFiles[id]; f != "" {
 			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", id.String(), f, msg))
 		} else {
@@ -485,35 +485,6 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		len(msgs), strings.Join(msgs, "\n  "))
 }
 
-// trimFluxPrefix removes the noisy `flux error: <subcategory>: ` chain
-// from a user-facing message so the actual cause leads. Idempotent —
-// callers that don't start with `flux error:` pass through unchanged.
-//
-// The sentinel chains (ErrFlux → ErrInput / ErrObjectNotFound / …)
-// remain intact for programmatic errors.Is branching; this only
-// reshapes the rendered string.
-func trimFluxPrefix(msg string) string {
-	const prefix = "flux error: "
-	if !strings.HasPrefix(msg, prefix) {
-		return msg
-	}
-	rest := msg[len(prefix):]
-	// One more level: `<subcategory>: <body>`. Strip subcategory too.
-	if i := strings.Index(rest, ": "); i > 0 {
-		// Only strip when the subcategory looks like a wrapped sentinel
-		// ("input error", "object not found", "invalid values reference",
-		// "invalid substitute reference", "command error") — otherwise
-		// leave it alone, the colon may be part of the actual message.
-		sub := rest[:i]
-		switch sub {
-		case "input error", "object not found",
-			"invalid values reference", "invalid substitute reference",
-			"command error":
-			return rest[i+2:]
-		}
-	}
-	return rest
-}
 
 // Render is the structured embed-friendly entry point: Bootstrap +
 // Run + collect everything an external caller needs to consume the

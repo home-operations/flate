@@ -6,6 +6,40 @@ import (
 	"strings"
 )
 
+// TrimSentinelPrefix removes the noisy `flux error: <subcategory>: `
+// chain produced by sentinel-wrapped errors (ErrFlux → ErrInput /
+// ErrObjectNotFound / …) so user-facing messages lead with the
+// actual cause. Idempotent — strings that don't start with the
+// prefix, or whose subcategory isn't one of the known sentinels,
+// pass through unchanged.
+//
+// Lives next to the sentinels themselves so the whitelist stays
+// in sync: adding a new ErrFoo here means updating one list, not
+// hunting through orchestrator code.
+func TrimSentinelPrefix(msg string) string {
+	const prefix = "flux error: "
+	if !strings.HasPrefix(msg, prefix) {
+		return msg
+	}
+	rest := msg[len(prefix):]
+	// One more level: `<subcategory>: <body>`. Strip subcategory only
+	// when it matches a known sentinel wrap so colon-containing
+	// non-sentinel messages aren't mangled.
+	i := strings.Index(rest, ": ")
+	if i <= 0 {
+		return rest
+	}
+	switch rest[:i] {
+	case "input error",
+		"object not found",
+		"invalid values reference",
+		"invalid substitute reference",
+		"command error":
+		return rest[i+2:]
+	}
+	return rest
+}
+
 // Sentinel errors. Callers branch on these with errors.Is. Every error
 // produced by this module wraps ErrFlux, so a generic
 // errors.Is(err, manifest.ErrFlux) classifies any flux-related failure.

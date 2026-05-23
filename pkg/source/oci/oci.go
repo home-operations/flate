@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -391,13 +390,15 @@ func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, expr, 
 	if len(matching) == 0 {
 		return "", fmt.Errorf("no tag matched semver %q (filter %q)", expr, filterPattern)
 	}
-	// Highest match wins.
-	idx := make([]int, len(matching))
-	for i := range idx {
-		idx[i] = i
+	// Highest match wins — find the max-index via slices.MaxFunc so the
+	// parallel matching[]/matchingTags[] stay aligned.
+	hi := 0
+	for i := 1; i < len(matching); i++ {
+		if matching[hi].LessThan(matching[i]) {
+			hi = i
+		}
 	}
-	sort.Slice(idx, func(a, b int) bool { return matching[idx[a]].LessThan(matching[idx[b]]) })
-	return matchingTags[idx[len(idx)-1]], nil
+	return matchingTags[hi], nil
 }
 
 // loadCredentials returns a credentials.Store backed by the given config

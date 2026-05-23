@@ -118,6 +118,38 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 	s.fire(EventObjectAdded, id, obj)
 }
 
+// Cloneable is satisfied by manifest types that can be shallowly
+// duplicated for safe mutation under the Store's immutability
+// contract. Kustomization, HelmRelease implement this; new types that
+// need post-load mutation should follow.
+type Cloneable[T any] interface {
+	Clone() T
+}
+
+// Mutate atomically replaces the store-owned object under id with the
+// result of mutating a fresh clone. Encodes the documented
+// immutability contract in one place: callers can't forget
+// clone-then-AddObject. Returns false when no object of type T is
+// stored under id (no-op).
+//
+// Use this for any post-load mutation — validateDependsOn pruning,
+// namespace-inheritance rewrites, alias seeding. Listeners fire as
+// they would on a fresh AddObject (intentionally — downstream
+// controllers re-reconcile against the mutated spec).
+func Mutate[T interface {
+	manifest.BaseManifest
+	Cloneable[T]
+}](s *Store, id manifest.NamedResource, mutate func(T)) bool {
+	obj, ok := s.GetObject(id).(T)
+	if !ok {
+		return false
+	}
+	cloned := obj.Clone()
+	mutate(cloned)
+	s.AddObject(cloned)
+	return true
+}
+
 // AddRendered records a manifest produced by helm/kustomize rendering.
 // Compared to AddObject it skips the reflect.DeepEqual dedup check and
 // the listener dispatch — rendered docs are leaves that no controller

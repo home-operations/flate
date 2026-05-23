@@ -26,10 +26,11 @@ package resourceset
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -159,11 +160,8 @@ func buildInputSets(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[s
 	}
 	// Sort providers by (namespace, name) for deterministic output,
 	// matching upstream's Combine routine ordering.
-	sort.Slice(providers, func(i, j int) bool {
-		if providers[i].Namespace != providers[j].Namespace {
-			return providers[i].Namespace < providers[j].Namespace
-		}
-		return providers[i].Name < providers[j].Name
+	slices.SortFunc(providers, func(a, b *manifest.ResourceSetInputProvider) int {
+		return cmp.Or(cmp.Compare(a.Namespace, b.Namespace), cmp.Compare(a.Name, b.Name))
 	})
 	for _, p := range providers {
 		exported, err := p.ExportedInputs()

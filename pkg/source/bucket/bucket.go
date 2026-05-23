@@ -3,6 +3,7 @@
 package bucket
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,7 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -212,7 +213,7 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 		}
 		entries = append(entries, entry{key: obj.Key, etag: obj.ETag})
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
+	slices.SortFunc(entries, func(a, b entry) int { return cmp.Compare(a.key, b.key) })
 
 	for _, e := range entries {
 		rel := strings.TrimPrefix(strings.TrimPrefix(e.key, prefix), "/")

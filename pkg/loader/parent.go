@@ -1,8 +1,9 @@
 package loader
 
 import (
+	"cmp"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -41,8 +42,8 @@ func BuildParentIndex(s *store.Store, sourceFiles map[manifest.NamedResource]str
 	// (the most specific structural owner) is the first match in the
 	// inner loop; we can short-circuit on first hit. Drops the worst
 	// case from O(K²) to O(K · depth) and the typical case to O(K).
-	sort.Slice(owners, func(i, j int) bool {
-		return len(owners[i].prefix) > len(owners[j].prefix)
+	slices.SortFunc(owners, func(a, b owner) int {
+		return cmp.Compare(len(b.prefix), len(a.prefix))
 	})
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for _, obj := range s.ListObjects(manifest.KindKustomization) {

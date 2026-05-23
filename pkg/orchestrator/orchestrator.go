@@ -128,11 +128,20 @@ func New(cfg Config) (*Orchestrator, error) {
 		manifest.KindGitRepository:    &git.Fetcher{Cache: cache, Secrets: secretGet},
 		manifest.KindExternalArtifact: &external.Fetcher{},
 		manifest.KindBucket:           &bucket.Fetcher{Cache: cache, Secrets: secretGet},
+		// HelmRepository: existence-only — flate resolves charts via the
+		// Helm client's registry/repo machinery directly, the controller
+		// just needs the resource to land in Ready so HelmRelease deps
+		// unblock.
+		manifest.KindHelmRepository: source.ExistenceFetcher{},
 	}
 	if cfg.EnableOCI {
 		fetchers[manifest.KindOCIRepository] = &oci.Fetcher{
 			Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet,
 		}
+	} else {
+		// --enable-oci=false: skip the real fetch but still mark each
+		// OCIRepository Ready so HRs that dependsOn one don't time out.
+		fetchers[manifest.KindOCIRepository] = source.ExistenceFetcher{}
 	}
 	o := &Orchestrator{
 		cfg:   cfg,
@@ -170,7 +179,6 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		return err
 	}
 	o.validateDependsOn()
-	o.markExistenceOnlyReady()
 	return o.buildChangeFilter(repoRoot)
 }
 
@@ -184,7 +192,7 @@ func (o *Orchestrator) seedBootstrapSource() (string, error) {
 	root := findRepoRoot(abs)
 
 	repo := &manifest.GitRepository{
-		Name: "flux-system", Namespace: "flux-system",
+		Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace,
 		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + root},
 	}
 	id := repo.Named()
@@ -498,21 +506,6 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		}
 	}
 	return out
-}
-
-// markExistenceOnlyReady marks HelmRepository (always) and
-// OCIRepository (when source-controller is disabled) as Ready so
-// HelmRelease waits can resolve without a real fetch.
-func (o *Orchestrator) markExistenceOnlyReady() {
-	for _, obj := range o.store.ListObjects(manifest.KindHelmRepository) {
-		o.store.UpdateStatus(obj.Named(), store.StatusReady, "")
-	}
-	if o.cfg.EnableOCI {
-		return
-	}
-	for _, obj := range o.store.ListObjects(manifest.KindOCIRepository) {
-		o.store.UpdateStatus(obj.Named(), store.StatusReady, "")
-	}
 }
 
 // buildChangeFilter computes the file-level change set (if changed-only

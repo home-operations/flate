@@ -351,15 +351,6 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	return deps
 }
 
-// bootstrapSourceID is the synthetic GitRepository the orchestrator
-// seeds for the user's working tree. Children that inherit sourceRef
-// only from a parent's render patches (a common onedr0p-style pattern)
-// look empty until the parent reconciles, so resolveSourceRoot uses
-// this as the fallback rather than mis-joining ks.Path against itself.
-var bootstrapSourceID = manifest.NamedResource{
-	Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system",
-}
-
 // resolveSourceRoot returns the on-disk root the kustomization should
 // be built from — i.e. the source artifact's local path. The Flux
 // renderer then joins ks.Path onto this root.
@@ -375,7 +366,7 @@ func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, erro
 			return "", fmt.Errorf("%w: kustomization %s has no path and no source",
 				manifest.ErrInput, ks.NamespacedName())
 		}
-		srcID = bootstrapSourceID
+		srcID = manifest.BootstrapSourceID
 	}
 	art := c.Store.GetArtifact(srcID)
 	if art == nil {

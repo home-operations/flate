@@ -33,6 +33,16 @@ const (
 // in `flux-system` when no namespace is declared.
 const DefaultNamespace = "flux-system"
 
+// BootstrapSourceID is the synthetic GitRepository the orchestrator
+// seeds for the user's local working tree. Child Kustomizations whose
+// sourceRef is patched in by a parent's render fall back to this id
+// when their own SourceRef is still empty (#105 — see resolveSourceRoot).
+// Exported so orchestrator and kustomization controller share one
+// declaration.
+var BootstrapSourceID = NamedResource{
+	Kind: KindGitRepository, Namespace: DefaultNamespace, Name: DefaultNamespace,
+}
+
 // HelmRepository types as understood by Flux.
 const (
 	RepoTypeDefault = "default"

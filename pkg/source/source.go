@@ -38,6 +38,20 @@ type Suspendable interface {
 	Suspended() bool
 }
 
+// ExistenceFetcher is the no-op Fetcher registered for kinds whose
+// existence alone is enough to satisfy downstream waits — used today
+// for HelmRepository (always) and OCIRepository when EnableOCI is
+// false. Returning nil artifact + nil error lands the resource in
+// Ready without recording a SourceArtifact, so a HelmRelease that
+// dependsOn a HelmRepository unblocks instantly without flate having
+// to mirror the controllers' "did fetch succeed?" logic from outside
+// the controller package.
+type ExistenceFetcher struct{}
+
+func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*store.SourceArtifact, error) {
+	return nil, nil
+}
+
 // SecretGetter resolves a Secret CR by namespace + name. Fetchers that
 // read authentication credentials (Bucket; future GitRepository
 // SecretRef; future OCIRepository SecretRef) accept one of these so

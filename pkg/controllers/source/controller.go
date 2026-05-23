@@ -113,6 +113,13 @@ func (c *Controller) runFetch(ctx context.Context, id manifest.NamedResource, ob
 		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
 		return
 	}
-	c.Store.SetArtifact(id, artifact)
+	// An ExistenceFetcher returns (nil, nil) — the kind doesn't produce
+	// an on-disk artifact (HelmRepository; OCIRepository when fetching
+	// is disabled). Mark Ready without writing an artifact so dependsOn
+	// watchers unblock and chart resolution falls through to whichever
+	// mechanism actually serves the chart.
+	if artifact != nil {
+		c.Store.SetArtifact(id, artifact)
+	}
 	c.Store.UpdateStatus(id, store.StatusReady, "")
 }

@@ -294,6 +294,23 @@ func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (
 	return c.fetchOCIChart(ctx, r.URL, ver)
 }
 
+// ociPullRef joins an OCI repo URL and an optional ref into the form
+// the helm registry client expects. A digest ref (`sha256:<hex>` and
+// friends) joins with `@`; a tag joins with `:`. Per OCI tag spec a
+// tag can never contain `:`, so its presence in `version` is an
+// unambiguous digest signal — without this branch, the helm client
+// rejects `repo:sha256:<hex>` as an invalid tag.
+func ociPullRef(ref, version string) string {
+	if version == "" {
+		return ref
+	}
+	sep := ":"
+	if strings.Contains(version, ":") {
+		sep = "@"
+	}
+	return ref + sep + version
+}
+
 // fetchOCIChart pulls an OCI chart via the helm registry client.
 func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string, error) {
 	if c.registry == nil {
@@ -311,10 +328,7 @@ func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string
 		return target, nil
 	}
 
-	pullRef := ref
-	if version != "" {
-		pullRef = ref + ":" + version
-	}
+	pullRef := ociPullRef(ref, version)
 	_ = ctx // reserved for future per-pull cancellation when helm supports it
 	result, err := c.registry.Pull(pullRef)
 	if err != nil {

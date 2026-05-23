@@ -136,15 +136,13 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		}
 	}
 
-	// Clone before mutating: ResolveChartRef rewrites hr.Chart in place
-	// and ExpandValueReferences writes hr.Values. The store-owned HR
-	// stays canonical so concurrent readers (e.g. dependsOn watchers
-	// reading hr.Chart for a sibling reconcile) never see torn state.
-	hr = hr.Clone()
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving chart")
-
-	helmCharts := c.gatherHelmChartSources()
-	if err := hr.ResolveChartRef(helmCharts); err != nil {
+	// helm.Prepare clones hr, resolves chartRef, and expands values —
+	// the same pre-render dance an embedder calling TemplateDocs
+	// directly performs. Keeping one canonical implementation here
+	// means changes to the contract only land in one place.
+	hr, err := helm.Prepare(hr, c.gatherHelmChartSources(), values.NewStoreProvider(c.Store))
+	if err != nil {
 		return err
 	}
 
@@ -166,12 +164,6 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	if sum.AnyFailed() {
 		return fmt.Errorf("%w: chart source %s not ready: %s",
 			manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
-	}
-
-	c.Store.UpdateStatus(id, store.StatusPending, "resolving values")
-	provider := values.NewStoreProvider(c.Store)
-	if err := values.ExpandValueReferences(hr, provider); err != nil {
-		return err
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering chart")

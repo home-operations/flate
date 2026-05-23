@@ -121,6 +121,30 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	}
 }
 
+// TestExpandPostBuildSubstituteReference_RejectsInvalidVarName locks
+// the upstream contract (fluxcd/pkg/kustomize varSubstitution): any
+// var name failing `^[_[:alpha:]][_[:alpha:][:digit:]]*$` fails the
+// whole postBuild rather than being silently dropped. A ConfigMap key
+// with a dash makes upstream Flux fail the Kustomization; flate must
+// surface the same error.
+func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) {
+	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
+	ks.PostBuildSubstituteFrom = []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}}
+	provider := &SliceProvider{
+		ConfigMaps: []*manifest.ConfigMap{{
+			Name: "cm", Namespace: "ns",
+			Data: map[string]any{"my-var": "v", "ok_name": "v"},
+		}},
+	}
+	err := ExpandPostBuildSubstituteReference(ks, provider)
+	if err == nil {
+		t.Fatal("expected error for dashed var name")
+	}
+	if !strings.Contains(err.Error(), "my-var") {
+		t.Errorf("error should name the invalid var; got %v", err)
+	}
+}
+
 // TestReplaceValueAtPath_TypeCoercion locks the upstream Flux contract
 // (chartutil.ReplacePathValue → strvals.ParseInto): a value flowing
 // in through ValuesReference.TargetPath is parsed as a Helm CLI

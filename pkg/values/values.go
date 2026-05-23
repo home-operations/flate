@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"regexp"
 	"strings"
 
 	"helm.sh/helm/v4/pkg/strvals"
@@ -12,6 +13,13 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// varsubRegex matches the upstream kustomize-controller var-name
+// validation from fluxcd/pkg/kustomize/kustomize_varsub.go: identifiers
+// composed of an alpha/underscore lead and alnum/underscore tail. A
+// ConfigMap key like `my-var` (dash) is invalid; upstream rejects the
+// whole postBuild rather than silently substituting nothing.
+var varsubRegex = regexp.MustCompile(`^[_a-zA-Z][_a-zA-Z0-9]*$`)
 
 // Provider exposes the ConfigMap/Secret lookups needed for value
 // reference expansion. The controllers implement it against the central
@@ -314,6 +322,18 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 	// Layer inline spec.postBuild.substitute on top — inline wins on
 	// key collision per upstream LoadVariables order.
 	maps.Copy(values, ks.PostBuildSubstitute)
+
+	// Reject invalid var names — matches upstream fluxcd/pkg/kustomize
+	// varSubstitution which fails the whole postBuild on any name that
+	// doesn't match `^[_[:alpha:]][_[:alpha:][:digit:]]*$`. Without this
+	// check flate would render with the invalid keys silently dropped
+	// while real Flux would fail the Kustomization — divergent output.
+	for name := range values {
+		if !varsubRegex.MatchString(name) {
+			return fmt.Errorf("%w: substituteFrom var name %q is invalid (must match %s)",
+				manifest.ErrInvalidSubstituteReference, name, varsubRegex.String())
+		}
+	}
 	ks.UpdatePostBuildSubstitutions(values)
 	return nil
 }

@@ -250,10 +250,11 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 		}
 	}
 
-	slot, exists, err := cache.Slot(repo.URL, refStr)
+	slot, exists, release, err := cache.Slot(repo.URL, refStr)
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", repo.URL, err)
 	}
+	defer release()
 
 	if exists {
 		// The flate-revision marker is written AFTER a successful

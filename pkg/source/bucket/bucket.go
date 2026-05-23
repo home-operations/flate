@@ -76,10 +76,11 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	// Cache key: bucket+prefix; reset on first error so retries start
 	// clean. The revision identifier (sha256 over sorted etags) is
 	// recomputed after listing.
-	slot, _, err := f.Cache.Slot(endpoint+"/"+b.BucketName, b.Prefix)
+	slot, _, release, err := f.Cache.Slot(endpoint+"/"+b.BucketName, b.Prefix)
 	if err != nil {
 		return nil, fmt.Errorf("bucket %s/%s cache slot: %w", b.Namespace, b.Name, err)
 	}
+	defer release()
 
 	keys, revHash, err := walkBucket(ctx, client, b.BucketName, b.Prefix, slot)
 	if err != nil {

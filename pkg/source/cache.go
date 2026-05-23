@@ -16,11 +16,18 @@ import (
 // sources. Each (url, ref) tuple gets its own slot, so multiple revisions
 // of the same upstream coexist without clobbering one another.
 //
-// The cache is safe for concurrent use; an internal mutex serializes
-// allocation so two reconcilers can't race on the same slot path.
+// The cache is safe for concurrent use. A per-slot mutex serializes the
+// full fetch-write-read lifecycle on a single slot — two distinct
+// source CRs with the same (url, ref) hash to the same slot, and
+// without per-slot locking one would observe the other mid-write
+// (e.g. read an empty marker, call Reset, wipe the in-progress clone).
+// Different slots proceed in parallel.
 type Cache struct {
 	root string
-	mu   sync.Mutex
+	mu   sync.Mutex // guards locks
+	// locks holds a sync.Mutex per slot path. Lazily created; never
+	// reaped — the slot count is bounded by user-declared sources.
+	locks map[string]*sync.Mutex
 }
 
 // NewCache constructs a Cache rooted at dir. If dir is empty, a
@@ -29,17 +36,38 @@ func NewCache(dir string) *Cache {
 	return &Cache{root: cmp.Or(dir, filepath.Join(os.TempDir(), "flate-cache"))}
 }
 
-// Slot returns the path under which (url, ref) should be cached. The
-// returned directory is created if it does not already exist. The
-// returned exists flag is true when the directory was already populated.
-func (c *Cache) Slot(url, ref string) (path string, exists bool, err error) {
+// slotMu returns the per-slot mutex for path, creating it on first
+// access. Caller must NOT hold c.mu.
+func (c *Cache) slotMu(path string) *sync.Mutex {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.locks == nil {
+		c.locks = make(map[string]*sync.Mutex)
+	}
+	m, ok := c.locks[path]
+	if !ok {
+		m = &sync.Mutex{}
+		c.locks[path] = m
+	}
+	return m
+}
 
+// Slot returns the path under which (url, ref) should be cached, the
+// per-slot release function the caller MUST defer, and an exists flag
+// indicating the directory was already populated.
+//
+// Holding the returned release across the full fetch-and-publish
+// lifecycle serializes other fetchers (different CRs, same (url, ref))
+// against the in-flight one — see Cache type doc for the race motivation.
+func (c *Cache) Slot(url, ref string) (path string, exists bool, release func(), err error) {
 	slug := slugifyRepo(url)
 	h := sha256.Sum256([]byte(url + "@" + ref))
 	hash := hex.EncodeToString(h[:])[:16]
 	path = filepath.Join(c.root, slug, hash)
+
+	m := c.slotMu(path)
+	m.Lock()
+	release = m.Unlock
 
 	info, statErr := os.Stat(path)
 	switch {
@@ -47,34 +75,35 @@ func (c *Cache) Slot(url, ref string) (path string, exists bool, err error) {
 		// Non-empty directory counts as populated. We use the presence
 		// of any entry as the indicator so a bare `mkdir` from a prior
 		// aborted run doesn't masquerade as a hit.
-		f, err := os.Open(path) //nolint:gosec // path is a cache slot under our cache root
-		if err == nil {
-			defer func() { _ = f.Close() }()
+		f, ferr := os.Open(path) //nolint:gosec // path is a cache slot under our cache root
+		if ferr == nil {
 			entries, _ := f.Readdirnames(1)
+			_ = f.Close()
 			exists = len(entries) > 0
 		}
-		return path, exists, nil
+		return path, exists, release, nil
 	case os.IsNotExist(statErr):
-		return path, false, os.MkdirAll(path, 0o750)
+		if mkErr := os.MkdirAll(path, 0o750); mkErr != nil {
+			release()
+			return "", false, nil, mkErr
+		}
+		return path, false, release, nil
 	default:
-		return "", false, fmt.Errorf("cache slot stat: %w", statErr)
+		release()
+		return "", false, nil, fmt.Errorf("cache slot stat: %w", statErr)
 	}
 }
 
-// Reset removes a previously allocated slot. Called when a fetch fails so
-// retries start clean.
-//
-// Acquires the cache mutex for the same reason Slot does: two fetchers
-// for the same (url, ref) hash to the same slot, and a Reset overlapping
-// with another fetcher's mid-clone could partially delete the
-// in-progress directory. Holding c.mu here serializes Reset against any
-// concurrent Slot allocation.
+// Reset removes a previously allocated slot. Called when a fetch fails
+// so retries start clean. The caller is expected to hold the slot
+// release (i.e. Reset is called from within the Slot-Acquire critical
+// section). This function does NOT take the per-slot lock — doing so
+// would self-deadlock — but it does serialize against new Slot
+// acquisitions via the absence of a sibling holder.
 func (c *Cache) Reset(path string) error {
 	if path == "" {
 		return nil
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	return os.RemoveAll(path)
 }
 

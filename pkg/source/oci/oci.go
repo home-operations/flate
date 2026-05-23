@@ -212,10 +212,11 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 
 	versioned := versionedURL(repo.URL, ref)
-	slot, exists, err := cache.Slot(versioned, "")
+	slot, exists, release, err := cache.Slot(versioned, "")
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}
+	defer release()
 	if exists {
 		cachedDigest := readCachedDigest(slot)
 		if cachedDigest == "" {
@@ -253,29 +254,37 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	if err != nil {
 		return nil, fmt.Errorf("oras file store: %w", err)
 	}
-	defer func() { _ = dest.Close() }()
+	// Track close + slot-reset ordering manually rather than via defer:
+	// orasfile.Close must flush/release file handles BEFORE cache.Reset
+	// wipes the slot, otherwise Close fsyncs against a deleted directory
+	// (and, worse, could touch another tenant's directory if the slot
+	// path were re-allocated in between — although the per-slot release
+	// above prevents that race today).
+	closeDest := func() { _ = dest.Close() }
+	resetOnErr := func() { closeDest(); _ = cache.Reset(slot) }
 
 	desc, err := oras.Copy(ctx, repoClient, tag, dest, tag, oras.DefaultCopyOptions)
 	if err != nil {
-		_ = cache.Reset(slot)
+		resetOnErr()
 		return nil, fmt.Errorf("oras copy %s: %w", versioned, err)
 	}
 
 	digest := desc.Digest.String()
 	if repo.Verify != nil {
 		if err := f.verifyCosignSignature(ctx, repoClient, repo, digest); err != nil {
-			_ = cache.Reset(slot)
+			resetOnErr()
 			return nil, err
 		}
 	}
 	if err := applyLayerSelector(ctx, repoClient, slot, desc.Digest.String(), repo.LayerSelector); err != nil {
-		_ = cache.Reset(slot)
+		resetOnErr()
 		return nil, fmt.Errorf("OCIRepository %s/%s: layer select: %w", repo.Namespace, repo.Name, err)
 	}
 	if err := source.ApplyIgnore(slot, repo.Ignore); err != nil {
-		_ = cache.Reset(slot)
+		resetOnErr()
 		return nil, fmt.Errorf("OCIRepository %s/%s: %w", repo.Namespace, repo.Name, err)
 	}
+	closeDest()
 	// Persist the resolved digest so a subsequent cache hit can
 	// re-verify against the exact bytes we wrote, even when the spec
 	// pinned only a tag. A write failure isn't fatal — the next fetch

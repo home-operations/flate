@@ -231,6 +231,11 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 				_ = cache.Reset(slot)
 				exists = false
 			} else if err := f.verifyCosignSignature(ctx, repoClient, repo, cachedDigest); err != nil {
+				// Cosign rejected the cached bytes. Without resetting, the
+				// next reconcile re-hits the same poisoned slot and fails
+				// verify identically — a hard-to-debug repeated failure.
+				// Reset so a fresh pull is attempted.
+				_ = cache.Reset(slot)
 				return nil, err
 			}
 		}

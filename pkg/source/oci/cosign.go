@@ -208,13 +208,22 @@ func (f *Fetcher) loadCosignPublicKeys(repo *manifest.OCIRepository) ([]crypto.P
 			repo.Namespace, repo.Name, repo.Namespace, repo.Verify.SecretRef.Name)
 	}
 	var keys []crypto.PublicKey
-	for k, v := range sec.StringData {
-		s, ok := v.(string)
-		if !ok || s == "" {
-			continue
-		}
-		// Treat the --wipe-secrets placeholder as missing.
-		if s = source.StringFromSecret(sec, k); s == "" {
+	// Iterate the union of StringData + Data keys so PEM blocks stored
+	// under either field are discovered. k8s Secrets typically put
+	// `cosign.pub` under `data:` (base64-encoded); StringData is the
+	// at-apply-time convenience field.
+	seen := make(map[string]struct{}, len(sec.StringData)+len(sec.Data))
+	for k := range sec.StringData {
+		seen[k] = struct{}{}
+	}
+	for k := range sec.Data {
+		seen[k] = struct{}{}
+	}
+	for k := range seen {
+		// StringFromSecret prefers StringData over Data and strips the
+		// PLACEHOLDER_-wipe marker, so callers see "" for wiped values.
+		s := source.StringFromSecret(sec, k)
+		if s == "" {
 			continue
 		}
 		parsed := parsePEMPublicKeys([]byte(s))

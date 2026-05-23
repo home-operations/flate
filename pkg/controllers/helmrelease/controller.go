@@ -144,6 +144,11 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		}
 	}
 
+	// Clone before mutating: ResolveChartRef rewrites hr.Chart in place
+	// and ExpandValueReferences writes hr.Values. The store-owned HR
+	// stays canonical so concurrent readers (e.g. dependsOn watchers
+	// reading hr.Chart for a sibling reconcile) never see torn state.
+	hr = hr.Clone()
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving chart")
 
 	helmCharts := c.gatherHelmChartSources()

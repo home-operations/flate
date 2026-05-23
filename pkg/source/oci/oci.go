@@ -257,23 +257,23 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 
 	desc, err := oras.Copy(ctx, repoClient, tag, dest, tag, oras.DefaultCopyOptions)
 	if err != nil {
-		_ = os.RemoveAll(slot)
+		_ = cache.Reset(slot)
 		return nil, fmt.Errorf("oras copy %s: %w", versioned, err)
 	}
 
 	digest := desc.Digest.String()
 	if repo.Verify != nil {
 		if err := f.verifyCosignSignature(ctx, repoClient, repo, digest); err != nil {
-			_ = os.RemoveAll(slot)
+			_ = cache.Reset(slot)
 			return nil, err
 		}
 	}
 	if err := applyLayerSelector(ctx, repoClient, slot, desc.Digest.String(), repo.LayerSelector); err != nil {
-		_ = os.RemoveAll(slot)
+		_ = cache.Reset(slot)
 		return nil, fmt.Errorf("OCIRepository %s/%s: layer select: %w", repo.Namespace, repo.Name, err)
 	}
 	if err := source.ApplyIgnore(slot, repo.Ignore); err != nil {
-		_ = os.RemoveAll(slot)
+		_ = cache.Reset(slot)
 		return nil, fmt.Errorf("OCIRepository %s/%s: %w", repo.Namespace, repo.Name, err)
 	}
 	// Persist the resolved digest so a subsequent cache hit can

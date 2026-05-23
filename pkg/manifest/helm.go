@@ -3,6 +3,7 @@ package manifest
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -216,6 +217,18 @@ type HelmRelease struct {
 // Named identifies the release.
 func (h *HelmRelease) Named() NamedResource {
 	return NamedResource{Kind: KindHelmRelease, Namespace: h.Namespace, Name: h.Name}
+}
+
+// Clone returns a copy of h safe for in-place mutation during a single
+// reconcile pass. Deep-copies the maps and slices reconcile writes to
+// (Values, ChartValuesFiles, DependsOn) so the canonical store-owned
+// object is never observed mid-mutation by other goroutines.
+func (h *HelmRelease) Clone() *HelmRelease {
+	out := *h
+	out.Values = DeepCopyMap(h.Values)
+	out.ChartValuesFiles = slices.Clone(h.ChartValuesFiles)
+	out.DependsOn = slices.Clone(h.DependsOn)
+	return &out
 }
 
 // ReleaseName returns the resolved Helm release name — spec.releaseName

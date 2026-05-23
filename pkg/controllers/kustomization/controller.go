@@ -132,6 +132,12 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		return err
 	}
 
+	// Clone before mutating: ExpandPostBuildSubstituteReference writes
+	// into ks.PostBuildSubstitute and the nested ks.Contents tree.
+	// The store-owned object stays canonical so concurrent readers
+	// (e.g. an HR controller resolving a chartRef while this KS is
+	// rendering) never observe torn state.
+	ks = ks.Clone()
 	c.Store.UpdateStatus(id, store.StatusPending, "expanding substitutions")
 	provider := values.NewStoreProvider(c.Store)
 	if err := values.ExpandPostBuildSubstituteReference(ks, provider); err != nil {

@@ -292,10 +292,12 @@ func fetch(ctx context.Context, cache *source.Cache, repo *manifest.GitRepositor
 		ref = *repo.Reference
 	}
 	if err := checkoutRef(cloned, ref, repo.SparseCheckout); err != nil {
+		_ = cache.Reset(slot)
 		return nil, fmt.Errorf("checkout %s: %w", refStr, err)
 	}
 	if repo.RecurseSubmodules {
 		if err := updateSubmodules(cloned, auth); err != nil {
+			_ = cache.Reset(slot)
 			return nil, fmt.Errorf("submodules: %w", err)
 		}
 	}

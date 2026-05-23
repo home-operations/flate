@@ -71,6 +71,17 @@ func (k *Kustomization) Named() NamedResource {
 	return NamedResource{Kind: KindKustomization, Namespace: k.Namespace, Name: k.Name}
 }
 
+// Clone returns a copy of k safe for in-place mutation during a single
+// reconcile pass. Deep-copies the maps reconcile writes to (Contents,
+// PostBuildSubstitute) so the canonical store-owned object is never
+// observed mid-mutation by other goroutines.
+func (k *Kustomization) Clone() *Kustomization {
+	out := *k
+	out.Contents = DeepCopyMap(k.Contents)
+	out.PostBuildSubstitute = maps.Clone(k.PostBuildSubstitute)
+	return &out
+}
+
 // NamespacedName is "<namespace>/<name>".
 func (k *Kustomization) NamespacedName() string { return k.Namespace + "/" + k.Name }
 

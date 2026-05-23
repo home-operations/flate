@@ -266,6 +266,7 @@ func (c *Client) fetchIndex(indexURL string, opts []getter.Option) (*repo.IndexF
 		return nil, err
 	}
 	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
 	if _, err := tmp.Write(buf.Bytes()); err != nil {
 		_ = tmp.Close()
 		return nil, err
@@ -273,7 +274,6 @@ func (c *Client) fetchIndex(indexURL string, opts []getter.Option) (*repo.IndexF
 	if err := tmp.Close(); err != nil {
 		return nil, err
 	}
-	defer func() { _ = os.Remove(tmpPath) }()
 	idx, err := repo.LoadIndexFile(tmpPath)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", indexURL, err)

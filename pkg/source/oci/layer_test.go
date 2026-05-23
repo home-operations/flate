@@ -75,9 +75,9 @@ func TestApplyLayerSelector_Extract(t *testing.T) {
 	slot := t.TempDir()
 
 	chartFiles := map[string]string{
-		"Chart.yaml":          "name: example\nversion: 1.0.0\n",
-		"templates/cm.yaml":   "kind: ConfigMap\n",
-		"values.yaml":         "replicas: 1\n",
+		"Chart.yaml":        "name: example\nversion: 1.0.0\n",
+		"templates/cm.yaml": "kind: ConfigMap\n",
+		"values.yaml":       "replicas: 1\n",
 	}
 	layerBytes := mustTarGz(t, chartFiles)
 	layerDigest := writeBlob(t, slot, layerBytes)

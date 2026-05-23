@@ -66,10 +66,18 @@ func (c *Cache) Slot(url, ref string) (path string, exists bool, err error) {
 
 // Reset removes a previously allocated slot. Called when a fetch fails so
 // retries start clean.
+//
+// Acquires the cache mutex for the same reason Slot does: two fetchers
+// for the same (url, ref) hash to the same slot, and a Reset overlapping
+// with another fetcher's mid-clone could partially delete the
+// in-progress directory. Holding c.mu here serializes Reset against any
+// concurrent Slot allocation.
 func (c *Cache) Reset(path string) error {
 	if path == "" {
 		return nil
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return os.RemoveAll(path)
 }
 

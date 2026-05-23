@@ -3,8 +3,8 @@ package manifest
 import (
 	"cmp"
 
-	meta "github.com/fluxcd/pkg/apis/meta"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	meta "github.com/fluxcd/pkg/apis/meta"
 )
 
 // LocalObjectReference is a name-only reference to a same-namespace

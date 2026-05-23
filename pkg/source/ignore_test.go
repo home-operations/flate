@@ -161,4 +161,3 @@ func TestApplyIgnore_LeadingSlashAnchorsToRoot(t *testing.T) {
 		t.Errorf("root-anchored /config.yaml must NOT remove nested file")
 	}
 }
-

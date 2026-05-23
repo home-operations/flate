@@ -110,11 +110,16 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath st
 	if err != nil {
 		return nil, fmt.Errorf("kustomize build %s: %w", subPath, err)
 	}
-	if err := applyCommonMetadata(rm, rawSpec); err != nil {
-		return nil, fmt.Errorf("apply commonMetadata %s: %w", subPath, err)
-	}
+	// Owner labels first so user-supplied spec.commonMetadata wins on a
+	// key collision. Matches kustomize-controller's ordering:
+	// SetOwnerLabels runs at reconcile setup
+	// (internal/controller/kustomization_controller.go:460), then
+	// SetCommonMetadata runs at apply time (:844) and overwrites.
 	if err := applyOwnerLabels(rm, rawSpec); err != nil {
 		return nil, fmt.Errorf("apply owner labels %s: %w", subPath, err)
+	}
+	if err := applyCommonMetadata(rm, rawSpec); err != nil {
+		return nil, fmt.Errorf("apply commonMetadata %s: %w", subPath, err)
 	}
 	out, err := rm.AsYaml()
 	if err != nil {

@@ -15,10 +15,10 @@ import (
 // no controllers, just the store / sourceFiles wiring the orchestrator
 // builds during Bootstrap. Three scenarios:
 //
-//   1. Truly orphaned child (file under parent path, never emitted by
-//      parent's render): downgraded.
-//   2. Root-level resource (no covering parent): NOT downgraded.
-//   3. Child re-emitted by parent (WasRendered set): NOT downgraded.
+//  1. Truly orphaned child (file under parent path, never emitted by
+//     parent's render): downgraded.
+//  2. Root-level resource (no covering parent): NOT downgraded.
+//  3. Child re-emitted by parent (WasRendered set): NOT downgraded.
 func TestDetectOrphans(t *testing.T) {
 	parent := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",

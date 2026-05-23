@@ -101,10 +101,10 @@ func TestFetcher_RefByName_Unresolvable(t *testing.T) {
 func TestFetcher_SparseCheckout(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{
-		"apps/a/manifest.yaml":   "kind: ConfigMap",
-		"apps/b/manifest.yaml":   "kind: ConfigMap",
-		"infra/c/manifest.yaml":  "kind: ConfigMap",
-		"README.md":              "top-level",
+		"apps/a/manifest.yaml":  "kind: ConfigMap",
+		"apps/b/manifest.yaml":  "kind: ConfigMap",
+		"infra/c/manifest.yaml": "kind: ConfigMap",
+		"README.md":             "top-level",
 	})
 
 	cache := source.NewCache(t.TempDir())

@@ -150,9 +150,9 @@ func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 		cr.Spec.SourceRef.Kind = KindHelmRepository
 	}
 	return &HelmChartSource{
-		Name:           cr.Name,
-		Namespace:      ns,
-		HelmChartSpec:  cr.Spec,
+		Name:          cr.Name,
+		Namespace:     ns,
+		HelmChartSpec: cr.Spec,
 	}, nil
 }
 

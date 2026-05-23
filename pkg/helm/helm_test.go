@@ -7,8 +7,8 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/common"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -360,6 +360,74 @@ func TestMergeChartValuesFiles(t *testing.T) {
 		}
 		if len(got) != 0 {
 			t.Errorf("expected empty result for nil names: %v", got)
+		}
+	})
+}
+
+// TestFilterShowOnly covers the --show-only flag's filter logic: keep
+// only sections whose "# Source: <path>" header matches one of the
+// requested template paths. The function is wired into Options.ShowOnly
+// for CLI consumers; pin the matrix here so future refactors don't
+// silently break the flag.
+func TestFilterShowOnly(t *testing.T) {
+	rendered := `# Source: mychart/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keep-me
+---
+# Source: mychart/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: drop-me
+---
+# Source: mychart/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: keep-me-too
+`
+
+	t.Run("KeepsListedPaths", func(t *testing.T) {
+		got := filterShowOnly(rendered, []string{
+			"mychart/templates/configmap.yaml",
+			"mychart/templates/service.yaml",
+		})
+		if !strings.Contains(got, "name: keep-me") {
+			t.Errorf("missing kept configmap: %s", got)
+		}
+		if !strings.Contains(got, "name: keep-me-too") {
+			t.Errorf("missing kept service: %s", got)
+		}
+		if strings.Contains(got, "name: drop-me") {
+			t.Errorf("unfiltered secret leaked through: %s", got)
+		}
+	})
+
+	t.Run("EmptyPathListProducesEmptyOutput", func(t *testing.T) {
+		got := filterShowOnly(rendered, nil)
+		if got != "" {
+			t.Errorf("nil show-only list should drop everything; got: %s", got)
+		}
+	})
+
+	t.Run("MissingHeaderSkipped", func(t *testing.T) {
+		noHeader := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orphan
+`
+		got := filterShowOnly(noHeader, []string{"any/path.yaml"})
+		if got != "" {
+			t.Errorf("doc with no Source header must be dropped; got: %s", got)
+		}
+	})
+
+	t.Run("UnmatchedPathProducesEmptyOutput", func(t *testing.T) {
+		got := filterShowOnly(rendered, []string{"mychart/templates/nonexistent.yaml"})
+		if got != "" {
+			t.Errorf("unmatched show-only path should drop everything; got: %s", got)
 		}
 	})
 }

@@ -8,8 +8,8 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"helm.sh/helm/v4/pkg/action"
-	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/common"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/cli"
 	release "helm.sh/helm/v4/pkg/release/v1"
 	"sigs.k8s.io/yaml"
@@ -276,4 +276,3 @@ func filterShowOnly(content string, paths []string) string {
 func isTestHook(h *release.Hook) bool {
 	return slices.Contains(h.Events, release.HookTest)
 }
-

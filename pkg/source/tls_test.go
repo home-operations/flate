@@ -73,4 +73,3 @@ func TestBuildTLSConfig_InvalidCertKey(t *testing.T) {
 		t.Errorf("expected cert/key parse error; got %v", err)
 	}
 }
-

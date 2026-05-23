@@ -124,4 +124,3 @@ func TestFetcher_ResolveTransport_CertSecretRefWithoutGetter(t *testing.T) {
 		t.Errorf("expected source.SecretGetter error; got %v", err)
 	}
 }
-

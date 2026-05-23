@@ -178,7 +178,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	// kustomize's emission order; passes themselves are ordered so the
 	// data backing a reconcile always arrives first.
 	type parsed struct {
-		obj         manifest.BaseManifest
+		obj          manifest.BaseManifest
 		reconcilable bool
 	}
 	objs := make([]parsed, 0, len(docs))

@@ -149,10 +149,10 @@ func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 	f := NewFilter(
 		NewSet([]string{"apps/media/plex/app/helmrelease.yaml"}),
 		map[manifest.NamedResource]string{
-			metaID:   "flux/cluster/ks.yaml",
-			plexID:   "apps/media/plex/app/ks.yaml",
-			atuinID:  "apps/default/atuin/app/ks.yaml",
-			hrAtuin:  "apps/default/atuin/app/helmrelease.yaml",
+			metaID:  "flux/cluster/ks.yaml",
+			plexID:  "apps/media/plex/app/ks.yaml",
+			atuinID: "apps/default/atuin/app/ks.yaml",
+			hrAtuin: "apps/default/atuin/app/helmrelease.yaml",
 		},
 		"",
 		mapLister{metaID: meta, plexID: plex, atuinID: atuin},

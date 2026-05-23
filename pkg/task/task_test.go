@@ -281,4 +281,3 @@ func TestYieldSlot_PanicRestoresSlot(t *testing.T) {
 	}
 	s.BlockTillDone()
 }
-

@@ -26,7 +26,6 @@ func GitRefString(r GitRepositoryRef) string {
 	return ""
 }
 
-
 // GitRepository is the Flux GitRepository CRD. The embedded
 // sourcev1.GitRepositorySpec promotes URL, Reference, Verification,
 // Provider, SecretRef, ProxySecretRef, RecurseSubmodules,
@@ -155,7 +154,6 @@ func (o *OCIRepository) Version() (string, error) {
 	return "", nil
 }
 
-
 // ParseOCIRepository decodes an OCIRepository CR.
 func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
@@ -229,9 +227,9 @@ func ParseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 		return nil, inputf("ExternalArtifact missing metadata.name")
 	}
 	out := &ExternalArtifact{
-		Name:                  cr.Name,
-		Namespace:             cr.Namespace,
-		ExternalArtifactSpec:  cr.Spec,
+		Name:                 cr.Name,
+		Namespace:            cr.Namespace,
+		ExternalArtifactSpec: cr.Spec,
 	}
 	if a := cr.Status.Artifact; a != nil {
 		out.ArtifactURL = a.URL

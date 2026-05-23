@@ -65,7 +65,15 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	inst.EnableDNS = opts.EnableDNS
 	inst.Replace = true
 	inst.DisableOpenAPIValidation = hr.DisableOpenAPIValidation
-	inst.SkipSchemaValidation = hr.DisableSchemaValidation
+	// When flate's wipe-secrets has replaced a substituteFrom / valuesFrom
+	// value with the ..PLACEHOLDER_KEY.. token, chart schemas with DNS /
+	// URL / regex patterns reject it (the placeholder isn't a valid
+	// hostname). Disable schema validation when any placeholder reaches
+	// rendering so the user sees the rendered output rather than a
+	// validation error against a value flate fabricated. Real Flux
+	// resolves the secret to the actual value and validates normally —
+	// flate can't, so this short-circuits the failure mode.
+	inst.SkipSchemaValidation = hr.DisableSchemaValidation || containsWipePlaceholder(hrValues)
 	// spec.postRenderers — pipe rendered output through one or more
 	// kustomize patch+image transforms. helm-controller does this via
 	// the same postrenderer.PostRenderer hook.
@@ -277,4 +285,28 @@ func filterShowOnly(content string, paths []string) string {
 
 func isTestHook(h *release.Hook) bool {
 	return slices.Contains(h.Events, release.HookTest)
+}
+
+// containsWipePlaceholder reports whether any string leaf in v matches
+// the secret-wipe marker `..PLACEHOLDER_<key>..`. Used to short-circuit
+// chart schema validation when flate has fabricated values that real
+// Flux would have resolved from a SOPS-encrypted secret.
+func containsWipePlaceholder(v any) bool {
+	switch t := v.(type) {
+	case string:
+		return strings.Contains(t, "..PLACEHOLDER_")
+	case map[string]any:
+		for _, vv := range t {
+			if containsWipePlaceholder(vv) {
+				return true
+			}
+		}
+	case []any:
+		for _, vv := range t {
+			if containsWipePlaceholder(vv) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -341,6 +341,35 @@ func TestApplyHRCommonMetadata_SkipsHooks(t *testing.T) {
 	}
 }
 
+// TestApplyHRCommonMetadata_SkipsCRDs locks the upstream behavior:
+// helm-controller's separate applyCRDs path uses setOriginVisitor for
+// origin labels but never CommonMetadata. flate must not stamp
+// commonMetadata onto CRDs — that produces labels real Flux doesn't
+// apply in cluster.
+func TestApplyHRCommonMetadata_SkipsCRDs(t *testing.T) {
+	docs := []map[string]any{
+		{
+			"kind":     "Deployment",
+			"metadata": map[string]any{"name": "real"},
+		},
+		{
+			"kind":     "CustomResourceDefinition",
+			"metadata": map[string]any{"name": "things.example.com"},
+		},
+	}
+	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+		Labels: map[string]string{"team": "platform"},
+	})
+
+	if docs[0]["metadata"].(map[string]any)["labels"] == nil {
+		t.Error("workload doc lost its commonMetadata stamp")
+	}
+	crdMd := docs[1]["metadata"].(map[string]any)
+	if _, ok := crdMd["labels"]; ok {
+		t.Errorf("CRD should not receive commonMetadata stamp; got %v", crdMd["labels"])
+	}
+}
+
 // TestApplyHROriginLabels_SkipsHooks mirrors the commonMetadata
 // hook-exclusion above for the origin-labels pass.
 func TestApplyHROriginLabels_SkipsHooks(t *testing.T) {

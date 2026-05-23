@@ -117,12 +117,17 @@ func classify(s *store.Store, id manifest.NamedResource) Case {
 	case !ok:
 		return Case{ID: id, Outcome: OutcomeFailed, Reason: "no status reported"}
 	case info.Status == store.StatusFailed:
-		return Case{ID: id, Outcome: OutcomeFailed, Reason: info.Message}
+		// Strip the `flux error: input error:` sentinel chain so the
+		// `flate test` table shows the actual cause rather than two
+		// layers of bureaucracy. Same treatment the orchestrator gives
+		// its aggregated error.
+		return Case{ID: id, Outcome: OutcomeFailed, Reason: manifest.TrimSentinelPrefix(info.Message)}
 	case info.Status == store.StatusReady && info.Message == "unchanged":
 		return Case{ID: id, Outcome: OutcomeSkipped, Reason: "unchanged"}
 	case info.Status == store.StatusReady:
 		return Case{ID: id, Outcome: OutcomePassed}
 	default:
-		return Case{ID: id, Outcome: OutcomeFailed, Reason: "still " + string(info.Status) + ": " + info.Message}
+		return Case{ID: id, Outcome: OutcomeFailed,
+			Reason: "still " + string(info.Status) + ": " + manifest.TrimSentinelPrefix(info.Message)}
 	}
 }

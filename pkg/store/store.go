@@ -176,15 +176,23 @@ func (s *Store) GetByName(kind, namespace, name string) manifest.BaseManifest {
 }
 
 // ListObjects returns every stored manifest, optionally filtered by kind.
-// An empty kind matches all objects.
+// An empty kind matches all objects. The byName index is hit directly
+// when kind is set — O(K) instead of O(N) — which matters on the
+// orchestrator's per-pass list calls when one kind dominates the
+// store (HelmReleases are typically the bulk).
 func (s *Store) ListObjects(kind string) []manifest.BaseManifest {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]manifest.BaseManifest, 0, len(s.objects))
-	for id, obj := range s.objects {
-		if kind != "" && id.Kind != kind {
-			continue
+	if kind != "" {
+		inner := s.byName[kind]
+		out := make([]manifest.BaseManifest, 0, len(inner))
+		for _, obj := range inner {
+			out = append(out, obj)
 		}
+		return out
+	}
+	out := make([]manifest.BaseManifest, 0, len(s.objects))
+	for _, obj := range s.objects {
 		out = append(out, obj)
 	}
 	return out

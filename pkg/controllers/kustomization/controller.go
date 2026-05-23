@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	yaml "go.yaml.in/yaml/v4"
 
@@ -239,14 +240,18 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 // and unmarshals the result back. Per-doc substitution (rather than
 // substitute-the-whole-blob) lets us honor Flux's
 // "kustomize.toolkit.fluxcd.io/substitute: disabled" opt-out, which is
-// scoped to individual resources.
+// scoped to individual resources. The marshal/unmarshal round-trip is
+// load-bearing — it preserves Flux's YAML type-coercion semantics where
+// `replicas: ${REPLICAS}` (plain scalar) round-trips through envsubst
+// as int rather than string. Cheap pre-check on the decoded tree skips
+// the round-trip for the (common) case of docs with no `${` anywhere.
 func substituteDoc(doc map[string]any, vars map[string]string) (map[string]any, error) {
+	if !containsSubstitution(doc) {
+		return doc, nil
+	}
 	raw, err := yaml.Marshal(doc)
 	if err != nil {
 		return nil, fmt.Errorf("substitute: marshal doc: %w", err)
-	}
-	if !kustomize.HasSubstitutions(raw) {
-		return doc, nil
 	}
 	out, err := kustomize.Substitute(raw, vars)
 	if err != nil {
@@ -257,6 +262,30 @@ func substituteDoc(doc map[string]any, vars map[string]string) (map[string]any, 
 		return nil, fmt.Errorf("substitute: unmarshal doc: %w", err)
 	}
 	return next, nil
+}
+
+// containsSubstitution scans the decoded tree for any string leaf
+// containing `${`. Cheap walk over the parsed map avoids the
+// allocate-marshal-scan-discard pattern that dominated CPU on
+// kustomization reconciles when most docs had no substitutions at all.
+func containsSubstitution(v any) bool {
+	switch t := v.(type) {
+	case string:
+		return strings.Contains(t, "${")
+	case map[string]any:
+		for _, vv := range t {
+			if containsSubstitution(vv) {
+				return true
+			}
+		}
+	case []any:
+		for _, vv := range t {
+			if containsSubstitution(vv) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // shouldDispatchAsObject reports whether a render-emitted Flux

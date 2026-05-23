@@ -263,6 +263,10 @@ func (o *Orchestrator) loadManifests(ctx context.Context, repoRoot string) error
 	slog.Debug("orchestrator: loaded objects", "count", total, "scan", scanRoot, "source-root", repoRoot)
 
 	loader.ApplyNamespaceInheritance(o.store, o.sourceFiles, repoRoot)
+	// Build the parent index after namespace inheritance so the
+	// recorded child→parent ids reflect the canonical (post-rewrite)
+	// NamedResources the controller will see.
+	o.ksc.ParentOf = loader.BuildParentIndex(o.store, o.sourceFiles)
 	return nil
 }
 

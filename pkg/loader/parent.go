@@ -1,0 +1,68 @@
+package loader
+
+import (
+	"path/filepath"
+	"strings"
+
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+)
+
+// BuildParentIndex maps each Flux Kustomization to its structural
+// parent — the Flux Kustomization whose spec.path is the deepest
+// strict ancestor of the child's source file. Excludes self-matches.
+//
+// Real Flux's reconcile chain enforces this naturally: a parent
+// Kustomization renders and applies its child Kustomizations, then
+// the kustomize-controller reconciles each child. flate's controllers
+// fire on AddObject and would otherwise race the parent's render —
+// the controller uses this index to wait for the parent's Ready
+// before reconciling, so any parent-render-time spec mutations
+// (e.g. `replacements:` injecting spec.targetNamespace) are visible
+// to the child's first reconcile.
+//
+// sourceFiles is the orchestrator's NamedResource → repo-relative
+// source-file map; entries without a recorded file are skipped.
+func BuildParentIndex(s *store.Store, sourceFiles map[manifest.NamedResource]string) map[manifest.NamedResource]manifest.NamedResource {
+	type owner struct {
+		prefix string
+		id     manifest.NamedResource
+	}
+	var owners []owner
+	for _, obj := range s.ListObjects(manifest.KindKustomization) {
+		ks, ok := obj.(*manifest.Kustomization)
+		if !ok || ks.Path == "" {
+			continue
+		}
+		owners = append(owners, owner{prefix: normalizePrefix(ks.Path), id: ks.Named()})
+	}
+	out := map[manifest.NamedResource]manifest.NamedResource{}
+	for _, obj := range s.ListObjects(manifest.KindKustomization) {
+		ks, ok := obj.(*manifest.Kustomization)
+		if !ok {
+			continue
+		}
+		id := ks.Named()
+		file, ok := sourceFiles[id]
+		if !ok {
+			continue
+		}
+		slashFile := filepath.ToSlash(file)
+		var best owner
+		for _, o := range owners {
+			if o.id == id {
+				continue
+			}
+			if !strings.HasPrefix(slashFile, o.prefix) {
+				continue
+			}
+			if len(o.prefix) > len(best.prefix) {
+				best = o
+			}
+		}
+		if best.prefix != "" {
+			out[id] = best.id
+		}
+	}
+	return out
+}

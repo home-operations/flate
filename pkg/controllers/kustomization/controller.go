@@ -39,6 +39,15 @@ type Controller struct {
 	// parsing rendered manifests.
 	WipeSecrets bool
 
+	// ParentOf maps each Flux Kustomization to its structural parent —
+	// the enclosing KS whose spec.path contains this one's source
+	// file. Reconcile waits for the parent's Ready before rendering so
+	// any parent-render-time spec mutations (e.g. `replacements:`
+	// injecting spec.targetNamespace) are observable when the child
+	// renders. Nil means "no parent enforcement," matching pre-#102
+	// behavior.
+	ParentOf map[manifest.NamedResource]manifest.NamedResource
+
 	unsub []store.Unsubscribe
 	coal  *task.Coalescer[manifest.NamedResource]
 }
@@ -103,6 +112,15 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 				Failed:  sum.Failed,
 				Reasons: sum.Messages,
 			}
+		}
+		// Refresh the KS — our structural parent may have re-emitted
+		// us with mutated spec (e.g. `replacements:` injecting
+		// spec.targetNamespace) while we were waiting. Without this
+		// re-read the first render would use the stale-spec snapshot
+		// captured by RunWithStatus, producing duplicate renders that
+		// linger in the store with the wrong namespace. See #102.
+		if fresh, ok := c.Store.GetObject(id).(*manifest.Kustomization); ok {
+			ks = fresh
 		}
 	}
 
@@ -279,7 +297,9 @@ func isLeafReconcilable(obj manifest.BaseManifest) bool {
 
 // collectDeps assembles the dependency refs whose readiness must
 // precede this Kustomization: explicit dependsOn entries (carrying any
-// CEL ReadyExpr) + the source ref.
+// CEL ReadyExpr), the source ref, and the implicit structural parent
+// (the enclosing Flux KS that renders us — must finish first so any
+// parent-render-time spec injections land before our reconcile).
 func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
 	deps := append([]manifest.DependencyRef(nil), ks.DependsOn...)
 	if ks.SourceKind != "" && ks.SourceName != "" {
@@ -288,6 +308,9 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 				Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
 			},
 		})
+	}
+	if parent, ok := c.ParentOf[ks.Named()]; ok {
+		deps = append(deps, manifest.DependencyRef{NamedResource: parent})
 	}
 	return deps
 }

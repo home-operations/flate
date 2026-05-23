@@ -35,7 +35,7 @@ func TestRender_InputsExpandTemplates(t *testing.T) {
 			},
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestRender_Deduplication(t *testing.T) {
 			},
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRender_NoInputsRendersOnce(t *testing.T) {
 			},
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestRender_DefaultsNamespace(t *testing.T) {
 			},
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestRender_CommonMetadata(t *testing.T) {
 			},
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestRender_SprigFunctions(t *testing.T) {
 			},
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 			},
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 			},
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestRender_MissingKeyErrors(t *testing.T) {
 			},
 		},
 	}
-	_, err := resourceset.Render(rs)
+	_, err := resourceset.Render(rs, nil)
 	if err == nil {
 		t.Fatal("expected error for undefined input key, got nil")
 	}
@@ -333,7 +333,7 @@ func TestRender_MalformedTemplateErrors(t *testing.T) {
 			},
 		},
 	}
-	_, err := resourceset.Render(rs)
+	_, err := resourceset.Render(rs, nil)
 	if err == nil {
 		t.Fatal("expected parse error for malformed template, got nil")
 	}
@@ -361,7 +361,7 @@ spec:
 `,
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -369,6 +369,111 @@ spec:
 	sel := spec["layerSelector"].(map[string]any)
 	if sel["mediaType"] != "x" || sel["operation"] != "copy" {
 		t.Errorf("toYaml|nindent did not produce nested map: %v", sel)
+	}
+}
+
+// TestRender_InputsFrom_StaticProvider locks the billimek volsync
+// pattern: a ResourceSet with no inline inputs that references a Static
+// ResourceSetInputProvider, whose defaultValues become a single input
+// set the template iterates over with `<<- range $app := inputs.apps >>`.
+func TestRender_InputsFrom_StaticProvider(t *testing.T) {
+	rsip := &manifest.ResourceSetInputProvider{
+		Name: "apps", Namespace: "kube-system",
+		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
+			Type: fluxopv1.InputProviderStatic,
+			DefaultValues: fluxopv1.ResourceSetInput{
+				"defaults": jsonTmpl(t, `{"capacity": "1Gi"}`),
+				"apps":     jsonTmpl(t, `[{"app": "alpha"}, {"app": "bravo", "capacity": "5Gi"}]`),
+			},
+		},
+	}
+	rs := &manifest.ResourceSet{
+		Name: "volsync", Namespace: "kube-system",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			InputsFrom: []fluxopv1.InputProviderReference{
+				{Name: "apps"},
+			},
+			ResourcesTemplate: `<<- range $app := inputs.apps >>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: << $app.app >>
+  namespace: default
+data:
+  capacity: << get $app "capacity" | default inputs.defaults.capacity >>
+<<- end >>
+`,
+		},
+	}
+	resolver := func(ref fluxopv1.InputProviderReference, ns string) ([]*manifest.ResourceSetInputProvider, error) {
+		if ref.Name == "apps" && ns == "kube-system" {
+			return []*manifest.ResourceSetInputProvider{rsip}, nil
+		}
+		return nil, nil
+	}
+	docs, err := resourceset.Render(rs, resolver)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("expected 2 ConfigMaps, got %d", len(docs))
+	}
+	caps := map[string]string{}
+	for _, doc := range docs {
+		md := doc["metadata"].(map[string]any)
+		data := doc["data"].(map[string]any)
+		caps[md["name"].(string)] = data["capacity"].(string)
+	}
+	// alpha falls back to inputs.defaults.capacity (1Gi); bravo
+	// overrides via its own per-app capacity (5Gi).
+	if caps["alpha"] != "1Gi" || caps["bravo"] != "5Gi" {
+		t.Errorf("expected alpha=1Gi, bravo=5Gi; got %v", caps)
+	}
+}
+
+// TestRender_InputsFrom_DynamicProviderEmptySkip verifies that a
+// non-Static provider (which flate can't query offline) contributes
+// zero input sets rather than erroring — the ResourceSet still renders
+// with whatever inline inputs it has.
+func TestRender_InputsFrom_DynamicProviderEmptySkip(t *testing.T) {
+	rsip := &manifest.ResourceSetInputProvider{
+		Name: "branches", Namespace: "flux-system",
+		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
+			Type: fluxopv1.InputProviderGitHubBranch,
+			URL:  "https://github.com/foo/bar",
+		},
+	}
+	rs := &manifest.ResourceSet{
+		Name: "matrix", Namespace: "flux-system",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			Inputs: []fluxopv1.ResourceSetInput{
+				{"tenant": jsonTmpl(t, `"inline-only"`)},
+			},
+			InputsFrom: []fluxopv1.InputProviderReference{
+				{Name: "branches"},
+			},
+			ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: << inputs.tenant >>
+  namespace: flux-system
+`,
+		},
+	}
+	resolver := func(ref fluxopv1.InputProviderReference, ns string) ([]*manifest.ResourceSetInputProvider, error) {
+		return []*manifest.ResourceSetInputProvider{rsip}, nil
+	}
+	docs, err := resourceset.Render(rs, resolver)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc from inline input (dynamic provider contributes nothing), got %d", len(docs))
+	}
+	md := docs[0]["metadata"].(map[string]any)
+	if md["name"] != "inline-only" {
+		t.Errorf("expected name=inline-only; got %v", md["name"])
 	}
 }
 
@@ -397,7 +502,7 @@ metadata:
 			ResourcesTemplate: tmpl,
 		},
 	}
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}

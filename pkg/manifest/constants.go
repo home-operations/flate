@@ -26,6 +26,7 @@ const (
 	KindSecret                   = "Secret"
 	KindCustomResourceDefinition = "CustomResourceDefinition"
 	KindResourceSet              = "ResourceSet"
+	KindResourceSetInputProvider = "ResourceSetInputProvider"
 )
 
 // DefaultNamespace mirrors Flux's convention of placing top-level resources

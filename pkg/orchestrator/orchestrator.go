@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -320,7 +321,7 @@ func (o *Orchestrator) loadAt(ctx context.Context, l *loader.Loader, dir string,
 // the count of new objects added so the caller can detect a fixed
 // point in the expansion loop.
 func (o *Orchestrator) renderResourceSet(rs *manifest.ResourceSet) (int, error) {
-	docs, err := resourceset.Render(rs)
+	docs, err := resourceset.Render(rs, o.resolveInputProvider)
 	if err != nil {
 		return 0, err
 	}
@@ -350,6 +351,44 @@ func (o *Orchestrator) renderResourceSet(rs *manifest.ResourceSet) (int, error) 
 		added++
 	}
 	return added, nil
+}
+
+// resolveInputProvider satisfies resourceset.ProviderResolver against
+// the orchestrator's object store. Returns the RSIPs matching a single
+// spec.inputsFrom reference within the given namespace. Name lookups
+// hit a single id; selector matches walk the store's RSIPs in nsScope
+// and filter by metadata.labels.
+func (o *Orchestrator) resolveInputProvider(ref fluxopv1.InputProviderReference, namespace string) ([]*manifest.ResourceSetInputProvider, error) {
+	if ref.Name != "" {
+		id := manifest.NamedResource{
+			Kind:      manifest.KindResourceSetInputProvider,
+			Namespace: namespace,
+			Name:      ref.Name,
+		}
+		obj, _ := o.store.GetObject(id).(*manifest.ResourceSetInputProvider)
+		if obj == nil {
+			return nil, nil
+		}
+		return []*manifest.ResourceSetInputProvider{obj}, nil
+	}
+	if ref.Selector == nil {
+		return nil, nil
+	}
+	var out []*manifest.ResourceSetInputProvider
+	for _, obj := range o.store.ListObjects(manifest.KindResourceSetInputProvider) {
+		p, ok := obj.(*manifest.ResourceSetInputProvider)
+		if !ok || p.Namespace != namespace {
+			continue
+		}
+		match, err := resourceset.MatchSelector(ref.Selector, p.Labels)
+		if err != nil {
+			return nil, err
+		}
+		if match {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // validateDependsOn drops dangling dependsOn references so the

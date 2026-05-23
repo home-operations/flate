@@ -6,8 +6,12 @@
 // slim-sprig with the `<<  >>` delimiter pair (so ResourceSet templates
 // can sit inside Helm charts without delimiter conflicts).
 //
-// Scope on this first pass:
+// Supported:
 //   - spec.inputs (in-YAML inline inputs)
+//   - spec.inputsFrom (ResourceSetInputProvider, Static type) — resolved
+//     via the ProviderResolver passed to Render. Dynamic providers
+//     (GitHubBranch, OCIArtifactTag, ExternalService, …) need network
+//     access flate doesn't have and contribute zero input sets.
 //   - spec.resources (typed JSON template list)
 //   - spec.resourcesTemplate (multi-document YAML string)
 //   - spec.commonMetadata (labels + annotations applied to every emitted object)
@@ -15,7 +19,6 @@
 //   - Default-namespace fallback to the ResourceSet's own namespace
 //
 // Deferred:
-//   - spec.inputsFrom (ResourceSetInputProvider) — needs a separate CRD type.
 //   - spec.inputStrategy: Permute — start with the implicit Flatten.
 //   - fluxcd.controlplane.io/copyFrom / convertKubeConfigFrom / checksumFrom
 //     annotations — those need live cluster data flate does not have.
@@ -25,6 +28,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -32,10 +37,18 @@ import (
 	sprig "github.com/go-task/slim-sprig/v3"
 	"github.com/gosimple/slug"
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// ProviderResolver returns the ResourceSetInputProviders matching a
+// single spec.inputsFrom reference within the given namespace. Callers
+// implement this against their object store (orchestrator) or pass nil
+// to disable inputsFrom resolution (tests, simple cases).
+type ProviderResolver func(ref fluxopv1.InputProviderReference, namespace string) ([]*manifest.ResourceSetInputProvider, error)
 
 // Render evaluates rs.Spec across rs.Spec.Inputs (flatten strategy) and
 // returns the resulting Kubernetes manifests as decoded YAML documents,
@@ -44,12 +57,19 @@ import (
 //
 // When rs.Spec.Inputs is empty (e.g. d2-fleet's policies.yaml — static
 // resources with no matrix), templates render once with a nil input set.
-func Render(rs *manifest.ResourceSet) ([]map[string]any, error) {
+//
+// resolve is optional: when non-nil, spec.inputsFrom references are
+// resolved and their providers' exported inputs are flattened into the
+// matrix alongside any inline rs.Spec.Inputs.
+func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]any, error) {
 	if rs == nil {
 		return nil, nil
 	}
 
-	inputs := buildInputSets(rs)
+	inputs, err := buildInputSets(rs, resolve)
+	if err != nil {
+		return nil, fmt.Errorf("ResourceSet %s: %w", rs.NamespacedName(), err)
+	}
 	var docs []map[string]any
 	seen := map[string]struct{}{}
 	appendUnique := func(doc map[string]any) {
@@ -91,33 +111,21 @@ func Render(rs *manifest.ResourceSet) ([]map[string]any, error) {
 	return docs, nil
 }
 
-// buildInputSets returns the flattened in-YAML input matrix. Each entry
-// is a map[string]any with the built-in inputs.provider block injected,
-// matching the flux-operator runtime contract. inputs.id is deliberately
-// not set under the Flatten strategy — upstream's Permuter is the only
-// path that synthesizes one (tracked in #109).
-func buildInputSets(rs *manifest.ResourceSet) []map[string]any {
-	if len(rs.Inputs) == 0 {
-		return nil
-	}
-	out := make([]map[string]any, 0, len(rs.Inputs))
+// buildInputSets returns the flattened input matrix. The ResourceSet's
+// own inline spec.inputs come first (with a provider block pointing at
+// the ResourceSet itself), followed by every input set exported by each
+// referenced ResourceSetInputProvider (with a provider block pointing
+// at the RSIP). Matches upstream's Flatten strategy: simple concat,
+// order = rset's inline inputs first, then providers in sorted
+// (kind, namespace, name) order.
+//
+// Permute strategy is not yet implemented (#109). inputs.id is left to
+// the provider when it's a Static RSIP; inline-only inputs see no
+// synthetic id under Flatten.
+func buildInputSets(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]any, error) {
+	var out []map[string]any
 	for _, in := range rs.Inputs {
-		decoded := map[string]any{}
-		for k, v := range in {
-			if v == nil {
-				decoded[k] = nil
-				continue
-			}
-			var raw any
-			if err := json.Unmarshal(v.Raw, &raw); err != nil {
-				// flate skips malformed entries silently — the parser
-				// already accepted the document, and at render time we
-				// have no good signaling channel beyond the per-resource
-				// log line a controller would emit.
-				continue
-			}
-			decoded[k] = raw
-		}
+		decoded := decodeInputSet(in)
 		decoded["provider"] = map[string]any{
 			"apiVersion": fluxopv1.GroupVersion.String(),
 			"kind":       manifest.KindResourceSet,
@@ -126,7 +134,91 @@ func buildInputSets(rs *manifest.ResourceSet) []map[string]any {
 		}
 		out = append(out, decoded)
 	}
-	return out
+	if resolve == nil || len(rs.InputsFrom) == 0 {
+		return out, nil
+	}
+
+	seen := make(map[string]struct{})
+	var providers []*manifest.ResourceSetInputProvider
+	for _, ref := range rs.InputsFrom {
+		matches, err := resolve(ref, rs.Namespace)
+		if err != nil {
+			return nil, fmt.Errorf("inputsFrom %q: %w", ref.Name, err)
+		}
+		for _, p := range matches {
+			if p == nil {
+				continue
+			}
+			k := p.Namespace + "/" + p.Name
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+			providers = append(providers, p)
+		}
+	}
+	// Sort providers by (namespace, name) for deterministic output,
+	// matching upstream's Combine routine ordering.
+	sort.Slice(providers, func(i, j int) bool {
+		if providers[i].Namespace != providers[j].Namespace {
+			return providers[i].Namespace < providers[j].Namespace
+		}
+		return providers[i].Name < providers[j].Name
+	})
+	for _, p := range providers {
+		exported, err := p.ExportedInputs()
+		if err != nil {
+			return nil, fmt.Errorf("ResourceSetInputProvider %s: %w", p.NamespacedName(), err)
+		}
+		if exported == nil && p.Type != "" && p.Type != fluxopv1.InputProviderStatic {
+			slog.Warn("resourceset: dynamic input provider contributes no inputs offline",
+				"resourceSet", rs.NamespacedName(),
+				"provider", p.NamespacedName(),
+				"type", p.Type)
+		}
+		for _, set := range exported {
+			set["provider"] = map[string]any{
+				"apiVersion": fluxopv1.GroupVersion.String(),
+				"kind":       manifest.KindResourceSetInputProvider,
+				"name":       p.Name,
+				"namespace":  p.Namespace,
+			}
+			out = append(out, set)
+		}
+	}
+	return out, nil
+}
+
+func decodeInputSet(in fluxopv1.ResourceSetInput) map[string]any {
+	decoded := map[string]any{}
+	for k, v := range in {
+		if v == nil {
+			decoded[k] = nil
+			continue
+		}
+		var raw any
+		if err := json.Unmarshal(v.Raw, &raw); err != nil {
+			// Malformed entries are skipped silently — the parser
+			// already accepted the document, and there's no good
+			// signaling channel beyond a controller log line.
+			continue
+		}
+		decoded[k] = raw
+	}
+	return decoded
+}
+
+// MatchSelector returns true when sel matches lbls. Helper for
+// ProviderResolver implementations that filter by InputProviderReference.Selector.
+func MatchSelector(sel *metav1.LabelSelector, lbls map[string]string) (bool, error) {
+	if sel == nil {
+		return true, nil
+	}
+	s, err := metav1.LabelSelectorAsSelector(sel)
+	if err != nil {
+		return false, err
+	}
+	return s.Matches(labels.Set(lbls)), nil
 }
 
 // renderResources templates a single spec.resources entry once per

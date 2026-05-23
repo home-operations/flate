@@ -27,6 +27,28 @@ func runCLI(t *testing.T, args ...string) string {
 	return stdout.String() + stderr.String()
 }
 
+// runCLIOutputOnly captures stdout+stderr regardless of exit code.
+// Use for tests that exercise the CLI's *output shape* against partial
+// fixtures where reconcile is intentionally incomplete (so the CLI's
+// new non-zero-on-failure behavior would otherwise mask the assertion
+// the test actually cares about — that get/diff/build produce the
+// expected structure on whatever did render). Tests that NEED a clean
+// reconcile should keep using runCLI.
+func runCLIOutputOnly(t *testing.T, args ...string) string {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	cli.Run(args, &stdout, &stderr)
+	return stdout.String() + stderr.String()
+}
+
+// runCLIStdoutOnly is the stdout variant of runCLIOutputOnly.
+func runCLIStdoutOnly(t *testing.T, args ...string) string {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	cli.Run(args, &stdout, &stderr)
+	return stdout.String()
+}
+
 // runCLIStdout returns stdout only — log lines on stderr would
 // otherwise pollute payloads that tests parse.
 func runCLIStdout(t *testing.T, args ...string) string {
@@ -63,7 +85,7 @@ func testdataPath(t *testing.T, sub string) string {
 }
 
 func TestE2E_GetKS(t *testing.T) {
-	out := runCLI(t, "get", "ks", "--path", testdataPath(t, "simple"))
+	out := runCLIOutputOnly(t, "get", "ks", "--path", testdataPath(t, "simple"))
 	if !strings.Contains(out, "NAMESPACE") || !strings.Contains(out, "NAME") {
 		t.Errorf("missing table headers:\n%s", out)
 	}
@@ -79,7 +101,7 @@ func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 	// via `get ks` alongside the static parent — confirming the
 	// load-time expansion pass plumbed each rendered doc through the
 	// store.
-	out := runCLI(t, "get", "ks", "--path", testdataPath(t, "resourceset"))
+	out := runCLIOutputOnly(t, "get", "ks", "--path", testdataPath(t, "resourceset"))
 	for _, want := range []string{
 		"cluster-tenants", // parent KS from cluster/flux-system.yaml
 		"apps-frontend",   // emitted by ResourceSet for tenant=frontend
@@ -92,7 +114,7 @@ func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 }
 
 func TestE2E_GetKS_YAMLExposesProjectedFields(t *testing.T) {
-	out := runCLI(t, "get", "ks", "--path", testdataPath(t, "simple"), "-o", "yaml")
+	out := runCLIOutputOnly(t, "get", "ks", "--path", testdataPath(t, "simple"), "-o", "yaml")
 	// Asserts the structured projection includes the new fields:
 	// sourceRef block (kind/name/namespace), prune, wait.
 	for _, want := range []string{"sourceRef:", "kind: GitRepository", "prune: true", "wait:"} {
@@ -103,7 +125,7 @@ func TestE2E_GetKS_YAMLExposesProjectedFields(t *testing.T) {
 }
 
 func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
-	out := runCLI(t, "get", "hr", "--path", testdataPath(t, "simple"), "-o", "yaml")
+	out := runCLIOutputOnly(t, "get", "hr", "--path", testdataPath(t, "simple"), "-o", "yaml")
 	// HelmRelease projection should carry sourceRef (chart's resolved
 	// ref) and releaseName.
 	for _, want := range []string{"sourceRef:", "releaseName:"} {
@@ -147,7 +169,7 @@ func TestE2E_BuildHR_Deterministic(t *testing.T) {
 }
 
 func TestE2E_GetAll_JSON(t *testing.T) {
-	out := runCLI(t, "get", "all", "--path", testdataPath(t, "simple"), "-o", "json")
+	out := runCLIOutputOnly(t, "get", "all", "--path", testdataPath(t, "simple"), "-o", "json")
 	if !strings.Contains(out, `"kustomizations"`) {
 		t.Errorf("missing kustomizations in json:\n%s", out)
 	}
@@ -178,7 +200,7 @@ func TestE2E_TestCommand(t *testing.T) {
 
 func TestE2E_DiffNoChange(t *testing.T) {
 	p := testdataPath(t, "simple")
-	out := runCLI(t, "diff", "ks", "--path", p, "--path-orig", p)
+	out := runCLIOutputOnly(t, "diff", "ks", "--path", p, "--path-orig", p)
 	// No diffs expected — output should be empty or near-empty.
 	if strings.Contains(out, "---") && strings.Contains(out, "+++") &&
 		strings.Contains(out, "@@") {
@@ -188,7 +210,7 @@ func TestE2E_DiffNoChange(t *testing.T) {
 
 func TestE2E_DiffImagesNoChange(t *testing.T) {
 	p := testdataPath(t, "simple")
-	out := runCLIStdout(t, "diff", "images", "--path", p, "--path-orig", p, "-o", "json")
+	out := runCLIStdoutOnly(t, "diff", "images", "--path", p, "--path-orig", p, "-o", "json")
 	got := strings.TrimSpace(out)
 	if got != "[]" && got != "null" {
 		t.Errorf("expected empty image diff for identical paths, got: %q", got)

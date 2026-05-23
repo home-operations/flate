@@ -154,9 +154,14 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 
 // runOrchestratorCfg returns a non-nil orchestrator whenever Bootstrap
 // succeeds, even if Run had per-resource failures — the partial Store
-// still backs `build`/`get`/`diff` output, and `test` separately
-// surfaces failures via Store.FailedResources. The returned error is
-// reserved for fatal init/bootstrap problems (orchestrator is nil).
+// still backs `build`/`get`/`diff` output. The returned error carries
+// any Run failure so the CLI can flip its exit code while still
+// emitting whatever partial output rendered. A nil orchestrator
+// indicates a fatal init/bootstrap problem (callers should bail).
+//
+// Discarding the Run error here is what previously let `flate build`
+// exit 0 against a repo where every Kustomization failed — CI would
+// pipe the partial YAML to kubectl apply and notice nothing wrong.
 func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestrator.Orchestrator, error) {
 	o, err := orchestrator.New(cfg)
 	if err != nil {
@@ -165,11 +170,7 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestr
 	if err := o.Bootstrap(ctx); err != nil {
 		return nil, err
 	}
-	// Recoverable per-resource failures are logged by Run() and visible
-	// through Store status; downstream commands report them on their
-	// own (e.g. `test` via AnyFailed).
-	_ = o.Run(ctx)
-	return o, nil
+	return o, o.Run(ctx)
 }
 
 func cmdContext(cmd *cobra.Command) context.Context {

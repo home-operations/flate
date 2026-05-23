@@ -81,12 +81,15 @@ func newDiffImagesCmd() *cobra.Command {
 }
 
 func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemoved bool) error {
-	orig, current, err := runDiffOrchestrators(cmdContext(cmd), c, h)
-	if err != nil {
-		return err
+	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
+	if orig == nil || current == nil {
+		return runErr
 	}
 	imgs := imageSetDiff(collectImages(orig, c), collectImages(current, c), includeRemoved)
-	return emitImageList(cmd.OutOrStdout(), imgs, c.output)
+	if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
+		return err
+	}
+	return runErr
 }
 
 // imageSetDiff returns the sorted images added in current; when
@@ -110,9 +113,9 @@ func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []stri
 }
 
 func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kind, name string) error {
-	orig, current, err := runDiffOrchestrators(cmdContext(cmd), c, h)
-	if err != nil {
-		return err
+	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
+	if orig == nil || current == nil {
+		return runErr
 	}
 	origDocs := gatherArtifacts(orig, kind, name, c)
 	currentDocs := gatherArtifacts(current, kind, name, c)
@@ -134,6 +137,8 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	if err != nil {
 		return err
 	}
-	_, err = cmd.OutOrStdout().Write(formatted)
-	return err
+	if _, err := cmd.OutOrStdout().Write(formatted); err != nil {
+		return err
+	}
+	return runErr
 }

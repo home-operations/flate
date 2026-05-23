@@ -37,10 +37,14 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		Short:   short,
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
-			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil {
-				return err
+			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			if o == nil {
+				return runErr
 			}
+			// testrunner.Report.AnyFailed already covers per-resource
+			// reconcile failures, so the runErr is informational here —
+			// the structured report is what the user reads. We still
+			// surface a non-zero exit on any failure.
 			report := testrunner.Run(testrunner.Job{
 				Store: o.Store(),
 				Kinds: kinds,
@@ -50,7 +54,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if report.AnyFailed() {
 				return errors.New("test failures detected")
 			}
-			return nil
+			return runErr
 		},
 	}
 	bindCommon(cmd.Flags(), c)

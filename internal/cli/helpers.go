@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -110,22 +111,54 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (*o
 	currentCfg.SourceCache = shared
 	origCfg.SourceCache = shared
 
-	var orig, current *orchestrator.Orchestrator
+	var (
+		orig, current     *orchestrator.Orchestrator
+		origErr, currErr  error
+	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		o, err := runOrchestratorCfg(gctx, currentCfg)
 		current = o
-		return err
+		currErr = err
+		// Fatal Bootstrap errors return nil orchestrator — propagate
+		// those so the errgroup cancels its sibling. Per-resource Run
+		// failures keep the orchestrator non-nil; defer them so we
+		// still produce a diff before the caller flips the exit code.
+		if o == nil {
+			return err
+		}
+		return nil
 	})
 	g.Go(func() error {
 		o, err := runOrchestratorCfg(gctx, origCfg)
 		orig = o
-		return err
+		origErr = err
+		if o == nil {
+			return err
+		}
+		return nil
 	})
 	if err := g.Wait(); err != nil {
 		return nil, nil, err
 	}
-	return orig, current, nil
+	// Either side may have reconcile failures — return the combined
+	// run-error alongside the orchestrators so the diff caller can
+	// write its output, then flip the exit code.
+	return orig, current, joinRunErrors(origErr, currErr)
+}
+
+// joinRunErrors composes the orig/current Run errors into a single
+// non-nil error when either side had failures. Both nil → nil.
+func joinRunErrors(orig, curr error) error {
+	switch {
+	case orig != nil && curr != nil:
+		return fmt.Errorf("both snapshots had reconcile failures:\n  orig: %s\n  current: %s", orig, curr)
+	case orig != nil:
+		return fmt.Errorf("orig snapshot: %w", orig)
+	case curr != nil:
+		return fmt.Errorf("current snapshot: %w", curr)
+	}
+	return nil
 }
 
 // gatherArtifacts collects every rendered manifest produced by the

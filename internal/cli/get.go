@@ -122,11 +122,14 @@ func newGetAllCmd() *cobra.Command {
 		Use:   "all",
 		Short: "Summarize every Kustomization and HelmRelease",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil {
+			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			if o == nil {
+				return runErr
+			}
+			if err := printCluster(cmd.OutOrStdout(), o, c.output); err != nil {
 				return err
 			}
-			return printCluster(cmd.OutOrStdout(), o, c.output)
+			return runErr
 		},
 	}
 	bindCommon(cmd.Flags(), c)
@@ -145,12 +148,15 @@ func newGetImagesCmd() *cobra.Command {
 		Use:   "images",
 		Short: "List container images across the cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil {
-				return err
+			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			if o == nil {
+				return runErr
 			}
 			imgs := slices.Sorted(maps.Keys(collectImages(o, c)))
-			return emitImageList(cmd.OutOrStdout(), imgs, c.output)
+			if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
+				return err
+			}
+			return runErr
 		},
 	}
 	bindCommon(cmd.Flags(), c)
@@ -174,15 +180,18 @@ func resourceListCmd[T manifest.BaseManifest](
 		Short:   short,
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil {
-				return err
+			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			if o == nil {
+				return runErr
 			}
 			sel := selector.Metadata{
 				Name:   firstArg(args),
 				Labels: c.labels,
 			}
-			return printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper)
+			if err := printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper); err != nil {
+				return err
+			}
+			return runErr
 		},
 	}
 	bindCommon(cmd.Flags(), c)

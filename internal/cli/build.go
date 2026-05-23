@@ -56,9 +56,9 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
 			applyBuildFlags(c, b)
-			o, err := runOrchestrator(cmdContext(cmd), *c, *h)
-			if err != nil {
-				return err
+			o, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			if o == nil {
+				return runErr
 			}
 			w := cmd.OutOrStdout()
 			name := firstArg(argv)
@@ -67,7 +67,10 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 					return err
 				}
 			}
-			return nil
+			// Per-resource Run failures: emit whatever we rendered, then
+			// flip the exit code so CI pipelines piping `flate build` into
+			// kubectl apply don't silently apply a half-rendered tree.
+			return runErr
 		},
 	}
 	bindCommon(cmd.Flags(), c)

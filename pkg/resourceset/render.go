@@ -99,7 +99,7 @@ func buildInputSets(rs *manifest.ResourceSet) []map[string]any {
 		return nil
 	}
 	out := make([]map[string]any, 0, len(rs.Inputs))
-	for i, in := range rs.Inputs {
+	for _, in := range rs.Inputs {
 		decoded := map[string]any{}
 		for k, v := range in {
 			if v == nil {
@@ -116,7 +116,6 @@ func buildInputSets(rs *manifest.ResourceSet) []map[string]any {
 			}
 			decoded[k] = raw
 		}
-		decoded["id"] = fmt.Sprintf("%s-%d", rs.Name, i)
 		decoded["provider"] = map[string]any{
 			"apiVersion": fluxopv1.GroupVersion.String(),
 			"kind":       manifest.KindResourceSet,
@@ -233,23 +232,15 @@ func execute(tmplStr string, inputSet map[string]any) ([]byte, error) {
 		Delims("<<", ">>").
 		Funcs(sprig.HermeticTxtFuncMap()).
 		Funcs(template.FuncMap{
-			"slugify": slug.Make,
-			"toYaml":  toYAML,
-			"inputs":  func() any { return inputSet },
+			"slugify":    slug.Make,
+			"toYaml":     toYaml,
+			"mustToYaml": mustToYaml,
+			"inputs":     func() any { return inputSet },
 		}).
+		Option("missingkey=error").
 		Parse(tmplStr)
 	if err != nil {
 		return nil, fmt.Errorf("parse template: %w", err)
-	}
-	if inputSet != nil {
-		// Promote inputs.X access by wrapping execution data in a map
-		// with an "inputs" key — slim-sprig's funcs reach `.inputs.X`
-		// via the standard text/template dot-walk.
-		var buf bytes.Buffer
-		if err := tmpl.Execute(&buf, map[string]any{"inputs": inputSet}); err != nil {
-			return nil, fmt.Errorf("execute template: %w", err)
-		}
-		return buf.Bytes(), nil
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, nil); err != nil {
@@ -258,7 +249,21 @@ func execute(tmplStr string, inputSet map[string]any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func toYAML(v any) (string, error) {
+// toYaml mirrors upstream's silent-error variant — encodes v as YAML;
+// any marshal error collapses to "". Templates expect this signature
+// so authors don't have to wrap every call in {{ if }}…{{ end }}.
+func toYaml(v any) string {
+	s, err := mustToYaml(v)
+	if err != nil {
+		return ""
+	}
+	return s
+}
+
+// mustToYaml is the explicit error-returning variant — surfaces a
+// marshal error to the template engine, which aborts execution. Use
+// this when the template is willing to fail loudly on malformed inputs.
+func mustToYaml(v any) (string, error) {
 	out, err := yaml.Marshal(v)
 	if err != nil {
 		return "", err

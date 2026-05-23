@@ -256,6 +256,122 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 	}
 }
 
+// TestRender_InputsProviderBuiltinField asserts every rendered input
+// carries the built-in inputs.provider block per the upstream
+// flux-operator contract. Templates rely on inputs.provider.kind to
+// distinguish ResourceSet inline inputs from ResourceSetInputProvider
+// inputs once that's supported.
+func TestRender_InputsProviderBuiltinField(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "apps", Namespace: "flux-system",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			Inputs: []fluxopv1.ResourceSetInput{{"tenant": jsonTmpl(t, `"a"`)}},
+			Resources: []*apix.JSON{
+				jsonTmpl(t, `{
+					"apiVersion": "v1", "kind": "ConfigMap",
+					"metadata": {"name": "x", "namespace": "flux-system"},
+					"data": {
+						"providerKind":      "<< inputs.provider.kind >>",
+						"providerName":      "<< inputs.provider.name >>",
+						"providerNamespace": "<< inputs.provider.namespace >>"
+					}
+				}`),
+			},
+		},
+	}
+	docs, err := resourceset.Render(rs)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	data := docs[0]["data"].(map[string]any)
+	if data["providerKind"] != "ResourceSet" {
+		t.Errorf("inputs.provider.kind=%v want ResourceSet", data["providerKind"])
+	}
+	if data["providerName"] != "apps" {
+		t.Errorf("inputs.provider.name=%v want apps", data["providerName"])
+	}
+	if data["providerNamespace"] != "flux-system" {
+		t.Errorf("inputs.provider.namespace=%v want flux-system", data["providerNamespace"])
+	}
+}
+
+// TestRender_MissingKeyErrors locks the upstream Option("missingkey=error")
+// behavior — a template referencing an undefined input must fail with a
+// useful error rather than silently rendering "<no value>". Templates
+// that work in flate must also work in real flux-operator and vice versa.
+func TestRender_MissingKeyErrors(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "test", Namespace: "flux-system",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			Inputs: []fluxopv1.ResourceSetInput{{"tenant": jsonTmpl(t, `"a"`)}},
+			Resources: []*apix.JSON{
+				jsonTmpl(t, `{
+					"apiVersion": "v1", "kind": "ConfigMap",
+					"metadata": {"name": "<< inputs.nonexistent >>", "namespace": "flux-system"}
+				}`),
+			},
+		},
+	}
+	_, err := resourceset.Render(rs)
+	if err == nil {
+		t.Fatal("expected error for undefined input key, got nil")
+	}
+}
+
+// TestRender_MalformedTemplateErrors surfaces a parse error rather than
+// silently swallowing the broken template.
+func TestRender_MalformedTemplateErrors(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "test", Namespace: "flux-system",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"a"`)}},
+			Resources: []*apix.JSON{
+				jsonTmpl(t, `{
+					"apiVersion": "v1", "kind": "ConfigMap",
+					"metadata": {"name": "<< inputs.name "}
+				}`), // unterminated template
+			},
+		},
+	}
+	_, err := resourceset.Render(rs)
+	if err == nil {
+		t.Fatal("expected parse error for malformed template, got nil")
+	}
+}
+
+// TestRender_ToYamlNindent covers the canonical upstream pattern
+// `<< value | toYaml | nindent N >>` for embedding nested structs as
+// child YAML. Pins both that toYaml is registered as the silent variant
+// (no error wrapping needed) and that the resulting indentation lines
+// up with the surrounding YAML.
+func TestRender_ToYamlNindent(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "test", Namespace: "flux-system",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			Inputs: []fluxopv1.ResourceSetInput{
+				{"layerSelector": jsonTmpl(t, `{"mediaType": "x", "operation": "copy"}`)},
+			},
+			ResourcesTemplate: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: app
+  namespace: flux-system
+spec:
+  layerSelector: << inputs.layerSelector | toYaml | nindent 4 >>
+`,
+		},
+	}
+	docs, err := resourceset.Render(rs)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	spec := docs[0]["spec"].(map[string]any)
+	sel := spec["layerSelector"].(map[string]any)
+	if sel["mediaType"] != "x" || sel["operation"] != "copy" {
+		t.Errorf("toYaml|nindent did not produce nested map: %v", sel)
+	}
+}
+
 // TestRender_ResourcesTemplate covers spec.resourcesTemplate (multi-doc
 // YAML string variant).
 func TestRender_ResourcesTemplate(t *testing.T) {

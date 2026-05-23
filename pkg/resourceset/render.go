@@ -92,8 +92,10 @@ func Render(rs *manifest.ResourceSet) ([]map[string]any, error) {
 }
 
 // buildInputSets returns the flattened in-YAML input matrix. Each entry
-// is a map[string]any with the built-in inputs.id + inputs.provider
-// fields injected, matching the flux-operator runtime contract.
+// is a map[string]any with the built-in inputs.provider block injected,
+// matching the flux-operator runtime contract. inputs.id is deliberately
+// not set under the Flatten strategy — upstream's Permuter is the only
+// path that synthesizes one (tracked in #109).
 func buildInputSets(rs *manifest.ResourceSet) []map[string]any {
 	if len(rs.Inputs) == 0 {
 		return nil

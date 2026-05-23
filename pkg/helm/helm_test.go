@@ -182,6 +182,59 @@ func TestTemplateDocs_AppliesHRCommonMetadata(t *testing.T) {
 	}
 }
 
+// TestTemplateDocs_StampsOriginLabels locks the helm-controller
+// OriginLabels post-renderer behavior: every rendered resource is
+// stamped with helm.toolkit.fluxcd.io/{name,namespace} so a real Flux
+// would identify it as owned by this HelmRelease.
+func TestTemplateDocs_StampsOriginLabels(t *testing.T) {
+	cli := helmChartFixture(t)
+	hr := newHR()
+	docs, err := cli.TemplateDocs(context.Background(), hr, nil, Options{NoHooks: true})
+	if err != nil {
+		t.Fatalf("TemplateDocs: %v", err)
+	}
+	if len(docs) == 0 {
+		t.Fatal("expected at least one rendered doc")
+	}
+	for i, doc := range docs {
+		md, _ := doc["metadata"].(map[string]any)
+		labels, _ := md["labels"].(map[string]any)
+		if labels["helm.toolkit.fluxcd.io/name"] != hr.Name {
+			t.Errorf("doc[%d] missing/wrong helm.toolkit.fluxcd.io/name: %v", i, labels)
+		}
+		if labels["helm.toolkit.fluxcd.io/namespace"] != hr.Namespace {
+			t.Errorf("doc[%d] missing/wrong helm.toolkit.fluxcd.io/namespace: %v", i, labels)
+		}
+	}
+}
+
+// TestTemplateDocs_OriginLabelsWinOverCommonMetadata locks the upstream
+// precedence rule: OriginLabels run AFTER CommonRenderer, so an
+// origin-key collision in CommonMetadata is silently overridden by the
+// origin value. Matches helm-controller/internal/postrender/build.go:46.
+func TestTemplateDocs_OriginLabelsWinOverCommonMetadata(t *testing.T) {
+	cli := helmChartFixture(t)
+	hr := newHR()
+	hr.CommonMetadata = &helmv2.CommonMetadata{
+		Labels: map[string]string{
+			"helm.toolkit.fluxcd.io/name": "user-override-should-lose",
+			"team":                        "platform",
+		},
+	}
+	docs, err := cli.TemplateDocs(context.Background(), hr, nil, Options{NoHooks: true})
+	if err != nil {
+		t.Fatalf("TemplateDocs: %v", err)
+	}
+	md := docs[0]["metadata"].(map[string]any)
+	labels := md["labels"].(map[string]any)
+	if labels["helm.toolkit.fluxcd.io/name"] != hr.Name {
+		t.Errorf("origin label should win; got %v", labels["helm.toolkit.fluxcd.io/name"])
+	}
+	if labels["team"] != "platform" {
+		t.Errorf("non-colliding commonMetadata label dropped; got %v", labels["team"])
+	}
+}
+
 func TestApplyHRCommonMetadata_LabelsOnly(t *testing.T) {
 	docs := []map[string]any{
 		{"metadata": map[string]any{"name": "x"}},

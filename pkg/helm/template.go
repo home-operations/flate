@@ -156,6 +156,7 @@ func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, val
 		return nil, err
 	}
 	applyHRCommonMetadata(docs, hr.CommonMetadata)
+	applyHROriginLabels(docs, hr)
 	skip := opts.SkipResourceKinds()
 	if len(skip) == 0 {
 		return docs, nil
@@ -163,6 +164,29 @@ func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, val
 	return slices.DeleteFunc(docs, func(doc map[string]any) bool {
 		return slices.Contains(skip, manifest.DocKind(doc))
 	}), nil
+}
+
+// applyHROriginLabels stamps the helm.toolkit.fluxcd.io/{name,namespace}
+// ownership labels onto every rendered doc, mirroring helm-controller's
+// OriginLabels post-renderer. Real Flux uses these to track which HR
+// owns each in-cluster resource for pruning + selection
+// (`kubectl get -l helm.toolkit.fluxcd.io/name=...`), and they take
+// precedence over CommonMetadata when keys collide — so we apply this
+// pass AFTER applyHRCommonMetadata, matching the upstream order.
+func applyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
+	group := helmv2.GroupVersion.Group
+	origin := map[string]string{
+		group + "/name":      hr.Name,
+		group + "/namespace": hr.Namespace,
+	}
+	for _, doc := range docs {
+		md, _ := doc["metadata"].(map[string]any)
+		if md == nil {
+			md = map[string]any{}
+			doc["metadata"] = md
+		}
+		mergeStringMap(md, "labels", origin)
+	}
 }
 
 // applyHRCommonMetadata merges spec.commonMetadata.labels and .annotations

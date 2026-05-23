@@ -3,26 +3,21 @@ package orchestrator
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
 	"github.com/home-operations/flate/pkg/source/external"
@@ -170,291 +165,45 @@ func New(cfg Config) (*Orchestrator, error) {
 // Store returns the underlying object store.
 func (o *Orchestrator) Store() *store.Store { return o.store }
 
+// WithFetcher installs (or replaces) a per-kind source.Fetcher on the
+// internal source controller. Call BEFORE Bootstrap. Returns the
+// orchestrator for chaining. Use this to embed flate as a library with
+// a custom fetcher (in-memory test fixtures, additional source kinds,
+// alternate verification logic) without forking the New() construction.
+//
+// Passing a nil fetcher unregisters the kind — useful for stripping a
+// default registration in tests.
+func (o *Orchestrator) WithFetcher(kind string, f source.Fetcher) *Orchestrator {
+	if f == nil {
+		delete(o.src.Fetchers, kind)
+		return o
+	}
+	o.src.Fetchers[kind] = f
+	return o
+}
+
 // Filter returns the change filter (may be nil-but-non-active).
 func (o *Orchestrator) Filter() *change.Filter { return o.filter }
 
 // Bootstrap discovers manifests, applies namespace inheritance, primes
 // existence-only sources Ready, and prepares the change filter.
+// Delegates the load / expand / alias phase to pkg/discovery; the
+// remainder is dependency validation + change-filter construction.
 func (o *Orchestrator) Bootstrap(ctx context.Context) error {
-	_ = ctx // bootstrap is filesystem-only; ctx kept for future async work
-
-	repoRoot, err := o.seedBootstrapSource()
-	if err != nil {
-		return err
-	}
-	if err := o.loadManifests(ctx, repoRoot); err != nil {
-		return err
-	}
-	o.aliasBootstrapSources(repoRoot)
-	o.validateDependsOn()
-	return o.buildChangeFilter(repoRoot)
-}
-
-// aliasBootstrapSources seeds a working-tree SourceArtifact for every
-// `flux-system/<name>` GitRepository referenced by a loaded Kustomization
-// whose definition isn't in the repo itself. This is the chkpwd-ops /
-// flux-bootstrap pattern: the user's entry-point KSes reference a
-// custom-named GitRepository (e.g. `chkpwd-ops`, `home-ops`) installed
-// by `flux bootstrap` into the cluster but never committed to the repo.
-// Without aliasing, every downstream KS fails with "source artifact not
-// found". Aliasing makes them all resolve to the working tree.
-func (o *Orchestrator) aliasBootstrapSources(repoRoot string) {
-	known := make(map[manifest.NamedResource]struct{})
-	for _, obj := range o.store.ListObjects(manifest.KindGitRepository) {
-		known[obj.Named()] = struct{}{}
-	}
-	seen := make(map[manifest.NamedResource]struct{})
-	for _, obj := range o.store.ListObjects(manifest.KindKustomization) {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.SourceKind != manifest.KindGitRepository {
-			continue
-		}
-		// Only alias flux-system-namespaced GRs — that's the convention
-		// for the bootstrap source. A KS pointing at a GR in another
-		// namespace is a legitimate cross-tree reference and should fail
-		// if missing rather than silently aliasing to the working tree.
-		if ks.SourceNamespace != manifest.DefaultNamespace {
-			continue
-		}
-		id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-		if _, ok := known[id]; ok {
-			continue
-		}
-		if _, dup := seen[id]; dup {
-			continue
-		}
-		seen[id] = struct{}{}
-		alias := &manifest.GitRepository{
-			Name: id.Name, Namespace: id.Namespace,
-			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + repoRoot},
-		}
-		o.store.AddObject(alias)
-		o.store.SetArtifact(id, &store.SourceArtifact{
-			Kind: manifest.KindGitRepository,
-			URL:  alias.URL, LocalPath: repoRoot,
-		})
-		o.store.UpdateStatus(id, store.StatusReady, "bootstrap alias")
-		slog.Debug("orchestrator: aliased bootstrap GitRepository",
-			"id", id.String(), "localPath", repoRoot)
-	}
-}
-
-
-// seedBootstrapSource publishes a synthetic GitRepository pointing at
-// the working tree's repo root, the anchor for spec.path resolution.
-func (o *Orchestrator) seedBootstrapSource() (string, error) {
-	abs, err := resolveScanPath(o.cfg.Path)
-	if err != nil {
-		return "", err
-	}
-	root := findRepoRoot(abs)
-
-	repo := &manifest.GitRepository{
-		Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace,
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + root},
-	}
-	id := repo.Named()
-	o.store.AddObject(repo)
-	o.store.SetArtifact(id, &store.SourceArtifact{
-		Kind: manifest.KindGitRepository,
-		URL:  repo.URL, LocalPath: root,
-	})
-	o.store.UpdateStatus(id, store.StatusReady, "bootstrap")
-	return root, nil
-}
-
-// loadManifests scans cfg.Path, then iteratively follows each loaded
-// Flux KS's spec.path so a narrow entry (e.g. ./kubernetes/flux/cluster)
-// still discovers the apps/ tree it references — without dragging in
-// unrelated siblings of the user-supplied path.
-func (o *Orchestrator) loadManifests(ctx context.Context, repoRoot string) error {
-	o.sourceFiles = map[manifest.NamedResource]string{}
-
 	l := loader.New(o.store)
 	l.Options.WipeSecrets = o.cfg.WipeSecrets
-	l.SourceRoot = repoRoot
-	l.SourceFiles = o.sourceFiles
 
-	scanRoot := repoRoot
-	if o.cfg.Path != "" {
-		if abs, err := resolveScanPath(o.cfg.Path); err == nil {
-			scanRoot = abs
-		}
-	}
-	if info, err := os.Stat(scanRoot); err != nil {
-		return fmt.Errorf("--path %q: %w", o.cfg.Path, err)
-	} else if !info.IsDir() {
-		return fmt.Errorf("--path %q is not a directory", o.cfg.Path)
-	}
-	scanned := map[string]struct{}{}
-	total := 0
-	if err := o.loadAt(ctx, l, scanRoot, scanned, &total); err != nil {
-		return err
-	}
-	// Iteratively follow each loaded Flux KS's spec.path so a narrow
-	// entry (e.g. ./kubernetes/flux/cluster) still discovers the
-	// apps/ tree it references, AND render any unrendered ResourceSet
-	// CRs so their generated children become visible to further
-	// passes (a ResourceSet may emit Flux Kustomizations whose
-	// spec.path then needs expansion). Frontier indexes track what's
-	// been handled so we don't rescan or rerender on every pass.
-	// PreferExisting protects the initial scan's data from being
-	// overwritten if a discovered path aliases a different snapshot.
-	l.PreferExisting = true
-	ksExpanded := make(map[manifest.NamedResource]struct{})
-	rsExpanded := make(map[manifest.NamedResource]struct{})
-	for {
-		var added int
-		for _, obj := range o.store.ListObjects(manifest.KindKustomization) {
-			ks, ok := obj.(*manifest.Kustomization)
-			if !ok || ks.Path == "" {
-				continue
-			}
-			id := ks.Named()
-			if _, ok := ksExpanded[id]; ok {
-				continue
-			}
-			ksExpanded[id] = struct{}{}
-			target := filepath.Join(repoRoot, filepath.FromSlash(strings.TrimPrefix(ks.Path, "./")))
-			if _, seen := scanned[target]; seen {
-				continue
-			}
-			if !strings.HasPrefix(target+string(filepath.Separator), repoRoot+string(filepath.Separator)) {
-				continue
-			}
-			if err := o.loadAt(ctx, l, target, scanned, &total); err != nil {
-				return err
-			}
-			added++
-		}
-		for _, obj := range o.store.ListObjects(manifest.KindResourceSet) {
-			rs, ok := obj.(*manifest.ResourceSet)
-			if !ok {
-				continue
-			}
-			id := rs.Named()
-			if _, ok := rsExpanded[id]; ok {
-				continue
-			}
-			rsExpanded[id] = struct{}{}
-			n, err := o.renderResourceSet(rs)
-			if err != nil {
-				return err
-			}
-			if n > 0 {
-				added++
-				total += n
-			}
-		}
-		if added == 0 {
-			break
-		}
-	}
-	l.PreferExisting = false
-	slog.Debug("orchestrator: loaded objects", "count", total, "scanRoot", scanRoot, "sourceRoot", repoRoot)
-
-	loader.ApplyNamespaceInheritance(o.store, o.sourceFiles, repoRoot)
-	// Build the parent index after namespace inheritance so the
-	// recorded child→parent ids reflect the canonical (post-rewrite)
-	// NamedResources the controller will see.
-	o.parentOf = loader.BuildParentIndex(o.store, o.sourceFiles)
-	return nil
-}
-
-// loadAt scans dir if not already scanned, marks it, and accumulates
-// the loaded object count.
-func (o *Orchestrator) loadAt(ctx context.Context, l *loader.Loader, dir string, scanned map[string]struct{}, total *int) error {
-	if _, seen := scanned[dir]; seen {
-		return nil
-	}
-	scanned[dir] = struct{}{}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return nil
-	}
-	n, err := l.Load(ctx, dir)
+	res, err := discovery.Run(ctx, discovery.Config{
+		Path: o.cfg.Path, Store: o.store, Loader: l, WipeSecrets: o.cfg.WipeSecrets,
+	})
 	if err != nil {
 		return err
 	}
-	*total += n
-	return nil
-}
+	o.sourceFiles = res.SourceFiles
+	o.parentOf = res.ParentOf
 
-// renderResourceSet evaluates rs.Spec across its inputs and AddObjects
-// every resulting recognized Flux resource into the store. The rendered
-// children are attributed to the ResourceSet's own source file so the
-// change filter treats them as siblings of the ResourceSet definition
-// (a ResourceSet change reruns its children's reconciles). Returns
-// the count of new objects added so the caller can detect a fixed
-// point in the expansion loop.
-func (o *Orchestrator) renderResourceSet(rs *manifest.ResourceSet) (int, error) {
-	docs, err := resourceset.Render(rs, o.resolveInputProvider)
-	if err != nil {
-		return 0, err
-	}
-	srcFile := o.sourceFiles[rs.Named()]
-	opts := manifest.ParseDocOptions{WipeSecrets: o.cfg.WipeSecrets}
-	added := 0
-	for _, doc := range docs {
-		obj, err := manifest.ParseDoc(doc, opts)
-		if err != nil {
-			slog.Debug("resourceset: skipped doc", "rs", rs.NamespacedName(), "err", err)
-			continue
-		}
-		if _, ok := obj.(*manifest.RawObject); ok {
-			// Generic / unrecognized kinds: not something flate
-			// reconciles further. Skip them rather than polluting the
-			// store with opaque entries.
-			continue
-		}
-		id := obj.Named()
-		if o.store.GetObject(id) != nil {
-			continue
-		}
-		o.store.AddObject(obj)
-		if srcFile != "" {
-			o.sourceFiles[id] = srcFile
-		}
-		added++
-	}
-	return added, nil
-}
-
-// resolveInputProvider satisfies resourceset.ProviderResolver against
-// the orchestrator's object store. Returns the RSIPs matching a single
-// spec.inputsFrom reference within the given namespace. Name lookups
-// hit a single id; selector matches walk the store's RSIPs in nsScope
-// and filter by metadata.labels.
-func (o *Orchestrator) resolveInputProvider(ref fluxopv1.InputProviderReference, namespace string) ([]*manifest.ResourceSetInputProvider, error) {
-	if ref.Name != "" {
-		id := manifest.NamedResource{
-			Kind:      manifest.KindResourceSetInputProvider,
-			Namespace: namespace,
-			Name:      ref.Name,
-		}
-		obj, _ := o.store.GetObject(id).(*manifest.ResourceSetInputProvider)
-		if obj == nil {
-			return nil, nil
-		}
-		return []*manifest.ResourceSetInputProvider{obj}, nil
-	}
-	if ref.Selector == nil {
-		return nil, nil
-	}
-	var out []*manifest.ResourceSetInputProvider
-	for _, obj := range o.store.ListObjects(manifest.KindResourceSetInputProvider) {
-		p, ok := obj.(*manifest.ResourceSetInputProvider)
-		if !ok || p.Namespace != namespace {
-			continue
-		}
-		match, err := resourceset.MatchSelector(ref.Selector, p.Labels)
-		if err != nil {
-			return nil, err
-		}
-		if match {
-			out = append(out, p)
-		}
-	}
-	return out, nil
+	o.validateDependsOn()
+	return o.buildChangeFilter(res.RepoRoot)
 }
 
 // validateDependsOn drops dangling dependsOn references on both
@@ -477,9 +226,8 @@ func (o *Orchestrator) validateDependsOn() {
 			known[manifest.KindHelmRelease][hr.NamespacedName()] = struct{}{}
 		}
 	}
-	// Store immutability contract: clone the struct, set the new slice
-	// on the clone, re-AddObject so listeners see the transition cleanly
-	// and any in-flight reader's pointer stays valid.
+	// Mutate via the Store helper — encodes the clone-then-AddObject
+	// contract so callers don't have to remember it.
 	for _, obj := range ksList {
 		ks, ok := obj.(*manifest.Kustomization)
 		if !ok {
@@ -489,9 +237,7 @@ func (o *Orchestrator) validateDependsOn() {
 		if dropped == 0 {
 			continue
 		}
-		clone := *ks
-		clone.DependsOn = kept
-		o.store.AddObject(&clone)
+		store.Mutate(o.store, ks.Named(), func(k *manifest.Kustomization) { k.DependsOn = kept })
 	}
 	for _, obj := range hrList {
 		hr, ok := obj.(*manifest.HelmRelease)
@@ -502,9 +248,7 @@ func (o *Orchestrator) validateDependsOn() {
 		if dropped == 0 {
 			continue
 		}
-		clone := *hr
-		clone.DependsOn = kept
-		o.store.AddObject(&clone)
+		store.Mutate(o.store, hr.Named(), func(h *manifest.HelmRelease) { h.DependsOn = kept })
 	}
 }
 
@@ -572,11 +316,11 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	changes := o.cfg.ExternalChanges
 	if changes == nil && o.cfg.PathOrig != "" {
-		origAbs, err := resolveScanPath(o.cfg.PathOrig)
+		origAbs, err := discovery.ResolveScanPath(o.cfg.PathOrig)
 		if err != nil {
 			return fmt.Errorf("--path-orig: %w", err)
 		}
-		currAbs, err := resolveScanPath(o.cfg.Path)
+		currAbs, err := discovery.ResolveScanPath(o.cfg.Path)
 		if err != nil {
 			return fmt.Errorf("--path: %w", err)
 		}
@@ -698,40 +442,3 @@ func (o *Orchestrator) Stop() {
 	}
 }
 
-// resolveScanPath normalizes a user-supplied --path / --path-orig:
-// absolute, with symlinks resolved. Without symlink resolution flate
-// would walk through the symlink itself (Go's filepath.WalkDir does
-// not follow root-level symlinks), producing an empty manifest set
-// without any error indication — a footgun.
-func resolveScanPath(p string) (string, error) {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		// Pass through the unresolved absolute path so the caller can
-		// produce a clearer "no such file or directory" error on Stat
-		// than the symlink-resolution failure.
-		if errors.Is(err, fs.ErrNotExist) {
-			return abs, nil
-		}
-		return "", fmt.Errorf("resolve --path %q: %w", p, err)
-	}
-	return resolved, nil
-}
-
-// findRepoRoot walks upward from p looking for a .git directory; falls
-// back to p itself when there isn't one.
-func findRepoRoot(p string) string {
-	for cur := p; ; {
-		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
-			return cur
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return p
-		}
-		cur = parent
-	}
-}

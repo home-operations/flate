@@ -18,10 +18,6 @@
 //   - Options exposes the helm CLI flags flate understands
 //     (--kube-version, --api-versions, --no-hooks, etc.).
 //
-// Legacy push API: Client.AddRepo / AddOCIRepo / AddLocalSource
-// remain for tests and standalone embedders that don't want to plug
-// in a resolver, but they're not used in production flate any more.
-//
 // The client is safe for concurrent use; chart downloads are cached
 // on disk keyed by chart name + version, and parallel first-loads
 // of the same chart coalesce through a per-path keylock.

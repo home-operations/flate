@@ -34,11 +34,7 @@ data:
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	cli.AddLocalSource(LocalSource{
-		Name:      "chart-repo",
-		Namespace: "flux-system",
-		Artifact:  &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir},
-	})
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -80,12 +76,24 @@ func helmChartFixture(t *testing.T) *Client {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	cli.AddLocalSource(LocalSource{
-		Name:      "chart-repo",
-		Namespace: "flux-system",
-		Artifact:  &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir},
-	})
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
 	return cli
+}
+
+// localChartResolver wires a *store.Store containing a single
+// GitRepository with its on-disk artifact, then returns a
+// StoreSourceResolver backed by it. The helper keeps the existing
+// test fixtures using the canonical resolver path instead of the
+// legacy Add*-driven push API.
+func localChartResolver(t *testing.T, name, namespace, dir string) SourceResolver {
+	t.Helper()
+	st := store.New()
+	gr := &manifest.GitRepository{Name: name, Namespace: namespace}
+	st.AddObject(gr)
+	st.SetArtifact(gr.Named(), &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+	})
+	return NewStoreSourceResolver(st)
 }
 
 func newHR() *manifest.HelmRelease {

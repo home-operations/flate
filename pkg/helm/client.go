@@ -19,26 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// LocalSource couples a source CR (GitRepository / Bucket /
-// ExternalArtifact — any fetched artifact that lives as a directory on
-// disk) with the fetcher-produced SourceArtifact. The helm Client uses
-// these to resolve charts whose sourceRef.kind points at one of those
-// three kinds; the chart sits at `<Artifact.LocalPath>/<hr.Chart.Name>`
-// in every case. Name+Namespace mirror the source CR so RepoFullName
-// matches what hr.Chart.RepoFullName() produces.
-type LocalSource struct {
-	Name      string
-	Namespace string
-	Artifact  *store.SourceArtifact
-}
-
-// RepoFullName is the `<namespace>-<name>` lookup key. Matches
-// manifest.HelmChart.RepoFullName so listing the helm client's
-// local sources resolves cleanly against the HR's chartRef.
-func (l LocalSource) RepoFullName() string {
-	return l.Namespace + "-" + l.Name
-}
-
 // SecretGetter is the same shape as source.SecretGetter; aliased so
 // the helm Client and the source Fetchers consume one canonical type.
 // The orchestrator wires the same closure into both.
@@ -50,20 +30,13 @@ type Client struct {
 	cacheDir string
 
 	mu sync.RWMutex
-	// resolver is the canonical source-lookup surface. When non-nil it
-	// wins over the legacy Add*-driven maps. The orchestrator wires
-	// NewStoreSourceResolver(store) at construction; embedders driving
-	// helm.Client directly can either set their own resolver or stay on
-	// the Add* API for back-compat.
+	// resolver is the canonical (and only) source-lookup surface.
+	// Embedders MUST call SetSourceResolver before any Template call;
+	// the orchestrator wires NewStoreSourceResolver(store) at
+	// construction.
 	resolver SourceResolver
-	// repos/ociRepos/localSources are the legacy push-registries. Kept
-	// for tests / standalone embedders that haven't migrated to the
-	// resolver. When the resolver is set, these maps are not consulted.
-	repos        map[string]*manifest.HelmRepository
-	ociRepos     map[string]*manifest.OCIRepository
-	localSources map[string]LocalSource
-	registry     *registry.Client
-	secrets      SecretGetter
+	registry *registry.Client
+	secrets  SecretGetter
 
 	// chartCache memoizes parsed *chart.Chart by on-disk path. Helm's
 	// loader.Load reparses the entire tgz on every call — for repos
@@ -99,9 +72,6 @@ func NewClient(tmpDir, cacheDir string) (*Client, error) {
 	return &Client{
 		tmpDir:         tmpDir,
 		cacheDir:       cacheDir,
-		repos:          map[string]*manifest.HelmRepository{},
-		ociRepos:       map[string]*manifest.OCIRepository{},
-		localSources:   map[string]LocalSource{},
 		registry:       reg,
 		chartCache:     map[string]*chart.Chart{},
 		chartLoadLocks: keylock.New[string](),
@@ -118,91 +88,44 @@ func (c *Client) SetSecretGetter(g SecretGetter) {
 }
 
 // SetSourceResolver installs the canonical lookup surface for
-// HelmRepository / OCIRepository / local-artifact sources. When set,
-// helm.Client reads through the resolver instead of consulting its
-// own Add*-populated maps — eliminating the duplicate-state hazard
-// where a source CR's spec change after registration could leave the
-// helm.Client looking at stale credentials. Safe to call before any
-// Add* / template call; typically once at orchestrator construction.
-// Pass nil to revert to the legacy push-API behavior.
+// HelmRepository / OCIRepository / local-artifact sources. helm.Client
+// reads through the resolver on every Template call — there's no
+// alternate path. Safe to call before any template call; typically
+// once at orchestrator construction.
 func (c *Client) SetSourceResolver(r SourceResolver) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.resolver = r
 }
 
-// resolveHelmRepo returns the HelmRepository at <namespace>-<name>,
-// reading from the resolver when present and falling back to the
-// legacy Add*-populated map otherwise.
 func (c *Client) resolveHelmRepo(hr *manifest.HelmRelease) *manifest.HelmRepository {
 	c.mu.RLock()
 	resolver := c.resolver
 	c.mu.RUnlock()
-	if resolver != nil {
-		return resolver.HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	if resolver == nil {
+		return nil
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.repos[hr.Chart.RepoFullName()]
+	return resolver.HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
 func (c *Client) resolveOCIRepo(hr *manifest.HelmRelease) *manifest.OCIRepository {
 	c.mu.RLock()
 	resolver := c.resolver
 	c.mu.RUnlock()
-	if resolver != nil {
-		return resolver.OCIRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	if resolver == nil {
+		return nil
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.ociRepos[hr.Chart.RepoFullName()]
+	return resolver.OCIRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
 func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtifact {
 	c.mu.RLock()
 	resolver := c.resolver
 	c.mu.RUnlock()
-	if resolver != nil {
-		return resolver.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	if resolver == nil {
+		return nil
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if ls, ok := c.localSources[hr.Chart.RepoFullName()]; ok {
-		return ls.Artifact
-	}
-	return nil
-}
-
-// AddRepo registers a HelmRepository so chart lookups can resolve it.
-func (c *Client) AddRepo(repo *manifest.HelmRepository) {
-	if repo == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.repos[repo.RepoName()] = repo
-}
-
-// AddOCIRepo registers an OCIRepository.
-func (c *Client) AddOCIRepo(repo *manifest.OCIRepository) {
-	if repo == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.ociRepos[repo.RepoName()] = repo
-}
-
-// AddLocalSource registers a fetched-artifact source — GitRepository,
-// Bucket, or ExternalArtifact — so charts referenced via the
-// corresponding sourceRef.kind can be resolved on disk.
-func (c *Client) AddLocalSource(s LocalSource) {
-	if s.Name == "" || s.Artifact == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.localSources[s.RepoFullName()] = s
+	return resolver.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
 // LocateChart returns a filesystem path to the chart referenced by hr.

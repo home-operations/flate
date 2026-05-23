@@ -8,11 +8,11 @@ import (
 // SourceResolver is the lookup surface helm.Client needs to resolve a
 // HelmRelease's sourceRef against the canonical object store.
 //
-// The interface exists so helm.Client doesn't have to maintain its own
-// parallel registries of source CRs that the Store already owns — see
-// NewStoreSourceResolver for the production-side adapter. Embedders
-// rendering a single HelmRelease without an Orchestrator can implement
-// this directly.
+// The interface exists so helm.Client reads source CRs from the
+// canonical store on every lookup rather than maintaining a parallel
+// registry — see NewStoreSourceResolver for the production-side
+// adapter. Embedders rendering a single HelmRelease without an
+// Orchestrator can implement this directly.
 //
 // A nil return from any method means "not found" — callers translate
 // that into a typed manifest.ErrObjectNotFound error.
@@ -32,9 +32,7 @@ type SourceResolver interface {
 
 // NewStoreSourceResolver returns a SourceResolver backed by the
 // canonical object store. The orchestrator wires this into helm.Client
-// so chart-source lookups read straight from the Store rather than
-// through helm.Client's now-deprecated AddRepo/AddOCIRepo/AddLocalSource
-// push API.
+// so chart-source lookups read straight from the Store.
 func NewStoreSourceResolver(s *store.Store) SourceResolver {
 	return &storeResolver{store: s}
 }

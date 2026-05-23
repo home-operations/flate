@@ -36,11 +36,13 @@ description: test
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	cli.AddLocalSource(LocalSource{
-		Name:      "chart-repo",
-		Namespace: "flux-system",
-		Artifact:  &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir},
+	st := store.New()
+	gr := &manifest.GitRepository{Name: "chart-repo", Namespace: "flux-system"}
+	st.AddObject(gr)
+	st.SetArtifact(gr.Named(), &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
 	})
+	cli.SetSourceResolver(NewStoreSourceResolver(st))
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",

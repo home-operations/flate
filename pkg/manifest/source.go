@@ -120,8 +120,8 @@ const (
 
 // OCIRepositoryVerify is the Flux OCIRepositoryVerification from
 // source-controller. Flate implements keyed cosign mode only: keyless
-// (OIDC) and notation parse for round-trip fidelity but are not
-// enforced at Fetch time.
+// (OIDC) parses for round-trip fidelity, logs a warn at Fetch time,
+// and proceeds with rendering. Notation is also unenforced.
 type OCIRepositoryVerify = sourcev1.OCIRepositoryVerification
 
 // Named identifies the OCIRepository.

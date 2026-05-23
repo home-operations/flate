@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/opencontainers/go-digest"
@@ -72,7 +73,13 @@ type signatureManifest struct {
 // Implements the cosign "simple signing" keyed verification path:
 //   - https://github.com/sigstore/cosign/blob/main/specs/SIGNATURE_SPEC.md
 //
-// Keyless / Rekor / Notation are out of scope for offline flate.
+// Keyless (Fulcio / Rekor) verification is logged and skipped: real Flux
+// proves the chain via sigstore-go + transparency-log roots, which costs
+// ~100 MB of crypto dependencies and online Fulcio/Rekor calls. flate's
+// purpose is rendering what Flux would render, not gating artifact
+// pulls — so the chart is fetched and rendered, with a warn-level log
+// making the unverified state visible to the user.
+// Notation is also out of scope.
 func (f *Fetcher) verifyCosignSignature(
 	ctx context.Context,
 	repoClient *remote.Repository,
@@ -91,10 +98,13 @@ func (f *Fetcher) verifyCosignSignature(
 			repo.Namespace, repo.Name, provider, "cosign")
 	}
 	if repo.Verify.SecretRef == nil {
-		// Keyless (OIDC) — flate cannot enforce this offline. Surface
-		// the gap as a loud error rather than silently passing.
-		return fmt.Errorf("OCIRepository %s/%s: keyless cosign verification is not implemented; supply spec.verify.secretRef with a public key",
-			repo.Namespace, repo.Name)
+		// Keyless (OIDC) — flate can't reach Fulcio/Rekor offline and
+		// doesn't carry the sigstore trust roots. Log and proceed so the
+		// chart still renders for diff purposes.
+		slog.Warn("cosign keyless verification skipped; rendering unverified artifact",
+			"ociRepository", repo.Namespace+"/"+repo.Name,
+			"digest", pulledDigest)
+		return nil
 	}
 	keys, err := f.loadCosignPublicKeys(repo)
 	if err != nil {

@@ -1,6 +1,7 @@
 package oci
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -176,6 +177,29 @@ func TestLoadCosignPublicKeys_ParsesPEM(t *testing.T) {
 	}
 	if len(keys) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+}
+
+// Keyless cosign (matchOIDCIdentity, no secretRef) cannot be enforced
+// offline. Verify that verifyCosignSignature returns nil — the chart
+// still renders for diff purposes — without touching the registry.
+func TestVerifyCosignSignature_KeylessSkipsAndReturnsNil(t *testing.T) {
+	f := &Fetcher{}
+	repo := &manifest.OCIRepository{
+		Name: "app-template", Namespace: "flux-system",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			Verify: &manifest.OCIRepositoryVerify{
+				Provider: "cosign",
+				MatchOIDCIdentity: []sourcev1.OIDCIdentityMatch{
+					{Issuer: "^https://token.actions.githubusercontent.com$",
+						Subject: "^https://github.com/bjw-s-labs/helm-charts.*$"},
+				},
+			},
+		},
+	}
+	// repoClient nil is fine: keyless path returns before any registry call.
+	if err := f.verifyCosignSignature(context.Background(), nil, repo, "sha256:deadbeef"); err != nil {
+		t.Errorf("keyless cosign should be skipped silently; got %v", err)
 	}
 }
 

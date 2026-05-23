@@ -52,14 +52,12 @@ type ChartLoadResult struct {
 // artifact — GitRepository, Bucket, or ExternalArtifact. The chart
 // lives at <artifact.LocalPath>/<chart.Name> in every case.
 func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
-	c.mu.RLock()
-	s, ok := c.localSources[hr.Chart.RepoFullName()]
-	c.mu.RUnlock()
-	if !ok || s.Artifact == nil {
+	art := c.resolveLocalSource(hr)
+	if art == nil {
 		return "", fmt.Errorf("%w: %s %s not available for HelmRelease %s",
 			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.NamespacedName())
 	}
-	path := filepath.Join(s.Artifact.LocalPath, hr.Chart.Name)
+	path := filepath.Join(art.LocalPath, hr.Chart.Name)
 	if _, err := os.Stat(filepath.Join(path, "Chart.yaml")); err != nil {
 		return "", fmt.Errorf("chart not found at %s: %w", path, err)
 	}
@@ -71,10 +69,8 @@ func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
 // path. Otherwise we download the chart tarball via getter, applying
 // any SecretRef credentials.
 func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
-	c.mu.RLock()
-	r, ok := c.repos[hr.Chart.RepoFullName()]
-	c.mu.RUnlock()
-	if !ok {
+	r := c.resolveHelmRepo(hr)
+	if r == nil {
 		return "", fmt.Errorf("%w: HelmRepository %s not registered for HelmRelease %s",
 			manifest.ErrObjectNotFound, hr.Chart.RepoFullName(), hr.NamespacedName())
 	}
@@ -287,10 +283,8 @@ func (c *Client) fetchIndex(indexURL string, opts []getter.Option) (*repo.IndexF
 // "chart-as-OCI-artifact" model) so we use it verbatim — the chart's
 // short name from the HelmRelease is metadata, not part of the URL.
 func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
-	c.mu.RLock()
-	r, ok := c.ociRepos[hr.Chart.RepoFullName()]
-	c.mu.RUnlock()
-	if !ok {
+	r := c.resolveOCIRepo(hr)
+	if r == nil {
 		return "", fmt.Errorf("%w: OCIRepository %s not registered", manifest.ErrObjectNotFound, hr.Chart.RepoFullName())
 	}
 	ver, err := r.Version()

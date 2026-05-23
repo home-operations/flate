@@ -125,6 +125,10 @@ func New(cfg Config) (*Orchestrator, error) {
 		return s
 	}
 	helmClient.SetSecretGetter(secretGet)
+	// Route helm.Client's source-CR lookups straight through the canonical
+	// Store rather than maintaining a duplicate registry the HR controller
+	// would otherwise have to keep in sync via Add* push-API calls.
+	helmClient.SetSourceResolver(helm.NewStoreSourceResolver(st))
 	srcCtrl := sourcectrl.New(st, ts)
 	srcCtrl.Fetchers[manifest.KindGitRepository] = &git.Fetcher{Cache: cache, Secrets: secretGet}
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = &external.Fetcher{}

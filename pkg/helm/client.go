@@ -49,7 +49,16 @@ type Client struct {
 	tmpDir   string
 	cacheDir string
 
-	mu           sync.RWMutex
+	mu sync.RWMutex
+	// resolver is the canonical source-lookup surface. When non-nil it
+	// wins over the legacy Add*-driven maps. The orchestrator wires
+	// NewStoreSourceResolver(store) at construction; embedders driving
+	// helm.Client directly can either set their own resolver or stay on
+	// the Add* API for back-compat.
+	resolver SourceResolver
+	// repos/ociRepos/localSources are the legacy push-registries. Kept
+	// for tests / standalone embedders that haven't migrated to the
+	// resolver. When the resolver is set, these maps are not consulted.
 	repos        map[string]*manifest.HelmRepository
 	ociRepos     map[string]*manifest.OCIRepository
 	localSources map[string]LocalSource
@@ -106,6 +115,62 @@ func (c *Client) SetSecretGetter(g SecretGetter) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.secrets = g
+}
+
+// SetSourceResolver installs the canonical lookup surface for
+// HelmRepository / OCIRepository / local-artifact sources. When set,
+// helm.Client reads through the resolver instead of consulting its
+// own Add*-populated maps — eliminating the duplicate-state hazard
+// where a source CR's spec change after registration could leave the
+// helm.Client looking at stale credentials. Safe to call before any
+// Add* / template call; typically once at orchestrator construction.
+// Pass nil to revert to the legacy push-API behavior.
+func (c *Client) SetSourceResolver(r SourceResolver) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resolver = r
+}
+
+// resolveHelmRepo returns the HelmRepository at <namespace>-<name>,
+// reading from the resolver when present and falling back to the
+// legacy Add*-populated map otherwise.
+func (c *Client) resolveHelmRepo(hr *manifest.HelmRelease) *manifest.HelmRepository {
+	c.mu.RLock()
+	resolver := c.resolver
+	c.mu.RUnlock()
+	if resolver != nil {
+		return resolver.HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.repos[hr.Chart.RepoFullName()]
+}
+
+func (c *Client) resolveOCIRepo(hr *manifest.HelmRelease) *manifest.OCIRepository {
+	c.mu.RLock()
+	resolver := c.resolver
+	c.mu.RUnlock()
+	if resolver != nil {
+		return resolver.OCIRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ociRepos[hr.Chart.RepoFullName()]
+}
+
+func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtifact {
+	c.mu.RLock()
+	resolver := c.resolver
+	c.mu.RUnlock()
+	if resolver != nil {
+		return resolver.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if ls, ok := c.localSources[hr.Chart.RepoFullName()]; ok {
+		return ls.Artifact
+	}
+	return nil
 }
 
 // AddRepo registers a HelmRepository so chart lookups can resolve it.

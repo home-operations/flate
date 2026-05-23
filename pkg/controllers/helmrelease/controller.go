@@ -69,32 +69,25 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 }
 
 // Start registers the listeners. The controller runs until Close.
+// The HR controller only listens for HelmRelease and HelmChartSource
+// (the chart-ref index) — source-kind events (HelmRepository,
+// OCIRepository, GitRepository, Bucket, ExternalArtifact) are now
+// consumed lazily by helm.Client through its SourceResolver against
+// the canonical Store. One fewer push-registry to keep in sync.
 func (c *Controller) Start(ctx context.Context) {
 	c.StartLifecycle("helmrelease")
 	c.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx))
-	c.AddListener(store.EventArtifactUpdated, c.onArtifactUpdated)
 }
 
 func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 	return func(id manifest.NamedResource, payload any) {
-		// Source-kind listeners re-read from the Store rather than
-		// trusting payload, because s.fire dispatches AFTER s.mu is
-		// released — two concurrent AddObject calls for the same id
-		// could deliver listener payloads in reverse of write order.
-		// The store always reflects the latest write under its own
-		// lock, so a fresh GetObject is authoritative.
 		switch id.Kind {
-		case manifest.KindHelmRepository:
-			_ = payload
-			if r, ok := c.Store.GetObject(id).(*manifest.HelmRepository); ok {
-				c.Helm.AddRepo(r)
-			}
-		case manifest.KindOCIRepository:
-			_ = payload
-			if r, ok := c.Store.GetObject(id).(*manifest.OCIRepository); ok {
-				c.Helm.AddOCIRepo(r)
-			}
 		case manifest.KindHelmChart:
+			// HelmChartSource is a flate-internal projection of a Flux
+			// HelmChart CR. Maintain an index so HR.ResolveChartRef can
+			// look up the producing source for a chartRef reference.
+			// Re-read from the Store to win the listener-ordering race
+			// (s.fire dispatches after s.mu releases).
 			_ = payload
 			if s, ok := c.Store.GetObject(id).(*manifest.HelmChartSource); ok {
 				c.chartSourcesMu.Lock()
@@ -114,26 +107,6 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 			})
 		}
 	}
-}
-
-// onArtifactUpdated registers fetched-artifact sources (GitRepository,
-// Bucket, ExternalArtifact) with the helm client so charts referenced
-// via the corresponding sourceRef.kind can be loaded from disk.
-func (c *Controller) onArtifactUpdated(id manifest.NamedResource, payload any) {
-	switch id.Kind {
-	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact:
-	default:
-		return
-	}
-	art, ok := payload.(*store.SourceArtifact)
-	if !ok || art.LocalPath == "" {
-		return
-	}
-	c.Helm.AddLocalSource(helm.LocalSource{
-		Name:      id.Name,
-		Namespace: id.Namespace,
-		Artifact:  art,
-	})
 }
 
 func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) error {

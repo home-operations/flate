@@ -359,6 +359,20 @@ func versionedURL(base string, ref manifest.OCIRepositoryRef) string {
 // filter, then returns the highest tag matching the semver constraint.
 // Mirrors source-controller's `getTagBySemver` (ocirepository_controller.go).
 func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, expr, filterPattern string) (string, error) {
+	var collected []string
+	if err := repoClient.Tags(ctx, "", func(tags []string) error {
+		collected = append(collected, tags...)
+		return nil
+	}); err != nil {
+		return "", fmt.Errorf("list tags: %w", err)
+	}
+	return pickSemverTag(collected, expr, filterPattern)
+}
+
+// pickSemverTag picks the highest semver-matching tag from a list,
+// applying an optional regex filter. Pure function so it's testable
+// without a real registry.
+func pickSemverTag(tags []string, expr, filterPattern string) (string, error) {
 	constraint, err := semver.NewConstraint(expr)
 	if err != nil {
 		return "", fmt.Errorf("semver %q: %w", expr, err)
@@ -373,29 +387,23 @@ func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, expr, 
 
 	var matching semver.Collection
 	var matchingTags []string
-	err = repoClient.Tags(ctx, "", func(tags []string) error {
-		for _, tag := range tags {
-			if pattern != nil && !pattern.MatchString(tag) {
-				continue
-			}
-			v, perr := semver.NewVersion(tag)
-			if perr != nil {
-				continue
-			}
-			if constraint.Check(v) {
-				matching = append(matching, v)
-				matchingTags = append(matchingTags, tag)
-			}
+	for _, tag := range tags {
+		if pattern != nil && !pattern.MatchString(tag) {
+			continue
 		}
-		return nil
-	})
-	if err != nil {
-		return "", fmt.Errorf("list tags: %w", err)
+		v, perr := semver.NewVersion(tag)
+		if perr != nil {
+			continue
+		}
+		if constraint.Check(v) {
+			matching = append(matching, v)
+			matchingTags = append(matchingTags, tag)
+		}
 	}
 	if len(matching) == 0 {
 		return "", fmt.Errorf("no tag matched semver %q (filter %q)", expr, filterPattern)
 	}
-	// Highest match wins — find the max-index via slices.MaxFunc so the
+	// Highest match wins — find the max-index by walking once so the
 	// parallel matching[]/matchingTags[] stay aligned.
 	hi := 0
 	for i := 1; i < len(matching); i++ {

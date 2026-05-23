@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
+	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -24,15 +25,12 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// Controller orchestrates HelmRelease reconciliation.
+// Controller orchestrates HelmRelease reconciliation. Reconcile-shaping
+// state (Filter) flows in via Configure exactly once before Start.
 type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
 	Helm  *helm.Client
-	// Filter, when non-nil and enabled, narrows reconciliation to
-	// only the HelmReleases whose source files (or whose referenced
-	// sources/values) changed between two checkouts.
-	Filter *change.Filter
 
 	// Options applied to every template call.
 	Options helm.Options
@@ -41,15 +39,38 @@ type Controller struct {
 	// templates.
 	WipeSecrets bool
 
-	unsub []store.Unsubscribe
-	coal  *task.Coalescer[manifest.NamedResource]
+	// Set via Configure() — see Options.
+	filter *change.Filter
+
+	started atomic.Bool
+	unsub   []store.Unsubscribe
+	coal    *task.Coalescer[manifest.NamedResource]
 
 	chartSourcesMu sync.RWMutex
 	chartSources   map[string]*manifest.HelmChartSource
 }
 
+// ReconcileOptions carries the post-bootstrap state the orchestrator
+// wires onto the controller. Filter narrows reconciliation to changed
+// HelmReleases (and their referenced sources/values) in changed-only
+// mode.
+type ReconcileOptions struct {
+	Filter *change.Filter
+}
+
+// Configure installs the post-bootstrap state. Panics if called after
+// Start — encodes the invariant that reconcile-shaping config is
+// read-only once dispatch begins.
+func (c *Controller) Configure(opts ReconcileOptions) {
+	if c.started.Load() {
+		panic("helmrelease controller: Configure called after Start")
+	}
+	c.filter = opts.Filter
+}
+
 // Start registers the listeners. The controller runs until Close.
 func (c *Controller) Start(ctx context.Context) {
+	c.started.Store(true)
 	c.coal = task.NewCoalescer[manifest.NamedResource](c.Tasks)
 	c.chartSources = map[string]*manifest.HelmChartSource{}
 	c.unsub = append(c.unsub,
@@ -101,7 +122,7 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 				c.Store.UpdateStatus(id, store.StatusReady, "suspended")
 				return
 			}
-			if c.Filter.Enabled() && !c.Filter.ShouldReconcile(id) {
+			if c.filter.Enabled() && !c.filter.ShouldReconcile(id) {
 				c.Store.UpdateStatus(id, store.StatusReady, "unchanged")
 				return
 			}
@@ -112,22 +133,24 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 	}
 }
 
-// onArtifactUpdated registers GitRepository artifacts with the helm
-// client so charts referenced via sourceRef.kind=GitRepository can be
-// loaded from disk.
+// onArtifactUpdated registers fetched-artifact sources (GitRepository,
+// Bucket, ExternalArtifact) with the helm client so charts referenced
+// via the corresponding sourceRef.kind can be loaded from disk.
 func (c *Controller) onArtifactUpdated(id manifest.NamedResource, payload any) {
-	if id.Kind != manifest.KindGitRepository {
+	switch id.Kind {
+	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact:
+	default:
 		return
 	}
-	gitArt, ok := payload.(*store.SourceArtifact)
-	if !ok || gitArt.Kind != manifest.KindGitRepository {
+	art, ok := payload.(*store.SourceArtifact)
+	if !ok || art.LocalPath == "" {
 		return
 	}
-	repo, _ := c.Store.GetObject(id).(*manifest.GitRepository)
-	if repo == nil {
-		return
-	}
-	c.Helm.AddLocalGit(helm.LocalGitRepository{Repo: repo, Artifact: gitArt})
+	c.Helm.AddLocalSource(helm.LocalSource{
+		Name:      id.Name,
+		Namespace: id.Namespace,
+		Artifact:  art,
+	})
 }
 
 func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) error {

@@ -17,20 +17,24 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// LocalGitRepository couples a GitRepository CRD with the cached working
-// tree produced by SourceController. The helm Client uses these to
-// resolve charts whose sourceRef.kind is GitRepository.
-type LocalGitRepository struct {
-	Repo     *manifest.GitRepository
-	Artifact *store.SourceArtifact
+// LocalSource couples a source CR (GitRepository / Bucket /
+// ExternalArtifact — any fetched artifact that lives as a directory on
+// disk) with the fetcher-produced SourceArtifact. The helm Client uses
+// these to resolve charts whose sourceRef.kind points at one of those
+// three kinds; the chart sits at `<Artifact.LocalPath>/<hr.Chart.Name>`
+// in every case. Name+Namespace mirror the source CR so RepoFullName
+// matches what hr.Chart.RepoFullName() produces.
+type LocalSource struct {
+	Name      string
+	Namespace string
+	Artifact  *store.SourceArtifact
 }
 
-// RepoName mirrors HelmRepository.RepoName for convenience in lookups.
-func (l LocalGitRepository) RepoName() string {
-	if l.Repo == nil {
-		return ""
-	}
-	return l.Repo.RepoName()
+// RepoFullName is the `<namespace>-<name>` lookup key. Matches
+// manifest.HelmChart.RepoFullName so listing the helm client's
+// local sources resolves cleanly against the HR's chartRef.
+func (l LocalSource) RepoFullName() string {
+	return l.Namespace + "-" + l.Name
 }
 
 // SecretGetter resolves a Secret CR by namespace + name. The helm
@@ -44,12 +48,12 @@ type Client struct {
 	tmpDir   string
 	cacheDir string
 
-	mu       sync.RWMutex
-	repos    map[string]*manifest.HelmRepository
-	ociRepos map[string]*manifest.OCIRepository
-	gitRepos map[string]LocalGitRepository
-	registry *registry.Client
-	secrets  SecretGetter
+	mu           sync.RWMutex
+	repos        map[string]*manifest.HelmRepository
+	ociRepos     map[string]*manifest.OCIRepository
+	localSources map[string]LocalSource
+	registry     *registry.Client
+	secrets      SecretGetter
 
 	// chartCache memoizes parsed *chart.Chart by on-disk path. Helm's
 	// loader.Load reparses the entire tgz on every call — for repos
@@ -77,12 +81,12 @@ func NewClient(tmpDir, cacheDir string) (*Client, error) {
 		return nil, fmt.Errorf("helm registry: %w", err)
 	}
 	return &Client{
-		tmpDir:   tmpDir,
-		cacheDir: cacheDir,
-		repos:    map[string]*manifest.HelmRepository{},
-		ociRepos: map[string]*manifest.OCIRepository{},
-		gitRepos: map[string]LocalGitRepository{},
-		registry: reg,
+		tmpDir:       tmpDir,
+		cacheDir:     cacheDir,
+		repos:        map[string]*manifest.HelmRepository{},
+		ociRepos:     map[string]*manifest.OCIRepository{},
+		localSources: map[string]LocalSource{},
+		registry:     reg,
 	}, nil
 }
 
@@ -115,15 +119,16 @@ func (c *Client) AddOCIRepo(repo *manifest.OCIRepository) {
 	c.ociRepos[repo.RepoName()] = repo
 }
 
-// AddLocalGit registers a GitRepository / artifact pair so charts
-// referenced via sourceRef.kind=GitRepository can be loaded.
-func (c *Client) AddLocalGit(g LocalGitRepository) {
-	if g.Repo == nil || g.Artifact == nil {
+// AddLocalSource registers a fetched-artifact source — GitRepository,
+// Bucket, or ExternalArtifact — so charts referenced via the
+// corresponding sourceRef.kind can be resolved on disk.
+func (c *Client) AddLocalSource(s LocalSource) {
+	if s.Name == "" || s.Artifact == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.gitRepos[g.RepoName()] = g
+	c.localSources[s.RepoFullName()] = s
 }
 
 // LocateChart returns a filesystem path to the chart referenced by hr.
@@ -134,8 +139,8 @@ func (c *Client) LocateChart(ctx context.Context, hr *manifest.HelmRelease) (str
 		return "", errors.New("nil HelmRelease")
 	}
 	switch hr.Chart.RepoKind {
-	case manifest.KindGitRepository:
-		return c.locateGitChart(hr)
+	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact:
+		return c.locateLocalChart(hr)
 	case manifest.KindOCIRepository:
 		return c.locateOCIChart(ctx, hr)
 	case manifest.KindHelmRepository, "":

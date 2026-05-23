@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
@@ -35,12 +34,10 @@ data:
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	cli.AddLocalGit(LocalGitRepository{
-		Repo: &manifest.GitRepository{
-			Name: "chart-repo", Namespace: "flux-system",
-			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + dir},
-		},
-		Artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir},
+	cli.AddLocalSource(LocalSource{
+		Name:      "chart-repo",
+		Namespace: "flux-system",
+		Artifact:  &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir},
 	})
 
 	hr := &manifest.HelmRelease{
@@ -83,12 +80,10 @@ func helmChartFixture(t *testing.T) *Client {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	cli.AddLocalGit(LocalGitRepository{
-		Repo: &manifest.GitRepository{
-			Name: "chart-repo", Namespace: "flux-system",
-			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + dir},
-		},
-		Artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir},
+	cli.AddLocalSource(LocalSource{
+		Name:      "chart-repo",
+		Namespace: "flux-system",
+		Artifact:  &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir},
 	})
 	return cli
 }

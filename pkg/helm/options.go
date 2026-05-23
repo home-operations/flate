@@ -33,6 +33,13 @@ type Options struct {
 	ShowOnly []string
 	// EnableDNS enables DNS lookups during templating.
 	EnableDNS bool
+	// SkipSchemaValidation opts out of `values.schema.json` validation
+	// for every HR — helm's jsonschema validator recompiles the schema
+	// per render and dominates allocation churn on big repos. The
+	// per-HR placeholder-detection path still kicks in on top of this:
+	// even with this flag false, schema validation is skipped when the
+	// HR values contain a wipe placeholder.
+	SkipSchemaValidation bool
 }
 
 // SkipResourceKinds returns the union of canonical and user-specified

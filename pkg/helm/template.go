@@ -73,7 +73,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	// validation error against a value flate fabricated. Real Flux
 	// resolves the secret to the actual value and validates normally —
 	// flate can't, so this short-circuits the failure mode.
-	inst.SkipSchemaValidation = hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(hrValues)
+	inst.SkipSchemaValidation = opts.SkipSchemaValidation || hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(hrValues)
 	// spec.postRenderers — pipe rendered output through one or more
 	// kustomize patch+image transforms. helm-controller does this via
 	// the same postrenderer.PostRenderer hook.

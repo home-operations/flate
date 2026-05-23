@@ -16,9 +16,10 @@ func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
 	}
 	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
 
-	c := &Controller{ParentOf: map[manifest.NamedResource]manifest.NamedResource{
+	c := &Controller{}
+	c.Configure(Options{ParentOf: map[manifest.NamedResource]manifest.NamedResource{
 		child.Named(): parent,
-	}}
+	}})
 	deps := c.collectDeps(child)
 	for _, d := range deps {
 		if d.NamedResource == parent {

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	yaml "go.yaml.in/yaml/v4"
 
@@ -24,7 +25,11 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// Controller orchestrates Kustomization reconciliation.
+// Controller orchestrates Kustomization reconciliation. Construction
+// args are immutable from the outside; reconcile-shaping state (Filter,
+// ParentOf) flows in via Configure exactly once before Start. The
+// invariant — "config is read-only after Start" — is encoded in the
+// type, not just in code review.
 type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
@@ -32,30 +37,47 @@ type Controller struct {
 	// into writable copies so Flux's Generator can write the merged
 	// kustomization.yaml without touching the user's working tree.
 	Staging *kustomize.StagingCache
-	// Filter, when non-nil and enabled, narrows reconciliation to
-	// only the resources whose source files changed between two
-	// checkouts.
-	Filter *change.Filter
 
 	// WipeSecrets controls whether Secret cleartext is wiped when
 	// parsing rendered manifests.
 	WipeSecrets bool
 
-	// ParentOf maps each Flux Kustomization to its structural parent —
-	// the enclosing KS whose spec.path contains this one's source
-	// file. Reconcile waits for the parent's Ready before rendering so
-	// any parent-render-time spec mutations (e.g. `replacements:`
-	// injecting spec.targetNamespace) are observable when the child
-	// renders. Nil means "no parent enforcement," matching pre-#102
-	// behavior.
-	ParentOf map[manifest.NamedResource]manifest.NamedResource
+	// Set via Configure() — see Options.
+	filter   *change.Filter
+	parentOf map[manifest.NamedResource]manifest.NamedResource
 
-	unsub []store.Unsubscribe
-	coal  *task.Coalescer[manifest.NamedResource]
+	started atomic.Bool
+	unsub   []store.Unsubscribe
+	coal    *task.Coalescer[manifest.NamedResource]
+}
+
+// Options carries the post-bootstrap state the orchestrator wires onto
+// the controller before Start. Filter narrows reconciliation to
+// changed resources in changed-only mode. ParentOf maps each Flux
+// Kustomization to its structural parent so reconcile waits for the
+// parent's Ready before rendering (so any parent-render-time spec
+// mutations — e.g. `replacements:` injecting spec.targetNamespace —
+// are observable when the child renders). A nil ParentOf disables
+// parent-enforcement, matching pre-#102 behavior.
+type Options struct {
+	Filter   *change.Filter
+	ParentOf map[manifest.NamedResource]manifest.NamedResource
+}
+
+// Configure installs the post-bootstrap state. Panics if called after
+// Start — encodes the invariant that reconcile-shaping config is
+// read-only once the controller is dispatching.
+func (c *Controller) Configure(opts Options) {
+	if c.started.Load() {
+		panic("kustomization controller: Configure called after Start")
+	}
+	c.filter = opts.Filter
+	c.parentOf = opts.ParentOf
 }
 
 // Start registers the listener that drives reconciliation.
 func (c *Controller) Start(ctx context.Context) {
+	c.started.Store(true)
 	c.coal = task.NewCoalescer[manifest.NamedResource](c.Tasks)
 	c.unsub = append(c.unsub,
 		c.Store.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx), true),
@@ -83,7 +105,7 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 			c.Store.UpdateStatus(id, store.StatusReady, "suspended")
 			return
 		}
-		if c.Filter.Enabled() && !c.Filter.ShouldReconcile(id) {
+		if c.filter.Enabled() && !c.filter.ShouldReconcile(id) {
 			c.Store.UpdateStatus(id, store.StatusReady, "unchanged")
 			return
 		}
@@ -325,7 +347,7 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 			},
 		})
 	}
-	if parent, ok := c.ParentOf[ks.Named()]; ok {
+	if parent, ok := c.parentOf[ks.Named()]; ok {
 		deps = append(deps, manifest.DependencyRef{NamedResource: parent})
 	}
 	return deps

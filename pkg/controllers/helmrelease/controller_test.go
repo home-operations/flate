@@ -23,7 +23,8 @@ func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
 	}
-	c := &Controller{Store: st, Tasks: ts, Helm: hc, Filter: filter}
+	c := &Controller{Store: st, Tasks: ts, Helm: hc}
+	c.Configure(ReconcileOptions{Filter: filter})
 	c.Start(context.Background())
 	t.Cleanup(func() {
 		c.Close()

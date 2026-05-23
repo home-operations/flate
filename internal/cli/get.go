@@ -25,7 +25,7 @@ func newGetCmd() *cobra.Command {
 func newGetKSCmd() *cobra.Command {
 	return resourceListCmd("ks", []string{"kustomization", "kustomizations"},
 		"List Kustomizations", manifest.KindKustomization, ksColumns,
-		func(o *manifest.Kustomization) (row map[string]string, doc map[string]any) {
+		func(_ *orchestrator.Orchestrator, o *manifest.Kustomization) (row map[string]string, doc map[string]any) {
 			doc = map[string]any{
 				"kind": manifest.KindKustomization, "namespace": o.Namespace,
 				"name": o.Name, "path": o.Path,
@@ -53,11 +53,19 @@ func newGetKSCmd() *cobra.Command {
 func newGetHRCmd() *cobra.Command {
 	return resourceListCmd("hr", []string{"helmrelease", "helmreleases"},
 		"List HelmReleases", manifest.KindHelmRelease, hrColumns,
-		func(o *manifest.HelmRelease) (row map[string]string, doc map[string]any) {
+		func(orch *orchestrator.Orchestrator, o *manifest.HelmRelease) (row map[string]string, doc map[string]any) {
+			version := o.Chart.Version
+			// chartRef HRs leave hr.Chart.Version empty — the version is
+			// pinned on the referenced OCIRepository (ref.tag) or
+			// HelmChart CRD (spec.version). Surface that for display
+			// instead of an empty column.
+			if version == "" {
+				version = resolveChartRefVersion(orch, o)
+			}
 			doc = map[string]any{
 				"kind": manifest.KindHelmRelease, "namespace": o.Namespace,
 				"name": o.Name, "chart": o.Chart.ChartName(),
-				"version": o.Chart.Version, "source": o.Chart.RepoName,
+				"version": version, "source": o.Chart.RepoName,
 				"sourceRef": map[string]string{
 					"kind":      o.Chart.RepoKind,
 					"name":      o.Chart.RepoName,
@@ -73,10 +81,38 @@ func newGetHRCmd() *cobra.Command {
 			}
 			return map[string]string{
 				"namespace": o.Namespace, "name": o.Name,
-				"chart": o.Chart.ChartName(), "version": o.Chart.Version,
+				"chart": o.Chart.ChartName(), "version": version,
 				"source": o.Chart.RepoName,
 			}, doc
 		})
+}
+
+// resolveChartRefVersion looks up the version pinned on the source CR
+// that hr.Chart references. For OCIRepository the source's
+// spec.ref.tag (or semver) is the version; for the HelmChart CRD the
+// version field is part of the CRD spec.
+func resolveChartRefVersion(orch *orchestrator.Orchestrator, hr *manifest.HelmRelease) string {
+	srcID := manifest.NamedResource{
+		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
+	}
+	obj := orch.Store().GetObject(srcID)
+	switch s := obj.(type) {
+	case *manifest.OCIRepository:
+		if s.Reference != nil {
+			if s.Reference.Tag != "" {
+				return s.Reference.Tag
+			}
+			if s.Reference.SemVer != "" {
+				return s.Reference.SemVer
+			}
+			if s.Reference.Digest != "" {
+				return s.Reference.Digest
+			}
+		}
+	case *manifest.HelmChartSource:
+		return s.Version
+	}
+	return ""
 }
 
 func newGetAllCmd() *cobra.Command {
@@ -124,10 +160,11 @@ func newGetImagesCmd() *cobra.Command {
 
 // resourceListCmd builds a `get <kind>` subcommand. mapper converts each
 // stored object to (table row, structured doc); cols is the table
-// schema.
+// schema. The orchestrator is threaded into mapper so display logic
+// can resolve cross-references (e.g. HR chartRef → OCIRepository tag).
 func resourceListCmd[T manifest.BaseManifest](
 	use string, aliases []string, short, kind string,
-	cols []format.Column, mapper func(T) (map[string]string, map[string]any),
+	cols []format.Column, mapper func(*orchestrator.Orchestrator, T) (map[string]string, map[string]any),
 ) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
@@ -157,7 +194,7 @@ func resourceListCmd[T manifest.BaseManifest](
 func printResources[T manifest.BaseManifest](
 	w io.Writer, o *orchestrator.Orchestrator, sel selector.Metadata, c *commonFlags,
 	out, kind string,
-	cols []format.Column, mapper func(T) (map[string]string, map[string]any),
+	cols []format.Column, mapper func(*orchestrator.Orchestrator, T) (map[string]string, map[string]any),
 ) error {
 	objs := o.Store().ListObjects(kind)
 	rows := make([]map[string]string, 0, len(objs))
@@ -174,7 +211,7 @@ func printResources[T manifest.BaseManifest](
 		if !ok {
 			continue
 		}
-		row, doc := mapper(t)
+		row, doc := mapper(o, t)
 		rows = append(rows, row)
 		docs = append(docs, doc)
 	}

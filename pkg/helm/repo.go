@@ -48,17 +48,18 @@ type ChartLoadResult struct {
 	Chart *chart.Chart
 }
 
-// locateGitChart resolves a chart whose source is a GitRepository — the
-// chart lives at <artifact.LocalPath>/<chart.Name>.
-func (c *Client) locateGitChart(hr *manifest.HelmRelease) (string, error) {
+// locateLocalChart resolves a chart whose source is a fetched on-disk
+// artifact — GitRepository, Bucket, or ExternalArtifact. The chart
+// lives at <artifact.LocalPath>/<chart.Name> in every case.
+func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
 	c.mu.RLock()
-	g, ok := c.gitRepos[hr.Chart.RepoFullName()]
+	s, ok := c.localSources[hr.Chart.RepoFullName()]
 	c.mu.RUnlock()
-	if !ok || g.Artifact == nil {
-		return "", fmt.Errorf("%w: GitRepository %s not available for HelmRelease %s",
-			manifest.ErrObjectNotFound, hr.Chart.RepoFullName(), hr.NamespacedName())
+	if !ok || s.Artifact == nil {
+		return "", fmt.Errorf("%w: %s %s not available for HelmRelease %s",
+			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.NamespacedName())
 	}
-	path := filepath.Join(g.Artifact.LocalPath, hr.Chart.Name)
+	path := filepath.Join(s.Artifact.LocalPath, hr.Chart.Name)
 	if _, err := os.Stat(filepath.Join(path, "Chart.yaml")); err != nil {
 		return "", fmt.Errorf("chart not found at %s: %w", path, err)
 	}

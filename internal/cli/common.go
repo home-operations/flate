@@ -89,12 +89,13 @@ func (c *commonFlags) includeNamespace(filter *change.Filter, ns string) bool {
 // helmFlags collect the helm template options. Mirrors flux-local's
 // --kube-version/--api-versions/--no-hooks/etc.
 type helmFlags struct {
-	kubeVersion string
-	apiVersions string
-	isUpgrade   bool
-	noHooks     bool
-	showOnly    []string
-	enableDNS   bool
+	kubeVersion          string
+	apiVersions          string
+	isUpgrade            bool
+	noHooks              bool
+	showOnly             []string
+	enableDNS            bool
+	skipSchemaValidation bool
 }
 
 func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
@@ -109,20 +110,23 @@ func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
 	fs.BoolVar(&h.noHooks, "no-hooks", false, "exclude hook-annotated templates")
 	fs.StringSliceVarP(&h.showOnly, "show-only", "s", nil, "only show specific template paths (repeatable)")
 	fs.BoolVar(&h.enableDNS, "enable-dns", false, "enable DNS lookups during helm template")
+	fs.BoolVar(&h.skipSchemaValidation, "skip-schema-validation", false,
+		"skip helm values.schema.json validation (dominates allocation churn on big repos)")
 }
 
 func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	return helm.Options{
-		SkipCRDs:    c.skipCRDs,
-		SkipSecrets: c.skipSecrets,
-		SkipKinds:   c.skipKinds,
-		KubeVersion: h.kubeVersion,
-		APIVersions: h.apiVersions,
-		IsUpgrade:   h.isUpgrade,
-		NoHooks:     h.noHooks,
-		ShowOnly:    h.showOnly,
-		EnableDNS:   h.enableDNS,
-		SkipTests:   true,
+		SkipCRDs:             c.skipCRDs,
+		SkipSecrets:          c.skipSecrets,
+		SkipKinds:            c.skipKinds,
+		KubeVersion:          h.kubeVersion,
+		APIVersions:          h.apiVersions,
+		IsUpgrade:            h.isUpgrade,
+		NoHooks:              h.noHooks,
+		ShowOnly:             h.showOnly,
+		EnableDNS:            h.enableDNS,
+		SkipSchemaValidation: h.skipSchemaValidation,
+		SkipTests:            true,
 	}
 }
 

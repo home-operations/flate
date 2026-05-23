@@ -12,6 +12,7 @@ package source
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -23,13 +24,11 @@ import (
 
 // Controller watches the Store for source-kind objects, fetches each
 // into an on-disk artifact via the matching Fetcher, and updates the
-// Store with the result.
+// Store with the result. Reconcile-shaping state (Filter) flows in
+// via Configure exactly once before Start.
 type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
-	// Filter, when non-nil and enabled, narrows fetches to only
-	// sources referenced by changed resources.
-	Filter *change.Filter
 
 	// Fetchers maps source CR kind → Fetcher implementation. Source
 	// kinds with no entry are ignored, which is also how a flate caller
@@ -37,13 +36,34 @@ type Controller struct {
 	// from the map).
 	Fetchers map[string]src.Fetcher
 
+	// Set via Configure() — see FetchOptions.
+	filter *change.Filter
+
+	started       atomic.Bool
 	unsubscribers []store.Unsubscribe
 	coal          *task.Coalescer[manifest.NamedResource]
+}
+
+// FetchOptions carries the post-bootstrap state the orchestrator wires
+// onto the controller. Filter narrows fetches to sources referenced by
+// changed resources in changed-only mode.
+type FetchOptions struct {
+	Filter *change.Filter
+}
+
+// Configure installs the post-bootstrap state. Panics if called after
+// Start.
+func (c *Controller) Configure(opts FetchOptions) {
+	if c.started.Load() {
+		panic("source controller: Configure called after Start")
+	}
+	c.filter = opts.Filter
 }
 
 // Start registers listeners on the Store. The controller runs until
 // Close is called.
 func (c *Controller) Start(ctx context.Context) {
+	c.started.Store(true)
 	c.coal = task.NewCoalescer[manifest.NamedResource](c.Tasks)
 	c.unsubscribers = append(c.unsubscribers,
 		c.Store.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx), true),
@@ -88,10 +108,10 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 // skip applies the change filter and marks unaffected sources Ready
 // without fetching so dependsOn waits succeed instantly.
 func (c *Controller) skip(id manifest.NamedResource) bool {
-	if !c.Filter.Enabled() {
+	if !c.filter.Enabled() {
 		return false
 	}
-	if c.Filter.ShouldReconcile(id) {
+	if c.filter.ShouldReconcile(id) {
 		return false
 	}
 	c.Store.UpdateStatus(id, store.StatusReady, "unchanged")

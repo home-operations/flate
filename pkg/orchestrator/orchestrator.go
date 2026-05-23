@@ -92,6 +92,11 @@ type Orchestrator struct {
 	// is populated during loadManifests and consumed once by Bootstrap
 	// to construct the immutable change.Filter.
 	sourceFiles map[manifest.NamedResource]string
+
+	// parentOf is the structural-parent index Bootstrap computes after
+	// loadManifests + namespace inheritance. Configured onto the
+	// kustomization controller at Run-time, never mutated thereafter.
+	parentOf map[manifest.NamedResource]manifest.NamedResource
 }
 
 // New constructs an Orchestrator. It allocates the Store and TaskService
@@ -352,7 +357,7 @@ func (o *Orchestrator) loadManifests(ctx context.Context, repoRoot string) error
 	// Build the parent index after namespace inheritance so the
 	// recorded child→parent ids reflect the canonical (post-rewrite)
 	// NamedResources the controller will see.
-	o.ksc.ParentOf = loader.BuildParentIndex(o.store, o.sourceFiles)
+	o.parentOf = loader.BuildParentIndex(o.store, o.sourceFiles)
 	return nil
 }
 
@@ -612,17 +617,18 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	return nil
 }
 
-// attachFilter wires the same filter into every controller.
+// attachFilter records the resolved Filter; controllers consume it
+// via Configure() at Run time.
 func (o *Orchestrator) attachFilter(f *change.Filter) {
 	o.filter = f
-	o.src.Filter = f
-	o.ksc.Filter = f
-	o.hrc.Filter = f
 }
 
 // Run starts every controller, blocks until the task service drains,
 // then aggregates and returns any failures.
 func (o *Orchestrator) Run(ctx context.Context) error {
+	o.src.Configure(sourcectrl.FetchOptions{Filter: o.filter})
+	o.ksc.Configure(kustomization.Options{Filter: o.filter, ParentOf: o.parentOf})
+	o.hrc.Configure(helmrelease.ReconcileOptions{Filter: o.filter})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)
 	o.hrc.Start(ctx)

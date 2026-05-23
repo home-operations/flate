@@ -152,7 +152,8 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 		"",
 		mapLister{},
 	)
-	c := &Controller{Store: st, Tasks: ts, Fetchers: map[string]src.Fetcher{manifest.KindGitRepository: f}, Filter: filter}
+	c := &Controller{Store: st, Tasks: ts, Fetchers: map[string]src.Fetcher{manifest.KindGitRepository: f}}
+	c.Configure(FetchOptions{Filter: filter})
 	c.Start(context.Background())
 	t.Cleanup(func() {
 		c.Close()

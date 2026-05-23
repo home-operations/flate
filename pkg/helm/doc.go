@@ -1,16 +1,28 @@
 // Package helm wraps helm.sh/helm/v4 to render HelmReleases without
 // shelling out to the `helm` binary.
 //
-// The exported surface mirrors the operations flux-local performs:
+// The exported surface:
 //
-//   - Client.Template renders a HelmRelease to YAML documents (the
-//     equivalent of `helm template --dry-run --client-only`).
-//   - Client.AddRepo registers a HelmRepository / OCIRepository /
-//     LocalGitRepository so subsequent Template calls can resolve their
-//     charts.
+//   - Client.Template / Client.TemplateDocs render a HelmRelease to
+//     YAML documents (the equivalent of
+//     `helm template --dry-run --client-only`).
+//   - Client.SetSourceResolver wires the canonical source-CR lookup
+//     surface — production callers pass NewStoreSourceResolver(store)
+//     so HelmRepository / OCIRepository / GitRepository / Bucket /
+//     ExternalArtifact lookups read straight from the canonical
+//     object store. Embedders rendering a single HR without an
+//     orchestrator can implement SourceResolver directly.
+//   - Prepare(hr, charts, provider) performs the pre-render dance
+//     (Clone → ResolveChartRef → ExpandValueReferences) — call this
+//     before TemplateDocs when rendering a HelmRelease in isolation.
 //   - Options exposes the helm CLI flags flate understands
 //     (--kube-version, --api-versions, --no-hooks, etc.).
 //
-// The client is safe for concurrent use; chart downloads are cached on
-// disk keyed by chart name + version.
+// Legacy push API: Client.AddRepo / AddOCIRepo / AddLocalSource
+// remain for tests and standalone embedders that don't want to plug
+// in a resolver, but they're not used in production flate any more.
+//
+// The client is safe for concurrent use; chart downloads are cached
+// on disk keyed by chart name + version, and parallel first-loads
+// of the same chart coalesce through a per-path keylock.
 package helm

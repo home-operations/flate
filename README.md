@@ -328,9 +328,11 @@ Apply to `get ks` / `get hr`:
 
 ```
               ┌──────────────────────┐
-              │   ResourceLoader     │
-              │  walk + namespace    │
-              │   inheritance        │
+              │  pkg/discovery       │
+              │  walk + spec.path    │
+              │  expand + ResourceSet│
+              │  render + ns inherit │
+              │  + parent index      │
               └─────────┬────────────┘
                         ▼
               ┌──────────────────────┐
@@ -344,12 +346,48 @@ Apply to `get ks` / `get hr`:
        │ SourceCtrl  │ │ KSController │ │ HRController     │
        │ Fetchers:   │ │ krusty +     │ │ helm v4          │
        │  git/oci/   │ │ Flux gen     │ │ (ClientOnly)     │
-       │  bucket/    │ │              │ │                  │
+       │  bucket/    │ │              │ │ + SourceResolver │
        │  external   │ │              │ │                  │
        └─────────────┘ └──────────────┘ └──────────────────┘
 ```
 
-Orchestrator pipeline: load → iterative `spec.path` discovery → namespace inheritance → `dependsOn` validation → existence-only-ready → change-filter resolution → controllers → diff / build / get.
+Orchestrator pipeline: discovery (load → spec.path expansion → ResourceSet rendering → namespace inheritance → parent index) → `dependsOn` validation → change-filter resolution → controllers fire → reconcile waits for parent KS Ready → render → orphan demotion → diff / build / get.
+
+## Library use
+
+flate ships as a Go library too — `pkg/orchestrator` is the embed entry point and `pkg/helm.Prepare` is the helper for rendering one `HelmRelease` in isolation.
+
+```go
+import (
+    "context"
+    "fmt"
+    "github.com/home-operations/flate/pkg/orchestrator"
+)
+
+o, err := orchestrator.New(orchestrator.Config{
+    Path:        "/path/to/cluster",
+    EnableOCI:   true,
+    WipeSecrets: true,
+})
+if err != nil { panic(err) }
+
+res, err := o.Render(context.Background())
+// res is non-nil even when err != nil: partial output is still usable.
+for id, docs := range res.Manifests {
+    fmt.Printf("%s rendered %d docs\n", id, len(docs))
+}
+for id, info := range res.Failed {
+    fmt.Printf("%s FAILED: %s\n", id, info.Message)
+}
+```
+
+Other embed surfaces worth knowing:
+
+- `Orchestrator.WithFetcher(kind, fetcher)` — replace any source fetcher (e.g. swap `git.Fetcher` for an in-memory fake during tests).
+- `Orchestrator.Store().OnStatus(fn, replay)` / `OnObject` / `OnArtifact` — typed listeners; payloads are pre-cast so consumers don't type-switch on `any`.
+- `helm.Prepare(hr, charts, provider)` then `helmClient.TemplateDocs(...)` — render a single HelmRelease without standing up the full orchestrator.
+- `pkg/discovery.Run(ctx, Config{Path, Store, WipeSecrets})` — load phase as a standalone unit (returns `{RepoRoot, SourceFiles, ParentOf}`).
+- `Store.Mutate[T]` — clone-then-AddObject helper that encodes the immutability contract; mutating a stored manifest in place is a bug (see `pkg/manifest/doc.go`).
 
 ## Development
 

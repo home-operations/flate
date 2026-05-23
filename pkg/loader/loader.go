@@ -16,7 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Options tunes the ResourceLoader.
+// Options tunes the Loader.
 type Options struct {
 	// WipeSecrets controls Secret cleartext replacement. Default true.
 	WipeSecrets bool

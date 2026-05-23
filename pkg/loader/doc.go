@@ -1,6 +1,6 @@
-// Package loader implements ResourceLoader — the entry point that
-// scans a local filesystem path, decodes every YAML document found,
-// and adds the recognized Flux objects to a Store.
+// Package loader implements Loader — the entry point that scans a
+// local filesystem path, decodes every YAML document found, and adds
+// the recognized Flux objects to a Store.
 //
 // Loader honors a `.krmignore`-style ignore file at the scan root.
 // Unrecognized objects (Pods, Deployments, etc.) are silently skipped

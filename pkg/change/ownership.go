@@ -112,6 +112,35 @@ func (idx ownershipIndex) ownersOf(file string) []manifest.NamedResource {
 	return owners
 }
 
+// ancestorsOf returns every Kustomization whose claim is a strict
+// prefix of file but shorter than the longest match (so excluding
+// what ownersOf would return). Used by Filter.resolve to keep
+// parent/meta Kustomizations in scope under changed-only mode —
+// their render injects spec.patches and postBuild.substituteFrom
+// onto children, and skipping them produces undefined-${VAR}
+// failures when the leaf renders. See #58.
+func (idx ownershipIndex) ancestorsOf(file string) []manifest.NamedResource {
+	if file == "" {
+		return nil
+	}
+	file = file + "/"
+	var bestLen int
+	var ancestors []manifest.NamedResource
+	for _, c := range idx.claims {
+		if !strings.HasPrefix(file, c.path) {
+			continue
+		}
+		if bestLen == 0 {
+			bestLen = len(c.path) // first (longest) match — skip
+			continue
+		}
+		if len(c.path) < bestLen {
+			ancestors = append(ancestors, c.id)
+		}
+	}
+	return ancestors
+}
+
 // normalizeKSPath strips the conventional `./` prefix and any trailing
 // slash so KS paths can be compared as plain string prefixes.
 func normalizeKSPath(p string) string {

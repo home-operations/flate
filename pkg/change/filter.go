@@ -91,6 +91,15 @@ func (f *Filter) resolve(objs ObjectLister) {
 			ownersHit[owner] = struct{}{}
 			enqueue(owner)
 		}
+		// Also include ancestor/meta Kustomizations whose render
+		// mutates the leaf owner's spec — parent-injected spec.patches
+		// and postBuild.substituteFrom land at parent-render time, so
+		// in changed-only mode the parent has to run too. Ancestors
+		// are NOT added to ownersHit, so the sibling-pull-in below
+		// doesn't drag in everything else they own. See #58.
+		for _, ancestor := range owners.ancestorsOf(file) {
+			enqueue(ancestor)
+		}
 	}
 	for id, src := range f.sourceFiles {
 		if f.changes.Contains(src) {

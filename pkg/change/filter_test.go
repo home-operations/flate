@@ -90,9 +90,13 @@ func TestFilter_SharedComponentPropagatesToAllConsumers(t *testing.T) {
 	}
 }
 
-func TestFilter_LongestPrefixOwnerWins(t *testing.T) {
+func TestFilter_AncestorKSAlsoKept(t *testing.T) {
 	// A meta-KS at apps/ and a specific KS at apps/media/plex/app —
-	// changes inside plex must belong to plex, not the meta-KS.
+	// the leaf plex is the deepest owner of the changed file, but the
+	// meta-KS's render (parent-injected spec.patches and
+	// postBuild.substituteFrom) mutates plex's spec. Both must be
+	// kept under changed-only mode so the leaf renders against the
+	// post-mutation spec. See #58.
 	meta := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps"},
@@ -115,11 +119,56 @@ func TestFilter_LongestPrefixOwnerWins(t *testing.T) {
 		mapLister{metaID: meta, plexID: plex},
 	)
 
-	if !f.ShouldReconcile(plexID) || !f.ShouldReconcile(hrPlex) {
-		t.Errorf("plex tree should be kept: %v", f.KeepNames())
+	for _, id := range []manifest.NamedResource{plexID, hrPlex, metaID} {
+		if !f.ShouldReconcile(id) {
+			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
+		}
 	}
-	if f.ShouldReconcile(metaID) {
-		t.Errorf("meta KS leaked into keep set despite a deeper owner: %v", f.KeepNames())
+}
+
+func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
+	// Two leaf KSes under the same meta-KS. Only plex changes. plex
+	// + meta are kept; atuin (an unrelated sibling under the meta-KS)
+	// must NOT be pulled in — keeping the meta-KS reconcile-eligible
+	// does not widen sibling-resource coverage.
+	meta := &manifest.Kustomization{
+		Name: "cluster-apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps"},
+	}
+	plex := &manifest.Kustomization{
+		Name: "plex", Namespace: "media",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/media/plex/app"},
+	}
+	atuin := &manifest.Kustomization{
+		Name: "atuin", Namespace: "default",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/default/atuin/app"},
+	}
+	metaID, plexID, atuinID := meta.Named(), plex.Named(), atuin.Named()
+	hrAtuin := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "atuin"}
+
+	f := NewFilter(
+		NewSet([]string{"apps/media/plex/app/helmrelease.yaml"}),
+		map[manifest.NamedResource]string{
+			metaID:   "flux/cluster/ks.yaml",
+			plexID:   "apps/media/plex/app/ks.yaml",
+			atuinID:  "apps/default/atuin/app/ks.yaml",
+			hrAtuin:  "apps/default/atuin/app/helmrelease.yaml",
+		},
+		"",
+		mapLister{metaID: meta, plexID: plex, atuinID: atuin},
+	)
+
+	if !f.ShouldReconcile(metaID) {
+		t.Errorf("meta KS must be kept (ancestor of changed file): %v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(plexID) {
+		t.Errorf("plex KS must be kept (owns changed file): %v", f.KeepNames())
+	}
+	if f.ShouldReconcile(atuinID) {
+		t.Errorf("unrelated sibling atuin must not be pulled in: %v", f.KeepNames())
+	}
+	if f.ShouldReconcile(hrAtuin) {
+		t.Errorf("unrelated sibling atuin HR must not be pulled in: %v", f.KeepNames())
 	}
 }
 

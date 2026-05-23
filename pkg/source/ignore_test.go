@@ -143,6 +143,45 @@ func TestApplyIgnore_DoubleStarMatchesAtAnyDepth(t *testing.T) {
 	}
 }
 
+// Regression: m00nwtchr's tekton-operator / garage GitRepositories use
+//
+//	/*
+//	!/charts/tekton-operator/
+//
+// to extract a single chart subdir from a larger repo. The matcher
+// returns match=true for `charts/` but match=false for files under
+// `charts/tekton-operator/`. The previous walk SkipDir'd on `charts/`
+// and never gave the descendants a chance to be re-included, wiping
+// the chart subpath entirely.
+func TestApplyIgnore_ReIncludeUnderExcludedParent(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "README.md")
+	writeFile(t, root, "docs/index.md")
+	writeFile(t, root, "charts/tekton-operator/Chart.yaml")
+	writeFile(t, root, "charts/tekton-operator/values.yaml")
+	writeFile(t, root, "charts/tekton-other/Chart.yaml")
+
+	patterns := "/*\n!/charts/tekton-operator/\n"
+	if err := source.ApplyIgnore(root, &patterns); err != nil {
+		t.Fatalf("ApplyIgnore: %v", err)
+	}
+	if !exists(t, filepath.Join(root, "charts/tekton-operator/Chart.yaml")) {
+		t.Errorf("re-included file must survive")
+	}
+	if !exists(t, filepath.Join(root, "charts/tekton-operator/values.yaml")) {
+		t.Errorf("re-included sibling file must survive")
+	}
+	if exists(t, filepath.Join(root, "README.md")) {
+		t.Errorf("root-level file should be removed")
+	}
+	if exists(t, filepath.Join(root, "docs/index.md")) {
+		t.Errorf("non-re-included subtree should be removed")
+	}
+	if exists(t, filepath.Join(root, "charts/tekton-other/Chart.yaml")) {
+		t.Errorf("sibling subdir of re-included path should be removed")
+	}
+}
+
 func TestApplyIgnore_LeadingSlashAnchorsToRoot(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "config.yaml")

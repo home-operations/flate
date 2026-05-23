@@ -39,12 +39,27 @@ func ApplyIgnore(root string, ignore *string) error {
 }
 
 func walkAndDelete(root string, domain []string, matcher gitignore.Matcher) error {
+	// Decide per-file: walk every file, ask the matcher whether it
+	// belongs in the artifact. Don't SkipDir on excluded directories —
+	// that would prevent a deeper `!` re-include pattern from being
+	// observed. With patterns like
+	//
+	//   /*
+	//   !/charts/tekton-operator/
+	//
+	// the matcher correctly excludes `charts/` (match=true) but
+	// re-includes `charts/tekton-operator/Chart.yaml` (match=false);
+	// a SkipDir on `charts/` would wipe the latter alongside.
+	//
+	// Empty directories left after file removal are pruned in a
+	// second bottom-up sweep so the artifact mirrors source-
+	// controller's tarball shape.
 	var toRemove []string
 	if err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if p == root {
+		if p == root || d.IsDir() {
 			return nil
 		}
 		rel, err := filepath.Rel(root, p)
@@ -52,20 +67,43 @@ func walkAndDelete(root string, domain []string, matcher gitignore.Matcher) erro
 			return err
 		}
 		segments := append(append([]string{}, domain...), strings.Split(rel, string(filepath.Separator))...)
-		if matcher.Match(segments, d.IsDir()) {
+		if matcher.Match(segments, false) {
 			toRemove = append(toRemove, p)
-			if d.IsDir() {
-				return fs.SkipDir
-			}
 		}
 		return nil
 	}); err != nil {
 		return fmt.Errorf("sourceignore walk: %w", err)
 	}
 	for _, p := range toRemove {
-		if err := os.RemoveAll(p); err != nil {
+		if err := os.Remove(p); err != nil {
 			return fmt.Errorf("sourceignore remove %s: %w", p, err)
 		}
+	}
+	return pruneEmptyDirs(root)
+}
+
+// pruneEmptyDirs removes directories that became empty after file
+// deletion, bottom-up. Stops at root.
+func pruneEmptyDirs(root string) error {
+	var dirs []string
+	if err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && p != root {
+			dirs = append(dirs, p)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("sourceignore prune walk: %w", err)
+	}
+	// Bottom-up by path length: deepest first.
+	for i := len(dirs) - 1; i >= 0; i-- {
+		entries, err := os.ReadDir(dirs[i])
+		if err != nil || len(entries) > 0 {
+			continue
+		}
+		_ = os.Remove(dirs[i])
 	}
 	return nil
 }

@@ -58,7 +58,9 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	bindHelmFlags(cmd.Flags(), h)
+	if rendersHelm([]string{kind}) {
+		bindHelmFlags(cmd.Flags(), h)
+	}
 	bindDiffFlags(cmd, d)
 	return cmd
 }

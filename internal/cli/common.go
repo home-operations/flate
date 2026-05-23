@@ -121,6 +121,22 @@ type helmFlags struct {
 	skipSchemaValidation bool
 }
 
+// rendersHelm reports whether the supplied kinds slice contains
+// KindHelmRelease, used to gate bindHelmFlags off of subcommands
+// (`build ks`, `diff ks`, `test ks`) that only render Kustomizations.
+// Without this gate the helm-template flags were silently accepted
+// on KS-only subcommands and no-op'd — confusing to users who set
+// e.g. `--show-only templates/foo.yaml` on `flate build ks` and
+// wondered why nothing changed.
+func rendersHelm(kinds []string) bool {
+	for _, k := range kinds {
+		if k == "HelmRelease" {
+			return true
+		}
+	}
+	return false
+}
+
 func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
 	// Default to the Kubernetes minor version bundled with the k8s.io/api
 	// dependency. Charts gated on KubeVersion (e.g. >=1.33 for ImageVolume)

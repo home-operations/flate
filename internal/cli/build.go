@@ -78,7 +78,9 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	bindHelmFlags(cmd.Flags(), h)
+	if rendersHelm(kinds) {
+		bindHelmFlags(cmd.Flags(), h)
+	}
 	bindBuildFlags(cmd.Flags(), b)
 	return cmd
 }

@@ -58,6 +58,8 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	bindHelmFlags(cmd.Flags(), h)
+	if rendersHelm(kinds) {
+		bindHelmFlags(cmd.Flags(), h)
+	}
 	return cmd
 }

@@ -101,6 +101,32 @@ metadata: {name: real, namespace: ns}
 	}
 }
 
+// isKustomizeComponent must catch the JSON form too — a substring
+// check on "kind: Component" against the file's first 256 bytes missed
+// `kustomization.json` outright (the JSON form is "kind":"Component"
+// without the YAML separator pattern).
+func TestLoader_SkipsKustomizeComponent_JSONForm(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "components/foo/kustomization.json",
+		`{"apiVersion":"kustomize.config.k8s.io/v1alpha1","kind":"Component"}`)
+	testutil.WriteFile(t, dir, "components/foo/leak.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: "${APP}-leak", namespace: ns}
+spec:
+  path: ./irrelevant
+  sourceRef: {kind: GitRepository, name: flux-system}
+  interval: 1h
+`)
+	s := store.New()
+	if _, err := New(s).Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-leak"})
+	if got != nil {
+		t.Errorf("Component subtree leaked a templated KS: %v", got)
+	}
+}
+
 // TestLoader_RespectsCanceledContext asserts the walk bails out on
 // context cancellation. Useful when a stuck NFS mount or symlink
 // loop would otherwise block Bootstrap indefinitely.

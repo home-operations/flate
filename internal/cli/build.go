@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"fmt"
 	"io"
 	"slices"
 
@@ -91,6 +92,7 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string,
 		ai, bi := a.Named(), b.Named()
 		return cmp.Or(cmp.Compare(ai.Namespace, bi.Namespace), cmp.Compare(ai.Name, bi.Name))
 	})
+	matched := 0
 	for _, obj := range objs {
 		id := obj.Named()
 		if name != "" && id.Name != name {
@@ -99,6 +101,7 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string,
 		if !c.includeNamespace(o.Filter(), id.Namespace) {
 			continue
 		}
+		matched++
 		a, ok := o.Store().GetArtifact(id).(store.RenderedArtifact)
 		if !ok {
 			continue
@@ -125,6 +128,12 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, kind, name string,
 		if err := format.YAMLMulti(w, docs); err != nil {
 			return err
 		}
+	}
+	// An explicit name positional that matches nothing in the store
+	// should error rather than silently emit an empty render — a typo
+	// shouldn't look like a successful build of a nonexistent resource.
+	if name != "" && matched == 0 {
+		return fmt.Errorf("no %s named %q in --path", kind, name)
 	}
 	return nil
 }

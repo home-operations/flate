@@ -153,16 +153,9 @@ func TestE2E_GetAll_JSON(t *testing.T) {
 	}
 }
 
-func TestE2E_DiagOK(t *testing.T) {
-	out := runCLI(t, "diag", "--path", testdataPath(t, "simple"))
-	if !strings.Contains(out, "DIAGNOSTICS OK") {
-		t.Errorf("expected OK marker:\n%s", out)
-	}
-}
-
 func TestE2E_Help(t *testing.T) {
 	out := runCLI(t, "--help")
-	for _, want := range []string{"build", "diff", "get", "test", "diag"} {
+	for _, want := range []string{"build", "diff", "get", "test"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help missing %q:\n%s", want, out)
 		}

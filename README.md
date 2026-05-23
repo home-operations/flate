@@ -19,7 +19,6 @@
   - [`flate build`](#flate-build)
   - [`flate diff`](#flate-diff)
   - [`flate test`](#flate-test)
-  - [`flate diag`](#flate-diag)
 - [Source kinds](#source-kinds)
 - [Authentication](#authentication)
 - [SOPS, suspend, dependsOn](#sops-suspend-dependson)
@@ -34,6 +33,8 @@
 - [Defaults](#defaults)
 - [Architecture](#architecture)
 - [Development](#development)
+- [Signature verification](#signature-verification)
+- [Limits](#limits)
 - [Deferred](#deferred)
 - [License](#license)
 
@@ -93,7 +94,6 @@ flate diff images  --path ./kubernetes --path-orig ../baseline/kubernetes -o jso
 | `flate test ks` | `kustomization`, `kustomizations` | Validate Kustomization reconcile status |
 | `flate test hr` | `helmrelease`, `helmreleases` | Validate HelmRelease reconcile status |
 | `flate test all` | | Validate every Kustomization and HelmRelease |
-| `flate diag` | | YAML / `.krmignore` sanity checks |
 
 Every command takes `--path <dir>` (default `.`). Add `--path-orig <dir>` to switch into [changed-only mode](#changed-only-mode).
 
@@ -171,14 +171,6 @@ Reports the reconcile status of every Kustomization and HelmRelease in the repo 
 flate test all --path ./kubernetes              # both kinds
 flate test ks  --path ./kubernetes              # only Kustomizations
 flate test hr  --path ./kubernetes media/plex   # one HelmRelease by name
-```
-
-### `flate diag`
-
-Static sanity checks that don't require reconciliation — YAML parseability, `.krmignore` coverage, dangling sourceRefs:
-
-```bash
-flate diag --path ./kubernetes
 ```
 
 ## Source kinds
@@ -271,7 +263,6 @@ All output is written to stdout — redirect with `> file.yaml` to capture it. L
 | `--path` | `.` | Flux cluster directory. |
 | `--path-orig` | _(unset)_ | Baseline path; enables changed-only mode for every command. |
 | `-n`, `--namespace` | _(all)_ | Limit to a single namespace. Auto-scopes to the touched namespaces in changed-only mode. |
-| `-l`, `--selector` | _(none)_ | `key=value` label selector, repeatable. |
 | `-o`, `--output` | `table` | `table` / `yaml` / `json` / `name`. |
 | `--skip-crds` | `true` | Drop CRD objects from rendered output. |
 | `--skip-secrets` | `true` | Drop Secret objects from rendered output. |
@@ -315,6 +306,14 @@ Apply to `diff ks` / `diff hr`:
 | Flag | Default | Description |
 |---|---|---|
 | `--include-removed` | `false` | Emit images dropped from `--path-orig` alongside newly added ones. |
+
+### Get flags
+
+Apply to `get ks` / `get hr`:
+
+| Flag | Default | Description |
+|---|---|---|
+| `-l`, `--selector` | _(none)_ | `key=value` label selector, repeatable. Matches `metadata.labels` on the KS/HR object itself, not on rendered child resources. |
 
 ## Defaults
 
@@ -370,6 +369,18 @@ Testdata lives in [`testdata/`](testdata/); the [`test/e2e`](test/e2e/) suite ru
 | --- | --- | --- |
 | `OCIRepository` | cosign keyed mode | `spec.verify.secretRef` carries one or more PEM-encoded public keys; flate verifies the cosign signature artifact (`sha256-<hex>.sig` tag) using stdlib crypto — no sigstore dep tree. Keyless (Fulcio/Rekor) is logged at warn and skipped (no offline trust roots); `notation` provider fails loud. |
 | `GitRepository` | PGP | `spec.verify` (`mode: HEAD` / `Tag` / `TagAndHEAD`) verifies the resolved commit and/or annotated tag against the keyring in `spec.verify.secretRef`. |
+
+## Limits
+
+flate is rendering-only. It deliberately does NOT:
+
+- Decrypt SOPS-encrypted resources — values are wiped to `..PLACEHOLDER_<key>..`. Pre-decrypt if you need real values in the diff.
+- Verify cosign keyless (Fulcio/Rekor) signatures — logs a warn, renders unverified. Keyed cosign IS verified end-to-end.
+- Support notation as a signature provider — fails loud.
+- Support Bucket `aws` / `gcp` / `azure` providers — use `provider: generic` with static creds.
+- Support HelmRepository OCI-flavored `spec.secretRef` — use a sibling `OCIRepository` instead.
+- Implement workload identity / IRSA / cloud impersonation — `spec.serviceAccountName` is a no-op.
+- Honor `dependsOn` content keep-set / `healthChecks` — flate just tracks resource readiness, not status conditions of the rendered objects.
 
 ## Deferred
 

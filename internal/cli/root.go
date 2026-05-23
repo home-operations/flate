@@ -2,11 +2,10 @@
 //
 // Every multi-kind command takes the same ks/hr/all positional layout:
 //
-//   - get   ks|hr|all — list Flux objects or summarize the cluster.
-//   - build ks|hr|all — render Flux objects to YAML.
-//   - diff  ks|hr|images — compare current vs. another path.
-//   - test  ks|hr|all — report reconcile status.
-//   - diag             — sanity-check local manifests.
+//   - get   ks|hr|images|all — list Flux objects, images, or cluster summary.
+//   - build ks|hr|all        — render Flux objects to YAML.
+//   - diff  ks|hr|images     — compare current vs. another path.
+//   - test  ks|hr|all        — report reconcile status.
 //
 // Use New() to obtain a cobra.Command for embedding flate in a parent
 // CLI; Execute() and Run() are the entry points used by cmd/flate and
@@ -26,11 +25,13 @@ import (
 
 // New constructs the root command and wires every subcommand into it.
 // Callers that want full control over I/O streams should use Run.
-func New() *cobra.Command {
+// version is exposed via --version and the standard cobra template.
+func New(version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "flate",
 		Short:         "Validate a local Flux GitOps repo without a live cluster.",
 		Long:          "flate renders and diffs Flux manifests using the upstream helm, kustomize, and source SDKs — no `helm`, `kustomize`, or `flux` binaries needed.",
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -46,27 +47,32 @@ func New() *cobra.Command {
 		newBuildCmd(),
 		newDiffCmd(),
 		newTestCmd(),
-		newDiagCmd(),
 	)
 	return root
 }
 
 // Execute runs the root command against os.Args and returns the
-// suggested process exit code.
-func Execute() int {
-	return Run(os.Args[1:], os.Stdout, os.Stderr)
+// suggested process exit code. version is the build identifier
+// surfaced via --version.
+func Execute(version string) int {
+	return run(version, os.Args[1:], os.Stdout, os.Stderr)
 }
 
 // Run executes flate with the supplied argv and I/O streams, returning
-// the exit code. Used by cmd/flate's main and by in-process tests.
+// the exit code. Test-only — production callers go through Execute.
+func Run(args []string, stdout, stderr io.Writer) int {
+	return run("dev", args, stdout, stderr)
+}
+
+// run is the shared body of Execute / Run.
 //
 // A context that listens for SIGINT / SIGTERM is propagated to commands
 // via cobra.Command.Context, so Ctrl-C cleanly cancels in-flight work.
-func Run(args []string, stdout, stderr io.Writer) int {
+func run(version string, args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	root := New()
+	root := New(version)
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)

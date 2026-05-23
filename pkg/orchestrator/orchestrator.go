@@ -182,7 +182,6 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	}
 	o.aliasBootstrapSources(repoRoot)
 	o.validateDependsOn()
-	o.warnSilentlySkippedVerification()
 	return o.buildChangeFilter(repoRoot)
 }
 
@@ -235,25 +234,6 @@ func (o *Orchestrator) aliasBootstrapSources(repoRoot string) {
 	}
 }
 
-// warnSilentlySkippedVerification surfaces cases where a user-configured
-// spec.verify won't actually run: today, OCIRepository.spec.verify when
-// EnableOCI=false (the existence-fetcher path renders Ready without
-// invoking the cosign verifier). Pre-existing behavior — flagging it
-// in a log line so the user knows their verification policy is dormant.
-func (o *Orchestrator) warnSilentlySkippedVerification() {
-	if o.cfg.EnableOCI {
-		return
-	}
-	for _, obj := range o.store.ListObjects(manifest.KindOCIRepository) {
-		repo, ok := obj.(*manifest.OCIRepository)
-		if !ok || repo.Verify == nil {
-			continue
-		}
-		slog.Warn("OCIRepository spec.verify skipped: --enable-oci=false",
-			"ociRepository", repo.Namespace+"/"+repo.Name,
-			"provider", repo.Verify.Provider)
-	}
-}
 
 // seedBootstrapSource publishes a synthetic GitRepository pointing at
 // the working tree's repo root, the anchor for spec.path resolution.

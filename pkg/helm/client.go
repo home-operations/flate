@@ -167,6 +167,13 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	}
 	ch, err = loader.Load(path)
 	if err != nil {
+		// A truncated/corrupt chart tgz left on disk (process killed
+		// mid-download, fs fault, manual delete-then-recreate) would
+		// otherwise stay sticky-broken — `os.Stat`-based cache-hit
+		// checks in LocateChart see the file, return its path, and we
+		// re-error here on every subsequent run. Removing the file
+		// lets the next reconcile re-pull cleanly.
+		_ = os.Remove(path)
 		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", path, err)
 	}
 	c.chartMu.Lock()

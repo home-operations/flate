@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -91,9 +92,15 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		}
 		n, err := l.loadFile(path)
 		if err != nil {
-			// Unparseable files are common (Helm chart templates,
-			// generated configs) — keep this at Debug to avoid noise.
-			slog.Debug("loader: file skipped", "path", path, "err", err)
+			// `templates/`, `crds/`, and ignore-matched paths never
+			// reach here — they're SkipDir'd in shouldSkipDir. A YAML
+			// syntax error at a path the loader DID try to parse is a
+			// real user-side problem (typo'd manifest, half-edited
+			// CRD); promote to WARN so it isn't invisible at default
+			// log level. The per-doc kind-mismatch case below stays at
+			// Debug because raw k8s manifests interspersed with Flux
+			// CRs are a legitimate pattern.
+			slog.Warn("loader: file failed to parse", "path", path, "err", err)
 			return nil
 		}
 		count += n
@@ -193,21 +200,24 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 }
 
 // isKustomizeComponent reports whether dir contains a kustomization
-// file declaring `kind: Component`. Reads at most the file's first
-// ~256 bytes — enough for `apiVersion` + `kind` to land.
+// file declaring `kind: Component`. Decodes the file via sigs.k8s.io/
+// yaml (JSON-compatible) and inspects the `kind` field — catches YAML,
+// JSON, and terse no-space-after-colon shapes that a substring check
+// would miss.
 func isKustomizeComponent(dir string) bool {
 	for _, name := range []string{"kustomization.yaml", "kustomization.yml", "kustomization.json"} {
 		path := filepath.Join(dir, name)
-		f, err := os.Open(path) //nolint:gosec // path joined under the user-supplied scan root
+		data, err := os.ReadFile(path) //nolint:gosec // path joined under the user-supplied scan root
 		if err != nil {
 			continue
 		}
-		head := make([]byte, 256)
-		n, _ := f.Read(head)
-		_ = f.Close()
-		// Cheap substring check — formal YAML decode would catch more
-		// shapes but adds a parser round-trip per directory.
-		if bytes.Contains(head[:n], []byte("kind: Component")) {
+		var doc struct {
+			Kind string `json:"kind" yaml:"kind"`
+		}
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			continue
+		}
+		if doc.Kind == "Component" {
 			return true
 		}
 	}

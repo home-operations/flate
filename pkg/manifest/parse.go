@@ -3,6 +3,7 @@ package manifest
 import (
 	"cmp"
 	"encoding/json"
+	"slices"
 	"strings"
 )
 
@@ -27,6 +28,27 @@ func decodeTyped[T any](doc map[string]any, out *T) error {
 func DocKind(doc map[string]any) string {
 	k, _ := doc["kind"].(string)
 	return k
+}
+
+// DropKinds returns docs with every entry whose `kind` appears in drop
+// removed. drop=nil is a no-op (returns docs unchanged). Used by the
+// orchestrator's Render and the CLI's build/diff paths to honor
+// --skip-secrets / --skip-crds / --skip-kinds against both
+// HelmRelease and Kustomization sources uniformly. helm.TemplateDocs
+// already filters HR output upstream; this is the canonical helper
+// for downstream code that needs the same operation.
+func DropKinds(docs []map[string]any, drop []string) []map[string]any {
+	if len(drop) == 0 {
+		return docs
+	}
+	out := make([]map[string]any, 0, len(docs))
+	for _, doc := range docs {
+		if slices.Contains(drop, DocKind(doc)) {
+			continue
+		}
+		out = append(out, doc)
+	}
+	return out
 }
 
 // DocMetadata returns (name, namespace) from a manifest document's

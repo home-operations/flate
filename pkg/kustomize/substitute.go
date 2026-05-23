@@ -1,7 +1,6 @@
 package kustomize
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/fluxcd/pkg/envsubst"
@@ -35,8 +34,3 @@ func Substitute(data []byte, vars map[string]string) ([]byte, error) {
 	return []byte(out), nil
 }
 
-// HasSubstitutions returns whether data contains any ${...} placeholder.
-// Useful when callers want to short-circuit costly substitution work.
-func HasSubstitutions(data []byte) bool {
-	return bytes.Contains(data, []byte("${"))
-}

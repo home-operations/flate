@@ -506,11 +506,23 @@ func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
 		Failed:    map[manifest.NamedResource]store.StatusInfo{},
 		Orphans:   map[manifest.NamedResource]string{},
 	}
+	// Apply --skip-secrets / --skip-crds / --skip-kinds uniformly here
+	// so embedders calling Render see consistent Result.Manifests
+	// regardless of producing controller. helm.TemplateDocs pre-filters
+	// HR output upstream, but Kustomization-rendered docs reach the
+	// artifact unfiltered (the Store must hold the full set so
+	// downstream valuesFrom / substituteFrom resolution finds Secret /
+	// ConfigMap objects). The drop happens here, on the slice that
+	// crosses the embed boundary — Store stays whole. Iter-15 #169
+	// patched the CLI emit paths; this closes the same gap one layer
+	// down for SDK consumers.
+	skip := o.cfg.HelmOptions.SkipResourceKinds()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		for _, obj := range o.store.ListObjects(kind) {
 			id := obj.Named()
 			if art, ok := o.store.GetArtifact(id).(store.RenderedArtifact); ok {
-				if mans := art.RenderedManifests(); len(mans) > 0 {
+				mans := manifest.DropKinds(art.RenderedManifests(), skip)
+				if len(mans) > 0 {
 					res.Manifests[id] = mans
 				}
 			}

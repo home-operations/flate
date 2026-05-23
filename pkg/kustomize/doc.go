@@ -8,7 +8,6 @@
 //   - Prepare: the standard pre-render dance (Clone + expand
 //     postBuild.substituteFrom) for embedders rendering a single
 //     Kustomization. Mirrors helm.Prepare for HelmReleases.
-//   - FilterKinds: chainable kind filter that mirrors flux-local.
 //   - Substitute: envsubst-style "${VAR}" / "${VAR:=default}" used
 //     for Flux post-build substitutions.
 //

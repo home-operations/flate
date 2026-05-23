@@ -7,6 +7,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -197,6 +198,74 @@ data: {k: v}
 	}
 	if len(res.Orphans) != 0 {
 		t.Errorf("expected no orphans; got %v", res.Orphans)
+	}
+}
+
+// TestOrchestrator_Render_AppliesSkipKinds locks the iter-16
+// embed-facing follow-on to #169: HelmOptions.SkipResourceKinds()
+// applies uniformly to BOTH HR and KS docs in Result.Manifests, not
+// just to the CLI emit paths. Without this, an embedder calling
+// orchestrator.New + Render would see HR-rendered Secrets dropped
+// but KS-rendered Secrets retained — the same asymmetry the CLI
+// fix patched at a different layer.
+func TestOrchestrator_Render_AppliesSkipKinds(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+		"resources:\n- cm.yaml\n- secret.yaml\n")
+	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: kept-cm, namespace: default}
+data: {k: v}
+`)
+	testutil.WriteFile(t, dir, "apps/secret.yaml", `apiVersion: v1
+kind: Secret
+metadata: {name: dropped-secret, namespace: default}
+stringData: {password: hunter2}
+`)
+
+	o, err := New(Config{
+		Path:        dir,
+		WipeSecrets: true,
+		HelmOptions: helm.Options{SkipSecrets: true},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	mans := res.Manifests[ksID]
+	if len(mans) == 0 {
+		t.Fatalf("Result.Manifests[apps] should retain non-Secret docs; got empty")
+	}
+	for _, doc := range mans {
+		if manifest.DocKind(doc) == manifest.KindSecret {
+			t.Errorf("Result.Manifests should not include Secret docs when SkipSecrets=true; got %v", doc)
+		}
+	}
+	// ConfigMap must survive — sanity that the filter only drops Secret.
+	var sawCM bool
+	for _, doc := range mans {
+		if manifest.DocKind(doc) == manifest.KindConfigMap {
+			sawCM = true
+		}
+	}
+	if !sawCM {
+		t.Errorf("ConfigMap should remain in Result.Manifests; mans=%v", mans)
 	}
 }
 

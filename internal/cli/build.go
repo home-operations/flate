@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/format"
-	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
@@ -142,7 +141,7 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.
 			// reach the store unfiltered (downstream KS / HR resolve
 			// valuesFrom / substituteFrom against them). This emit-time
 			// drop ensures the user sees consistent filtering. See #169.
-			docs = kustomize.DropKinds(docs, c.skipResourceKinds())
+			docs = manifest.DropKinds(docs, c.skipResourceKinds())
 			if len(docs) == 0 {
 				continue
 			}
@@ -186,7 +185,7 @@ func compareDocs(a, b map[string]any) int {
 
 // filterCRDsOnly returns the subset of docs whose `kind` is
 // CustomResourceDefinition. Inlined here (rather than via
-// kustomize.FilterKinds) to skip the slice-copy when nothing matches:
+// manifest.DropKinds) to skip the slice-copy when nothing matches:
 // most rendered artifacts contain zero CRDs, so the common case is to
 // return a length-0 slice without allocation.
 func filterCRDsOnly(docs []map[string]any) []map[string]any {

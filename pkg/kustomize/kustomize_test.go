@@ -36,18 +36,6 @@ func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
 	}
 }
 
-func TestFilterKinds(t *testing.T) {
-	docs := []map[string]any{
-		{"kind": "ConfigMap"},
-		{"kind": "Secret"},
-		{"kind": "Service"},
-	}
-	out := FilterKinds(docs, []string{"ConfigMap"})
-	if len(out) != 1 || out[0]["kind"] != "ConfigMap" {
-		t.Errorf("FilterKinds: %+v", out)
-	}
-}
-
 func TestSubstitute(t *testing.T) {
 	in := []byte(`hello ${NAME}, version=${VERSION:=v1}, ${OPT:-x}`)
 	out, err := Substitute(in, map[string]string{"NAME": "world"})

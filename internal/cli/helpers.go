@@ -16,7 +16,6 @@ import (
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/image"
-	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
@@ -198,7 +197,7 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 		if ks, ok := o.Store().GetObject(id).(*manifest.Kustomization); ok {
 			parent.Path = strings.TrimPrefix(ks.Path, "./")
 		}
-		for _, m := range kustomize.DropKinds(docs, skip) {
+		for _, m := range manifest.DropKinds(docs, skip) {
 			out = append(out, diff.Doc{Manifest: m, Parent: parent})
 		}
 	}

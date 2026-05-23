@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"sigs.k8s.io/yaml"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -70,6 +68,17 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		return 0, err
 	}
 
+	// Pre-pass: decode every kustomization.yaml in the tree and
+	// collect the set of files referenced as configMapGenerator /
+	// secretGenerator data sources. The main walk skips those — they
+	// are valid YAML data files, not Flux manifests, and would
+	// otherwise trip the generic decode-as-map fallback with noisy
+	// WARN logs that look like real failures (issue #192).
+	dataFiles, err := collectGeneratorDataFiles(ctx, abs, ignore)
+	if err != nil {
+		return 0, err
+	}
+
 	count := 0
 	err = filepath.WalkDir(abs, func(path string, d fs.DirEntry, walkErr error) error {
 		if cerr := ctx.Err(); cerr != nil {
@@ -88,6 +97,14 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 			return nil
 		}
 		if ignore.matches(path, abs) {
+			return nil
+		}
+		if _, isData := dataFiles[path]; isData {
+			// Declared as configMapGenerator/secretGenerator data by
+			// a kustomization.yaml in the tree. krusty handles the
+			// file correctly at render time; the loader's job is to
+			// stay out of the way.
+			slog.Debug("loader: skipping generator data file", "path", path)
 			return nil
 		}
 		n, err := l.loadFile(path)
@@ -200,26 +217,9 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 }
 
 // isKustomizeComponent reports whether dir contains a kustomization
-// file declaring `kind: Component`. Decodes the file via sigs.k8s.io/
-// yaml (JSON-compatible) and inspects the `kind` field — catches YAML,
-// JSON, and terse no-space-after-colon shapes that a substring check
-// would miss.
+// file declaring `kind: Component`. Catches YAML, JSON, and terse
+// no-space-after-colon shapes that a substring check would miss.
 func isKustomizeComponent(dir string) bool {
-	for _, name := range []string{"kustomization.yaml", "kustomization.yml", "kustomization.json"} {
-		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path) //nolint:gosec // path joined under the user-supplied scan root
-		if err != nil {
-			continue
-		}
-		var doc struct {
-			Kind string `json:"kind" yaml:"kind"`
-		}
-		if err := yaml.Unmarshal(data, &doc); err != nil {
-			continue
-		}
-		if doc.Kind == "Component" {
-			return true
-		}
-	}
-	return false
+	k := readKustomization(dir)
+	return k != nil && k.Kind == "Component"
 }

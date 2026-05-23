@@ -120,10 +120,20 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 // order = rset's inline inputs first, then providers in sorted
 // (kind, namespace, name) order.
 //
-// Permute strategy is not yet implemented (#109). inputs.id is left to
-// the provider when it's a Static RSIP; inline-only inputs see no
-// synthetic id under Flatten.
+// inputs.id is left to the provider when it's a Static RSIP; inline-
+// only inputs see no synthetic id under Flatten.
+//
+// Permute (Cartesian product) is rejected with a clear error rather
+// than silently falling through to Flatten — Flatten produces wrong
+// cardinality for a ResourceSet that requested Permute. Real Flux's
+// flux-operator/internal/inputs/combine.go dispatches on
+// spec.inputStrategy.name and would emit the Cartesian product;
+// any flate render that doesn't would silently disagree with cluster.
 func buildInputSets(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]any, error) {
+	if rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute {
+		return nil, fmt.Errorf("%w: ResourceSet %s/%s requests spec.inputStrategy.name=Permute, which flate does not yet implement (#109)",
+			manifest.ErrInput, rs.Namespace, rs.Name)
+	}
 	var out []map[string]any
 	for _, in := range rs.Inputs {
 		decoded := decodeInputSet(in)

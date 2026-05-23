@@ -1,6 +1,7 @@
 package resourceset_test
 
 import (
+	"strings"
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -9,6 +10,37 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 )
+
+// TestRender_PermuteIsRejected locks the upstream-fidelity guard: a
+// ResourceSet requesting spec.inputStrategy.name=Permute fails loud
+// rather than silently falling through to Flatten. Flatten produces
+// wrong cardinality for a Permute consumer — flate would render
+// differently from what flux-operator emits in cluster.
+func TestRender_PermuteIsRejected(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "apps", Namespace: "flux-system",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			InputStrategy: &fluxopv1.InputStrategySpec{
+				Name: fluxopv1.InputStrategyPermute,
+			},
+			Inputs: []fluxopv1.ResourceSetInput{
+				{"x": jsonTmpl(t, `"a"`)},
+				{"x": jsonTmpl(t, `"b"`)},
+			},
+			ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: << .input.x >>`,
+		},
+	}
+	_, err := resourceset.Render(rs, nil)
+	if err == nil {
+		t.Fatal("expected Permute to be rejected; got nil error")
+	}
+	if !strings.Contains(err.Error(), "Permute") {
+		t.Errorf("error should mention Permute; got %v", err)
+	}
+}
 
 func jsonTmpl(t *testing.T, raw string) *apix.JSON {
 	t.Helper()

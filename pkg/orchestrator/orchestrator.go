@@ -397,7 +397,9 @@ func (o *Orchestrator) attachFilter(f *change.Filter) {
 }
 
 // Run starts every controller, blocks until the task service drains,
-// then aggregates and returns any failures.
+// then aggregates and returns any failures. The post-drain reporting
+// + error-string assembly lives in finalize so Run reads as a clean
+// start → drain → finalize sequence.
 func (o *Orchestrator) Run(ctx context.Context) error {
 	o.src.Configure(sourcectrl.FetchOptions{Filter: o.filter})
 	o.ksc.Configure(kustomization.Options{
@@ -412,15 +414,41 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	defer o.Stop()
 
 	o.tasks.BlockTillDone()
+	return o.finalize()
+}
 
+// finalize is the post-BlockTillDone reporting phase: demote orphans
+// from Failed → Ready, log per-resource warnings, and assemble the
+// aggregated error string. Pulled out of Run so the lifecycle entry
+// point reads as start → drain → finalize.
+func (o *Orchestrator) finalize() error {
 	failed := o.store.FailedResources()
-	// Filter out orphans: Kustomizations / HelmReleases whose source
-	// files sit under another Kustomization's spec.path but were never
-	// emitted by that parent's render. Real Flux would not reconcile
-	// them either — the file walker only loaded them because flate
-	// scans the whole tree. Surface as warnings instead of failures so
-	// the test isn't gated on stale on-disk files the user has not
-	// wired into their kustomize tree.
+	o.demoteOrphans(failed)
+	o.logSummary(failed)
+	o.logResourceFailures(failed)
+
+	if len(failed) == 0 {
+		// Controllers attribute panics by marking the resource StatusFailed
+		// (see kustomization/helmrelease/source controllers). This catches
+		// any panic that escaped attribution — e.g. inside a future task
+		// dispatched outside the per-resource recover.
+		if n := o.tasks.Failures(); n > 0 {
+			return fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n)
+		}
+		return nil
+	}
+	return o.aggregateFailures(failed)
+}
+
+// demoteOrphans filters out resources whose source files sit under
+// another Kustomization's spec.path but were never emitted by that
+// parent's render. Real Flux wouldn't reconcile them either — the
+// file walker only loaded them because flate scans the whole tree.
+// Surface as warnings instead of failures so the test isn't gated on
+// stale on-disk files the user has not wired into their kustomize
+// tree. Mutates the failed map in place; the demoted ids land in
+// o.orphans for Render() to surface.
+func (o *Orchestrator) demoteOrphans(failed map[manifest.NamedResource]store.StatusInfo) {
 	o.orphans = map[manifest.NamedResource]string{}
 	for id := range o.detectOrphans(failed) {
 		info := failed[id]
@@ -431,6 +459,9 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 			"reason", info.Message)
 		delete(failed, id)
 	}
+}
+
+func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo) {
 	ksCount := len(o.store.ListObjects(manifest.KindKustomization))
 	hrCount := len(o.store.ListObjects(manifest.KindHelmRelease))
 	slog.Info("reconcile complete",
@@ -443,7 +474,9 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	if ksCount == 0 && hrCount == 0 {
 		slog.Warn("no Flux Kustomization or HelmRelease objects found under --path; check the path is correct")
 	}
+}
 
+func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]store.StatusInfo) {
 	for id, info := range failed {
 		// Include the originating source file when known so the user can
 		// jump straight to the offending YAML — `flux error: input error:`
@@ -455,23 +488,15 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		}
 		slog.Warn("resource failed", args...)
 	}
+}
 
-	if len(failed) == 0 {
-		// Controllers attribute panics by marking the resource StatusFailed
-		// (see kustomization/helmrelease/source controllers). This catches
-		// any panic that escaped attribution — e.g. inside a future task
-		// dispatched outside the per-resource recover.
-		if n := o.tasks.Failures(); n > 0 {
-			return fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n)
-		}
-		return nil
-	}
+func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))
 	for id, info := range failed {
 		// Strip the `flux error: …: ` chain from user-facing messages —
 		// it's three layers of noise before the actual cause. The
 		// sentinels are still wired up for errors.Is callers (e.g.
-		// embedders branching on ErrObjectNotFound), this only affects
+		// embedders branching on ErrObjectNotFound); this only affects
 		// the formatted text the CLI ultimately prints.
 		msg := manifest.TrimSentinelPrefix(info.Message)
 		if f := o.sourceFiles[id]; f != "" {

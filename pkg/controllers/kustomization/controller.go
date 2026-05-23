@@ -204,45 +204,58 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
-	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
-	// Two-pass emission. Pass 1 lands "data" kinds (ConfigMap, Secret,
-	// sources) into the store so child Kustomization / HelmRelease
-	// reconciles in pass 2 see a complete store — substituteFrom and
-	// chart-source lookups would race otherwise, since AddObject for a
-	// reconcilable kind fires its controller on a separate goroutine
-	// immediately. Within each pass the controller renders the docs in
-	// kustomize's emission order; passes themselves are ordered so the
-	// data backing a reconcile always arrives first.
+	c.emitRenderedChildren(id, docs)
+
+	c.Store.SetArtifact(id, &store.KustomizationArtifact{
+		Path:      filepath.Join(sourceRoot, ks.Path),
+		Manifests: docs,
+	})
+	return nil
+}
+
+// emitRenderedChildren parses the rendered docs and lands them in the
+// store using a two-pass emission strategy:
+//
+//   - Pass 1 — non-leaf "data" kinds (ConfigMap, Secret, sources, etc.)
+//     go into the store first. Sources go through AddObject because
+//     they have their own status to track; ConfigMap/Secret have no
+//     controller so AddObject's event dispatch is a no-op for them.
+//     Either way they're in the store before pass 2 fires.
+//
+//   - Pass 2 — leaf reconcilables (Kustomization, HelmRelease). Their
+//     substituteFrom / chartRef lookups now see the data from pass 1.
+//
+// Without the two passes, AddObject for a reconcilable kind fires its
+// controller on a separate goroutine immediately, racing the parent's
+// "data first" emission. Within each pass the controller renders docs
+// in kustomize's emission order; passes themselves are ordered so the
+// data backing a reconcile always arrives first.
+//
+// Parse errors on inline resources are debug-logged and skipped — they
+// may be raw Kubernetes manifests flate doesn't track. SOPS-encrypted
+// secrets are debug-noted; ParseSecret wipes their values to the
+// PLACEHOLDER token the same way --wipe-secrets does for cleartext.
+func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any) {
 	type parsed struct {
 		obj          manifest.BaseManifest
 		reconcilable bool
 	}
+	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
 	objs := make([]parsed, 0, len(docs))
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
-			// flate can't decrypt SOPS offline. ParseSecret will wipe
-			// the encrypted values to PLACEHOLDER below — same as it
-			// does for cleartext Secret data when --wipe-secrets is on
-			// — so downstream substituteFrom lookups succeed with a
-			// clearly-marked placeholder rather than failing.
 			name, ns := manifest.DocMetadata(doc)
 			slog.Debug("kustomization: SOPS-encrypted resource wiped to placeholder",
 				"id", id.String(), "ref", manifest.DocKind(doc)+" "+ns+"/"+name)
 		}
 		obj, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
-			// Don't fail on parse errors of inline resources — they may
-			// be raw kubernetes manifests flate doesn't track. Log and
-			// continue.
 			slog.Debug("kustomization: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
 		objs = append(objs, parsed{obj: obj, reconcilable: shouldDispatchAsObject(obj)})
 	}
-	// Pass 1 — data first. Sources go through AddObject because they
-	// have their own status to track; ConfigMap/Secret have no
-	// controller, so AddObject's event dispatch is a no-op for them.
-	// Either way they're in the store before pass 2 fires.
+	// Pass 1 — data first.
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			continue
@@ -254,20 +267,13 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 			c.Store.AddRendered(p.obj)
 		}
 	}
-	// Pass 2 — leaf reconcilables (Kustomization, HelmRelease). Their
-	// substituteFrom / chartRef lookups now see the data from pass 1.
+	// Pass 2 — leaf reconcilables.
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			c.Store.AddObject(p.obj)
 			c.markRendered(p.obj.Named())
 		}
 	}
-
-	c.Store.SetArtifact(id, &store.KustomizationArtifact{
-		Path:      filepath.Join(sourceRoot, ks.Path),
-		Manifests: docs,
-	})
-	return nil
 }
 
 // substituteDoc marshals a single manifest doc, runs envsubst over it,

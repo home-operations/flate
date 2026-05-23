@@ -790,7 +790,7 @@ spec:
 		t.Errorf("substitute = %+v", k.PostBuildSubstitute)
 	}
 
-	kept, dropped := k.FilterDependsOn(map[string]struct{}{"flux-system/infra": {}})
+	kept, dropped := FilterDependsOn(k.DependsOn, map[string]struct{}{"flux-system/infra": {}})
 	if len(kept) != 1 || kept[0].NamespacedName() != "flux-system/infra" {
 		t.Errorf("FilterDependsOn kept = %v", kept)
 	}

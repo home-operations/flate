@@ -261,7 +261,7 @@ func validatePath(p string) error {
 		if errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%w: kustomization path does not exist: %s", manifest.ErrInput, p)
 		}
-		return fmt.Errorf("%w: stat kustomization path %s: %v", manifest.ErrInput, p, err)
+		return fmt.Errorf("%w: stat kustomization path %s: %w", manifest.ErrInput, p, err)
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("%w: kustomization path is not a directory: %s", manifest.ErrInput, p)

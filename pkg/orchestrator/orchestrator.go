@@ -391,31 +391,54 @@ func (o *Orchestrator) resolveInputProvider(ref fluxopv1.InputProviderReference,
 	return out, nil
 }
 
-// validateDependsOn drops dangling dependsOn references so the
-// dependency-wait phase never blocks on a resource that will never
-// appear.
+// validateDependsOn drops dangling dependsOn references on both
+// Kustomizations and HelmReleases so the dependency-wait phase fails
+// fast on typos instead of stalling out the full per-dep budget.
+// Pre-2026-05-23 only Kustomizations were pruned, so a dangling
+// HR→HR dependsOn would hit the 30-second timeout.
 func (o *Orchestrator) validateDependsOn() {
-	known := make(map[string]struct{})
+	known := map[string]map[string]struct{}{
+		manifest.KindKustomization: {},
+		manifest.KindHelmRelease:   {},
+	}
 	ksList := o.store.ListObjects(manifest.KindKustomization)
 	for _, obj := range ksList {
 		if ks, ok := obj.(*manifest.Kustomization); ok {
-			known[ks.NamespacedName()] = struct{}{}
+			known[manifest.KindKustomization][ks.NamespacedName()] = struct{}{}
 		}
 	}
+	hrList := o.store.ListObjects(manifest.KindHelmRelease)
+	for _, obj := range hrList {
+		if hr, ok := obj.(*manifest.HelmRelease); ok {
+			known[manifest.KindHelmRelease][hr.NamespacedName()] = struct{}{}
+		}
+	}
+	// Store immutability contract: clone the struct, set the new slice
+	// on the clone, re-AddObject so listeners see the transition cleanly
+	// and any in-flight reader's pointer stays valid.
 	for _, obj := range ksList {
 		ks, ok := obj.(*manifest.Kustomization)
 		if !ok {
 			continue
 		}
-		kept, dropped := ks.FilterDependsOn(known)
+		kept, dropped := manifest.FilterDependsOn(ks.DependsOn, known[manifest.KindKustomization])
 		if dropped == 0 {
 			continue
 		}
-		// Store immutability contract: clone the struct, set the new
-		// slice on the clone, then re-AddObject so listeners see the
-		// transition cleanly and the existing pointer stays valid for
-		// any in-flight readers.
 		clone := *ks
+		clone.DependsOn = kept
+		o.store.AddObject(&clone)
+	}
+	for _, obj := range hrList {
+		hr, ok := obj.(*manifest.HelmRelease)
+		if !ok {
+			continue
+		}
+		kept, dropped := manifest.FilterDependsOn(hr.DependsOn, known[manifest.KindHelmRelease])
+		if dropped == 0 {
+			continue
+		}
+		clone := *hr
 		clone.DependsOn = kept
 		o.store.AddObject(&clone)
 	}

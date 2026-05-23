@@ -113,11 +113,12 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 			// Recover from panics in watchOne (e.g. malformed CEL expression
 			// evaluating against an unexpected payload type) so the whole
 			// run isn't killed. The dep is reported failed instead.
-			ev := safeWatchOne(ctx, w, dep, timeout)
-			select {
-			case out <- ev:
-			case <-ctx.Done():
-			}
+			//
+			// Send unconditionally — `out` is buffered to len(deps) so
+			// the send never blocks. The previous select-on-ctx silently
+			// dropped events on cancellation, leaving the consumer with
+			// a Pending dep that would time out at the full budget.
+			out <- safeWatchOne(ctx, w, dep, timeout)
 		}(dep)
 	}
 

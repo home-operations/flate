@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -277,8 +278,14 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 	// Persist the resolved digest so a subsequent cache hit can
 	// re-verify against the exact bytes we wrote, even when the spec
-	// pinned only a tag.
-	_ = writeCachedDigest(slot, digest)
+	// pinned only a tag. A write failure isn't fatal — the next fetch
+	// just falls through to a fresh pull — but it does silently weaken
+	// spec.verify on cache hits, so log it.
+	if err := writeCachedDigest(slot, digest); err != nil {
+		slog.Warn("oci: failed to persist cached digest",
+			"ociRepository", repo.Namespace+"/"+repo.Name,
+			"err", err)
+	}
 	return &store.SourceArtifact{
 		Kind: manifest.KindOCIRepository,
 		URL:  repo.URL, LocalPath: slot,

@@ -74,32 +74,29 @@ func (k *Kustomization) Named() NamedResource {
 // NamespacedName is "<namespace>/<name>".
 func (k *Kustomization) NamespacedName() string { return k.Namespace + "/" + k.Name }
 
-// FilterDependsOn returns a copy of k.DependsOn with any entries
-// whose target is not present in allKS removed. allKS is a set of
-// "namespace/name" identifiers. The second return value is the count
-// of entries that were dropped.
-//
-// Pure function — does not mutate k. Callers wanting to update a
-// stored Kustomization should follow the Store's immutability
-// contract: shallow-copy k, set the new DependsOn on the copy, then
+// FilterDependsOn returns a copy of deps with any entries whose target
+// is not present in known removed. known is a set of "namespace/name"
+// identifiers. The second return value is the count of dropped
+// entries. Pure function — does not mutate deps. Callers updating a
+// stored object should follow the Store's immutability contract:
+// shallow-copy the object, set the new DependsOn on the copy, then
 // re-AddObject the copy.
-func (k *Kustomization) FilterDependsOn(allKS map[string]struct{}) ([]DependencyRef, int) {
-	if len(k.DependsOn) == 0 {
-		return k.DependsOn, 0
+func FilterDependsOn(deps []DependencyRef, known map[string]struct{}) ([]DependencyRef, int) {
+	if len(deps) == 0 {
+		return deps, 0
 	}
-	kept := slices.DeleteFunc(slices.Clone(k.DependsOn), func(dep DependencyRef) bool {
-		_, ok := allKS[dep.NamespacedName()]
+	kept := slices.DeleteFunc(slices.Clone(deps), func(dep DependencyRef) bool {
+		_, ok := known[dep.NamespacedName()]
 		return !ok
 	})
-	dropped := len(k.DependsOn) - len(kept)
+	dropped := len(deps) - len(kept)
 	if dropped > 0 {
 		// Demoted to Debug: dependsOn references often dangle in a
 		// statically-loaded view because parent-Kustomization
 		// targetNamespace inheritance happens lazily. Real Flux resolves
 		// them at apply time, and dropping them here only affects the
 		// wait order during flate's reconcile.
-		slog.Debug("kustomization dependsOn entries dropped",
-			"kustomization", k.NamespacedName(),
+		slog.Debug("dependsOn entries dropped",
 			"dropped", dropped, "kept", len(kept))
 	}
 	return kept, dropped

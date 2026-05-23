@@ -31,12 +31,17 @@ import (
 type Fetcher struct {
 	Cache   *source.Cache
 	Secrets source.SecretGetter
-	// httpsMu serializes the brief window where a per-CR HTTPS client
-	// is installed as go-git's global transport. go-git v5 does not
-	// expose per-CloneOptions TLS config, so custom-CA fetches must
-	// take this lock for the duration of the clone.
-	httpsMu sync.Mutex
 }
+
+// httpsTransportMu serializes the brief window where a per-CR HTTPS
+// client is installed as go-git's process-global transport. go-git v5
+// has no per-CloneOptions TLS hook, so custom-CA fetches must hold
+// this lock across InstallProtocol → clone → restore. The lock is
+// package-global because `client.InstallProtocol` is itself
+// process-global: a per-Fetcher mutex (as flate had pre-2026-05-23)
+// raced when `flate diff` ran two Fetchers concurrently and clobbered
+// each other's transport.
+var httpsTransportMu sync.Mutex
 
 // Fetch implements source.Fetcher for *manifest.GitRepository.
 func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
@@ -64,8 +69,8 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 		return nil, err
 	}
 	if tlsCfg != nil {
-		f.httpsMu.Lock()
-		defer f.httpsMu.Unlock()
+		httpsTransportMu.Lock()
+		defer httpsTransportMu.Unlock()
 		tr := &http.Transport{TLSClientConfig: tlsCfg}
 		if proxy != nil {
 			pfn, perr := proxy.HTTPProxyFunc()

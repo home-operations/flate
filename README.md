@@ -1,6 +1,6 @@
 # flate
 
-> A single-binary Go rewrite of [flux-local](https://github.com/allenporter/flux-local) — render and diff Flux GitOps repositories **fully offline**, without a cluster, `kubectl`, or shell calls.
+> Render and diff Flux GitOps repositories fully offline — one static binary, no cluster, no `kubectl`, no shellouts.
 
 [![Tests](https://github.com/home-operations/flate/actions/workflows/tests.yaml/badge.svg)](https://github.com/home-operations/flate/actions/workflows/tests.yaml)
 [![Build](https://github.com/home-operations/flate/actions/workflows/build.yaml/badge.svg)](https://github.com/home-operations/flate/actions/workflows/build.yaml)
@@ -8,429 +8,145 @@
 [![Release](https://img.shields.io/github/v/release/home-operations/flate)](https://github.com/home-operations/flate/releases)
 [![License](https://img.shields.io/github/license/home-operations/flate)](LICENSE)
 
----
+flate is a Go rewrite of [flux-local](https://github.com/allenporter/flux-local). Helm, kustomize, go-git, and oras-go are linked as native libraries, so a `kind` cluster plus a stack of CLIs (`helm`, `kustomize`, `flux`, `kubectl`) collapse into one binary that runs in CI in seconds, not minutes. Changed-only mode reconciles just the subtree a PR touches, dropping single-file diffs to tens of milliseconds on real home-ops repos.
 
-## Contents
-
-- [Why](#why)
-- [Quick start](#quick-start)
-- [Subcommands](#subcommands)
-  - [`flate get`](#flate-get)
-  - [`flate build`](#flate-build)
-  - [`flate diff`](#flate-diff)
-  - [`flate test`](#flate-test)
-- [Source kinds](#source-kinds)
-- [Authentication](#authentication)
-- [SOPS, suspend, dependsOn](#sops-suspend-dependson)
-- [Changed-only mode](#changed-only-mode)
-- [Output formats](#output-formats)
-- [Configuration](#configuration)
-  - [Common flags](#common-flags)
-  - [Helm rendering](#helm-rendering)
-  - [Build flags](#build-flags)
-  - [Diff flags](#diff-flags)
-  - [Get flags](#get-flags)
-- [Defaults](#defaults)
-- [Architecture](#architecture)
-- [Development](#development)
-- [Signature verification](#signature-verification)
-- [Limits](#limits)
-- [Deferred](#deferred)
-- [License](#license)
-
----
-
-## Why
-
-Validating a Flux GitOps repo from CI used to mean a `kind` cluster, a `flux install`, and a stack of binaries — `helm`, `kustomize`, `kubectl`, `flux` itself. flate folds that into a single static binary that links helm, kustomize, go-git, and oras-go as native Go libraries.
-
-- 🪶 **Single binary, no shellouts** — no `helm`, `kustomize`, `flux`, or `kubectl` on `PATH`.
-- ⚡ **PR-fast** — changed-only mode reconciles only the resources whose source files moved; one-file PRs drop from seconds to tens of milliseconds.
-- 🧪 **Diff-aware** — unified diffs of rendered output, with parent KS / HR headers and a flat image-set diff for CI pull-tests.
-- 📦 **CI-friendly** — JSON / YAML / name output to stdout, no TTY assumptions.
-- 🧬 **Native Go SDKs** — helm v4 client-only, krusty, go-git, oras-go — linked in, not shelled out.
-
-## Quick start
+## Install
 
 ```bash
 brew install --cask home-operations/tap/flate
-```
-
-…or with Go:
-
-```bash
 go install github.com/home-operations/flate/cmd/flate@latest
-```
-
-…or pull the container image (used by the `home-operations/flate` GitHub Action):
-
-```bash
 docker pull ghcr.io/home-operations/flate:latest
 ```
 
-A typical first run against a Flux repo:
+## Use
 
 ```bash
 flate get ks       --path ./kubernetes
-flate build hr     --path ./kubernetes
+flate build hr     --path ./kubernetes media/plex
 flate diff ks      --path ./kubernetes --path-orig ../baseline/kubernetes
 flate diff images  --path ./kubernetes --path-orig ../baseline/kubernetes -o json
+flate test all     --path ./kubernetes
 ```
 
-## Subcommands
+Every command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag.
 
-| Command | Aliases | Purpose |
+| Verb | Targets | Notes |
 |---|---|---|
-| `flate get ks` | `kustomization`, `kustomizations` | List Kustomizations |
-| `flate get hr` | `helmrelease`, `helmreleases` | List HelmReleases |
-| `flate get images` | | List container images across the cluster |
-| `flate get all` | | Kustomization + HelmRelease cluster summary |
-| `flate build ks` | | Render Kustomizations to YAML |
-| `flate build hr` | | Render HelmReleases to YAML |
-| `flate build all` | | Render every Kustomization and HelmRelease |
-| `flate diff ks` | | Unified diff of rendered Kustomizations |
-| `flate diff hr` | | Unified diff of rendered HelmReleases |
-| `flate diff images` | | Set diff of container images (CI-friendly) |
-| `flate test ks` | `kustomization`, `kustomizations` | Validate Kustomization reconcile status |
-| `flate test hr` | `helmrelease`, `helmreleases` | Validate HelmRelease reconcile status |
-| `flate test all` | | Validate every Kustomization and HelmRelease |
+| `get` | `ks`, `hr`, `images`, `all` | List or summarize. `-o table` / `yaml` / `json` / `name`. |
+| `build` | `ks`, `hr`, `all` | Render Kustomizations and HelmReleases to YAML or JSON. |
+| `diff` | `ks`, `hr`, `images` | Unified diff against `--path-orig`. |
+| `test` | `ks`, `hr`, `all` | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure. |
 
-Every command takes `--path <dir>` (default `.`). Add `--path-orig <dir>` to switch into [changed-only mode](#changed-only-mode).
-
-### `flate get`
-
-```bash
-flate get ks --path ./kubernetes -o json
-flate get hr --path ./kubernetes -l app.kubernetes.io/part-of=media
-flate get images --path ./kubernetes
-```
-
-`get images` emits a flat, deduplicated list across both HelmReleases and Kustomization-managed workloads (Deployments, StatefulSets, Pods, Jobs). The same shape as [`diff images`](#flate-diff-images) — that one filters down to images that actually changed.
-
-### `flate build`
-
-Renders everything that would be applied to the cluster:
-
-```bash
-flate build hr --path ./kubernetes              # all HRs
-flate build hr --path ./kubernetes media/plex   # one HR
-flate build all --path ./kubernetes -o yaml
-```
-
-`--show-only` / `-s` accepts repeated `templates/<file>.yaml` paths to narrow the helm render.
-
-### `flate diff`
-
-Compare a working tree against a baseline. `--path-orig` is required.
-
-```bash
-git worktree add ../baseline main
-flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
-flate diff hr --path ./kubernetes --path-orig ../baseline/kubernetes
-```
-
-Output is unified diff with rich, reader-friendly headers and a blank line after every separator:
-
-```diff
---- HelmRelease: media/qui Deployment: media/qui
-
-+++ HelmRelease: media/qui Deployment: media/qui
-
-@@ -61,13 +61,13 @@
-
-         envFrom:
-         - secretRef:
-             name: qui-secret
--        image: ghcr.io/autobrr/qui:v1.18.0@sha256:…
-+        image: ghcr.io/autobrr/qui:v1.19.0@sha256:…
-```
-
-The header always shows the **parent** (HelmRelease or Kustomization) and the rendered **child resource**. For KS parents the Flux `spec.path` prepends the line.
-
-#### `flate diff images`
-
-A diff-aware companion to `get images`. Emits images whose string actually changed between `--path` and `--path-orig` — touching an env var doesn't produce noise.
-
-| Flag | Effect |
-|---|---|
-| _(default)_ | Emit images present in `--path` but not in `--path-orig` (newly added). |
-| `--include-removed` | Emit the full symmetric difference (added + removed). |
-
-```bash
-flate diff images --path ./pull --path-orig ./default -o json
-# ["ghcr.io/foo/bar:v2.1@sha256:…"]
-```
-
-`-o name` (the default for non-structured output) gives one image per line, ideal for piping into a CI pull-test loop.
-
-### `flate test`
-
-Reports the reconcile status of every Kustomization and HelmRelease in the repo in a pytest-like progress format. A case passes when the resource reached `Ready`; it fails otherwise. Resources skipped by [changed-only mode](#changed-only-mode) appear as `SKIPPED`.
-
-```bash
-flate test all --path ./kubernetes              # both kinds
-flate test ks  --path ./kubernetes              # only Kustomizations
-flate test hr  --path ./kubernetes media/plex   # one HelmRelease by name
-```
-
-## Source kinds
-
-flate recognizes every source CR Flux's source-controller ships:
-
-| Kind | Status | Notes |
-|---|---|---|
-| `GitRepository` | ✅ full | HTTPS / SSH / file://, `SecretRef`, `recurseSubmodules`, `spec.ref.{branch,tag,commit,semver,name}` |
-| `OCIRepository` | ✅ full | oras-go, `SecretRef` (dockerconfigjson), `--registry-config`, semver via remote tag walk |
-| `HelmRepository` | ✅ full | HTTP basic / bearer auth, `passCredentials`, OCI via underlying registry client |
-| `HelmChart` | ✅ full | Embedded (`HR.spec.chart`) and standalone CRD; `valuesFiles` honored |
-| `Bucket` | ✅ generic | S3-API-compatible via minio-go (`SecretRef` with `accesskey`/`secretkey`). `aws`/`gcp`/`azure` providers parse but fail-loud — switch to `provider: generic` |
-| `ExternalArtifact` | ✅ file:// | flate has no live cluster, so the third-party-published `status.artifact.url` must point at a local `file://` path. Other schemes fail-loud |
-
-Cloud-side workload-identity providers (Azure Managed Identity for Git, GitHub App for Git, AWS IRSA for OCI / Bucket) are intentionally out of scope — flate runs offline. Use static credentials in a Secret instead.
-
-## Authentication
-
-Every fetch path resolves credentials from a Flux-style `spec.secretRef` pointing at a Secret in the same flate-tracked tree. PLACEHOLDER-wiped values (the default with `--skip-secrets`) are treated as missing — you get a clear "missing username/password" rather than a misleading auth attempt with the literal placeholder.
-
-| Source | Secret keys |
-|---|---|
-| GitRepository (HTTPS) | `username` + `password`, or `bearerToken` (takes precedence) |
-| GitRepository (SSH) | `identity` (PEM), optional `password`, optional `known_hosts` (else `insecureIgnoreHostKey`) |
-| OCIRepository | `.dockerconfigjson` (per-repo); falls back to `--registry-config` then `~/.docker/config.json` |
-| HelmRepository (HTTP) | `username` + `password` |
-| Bucket | `accesskey` + `secretkey` |
-
-## SOPS, suspend, dependsOn
-
-**SOPS-encrypted resources are wiped to PLACEHOLDER.** flate doesn't implement `spec.decryption`. Encrypted Secret values get replaced with the literal `..PLACEHOLDER_<key>..` token — the same wipe applied to cleartext Secret values, which is always on. Downstream `postBuild.substituteFrom` lookups against a SOPS Secret resolve to the placeholder string rather than failing — so `${SECRET_DOMAIN}` becomes `..PLACEHOLDER_SECRET_DOMAIN..` in rendered output. Pre-decrypt your manifests if you need real values in the diff.
-
-**Per-resource substitution opt-out:** flate honors the `kustomize.toolkit.fluxcd.io/substitute: disabled` label or annotation. Resources carrying it are skipped during the postBuild substitute pass — used in real repos for ConfigMaps that embed shell scripts with bash array expansions (`${ARR[@]}`) that envsubst's parser can't handle.
-
-**`spec.suspend: true` is honored** on every reconcilable CR (Kustomization, HelmRelease, GitRepository, OCIRepository). Suspended resources mark themselves `Ready` with a `"suspended"` message and produce no rendered output — matching cluster behavior.
-
-**`spec.dependsOn[].readyExpr` (CEL)** is evaluated against the dependency's projected `object` view (kind, apiVersion, metadata, status.conditions). When set, replaces the built-in `Ready=True` check per Flux's default semantics:
-
-```yaml
-spec:
-  dependsOn:
-    - name: infra-controllers
-      readyExpr: |
-        object.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")
-```
+`get` and `diff` accept `-l/--selector key=value` for label filtering. `build` and `diff` accept `--strip-attr` (default strips Helm chart digest annotations from the diff) and `--limit-bytes` (default 65536, GitHub-issue-body-safe).
 
 ## Changed-only mode
 
-Pass `--path-orig` to compare a working tree against a baseline. flate diffs files, picks the **most-specific Flux Kustomization that owns each change** (longest matching `spec.path`, including `spec.components`), and reconciles only that subtree.
+`--path-orig` flips every command into change-aware reconcile. flate diffs the two paths, walks ownership backwards (longest matching Flux KS `spec.path`, including `spec.components`), and reconciles only the touched subtree plus its content dependencies.
 
-What's in the keep-set:
+In the keep-set: direct file edits, chart sources, KS `sourceRef`, HR `valuesFrom`, kustomize components (touching a shared component re-renders every consumer).
 
-- **direct edits** — every resource whose source file changed
-- **chart sources / KS `sourceRef` / HR `valuesFrom`** — content dependencies, pulled in transitively
-- **kustomize components** — touching a shared component (Flux v1 `spec.components` or a kustomize-level `components:` entry) re-renders **every consumer Kustomization**
-
-What's _not_:
-
-- **`dependsOn`** — this is a reconcile-ordering signal in Flux, not a content dependency. Skipped resources still get marked `Ready` so downstream depwait completes naturally.
-- **meta-Kustomizations** — a top-level KS rooted at `apps/` doesn't claim files inside `apps/media/plex/app/` when a deeper KS owns them.
+Out: `dependsOn` (reconcile-ordering, not content — skipped resources still get marked `Ready` so downstream waits unblock) and meta-Kustomizations that don't claim the deeper file.
 
 ```bash
 git worktree add ../baseline main
 flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
 ```
 
-One-file PRs in a 70-Kustomization repo drop reconcile time from seconds to tens of milliseconds.
+`--path` can point at a narrow Flux entry like `./kubernetes/flux/cluster`; flate iteratively follows each loaded KS's `spec.path` to discover the rest of the tree.
 
-> **Narrow entries.** `--path` can point at a Flux entry like `./kubernetes/flux/cluster` — flate iteratively follows each loaded KS's `spec.path` to discover the full content tree without you having to widen the flag.
+## Source kinds and auth
 
-## Output formats
-
-| `-o` | Effect |
-|---|---|
-| `table` _(default for `get`)_ | Aligned columns. |
-| `yaml` | Multi-document YAML. |
-| `json` | One JSON array. |
-| `name` | `<namespace>/<name>` per line — script-friendly. |
-| `diff` _(default for `diff`)_ | Unified diff. |
-
-All output is written to stdout — redirect with `> file.yaml` to capture it. Logs go to stderr, so structured formats stay clean for piping into `jq`, `yq`, or further processing.
-
-## Configuration
-
-### Common flags
-
-| Flag | Default | Description |
+| Kind | Status | Auth (`spec.secretRef`) |
 |---|---|---|
-| `--path` | `.` | Flux cluster directory. |
-| `--path-orig` | _(unset)_ | Baseline path; enables changed-only mode for every command. |
-| `-n`, `--namespace` | _(all)_ | Limit to a single namespace. Auto-scopes to the touched namespaces in changed-only mode. |
-| `-o`, `--output` | `table` | `table` / `yaml` / `json` / `name`. |
-| `--skip-crds` | `true` | Drop CRD objects from rendered output. |
-| `--skip-secrets` | `true` | Drop Secret objects from rendered output. |
-| `--skip-kinds` | _(none)_ | Extra kinds to drop, repeatable. |
-| `--enable-oci` | `true` | Reconcile OCIRepository sources. |
-| `--registry-config` | _(none)_ | Docker `config.json` for OCI auth. |
-| `--concurrency` | `NumCPU * 4` | Worker pool size for parallel reconciles. |
-| `--log-level` | `info` | `debug` / `info` / `warn` / `error`. |
+| `GitRepository` | full | HTTPS: `username` + `password` or `bearerToken`. SSH: `identity` (+ optional `password`, `known_hosts`). |
+| `OCIRepository` | full | `.dockerconfigjson`. Falls back to `--registry-config`, then `~/.docker/config.json`. |
+| `HelmRepository` | full | HTTP basic: `username` + `password`. OCI flavor: use a sibling `OCIRepository`. |
+| `HelmChart` | full | Inline (`HR.spec.chart`) and standalone CRD. |
+| `Bucket` | `generic` only | `accesskey` + `secretkey`. `aws`/`gcp`/`azure` fail loud — use static creds. |
+| `ExternalArtifact` | `file://` only | `status.artifact.url` must be a local path. |
 
-### Helm rendering
+PLACEHOLDER-wiped values (the always-on `--skip-secrets` behavior) are treated as missing — auth fails with a clear "missing username/password" instead of attempting auth with the placeholder string.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--kube-version` | bundled `k8s.io/api` minor | Kubernetes version for `.Capabilities.KubeVersion`. |
-| `-a`, `--api-versions` | _(empty)_ | Extra API versions for `.Capabilities.APIVersions`. |
-| `--is-upgrade` | `false` | Set `.Release.IsUpgrade` instead of `.Release.IsInstall`. |
-| `--no-hooks` | `false` | Exclude hook-annotated templates. |
-| `-s`, `--show-only` | _(none)_ | Restrict render to specific template paths, repeatable. |
-| `--enable-dns` | `false` | Allow DNS lookups during `helm template`. |
-| `--skip-schema-validation` | `false` | Skip `values.schema.json` validation. Helm's jsonschema validator dominates allocation churn — flipping this on saves ~45% wall time on large repos. |
+## Behaviors
 
-### Build flags
+**SOPS** — `spec.decryption` is not implemented. Encrypted Secret values get wiped to `..PLACEHOLDER_<key>..`, same as cleartext values under the always-on wipe. Downstream `postBuild.substituteFrom` lookups resolve to the placeholder string rather than failing.
 
-Apply to `build ks` / `build hr` / `build all`:
+**`spec.suspend`** — honored on every reconcilable CR. Suspended resources mark `Ready / "suspended"` and produce no rendered output.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--only-crds` | `false` | Emit only `CustomResourceDefinition` resources (implies `--skip-crds=false`). |
+**`spec.dependsOn[].readyExpr` (CEL)** — evaluated against `self` and `dep` projections, matching upstream kustomize- and helm-controller binding:
 
-### Diff flags
-
-Apply to `diff ks` / `diff hr`:
-
-| Flag | Default | Description |
-|---|---|---|
-| `-u`, `--unified` | `6` | Unified diff context lines. |
-| `--strip-attr` | `helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart` | Annotation / label key to strip before diffing, repeatable. Supplying any value replaces the default set. |
-| `--limit-bytes` | `65536` | Truncate per-resource diffs (0 = unlimited; default matches GitHub issue body limit). |
-
-`diff images` adds:
-
-| Flag | Default | Description |
-|---|---|---|
-| `--include-removed` | `false` | Emit images dropped from `--path-orig` alongside newly added ones. |
-
-### Get flags
-
-Apply to `get ks` / `get hr`:
-
-| Flag | Default | Description |
-|---|---|---|
-| `-l`, `--selector` | _(none)_ | `key=value` label selector, repeatable. Matches `metadata.labels` on the KS/HR object itself, not on rendered child resources. |
-
-## Defaults
-
-- `--enable-oci` → **true**.
-- `--kube-version` defaults to the Kubernetes minor bundled with flate's `k8s.io/api` dependency — Helm charts gated on `KubeVersion` render against the latest version flate knows about.
-- Secrets are always replaced with `..PLACEHOLDER_<key>..` (matches flux-local).
-- `--skip-crds`, `--skip-secrets` → **true** for `build` / `diff`.
-- **Fast-fail dependency waits** for offline use: 30-second per-dep ceiling (vs. several minutes upstream) and a 2-second missing-grace, so typo'd `dependsOn` or broken `sourceRef` fail with `dependency not found` instead of stalling out the budget.
-
-## Architecture
-
-```
-              ┌──────────────────────┐
-              │  pkg/discovery       │
-              │  walk + spec.path    │
-              │  expand + ResourceSet│
-              │  render + ns inherit │
-              │  + parent index      │
-              └─────────┬────────────┘
-                        ▼
-              ┌──────────────────────┐
-              │        Store         │◀── events ──┐
-              │  objects + status +  │             │
-              │  artifacts + pubsub  │             │
-              └──┬──────┬────────┬───┘             │
-                 │      │        │                 │
-                 ▼      ▼        ▼                 │
-       ┌─────────────┐ ┌──────────────┐ ┌──────────────────┐
-       │ SourceCtrl  │ │ KSController │ │ HRController     │
-       │ Fetchers:   │ │ krusty +     │ │ helm v4          │
-       │  git/oci/   │ │ Flux gen     │ │ (ClientOnly)     │
-       │  bucket/    │ │              │ │ + SourceResolver │
-       │  external   │ │              │ │                  │
-       └─────────────┘ └──────────────┘ └──────────────────┘
+```yaml
+dependsOn:
+- name: infra-controllers
+  readyExpr: |
+    dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")
 ```
 
-Orchestrator pipeline: discovery (load → spec.path expansion → ResourceSet rendering → namespace inheritance → parent index) → `dependsOn` validation → change-filter resolution → controllers fire → reconcile waits for parent KS Ready → render → orphan demotion → diff / build / get.
+**Substitution opt-out** — the `kustomize.toolkit.fluxcd.io/substitute: disabled` label or annotation is honored per-resource, matching kustomize-controller. Used for ConfigMaps embedding bash array expansions envsubst can't parse.
+
+**Signature verification** — `OCIRepository` uses cosign keyed mode (`spec.verify.secretRef` with PEM keys) verified through stdlib crypto, no sigstore dep tree. `GitRepository` uses PGP via `spec.verify.{mode,secretRef}`. Cosign keyless and `notation` are not supported (see [Limits](#limits)).
 
 ## Library use
 
-flate ships as a Go library too — `pkg/orchestrator` is the embed entry point and `pkg/helm.Prepare` is the helper for rendering one `HelmRelease` in isolation.
+`pkg/orchestrator` is the embed entry point.
 
 ```go
 import (
     "context"
-    "fmt"
     "github.com/home-operations/flate/pkg/orchestrator"
 )
 
-o, err := orchestrator.New(orchestrator.Config{
-    Path:        "/path/to/cluster",
-    EnableOCI:   true,
-    WipeSecrets: true,
-})
-if err != nil { panic(err) }
-
+o, _ := orchestrator.New(orchestrator.Config{Path: "/path/to/cluster"})
 res, err := o.Render(context.Background())
-// res is non-nil even when err != nil: partial output is still usable.
+// res is non-nil even when err != nil — partial output stays usable.
 for id, docs := range res.Manifests {
-    fmt.Printf("%s rendered %d docs\n", id, len(docs))
+    // rendered YAML docs for the KS / HR with this id
 }
 for id, info := range res.Failed {
-    fmt.Printf("%s FAILED: %s\n", id, info.Message)
+    // structured failure list keyed by NamedResource
 }
 ```
 
-Other embed surfaces worth knowing:
+Other entry points worth knowing:
 
-- `Orchestrator.WithFetcher(kind, fetcher)` — replace any source fetcher (e.g. swap `git.Fetcher` for an in-memory fake during tests).
-- `Orchestrator.Store().OnStatus(fn, replay)` / `OnObject` / `OnArtifact` — typed listeners; payloads are pre-cast so consumers don't type-switch on `any`.
-- `helm.Prepare(hr, charts, provider)` then `helmClient.TemplateDocs(...)` — render a single HelmRelease without standing up the full orchestrator.
-- `pkg/discovery.Run(ctx, Config{Path, Store, WipeSecrets})` — load phase as a standalone unit (returns `{RepoRoot, SourceFiles, ParentOf}`).
-- `Store.Mutate[T]` — clone-then-AddObject helper that encodes the immutability contract; mutating a stored manifest in place is a bug (see `pkg/manifest/doc.go`).
+- `Orchestrator.WithFetcher(kind, f)` — swap any source fetcher (in-memory fakes for tests, custom kinds).
+- `Store.OnObject` / `OnStatus` / `OnArtifact` — typed listeners; payloads are pre-cast.
+- `helm.Prepare(hr, charts, provider)` then `helmClient.TemplateDocs(...)` — render one HelmRelease without the orchestrator.
+- `discovery.Run(ctx, Config{Path, Store, WipeSecrets})` — load phase as a standalone unit.
+- `Store.Mutate[T]` — clone-then-AddObject helper encoding the immutability contract. See [`pkg/manifest/doc.go`](pkg/manifest/doc.go) for the full rule.
+
+## Architecture
+
+```
+discovery → Store ⇄ events ⇄ controllers (source · kustomization · helmrelease)
+```
+
+Pipeline: load → `spec.path` expansion → ResourceSet rendering → namespace inheritance → parent index → `dependsOn` validation → change-filter → controllers fire → child KS waits on parent Ready → render → orphan demotion → output.
+
+The Store is the single source of truth. Every stored manifest is immutable; mutation routes through `Store.Mutate[T]` (clone, mutate, AddObject). Helm chart loads coalesce through a per-path keylock — N parallel reconciles of the same chart issue exactly one parse.
+
+## Limits
+
+flate is rendering-only.
+
+- **No SOPS decryption.** Values wiped; pre-decrypt if you need them in the diff.
+- **No cosign keyless.** Keyed verification works end-to-end; keyless logs and renders unverified (no offline trust roots).
+- **No notation.** Fails loud.
+- **No cloud workload identity.** `spec.serviceAccountName` is a no-op; use static creds in a Secret.
+- **No `healthChecks`.** flate tracks resource readiness, not status conditions of rendered objects.
+- **`ResourceSetInputProvider`: `Static` only.** Dynamic providers (GitHub, GitLab, OCIArtifactTag, ExternalService) need network access and contribute zero inputs.
 
 ## Development
 
 ```bash
-go build ./cmd/flate            # build the CLI
-go test ./...                   # full test suite, including in-process E2E
-go test -race ./...             # race detector
-go vet ./...                    # vet
+go build ./cmd/flate
+go test ./...
+go test -race ./...
+golangci-lint run ./...
 ```
 
-Tool versions are pinned via [mise](https://mise.jdx.dev) (`mise install`).
-
-Testdata lives in [`testdata/`](testdata/); the [`test/e2e`](test/e2e/) suite runs the cobra command tree in-process via `cli.Run` — no fork/exec, no freshly built binary required.
-
-## Signature verification
-
-| Source kind | Mechanism | Notes |
-| --- | --- | --- |
-| `OCIRepository` | cosign keyed mode | `spec.verify.secretRef` carries one or more PEM-encoded public keys; flate verifies the cosign signature artifact (`sha256-<hex>.sig` tag) using stdlib crypto — no sigstore dep tree. Keyless (Fulcio/Rekor) is logged at warn and skipped (no offline trust roots); `notation` provider fails loud. |
-| `GitRepository` | PGP | `spec.verify` (`mode: HEAD` / `Tag` / `TagAndHEAD`) verifies the resolved commit and/or annotated tag against the keyring in `spec.verify.secretRef`. |
-
-## Limits
-
-flate is rendering-only. It deliberately does NOT:
-
-- Decrypt SOPS-encrypted resources — values are wiped to `..PLACEHOLDER_<key>..`. Pre-decrypt if you need real values in the diff.
-- Verify cosign keyless (Fulcio/Rekor) signatures — logs a warn, renders unverified. Keyed cosign IS verified end-to-end.
-- Support notation as a signature provider — fails loud.
-- Support Bucket `aws` / `gcp` / `azure` providers — use `provider: generic` with static creds.
-- Support HelmRepository OCI-flavored `spec.secretRef` — use a sibling `OCIRepository` instead.
-- Implement workload identity / IRSA / cloud impersonation — `spec.serviceAccountName` is a no-op.
-- Honor `dependsOn` content keep-set / `healthChecks` — flate just tracks resource readiness, not status conditions of the rendered objects.
-
-## Deferred
-
-- `diff --branch-orig <branch>` (auto-worktree)
-- `shell` interactive REPL
-- Cosign keyless on OCIRepository — currently warn-and-skip (no offline trust roots)
-- Notation provider (`spec.verify.provider: notation`) — fails loud
-- `ResourceSetInputProvider` dynamic types (GitHub*, GitLab*, OCIArtifactTag, ExternalService, …) — `Static` is supported, dynamic providers contribute zero inputs offline
-- Bucket `aws` / `gcp` / `azure` providers (workload-identity / IRSA — out of scope offline; use `provider: generic` with static creds)
-- HelmRepository OCI-flavored `spec.secretRef` (use a sibling `OCIRepository` instead)
+Tool versions pin via [mise](https://mise.jdx.dev). Testdata lives in [`testdata/`](testdata/); [`test/e2e`](test/e2e/) runs the cobra command tree in-process — no fork/exec, no freshly built binary.
 
 ## License
 
-AGPL-3.0 — see [LICENSE](LICENSE). flate borrows behavior and test fixtures from [flux-local](https://github.com/allenporter/flux-local) (Apache-2.0).
+AGPL-3.0. flate borrows behavior and test fixtures from [flux-local](https://github.com/allenporter/flux-local) (Apache-2.0).

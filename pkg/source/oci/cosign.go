@@ -101,7 +101,7 @@ func (f *Fetcher) verifyCosignSignature(
 		// Keyless (OIDC) — flate can't reach Fulcio/Rekor offline and
 		// doesn't carry the sigstore trust roots. Log and proceed so the
 		// chart still renders for diff purposes.
-		slog.Warn("cosign keyless verification skipped; rendering unverified artifact",
+		slog.Debug("cosign keyless verification skipped; rendering unverified artifact",
 			"ociRepository", repo.Namespace+"/"+repo.Name,
 			"digest", pulledDigest)
 		return nil

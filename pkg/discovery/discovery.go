@@ -39,20 +39,18 @@ type Result struct {
 	// SourceFiles maps each loaded resource to the repo-relative path
 	// it was parsed from. Consumed by the change filter.
 	SourceFiles map[manifest.NamedResource]string
-	// ParentOf maps each Flux Kustomization to its structural-parent KS
-	// (the enclosing KS whose spec.path contains this one's source
-	// file). Empty when no parent enforcement applies.
+	// ParentOf maps each reconcilable resource (Kustomization or
+	// HelmRelease) to its structural-parent Kustomization — the KS
+	// whose spec.path is the deepest strict ancestor of the child's
+	// source file. KS children honor it as a depwait dep so any
+	// parent-render-time spec mutations (replacements: injecting
+	// targetNamespace) are visible before the child renders;
+	// HR children honor it so the first render reads the post-patch
+	// spec (driftDetection / upgrade strategy / CRD policy overrides
+	// applied at the cluster-KS level) instead of the pre-patch
+	// file-loaded copy. Keyed by NamedResource so KS and HR entries
+	// never collide. Empty when no parent enforcement applies.
 	ParentOf map[manifest.NamedResource]manifest.NamedResource
-	// HRParentOf maps each file-loaded HelmRelease to the structural-
-	// parent Kustomization that will re-emit it during reconcile.
-	// The HR controller depwaits on the parent so its first render
-	// uses the post-patch HR (drift detection / upgrade strategy /
-	// CRD policy overrides applied at the cluster KS level) rather
-	// than the pre-patch file-loaded copy. Without this, every HR
-	// under such a cluster patch chain rendered twice — once stale,
-	// once canonical — doubling helm-render time and any warnings
-	// the chart emits during coalesce.
-	HRParentOf map[manifest.NamedResource]manifest.NamedResource
 }
 
 // Config is the input contract for Run. Store is mandatory.
@@ -85,14 +83,37 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	d.aliasBootstrapSources(repoRoot)
 	loader.ApplyNamespaceInheritance(d.cfg.Store, d.sourceFiles, repoRoot)
-	parentOf := loader.BuildParentIndex(d.cfg.Store, d.sourceFiles)
-	hrParentOf := loader.BuildParentIndexForKind(d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease)
+	// Unified parent index over every reconcilable kind that uses a
+	// parent gate. KS and HR keys never collide because NamedResource
+	// includes Kind; downstream controllers look up by their own id
+	// and naturally filter to their own kind.
+	parentOf := mergeParents(
+		loader.BuildParentIndex(d.cfg.Store, d.sourceFiles),
+		loader.BuildParentIndexForKind(d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease),
+	)
 	return &Result{
 		RepoRoot:    repoRoot,
 		SourceFiles: d.sourceFiles,
 		ParentOf:    parentOf,
-		HRParentOf:  hrParentOf,
 	}, nil
+}
+
+// mergeParents combines per-kind parent maps into one. Earlier
+// arguments win on collision (which can't happen in practice — keys
+// are NamedResource with distinct Kind components — but the rule is
+// explicit so future callers don't accidentally clobber a KS parent
+// with an HR-built rebuild).
+func mergeParents(maps ...map[manifest.NamedResource]manifest.NamedResource) map[manifest.NamedResource]manifest.NamedResource {
+	out := map[manifest.NamedResource]manifest.NamedResource{}
+	for _, m := range maps {
+		for k, v := range m {
+			if _, exists := out[k]; exists {
+				continue
+			}
+			out[k] = v
+		}
+	}
+	return out
 }
 
 type discoverer struct {

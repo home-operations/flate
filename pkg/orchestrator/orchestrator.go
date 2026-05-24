@@ -101,19 +101,12 @@ type Orchestrator struct {
 	sourceFiles map[manifest.NamedResource]string
 
 	// parentOf is the structural-parent index Bootstrap computes after
-	// loadManifests + namespace inheritance. Configured onto the
-	// kustomization controller at Run-time, never mutated thereafter.
+	// loadManifests + namespace inheritance — keyed by every
+	// reconcilable id that uses a parent gate (KS and HR). KS lookups
+	// only see KS entries and HR lookups only see HR entries because
+	// NamedResource includes Kind; the single map keeps controller
+	// wiring symmetric.
 	parentOf map[manifest.NamedResource]manifest.NamedResource
-
-	// hrParentOf maps each file-loaded HelmRelease to its structural-
-	// parent KS so the HR controller can depwait on the parent's
-	// reconcile before rendering. Without this, an HR underneath a
-	// parent KS that applies spec-mutating patches (e.g. tholinka's
-	// cluster-wide driftDetection/upgrade/crds override) renders
-	// twice: once with the file-loaded pre-patch spec, once with the
-	// emitted post-patch spec. Both renders are legitimate but the
-	// first is pure waste.
-	hrParentOf map[manifest.NamedResource]manifest.NamedResource
 
 	// rendered tracks IDs the KS controller emitted from a parent
 	// render (vs. only loaded by the file walker). detectOrphans reads
@@ -257,7 +250,6 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	}
 	o.sourceFiles = res.SourceFiles
 	o.parentOf = res.ParentOf
-	o.hrParentOf = res.HRParentOf
 
 	o.validateDependsOn()
 	o.breakDependsOnCycles()
@@ -439,7 +431,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		ParentOf:      o.parentOf,
 		RenderTracker: o.rendered,
 	})
-	o.hrc.Configure(helmrelease.ReconcileOptions{Filter: o.filter, ParentOf: o.hrParentOf})
+	o.hrc.Configure(helmrelease.ReconcileOptions{Filter: o.filter, ParentOf: o.parentOf})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)
 	o.hrc.Start(ctx)

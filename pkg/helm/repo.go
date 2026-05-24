@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -316,10 +317,30 @@ func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (
 		}
 		return path, nil
 	}
+	// Fallback path. The source.oci.Fetcher didn't produce an
+	// artifact for this OCIRepository — typically because the
+	// orchestrator is configured with EnableOCI=false (which wires
+	// source.ExistenceFetcher) or because the HR's source controller
+	// was never wired in this embedding. NONE of the OCIRepository
+	// spec.* features (verify / layerSelector / certSecretRef /
+	// proxySecretRef / insecure / ignore) apply on this path.
+	if r.Reference != nil && r.Reference.SemVer != "" {
+		// Semver resolution requires listing tags from the registry —
+		// that's part of source.oci.Fetcher, not helm's registry
+		// client. The helm-side fall-back would just pass the semver
+		// constraint to Pull and get a cryptic "invalid tag" error.
+		return "", fmt.Errorf(
+			"OCIRepository %s/%s uses spec.ref.semver but the source.oci.Fetcher is not active "+
+				"(likely --enable-oci=false); semver resolution requires the OCI fetcher",
+			r.Namespace, r.Name)
+	}
 	ver, err := r.Version()
 	if err != nil {
 		return "", err
 	}
+	slog.Debug("helm: OCIRepository SourceArtifact missing; falling back to helm registry client",
+		"ociRepository", r.Namespace+"/"+r.Name, "url", r.URL, "version", ver,
+		"note", "OCIRepository spec.verify/layerSelector/etc. NOT applied on this path")
 	return c.fetchOCIChart(ctx, r.URL, ver)
 }
 
@@ -350,27 +371,46 @@ func ociChartPathFromArtifact(slot string) (string, error) {
 	if _, err := os.Stat(tgz); err == nil {
 		return tgz, nil
 	}
-	if sub, ok := findChartSubdir(slot); ok {
+	switch sub, status := findChartSubdir(slot); status {
+	case chartSubdirFound:
 		return sub, nil
+	case chartSubdirAmbiguous:
+		// More than one Chart.yaml-bearing subdir — distinct failure
+		// from "no chart found", and the right hint is "this is a
+		// bundle-of-charts artifact, not a single chart".
+		return "", fmt.Errorf("OCIRepository artifact at %s contains multiple Chart.yaml-bearing subdirs; "+
+			"flate cannot disambiguate a bundle-of-charts artifact", slot)
 	}
-	return "", fmt.Errorf("OCIRepository artifact at %s has neither %s, %s, nor a <name>/Chart.yaml subdir — chart layer missing or layerSelector misconfigured",
+	return "", fmt.Errorf("OCIRepository artifact at %s has neither %s, %s, nor a <name>/Chart.yaml subdir — "+
+		"chart layer missing or layerSelector misconfigured",
 		slot, chartYamlFilename, copiedOCILayerFilename)
 }
 
+// chartSubdirStatus is the typed result of findChartSubdir. The
+// caller branches between "not found" and "ambiguous" to surface
+// distinct error messages — the operator hint is different.
+type chartSubdirStatus int
+
+const (
+	chartSubdirNotFound chartSubdirStatus = iota
+	chartSubdirFound
+	chartSubdirAmbiguous
+)
+
 // findChartSubdir scans the immediate children of slot for one that
 // contains a Chart.yaml — the shape produced by `helm package` when
-// extracted via operation=extract. Returns the matching subdir's full
-// path. Hidden entries (`.flate-digest`, `.flate-layer.tar.gz`) are
-// skipped because they're flate internals, not user content.
+// extracted via operation=extract. Hidden entries (anything starting
+// with `.`) are skipped: this safely covers the .flate-* sentinels and
+// any incidental dotfiles. Valid charts never use a dot-prefixed
+// top-level directory.
 //
-// Returns (path, false) when no subdir matches; (path, false) when
-// multiple subdirs match, because we can't safely pick one — that's
-// either a bundle-of-charts artifact (unsupported here, surfaces as
-// a clear error from the caller) or a polluted slot.
-func findChartSubdir(slot string) (string, bool) {
+// Returns ("", chartSubdirNotFound) when no subdir matches and
+// ("", chartSubdirAmbiguous) when multiple match, so the caller can
+// emit a specific error for each.
+func findChartSubdir(slot string) (string, chartSubdirStatus) {
 	entries, err := os.ReadDir(slot)
 	if err != nil {
-		return "", false
+		return "", chartSubdirNotFound
 	}
 	var match string
 	for _, e := range entries {
@@ -381,11 +421,14 @@ func findChartSubdir(slot string) (string, bool) {
 			continue
 		}
 		if match != "" {
-			return "", false // ambiguous
+			return "", chartSubdirAmbiguous
 		}
 		match = filepath.Join(slot, e.Name())
 	}
-	return match, match != ""
+	if match == "" {
+		return "", chartSubdirNotFound
+	}
+	return match, chartSubdirFound
 }
 
 // chartYamlFilename / copiedOCILayerFilename mirror, by string value,

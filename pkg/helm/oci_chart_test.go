@@ -149,6 +149,13 @@ func TestLocateOCIChart_PrefersSourceArtifactChartnameSubdir(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeChartFiles(t, chartDir, "vector", "0.52.0")
+	// Real source/oci slots also contain `.flate-digest` (and possibly
+	// `.flate-layer.tar.gz` from a `copy` op). Drop one to verify the
+	// hidden-prefix filter in findChartSubdir doesn't mistake it for
+	// a Chart.yaml-less subdir.
+	if err := os.WriteFile(filepath.Join(slot, ".flate-digest"), []byte("sha256:abcd"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	cli, hr := setupOCIChartTest(t, slot, "subdir")
 	// hr.Chart.Name purposely differs from the on-disk subdir name to
@@ -170,7 +177,9 @@ func TestLocateOCIChart_PrefersSourceArtifactChartnameSubdir(t *testing.T) {
 // TestLocateOCIChart_AmbiguousSubdirs covers the multi-subdir case:
 // when an OCI artifact unexpectedly contains MORE than one
 // Chart.yaml-bearing subdir, refuse to guess. Better a loud error
-// than silently rendering the wrong chart.
+// than silently rendering the wrong chart. The error must call out
+// the bundle-of-charts shape so the operator gets an actionable
+// hint, not just "Chart.yaml missing".
 func TestLocateOCIChart_AmbiguousSubdirs(t *testing.T) {
 	t.Parallel()
 
@@ -189,8 +198,50 @@ func TestLocateOCIChart_AmbiguousSubdirs(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for ambiguous subdirs")
 	}
-	if !strings.Contains(err.Error(), "Chart.yaml") {
-		t.Errorf("error message should mention Chart.yaml; got: %v", err)
+	if !strings.Contains(err.Error(), "multiple") || !strings.Contains(err.Error(), "bundle-of-charts") {
+		t.Errorf("error message should distinguish ambiguous case (mention 'multiple' + 'bundle-of-charts'); got: %v", err)
+	}
+}
+
+// TestLocateOCIChart_FallbackSemverRefused covers the fallback's
+// semver guard: spec.ref.semver requires the source.oci.Fetcher
+// (which lists tags from the registry); the helm-side fallback has
+// no way to resolve it, so we error early with an explicit message
+// rather than letting helm's registry client return a cryptic
+// "invalid tag" deeper down.
+func TestLocateOCIChart_FallbackSemverRefused(t *testing.T) {
+	t.Parallel()
+
+	cli, err := NewClient(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	st := store.New()
+	repo := &manifest.OCIRepository{
+		Name: "semver", Namespace: "flux-system",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			URL:       "oci://ghcr.io/test/chart",
+			Reference: &sourcev1.OCIRepositoryRef{SemVer: ">=1.0.0"},
+		},
+	}
+	st.AddObject(repo)
+	// No SetArtifact — forces the fallback.
+	cli.SetSourceResolver(NewStoreSourceResolver(st))
+
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "chart", RepoName: "semver", RepoNamespace: "flux-system",
+			RepoKind: manifest.KindOCIRepository,
+		},
+	}
+
+	_, err = cli.locateOCIChart(t.Context(), hr)
+	if err == nil {
+		t.Fatal("expected error for semver in fallback mode")
+	}
+	if !strings.Contains(err.Error(), "semver") || !strings.Contains(err.Error(), "enable-oci") {
+		t.Errorf("error should name the cause (semver) and the resolution (enable-oci); got: %v", err)
 	}
 }
 

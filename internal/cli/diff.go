@@ -29,10 +29,16 @@ func newDiffCmd() *cobra.Command {
 
 // defaultStripAttrs is the default `--strip-attr` list — annotations
 // and labels that Helm + kustomize rotate on every chart bump and
-// which contribute pure noise to PR-time diff review.
+// which contribute pure noise to PR-time diff review. checksum/*
+// annotations are templated as `sha256sum (include "secret.yaml")`
+// in many charts; the rendered Secret values flate sees are
+// wiped-to-PLACEHOLDER but the chart's helper pipeline still emits
+// non-stable bytes across runs (e.g. random suffix from sprig
+// randAlphaNum), producing churn-only diffs.
 var defaultStripAttrs = []string{
 	"helm.sh/chart",
 	"checksum/config",
+	"checksum/secret",
 	"app.kubernetes.io/version",
 	"chart",
 }

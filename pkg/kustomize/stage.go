@@ -116,6 +116,16 @@ func (c *StagingCache) copyTree(src string) (string, error) {
 		// Read regular files (or follow symlinks to regular files).
 		info, err := os.Stat(path)
 		if err != nil {
+			// A dangling symlink in the user's working tree (a common
+			// local-only state for editor lockfiles, gitignored
+			// .pre-commit-config.yaml, IDE caches) used to abort the
+			// entire stage. flate doesn't need the link target — Flux's
+			// reconcile wouldn't either — so skip silently when the
+			// target is missing. Other Stat errors (permissions, I/O)
+			// still surface.
+			if d.Type()&fs.ModeSymlink != 0 && errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 		if !info.Mode().IsRegular() {

@@ -19,42 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// flatFallbackStorage is the orasfile fallback we pass to
-// NewWithFallbackStorage so blobs lacking an
-// `org.opencontainers.image.title` annotation still land on disk
-// (orasfile's default fallback is an in-memory store). It writes each
-// blob as `<root>/<hex>` — the same layout applyLayerSelector,
-// readSlotManifest, and cleanupBlobs already address. The
-// non-title-annotated case covers every Flux OCIRepository payload
-// (vnd.cncf.flux.content.v1.tar+gzip), the artifact's config blob, and
-// the image manifest itself.
-type flatFallbackStorage struct{ root string }
-
-func (s *flatFallbackStorage) Push(_ context.Context, desc ocispec.Descriptor, content io.Reader) error {
-	path := digestPath(s.root, desc.Digest)
-	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // path lives under fetcher-owned slot
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, content); err != nil { //nolint:gosec // size-bounded by oras's descriptor verification
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
-}
-
-func (s *flatFallbackStorage) Fetch(_ context.Context, desc ocispec.Descriptor) (io.ReadCloser, error) {
-	return os.Open(digestPath(s.root, desc.Digest)) //nolint:gosec // path lives under fetcher-owned slot
-}
-
-func (s *flatFallbackStorage) Exists(_ context.Context, desc ocispec.Descriptor) (bool, error) {
-	_, err := os.Stat(digestPath(s.root, desc.Digest))
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
 // copiedLayerFilename is the deterministic name layers are stored
 // under when LayerSelector.Operation is "copy". Downstream consumers
 // (e.g. Kustomization spec.path on an OCIRepository whose artifact

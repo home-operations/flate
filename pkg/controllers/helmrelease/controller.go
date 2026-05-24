@@ -195,6 +195,19 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 				Reasons: sum.Messages,
 			}
 		}
+		// Re-read the HR after the dependsOn wait: while we were
+		// yielding our slot, the parent KS could have re-rendered
+		// (e.g. its own dependsOn cleared in the meantime, freeing
+		// up parent-render-time substitutions that mutate our
+		// spec). Without this refresh, an HR with explicit
+		// spec.dependsOn but no structural parent — or one whose
+		// parent re-emitted us after the parent-gate cleared —
+		// keeps the pre-mutation snapshot through chart
+		// resolution. Mirrors the KS controller's single
+		// refresh after its combined dep wait.
+		if obj, ok := c.Store.GetObject(id).(*manifest.HelmRelease); ok {
+			hr = obj
+		}
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving chart")

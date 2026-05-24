@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.1.12](https://github.com/home-operations/flate/compare/0.1.11...0.1.12) (2026-05-24)
+
+
+### Features
+
+* **diff:** always emit per-resource header, even for single diffs ([#215](https://github.com/home-operations/flate/issues/215)) ([6c26379](https://github.com/home-operations/flate/commit/6c263798d9ecb6a42bf8b79405b3dd6b21d0fb13))
+* **orchestrator:** surface RS-rendered non-Flux docs in parent KS output ([#218](https://github.com/home-operations/flate/issues/218)) ([e1ccae9](https://github.com/home-operations/flate/commit/e1ccae9a0d77250ab4f5b45a22a5e04530fbaf9f))
+* **resourceset:** implement spec.inputStrategy: Permute ([#109](https://github.com/home-operations/flate/issues/109)) ([#217](https://github.com/home-operations/flate/issues/217)) ([a8054cc](https://github.com/home-operations/flate/commit/a8054ccede6b51da9827ad620b5110cec108859c))
+
+
+### Bug Fixes
+
+* bootstrap-GR test skip in changed-only mode + IsSuspended + log noise ([#214](https://github.com/home-operations/flate/issues/214)) ([3833c6e](https://github.com/home-operations/flate/commit/3833c6ec3dd0cead4e1bdb86c144596ad51c09dc))
+* **change:** scope keepByName fallback to empty-namespace entries only ([#207](https://github.com/home-operations/flate/issues/207)) ([909c08c](https://github.com/home-operations/flate/commit/909c08c805b72b28ff69c211bfbf3a7a19d45939))
+* **cli,testrunner:** diff-images coercion, bootstrap-GR test filter, get-helm gate ([#212](https://github.com/home-operations/flate/issues/212)) ([6e1d2ab](https://github.com/home-operations/flate/commit/6e1d2abc60b3d3e55e63728f2c0c338991f78f72))
+* **cli:** surface Bootstrap errors instead of drowning them in test report ([#216](https://github.com/home-operations/flate/issues/216)) ([a3d6dc5](https://github.com/home-operations/flate/commit/a3d6dc52470276c35ba1c005f5931cd7b0b1caca))
+* **cli:** validate -o uniformly across get all / get images / test ([#222](https://github.com/home-operations/flate/issues/222)) ([37ae742](https://github.com/home-operations/flate/commit/37ae7429f6f6d4e496996adcf534bc77b4661241))
+* **kustomize:** skip broken symlinks during stage instead of aborting ([#228](https://github.com/home-operations/flate/issues/228)) ([42a6ee8](https://github.com/home-operations/flate/commit/42a6ee855b04db148132be51bf02d38e98fea1c1))
+* **manifest:** extend strip walker to CronJob jobTemplate + StatefulSet PVCs ([#210](https://github.com/home-operations/flate/issues/210)) ([96f3ab3](https://github.com/home-operations/flate/commit/96f3ab32d23596d6d2b9f3c28257eb8ac8c8139e))
+
+
+### Performance Improvements
+
+* **helmrelease:** skip duplicate render via parent gate + fingerprint dedup ([#219](https://github.com/home-operations/flate/issues/219)) ([9daefba](https://github.com/home-operations/flate/commit/9daefba56f5072d0ccc07e5eb4d7735fd6ef8371))
+* **kustomization:** skip duplicate render via fingerprint dedup ([#220](https://github.com/home-operations/flate/issues/220)) ([69744f3](https://github.com/home-operations/flate/commit/69744f3a17712155b34e888d404ae30fc4655172))
+
+
+### Documentation
+
+* **readme:** default output filters, build example, pipeline + lib API refresh ([#211](https://github.com/home-operations/flate/issues/211)) ([bb66014](https://github.com/home-operations/flate/commit/bb6601412763610ded9a7e0d44737d64871027b2))
+
+
+### Miscellaneous Chores
+
+* post-iter-N cleanup — dead format, dedupe, alias warn, README ([#209](https://github.com/home-operations/flate/issues/209)) ([7ad1aa8](https://github.com/home-operations/flate/commit/7ad1aa80efe377f0d0b8ef72a307f138e7fb0ae4))
+* StatusReady message constants + Filter.Add ordering godoc ([#213](https://github.com/home-operations/flate/issues/213)) ([f4724f2](https://github.com/home-operations/flate/commit/f4724f2906009fd1c42debf53d77d8e6402d0d96))
+
+
+### Code Refactoring
+
+* **discovery:** unify ParentOf + HRParentOf into one index ([#227](https://github.com/home-operations/flate/issues/227)) ([3414530](https://github.com/home-operations/flate/commit/34145300b0f659d83a11a005765fde5eb507a334))
+* **manifest:** unexport per-kind Parse helpers (internal-only API) ([#223](https://github.com/home-operations/flate/issues/223)) ([5d740c9](https://github.com/home-operations/flate/commit/5d740c9c7391853f7f7989ffc1512ef9547eb4a6))
+* **source:** adopt RunWithStatus + YieldSlot to match KS/HR shape ([#221](https://github.com/home-operations/flate/issues/221)) ([1927fdc](https://github.com/home-operations/flate/commit/1927fdc8a20230914f89d0970c7a6e58cfd880f4))
+
 ## [0.1.11](https://github.com/home-operations/flate/compare/0.1.10...0.1.11) (2026-05-24)
 
 

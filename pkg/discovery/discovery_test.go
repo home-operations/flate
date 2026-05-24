@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/discovery"
@@ -256,5 +257,141 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRun_AliasesURLMatchedInTreeGitRepository pins the Zariel/
+// home-ops pattern: a GitRepository CR defined IN the tree
+// whose spec.url points at the same remote the working tree
+// itself clones from. Real Flux uses these with SOPS-decrypted
+// SSH deploy keys; flate runs offline and can't materialize the
+// key, so the fetch fails on a placeholder credential.
+//
+// The second-pass alias in aliasBootstrapSources detects that
+// the URL matches the working tree's .git/config remote and
+// overrides the artifact with a working-tree alias so the
+// dependent KSes proceed against local files rather than the
+// failed-fetch source.
+func TestRun_AliasesURLMatchedInTreeGitRepository(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Stand up a minimal .git/config so PlainOpen sees a repo and
+	// readWorkingTreeRemotes returns one remote.
+	mustWrite(t, filepath.Join(dir, ".git", "config"), `[core]
+	repositoryformatversion = 0
+[remote "origin"]
+	url = git@github.com:Example/home-ops.git
+`)
+	mustWrite(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+
+	mustWrite(t, filepath.Join(dir, "k8s", "flux", "cluster.yaml"), `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: home-kubernetes
+  namespace: flux-system
+spec:
+  url: ssh://git@github.com/example/home-ops.git
+  ref:
+    branch: main
+  secretRef:
+    name: github-deploy-key
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster
+  namespace: flux-system
+spec:
+  path: ./k8s/apps
+  sourceRef:
+    kind: GitRepository
+    name: home-kubernetes
+  interval: 1h
+`)
+	mustWrite(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	id := manifest.NamedResource{
+		Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes",
+	}
+	art := st.GetArtifact(id)
+	if art == nil {
+		t.Fatalf("expected URL-matched GitRepository to have a SourceArtifact")
+	}
+	src, ok := art.(*store.SourceArtifact)
+	if !ok {
+		t.Fatalf("expected SourceArtifact, got %T", art)
+	}
+	wantPrefix := "file://"
+	if !strings.HasPrefix(src.URL, wantPrefix) {
+		t.Errorf("expected file:// URL alias; got %q", src.URL)
+	}
+	info, ok := st.GetStatus(id)
+	if !ok || info.Status != store.StatusReady {
+		t.Errorf("expected URL-matched GitRepository to be Ready; got ok=%v info=%+v", ok, info)
+	}
+}
+
+// TestRun_LeavesUnmatchedInTreeGitRepository covers the
+// negative case: an in-tree GitRepository whose URL points at a
+// different remote (a real shared-infra source) must NOT get
+// aliased to the working tree — that would silently render the
+// wrong files. The store should still have the GitRepository
+// from file-load, but without an aliased SourceArtifact.
+func TestRun_LeavesUnmatchedInTreeGitRepository(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, ".git", "config"), `[core]
+	repositoryformatversion = 0
+[remote "origin"]
+	url = git@github.com:Example/home-ops.git
+`)
+	mustWrite(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+
+	mustWrite(t, filepath.Join(dir, "k8s", "flux", "shared-infra.yaml"), `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: shared-infra
+  namespace: flux-system
+spec:
+  url: https://github.com/upstream/shared-infra.git
+  ref:
+    branch: main
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster
+  namespace: flux-system
+spec:
+  path: ./k8s/apps
+  sourceRef:
+    kind: GitRepository
+    name: shared-infra
+  interval: 1h
+`)
+	mustWrite(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	id := manifest.NamedResource{
+		Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared-infra",
+	}
+	if st.GetArtifact(id) != nil {
+		t.Errorf("non-matching upstream GitRepository must NOT receive a working-tree alias artifact")
 	}
 }

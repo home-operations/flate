@@ -500,7 +500,7 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 			})
 			d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias (URL matches working tree)")
 			slog.Info("discovery: aliased in-tree GitRepository to working tree (URL matches working-tree remote)",
-				"id", id.String(), "url", repo.URL, "localPath", repoRoot)
+				"id", id.String(), "url", repo.URL, "normalizedKey", normalized, "localPath", repoRoot)
 			aliased = append(aliased, id)
 		}
 	}

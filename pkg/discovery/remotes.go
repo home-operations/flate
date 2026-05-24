@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"log/slog"
+	"net/url"
 	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -40,8 +41,9 @@ func readWorkingTreeRemotes(repoRoot string) map[string]struct{} {
 
 // normalizeGitURL reduces git URL variants to a canonical
 // host/owner/repo key suitable for cross-syntax equality. Strips
-// scheme, leading user@, port, trailing .git, and lowercases the
-// result (GitHub/GitLab paths are case-insensitive in practice).
+// scheme, userinfo, port, query, fragment, trailing .git/`/`, and
+// lowercases the result (GitHub/GitLab paths are case-insensitive
+// in practice). IPv6 hosts are returned bare (no brackets).
 //
 // Examples normalize to "github.com/owner/repo":
 //
@@ -49,48 +51,72 @@ func readWorkingTreeRemotes(repoRoot string) map[string]struct{} {
 //	git@github.com:owner/repo.git
 //	https://github.com/owner/repo
 //	https://user:pass@github.com/owner/repo.git
+//	https://github.com/owner/repo?deploy_key=prod#section
+//	https://github.com:443/owner/repo.git/
 //
-// Returns "" for inputs that don't look like a remote URL (e.g.
-// file:// or local paths) — those shouldn't participate in
-// bootstrap-alias matching.
-func normalizeGitURL(url string) string {
-	u := strings.TrimSpace(url)
-	if u == "" {
+// Returns "" for inputs that don't describe a remote (file://,
+// local paths, empty) — those don't participate in bootstrap-alias
+// matching.
+func normalizeGitURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return ""
 	}
-	// scp-style: git@host:owner/repo — convert to a uniform shape
-	// before stripping scheme.
-	if !strings.Contains(u, "://") {
-		if at := strings.Index(u, "@"); at >= 0 {
-			if colon := strings.Index(u[at+1:], ":"); colon >= 0 {
-				u = u[at+1:colon+at+1] + "/" + u[at+1+colon+1:]
-			}
-		} else {
-			// Local path or other non-remote shape — skip.
-			return ""
-		}
-	} else {
-		u = u[strings.Index(u, "://")+3:]
-		// Strip optional userinfo (user[:pass]@).
-		if at := strings.Index(u, "@"); at >= 0 && at < strings.IndexByte(u+"/", '/') {
-			u = u[at+1:]
-		}
-		// Strip port (host:1234/...).
-		if slash := strings.IndexByte(u, '/'); slash > 0 {
-			host := u[:slash]
-			if colon := strings.Index(host, ":"); colon >= 0 {
-				u = host[:colon] + u[slash:]
-			}
-		}
-	}
-	// Discard file:// and other non-remote schemes that may have
-	// slipped past the scheme check.
-	if strings.HasPrefix(u, "/") {
+	host, path, ok := parseGitURL(raw)
+	if !ok || host == "" || path == "" {
 		return ""
 	}
-	u = strings.TrimSuffix(u, "/")
-	u = strings.TrimSuffix(u, ".git")
-	return strings.ToLower(u)
+	path = strings.TrimSuffix(path, "/")
+	path = strings.TrimSuffix(path, ".git")
+	path = strings.TrimPrefix(path, "/")
+	if path == "" {
+		return ""
+	}
+	return strings.ToLower(host + "/" + path)
+}
+
+// parseGitURL extracts the host and path components of a remote git
+// URL, handling both URL-form (scheme://...) and scp-style
+// (user@host:path). Returns ok=false for non-remote shapes (file://,
+// local paths, malformed input). Userinfo, port, query, and fragment
+// are dropped — net/url handles the URL-form parsing including
+// bracketed IPv6 hosts.
+func parseGitURL(raw string) (host, path string, ok bool) {
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return "", "", false
+		}
+		switch strings.ToLower(u.Scheme) {
+		case "http", "https", "ssh", "git":
+			// supported remote schemes
+		default:
+			// file://, ftp://, anything else — not a remote we
+			// can compare against a working-tree clone.
+			return "", "", false
+		}
+		// url.Hostname strips both port and IPv6 brackets correctly.
+		return u.Hostname(), u.Path, true
+	}
+	// scp-style: user@host:owner/repo (or host:owner/repo without
+	// user). The first `:` after the first `@` (or after the start
+	// when no `@`) separates host from path. Anything that doesn't
+	// match this shape is treated as a local path and rejected.
+	rest := raw
+	if at := strings.Index(rest, "@"); at >= 0 {
+		rest = rest[at+1:]
+	}
+	colon := strings.Index(rest, ":")
+	if colon <= 0 {
+		return "", "", false
+	}
+	host, path = rest[:colon], rest[colon+1:]
+	if strings.ContainsAny(host, "/\\") {
+		// Looks like a relative path containing a colon, not
+		// host:path. Reject.
+		return "", "", false
+	}
+	return host, "/" + path, true
 }
 
 // debugLogRemotes is a small helper to keep the discovery flow log

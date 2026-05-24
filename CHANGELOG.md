@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/home-operations/flate/compare/0.1.9...0.1.10) (2026-05-24)
+
+
+### Bug Fixes
+
+* **discovery:** alias bootstrap GitRepositories in any namespace ([#202](https://github.com/home-operations/flate/issues/202)) ([de497c4](https://github.com/home-operations/flate/commit/de497c45d520ba43f5d29bb984ee35350f96ba3f))
+
 ## [0.1.9](https://github.com/home-operations/flate/compare/0.1.8...0.1.9) (2026-05-24)
 
 

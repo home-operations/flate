@@ -41,24 +41,29 @@ type Controller struct {
 	// templates.
 	WipeSecrets bool
 
-	// parentOf maps each file-loaded HR to the enclosing Flux KS whose
-	// spec.path covers it. Reconcile depwaits on the parent's Ready so
-	// the first render reads the post-patch HR rather than the file-
-	// loaded pre-patch copy.
-	parentOf map[manifest.NamedResource]manifest.NamedResource
+	// parentOf resolves each HR to its enclosing Flux KS at lookup
+	// time. The closure unifies two parent sources:
+	//   - file-loaded HRs: pre-built path-prefix index from
+	//     loader.BuildParentIndexForKind.
+	//   - render-emitted HRs (chart-of-charts, KS-substituted copies):
+	//     the orchestrator's renderedSet.ParentOf, populated when the
+	//     parent KS's emitRenderedChildren fires.
+	// Nil means "no parent enforcement"; matches pre-#221 behavior.
+	parentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
 // wires onto the controller. Filter narrows reconciliation to changed
 // HelmReleases (and their referenced sources/values) in changed-only
-// mode. ParentOf maps each file-loaded HR to the enclosing KS whose
-// spec.path covers it; reconcile depwaits on the parent before
-// rendering so spec patches (driftDetection / upgrade strategy /
-// CRD policy at the cluster KS level, post-build substitutions,
-// kustomize replacements) land before the first helm.Template call.
+// mode. ParentOf resolves each HR to its enclosing KS at lookup time
+// (combines the file-loaded path-prefix index with the runtime
+// renderedSet); reconcile depwaits on the parent before rendering so
+// spec patches (driftDetection / upgrade strategy / CRD policy at the
+// cluster KS level, post-build substitutions, kustomize replacements)
+// land before the first helm.Template call.
 type ReconcileOptions struct {
 	Filter   *change.Filter
-	ParentOf map[manifest.NamedResource]manifest.NamedResource
+	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
 }
 
 // New constructs a HelmRelease controller.
@@ -77,6 +82,16 @@ func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wip
 func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetFilter(opts.Filter)
 	c.parentOf = opts.ParentOf
+}
+
+// lookupParent reports the structural parent KS of id via the
+// configured resolver, or (zero, false) when no parent exists or no
+// resolver was configured.
+func (c *Controller) lookupParent(id manifest.NamedResource) (manifest.NamedResource, bool) {
+	if c.parentOf == nil {
+		return manifest.NamedResource{}, false
+	}
+	return c.parentOf(id)
 }
 
 // Start registers the listeners. The controller runs until Close.
@@ -121,7 +136,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// parent-patching chain (tholinka/home-ops's cluster KS applies
 	// driftDetection / install.crds / upgrade strategy / rollback to
 	// every HR, so all of them were hit by this).
-	if parent, ok := c.parentOf[id]; ok {
+	if parent, ok := c.lookupParent(id); ok {
 		c.Store.UpdateStatus(id, store.StatusPending, "waiting for parent KS")
 		var sum depwait.Summary
 		c.Tasks.YieldSlot(func() {

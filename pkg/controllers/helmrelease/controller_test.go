@@ -23,7 +23,11 @@ func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store
 
 func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedResource]manifest.NamedResource) (*Controller, *store.Store) {
 	t.Helper()
-	return newTestControllerWithOptions(t, ReconcileOptions{ParentOf: parentOf})
+	resolver := func(id manifest.NamedResource) (manifest.NamedResource, bool) {
+		parent, ok := parentOf[id]
+		return parent, ok
+	}
+	return newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
 }
 
 func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Controller, *store.Store) {

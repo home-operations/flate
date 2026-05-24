@@ -45,7 +45,7 @@ type Controller struct {
 	WipeSecrets bool
 
 	// Set via Configure() — see Options.
-	parentOf      map[manifest.NamedResource]manifest.NamedResource
+	parentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
 	renderTracker RenderTracker
 }
 
@@ -74,7 +74,7 @@ type RenderTracker interface {
 // receives every reconcilable child this KS emits during render.
 type Options struct {
 	Filter        *change.Filter
-	ParentOf      map[manifest.NamedResource]manifest.NamedResource
+	ParentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
 	RenderTracker RenderTracker
 }
 
@@ -428,8 +428,10 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 			},
 		})
 	}
-	if parent, ok := c.parentOf[ks.Named()]; ok {
-		deps = append(deps, manifest.DependencyRef{NamedResource: parent})
+	if c.parentOf != nil {
+		if parent, ok := c.parentOf(ks.Named()); ok {
+			deps = append(deps, manifest.DependencyRef{NamedResource: parent})
+		}
 	}
 	return deps
 }

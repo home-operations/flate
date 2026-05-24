@@ -426,12 +426,26 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		Filter:             o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	})
+	// parentResolver unifies the two sources of structural-parent info:
+	// (1) the pre-built file-path prefix index for file-loaded
+	// resources (o.parentOf), and (2) the renderedSet's parent-of
+	// linkage for resources that arrive via a KS render's
+	// emitRenderedChildren (populated at Run-time, not at Bootstrap).
+	// Controllers query through this single seam; later migration
+	// steps swap (1) for the full render-driven version without
+	// touching controller code.
+	parentResolver := func(id manifest.NamedResource) (manifest.NamedResource, bool) {
+		if parent, ok := o.parentOf[id]; ok {
+			return parent, true
+		}
+		return o.rendered.ParentOf(id)
+	}
 	o.ksc.Configure(kustomization.Options{
 		Filter:        o.filter,
-		ParentOf:      o.parentOf,
+		ParentOf:      parentResolver,
 		RenderTracker: o.rendered,
 	})
-	o.hrc.Configure(helmrelease.ReconcileOptions{Filter: o.filter, ParentOf: o.parentOf})
+	o.hrc.Configure(helmrelease.ReconcileOptions{Filter: o.filter, ParentOf: parentResolver})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)
 	o.hrc.Start(ctx)
@@ -684,25 +698,41 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 		if err != nil || len(docs) == 0 {
 			continue
 		}
-		file := o.sourceFiles[rs.Named()]
-		if file == "" {
-			file = sourceByName[rs.Name]
-		}
-		if file == "" {
-			continue
-		}
-		slashFile := filepath.ToSlash(file)
+		// Resolve parent KS in priority order:
+		//
+		//   1. renderedSet.ParentOf — most direct; set when the RS
+		//      arrived via emitRenderedChildren (the render-driven
+		//      path that increasingly dominates as the migration
+		//      progresses). No prefix matching needed.
+		//   2. sourceFiles + path-prefix match — covers file-loaded
+		//      RSes (today's typical case).
+		//   3. Name-keyed sourceFile fallback — covers the
+		//      KS-substituted variant whose namespace shifted at
+		//      emit time, identified by sharing a name with a
+		//      file-loaded sibling.
 		var parentKS manifest.NamedResource
 		var matched bool
-		for _, w := range owners {
-			if strings.HasPrefix(slashFile, w.prefix) {
-				parentKS = w.id
-				matched = true
-				break
+		if parent, ok := o.rendered.ParentOf(rs.Named()); ok {
+			parentKS, matched = parent, true
+		} else {
+			file := o.sourceFiles[rs.Named()]
+			if file == "" {
+				file = sourceByName[rs.Name]
 			}
-		}
-		if !matched {
-			continue
+			if file == "" {
+				continue
+			}
+			slashFile := filepath.ToSlash(file)
+			for _, w := range owners {
+				if strings.HasPrefix(slashFile, w.prefix) {
+					parentKS = w.id
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
 		}
 		for _, doc := range docs {
 			parsed, perr := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: o.cfg.WipeSecrets})

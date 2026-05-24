@@ -93,6 +93,38 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 	}
 }
 
+// TestReconcile_ParentGateViaResolverFunc verifies the parent gate
+// works when ParentOf is a closure (the production wiring path —
+// orchestrator combines the pre-built path-prefix index with the
+// renderedSet to support both file-loaded and render-emitted HRs).
+// Locks the contract that any resolver implementation is honored,
+// not just the static-map shape.
+func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
+	parent := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
+	hr := &manifest.HelmRelease{
+		Name: "child", Namespace: "flux-system",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Timeout: ptrDuration(80 * time.Millisecond),
+		},
+	}
+	// Resolver returns the parent for the HR only — closes over
+	// captured state, the production shape (which combines a map +
+	// a renderedSet lookup).
+	resolver := func(id manifest.NamedResource) (manifest.NamedResource, bool) {
+		if id == hr.Named() {
+			return parent.Named(), true
+		}
+		return manifest.NamedResource{}, false
+	}
+	_, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
+	st.AddObject(parent) // never reaches Ready
+	st.AddObject(hr)
+	info := waitForStatus(t, st, hr.Named(), store.StatusFailed)
+	if !strings.Contains(info.Message, "parent") {
+		t.Errorf("expected parent-not-ready error via resolver, got %q", info.Message)
+	}
+}
+
 // TestReconcile_NoChartRefBypassDepwait covers a degenerate HR with
 // neither chartRef nor sourceRef — chart resolution writes
 // TestIsFluxSourceKind enumerates the chart-render dispatch matrix:

@@ -154,7 +154,11 @@ func stripFileEntryKey(s string) string {
 // resolveDataPath joins rel against base and cleans the result. An
 // empty rel is rejected (kustomize would reject it too). Absolute
 // paths pass through verbatim — kustomize doesn't forbid them and
-// some generated manifests use them.
+// some generated manifests use them. Relative paths that escape
+// base via `..` are rejected: the resolved key is only consulted
+// against tree-walk paths today (no escape can match a walked path
+// rooted at --path), but a future caller that opens the path would
+// otherwise hit a TOCTOU + path-traversal surface for free.
 func resolveDataPath(base, rel string) (string, bool) {
 	if rel == "" {
 		return "", false
@@ -162,7 +166,12 @@ func resolveDataPath(base, rel string) (string, bool) {
 	if filepath.IsAbs(rel) {
 		return filepath.Clean(rel), true
 	}
-	return filepath.Clean(filepath.Join(base, rel)), true
+	abs := filepath.Clean(filepath.Join(base, rel))
+	cleanBase := filepath.Clean(base) + string(filepath.Separator)
+	if abs != filepath.Clean(base) && !strings.HasPrefix(abs+string(filepath.Separator), cleanBase) {
+		return "", false
+	}
+	return abs, true
 }
 
 // isKustomizationFileName reports whether name matches one of the

@@ -21,6 +21,13 @@ import (
 // in seconds, not minutes.
 const remoteFetchTimeout = 5 * time.Second
 
+// remoteFetchMaxBytes caps each pre-flight response body. A
+// kustomization resource is almost always under a megabyte of YAML;
+// 64 MiB is several orders of magnitude of headroom that still
+// bounds the OOM blast radius from a malicious or accidentally-huge
+// URL endpoint.
+const remoteFetchMaxBytes = 64 << 20 // 64 MiB
+
 // remoteFetchClient is the package-level client used by the
 // pre-flight pass. Distinct from the helm/oci clients so resource-
 // fetch latency stays observable.
@@ -158,7 +165,18 @@ func httpGetURL(ctx context.Context, urlStr string) ([]byte, error) {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	// Cap with LimitReader +1 so we can detect overflow precisely:
+	// read up to remoteFetchMaxBytes+1, and if we actually got
+	// MaxBytes+1 bytes the body is larger than the cap and we fail
+	// fast instead of OOMing on an attacker-controlled endpoint.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, remoteFetchMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > remoteFetchMaxBytes {
+		return nil, fmt.Errorf("response body exceeds %d-byte cap", remoteFetchMaxBytes)
+	}
+	return body, nil
 }
 
 func urlHash(s string) string {

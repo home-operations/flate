@@ -235,3 +235,43 @@ func newPreflightCache(t *testing.T) *StagingCache {
 	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
+
+// TestHttpGetURL_RejectsOversizedBody pins the round-4 OOM
+// guard: a malicious or accidentally-huge endpoint returning more
+// than remoteFetchMaxBytes must fail fast rather than reading the
+// whole body into memory. Reads MaxBytes+1 via LimitReader and
+// errors on overflow.
+func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
+	huge := strings.Repeat("a", remoteFetchMaxBytes+1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(huge))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := httpGetURL(context.Background(), srv.URL+"/big.yaml")
+	if err == nil {
+		t.Fatalf("expected oversized-body error, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("expected 'exceeds ... cap' error, got %q", err.Error())
+	}
+}
+
+// TestHttpGetURL_AcceptsBodyAtCap is the boundary check: a body
+// exactly at the cap must succeed. Guards against off-by-one in the
+// LimitReader+overflow-detection pattern.
+func TestHttpGetURL_AcceptsBodyAtCap(t *testing.T) {
+	atCap := strings.Repeat("b", remoteFetchMaxBytes)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(atCap))
+	}))
+	t.Cleanup(srv.Close)
+
+	body, err := httpGetURL(context.Background(), srv.URL+"/atcap.yaml")
+	if err != nil {
+		t.Fatalf("body exactly at cap should succeed, got: %v", err)
+	}
+	if len(body) != remoteFetchMaxBytes {
+		t.Errorf("expected %d bytes, got %d", remoteFetchMaxBytes, len(body))
+	}
+}

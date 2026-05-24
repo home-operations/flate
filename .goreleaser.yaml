@@ -14,7 +14,10 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w
+      # -X main.version stamps the tag into cmd/flate's `version` var
+      # so `flate --version` reports the release tag instead of
+      # debug.ReadBuildInfo's "(devel)" fallback.
+      - -s -w -X main.version={{ .Version }}
     goos:
       - linux
       - windows

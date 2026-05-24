@@ -18,6 +18,16 @@ import (
 
 func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store.Store) {
 	t.Helper()
+	return newTestControllerWithOptions(t, ReconcileOptions{Filter: filter})
+}
+
+func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedResource]manifest.NamedResource) (*Controller, *store.Store) {
+	t.Helper()
+	return newTestControllerWithOptions(t, ReconcileOptions{ParentOf: parentOf})
+}
+
+func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Controller, *store.Store) {
+	t.Helper()
 	st := store.New()
 	ts := task.New()
 	hc, err := helm.NewClient(t.TempDir(), t.TempDir())
@@ -29,7 +39,7 @@ func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store
 	// through the Store via the helm client's SourceResolver.
 	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
 	c := New(st, ts, hc, helm.Options{}, false)
-	c.Configure(ReconcileOptions{Filter: filter})
+	c.Configure(opts)
 	c.Start(context.Background())
 	t.Cleanup(func() {
 		c.Close()

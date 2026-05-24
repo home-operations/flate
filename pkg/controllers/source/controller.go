@@ -12,6 +12,7 @@ package source
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -73,8 +74,7 @@ func (c *Controller) Start(ctx context.Context) {
 
 func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 	return func(id manifest.NamedResource, payload any) {
-		fetcher, registered := c.Fetchers[id.Kind]
-		if !registered {
+		if _, registered := c.Fetchers[id.Kind]; !registered {
 			return
 		}
 		obj, ok := payload.(manifest.BaseManifest)
@@ -89,42 +89,56 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 		// (e.g. a parent KS re-emits a child source on re-render)
 		// doesn't race two concurrent fetches into the same cache slot.
 		c.Submit(ctx, id, func(ctx context.Context) {
-			defer base.Recover(c.Store, id, "source")
-			c.runFetch(ctx, id, obj, fetcher)
+			base.RunWithStatus(ctx, c.Store, id, "source", c.reconcile)
 		})
 	}
 }
 
-// runFetch invokes the registered Fetcher and translates the result
-// into Store status + artifact writes. Generic over kind: the only
-// per-kind decision (which Fetcher to call) was made above.
-func (c *Controller) runFetch(ctx context.Context, id manifest.NamedResource, obj manifest.BaseManifest, fetcher src.Fetcher) {
-	c.Store.UpdateStatus(id, store.StatusPending, "fetching")
-	if art := c.Store.GetArtifact(id); art != nil {
-		c.Store.UpdateStatus(id, store.StatusReady, "")
-		return
+// reconcile fetches the source artifact via the registered Fetcher and
+// writes the result through base.RunWithStatus so panic recovery,
+// final status writes, and ErrSourceSkipped routing match the
+// KS/HR controllers' shape. Returning ErrSourceSkipped yields a
+// Ready+"skipped: ..." status; any other error yields Failed.
+func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) error {
+	id := obj.Named()
+	fetcher, registered := c.Fetchers[id.Kind]
+	if !registered {
+		return nil
 	}
+	// Existence short-circuit: a source we already fetched in this run
+	// stays fetched. Idempotent re-AddObject (e.g. a parent KS
+	// re-emitting a stamped copy) returns without touching the network.
+	if c.Store.GetArtifact(id) != nil {
+		return nil
+	}
+
+	c.Store.UpdateStatus(id, store.StatusPending, "fetching")
 	slog.Debug("source: fetch", "id", id.String())
-	artifact, err := fetcher.Fetch(ctx, obj)
-	if err != nil {
-		if c.allowMissingSecrets && errors.Is(err, manifest.ErrMissingSecret) {
-			// Soft-skip: leave the artifact slot empty so consumers see
-			// "no artifact" + Ready+"skipped:" status and propagate.
-			c.Store.UpdateStatus(id, store.StatusReady,
-				store.SkippedPrefix+" "+manifest.TrimSentinelPrefix(err.Error()))
-			slog.Info("source: skipped (missing secret)", "id", id.String(), "err", err)
-			return
+
+	// Release the worker slot during the fetch so consumers of this
+	// source (KS/HR depwait watchers) can acquire one and make
+	// progress instead of blocking on a fetcher that's itself blocked
+	// on network I/O. Mirrors KS/HR's pattern of yielding around
+	// depwait calls.
+	var artifact *store.SourceArtifact
+	var fetchErr error
+	c.Tasks.YieldSlot(func() {
+		artifact, fetchErr = fetcher.Fetch(ctx, obj)
+	})
+	if fetchErr != nil {
+		if c.allowMissingSecrets && errors.Is(fetchErr, manifest.ErrMissingSecret) {
+			slog.Info("source: skipped (missing secret)", "id", id.String(), "err", fetchErr)
+			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(fetchErr.Error()))
 		}
-		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
-		return
+		return fetchErr
 	}
 	// An ExistenceFetcher returns (nil, nil) — the kind doesn't produce
 	// an on-disk artifact (HelmRepository; OCIRepository when fetching
-	// is disabled). Mark Ready without writing an artifact so dependsOn
-	// watchers unblock and chart resolution falls through to whichever
+	// is disabled). RunWithStatus will still mark Ready so dependsOn
+	// watchers unblock; chart resolution falls through to whichever
 	// mechanism actually serves the chart.
 	if artifact != nil {
 		c.Store.SetArtifact(id, artifact)
 	}
-	c.Store.UpdateStatus(id, store.StatusReady, "")
+	return nil
 }

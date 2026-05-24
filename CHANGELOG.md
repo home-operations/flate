@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/home-operations/flate/compare/0.1.7...0.1.8) (2026-05-24)
+
+
+### Features
+
+* **diff:** restore --strip-attr (same defaults) as a pre-dyff filter ([#197](https://github.com/home-operations/flate/issues/197)) ([88b13f6](https://github.com/home-operations/flate/commit/88b13f63e5845506a10d41a672e9b86d43fac01e))
+
 ## [0.1.7](https://github.com/home-operations/flate/compare/0.1.6...0.1.7) (2026-05-24)
 
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.17](https://github.com/home-operations/flate/compare/0.1.16...0.1.17) (2026-05-24)
+
+
+### Bug Fixes
+
+* action script point to wrong arch ([b4ddab2](https://github.com/home-operations/flate/commit/b4ddab21592f35f76372e2f4948b2f5d5c8c8206))
+
+
+### Code Refactoring
+
+* **controllers:** split KS + HR controllers into per-concern files ([#253](https://github.com/home-operations/flate/issues/253)) ([52203c1](https://github.com/home-operations/flate/commit/52203c1210ee95b39083209c90d31311eca6b03c))
+* **discovery:** split discovery.go into per-concern files ([#256](https://github.com/home-operations/flate/issues/256)) ([f28a0b4](https://github.com/home-operations/flate/commit/f28a0b44a60100ebb7bb84e058612c14feed9048))
+* **orchestrator:** split orchestrator.go into finalize.go + resourceset.go ([#255](https://github.com/home-operations/flate/issues/255)) ([49d00f9](https://github.com/home-operations/flate/commit/49d00f98310ea8935c3eaf172b6efdb8646dfba0))
+* **resourceset:** rename doc.go → output.go to avoid package-doc collision ([#258](https://github.com/home-operations/flate/issues/258)) ([8c3b940](https://github.com/home-operations/flate/commit/8c3b940f9f3c7652753bdb80da169c30e5857cbd))
+* **resourceset:** split render.go into per-concern files ([#257](https://github.com/home-operations/flate/issues/257)) ([c7c51fe](https://github.com/home-operations/flate/commit/c7c51fe2fd81a1c974ba4f68fb30fc471d176961))
+* **store:** typed Get[T] + ListAs[T] generic helpers ([#259](https://github.com/home-operations/flate/issues/259)) ([d6610f5](https://github.com/home-operations/flate/commit/d6610f56948d879b51700a65ef31915148bd1c3c))
+
 ## [0.1.16](https://github.com/home-operations/flate/compare/0.1.15...0.1.16) (2026-05-24)
 
 

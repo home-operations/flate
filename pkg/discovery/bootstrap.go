@@ -33,15 +33,22 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 	return root, nil
 }
 
-// aliasBootstrapSources seeds a working-tree SourceArtifact for every
-// GitRepository referenced by a loaded Kustomization whose definition
-// isn't in the repo itself. Targets `flux bootstrap` / flux-operator
-// FluxInstance patterns: the cluster's root GitRepository is created
-// out-of-band (the source that delivers the rest of the manifests
-// cannot, by construction, be one of the manifests it delivers), so
-// no static manifest exists in the tree to discover. Without aliasing,
-// every Kustomization referencing it via `sourceRef` fails depwait
-// with "dependency not found" (issue #199).
+// aliasBootstrapSources seeds a working-tree SourceArtifact for
+// every GitRepository OR OCIRepository referenced by a loaded
+// Kustomization whose definition isn't in the repo itself. Targets
+// `flux bootstrap` / flux-operator FluxInstance patterns: the
+// cluster's root source CR is created out-of-band (the source that
+// delivers the rest of the manifests cannot, by construction, be one
+// of the manifests it delivers), so no static manifest exists in the
+// tree to discover. Without aliasing, every Kustomization referencing
+// it via `sourceRef` fails depwait with "dependency not found"
+// (issue #199 for GitRepository; mortebrume/homelab for OCIRepository).
+//
+// Both kinds are aliased because flux-operator's FluxInstance pattern
+// publishes the bootstrap source as an OCIRepository (chart-as-OCI),
+// while traditional `flux bootstrap` uses a GitRepository. Real Flux
+// fetches the actual remote; flate aliases to the working tree so
+// the dependent Kustomizations resolve against the local file path.
 //
 // All namespaces are aliased, not just `flux-system` — the convention
 // of running Flux in a non-default namespace (e.g. `gitops-system`)
@@ -55,13 +62,18 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 	for _, obj := range d.cfg.Store.ListObjects(manifest.KindGitRepository) {
 		known[obj.Named()] = struct{}{}
 	}
+	for _, obj := range d.cfg.Store.ListObjects(manifest.KindOCIRepository) {
+		known[obj.Named()] = struct{}{}
+	}
 	seen := make(map[manifest.NamedResource]struct{})
 	var aliased []manifest.NamedResource
 	for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
-		if ks.SourceKind != manifest.KindGitRepository {
+		switch ks.SourceKind {
+		case manifest.KindGitRepository, manifest.KindOCIRepository:
+		default:
 			continue
 		}
-		id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+		id := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 		if _, ok := known[id]; ok {
 			continue
 		}
@@ -69,17 +81,30 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 			continue
 		}
 		seen[id] = struct{}{}
-		alias := &manifest.GitRepository{
-			Name: id.Name, Namespace: id.Namespace,
-			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + repoRoot},
+		switch id.Kind {
+		case manifest.KindGitRepository:
+			alias := &manifest.GitRepository{
+				Name: id.Name, Namespace: id.Namespace,
+				GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + repoRoot},
+			}
+			d.cfg.Store.AddObject(alias)
+			d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
+				Kind: manifest.KindGitRepository,
+				URL:  alias.URL, LocalPath: repoRoot,
+			})
+		case manifest.KindOCIRepository:
+			alias := &manifest.OCIRepository{
+				Name: id.Name, Namespace: id.Namespace,
+				OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://flate-bootstrap-alias/" + id.Name},
+			}
+			d.cfg.Store.AddObject(alias)
+			d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository,
+				URL:  alias.URL, LocalPath: repoRoot,
+			})
 		}
-		d.cfg.Store.AddObject(alias)
-		d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
-			Kind: manifest.KindGitRepository,
-			URL:  alias.URL, LocalPath: repoRoot,
-		})
 		d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias")
-		slog.Debug("discovery: aliased bootstrap GitRepository",
+		slog.Debug("discovery: aliased bootstrap source",
 			"id", id.String(), "localPath", repoRoot)
 		aliased = append(aliased, id)
 	}

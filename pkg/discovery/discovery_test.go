@@ -136,6 +136,55 @@ spec:
 	}
 }
 
+// TestRun_AliasesBootstrapOCIRepository pins the mortebrume/homelab
+// pattern: a Kustomization whose sourceRef points at an OCIRepository
+// (flux-operator FluxInstance publishes the bootstrap source as an
+// OCI artifact rather than a Git repo) must be aliased to the
+// working tree the same way GitRepository sources are. Without this,
+// every dependent KS fails with "dependency not found:
+// OCIRepository/flux-system/flux-system".
+func TestRun_AliasesBootstrapOCIRepository(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	mustWrite(t, filepath.Join(dir, "flux", "cluster.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+    namespace: flux-system
+  interval: 1h
+`)
+	mustWrite(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	aliased := manifest.NamedResource{
+		Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "flux-system",
+	}
+	if st.GetObject(aliased) == nil {
+		t.Errorf("expected bootstrap OCIRepository to be aliased; only GitRepository aliasing would leave this case broken")
+	}
+	if st.GetArtifact(aliased) == nil {
+		t.Errorf("aliased OCIRepository should have a SourceArtifact so depwait resolves")
+	}
+	info, ok := st.GetStatus(aliased)
+	if !ok || info.Status != store.StatusReady {
+		t.Errorf("aliased OCIRepository should be Ready; got ok=%v info=%+v", ok, info)
+	}
+}
+
 // TestRun_ResourceSetReExpandsForLateRSIPs pins a discovery-loop
 // fix: a ResourceSet whose RSIP providers only become visible in a
 // later iteration (because they live behind a Kustomization path

@@ -386,6 +386,9 @@ func TestBindHelmFlags_OnHRSubcommandOnly(t *testing.T) {
 		{argv: []string{"build", "ks"}, wantHelmFlag: false},
 		{argv: []string{"build", "hr"}, wantHelmFlag: true},
 		{argv: []string{"build", "all"}, wantHelmFlag: true},
+		{argv: []string{"diff", "ks"}, wantHelmFlag: false},
+		{argv: []string{"diff", "hr"}, wantHelmFlag: true},
+		{argv: []string{"diff", "all"}, wantHelmFlag: true},
 	}
 	for _, tc := range cases {
 		sub, _, err := cmd.Find(tc.argv)

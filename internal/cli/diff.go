@@ -16,6 +16,8 @@ func newDiffCmd() *cobra.Command {
 		Short: "Diff rendered output against a previous revision",
 	}
 	cmd.AddCommand(
+		diffCmd("all", nil,
+			"Diff every Kustomization and HelmRelease against another path", ""),
 		diffCmd("ks [name]", []string{"kustomization", "kustomizations"},
 			"Diff Kustomizations against another path", manifest.KindKustomization),
 		diffCmd("hr [name]", []string{"helmrelease", "helmreleases"},
@@ -48,17 +50,26 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
 	d := &diffFlags{}
+	// `diff all` has no name filter — it's the catch-all combined
+	// view, accepts no positional args. Per-kind variants accept an
+	// optional single name positional to scope the diff.
+	maxArgs := 1
+	if kind == "" {
+		maxArgs = 0
+	}
 	cmd := &cobra.Command{
 		Use:     use,
 		Aliases: aliases,
 		Short:   short,
-		Args:    cobra.MaximumNArgs(1),
+		Args:    cobra.MaximumNArgs(maxArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDiff(cmd, c, h, d, kind, firstArg(args))
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	if rendersHelm([]string{kind}) {
+	// `diff all` renders HRs as part of its scope, so always bind
+	// helm flags (matches `build all` / `test all` / `get all`).
+	if kind == "" || rendersHelm([]string{kind}) {
 		bindHelmFlags(cmd.Flags(), h)
 	}
 	bindDiffFlags(cmd, d)
@@ -141,8 +152,8 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	if orig.O == nil || current.O == nil {
 		return runErr
 	}
-	origDocs := gatherArtifacts(orig.O, orig.Res, kind, name, c)
-	currentDocs := gatherArtifacts(current.O, current.Res, kind, name, c)
+	origDocs := gatherAllArtifacts(orig.O, orig.Res, kind, name, c)
+	currentDocs := gatherAllArtifacts(current.O, current.Res, kind, name, c)
 
 	outFormat := c.output
 	if outFormat == "table" {

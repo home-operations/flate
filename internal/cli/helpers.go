@@ -174,6 +174,19 @@ func joinRunErrors(orig, curr error) error {
 // Reads res.Manifests for the rendered docs; falls back to the Store
 // only to recover the producing object's spec.path (the diff header
 // shows it for KS parents).
+// gatherAllArtifacts is gatherArtifacts with a kind="" shortcut for
+// the `diff all` command: when kind is empty, collect both
+// Kustomization- and HelmRelease-rendered manifests in one pass.
+// Each kind's docs are gathered separately so the diff header
+// attribution (parent KS vs parent HR) stays accurate.
+func gatherAllArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) []diff.Doc {
+	if kind != "" {
+		return gatherArtifacts(o, res, kind, name, c)
+	}
+	out := gatherArtifacts(o, res, manifest.KindKustomization, name, c)
+	return append(out, gatherArtifacts(o, res, manifest.KindHelmRelease, name, c)...)
+}
+
 func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) []diff.Doc {
 	var out []diff.Doc
 	// Defensive re-drop of --skip-secrets / --skip-crds / --skip-kinds.

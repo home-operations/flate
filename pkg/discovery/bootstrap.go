@@ -60,7 +60,7 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 // trade-off inherited from the original `flux-system` path.
 func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 	aliased := d.aliasMissingKustomizationSources(repoRoot)
-	aliased = append(aliased, d.overrideSelfReferentialGitRepositories(repoRoot, aliased)...)
+	aliased = append(aliased, d.overrideSelfReferentialGitRepositories(repoRoot)...)
 	warnIfMultipleBootstrapAliases(aliased, repoRoot)
 }
 
@@ -68,10 +68,10 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 // Kustomization and, for any unique Git/OCIRepository sourceRef that no
 // in-tree CR satisfies, publishes a synthetic CR + working-tree
 // artifact. Without this, dependent Kustomizations would fail depwait
-// with `dependency not found`. Returns the IDs aliased so pass 2 can
-// skip them.
+// with `dependency not found`. Returns the IDs aliased so the multi-
+// source WARN sees them.
 func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifest.NamedResource {
-	existing := d.knownSourceIDs(manifest.KindGitRepository, manifest.KindOCIRepository)
+	existing := knownSourceIDs(d.cfg.Store, manifest.KindGitRepository, manifest.KindOCIRepository)
 	seen := make(map[manifest.NamedResource]struct{})
 	var aliased []manifest.NamedResource
 	for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
@@ -83,10 +83,10 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 			continue
 		}
 		if !d.publishBootstrapAlias(id, repoRoot) {
-			// Unsupported kind (HelmRepository, Bucket, etc.) — these
-			// can't be aliased to a filesystem path, so we silently
-			// skip; the downstream depwait failure surfaces a clearer
-			// error than a misleading half-publish would.
+			// Unsupported kind for aliasing (anything outside
+			// newBootstrapAlias's switch) — silently skip; the
+			// downstream depwait failure surfaces a clearer error
+			// than a misleading half-publish would.
 			continue
 		}
 		seen[id] = struct{}{}
@@ -102,22 +102,19 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 // offline so we substitute the local checkout. Returns the IDs
 // overridden so the multi-alias footgun check sees them.
 //
-// Skips IDs in alreadyAliased (defensive — pass 1 publishes synthetic
-// URLs that don't match real remotes, but staying explicit prevents
-// double-status writes).
-func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string, alreadyAliased []manifest.NamedResource) []manifest.NamedResource {
+// No alreadyAliased skip-set needed: pass 1 publishes synthetic URLs
+// (file:// or oci://flate-bootstrap-alias/...) that normalizeGitURL
+// always rejects. A pass-1 alias can never URL-match a working-tree
+// remote, so the URL-match filter below is the natural guard.
+func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string) []manifest.NamedResource {
 	remotes := readWorkingTreeRemotes(repoRoot)
 	debugLogRemotes(remotes)
 	if len(remotes) == 0 {
 		return nil
 	}
-	skip := namedResourceSet(alreadyAliased)
 	var overridden []manifest.NamedResource
 	for _, repo := range store.ListAs[*manifest.GitRepository](d.cfg.Store, manifest.KindGitRepository) {
 		id := repo.Named()
-		if _, ok := skip[id]; ok {
-			continue
-		}
 		normalized := normalizeGitURL(repo.URL)
 		if normalized == "" {
 			continue
@@ -181,25 +178,15 @@ func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.Bas
 	return nil, "", false
 }
 
-// knownSourceIDs returns a set of the IDs of every object currently in
-// the store for the given kinds. Used by pass 1 to skip sourceRefs
-// that already have a real CR.
-func (d *discoverer) knownSourceIDs(kinds ...string) map[manifest.NamedResource]struct{} {
+// knownSourceIDs returns the IDs of every object currently in s for
+// the given kinds. Used by aliasing pass 1 to skip sourceRefs that
+// already have a real CR.
+func knownSourceIDs(s *store.Store, kinds ...string) map[manifest.NamedResource]struct{} {
 	out := make(map[manifest.NamedResource]struct{})
 	for _, kind := range kinds {
-		for _, obj := range d.cfg.Store.ListObjects(kind) {
+		for _, obj := range s.ListObjects(kind) {
 			out[obj.Named()] = struct{}{}
 		}
-	}
-	return out
-}
-
-// namedResourceSet builds a set lookup from a slice of NamedResource
-// IDs.
-func namedResourceSet(ids []manifest.NamedResource) map[manifest.NamedResource]struct{} {
-	out := make(map[manifest.NamedResource]struct{}, len(ids))
-	for _, id := range ids {
-		out[id] = struct{}{}
 	}
 	return out
 }
@@ -217,6 +204,6 @@ func warnIfMultipleBootstrapAliases(aliased []manifest.NamedResource, repoRoot s
 	for i, id := range aliased {
 		names[i] = id.String()
 	}
-	slog.Warn("discovery: aliased multiple GitRepositories to the working tree; cross-repo refs render against the wrong tree",
+	slog.Warn("discovery: aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
 		"count", len(aliased), "ids", names, "localPath", repoRoot)
 }

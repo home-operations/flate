@@ -2,6 +2,31 @@ package manifest
 
 import "testing"
 
+func TestHasEnvsubstReference(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"bare reference", "${REDIS_APP_NAME}-redis", true},
+		{"reference with :? error message", "${REQUIRED:?must be set}", true},
+		{"default already resolved → no surviving reference", "biohazard", false},
+		{"reference with default still survives the regex", "${VAR:=default}", true},
+		{"no envsubst at all", "redis-server", false},
+		{"plain dollar (no brace)", "$HOME", false},
+		{"empty", "", false},
+		{"escaped dollar", "$$HOME", false},
+		{"reference in middle of string", "prefix-${VAR}-suffix", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HasEnvsubstReference(tc.in); got != tc.want {
+				t.Errorf("HasEnvsubstReference(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveEnvsubstDefaults(t *testing.T) {
 	cases := []struct {
 		name string

@@ -153,6 +153,18 @@ func (l *Loader) loadFile(path string) (int, error) {
 			continue
 		}
 		id := obj.Named()
+		// Skip resources whose name or namespace contains a literal
+		// `${VAR}` reference — those are templates the user expects a
+		// parent Kustomization's postBuild.substitute(From) to resolve
+		// at render time. Real Flux never sees them as in-cluster CRs
+		// (the K8s API would reject `$` in metadata.name) and flate
+		// shouldn't try to reconcile them either; the substituted copy
+		// emitted by the parent KS's render is the reconcilable one.
+		if manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace) {
+			slog.Debug("loader: skipped template file (unresolved envsubst in name/namespace)",
+				"path", path, "id", id.String())
+			continue
+		}
 		if l.PreferExisting && l.Store.GetObject(id) != nil {
 			continue
 		}

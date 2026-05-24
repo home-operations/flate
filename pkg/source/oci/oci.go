@@ -262,7 +262,18 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		tag = "latest"
 	}
 
-	dest, err := orasfile.New(slot)
+	// orasfile.New's default fallback storage is an in-memory store, so
+	// any blob without an `org.opencontainers.image.title` annotation
+	// (the typical shape of Flux's `vnd.cncf.flux.content.v1.tar+gzip`
+	// content layer, plus most non-Helm OCI artifacts) is dropped into
+	// memory and never lands in the slot. applyLayerSelector then can't
+	// find the manifest on disk and silently no-ops — the slot is left
+	// empty except for `.flate-digest`, and downstream `kustomize build`
+	// renders zero manifests rather than failing. Wire a flat-layout
+	// fallback that writes each unnamed blob as `slot/<hex>`, the layout
+	// applyLayerSelector / readSlotManifest / cleanupBlobs already
+	// expect.
+	dest, err := orasfile.NewWithFallbackStorage(slot, &flatFallbackStorage{root: slot})
 	if err != nil {
 		return nil, fmt.Errorf("oras file store: %w", err)
 	}

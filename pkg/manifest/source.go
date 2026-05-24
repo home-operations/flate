@@ -94,6 +94,14 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 	if cr.Spec.Provider == "" {
 		cr.Spec.Provider = sourcev1.GitProviderGeneric
 	}
+	cr.Spec.URL = ResolveEnvsubstDefaults(cr.Spec.URL)
+	if r := cr.Spec.Reference; r != nil {
+		r.Branch = ResolveEnvsubstDefaults(r.Branch)
+		r.Tag = ResolveEnvsubstDefaults(r.Tag)
+		r.SemVer = ResolveEnvsubstDefaults(r.SemVer)
+		r.Commit = ResolveEnvsubstDefaults(r.Commit)
+		r.Name = ResolveEnvsubstDefaults(r.Name)
+	}
 	if v := cr.Spec.Verification; v != nil {
 		// GetMode normalizes the legacy "head" alias to "HEAD" and
 		// applies the schema default. Write it back so consumers see a
@@ -203,6 +211,16 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	}
 	if cr.Spec.Provider == "" {
 		cr.Spec.Provider = sourcev1.GenericOCIProvider
+	}
+	// Pre-resolve envsubst defaults on ref fields so a chart pin like
+	// `tag: "${FLUXCD_VERSION:=v2.8.5}"` becomes "v2.8.5" before the
+	// fetcher tries to resolve it. Bare ${VAR} (no default) is left
+	// for postBuild substitution.
+	cr.Spec.URL = ResolveEnvsubstDefaults(cr.Spec.URL)
+	if r := cr.Spec.Reference; r != nil {
+		r.Tag = ResolveEnvsubstDefaults(r.Tag)
+		r.SemVer = ResolveEnvsubstDefaults(r.SemVer)
+		r.Digest = ResolveEnvsubstDefaults(r.Digest)
 	}
 	owner := cr.Namespace + "/" + cr.Name
 	if r := cr.Spec.SecretRef; r != nil {

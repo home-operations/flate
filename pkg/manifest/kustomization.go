@@ -165,6 +165,17 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 	if cr.Name == "" {
 		return nil, inputf("Kustomization missing metadata.name")
 	}
+	// Pre-resolve envsubst defaults so flate's path / dep resolution
+	// matches what real Flux's postBuild.substitute would produce.
+	// Bare ${VAR} (no default) is left for the postBuild step to
+	// fill — only ${VAR:=default} and ${VAR:-default} collapse here.
+	cr.Spec.Path = ResolveEnvsubstDefaults(cr.Spec.Path)
+	cr.Spec.SourceRef.Name = ResolveEnvsubstDefaults(cr.Spec.SourceRef.Name)
+	cr.Spec.SourceRef.Namespace = ResolveEnvsubstDefaults(cr.Spec.SourceRef.Namespace)
+	for i := range cr.Spec.DependsOn {
+		cr.Spec.DependsOn[i].Name = ResolveEnvsubstDefaults(cr.Spec.DependsOn[i].Name)
+		cr.Spec.DependsOn[i].Namespace = ResolveEnvsubstDefaults(cr.Spec.DependsOn[i].Namespace)
+	}
 	// sourceRef validation catches the truncated-YAML case where
 	// `name:` (no value, e.g. file ends mid-mapping) decodes silently
 	// as empty string. Without this, the failure surfaces as a

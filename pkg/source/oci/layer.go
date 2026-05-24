@@ -26,16 +26,42 @@ import (
 // raw blob.
 const copiedLayerFilename = "layer.tar.gz"
 
-// applyLayerSelector post-processes an OCI artifact written into
-// slot by oras.Copy. After oras.Copy, the slot contains every blob
-// in the artifact named by its sha256 digest. This function:
+// stagedLayerFilename is where applyLayerSelector parks the selected
+// layer before wiping the OCI Image Layout dirs (blobs/, ingest/,
+// oci-layout, index.json). Staging at the slot root lets the layout
+// wipe run with no surviving file handles into deleted subtrees, and
+// the dot-prefix keeps it from colliding with anything kustomize
+// would treat as a resource. extractTarGz removes it on success.
+const stagedLayerFilename = ".flate-layer.tar.gz"
+
+// ociLayoutArtifacts are the files / directories oras-go's content/oci
+// store writes alongside the blobs we actually want — the OCI Image
+// Layout metadata (index.json, oci-layout, blobs/, ingest/). Downstream
+// consumers (kustomize) only want the extracted tarball contents at
+// the slot root, so cleanupOCILayout sweeps these away once
+// applyLayerSelector has moved / extracted the selected layer.
+var ociLayoutArtifacts = []string{
+	ocispec.ImageBlobsDir,   // "blobs"
+	"ingest",                // content/oci.Storage's temp-rename area
+	ocispec.ImageLayoutFile, // "oci-layout"
+	ocispec.ImageIndexFile,  // "index.json"
+}
+
+// applyLayerSelector post-processes an OCI artifact written into slot
+// by oras.Copy. After Copy, the slot is laid out per the OCI Image
+// Layout spec (see ociLayoutArtifacts). This function:
 //
-//   - Reads the manifest from the slot to find the layer matching
+//   - Reads the manifest blob to find the layer matching
 //     selector.MediaType (or the first layer when MediaType is empty).
-//   - For Operation = "extract" (Flux's default), untars the layer's
-//     tar.gz blob into the slot root.
-//   - For Operation = "copy", renames the layer blob to layer.tar.gz.
-//   - Cleans up the now-redundant digest-named files.
+//   - Stages the layer at slot/<stagedLayerFilename> so the layout
+//     wipe in the next step can't take open handles or user-tarball
+//     entries that collide with OCI well-known names down with it.
+//   - For Operation = "extract" (Flux's default), untars the staged
+//     layer into the slot root. extractTarGz removes the staged file
+//     on success.
+//   - For Operation = "copy", renames the staged layer to
+//     <copiedLayerFilename>.
+//   - Wipes the OCI Image Layout artifacts.
 //
 // When selector is nil the default extract behavior still applies —
 // matches source-controller's behavior when spec.layerSelector is
@@ -70,26 +96,33 @@ func applyLayerSelector(
 		op = selector.Operation
 	}
 
-	layerPath := digestPath(slot, layer.Digest)
+	staged := filepath.Join(slot, stagedLayerFilename)
+	if err := os.Rename(digestPath(slot, layer.Digest), staged); err != nil {
+		return fmt.Errorf("stage layer: %w", err)
+	}
+	// Wipe the layout BEFORE the operation runs so extract / copy
+	// can never collide with surviving OCI artifact directories.
+	if err := cleanupOCILayout(slot); err != nil {
+		return fmt.Errorf("cleanup oci layout: %w", err)
+	}
+
 	switch op {
 	case manifest.OCILayerOperationExtract:
-		if err := extractTarGz(layerPath, slot); err != nil {
+		if err := extractTarGz(staged, slot); err != nil {
 			return fmt.Errorf("extract layer: %w", err)
 		}
 	case manifest.OCILayerOperationCopy:
-		dest := filepath.Join(slot, copiedLayerFilename)
-		if err := os.Rename(layerPath, dest); err != nil {
+		if err := os.Rename(staged, filepath.Join(slot, copiedLayerFilename)); err != nil {
 			return fmt.Errorf("copy layer: %w", err)
 		}
 	default:
 		return fmt.Errorf("unsupported layer operation %q", op)
 	}
-
-	return cleanupBlobs(slot)
+	return nil
 }
 
-// readSlotManifest finds and decodes the OCI image manifest written
-// by orasfile under the given digest.
+// readSlotManifest decodes the OCI image manifest oras.Copy wrote into
+// the layout under the given digest.
 func readSlotManifest(slot, digestStr string) (*ocispec.Manifest, error) {
 	path := digestPath(slot, digest.Digest(digestStr))
 	b, err := os.ReadFile(path) //nolint:gosec // slot is fetcher-owned cache path
@@ -121,51 +154,35 @@ func pickLayer(layers []ocispec.Descriptor, selector *manifest.OCILayerSelector)
 }
 
 // digestPath resolves a digest to its on-disk path inside slot,
-// matching orasfile's layout: "<algorithm>:<hex>" → "<hex>" (the
-// algorithm prefix is stripped, file lives at the slot root).
+// matching the OCI Image Layout spec: `<slot>/blobs/<algo>/<hex>`.
+// Aligns with oras-go's content/oci.Storage Push.
 func digestPath(slot string, d digest.Digest) string {
-	_, hex, found := strings.Cut(d.String(), ":")
-	if !found {
-		hex = d.String()
+	algo := d.Algorithm().String()
+	hex := d.Encoded()
+	if hex == "" {
+		// Malformed digest — Encoded() returns "" rather than error.
+		// Fall back to splitting on ":" so the path stays inside slot
+		// rather than escaping or hitting a bare blobs/<algo>/ dir.
+		_, hex, _ = strings.Cut(d.String(), ":")
+		if hex == "" {
+			hex = d.String()
+		}
 	}
-	return filepath.Join(slot, hex)
+	return filepath.Join(slot, ocispec.ImageBlobsDir, algo, hex)
 }
 
-// cleanupBlobs removes the digest-named files orasfile wrote — by
-// this point the manifest's selected layer has either been extracted
-// or renamed, so the raw blobs are noise.
-func cleanupBlobs(slot string) error {
-	entries, err := os.ReadDir(slot)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if e.IsDir() || e.Name() == copiedLayerFilename || e.Name() == cachedDigestFile {
-			continue
-		}
-		// orasfile writes files named by their sha256 hex digest.
-		// Anything that isn't the (already-renamed) layer or sentinel
-		// matches that shape and is safe to drop.
-		if looksLikeDigest(e.Name()) {
-			_ = os.Remove(filepath.Join(slot, e.Name()))
+// cleanupOCILayout removes the OCI Image Layout artifacts oras-go wrote
+// alongside the artifact blobs. By the time this runs the selected
+// layer has already been staged outside the layout subtree, so removal
+// is safe — but the order matters: a layout wipe BEFORE staging would
+// leave nothing to extract from.
+func cleanupOCILayout(slot string) error {
+	for _, name := range ociLayoutArtifacts {
+		if err := os.RemoveAll(filepath.Join(slot, name)); err != nil {
+			return err
 		}
 	}
 	return nil
-}
-
-func looksLikeDigest(name string) bool {
-	if len(name) != 64 {
-		return false
-	}
-	for _, c := range name {
-		switch {
-		case c >= '0' && c <= '9':
-		case c >= 'a' && c <= 'f':
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 // extractTarGz unpacks a gzipped tarball into dst. Refuses path

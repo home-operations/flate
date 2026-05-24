@@ -19,7 +19,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"oras.land/oras-go/v2"
-	orasfile "oras.land/oras-go/v2/content/file"
+	orasoci "oras.land/oras-go/v2/content/oci"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
@@ -262,22 +262,19 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		tag = "latest"
 	}
 
-	// Non-default fallback so blobs without an
-	// `org.opencontainers.image.title` annotation still land on disk
-	// rather than orasfile's in-memory default. See fallback.go for the
-	// why — every Flux OCIRepository payload hits this case.
-	dest, err := orasfile.NewWithFallbackStorage(slot, &flatFallbackStorage{root: slot})
+	// OCI Image Layout content store: blobs land at
+	// `slot/blobs/<algo>/<hex>` regardless of title annotations, so we
+	// no longer need a custom fallback to keep unnamed blobs on disk.
+	// applyLayerSelector reads from the same standard layout and wipes
+	// it after extracting the selected layer.
+	dest, err := orasoci.New(slot)
 	if err != nil {
-		return nil, fmt.Errorf("oras file store: %w", err)
+		return nil, fmt.Errorf("oras oci store: %w", err)
 	}
-	// Track close + slot-reset ordering manually rather than via defer:
-	// orasfile.Close must flush/release file handles BEFORE cache.Reset
-	// wipes the slot, otherwise Close fsyncs against a deleted directory
-	// (and, worse, could touch another tenant's directory if the slot
-	// path were re-allocated in between — although the per-slot release
-	// above prevents that race today).
-	closeDest := func() { _ = dest.Close() }
-	resetOnErr := func() { closeDest(); _ = cache.Reset(slot) }
+	// content/oci.Store has no Close() method — all writes flush
+	// synchronously per blob via os.Rename — so reset-on-error is the
+	// only cleanup we need.
+	resetOnErr := func() { _ = cache.Reset(slot) }
 
 	desc, err := oras.Copy(ctx, repoClient, tag, dest, tag, oras.DefaultCopyOptions)
 	if err != nil {
@@ -300,7 +297,6 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		resetOnErr()
 		return nil, fmt.Errorf("OCIRepository %s/%s: %w", repo.Namespace, repo.Name, err)
 	}
-	closeDest()
 	// Persist the resolved digest so a subsequent cache hit can
 	// re-verify against the exact bytes we wrote, even when the spec
 	// pinned only a tag. A write failure isn't fatal — the next fetch

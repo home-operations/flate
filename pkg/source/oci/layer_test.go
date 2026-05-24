@@ -56,21 +56,6 @@ func TestPickLayer(t *testing.T) {
 	}
 }
 
-func TestLooksLikeDigest(t *testing.T) {
-	cases := map[string]bool{
-		"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": true,
-		"E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855": false, // uppercase
-		"layer.tar.gz": false,
-		"short":        false,
-		"":             false,
-	}
-	for in, want := range cases {
-		if got := looksLikeDigest(in); got != want {
-			t.Errorf("looksLikeDigest(%q) = %v, want %v", in, got, want)
-		}
-	}
-}
-
 func TestApplyLayerSelector_Extract(t *testing.T) {
 	slot := t.TempDir()
 
@@ -109,12 +94,14 @@ func TestApplyLayerSelector_Extract(t *testing.T) {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
 	}
-	// Both blob files should be gone.
-	entries, _ := os.ReadDir(slot)
-	for _, e := range entries {
-		if looksLikeDigest(e.Name()) {
-			t.Errorf("leftover digest-named file: %s", e.Name())
+	// OCI Image Layout artifacts should be wiped after extract.
+	for _, name := range ociLayoutArtifacts {
+		if _, err := os.Stat(filepath.Join(slot, name)); !os.IsNotExist(err) {
+			t.Errorf("leftover OCI layout artifact: %s (err: %v)", name, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(slot, stagedLayerFilename)); !os.IsNotExist(err) {
+		t.Errorf("staged layer file not removed after extract")
 	}
 }
 
@@ -235,19 +222,24 @@ func mustTarGz(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// writeBlob writes payload at slot/<sha256-hex> and returns its OCI digest.
+// writeBlob writes payload at the OCI Image Layout blob path
+// (slot/blobs/sha256/<hex>) and returns its OCI digest.
 func writeBlob(t *testing.T, slot string, payload []byte) digest.Digest {
 	t.Helper()
 	sum := sha256.Sum256(payload)
 	hexs := hex.EncodeToString(sum[:])
-	if err := os.WriteFile(filepath.Join(slot, hexs), payload, 0o600); err != nil { //nolint:gosec // inside t.TempDir()
+	dir := filepath.Join(slot, ocispec.ImageBlobsDir, "sha256")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, hexs), payload, 0o600); err != nil { //nolint:gosec // inside t.TempDir()
 		t.Fatal(err)
 	}
 	return digest.Digest("sha256:" + hexs)
 }
 
-// writeManifest writes an OCI manifest at slot/<sha256-hex> for layers
-// and returns (raw bytes, digest).
+// writeManifest writes an OCI manifest blob (under blobs/sha256) for
+// layers and returns (raw bytes, digest).
 func writeManifest(t *testing.T, slot string, layers []ocispec.Descriptor) ([]byte, digest.Digest) {
 	t.Helper()
 	m := ocispec.Manifest{

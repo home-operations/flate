@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -25,13 +24,11 @@ import (
 
 // TestFetcher_ExtractsLayerWithoutTitleAnnotation regresses the silent
 // no-op that Zariel/home-ops hit on flux-manifests: every blob in a
-// Flux OCIRepository artifact lacks `org.opencontainers.image.title`,
-// orasfile's default in-memory fallback swallowed them, the slot was
-// left holding only `.flate-digest`, and `kustomize build` rendered
-// zero manifests rather than failing. The flat-layout fallback (see
-// fallback.go) writes the manifest + config + layer to `slot/<hex>`,
-// at which point applyLayerSelector finds them and extracts the
-// content layer.
+// Flux OCIRepository artifact lacks `org.opencontainers.image.title`.
+// orasfile's default in-memory fallback used to swallow them, leaving
+// the slot empty and `kustomize build` rendering zero manifests
+// without failing. With content/oci.Store (see oci.go) blobs land at
+// `slot/blobs/<algo>/<hex>` regardless of annotations.
 func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 	t.Parallel()
 
@@ -45,14 +42,13 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 	)
 
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
-	hostport := mustURL(t, srv.URL).Host
 
 	f := &Fetcher{Cache: source.NewCache(t.TempDir())}
 	repo := &manifest.OCIRepository{
 		Name:      "flux-manifests",
 		Namespace: "flux-system",
 		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL: fmt.Sprintf("oci://%s/fluxcd/flux-manifests", hostport),
+			URL: fmt.Sprintf("oci://%s/fluxcd/flux-manifests", mustURL(t, srv.URL).Host),
 			// httptest.NewTLSServer issues a self-signed cert; flate
 			// maps spec.insecure to TLS InsecureSkipVerify.
 			Insecure:  true,
@@ -68,9 +64,7 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 		t.Fatal("Fetch returned no artifact")
 	}
 
-	// The regression target: pre-fix the slot held only .flate-digest
-	// because the layer blob went to memory; the extracted file is the
-	// observable proof that fallback storage now writes to disk.
+	// Observable proof that the layer made it to disk and got extracted.
 	got, err := os.ReadFile(filepath.Join(art.LocalPath, "gotk-components.yaml")) //nolint:gosec // inside t.TempDir-rooted slot
 	if err != nil {
 		t.Fatalf("expected extracted gotk-components.yaml under %s: %v\nslot contents: %v",
@@ -79,54 +73,68 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 	if want := "kind: ConfigMap\n"; string(got) != want {
 		t.Errorf("gotk-components.yaml = %q, want %q", got, want)
 	}
+
+	// OCI layout artifacts should be wiped after extract so kustomize /
+	// downstream consumers see only the artifact's own files.
+	for _, name := range ociLayoutArtifacts {
+		if _, err := os.Stat(filepath.Join(art.LocalPath, name)); !os.IsNotExist(err) {
+			t.Errorf("leftover OCI layout artifact in slot: %s (err: %v)", name, err)
+		}
+	}
 }
 
-// TestFlatFallbackStorage exercises the storage contract directly so
-// regressions in Push / Fetch / Exists don't depend on the full
-// httptest-registry round-trip catching them.
-func TestFlatFallbackStorage(t *testing.T) {
+// TestFetcher_ExtractCollidesWithOCILayoutName guards the staging
+// step in applyLayerSelector: a tarball whose entries collide with
+// OCI Image Layout well-known names (blobs/, index.json, oci-layout)
+// must still extract cleanly. The staging dance moves the layer out
+// of the layout subtree before the wipe, then extracts onto a slot
+// with no surviving layout dirs to collide against.
+func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
-	s := &flatFallbackStorage{root: root}
-	payload := []byte("hello flate")
-	desc := ocispec.Descriptor{
-		MediaType: "application/vnd.test",
-		Digest:    digest.Digest(sha256Digest(payload)),
-		Size:      int64(len(payload)),
+	layerBytes := mustTarGz(t, map[string]string{
+		"blobs/should-survive.yaml": "kind: ConfigMap\nmetadata:\n  name: survives\n",
+		"index.json":                `{"user": "data"}`,
+		"oci-layout":                "user-owned content",
+		"kustomization.yaml":        "resources:\n- blobs/should-survive.yaml\n",
+	})
+	configBytes := []byte(`{}`)
+	manifestBytes := mustManifestJSON(t, configBytes, layerBytes,
+		"application/vnd.cncf.flux.config.v1+json",
+		"application/vnd.cncf.flux.content.v1.tar+gzip",
+	)
+	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
+
+	f := &Fetcher{Cache: source.NewCache(t.TempDir())}
+	repo := &manifest.OCIRepository{
+		Name:      "collider",
+		Namespace: "test",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			URL:       fmt.Sprintf("oci://%s/collider", mustURL(t, srv.URL).Host),
+			Insecure:  true,
+			Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
+		},
 	}
 
-	// Exists is false before Push.
-	if ok, err := s.Exists(t.Context(), desc); err != nil || ok {
-		t.Fatalf("Exists before Push = (%v, %v), want (false, nil)", ok, err)
-	}
-
-	if err := s.Push(t.Context(), desc, strings.NewReader(string(payload))); err != nil {
-		t.Fatalf("Push: %v", err)
-	}
-
-	// Push lands at <root>/<hex> — applyLayerSelector / cleanupBlobs
-	// both rely on this layout.
-	_, hexDigest, _ := strings.Cut(desc.Digest.String(), ":")
-	if _, err := os.Stat(filepath.Join(root, hexDigest)); err != nil {
-		t.Fatalf("blob not at <root>/<hex>: %v", err)
-	}
-
-	if ok, err := s.Exists(t.Context(), desc); err != nil || !ok {
-		t.Fatalf("Exists after Push = (%v, %v), want (true, nil)", ok, err)
-	}
-
-	rc, err := s.Fetch(t.Context(), desc)
+	art, err := f.Fetch(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	defer rc.Close()
-	got, err := io.ReadAll(rc)
+
+	// User's blobs/should-survive.yaml must be intact, not wiped by
+	// the OCI layout cleanup.
+	got, err := os.ReadFile(filepath.Join(art.LocalPath, "blobs", "should-survive.yaml")) //nolint:gosec // inside t.TempDir-rooted slot
 	if err != nil {
-		t.Fatalf("read: %v", err)
+		t.Fatalf("user's blobs/should-survive.yaml was wiped by cleanup: %v", err)
 	}
-	if string(got) != string(payload) {
-		t.Errorf("Fetch = %q, want %q", got, payload)
+	if !strings.Contains(string(got), "name: survives") {
+		t.Errorf("survives.yaml content lost: %q", got)
+	}
+	// User's index.json + oci-layout files must also survive.
+	for _, name := range []string{"index.json", "oci-layout", "kustomization.yaml"} {
+		if _, err := os.Stat(filepath.Join(art.LocalPath, name)); err != nil {
+			t.Errorf("user's %s was wiped: %v", name, err)
+		}
 	}
 }
 
@@ -169,8 +177,8 @@ func startFakeRegistry(t *testing.T, manifestBytes, configBytes, layerBytes []by
 }
 
 // mustManifestJSON builds an OCI image manifest pointing at the given
-// config + single layer (no title annotations — that's the whole
-// point of the regression).
+// config + single layer with no title annotations — the shape that
+// surfaces the regression this test covers.
 func mustManifestJSON(t *testing.T, configBytes, layerBytes []byte, configMT, layerMT string) []byte {
 	t.Helper()
 	m := ocispec.Manifest{
@@ -220,4 +228,3 @@ func slotEntries(t *testing.T, dir string) []string {
 	}
 	return names
 }
-

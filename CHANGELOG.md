@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.14](https://github.com/home-operations/flate/compare/0.1.13...0.1.14) (2026-05-24)
+
+
+### Features
+
+* **controllers/kustomization:** substituteFrom ConfigMap as depwait edge (step 3/4) ([#240](https://github.com/home-operations/flate/issues/240)) ([10c605f](https://github.com/home-operations/flate/commit/10c605f740b1fcfa4683211e939d15697c051184))
+* **loader:** DiscoveryOnly with lazy promotion (step 4/4) ([#242](https://github.com/home-operations/flate/issues/242)) ([f66cb59](https://github.com/home-operations/flate/commit/f66cb597cffd6f333fa64033584593b200376a91))
+
+
+### Bug Fixes
+
+* **manifest:** Flux-native envsubst handling — defaults + template skip ([#236](https://github.com/home-operations/flate/issues/236)) ([d445088](https://github.com/home-operations/flate/commit/d4450880635ffc0dfa9a0a7851b59c360948868c))
+
+
+### Code Refactoring
+
+* **controllers:** ParentOf is a resolver func, queries both sources ([#239](https://github.com/home-operations/flate/issues/239)) ([572e622](https://github.com/home-operations/flate/commit/572e6227d562805080c9fef3efa7254fed158263))
+* **orchestrator:** RenderTracker carries parent KS provenance ([#238](https://github.com/home-operations/flate/issues/238)) ([2803315](https://github.com/home-operations/flate/commit/2803315a41bb4ee6b2ecaf391f2bde09ed4a7325))
+
 ## [0.1.13](https://github.com/home-operations/flate/compare/0.1.12...0.1.13) (2026-05-24)
 
 

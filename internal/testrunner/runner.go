@@ -134,8 +134,8 @@ func classify(s *store.Store, id manifest.NamedResource) Case {
 		// layers of bureaucracy. Same treatment the orchestrator gives
 		// its aggregated error.
 		return Case{ID: id, Outcome: OutcomeFailed, Reason: manifest.TrimSentinelPrefix(info.Message)}
-	case info.Status == store.StatusReady && info.Message == "unchanged":
-		return Case{ID: id, Outcome: OutcomeSkipped, Reason: "unchanged"}
+	case store.IsUnchanged(info):
+		return Case{ID: id, Outcome: OutcomeSkipped, Reason: store.MsgUnchanged}
 	case store.IsSkipped(info):
 		// Strip the `skipped: ` convention prefix from the stored
 		// message — the column already prints SKIPPED, so leading the

@@ -8,17 +8,49 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// SkippedPrefix is the message prefix UpdateStatus carries when a
-// resource was soft-skipped (e.g. by --allow-missing-secrets). Status
-// remains StatusReady — depwait treats the resource as ready so deps
-// unblock — but consumers can detect the skip via IsSkipped to
-// propagate it (KS resolveSourceRoot, test runner classification).
-const SkippedPrefix = "skipped:"
+// Canonical StatusReady message vocabulary. flate overloads
+// StatusReady with several "ready but…" sub-states encoded in the
+// message text — depwait treats them uniformly as ready (so deps
+// unblock), while consumers branch on the message to decide UI /
+// propagation.
+//
+// Three sub-states exist today:
+//
+//   - SkippedPrefix — a resource soft-skipped by --allow-missing-
+//     secrets (or by a consumer propagating a source-skip). Detect
+//     via IsSkipped. Message format: "skipped: <reason>".
+//   - MsgUnchanged — the change-filter excluded this resource
+//     because its sources weren't in the diff. Detect via
+//     IsUnchanged. Used by `flate test` for SKIPPED outcomes.
+//   - MsgSuspended — spec.suspend was honored. Detect via
+//     IsSuspended.
+//
+// All three are kept in one place so the literal-vs-helper drift
+// (testrunner's `info.Message == "unchanged"` direct compare, etc.)
+// has exactly one source of truth and a future rephrasing in
+// controllers/base only requires updating the constant here.
+const (
+	SkippedPrefix = "skipped:"
+	MsgUnchanged  = "unchanged"
+	MsgSuspended  = "suspended"
+)
 
 // IsSkipped reports whether info represents a soft-skip — i.e. a
 // StatusReady whose message starts with SkippedPrefix.
 func IsSkipped(info StatusInfo) bool {
 	return info.Status == StatusReady && strings.HasPrefix(info.Message, SkippedPrefix)
+}
+
+// IsUnchanged reports whether info represents a change-filter
+// exclusion (StatusReady + MsgUnchanged).
+func IsUnchanged(info StatusInfo) bool {
+	return info.Status == StatusReady && info.Message == MsgUnchanged
+}
+
+// IsSuspended reports whether info represents a spec.suspend honor
+// (StatusReady + MsgSuspended).
+func IsSuspended(info StatusInfo) bool {
+	return info.Status == StatusReady && info.Message == MsgSuspended
 }
 
 // Status is the processing state of a resource as projected from its

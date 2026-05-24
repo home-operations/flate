@@ -109,6 +109,13 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 // changed-only diffs: the leaf KS isn't keep-set'd, never reconciles,
 // and its render output is missing from the diff. Issue #204.
 //
+// Ordering contract for embedders: call Add(child) BEFORE the
+// emitting Store.AddObject(child). Store events fire synchronously
+// on the calling goroutine, so the controller's listener invokes
+// PreGate (and thus ShouldReconcile) inside that AddObject — if
+// Add ran after, the listener sees the old keep set and short-
+// circuits to Ready/"unchanged".
+//
 // No-op when the filter is disabled. Safe for concurrent use.
 func (f *Filter) Add(id manifest.NamedResource) {
 	if !f.Enabled() {

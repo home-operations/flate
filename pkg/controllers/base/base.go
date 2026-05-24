@@ -109,11 +109,11 @@ func (c *Controller) Submit(ctx context.Context, id manifest.NamedResource, fn f
 //   - otherwise → returns false, caller proceeds to Submit/reconcile
 func (c *Controller) PreGate(id manifest.NamedResource, suspended bool) bool {
 	if suspended {
-		c.Store.UpdateStatus(id, store.StatusReady, "suspended")
+		c.Store.UpdateStatus(id, store.StatusReady, store.MsgSuspended)
 		return true
 	}
 	if c.filter.Enabled() && !c.filter.ShouldReconcile(id) {
-		c.Store.UpdateStatus(id, store.StatusReady, "unchanged")
+		c.Store.UpdateStatus(id, store.StatusReady, store.MsgUnchanged)
 		return true
 	}
 	return false

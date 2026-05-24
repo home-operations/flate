@@ -176,9 +176,12 @@ func joinRunErrors(orig, curr error) error {
 // shows it for KS parents).
 func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) []diff.Doc {
 	var out []diff.Doc
-	// Drop kinds the user opted out of (--skip-secrets / --skip-crds /
-	// --skip-kinds). KS-rendered docs reach Result.Manifests unfiltered;
-	// see comment in writeRendered. See #169.
+	// Defensive re-drop of --skip-secrets / --skip-crds / --skip-kinds.
+	// Orchestrator.Render already applies the same set to Result.Manifests
+	// at the embed boundary (orchestrator.go:555), so this is a no-op for
+	// CLI callers. It still pulls weight for SDK consumers who hand-build
+	// a Result and pass it through the CLI helpers in tests / harnesses.
+	// See #169.
 	var skip []string
 	if c != nil {
 		skip = c.skipResourceKinds()

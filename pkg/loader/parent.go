@@ -26,6 +26,22 @@ import (
 // sourceFiles is the orchestrator's NamedResource → repo-relative
 // source-file map; entries without a recorded file are skipped.
 func BuildParentIndex(s *store.Store, sourceFiles map[manifest.NamedResource]string) map[manifest.NamedResource]manifest.NamedResource {
+	return buildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
+}
+
+// BuildParentIndexForKind extends BuildParentIndex to map any kind to
+// its enclosing Flux Kustomization. The HR controller uses this to
+// gate reconcile on the parent KS — without that gate, the file-
+// loaded HR renders once with stale spec, the parent KS applies
+// `replacements:` / `patches:` and re-emits a mutated HR, the HR
+// controller renders again with the canonical spec, and helm runs
+// twice for one logical resource. Same parent-prefix logic as
+// BuildParentIndex, just iterating the requested child kind.
+func BuildParentIndexForKind(s *store.Store, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
+	return buildParentIndexForKind(s, sourceFiles, childKind)
+}
+
+func buildParentIndexForKind(s *store.Store, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
 	type owner struct {
 		prefix string
 		id     manifest.NamedResource
@@ -46,12 +62,8 @@ func BuildParentIndex(s *store.Store, sourceFiles map[manifest.NamedResource]str
 		return cmp.Compare(len(b.prefix), len(a.prefix))
 	})
 	out := map[manifest.NamedResource]manifest.NamedResource{}
-	for _, obj := range s.ListObjects(manifest.KindKustomization) {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok {
-			continue
-		}
-		id := ks.Named()
+	for _, obj := range s.ListObjects(childKind) {
+		id := obj.Named()
 		file, ok := sourceFiles[id]
 		if !ok {
 			continue

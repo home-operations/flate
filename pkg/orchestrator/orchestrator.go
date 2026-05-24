@@ -105,6 +105,16 @@ type Orchestrator struct {
 	// kustomization controller at Run-time, never mutated thereafter.
 	parentOf map[manifest.NamedResource]manifest.NamedResource
 
+	// hrParentOf maps each file-loaded HelmRelease to its structural-
+	// parent KS so the HR controller can depwait on the parent's
+	// reconcile before rendering. Without this, an HR underneath a
+	// parent KS that applies spec-mutating patches (e.g. tholinka's
+	// cluster-wide driftDetection/upgrade/crds override) renders
+	// twice: once with the file-loaded pre-patch spec, once with the
+	// emitted post-patch spec. Both renders are legitimate but the
+	// first is pure waste.
+	hrParentOf map[manifest.NamedResource]manifest.NamedResource
+
 	// rendered tracks IDs the KS controller emitted from a parent
 	// render (vs. only loaded by the file walker). detectOrphans reads
 	// it to demote stale-on-disk resources to "orphan" rather than
@@ -247,6 +257,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	}
 	o.sourceFiles = res.SourceFiles
 	o.parentOf = res.ParentOf
+	o.hrParentOf = res.HRParentOf
 
 	o.validateDependsOn()
 	o.breakDependsOnCycles()
@@ -428,7 +439,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		ParentOf:      o.parentOf,
 		RenderTracker: o.rendered,
 	})
-	o.hrc.Configure(helmrelease.ReconcileOptions{Filter: o.filter})
+	o.hrc.Configure(helmrelease.ReconcileOptions{Filter: o.filter, ParentOf: o.hrParentOf})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)
 	o.hrc.Start(ctx)

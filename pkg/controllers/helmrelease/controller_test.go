@@ -7,6 +7,7 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
@@ -112,6 +113,54 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 		t.Errorf("resolver returned wrong source: %+v", got)
 	}
 }
+
+// TestHelmReleaseFingerprint_StableAcrossLabelStamping locks the
+// dedup contract: an HR re-AddObject'd with kustomize ownership
+// labels (the typical pattern when the parent KS emits a
+// re-stamped copy) must produce the same fingerprint as the file-
+// loaded original — otherwise the dedup short-circuit can't fire
+// and helm.Template runs twice for one logical release.
+func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
+	base := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Interval: metav1Duration(time.Hour),
+		},
+		Chart:  manifest.HelmChart{Name: "podinfo", RepoName: "podinfo", RepoNamespace: "flux-system", RepoKind: manifest.KindHelmRepository},
+		Values: map[string]any{"replicas": 2},
+	}
+	stamped := base.Clone()
+	stamped.Labels = map[string]string{
+		"kustomize.toolkit.fluxcd.io/name":      "parent-ks",
+		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
+	}
+	stamped.Annotations = map[string]string{"reconcile.fluxcd.io/requestedAt": "now"}
+
+	if got, want := helmReleaseFingerprint(stamped), helmReleaseFingerprint(base); got != want {
+		t.Errorf("fingerprint changed under label/annotation stamping; got %q want %q", got, want)
+	}
+}
+
+// TestHelmReleaseFingerprint_DifferentOnSpecChange flips the
+// invariant: if patches mutate spec (tholinka's cluster KS pattern
+// — driftDetection, install.crds, upgrade.* injected via
+// kustomize), the fingerprint MUST differ so the controller
+// renders the canonical post-patch values.
+func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
+	base := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{Interval: metav1Duration(time.Hour)},
+		Chart:           manifest.HelmChart{Name: "podinfo"},
+	}
+	patched := base.Clone()
+	patched.DriftDetection = &helmv2.DriftDetection{Mode: helmv2.DriftDetectionEnabled}
+
+	if got := helmReleaseFingerprint(base); got == helmReleaseFingerprint(patched) {
+		t.Errorf("fingerprint should differ when spec.driftDetection mutates; both = %q", got)
+	}
+}
+
+func metav1Duration(d time.Duration) metav1.Duration { return metav1.Duration{Duration: d} }
 
 func TestController_CollectHRDepsClone(t *testing.T) {
 	c, _ := newTestController(t, nil)

@@ -43,6 +43,16 @@ type Result struct {
 	// (the enclosing KS whose spec.path contains this one's source
 	// file). Empty when no parent enforcement applies.
 	ParentOf map[manifest.NamedResource]manifest.NamedResource
+	// HRParentOf maps each file-loaded HelmRelease to the structural-
+	// parent Kustomization that will re-emit it during reconcile.
+	// The HR controller depwaits on the parent so its first render
+	// uses the post-patch HR (drift detection / upgrade strategy /
+	// CRD policy overrides applied at the cluster KS level) rather
+	// than the pre-patch file-loaded copy. Without this, every HR
+	// under such a cluster patch chain rendered twice — once stale,
+	// once canonical — doubling helm-render time and any warnings
+	// the chart emits during coalesce.
+	HRParentOf map[manifest.NamedResource]manifest.NamedResource
 }
 
 // Config is the input contract for Run. Store is mandatory.
@@ -76,10 +86,12 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	d.aliasBootstrapSources(repoRoot)
 	loader.ApplyNamespaceInheritance(d.cfg.Store, d.sourceFiles, repoRoot)
 	parentOf := loader.BuildParentIndex(d.cfg.Store, d.sourceFiles)
+	hrParentOf := loader.BuildParentIndexForKind(d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease)
 	return &Result{
 		RepoRoot:    repoRoot,
 		SourceFiles: d.sourceFiles,
 		ParentOf:    parentOf,
+		HRParentOf:  hrParentOf,
 	}, nil
 }
 

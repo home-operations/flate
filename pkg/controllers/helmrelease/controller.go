@@ -9,8 +9,13 @@ package helmrelease
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -23,7 +28,7 @@ import (
 )
 
 // Controller orchestrates HelmRelease reconciliation. Reconcile-shaping
-// state (Filter) flows in via Configure exactly once before Start.
+// state (Filter, ParentOf) flows in via Configure exactly once before Start.
 type Controller struct {
 	*base.Controller
 
@@ -36,14 +41,24 @@ type Controller struct {
 	// templates.
 	WipeSecrets bool
 
+	// parentOf maps each file-loaded HR to the enclosing Flux KS whose
+	// spec.path covers it. Reconcile depwaits on the parent's Ready so
+	// the first render reads the post-patch HR rather than the file-
+	// loaded pre-patch copy.
+	parentOf map[manifest.NamedResource]manifest.NamedResource
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
 // wires onto the controller. Filter narrows reconciliation to changed
 // HelmReleases (and their referenced sources/values) in changed-only
-// mode.
+// mode. ParentOf maps each file-loaded HR to the enclosing KS whose
+// spec.path covers it; reconcile depwaits on the parent before
+// rendering so spec patches (driftDetection / upgrade strategy /
+// CRD policy at the cluster KS level, post-build substitutions,
+// kustomize replacements) land before the first helm.Template call.
 type ReconcileOptions struct {
-	Filter *change.Filter
+	Filter   *change.Filter
+	ParentOf map[manifest.NamedResource]manifest.NamedResource
 }
 
 // New constructs a HelmRelease controller.
@@ -61,6 +76,7 @@ func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wip
 // read-only once dispatch begins.
 func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetFilter(opts.Filter)
+	c.parentOf = opts.ParentOf
 }
 
 // Start registers the listeners. The controller runs until Close.
@@ -95,6 +111,40 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) error {
 	id := hr.Named()
 
+	// Parent gate: if this HR was file-loaded under a Flux KS's
+	// spec.path, wait for that KS to finish reconciling before
+	// rendering. The KS may apply patches / replacements / postBuild
+	// substitutions that mutate spec — without the wait, the first
+	// render uses stale (pre-patch) values and a second render
+	// follows once the KS controller emits the patched copy via
+	// AddObject, doubling helm-template work for every HR under a
+	// parent-patching chain (tholinka/home-ops's cluster KS applies
+	// driftDetection / install.crds / upgrade strategy / rollback to
+	// every HR, so all of them were hit by this).
+	if parent, ok := c.parentOf[id]; ok {
+		c.Store.UpdateStatus(id, store.StatusPending, "waiting for parent KS")
+		var sum depwait.Summary
+		c.Tasks.YieldSlot(func() {
+			w := &depwait.Waiter{
+				Store:   c.Store,
+				Parent:  id,
+				Timeout: depwait.TimeoutFromSpec(hr.Timeout),
+			}
+			sum = depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: parent}}))
+		})
+		if sum.AnyFailed() {
+			return fmt.Errorf("%w: parent Kustomization %s not ready: %s",
+				manifest.ErrObjectNotFound, parent.String(), sum.Messages[parent])
+		}
+		// The parent's render may have replaced this HR in the store
+		// with a patched copy; re-read so the rest of reconcile uses
+		// the canonical spec instead of the pre-patch snapshot we
+		// were dispatched with.
+		if obj, ok := c.Store.GetObject(id).(*manifest.HelmRelease); ok {
+			hr = obj
+		}
+	}
+
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
 	// YieldSlot releases the worker-pool slot during the wait so the
@@ -127,6 +177,21 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	hr, err := helm.Prepare(hr, c.Helm.Resolver().HelmChart, values.NewStoreProvider(c.Store))
 	if err != nil {
 		return err
+	}
+
+	// Fingerprint dedup: when the same HR id gets re-AddObject'd with
+	// the same effective spec (e.g. the parent KS render stamps
+	// kustomize.toolkit.fluxcd.io/{name,namespace} labels onto a
+	// previously-loaded HR and re-emits it via Store.AddObject), skip
+	// the helm render — its output would be byte-identical. Without
+	// this, flate runs helm.Template twice for every HR a parent KS
+	// owns, which surfaces as duplicate "warning: cannot overwrite
+	// table..." log lines from helm's coalescer and roughly doubles
+	// the HR-render time on real-world trees.
+	fp := helmReleaseFingerprint(hr)
+	if existing, ok := c.Store.GetArtifact(id).(*store.HelmReleaseArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
+		slog.Debug("helmrelease: skipped re-render (fingerprint unchanged)", "id", id.String())
+		return nil
 	}
 
 	// Wait for chart source (HelmRepository / OCIRepository / GitRepository)
@@ -183,8 +248,50 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		c.Store.AddRendered(obj)
 	}
 
-	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs})
+	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
 	return nil
+}
+
+// helmReleaseFingerprint produces a stable hash of the inputs that
+// determine helm.Template's output for hr. Excludes metadata.labels
+// and metadata.annotations on purpose — kustomize-controller-emitted
+// HRs differ from their file-loaded sources only in label stamping,
+// and re-rendering on a label diff is pure waste. Returns "" when
+// json.Marshal fails (degrades safely: an empty fingerprint never
+// matches, so the dedup short-circuit is skipped and we re-render).
+func helmReleaseFingerprint(hr *manifest.HelmRelease) string {
+	raw, err := json.Marshal(helmReleaseFingerprintPayload(hr))
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func helmReleaseFingerprintPayload(hr *manifest.HelmRelease) any {
+	return struct {
+		ReleaseName              string
+		ReleaseNamespace         string
+		Chart                    manifest.HelmChart
+		Values                   map[string]any
+		Spec                     helmv2.HelmReleaseSpec
+		ChartValuesFiles         []string
+		IgnoreMissingValuesFiles bool
+		CRDsPolicy               string
+		DisableSchemaValidation  bool
+		DisableOpenAPIValidation bool
+	}{
+		ReleaseName:              hr.ReleaseName(),
+		ReleaseNamespace:         hr.ReleaseNamespace(),
+		Chart:                    hr.Chart,
+		Values:                   hr.Values,
+		Spec:                     hr.HelmReleaseSpec,
+		ChartValuesFiles:         hr.ChartValuesFiles,
+		IgnoreMissingValuesFiles: hr.IgnoreMissingValuesFiles,
+		CRDsPolicy:               hr.CRDsPolicy,
+		DisableSchemaValidation:  hr.DisableSchemaValidation,
+		DisableOpenAPIValidation: hr.DisableOpenAPIValidation,
+	}
 }
 
 // collectHRDeps returns hr's typed dependsOn entries (carrying any

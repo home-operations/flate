@@ -56,8 +56,19 @@ func (*KustomizationArtifact) artifact() {}
 func (a *KustomizationArtifact) RenderedManifests() []map[string]any { return a.Manifests }
 
 // HelmReleaseArtifact is the rendered output of a HelmRelease template.
+//
+// Fingerprint is a stable hash of the inputs that determine the
+// rendered output (chart identity, expanded values, install/upgrade
+// flags). The HR controller compares it on every reconcile and
+// skips the helm render — which is by far the hot path — when a
+// re-AddObject event arrives with the same effective spec. Typical
+// trigger: the parent Kustomization's render re-emits the HR with
+// `kustomize.toolkit.fluxcd.io/{name,namespace}` ownership labels
+// stamped on metadata, which fails AddObject's reflect-DeepEqual
+// gate even though the rendered output would be byte-identical.
 type HelmReleaseArtifact struct {
-	Manifests []map[string]any
+	Manifests   []map[string]any
+	Fingerprint string
 }
 
 func (*HelmReleaseArtifact) artifact() {}

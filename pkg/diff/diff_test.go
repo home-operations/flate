@@ -196,6 +196,53 @@ func TestRun_ContainerByNameImageChange(t *testing.T) {
 	}
 }
 
+// TestRender_DiffHeaderOnlyWhenMultiple pins the per-resource header
+// policy: a single diff renders bare (no `# ...` line), but two or
+// more diffs each get a `#`-prefixed identifier so the reader can
+// tell which resource a `@@ <path> @@` block belongs to. dyff's
+// path doesn't carry the owning resource, so headers are load-
+// bearing exactly when ambiguity is possible — and only then.
+func TestRender_DiffHeaderOnlyWhenMultiple(t *testing.T) {
+	mkDiff := func(name string) ResourceDiff {
+		return ResourceDiff{
+			Parent: Parent{Kind: "HelmRelease", Namespace: "media", Name: name},
+			Kind:   "Deployment", Namespace: "media", Name: name,
+			Diff: "\n@@ spec.replicas @@\n! ± value change\n- 1\n+ 2\n",
+		}
+	}
+
+	t.Run("single resource renders without header", func(t *testing.T) {
+		out, err := Render([]ResourceDiff{mkDiff("qui")}, FormatDiff)
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		if strings.Contains(string(out), "# HelmRelease") {
+			t.Errorf("single-resource output should not include a header line; got:\n%s", out)
+		}
+		if !strings.Contains(string(out), "@@ spec.replicas @@") {
+			t.Errorf("body should pass through verbatim; got:\n%s", out)
+		}
+	})
+
+	t.Run("multiple resources each get a header", func(t *testing.T) {
+		out, err := Render([]ResourceDiff{mkDiff("qui"), mkDiff("plex")}, FormatDiff)
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		s := string(out)
+		if !strings.Contains(s, "# HelmRelease: media/qui Deployment: media/qui") {
+			t.Errorf("missing qui header:\n%s", s)
+		}
+		if !strings.Contains(s, "# HelmRelease: media/plex Deployment: media/plex") {
+			t.Errorf("missing plex header:\n%s", s)
+		}
+		// And critically: NO flux-local-style `--- / +++` twin banners.
+		if strings.Contains(s, "--- HelmRelease") || strings.Contains(s, "+++ HelmRelease") {
+			t.Errorf("output reintroduced the --- / +++ twin banner:\n%s", s)
+		}
+	})
+}
+
 func TestFormat_JSON(t *testing.T) {
 	diffs := []ResourceDiff{{Kind: "ConfigMap", Name: "a", Diff: "..."}}
 	out, err := Render(diffs, FormatJSON)

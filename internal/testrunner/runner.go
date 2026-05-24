@@ -96,6 +96,18 @@ func Run(j Job) Report {
 			if j.Name != "" && id.Name != j.Name {
 				continue
 			}
+			// Skip the synthetic bootstrap GitRepository the
+			// discovery phase seeds for `spec.path` anchoring (see
+			// pkg/discovery.seedBootstrapSource). It carries the
+			// status message "bootstrap" so users running
+			// `flate test all` on a repo that doesn't actually
+			// declare flux-system/flux-system don't see a phantom
+			// PASSED row for an internal artifact.
+			if id == manifest.BootstrapSourceID {
+				if info, ok := j.Store.GetStatus(id); ok && info.Message == "bootstrap" {
+					continue
+				}
+			}
 			c := classify(j.Store, id)
 			switch c.Outcome {
 			case OutcomePassed:

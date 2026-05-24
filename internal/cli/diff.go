@@ -84,8 +84,15 @@ func newDiffImagesCmd() *cobra.Command {
 }
 
 func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemoved bool) error {
-	// diff images emits a flat list — only json/yaml are honored.
-	if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
+	// diff images emits a flat list of image refs — json/yaml/name
+	// are the meaningful shapes. The CLI default `-o table` would
+	// otherwise leak through `requireOutput`'s table-passthrough
+	// (common.go:requireOutput) and fall into emitImageList's
+	// newline-per-image branch, producing identical output to
+	// `-o name` with no signposting that the format was effectively
+	// coerced. Allow `-o name` explicitly, then route `table` →
+	// `name` so the default and the explicit form match.
+	if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputName); err != nil {
 		return err
 	}
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
@@ -93,7 +100,11 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 		return runErr
 	}
 	imgs := imageSetDiff(collectImages(orig.O, orig.Res, c), collectImages(current.O, current.Res, c), includeRemoved)
-	if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
+	out := c.output
+	if out == string(format.OutputTable) {
+		out = string(format.OutputName)
+	}
+	if err := emitImageList(cmd.OutOrStdout(), imgs, out); err != nil {
 		return err
 	}
 	return runErr

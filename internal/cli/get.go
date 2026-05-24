@@ -196,7 +196,14 @@ func resourceListCmd[T manifest.BaseManifest](
 	}
 	bindCommon(cmd.Flags(), c)
 	bindSelector(cmd.Flags(), c)
-	bindHelmFlags(cmd.Flags(), h)
+	// Only attach helm-template flags when the kind being listed
+	// actually depends on Helm rendering — `get ks` listings don't,
+	// so showing --show-only / --no-hooks / --kube-version etc.
+	// confuses readers who'll wonder why the KS table cares about
+	// chart templating. Same gate `build` / `diff` / `test` use.
+	if rendersHelm([]string{kind}) {
+		bindHelmFlags(cmd.Flags(), h)
+	}
 	return cmd
 }
 

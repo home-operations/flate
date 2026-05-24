@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -63,18 +62,15 @@ func NewStagingCache(parent string) (*StagingCache, error) {
 // FetchRemote returns the body of urlStr, fetched at most once per
 // StagingCache lifetime. Both successful bodies and errors are
 // cached — concurrent callers block on a single sync.OnceValues and
-// every caller sees the same result. The warning log lives inside
-// the OnceValues so the user sees one WARN per broken URL per run,
-// not one per kustomization that referenced it.
+// every caller sees the same result. The error (if any) is returned
+// to the caller; logging is left to whichever reconcile path
+// surfaces the failure, so the user sees one structured error in
+// `flate test`'s report rather than a separate log line per call
+// site.
 func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, error) {
 	actual, _ := c.remoteFetches.LoadOrStore(urlStr, &remoteFetch{
 		once: sync.OnceValues(func() ([]byte, error) {
-			body, err := httpGetURL(ctx, urlStr)
-			if err != nil {
-				slog.Warn("kustomize: remote resource fetch failed",
-					"url", urlStr, "err", err)
-			}
-			return body, err
+			return httpGetURL(ctx, urlStr)
 		}),
 	})
 	return actual.(*remoteFetch).once()

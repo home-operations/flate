@@ -56,13 +56,14 @@ func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 	}
 }
 
-// TestPreflightRemoteResources_TombstoneOnFailure locks the
-// fail-fast behavior: a URL returning 404 → tombstone written →
-// kustomization.yaml points at the tombstone (not at the URL, not
-// at the git fallback). Verifies the fix for m00nwtchr's case where
-// a broken URL used to cascade 10+ seconds through kustomize's
-// HTTP-then-git path.
-func TestPreflightRemoteResources_TombstoneOnFailure(t *testing.T) {
+// TestPreflightRemoteResources_PropagatesFailure locks the contract:
+// a URL fetch failure returns an error to the caller — the KS
+// controller surfaces it as a real reconcile failure rather than
+// silently tombstoning and letting the build pass with a missing
+// resource. The error wraps the URL and the underlying status/IO
+// error so `flate test` shows the user what's actually broken in
+// their repo.
+func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -72,26 +73,15 @@ func TestPreflightRemoteResources_TombstoneOnFailure(t *testing.T) {
 	ks := filepath.Join(stage, "kustomization.yaml")
 	mustWriteFile(t, ks, "resources:\n  - "+srv.URL+"/missing.yaml\n")
 
-	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
-		t.Fatalf("preflight: %v", err)
+	err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage)
+	if err == nil {
+		t.Fatal("expected error on 404; got nil (preflight would silently swallow the failure)")
 	}
-
-	body, _ := os.ReadFile(ks) //nolint:gosec // ks is t.TempDir
-	if strings.Contains(string(body), srv.URL) {
-		t.Errorf("failed URL still present (should be tombstone):\n%s", body)
+	if !strings.Contains(err.Error(), srv.URL) {
+		t.Errorf("error should name the URL; got %q", err)
 	}
-	if !strings.Contains(string(body), ".flate-tombstone-") {
-		t.Errorf("expected tombstone rewrite:\n%s", body)
-	}
-
-	matches, _ := filepath.Glob(filepath.Join(stage, ".flate-tombstone-*.yaml"))
-	if len(matches) != 1 {
-		t.Fatalf("expected one tombstone, got %v", matches)
-	}
-	tomb, _ := os.ReadFile(matches[0]) //nolint:gosec // matches[0] is t.TempDir
-	if !strings.Contains(string(tomb), "remote resource fetch failed") ||
-		!strings.Contains(string(tomb), "HTTP 404") {
-		t.Errorf("tombstone missing diagnostic info:\n%s", tomb)
+	if !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("error should name the status code; got %q", err)
 	}
 }
 

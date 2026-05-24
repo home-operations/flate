@@ -416,9 +416,25 @@ func isLeafReconcilable(obj manifest.BaseManifest) bool {
 
 // collectDeps assembles the dependency refs whose readiness must
 // precede this Kustomization: explicit dependsOn entries (carrying any
-// CEL ReadyExpr), the source ref, and the implicit structural parent
-// (the enclosing Flux KS that renders us — must finish first so any
-// parent-render-time spec injections land before our reconcile).
+// CEL ReadyExpr), the source ref, the implicit structural parent (the
+// enclosing Flux KS that renders us — must finish first so any
+// parent-render-time spec injections land before our reconcile), and
+// every non-Optional postBuild.substituteFrom ConfigMap.
+//
+// substituteFrom ConfigMap edges fix the race where the referenced CM
+// is emitted by another KS's render: without the edge, KS-A would
+// race KS-B and Prepare would silently expand with empty values for
+// vars that should have come from KS-B's CM. Flux's eventual-
+// consistency reconcile loop self-heals; flate is one-shot, so a
+// missed substitution shows up as broken rendered output.
+//
+// Secret refs are deliberately NOT added as depwait edges. In real
+// repos substituteFrom Secrets are almost always SOPS-encrypted or
+// ExternalSecret-managed — they live in cluster state that flate
+// cannot materialize offline. values.ExpandPostBuildSubstituteReference
+// already gracefully degrades on missing Secrets (logs DEBUG and
+// continues); adding a hard edge here would regress every offline
+// render against a Flux repo that uses secret-substitute patterns.
 func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
 	deps := append([]manifest.DependencyRef(nil), ks.DependsOn...)
 	if ks.SourceKind != "" && ks.SourceName != "" {
@@ -432,6 +448,25 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 		if parent, ok := c.parentOf(ks.Named()); ok {
 			deps = append(deps, manifest.DependencyRef{NamedResource: parent})
 		}
+	}
+	for _, ref := range ks.PostBuildSubstituteFrom {
+		if ref.Optional {
+			// Optional refs are best-effort — their absence shouldn't
+			// gate reconcile. Matches Flux's own substituteFrom
+			// semantics for Optional=true.
+			continue
+		}
+		if ref.Kind != manifest.KindConfigMap {
+			continue
+		}
+		if ref.Name == "" {
+			continue
+		}
+		deps = append(deps, manifest.DependencyRef{
+			NamedResource: manifest.NamedResource{
+				Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name,
+			},
+		})
 	}
 	return deps
 }

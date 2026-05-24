@@ -41,6 +41,79 @@ func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
 	}
 }
 
+// TestCollectDeps_AppendsSubstituteFromConfigMap is step 3 of the
+// render-driven migration: every non-Optional postBuild.substituteFrom
+// ConfigMap becomes a real depwait edge. Without this, KS-A would
+// race the CM that KS-B's render emits, and Prepare would silently
+// expand with empty values for any var that should have come from
+// KS-B's CM.
+func TestCollectDeps_AppendsSubstituteFromConfigMap(t *testing.T) {
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
+			{Kind: manifest.KindConfigMap, Name: "maybe-missing", Optional: true},
+		},
+	}
+	c := New(store.New(), nil, nil, false)
+	deps := c.collectDeps(ks)
+
+	wantID := manifest.NamedResource{
+		Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings",
+	}
+	var found bool
+	for _, d := range deps {
+		if d.NamedResource == wantID {
+			found = true
+		}
+		if d.Kind == manifest.KindConfigMap && d.Name == "maybe-missing" {
+			t.Errorf("Optional substituteFrom ref must not gate reconcile; got %+v", d)
+		}
+	}
+	if !found {
+		t.Errorf("expected substituteFrom dep %+v in deps %+v", wantID, deps)
+	}
+}
+
+// TestCollectDeps_SubstituteFromSkipsSecrets locks the
+// SOPS/ExternalSecret carve-out: substituteFrom Secret refs are
+// resolved by values.ExpandPostBuildSubstituteReference at Prepare
+// time and gracefully degrade on missing entries. Adding a depwait
+// edge for them would regress every offline render against a Flux
+// repo using secret-substitute patterns (e.g. cnpg-objectstore,
+// cloudflare-tunnel-substitute) because those Secrets live in
+// cluster state flate cannot materialize.
+func TestCollectDeps_SubstituteFromSkipsSecrets(t *testing.T) {
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindSecret, Name: "cluster-secrets"},
+		},
+	}
+	c := New(store.New(), nil, nil, false)
+	if deps := c.collectDeps(ks); len(deps) != 0 {
+		t.Errorf("Secret substituteFrom refs must NOT gate reconcile; got %+v", deps)
+	}
+}
+
+// TestCollectDeps_SubstituteFromIgnoresMalformedRefs covers the
+// defensive branches in collectDeps: refs with an unknown Kind or
+// empty Name must be skipped rather than producing meaningless
+// depwait edges that would never resolve.
+func TestCollectDeps_SubstituteFromIgnoresMalformedRefs(t *testing.T) {
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: "Junk", Name: "x"},
+			{Kind: manifest.KindConfigMap, Name: ""},
+		},
+	}
+	c := New(store.New(), nil, nil, false)
+	if deps := c.collectDeps(ks); len(deps) != 0 {
+		t.Errorf("expected no deps from malformed substituteFrom refs; got %+v", deps)
+	}
+}
+
 // mapResolver wraps a static parent map into the func resolver shape
 // the controllers consume. Used by tests that want to verify
 // behavior on a known parent index without standing up the full

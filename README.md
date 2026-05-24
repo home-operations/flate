@@ -28,11 +28,13 @@ docker pull ghcr.io/home-operations/flate:latest
 
 ```bash
 flate get ks       --path ./kubernetes
-flate build hr     --path ./kubernetes media/plex
+flate build hr     --path ./kubernetes plex
 flate diff ks      --path ./kubernetes --path-orig ../baseline/kubernetes
 flate diff images  --path ./kubernetes --path-orig ../baseline/kubernetes -o json
 flate test all     --path ./kubernetes
 ```
+
+The `[name]` positional on `build`/`diff`/`test` is matched against the resource's bare name (`metadata.name`), not `namespace/name`. Use `-n / --namespace` to scope.
 
 Every command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag.
 
@@ -44,6 +46,8 @@ Every command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches i
 | `test` | `ks`, `hr`, `all` | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure. |
 
 `get ks` and `get hr` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart`). Every subcommand accepts `--allow-missing-secrets` to soft-skip sources whose auth Secret is missing or PLACEHOLDER-wiped — see [Behaviors](#behaviors).
+
+**Default output filters.** `--skip-secrets` and `--skip-crds` both default to `true` — `build`/`diff`/`test` strip rendered `Secret` and `CustomResourceDefinition` objects from output. Pass `--skip-secrets=false` / `--skip-crds=false` to include them; `--skip-kinds <kind>` (repeatable) drops additional kinds. These are output-stream filters, distinct from `--allow-missing-secrets`, which gates *source fetch* on missing auth Secrets.
 
 ## Changed-only mode
 
@@ -119,8 +123,9 @@ Other entry points worth knowing:
 
 - `Orchestrator.WithFetcher(kind, f)` — swap any source fetcher (in-memory fakes for tests, custom kinds).
 - `Store.OnObject` / `OnStatus` / `OnArtifact` — typed listeners; payloads are pre-cast.
-- `helm.Prepare(hr, charts, provider)` then `helmClient.TemplateDocs(...)` — render one HelmRelease without the orchestrator. `kustomize.Prepare(ks, provider)` is the symmetric helper for Kustomizations.
+- `helm.Prepare(hr, lookup, provider)` then `helmClient.TemplateDocs(...)` — render one HelmRelease without the orchestrator. `lookup` is a `manifest.HelmChartLookup` (`func(ns, name string) *HelmChartSource`). `kustomize.Prepare(ks, provider)` is the symmetric helper for Kustomizations.
 - `discovery.Run(ctx, Config{Path, Store, WipeSecrets})` — load phase as a standalone unit.
+- `change.Filter.Add(id)` — extend the changed-only-mode keep set at runtime when a custom controller emits a child that wasn't visible at filter-build time. Call BEFORE `Store.AddObject(child)` so the synchronous listener sees the extended set.
 - `Store.Mutate[T]` — clone-then-AddObject helper encoding the immutability contract. See [`pkg/manifest/doc.go`](pkg/manifest/doc.go) for the full rule.
 
 ## Architecture
@@ -129,7 +134,7 @@ Other entry points worth knowing:
 discovery → Store ⇄ events ⇄ controllers (source · kustomization · helmrelease)
 ```
 
-Pipeline: load → `spec.path` expansion → ResourceSet rendering → namespace inheritance → parent index → `dependsOn` validation → change-filter → controllers fire → child KS waits on parent Ready → render → orphan demotion → output.
+Pipeline: bootstrap-source seed → loader pre-pass excluding `configMapGenerator`/`secretGenerator` data files → file walk → `spec.path` + ResourceSet fixed-point expansion → bootstrap-source aliasing for unresolved `GitRepository` refs → namespace inheritance → parent index → `dependsOn` validation + cycle break → change-filter → controllers fire → render → render-time keep-set extension for emitted children → orphan demotion → output.
 
 The Store is the single source of truth. Every stored manifest is immutable; mutation routes through `Store.Mutate[T]` (clone, mutate, AddObject). Helm chart loads coalesce through a per-path keylock — N parallel reconciles of the same chart issue exactly one parse.
 

@@ -85,6 +85,56 @@ spec:
 	}
 }
 
+// TestRun_AliasesNonDefaultNamespaceBootstrap pins issue #199: a
+// Kustomization whose sourceRef points at a GitRepository in a
+// non-`flux-system` namespace (typical of the flux-operator /
+// FluxInstance pattern, where Flux runs in `gitops-system` and the
+// root GitRepository is created out-of-band by the operator) must
+// have that GitRepository aliased to the working tree so depwait
+// resolves it. Without the fix, every consumer fails with
+// `dependency not found: GitRepository/gitops-system/gitops-system`.
+func TestRun_AliasesNonDefaultNamespaceBootstrap(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	mustWrite(t, filepath.Join(dir, "flux", "cluster.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-repositories
+  namespace: gitops-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: gitops-system
+    namespace: gitops-system
+  interval: 1h
+`)
+	mustWrite(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	aliased := manifest.NamedResource{
+		Kind: manifest.KindGitRepository, Namespace: "gitops-system", Name: "gitops-system",
+	}
+	if st.GetObject(aliased) == nil {
+		t.Errorf("expected GitRepository/gitops-system/gitops-system to be aliased; alias scoped only to flux-system would leave this case broken")
+	}
+	if st.GetArtifact(aliased) == nil {
+		t.Errorf("aliased GitRepository should have a SourceArtifact so depwait resolves")
+	}
+	info, ok := st.GetStatus(aliased)
+	if !ok || info.Status != store.StatusReady {
+		t.Errorf("aliased GitRepository should be Ready; got ok=%v info=%+v", ok, info)
+	}
+}
+
 func TestRun_RequiresStoreAndLoader(t *testing.T) {
 	t.Parallel()
 	if _, err := discovery.Run(context.Background(), discovery.Config{Path: t.TempDir()}); err == nil {

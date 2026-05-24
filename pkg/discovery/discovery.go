@@ -299,12 +299,22 @@ func (d *discoverer) resolveInputProvider(ref fluxopv1.InputProviderReference, n
 }
 
 // aliasBootstrapSources seeds a working-tree SourceArtifact for every
-// `flux-system/<name>` GitRepository referenced by a loaded
-// Kustomization whose definition isn't in the repo itself. Targets the
-// chkpwd-ops / flux-bootstrap pattern: the user's entry-point KSes
-// reference a custom-named GitRepository installed by `flux bootstrap`
-// but never committed. Without aliasing, every downstream KS fails
-// "source artifact not found".
+// GitRepository referenced by a loaded Kustomization whose definition
+// isn't in the repo itself. Targets `flux bootstrap` / flux-operator
+// FluxInstance patterns: the cluster's root GitRepository is created
+// out-of-band (the source that delivers the rest of the manifests
+// cannot, by construction, be one of the manifests it delivers), so
+// no static manifest exists in the tree to discover. Without aliasing,
+// every Kustomization referencing it via `sourceRef` fails depwait
+// with "dependency not found" (issue #199).
+//
+// All namespaces are aliased, not just `flux-system` — the convention
+// of running Flux in a non-default namespace (e.g. `gitops-system`)
+// is widespread, and the bootstrap-source-points-at-the-local-tree
+// property is identical regardless of where the user happens to deploy
+// Flux. A typo'd sourceRef name will silently render against the
+// working tree instead of failing fast — same trade-off the
+// `flux-system` path already accepted.
 func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 	known := make(map[manifest.NamedResource]struct{})
 	for _, obj := range d.cfg.Store.ListObjects(manifest.KindGitRepository) {
@@ -314,9 +324,6 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 	for _, obj := range d.cfg.Store.ListObjects(manifest.KindKustomization) {
 		ks, ok := obj.(*manifest.Kustomization)
 		if !ok || ks.SourceKind != manifest.KindGitRepository {
-			continue
-		}
-		if ks.SourceNamespace != manifest.DefaultNamespace {
 			continue
 		}
 		id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: ks.SourceNamespace, Name: ks.SourceName}

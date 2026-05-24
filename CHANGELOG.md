@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.7](https://github.com/home-operations/flate/compare/0.1.6...0.1.7) (2026-05-24)
+
+
+### Features
+
+* **diff:** render via dyff in github mode; drop --strip-attr / --limit-bytes ([#196](https://github.com/home-operations/flate/issues/196)) ([a3c28ed](https://github.com/home-operations/flate/commit/a3c28ed2584a9f3b45c34c1f9c7654188ce1655a))
+
+
+### Miscellaneous Chores
+
+* immutable releases are painfoil ([258cc10](https://github.com/home-operations/flate/commit/258cc10b0039fbc328c47a7560253307e05375b0))
+
 ## [0.1.6](https://github.com/home-operations/flate/compare/0.1.5...0.1.6) (2026-05-23)
 
 

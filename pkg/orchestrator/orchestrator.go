@@ -175,8 +175,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	ts := task.NewBounded(cfg.Concurrency)
 	cache := cmp.Or(cfg.SourceCache, source.NewCache(filepath.Join(cacheRoot, "sources")))
 	secretGet := func(ns, name string) *manifest.Secret {
-		obj := st.GetByName(manifest.KindSecret, ns, name)
-		s, _ := obj.(*manifest.Secret)
+		s, _ := store.GetByName[*manifest.Secret](st, manifest.KindSecret, ns, name)
 		return s
 	}
 	helmClient.SetSecretGetter(secretGet)
@@ -267,36 +266,24 @@ func (o *Orchestrator) validateDependsOn() {
 		manifest.KindKustomization: {},
 		manifest.KindHelmRelease:   {},
 	}
-	ksList := o.store.ListObjects(manifest.KindKustomization)
-	for _, obj := range ksList {
-		if ks, ok := obj.(*manifest.Kustomization); ok {
-			known[manifest.KindKustomization][ks.NamespacedName()] = struct{}{}
-		}
+	ksList := store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization)
+	for _, ks := range ksList {
+		known[manifest.KindKustomization][ks.NamespacedName()] = struct{}{}
 	}
-	hrList := o.store.ListObjects(manifest.KindHelmRelease)
-	for _, obj := range hrList {
-		if hr, ok := obj.(*manifest.HelmRelease); ok {
-			known[manifest.KindHelmRelease][hr.NamespacedName()] = struct{}{}
-		}
+	hrList := store.ListAs[*manifest.HelmRelease](o.store, manifest.KindHelmRelease)
+	for _, hr := range hrList {
+		known[manifest.KindHelmRelease][hr.NamespacedName()] = struct{}{}
 	}
 	// Mutate via the Store helper — encodes the clone-then-AddObject
 	// contract so callers don't have to remember it.
-	for _, obj := range ksList {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok {
-			continue
-		}
+	for _, ks := range ksList {
 		kept, dropped := manifest.FilterDependsOn(ks.DependsOn, known[manifest.KindKustomization])
 		if dropped == 0 {
 			continue
 		}
 		store.Mutate(o.store, ks.Named(), func(k *manifest.Kustomization) { k.DependsOn = kept })
 	}
-	for _, obj := range hrList {
-		hr, ok := obj.(*manifest.HelmRelease)
-		if !ok {
-			continue
-		}
+	for _, hr := range hrList {
 		kept, dropped := manifest.FilterDependsOn(hr.DependsOn, known[manifest.KindHelmRelease])
 		if dropped == 0 {
 			continue

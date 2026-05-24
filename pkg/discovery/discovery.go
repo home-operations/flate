@@ -191,11 +191,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	ksExpanded := map[manifest.NamedResource]struct{}{}
 	for {
 		added := 0
-		for _, obj := range d.cfg.Store.ListObjects(manifest.KindKustomization) {
-			ks, ok := obj.(*manifest.Kustomization)
-			if !ok {
-				continue
-			}
+		for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
 			id := ks.Named()
 			if _, seen := ksExpanded[id]; seen {
 				continue
@@ -217,11 +213,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			}
 			added++
 		}
-		for _, obj := range d.cfg.Store.ListObjects(manifest.KindResourceSet) {
-			rs, ok := obj.(*manifest.ResourceSet)
-			if !ok {
-				continue
-			}
+		for _, rs := range store.ListAs[*manifest.ResourceSet](d.cfg.Store, manifest.KindResourceSet) {
 			n, err := d.renderResourceSet(rs)
 			if err != nil {
 				return err

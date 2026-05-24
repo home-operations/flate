@@ -169,7 +169,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		// with a patched copy; re-read so the rest of reconcile uses
 		// the canonical spec instead of the pre-patch snapshot we
 		// were dispatched with.
-		if obj, ok := c.Store.GetObject(id).(*manifest.HelmRelease); ok {
+		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
 			hr = obj
 		}
 	}
@@ -201,7 +201,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		// keeps the pre-mutation snapshot through chart
 		// resolution. Mirrors the KS controller's single
 		// refresh after its combined dep wait.
-		if obj, ok := c.Store.GetObject(id).(*manifest.HelmRelease); ok {
+		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
 			hr = obj
 		}
 	}

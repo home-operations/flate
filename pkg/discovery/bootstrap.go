@@ -57,9 +57,8 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 	}
 	seen := make(map[manifest.NamedResource]struct{})
 	var aliased []manifest.NamedResource
-	for _, obj := range d.cfg.Store.ListObjects(manifest.KindKustomization) {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.SourceKind != manifest.KindGitRepository {
+	for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
+		if ks.SourceKind != manifest.KindGitRepository {
 			continue
 		}
 		id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: ks.SourceNamespace, Name: ks.SourceName}
@@ -99,11 +98,7 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 	remotes := readWorkingTreeRemotes(repoRoot)
 	debugLogRemotes(remotes)
 	if len(remotes) > 0 {
-		for _, obj := range d.cfg.Store.ListObjects(manifest.KindGitRepository) {
-			repo, ok := obj.(*manifest.GitRepository)
-			if !ok {
-				continue
-			}
+		for _, repo := range store.ListAs[*manifest.GitRepository](d.cfg.Store, manifest.KindGitRepository) {
 			id := repo.Named()
 			if _, alreadyAliased := seen[id]; alreadyAliased {
 				continue

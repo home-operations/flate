@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // firstArg returns the first positional arg, or "" when none was given.
@@ -210,7 +211,7 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 			continue
 		}
 		parent := diff.Parent{Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
-		if ks, ok := o.Store().GetObject(id).(*manifest.Kustomization); ok {
+		if ks, ok := store.Get[*manifest.Kustomization](o.Store(), id); ok {
 			parent.Path = strings.TrimPrefix(ks.Path, "./")
 		}
 		for _, m := range manifest.DropKinds(docs, skip) {

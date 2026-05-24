@@ -25,9 +25,8 @@ type KSPathPrefix struct {
 // O(K²) to O(K · depth) in the typical case.
 func KSPathPrefixes(s *store.Store) []KSPathPrefix {
 	var out []KSPathPrefix
-	for _, obj := range s.ListObjects(manifest.KindKustomization) {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.Path == "" {
+	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+		if ks.Path == "" {
 			continue
 		}
 		out = append(out, KSPathPrefix{ID: ks.Named(), Prefix: normalizePrefix(ks.Path)})

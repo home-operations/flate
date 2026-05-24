@@ -118,9 +118,8 @@ func resolveNamespace(file string, flux, kust []pathEntry) string {
 // stay unsorted.
 func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]string, kust []pathEntry) []pathEntry {
 	var out []pathEntry
-	for _, obj := range s.ListObjects(manifest.KindKustomization) {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.Path == "" {
+	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+		if ks.Path == "" {
 			continue
 		}
 		ns := ks.TargetNamespace

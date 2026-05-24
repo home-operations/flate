@@ -61,22 +61,14 @@ func (o *Orchestrator) breakDependsOnCycles() {
 			}
 		}
 	}
-	for _, ks := range o.store.ListObjects(manifest.KindKustomization) {
-		k, ok := ks.(*manifest.Kustomization)
-		if !ok {
-			continue
-		}
+	for _, k := range store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization) {
 		if _, member := inCycle[manifest.KindKustomization][k.Named()]; !member {
 			continue
 		}
 		stripped := stripCycleDeps(k.DependsOn, inCycle[manifest.KindKustomization])
 		store.Mutate(o.store, k.Named(), func(x *manifest.Kustomization) { x.DependsOn = stripped })
 	}
-	for _, hr := range o.store.ListObjects(manifest.KindHelmRelease) {
-		h, ok := hr.(*manifest.HelmRelease)
-		if !ok {
-			continue
-		}
+	for _, h := range store.ListAs[*manifest.HelmRelease](o.store, manifest.KindHelmRelease) {
 		if _, member := inCycle[manifest.KindHelmRelease][h.Named()]; !member {
 			continue
 		}

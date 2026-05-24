@@ -169,7 +169,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		// re-read the first render would use the stale-spec snapshot
 		// captured by RunWithStatus, producing duplicate renders that
 		// linger in the store with the wrong namespace. See #102.
-		if fresh, ok := c.Store.GetObject(id).(*manifest.Kustomization); ok {
+		if fresh, ok := store.Get[*manifest.Kustomization](c.Store, id); ok {
 			ks = fresh
 		}
 	}

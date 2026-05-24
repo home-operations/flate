@@ -7,6 +7,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // renderResourceSet evaluates rs.Spec across its inputs and AddObjects
@@ -64,8 +65,8 @@ func (d *discoverer) resolveInputProvider(ref fluxopv1.InputProviderReference, n
 			Namespace: namespace,
 			Name:      ref.Name,
 		}
-		obj, _ := d.cfg.Store.GetObject(id).(*manifest.ResourceSetInputProvider)
-		if obj == nil {
+		obj, ok := store.Get[*manifest.ResourceSetInputProvider](d.cfg.Store, id)
+		if !ok {
 			return nil, nil
 		}
 		return []*manifest.ResourceSetInputProvider{obj}, nil
@@ -74,9 +75,8 @@ func (d *discoverer) resolveInputProvider(ref fluxopv1.InputProviderReference, n
 		return nil, nil
 	}
 	var out []*manifest.ResourceSetInputProvider
-	for _, obj := range d.cfg.Store.ListObjects(manifest.KindResourceSetInputProvider) {
-		p, ok := obj.(*manifest.ResourceSetInputProvider)
-		if !ok || p.Namespace != namespace {
+	for _, p := range store.ListAs[*manifest.ResourceSetInputProvider](d.cfg.Store, manifest.KindResourceSetInputProvider) {
+		if p.Namespace != namespace {
 			continue
 		}
 		match, err := resourceset.MatchSelector(ref.Selector, p.Labels)

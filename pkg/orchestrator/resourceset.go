@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // expandResourceSetsPostRun re-renders every ResourceSet using the
@@ -26,7 +27,7 @@ import (
 // is the canonical seeding point for Flux-kind RS children; this pass
 // only handles the visibility gap for non-Flux output.
 func (o *Orchestrator) expandResourceSetsPostRun() {
-	rsList := o.store.ListObjects(manifest.KindResourceSet)
+	rsList := store.ListAs[*manifest.ResourceSet](o.store, manifest.KindResourceSet)
 	if len(rsList) == 0 {
 		return
 	}
@@ -38,9 +39,8 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 		id     manifest.NamedResource
 	}
 	var owners []owner
-	for _, obj := range o.store.ListObjects(manifest.KindKustomization) {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.Path == "" {
+	for _, ks := range store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization) {
+		if ks.Path == "" {
 			continue
 		}
 		p := filepath.ToSlash(ks.Path)
@@ -76,11 +76,7 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 	// emit it under the parent KS.
 	seen := map[string]struct{}{}
 	out := map[manifest.NamedResource][]map[string]any{}
-	for _, obj := range rsList {
-		rs, ok := obj.(*manifest.ResourceSet)
-		if !ok {
-			continue
-		}
+	for _, rs := range rsList {
 		docs, err := resourceset.Render(rs, o.resolveInputProvider)
 		if err != nil || len(docs) == 0 {
 			continue
@@ -168,8 +164,8 @@ func (o *Orchestrator) resolveInputProvider(ref fluxopv1.InputProviderReference,
 			Namespace: namespace,
 			Name:      ref.Name,
 		}
-		obj, _ := o.store.GetObject(id).(*manifest.ResourceSetInputProvider)
-		if obj == nil {
+		obj, ok := store.Get[*manifest.ResourceSetInputProvider](o.store, id)
+		if !ok {
 			return nil, nil
 		}
 		return []*manifest.ResourceSetInputProvider{obj}, nil
@@ -178,9 +174,8 @@ func (o *Orchestrator) resolveInputProvider(ref fluxopv1.InputProviderReference,
 		return nil, nil
 	}
 	var out []*manifest.ResourceSetInputProvider
-	for _, obj := range o.store.ListObjects(manifest.KindResourceSetInputProvider) {
-		p, ok := obj.(*manifest.ResourceSetInputProvider)
-		if !ok || p.Namespace != namespace {
+	for _, p := range store.ListAs[*manifest.ResourceSetInputProvider](o.store, manifest.KindResourceSetInputProvider) {
+		if p.Namespace != namespace {
 			continue
 		}
 		match, err := resourceset.MatchSelector(ref.Selector, p.Labels)

@@ -2,6 +2,7 @@ package change
 
 import (
 	"slices"
+	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -10,11 +11,24 @@ import (
 // against a keep-set resolved from a file-level diff. Construct via
 // NewFilter — the zero value is the "no filtering" sentinel and
 // returns true from ShouldReconcile for every id.
+//
+// The keep set is built once at construction and then extended at
+// runtime by Add: a parent KS already in the keep set may render and
+// emit child KS / HR resources that the file-walk discovery phase
+// couldn't see (kustomize component + replacement patterns generate
+// Flux Kustomizations on the fly). Those children inherit the
+// parent's in-scope-ness because the parent only reconciled by
+// passing the filter in the first place. See issue #204.
 type Filter struct {
 	changes     *Set
 	sourceFiles map[manifest.NamedResource]string
 	repoRoot    string
-	keep        map[manifest.NamedResource]struct{}
+
+	// mu guards keep + keepByName for runtime Add(); resolve() runs
+	// once during construction before the controllers start, so it
+	// doesn't need to hold the lock.
+	mu   sync.RWMutex
+	keep map[manifest.NamedResource]struct{}
 
 	// keepByName: (Kind, Name) presence set used as an O(1) fallback
 	// when either side of a lookup has an empty namespace.
@@ -64,6 +78,8 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	if !f.Enabled() {
 		return true
 	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	if _, ok := f.keep[id]; ok {
 		return true
 	}
@@ -75,6 +91,30 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 		return true
 	}
 	return false
+}
+
+// Add extends the keep set with id at runtime. Used by the KS
+// controller when a parent in the keep set emits id as a rendered
+// child — the file walk that built the keep set can't see those
+// emissions, but they're conceptually in-scope because the parent
+// only reconciled by passing the filter. Without this, the kustomize
+// component+replacement pattern (a parent KS emitting a per-app KS
+// via a ConfigMap-driven replacement) produces silent gaps in
+// changed-only diffs: the leaf KS isn't keep-set'd, never reconciles,
+// and its render output is missing from the diff. Issue #204.
+//
+// No-op when the filter is disabled. Safe for concurrent use.
+func (f *Filter) Add(id manifest.NamedResource) {
+	if !f.Enabled() {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.keep[id]; ok {
+		return
+	}
+	f.keep[id] = struct{}{}
+	f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
 }
 
 func (f *Filter) resolve(objs ObjectLister) {
@@ -174,12 +214,19 @@ func (f *Filter) Size() int {
 	if f == nil {
 		return 0
 	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return len(f.keep)
 }
 
 // KeepNames returns the resolved keep-set as sorted strings for logs.
 func (f *Filter) KeepNames() []string {
-	if f == nil || f.keep == nil {
+	if f == nil {
+		return nil
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if f.keep == nil {
 		return nil
 	}
 	out := make([]string, 0, len(f.keep))
@@ -194,7 +241,12 @@ func (f *Filter) KeepNames() []string {
 // or nil when no scope can be derived (disabled, empty, or
 // cluster-scoped only).
 func (f *Filter) KeepNamespaces() map[string]struct{} {
-	if f == nil || f.keep == nil {
+	if f == nil {
+		return nil
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if f.keep == nil {
 		return nil
 	}
 	out := make(map[string]struct{})

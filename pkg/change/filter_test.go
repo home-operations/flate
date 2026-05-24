@@ -325,6 +325,56 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 	}
 }
 
+// TestFilter_AddExtendsKeepSetAtRuntime pins issue #204: a parent
+// KS in the keep set may render and emit a child KS that wasn't
+// discoverable at filter-build time (kustomize component +
+// replacement patterns generate per-app Kustomizations on the fly).
+// The KS controller calls Filter.Add(child) before AddObject so the
+// listener's PreGate filter check sees the extended keep set.
+//
+// Without this, the kept parent reconciles but every render-emitted
+// child gets marked Ready "unchanged" by PreGate, never reconciles,
+// and the child's own render output is silently absent from the
+// diff (the user's repo: 37 of 40 OCIRepository digest changes
+// missing because their `components/ks/app` pattern emits the leaf
+// KS via replacements).
+func TestFilter_AddExtendsKeepSetAtRuntime(t *testing.T) {
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "database"}
+	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "database", Name: "leaf-app"}
+
+	f := NewFilter(
+		NewSet([]string{"apps/database/parent.yaml"}),
+		map[manifest.NamedResource]string{parent: "apps/database/parent.yaml"},
+		"",
+		emptyLister{},
+	)
+	if !f.ShouldReconcile(parent) {
+		t.Fatalf("parent must be in keep set from file change; keep=%v", f.KeepNames())
+	}
+	if f.ShouldReconcile(child) {
+		t.Fatalf("precondition: child must NOT be in keep set before Add; keep=%v", f.KeepNames())
+	}
+
+	f.Add(child)
+	if !f.ShouldReconcile(child) {
+		t.Errorf("Add(child) should extend keep set; ShouldReconcile(child)=false; keep=%v", f.KeepNames())
+	}
+}
+
+// TestFilter_AddOnDisabledFilterIsNoOp protects against accidentally
+// activating the keep-set semantics when the filter is disabled
+// (no --path-orig). A disabled filter must continue to return true
+// for everything regardless of Add() calls.
+func TestFilter_AddOnDisabledFilterIsNoOp(t *testing.T) {
+	var f Filter
+	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "x"}
+	f.Add(id)
+	other := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "y"}
+	if !f.ShouldReconcile(other) {
+		t.Errorf("disabled filter must still keep everything after Add()")
+	}
+}
+
 func TestFilter_ShouldReconcileEmptyNamespaceFallback(t *testing.T) {
 	hrLoaded := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "", Name: "x"}
 	hrLookup := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "media", Name: "x"}

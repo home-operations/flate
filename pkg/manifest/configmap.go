@@ -18,8 +18,8 @@ func (c *ConfigMap) Named() NamedResource {
 	return NamedResource{Kind: KindConfigMap, Namespace: c.Namespace, Name: c.Name}
 }
 
-// ParseConfigMap decodes a core/v1 ConfigMap.
-func ParseConfigMap(doc map[string]any) (*ConfigMap, error) {
+// parseConfigMap decodes a core/v1 ConfigMap.
+func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
 	if err := checkAPIVersion(doc, "v1"); err != nil {
 		return nil, err
 	}
@@ -51,8 +51,8 @@ func (s *Secret) Named() NamedResource {
 	return NamedResource{Kind: KindSecret, Namespace: s.Namespace, Name: s.Name}
 }
 
-// ParseSecret decodes a Secret, wiping cleartext when wipeSecrets is true.
-func ParseSecret(doc map[string]any, wipeSecrets bool) (*Secret, error) {
+// parseSecret decodes a Secret, wiping cleartext when wipeSecrets is true.
+func parseSecret(doc map[string]any, wipeSecrets bool) (*Secret, error) {
 	if err := checkAPIVersion(doc, "v1"); err != nil {
 		return nil, err
 	}

@@ -40,9 +40,9 @@ func (r *ResourceSet) Named() NamedResource {
 // NamespacedName is "<namespace>/<name>".
 func (r *ResourceSet) NamespacedName() string { return r.Namespace + "/" + r.Name }
 
-// ParseResourceSet decodes a ResourceSet CR via the flux-operator
+// parseResourceSet decodes a ResourceSet CR via the flux-operator
 // typed schema (controlplane.io/v1).
-func ParseResourceSet(doc map[string]any) (*ResourceSet, error) {
+func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 	if err := checkAPIVersion(doc, FluxOperatorDomain); err != nil {
 		return nil, err
 	}
@@ -92,8 +92,8 @@ func (p *ResourceSetInputProvider) Named() NamedResource {
 // NamespacedName is "<namespace>/<name>".
 func (p *ResourceSetInputProvider) NamespacedName() string { return p.Namespace + "/" + p.Name }
 
-// ParseResourceSetInputProvider decodes a ResourceSetInputProvider CR.
-func ParseResourceSetInputProvider(doc map[string]any) (*ResourceSetInputProvider, error) {
+// parseResourceSetInputProvider decodes a ResourceSetInputProvider CR.
+func parseResourceSetInputProvider(doc map[string]any) (*ResourceSetInputProvider, error) {
 	if err := checkAPIVersion(doc, FluxOperatorDomain); err != nil {
 		return nil, err
 	}

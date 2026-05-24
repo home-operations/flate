@@ -74,10 +74,10 @@ func validateSecretRefName(kind, owner, field, name string) error {
 	return nil
 }
 
-// ParseGitRepository decodes a GitRepository CR via the Flux typed
+// parseGitRepository decodes a GitRepository CR via the Flux typed
 // schema (source-controller/api/v1), then projects the fields flate
 // uses into the local struct.
-func ParseGitRepository(doc map[string]any) (*GitRepository, error) {
+func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
 		return nil, err
 	}
@@ -266,9 +266,9 @@ func (e *ExternalArtifact) Named() NamedResource {
 // controller's Suspendable check is uniform.
 func (e *ExternalArtifact) Suspended() bool { return false }
 
-// ParseExternalArtifact decodes an ExternalArtifact CR via the
+// parseExternalArtifact decodes an ExternalArtifact CR via the
 // source-controller typed schema.
-func ParseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
+func parseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
 		return nil, err
 	}

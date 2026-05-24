@@ -57,9 +57,9 @@ spec:
       chart: c
       sourceRef: {kind: HelmRepository, name: r, namespace: ns}
 `)
-	hr, err := ParseHelmRelease(doc)
+	hr, err := parseHelmRelease(doc)
 	if err != nil {
-		t.Fatalf("ParseHelmRelease: %v", err)
+		t.Fatalf("parseHelmRelease: %v", err)
 	}
 	if !hr.Suspend {
 		t.Errorf("expected Suspend=true; got false")
@@ -78,9 +78,9 @@ spec:
       chart: c
       sourceRef: {kind: HelmRepository, name: r, namespace: ns}
 `)
-	hr, err := ParseHelmRelease(doc)
+	hr, err := parseHelmRelease(doc)
 	if err != nil {
-		t.Fatalf("ParseHelmRelease: %v", err)
+		t.Fatalf("parseHelmRelease: %v", err)
 	}
 	if hr.ServiceAccountName != "privileged-installer" {
 		t.Errorf("ServiceAccountName = %q, want %q", hr.ServiceAccountName, "privileged-installer")
@@ -156,9 +156,9 @@ spec:
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			hr, err := ParseHelmRelease(mustYAML(t, tc.yaml))
+			hr, err := parseHelmRelease(mustYAML(t, tc.yaml))
 			if err != nil {
-				t.Fatalf("ParseHelmRelease: %v", err)
+				t.Fatalf("parseHelmRelease: %v", err)
 			}
 			if hr.CRDsPolicy != tc.want {
 				t.Errorf("CRDsPolicy = %q, want %q", hr.CRDsPolicy, tc.want)
@@ -177,9 +177,9 @@ spec:
   reconcileStrategy: Revision
   sourceRef: {kind: HelmRepository, name: r}
 `)
-	hc, err := ParseHelmChartSource(doc)
+	hc, err := parseHelmChartSource(doc)
 	if err != nil {
-		t.Fatalf("ParseHelmChartSource: %v", err)
+		t.Fatalf("parseHelmChartSource: %v", err)
 	}
 	if hc.ReconcileStrategy != "Revision" {
 		t.Errorf("ReconcileStrategy = %q, want %q", hc.ReconcileStrategy, "Revision")
@@ -211,9 +211,9 @@ spec:
       name: trusted-pgp-keys
   interval: 5m
 `)
-			g, err := ParseGitRepository(doc)
+			g, err := parseGitRepository(doc)
 			if err != nil {
-				t.Fatalf("ParseGitRepository: %v", err)
+				t.Fatalf("parseGitRepository: %v", err)
 			}
 			if g.Verification == nil {
 				t.Fatalf("expected Verify parsed")
@@ -246,7 +246,7 @@ spec:
   interval: 5m
 `,
 			get: func(d map[string]any) (*LocalObjectReference, error) {
-				g, err := ParseGitRepository(d)
+				g, err := parseGitRepository(d)
 				if err != nil {
 					return nil, err
 				}
@@ -285,7 +285,7 @@ spec:
   interval: 5m
 `,
 			get: func(d map[string]any) (*LocalObjectReference, error) {
-				b, err := ParseBucket(d)
+				b, err := parseBucket(d)
 				if err != nil {
 					return nil, err
 				}
@@ -318,9 +318,9 @@ spec:
     - kubernetes/components/shared
   interval: 5m
 `)
-	g, err := ParseGitRepository(doc)
+	g, err := parseGitRepository(doc)
 	if err != nil {
-		t.Fatalf("ParseGitRepository: %v", err)
+		t.Fatalf("parseGitRepository: %v", err)
 	}
 	wantDirs := []string{"kubernetes/apps/media", "kubernetes/components/shared"}
 	if !slices.Equal(g.SparseCheckout, wantDirs) {
@@ -340,9 +340,9 @@ spec:
   recurseSubmodules: true
   interval: 5m
 `)
-	g, err := ParseGitRepository(doc)
+	g, err := parseGitRepository(doc)
 	if err != nil {
-		t.Fatalf("ParseGitRepository: %v", err)
+		t.Fatalf("parseGitRepository: %v", err)
 	}
 	if g.Reference == nil || g.Reference.Name != "refs/pull/420/head" {
 		t.Errorf("Reference.Name = %q", g.Reference)
@@ -372,7 +372,7 @@ spec:
     name: ""
   interval: 5m
 `)
-	_, err := ParseKustomization(doc)
+	_, err := parseKustomization(doc)
 	if err == nil {
 		t.Fatal("expected parse error for empty sourceRef.name with kind set")
 	}
@@ -392,9 +392,9 @@ spec:
   sourceRef: {kind: GitRepository, name: src, namespace: ns}
   interval: 5m
 `)
-	ks, err := ParseKustomization(doc)
+	ks, err := parseKustomization(doc)
 	if err != nil {
-		t.Fatalf("ParseKustomization: %v", err)
+		t.Fatalf("parseKustomization: %v", err)
 	}
 	if !ks.Suspend {
 		t.Errorf("expected Suspend=true; got false")
@@ -418,9 +418,9 @@ spec:
     name: minio-creds
   interval: 5m
 `)
-	b, err := ParseBucket(doc)
+	b, err := parseBucket(doc)
 	if err != nil {
-		t.Fatalf("ParseBucket: %v", err)
+		t.Fatalf("parseBucket: %v", err)
 	}
 	if b.Provider != "generic" {
 		t.Errorf("default Provider should be 'generic', got %q", b.Provider)
@@ -474,7 +474,7 @@ spec:
   url: https://example/x.git
   secretRef: {name: ""}`,
 			want:  "spec.secretRef.name is empty",
-			parse: func(d map[string]any) error { _, err := ParseGitRepository(d); return err },
+			parse: func(d map[string]any) error { _, err := parseGitRepository(d); return err },
 		},
 		{
 			name: "HelmRepository spec.secretRef.name empty",
@@ -485,7 +485,7 @@ spec:
   url: https://example.com/charts
   secretRef: {name: ""}`,
 			want:  "spec.secretRef.name is empty",
-			parse: func(d map[string]any) error { _, err := ParseHelmRepository(d); return err },
+			parse: func(d map[string]any) error { _, err := parseHelmRepository(d); return err },
 		},
 		{
 			name: "Bucket spec.secretRef.name empty",
@@ -497,7 +497,7 @@ spec:
   endpoint: e
   secretRef: {name: ""}`,
 			want:  "spec.secretRef.name is empty",
-			parse: func(d map[string]any) error { _, err := ParseBucket(d); return err },
+			parse: func(d map[string]any) error { _, err := parseBucket(d); return err },
 		},
 	}
 	for _, tc := range cases {
@@ -525,9 +525,9 @@ spec:
   endpoint: e
   interval: 5m
 `)
-	b, err := ParseBucket(doc)
+	b, err := parseBucket(doc)
 	if err != nil {
-		t.Fatalf("ParseBucket: %v", err)
+		t.Fatalf("parseBucket: %v", err)
 	}
 	if !b.Suspend {
 		t.Errorf("expected Suspend=true")
@@ -551,9 +551,9 @@ spec:
       metadata:
         name: << inputs.tenant >>-cm
 `)
-	rs, err := ParseResourceSet(doc)
+	rs, err := parseResourceSet(doc)
 	if err != nil {
-		t.Fatalf("ParseResourceSet: %v", err)
+		t.Fatalf("parseResourceSet: %v", err)
 	}
 	if rs.Name != "apps" || rs.Namespace != "flux-system" {
 		t.Errorf("unexpected name/ns: %s/%s", rs.Namespace, rs.Name)
@@ -574,9 +574,9 @@ metadata:
   name: apps
 spec: {}
 `)
-	rs, err := ParseResourceSet(doc)
+	rs, err := parseResourceSet(doc)
 	if err != nil {
-		t.Fatalf("ParseResourceSet: %v", err)
+		t.Fatalf("parseResourceSet: %v", err)
 	}
 	if rs.Namespace != DefaultNamespace {
 		t.Errorf("namespace=%q want %q", rs.Namespace, DefaultNamespace)
@@ -602,9 +602,9 @@ status:
     revision: v1.2.3@sha256:abc
     digest: sha256:abc
 `)
-	ea, err := ParseExternalArtifact(doc)
+	ea, err := parseExternalArtifact(doc)
 	if err != nil {
-		t.Fatalf("ParseExternalArtifact: %v", err)
+		t.Fatalf("parseExternalArtifact: %v", err)
 	}
 	if ea.Name != "pulled-tarball" || ea.Namespace != "apps" {
 		t.Errorf("identity: %+v", ea)
@@ -634,9 +634,9 @@ spec:
         object.status.conditions.exists(c, c.type == "InfraInitialized" && c.status == "True")
   interval: 5m
 `)
-	k, err := ParseKustomization(doc)
+	k, err := parseKustomization(doc)
 	if err != nil {
-		t.Fatalf("ParseKustomization: %v", err)
+		t.Fatalf("parseKustomization: %v", err)
 	}
 	if len(k.DependsOn) != 1 {
 		t.Fatalf("DependsOn len = %d", len(k.DependsOn))
@@ -663,9 +663,9 @@ spec:
       chart: c
       sourceRef: {kind: HelmRepository, name: r, namespace: ns}
 `)
-	hr, err := ParseHelmRelease(doc)
+	hr, err := parseHelmRelease(doc)
 	if err != nil {
-		t.Fatalf("ParseHelmRelease: %v", err)
+		t.Fatalf("parseHelmRelease: %v", err)
 	}
 	if got, want := len(hr.DependsOn), 2; got != want {
 		t.Fatalf("DependsOn len = %d, want %d", got, want)
@@ -703,9 +703,9 @@ spec:
       valuesKey: values.yaml
       optional: true
 `)
-	hr, err := ParseHelmRelease(doc)
+	hr, err := parseHelmRelease(doc)
 	if err != nil {
-		t.Fatalf("ParseHelmRelease: %v", err)
+		t.Fatalf("parseHelmRelease: %v", err)
 	}
 
 	cases := []struct {
@@ -745,9 +745,9 @@ spec:
       chart: c
       sourceRef: {kind: HelmRepository, name: r, namespace: ns}
 `)
-	hr, err := ParseHelmRelease(doc)
+	hr, err := parseHelmRelease(doc)
 	if err != nil {
-		t.Fatalf("ParseHelmRelease: %v", err)
+		t.Fatalf("parseHelmRelease: %v", err)
 	}
 	if hr.HelmReleaseSpec.ReleaseName != "my-explicit-release" {
 		t.Errorf("HelmReleaseSpec.ReleaseName = %q, want my-explicit-release", hr.HelmReleaseSpec.ReleaseName)
@@ -799,9 +799,9 @@ spec:
     name: my-chart
     namespace: flux-system
 `)
-	hr, err := ParseHelmRelease(doc)
+	hr, err := parseHelmRelease(doc)
 	if err != nil {
-		t.Fatalf("ParseHelmRelease: %v", err)
+		t.Fatalf("parseHelmRelease: %v", err)
 	}
 	if hr.Chart.RepoKind != KindHelmChart || hr.Chart.Version != "" {
 		t.Fatalf("expected unresolved chartRef, got %+v", hr.Chart)
@@ -847,9 +847,9 @@ spec:
   url: oci://ghcr.io/stefanprodan/charts
   type: oci
 `)
-	r, err := ParseHelmRepository(doc)
+	r, err := parseHelmRepository(doc)
 	if err != nil {
-		t.Fatalf("ParseHelmRepository: %v", err)
+		t.Fatalf("parseHelmRepository: %v", err)
 	}
 	if r.Type != "oci" {
 		t.Errorf("RepoType = %q", r.Type)
@@ -868,9 +868,9 @@ spec:
   ref:
     tag: v1.2.3
 `)
-	g, err := ParseGitRepository(doc)
+	g, err := parseGitRepository(doc)
 	if err != nil {
-		t.Fatalf("ParseGitRepository: %v", err)
+		t.Fatalf("parseGitRepository: %v", err)
 	}
 	if g.Reference == nil {
 		t.Fatalf("expected Reference parsed")
@@ -904,9 +904,9 @@ spec:
         name: cluster-vars
         optional: true
 `)
-	k, err := ParseKustomization(doc)
+	k, err := parseKustomization(doc)
 	if err != nil {
-		t.Fatalf("ParseKustomization: %v", err)
+		t.Fatalf("parseKustomization: %v", err)
 	}
 	if len(k.DependsOn) != 2 {
 		t.Fatalf("DependsOn len = %d, want 2", len(k.DependsOn))
@@ -987,9 +987,9 @@ metadata:
 data:
   DOMAIN: example.com
 `)
-	cm, err := ParseConfigMap(doc)
+	cm, err := parseConfigMap(doc)
 	if err != nil {
-		t.Fatalf("ParseConfigMap: %v", err)
+		t.Fatalf("parseConfigMap: %v", err)
 	}
 	if cm.Data["DOMAIN"] != "example.com" {
 		t.Errorf("data = %+v", cm.Data)
@@ -1007,9 +1007,9 @@ stringData:
   apiKey: real-key
 `
 	t.Run("wiped", func(t *testing.T) {
-		s, err := ParseSecret(mustYAML(t, yamlDoc), true)
+		s, err := parseSecret(mustYAML(t, yamlDoc), true)
 		if err != nil {
-			t.Fatalf("ParseSecret: %v", err)
+			t.Fatalf("parseSecret: %v", err)
 		}
 		wantPlaceholder := fmt.Sprintf(ValuePlaceholderTemplate, "password")
 		wantB64 := base64.StdEncoding.EncodeToString([]byte(wantPlaceholder))
@@ -1022,9 +1022,9 @@ stringData:
 	})
 
 	t.Run("preserved", func(t *testing.T) {
-		s, err := ParseSecret(mustYAML(t, yamlDoc), false)
+		s, err := parseSecret(mustYAML(t, yamlDoc), false)
 		if err != nil {
-			t.Fatalf("ParseSecret: %v", err)
+			t.Fatalf("parseSecret: %v", err)
 		}
 		if s.Data["password"] != "dGVzdA==" {
 			t.Errorf("data was wiped despite false: %v", s.Data["password"])
@@ -1083,7 +1083,7 @@ metadata: {name: x}`, "Foo"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			obj, err := ParseDoc(mustYAML(t, tc.yaml), DefaultParseDocOptions())
+			obj, err := ParseDoc(mustYAML(t, tc.yaml), defaultParseDocOptions())
 			if err != nil {
 				t.Fatalf("ParseDoc: %v", err)
 			}
@@ -1221,12 +1221,12 @@ func TestStripResourceAttributes_StatefulSetPVCs(t *testing.T) {
 }
 
 func TestParseDoc_MissingFields(t *testing.T) {
-	if _, err := ParseDoc(map[string]any{"kind": "Foo"}, DefaultParseDocOptions()); err == nil || !strings.Contains(err.Error(), "apiVersion") {
+	if _, err := ParseDoc(map[string]any{"kind": "Foo"}, defaultParseDocOptions()); err == nil || !strings.Contains(err.Error(), "apiVersion") {
 		t.Errorf("expected apiVersion error, got %v", err)
 	}
 	// Bare data files (no kind:) are silently dropped as RawObjects —
 	// helm values, config blobs, etc. that aren't k8s resources.
-	obj, err := ParseDoc(map[string]any{"apiVersion": "v1"}, DefaultParseDocOptions())
+	obj, err := ParseDoc(map[string]any{"apiVersion": "v1"}, defaultParseDocOptions())
 	if err != nil {
 		t.Errorf("missing-kind docs should not error, got %v", err)
 	}

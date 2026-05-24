@@ -9,7 +9,7 @@ package manifest
 // flate runs offline and cannot decrypt; the kustomization and
 // helmrelease controllers call this to log the encrypted resource
 // then wipe its data fields to ValuePlaceholderTemplate via
-// ParseSecret, mirroring the --wipe-secrets cleartext behavior.
+// parseSecret, mirroring the --wipe-secrets cleartext behavior.
 // flate ignores spec.decryption entirely — there is no path that
 // reads the decryption Secret.
 func IsEncryptedSecret(doc map[string]any) bool {

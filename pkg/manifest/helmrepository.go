@@ -22,9 +22,9 @@ func (h *HelmRepository) Named() NamedResource {
 // RepoName is "<namespace>-<name>".
 func (h *HelmRepository) RepoName() string { return h.Namespace + "-" + h.Name }
 
-// ParseHelmRepository decodes a HelmRepository CR via the
+// parseHelmRepository decodes a HelmRepository CR via the
 // source-controller typed schema.
-func ParseHelmRepository(doc map[string]any) (*HelmRepository, error) {
+func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
 		return nil, err
 	}

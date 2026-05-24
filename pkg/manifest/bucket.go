@@ -30,9 +30,9 @@ func (b *Bucket) Named() NamedResource {
 // Suspended reports whether reconciliation is paused on this resource.
 func (b *Bucket) Suspended() bool { return b.Suspend }
 
-// ParseBucket decodes a Bucket CR via the source-controller typed
+// parseBucket decodes a Bucket CR via the source-controller typed
 // schema.
-func ParseBucket(doc map[string]any) (*Bucket, error) {
+func parseBucket(doc map[string]any) (*Bucket, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
 		return nil, err
 	}

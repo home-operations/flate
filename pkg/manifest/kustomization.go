@@ -150,11 +150,11 @@ func (k *Kustomization) UpdatePostBuildSubstitutions(subs map[string]any) {
 	maps.Copy(sub, subs)
 }
 
-// ParseKustomization decodes a Flux Kustomization CR via the
+// parseKustomization decodes a Flux Kustomization CR via the
 // kustomize-controller typed schema. The raw doc is retained in
 // Contents because RenderFlux still feeds it to fluxcd/pkg/kustomize
 // as an unstructured.Unstructured.
-func ParseKustomization(doc map[string]any) (*Kustomization, error) {
+func parseKustomization(doc map[string]any) (*Kustomization, error) {
 	if err := checkAPIVersion(doc, FluxKustomizeDomain); err != nil {
 		return nil, err
 	}

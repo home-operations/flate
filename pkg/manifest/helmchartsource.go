@@ -25,9 +25,9 @@ func (h *HelmChartSource) ResourceFullName() string {
 	return h.Namespace + "-" + h.Name
 }
 
-// ParseHelmChartSource decodes a standalone HelmChart CRD via the
+// parseHelmChartSource decodes a standalone HelmChart CRD via the
 // source-controller typed schema.
-func ParseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
+func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	if err := checkAPIVersion(doc, SourceDomain); err != nil {
 		return nil, err
 	}

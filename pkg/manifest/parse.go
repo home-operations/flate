@@ -69,8 +69,8 @@ type ParseDocOptions struct {
 	WipeSecrets bool
 }
 
-// DefaultParseDocOptions returns the standard options — secrets wiped.
-func DefaultParseDocOptions() ParseDocOptions {
+// defaultParseDocOptions returns the standard options — secrets wiped.
+func defaultParseDocOptions() ParseDocOptions {
 	return ParseDocOptions{WipeSecrets: true}
 }
 
@@ -98,31 +98,31 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
 
 	switch {
 	case kind == KindKustomization && strings.HasPrefix(apiVersion, FluxKustomizeDomain):
-		return ParseKustomization(doc)
+		return parseKustomization(doc)
 	case kind == KindHelmRelease:
-		return ParseHelmRelease(doc)
+		return parseHelmRelease(doc)
 	case kind == KindHelmRepository:
-		return ParseHelmRepository(doc)
+		return parseHelmRepository(doc)
 	case kind == KindHelmChart && strings.HasPrefix(apiVersion, SourceDomain):
-		return ParseHelmChartSource(doc)
+		return parseHelmChartSource(doc)
 	case kind == KindGitRepository:
-		return ParseGitRepository(doc)
+		return parseGitRepository(doc)
 	case kind == KindOCIRepository:
 		return ParseOCIRepository(doc)
 	case kind == KindExternalArtifact && strings.HasPrefix(apiVersion, SourceDomain):
-		return ParseExternalArtifact(doc)
+		return parseExternalArtifact(doc)
 	case kind == KindBucket && strings.HasPrefix(apiVersion, SourceDomain):
-		return ParseBucket(doc)
+		return parseBucket(doc)
 	case kind == KindResourceSet && strings.HasPrefix(apiVersion, FluxOperatorDomain):
-		return ParseResourceSet(doc)
+		return parseResourceSet(doc)
 	case kind == KindResourceSetInputProvider && strings.HasPrefix(apiVersion, FluxOperatorDomain):
-		return ParseResourceSetInputProvider(doc)
+		return parseResourceSetInputProvider(doc)
 	case kind == KindConfigMap:
-		return ParseConfigMap(doc)
+		return parseConfigMap(doc)
 	case kind == KindSecret:
-		return ParseSecret(doc, opts.WipeSecrets)
+		return parseSecret(doc, opts.WipeSecrets)
 	}
-	return ParseRawObject(doc)
+	return parseRawObject(doc)
 }
 
 // checkAPIVersion enforces an api group prefix on a raw document.

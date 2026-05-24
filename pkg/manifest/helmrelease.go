@@ -259,10 +259,10 @@ func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
 	return nil
 }
 
-// ParseHelmRelease decodes a HelmRelease CR via the helm-controller
+// parseHelmRelease decodes a HelmRelease CR via the helm-controller
 // typed schema (helm-controller/api/v2). The chart vs chartRef
 // normalization is preserved by chartFromHelmRelease.
-func ParseHelmRelease(doc map[string]any) (*HelmRelease, error) {
+func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	if err := checkAPIVersion(doc, HelmReleaseDomain); err != nil {
 		return nil, err
 	}

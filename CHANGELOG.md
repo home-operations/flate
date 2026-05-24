@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.13](https://github.com/home-operations/flate/compare/0.1.12...0.1.13) (2026-05-24)
+
+
+### Bug Fixes
+
+* **helmrelease:** dispatch chart-rendered source CRs through AddObject ([#230](https://github.com/home-operations/flate/issues/230)) ([dcd385a](https://github.com/home-operations/flate/commit/dcd385a13ee538ffd26b9f34de3bd8e8add87b39))
+* **kustomize:** pre-fetch URL resources to eliminate git binary dep ([#229](https://github.com/home-operations/flate/issues/229)) ([5aa0845](https://github.com/home-operations/flate/commit/5aa0845a0a77f32d98f428365031fd37e09271bc))
+* **kustomize:** propagate URL fetch failures as real reconcile errors ([#235](https://github.com/home-operations/flate/issues/235)) ([c024d5d](https://github.com/home-operations/flate/commit/c024d5d6fd670735052474ddb78c6492d0ba6239))
+
+
+### Performance Improvements
+
+* **kustomize:** dedup remote-resource fetches across preflight passes ([#232](https://github.com/home-operations/flate/issues/232)) ([a4740bf](https://github.com/home-operations/flate/commit/a4740bf0302403a1e73d9e6702df5e7702533f3b))
+
+
+### Miscellaneous Chores
+
+* **oci:** demote cosign keyless-skip log from WARN to DEBUG ([#233](https://github.com/home-operations/flate/issues/233)) ([53ad9c1](https://github.com/home-operations/flate/commit/53ad9c1552ef147c515912535d331355fc44a141))
+
 ## [0.1.12](https://github.com/home-operations/flate/compare/0.1.11...0.1.12) (2026-05-24)
 
 

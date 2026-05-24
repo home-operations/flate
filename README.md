@@ -43,7 +43,7 @@ Every command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches i
 | `diff` | `ks`, `hr`, `images` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output github` mode. K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
 | `test` | `ks`, `hr`, `all` | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure. |
 
-`get` and `diff` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart`).
+`get ks` and `get hr` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart`). Every subcommand accepts `--allow-missing-secrets` to soft-skip sources whose auth Secret is missing or PLACEHOLDER-wiped — see [Behaviors](#behaviors).
 
 ## Changed-only mode
 
@@ -71,7 +71,7 @@ flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
 | `Bucket` | `generic` only | `accesskey` + `secretkey`. `aws`/`gcp`/`azure` fail loud — use static creds. |
 | `ExternalArtifact` | `file://` only | `status.artifact.url` must be a local path. |
 
-PLACEHOLDER-wiped values (the always-on wipe of cleartext Secret data) are treated as missing — auth fails with a clear "missing username/password" instead of attempting auth with the placeholder string. Pass `--allow-missing-secrets` to convert these failures (and Secrets absent from the tree entirely) into a SKIPPED outcome; downstream Kustomizations and HelmReleases propagate the skip. Verify, cert, and proxy `secretRef`s are out of scope — they still fail loud, since silently dropping verification or TLS material is a security downgrade.
+PLACEHOLDER-wiped values (the always-on wipe of cleartext Secret data) are treated as missing — auth fails with a clear "missing username/password" instead of attempting auth with the placeholder string. See [Behaviors](#behaviors) for `--allow-missing-secrets`, which soft-skips affected sources end-to-end.
 
 ## Behaviors
 
@@ -79,7 +79,7 @@ PLACEHOLDER-wiped values (the always-on wipe of cleartext Secret data) are treat
 
 **`spec.suspend`** — honored on every reconcilable CR. Suspended resources mark `Ready / "suspended"` and produce no rendered output.
 
-**`--allow-missing-secrets`** — off by default. When set, a source whose auth `secretRef` is missing or PLACEHOLDER-wiped marks `Ready / "skipped: …"` instead of `Failed`, and consumers (KS `sourceRef`, HR `chartRef`) propagate the skip so `flate test` reports SKIPPED rather than a cascade of FAILED. Intended for repos that materialize auth on the live cluster via ExternalSecret / SealedSecret. Typos in `secretRef.name` are rejected at parse time so they don't silently fall into this path.
+**`--allow-missing-secrets`** — off by default. When set, a source whose auth `secretRef` is missing or PLACEHOLDER-wiped marks `Ready / "skipped: …"` instead of `Failed`, and consumers (KS `sourceRef`, HR `chartRef`) propagate the skip so `flate test` reports SKIPPED rather than a cascade of FAILED. Intended for repos that materialize auth on the live cluster via ExternalSecret / SealedSecret. Typos in `secretRef.name` are rejected at parse time so they don't silently fall into this path. Scope is auth `secretRef` only — verify, cert, and proxy `secretRef`s still fail loud, since silently dropping verification or TLS material is a security downgrade.
 
 **`spec.dependsOn[].readyExpr` (CEL)** — evaluated against `self` and `dep` projections, matching upstream kustomize- and helm-controller binding:
 
@@ -143,6 +143,7 @@ flate is rendering-only.
 - **No cloud workload identity.** `spec.serviceAccountName` is a no-op; use static creds in a Secret.
 - **No `healthChecks`.** flate tracks resource readiness, not status conditions of rendered objects.
 - **`ResourceSetInputProvider`: `Static` only.** Dynamic providers (GitHub, GitLab, OCIArtifactTag, ExternalService) need network access and contribute zero inputs.
+- **Diff output isn't a unified-diff patch.** `flate diff` emits dyff path-keyed syntax (`@@ <path> @@`); GitHub's diff lexer renders it natively but it won't apply with `patch` / `git apply` — use the rendered output of `flate build` if you need a literal patch.
 
 ## Development
 

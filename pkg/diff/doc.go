@@ -14,14 +14,16 @@
 // `checksum/config`, …) that rotates on every Helm upgrade but
 // carries no review-relevant signal.
 //
-// Four output flavors are supported:
+// Three output flavors are supported:
 //
-//   - Diff   — concatenated dyff bodies, one per resource, with a
-//     per-resource `--- / +++` header banner (the default).
-//   - Object — a per-resource heading followed by the dyff body.
-//   - YAML   — structured YAML where each entry is a resource and its
+//   - Diff — concatenated dyff bodies, one per resource. Multi-
+//     resource output prefixes each body with a single `#`-style
+//     header line identifying the parent KS/HR; single-resource
+//     output omits the header because dyff's `@@ <path> @@` is
+//     unambiguous on its own (the default).
+//   - YAML — structured YAML where each entry is a resource and its
 //     dyff body.
-//   - JSON   — same shape as YAML, marshaled as JSON.
+//   - JSON — same shape as YAML, marshaled as JSON.
 //
 // [dyff]: https://github.com/homeport/dyff
 package diff

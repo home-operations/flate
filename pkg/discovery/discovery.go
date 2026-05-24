@@ -321,6 +321,7 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 		known[obj.Named()] = struct{}{}
 	}
 	seen := make(map[manifest.NamedResource]struct{})
+	var aliased []manifest.NamedResource
 	for _, obj := range d.cfg.Store.ListObjects(manifest.KindKustomization) {
 		ks, ok := obj.(*manifest.Kustomization)
 		if !ok || ks.SourceKind != manifest.KindGitRepository {
@@ -346,6 +347,21 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 		d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias")
 		slog.Debug("discovery: aliased bootstrap GitRepository",
 			"id", id.String(), "localPath", repoRoot)
+		aliased = append(aliased, id)
+	}
+	// Multiple unresolved GitRepositories is the cross-repo footgun:
+	// each gets aliased to the SAME working tree, so a real upstream
+	// shared-infra GitRepository would render against the wrong files
+	// without any user-visible signal. Warn so an operator can spot
+	// the divergence; the single-source case stays Debug because
+	// that's the intended flux-bootstrap shape.
+	if len(aliased) > 1 {
+		names := make([]string, len(aliased))
+		for i, id := range aliased {
+			names[i] = id.String()
+		}
+		slog.Warn("discovery: aliased multiple GitRepositories to the working tree; cross-repo refs render against the wrong tree",
+			"count", len(aliased), "ids", names, "localPath", repoRoot)
 	}
 }
 

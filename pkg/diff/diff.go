@@ -24,10 +24,9 @@ const (
 	// fence. K8s-aware: list entries are matched by identifier
 	// (container name, env-var name, etc.), so reordering a list
 	// produces no diff churn.
-	FormatDiff   Format = "diff"
-	FormatObject Format = "object"
-	FormatYAML   Format = "yaml"
-	FormatJSON   Format = "json"
+	FormatDiff Format = "diff"
+	FormatYAML Format = "yaml"
+	FormatJSON Format = "json"
 )
 
 // Options tunes Run behavior.
@@ -143,17 +142,6 @@ func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 			if emitHeader {
 				fmt.Fprintf(&b, "# %s\n", d.Header())
 			}
-			b.WriteString(d.Diff)
-			if !strings.HasSuffix(d.Diff, "\n") {
-				b.WriteByte('\n')
-			}
-		}
-		return b.Bytes(), nil
-	case FormatObject:
-		var b bytes.Buffer
-		for _, d := range diffs {
-			b.WriteString(d.Header())
-			b.WriteByte('\n')
 			b.WriteString(d.Diff)
 			if !strings.HasSuffix(d.Diff, "\n") {
 				b.WriteByte('\n')

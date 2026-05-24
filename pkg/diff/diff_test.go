@@ -196,13 +196,14 @@ func TestRun_ContainerByNameImageChange(t *testing.T) {
 	}
 }
 
-// TestRender_DiffHeaderOnlyWhenMultiple pins the per-resource header
-// policy: a single diff renders bare (no `# ...` line), but two or
-// more diffs each get a `#`-prefixed identifier so the reader can
-// tell which resource a `@@ <path> @@` block belongs to. dyff's
-// path doesn't carry the owning resource, so headers are load-
-// bearing exactly when ambiguity is possible — and only then.
-func TestRender_DiffHeaderOnlyWhenMultiple(t *testing.T) {
+// TestRender_DiffHeaderAlwaysEmitted pins the per-resource header
+// policy: every diff body gets a `#`-prefixed identifier, even when
+// there's only one diff in the output. dyff's `@@ <path> @@`
+// identifies the data path but not the owning resource, so a
+// reviewer scanning a PR comment shouldn't have to infer the
+// resource from the body. Critically: NO flux-local-style `---/+++`
+// twin banner — the single `#` line is the load-bearing identifier.
+func TestRender_DiffHeaderAlwaysEmitted(t *testing.T) {
 	mkDiff := func(name string) ResourceDiff {
 		return ResourceDiff{
 			Parent: Parent{Kind: "HelmRelease", Namespace: "media", Name: name},
@@ -211,16 +212,17 @@ func TestRender_DiffHeaderOnlyWhenMultiple(t *testing.T) {
 		}
 	}
 
-	t.Run("single resource renders without header", func(t *testing.T) {
+	t.Run("single resource still gets a header", func(t *testing.T) {
 		out, err := Render([]ResourceDiff{mkDiff("qui")}, FormatDiff)
 		if err != nil {
 			t.Fatalf("Render: %v", err)
 		}
-		if strings.Contains(string(out), "# HelmRelease") {
-			t.Errorf("single-resource output should not include a header line; got:\n%s", out)
+		s := string(out)
+		if !strings.Contains(s, "# HelmRelease: media/qui Deployment: media/qui") {
+			t.Errorf("single-resource output must still include the header; got:\n%s", s)
 		}
-		if !strings.Contains(string(out), "@@ spec.replicas @@") {
-			t.Errorf("body should pass through verbatim; got:\n%s", out)
+		if !strings.Contains(s, "@@ spec.replicas @@") {
+			t.Errorf("body should pass through verbatim; got:\n%s", s)
 		}
 	})
 
@@ -236,7 +238,7 @@ func TestRender_DiffHeaderOnlyWhenMultiple(t *testing.T) {
 		if !strings.Contains(s, "# HelmRelease: media/plex Deployment: media/plex") {
 			t.Errorf("missing plex header:\n%s", s)
 		}
-		// And critically: NO flux-local-style `--- / +++` twin banners.
+		// Critically: NO flux-local-style `--- / +++` twin banners.
 		if strings.Contains(s, "--- HelmRelease") || strings.Contains(s, "+++ HelmRelease") {
 			t.Errorf("output reintroduced the --- / +++ twin banner:\n%s", s)
 		}

@@ -128,20 +128,17 @@ func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 	switch format {
 	case "", FormatDiff:
 		var b bytes.Buffer
-		// Emit a `# <resource>` comment line above each body ONLY
-		// when there's more than one resource diff — with a single
-		// resource the dyff `@@ <path> @@` is unambiguous on its
-		// own, so the header would be pure noise. With multiple,
-		// dyff's path header doesn't identify the owning resource
-		// (`spec.template.spec.containers.app.image` could belong
-		// to any HelmRelease's Deployment), so we add a one-line
-		// `#`-prefixed identifier — dyff's own comment convention,
-		// rendered magenta by GitHub's diff lexer.
-		emitHeader := len(diffs) > 1
+		// Emit a `# <resource>` comment line above every body. dyff's
+		// `@@ <path> @@` identifies the data path that changed but
+		// not the owning resource (`spec.template.spec.containers
+		// .app.image` is which Deployment from which HelmRelease?),
+		// so the header is load-bearing even when there's only one
+		// diff — a reviewer scanning a PR comment shouldn't have to
+		// infer the resource from the body. `#`-prefixed lines are
+		// dyff's own comment convention; GitHub's diff lexer renders
+		// them magenta.
 		for _, d := range diffs {
-			if emitHeader {
-				fmt.Fprintf(&b, "# %s\n", d.Header())
-			}
+			fmt.Fprintf(&b, "# %s\n", d.Header())
 			b.WriteString(d.Diff)
 			if !strings.HasSuffix(d.Diff, "\n") {
 				b.WriteByte('\n')

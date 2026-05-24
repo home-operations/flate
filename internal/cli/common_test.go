@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -65,5 +67,44 @@ func TestIncludeNamespace_RespectsExplicitFilter(t *testing.T) {
 	}
 	if c.includeNamespace(&change.Filter{}, "default") {
 		t.Error("non-matching namespace must fail")
+	}
+}
+
+// TestRequireOutput_AcceptsDefaultTableAndAllowed pins the
+// short-circuit shape: "table" always passes (subcommand coerces via
+// outputOrDefault), and anything in the allowed set passes.
+func TestRequireOutput_AcceptsDefaultTableAndAllowed(t *testing.T) {
+	for _, out := range []string{"table", "yaml", "json"} {
+		c := &commonFlags{output: out}
+		if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
+			t.Errorf("output=%q: unexpected error %v", out, err)
+		}
+	}
+}
+
+// TestRequireOutput_RejectsUnsupported guards the diff/drift fix:
+// `get all -o name` and `get images -o diff` used to silently coerce
+// into a different format — now they fail loud. Empty allowed-set
+// (test's pattern) must reject every non-default `-o`.
+func TestRequireOutput_RejectsUnsupported(t *testing.T) {
+	cases := []struct {
+		output  string
+		allowed []format.Output
+		wantSub string
+	}{
+		{output: "name", allowed: []format.Output{format.OutputYAML, format.OutputJSON}, wantSub: `"name"`},
+		{output: "yaml", allowed: nil, wantSub: "want one of: table"},
+		{output: "json", allowed: []format.Output{format.OutputName}, wantSub: "table, name"},
+	}
+	for _, tc := range cases {
+		c := &commonFlags{output: tc.output}
+		err := c.requireOutput(tc.allowed...)
+		if err == nil {
+			t.Errorf("output=%q allowed=%v: expected error, got nil", tc.output, tc.allowed)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wantSub) {
+			t.Errorf("output=%q: error %q missing substring %q", tc.output, err.Error(), tc.wantSub)
+		}
 	}
 }

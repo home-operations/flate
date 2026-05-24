@@ -210,7 +210,9 @@ func (c *commonFlags) outputOrDefault(fallback format.Output) format.Output {
 // value (e.g. build has no concept of "name"; diff has no concept of
 // "name"). Treats "table" as accepted so the global default doesn't
 // trigger this check — callers downstream coerce "table" to their
-// own natural default via outputOrDefault.
+// own natural default via outputOrDefault. Pass no `allowed` values to
+// reject every non-default `-o`, which is how `test` (plain-text only)
+// signals "I don't honor -o" loudly instead of silently.
 func (c *commonFlags) requireOutput(allowed ...format.Output) error {
 	if c.output == string(format.OutputTable) {
 		return nil
@@ -220,11 +222,12 @@ func (c *commonFlags) requireOutput(allowed ...format.Output) error {
 			return nil
 		}
 	}
-	names := make([]string, len(allowed))
-	for i, a := range allowed {
-		names[i] = string(a)
+	names := make([]string, 0, len(allowed)+1)
+	names = append(names, string(format.OutputTable))
+	for _, a := range allowed {
+		names = append(names, string(a))
 	}
-	return fmt.Errorf("--output %q not supported by this subcommand (want one of: table, %s)",
+	return fmt.Errorf("--output %q not supported by this subcommand (want one of: %s)",
 		c.output, strings.Join(names, ", "))
 }
 

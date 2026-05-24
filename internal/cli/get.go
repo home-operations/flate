@@ -122,11 +122,17 @@ func newGetAllCmd() *cobra.Command {
 		Use:   "all",
 		Short: "Summarize every Kustomization and HelmRelease",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// printCluster emits a key/value summary; only yaml/json
+			// shape it. Reject `-o name` (which printCluster used to
+			// silently coerce to yaml) for parity with build/diff.
+			if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
+				return err
+			}
 			o, _, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
-			if err := printCluster(cmd.OutOrStdout(), o, c.output); err != nil {
+			if err := printCluster(cmd.OutOrStdout(), o, string(c.outputOrDefault(format.OutputYAML))); err != nil {
 				return err
 			}
 			return runErr
@@ -148,12 +154,18 @@ func newGetImagesCmd() *cobra.Command {
 		Use:   "images",
 		Short: "List container images across the cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Mirrors `diff images`: name is the natural default
+			// (one image per line); yaml/json are the structured
+			// alternatives. Reject anything else loudly.
+			if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputName); err != nil {
+				return err
+			}
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
 			imgs := slices.Sorted(maps.Keys(collectImages(o, res, c)))
-			if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
+			if err := emitImageList(cmd.OutOrStdout(), imgs, string(c.outputOrDefault(format.OutputName))); err != nil {
 				return err
 			}
 			return runErr

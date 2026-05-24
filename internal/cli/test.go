@@ -9,6 +9,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// `test` emits a human-readable reconcile report. No structured-output
+// support yet; reject any non-default `-o` so users don't silently get
+// the same plain-text output regardless of what they ask for. When
+// adding json/yaml here later, pass them through requireOutput.
+
 func newTestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test",
@@ -44,6 +49,9 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		Short:   short,
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
+			if err := c.requireOutput(); err != nil {
+				return err
+			}
 			o, _, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr

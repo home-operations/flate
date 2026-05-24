@@ -489,15 +489,18 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 
 func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]store.StatusInfo) {
 	for id, info := range failed {
-		// Include the originating source file when known so the user can
-		// jump straight to the offending YAML — `flux error: input error:`
-		// chains alone don't reveal which spec.path declared a missing
-		// directory.
+		// Demoted to Debug: the same failure list is surfaced as a
+		// structured error by aggregateFailures (with file paths
+		// included) AND echoed by the test runner / build CLI's own
+		// per-resource output. Logging at Warn here double-emits to
+		// stderr alongside the user-facing report and reads as
+		// "flate had an internal error" when it's just normal
+		// per-resource Flux failures the user expects to see.
 		args := []any{"id", id.String(), "reason", manifest.TrimSentinelPrefix(info.Message)}
 		if f := o.sourceFiles[id]; f != "" {
 			args = append(args, "file", f)
 		}
-		slog.Warn("resource failed", args...)
+		slog.Debug("resource failed", args...)
 	}
 }
 

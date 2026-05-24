@@ -97,16 +97,17 @@ func Run(j Job) Report {
 				continue
 			}
 			// Skip the synthetic bootstrap GitRepository the
-			// discovery phase seeds for `spec.path` anchoring (see
-			// pkg/discovery.seedBootstrapSource). It carries the
-			// status message "bootstrap" so users running
-			// `flate test all` on a repo that doesn't actually
-			// declare flux-system/flux-system don't see a phantom
-			// PASSED row for an internal artifact.
+			// discovery phase seeds for `spec.path` anchoring — it's
+			// always an internal artifact. Discovery initially tags
+			// it with the "bootstrap" message, but changed-only mode's
+			// PreGate later overwrites that with MsgUnchanged, so the
+			// status-message check that PR #212 introduced misses in
+			// the typical `flate diff ks --path-orig=...` CI flow.
+			// Skip by id alone: a user who explicitly declares a
+			// GitRepository/flux-system/flux-system loses report
+			// visibility on it (rare; flate would alias to it anyway).
 			if id == manifest.BootstrapSourceID {
-				if info, ok := j.Store.GetStatus(id); ok && info.Message == "bootstrap" {
-					continue
-				}
+				continue
 			}
 			c := classify(j.Store, id)
 			switch c.Outcome {
@@ -136,6 +137,11 @@ func classify(s *store.Store, id manifest.NamedResource) Case {
 		return Case{ID: id, Outcome: OutcomeFailed, Reason: manifest.TrimSentinelPrefix(info.Message)}
 	case store.IsUnchanged(info):
 		return Case{ID: id, Outcome: OutcomeSkipped, Reason: store.MsgUnchanged}
+	case store.IsSuspended(info):
+		// spec.suspend was honored. A user-suspended KS / HR isn't
+		// rendered, so reporting PASSED would be misleading — the
+		// resource is intentionally inert, not "tests passed."
+		return Case{ID: id, Outcome: OutcomeSkipped, Reason: store.MsgSuspended}
 	case store.IsSkipped(info):
 		// Strip the `skipped: ` convention prefix from the stored
 		// message — the column already prints SKIPPED, so leading the

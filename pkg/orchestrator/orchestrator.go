@@ -8,10 +8,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
-
-	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
@@ -22,7 +18,6 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
 	"github.com/home-operations/flate/pkg/source/external"
@@ -310,35 +305,6 @@ func (o *Orchestrator) validateDependsOn() {
 	}
 }
 
-// detectOrphans returns the subset of failed resources that are
-// "orphans" — Kustomizations/HelmReleases whose source files sit
-// under another Kustomization's spec.path but were never emitted by
-// that parent's render output. Such files exist on disk but Flux
-// would never see them, so flate downgrades the failure to a
-// warning rather than gating the test on stale local files.
-func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]struct{} {
-	out := make(map[manifest.NamedResource]struct{})
-	prefixes := loader.KSPathPrefixes(o.store)
-	for id := range failed {
-		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
-			continue
-		}
-		// A resource that any parent's render also emitted is by
-		// definition not orphaned — kustomize-controller saw it.
-		if o.rendered.has(id) {
-			continue
-		}
-		file, ok := o.sourceFiles[id]
-		if !ok {
-			continue
-		}
-		if _, ok := loader.LongestParent(prefixes, file, id); ok {
-			out[id] = struct{}{}
-		}
-	}
-	return out
-}
-
 // buildChangeFilter computes the file-level change set (if changed-only
 // mode is requested) and constructs the immutable change.Filter from
 // (changes, sourceFiles, repoRoot, store), then wires it onto every
@@ -450,102 +416,6 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	return o.finalize()
 }
 
-// finalize is the post-BlockTillDone reporting phase: demote orphans
-// from Failed → Ready, log per-resource warnings, and assemble the
-// aggregated error string. Pulled out of Run so the lifecycle entry
-// point reads as start → drain → finalize.
-func (o *Orchestrator) finalize() error {
-	failed := o.store.FailedResources()
-	o.demoteOrphans(failed)
-	o.logSummary(failed)
-	o.logResourceFailures(failed)
-
-	if len(failed) == 0 {
-		// Controllers attribute panics by marking the resource StatusFailed
-		// (see kustomization/helmrelease/source controllers). This catches
-		// any panic that escaped attribution — e.g. inside a future task
-		// dispatched outside the per-resource recover.
-		if n := o.tasks.Failures(); n > 0 {
-			return fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n)
-		}
-		return nil
-	}
-	return o.aggregateFailures(failed)
-}
-
-// demoteOrphans filters out resources whose source files sit under
-// another Kustomization's spec.path but were never emitted by that
-// parent's render. Real Flux wouldn't reconcile them either — the
-// file walker only loaded them because flate scans the whole tree.
-// Surface as warnings instead of failures so the test isn't gated on
-// stale on-disk files the user has not wired into their kustomize
-// tree. Mutates the failed map in place; the demoted ids land in
-// o.orphans for Render() to surface.
-func (o *Orchestrator) demoteOrphans(failed map[manifest.NamedResource]store.StatusInfo) {
-	o.orphans = map[manifest.NamedResource]string{}
-	for id := range o.detectOrphans(failed) {
-		info := failed[id]
-		o.orphans[id] = info.Message
-		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
-		slog.Warn("resource orphaned", "id", id.String(),
-			"file", o.sourceFiles[id],
-			"reason", info.Message)
-		delete(failed, id)
-	}
-}
-
-func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo) {
-	ksCount := len(o.store.ListObjects(manifest.KindKustomization))
-	hrCount := len(o.store.ListObjects(manifest.KindHelmRelease))
-	slog.Info("reconcile complete",
-		"kustomizations", ksCount,
-		"helmReleases", hrCount,
-		"failed", len(failed))
-	// Surface a clear warning when the scan turned up nothing — covers
-	// the "typo'd --path that happens to be an empty directory" case
-	// where flate would otherwise look like a silent success.
-	if ksCount == 0 && hrCount == 0 {
-		slog.Warn("no Flux Kustomization or HelmRelease objects found under --path; check the path is correct")
-	}
-}
-
-func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]store.StatusInfo) {
-	for id, info := range failed {
-		// Demoted to Debug: the same failure list is surfaced as a
-		// structured error by aggregateFailures (with file paths
-		// included) AND echoed by the test runner / build CLI's own
-		// per-resource output. Logging at Warn here double-emits to
-		// stderr alongside the user-facing report and reads as
-		// "flate had an internal error" when it's just normal
-		// per-resource Flux failures the user expects to see.
-		args := []any{"id", id.String(), "reason", manifest.TrimSentinelPrefix(info.Message)}
-		if f := o.sourceFiles[id]; f != "" {
-			args = append(args, "file", f)
-		}
-		slog.Debug("resource failed", args...)
-	}
-}
-
-func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
-	msgs := make([]string, 0, len(failed))
-	for id, info := range failed {
-		// Strip the `flux error: …: ` chain from user-facing messages —
-		// it's three layers of noise before the actual cause. The
-		// sentinels are still wired up for errors.Is callers (e.g.
-		// embedders branching on ErrObjectNotFound); this only affects
-		// the formatted text the CLI ultimately prints.
-		msg := manifest.TrimSentinelPrefix(info.Message)
-		if f := o.sourceFiles[id]; f != "" {
-			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", id.String(), f, msg))
-		} else {
-			msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), msg))
-		}
-	}
-	slices.Sort(msgs) // deterministic ordering across runs
-	return fmt.Errorf("reconcile completed with %d failure(s):\n  %s",
-		len(msgs), strings.Join(msgs, "\n  "))
-}
-
 
 // Render is the structured embed-friendly entry point: Bootstrap +
 // Run + collect everything an external caller needs to consume the
@@ -620,187 +490,6 @@ func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
 	return res, runErr
 }
 
-// expandResourceSetsPostRun re-renders every ResourceSet using the
-// post-Run store state and attributes any non-Flux child docs to the
-// owning structural-parent Kustomization. Fires after Run so it sees
-// RSIPs the KS controller emitted from kustomize substitution (the
-// `dragonfly-${APP}` -> `dragonfly-renovate-operator-jobs` etc.
-// pattern in tholinka/home-ops, which discovery's pre-Bootstrap RS
-// pass cannot see because the substitution hasn't happened yet).
-//
-// Flux-kind children (Kustomization, HelmRelease, …) are intentionally
-// NOT re-emitted here — they would have failed reconcile anyway since
-// it's too late in the pipeline to add reconcilable objects. Discovery
-// is the canonical seeding point for Flux-kind RS children; this pass
-// only handles the visibility gap for non-Flux output.
-func (o *Orchestrator) expandResourceSetsPostRun() {
-	rsList := o.store.ListObjects(manifest.KindResourceSet)
-	if len(rsList) == 0 {
-		return
-	}
-	// Owner index keyed by deepest spec.path prefix wins, mirroring
-	// loader.BuildParentIndex. The RS's source-file path lives below
-	// some KS's spec.path — that KS becomes its visibility parent.
-	type owner struct {
-		prefix string
-		id     manifest.NamedResource
-	}
-	var owners []owner
-	for _, obj := range o.store.ListObjects(manifest.KindKustomization) {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.Path == "" {
-			continue
-		}
-		p := filepath.ToSlash(ks.Path)
-		p = strings.TrimPrefix(p, "./")
-		if !strings.HasSuffix(p, "/") {
-			p += "/"
-		}
-		owners = append(owners, owner{prefix: p, id: ks.Named()})
-	}
-	slices.SortFunc(owners, func(a, b owner) int {
-		return cmp.Compare(len(b.prefix), len(a.prefix))
-	})
-
-	// A RS that arrived through file discovery has a sourceFile; a RS
-	// that arrived through KS-controller emission (kustomize bakes the
-	// parent's targetNamespace into a duplicate copy) does not. Build
-	// a name-keyed sourceFile fallback so we can attribute the
-	// namespace-resolved variant — which is the one with RSIPs visible
-	// to its selectors — through its file-loaded sibling.
-	sourceByName := map[string]string{}
-	for id, f := range o.sourceFiles {
-		if id.Kind != manifest.KindResourceSet || f == "" {
-			continue
-		}
-		if _, exists := sourceByName[id.Name]; !exists {
-			sourceByName[id.Name] = f
-		}
-	}
-
-	// Dedupe by (apiVersion, kind, ns, name) across the union of every
-	// RS's render — a name-grouped RS may legitimately render the same
-	// child from each namespace variant, and we don't want to double-
-	// emit it under the parent KS.
-	seen := map[string]struct{}{}
-	out := map[manifest.NamedResource][]map[string]any{}
-	for _, obj := range rsList {
-		rs, ok := obj.(*manifest.ResourceSet)
-		if !ok {
-			continue
-		}
-		docs, err := resourceset.Render(rs, o.resolveInputProvider)
-		if err != nil || len(docs) == 0 {
-			continue
-		}
-		// Resolve parent KS in priority order:
-		//
-		//   1. renderedSet.ParentOf — most direct; set when the RS
-		//      arrived via emitRenderedChildren. No prefix matching
-		//      needed.
-		//   2. sourceFiles + path-prefix match — file-loaded RSes.
-		//   3. Name-keyed sourceFile fallback — covers a KS-
-		//      substituted variant whose namespace shifted at emit
-		//      time, identified by sharing a name with a file-loaded
-		//      sibling.
-		var parentKS manifest.NamedResource
-		var matched bool
-		if parent, ok := o.rendered.ParentOf(rs.Named()); ok {
-			parentKS, matched = parent, true
-		} else {
-			file := o.sourceFiles[rs.Named()]
-			if file == "" {
-				file = sourceByName[rs.Name]
-			}
-			if file == "" {
-				continue
-			}
-			slashFile := filepath.ToSlash(file)
-			for _, w := range owners {
-				if strings.HasPrefix(slashFile, w.prefix) {
-					parentKS = w.id
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-		}
-		for _, doc := range docs {
-			parsed, perr := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: o.cfg.WipeSecrets})
-			if perr != nil {
-				continue
-			}
-			if _, raw := parsed.(*manifest.RawObject); !raw {
-				continue
-			}
-			key := dedupKeyForDoc(doc)
-			if key == "" {
-				continue
-			}
-			if _, dup := seen[key]; dup {
-				continue
-			}
-			seen[key] = struct{}{}
-			out[parentKS] = append(out[parentKS], doc)
-		}
-	}
-	o.rsExtensions = out
-}
-
-// dedupKeyForDoc keys a rendered doc by (apiVersion, kind, namespace,
-// name). Empty string when any required component is missing —
-// signals "drop this doc" rather than collide with other emptys.
-func dedupKeyForDoc(doc map[string]any) string {
-	apiVersion, _ := doc["apiVersion"].(string)
-	kind, _ := doc["kind"].(string)
-	md, _ := doc["metadata"].(map[string]any)
-	name, _ := md["name"].(string)
-	ns, _ := md["namespace"].(string)
-	if kind == "" || name == "" {
-		return ""
-	}
-	return apiVersion + "|" + kind + "|" + ns + "|" + name
-}
-
-// resolveInputProvider mirrors discovery.resolveInputProvider but
-// against the post-Run store, which now includes RSIPs emitted by
-// the KS controller from kustomize substitution. Same semantics:
-// name-only refs hit the exact id; selector refs walk the requested
-// namespace's RSIPs and filter by metadata.labels.
-func (o *Orchestrator) resolveInputProvider(ref fluxopv1.InputProviderReference, namespace string) ([]*manifest.ResourceSetInputProvider, error) {
-	if ref.Name != "" {
-		id := manifest.NamedResource{
-			Kind:      manifest.KindResourceSetInputProvider,
-			Namespace: namespace,
-			Name:      ref.Name,
-		}
-		obj, _ := o.store.GetObject(id).(*manifest.ResourceSetInputProvider)
-		if obj == nil {
-			return nil, nil
-		}
-		return []*manifest.ResourceSetInputProvider{obj}, nil
-	}
-	if ref.Selector == nil {
-		return nil, nil
-	}
-	var out []*manifest.ResourceSetInputProvider
-	for _, obj := range o.store.ListObjects(manifest.KindResourceSetInputProvider) {
-		p, ok := obj.(*manifest.ResourceSetInputProvider)
-		if !ok || p.Namespace != namespace {
-			continue
-		}
-		match, err := resourceset.MatchSelector(ref.Selector, p.Labels)
-		if err != nil {
-			return nil, err
-		}
-		if match {
-			out = append(out, p)
-		}
-	}
-	return out, nil
-}
 
 // Stop shuts the controllers down in reverse-construction order and
 // releases the staging cache.

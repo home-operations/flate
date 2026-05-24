@@ -226,19 +226,26 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	defer release()
 	if exists {
 		cachedDigest := readCachedDigest(slot)
-		if cachedDigest == "" {
+		// `.flate-digest` is written as the FINAL step of a successful
+		// fetch, so its absence on a non-empty slot signals a crashed
+		// or aborted prior run that left partial blobs/ layout behind.
+		// (Slot.exists returns true on ANY non-empty dir.) Without
+		// this guard, the next fetch silently serves the corrupt
+		// slot as a cache hit. Fall through to a fresh pull, and only
+		// honor ref.Digest as the cachedDigest when one is explicitly
+		// pinned in spec.ref.digest — the orig spec-pin path that
+		// never wrote `.flate-digest` in the first place.
+		if cachedDigest == "" && ref.Digest == "" {
+			_ = cache.Reset(slot)
+			exists = false
+		} else if cachedDigest == "" {
 			cachedDigest = ref.Digest
 		}
 		// When verification is configured, re-verify the cached digest
 		// against the registry. Cheap (one metadata fetch) and closes the
-		// gap where a slot was populated under a prior policy. If we have
-		// no recorded digest, the verify pass can't be trusted — fall
-		// through to a fresh pull.
-		if repo.Verify != nil {
-			if cachedDigest == "" {
-				_ = cache.Reset(slot)
-				exists = false
-			} else if err := f.verifyCosignSignature(ctx, repoClient, repo, cachedDigest); err != nil {
+		// gap where a slot was populated under a prior policy.
+		if exists && repo.Verify != nil {
+			if err := f.verifyCosignSignature(ctx, repoClient, repo, cachedDigest); err != nil {
 				// Cosign rejected the cached bytes. Without resetting, the
 				// next reconcile re-hits the same poisoned slot and fails
 				// verify identically — a hard-to-debug repeated failure.
@@ -289,7 +296,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 			return nil, err
 		}
 	}
-	if err := applyLayerSelector(ctx, repoClient, slot, desc.Digest.String(), repo.LayerSelector); err != nil {
+	if err := applyLayerSelector(ctx, slot, desc.Digest.String(), repo.LayerSelector); err != nil {
 		resetOnErr()
 		return nil, fmt.Errorf("OCIRepository %s/%s: layer select: %w", repo.Namespace, repo.Name, err)
 	}

@@ -76,7 +76,7 @@ func TestApplyLayerSelector_Extract(t *testing.T) {
 	})
 	_ = manifestBytes
 
-	if err := applyLayerSelector(t.Context(), nil, slot, manifestDigest.String(),
+	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
 		&manifest.OCILayerSelector{
 			MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
 			Operation: manifest.OCILayerOperationExtract,
@@ -118,7 +118,7 @@ func TestApplyLayerSelector_Copy(t *testing.T) {
 		},
 	})
 
-	if err := applyLayerSelector(t.Context(), nil, slot, manifestDigest.String(),
+	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
 		&manifest.OCILayerSelector{
 			MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
 			Operation: manifest.OCILayerOperationCopy,
@@ -147,10 +147,47 @@ func TestApplyLayerSelector_MediaTypeUnmatched(t *testing.T) {
 		},
 	})
 
-	err := applyLayerSelector(t.Context(), nil, slot, manifestDigest.String(),
+	err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
 		&manifest.OCILayerSelector{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"})
 	if err == nil {
 		t.Fatalf("expected error for unmatched mediaType")
+	}
+}
+
+// TestSafeJoinTarPath covers the three escape shapes the helper is
+// supposed to reject: relative `../` traversal, absolute paths in the
+// tar header, and the happy path that must NOT be rejected.
+func TestSafeJoinTarPath(t *testing.T) {
+	t.Parallel()
+	dst := t.TempDir()
+	cases := []struct {
+		name      string
+		entry     string
+		wantError bool
+	}{
+		{"relative traversal", "../escape.txt", true},
+		{"deep relative traversal", "../../../etc/passwd", true},
+		{"absolute path", "/etc/passwd", true},
+		{"absolute deep path", "/var/run/secrets/token", true},
+		{"sneaky cleaned traversal", "foo/../../escape", true},
+		{"clean traversal back to dst is fine", "foo/../bar.txt", false},
+		{"plain relative", "Chart.yaml", false},
+		{"nested relative", "templates/cm.yaml", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := safeJoinTarPath(dst, tc.entry)
+			if tc.wantError {
+				if err == nil {
+					t.Errorf("safeJoinTarPath(%q) = %q, nil; want escape error", tc.entry, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("safeJoinTarPath(%q): %v", tc.entry, err)
+			}
+		})
 	}
 }
 
@@ -184,7 +221,7 @@ func TestApplyLayerSelector_TraversalRejected(t *testing.T) {
 		},
 	})
 
-	err := applyLayerSelector(t.Context(), nil, slot, manifestDigest.String(),
+	err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
 		&manifest.OCILayerSelector{
 			MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
 			Operation: manifest.OCILayerOperationExtract,

@@ -83,6 +83,69 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 	}
 }
 
+// TestFetcher_PartialSlotInvalidated guards against a corrupt cache
+// hit: a prior fetch that crashed AFTER oras.Copy populated `blobs/`
+// but BEFORE writeCachedDigest finalized the `.flate-digest` sentinel
+// would otherwise be served back as a valid artifact (cache.Slot
+// reports non-empty dir → exists=true). Treat the missing sentinel
+// as an invalidated slot and re-pull.
+func TestFetcher_PartialSlotInvalidated(t *testing.T) {
+	t.Parallel()
+
+	layerBytes := mustTarGz(t, map[string]string{"Chart.yaml": "apiVersion: v2\nname: x\nversion: 0.1.0\n"})
+	configBytes := []byte(`{}`)
+	manifestBytes := mustManifestJSON(t, configBytes, layerBytes,
+		"application/vnd.cncf.flux.config.v1+json",
+		"application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+	)
+	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
+
+	cache := source.NewCache(t.TempDir())
+	f := &Fetcher{Cache: cache}
+	repo := &manifest.OCIRepository{
+		Name:      "partial",
+		Namespace: "test",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			URL:       fmt.Sprintf("oci://%s/partial", mustURL(t, srv.URL).Host),
+			Insecure:  true,
+			Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
+		},
+	}
+
+	// First fetch populates the slot fully.
+	art, err := f.Fetch(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("first Fetch: %v", err)
+	}
+	digestPath := filepath.Join(art.LocalPath, ".flate-digest")
+	if _, err := os.Stat(digestPath); err != nil {
+		t.Fatalf("first fetch did not produce .flate-digest: %v", err)
+	}
+
+	// Simulate the crash: remove the sentinel but leave stray content
+	// (a leftover dir is closer to the real crash shape than an empty
+	// slot, which Slot() would treat as fresh).
+	if err := os.Remove(digestPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(art.LocalPath, "blobs", "sha256"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second fetch must NOT return the corrupt slot. With the fix it
+	// resets and re-pulls; the .flate-digest comes back.
+	art2, err := f.Fetch(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("second Fetch (after partial-slot reset): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(art2.LocalPath, ".flate-digest")); err != nil {
+		t.Errorf("second fetch did not re-populate .flate-digest after partial-slot reset: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(art2.LocalPath, "Chart.yaml")); err != nil {
+		t.Errorf("second fetch did not re-extract Chart.yaml: %v", err)
+	}
+}
+
 // TestFetcher_ExtractCollidesWithOCILayoutName guards the staging
 // step in applyLayerSelector: a tarball whose entries collide with
 // OCI Image Layout well-known names (blobs/, index.json, oci-layout)

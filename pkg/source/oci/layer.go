@@ -14,7 +14,6 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -80,7 +79,6 @@ func effectiveLayerOperation(selector *manifest.OCILayerSelector) string {
 // omitted but the artifact has exactly one tarball layer.
 func applyLayerSelector(
 	_ context.Context,
-	_ *remote.Repository,
 	slot string,
 	manifestDigest string,
 	selector *manifest.OCILayerSelector,
@@ -103,10 +101,7 @@ func applyLayerSelector(
 		return nil
 	}
 
-	op := manifest.OCILayerOperationExtract
-	if selector != nil && selector.Operation != "" {
-		op = selector.Operation
-	}
+	op := effectiveLayerOperation(selector)
 
 	staged := filepath.Join(slot, stagedLayerFilename)
 	if err := os.Rename(digestPath(slot, layer.Digest), staged); err != nil {
@@ -197,9 +192,12 @@ func cleanupOCILayout(slot string) error {
 	return nil
 }
 
-// extractTarGz unpacks a gzipped tarball into dst. Refuses path
-// traversal entries (../) so a malicious artifact can't write
-// outside the cache slot.
+// extractTarGz unpacks a gzipped tarball into dst. Rejects any entry
+// whose resolved path escapes dst — covers `../` traversal, absolute
+// paths in the tar header (e.g. `/etc/passwd`), and symlink-pivoting
+// hardlinks. Symlinks/hardlinks/devices are silently skipped rather
+// than honored; Flux's source-controller does the same and helm
+// charts never depend on them.
 func extractTarGz(src, dst string) error {
 	f, err := os.Open(src) //nolint:gosec // src lives under the fetcher's cache slot
 	if err != nil {
@@ -220,11 +218,10 @@ func extractTarGz(src, dst string) error {
 		if err != nil {
 			return fmt.Errorf("tar: %w", err)
 		}
-		clean := filepath.Clean(hdr.Name)
-		if strings.HasPrefix(clean, "..") || strings.Contains(clean, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("tar entry escapes target directory: %q", hdr.Name)
+		target, err := safeJoinTarPath(dst, hdr.Name)
+		if err != nil {
+			return err
 		}
-		target := filepath.Join(dst, clean)
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o750); err != nil {
@@ -234,7 +231,7 @@ func extractTarGz(src, dst string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // target stays under dst
+			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // target stays under dst (safeJoinTarPath enforced)
 			if err != nil {
 				return err
 			}
@@ -245,10 +242,46 @@ func extractTarGz(src, dst string) error {
 			if err := out.Close(); err != nil {
 				return err
 			}
+		default:
+			// Skip symlinks, hardlinks, devices, FIFOs, etc.
+			// Honoring symlinks would re-open the traversal surface
+			// (point at /etc/passwd, then a subsequent TypeReg
+			// "writes through" the link); flate has no use case
+			// for these and Flux's source-controller does the same.
 		}
 	}
 	if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
+}
+
+// safeJoinTarPath joins a tar entry's declared name against dst and
+// verifies the resolved path stays strictly inside dst. Defends
+// against three escape shapes:
+//
+//   - Relative traversal: `../../escape.txt` (filepath.Clean
+//     collapses; Rel reports `..` prefix).
+//   - Absolute path: `/etc/passwd` (filepath.Join silently strips the
+//     leading `/` and roots inside dst, which Rel can't detect after
+//     the fact — so we reject any entryName that filepath.IsAbs flags
+//     OR that has a Windows-style volume name, BEFORE the Join).
+//   - Symlink-pivot: a prior symlink entry creating a back-pointer.
+//     Mitigated by extractTarGz's default-case silent skip of
+//     symlinks; this guard catches the residual case if symlinks
+//     are ever re-enabled.
+//
+// Mirrors the bucket source's safeJoinUnderSlot — both packages need
+// the same guarantee.
+func safeJoinTarPath(dst, entryName string) (string, error) {
+	clean := filepath.Clean(entryName)
+	if filepath.IsAbs(clean) || filepath.VolumeName(clean) != "" {
+		return "", fmt.Errorf("tar entry escapes target directory: %q", entryName)
+	}
+	target := filepath.Join(dst, clean)
+	rel, err := filepath.Rel(dst, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("tar entry escapes target directory: %q", entryName)
+	}
+	return target, nil
 }

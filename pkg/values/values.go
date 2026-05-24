@@ -101,9 +101,16 @@ func DeepMerge(base, override map[string]any) map[string]any {
 // merges them with hr.Values (inline values take precedence per Helm
 // semantics), and writes the result back to hr.Values.
 //
-// Per-reference resolution failures are logged and skipped, matching
-// upstream behavior. Hard errors (kind unknown, missing key in present
-// resource) bubble up.
+// Honors ValuesReference.Optional: missing references on Optional=true
+// refs are skipped silently; missing references on Optional=false (the
+// default) return ErrObjectNotFound so the orchestrator can surface a
+// real failure or honor --allow-missing-secrets. Matches Flux's helm-
+// controller, which fails the reconcile on a missing non-optional
+// valuesFrom but tolerates a missing optional one.
+//
+// Hard errors from the lookup itself — unsupported kind, missing key
+// in a present resource, malformed binaryData — always bubble up; they
+// are unrelated to whether the ref is optional.
 func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 	if hr == nil || len(hr.ValuesFrom) == 0 {
 		return nil
@@ -112,11 +119,17 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 	for _, ref := range hr.ValuesFrom {
 		found, err := lookupValueRef(ref, hr.Namespace, provider)
 		if err != nil {
-			slog.Debug("values: skipped ValuesReference",
-				"id", hr.Named().String(), "ref", ref.Name, "err", err)
-			continue
+			return fmt.Errorf("building HelmRelease %s: %w", hr.NamespacedName(), err)
 		}
 		if found == "" {
+			// Resource missing. lookupValueRef only returns "" when
+			// the underlying CM/Secret was absent AND no TargetPath
+			// short-circuit produced a placeholder; that's the only
+			// case where Optional applies.
+			if !ref.Optional {
+				return fmt.Errorf("%w: HelmRelease %s: valuesFrom %s %s/%s not found",
+					manifest.ErrObjectNotFound, hr.NamespacedName(), ref.Kind, hr.Namespace, ref.Name)
+			}
 			continue
 		}
 		merged, err := updateHelmReleaseValues(ref, found, values)

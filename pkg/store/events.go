@@ -1,6 +1,7 @@
 package store
 
 import (
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
@@ -136,7 +137,16 @@ func (s *Store) fire(event EventKind, id manifest.NamedResource, payload any) {
 }
 
 func safeInvoke(fn Listener, id manifest.NamedResource, payload any) {
-	defer func() { _ = recover() }()
+	defer func() {
+		if r := recover(); r != nil {
+			// A panicking listener silently swallowed the event in
+			// the past — the orchestrator would see a missing
+			// status update with no diagnostic. Log at Error so
+			// a CI run surfaces the panic instead of buried
+			// "FAILED (no status reported)" downstream.
+			slog.Error("store: listener panicked", "id", id.String(), "panic", r)
+		}
+	}()
 	fn(id, payload)
 }
 

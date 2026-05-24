@@ -103,10 +103,12 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	}
 	cv, err := idx.Get(hr.Chart.Name, hr.Chart.Version)
 	if err != nil {
-		return "", fmt.Errorf("chart %s@%s not found in %s: %w", hr.Chart.Name, hr.Chart.Version, r.URL, err)
+		return "", fmt.Errorf("%w: chart %s@%s not found in %s: %v",
+			manifest.ErrObjectNotFound, hr.Chart.Name, hr.Chart.Version, r.URL, err)
 	}
 	if len(cv.URLs) == 0 {
-		return "", fmt.Errorf("chart %s@%s in %s has no URLs", hr.Chart.Name, hr.Chart.Version, r.URL)
+		return "", fmt.Errorf("%w: chart %s@%s in %s has no URLs",
+			manifest.ErrObjectNotFound, hr.Chart.Name, hr.Chart.Version, r.URL)
 	}
 	chartURL, err := absChartURL(r.URL, cv.URLs[0])
 	if err != nil {
@@ -152,8 +154,11 @@ func (c *Client) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Optio
 	getSec := c.secrets
 	c.mu.RUnlock()
 	if getSec == nil {
-		return nil, fmt.Errorf("HelmRepository %s/%s references secretRef but no SecretGetter is wired",
-			r.Namespace, r.Name)
+		// Use the same sentinel as the "secret not found" path so
+		// --allow-missing-secrets covers both shapes — from the
+		// caller's perspective the dependency is equally unresolved.
+		return nil, fmt.Errorf("%w: HelmRepository %s/%s references secretRef but no SecretGetter is wired",
+			manifest.ErrMissingSecret, r.Namespace, r.Name)
 	}
 	sec := getSec(r.Namespace, r.SecretRef.Name)
 	if sec == nil {
@@ -191,13 +196,13 @@ func (c *Client) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option
 	getSec := c.secrets
 	c.mu.RUnlock()
 	if getSec == nil {
-		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s references certSecretRef but no SecretGetter is wired",
-			r.Namespace, r.Name)
+		return nil, noCleanup, fmt.Errorf("%w: HelmRepository %s/%s references certSecretRef but no SecretGetter is wired",
+			manifest.ErrMissingSecret, r.Namespace, r.Name)
 	}
 	sec := getSec(r.Namespace, r.CertSecretRef.Name)
 	if sec == nil {
-		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s: cert secret %s/%s not found",
-			r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
+		return nil, noCleanup, fmt.Errorf("%w: HelmRepository %s/%s: cert secret %s/%s not found",
+			manifest.ErrMissingSecret, r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
 	}
 
 	var tmpFiles []string
@@ -245,8 +250,8 @@ func (c *Client) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option
 	}
 	if certPath == "" && keyPath == "" && caPath == "" {
 		cleanup()
-		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
-			r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
+		return nil, noCleanup, fmt.Errorf("%w: HelmRepository %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
+			manifest.ErrMissingSecret, r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
 	}
 	return []getter.Option{getter.WithTLSClientConfig(certPath, keyPath, caPath)}, cleanup, nil
 }

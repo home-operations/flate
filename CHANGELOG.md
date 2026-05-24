@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.16](https://github.com/home-operations/flate/compare/0.1.15...0.1.16) (2026-05-24)
+
+
+### Bug Fixes
+
+* **controllers/helmrelease:** refresh HR after dependsOn wait ([#251](https://github.com/home-operations/flate/issues/251)) ([55c46ac](https://github.com/home-operations/flate/commit/55c46ac0111e4fa1ed7d5fd0902528d33395a002))
+
 ## [0.1.15](https://github.com/home-operations/flate/compare/0.1.14...0.1.15) (2026-05-24)
 
 

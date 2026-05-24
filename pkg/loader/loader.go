@@ -3,10 +3,8 @@ package loader
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -153,53 +151,25 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 }
 
 func (l *Loader) loadFile(path string) (int, error) {
-	f, err := os.Open(path) //nolint:gosec // path is a tree-walk result under the cluster scan root
+	objs, err := parseFile(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = f.Close() }()
-	docs, err := manifest.DecodeDocs(f)
-	if err != nil {
-		return 0, fmt.Errorf("decode %s: %w", path, err)
-	}
-	opts := manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}
 	count := 0
-	for _, doc := range docs {
-		obj, err := manifest.ParseDoc(doc, opts)
-		if err != nil {
-			// Don't break on a single bad doc; flux-local skips and logs.
-			slog.Debug("loader: doc skipped", "path", path, "err", err)
-			continue
-		}
-		if _, ok := obj.(*manifest.RawObject); ok {
-			// We only persist objects we explicitly understand.
-			continue
-		}
+	for _, obj := range objs {
 		id := obj.Named()
-		// Skip resources whose name or namespace contains a literal
-		// `${VAR}` reference — those are templates the user expects a
-		// parent Kustomization's postBuild.substitute(From) to resolve
-		// at render time. Real Flux never sees them as in-cluster CRs
-		// (the K8s API would reject `$` in metadata.name) and flate
-		// shouldn't try to reconcile them either; the substituted copy
-		// emitted by the parent KS's render is the reconcilable one.
-		if manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace) {
-			slog.Debug("loader: skipped template file (unresolved envsubst in name/namespace)",
-				"path", path, "id", id.String())
-			continue
-		}
 		if l.PreferExisting && l.Store.GetObject(id) != nil {
 			continue
 		}
 		if l.Options.DiscoveryOnly && !isDiscoveryKind(obj) {
-			// Step 4 of the render-driven migration: HRs, sources,
-			// ConfigMaps, Secrets and other reconcilable kinds stay
-			// out of the Store at file-load time. They appear later
-			// via KS render emission (emitRenderedChildren) or via
-			// orphan promotion. The existence index records the
-			// {id, path} pair so depwait's missing-dep fallback can
-			// resolve sibling-rendered substituteFrom CMs without
-			// deadlocking the parent KS.
+			// Under render-driven discovery, HRs / ConfigMaps /
+			// Secrets / raw manifests stay out of the Store at file-
+			// load time. They reach the Store via KS render
+			// emission (emitRenderedChildren), depwait's lazy-
+			// promotion fallback, or the orchestrator's orphan
+			// sweep. The Existence index records the {id, path}
+			// pair so the depwait fallback can re-parse the file
+			// on demand without deadlocking the producing KS.
 			l.Existence.Record(id, path)
 			l.recordSource(id, path)
 			continue

@@ -41,12 +41,11 @@ func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
 	}
 }
 
-// TestCollectDeps_AppendsSubstituteFromConfigMap is step 3 of the
-// render-driven migration: every non-Optional postBuild.substituteFrom
-// ConfigMap becomes a real depwait edge. Without this, KS-A would
-// race the CM that KS-B's render emits, and Prepare would silently
-// expand with empty values for any var that should have come from
-// KS-B's CM.
+// TestCollectDeps_AppendsSubstituteFromConfigMap locks the
+// substituteFrom→ConfigMap depwait edge: every non-Optional ref
+// becomes a real dependency. Without this, KS-A would race the CM
+// that KS-B's render emits, and Prepare would silently expand with
+// empty values for any var that should have come from KS-B's CM.
 func TestCollectDeps_AppendsSubstituteFromConfigMap(t *testing.T) {
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",

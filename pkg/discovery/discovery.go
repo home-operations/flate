@@ -80,10 +80,10 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	l := loader.New(cfg.Store)
 	l.Options.WipeSecrets = cfg.WipeSecrets
-	// Step 4 of the render-driven migration: only Kustomizations (plus
-	// the discovery-meta ResourceSet/RSIP pair) reach the Store from
-	// the file walker. HRs, sources, CMs, Secrets, and raw manifests
-	// flow through Existence — picked up later by KS render via
+	// Render-driven discovery: only Kustomizations and the discovery-
+	// meta pair (ResourceSet, RSIP) reach the Store from the file
+	// walker. HRs, sources, CMs, Secrets, and raw manifests flow
+	// through Existence — picked up later by KS render via
 	// emitRenderedChildren, the orchestrator's orphan-promotion
 	// sweep, or depwait's lazy-promotion fallback.
 	l.Options.DiscoveryOnly = true
@@ -115,7 +115,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// render emission. Promote it now so standalone CRs (loose HR
 	// at repo root, sources next to flux-system/kustomization.yaml,
 	// etc.) keep working in DiscoveryOnly mode.
-	d.promoteOrphans(repoRoot)
+	d.promoteOrphans()
 
 	return &Result{
 		RepoRoot:    repoRoot,
@@ -371,9 +371,8 @@ func (d *discoverer) resolveInputProvider(ref fluxopv1.InputProviderReference, n
 
 // promoteOrphans materializes Existence entries that no Kustomization
 // will ever render. An "orphan" here is a file-indexed object whose
-// absolute file path is not under any loaded KS's spec.path — render-
-// driven discovery would leave it stranded otherwise. Common shapes
-// promoted here:
+// source file is not under any loaded KS's spec.path — render-driven
+// discovery would leave it stranded otherwise. Common shapes:
 //
 //   - A loose HelmRelease/source at repo root that `flate build`
 //     should still render even with no enclosing KS.
@@ -384,54 +383,32 @@ func (d *discoverer) resolveInputProvider(ref fluxopv1.InputProviderReference, n
 // they'll be emitted by that KS's render via emitRenderedChildren
 // (or resolved on-demand by depwait's lazy-promotion fallback when a
 // substituteFrom edge fires before the producing KS reconciles).
-func (d *discoverer) promoteOrphans(repoRoot string) {
+//
+// Shares the parent-path-prefix predicate with the orchestrator's
+// detectOrphans via loader.KSPathPrefixes — the two run in
+// complementary phases (pre-reconcile materialization here,
+// post-reconcile failure demotion there) and must agree on the
+// same "under a KS path" predicate so an object can't be classified
+// orphan by one and parented by the other.
+func (d *discoverer) promoteOrphans() {
 	if d.loader.Existence == nil {
 		return
 	}
-	covered := d.coveredPathPrefixes(repoRoot)
-	for id, path := range d.loader.Existence.All() {
+	prefixes := loader.KSPathPrefixes(d.cfg.Store)
+	for id := range d.loader.Existence.All() {
 		if d.cfg.Store.GetObject(id) != nil {
 			continue
 		}
-		if pathUnderAny(path, covered) {
-			continue
+		file, hasFile := d.sourceFiles[id]
+		if hasFile {
+			if _, covered := loader.LongestParent(prefixes, file, id); covered {
+				continue
+			}
 		}
-		if !loader.Promote(d.loader.Existence, d.cfg.Store, id, d.cfg.WipeSecrets) {
-			slog.Debug("discovery: orphan promotion failed", "id", id.String(), "path", path)
-		}
-	}
-}
-
-// coveredPathPrefixes returns the absolute directory prefixes covered
-// by every loaded Kustomization's spec.path (each terminated with a
-// path separator so pathUnderAny matches a directory boundary instead
-// of a name-prefix collision like `/apps/foo` vs `/apps-foo`).
-func (d *discoverer) coveredPathPrefixes(repoRoot string) []string {
-	var out []string
-	for _, obj := range d.cfg.Store.ListObjects(manifest.KindKustomization) {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.Path == "" {
-			continue
-		}
-		abs := filepath.Join(repoRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
-		out = append(out, filepath.Clean(abs)+string(filepath.Separator))
-	}
-	return out
-}
-
-// pathUnderAny reports whether path sits under one of prefixes
-// (which must already end with a path separator).
-func pathUnderAny(path string, prefixes []string) bool {
-	clean := filepath.Clean(path)
-	for _, prefix := range prefixes {
-		if len(clean) >= len(prefix)-1 && clean+string(filepath.Separator) == prefix {
-			return true
-		}
-		if len(clean) > len(prefix) && clean[:len(prefix)] == prefix {
-			return true
+		if !d.loader.Existence.Promote(d.cfg.Store, id, d.cfg.WipeSecrets) {
+			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}
 	}
-	return false
 }
 
 // aliasBootstrapSources seeds a working-tree SourceArtifact for every

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -102,6 +103,20 @@ func (c *Controller) lookupParent(id manifest.NamedResource) (manifest.NamedReso
 	return c.parentOf(id)
 }
 
+// newWaiter constructs a depwait.Waiter pre-wired with the
+// controller's Store and lazy-promotion fallback, parented to id and
+// budgeted from timeout (typically hr.Timeout). Centralizes the
+// boilerplate so the parent-KS gate, dependsOn wait, and chart-
+// source wait don't drift apart.
+func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Duration) *depwait.Waiter {
+	return &depwait.Waiter{
+		Store:          c.Store,
+		Parent:         id,
+		Timeout:        depwait.TimeoutFromSpec(timeout),
+		ResolveMissing: c.resolveMissing,
+	}
+}
+
 // Start registers the listeners. The controller runs until Close.
 // The HR controller only listens for HelmRelease and HelmChartSource
 // (the chart-ref index) — source-kind events (HelmRepository,
@@ -148,13 +163,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		c.Store.UpdateStatus(id, store.StatusPending, "waiting for parent KS")
 		var sum depwait.Summary
 		c.Tasks.YieldSlot(func() {
-			w := &depwait.Waiter{
-				Store:          c.Store,
-				Parent:         id,
-				Timeout:        depwait.TimeoutFromSpec(hr.Timeout),
-				ResolveMissing: c.resolveMissing,
-			}
-			sum = depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: parent}}))
+			sum = depwait.WaitAll(c.newWaiter(id, hr.Timeout).Watch(ctx, []manifest.DependencyRef{{NamedResource: parent}}))
 		})
 		if sum.AnyFailed() {
 			return fmt.Errorf("%w: parent Kustomization %s not ready: %s",
@@ -177,13 +186,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
 		var sum depwait.Summary
 		c.Tasks.YieldSlot(func() {
-			w := &depwait.Waiter{
-				Store:          c.Store,
-				Parent:         id,
-				Timeout:        depwait.TimeoutFromSpec(hr.Timeout),
-				ResolveMissing: c.resolveMissing,
-			}
-			sum = depwait.WaitAll(w.Watch(ctx, deps))
+			sum = depwait.WaitAll(c.newWaiter(id, hr.Timeout).Watch(ctx, deps))
 		})
 		if sum.AnyFailed() {
 			return &manifest.DependencyFailedError{
@@ -227,13 +230,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 	var sum depwait.Summary
 	c.Tasks.YieldSlot(func() {
-		w := &depwait.Waiter{
-			Store:          c.Store,
-			Parent:         id,
-			Timeout:        depwait.TimeoutFromSpec(hr.Timeout),
-			ResolveMissing: c.resolveMissing,
-		}
-		sum = depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: srcID}}))
+		sum = depwait.WaitAll(c.newWaiter(id, hr.Timeout).Watch(ctx, []manifest.DependencyRef{{NamedResource: srcID}}))
 	})
 	if sum.AnyFailed() {
 		return fmt.Errorf("%w: chart source %s not ready: %s",

@@ -17,6 +17,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	yaml "go.yaml.in/yaml/v4"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -54,12 +55,10 @@ type Controller struct {
 // "this child id was emitted by THIS parent KS's render" to the
 // orchestrator. Nil is OK — the controller no-ops.
 //
-// The parent linkage is consumed by detectOrphans and (in later
-// steps of the render-driven discovery migration) by the parent
-// index, change filter, and ResourceSet extension attribution —
-// every place that today relies on `sourceFiles[id]` for
-// file-loaded resources gains the ability to query parent
-// provenance for render-emitted ones.
+// The parent linkage is consumed by detectOrphans, the parent
+// resolver (combined with the file-loaded path-prefix index), and
+// ResourceSet extension attribution — every place that needs to
+// query parent provenance for render-emitted resources.
 type RenderTracker interface {
 	MarkRendered(parent, child manifest.NamedResource)
 }
@@ -113,6 +112,18 @@ func (c *Controller) markRendered(parent, child manifest.NamedResource) {
 	}
 }
 
+// newWaiter constructs a depwait.Waiter pre-wired with the
+// controller's Store and lazy-promotion fallback, parented to id and
+// budgeted from timeout (typically ks.Timeout).
+func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Duration) *depwait.Waiter {
+	return &depwait.Waiter{
+		Store:          c.Store,
+		Parent:         id,
+		Timeout:        depwait.TimeoutFromSpec(timeout),
+		ResolveMissing: c.resolveMissing,
+	}
+}
+
 // Start registers the listener that drives reconciliation.
 func (c *Controller) Start(ctx context.Context) {
 	c.StartLifecycle("kustomization")
@@ -149,13 +160,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		// slots while waiting for children that need a slot to run.
 		var sum depwait.Summary
 		c.Tasks.YieldSlot(func() {
-			w := &depwait.Waiter{
-				Store:          c.Store,
-				Parent:         id,
-				Timeout:        depwait.TimeoutFromSpec(ks.Timeout),
-				ResolveMissing: c.resolveMissing,
-			}
-			sum = depwait.WaitAll(w.Watch(ctx, deps))
+			sum = depwait.WaitAll(c.newWaiter(id, ks.Timeout).Watch(ctx, deps))
 		})
 		if sum.AnyFailed() {
 			return &manifest.DependencyFailedError{

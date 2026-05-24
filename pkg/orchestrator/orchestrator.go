@@ -318,23 +318,7 @@ func (o *Orchestrator) validateDependsOn() {
 // warning rather than gating the test on stale local files.
 func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]struct{} {
 	out := make(map[manifest.NamedResource]struct{})
-	// Collect every loaded Kustomization's spec.path so we can ask
-	// "does any parent's path cover this file?" cheaply.
-	type parentPath struct {
-		id   manifest.NamedResource
-		path string
-	}
-	var parents []parentPath
-	for _, obj := range o.store.ListObjects(manifest.KindKustomization) {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.Path == "" {
-			continue
-		}
-		parents = append(parents, parentPath{
-			id:   ks.Named(),
-			path: filepath.ToSlash(strings.TrimPrefix(strings.TrimSuffix(ks.Path, "/"), "./")) + "/",
-		})
-	}
+	prefixes := loader.KSPathPrefixes(o.store)
 	for id := range failed {
 		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
 			continue
@@ -348,18 +332,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		if !ok {
 			continue
 		}
-		slashFile := filepath.ToSlash(file)
-		var covered bool
-		for _, p := range parents {
-			if p.id == id {
-				continue
-			}
-			if strings.HasPrefix(slashFile, p.path) {
-				covered = true
-				break
-			}
-		}
-		if covered {
+		if _, ok := loader.LongestParent(prefixes, file, id); ok {
 			out[id] = struct{}{}
 		}
 	}
@@ -434,14 +407,11 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		Filter:             o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	})
-	// parentResolver unifies the two sources of structural-parent info:
-	// (1) the pre-built file-path prefix index for file-loaded
-	// resources (o.parentOf), and (2) the renderedSet's parent-of
-	// linkage for resources that arrive via a KS render's
-	// emitRenderedChildren (populated at Run-time, not at Bootstrap).
-	// Controllers query through this single seam; later migration
-	// steps swap (1) for the full render-driven version without
-	// touching controller code.
+	// parentResolver unifies the two sources of structural-parent
+	// info: (1) the pre-built file-path prefix index for file-loaded
+	// resources, and (2) the renderedSet for resources that arrive
+	// via a KS render's emitRenderedChildren (populated at Run-time,
+	// not at Bootstrap). Controllers query through this single seam.
 	parentResolver := func(id manifest.NamedResource) (manifest.NamedResource, bool) {
 		if parent, ok := o.parentOf[id]; ok {
 			return parent, true
@@ -458,7 +428,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	// asks instead of waiting for the producing render that can't
 	// run until the depwait clears.
 	resolveMissing := func(id manifest.NamedResource) bool {
-		return loader.Promote(o.existence, o.store, id, o.cfg.WipeSecrets)
+		return o.existence.Promote(o.store, id, o.cfg.WipeSecrets)
 	}
 	o.ksc.Configure(kustomization.Options{
 		Filter:         o.filter,
@@ -726,15 +696,13 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 		// Resolve parent KS in priority order:
 		//
 		//   1. renderedSet.ParentOf — most direct; set when the RS
-		//      arrived via emitRenderedChildren (the render-driven
-		//      path that increasingly dominates as the migration
-		//      progresses). No prefix matching needed.
-		//   2. sourceFiles + path-prefix match — covers file-loaded
-		//      RSes (today's typical case).
-		//   3. Name-keyed sourceFile fallback — covers the
-		//      KS-substituted variant whose namespace shifted at
-		//      emit time, identified by sharing a name with a
-		//      file-loaded sibling.
+		//      arrived via emitRenderedChildren. No prefix matching
+		//      needed.
+		//   2. sourceFiles + path-prefix match — file-loaded RSes.
+		//   3. Name-keyed sourceFile fallback — covers a KS-
+		//      substituted variant whose namespace shifted at emit
+		//      time, identified by sharing a name with a file-loaded
+		//      sibling.
 		var parentKS manifest.NamedResource
 		var matched bool
 		if parent, ok := o.rendered.ParentOf(rs.Named()); ok {

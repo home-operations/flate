@@ -110,7 +110,7 @@ data:
 	if st.GetObject(id) != nil {
 		t.Fatalf("precondition: CM should not be in store yet")
 	}
-	if !Promote(l.Existence, st, id, true) {
+	if !l.Existence.Promote(st, id, true) {
 		t.Fatalf("Promote should return true on a known id")
 	}
 	if st.GetObject(id) == nil {

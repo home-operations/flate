@@ -24,6 +24,21 @@ type Filter struct {
 	sourceFiles map[manifest.NamedResource]string
 	repoRoot    string
 
+	// objs is captured from NewFilter so runtime Add() can walk
+	// transitiveDeps without the caller re-supplying it. Set once
+	// at construction; never mutated.
+	objs ObjectLister
+
+	// OnAdd, when non-nil, fires for every id newly added to the
+	// keep set by Add (including transitive-dep recursion). The
+	// orchestrator wires this to refire EventObjectAdded for source-
+	// kind ids whose listener already short-circuited via PreGate
+	// before the consuming KS joined keep. Issue #260.
+	//
+	// Set BEFORE controllers start. The Filter calls OnAdd outside
+	// its internal lock so callbacks are free to take other locks.
+	OnAdd func(manifest.NamedResource)
+
 	// mu guards keep + keepByName for runtime Add(); resolve() runs
 	// once during construction before the controllers start, so it
 	// doesn't need to hold the lock.
@@ -59,6 +74,7 @@ func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repo
 		changes:     changes,
 		sourceFiles: sourceFiles,
 		repoRoot:    repoRoot,
+		objs:        objs,
 	}
 	if changes == nil {
 		return f
@@ -109,6 +125,19 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 // changed-only diffs: the leaf KS isn't keep-set'd, never reconciles,
 // and its render output is missing from the diff. Issue #204.
 //
+// Add ALSO walks transitiveDeps recursively so a Kustomization /
+// HelmRelease added at runtime carries its sourceRef and chartRef
+// into the keep set with it. Without this, a leaf KS emitted via a
+// parent's render lands in keep, runs reconcile, asks for its
+// sourceRef's artifact, and finds nothing — the source controller
+// PreGate-skipped that source at startup because nothing in keep
+// referenced it yet. Issue #260.
+//
+// Newly-added ids are passed to OnAdd (when configured) so the
+// orchestrator can refire dependent listeners (e.g. retrigger the
+// source controller's fetch for a source whose PreGate-skip happened
+// before its consumer joined keep).
+//
 // Ordering contract for embedders: call Add(child) BEFORE the
 // emitting Store.AddObject(child). Store events fire synchronously
 // on the calling goroutine, so the controller's listener invokes
@@ -121,15 +150,54 @@ func (f *Filter) Add(id manifest.NamedResource) {
 	if !f.Enabled() {
 		return
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.keep[id]; ok {
+	added := f.addRecursive(id)
+	if f.OnAdd == nil || len(added) == 0 {
 		return
 	}
-	f.keep[id] = struct{}{}
-	if id.Namespace == "" {
-		f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
+	// Call OnAdd outside the lock — callbacks may take other locks
+	// (e.g. the Store's mu via Refire) and we don't want to invert
+	// lock order with concurrent ShouldReconcile readers.
+	for _, newID := range added {
+		f.OnAdd(newID)
 	}
+}
+
+// addRecursive adds id (and transitive deps) to keep, returning the
+// list of ids that were newly added (so the caller can dispatch
+// OnAdd notifications outside the lock). Holds mu for the full
+// graph walk so the recursion sees a coherent keep snapshot.
+func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResource {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var added []manifest.NamedResource
+	stack := []manifest.NamedResource{id}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, ok := f.keep[cur]; ok {
+			continue
+		}
+		f.keep[cur] = struct{}{}
+		if cur.Namespace == "" {
+			f.keepByName[nameKey{cur.Kind, cur.Name}] = struct{}{}
+		}
+		added = append(added, cur)
+		// Transitive walk: a runtime-added KS / HR pulls its
+		// sourceRef / chartRef / valuesFrom into keep with it.
+		// objs may be nil for tests that construct a Filter without
+		// an ObjectLister; in that case the walk is a no-op (the
+		// resolve() pre-build covered the initial graph already).
+		if f.objs == nil {
+			continue
+		}
+		for _, dep := range transitiveDeps(f.objs, cur) {
+			if _, ok := f.keep[dep]; !ok {
+				stack = append(stack, dep)
+			}
+		}
+	}
+	return added
 }
 
 func (f *Filter) resolve(objs ObjectLister) {

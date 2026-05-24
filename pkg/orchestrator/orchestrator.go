@@ -340,7 +340,26 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	if changes == nil {
 		return nil
 	}
-	o.attachFilter(change.NewFilter(changes, o.sourceFiles, repoRoot, o.store))
+	f := change.NewFilter(changes, o.sourceFiles, repoRoot, o.store)
+	// Wire OnAdd so a runtime keep-set extension (KS controller's
+	// emitRenderedChildren → keepEmitted) refires any source whose
+	// listener already short-circuited via PreGate before the
+	// consuming KS joined keep. Without this hook, the source stays
+	// Ready "unchanged" with no artifact and the KS's
+	// resolveSourceRoot surfaces "artifact not found" downstream.
+	// Issue #260.
+	f.OnAdd = func(id manifest.NamedResource) {
+		switch id.Kind {
+		case manifest.KindGitRepository,
+			manifest.KindOCIRepository,
+			manifest.KindHelmRepository,
+			manifest.KindBucket,
+			manifest.KindHelmChart,
+			manifest.KindExternalArtifact:
+			o.store.Refire(id)
+		}
+	}
+	o.attachFilter(f)
 	slog.Debug("changed-only keep set", "size", o.filter.Size(), "items", o.filter.KeepNames())
 	return nil
 }

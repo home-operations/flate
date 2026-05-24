@@ -89,6 +89,22 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 	s.fire(EventObjectAdded, id, obj)
 }
 
+// Refire dispatches EventObjectAdded for the existing object at id
+// without altering state. Used to wake up listeners that
+// short-circuited the first time (e.g. source controllers that
+// PreGate-skipped a source whose consumer joined the change-filter
+// keep set only at runtime — see issue #260). No-op when id is not
+// in the store.
+func (s *Store) Refire(id manifest.NamedResource) {
+	s.mu.RLock()
+	obj, ok := s.objects[id]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	s.fire(EventObjectAdded, id, obj)
+}
+
 // Cloneable is satisfied by manifest types that can be shallowly
 // duplicated for safe mutation under the Store's immutability
 // contract. Kustomization, HelmRelease implement this; new types that

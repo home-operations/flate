@@ -245,11 +245,48 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			slog.Debug("helmrelease: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
-		c.Store.AddRendered(obj)
+		// Source CRs rendered by a chart (e.g. tofu-controller emits an
+		// OCIRepository for its TF state bundle) need to flow through
+		// the source controller's listener so they actually get
+		// fetched and produce a Ready status. Without AddObject the
+		// rendered source sits in the Store with no status and
+		// `flate test` reports it as "FAILED (no status reported)".
+		// Real Flux reconciles these the same way.
+		//
+		// Other kinds — Deployments, Services, ConfigMaps emitted as
+		// chart workload output — go via AddRendered: they're the
+		// chart's final cluster manifests, not anything flate
+		// reconciles further.
+		if isFluxSourceKind(obj) {
+			c.Store.AddObject(obj)
+		} else {
+			c.Store.AddRendered(obj)
+		}
 	}
 
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
 	return nil
+}
+
+// isFluxSourceKind reports whether obj is a Flux source CR — one
+// the source controller is registered to reconcile. Mirrors the
+// subset of kustomization.shouldDispatchAsObject that the HR
+// controller actually wants to re-emit: only sources are
+// chart-rendered in the wild (tofu-controller's OCIRepository, ESO
+// chart's HelmRepository fallback). Charts that render KS / HR are
+// rare and risky — restricting the AddObject dispatch to sources
+// keeps the blast radius small.
+func isFluxSourceKind(obj manifest.BaseManifest) bool {
+	switch obj.(type) {
+	case *manifest.GitRepository,
+		*manifest.OCIRepository,
+		*manifest.HelmRepository,
+		*manifest.Bucket,
+		*manifest.HelmChartSource,
+		*manifest.ExternalArtifact:
+		return true
+	}
+	return false
 }
 
 // helmReleaseFingerprint produces a stable hash of the inputs that

@@ -95,6 +95,40 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 
 // TestReconcile_NoChartRefBypassDepwait covers a degenerate HR with
 // neither chartRef nor sourceRef — chart resolution writes
+// TestIsFluxSourceKind enumerates the chart-render dispatch matrix:
+// source CRs go through AddObject (so the source controller picks
+// them up and writes a status); other kinds go through AddRendered.
+// Pins the fix for the m00nwtchr report where tofu-controller's
+// chart-rendered OCIRepository/aws-package surfaced as "FAILED
+// (no status reported)" because the HR controller used to
+// AddRendered every doc unconditionally.
+func TestIsFluxSourceKind(t *testing.T) {
+	cases := []struct {
+		name string
+		obj  manifest.BaseManifest
+		want bool
+	}{
+		{"GitRepository", &manifest.GitRepository{}, true},
+		{"OCIRepository", &manifest.OCIRepository{}, true},
+		{"HelmRepository", &manifest.HelmRepository{}, true},
+		{"Bucket", &manifest.Bucket{}, true},
+		{"HelmChartSource", &manifest.HelmChartSource{}, true},
+		{"ExternalArtifact", &manifest.ExternalArtifact{}, true},
+		{"ConfigMap is not a source", &manifest.ConfigMap{}, false},
+		{"Secret is not a source", &manifest.Secret{}, false},
+		{"Kustomization is not a source", &manifest.Kustomization{}, false},
+		{"HelmRelease is not a source", &manifest.HelmRelease{}, false},
+		{"RawObject is not a source", &manifest.RawObject{Kind: "Deployment"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isFluxSourceKind(tc.obj); got != tc.want {
+				t.Errorf("isFluxSourceKind(%T) = %v, want %v", tc.obj, got, tc.want)
+			}
+		})
+	}
+}
+
 // "missing spec.chart" via helm.Prepare, surfacing as Failed without
 // ever entering depwait.
 func TestReconcile_MissingChartFails(t *testing.T) {

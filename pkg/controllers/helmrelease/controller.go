@@ -49,7 +49,8 @@ type Controller struct {
 	//     the orchestrator's renderedSet.ParentOf, populated when the
 	//     parent KS's emitRenderedChildren fires.
 	// Nil means "no parent enforcement"; matches pre-#221 behavior.
-	parentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
+	parentOf       func(manifest.NamedResource) (manifest.NamedResource, bool)
+	resolveMissing func(manifest.NamedResource) bool
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -64,6 +65,12 @@ type Controller struct {
 type ReconcileOptions struct {
 	Filter   *change.Filter
 	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
+	// ResolveMissing, when non-nil, is forwarded to every depwait
+	// Waiter built during reconcile. The orchestrator wires this
+	// against the loader's ExistenceIndex so file-indexed sources
+	// (HelmRepository, OCIRepository, HelmChart) can be lazy-loaded
+	// the moment the HR's chartRef gate needs them.
+	ResolveMissing func(manifest.NamedResource) bool
 }
 
 // New constructs a HelmRelease controller.
@@ -82,6 +89,7 @@ func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wip
 func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetFilter(opts.Filter)
 	c.parentOf = opts.ParentOf
+	c.resolveMissing = opts.ResolveMissing
 }
 
 // lookupParent reports the structural parent KS of id via the
@@ -141,9 +149,10 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		var sum depwait.Summary
 		c.Tasks.YieldSlot(func() {
 			w := &depwait.Waiter{
-				Store:   c.Store,
-				Parent:  id,
-				Timeout: depwait.TimeoutFromSpec(hr.Timeout),
+				Store:          c.Store,
+				Parent:         id,
+				Timeout:        depwait.TimeoutFromSpec(hr.Timeout),
+				ResolveMissing: c.resolveMissing,
 			}
 			sum = depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: parent}}))
 		})
@@ -169,9 +178,10 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		var sum depwait.Summary
 		c.Tasks.YieldSlot(func() {
 			w := &depwait.Waiter{
-				Store:   c.Store,
-				Parent:  id,
-				Timeout: depwait.TimeoutFromSpec(hr.Timeout),
+				Store:          c.Store,
+				Parent:         id,
+				Timeout:        depwait.TimeoutFromSpec(hr.Timeout),
+				ResolveMissing: c.resolveMissing,
 			}
 			sum = depwait.WaitAll(w.Watch(ctx, deps))
 		})
@@ -218,9 +228,10 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	var sum depwait.Summary
 	c.Tasks.YieldSlot(func() {
 		w := &depwait.Waiter{
-			Store:   c.Store,
-			Parent:  id,
-			Timeout: depwait.TimeoutFromSpec(hr.Timeout),
+			Store:          c.Store,
+			Parent:         id,
+			Timeout:        depwait.TimeoutFromSpec(hr.Timeout),
+			ResolveMissing: c.resolveMissing,
 		}
 		sum = depwait.WaitAll(w.Watch(ctx, []manifest.DependencyRef{{NamedResource: srcID}}))
 	})

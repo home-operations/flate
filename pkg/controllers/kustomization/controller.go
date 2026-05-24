@@ -45,8 +45,9 @@ type Controller struct {
 	WipeSecrets bool
 
 	// Set via Configure() — see Options.
-	parentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
-	renderTracker RenderTracker
+	parentOf       func(manifest.NamedResource) (manifest.NamedResource, bool)
+	renderTracker  RenderTracker
+	resolveMissing func(manifest.NamedResource) bool
 }
 
 // RenderTracker is the tiny seam the controller uses to report
@@ -76,6 +77,12 @@ type Options struct {
 	Filter        *change.Filter
 	ParentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
 	RenderTracker RenderTracker
+	// ResolveMissing, when non-nil, is forwarded to every depwait
+	// Waiter built during reconcile. The orchestrator wires this
+	// against the loader's ExistenceIndex so a substituteFrom CM
+	// rendered by a sibling KS can be lazy-loaded on demand instead
+	// of failing the parent KS with "dependency not found."
+	ResolveMissing func(manifest.NamedResource) bool
 }
 
 // New constructs a Kustomization controller.
@@ -94,6 +101,7 @@ func (c *Controller) Configure(opts Options) {
 	c.SetFilter(opts.Filter)
 	c.parentOf = opts.ParentOf
 	c.renderTracker = opts.RenderTracker
+	c.resolveMissing = opts.ResolveMissing
 }
 
 // markRendered reports a parent→child render emission to the
@@ -142,9 +150,10 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		var sum depwait.Summary
 		c.Tasks.YieldSlot(func() {
 			w := &depwait.Waiter{
-				Store:   c.Store,
-				Parent:  id,
-				Timeout: depwait.TimeoutFromSpec(ks.Timeout),
+				Store:          c.Store,
+				Parent:         id,
+				Timeout:        depwait.TimeoutFromSpec(ks.Timeout),
+				ResolveMissing: c.resolveMissing,
 			}
 			sum = depwait.WaitAll(w.Watch(ctx, deps))
 		})

@@ -18,6 +18,24 @@ import (
 type Options struct {
 	// WipeSecrets controls Secret cleartext replacement. Default true.
 	WipeSecrets bool
+
+	// DiscoveryOnly restricts file-loaded kinds that reach the Store
+	// to the discovery-meta set: Kustomization, ResourceSet, and
+	// ResourceSetInputProvider. Every other Flux CR (HelmRelease,
+	// sources, ConfigMap, Secret) is recorded in Existence instead of
+	// AddObject'd, matching real Flux's render-driven discovery
+	// model where only the bootstrap KS is static and the rest of
+	// the cluster materializes through KS reconciles. depwait
+	// consults the existence index on missing deps; orchestrator
+	// orphan-promotes any index entry not under a KS's spec.path
+	// before reconcile starts.
+	//
+	// Why RS + RSIP stay in-scope: the discovery loop renders
+	// ResourceSets to discover further KSes (RSIPs feed selectors,
+	// RSes produce KSes/RSIPs). There is no ResourceSet controller
+	// yet, so render-emitted RSes would never be processed; keeping
+	// them file-loaded preserves the meta-discovery fixed point.
+	DiscoveryOnly bool
 }
 
 // Loader walks a directory tree and adds Flux objects to a Store.
@@ -41,6 +59,11 @@ type Loader struct {
 	// --path scan's data wins over downstream paths that may point
 	// into a different tree.
 	PreferExisting bool
+
+	// Existence captures every file-loaded object that DiscoveryOnly
+	// keeps out of the Store. Nil disables the bookkeeping (the
+	// default for non-DiscoveryOnly callers).
+	Existence *ExistenceIndex
 }
 
 // New returns a Loader configured to wipe secrets.
@@ -168,6 +191,19 @@ func (l *Loader) loadFile(path string) (int, error) {
 		if l.PreferExisting && l.Store.GetObject(id) != nil {
 			continue
 		}
+		if l.Options.DiscoveryOnly && !isDiscoveryKind(obj) {
+			// Step 4 of the render-driven migration: HRs, sources,
+			// ConfigMaps, Secrets and other reconcilable kinds stay
+			// out of the Store at file-load time. They appear later
+			// via KS render emission (emitRenderedChildren) or via
+			// orphan promotion. The existence index records the
+			// {id, path} pair so depwait's missing-dep fallback can
+			// resolve sibling-rendered substituteFrom CMs without
+			// deadlocking the parent KS.
+			l.Existence.Record(id, path)
+			l.recordSource(id, path)
+			continue
+		}
 		l.Store.AddObject(obj)
 		l.recordSource(id, path)
 		count++
@@ -189,6 +225,40 @@ func (l *Loader) recordSource(id manifest.NamedResource, absPath string) {
 		}
 	}
 	l.SourceFiles[id] = filepath.ToSlash(rel)
+}
+
+// isDiscoveryKind reports whether obj belongs to the discovery-meta
+// kind set the loader keeps in the Store under DiscoveryOnly:
+//
+//   - Kustomization, ResourceSet, ResourceSetInputProvider — the
+//     reconcile driver and its meta-discovery hooks (RS renders to
+//     more KSes; RSIPs feed RS selectors).
+//   - Sources (GitRepository, OCIRepository, HelmRepository,
+//     HelmChartSource, Bucket, ExternalArtifact) — sources are
+//     rarely patched at render time and need to be visible at
+//     discovery for the bootstrap-alias pass to recognize them as
+//     already-known (otherwise every GitRepository gets aliased to
+//     the working tree, which silently redirects every KS's render
+//     to the wrong source root).
+//
+// HelmReleases, ConfigMaps, Secrets, and other reconcilables flow
+// from KS render output via emitRenderedChildren — or, when no KS
+// would render them, through the orchestrator's post-discovery
+// orphan-promotion sweep.
+func isDiscoveryKind(obj manifest.BaseManifest) bool {
+	switch obj.(type) {
+	case *manifest.Kustomization,
+		*manifest.ResourceSet,
+		*manifest.ResourceSetInputProvider,
+		*manifest.GitRepository,
+		*manifest.OCIRepository,
+		*manifest.HelmRepository,
+		*manifest.HelmChartSource,
+		*manifest.Bucket,
+		*manifest.ExternalArtifact:
+		return true
+	}
+	return false
 }
 
 var manifestExtensions = map[string]struct{}{

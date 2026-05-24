@@ -89,6 +89,19 @@ type Waiter struct {
 	// true. When true, the dep must satisfy both the built-in
 	// Ready check AND the ReadyExpr (additive mode).
 	AdditiveReadyExpr bool
+
+	// ResolveMissing, when non-nil, is consulted after the
+	// missing-dep grace window elapses and the dep is still absent
+	// from the Store. A true return means the resolver has (or can)
+	// promote the dep into the Store — the wait then continues
+	// instead of failing. Used by the orchestrator to lazy-load
+	// file-indexed objects (CMs/Secrets/HRs the DiscoveryOnly
+	// loader kept in Existence) the moment a depwait edge needs
+	// them. Without this hook, the render-driven loader breaks the
+	// bjw-s parent-patches pattern where a KS's substituteFrom CM
+	// lives inside that KS's own spec.path: the dep would never
+	// clear because the producing render hasn't run yet.
+	ResolveMissing func(manifest.NamedResource) bool
 }
 
 // Watch concurrently watches each dep and returns a channel of Events.
@@ -169,7 +182,14 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 		_, err := w.Store.WatchExists(graceCtx, id)
 		graceCancel()
 		if err != nil && !w.depExists(id) {
-			return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+			// Final fallback: ask the resolver to materialize the
+			// dep from the file-indexed Existence map. A true
+			// return means the dep is now in the Store and the
+			// wait can continue against built-in status / exists
+			// semantics below; false confirms it really is missing.
+			if w.ResolveMissing == nil || !w.ResolveMissing(id) {
+				return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+			}
 		}
 	}
 

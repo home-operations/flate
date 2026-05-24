@@ -51,6 +51,17 @@ type Result struct {
 	// file-loaded copy. Keyed by NamedResource so KS and HR entries
 	// never collide. Empty when no parent enforcement applies.
 	ParentOf map[manifest.NamedResource]manifest.NamedResource
+	// Existence holds every file-loaded object the DiscoveryOnly
+	// loader kept out of the Store: HRs, sources, CMs, Secrets, and
+	// raw manifests. depwait's missing-dep fallback consults it to
+	// resolve sibling-rendered substituteFrom CMs without
+	// deadlocking the parent KS. The orchestrator passes a closure
+	// over this index into the controllers' Waiter wiring.
+	Existence *loader.ExistenceIndex
+	// WipeSecrets reflects the loader's WipeSecrets setting. The
+	// orchestrator forwards it to lazy-promotion so SOPS Secrets
+	// stay wiped on demand the same way they were at file-load.
+	WipeSecrets bool
 }
 
 // Config is the input contract for Run. Store is mandatory.
@@ -69,6 +80,14 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	l := loader.New(cfg.Store)
 	l.Options.WipeSecrets = cfg.WipeSecrets
+	// Step 4 of the render-driven migration: only Kustomizations (plus
+	// the discovery-meta ResourceSet/RSIP pair) reach the Store from
+	// the file walker. HRs, sources, CMs, Secrets, and raw manifests
+	// flow through Existence — picked up later by KS render via
+	// emitRenderedChildren, the orchestrator's orphan-promotion
+	// sweep, or depwait's lazy-promotion fallback.
+	l.Options.DiscoveryOnly = true
+	l.Existence = loader.NewExistenceIndex()
 	d := &discoverer{
 		cfg:         cfg,
 		loader:      l,
@@ -91,10 +110,19 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		loader.BuildParentIndex(d.cfg.Store, d.sourceFiles),
 		loader.BuildParentIndexForKind(d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease),
 	)
+	// Orphan promotion: every Existence entry whose file path is NOT
+	// under any KS spec.path will never reach the Store through KS
+	// render emission. Promote it now so standalone CRs (loose HR
+	// at repo root, sources next to flux-system/kustomization.yaml,
+	// etc.) keep working in DiscoveryOnly mode.
+	d.promoteOrphans(repoRoot)
+
 	return &Result{
 		RepoRoot:    repoRoot,
 		SourceFiles: d.sourceFiles,
 		ParentOf:    parentOf,
+		Existence:   l.Existence,
+		WipeSecrets: cfg.WipeSecrets,
 	}, nil
 }
 
@@ -339,6 +367,71 @@ func (d *discoverer) resolveInputProvider(ref fluxopv1.InputProviderReference, n
 		}
 	}
 	return out, nil
+}
+
+// promoteOrphans materializes Existence entries that no Kustomization
+// will ever render. An "orphan" here is a file-indexed object whose
+// absolute file path is not under any loaded KS's spec.path — render-
+// driven discovery would leave it stranded otherwise. Common shapes
+// promoted here:
+//
+//   - A loose HelmRelease/source at repo root that `flate build`
+//     should still render even with no enclosing KS.
+//   - flux-system bootstrap CRs that exist beside the bootstrap KS
+//     itself but aren't inside its spec.path tree.
+//
+// Entries whose path IS under a KS's spec.path stay in Existence —
+// they'll be emitted by that KS's render via emitRenderedChildren
+// (or resolved on-demand by depwait's lazy-promotion fallback when a
+// substituteFrom edge fires before the producing KS reconciles).
+func (d *discoverer) promoteOrphans(repoRoot string) {
+	if d.loader.Existence == nil {
+		return
+	}
+	covered := d.coveredPathPrefixes(repoRoot)
+	for id, path := range d.loader.Existence.All() {
+		if d.cfg.Store.GetObject(id) != nil {
+			continue
+		}
+		if pathUnderAny(path, covered) {
+			continue
+		}
+		if !loader.Promote(d.loader.Existence, d.cfg.Store, id, d.cfg.WipeSecrets) {
+			slog.Debug("discovery: orphan promotion failed", "id", id.String(), "path", path)
+		}
+	}
+}
+
+// coveredPathPrefixes returns the absolute directory prefixes covered
+// by every loaded Kustomization's spec.path (each terminated with a
+// path separator so pathUnderAny matches a directory boundary instead
+// of a name-prefix collision like `/apps/foo` vs `/apps-foo`).
+func (d *discoverer) coveredPathPrefixes(repoRoot string) []string {
+	var out []string
+	for _, obj := range d.cfg.Store.ListObjects(manifest.KindKustomization) {
+		ks, ok := obj.(*manifest.Kustomization)
+		if !ok || ks.Path == "" {
+			continue
+		}
+		abs := filepath.Join(repoRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
+		out = append(out, filepath.Clean(abs)+string(filepath.Separator))
+	}
+	return out
+}
+
+// pathUnderAny reports whether path sits under one of prefixes
+// (which must already end with a path separator).
+func pathUnderAny(path string, prefixes []string) bool {
+	clean := filepath.Clean(path)
+	for _, prefix := range prefixes {
+		if len(clean) >= len(prefix)-1 && clean+string(filepath.Separator) == prefix {
+			return true
+		}
+		if len(clean) > len(prefix) && clean[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
 }
 
 // aliasBootstrapSources seeds a working-tree SourceArtifact for every

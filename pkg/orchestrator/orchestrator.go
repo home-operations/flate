@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/source"
@@ -114,6 +115,12 @@ type Orchestrator struct {
 	// failing the run. Lives here, not on Store — iter-15 carved this
 	// orchestrator-internal bookkeeping out of the data substrate.
 	rendered *renderedSet
+
+	// existence is the file-indexed bookkeeping the DiscoveryOnly
+	// loader populated. Consumed by the depwait ResolveMissing
+	// closure to lazy-promote substituteFrom CMs/Secrets and any
+	// other file-indexed dep on demand.
+	existence *loader.ExistenceIndex
 
 	// orphans records resources Run demoted from Failed → Ready because
 	// they aren't referenced by any parent KS. Populated during Run,
@@ -250,6 +257,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	}
 	o.sourceFiles = res.SourceFiles
 	o.parentOf = res.ParentOf
+	o.existence = res.Existence
 
 	o.validateDependsOn()
 	o.breakDependsOnCycles()
@@ -440,12 +448,29 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		}
 		return o.rendered.ParentOf(id)
 	}
+	// resolveMissing closes over the file-indexed Existence map the
+	// DiscoveryOnly loader populated. When a depwait grace window
+	// elapses on a missing dep, the closure lazy-promotes the dep
+	// from its indexed file into the Store. This is the seam that
+	// keeps the bjw-s parent-patches pattern (KS substituting from
+	// a CM rendered by its own spec.path) from deadlocking — the CM
+	// file is on disk, so we materialize it the moment the depwait
+	// asks instead of waiting for the producing render that can't
+	// run until the depwait clears.
+	resolveMissing := func(id manifest.NamedResource) bool {
+		return loader.Promote(o.existence, o.store, id, o.cfg.WipeSecrets)
+	}
 	o.ksc.Configure(kustomization.Options{
-		Filter:        o.filter,
-		ParentOf:      parentResolver,
-		RenderTracker: o.rendered,
+		Filter:         o.filter,
+		ParentOf:       parentResolver,
+		RenderTracker:  o.rendered,
+		ResolveMissing: resolveMissing,
 	})
-	o.hrc.Configure(helmrelease.ReconcileOptions{Filter: o.filter, ParentOf: parentResolver})
+	o.hrc.Configure(helmrelease.ReconcileOptions{
+		Filter:         o.filter,
+		ParentOf:       parentResolver,
+		ResolveMissing: resolveMissing,
+	})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)
 	o.hrc.Start(ctx)

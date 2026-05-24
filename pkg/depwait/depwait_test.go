@@ -98,6 +98,58 @@ func TestWaiter_MissingDepFailsFast(t *testing.T) {
 	}
 }
 
+// TestWaiter_ResolveMissingLazyPromotes covers the step-4 fallback:
+// when the missing-grace expires and the dep is still absent, the
+// Waiter consults ResolveMissing. A true return (closure has
+// promoted the object into the Store) means the wait continues
+// against built-in existence semantics instead of failing.
+// Mirrors the orchestrator's wiring where ResolveMissing closes
+// over the loader.ExistenceIndex's Promote.
+func TestWaiter_ResolveMissingLazyPromotes(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "settings"}
+
+	resolveCalled := false
+	resolve := func(id manifest.NamedResource) bool {
+		resolveCalled = true
+		if id != dep {
+			t.Errorf("resolver called with %+v, want %+v", id, dep)
+			return false
+		}
+		// Simulate lazy promotion: object lands in the Store as a
+		// side effect, which is how loader.Promote works.
+		s.AddObject(&manifest.ConfigMap{Name: dep.Name, Namespace: dep.Namespace})
+		return true
+	}
+
+	w := &Waiter{Store: s, Timeout: 5 * time.Second, ResolveMissing: resolve}
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
+
+	if !resolveCalled {
+		t.Errorf("ResolveMissing was never invoked")
+	}
+	if !sum.AllReady() {
+		t.Errorf("expected dep to clear after lazy promotion: %+v", sum)
+	}
+}
+
+// TestWaiter_ResolveMissingFalseStillFails locks the symmetric
+// contract: a false return from ResolveMissing means the dep
+// genuinely doesn't exist (no Existence index entry) and the wait
+// surfaces the same "dependency not found" failure as if no
+// resolver were configured.
+func TestWaiter_ResolveMissingFalseStillFails(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "ghost"}
+	resolve := func(manifest.NamedResource) bool { return false }
+	w := &Waiter{Store: s, Timeout: 5 * time.Second, ResolveMissing: resolve}
+
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
+	if !sum.AnyFailed() {
+		t.Errorf("ResolveMissing=false should still fail: %+v", sum)
+	}
+}
+
 func TestWaiter_NoDeps(t *testing.T) {
 	w := &Waiter{Store: store.New()}
 	sum := WaitAll(w.Watch(context.Background(), nil))

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/home-operations/flate/compare/0.1.10...0.1.11) (2026-05-24)
+
+
+### Bug Fixes
+
+* **change:** extend keep set when KS controller emits rendered children ([#205](https://github.com/home-operations/flate/issues/205)) ([33fc7f3](https://github.com/home-operations/flate/commit/33fc7f358260d22a8f541e00b5ef93941d716dc5))
+
 ## [0.1.10](https://github.com/home-operations/flate/compare/0.1.9...0.1.10) (2026-05-24)
 
 

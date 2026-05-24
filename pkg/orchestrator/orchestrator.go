@@ -348,6 +348,16 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	// Ready "unchanged" with no artifact and the KS's
 	// resolveSourceRoot surfaces "artifact not found" downstream.
 	// Issue #260.
+	//
+	// Reset the source's status to Pending BEFORE the Refire fires
+	// so a concurrent depwait — the KS consuming this source is
+	// reconciled on a sibling goroutine right after Filter.Add
+	// returns — sees Pending and blocks instead of reading the
+	// stale Ready/"unchanged" status from the initial PreGate skip.
+	// Without this, depwait races the re-fetch and may proceed with
+	// no artifact even though the fetch is queued. (Visible as
+	// intermittent CI flakes on the issue #260 regression test
+	// before this guard landed.)
 	f.OnAdd = func(id manifest.NamedResource) {
 		switch id.Kind {
 		case manifest.KindGitRepository,
@@ -356,6 +366,7 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 			manifest.KindBucket,
 			manifest.KindHelmChart,
 			manifest.KindExternalArtifact:
+			o.store.UpdateStatus(id, store.StatusPending, "re-fetching after keep-set extension")
 			o.store.Refire(id)
 		}
 	}

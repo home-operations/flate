@@ -83,6 +83,53 @@ func TestStore_AddListener_Flush(t *testing.T) {
 	}
 }
 
+// TestStore_Refire_ResetsStatusBeforeDispatch pins the contract that
+// makes the issue #260 fix race-free: by the time the EventObjectAdded
+// listener fires, the resource's recorded status MUST already be
+// Pending. A consumer's depwait observing status between the two events
+// must never see the stale Ready left by an initial PreGate skip.
+func TestStore_Refire_ResetsStatusBeforeDispatch(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "src"}
+	s.AddObject(&manifest.OCIRepository{Name: "src", Namespace: "flux-system"})
+	s.UpdateStatus(id, StatusReady, MsgUnchanged) // simulate PreGate skip
+
+	var observed StatusInfo
+	s.AddListener(EventObjectAdded, func(eventID manifest.NamedResource, _ any) {
+		if eventID != id {
+			return
+		}
+		info, _ := s.GetStatus(eventID)
+		observed = info
+	}, false)
+	s.Refire(id)
+
+	if observed.Status != StatusPending {
+		t.Errorf("listener saw status %+v on Refire; want Pending so depwaits block", observed)
+	}
+	if observed.Message != MsgRefetching {
+		t.Errorf("listener saw message %q; want %q", observed.Message, MsgRefetching)
+	}
+}
+
+// TestStore_Refire_NoopMissingID pins that Refire silently returns
+// when id isn't in the store — used by callers that may speculatively
+// refire ids that race a DeleteObject.
+func TestStore_Refire_NoopMissingID(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "nope"}
+
+	fired := 0
+	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) { fired++ }, false)
+	s.Refire(id) // must not panic, must not dispatch
+	if fired != 0 {
+		t.Errorf("Refire on missing id fired %d events; want 0", fired)
+	}
+	if _, ok := s.GetStatus(id); ok {
+		t.Errorf("Refire on missing id left status behind")
+	}
+}
+
 func TestStore_UpdateStatus_Idempotent(t *testing.T) {
 	s := New()
 	id := manifest.NamedResource{Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}

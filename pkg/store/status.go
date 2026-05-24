@@ -33,6 +33,12 @@ const (
 	SkippedPrefix = "skipped:"
 	MsgUnchanged  = "unchanged"
 	MsgSuspended  = "suspended"
+	// MsgRefetching is the Pending-message Refire writes before
+	// re-dispatching EventObjectAdded. Surfaced as a distinct sentinel
+	// (vs. the source controller's own "fetching" mid-reconcile) so log
+	// scraping can distinguish a Refire-triggered re-pull from a
+	// first-time fetch.
+	MsgRefetching = "re-fetching"
 )
 
 // IsSkipped reports whether info represents a soft-skip — i.e. a

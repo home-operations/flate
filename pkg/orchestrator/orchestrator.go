@@ -345,28 +345,23 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	// emitRenderedChildren → keepEmitted) refires any source whose
 	// listener already short-circuited via PreGate before the
 	// consuming KS joined keep. Without this hook, the source stays
-	// Ready "unchanged" with no artifact and the KS's
+	// Ready/"unchanged" with no artifact and the KS's
 	// resolveSourceRoot surfaces "artifact not found" downstream.
-	// Issue #260.
+	// Issue #260. Refire owns the status reset that closes the
+	// depwait race — see Store.Refire.
 	//
-	// Reset the source's status to Pending BEFORE the Refire fires
-	// so a concurrent depwait — the KS consuming this source is
-	// reconciled on a sibling goroutine right after Filter.Add
-	// returns — sees Pending and blocks instead of reading the
-	// stale Ready/"unchanged" status from the initial PreGate skip.
-	// Without this, depwait races the re-fetch and may proceed with
-	// no artifact even though the fetch is queued. (Visible as
-	// intermittent CI flakes on the issue #260 regression test
-	// before this guard landed.)
+	// Kinds limited to the source-controller-managed set (those wired
+	// with a Fetcher in the constructor above). HelmChart resources
+	// are read directly by helm.storeResolver without a Fetcher, so
+	// Refire on a HelmChart id would write a Pending status that no
+	// controller transitions back to Ready.
 	f.OnAdd = func(id manifest.NamedResource) {
 		switch id.Kind {
 		case manifest.KindGitRepository,
 			manifest.KindOCIRepository,
 			manifest.KindHelmRepository,
 			manifest.KindBucket,
-			manifest.KindHelmChart,
 			manifest.KindExternalArtifact:
-			o.store.UpdateStatus(id, store.StatusPending, "re-fetching after keep-set extension")
 			o.store.Refire(id)
 		}
 	}

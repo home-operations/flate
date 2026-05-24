@@ -89,12 +89,21 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 	s.fire(EventObjectAdded, id, obj)
 }
 
-// Refire dispatches EventObjectAdded for the existing object at id
-// without altering state. Used to wake up listeners that
-// short-circuited the first time (e.g. source controllers that
-// PreGate-skipped a source whose consumer joined the change-filter
-// keep set only at runtime — see issue #260). No-op when id is not
-// in the store.
+// Refire resets the resource's Ready condition to Pending and then
+// dispatches EventObjectAdded for the existing object at id. Used to
+// wake up listeners that short-circuited the first time — e.g. source
+// controllers that PreGate-skipped a source whose consumer joined the
+// change-filter keep set only at runtime (issue #260).
+//
+// The status reset is load-bearing, not cosmetic. Without it, a
+// consumer's depwait may read the stale Ready/"unchanged" status the
+// initial PreGate skip wrote, return immediately, and race ahead of
+// the queued re-reconcile — producing an "artifact not found" failure
+// while the actual fetch is still in flight. UpdateStatus completes
+// before EventObjectAdded fires, so any depwait that reads status
+// between the two events still sees Pending.
+//
+// No-op when id is not in the store.
 func (s *Store) Refire(id manifest.NamedResource) {
 	s.mu.RLock()
 	obj, ok := s.objects[id]
@@ -102,6 +111,7 @@ func (s *Store) Refire(id manifest.NamedResource) {
 	if !ok {
 		return
 	}
+	s.UpdateStatus(id, StatusPending, MsgRefetching)
 	s.fire(EventObjectAdded, id, obj)
 }
 

@@ -287,13 +287,34 @@ func (c *Client) fetchIndex(indexURL string, opts []getter.Option) (*repo.IndexF
 }
 
 // locateOCIChart resolves a chart whose source is an OCIRepository.
-// The OCIRepository.url already points at the chart artifact (Flux's
-// "chart-as-OCI-artifact" model) so we use it verbatim — the chart's
-// short name from the HelmRelease is metadata, not part of the URL.
+//
+// Preferred path: the source.oci.Fetcher has already pulled the
+// artifact (applying spec.verify cosign verification, spec.layerSelector,
+// spec.certSecretRef, spec.proxySecretRef, spec.insecure, spec.ignore,
+// semver tag resolution) into a slot under the shared source cache —
+// the HR depwait blocks render until that source is Ready, so by the
+// time this runs the artifact is on disk. Reading it from the store
+// keeps every Flux OCIRepository feature working uniformly for both
+// Kustomization and HelmRelease consumers.
+//
+// Fallback path: when no SourceArtifact is present (typically
+// --enable-oci=false, which wires source.ExistenceFetcher for
+// OCIRepository so HR depwait still unblocks but no artifact is
+// written), pull via helm's registry client. This preserves the
+// pre-unification behavior for embedders that don't wire the OCI
+// fetcher — but in that mode none of the OCIRepository spec.*
+// features apply, exactly as before.
 func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
 	r := c.resolveOCIRepo(hr)
 	if r == nil {
 		return "", fmt.Errorf("%w: OCIRepository %s not registered", manifest.ErrObjectNotFound, hr.Chart.RepoFullName())
+	}
+	if art := c.resolveLocalSource(hr); art != nil && art.LocalPath != "" {
+		path, err := ociChartPathFromArtifact(art.LocalPath)
+		if err != nil {
+			return "", fmt.Errorf("OCIRepository %s/%s: %w", r.Namespace, r.Name, err)
+		}
+		return path, nil
 	}
 	ver, err := r.Version()
 	if err != nil {
@@ -301,6 +322,80 @@ func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (
 	}
 	return c.fetchOCIChart(ctx, r.URL, ver)
 }
+
+// ociChartPathFromArtifact picks the right chart path under an
+// OCIRepository SourceArtifact's slot. The source/oci fetcher's
+// applyLayerSelector produces one of three observable layouts:
+//
+//  1. Chart.yaml at slot root — the rare shape where a chart-as-OCI
+//     artifact is published WITHOUT helm's standard `<chartname>/`
+//     wrapper directory. Slot itself is the chart root.
+//  2. layer.tar.gz at slot root — operation=copy on the OCIRepository's
+//     layerSelector. Slot contains the packaged chart tgz; helm's
+//     loader.Load handles it via FileLoader.
+//  3. <slot>/<chartname>/Chart.yaml — the common shape: `helm package`
+//     emits tarballs with a single top-level directory named after
+//     the chart, and operation=extract (Flux's default) preserves
+//     that layout when unpacking. The chart name in the dir comes
+//     from the artifact, NOT hr.Chart.Name (those can differ), so we
+//     scan for the single subdir that contains a Chart.yaml.
+//
+// Probing the filesystem keeps this hr.Chart.Name-independent and
+// works uniformly across vendor packaging styles.
+func ociChartPathFromArtifact(slot string) (string, error) {
+	if _, err := os.Stat(filepath.Join(slot, chartYamlFilename)); err == nil {
+		return slot, nil
+	}
+	tgz := filepath.Join(slot, copiedOCILayerFilename)
+	if _, err := os.Stat(tgz); err == nil {
+		return tgz, nil
+	}
+	if sub, ok := findChartSubdir(slot); ok {
+		return sub, nil
+	}
+	return "", fmt.Errorf("OCIRepository artifact at %s has neither %s, %s, nor a <name>/Chart.yaml subdir — chart layer missing or layerSelector misconfigured",
+		slot, chartYamlFilename, copiedOCILayerFilename)
+}
+
+// findChartSubdir scans the immediate children of slot for one that
+// contains a Chart.yaml — the shape produced by `helm package` when
+// extracted via operation=extract. Returns the matching subdir's full
+// path. Hidden entries (`.flate-digest`, `.flate-layer.tar.gz`) are
+// skipped because they're flate internals, not user content.
+//
+// Returns (path, false) when no subdir matches; (path, false) when
+// multiple subdirs match, because we can't safely pick one — that's
+// either a bundle-of-charts artifact (unsupported here, surfaces as
+// a clear error from the caller) or a polluted slot.
+func findChartSubdir(slot string) (string, bool) {
+	entries, err := os.ReadDir(slot)
+	if err != nil {
+		return "", false
+	}
+	var match string
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(slot, e.Name(), chartYamlFilename)); err != nil {
+			continue
+		}
+		if match != "" {
+			return "", false // ambiguous
+		}
+		match = filepath.Join(slot, e.Name())
+	}
+	return match, match != ""
+}
+
+// chartYamlFilename / copiedOCILayerFilename mirror, by string value,
+// the on-disk names produced by source/oci.applyLayerSelector. Kept
+// as constants here (and not imported across packages) to avoid a
+// pkg/helm → pkg/source/oci dependency for two static strings.
+const (
+	chartYamlFilename      = "Chart.yaml"
+	copiedOCILayerFilename = "layer.tar.gz"
+)
 
 // ociPullRef joins an OCI repo URL and an optional ref into the form
 // the helm registry client expects. A digest ref (`sha256:<hex>` and

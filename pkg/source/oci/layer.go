@@ -47,6 +47,18 @@ var ociLayoutArtifacts = []string{
 	ocispec.ImageIndexFile,  // "index.json"
 }
 
+// effectiveLayerOperation returns the operation applyLayerSelector
+// will run for a given selector — Extract by default, honoring an
+// explicit override otherwise. Exposed so callers (the OCI fetcher)
+// can branch behavior such as source-ignore application that only
+// makes sense for the extracted-contents shape.
+func effectiveLayerOperation(selector *manifest.OCILayerSelector) string {
+	if selector == nil || selector.Operation == "" {
+		return manifest.OCILayerOperationExtract
+	}
+	return selector.Operation
+}
+
 // applyLayerSelector post-processes an OCI artifact written into slot
 // by oras.Copy. After Copy, the slot is laid out per the OCI Image
 // Layout spec (see ociLayoutArtifacts). This function:

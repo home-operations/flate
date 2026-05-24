@@ -293,9 +293,17 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		resetOnErr()
 		return nil, fmt.Errorf("OCIRepository %s/%s: layer select: %w", repo.Namespace, repo.Name, err)
 	}
-	if err := source.ApplyIgnore(slot, repo.Ignore); err != nil {
-		resetOnErr()
-		return nil, fmt.Errorf("OCIRepository %s/%s: %w", repo.Namespace, repo.Name, err)
+	// Source-controller's default ignore set includes `*.tar.gz`. For
+	// operation=copy the artifact IS the .tar.gz file we just produced
+	// at slot/<copiedLayerFilename>, so running ApplyIgnore would
+	// delete it. Skip the ignore pass in that case; for operation=
+	// extract the slot holds the extracted directory tree and the
+	// ignore semantics apply as Flux ships them.
+	if effectiveLayerOperation(repo.LayerSelector) == manifest.OCILayerOperationExtract {
+		if err := source.ApplyIgnore(slot, repo.Ignore); err != nil {
+			resetOnErr()
+			return nil, fmt.Errorf("OCIRepository %s/%s: %w", repo.Namespace, repo.Name, err)
+		}
 	}
 	// Persist the resolved digest so a subsequent cache hit can
 	// re-verify against the exact bytes we wrote, even when the spec

@@ -247,6 +247,22 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestr
 		return nil, nil, err
 	}
 	res, err := o.Render(ctx)
+	// Render nils the result only when Bootstrap fails (Run-time
+	// per-resource failures still produce a non-nil Result). Drop
+	// the partial orchestrator in that case: every CLI verb gates
+	// on `o == nil` to surface the underlying error, but without
+	// this nil-out the verb would proceed to read a Store that's
+	// partially populated by the discovery pre-Bootstrap walk and
+	// produce confusing output — e.g. `flate test all` reporting
+	// every loaded resource as "FAILED (no status reported)"
+	// instead of surfacing the actual Bootstrap error (an
+	// unimplemented ResourceSet inputStrategy, a YAML schema
+	// rejection, etc.). Issue surfaced by tholinka/home-ops where
+	// a Permute ResourceSet drowned the real "not yet implemented"
+	// message under 247 phantom failures.
+	if res == nil {
+		return nil, nil, err
+	}
 	return o, res, err
 }
 

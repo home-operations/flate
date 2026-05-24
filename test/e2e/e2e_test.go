@@ -227,6 +227,62 @@ func TestE2E_DiffImagesRequiresPathOrig(t *testing.T) {
 	}
 }
 
+// TestE2E_BootstrapErrorSurfacesNotMasked pins the contract that
+// when discovery itself fails (e.g. an unimplemented ResourceSet
+// inputStrategy, a YAML schema rejection), the actual error reaches
+// the user instead of getting drowned under a wall of phantom
+// "FAILED (no status reported)" rows from the testrunner running on
+// a partial Store. Surfaced by tholinka/home-ops where a `Permute`
+// ResourceSet produced 247 generic failure rows instead of the
+// "not yet implemented (#109)" message.
+func TestE2E_BootstrapErrorSurfacesNotMasked(t *testing.T) {
+	dir := t.TempDir()
+	// Minimal repo: one Kustomization + one Permute ResourceSet.
+	// Discovery's render pass hits Permute, returns the input-error,
+	// Bootstrap returns it, Render nils the Result, the CLI must
+	// surface the underlying error rather than running the testrunner
+	// on partial state.
+	if err := os.WriteFile(filepath.Join(dir, "ks.yaml"), []byte(`---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rs.yaml"), []byte(`---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: permute-rs, namespace: flux-system}
+spec:
+  inputStrategy:
+    name: Permute
+  resourcesTemplate: |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: x, namespace: ns}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, code := runCLIExpectErr(t, "test", "all", "--path", dir)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit; got 0:\n%s", out)
+	}
+	if !strings.Contains(out, "Permute") {
+		t.Errorf("error must mention Permute (the actual Bootstrap failure); got:\n%s", out)
+	}
+	// Guard against the regression: the testrunner used to run on
+	// the partial Store and emit one "FAILED (no status reported)"
+	// row per loaded object. Collect-N where N is the partial count
+	// is the signature.
+	if strings.Contains(out, "no status reported") {
+		t.Errorf("Bootstrap failure should NOT trigger testrunner output; got:\n%s", out)
+	}
+}
+
 // TestE2E_ComponentChangePropagatesToAllConsumers — the fixture has
 // two apps (app-a, app-b) consuming components/shared; mutating the
 // shared component must show up in both consumers' diffs.

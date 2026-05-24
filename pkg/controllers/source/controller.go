@@ -111,7 +111,7 @@ func (c *Controller) runFetch(ctx context.Context, id manifest.NamedResource, ob
 			// Soft-skip: leave the artifact slot empty so consumers see
 			// "no artifact" + Ready+"skipped:" status and propagate.
 			c.Store.UpdateStatus(id, store.StatusReady,
-				"skipped: "+manifest.TrimSentinelPrefix(err.Error()))
+				store.SkippedPrefix+" "+manifest.TrimSentinelPrefix(err.Error()))
 			slog.Info("source: skipped (missing secret)", "id", id.String(), "err", err)
 			return
 		}

@@ -1133,6 +1133,93 @@ func TestStripResourceAttributes(t *testing.T) {
 	}
 }
 
+// TestStripResourceAttributes_CronJob pins the CronJob walk: chart
+// labels live both on the JobTemplateSpec metadata AND on the nested
+// PodTemplateSpec metadata. Bitnami / app-template charts decorate
+// both, so chart bumps would otherwise produce two diff entries per
+// CronJob after the strip pass missed them.
+func TestStripResourceAttributes_CronJob(t *testing.T) {
+	r := map[string]any{
+		"kind": "CronJob",
+		"metadata": map[string]any{
+			"labels": map[string]any{"helm.sh/chart": "backup-1.0.0", "keep": "yes"},
+		},
+		"spec": map[string]any{
+			"jobTemplate": map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]any{"helm.sh/chart": "backup-1.0.0"},
+				},
+				"spec": map[string]any{
+					"template": map[string]any{
+						"metadata": map[string]any{
+							"annotations": map[string]any{"checksum/config": "abc123"},
+						},
+					},
+				},
+			},
+		},
+	}
+	StripResourceAttributes(r, []string{"helm.sh/chart", "checksum/config"})
+
+	if meta := r["metadata"].(map[string]any); meta["labels"].(map[string]any)["keep"] != "yes" {
+		t.Errorf("top-level kept label lost")
+	}
+	jobTmpl := r["spec"].(map[string]any)["jobTemplate"].(map[string]any)
+	if _, ok := jobTmpl["metadata"].(map[string]any)["labels"]; ok {
+		t.Errorf("jobTemplate.metadata.labels should have been emptied + removed")
+	}
+	podTmplMeta := jobTmpl["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)
+	if _, ok := podTmplMeta["annotations"]; ok {
+		t.Errorf("jobTemplate.spec.template.metadata.annotations should have been emptied + removed")
+	}
+}
+
+// TestStripResourceAttributes_StatefulSetPVCs pins the
+// volumeClaimTemplates walk: chart labels on StatefulSet PVC
+// templates (common pattern in Postgres / Loki / Prometheus charts)
+// must be stripped, or every chart bump produces N diff entries
+// (one per replica's PVC template).
+func TestStripResourceAttributes_StatefulSetPVCs(t *testing.T) {
+	r := map[string]any{
+		"kind": "StatefulSet",
+		"spec": map[string]any{
+			"template": map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]any{"helm.sh/chart": "pg-1.0.0"},
+				},
+			},
+			"volumeClaimTemplates": []any{
+				map[string]any{
+					"metadata": map[string]any{
+						"name":   "data",
+						"labels": map[string]any{"helm.sh/chart": "pg-1.0.0", "app": "pg"},
+					},
+				},
+				map[string]any{
+					"metadata": map[string]any{
+						"name":        "wal",
+						"annotations": map[string]any{"checksum/config": "abc"},
+					},
+				},
+			},
+		},
+	}
+	StripResourceAttributes(r, []string{"helm.sh/chart", "checksum/config"})
+
+	pvcs := r["spec"].(map[string]any)["volumeClaimTemplates"].([]any)
+	data := pvcs[0].(map[string]any)["metadata"].(map[string]any)
+	if _, ok := data["labels"].(map[string]any)["helm.sh/chart"]; ok {
+		t.Errorf("PVC[0].metadata.labels.helm.sh/chart should have been stripped")
+	}
+	if data["labels"].(map[string]any)["app"] != "pg" {
+		t.Errorf("PVC[0].metadata.labels.app (non-stripped) should remain")
+	}
+	wal := pvcs[1].(map[string]any)["metadata"].(map[string]any)
+	if _, ok := wal["annotations"]; ok {
+		t.Errorf("PVC[1].metadata.annotations should have been emptied + removed")
+	}
+}
+
 func TestParseDoc_MissingFields(t *testing.T) {
 	if _, err := ParseDoc(map[string]any{"kind": "Foo"}, DefaultParseDocOptions()); err == nil || !strings.Contains(err.Error(), "apiVersion") {
 		t.Errorf("expected apiVersion error, got %v", err)

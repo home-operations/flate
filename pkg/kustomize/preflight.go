@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -43,13 +42,14 @@ var remoteFetchClient = &http.Client{Timeout: remoteFetchTimeout}
 //
 // On a fetch failure (timeout, 4xx, 5xx, DNS), a YAML-comment-only
 // tombstone file is written so kustomize completes the build with
-// one fewer resource. The failure surfaces via slog.Warn rather
-// than a misleading "URL is a git repository" error.
+// one fewer resource. The failure surfaces via one slog.Warn per
+// URL (StagingCache.FetchRemote dedupes both the network call AND
+// the log line across every preflight pass in one orchestrator run).
 //
 // Walks all three valid kustomization filenames (kustomization.yaml,
 // kustomization.yml, Kustomization). Only mutates the staged copy
 // the caller owns; the user's source tree is never touched.
-func preflightRemoteResources(ctx context.Context, root string) error {
+func preflightRemoteResources(ctx context.Context, cache *StagingCache, root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -61,14 +61,14 @@ func preflightRemoteResources(ctx context.Context, root string) error {
 		if name != "kustomization.yaml" && name != "kustomization.yml" && name != "Kustomization" {
 			return nil
 		}
-		return rewriteURLResources(ctx, path)
+		return rewriteURLResources(ctx, cache, path)
 	})
 }
 
 // rewriteURLResources rewrites URL entries in one kustomization file.
 // Reads the file as a generic YAML doc to preserve unknown fields,
 // rewrites the resources list, writes the file back.
-func rewriteURLResources(ctx context.Context, ksFile string) error {
+func rewriteURLResources(ctx context.Context, cache *StagingCache, ksFile string) error {
 	body, err := os.ReadFile(ksFile) //nolint:gosec // ksFile is a tree-walk result under our staged copy
 	if err != nil {
 		return err
@@ -97,10 +97,11 @@ func rewriteURLResources(ctx context.Context, ksFile string) error {
 		if !isHTTPURL(urlStr) {
 			continue
 		}
-		localFile, fetchErr := fetchRemoteResource(ctx, dir, urlStr)
+		localFile, fetchErr := fetchRemoteResource(ctx, cache, dir, urlStr)
 		if fetchErr != nil {
-			slog.Warn("kustomize: remote resource fetch failed; emitting tombstone",
-				"url", urlStr, "err", fetchErr)
+			// Warning already logged inside cache.FetchRemote — the
+			// first fetch emits the WARN, subsequent cache hits stay
+			// quiet.
 			rawRes[i] = "./" + writeFetchTombstone(dir, urlStr, fetchErr)
 		} else {
 			rawRes[i] = "./" + localFile
@@ -123,25 +124,13 @@ func isHTTPURL(s string) bool {
 }
 
 // fetchRemoteResource fetches the URL into a .flate-remote-<hash>.yaml
-// file next to the kustomization that referenced it. The local name
-// is deterministic per URL so re-runs reuse the same on-disk file
-// (kustomize sees a stable input, which keeps its own caching honest).
-func fetchRemoteResource(ctx context.Context, dir, urlStr string) (string, error) {
-	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, urlStr, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := remoteFetchClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
+// file next to the kustomization that referenced it. The actual HTTP
+// fetch is deduped via cache.FetchRemote — multiple kustomization
+// files referencing the same URL share one network call. The local
+// filename is deterministic per URL so re-runs reuse the same on-disk
+// file (kustomize sees a stable input).
+func fetchRemoteResource(ctx context.Context, cache *StagingCache, dir, urlStr string) (string, error) {
+	body, err := cache.FetchRemote(ctx, urlStr)
 	if err != nil {
 		return "", err
 	}
@@ -150,6 +139,27 @@ func fetchRemoteResource(ctx context.Context, dir, urlStr string) (string, error
 		return "", err
 	}
 	return name, nil
+}
+
+// httpGetURL is the actual network call cache.FetchRemote dispatches
+// through OnceValues. Lives here (not on the StagingCache) because
+// it's a preflight detail — the cache only owns the dedup discipline.
+func httpGetURL(ctx context.Context, urlStr string) ([]byte, error) {
+	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := remoteFetchClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 // writeFetchTombstone emits a YAML-comment-only file in place of a
@@ -168,3 +178,4 @@ func urlHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:8])
 }
+

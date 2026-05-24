@@ -102,7 +102,7 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath st
 	// to `exec.Command("git", "fetch", ...)`. See preflight.go for
 	// the why. Walks the entire staged tree because Components and
 	// nested overlays may reference URL resources from below subPath.
-	if err := preflightRemoteResources(ctx, staged); err != nil {
+	if err := preflightRemoteResources(ctx, cache, staged); err != nil {
 		return nil, fmt.Errorf("preflight remote resources: %w", err)
 	}
 

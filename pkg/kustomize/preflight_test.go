@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -26,7 +27,7 @@ func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 	ks := filepath.Join(stage, "kustomization.yaml")
 	mustWriteFile(t, ks, "resources:\n  - "+srv.URL+"/foo.yaml\n")
 
-	if err := preflightRemoteResources(context.Background(), stage); err != nil {
+	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -71,7 +72,7 @@ func TestPreflightRemoteResources_TombstoneOnFailure(t *testing.T) {
 	ks := filepath.Join(stage, "kustomization.yaml")
 	mustWriteFile(t, ks, "resources:\n  - "+srv.URL+"/missing.yaml\n")
 
-	if err := preflightRemoteResources(context.Background(), stage); err != nil {
+	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -102,7 +103,7 @@ func TestPreflightRemoteResources_IgnoresLocalEntries(t *testing.T) {
 	body := "resources:\n  - ./local.yaml\n  - ../shared/cm.yaml\n"
 	mustWriteFile(t, ks, body)
 
-	if err := preflightRemoteResources(context.Background(), stage); err != nil {
+	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -131,7 +132,7 @@ func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 	mustWriteFile(t, filepath.Join(nested, "kustomization.yaml"),
 		"resources:\n  - "+srv.URL+"/nested.yaml\n")
 
-	if err := preflightRemoteResources(context.Background(), stage); err != nil {
+	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 	body, _ := os.ReadFile(filepath.Join(nested, "kustomization.yaml")) //nolint:gosec // t.TempDir
@@ -154,7 +155,7 @@ func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 			stage := t.TempDir()
 			mustWriteFile(t, filepath.Join(stage, name),
 				"resources:\n  - "+srv.URL+"/x.yaml\n")
-			if err := preflightRemoteResources(context.Background(), stage); err != nil {
+			if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
 				t.Fatalf("preflight: %v", err)
 			}
 			body, _ := os.ReadFile(filepath.Join(stage, name)) //nolint:gosec // t.TempDir
@@ -162,6 +163,64 @@ func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 				t.Errorf("%s URL not rewritten:\n%s", name, body)
 			}
 		})
+	}
+}
+
+// TestPreflightRemoteResources_FetchesEachURLOnce pins the dedup
+// contract: a URL referenced from N kustomization files (parent +
+// nested child + sibling overlay …) must hit the network exactly
+// once per orchestrator run. The fix for the m00nwtchr report
+// where the same broken URL emitted 6 WARNs per `flate test all`.
+func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
+	var hits int32
+	mu := &sync.Mutex{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\n"))
+	}))
+	t.Cleanup(srv.Close)
+
+	stage := t.TempDir()
+	// Three kustomization files, all referencing the same URL.
+	for _, sub := range []string{"a", "b", "c"} {
+		dir := filepath.Join(stage, sub)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		mustWriteFile(t, filepath.Join(dir, "kustomization.yaml"),
+			"resources:\n  - "+srv.URL+"/shared.yaml\n")
+	}
+
+	cache := newPreflightCache(t)
+	if err := preflightRemoteResources(context.Background(), cache, stage); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if hits != 1 {
+		t.Errorf("expected 1 network call, got %d", hits)
+	}
+
+	// Each kustomization still got its own local copy written.
+	for _, sub := range []string{"a", "b", "c"} {
+		matches, _ := filepath.Glob(filepath.Join(stage, sub, ".flate-remote-*.yaml"))
+		if len(matches) != 1 {
+			t.Errorf("%s: expected one local copy, got %v", sub, matches)
+		}
+	}
+
+	// Running preflight again on the same cache must NOT re-fetch.
+	// (Tests the dedup spans across multiple preflight calls, which
+	// is the actual production pattern — one preflight per
+	// RenderFlux invocation.)
+	stage2 := t.TempDir()
+	mustWriteFile(t, filepath.Join(stage2, "kustomization.yaml"),
+		"resources:\n  - "+srv.URL+"/shared.yaml\n")
+	if err := preflightRemoteResources(context.Background(), cache, stage2); err != nil {
+		t.Fatalf("second preflight: %v", err)
+	}
+	if hits != 1 {
+		t.Errorf("expected 1 network call across both runs, got %d", hits)
 	}
 }
 
@@ -173,4 +232,16 @@ func mustWriteFile(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// newPreflightCache returns a fresh StagingCache so each test gets
+// its own remote-fetch dedup table (no cross-test cache hits).
+func newPreflightCache(t *testing.T) *StagingCache {
+	t.Helper()
+	c, err := NewStagingCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return c
 }

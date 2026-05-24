@@ -1,10 +1,12 @@
 package kustomize
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,6 +27,17 @@ type StagingCache struct {
 	mu     sync.Mutex
 	stages map[string]*stage
 	root   string
+	// remoteFetches dedupes URL fetches across every preflight pass in
+	// one orchestrator run. A single kustomization.yaml URL may be
+	// reached via multiple Flux Kustomizations (parent emits a child
+	// that shares the same path; multiple KSes whose subPath crosses
+	// the same nested kustomization). Without this, every reconcile
+	// re-fetches the same URL and re-emits the same WARN line.
+	remoteFetches sync.Map // url string -> *remoteFetch
+}
+
+type remoteFetch struct {
+	once func() ([]byte, error)
 }
 
 type stage struct {
@@ -45,6 +58,26 @@ func NewStagingCache(parent string) (*StagingCache, error) {
 		stages: make(map[string]*stage),
 		root:   parent,
 	}, nil
+}
+
+// FetchRemote returns the body of urlStr, fetched at most once per
+// StagingCache lifetime. Both successful bodies and errors are
+// cached — concurrent callers block on a single sync.OnceValues and
+// every caller sees the same result. The warning log lives inside
+// the OnceValues so the user sees one WARN per broken URL per run,
+// not one per kustomization that referenced it.
+func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, error) {
+	actual, _ := c.remoteFetches.LoadOrStore(urlStr, &remoteFetch{
+		once: sync.OnceValues(func() ([]byte, error) {
+			body, err := httpGetURL(ctx, urlStr)
+			if err != nil {
+				slog.Warn("kustomize: remote resource fetch failed",
+					"url", urlStr, "err", err)
+			}
+			return body, err
+		}),
+	})
+	return actual.(*remoteFetch).once()
 }
 
 // Stage returns the on-disk staged copy of source. The copy is created

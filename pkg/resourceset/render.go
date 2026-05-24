@@ -12,6 +12,12 @@
 //     via the ProviderResolver passed to Render. Dynamic providers
 //     (GitHubBranch, OCIArtifactTag, ExternalService, …) need network
 //     access flate doesn't have and contribute zero input sets.
+//   - spec.inputStrategy: Flatten (default) AND Permute. Permute
+//     Cartesian-products inputs across providers and scopes each
+//     under its normalized name; templates access values via
+//     `inputs.<provider>.foo`. ID generation matches upstream's
+//     adler32 scheme so renders are byte-equivalent to flux-operator
+//     output. Capped at 10000 permutations.
 //   - spec.resources (typed JSON template list)
 //   - spec.resourcesTemplate (multi-document YAML string)
 //   - spec.commonMetadata (labels + annotations applied to every emitted object)
@@ -19,7 +25,6 @@
 //   - Default-namespace fallback to the ResourceSet's own namespace
 //
 // Deferred:
-//   - spec.inputStrategy: Permute — start with the implicit Flatten.
 //   - fluxcd.controlplane.io/copyFrom / convertKubeConfigFrom / checksumFrom
 //     annotations — those need live cluster data flate does not have.
 package resourceset
@@ -71,6 +76,15 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 	if err != nil {
 		return nil, fmt.Errorf("ResourceSet %s: %w", rs.NamespacedName(), err)
 	}
+	// Under Permute, an empty input slice means the Cartesian product
+	// genuinely collapsed (every-provider-empty with includeEmpty=true,
+	// or no providers contributed). Render zero docs rather than
+	// falling through to renderResources' "no matrix → render once
+	// with nil" fallback, which only applies under Flatten where an
+	// empty matrix legitimately means "static resources, no inputs".
+	if len(inputs) == 0 && rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute {
+		return nil, nil
+	}
 	var docs []map[string]any
 	seen := map[string]struct{}{}
 	appendUnique := func(doc map[string]any) {
@@ -112,41 +126,76 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 	return docs, nil
 }
 
-// buildInputSets returns the flattened input matrix. The ResourceSet's
-// own inline spec.inputs come first (with a provider block pointing at
-// the ResourceSet itself), followed by every input set exported by each
-// referenced ResourceSetInputProvider (with a provider block pointing
-// at the RSIP). Matches upstream's Flatten strategy: simple concat,
-// order = rset's inline inputs first, then providers in sorted
-// (kind, namespace, name) order.
+// providerInputs is one per-provider list of input sets carrying its
+// raw (un-normalized) name. Used to dispatch on spec.inputStrategy:
+// Flatten concatenates; Permute scopes by name and Cartesian-products.
+type providerInputs struct {
+	name   string             // raw provider name (rs.Name for inline; RSIP.Name otherwise)
+	inputs []map[string]any   // each set already carries its `provider` block
+}
+
+// buildInputSets gathers per-provider input lists then dispatches on
+// spec.inputStrategy. The ResourceSet's own inline spec.inputs are
+// treated as "provider 0", followed by each referenced
+// ResourceSetInputProvider in upstream's sorted order (matching
+// flux-operator/internal/inputs/combine.go).
+//
+// Flatten (default) concatenates: each input set is rendered once
+// against the templates, top-level access (`inputs.foo`).
+//
+// Permute Cartesian-products across providers: each result map has
+// the providers' input sets nested under their normalized names
+// (`inputs.<provider>.foo`) plus an `id` field — an adler32 hash of
+// the provider=index path matching upstream's flux-operator/internal/
+// inputs/permuter.go. Per-provider input lists are scoped before the
+// product so authors can disambiguate "rset.x" from "rsip.x". A 10000
+// permutation cap (also matching upstream) prevents pathological
+// Cartesian blowups.
 //
 // inputs.id is left to the provider when it's a Static RSIP; inline-
 // only inputs see no synthetic id under Flatten.
-//
-// Permute (Cartesian product) is rejected with a clear error rather
-// than silently falling through to Flatten — Flatten produces wrong
-// cardinality for a ResourceSet that requested Permute. Real Flux's
-// flux-operator/internal/inputs/combine.go dispatches on
-// spec.inputStrategy.name and would emit the Cartesian product;
-// any flate render that doesn't would silently disagree with cluster.
 func buildInputSets(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]any, error) {
-	if rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute {
-		return nil, fmt.Errorf("%w: ResourceSet %s/%s requests spec.inputStrategy.name=Permute, which flate does not yet implement (#109)",
-			manifest.ErrInput, rs.Namespace, rs.Name)
+	groups, err := collectProviderInputs(rs, resolve)
+	if err != nil {
+		return nil, err
 	}
+
+	if rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute {
+		return permute(groups, rs.InputStrategy.IncludeEmptyProviders)
+	}
+	// Default: Flatten — concatenate every provider's input list.
 	var out []map[string]any
+	for _, g := range groups {
+		out = append(out, g.inputs...)
+	}
+	return out, nil
+}
+
+// collectProviderInputs assembles the per-provider input lists: rs's
+// inline inputs as provider 0 (named after the ResourceSet itself),
+// then every resolved ResourceSetInputProvider in (namespace, name)
+// order. Each input set is stamped with a `provider` block so
+// templates can recover which CR sourced the values.
+func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) ([]providerInputs, error) {
+	var groups []providerInputs
+
+	// Provider 0: the ResourceSet itself with its inline spec.inputs.
+	inlineProv := map[string]any{
+		"apiVersion": fluxopv1.GroupVersion.String(),
+		"kind":       manifest.KindResourceSet,
+		"name":       rs.Name,
+		"namespace":  rs.Namespace,
+	}
+	inline := make([]map[string]any, 0, len(rs.Inputs))
 	for _, in := range rs.Inputs {
 		decoded := decodeInputSet(in)
-		decoded["provider"] = map[string]any{
-			"apiVersion": fluxopv1.GroupVersion.String(),
-			"kind":       manifest.KindResourceSet,
-			"name":       rs.Name,
-			"namespace":  rs.Namespace,
-		}
-		out = append(out, decoded)
+		decoded["provider"] = inlineProv
+		inline = append(inline, decoded)
 	}
+	groups = append(groups, providerInputs{name: rs.Name, inputs: inline})
+
 	if resolve == nil || len(rs.InputsFrom) == 0 {
-		return out, nil
+		return groups, nil
 	}
 
 	seen := make(map[string]struct{})
@@ -184,17 +233,20 @@ func buildInputSets(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[s
 				"provider", p.NamespacedName(),
 				"type", p.Type)
 		}
-		for _, set := range exported {
-			set["provider"] = map[string]any{
-				"apiVersion": fluxopv1.GroupVersion.String(),
-				"kind":       manifest.KindResourceSetInputProvider,
-				"name":       p.Name,
-				"namespace":  p.Namespace,
-			}
-			out = append(out, set)
+		provBlock := map[string]any{
+			"apiVersion": fluxopv1.GroupVersion.String(),
+			"kind":       manifest.KindResourceSetInputProvider,
+			"name":       p.Name,
+			"namespace":  p.Namespace,
 		}
+		pInputs := make([]map[string]any, 0, len(exported))
+		for _, set := range exported {
+			set["provider"] = provBlock
+			pInputs = append(pInputs, set)
+		}
+		groups = append(groups, providerInputs{name: p.Name, inputs: pInputs})
 	}
-	return out, nil
+	return groups, nil
 }
 
 func decodeInputSet(in fluxopv1.ResourceSetInput) map[string]any {

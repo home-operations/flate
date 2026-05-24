@@ -144,9 +144,20 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	// pass discovered, plus ResourceSets that may emit further KSes.
 	// PreferExisting lets repeated AddObject re-emission be a no-op so
 	// the loop terminates on convergence (no new objects added).
+	//
+	// ResourceSets are re-rendered every iteration rather than memoized,
+	// because a RS's inputsFrom selector may match RSIPs that only
+	// arrive after a downstream Kustomization chain expands. Without
+	// the retry, a RS whose RSIPs are produced by a child KS renders
+	// to zero docs on first pass and never recovers — observed in
+	// tholinka/home-ops where `dragonfly-acls` (a Permute RS) selects
+	// RSIPs created by an unrelated `dragonfly/manual` component
+	// applied through `renovate-operator-jobs-jobs`. Re-rendering is
+	// safe: renderResourceSet skips already-present objects in the
+	// store, so a steady-state RS contributes 0 new docs and the loop
+	// converges via the `added == 0` exit.
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
-	rsExpanded := map[manifest.NamedResource]struct{}{}
 	for {
 		added := 0
 		for _, obj := range d.cfg.Store.ListObjects(manifest.KindKustomization) {
@@ -180,11 +191,6 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if !ok {
 				continue
 			}
-			id := rs.Named()
-			if _, ok := rsExpanded[id]; ok {
-				continue
-			}
-			rsExpanded[id] = struct{}{}
 			n, err := d.renderResourceSet(rs)
 			if err != nil {
 				return err

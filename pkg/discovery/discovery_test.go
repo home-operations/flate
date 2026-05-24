@@ -135,6 +135,84 @@ spec:
 	}
 }
 
+// TestRun_ResourceSetReExpandsForLateRSIPs pins a discovery-loop
+// fix: a ResourceSet whose RSIP providers only become visible in a
+// later iteration (because they live behind a Kustomization path
+// that hasn't been walked yet) must be re-rendered, not memoized
+// after its first empty render. Without the fix, the RS would
+// render to zero docs on the first pass — when no RSIPs were in
+// the store — and never recover when the deeper KS expansion
+// produced them.
+func TestRun_ResourceSetReExpandsForLateRSIPs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Root: a parent KS that points at apps/, plus an RS at the same
+	// level. The RS selects RSIPs by label in its own namespace.
+	mustWrite(t, filepath.Join(dir, "flux", "parent.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: parent, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system}
+  interval: 10m
+`)
+	mustWrite(t, filepath.Join(dir, "flux", "rs.yaml"), `---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: late-rs, namespace: flux-system}
+spec:
+  inputsFrom:
+    - apiVersion: fluxcd.controlplane.io/v1
+      kind: ResourceSetInputProvider
+      selector:
+        matchLabels: {role: db}
+  resourcesTemplate: |
+    ---
+    apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata: {name: child-<< index (index inputs "provider") "name" >>, namespace: flux-system}
+    spec:
+      path: ./child
+      sourceRef: {kind: GitRepository, name: flux-system}
+`)
+	// RSIP lives BEHIND the parent KS's path — discovery must expand
+	// that path before the RSIP is in the store. Re-rendering the RS
+	// on a later iter is what makes the child-rsip Kustomization show
+	// up at all.
+	mustWrite(t, filepath.Join(dir, "apps", "rsip.yaml"), `---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: rsip
+  namespace: flux-system
+  labels: {role: db}
+spec:
+  type: Static
+  defaultValues:
+    user: alice
+`)
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// The RS render produces a Kustomization named "child-rsip" — present
+	// only when the RS re-renders after the RSIP gets loaded.
+	want := manifest.NamedResource{
+		Kind:      manifest.KindKustomization,
+		Namespace: "flux-system",
+		Name:      "child-rsip",
+	}
+	if st.GetObject(want) == nil {
+		t.Errorf("expected RS-emitted Kustomization %s in store; the RS likely rendered before its RSIP was loaded and was never retried", want)
+	}
+}
+
 func TestRun_RequiresStoreAndLoader(t *testing.T) {
 	t.Parallel()
 	if _, err := discovery.Run(context.Background(), discovery.Config{Path: t.TempDir()}); err == nil {

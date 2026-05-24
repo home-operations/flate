@@ -11,34 +11,214 @@ import (
 	"github.com/home-operations/flate/pkg/resourceset"
 )
 
-// TestRender_PermuteIsRejected locks the upstream-fidelity guard: a
-// ResourceSet requesting spec.inputStrategy.name=Permute fails loud
-// rather than silently falling through to Flatten. Flatten produces
-// wrong cardinality for a Permute consumer — flate would render
-// differently from what flux-operator emits in cluster.
-func TestRender_PermuteIsRejected(t *testing.T) {
+// TestRender_PermuteScopesByProviderName locks the core Permute
+// semantic: each provider's input set is nested under its normalized
+// name, so templates dereference `inputs.<provider>.foo` instead of
+// the flat `inputs.foo`. Matches flux-operator/internal/inputs/
+// permuter.go. With one RSET-inline input and one Static RSIP, the
+// Cartesian product is 1×1=1 — the cardinality match is the same as
+// Flatten, but the SCOPING differs, which is the observable change.
+func TestRender_PermuteScopesByProviderName(t *testing.T) {
 	rs := &manifest.ResourceSet{
-		Name: "apps", Namespace: "flux-system",
+		Name: "myrset", Namespace: "default",
 		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputStrategy: &fluxopv1.InputStrategySpec{
-				Name: fluxopv1.InputStrategyPermute,
-			},
-			Inputs: []fluxopv1.ResourceSetInput{
-				{"x": jsonTmpl(t, `"a"`)},
-				{"x": jsonTmpl(t, `"b"`)},
-			},
+			InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
+			Inputs:        []fluxopv1.ResourceSetInput{{"env": jsonTmpl(t, `"prod"`)}},
+			InputsFrom: []fluxopv1.InputProviderReference{{
+				Kind: manifest.KindResourceSetInputProvider, Name: "myrsip",
+			}},
+			// Permute templates dereference inputs by provider name.
+			// `myrset` (the rs.Name) wraps the inline input;
+			// `myrsip` wraps the RSIP's defaultValues.
 			ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: << .input.x >>`,
+  name: << index inputs "myrset" "env" >>-<< index inputs "myrsip" "tenant" >>
+  namespace: default`,
+		},
+	}
+	rsip := &manifest.ResourceSetInputProvider{
+		Name: "myrsip", Namespace: "default",
+		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
+			Type:          fluxopv1.InputProviderStatic,
+			DefaultValues: fluxopv1.ResourceSetInput{"tenant": jsonTmpl(t, `"alpha"`)},
+		},
+	}
+	resolver := func(ref fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
+		if ref.Name == "myrsip" {
+			return []*manifest.ResourceSetInputProvider{rsip}, nil
+		}
+		return nil, nil
+	}
+
+	docs, err := resourceset.Render(rs, resolver)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc (1 inline × 1 static = 1), got %d:\n%+v", len(docs), docs)
+	}
+	md, _ := docs[0]["metadata"].(map[string]any)
+	if got, _ := md["name"].(string); got != "prod-alpha" {
+		t.Errorf("expected name=prod-alpha, got %q", got)
+	}
+}
+
+// TestRender_PermuteMultiInlineCartesian covers the Cartesian
+// expansion across provider rows: 2 RSET-inline inputs × 1 Static
+// RSIP = 2 permutations, each combining the inline value with the
+// shared RSIP value.
+func TestRender_PermuteMultiInlineCartesian(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "rset", Namespace: "default",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
+			Inputs: []fluxopv1.ResourceSetInput{
+				{"env": jsonTmpl(t, `"prod"`)},
+				{"env": jsonTmpl(t, `"stage"`)},
+			},
+			InputsFrom: []fluxopv1.InputProviderReference{{
+				Kind: manifest.KindResourceSetInputProvider, Name: "rsip",
+			}},
+			ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: << index inputs "rset" "env" >>-<< index inputs "rsip" "tenant" >>
+  namespace: default`,
+		},
+	}
+	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
+		return []*manifest.ResourceSetInputProvider{{
+			Name: "rsip", Namespace: "default",
+			ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
+				Type:          fluxopv1.InputProviderStatic,
+				DefaultValues: fluxopv1.ResourceSetInput{"tenant": jsonTmpl(t, `"alpha"`)},
+			},
+		}}, nil
+	}
+	docs, err := resourceset.Render(rs, resolver)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("expected 2 perm docs (2 inline × 1 rsip), got %d:\n%+v", len(docs), docs)
+	}
+	gotNames := map[string]struct{}{}
+	for _, d := range docs {
+		md, _ := d["metadata"].(map[string]any)
+		name, _ := md["name"].(string)
+		gotNames[name] = struct{}{}
+	}
+	for _, want := range []string{"prod-alpha", "stage-alpha"} {
+		if _, ok := gotNames[want]; !ok {
+			t.Errorf("missing permutation %q; got %v", want, gotNames)
+		}
+	}
+}
+
+// TestRender_PermuteSkipsEmptyProviderByDefault matches upstream:
+// when a provider exports zero input sets, the default (includeEmpty=
+// false) silently drops it from the product. Only the non-empty
+// provider's inputs survive — and their scoping is preserved.
+func TestRender_PermuteSkipsEmptyProviderByDefault(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "rset", Namespace: "default",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
+			Inputs:        []fluxopv1.ResourceSetInput{{"env": jsonTmpl(t, `"prod"`)}},
+			InputsFrom: []fluxopv1.InputProviderReference{{
+				Kind: manifest.KindResourceSetInputProvider, Name: "dyn",
+			}},
+			ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: << index inputs "rset" "env" >>
+  namespace: default`,
+		},
+	}
+	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
+		// Dynamic provider (GitHubBranch etc.) — flate can't fetch
+		// remote APIs offline, so it exports zero input sets.
+		return []*manifest.ResourceSetInputProvider{{
+			Name: "dyn", Namespace: "default",
+			ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
+				Type: fluxopv1.InputProviderGitHubBranch,
+			},
+		}}, nil
+	}
+	docs, err := resourceset.Render(rs, resolver)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Errorf("expected 1 doc (dyn provider dropped, 1 inline remains); got %d:\n%+v", len(docs), docs)
+	}
+}
+
+// TestRender_PermuteIncludeEmptyProvidersCollapses verifies the
+// IncludeEmptyProviders=true branch: the empty provider participates
+// in the Cartesian product and collapses it to zero results, matching
+// upstream's "permutes to empty when includeEmptyProviders is true"
+// test in combine_test.go.
+func TestRender_PermuteIncludeEmptyProvidersCollapses(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "rset", Namespace: "default",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			InputStrategy: &fluxopv1.InputStrategySpec{
+				Name:                  fluxopv1.InputStrategyPermute,
+				IncludeEmptyProviders: true,
+			},
+			Inputs: []fluxopv1.ResourceSetInput{{"env": jsonTmpl(t, `"prod"`)}},
+			InputsFrom: []fluxopv1.InputProviderReference{{
+				Kind: manifest.KindResourceSetInputProvider, Name: "dyn",
+			}},
+			ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata: {name: x, namespace: default}`,
+		},
+	}
+	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
+		return []*manifest.ResourceSetInputProvider{{
+			Name: "dyn", Namespace: "default",
+			ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
+				Type: fluxopv1.InputProviderGitHubBranch,
+			},
+		}}, nil
+	}
+	docs, err := resourceset.Render(rs, resolver)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(docs) != 0 {
+		t.Errorf("expected 0 docs (Cartesian product with an empty provider), got %d:\n%+v", len(docs), docs)
+	}
+}
+
+// TestRender_PermuteMaxPermutationsRejected guards the 10000-cap that
+// matches upstream's permuter.go. flate must fail loud rather than
+// burn host RAM on a pathological combination set. With 10001 inline
+// inputs, even the single-RSET-provider case crosses the threshold.
+func TestRender_PermuteMaxPermutationsRejected(t *testing.T) {
+	inputs := make([]fluxopv1.ResourceSetInput, 10001)
+	for i := range inputs {
+		inputs[i] = fluxopv1.ResourceSetInput{"i": jsonTmpl(t, `"x"`)}
+	}
+	rs := &manifest.ResourceSet{
+		Name: "rset", Namespace: "default",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
+			Inputs:        inputs,
+			ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata: {name: x, namespace: default}`,
 		},
 	}
 	_, err := resourceset.Render(rs, nil)
 	if err == nil {
-		t.Fatal("expected Permute to be rejected; got nil error")
+		t.Fatal("expected Render to reject the >10000-permutation case")
 	}
-	if !strings.Contains(err.Error(), "Permute") {
-		t.Errorf("error should mention Permute; got %v", err)
+	if !strings.Contains(err.Error(), "permutations") {
+		t.Errorf("error should mention permutations; got %v", err)
 	}
 }
 

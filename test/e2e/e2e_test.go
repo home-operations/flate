@@ -228,20 +228,24 @@ func TestE2E_DiffImagesRequiresPathOrig(t *testing.T) {
 }
 
 // TestE2E_BootstrapErrorSurfacesNotMasked pins the contract that
-// when discovery itself fails (e.g. an unimplemented ResourceSet
-// inputStrategy, a YAML schema rejection), the actual error reaches
+// when discovery itself fails (e.g. a ResourceSet template that
+// fails to parse, a YAML schema rejection), the actual error reaches
 // the user instead of getting drowned under a wall of phantom
 // "FAILED (no status reported)" rows from the testrunner running on
-// a partial Store. Surfaced by tholinka/home-ops where a `Permute`
-// ResourceSet produced 247 generic failure rows instead of the
-// "not yet implemented (#109)" message.
+// a partial Store. Surfaced by tholinka/home-ops where an
+// unimplemented inputStrategy: Permute ResourceSet produced 247
+// generic failure rows instead of the actual message. Now that
+// Permute is implemented, the test triggers Bootstrap failure with
+// a malformed template — same code path through
+// runOrchestratorCfg's `res == nil` guard.
 func TestE2E_BootstrapErrorSurfacesNotMasked(t *testing.T) {
 	dir := t.TempDir()
-	// Minimal repo: one Kustomization + one Permute ResourceSet.
-	// Discovery's render pass hits Permute, returns the input-error,
-	// Bootstrap returns it, Render nils the Result, the CLI must
-	// surface the underlying error rather than running the testrunner
-	// on partial state.
+	// Minimal repo: one Kustomization + one ResourceSet whose template
+	// references an undefined function ("nope"). text/template's Parse
+	// rejects it; the ResourceSet render returns an error; Bootstrap
+	// returns it; Render nils the Result; the CLI must surface the
+	// underlying error rather than running the testrunner on partial
+	// state.
 	if err := os.WriteFile(filepath.Join(dir, "ks.yaml"), []byte(`---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -255,14 +259,12 @@ spec:
 	if err := os.WriteFile(filepath.Join(dir, "rs.yaml"), []byte(`---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
-metadata: {name: permute-rs, namespace: flux-system}
+metadata: {name: broken-rs, namespace: flux-system}
 spec:
-  inputStrategy:
-    name: Permute
   resourcesTemplate: |
     apiVersion: v1
     kind: ConfigMap
-    metadata: {name: x, namespace: ns}
+    metadata: {name: << nope >>, namespace: ns}
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -271,8 +273,9 @@ spec:
 	if code == 0 {
 		t.Fatalf("expected non-zero exit; got 0:\n%s", out)
 	}
-	if !strings.Contains(out, "Permute") {
-		t.Errorf("error must mention Permute (the actual Bootstrap failure); got:\n%s", out)
+	// The template parse error mentions the undefined function.
+	if !strings.Contains(out, "nope") {
+		t.Errorf("error must mention the underlying Bootstrap failure (template parse rejecting `nope`); got:\n%s", out)
 	}
 	// Guard against the regression: the testrunner used to run on
 	// the partial Store and emit one "FAILED (no status reported)"

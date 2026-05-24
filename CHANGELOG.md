@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/home-operations/flate/compare/0.1.8...0.1.9) (2026-05-24)
+
+
+### Features
+
+* **diff:** emit per-resource header only when there's more than one ([#200](https://github.com/home-operations/flate/issues/200)) ([9f5e7aa](https://github.com/home-operations/flate/commit/9f5e7aa63c72ae2e6ee7c6d3085f9ae54a8c093e))
+
 ## [0.1.8](https://github.com/home-operations/flate/compare/0.1.7...0.1.8) (2026-05-24)
 
 

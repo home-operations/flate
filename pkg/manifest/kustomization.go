@@ -80,13 +80,20 @@ func (k *Kustomization) Named() NamedResource {
 }
 
 // Clone returns a copy of k safe for in-place mutation during a single
-// reconcile pass. Deep-copies the maps reconcile writes to (Contents,
-// PostBuildSubstitute) so the canonical store-owned object is never
-// observed mid-mutation by other goroutines.
+// reconcile pass. Deep-copies every mutable reference field —
+// reconcile bodies, prepare passes, and orchestrator stamping all
+// observe the same canonical store-owned object across goroutines,
+// so a partial clone is a footgun the moment any of those grow a
+// new mutation. Cheap: typical KS has <10 labels/annotations and
+// short DependsOn / PostBuildSubstituteFrom.
 func (k *Kustomization) Clone() *Kustomization {
 	out := *k
 	out.Contents = DeepCopyMap(k.Contents)
 	out.PostBuildSubstitute = maps.Clone(k.PostBuildSubstitute)
+	out.PostBuildSubstituteFrom = slices.Clone(k.PostBuildSubstituteFrom)
+	out.DependsOn = slices.Clone(k.DependsOn)
+	out.Labels = maps.Clone(k.Labels)
+	out.Annotations = maps.Clone(k.Annotations)
 	return &out
 }
 

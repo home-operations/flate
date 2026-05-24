@@ -118,6 +118,114 @@ data:
 	}
 }
 
+// TestExistenceIndex_PromoteNilReceiverSafe confirms the defensive
+// nil-receiver guard: a nil index promoted against any id should be
+// a no-op false return, not a panic. The orchestrator's
+// resolveMissing closure relies on this when DiscoveryOnly is off
+// and Existence was never initialized.
+func TestExistenceIndex_PromoteNilReceiverSafe(t *testing.T) {
+	var idx *ExistenceIndex
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "x"}
+	if got := idx.Promote(store.New(), id, true); got {
+		t.Errorf("nil index Promote should return false, got true")
+	}
+}
+
+// TestExistenceIndex_PromoteUnknownIDReturnsFalse covers the path
+// where depwait's missing-dep fallback asks for a CM that never
+// reached file-load: existence index has no entry, so Promote bails
+// out cleanly and the depwait surfaces "dependency not found" as
+// intended.
+func TestExistenceIndex_PromoteUnknownIDReturnsFalse(t *testing.T) {
+	idx := NewExistenceIndex()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
+	if got := idx.Promote(store.New(), id, true); got {
+		t.Errorf("Promote on unknown id should return false, got true")
+	}
+}
+
+// TestExistenceIndex_PromoteFileRemovedBetweenRecordAndPromote
+// exercises the race where the indexed file was deleted (or
+// permission-stripped) between the file walk and the lazy lookup.
+// Promote should fail gracefully (return false), not panic, so the
+// depwait surfaces "dependency not found" instead of crashing the
+// orchestrator.
+func TestExistenceIndex_PromoteFileRemovedBetweenRecordAndPromote(t *testing.T) {
+	dir := t.TempDir()
+	writeExistenceFile(t, dir, "cm.yaml", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ephemeral
+  namespace: default
+data:
+  KEY: value
+`)
+	st := store.New()
+	l := New(st)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Remove the file behind the index.
+	if err := os.Remove(filepath.Join(dir, "cm.yaml")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ephemeral"}
+	if got := l.Existence.Promote(st, id, true); got {
+		t.Errorf("Promote on a removed file should return false, got true")
+	}
+	if st.GetObject(id) != nil {
+		t.Errorf("removed file should not have produced a Store entry")
+	}
+}
+
+// TestExistenceIndex_PromoteMultiDocLoadsSiblings pins the
+// "whole-file parse" contract documented on Promote: a YAML file
+// packing CM + Secret + HR together promotes ALL three when ANY one
+// is requested. This is what allows depwait to avoid re-opening the
+// same file once per dep in the common multi-doc fixture pattern.
+func TestExistenceIndex_PromoteMultiDocLoadsSiblings(t *testing.T) {
+	dir := t.TempDir()
+	writeExistenceFile(t, dir, "bundle.yaml", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: default
+data:
+  KEY: value
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+  namespace: default
+type: Opaque
+data:
+  TOKEN: dG9rZW4=
+`)
+	st := store.New()
+	l := New(st)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
+	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-secret"}
+	if !l.Existence.Promote(st, cmID, true) {
+		t.Fatalf("Promote(cm) should succeed")
+	}
+	if st.GetObject(cmID) == nil {
+		t.Errorf("CM not in store after Promote")
+	}
+	if st.GetObject(secretID) == nil {
+		t.Errorf("sibling Secret should have been promoted alongside the CM (whole-file parse contract)")
+	}
+}
+
 // TestDiscoveryOnly_SourcesStayFileLoaded pins the regression fix
 // found on JJGadgets/Biohazard: sources (GitRepository,
 // OCIRepository, HelmRepository) must remain in the Store under

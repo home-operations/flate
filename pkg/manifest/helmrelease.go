@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -166,14 +167,19 @@ func (h *HelmRelease) Named() NamedResource {
 }
 
 // Clone returns a copy of h safe for in-place mutation during a single
-// reconcile pass. Deep-copies the maps and slices reconcile writes to
-// (Values, ChartValuesFiles, DependsOn) so the canonical store-owned
-// object is never observed mid-mutation by other goroutines.
+// reconcile pass. Deep-copies every mutable reference field —
+// reconcile bodies, prepare passes, and orchestrator stamping all
+// observe the same canonical store-owned object across goroutines,
+// so a partial clone is a footgun the moment any of those grow a
+// new mutation. Cheap: typical HR has <10 labels/annotations and
+// short DependsOn / ChartValuesFiles.
 func (h *HelmRelease) Clone() *HelmRelease {
 	out := *h
 	out.Values = DeepCopyMap(h.Values)
 	out.ChartValuesFiles = slices.Clone(h.ChartValuesFiles)
 	out.DependsOn = slices.Clone(h.DependsOn)
+	out.Labels = maps.Clone(h.Labels)
+	out.Annotations = maps.Clone(h.Annotations)
 	return &out
 }
 

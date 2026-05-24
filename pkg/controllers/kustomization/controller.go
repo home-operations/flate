@@ -7,11 +7,15 @@ package kustomization
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -172,6 +176,18 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		return err
 	}
 
+	// Fingerprint dedup: the same id may receive multiple AddObject
+	// events with the same effective spec (e.g. when the structural
+	// parent re-emits this KS after running its own render, stamping
+	// kustomize.toolkit.fluxcd.io ownership labels). kustomize.RenderFlux
+	// is the hot path; skip it and reuse the prior artifact when the
+	// post-Prepare inputs are byte-identical. Same pattern as HR (#219).
+	fp := kustomizationFingerprint(ks, sourceRoot)
+	if existing, ok := c.Store.GetArtifact(id).(*store.KustomizationArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
+		slog.Debug("kustomization: skipped re-render (fingerprint unchanged)", "id", id.String())
+		return nil
+	}
+
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering")
 	data, err := kustomize.RenderFlux(ctx, c.Staging, sourceRoot, ks.Path, ks.Contents)
 	if err != nil {
@@ -207,10 +223,42 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	c.emitRenderedChildren(id, docs)
 
 	c.Store.SetArtifact(id, &store.KustomizationArtifact{
-		Path:      filepath.Join(sourceRoot, ks.Path),
-		Manifests: docs,
+		Path:        filepath.Join(sourceRoot, ks.Path),
+		Manifests:   docs,
+		Fingerprint: fp,
 	})
 	return nil
+}
+
+// kustomizationFingerprint produces a stable hash of the post-Prepare
+// inputs that determine kustomize.RenderFlux's output for ks. The
+// resolved sourceRoot is included so a sibling KS that points at a
+// different source artifact path doesn't collide. Labels and
+// annotations are excluded on purpose: kustomize-controller-emitted
+// children carry stamped ownership labels that don't affect the
+// rendered manifests, and re-rendering on that delta is pure waste.
+// Returns "" when json.Marshal fails — empty fingerprints never
+// match, so the dedup short-circuit degrades safely into re-render.
+func kustomizationFingerprint(ks *manifest.Kustomization, sourceRoot string) string {
+	payload := struct {
+		Path                string
+		SourceRoot          string
+		Contents            map[string]any
+		PostBuildSubstitute map[string]any
+		Spec                kustomizev1.KustomizationSpec
+	}{
+		Path:                ks.Path,
+		SourceRoot:          sourceRoot,
+		Contents:            ks.Contents,
+		PostBuildSubstitute: ks.PostBuildSubstitute,
+		Spec:                ks.KustomizationSpec,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // emitRenderedChildren parses the rendered docs and lands them in the

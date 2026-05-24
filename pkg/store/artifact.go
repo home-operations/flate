@@ -45,9 +45,17 @@ type SourceArtifact struct {
 func (*SourceArtifact) artifact() {}
 
 // KustomizationArtifact is the rendered output of a Kustomization build.
+//
+// Fingerprint mirrors HelmReleaseArtifact: a stable hash of the inputs
+// that determine the rendered output (path, inline contents, spec,
+// expanded substitutions, resolved source root). The KS controller
+// compares it on every reconcile and skips re-running kustomize when
+// a re-AddObject event arrives with the same effective spec — the
+// same wasted-work pattern HR had before PR #219, just for KS.
 type KustomizationArtifact struct {
-	Path      string
-	Manifests []map[string]any
+	Path        string
+	Manifests   []map[string]any
+	Fingerprint string
 }
 
 func (*KustomizationArtifact) artifact() {}

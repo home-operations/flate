@@ -9,13 +9,9 @@ package helmrelease
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -303,70 +299,6 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
 	return nil
 }
-
-// isFluxSourceKind reports whether obj is a Flux source CR — one
-// the source controller is registered to reconcile. Mirrors the
-// subset of kustomization.shouldDispatchAsObject that the HR
-// controller actually wants to re-emit: only sources are
-// chart-rendered in the wild (tofu-controller's OCIRepository, ESO
-// chart's HelmRepository fallback). Charts that render KS / HR are
-// rare and risky — restricting the AddObject dispatch to sources
-// keeps the blast radius small.
-func isFluxSourceKind(obj manifest.BaseManifest) bool {
-	switch obj.(type) {
-	case *manifest.GitRepository,
-		*manifest.OCIRepository,
-		*manifest.HelmRepository,
-		*manifest.Bucket,
-		*manifest.HelmChartSource,
-		*manifest.ExternalArtifact:
-		return true
-	}
-	return false
-}
-
-// helmReleaseFingerprint produces a stable hash of the inputs that
-// determine helm.Template's output for hr. Excludes metadata.labels
-// and metadata.annotations on purpose — kustomize-controller-emitted
-// HRs differ from their file-loaded sources only in label stamping,
-// and re-rendering on a label diff is pure waste. Returns "" when
-// json.Marshal fails (degrades safely: an empty fingerprint never
-// matches, so the dedup short-circuit is skipped and we re-render).
-func helmReleaseFingerprint(hr *manifest.HelmRelease) string {
-	raw, err := json.Marshal(helmReleaseFingerprintPayload(hr))
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
-}
-
-func helmReleaseFingerprintPayload(hr *manifest.HelmRelease) any {
-	return struct {
-		ReleaseName              string
-		ReleaseNamespace         string
-		Chart                    manifest.HelmChart
-		Values                   map[string]any
-		Spec                     helmv2.HelmReleaseSpec
-		ChartValuesFiles         []string
-		IgnoreMissingValuesFiles bool
-		CRDsPolicy               string
-		DisableSchemaValidation  bool
-		DisableOpenAPIValidation bool
-	}{
-		ReleaseName:              hr.ReleaseName(),
-		ReleaseNamespace:         hr.ReleaseNamespace(),
-		Chart:                    hr.Chart,
-		Values:                   hr.Values,
-		Spec:                     hr.HelmReleaseSpec,
-		ChartValuesFiles:         hr.ChartValuesFiles,
-		IgnoreMissingValuesFiles: hr.IgnoreMissingValuesFiles,
-		CRDsPolicy:               hr.CRDsPolicy,
-		DisableSchemaValidation:  hr.DisableSchemaValidation,
-		DisableOpenAPIValidation: hr.DisableOpenAPIValidation,
-	}
-}
-
 // collectHRDeps returns hr's typed dependsOn entries (carrying any
 // ReadyExpr) for the depwait Waiter. dependsOn on a HelmRelease
 // references other HelmReleases only (per Flux spec).

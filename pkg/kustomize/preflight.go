@@ -141,6 +141,20 @@ func fetchRemoteResource(ctx context.Context, cache *StagingCache, dir, urlStr s
 	return name, nil
 }
 
+// httpStatusError signals a non-2xx response — the URL was reachable
+// but the server didn't serve the resource. Distinct from transport
+// errors (DNS, timeout, connection refused) so FetchRemote can log
+// the two at different levels: server-said-no is a user-repo concern
+// and stays DEBUG; can't-reach-the-server is environment-side and
+// warrants WARN.
+type httpStatusError struct {
+	code int
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d", e.code)
+}
+
 // httpGetURL is the actual network call cache.FetchRemote dispatches
 // through OnceValues. Lives here (not on the StagingCache) because
 // it's a preflight detail — the cache only owns the dedup discipline.
@@ -157,7 +171,7 @@ func httpGetURL(ctx context.Context, urlStr string) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, &httpStatusError{code: resp.StatusCode}
 	}
 	return io.ReadAll(resp.Body)
 }

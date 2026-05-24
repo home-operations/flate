@@ -63,16 +63,32 @@ func NewStagingCache(parent string) (*StagingCache, error) {
 // FetchRemote returns the body of urlStr, fetched at most once per
 // StagingCache lifetime. Both successful bodies and errors are
 // cached — concurrent callers block on a single sync.OnceValues and
-// every caller sees the same result. The warning log lives inside
-// the OnceValues so the user sees one WARN per broken URL per run,
-// not one per kustomization that referenced it.
+// every caller sees the same result. Logging lives inside the
+// OnceValues so users see one line per URL per run.
+//
+// Log level depends on the failure mode:
+//
+//   - WARN: the HTTP client couldn't reach the URL (DNS, connection
+//     refused, timeout). The user's environment is the suspect —
+//     they need to know.
+//   - DEBUG: the server responded with non-2xx (404, 410, 500…). The
+//     URL is reachable; it just doesn't host that resource. That's
+//     a user-repo issue, surfaced separately by the missing resource
+//     in the rendered output — no need to spam WARN.
+//   - nothing on success.
 func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, error) {
 	actual, _ := c.remoteFetches.LoadOrStore(urlStr, &remoteFetch{
 		once: sync.OnceValues(func() ([]byte, error) {
 			body, err := httpGetURL(ctx, urlStr)
 			if err != nil {
-				slog.Warn("kustomize: remote resource fetch failed",
-					"url", urlStr, "err", err)
+				var httpErr *httpStatusError
+				if errors.As(err, &httpErr) {
+					slog.Debug("kustomize: remote resource returned non-2xx",
+						"url", urlStr, "status", httpErr.code)
+				} else {
+					slog.Warn("kustomize: remote resource unreachable",
+						"url", urlStr, "err", err)
+				}
 			}
 			return body, err
 		}),

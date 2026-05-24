@@ -97,6 +97,15 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath st
 		return nil, err
 	}
 
+	// Pre-fetch any HTTP/HTTPS entries in kustomization `resources:`
+	// so kustomize.Build sees local files only and never falls back
+	// to `exec.Command("git", "fetch", ...)`. See preflight.go for
+	// the why. Walks the entire staged tree because Components and
+	// nested overlays may reference URL resources from below subPath.
+	if err := preflightRemoteResources(ctx, staged); err != nil {
+		return nil, fmt.Errorf("preflight remote resources: %w", err)
+	}
+
 	u := &unstructured.Unstructured{Object: rawSpec}
 	gen := fluxkustomize.NewGenerator(staged, *u)
 	if _, err := gen.WriteFile(stagedSub); err != nil {

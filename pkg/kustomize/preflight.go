@@ -1,0 +1,170 @@
+package kustomize
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	yaml "go.yaml.in/yaml/v4"
+)
+
+// remoteFetchTimeout caps each pre-flight HTTP GET. Kustomize's
+// built-in loader has no timeout knob; we want broken URLs to fail
+// in seconds, not minutes.
+const remoteFetchTimeout = 5 * time.Second
+
+// remoteFetchClient is the package-level client used by the
+// pre-flight pass. Distinct from the helm/oci clients so resource-
+// fetch latency stays observable.
+var remoteFetchClient = &http.Client{Timeout: remoteFetchTimeout}
+
+// preflightRemoteResources walks every kustomization file under root
+// and replaces any HTTP/HTTPS entry in `resources:` with a locally-
+// fetched copy. Without this pass, kustomize.Build falls back to
+// `exec.Command("git", "fetch", ...)` whenever a URL returns non-2xx
+// AND its shape looks git-like (raw.githubusercontent.com URLs do).
+// Two reasons we route URLs through our own client instead:
+//
+//  1. **Hidden binary dependency.** flate is meant to be a single
+//     statically-linked binary; the kustomize git fallback silently
+//     requires `git` in PATH and `exec.LookPath` succeeding.
+//  2. **No timeout.** A broken URL pays kustomize's full HTTP timeout
+//     plus the git-fetch failure path — observed at ~13s per broken
+//     URL against m00nwtchr/homelab-cluster.
+//
+// On a fetch failure (timeout, 4xx, 5xx, DNS), a YAML-comment-only
+// tombstone file is written so kustomize completes the build with
+// one fewer resource. The failure surfaces via slog.Warn rather
+// than a misleading "URL is a git repository" error.
+//
+// Walks all three valid kustomization filenames (kustomization.yaml,
+// kustomization.yml, Kustomization). Only mutates the staged copy
+// the caller owns; the user's source tree is never touched.
+func preflightRemoteResources(ctx context.Context, root string) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if name != "kustomization.yaml" && name != "kustomization.yml" && name != "Kustomization" {
+			return nil
+		}
+		return rewriteURLResources(ctx, path)
+	})
+}
+
+// rewriteURLResources rewrites URL entries in one kustomization file.
+// Reads the file as a generic YAML doc to preserve unknown fields,
+// rewrites the resources list, writes the file back.
+func rewriteURLResources(ctx context.Context, ksFile string) error {
+	body, err := os.ReadFile(ksFile) //nolint:gosec // ksFile is a tree-walk result under our staged copy
+	if err != nil {
+		return err
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		// Some kustomization files use unusual shapes (YAML anchors,
+		// strict-mode fields) that our generic decode can't round-trip.
+		// Skip them silently — kustomize will load them via its own
+		// parser, and if any of those carry URL resources we fall back
+		// to kustomize's HTTP-then-git path. Better to render imperfectly
+		// than fail loud on a doc kustomize itself handles.
+		return nil
+	}
+	rawRes, _ := doc["resources"].([]any)
+	if len(rawRes) == 0 {
+		return nil
+	}
+	changed := false
+	dir := filepath.Dir(ksFile)
+	for i, entry := range rawRes {
+		urlStr, ok := entry.(string)
+		if !ok {
+			continue
+		}
+		if !isHTTPURL(urlStr) {
+			continue
+		}
+		localFile, fetchErr := fetchRemoteResource(ctx, dir, urlStr)
+		if fetchErr != nil {
+			slog.Warn("kustomize: remote resource fetch failed; emitting tombstone",
+				"url", urlStr, "err", fetchErr)
+			rawRes[i] = "./" + writeFetchTombstone(dir, urlStr, fetchErr)
+		} else {
+			rawRes[i] = "./" + localFile
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	doc["resources"] = rawRes
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(ksFile, out, 0o600)
+}
+
+func isHTTPURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+// fetchRemoteResource fetches the URL into a .flate-remote-<hash>.yaml
+// file next to the kustomization that referenced it. The local name
+// is deterministic per URL so re-runs reuse the same on-disk file
+// (kustomize sees a stable input, which keeps its own caching honest).
+func fetchRemoteResource(ctx context.Context, dir, urlStr string) (string, error) {
+	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := remoteFetchClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	name := ".flate-remote-" + urlHash(urlStr) + ".yaml"
+	if err := os.WriteFile(filepath.Join(dir, name), body, 0o600); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+// writeFetchTombstone emits a YAML-comment-only file in place of a
+// failed URL fetch. Kustomize parses it as zero resources, so the
+// build completes; the comment block makes the failure visible when
+// inspecting the staged tree.
+func writeFetchTombstone(dir, urlStr string, fetchErr error) string {
+	name := ".flate-tombstone-" + urlHash(urlStr) + ".yaml"
+	body := fmt.Sprintf("# flate: remote resource fetch failed\n# url: %s\n# error: %v\n",
+		urlStr, fetchErr)
+	_ = os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600)
+	return name
+}
+
+func urlHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:8])
+}

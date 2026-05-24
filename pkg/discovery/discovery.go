@@ -462,6 +462,48 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 			"id", id.String(), "localPath", repoRoot)
 		aliased = append(aliased, id)
 	}
+
+	// Second pass: a GitRepository CR may be file-loaded AND point
+	// at the same remote that flate is being run against (the
+	// Zariel/home-ops pattern — the in-tree GitRepository URL is
+	// the cluster's own deploy-key SSH URL). Real Flux fetches that
+	// URL with a SOPS-decrypted key; flate runs offline, so the
+	// fetch either round-trips slowly over the network or fails on
+	// the wiped-to-placeholder key. URL-match those against the
+	// working tree's git remotes and override the artifact to use
+	// the working tree directly. Single explicit warn when this
+	// fires so misattributed in-tree GitRepositories (a coincidental
+	// URL match on a real shared-infra repo) are spottable in logs.
+	remotes := readWorkingTreeRemotes(repoRoot)
+	debugLogRemotes(remotes)
+	if len(remotes) > 0 {
+		for _, obj := range d.cfg.Store.ListObjects(manifest.KindGitRepository) {
+			repo, ok := obj.(*manifest.GitRepository)
+			if !ok {
+				continue
+			}
+			id := repo.Named()
+			if _, alreadyAliased := seen[id]; alreadyAliased {
+				continue
+			}
+			normalized := normalizeGitURL(repo.URL)
+			if normalized == "" {
+				continue
+			}
+			if _, match := remotes[normalized]; !match {
+				continue
+			}
+			seen[id] = struct{}{}
+			d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
+				Kind: manifest.KindGitRepository,
+				URL:  "file://" + repoRoot, LocalPath: repoRoot,
+			})
+			d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias (URL matches working tree)")
+			slog.Info("discovery: aliased in-tree GitRepository to working tree (URL matches working-tree remote)",
+				"id", id.String(), "url", repo.URL, "localPath", repoRoot)
+			aliased = append(aliased, id)
+		}
+	}
 	// Multiple unresolved GitRepositories is the cross-repo footgun:
 	// each gets aliased to the SAME working tree, so a real upstream
 	// shared-infra GitRepository would render against the wrong files

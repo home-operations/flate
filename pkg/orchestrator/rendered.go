@@ -39,7 +39,19 @@ func newRenderedSet() *renderedSet {
 // linkage replaces the previous file-path prefix-match used by
 // loader.BuildParentIndexForKind — render-emitted children have no
 // source file, but they DO have a known parent.
+//
+// Self-edges are dropped: a KS whose spec.path covers its own
+// definition file (the Zariel/home-ops pattern — cluster KS at
+// ./k8s/flux/config/cluster.yaml with spec.path ./k8s/flux/) emits
+// itself during render. Without this guard, ParentOf(cluster) would
+// return cluster, the parent-gate would depwait on the KS itself,
+// and reconcile would time out. The file-loaded path-prefix index
+// already excludes self in loader.LongestParent; renderedSet mirrors
+// that contract.
 func (r *renderedSet) MarkRendered(parent, child manifest.NamedResource) {
+	if parent == child {
+		return
+	}
 	r.mu.Lock()
 	r.parents[child] = parent
 	r.mu.Unlock()

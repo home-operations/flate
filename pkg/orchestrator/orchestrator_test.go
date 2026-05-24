@@ -53,7 +53,7 @@ func TestDetectOrphans(t *testing.T) {
 	}
 	// Mark emittedChild as rendered by its parent — simulates the
 	// AddObject + MarkRendered call cluster-apps's render would make.
-	o.rendered.MarkRendered(emittedChild.Named())
+	o.rendered.MarkRendered(parent.Named(), emittedChild.Named())
 
 	failed := map[manifest.NamedResource]store.StatusInfo{
 		orphan.Named():       {Status: store.StatusFailed, Message: "TIMEZONE undefined"},

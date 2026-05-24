@@ -50,11 +50,17 @@ type Controller struct {
 }
 
 // RenderTracker is the tiny seam the controller uses to report
-// "this id was emitted by a parent KS render" to the orchestrator.
-// Nil is OK — the controller no-ops. Used by orchestrator.detectOrphans
-// to distinguish stale-on-disk KSes from real failures.
+// "this child id was emitted by THIS parent KS's render" to the
+// orchestrator. Nil is OK — the controller no-ops.
+//
+// The parent linkage is consumed by detectOrphans and (in later
+// steps of the render-driven discovery migration) by the parent
+// index, change filter, and ResourceSet extension attribution —
+// every place that today relies on `sourceFiles[id]` for
+// file-loaded resources gains the ability to query parent
+// provenance for render-emitted ones.
 type RenderTracker interface {
-	MarkRendered(id manifest.NamedResource)
+	MarkRendered(parent, child manifest.NamedResource)
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto
@@ -90,12 +96,12 @@ func (c *Controller) Configure(opts Options) {
 	c.renderTracker = opts.RenderTracker
 }
 
-// markRendered reports id to the orchestrator's render tracker if one
-// is wired; no-op otherwise. Centralizes the nil-check so the
-// reconcile body stays readable.
-func (c *Controller) markRendered(id manifest.NamedResource) {
+// markRendered reports a parent→child render emission to the
+// orchestrator's tracker if one is wired; no-op otherwise.
+// Centralizes the nil-check so the reconcile body stays readable.
+func (c *Controller) markRendered(parent, child manifest.NamedResource) {
 	if c.renderTracker != nil {
-		c.renderTracker.MarkRendered(id)
+		c.renderTracker.MarkRendered(parent, child)
 	}
 }
 
@@ -311,7 +317,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		if p.reconcilable {
 			c.keepEmitted(p.obj.Named())
 			c.Store.AddObject(p.obj)
-			c.markRendered(p.obj.Named())
+			c.markRendered(id, p.obj.Named())
 		} else {
 			c.Store.AddRendered(p.obj)
 		}
@@ -321,7 +327,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			c.keepEmitted(p.obj.Named())
 			c.Store.AddObject(p.obj)
-			c.markRendered(p.obj.Named())
+			c.markRendered(id, p.obj.Named())
 		}
 	}
 }

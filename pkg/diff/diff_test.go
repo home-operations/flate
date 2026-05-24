@@ -230,6 +230,47 @@ func TestResourceDiff_Header(t *testing.T) {
 	}
 }
 
+// TestRun_StripAttrsRemovesNoise pins that Options.StripAttrs is
+// applied before the dyff comparison: rotating a stripped annotation
+// without changing anything else yields zero diffs. This is the
+// chart-bump noise filter — `helm.sh/chart` changes on every chart
+// upgrade and would otherwise produce one entry per rendered
+// resource even with the K8s-aware dyff backend.
+func TestRun_StripAttrsRemovesNoise(t *testing.T) {
+	mk := func(chartLabel string) []Doc {
+		return []Doc{{
+			Manifest: map[string]any{
+				"kind": "Deployment",
+				"metadata": map[string]any{
+					"name":      "x",
+					"namespace": "ns",
+					"annotations": map[string]any{
+						"helm.sh/chart": chartLabel,
+					},
+				},
+			},
+		}}
+	}
+	diffs, err := Run(mk("myapp-1.2.3"), mk("myapp-1.2.4"),
+		Options{StripAttrs: []string{"helm.sh/chart"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diffs) != 0 {
+		t.Errorf("stripped annotation should produce no diff entries; got %d:\n%+v", len(diffs), diffs)
+	}
+
+	// Sanity: without --strip-attr, the same change DOES surface as
+	// a diff — proves the strip is what's suppressing the entry.
+	diffs, err = Run(mk("myapp-1.2.3"), mk("myapp-1.2.4"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diffs) != 1 {
+		t.Errorf("control: unstripped annotation change should surface; got %d diffs", len(diffs))
+	}
+}
+
 // TestRun_DistinguishesByParent locks the parent-aware pairing: two
 // HelmReleases each rendering a same-named Deployment are tracked
 // independently — a change to HR/a's copy doesn't leak into a phantom

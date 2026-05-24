@@ -9,6 +9,11 @@
 // reordering a list produces an `⇆ order changed` marker instead of
 // a wall of phantom value-line churn.
 //
+// Options.StripAttrs is applied to a deep-copied tree before the
+// comparison runs — used to drop chart-bump noise (`helm.sh/chart`,
+// `checksum/config`, …) that rotates on every Helm upgrade but
+// carries no review-relevant signal.
+//
 // Four output flavors are supported:
 //
 //   - Diff   — concatenated dyff bodies, one per resource, with a

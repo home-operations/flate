@@ -34,6 +34,15 @@ const (
 type Options struct {
 	// Format selects the output flavor. Default FormatDiff.
 	Format Format
+	// StripAttrs lists annotation/label keys removed from each
+	// manifest's metadata (and pod-template metadata) before the diff
+	// is computed. Cuts chart-bump noise — annotations like
+	// `helm.sh/chart` or `checksum/config` whose values rotate on
+	// every chart bump would otherwise produce a diff entry per
+	// resource. dyff matches K8s lists by identifier but still
+	// reports string-value changes verbatim, so this pre-filter still
+	// pulls its weight after the dyff swap.
+	StripAttrs []string
 }
 
 // Parent identifies the Flux Kustomization or HelmRelease that
@@ -93,7 +102,9 @@ func joinNS(ns, name string) string {
 // (parent, kind, namespace, name) so a Deployment rendered by
 // HelmRelease A doesn't accidentally diff against the same-named
 // Deployment from HelmRelease B.
-func Run(left, right []Doc, _ Options) ([]ResourceDiff, error) {
+func Run(left, right []Doc, opts Options) ([]ResourceDiff, error) {
+	left = applyStrip(left, opts.StripAttrs)
+	right = applyStrip(right, opts.StripAttrs)
 	pairs := pair(left, right)
 	out := make([]ResourceDiff, 0, len(pairs))
 	for _, p := range pairs {
@@ -207,5 +218,22 @@ func pair(left, right []Doc) []pairedResource {
 		}
 		return cmp.Compare(a.name, b.name)
 	})
+	return out
+}
+
+// applyStrip clones each Doc's manifest and removes the listed
+// annotation/label keys before the diff runs. Deep-copies so the
+// original tree (used by other consumers in the same orchestrator
+// run) is untouched.
+func applyStrip(docs []Doc, attrs []string) []Doc {
+	if len(attrs) == 0 {
+		return docs
+	}
+	out := make([]Doc, len(docs))
+	for i, d := range docs {
+		copyDoc := manifest.DeepCopyMap(d.Manifest)
+		manifest.StripResourceAttributes(copyDoc, attrs)
+		out[i] = Doc{Manifest: copyDoc, Parent: d.Parent}
+	}
 	return out
 }

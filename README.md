@@ -43,7 +43,7 @@ Every command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches i
 | `diff` | `ks`, `hr`, `images` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output github` mode. K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
 | `test` | `ks`, `hr`, `all` | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure. |
 
-`get` and `diff` accept `-l/--selector key=value` for label filtering.
+`get` and `diff` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart`).
 
 ## Changed-only mode
 

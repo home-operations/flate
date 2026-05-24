@@ -25,22 +25,43 @@ func newDiffCmd() *cobra.Command {
 	return cmd
 }
 
+// defaultStripAttrs is the default `--strip-attr` list — annotations
+// and labels that Helm + kustomize rotate on every chart bump and
+// which contribute pure noise to PR-time diff review.
+var defaultStripAttrs = []string{
+	"helm.sh/chart",
+	"checksum/config",
+	"app.kubernetes.io/version",
+	"chart",
+}
+
+type diffFlags struct {
+	stripAttrs []string
+}
+
+func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
+	cmd.Flags().StringArrayVar(&d.stripAttrs, "strip-attr", defaultStripAttrs,
+		"metadata annotation/label key to strip before diffing (repeatable; supplying any value replaces the default set)")
+}
+
 func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
+	d := &diffFlags{}
 	cmd := &cobra.Command{
 		Use:     use,
 		Aliases: aliases,
 		Short:   short,
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd, c, h, kind, firstArg(args))
+			return runDiff(cmd, c, h, d, kind, firstArg(args))
 		},
 	}
 	bindCommon(cmd.Flags(), c)
 	if rendersHelm([]string{kind}) {
 		bindHelmFlags(cmd.Flags(), h)
 	}
+	bindDiffFlags(cmd, d)
 	return cmd
 }
 
@@ -98,7 +119,7 @@ func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []stri
 	return out
 }
 
-func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, kind, name string) error {
+func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kind, name string) error {
 	// diff has no `name` output mode; only diff/yaml/json/object are
 	// meaningful. Reject early so the user sees a clear error instead
 	// of "unknown diff format" from pkg/diff.
@@ -116,7 +137,10 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, kind, name string
 	if outFormat == "table" {
 		outFormat = "diff"
 	}
-	diffs, err := diff.Run(origDocs, currentDocs, diff.Options{Format: diff.Format(outFormat)})
+	diffs, err := diff.Run(origDocs, currentDocs, diff.Options{
+		Format:     diff.Format(outFormat),
+		StripAttrs: d.stripAttrs,
+	})
 	if err != nil {
 		return err
 	}

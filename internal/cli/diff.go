@@ -25,43 +25,22 @@ func newDiffCmd() *cobra.Command {
 	return cmd
 }
 
-type diffFlags struct {
-	unified    int
-	stripAttrs []string
-	limitBytes int
-}
-
-var defaultStripAttrs = []string{
-	"helm.sh/chart",
-	"checksum/config",
-	"app.kubernetes.io/version",
-	"chart",
-}
-
-func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
-	cmd.Flags().IntVarP(&d.unified, "unified", "u", 6, "unified diff context lines")
-	cmd.Flags().StringArrayVar(&d.stripAttrs, "strip-attr", defaultStripAttrs, "metadata annotation/label key to strip before diffing (repeatable; supplying any value replaces the default set)")
-	cmd.Flags().IntVar(&d.limitBytes, "limit-bytes", 65536, "truncate per-resource diffs (0 = unlimited; default matches GitHub issue body limit)")
-}
-
 func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
-	d := &diffFlags{}
 	cmd := &cobra.Command{
 		Use:     use,
 		Aliases: aliases,
 		Short:   short,
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd, c, h, d, kind, firstArg(args))
+			return runDiff(cmd, c, h, kind, firstArg(args))
 		},
 	}
 	bindCommon(cmd.Flags(), c)
 	if rendersHelm([]string{kind}) {
 		bindHelmFlags(cmd.Flags(), h)
 	}
-	bindDiffFlags(cmd, d)
 	return cmd
 }
 
@@ -119,7 +98,7 @@ func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []stri
 	return out
 }
 
-func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kind, name string) error {
+func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, kind, name string) error {
 	// diff has no `name` output mode; only diff/yaml/json/object are
 	// meaningful. Reject early so the user sees a clear error instead
 	// of "unknown diff format" from pkg/diff.
@@ -137,12 +116,7 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	if outFormat == "table" {
 		outFormat = "diff"
 	}
-	diffs, err := diff.Run(origDocs, currentDocs, diff.Options{
-		Format:     diff.Format(outFormat),
-		Context:    d.unified,
-		LimitBytes: d.limitBytes,
-		StripAttrs: d.stripAttrs,
-	})
+	diffs, err := diff.Run(origDocs, currentDocs, diff.Options{Format: diff.Format(outFormat)})
 	if err != nil {
 		return err
 	}

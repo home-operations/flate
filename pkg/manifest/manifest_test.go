@@ -1094,39 +1094,6 @@ metadata: {name: x}`, "Foo"},
 	}
 }
 
-func TestStripResourceAttributes(t *testing.T) {
-	r := map[string]any{
-		"kind": "Deployment",
-		"metadata": map[string]any{
-			"annotations": map[string]any{"config.kubernetes.io/index": "0", "keep": "yes"},
-			"labels":      map[string]any{"internal.config.kubernetes.io/index": "1"},
-		},
-		"spec": map[string]any{
-			"template": map[string]any{
-				"metadata": map[string]any{
-					"annotations": map[string]any{"config.kubernetes.io/index": "0"},
-				},
-			},
-		},
-	}
-	StripResourceAttributes(r, StripAttributes)
-
-	meta := r["metadata"].(map[string]any)
-	ann := meta["annotations"].(map[string]any)
-	if _, ok := ann["config.kubernetes.io/index"]; ok {
-		t.Errorf("annotation not stripped")
-	}
-	if ann["keep"] != "yes" {
-		t.Errorf("kept annotation lost")
-	}
-	if _, ok := meta["labels"]; ok {
-		t.Errorf("empty labels should have been removed")
-	}
-	tplMeta := r["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)
-	if _, ok := tplMeta["annotations"]; ok {
-		t.Errorf("template annotation not stripped")
-	}
-}
 
 func TestParseDoc_MissingFields(t *testing.T) {
 	if _, err := ParseDoc(map[string]any{"kind": "Foo"}, DefaultParseDocOptions()); err == nil || !strings.Contains(err.Error(), "apiVersion") {

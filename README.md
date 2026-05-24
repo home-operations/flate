@@ -40,10 +40,10 @@ Every command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches i
 |---|---|---|
 | `get` | `ks`, `hr`, `images`, `all` | List or summarize. `-o table` / `yaml` / `json` / `name`. |
 | `build` | `ks`, `hr`, `all` | Render Kustomizations and HelmReleases to YAML or JSON. |
-| `diff` | `ks`, `hr`, `images` | Unified diff against `--path-orig`. |
+| `diff` | `ks`, `hr`, `images` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output github` mode. K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
 | `test` | `ks`, `hr`, `all` | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure. |
 
-`get` and `diff` accept `-l/--selector key=value` for label filtering. `build` and `diff` accept `--strip-attr` (default strips Helm chart digest annotations from the diff) and `--limit-bytes` (default 65536, GitHub-issue-body-safe).
+`get` and `diff` accept `-l/--selector key=value` for label filtering.
 
 ## Changed-only mode
 

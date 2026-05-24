@@ -253,11 +253,13 @@ func TestE2E_ComponentChangePropagatesToAllConsumers(t *testing.T) {
 
 	// Coverage must propagate to BOTH consumers, so the
 	// original→changed transition should surface at least twice (once
-	// per consumer Kustomization).
-	if got := strings.Count(out, "+  value: changed"); got < 2 {
+	// per consumer Kustomization). dyff prints value changes as bare
+	// `- original` / `+ changed` lines under a `@@ data.value @@`
+	// path header.
+	if got := strings.Count(out, "+ changed"); got < 2 {
 		t.Errorf("coverage did not propagate to both consumers (got %d hits, want >= 2):\n%s", got, out)
 	}
-	if !strings.Contains(out, "-  value: original") {
+	if !strings.Contains(out, "- original") {
 		t.Errorf("removal of baseline value missing from diff:\n%s", out)
 	}
 }

@@ -59,9 +59,3 @@ const ValuePlaceholderTemplate = "..PLACEHOLDER_%s.."
 // rather than hard-coding the prefix.
 const ValuePlaceholderPrefix = "..PLACEHOLDER_"
 
-// StripAttributes is the canonical list of metadata annotations that
-// kustomize injects and which contribute only noise to diffs.
-var StripAttributes = []string{
-	"config.kubernetes.io/index",
-	"internal.config.kubernetes.io/index",
-}

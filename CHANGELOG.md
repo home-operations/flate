@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.15](https://github.com/home-operations/flate/compare/0.1.14...0.1.15) (2026-05-24)
+
+
+### Features
+
+* **cli:** add `flate diff all` for combined KS + HR diff ([#250](https://github.com/home-operations/flate/issues/250)) ([b6e2092](https://github.com/home-operations/flate/commit/b6e2092b4df1a58a4aa87c3f9aac48118e7b2888))
+
+
+### Bug Fixes
+
+* **discovery:** alias in-tree GitRepository whose URL matches working tree ([#248](https://github.com/home-operations/flate/issues/248)) ([306d7b4](https://github.com/home-operations/flate/commit/306d7b40a5ebb3561887a355b96e9d11666d3a57))
+
+
+### Miscellaneous Chores
+
+* cleanup pass after render-driven discovery migration ([#243](https://github.com/home-operations/flate/issues/243)) ([0413460](https://github.com/home-operations/flate/commit/041346096b1ea39fe0642faeb1282410639b1bcd))
+* round-2 correctness pass (sentinel wrapping + honest failures) ([#245](https://github.com/home-operations/flate/issues/245)) ([af27f3e](https://github.com/home-operations/flate/commit/af27f3ea8cd76f1daf6b657320d4c93b6634359d))
+* round-3 polish — complete Clone helpers + coverage gaps ([#246](https://github.com/home-operations/flate/issues/246)) ([979f644](https://github.com/home-operations/flate/commit/979f644c821d9c48a7a5d7d43917d5f5356d7491))
+* round-4 hardening — version stamp + HTTP cap + path-traversal guard ([#247](https://github.com/home-operations/flate/issues/247)) ([d35fc0b](https://github.com/home-operations/flate/commit/d35fc0bf2bad96cce86682af2d058dfccb815372))
+* round-6 — harden normalizeGitURL + integration coverage ([#249](https://github.com/home-operations/flate/issues/249)) ([08524a8](https://github.com/home-operations/flate/commit/08524a84c872e2438bbbda0ae8ec57adb797ab30))
+
 ## [0.1.14](https://github.com/home-operations/flate/compare/0.1.13...0.1.14) (2026-05-24)
 
 

@@ -390,3 +390,36 @@ func TestFilter_ShouldReconcileEmptyNamespaceFallback(t *testing.T) {
 		t.Fatalf("(Kind, Name) fallback didn't match; keep=%v", f.KeepNames())
 	}
 }
+
+// TestFilter_KeepByNameDoesNotLeakAcrossNamespaces pins the
+// asymmetric-fallback contract: a fully-namespaced keep entry must
+// NOT match a fully-namespaced lookup that happens to share
+// (Kind, Name). Without this, a kept
+// Kustomization/cluster-infra/external-secrets would silently scope-in
+// an unrelated Kustomization/database/external-secrets (and likewise
+// for the runtime Filter.Add path), broadening changed-only mode in
+// ways the user can't see. The empty-namespace bridge in
+// TestFilter_ShouldReconcileEmptyNamespaceFallback is preserved
+// because it indexes only entries whose Namespace is empty.
+func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
+	kept := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "cluster-infra", Name: "external-secrets"}
+	collider := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "database", Name: "external-secrets"}
+	f := NewFilter(
+		NewSet([]string{"apps/cluster-infra/external-secrets/ks.yaml"}),
+		map[manifest.NamedResource]string{kept: "apps/cluster-infra/external-secrets/ks.yaml"},
+		"",
+		emptyLister{},
+	)
+	if !f.ShouldReconcile(kept) {
+		t.Fatalf("precondition: cluster-infra/external-secrets must be in keep; keep=%v", f.KeepNames())
+	}
+	if f.ShouldReconcile(collider) {
+		t.Errorf("keepByName leaked across namespaces: database/external-secrets matched on name alone; keep=%v", f.KeepNames())
+	}
+
+	// Same invariant via the runtime Add path (issue #204 surface).
+	f.Add(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "cert-manager"})
+	if f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "monitoring-system", Name: "cert-manager"}) {
+		t.Errorf("Add() leaked across namespaces: monitoring-system/cert-manager matched on name alone; keep=%v", f.KeepNames())
+	}
+}

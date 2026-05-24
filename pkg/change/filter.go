@@ -71,9 +71,19 @@ func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repo
 func (f *Filter) Enabled() bool { return f != nil && f.changes != nil }
 
 // ShouldReconcile reports whether the controller for id should do work
-// (true when filtering is disabled). Lookups tolerate an empty
-// namespace on either side because parent-Kustomization targetNamespace
-// inheritance is applied lazily.
+// (true when filtering is disabled). The (Kind, Name) fallback below
+// bridges parent-Kustomization targetNamespace inheritance: a
+// resource loaded from disk with no namespace (entry kept with
+// Namespace="") and queried later with the inherited namespace
+// (lookup with Namespace=X) refers to the same logical resource.
+//
+// The fallback ONLY indexes keep-entries whose Namespace is empty —
+// so a fully-namespaced lookup never matches an unrelated fully-
+// namespaced entry that happens to share (Kind, Name). Without this
+// asymmetry the keep set would silently expand across namespaces
+// (e.g. a kept `Kustomization/cluster-infra/external-secrets`
+// dragging an unrelated `Kustomization/database/external-secrets`
+// into scope on name match alone).
 func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	if !f.Enabled() {
 		return true
@@ -83,10 +93,6 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	if _, ok := f.keep[id]; ok {
 		return true
 	}
-	// Fall back to a (Kind, Name)-only lookup when EITHER side has an
-	// empty namespace — parent-KS targetNamespace inheritance is lazy,
-	// so a keep-set entry from disk-load (namespace=="") and a lookup
-	// after inheritance (namespace set) refer to the same resource.
 	if _, ok := f.keepByName[nameKey{id.Kind, id.Name}]; ok {
 		return true
 	}
@@ -114,7 +120,9 @@ func (f *Filter) Add(id manifest.NamedResource) {
 		return
 	}
 	f.keep[id] = struct{}{}
-	f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
+	if id.Namespace == "" {
+		f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
+	}
 }
 
 func (f *Filter) resolve(objs ObjectLister) {
@@ -199,13 +207,16 @@ func (f *Filter) resolve(objs ObjectLister) {
 	}
 	f.keep = keep
 
-	// Index every keep-set entry by (kind, name) so the namespace-tolerant
-	// lookup path (ShouldReconcile when either side's namespace is empty)
-	// finds it. The full id is still required for the primary keep map —
-	// this is purely the namespace-degenerate fallback.
-	f.keepByName = make(map[nameKey]struct{}, len(keep))
+	// Index ONLY empty-namespace keep entries by (Kind, Name) — see
+	// ShouldReconcile's doc for the asymmetry rationale. Indexing
+	// every keep entry (regardless of namespace) would let one kept
+	// resource silently scope-in every same-(Kind, Name) resource in
+	// other namespaces.
+	f.keepByName = make(map[nameKey]struct{})
 	for id := range keep {
-		f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
+		if id.Namespace == "" {
+			f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
+		}
 	}
 }
 

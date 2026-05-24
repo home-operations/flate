@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -484,6 +486,242 @@ spec:
 			"If status is Failed with a registry-pull error, the pre-check is missing and "+
 			"helm tried an anonymous pull — exactly the silent-downgrade the pre-check exists to prevent.",
 			hrInfo)
+	}
+}
+
+func TestLocalGitSource(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, root, ".git/config", "")
+	testutil.WriteFile(t, root, "k8s/flux/kustomization.yaml", "namespace: flux-system\n")
+	testutil.WriteFile(t, root, "k8s/flux/cluster.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: gitops}
+spec:
+  url: ssh://git@example.invalid/example/gitops.git
+  secretRef: {name: deploy-key}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./k8s/apps
+  sourceRef:
+    kind: GitRepository
+    name: gitops
+    namespace: flux-system
+`)
+	testutil.WriteFile(t, root, "k8s/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, root, "k8s/apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: rendered, namespace: default}
+data: {value: current}
+`)
+
+	gitID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "gitops"}
+	o, err := New(Config{
+		Path:                filepath.Join(root, "k8s"),
+		WipeSecrets:         true,
+		AllowMissingSecrets: true,
+		LocalGitSources:     map[manifest.NamedResource]string{gitID: root},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(res.Failed) != 0 {
+		t.Fatalf("unexpected failures: %v", res.Failed)
+	}
+	if art, ok := o.Store().GetArtifact(gitID).(*store.SourceArtifact); !ok || art.LocalPath != root {
+		t.Fatalf("GitRepository artifact = %#v, want LocalPath %q", art, root)
+	}
+	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	if len(res.Manifests[ksID]) == 0 {
+		t.Fatalf("expected rendered manifests for %s", ksID)
+	}
+	info, ok := o.Store().GetStatus(ksID)
+	if !ok || store.IsSkipped(info) {
+		t.Fatalf("Kustomization should render, got status %+v", info)
+	}
+}
+
+func TestLocalGitMissing(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, root, ".git/config", "")
+	testutil.WriteFile(t, root, "k8s/flux/cluster.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: gitops, namespace: flux-system}
+spec:
+  url: ssh://git@example.invalid/example/gitops.git
+  secretRef: {name: deploy-key}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./k8s/apps
+  sourceRef:
+    kind: GitRepository
+    name: gitops
+    namespace: flux-system
+`)
+
+	o, err := New(Config{
+		Path:                filepath.Join(root, "k8s"),
+		WipeSecrets:         true,
+		AllowMissingSecrets: true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(res.Failed) != 0 {
+		t.Fatalf("unexpected failures: %v", res.Failed)
+	}
+	gitID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "gitops"}
+	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	for _, id := range []manifest.NamedResource{gitID, ksID} {
+		info, ok := o.Store().GetStatus(id)
+		if !ok || !store.IsSkipped(info) {
+			t.Fatalf("%s should be skipped, got %+v", id, info)
+		}
+	}
+}
+
+func TestLocalGitScoped(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, root, ".git/config", "")
+	testutil.WriteFile(t, root, "k8s/flux/cluster.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: gitops, namespace: flux-system}
+spec:
+  url: ssh://git@example.invalid/example/gitops.git
+  secretRef: {name: deploy-key}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: shared, namespace: flux-system}
+spec:
+  url: ssh://git@example.invalid/example/shared.git
+  secretRef: {name: shared-deploy-key}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: good, namespace: flux-system}
+spec:
+  path: ./k8s/apps/good
+  sourceRef: {kind: GitRepository, name: gitops, namespace: flux-system}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: bad, namespace: flux-system}
+spec:
+  path: ./k8s/apps/bad
+  sourceRef: {kind: GitRepository, name: shared, namespace: flux-system}
+`)
+	testutil.WriteFile(t, root, "k8s/apps/good/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, root, "k8s/apps/good/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: good, namespace: default}
+data: {value: ok}
+`)
+	testutil.WriteFile(t, root, "k8s/apps/bad/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, root, "k8s/apps/bad/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: bad, namespace: default}
+data: {value: skipped}
+`)
+
+	homeID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "gitops"}
+	sharedID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared"}
+	o, err := New(Config{
+		Path:                filepath.Join(root, "k8s"),
+		WipeSecrets:         true,
+		AllowMissingSecrets: true,
+		LocalGitSources:     map[manifest.NamedResource]string{homeID: root},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(res.Failed) != 0 {
+		t.Fatalf("unexpected failures: %v", res.Failed)
+	}
+	goodID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "good"}
+	badID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "bad"}
+	if len(res.Manifests[goodID]) == 0 {
+		t.Fatalf("mapped Kustomization did not render")
+	}
+	if art := o.Store().GetArtifact(sharedID); art != nil {
+		t.Fatalf("unmapped GitRepository got artifact %#v", art)
+	}
+	info, ok := o.Store().GetStatus(badID)
+	if !ok || !store.IsSkipped(info) {
+		t.Fatalf("unmapped Kustomization should skip, got %+v", info)
+	}
+}
+
+func TestLocalGitVerify(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, root, ".git/config", "")
+	testutil.WriteFile(t, root, "k8s/flux/cluster.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: gitops, namespace: flux-system}
+spec:
+  url: ssh://git@example.invalid/example/gitops.git
+  secretRef: {name: deploy-key}
+  verify:
+    mode: HEAD
+    secretRef: {name: pgp-key}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./k8s/apps
+  sourceRef: {kind: GitRepository, name: gitops, namespace: flux-system}
+`)
+	testutil.WriteFile(t, root, "k8s/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, root, "k8s/apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: rendered, namespace: default}
+data: {value: verify}
+`)
+	gitID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "gitops"}
+	o, err := New(Config{
+		Path:            filepath.Join(root, "k8s"),
+		WipeSecrets:     true,
+		LocalGitSources: map[manifest.NamedResource]string{gitID: root},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = o.Render(context.Background())
+	if err == nil {
+		t.Fatal("expected spec.verify local override to fail")
+	}
+	if !strings.Contains(err.Error(), "refusing to bypass spec.verify") {
+		t.Fatalf("expected spec.verify refusal, got %v", err)
 	}
 }
 

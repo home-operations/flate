@@ -98,9 +98,17 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 	if c.pathOrig == "" {
 		return diffSide{}, diffSide{}, errors.New("diff requires --path-orig")
 	}
-	currentCfg := buildOrchCfg(*c, *h)
+	currentCfg, err := buildOrchCfg(*c, *h)
+	if err != nil {
+		return diffSide{}, diffSide{}, err
+	}
 	origCfg := currentCfg
 	origCfg.Path, origCfg.PathOrig = c.pathOrig, c.path
+	localGitSourcesOrig, err := parseLocalSources("--local-git-source-orig", c.localGitSourcesOrig)
+	if err != nil {
+		return diffSide{}, diffSide{}, err
+	}
+	origCfg.LocalGitSources = localGitSourcesOrig
 
 	// One source.Cache shared across both orchestrators. They write into
 	// the same on-disk cache root; without a shared *Cache each side has

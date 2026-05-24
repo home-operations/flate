@@ -13,22 +13,25 @@ import (
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
 type commonFlags struct {
-	path               string
-	pathOrig           string
-	namespace          string
-	labels             map[string]string
-	skipCRDs           bool
-	skipSecrets        bool
+	path                string
+	pathOrig            string
+	namespace           string
+	labels              map[string]string
+	skipCRDs            bool
+	skipSecrets         bool
 	allowMissingSecrets bool
-	skipKinds          []string
-	output             string
-	enableOCI          bool
-	registryConfig     string
-	concurrency        int
+	localGitSources     []string
+	localGitSourcesOrig []string
+	skipKinds           []string
+	output              string
+	enableOCI           bool
+	registryConfig      string
+	concurrency         int
 }
 
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
@@ -43,12 +46,62 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 		"soft-skip sources whose auth Secret is missing or whose values are placeholders "+
 			"(typical when the live cluster materializes auth via ExternalSecret); dependent "+
 			"Kustomizations/HelmReleases propagate the skip. Verify/cert/proxy secretRefs still fail loud.")
+	fs.StringArrayVar(&f.localGitSources, "local-git-source", nil,
+		"map a GitRepository to a local checkout root as namespace/name=path (repeatable)")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
 	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, yaml, json, name")
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
+}
+
+func bindOrigLocal(fs *pflag.FlagSet, f *commonFlags) {
+	fs.StringArrayVar(&f.localGitSourcesOrig, "local-git-source-orig", nil,
+		"map a baseline GitRepository to a local checkout root as namespace/name=path (repeatable)")
+}
+
+func parseLocalSources(flag string, values []string) (map[manifest.NamedResource]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := make(map[manifest.NamedResource]string, len(values))
+	for _, value := range values {
+		left, right, ok := strings.Cut(value, "=")
+		if !ok || strings.TrimSpace(left) == "" || strings.TrimSpace(right) == "" {
+			return nil, fmt.Errorf("%s %q must be namespace/name=path", flag, value)
+		}
+		id, err := parseGitID(strings.TrimSpace(left))
+		if err != nil {
+			return nil, fmt.Errorf("%s %q: %w", flag, value, err)
+		}
+		if _, exists := out[id]; exists {
+			return nil, fmt.Errorf("%s %q duplicates %s", flag, value, id.String())
+		}
+		out[id] = strings.TrimSpace(right)
+	}
+	return out, nil
+}
+
+func parseGitID(raw string) (manifest.NamedResource, error) {
+	parts := strings.Split(raw, "/")
+	switch len(parts) {
+	case 2:
+		if parts[0] == "" || parts[1] == "" {
+			return manifest.NamedResource{}, fmt.Errorf("want namespace/name")
+		}
+		return manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: parts[0], Name: parts[1]}, nil
+	case 3:
+		if parts[0] != manifest.KindGitRepository {
+			return manifest.NamedResource{}, fmt.Errorf("kind must be %s", manifest.KindGitRepository)
+		}
+		if parts[1] == "" || parts[2] == "" {
+			return manifest.NamedResource{}, fmt.Errorf("want GitRepository/namespace/name")
+		}
+		return manifest.NamedResource{Kind: parts[0], Namespace: parts[1], Name: parts[2]}, nil
+	default:
+		return manifest.NamedResource{}, fmt.Errorf("want namespace/name or GitRepository/namespace/name")
+	}
 }
 
 // skipResourceKinds delegates to helm.Options.SkipResourceKinds so
@@ -171,17 +224,22 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	}
 }
 
-func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
-	return orchestrator.Config{
-		Path:               c.path,
-		PathOrig:           c.pathOrig,
-		HelmOptions:        c.helmOptions(h),
-		WipeSecrets:        true,
-		EnableOCI:          c.enableOCI,
-		RegistryConfig:     c.registryConfig,
-		Concurrency:        c.concurrency,
-		AllowMissingSecrets: c.allowMissingSecrets,
+func buildOrchCfg(c commonFlags, h helmFlags) (orchestrator.Config, error) {
+	localGitSources, err := parseLocalSources("--local-git-source", c.localGitSources)
+	if err != nil {
+		return orchestrator.Config{}, err
 	}
+	return orchestrator.Config{
+		Path:                c.path,
+		PathOrig:            c.pathOrig,
+		HelmOptions:         c.helmOptions(h),
+		WipeSecrets:         true,
+		EnableOCI:           c.enableOCI,
+		RegistryConfig:      c.registryConfig,
+		Concurrency:         c.concurrency,
+		AllowMissingSecrets: c.allowMissingSecrets,
+		LocalGitSources:     localGitSources,
+	}, nil
 }
 
 func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
@@ -191,7 +249,11 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 	if _, err := format.ParseOutput(c.output); err != nil {
 		return nil, nil, err
 	}
-	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
+	cfg, err := buildOrchCfg(c, h)
+	if err != nil {
+		return nil, nil, err
+	}
+	return runOrchestratorCfg(ctx, cfg)
 }
 
 // outputOrDefault returns the user's -o choice, or fallback when -o

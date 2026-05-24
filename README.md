@@ -77,6 +77,19 @@ flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
 
 PLACEHOLDER-wiped values (the always-on wipe of cleartext Secret data) are treated as missing — auth fails with a clear "missing username/password" instead of attempting auth with the placeholder string. See [Behaviors](#behaviors) for `--allow-missing-secrets`, which soft-skips affected sources end-to-end.
 
+For CI against a checked-out GitOps repo, an in-repo `GitRepository` can be mapped to the local checkout instead of fetched with its deploy key:
+
+```bash
+flate test ks --path ./pull/k8s \
+  --local-git-source flux-system/gitops=./pull
+
+flate diff ks --path ./pull/k8s --path-orig ./default/k8s \
+  --local-git-source flux-system/gitops=./pull \
+  --local-git-source-orig flux-system/gitops=./default
+```
+
+Use the repository root on the right-hand side when Flux `spec.path` values are repo-root relative, e.g. `./k8s/apps/...`. The mapping is explicit and scoped to the named `GitRepository`; missing secrets on other sources still follow the normal `--allow-missing-secrets` behavior. Local overrides use the checkout as-is, so callers must check out the intended ref themselves; configured `spec.ref` is only logged. Local overrides refuse `spec.verify` rather than silently bypassing Git signature verification.
+
 ## Behaviors
 
 **SOPS** — `spec.decryption` is not implemented. Encrypted Secret values get wiped to `..PLACEHOLDER_<key>..`, same as cleartext values under the always-on wipe. Downstream `postBuild.substituteFrom` lookups resolve to the placeholder string rather than failing.

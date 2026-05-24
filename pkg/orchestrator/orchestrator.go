@@ -55,6 +55,11 @@ type Config struct {
 	// consumers propagate the skip so the dependency chain doesn't
 	// surface as a cascade of failures in `flate test`.
 	AllowMissingSecrets bool
+	// LocalGitSources maps specific GitRepository resources to local
+	// checkout roots. This is an explicit CI escape hatch for in-repo
+	// GitRepositories whose auth Secret is unavailable offline; all
+	// other GitRepositories continue through the normal source fetcher.
+	LocalGitSources map[manifest.NamedResource]string
 
 	// RegistryConfig is the docker config.json used for OCI auth.
 	RegistryConfig string
@@ -208,8 +213,8 @@ func New(cfg Config) (*Orchestrator, error) {
 		ksc:      kustomization.New(st, ts, staging, cfg.WipeSecrets),
 		hrc:      helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
 		rendered: newRenderedSet(),
-		helm:    helmClient,
-		staging: staging,
+		helm:     helmClient,
+		staging:  staging,
 	}
 	return o, nil
 }
@@ -244,6 +249,7 @@ func (o *Orchestrator) Filter() *change.Filter { return o.filter }
 func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
+		LocalGitSources: o.cfg.LocalGitSources,
 	})
 	if err != nil {
 		return err
@@ -423,7 +429,7 @@ func (o *Orchestrator) attachFilter(f *change.Filter) {
 // start → drain → finalize sequence.
 func (o *Orchestrator) Run(ctx context.Context) error {
 	o.src.Configure(sourcectrl.FetchOptions{
-		Filter:             o.filter,
+		Filter:              o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	})
 	o.ksc.Configure(kustomization.Options{
@@ -536,7 +542,6 @@ func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store
 	return fmt.Errorf("reconcile completed with %d failure(s):\n  %s",
 		len(msgs), strings.Join(msgs, "\n  "))
 }
-
 
 // Render is the structured embed-friendly entry point: Bootstrap +
 // Run + collect everything an external caller needs to consume the
@@ -789,4 +794,3 @@ func (o *Orchestrator) Stop() {
 		_ = o.staging.Close()
 	}
 }
-

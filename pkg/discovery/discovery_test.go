@@ -135,6 +135,45 @@ spec:
 	}
 }
 
+func TestRun_LocalGitNoAlias(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	mustWrite(t, filepath.Join(dir, "flux", "cluster.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: home, namespace: flux-system}
+spec:
+  path: ./apps/home
+  sourceRef: {kind: GitRepository, name: gitops, namespace: flux-system}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: shared, namespace: flux-system}
+spec:
+  path: ./apps/shared
+  sourceRef: {kind: GitRepository, name: shared, namespace: flux-system}
+`)
+	mustWrite(t, filepath.Join(dir, "apps", "home", "kustomization.yaml"), "resources: []\n")
+	mustWrite(t, filepath.Join(dir, "apps", "shared", "kustomization.yaml"), "resources: []\n")
+
+	homeID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "gitops"}
+	sharedID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared"}
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+		LocalGitSources: map[manifest.NamedResource]string{homeID: dir},
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.GetObject(homeID) == nil || st.GetArtifact(homeID) == nil {
+		t.Fatalf("mapped GitRepository should be aliased with an artifact")
+	}
+	if st.GetObject(sharedID) != nil || st.GetArtifact(sharedID) != nil {
+		t.Fatalf("unmapped GitRepository should not be aliased")
+	}
+}
+
 // TestRun_ResourceSetReExpandsForLateRSIPs pins a discovery-loop
 // fix: a ResourceSet whose RSIP providers only become visible in a
 // later iteration (because they live behind a Kustomization path

@@ -55,9 +55,10 @@ type Result struct {
 
 // Config is the input contract for Run. Store is mandatory.
 type Config struct {
-	Path        string
-	Store       *store.Store
-	WipeSecrets bool
+	Path            string
+	Store           *store.Store
+	WipeSecrets     bool
+	LocalGitSources map[manifest.NamedResource]string
 }
 
 // Run performs the full discovery phase against cfg and writes results
@@ -83,6 +84,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	d.aliasBootstrapSources(repoRoot)
 	loader.ApplyNamespaceInheritance(d.cfg.Store, d.sourceFiles, repoRoot)
+	if err := d.applyLocalSources(); err != nil {
+		return nil, err
+	}
 	// Unified parent index over every reconcilable kind that uses a
 	// parent gate. KS and HR keys never collide because NamedResource
 	// includes Kind; downstream controllers look up by their own id
@@ -131,6 +135,11 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 		return "", err
 	}
 	root := FindRepoRoot(abs)
+	if localRoot, ok, err := d.scanLocalRoot(abs); err != nil {
+		return "", err
+	} else if ok {
+		root = localRoot
+	}
 
 	repo := &manifest.GitRepository{
 		Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace,
@@ -377,6 +386,11 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 		if _, dup := seen[id]; dup {
 			continue
 		}
+		if len(d.cfg.LocalGitSources) > 0 {
+			if _, mapped := d.cfg.LocalGitSources[id]; !mapped {
+				continue
+			}
+		}
 		seen[id] = struct{}{}
 		alias := &manifest.GitRepository{
 			Name: id.Name, Namespace: id.Namespace,
@@ -406,6 +420,82 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 		slog.Warn("discovery: aliased multiple GitRepositories to the working tree; cross-repo refs render against the wrong tree",
 			"count", len(aliased), "ids", names, "localPath", repoRoot)
 	}
+}
+
+func (d *discoverer) scanLocalRoot(scanRoot string) (string, bool, error) {
+	var best string
+	for id, raw := range d.cfg.LocalGitSources {
+		if id.Kind != manifest.KindGitRepository {
+			continue
+		}
+		root, err := resolveLocalRoot(raw)
+		if err != nil {
+			return "", false, fmt.Errorf("local Git source %s: %w", id.String(), err)
+		}
+		if !pathUnderRoot(scanRoot, root) {
+			continue
+		}
+		if len(root) > len(best) {
+			best = root
+		}
+	}
+	if best == "" {
+		return "", false, nil
+	}
+	return best, true, nil
+}
+
+func (d *discoverer) applyLocalSources() error {
+	for id, raw := range d.cfg.LocalGitSources {
+		if id.Kind != manifest.KindGitRepository {
+			return fmt.Errorf("local Git source %s: only GitRepository mappings are supported", id.String())
+		}
+		root, err := resolveLocalRoot(raw)
+		if err != nil {
+			return fmt.Errorf("local Git source %s: %w", id.String(), err)
+		}
+		repo, ok := d.cfg.Store.GetObject(id).(*manifest.GitRepository)
+		if !ok {
+			return fmt.Errorf("local Git source %s: GitRepository was not discovered or referenced by a Kustomization", id.String())
+		}
+		if repo.Verification != nil {
+			return fmt.Errorf("local Git source %s: refusing to bypass spec.verify; remove the local override or add explicit verification support", id.String())
+		}
+		if repo.Reference != nil {
+			if ref := manifest.GitRefString(*repo.Reference); ref != "" {
+				slog.Warn("discovery: local GitRepository override uses checkout as-is; spec.ref is not checked",
+					"id", id.String(), "ref", ref, "localPath", root)
+			}
+		}
+		d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
+			Kind:      manifest.KindGitRepository,
+			URL:       "file://" + root,
+			LocalPath: root,
+			Revision:  "local",
+		})
+		d.cfg.Store.UpdateStatus(id, store.StatusReady, "local override")
+		slog.Debug("discovery: mapped GitRepository to local checkout",
+			"id", id.String(), "localPath", root)
+	}
+	return nil
+}
+
+func resolveLocalRoot(raw string) (string, error) {
+	if raw == "" {
+		return "", fmt.Errorf("path is empty")
+	}
+	root, err := ResolveScanPath(raw)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%q is not a directory", raw)
+	}
+	return root, nil
 }
 
 // ResolveScanPath normalizes a user-supplied --path / --path-orig:

@@ -53,6 +53,38 @@ data:
 	return k8s
 }
 
+func writeGitDiff(t *testing.T, value string) string {
+	t.Helper()
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".git", "config"), "")
+	mustWrite(t, filepath.Join(root, "k8s", "flux", "cluster.yaml"), `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: gitops, namespace: flux-system}
+spec:
+  url: ssh://git@example.invalid/example/gitops.git
+  secretRef: {name: deploy-key}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./k8s/apps
+  sourceRef: {kind: GitRepository, name: gitops, namespace: flux-system}
+`)
+	mustWrite(t, filepath.Join(root, "k8s", "apps", "kustomization.yaml"),
+		"resources:\n- cm.yaml\n")
+	mustWrite(t, filepath.Join(root, "k8s", "apps", "cm.yaml"), `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: rendered, namespace: default}
+data:
+  value: `+value+`
+`)
+	return root
+}
+
 func mustWrite(t *testing.T, p, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
@@ -337,6 +369,27 @@ func TestRun_DiffImages_NameDefault(t *testing.T) {
 	}
 }
 
+func TestRun_DiffLocalGit(t *testing.T) {
+	current := writeGitDiff(t, "new")
+	orig := writeGitDiff(t, "old")
+	stdout, stderr, code := runCLI(t,
+		"diff", "ks",
+		"--allow-missing-secrets",
+		"--path", filepath.Join(current, "k8s"),
+		"--path-orig", filepath.Join(orig, "k8s"),
+		"--local-git-source", "flux-system/gitops="+current,
+		"--local-git-source-orig", "flux-system/gitops="+orig,
+	)
+	if code != 0 {
+		t.Fatalf("diff local git exited %d: %s", code, stderr)
+	}
+	for _, want := range []string{"old", "new"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("diff output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 func copyTree(t *testing.T, src, dst string) {
 	t.Helper()
 	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
@@ -446,10 +499,10 @@ func TestCompareDocs_OrdersByKindNamespaceName(t *testing.T) {
 		a, b map[string]any
 		want int
 	}{
-		{mkDoc("ConfigMap", "a", "x"), mkDoc("Secret", "a", "x"), -1},     // kind wins
-		{mkDoc("CM", "a", "x"), mkDoc("CM", "b", "x"), -1},                // ns wins after kind tie
-		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "y"), -1},                // name wins last
-		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "x"), 0},                 // identical
+		{mkDoc("ConfigMap", "a", "x"), mkDoc("Secret", "a", "x"), -1}, // kind wins
+		{mkDoc("CM", "a", "x"), mkDoc("CM", "b", "x"), -1},            // ns wins after kind tie
+		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "y"), -1},            // name wins last
+		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "x"), 0},             // identical
 	}
 	for _, tc := range cases {
 		got := compareDocs(tc.a, tc.b)

@@ -201,6 +201,97 @@ data: {k: v}
 	}
 }
 
+// TestOrchestrator_Render_RSExtensionAttributedToParentKS verifies
+// the post-Run ResourceSet expansion lands non-Flux RS children
+// (ExternalSecret, ConfigMap-as-data, etc.) in the manifest stream
+// of the structural-parent Kustomization. Without this, dragonfly-
+// acls-style RSes that emit ExternalSecrets from kustomize-substituted
+// RSIPs (the tholinka/home-ops `dragonfly-${APP}` pattern) would
+// silently drop their output — flate would render zero docs for the
+// RS even though the in-cluster controller would produce one.
+func TestOrchestrator_Render_RSExtensionAttributedToParentKS(t *testing.T) {
+	dir := t.TempDir()
+	// Parent KS at the repo root scans ./apps.
+	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", `resources:
+- rs.yaml
+- rsip.yaml
+`)
+	// RS with a selector-based inputsFrom emitting a RawObject
+	// (ExternalSecret) — the kind flate doesn't track natively.
+	testutil.WriteFile(t, dir, "apps/rs.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: acl, namespace: flux-system}
+spec:
+  inputsFrom:
+    - apiVersion: fluxcd.controlplane.io/v1
+      kind: ResourceSetInputProvider
+      selector:
+        matchLabels: {role: db}
+  resourcesTemplate: |
+    ---
+    apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: acl
+      namespace: flux-system
+    spec:
+      target: {name: acl}
+`)
+	testutil.WriteFile(t, dir, "apps/rsip.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: rsip
+  namespace: flux-system
+  labels: {role: db}
+spec:
+  type: Static
+  defaultValues: {user: alice}
+`)
+
+	o, err := New(Config{Path: dir, WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	mans := res.Manifests[ksID]
+	var found bool
+	for _, doc := range mans {
+		md, _ := doc["metadata"].(map[string]any)
+		name, _ := md["name"].(string)
+		kind, _ := doc["kind"].(string)
+		if kind == "ExternalSecret" && name == "acl" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected ExternalSecret/acl in res.Manifests[%s] (the RS-rendered child); kinds in stream: %v",
+			ksID, kindsOf(mans))
+	}
+}
+
+func kindsOf(docs []map[string]any) []string {
+	out := make([]string, 0, len(docs))
+	for _, d := range docs {
+		k, _ := d["kind"].(string)
+		out = append(out, k)
+	}
+	return out
+}
+
 // TestOrchestrator_Render_AppliesSkipKinds locks the iter-16
 // embed-facing follow-on to #169: HelmOptions.SkipResourceKinds()
 // applies uniformly to BOTH HR and KS docs in Result.Manifests, not

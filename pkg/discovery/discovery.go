@@ -250,8 +250,12 @@ func (d *discoverer) renderResourceSet(rs *manifest.ResourceSet) (int, error) {
 		}
 		if _, ok := obj.(*manifest.RawObject); ok {
 			// Generic / unrecognized kinds: not something flate
-			// reconciles further. Skip them rather than polluting the
-			// store with opaque entries.
+			// reconciles further. Skipped here; the orchestrator's
+			// post-Run RS expansion pass picks them up and attributes
+			// them to the owning KS for `flate build` visibility.
+			// That late pass sees RSIPs emitted from KS reconcile
+			// (kustomize-substituted dragonfly-${APP} style) which
+			// this discovery pass would miss.
 			continue
 		}
 		id := obj.Named()

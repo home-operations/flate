@@ -206,18 +206,17 @@ func (f *Filter) addEmittedLocked(emitter, child manifest.NamedResource) []manif
 	return f.addRecursiveLocked(child)
 }
 
-// Add unconditionally extends the keep set with id (and its
+// addUngated unconditionally extends the keep set with id (and its
 // transitive sourceRef/chartRef/valuesFrom deps) at runtime, marking
 // every newly-inserted entry primary.
 //
-// PRODUCTION CODE SHOULD USE AddEmitted INSTEAD: Add bypasses the
-// primary-emitter gate that prevents the ancestor-cascade failure
-// mode. The only legitimate uses are test scaffolding that needs
-// to seed an entry without simulating a render emission, and the
-// unconditional-add primitive that AddEmitted composes onto.
+// Internal-only: production code MUST use AddEmitted so the
+// primary-emitter gate prevents the ancestor-cascade failure mode.
+// Test scaffolding that needs to seed an entry without simulating a
+// render emission can call this directly from within the package.
 //
 // No-op when the filter is disabled. Safe for concurrent use.
-func (f *Filter) Add(id manifest.NamedResource) {
+func (f *Filter) addUngated(id manifest.NamedResource) {
 	if !f.Enabled() {
 		return
 	}

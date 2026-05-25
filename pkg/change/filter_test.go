@@ -331,7 +331,7 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 // replacement patterns generate per-app Kustomizations on the fly).
 // The KS controller calls Filter.AddEmitted(parent, child) before
 // AddObject so the listener's PreGate filter check sees the
-// extended keep set. This test uses Filter.Add directly (skipping
+// extended keep set. This test uses addUngated directly (skipping
 // the primacy gate) to seed the runtime keep without simulating
 // a parent render; the gated path is covered by the AddEmitted
 // tests below.
@@ -359,7 +359,7 @@ func TestFilter_AddExtendsKeepSetAtRuntime(t *testing.T) {
 		t.Fatalf("precondition: child must NOT be in keep set before Add; keep=%v", f.KeepNames())
 	}
 
-	f.Add(child)
+	f.addUngated(child)
 	if !f.ShouldReconcile(child) {
 		t.Errorf("Add(child) should extend keep set; ShouldReconcile(child)=false; keep=%v", f.KeepNames())
 	}
@@ -372,7 +372,7 @@ func TestFilter_AddExtendsKeepSetAtRuntime(t *testing.T) {
 func TestFilter_AddOnDisabledFilterIsNoOp(t *testing.T) {
 	var f Filter
 	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "x"}
-	f.Add(id)
+	f.addUngated(id)
 	other := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "y"}
 	if !f.ShouldReconcile(other) {
 		t.Errorf("disabled filter must still keep everything after Add()")
@@ -609,7 +609,7 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 	}
 
 	// Same invariant via the runtime Add path (issue #204 surface).
-	f.Add(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "cert-manager"})
+	f.addUngated(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "cert-manager"})
 	if f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "monitoring-system", Name: "cert-manager"}) {
 		t.Errorf("Add() leaked across namespaces: monitoring-system/cert-manager matched on name alone; keep=%v", f.KeepNames())
 	}

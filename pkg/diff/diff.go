@@ -160,8 +160,11 @@ type pairedResource struct {
 }
 
 type pairKey struct {
-	pKind, pNS, pName string
-	kind, ns, name    string
+	// pPath disambiguates two KS parents with the same (kind, ns, name)
+	// but different spec.path — a real-world collision in repos where
+	// the same KS is rendered twice from different overlays.
+	pKind, pNS, pName, pPath string
+	kind, ns, name           string
 }
 
 func pair(left, right []Doc) []pairedResource {
@@ -169,7 +172,7 @@ func pair(left, right []Doc) []pairedResource {
 	add := func(side int, d Doc) {
 		kind := manifest.DocKind(d.Manifest)
 		name, ns := manifest.DocMetadata(d.Manifest)
-		k := pairKey{d.Parent.Kind, d.Parent.Namespace, d.Parent.Name, kind, ns, name}
+		k := pairKey{d.Parent.Kind, d.Parent.Namespace, d.Parent.Name, d.Parent.Path, kind, ns, name}
 		p, ok := idx[k]
 		if !ok {
 			p = &pairedResource{parent: d.Parent, kind: kind, namespace: ns, name: name}
@@ -196,6 +199,7 @@ func pair(left, right []Doc) []pairedResource {
 			cmp.Compare(a.parent.Kind, b.parent.Kind),
 			cmp.Compare(a.parent.Namespace, b.parent.Namespace),
 			cmp.Compare(a.parent.Name, b.parent.Name),
+			cmp.Compare(a.parent.Path, b.parent.Path),
 			cmp.Compare(a.kind, b.kind),
 			cmp.Compare(a.namespace, b.namespace),
 			cmp.Compare(a.name, b.name),

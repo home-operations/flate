@@ -102,8 +102,7 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.
 	// produce a different ordering each invocation, breaking shell-piped
 	// diffs and CI consumers.
 	slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
-		ai, bi := a.Named(), b.Named()
-		return cmp.Or(cmp.Compare(ai.Namespace, bi.Namespace), cmp.Compare(ai.Name, bi.Name))
+		return a.Named().Compare(b.Named())
 	})
 	matched := 0
 	for _, obj := range objs {

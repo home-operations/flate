@@ -1,7 +1,6 @@
 package resourceset
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -106,9 +105,12 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 		}
 	}
 	// Sort providers by (namespace, name) for deterministic output,
-	// matching upstream's Combine routine ordering.
+	// matching upstream's Combine routine ordering. NamedResource.Compare
+	// orders by (kind, namespace, name); every provider here shares the
+	// same kind so the Kind comparison is always 0 and the order reduces
+	// to the desired (namespace, name).
 	slices.SortFunc(providers, func(a, b *manifest.ResourceSetInputProvider) int {
-		return cmp.Or(cmp.Compare(a.Namespace, b.Namespace), cmp.Compare(a.Name, b.Name))
+		return a.Named().Compare(b.Named())
 	})
 	for _, p := range providers {
 		exported, err := p.ExportedInputs()

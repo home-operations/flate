@@ -192,22 +192,14 @@ func pair(left, right []Doc) []pairedResource {
 		out = append(out, *p)
 	}
 	slices.SortFunc(out, func(a, b pairedResource) int {
-		if c := cmp.Compare(a.parent.Kind, b.parent.Kind); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.parent.Namespace, b.parent.Namespace); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.parent.Name, b.parent.Name); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.kind, b.kind); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.namespace, b.namespace); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.name, b.name)
+		return cmp.Or(
+			cmp.Compare(a.parent.Kind, b.parent.Kind),
+			cmp.Compare(a.parent.Namespace, b.parent.Namespace),
+			cmp.Compare(a.parent.Name, b.parent.Name),
+			cmp.Compare(a.kind, b.kind),
+			cmp.Compare(a.namespace, b.namespace),
+			cmp.Compare(a.name, b.name),
+		)
 	})
 	return out
 }

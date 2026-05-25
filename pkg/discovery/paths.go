@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ResolveScanPath normalizes a user-supplied --path / --path-orig:
@@ -42,23 +43,31 @@ func FindRepoRoot(p string) string {
 	}
 }
 
+// stripDotSlash strips leading `./` / `/` / bare `.` segments from a
+// Flux spec.path so it can be joined against repoRoot without
+// re-rooting. `..` is preserved — the caller validates traversal via
+// pathUnderRoot.
 func stripDotSlash(p string) string {
-	for len(p) > 0 && (p[0] == '.' || p[0] == '/') {
-		if p[0] == '.' && (len(p) == 1 || p[1] == '/') {
+	for {
+		switch {
+		case strings.HasPrefix(p, "./"):
+			p = p[2:]
+		case p == ".":
+			return ""
+		case strings.HasPrefix(p, "/"):
 			p = p[1:]
-			continue
+		default:
+			return p
 		}
-		if p[0] == '/' {
-			p = p[1:]
-			continue
-		}
-		break
 	}
-	return p
 }
 
+// pathUnderRoot reports whether target resolves inside root. Both are
+// trailing-slash normalized so a sibling path with a prefix-matching
+// name (`/repo/apps` vs `/repo/apps-staging`) doesn't get a false
+// positive from raw HasPrefix.
 func pathUnderRoot(target, root string) bool {
 	t := filepath.Clean(target) + string(filepath.Separator)
 	r := filepath.Clean(root) + string(filepath.Separator)
-	return len(t) >= len(r) && t[:len(r)] == r
+	return strings.HasPrefix(t, r)
 }

@@ -103,41 +103,52 @@ type Waiter struct {
 	// Ready check AND the ReadyExpr (additive mode).
 	AdditiveReadyExpr bool
 
-	// ResolveMissing, when non-nil, is consulted after the
-	// missing-dep grace window elapses and the dep is still absent
-	// from the Store. A true return means the resolver has (or can)
-	// promote the dep into the Store — the wait then continues
-	// instead of failing. Used by the orchestrator to lazy-load
-	// file-indexed objects (CMs/Secrets/HRs the DiscoveryOnly
-	// loader kept in Existence) the moment a depwait edge needs
-	// them. Without this hook, the render-driven loader breaks the
-	// bjw-s parent-patches pattern where a KS's substituteFrom CM
-	// lives inside that KS's own spec.path: the dep would never
-	// clear because the producing render hasn't run yet.
-	ResolveMissing func(manifest.NamedResource) bool
-
-	// IsFileIndexed reports whether id has a file-existence record (the
-	// loader saw a YAML on disk that defines it, even if the loader
-	// kept it out of the Store under render-driven discovery).
-	// depwait uses this to distinguish two missing-dep cases when
-	// the grace window expires:
-	//
-	//   - IsFileIndexed(id) == true and ResolveMissing(id) == false:
-	//     the file existed but promote failed (parse error, file
-	//     mutated since record). Fail fast as "dependency not found".
-	//   - IsFileIndexed(id) == false:
-	//     no file record. The dep can only appear via a parent
-	//     render's emitRenderedChildren chain. Keep watching for
-	//     up to the per-dep Timeout — a deeply-chained kustomize
-	//     component+replacement pattern can take longer than the
-	//     2s grace to land its render output, and failing fast
-	//     surfaces a spurious "dependency not found" for a dep
-	//     that would have arrived a few seconds later.
-	//
-	// When IsFileIndexed is nil, depwait preserves the historical fast-
+	// Existence, when non-nil, drives the post-grace branching for
+	// missing deps. The orchestrator wires this against the loader's
+	// ExistenceIndex (file-loaded YAML records); tests supply stubs.
+	// When Existence is nil, depwait preserves the historical fast-
 	// fail-after-grace behavior — callers that don't wire an
 	// existence index can't distinguish render-only from typo'd.
-	IsFileIndexed func(manifest.NamedResource) bool
+	//
+	// See ExistenceLookup for the decision matrix at the grace
+	// boundary.
+	Existence ExistenceLookup
+}
+
+// ExistenceLookup is the seam depwait uses to resolve missing
+// dependencies. Bundled into one interface so the orchestrator
+// (and any future embedder) wires a single object through the
+// controller Options pipe instead of two parallel closures.
+//
+// The orchestrator's implementation reads from the loader's
+// ExistenceIndex — file-indexed objects (CMs/Secrets/HRs the
+// DiscoveryOnly loader kept out of the Store) get lazy-promoted
+// the moment a depwait edge needs them, while render-only ids
+// (no file record) signal depwait to keep waiting for an
+// emitRenderedChildren chain instead of failing fast.
+//
+// When the grace window expires with id still missing:
+//
+//   - Promote(id) == true:
+//     dep is now in the Store (lazy-promoted from a file YAML).
+//     Wait continues against built-in status / exists semantics.
+//   - Promote(id) == false, IsFileIndexed(id) == true:
+//     file existed but promote failed (parse error, file mutated
+//     since record). Fail fast as "dependency not found".
+//   - Promote(id) == false, IsFileIndexed(id) == false:
+//     no file record. Dep can only arrive via a parent render's
+//     emitRenderedChildren chain. Keep watching for up to
+//     RenderProducingTimeout — a deeply-chained kustomize
+//     component+replacement pattern can take longer than the 2s
+//     grace, and failing fast surfaces a spurious "dependency not
+//     found" for a dep that would have arrived a few seconds later.
+type ExistenceLookup interface {
+	// IsFileIndexed reports whether id has a file-existence record.
+	IsFileIndexed(id manifest.NamedResource) bool
+	// Promote attempts to materialize id into the Store from the
+	// file-existence index. Returns true when promotion succeeded
+	// and id is now reachable via store.GetObject.
+	Promote(id manifest.NamedResource) bool
 }
 
 // Watch concurrently watches each dep and returns a channel of Events.
@@ -218,13 +229,15 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 		_, err := w.Store.WatchExists(graceCtx, id)
 		graceCancel()
 		if err != nil && !w.depExists(id) {
-			// Step 1: ask the resolver to materialize the dep from
-			// the file-indexed Existence map. A true return means
-			// the dep is now in the Store and the wait can continue
-			// against built-in status / exists semantics below.
-			if w.ResolveMissing != nil && w.ResolveMissing(id) {
+			// Step 1: ask the existence lookup to materialize the
+			// dep from the file-indexed Existence map. A true return
+			// means the dep is now in the Store and the wait can
+			// continue against built-in status / exists semantics
+			// below.
+			switch {
+			case w.Existence != nil && w.Existence.Promote(id):
 				// promoted; fall through to the regular wait.
-			} else if w.IsFileIndexed != nil && !w.IsFileIndexed(id) {
+			case w.Existence != nil && !w.Existence.IsFileIndexed(id):
 				// Step 2: dep has no file record — it can only arrive
 				// via a parent render's emitRenderedChildren chain.
 				// Wait up to RenderProducingTimeout for the dep to
@@ -264,10 +277,10 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 						return Event{Dep: id, Status: DepFailed, Reason: werr.Error()}
 					}
 				}
-			} else {
-				// Step 3: either no IsFileIndexed wired (legacy callers
+			default:
+				// Step 3: either no Existence wired (legacy callers
 				// can't distinguish render-only from typo) or the
-				// dep is file-indexed but promote failed (file
+				// dep is file-indexed but Promote failed (file
 				// disappeared / parse error). Either way the dep is
 				// not coming — fail fast at the grace boundary.
 				return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}

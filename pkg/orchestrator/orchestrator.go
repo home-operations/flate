@@ -422,6 +422,28 @@ func (o *Orchestrator) attachFilter(f *change.Filter) {
 	o.filter = f
 }
 
+// orchestratorExistence adapts the orchestrator's
+// loader.ExistenceIndex + Store + WipeSecrets config into the
+// depwait.ExistenceLookup interface that flows through controller
+// Options into every Waiter. Bundled so controllers don't each
+// reach into the orchestrator's private fields, and so future
+// existence-related signals land on one type instead of plumbing
+// new closures through three call layers.
+type orchestratorExistence struct {
+	idx         *loader.ExistenceIndex
+	store       *store.Store
+	wipeSecrets bool
+}
+
+func (e *orchestratorExistence) Promote(id manifest.NamedResource) bool {
+	return e.idx.Promote(e.store, id, e.wipeSecrets)
+}
+
+func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
+	_, ok := e.idx.Get(id)
+	return ok
+}
+
 // Run starts every controller, blocks until the task service drains,
 // then aggregates and returns any failures. The post-drain reporting
 // + error-string assembly lives in finalize so Run reads as a clean
@@ -442,41 +464,31 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		}
 		return o.rendered.ParentOf(id)
 	}
-	// resolveMissing closes over the file-indexed Existence map the
-	// DiscoveryOnly loader populated. When a depwait grace window
-	// elapses on a missing dep, the closure lazy-promotes the dep
-	// from its indexed file into the Store. This is the seam that
-	// keeps the bjw-s parent-patches pattern (KS substituting from
-	// a CM rendered by its own spec.path) from deadlocking — the CM
-	// file is on disk, so we materialize it the moment the depwait
-	// asks instead of waiting for the producing render that can't
-	// run until the depwait clears.
-	resolveMissing := func(id manifest.NamedResource) bool {
-		return o.existence.Promote(o.store, id, o.cfg.WipeSecrets)
-	}
-	// isFileIndexed lets depwait distinguish "render-only dep still in
-	// flight" (no file record → wait on the per-dep ctx) from
-	// "file-indexed but promote failed" (file record → fail fast).
-	// Without this signal depwait would treat both as fast-fail,
-	// surfacing spurious "dependency not found" errors for chained
-	// kustomize-component+replacement renders (component/ks/app
-	// → leaf KS → child HR) that exceed the 2s grace window.
-	isFileIndexed := func(id manifest.NamedResource) bool {
-		_, ok := o.existence.Get(id)
-		return ok
+	// existence bundles the file-existence lookups depwait needs:
+	// Promote lazy-loads a file-indexed dep into the Store the
+	// moment a depwait edge asks for it (covering the bjw-s parent-
+	// patches pattern where a KS's substituteFrom CM lives inside
+	// the same KS's spec.path); IsFileIndexed distinguishes
+	// "render-only dep still in flight" (no file record → wait on
+	// the per-dep ctx) from "file-indexed but promote failed" (file
+	// record → fail fast). The orchestrator owns both signals; the
+	// controllers and Waiter consume them via the single
+	// depwait.ExistenceLookup interface.
+	existence := &orchestratorExistence{
+		idx:         o.existence,
+		store:       o.store,
+		wipeSecrets: o.cfg.WipeSecrets,
 	}
 	o.ksc.Configure(kustomization.Options{
-		Filter:         o.filter,
-		ParentOf:       parentResolver,
-		RenderTracker:  o.rendered,
-		ResolveMissing: resolveMissing,
-		IsFileIndexed:  isFileIndexed,
+		Filter:        o.filter,
+		ParentOf:      parentResolver,
+		RenderTracker: o.rendered,
+		Existence:     existence,
 	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
-		Filter:         o.filter,
-		ParentOf:       parentResolver,
-		ResolveMissing: resolveMissing,
-		IsFileIndexed:  isFileIndexed,
+		Filter:    o.filter,
+		ParentOf:  parentResolver,
+		Existence: existence,
 	})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)

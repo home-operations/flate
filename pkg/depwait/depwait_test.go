@@ -22,6 +22,28 @@ func refs(ids ...manifest.NamedResource) []manifest.DependencyRef {
 	return out
 }
 
+// lookupStub satisfies ExistenceLookup from inline closures so
+// individual tests can express both halves of the contract without
+// declaring a custom type per case.
+type lookupStub struct {
+	promote     func(manifest.NamedResource) bool
+	fileIndexed func(manifest.NamedResource) bool
+}
+
+func (l lookupStub) Promote(id manifest.NamedResource) bool {
+	if l.promote == nil {
+		return false
+	}
+	return l.promote(id)
+}
+
+func (l lookupStub) IsFileIndexed(id manifest.NamedResource) bool {
+	if l.fileIndexed == nil {
+		return false
+	}
+	return l.fileIndexed(id)
+}
+
 func TestWaiter_AllReady(t *testing.T) {
 	s := store.New()
 	dep1 := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "ns", Name: "a"}
@@ -122,11 +144,11 @@ func TestWaiter_ResolveMissingLazyPromotes(t *testing.T) {
 		return true
 	}
 
-	w := &Waiter{Store: s, Timeout: 5 * time.Second, ResolveMissing: resolve}
+	w := &Waiter{Store: s, Timeout: 5 * time.Second, Existence: lookupStub{promote: resolve}}
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
 
 	if !resolveCalled {
-		t.Errorf("ResolveMissing was never invoked")
+		t.Errorf("Existence.Promote was never invoked")
 	}
 	if !sum.AllReady() {
 		t.Errorf("expected dep to clear after lazy promotion: %+v", sum)
@@ -142,11 +164,11 @@ func TestWaiter_ResolveMissingFalseStillFails(t *testing.T) {
 	s := store.New()
 	dep := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "ghost"}
 	resolve := func(manifest.NamedResource) bool { return false }
-	w := &Waiter{Store: s, Timeout: 5 * time.Second, ResolveMissing: resolve}
+	w := &Waiter{Store: s, Timeout: 5 * time.Second, Existence: lookupStub{promote: resolve}}
 
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
 	if !sum.AnyFailed() {
-		t.Errorf("ResolveMissing=false should still fail: %+v", sum)
+		t.Errorf("Existence.Promote=false should still fail: %+v", sum)
 	}
 }
 
@@ -178,10 +200,9 @@ func TestWaiter_RenderOnlyDepWaitsBeyondGrace(t *testing.T) {
 	}()
 
 	w := &Waiter{
-		Store:          s,
-		Timeout:        MissingGrace + 5*time.Second,
-		ResolveMissing: resolve,
-		IsFileIndexed:  isFileIndexed,
+		Store:     s,
+		Timeout:   MissingGrace + 5*time.Second,
+		Existence: lookupStub{promote: resolve, fileIndexed: isFileIndexed},
 	}
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
 	if !sum.AllReady() {
@@ -206,10 +227,9 @@ func TestWaiter_RenderOnlyDepStillFailsAfterFullTimeout(t *testing.T) {
 	// meaningful gap (300ms) so the assertion that elapsed >=
 	// MissingGrace + 100ms actually pins the long-wait branch.
 	w := &Waiter{
-		Store:          s,
-		Timeout:        MissingGrace + 300*time.Millisecond,
-		ResolveMissing: resolve,
-		IsFileIndexed:  isFileIndexed,
+		Store:     s,
+		Timeout:   MissingGrace + 300*time.Millisecond,
+		Existence: lookupStub{promote: resolve, fileIndexed: isFileIndexed},
 	}
 	start := time.Now()
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
@@ -247,10 +267,9 @@ func TestWaiter_FileIndexedPromoteFailsFastAtGrace(t *testing.T) {
 	isFileIndexed := func(manifest.NamedResource) bool { return true }
 
 	w := &Waiter{
-		Store:          s,
-		Timeout:        30 * time.Second, // generous; if step-2 ran we'd see it
-		ResolveMissing: resolve,
-		IsFileIndexed:  isFileIndexed,
+		Store:     s,
+		Timeout:   30 * time.Second, // generous; if step-2 ran we'd see it
+		Existence: lookupStub{promote: resolve, fileIndexed: isFileIndexed},
 	}
 	start := time.Now()
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
@@ -289,10 +308,9 @@ func TestWaiter_RenderOnlyCappedAtRenderProducingTimeout(t *testing.T) {
 	isFileIndexed := func(manifest.NamedResource) bool { return false }
 
 	w := &Waiter{
-		Store:          s,
-		Timeout:        30 * time.Second, // huge — render cap should win
-		ResolveMissing: resolve,
-		IsFileIndexed:  isFileIndexed,
+		Store:     s,
+		Timeout:   30 * time.Second, // huge — render cap should win
+		Existence: lookupStub{promote: resolve, fileIndexed: isFileIndexed},
 	}
 	start := time.Now()
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
@@ -331,10 +349,9 @@ func TestWaiter_RenderOnlyCancelDuringLongWaitSurfacesCancelled(t *testing.T) {
 	isFileIndexed := func(manifest.NamedResource) bool { return false }
 
 	w := &Waiter{
-		Store:          s,
-		Timeout:        30 * time.Second,
-		ResolveMissing: resolve,
-		IsFileIndexed:  isFileIndexed,
+		Store:     s,
+		Timeout:   30 * time.Second,
+		Existence: lookupStub{promote: resolve, fileIndexed: isFileIndexed},
 	}
 
 	// Cancel after grace expires + 500ms — well into step-2's wait.

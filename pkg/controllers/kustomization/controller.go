@@ -40,10 +40,9 @@ type Controller struct {
 	WipeSecrets bool
 
 	// Set via Configure() — see Options.
-	parentOf       func(manifest.NamedResource) (manifest.NamedResource, bool)
-	renderTracker  RenderTracker
-	resolveMissing func(manifest.NamedResource) bool
-	isFileIndexed  func(manifest.NamedResource) bool
+	parentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
+	renderTracker RenderTracker
+	existence     depwait.ExistenceLookup
 }
 
 // RenderTracker is the tiny seam the controller uses to report
@@ -71,19 +70,13 @@ type Options struct {
 	Filter        *change.Filter
 	ParentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
 	RenderTracker RenderTracker
-	// ResolveMissing, when non-nil, is forwarded to every depwait
-	// Waiter built during reconcile. The orchestrator wires this
-	// against the loader's ExistenceIndex so a substituteFrom CM
-	// rendered by a sibling KS can be lazy-loaded on demand instead
-	// of failing the parent KS with "dependency not found."
-	ResolveMissing func(manifest.NamedResource) bool
-	// IsFileIndexed reports whether id has a file-existence record. The
-	// orchestrator wires this so depwait distinguishes "dep is
-	// render-only and the producing chain hasn't finished yet"
-	// (no file record → keep waiting on per-dep ctx) from "dep is
-	// file-indexed but promote failed" (file record → fail fast).
-	// Forwarded to every Waiter built during reconcile.
-	IsFileIndexed func(manifest.NamedResource) bool
+	// Existence is the file-existence lookup the orchestrator wires
+	// against the loader's ExistenceIndex. depwait uses it to lazy-
+	// promote file-indexed deps and to distinguish render-only
+	// deps from typo'd ones at the missing-dep grace boundary. See
+	// depwait.ExistenceLookup for the decision matrix. Forwarded
+	// to every Waiter built during reconcile.
+	Existence depwait.ExistenceLookup
 }
 
 // New constructs a Kustomization controller.
@@ -102,8 +95,7 @@ func (c *Controller) Configure(opts Options) {
 	c.SetFilter(opts.Filter)
 	c.parentOf = opts.ParentOf
 	c.renderTracker = opts.RenderTracker
-	c.resolveMissing = opts.ResolveMissing
-	c.isFileIndexed = opts.IsFileIndexed
+	c.existence = opts.Existence
 }
 
 // markRendered reports a parent→child render emission to the
@@ -120,11 +112,10 @@ func (c *Controller) markRendered(parent, child manifest.NamedResource) {
 // budgeted from timeout (typically ks.Timeout).
 func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Duration) *depwait.Waiter {
 	return &depwait.Waiter{
-		Store:          c.Store,
-		Parent:         id,
-		Timeout:        depwait.TimeoutFromSpec(timeout),
-		ResolveMissing: c.resolveMissing,
-		IsFileIndexed:  c.isFileIndexed,
+		Store:     c.Store,
+		Parent:    id,
+		Timeout:   depwait.TimeoutFromSpec(timeout),
+		Existence: c.existence,
 	}
 }
 

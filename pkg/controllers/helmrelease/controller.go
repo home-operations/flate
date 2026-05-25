@@ -46,9 +46,8 @@ type Controller struct {
 	//     the orchestrator's renderedSet.ParentOf, populated when the
 	//     parent KS's emitRenderedChildren fires.
 	// Nil means "no parent enforcement"; matches pre-#221 behavior.
-	parentOf       func(manifest.NamedResource) (manifest.NamedResource, bool)
-	resolveMissing func(manifest.NamedResource) bool
-	isFileIndexed  func(manifest.NamedResource) bool
+	parentOf  func(manifest.NamedResource) (manifest.NamedResource, bool)
+	existence depwait.ExistenceLookup
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -63,18 +62,14 @@ type Controller struct {
 type ReconcileOptions struct {
 	Filter   *change.Filter
 	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
-	// ResolveMissing, when non-nil, is forwarded to every depwait
-	// Waiter built during reconcile. The orchestrator wires this
-	// against the loader's ExistenceIndex so file-indexed sources
-	// (HelmRepository, OCIRepository, HelmChart) can be lazy-loaded
-	// the moment the HR's chartRef gate needs them.
-	ResolveMissing func(manifest.NamedResource) bool
-	// IsFileIndexed reports whether id has a file-existence record. The
-	// orchestrator wires this so depwait distinguishes "dep is
-	// render-only and the producing chain hasn't finished yet"
-	// (no file record → keep waiting on per-dep ctx) from "dep is
-	// file-indexed but promote failed" (file record → fail fast).
-	IsFileIndexed func(manifest.NamedResource) bool
+	// Existence is the file-existence lookup the orchestrator wires
+	// against the loader's ExistenceIndex. depwait uses it to lazy-
+	// promote file-indexed deps (HelmRepository, OCIRepository,
+	// HelmChart, …) and to distinguish render-only deps from typo'd
+	// ones at the missing-dep grace boundary. See
+	// depwait.ExistenceLookup for the decision matrix. Forwarded
+	// to every Waiter built during reconcile.
+	Existence depwait.ExistenceLookup
 }
 
 // New constructs a HelmRelease controller.
@@ -93,8 +88,7 @@ func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wip
 func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetFilter(opts.Filter)
 	c.parentOf = opts.ParentOf
-	c.resolveMissing = opts.ResolveMissing
-	c.isFileIndexed = opts.IsFileIndexed
+	c.existence = opts.Existence
 }
 
 // lookupParent reports the structural parent KS of id via the
@@ -114,11 +108,10 @@ func (c *Controller) lookupParent(id manifest.NamedResource) (manifest.NamedReso
 // source wait don't drift apart.
 func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Duration) *depwait.Waiter {
 	return &depwait.Waiter{
-		Store:          c.Store,
-		Parent:         id,
-		Timeout:        depwait.TimeoutFromSpec(timeout),
-		ResolveMissing: c.resolveMissing,
-		IsFileIndexed:  c.isFileIndexed,
+		Store:     c.Store,
+		Parent:    id,
+		Timeout:   depwait.TimeoutFromSpec(timeout),
+		Existence: c.existence,
 	}
 }
 

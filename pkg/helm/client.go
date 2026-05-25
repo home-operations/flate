@@ -24,6 +24,19 @@ import (
 // The orchestrator wires the same closure into both.
 type SecretGetter = source.SecretGetter
 
+// OCIPuller fetches an OCI artifact into a content-addressed slot
+// directory. Helm.Client uses it to route HelmRepository(type=oci)
+// and OCIRepository chart resolution through the same machinery as
+// source/oci.Fetcher — applying spec.verify / certSecretRef /
+// proxySecretRef / insecure / layerSelector / ignore uniformly
+// regardless of whether the chart was referenced via OCIRepository
+// or HelmRepository(type=oci). When nil, helm.Client falls back to
+// its built-in registry-client pull (no TLS/auth/verify surface) —
+// matches the pre-unification behavior for EnableOCI=false runs.
+//
+// source/oci.Fetcher satisfies this interface verbatim (type alias).
+type OCIPuller = source.TypedFetcher[*manifest.OCIRepository]
+
 // Client renders HelmReleases. Construct with NewClient.
 type Client struct {
 	tmpDir   string
@@ -37,6 +50,13 @@ type Client struct {
 	resolver SourceResolver
 	registry *registry.Client
 	secrets  SecretGetter
+	// ociPuller, when wired, routes both OCIRepository chart
+	// resolution and HelmRepository(type=oci) chart resolution
+	// through source/oci.Fetcher — so spec.verify / cert /
+	// proxy / layerSelector / ignore all apply uniformly. Nil
+	// retains the legacy registry-client pull (EnableOCI=false
+	// path: no auth/TLS surface, anonymous pulls only).
+	ociPuller OCIPuller
 
 	// chartCache memoizes parsed *chart.Chart by on-disk path. Helm's
 	// loader.Load reparses the entire tgz on every call — for repos
@@ -99,6 +119,27 @@ func (c *Client) SetSecretGetter(g SecretGetter) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.secrets = g
+}
+
+// SetOCIPuller installs the OCI fetcher helm.Client routes
+// HelmRepository(type=oci) and OCIRepository chart resolution
+// through. The orchestrator wires source/oci.Fetcher when
+// EnableOCI=true; embedders without one (or EnableOCI=false runs)
+// leave it nil and helm.Client falls back to its built-in
+// registry-client pull. Safe to call before any Template call.
+func (c *Client) SetOCIPuller(p OCIPuller) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ociPuller = p
+}
+
+// ociPullerSnapshot returns the configured OCIPuller under a read
+// lock. Returns nil when none was wired — callers fall back to the
+// registry-client path.
+func (c *Client) ociPullerSnapshot() OCIPuller {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ociPuller
 }
 
 // secretGetter returns the configured SecretGetter under a read lock —

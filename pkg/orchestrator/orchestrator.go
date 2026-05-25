@@ -212,12 +212,22 @@ func New(cfg Config) (*Orchestrator, error) {
 	// unblock.
 	srcCtrl.Fetchers[manifest.KindHelmRepository] = source.ExistenceFetcher{}
 	if cfg.EnableOCI {
+		ociFetcher := &oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet}
 		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap[*manifest.OCIRepository](
-			manifest.KindOCIRepository,
-			&oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet})
+			manifest.KindOCIRepository, ociFetcher)
+		// Share the same fetcher with helm.Client so HelmRepository
+		// (type=oci) and OCIRepository chart resolution both route
+		// through one OCI pull path — spec.verify / certSecretRef /
+		// proxySecretRef / insecure / layerSelector / ignore apply
+		// uniformly. Without this, type=oci would silently drop
+		// those fields (helm-side fallback used the registry client
+		// with no auth/TLS surface).
+		helmClient.SetOCIPuller(ociFetcher)
 	} else {
 		// --enable-oci=false: skip the real fetch but still mark each
 		// OCIRepository Ready so HRs that dependsOn one don't time out.
+		// helm.Client's OCIPuller stays nil, falling back to the
+		// registry-client pull (matches prior EnableOCI=false behavior).
 		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.ExistenceFetcher{}
 	}
 	o := &Orchestrator{

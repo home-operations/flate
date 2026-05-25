@@ -82,6 +82,67 @@ func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
 	return path, nil
 }
 
+// pullHelmRepoOCI handles the `HelmRepository.type=oci` branch by
+// synthesizing an OCIRepository (carrying the HelmRepository's
+// secret/cert/proxy/insecure fields) and routing it through the
+// OCIPuller — the same source/oci.Fetcher the OCIRepository path
+// uses. This gives HelmRepository(type=oci) parity with
+// OCIRepository for spec.verify / cert / auth / proxy / insecure;
+// previously those fields were silently ignored and SecretRef
+// rejected outright with a "not yet implemented" error.
+//
+// When no puller is wired (EnableOCI=false runs or embedders
+// without an OCI fetcher), fall back to the registry-client pull —
+// preserves the legacy anonymous-pull behavior for backward
+// compatibility.
+func (c *Client) pullHelmRepoOCI(ctx context.Context, r *manifest.HelmRepository, hr *manifest.HelmRelease) (string, error) {
+	chartURL := strings.TrimSuffix(r.URL, "/") + "/" + hr.Chart.Name
+	if puller := c.ociPullerSnapshot(); puller != nil {
+		syn := &manifest.OCIRepository{
+			Name:      hr.Chart.Name,
+			Namespace: r.Namespace,
+		}
+		syn.URL = chartURL
+		if hr.Chart.Version != "" {
+			ref := &manifest.OCIRepositoryRef{}
+			if strings.Contains(hr.Chart.Version, ":") {
+				ref.Digest = hr.Chart.Version
+			} else {
+				ref.Tag = hr.Chart.Version
+			}
+			syn.Reference = ref
+		}
+		// Lift HelmRepository's auth / TLS / proxy / insecure into
+		// the synthetic OCIRepository so the puller honors them.
+		syn.SecretRef = r.SecretRef
+		syn.CertSecretRef = r.CertSecretRef
+		syn.Insecure = r.Insecure
+		art, err := puller.Fetch(ctx, syn)
+		if err != nil {
+			return "", err
+		}
+		if art != nil && art.LocalPath != "" {
+			path, err := ociChartPathFromArtifact(art.LocalPath)
+			if err != nil {
+				return "", fmt.Errorf("HelmRepository %s/%s (oci): %w", r.Namespace, r.Name, err)
+			}
+			return path, nil
+		}
+	}
+	// Registry-client fallback — anonymous pull, no auth/TLS/verify.
+	// Preserve the previous SecretRef rejection so a user with
+	// credentials configured against this path gets a clear error
+	// rather than a silently-anonymous pull failure.
+	if r.SecretRef != nil {
+		return "", fmt.Errorf(
+			"HelmRepository %s/%s: SecretRef on type=oci requires an OCI puller "+
+				"(typically EnableOCI=true); reference the chart via a sibling "+
+				"OCIRepository CR or enable OCI",
+			r.Namespace, r.Name)
+	}
+	return c.fetchOCIChart(ctx, chartURL, hr.Chart.Version)
+}
+
 // locateHelmRepoChart resolves a chart from a HelmRepository. For OCI
 // HelmRepositories the URL is `oci://...` and we delegate to the OCI
 // path. Otherwise we download the chart tarball via getter, applying
@@ -94,13 +155,7 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	}
 
 	if r.Type == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://") {
-		if r.SecretRef != nil {
-			return "", fmt.Errorf(
-				"HelmRepository %s/%s: SecretRef on OCI HelmRepositories is not yet implemented; "+
-					"reference the chart via a sibling OCIRepository CR instead",
-				r.Namespace, r.Name)
-		}
-		return c.fetchOCIChart(ctx, r.URL+"/"+hr.Chart.Name, hr.Chart.Version)
+		return c.pullHelmRepoOCI(ctx, r, hr)
 	}
 
 	authOpts, err := c.helmRepoAuthOptions(r)

@@ -42,33 +42,39 @@ func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (
 		}
 		return path, nil
 	}
-	// Fallback path. The source.oci.Fetcher didn't produce an
-	// artifact for this OCIRepository — typically because the
-	// orchestrator is configured with EnableOCI=false (which wires
-	// source.ExistenceFetcher) or because the HR's source controller
-	// was never wired in this embedding. NONE of the OCIRepository
-	// spec.* features (verify / layerSelector / certSecretRef /
-	// proxySecretRef / insecure / ignore) apply on this path.
+	// No artifact in the store. Try the puller (source/oci.Fetcher)
+	// when wired — produces a slot with full spec.* support, same
+	// as the canonical OCIRepository fetch path. Falls back to the
+	// registry-client pull when no puller was wired (EnableOCI=false
+	// orchestrator runs, embedders without OCI).
+	if puller := c.ociPullerSnapshot(); puller != nil {
+		art, err := puller.Fetch(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		if art != nil && art.LocalPath != "" {
+			path, err := ociChartPathFromArtifact(art.LocalPath)
+			if err != nil {
+				return "", fmt.Errorf("OCIRepository %s/%s: %w", r.Namespace, r.Name, err)
+			}
+			return path, nil
+		}
+		// Puller returned (nil, nil) — ExistenceFetcher shape. Fall
+		// through to the registry-client path so the HR can still
+		// render with anonymous pulls.
+	}
+	// Registry-client fallback. Drops every security-relevant spec.*
+	// field (verify / layerSelector / certSecretRef / proxySecretRef
+	// / insecure / ignore) — bootstrap-time warnOnDisabledOCIFeatures
+	// already warns per CR; the per-lookup log here surfaces the
+	// actual moment the fallback runs.
 	if r.Reference != nil && r.Reference.SemVer != "" {
-		// Semver resolution requires listing tags from the registry —
-		// that's part of source.oci.Fetcher, not helm's registry
-		// client. The helm-side fall-back would just pass the semver
-		// constraint to Pull and get a cryptic "invalid tag" error.
 		return "", fmt.Errorf(
-			"OCIRepository %s/%s uses spec.ref.semver but the source.oci.Fetcher is not active "+
+			"OCIRepository %s/%s uses spec.ref.semver but no source.oci.Fetcher is wired "+
 				"(likely --enable-oci=false); semver resolution requires the OCI fetcher",
 			r.Namespace, r.Name)
 	}
 	ver := r.Version()
-	// Operator-visible: the fallback path silently drops every
-	// security-relevant spec.* field (verify, layerSelector,
-	// certSecretRef, proxySecretRef, insecure, ignore). Bootstrap-
-	// time warnOnDisabledOCIFeatures already calls this out per
-	// CR; the per-lookup log surfaces the actual moment the
-	// fallback runs — useful both for diagnosing missing-feature
-	// surprises and for noticing when the fallback is hit
-	// unexpectedly. Upgraded from Debug to Warn so operators on
-	// default log level (info) see it.
 	slog.Warn("helm: OCIRepository SourceArtifact missing; falling back to helm registry client — spec.verify/layerSelector/etc. NOT applied on this path",
 		"ociRepository", r.Namespace+"/"+r.Name, "url", r.URL, "version", ver)
 	return c.fetchOCIChart(ctx, r.URL, ver)

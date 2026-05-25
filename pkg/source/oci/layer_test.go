@@ -456,6 +456,21 @@ func TestHasUnfinishedOCILayout(t *testing.T) {
 			t.Errorf("hasUnfinishedOCILayout(%s) = true on a clean slot with only layer.tar.gz", slot)
 		}
 	})
+
+	// The staged layer file (.flate-layer.tar.gz) is renamed into
+	// place between cleanupOCILayout and the extract/copy step.
+	// A crash in that window leaves the staging file alongside an
+	// otherwise-cleaned slot, and the next fetch would serve it
+	// as if it were a chart. Sentinel must catch this.
+	t.Run("staged_layer_leftover", func(t *testing.T) {
+		slot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(slot, stagedLayerFilename), []byte("staged"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if !hasUnfinishedOCILayout(slot) {
+			t.Errorf("hasUnfinishedOCILayout(%s) = false; expected true with %s present", slot, stagedLayerFilename)
+		}
+	})
 }
 
 // writeManifest writes an OCI manifest blob (under blobs/sha256) for

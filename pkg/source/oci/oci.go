@@ -358,16 +358,61 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 // hit when spec.verify is configured.
 const cachedDigestFile = ".flate-digest"
 
+// digestRE matches a well-formed OCI content digest:
+// "<algorithm>:<hex>" where the hex side is at least 32 chars (sha256
+// truncated, the OCI spec minimum). Catches torn writes where the
+// previous run died mid-WriteFile and left a partial digest string —
+// rather than passing the partial to cosign and getting a misleading
+// "signature not found" error, treat it as a missing marker.
+var digestRE = regexp.MustCompile(`^[a-z0-9]+:[a-fA-F0-9]{32,}$`)
+
+// writeCachedDigest persists digest atomically: write to a sibling
+// temp file, fsync, then rename into place. Without atomicity, a
+// crash mid-write could leave a partial digest string that would
+// later mis-read on cache hit and trigger a misleading cosign
+// failure on the next reconcile.
 func writeCachedDigest(slot, digest string) error {
-	return os.WriteFile(filepath.Join(slot, cachedDigestFile), []byte(digest), 0o600)
+	dst := filepath.Join(slot, cachedDigestFile)
+	tmp, err := os.CreateTemp(slot, ".flate-digest-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	if _, err := tmp.WriteString(digest); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
+// readCachedDigest returns the cached digest only when it parses as a
+// well-formed OCI content digest. Empty + malformed both return "" so
+// the caller's "no marker" branch handles the recovery uniformly.
 func readCachedDigest(slot string) string {
 	b, err := os.ReadFile(filepath.Join(slot, cachedDigestFile)) //nolint:gosec // slot is fetcher-owned cache path
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(b))
+	s := strings.TrimSpace(string(b))
+	if !digestRE.MatchString(s) {
+		return ""
+	}
+	return s
 }
 
 // ociRevision composes a Flux-style "<tag>@<digest>" revision string.

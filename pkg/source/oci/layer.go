@@ -199,16 +199,21 @@ func digestPath(slot string, d digest.Digest) string {
 	return filepath.Join(slot, ocispec.ImageBlobsDir, algo, hex)
 }
 
-// hasUnfinishedOCILayout reports whether slot still carries any of
-// the OCI Image Layout artifacts cleanupOCILayout is supposed to
-// wipe at the end of a successful fetch. Their presence means the
-// slot is in an inconsistent state: either applyLayerSelector
-// didn't run to completion, or a concurrent process modified the
-// slot after a successful fetch landed `.flate-digest`. The OCI
-// fetcher's cache-hit path uses this as a sentinel to reset stale
-// slots before serving them.
+// hasUnfinishedOCILayout reports whether slot still carries any
+// in-progress fetch artifacts:
+//
+//   - The OCI Image Layout dirs/files (blobs/, ingest/, oci-layout,
+//     index.json) cleanupOCILayout is supposed to wipe.
+//   - The staged layer file (.flate-layer.tar.gz) applyLayerSelector
+//     renames into place before extract / copy. A crash between the
+//     stage rename and the cleanup leaves it behind even when the
+//     layout dirs were already wiped.
+//
+// Either signals an inconsistent slot. The OCI fetcher's cache-hit
+// path uses this to reset stale slots before serving them.
 func hasUnfinishedOCILayout(slot string) bool {
-	for _, name := range ociLayoutArtifacts {
+	candidates := append([]string{stagedLayerFilename}, ociLayoutArtifacts...)
+	for _, name := range candidates {
 		if _, err := os.Stat(filepath.Join(slot, name)); err == nil {
 			return true
 		}

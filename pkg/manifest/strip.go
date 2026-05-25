@@ -26,54 +26,54 @@ package manifest
 // kube-prometheus-stack, app-template CronJobs, etc. produce diff
 // noise on every chart-version rotation despite the strip pass.
 func StripResourceAttributes(resource map[string]any, attrs []string) {
-	if metadata, ok := resource["metadata"].(map[string]any); ok {
-		stripAttrs(metadata, attrs)
-	}
+	stripObjectMetadata(resource, attrs)
 	if spec, ok := resource["spec"].(map[string]any); ok {
 		// Deployment / StatefulSet / DaemonSet / ReplicaSet / Job pod
 		// template.
 		if tmpl, ok := spec["template"].(map[string]any); ok {
-			if meta, ok := tmpl["metadata"].(map[string]any); ok {
-				stripAttrs(meta, attrs)
-			}
+			stripObjectMetadata(tmpl, attrs)
 		}
 		// CronJob jobTemplate + its nested pod template.
 		if jobTmpl, ok := spec["jobTemplate"].(map[string]any); ok {
-			if meta, ok := jobTmpl["metadata"].(map[string]any); ok {
-				stripAttrs(meta, attrs)
-			}
+			stripObjectMetadata(jobTmpl, attrs)
 			if jobSpec, ok := jobTmpl["spec"].(map[string]any); ok {
 				if podTmpl, ok := jobSpec["template"].(map[string]any); ok {
-					if meta, ok := podTmpl["metadata"].(map[string]any); ok {
-						stripAttrs(meta, attrs)
-					}
+					stripObjectMetadata(podTmpl, attrs)
 				}
 			}
 		}
 		// StatefulSet PVC templates — Helm puts chart labels here too.
-		if pvcs, ok := spec["volumeClaimTemplates"].([]any); ok {
-			for _, pvc := range pvcs {
-				m, ok := pvc.(map[string]any)
-				if !ok {
-					continue
-				}
-				if meta, ok := m["metadata"].(map[string]any); ok {
-					stripAttrs(meta, attrs)
-				}
-			}
-		}
+		stripMetadataInList(spec, "volumeClaimTemplates", attrs)
 	}
 	if kind, _ := resource["kind"].(string); kind == "List" {
-		if items, ok := resource["items"].([]any); ok {
-			for _, it := range items {
-				m, ok := it.(map[string]any)
-				if !ok {
-					continue
-				}
-				if meta, ok := m["metadata"].(map[string]any); ok {
-					stripAttrs(meta, attrs)
-				}
-			}
+		stripMetadataInList(resource, "items", attrs)
+	}
+}
+
+// stripObjectMetadata strips the configured attrs from parent's
+// "metadata" field when present. No-op when metadata is absent or
+// isn't a map. Centralizes the type assertion + nil guard so the
+// outer walker stays readable as a navigation of the K8s object
+// graph rather than a pile of typed-map dances.
+func stripObjectMetadata(parent map[string]any, attrs []string) {
+	meta, ok := parent["metadata"].(map[string]any)
+	if !ok {
+		return
+	}
+	stripAttrs(meta, attrs)
+}
+
+// stripMetadataInList walks parent[listKey] as a []any of
+// map[string]any objects and strips attrs from each item's metadata.
+// Covers StatefulSet volumeClaimTemplates and List items uniformly.
+func stripMetadataInList(parent map[string]any, listKey string, attrs []string) {
+	items, ok := parent[listKey].([]any)
+	if !ok {
+		return
+	}
+	for _, it := range items {
+		if obj, ok := it.(map[string]any); ok {
+			stripObjectMetadata(obj, attrs)
 		}
 	}
 }

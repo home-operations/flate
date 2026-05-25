@@ -88,11 +88,11 @@ func (r *RawObject) Named() NamedResource {
 
 // parseRawObject decodes any Kubernetes document into RawObject.
 func parseRawObject(doc map[string]any) (*RawObject, error) {
-	apiVersion, _ := doc["apiVersion"].(string)
+	apiVersion := DocAPIVersion(doc)
 	if apiVersion == "" {
 		return nil, inputf("missing apiVersion")
 	}
-	kind, _ := doc["kind"].(string)
+	kind := DocKind(doc)
 	if kind == "" {
 		return nil, inputf("missing kind")
 	}

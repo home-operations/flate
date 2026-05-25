@@ -1,6 +1,10 @@
 package resourceset
 
-import fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+import (
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+
+	"github.com/home-operations/flate/pkg/manifest"
+)
 
 // DedupKey identifies a rendered doc by (apiVersion, kind, namespace,
 // name) for cross-render deduplication. Returns "" when kind or name
@@ -12,15 +16,12 @@ import fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 // a name-grouped RS that emits the same child from two namespace
 // variants could land both copies in the parent KS's extension list.
 func DedupKey(doc map[string]any) string {
-	apiVersion, _ := doc["apiVersion"].(string)
-	kind, _ := doc["kind"].(string)
-	md, _ := doc["metadata"].(map[string]any)
-	name, _ := md["name"].(string)
-	ns, _ := md["namespace"].(string)
+	kind := manifest.DocKind(doc)
+	name, ns := manifest.DocMetadata(doc)
 	if kind == "" || name == "" {
 		return ""
 	}
-	return apiVersion + "|" + kind + "|" + ns + "|" + name
+	return manifest.DocAPIVersion(doc) + "|" + kind + "|" + ns + "|" + name
 }
 
 func defaultNamespace(doc map[string]any, ns string) {
@@ -44,8 +45,7 @@ func defaultNamespace(doc map[string]any, ns string) {
 }
 
 func isClusterScoped(doc map[string]any) bool {
-	kind, _ := doc["kind"].(string)
-	switch kind {
+	switch manifest.DocKind(doc) {
 	case "Namespace",
 		"ClusterRole", "ClusterRoleBinding",
 		"CustomResourceDefinition",

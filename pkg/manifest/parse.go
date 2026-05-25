@@ -30,6 +30,14 @@ func DocKind(doc map[string]any) string {
 	return k
 }
 
+// DocAPIVersion returns the "apiVersion" field of a manifest document,
+// or "" if absent. Centralizes the doc["apiVersion"].(string) cast so
+// callers don't repeat the same one-liner.
+func DocAPIVersion(doc map[string]any) string {
+	v, _ := doc["apiVersion"].(string)
+	return v
+}
+
 // DropKinds returns docs with every entry whose `kind` appears in drop
 // removed. drop=nil is a no-op (returns docs unchanged). Used by the
 // orchestrator's Render and the CLI's build/diff paths to honor
@@ -78,8 +86,8 @@ func defaultParseDocOptions() ParseDocOptions {
 // parser. Unknown kinds become a RawObject; kustomize.config.k8s.io
 // build directives and bare data files are silently dropped.
 func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
-	kind, _ := doc["kind"].(string)
-	apiVersion, _ := doc["apiVersion"].(string)
+	kind := DocKind(doc)
+	apiVersion := DocAPIVersion(doc)
 	// kustomize.config.k8s.io build directives (Kustomization,
 	// Component) aren't k8s resources — they're build inputs we
 	// already follow via spec.path discovery. Drop them silently.
@@ -127,7 +135,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
 
 // checkAPIVersion enforces an api group prefix on a raw document.
 func checkAPIVersion(doc map[string]any, want string) error {
-	v, _ := doc["apiVersion"].(string)
+	v := DocAPIVersion(doc)
 	if v == "" {
 		return inputf("missing apiVersion")
 	}

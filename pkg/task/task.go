@@ -106,6 +106,16 @@ func (s *Service) YieldSlot(fn func()) {
 // Failures returns the number of panicked tasks observed.
 func (s *Service) Failures() int64 { return s.failures.Load() }
 
+// ActiveCount returns the number of in-flight tasks. Includes
+// tasks that have been Go'd but are still parked on the worker
+// semaphore (NewBounded). Useful as a quiescence signal — when
+// every reconcile has finished, ActiveCount returns 0.
+//
+// Callers asking from inside a Go'd body should remember their
+// own goroutine is counted: a "no other work" check needs
+// ActiveCount() > 1, not > 0.
+func (s *Service) ActiveCount() int64 { return s.active.Load() }
+
 // BlockTillDone waits until every active task has finished. Safe to
 // call concurrently with Go.
 func (s *Service) BlockTillDone() { s.wgActive.Wait() }

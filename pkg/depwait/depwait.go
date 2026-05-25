@@ -113,6 +113,16 @@ type Waiter struct {
 	// See ExistenceLookup for the decision matrix at the grace
 	// boundary.
 	Existence ExistenceLookup
+
+	// Renders, when non-nil, drives the step-2 fast-fail signal:
+	// during the render-only long wait, depwait polls
+	// Renders.OtherActive(); a false return means no other
+	// reconcile in the orchestrator is doing work, so no future
+	// render can produce the missing dep. The wait short-circuits
+	// to "dependency not found" instead of burning the full
+	// RenderProducingTimeout cap. When Renders is nil, step-2 falls
+	// back to the fixed cap alone (preserves the legacy timing).
+	Renders RenderInflight
 }
 
 // ExistenceLookup is the seam depwait uses to resolve missing
@@ -149,6 +159,32 @@ type ExistenceLookup interface {
 	// file-existence index. Returns true when promotion succeeded
 	// and id is now reachable via store.GetObject.
 	Promote(id manifest.NamedResource) bool
+}
+
+// RenderInflight is the positive quiescence signal depwait's step-2
+// uses to fail fast on truly-missing render-only deps. The
+// orchestrator's implementation reads from task.Service.ActiveCount
+// — true when more than the caller's own goroutine is active in
+// the task pool (and could therefore still emit the missing dep);
+// false when the orchestrator has drained.
+//
+// Semantically the inverse of the Existence-based step-2 wait: that
+// path keeps waiting on the absence of a finite signal
+// (RenderProducingTimeout); RenderInflight short-circuits the wait
+// once a positive signal ("no more work could produce this") fires.
+// Both together pin the wait between a fast-fail floor (no other
+// work running) and a hard ceiling (the timeout cap).
+//
+// When Renders is nil, step-2 still works via the timeout cap alone
+// — embedders that don't drive a task pool get the legacy
+// behavior.
+type RenderInflight interface {
+	// OtherActive reports whether at least one reconcile beyond the
+	// caller's own task is still running in the orchestrator's task
+	// pool. depwait calls this from inside a Submit'd reconcile
+	// body, so the caller's goroutine is counted; OtherActive
+	// returns true iff the total active count exceeds 1.
+	OtherActive() bool
 }
 
 // Watch concurrently watches each dep and returns a channel of Events.
@@ -240,41 +276,33 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 			case w.Existence != nil && !w.Existence.IsFileIndexed(id):
 				// Step 2: dep has no file record — it can only arrive
 				// via a parent render's emitRenderedChildren chain.
-				// Wait up to RenderProducingTimeout for the dep to
-				// land. The 2s grace is too short for deeply-chained
-				// kustomize component+replacement patterns (parent
-				// KS → leaf KS → child HR) where the producing chain
-				// runs many kustomize builds + helm templates back-
-				// to-back, but unbounded waiting on the full per-dep
-				// budget burns ~30s on typo'd dependsOn that look
-				// identical to render-only at this point (IsFileIndexed is
-				// false in both cases).
+				// Two complementary signals bound the wait:
 				//
-				// The render budget is derived from the parent ctx,
-				// so the per-dep Timeout still caps total wall time:
-				// if the user sets spec.timeout=5s, we wait at most
-				// 5s here. If they set the default 30s, we cap at
-				// RenderProducingTimeout (10s) and the remaining
-				// budget is available for the downstream Ready check.
-				renderCtx, renderCancel := context.WithTimeout(ctx, RenderProducingTimeout)
-				_, werr := w.Store.WatchExists(renderCtx, id)
-				renderCancel()
-				if werr != nil {
-					// Route through classify() so parent ctx
-					// cancellation propagates as DepCancelled
-					// instead of being flattened. A renderCtx
-					// timeout (dep didn't arrive within the cap)
-					// looks like context.DeadlineExceeded — same
-					// as parent ctx expiry — and gets the same
-					// "dependency not found" treatment because
-					// both mean "dep never appeared in time."
+				//   - RenderProducingTimeout caps the absolute wall
+				//     time so a missing Renders signal doesn't burn
+				//     the full per-dep Timeout. Legacy embedders
+				//     without a task pool get this cap as the only
+				//     bound.
+				//   - Renders.OtherActive() short-circuits the wait
+				//     once no other reconcile in the pool is doing
+				//     work — at that point, no future render can
+				//     produce the missing dep. Typo'd dependsOn
+				//     fails as soon as the orchestrator drains
+				//     instead of waiting the full cap.
+				//
+				// On a real chain (the omada-controller-style
+				// component+replacement render), other reconciles
+				// stay active while the producing chain runs, so
+				// OtherActive returns true and the wait holds open
+				// until the dep arrives via subscription.
+				if err := w.waitRenderEmission(ctx, id); err != nil {
 					switch {
 					case errors.Is(ctx.Err(), context.Canceled):
 						return classify(id, ctx.Err(), "")
-					case errors.Is(werr, context.DeadlineExceeded):
+					case errors.Is(err, context.DeadlineExceeded), errors.Is(err, errRenderDrained):
 						return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
 					default:
-						return Event{Dep: id, Status: DepFailed, Reason: werr.Error()}
+						return Event{Dep: id, Status: DepFailed, Reason: err.Error()}
 					}
 				}
 			default:
@@ -389,6 +417,71 @@ func (w *Waiter) depExists(dep manifest.NamedResource) bool {
 	}
 	_, ok := w.Store.GetStatus(dep)
 	return ok
+}
+
+// errRenderDrained is the sentinel waitRenderEmission returns when
+// the orchestrator's task pool drains while step-2 is still waiting
+// — no future emission can produce the missing dep, so the wait
+// fails fast as "dependency not found" without burning the full
+// RenderProducingTimeout cap. Internal to depwait; not exported.
+var errRenderDrained = errors.New("render pool drained without emission")
+
+// waitRenderEmission is step-2's bounded wait for a render-only dep
+// to arrive. It composes three termination signals:
+//
+//   - Store.EventObjectAdded fires for id → returns nil (caller
+//     falls through to the regular Ready wait).
+//   - Renders.OtherActive() flips to false → returns errRenderDrained
+//     (no future emission could produce id; caller fails fast).
+//   - ctx hits its deadline / cancellation → returns ctx.Err().
+//
+// An overall cap of RenderProducingTimeout is layered onto ctx so
+// the wait can't run past it even when Renders is nil (legacy
+// embedders without a task pool).
+func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResource) error {
+	renderCtx, renderCancel := context.WithTimeout(ctx, RenderProducingTimeout)
+	defer renderCancel()
+
+	// Subscribe FIRST, then re-check the store, to close the race
+	// between subscribe and a concurrent AddObject.
+	arrived := make(chan struct{}, 1)
+	unsub := w.Store.AddListener(store.EventObjectAdded, func(other manifest.NamedResource, _ any) {
+		if other != id {
+			return
+		}
+		select {
+		case arrived <- struct{}{}:
+		default:
+		}
+	}, false)
+	defer unsub()
+	if w.depExists(id) {
+		return nil
+	}
+
+	// Polling cadence for the RenderInflight quiescence check. 100ms
+	// keeps drain detection responsive without burning CPU on tight
+	// loops; the typo case fails within ~100ms of the orchestrator's
+	// last reconcile finishing.
+	const pollInterval = 100 * time.Millisecond
+	poll := time.NewTicker(pollInterval)
+	defer poll.Stop()
+
+	for {
+		select {
+		case <-arrived:
+			return nil
+		case <-renderCtx.Done():
+			return renderCtx.Err()
+		case <-poll.C:
+			if w.depExists(id) {
+				return nil
+			}
+			if w.Renders != nil && !w.Renders.OtherActive() {
+				return errRenderDrained
+			}
+		}
+	}
 }
 
 func classify(dep manifest.NamedResource, err error, fallback string) Event {

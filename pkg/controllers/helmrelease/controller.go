@@ -48,6 +48,7 @@ type Controller struct {
 	// Nil means "no parent enforcement"; matches pre-#221 behavior.
 	parentOf  func(manifest.NamedResource) (manifest.NamedResource, bool)
 	existence depwait.ExistenceLookup
+	renders   depwait.RenderInflight
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -70,6 +71,11 @@ type ReconcileOptions struct {
 	// depwait.ExistenceLookup for the decision matrix. Forwarded
 	// to every Waiter built during reconcile.
 	Existence depwait.ExistenceLookup
+	// Renders is the quiescence signal the orchestrator wires
+	// against task.Service.ActiveCount. depwait's step-2 long wait
+	// short-circuits to "dependency not found" once Renders reports
+	// no other reconcile is in flight.
+	Renders depwait.RenderInflight
 }
 
 // New constructs a HelmRelease controller.
@@ -89,6 +95,7 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetFilter(opts.Filter)
 	c.parentOf = opts.ParentOf
 	c.existence = opts.Existence
+	c.renders = opts.Renders
 }
 
 // lookupParent reports the structural parent KS of id via the
@@ -112,6 +119,7 @@ func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Durati
 		Parent:    id,
 		Timeout:   depwait.TimeoutFromSpec(timeout),
 		Existence: c.existence,
+		Renders:   c.renders,
 	}
 }
 

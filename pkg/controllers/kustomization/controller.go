@@ -43,6 +43,7 @@ type Controller struct {
 	parentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
 	renderTracker RenderTracker
 	existence     depwait.ExistenceLookup
+	renders       depwait.RenderInflight
 }
 
 // RenderTracker is the tiny seam the controller uses to report
@@ -77,6 +78,13 @@ type Options struct {
 	// depwait.ExistenceLookup for the decision matrix. Forwarded
 	// to every Waiter built during reconcile.
 	Existence depwait.ExistenceLookup
+	// Renders is the quiescence signal the orchestrator wires
+	// against task.Service.ActiveCount. depwait's step-2 long wait
+	// short-circuits to "dependency not found" once Renders reports
+	// no other reconcile is in flight — so a typo'd dependsOn
+	// fails as soon as the orchestrator drains instead of burning
+	// the full RenderProducingTimeout cap.
+	Renders depwait.RenderInflight
 }
 
 // New constructs a Kustomization controller.
@@ -96,6 +104,7 @@ func (c *Controller) Configure(opts Options) {
 	c.parentOf = opts.ParentOf
 	c.renderTracker = opts.RenderTracker
 	c.existence = opts.Existence
+	c.renders = opts.Renders
 }
 
 // markRendered reports a parent→child render emission to the
@@ -116,6 +125,7 @@ func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Durati
 		Parent:    id,
 		Timeout:   depwait.TimeoutFromSpec(timeout),
 		Existence: c.existence,
+		Renders:   c.renders,
 	}
 }
 

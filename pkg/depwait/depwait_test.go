@@ -44,6 +44,19 @@ func (l lookupStub) IsFileIndexed(id manifest.NamedResource) bool {
 	return l.fileIndexed(id)
 }
 
+// rendersStub satisfies RenderInflight from an inline closure so
+// tests can pin the OtherActive() flip behavior precisely.
+type rendersStub struct {
+	otherActive func() bool
+}
+
+func (r rendersStub) OtherActive() bool {
+	if r.otherActive == nil {
+		return false
+	}
+	return r.otherActive()
+}
+
 func TestWaiter_AllReady(t *testing.T) {
 	s := store.New()
 	dep1 := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "ns", Name: "a"}
@@ -331,6 +344,96 @@ func TestWaiter_RenderOnlyCappedAtRenderProducingTimeout(t *testing.T) {
 	}
 	if got := sum.Messages[dep]; got != "dependency not found" {
 		t.Errorf("expected 'dependency not found', got %q", got)
+	}
+}
+
+// TestWaiter_RenderInflightDrainShortCircuits pins the
+// RenderInflight quiescence path: when no other reconcile is in
+// flight, depwait's step-2 long wait must NOT burn the full
+// RenderProducingTimeout cap. It detects "no more emissions can
+// produce this dep" via Renders.OtherActive() and fails fast.
+//
+// The realistic scenario this defends: a typo'd dependsOn at the
+// end of a reconcile pass. The orchestrator drains all real work
+// (active count goes to 1 = just the depwait's own task), depwait
+// observes quiescence on its next poll, and returns
+// "dependency not found" within ~100ms — instead of waiting the
+// full cap.
+func TestWaiter_RenderInflightDrainShortCircuits(t *testing.T) {
+	// Tighten the cap and grace so the test runs fast; the win we
+	// pin here is "ended well before the cap fired", which only
+	// works if the cap is large enough that the RenderInflight
+	// path is the actual termination signal.
+	oldCap := RenderProducingTimeout
+	RenderProducingTimeout = 10 * time.Second
+	defer func() { RenderProducingTimeout = oldCap }()
+
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "typo-or-gone"}
+
+	w := &Waiter{
+		Store:     s,
+		Timeout:   30 * time.Second,
+		Existence: lookupStub{
+			promote:     func(manifest.NamedResource) bool { return false },
+			fileIndexed: func(manifest.NamedResource) bool { return false },
+		},
+		Renders: rendersStub{
+			otherActive: func() bool { return false }, // quiescent
+		},
+	}
+
+	start := time.Now()
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
+	elapsed := time.Since(start)
+
+	if !sum.AnyFailed() {
+		t.Fatalf("expected fail when no other renders active: %+v", sum)
+	}
+	// Must end well before the RenderProducingTimeout cap. We
+	// allow grace + a few poll intervals; anything past 1s past
+	// grace means the drain check didn't fire.
+	upper := MissingGrace + 1*time.Second
+	if elapsed > upper {
+		t.Errorf("drain short-circuit didn't fire: elapsed=%s, upper=%s", elapsed, upper)
+	}
+	if got := sum.Messages[dep]; got != "dependency not found" {
+		t.Errorf("expected 'dependency not found', got %q", got)
+	}
+}
+
+// TestWaiter_RenderInflightActiveHoldsTheWait pins the inverse:
+// while Renders.OtherActive() returns true, depwait keeps waiting
+// past the grace boundary for the dep to land. We flip the signal
+// to false after the dep has already arrived; the wait should
+// return via the subscription, not via the drain.
+func TestWaiter_RenderInflightActiveHoldsTheWait(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "produced-late"}
+
+	// Renders is "active" throughout; the only thing that ends the
+	// wait is the dep arriving via AddObject.
+	w := &Waiter{
+		Store:     s,
+		Timeout:   MissingGrace + 5*time.Second,
+		Existence: lookupStub{
+			promote:     func(manifest.NamedResource) bool { return false },
+			fileIndexed: func(manifest.NamedResource) bool { return false },
+		},
+		Renders: rendersStub{
+			otherActive: func() bool { return true },
+		},
+	}
+
+	go func() {
+		time.Sleep(MissingGrace + 500*time.Millisecond)
+		s.AddObject(&manifest.HelmRelease{Name: dep.Name, Namespace: dep.Namespace})
+		s.UpdateStatus(dep, store.StatusReady, "")
+	}()
+
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
+	if !sum.AllReady() {
+		t.Errorf("dep arrived after grace with Renders active; expected Ready: %+v", sum)
 	}
 }
 

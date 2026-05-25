@@ -444,6 +444,18 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	return ok
 }
 
+// orchestratorRenderInflight adapts task.Service.ActiveCount into
+// depwait.RenderInflight. OtherActive returns true when the pool
+// has more than one task running — the caller's own goroutine is
+// always one of them since depwait runs inside a Submit'd reconcile
+// body, so a count of 1 means "just me, no future emissions can
+// produce my missing dep".
+type orchestratorRenderInflight struct{ tasks *task.Service }
+
+func (r *orchestratorRenderInflight) OtherActive() bool {
+	return r.tasks.ActiveCount() > 1
+}
+
 // Run starts every controller, blocks until the task service drains,
 // then aggregates and returns any failures. The post-drain reporting
 // + error-string assembly lives in finalize so Run reads as a clean
@@ -479,16 +491,19 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		store:       o.store,
 		wipeSecrets: o.cfg.WipeSecrets,
 	}
+	renders := &orchestratorRenderInflight{tasks: o.tasks}
 	o.ksc.Configure(kustomization.Options{
 		Filter:        o.filter,
 		ParentOf:      parentResolver,
 		RenderTracker: o.rendered,
 		Existence:     existence,
+		Renders:       renders,
 	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
 		Filter:    o.filter,
 		ParentOf:  parentResolver,
 		Existence: existence,
+		Renders:   renders,
 	})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)

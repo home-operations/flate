@@ -240,6 +240,31 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		}
 		count += n
 	}
+
+	// Walk `components:` entries too. A kustomize Component contributes
+	// resources (and patches) to its parent's render, and any Flux CRs
+	// inside a component's subtree must be discoverable by flate.
+	// parent.go already reads `components:` for ownership-prefix
+	// claiming; without walking them here, the loader's discovery and
+	// parent.go's claim graph disagree.
+	for _, comp := range k.Components {
+		if cerr := ctx.Err(); cerr != nil {
+			return count, cerr
+		}
+		abs, ok := resolveDataPath(dir, comp)
+		if !ok {
+			continue
+		}
+		info, err := os.Stat(abs)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		n, err := w.descend(ctx, abs)
+		if err != nil {
+			return count, err
+		}
+		count += n
+	}
 	return count, nil
 }
 

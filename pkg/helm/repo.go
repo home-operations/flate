@@ -99,8 +99,16 @@ func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
 func (c *Client) pullHelmRepoOCI(ctx context.Context, r *manifest.HelmRepository, hr *manifest.HelmRelease) (string, error) {
 	chartURL := strings.TrimSuffix(r.URL, "/") + "/" + hr.Chart.Name
 	if puller := c.ociPullerSnapshot(); puller != nil {
+		// Name the synthetic OCIRepository after the source
+		// HelmRepository's identity (NOT the chart name): the puller's
+		// internal slot/dedup/log key uses (Namespace, Name), and
+		// using the chart name would conflate two distinct
+		// HelmRepositories that happen to ship a chart with the same
+		// name. Disambiguate slot identity further by suffixing the
+		// chart name so distinct charts from the same HelmRepository
+		// also get distinct slots.
 		syn := &manifest.OCIRepository{
-			Name:      hr.Chart.Name,
+			Name:      r.Name + "-" + hr.Chart.Name,
 			Namespace: r.Namespace,
 		}
 		syn.URL = chartURL
@@ -195,7 +203,14 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 		return "", err
 	}
 
-	cacheKey := safeName(hr.Chart.Name) + "-" + cv.Version + ".tgz"
+	// Include the HelmRepository's identity in the cache key so two
+	// repos that publish the same chart name + version don't
+	// overwrite each other's tarball on disk. Without the repo
+	// prefix, `nginx:15.0.0` from repo A and a different
+	// `nginx:15.0.0` from repo B alternately overwrote each other's
+	// bytes; the in-memory chartCache (keyed by path) then served
+	// whichever bytes were last written.
+	cacheKey := safeName(r.Namespace+"-"+r.Name+"-"+hr.Chart.Name) + "-" + cv.Version + ".tgz"
 	target := filepath.Join(c.cacheDir, cacheKey)
 
 	release, err := chartCacheLocks.Acquire(ctx, target)

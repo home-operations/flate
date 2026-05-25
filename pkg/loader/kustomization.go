@@ -18,6 +18,7 @@ type kustomization struct {
 	APIVersion         string            `json:"apiVersion"                   yaml:"apiVersion"`
 	Kind               string            `json:"kind"                         yaml:"kind"`
 	Resources          []string          `json:"resources,omitempty"          yaml:"resources,omitempty"`
+	Components         []string          `json:"components,omitempty"         yaml:"components,omitempty"`
 	ConfigMapGenerator []kvPairGenerator `json:"configMapGenerator,omitempty" yaml:"configMapGenerator,omitempty"`
 	SecretGenerator    []kvPairGenerator `json:"secretGenerator,omitempty"    yaml:"secretGenerator,omitempty"`
 }

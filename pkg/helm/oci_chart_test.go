@@ -118,9 +118,10 @@ func TestLocateOCIChart_FallsBackWhenNoArtifact(t *testing.T) {
 	}
 
 	// Pre-populate the helm cache target so fetchOCIChart's cache-hit
-	// branch returns without network. The target naming comes from
-	// fetchOCIChart's `safeName(filepath.Base(ref))+"-"+version+".tgz"`.
-	cacheTarget := filepath.Join(cli.cacheDir, "chart-0.1.0.tgz")
+	// branch returns without network. Target naming is
+	// safeName(trimmedRef)+"-"+version+".tgz" — full ref (registry+
+	// path), not just the basename, to avoid cross-registry collisions.
+	cacheTarget := filepath.Join(cli.cacheDir, "ghcr.io-test-chart-0.1.0.tgz")
 	if err := os.WriteFile(cacheTarget, buildChartTarGz(t, "chart", "0.1.0"), 0o600); err != nil {
 		t.Fatal(err)
 	}

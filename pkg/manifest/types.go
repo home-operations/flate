@@ -132,7 +132,14 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 	if name == "" {
 		return nil, inputf("missing metadata.name for %s", kind)
 	}
-	ns := stringOr(metadata, "namespace", DefaultNamespace)
+	// Pass through whatever the doc declares (empty for cluster-scoped
+	// CRs like ClusterRole / CRD / Namespace / IngressClass). DON'T
+	// default to flux-system here — that silently namespaces cluster-
+	// scoped resources and collides their identities in the store
+	// (NamespacedName() returns "flux-system/<name>" for every
+	// cluster-scoped CR with the same name). Callers that need a
+	// default for genuinely-namespaced kinds apply it at the emit site.
+	ns, _ := metadata["namespace"].(string)
 	spec, _ := doc["spec"].(map[string]any)
 	// Deep-copy the spec map so RawObject doesn't alias the loader's
 	// parsed YAML — mutating r.Spec then corrupts the multi-doc

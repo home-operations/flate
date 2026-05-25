@@ -100,6 +100,14 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 		inst.KubeVersion = kv
 	}
+	// Same for APIVersions — action.Install under DryRunClient
+	// replaces cfg.Capabilities with a fresh default copy and then
+	// only re-applies inst.APIVersions onto that copy. Setting
+	// cfg.Capabilities alone leaves APIVersions empty at render
+	// time, silently dropping the user's --api-versions flag.
+	if len(caps.APIVersions) > 0 {
+		inst.APIVersions = caps.APIVersions
+	}
 	if hrValues == nil {
 		hrValues = map[string]any{}
 	}

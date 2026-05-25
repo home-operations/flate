@@ -203,7 +203,10 @@ func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string
 	if c.registry == nil {
 		return "", errors.New("helm registry client not initialized")
 	}
-	target := filepath.Join(c.cacheDir, safeName(filepath.Base(ref))+"-"+version+".tgz")
+	// Key on the FULL trimmed ref (registry+path), not filepath.Base —
+	// two distinct registries publishing a chart with the same final
+	// path segment would otherwise collide on a single cache file.
+	target := filepath.Join(c.cacheDir, safeName(strings.TrimPrefix(ref, "oci://"))+"-"+version+".tgz")
 
 	release, err := chartCacheLocks.Acquire(ctx, target)
 	if err != nil {

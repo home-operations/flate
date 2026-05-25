@@ -74,57 +74,89 @@ func preflightRemoteResources(ctx context.Context, cache *StagingCache, root str
 	})
 }
 
-// rewriteURLResources rewrites URL entries in one kustomization file.
-// Reads the file as a generic YAML doc to preserve unknown fields,
-// rewrites the resources list, writes the file back. Returns the
-// first URL fetch failure encountered so the caller can fail the
-// Kustomization's reconcile rather than silently dropping the
-// missing resource.
+// rewriteURLResources rewrites URL entries in one kustomization file
+// via yaml.Node node-level editing. Previous implementations decoded
+// to map[string]any and re-marshaled, which round-tripped destroyed
+// YAML comments, key ordering, anchors/aliases, and block-vs-flow
+// distinctions — any downstream diff against the staged tree saw
+// noise unrelated to a user's edit, and re-marshal of map-decoded
+// values changed scalar quoting in ways kustomize can interpret
+// differently.
+//
+// Node-level editing modifies ONLY the resources sequence entries
+// that match HTTP/HTTPS URLs; every other byte in the file (comments,
+// other-key ordering, anchors) survives the round-trip intact.
+//
+// Returns the first URL fetch failure encountered so the caller can
+// fail the Kustomization's reconcile rather than silently dropping
+// the missing resource.
 func rewriteURLResources(ctx context.Context, cache *StagingCache, ksFile string) error {
 	body, err := os.ReadFile(ksFile) //nolint:gosec // ksFile is a tree-walk result under our staged copy
 	if err != nil {
 		return err
 	}
-	var doc map[string]any
+	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil {
 		// Some kustomization files use unusual shapes (YAML anchors,
-		// strict-mode fields) that our generic decode can't round-trip.
-		// Skip them silently — kustomize will load them via its own
-		// parser, and if any of those carry URL resources we fall back
-		// to kustomize's HTTP-then-git path. Better to render imperfectly
-		// than fail loud on a doc kustomize itself handles.
+		// strict-mode fields) that decode can't handle. Skip silently
+		// — kustomize will load them via its own parser, and if any
+		// carry URL resources we fall back to kustomize's
+		// HTTP-then-git path. Better to render imperfectly than fail
+		// loud on a doc kustomize itself handles.
 		return nil
 	}
-	rawRes, _ := doc["resources"].([]any)
-	if len(rawRes) == 0 {
+	resourcesNode := findMappingValue(&doc, "resources")
+	if resourcesNode == nil || resourcesNode.Kind != yaml.SequenceNode || len(resourcesNode.Content) == 0 {
 		return nil
 	}
 	changed := false
 	dir := filepath.Dir(ksFile)
-	for i, entry := range rawRes {
-		urlStr, ok := entry.(string)
-		if !ok {
+	for _, entry := range resourcesNode.Content {
+		if entry.Kind != yaml.ScalarNode {
 			continue
 		}
-		if !isHTTPURL(urlStr) {
+		if !isHTTPURL(entry.Value) {
 			continue
 		}
-		localFile, fetchErr := fetchRemoteResource(ctx, cache, dir, urlStr)
+		localFile, fetchErr := fetchRemoteResource(ctx, cache, dir, entry.Value)
 		if fetchErr != nil {
-			return fmt.Errorf("remote resource %s: %w", urlStr, fetchErr)
+			return fmt.Errorf("remote resource %s: %w", entry.Value, fetchErr)
 		}
-		rawRes[i] = "./" + localFile
+		entry.Value = "./" + localFile
+		entry.Tag = "!!str"
+		entry.Style = 0 // plain scalar; preserve other entries' styles
 		changed = true
 	}
 	if !changed {
 		return nil
 	}
-	doc["resources"] = rawRes
-	out, err := yaml.Marshal(doc)
+	out, err := yaml.Marshal(&doc)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(ksFile, out, 0o600)
+}
+
+// findMappingValue returns the value node for the first mapping
+// entry with the given key inside the document. Returns nil when
+// the document is not a single-mapping document or the key is
+// absent. Used by rewriteURLResources to locate the "resources:"
+// sequence without round-tripping the whole document.
+func findMappingValue(doc *yaml.Node, key string) *yaml.Node {
+	if doc == nil || doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil
+	}
+	// MappingNode.Content is [key, value, key, value, ...].
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == key {
+			return root.Content[i+1]
+		}
+	}
+	return nil
 }
 
 func isHTTPURL(s string) bool {

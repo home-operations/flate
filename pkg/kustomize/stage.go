@@ -36,8 +36,19 @@ type StagingCache struct {
 	remoteFetches sync.Map // url string -> *remoteFetch
 }
 
+// remoteFetch carries the result of one URL fetch. The fetch runs in
+// a single background goroutine (gated by start.Do) detached from any
+// caller's ctx so a cancellation on the first caller doesn't poison
+// the cached result for everyone else — the previous OnceValues+ctx
+// capture would freeze ctx.Canceled into every subsequent FetchRemote
+// call for the same URL. Callers select on their own ctx vs the
+// done channel; the fetch runs to completion under the package-level
+// remoteFetchTimeout.
 type remoteFetch struct {
-	once func() ([]byte, error)
+	start sync.Once
+	done  chan struct{}
+	body  []byte
+	err   error
 }
 
 type stage struct {
@@ -61,20 +72,32 @@ func NewStagingCache(parent string) (*StagingCache, error) {
 }
 
 // FetchRemote returns the body of urlStr, fetched at most once per
-// StagingCache lifetime. Both successful bodies and errors are
-// cached — concurrent callers block on a single sync.OnceValues and
-// every caller sees the same result. The error (if any) is returned
-// to the caller; logging is left to whichever reconcile path
-// surfaces the failure, so the user sees one structured error in
-// `flate test`'s report rather than a separate log line per call
-// site.
+// StagingCache lifetime. Both successful bodies and benign errors
+// (4xx/5xx/timeouts) are cached and returned to every subsequent
+// caller. Concurrent first-time callers share one fetch; later
+// callers always read the cached result without re-fetching.
+//
+// The fetch runs in a background goroutine seeded with a detached
+// context (httpGetURL applies remoteFetchTimeout internally) so a
+// cancellation on the first caller doesn't propagate into the
+// cached error — the previous OnceValues capture poisoned every
+// subsequent FetchRemote for the same URL with context.Canceled.
+// Each caller still honors its own ctx via the select below.
 func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, error) {
-	actual, _ := c.remoteFetches.LoadOrStore(urlStr, &remoteFetch{
-		once: sync.OnceValues(func() ([]byte, error) {
-			return httpGetURL(ctx, urlStr)
-		}),
+	loaded, _ := c.remoteFetches.LoadOrStore(urlStr, &remoteFetch{done: make(chan struct{})})
+	rf := loaded.(*remoteFetch)
+	rf.start.Do(func() {
+		go func() {
+			rf.body, rf.err = httpGetURL(context.Background(), urlStr)
+			close(rf.done)
+		}()
 	})
-	return actual.(*remoteFetch).once()
+	select {
+	case <-rf.done:
+		return rf.body, rf.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // Stage returns the on-disk staged copy of source. The copy is created

@@ -257,6 +257,65 @@ func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
 	}
 }
 
+// TestRewriteURLResources_PreservesCommentsAndOrder pins the
+// yaml.Node node-level edit fix: only the rewritten resource entry
+// changes, every other byte (comments, other-key ordering, trailing
+// content) survives intact. The previous map-decode + re-marshal
+// round-trip silently destroyed all of that.
+func TestRewriteURLResources_PreservesCommentsAndOrder(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("kind: ConfigMap\n"))
+	}))
+	t.Cleanup(srv.Close)
+
+	original := `# Owner comment that MUST survive.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# why we have this list
+resources:
+  # remote shared fragment
+  - ` + srv.URL + `/x.yaml
+  - ./local.yaml  # keep this comment
+namespace: my-app
+`
+	dir := t.TempDir()
+	ks := filepath.Join(dir, "kustomization.yaml")
+	mustWriteFile(t, ks, original)
+
+	if err := rewriteURLResources(context.Background(), newPreflightCache(t), ks); err != nil {
+		t.Fatalf("rewriteURLResources: %v", err)
+	}
+
+	got, err := os.ReadFile(ks) //nolint:gosec // ks under t.TempDir
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(got)
+
+	for _, expect := range []string{
+		"# Owner comment that MUST survive.",
+		"# why we have this list",
+		"# remote shared fragment",
+		"# keep this comment",
+	} {
+		if !strings.Contains(out, expect) {
+			t.Errorf("comment dropped on rewrite: %q\nfile is:\n%s", expect, out)
+		}
+	}
+	if !strings.Contains(out, "- ./local.yaml") {
+		t.Errorf("local resource path mangled:\n%s", out)
+	}
+	if !strings.Contains(out, ".flate-remote-") {
+		t.Errorf("URL entry not rewritten to local file:\n%s", out)
+	}
+	if strings.Contains(out, srv.URL) {
+		t.Errorf("URL still present after rewrite:\n%s", out)
+	}
+	if idxRes, idxNs := strings.Index(out, "\nresources:"), strings.Index(out, "\nnamespace:"); idxRes < 0 || idxNs < 0 || idxRes >= idxNs {
+		t.Errorf("key ordering not preserved (resources should precede namespace):\n%s", out)
+	}
+}
+
 // TestHttpGetURL_AcceptsBodyAtCap is the boundary check: a body
 // exactly at the cap must succeed. Guards against off-by-one in the
 // LimitReader+overflow-detection pattern.

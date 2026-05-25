@@ -1,9 +1,14 @@
 package kustomize
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestStagingCache_CopyTree_SkipsBrokenSymlink locks the fix for
@@ -75,6 +80,72 @@ func TestStagingCache_CopyTree_FollowsLiveSymlink(t *testing.T) {
 	}
 	if string(got) != "kind: ConfigMap\n" {
 		t.Errorf("symlink target lost; got %q", got)
+	}
+}
+
+// TestStagingCache_FetchRemote_CancelDoesNotPoisonCache pins the
+// fix for ctx-capture poisoning: the previous implementation wrapped
+// the fetch in sync.OnceValues with the first caller's ctx, so a
+// cancel on caller A froze context.Canceled into the cached error for
+// every subsequent FetchRemote of the same URL — even with healthy
+// ctxs. The new implementation detaches the fetch's own ctx from
+// callers; only the per-call select on rf.done vs ctx.Done() respects
+// the caller's cancellation.
+func TestStagingCache_FetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
+	// Slow server: holds requests until the harness signals release.
+	release := make(chan struct{})
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = w.Write([]byte("body: ok\n"))
+	}))
+	t.Cleanup(srv.Close)
+
+	cache, err := NewStagingCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	// Caller A starts a fetch with a ctx we'll cancel.
+	ctxA, cancelA := context.WithCancel(context.Background())
+	doneA := make(chan error, 1)
+	go func() {
+		_, err := cache.FetchRemote(ctxA, srv.URL+"/x.yaml")
+		doneA <- err
+	}()
+
+	// Wait until the server has at least one in-flight request, then
+	// cancel A. Give the goroutine a chance to actually call select.
+	for hits.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancelA()
+	if err := <-doneA; err == nil {
+		t.Fatal("caller A should have seen ctx.Err()")
+	}
+
+	// Caller B with a healthy ctx must NOT see context.Canceled. The
+	// fetch is still running (release not signaled); B should observe
+	// it complete normally. Release the server now so B can finish.
+	close(release)
+	body, err := cache.FetchRemote(context.Background(), srv.URL+"/x.yaml")
+	if err != nil {
+		t.Errorf("caller B got poisoned error: %v", err)
+	}
+	if string(body) != "body: ok\n" {
+		t.Errorf("caller B got wrong body: %q", body)
+	}
+
+	// And the dedup invariant: at most one server hit for the same URL
+	// despite two callers.
+	if got := hits.Load(); got != 1 {
+		t.Errorf("server hit %d times; want 1 (singleflight broken)", got)
 	}
 }
 

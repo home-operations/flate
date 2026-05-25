@@ -17,10 +17,24 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// pathLocks serialize concurrent renders against the same staged path —
-// Flux's Generator mutates kustomization.yaml in place, so parallel
-// builds against the same path race.
-var pathLocks = keylock.New[string]()
+// stageLocks serialize concurrent RenderFlux calls that share a
+// staged tree. The lock is keyed by the stage ROOT (one per source
+// directory), not the subPath, because Flux's Generator writes
+// kustomization.yaml at stagedSub AND SecureBuild walks downward
+// from stagedSub reading nested kustomization.yaml files. When two
+// calls hold ancestor/descendant subPaths under the same staged tree
+// — common in repos with a root KS that traverses nested apps — A's
+// SecureBuild reads B's kustomization.yaml mid-write. The per-subPath
+// locking that existed before couldn't see the overlap and produced
+// intermittent "patches accumulated" / wrong-rendered output that
+// disappeared on retry.
+//
+// The cost is reduced render parallelism within a single source
+// tree: KSes sharing a sourceRoot now serialize. For repos with a
+// single cluster root this is the bulk of renders. Sibling subPaths
+// that could otherwise have run in parallel are now sequenced.
+// Correctness is the priority — the previous parallelism was incorrect.
+var stageLocks = keylock.New[string]()
 
 // RenderFlux renders a Flux kustomize.toolkit.fluxcd.io Kustomization
 // using the same library that Flux's kustomize-controller uses
@@ -78,12 +92,10 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath st
 		return nil, err
 	}
 
-	// Serialize concurrent reconciles of the same path. Flux's
-	// Generator merges patches / images / components into the
-	// kustomization file at the staged path — restoring the source
-	// baseline + writing the Generator output must happen atomically
-	// per Kustomization. ctx cancellation interrupts the acquire.
-	release, err := pathLocks.Acquire(ctx, stagedSub)
+	// Serialize concurrent reconciles within the same staged tree.
+	// See stageLocks docstring for why this is the stage root and
+	// not stagedSub. ctx cancellation interrupts the acquire.
+	release, err := stageLocks.Acquire(ctx, staged)
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +244,12 @@ func stringMap(v any) map[string]string {
 // any) over the staged one so each Flux Generator run sees a clean
 // baseline. A no-op when the source has none — Generator will create
 // one from scratch.
+//
+// Surfaces os.Remove errors via errors.Join: a failed remove leaves
+// two kustomization variants in stagedSub, which makes SecureBuild's
+// readdir-order-dependent precedence non-deterministic. Symptom is
+// repeat reconciles producing different output. fs.ErrNotExist is
+// the expected miss and is filtered.
 func restoreKustomizationFile(sourceRoot, stagedSub, subPath string) error {
 	srcDir := filepath.Join(sourceRoot, subPath)
 	for _, name := range kustomizationFilenames {
@@ -246,19 +264,29 @@ func restoreKustomizationFile(sourceRoot, stagedSub, subPath string) error {
 		}
 		// Remove every other variant from the stage so Generator
 		// writes to the canonical filename.
+		var rmErrs []error
 		for _, other := range kustomizationFilenames {
-			if other != name {
-				_ = os.Remove(filepath.Join(stagedSub, other))
+			if other == name {
+				continue
+			}
+			if err := os.Remove(filepath.Join(stagedSub, other)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				rmErrs = append(rmErrs, fmt.Errorf("remove staged %s: %w", other, err))
 			}
 		}
-		return os.WriteFile(filepath.Join(stagedSub, name), data, info.Mode().Perm()) //nolint:gosec // stagedSub is our own tempdir
+		if err := os.WriteFile(filepath.Join(stagedSub, name), data, info.Mode().Perm()); err != nil { //nolint:gosec // stagedSub is our own tempdir
+			rmErrs = append(rmErrs, fmt.Errorf("write staged %s: %w", name, err))
+		}
+		return errors.Join(rmErrs...)
 	}
 	// No source kustomization.yaml — remove any stale staged copy
 	// so Generator starts cleanly.
+	var rmErrs []error
 	for _, name := range kustomizationFilenames {
-		_ = os.Remove(filepath.Join(stagedSub, name))
+		if err := os.Remove(filepath.Join(stagedSub, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			rmErrs = append(rmErrs, fmt.Errorf("remove staged %s: %w", name, err))
+		}
 	}
-	return nil
+	return errors.Join(rmErrs...)
 }
 
 // kustomizationFilenames is the canonical set kustomize looks for

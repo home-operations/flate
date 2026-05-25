@@ -123,7 +123,7 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 			if _, raw := parsed.(*manifest.RawObject); !raw {
 				continue
 			}
-			key := dedupKeyForDoc(doc)
+			key := resourceset.DedupKey(doc)
 			if key == "" {
 				continue
 			}
@@ -135,21 +135,6 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 		}
 	}
 	o.rsExtensions = out
-}
-
-// dedupKeyForDoc keys a rendered doc by (apiVersion, kind, namespace,
-// name). Empty string when any required component is missing —
-// signals "drop this doc" rather than collide with other emptys.
-func dedupKeyForDoc(doc map[string]any) string {
-	apiVersion, _ := doc["apiVersion"].(string)
-	kind, _ := doc["kind"].(string)
-	md, _ := doc["metadata"].(map[string]any)
-	name, _ := md["name"].(string)
-	ns, _ := md["namespace"].(string)
-	if kind == "" || name == "" {
-		return ""
-	}
-	return apiVersion + "|" + kind + "|" + ns + "|" + name
 }
 
 // resolveInputProvider mirrors discovery.resolveInputProvider but

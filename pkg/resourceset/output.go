@@ -2,7 +2,16 @@ package resourceset
 
 import fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
-func dedupKey(doc map[string]any) string {
+// DedupKey identifies a rendered doc by (apiVersion, kind, namespace,
+// name) for cross-render deduplication. Returns "" when kind or name
+// are missing — signal to the caller to drop the doc rather than
+// merge with an "empty key" collision pile.
+//
+// Exported so the orchestrator's post-Run RS-extension pass can share
+// the same identity rule as the in-package RS render — without that,
+// a name-grouped RS that emits the same child from two namespace
+// variants could land both copies in the parent KS's extension list.
+func DedupKey(doc map[string]any) string {
 	apiVersion, _ := doc["apiVersion"].(string)
 	kind, _ := doc["kind"].(string)
 	md, _ := doc["metadata"].(map[string]any)

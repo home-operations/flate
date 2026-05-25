@@ -27,9 +27,19 @@ import (
 // It owns a shared Cache so multiple GitRepository CRs writing to the
 // same cache root serialize on slot allocation correctly. Secrets is
 // optional; required when a GitRepository sets spec.secretRef.
+//
+// Mirrors, when set, switches the default fetch path to an incremental
+// bare-mirror-plus-worktree strategy: one bare clone per upstream URL
+// (kept warm across runs and across refs), and per-slot worktrees are
+// materialized by walking the commit tree out of the mirror. The
+// legacy full PlainClone-into-slot path still runs for repos that
+// need submodule recursion or sparse checkout — neither feature is
+// expressible against a bare mirror without a separate fetch that
+// defeats the cache. Leave nil to keep the legacy path everywhere.
 type Fetcher struct {
 	Cache   *source.Cache
 	Secrets source.SecretGetter
+	Mirrors *MirrorCache
 }
 
 // httpsTransportMu is declared in tls.go (with the only caller —
@@ -139,6 +149,10 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		url = rest
 	}
 
+	if f.canUseMirror(repo, url) {
+		return f.fetchViaMirror(ctx, repo, refStr, slot, auth, proxy)
+	}
+
 	cloneOpts := &git.CloneOptions{URL: url, NoCheckout: true, Auth: auth}
 	if proxy != nil {
 		cloneOpts.ProxyOptions = transport.ProxyOptions{
@@ -216,6 +230,66 @@ func (f *Fetcher) finalize(repo *manifest.GitRepository, art *store.SourceArtifa
 		_ = writeCachedRevision(art.LocalPath, art.Revision)
 	}
 	return nil
+}
+
+// canUseMirror reports whether this Fetcher can take the bare-mirror
+// path for repo. The mirror path doesn't support submodule recursion
+// or sparse checkout — both require a real worktree go-git can act on.
+// Everything else (https, ssh, file://) is mirror-eligible.
+func (f *Fetcher) canUseMirror(repo *manifest.GitRepository, _ string) bool {
+	if f.Mirrors == nil {
+		return false
+	}
+	if repo.RecurseSubmodules {
+		return false
+	}
+	if len(repo.SparseCheckout) > 0 {
+		return false
+	}
+	return true
+}
+
+// fetchViaMirror runs the bare-mirror path: open-or-update the
+// per-URL mirror, resolve the requested ref to a commit hash, then
+// materialize the tree into the slot's staging dir. PGP verification
+// runs against the mirror (which has the object store); ApplyIgnore
+// and the revision-marker write reuse the standard finalize.
+func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitRepository, refStr string, slot *source.Slot, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
+	tlsCfg, err := f.resolveTLS(repo)
+	if err != nil {
+		return nil, err
+	}
+	mirror, err := f.Mirrors.openOrFetch(ctx, repo.URL, auth, proxy, tlsCfg)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := resolveRefHash(mirror, repo.Reference)
+	if err != nil {
+		return nil, fmt.Errorf("GitRepository %s/%s ref %q: %w", repo.Namespace, repo.Name, refStr, err)
+	}
+	if err := materializeTree(mirror, hash, slot.Path); err != nil {
+		return nil, fmt.Errorf("materialize %s at %s: %w", hash, refStr, err)
+	}
+	if repo.Verification != nil {
+		if err := verifySignatures(f.Secrets, repo, mirror, hash); err != nil {
+			return nil, err
+		}
+	}
+	art := &store.SourceArtifact{
+		Kind: manifest.KindGitRepository,
+		URL:  repo.URL, LocalPath: slot.Path, Revision: hash.String(),
+	}
+	if err := source.ApplyIgnore(art.LocalPath, repo.Ignore); err != nil {
+		return nil, fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
+	}
+	if art.Revision != "" {
+		_ = writeCachedRevision(art.LocalPath, art.Revision)
+	}
+	if err := slot.Commit(); err != nil {
+		return nil, fmt.Errorf("GitRepository %s/%s: commit slot: %w", repo.Namespace, repo.Name, err)
+	}
+	art.LocalPath = slot.Path
+	return art, nil
 }
 
 // cachedRevisionFile holds the resolved commit SHA of a fetched slot.

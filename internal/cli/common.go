@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ import (
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
@@ -131,12 +133,7 @@ type helmFlags struct {
 // e.g. `--show-only templates/foo.yaml` on `flate build ks` and
 // wondered why nothing changed.
 func rendersHelm(kinds []string) bool {
-	for _, k := range kinds {
-		if k == "HelmRelease" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(kinds, manifest.KindHelmRelease)
 }
 
 func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {

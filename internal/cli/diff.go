@@ -75,7 +75,7 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 	bindCommon(cmd.Flags(), c)
 	// `diff all` renders HRs as part of its scope, so always bind
 	// helm flags (matches `build all` / `test all` / `get all`).
-	if kind == "" || rendersHelm([]string{kind}) {
+	if kind == "" || kind == manifest.KindHelmRelease {
 		bindHelmFlags(cmd.Flags(), h)
 	}
 	bindDiffFlags(cmd, d)

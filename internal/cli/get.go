@@ -206,7 +206,7 @@ func resourceListCmd[T manifest.BaseManifest](
 	// so showing --show-only / --no-hooks / --kube-version etc.
 	// confuses readers who'll wonder why the KS table cares about
 	// chart templating. Same gate `build` / `diff` / `test` use.
-	if rendersHelm([]string{kind}) {
+	if kind == manifest.KindHelmRelease {
 		bindHelmFlags(cmd.Flags(), h)
 	}
 	return cmd

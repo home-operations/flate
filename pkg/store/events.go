@@ -91,7 +91,17 @@ func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscrib
 		panic("store: unknown event kind")
 	}
 	if !flush {
+		// Even the no-replay path serializes via s.mu so a concurrent
+		// writer can't snapshot listeners (under set.mu alone) and then
+		// dispatch BEFORE this fn lands in the set. Without the s.mu
+		// hold, a registration racing AddObject can miss the very
+		// event it was registered for: writer takes s.mu → captures
+		// pre-add snapshot via set.snapshot → releases s.mu → registrar
+		// runs set.add(fn) → writer's deferred dispatch fires the
+		// pre-snapshot listeners, fn is silently missing.
+		s.mu.Lock()
 		handle := set.add(fn)
+		s.mu.Unlock()
 		return func() { set.remove(handle) }
 	}
 	s.mu.Lock()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -683,5 +684,59 @@ func TestStore_AddRendered_DispatchesListeners(t *testing.T) {
 	s.AddRendered(newCM("a", "ns"))
 	if got := seen.Load(); got != 1 {
 		t.Errorf("AddRendered fired %d events; want 1 (listener contract violated)", got)
+	}
+}
+
+// TestStore_AddListenerNoFlush_NoMissedConcurrentWrites pins that a
+// listener registered with flush=false against a hot writer doesn't
+// miss the next live event. Pre-fix, the non-flush branch took
+// set.mu but not s.mu, so a writer could:
+//   1. Lock s.mu, mutate store.
+//   2. Capture set.snapshot() under set.mu (independent of s.mu).
+//   3. Release s.mu.
+//   4. Dispatch to the pre-add snapshot.
+// while the registrar slid set.add(fn) between steps 2 and 4. fn
+// silently misses the live event. Holding s.mu around set.add
+// closes the window. Test races N writers against AddListener and
+// asserts the listener observes every AddObject made after its own
+// goroutine acquired the lock.
+func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
+	s := New()
+	const writers = 64
+	var (
+		writerWG sync.WaitGroup
+		registerReady = make(chan struct{})
+		registered = make(chan struct{})
+		seen atomic.Int64
+	)
+	// Pre-populate so AddObject takes the "update existing" path
+	// uniformly — keeps test deterministic.
+	for i := range writers {
+		s.AddObject(newCM("init"+strings.Repeat("x", i), "ns"))
+	}
+	writerWG.Add(1)
+	go func() {
+		defer writerWG.Done()
+		<-registerReady
+		// Spin writes while the registrar runs. Some will land before
+		// AddListener returns; some after.
+		for i := range writers {
+			s.AddObject(newCM("post"+strings.Repeat("x", i), "ns"))
+		}
+		<-registered // Make sure registrar is fully attached.
+		// One more guaranteed-post-registration write that the
+		// listener MUST observe.
+		s.AddObject(newCM("definite-post", "ns"))
+	}()
+	close(registerReady)
+	s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id.Name == "definite-post" {
+			seen.Add(1)
+		}
+	}, false)
+	close(registered)
+	writerWG.Wait()
+	if got := seen.Load(); got != 1 {
+		t.Errorf("listener missed the post-registration definite-post event (saw %d, want 1) — non-flush race regression", got)
 	}
 }

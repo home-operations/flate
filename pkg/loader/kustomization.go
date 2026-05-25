@@ -15,10 +15,30 @@ import (
 // declarations; we deliberately do not import the upstream type to
 // avoid pulling its full transitive dep tree into the load path.
 type kustomization struct {
+	APIVersion         string            `json:"apiVersion"                   yaml:"apiVersion"`
 	Kind               string            `json:"kind"                         yaml:"kind"`
 	Resources          []string          `json:"resources,omitempty"          yaml:"resources,omitempty"`
 	ConfigMapGenerator []kvPairGenerator `json:"configMapGenerator,omitempty" yaml:"configMapGenerator,omitempty"`
 	SecretGenerator    []kvPairGenerator `json:"secretGenerator,omitempty"    yaml:"secretGenerator,omitempty"`
+}
+
+// kustomizeAPIPrefix is the kustomize.config.k8s.io API group; both
+// regular Kustomizations and Components live here. A `kind: Component`
+// outside this prefix is a different CR that happens to share the
+// kind name (e.g. a custom operator's Component CR) and must NOT be
+// silently skipped by descend.
+const kustomizeAPIPrefix = "kustomize.config.k8s.io/"
+
+// isKustomizeComponent reports whether k is a kustomize Component
+// declaration (kind=Component AND kustomize.config.k8s.io apiVersion).
+// Kind alone isn't enough: a YAML with `kind: Component` and a
+// different apiVersion is a foreign CR and must not be treated as a
+// Component fragment.
+func (k *kustomization) isKustomizeComponent() bool {
+	if k == nil || k.Kind != "Component" {
+		return false
+	}
+	return strings.HasPrefix(k.APIVersion, kustomizeAPIPrefix)
 }
 
 // kvPairGenerator captures the file/env entries of a configMap or

@@ -127,6 +127,41 @@ spec:
 	}
 }
 
+// TestLoader_ForeignComponentKindIsNotSkipped pins the apiVersion
+// gate on the Component detection: a CR with `kind: Component` but a
+// non-kustomize apiVersion (e.g. someone's operator's custom CR) MUST
+// NOT be treated as a kustomize Component fragment — the subtree
+// would silently be skipped and any Flux resources inside vanish from
+// the load. Use a kustomization.yaml as the carrier so descend's
+// readKustomization picks it up.
+func TestLoader_ForeignComponentKindIsNotSkipped(t *testing.T) {
+	dir := t.TempDir()
+	// Foreign Component CR shaped exactly like the kustomize one
+	// except for apiVersion. With the kind-only check, descend would
+	// short-circuit and the sibling KS would never load.
+	testutil.WriteFile(t, dir, "addons/kustomization.yaml", `apiVersion: example.com/v1alpha1
+kind: Component
+resources:
+  - ./ks.yaml
+`)
+	testutil.WriteFile(t, dir, "addons/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: addons, namespace: flux-system}
+spec:
+  path: ./addons
+  sourceRef: {kind: GitRepository, name: flux-system}
+  interval: 1h
+`)
+	s := store.New()
+	if _, err := New(s).Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "addons"})
+	if got == nil {
+		t.Error("foreign 'kind: Component' (non-kustomize apiVersion) silently skipped sibling KS — Component gate fired without apiVersion check")
+	}
+}
+
 // TestLoader_SkipsConfigMapGeneratorDataFile mirrors the home-ops
 // repo shape that triggered #192: a `kustomization.yaml` declares a
 // `configMapGenerator.files` entry pointing at a YAML data file

@@ -112,9 +112,10 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		return 0, err
 	}
 	w := walker{
-		loader:  l,
-		ignore:  ignore,
-		visited: map[string]struct{}{},
+		loader:   l,
+		ignore:   ignore,
+		visited:  map[string]struct{}{},
+		scanRoot: abs,
 	}
 	return w.descend(ctx, abs)
 }
@@ -123,9 +124,16 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 // dedup, loader back-reference — so the recursive functions don't
 // need to thread the same args through every call.
 type walker struct {
-	loader  *Loader
-	ignore  *ignoreSet
-	visited map[string]struct{}
+	loader *Loader
+	ignore *ignoreSet
+	// scanRoot is the original Load() root that ignore patterns are
+	// authored against. Every ignore.matches call must pass scanRoot
+	// (not the current sub-package dir), otherwise patterns like
+	// `apps/junk/**` silently fail to match anything inside a
+	// descended sub-package — the rel path would be sub-tree-relative
+	// instead of scan-root-relative.
+	scanRoot string
+	visited  map[string]struct{}
 }
 
 // descend dispatches on the kind of directory dir is:
@@ -149,7 +157,7 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 
 	k := readKustomization(dir)
 	if k != nil {
-		if k.Kind == "Component" {
+		if k.isKustomizeComponent() {
 			slog.Debug("loader: skipping kustomize Component directory", "dir", dir)
 			return 0, nil
 		}
@@ -182,7 +190,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 	// lets parseFile recognize a Flux Kustomization that happens to
 	// be authored at the `kustomization.yaml` filename (rare but
 	// permitted).
-	if kpath, ok := kustomizationFilePath(dir); ok && !w.ignore.matches(kpath, dir) {
+	if kpath, ok := kustomizationFilePath(dir); ok && !w.ignore.matches(kpath, w.scanRoot) {
 		n, err := w.loader.loadFile(kpath)
 		if err != nil {
 			slog.Warn("loader: kustomization file failed to parse", "path", kpath, "err", err)
@@ -222,7 +230,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		if _, isData := dataFiles[abs]; isData {
 			continue
 		}
-		if w.ignore.matches(abs, dir) {
+		if w.ignore.matches(abs, w.scanRoot) {
 			continue
 		}
 		n, err := w.loader.loadFile(abs)
@@ -254,7 +262,7 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			if shouldSkipDir(d.Name(), path, root, w.ignore) {
+			if shouldSkipDir(d.Name(), path, w.scanRoot, w.ignore) {
 				return filepath.SkipDir
 			}
 			if path == root {
@@ -264,7 +272,7 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 			// graph walk and SkipDir to keep filepath.WalkDir from
 			// descending again.
 			if k := readKustomization(path); k != nil {
-				if k.Kind == "Component" {
+				if k.isKustomizeComponent() {
 					return filepath.SkipDir
 				}
 				w.visited[path] = struct{}{}
@@ -280,7 +288,7 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 		if !isManifestFile(path) {
 			return nil
 		}
-		if w.ignore.matches(path, root) {
+		if w.ignore.matches(path, w.scanRoot) {
 			return nil
 		}
 		n, err := w.loader.loadFile(path)
@@ -411,12 +419,25 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 // kustomizationFilePath returns the absolute path of dir's
 // kustomization.{yaml,yml,json} (first match wins, matching kustomize's
 // own filename precedence). Returns ("", false) when none exists.
+//
+// Uses os.Stat (follows symlinks) rather than restricting to regular
+// files via Lstat-IsRegular: readKustomization (which actually parses
+// the file) reads through symlinks happily, so the two need to agree
+// or descend silently classifies the dir as a kustomize package via
+// readKustomization but walkKustomize skips loading the file itself.
 func kustomizationFilePath(dir string) (string, bool) {
 	for _, name := range kustomizationFileNames {
 		p := filepath.Join(dir, name)
-		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
-			return p, true
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
 		}
+		if info.IsDir() {
+			// `kustomization.yaml/` is nonsense — refuse and let the
+			// next candidate filename try.
+			continue
+		}
+		return p, true
 	}
 	return "", false
 }

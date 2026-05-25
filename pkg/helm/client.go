@@ -109,33 +109,27 @@ func (c *Client) Resolver() SourceResolver {
 }
 
 func (c *Client) resolveHelmRepo(hr *manifest.HelmRelease) *manifest.HelmRepository {
-	c.mu.RLock()
-	resolver := c.resolver
-	c.mu.RUnlock()
-	if resolver == nil {
+	r := c.Resolver()
+	if r == nil {
 		return nil
 	}
-	return resolver.HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	return r.HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
 func (c *Client) resolveOCIRepo(hr *manifest.HelmRelease) *manifest.OCIRepository {
-	c.mu.RLock()
-	resolver := c.resolver
-	c.mu.RUnlock()
-	if resolver == nil {
+	r := c.Resolver()
+	if r == nil {
 		return nil
 	}
-	return resolver.OCIRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	return r.OCIRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
 func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtifact {
-	c.mu.RLock()
-	resolver := c.resolver
-	c.mu.RUnlock()
-	if resolver == nil {
+	r := c.Resolver()
+	if r == nil {
 		return nil
 	}
-	return resolver.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	return r.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
 // LocateChart returns a filesystem path to the chart referenced by hr.

@@ -212,6 +212,29 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		}
 	}
 
+	// Pre-Prepare existence waits: helm.Prepare reads from the live
+	// Store synchronously, returning ErrObjectNotFound for missing
+	// chartRef-HelmChart CRDs and non-optional valuesFrom refs. A
+	// legitimate load order — HR observed before the HelmChart CR
+	// it references, or before a sibling KS emits its valuesFrom CM —
+	// would hard-fail here without waiting. Collect the existence-
+	// only deps (no Ready semantics needed; they just have to be in
+	// the store before Prepare reads through them) and Await them.
+	if preDeps := preparePrereqs(hr); len(preDeps) > 0 {
+		if err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout), preDeps,
+			"awaiting pre-render references",
+			func(sum depwait.Summary) error {
+				return &manifest.DependencyFailedError{
+					Parent: id, Failed: sum.Failed, Reasons: sum.Messages,
+				}
+			}); err != nil {
+			return err
+		}
+		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
+			hr = obj
+		}
+	}
+
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving chart")
 	// helm.Prepare clones hr, resolves chartRef, and expands values —
 	// the same pre-render dance an embedder calling TemplateDocs
@@ -315,4 +338,39 @@ func (c *Controller) collectHRDeps(hr *manifest.HelmRelease) []manifest.Dependen
 		return nil
 	}
 	return append([]manifest.DependencyRef(nil), hr.DependsOn...)
+}
+
+// preparePrereqs collects refs that helm.Prepare reads from the live
+// Store via synchronous lookup. The Store is mutated by other
+// controllers (parent KS emit, sibling KS render), so a HR observed
+// before its referenced HelmChart CRD / valuesFrom CM/Secret would
+// hard-fail in Prepare with ErrObjectNotFound. Pre-await each ref's
+// existence so the lookup is guaranteed to land.
+//
+// Excluded: Optional valuesFrom refs (Prepare tolerates their
+// absence) and the chart source itself (already awaited explicitly
+// after Prepare since it needs Ready, not just exists).
+func preparePrereqs(hr *manifest.HelmRelease) []manifest.DependencyRef {
+	var out []manifest.DependencyRef
+
+	// chartRef → HelmChart CRD: the unresolved Name=="" placeholder
+	// shape (chartFromHelmRelease leaves Name empty for HelmChart
+	// chartRefs); Prepare's ResolveChartRef would synchronously read
+	// the HelmChartSource from the store to materialize it.
+	if hr.Chart.RepoKind == manifest.KindHelmChart && hr.Chart.Version == "" {
+		out = append(out, manifest.DependencyRef{NamedResource: manifest.NamedResource{
+			Kind: manifest.KindHelmChart, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
+		}})
+	}
+
+	for _, ref := range hr.ValuesFrom {
+		if ref.Optional {
+			continue
+		}
+		out = append(out, manifest.DependencyRef{NamedResource: manifest.NamedResource{
+			Kind: ref.Kind, Namespace: hr.Namespace, Name: ref.Name,
+		}})
+	}
+
+	return out
 }

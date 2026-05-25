@@ -183,6 +183,35 @@ func TestReadyExpr_NonBoolResult(t *testing.T) {
 	}
 }
 
+// TestReadyExpr_TransientEvalErrorPolls covers the "eval error against
+// the projection is transient" contract: cel-go's runtime can fail
+// when the expression touches a field that isn't yet present
+// (e.g. an empty conditions slice). The waiter must re-poll on the
+// next store event instead of failing terminally, so a dep that
+// becomes ready a moment later still goes Ready.
+func TestReadyExpr_TransientEvalErrorPolls(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}
+	// Status is set but conditions is empty — `conditions[0]` triggers
+	// a runtime eval error inside cel-go.
+	s.UpdateStatus(dep, store.StatusReady, "")
+
+	w := &Waiter{Store: s, Timeout: time.Second}
+	ch := w.Watch(context.Background(), []manifest.DependencyRef{{
+		NamedResource: dep,
+		ReadyExpr:     `dep.status.conditions[0].type == "Ready"`,
+	}})
+	// Now land the condition the expr is looking for — this should
+	// wake the polling loop.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		s.SetCondition(dep, store.Condition{Type: "Ready", Status: metav1.ConditionTrue})
+	}()
+	if sum := WaitAll(ch); !sum.AllReady() {
+		t.Errorf("dep should go Ready once conditions[0] populates: %+v", sum)
+	}
+}
+
 // TestReadyExpr_ReadsLabelsAndAnnotations locks the upstream Flux
 // contract that readyExpr can read dep.metadata.{labels,annotations}.
 // The HR/KS manifest types now carry these maps and the CEL projection

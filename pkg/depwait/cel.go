@@ -59,22 +59,51 @@ func mustCELEnv() *cel.Env {
 
 // evaluateReadyExpr compiles (memoized) and evaluates expr against the
 // projected views of self (consumer) and dep (dependency). Returns true
-// iff the program produces a bool true. Any compile, eval, or type-
-// shape error is returned verbatim.
+// iff the program produces a bool true.
+//
+// Errors are split: a compile/program error is wrapped in *celCompileErr
+// (terminal — the expression itself is broken); an eval error against
+// the projected object is wrapped in *celEvalErr (transient — the dep's
+// status may not yet be populated, so callers polling on store events
+// should keep waiting).
 func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedResource) (bool, error) {
 	prog, err := compileReadyExpr(expr)
 	if err != nil {
-		return false, err
+		return false, &celCompileErr{err}
 	}
 	val, _, err := prog.Eval(map[string]any{
 		"self": projectObject(s, self),
 		"dep":  projectObject(s, dep),
 	})
 	if err != nil {
-		return false, fmt.Errorf("eval: %w", err)
+		return false, &celEvalErr{fmt.Errorf("eval: %w", err)}
 	}
-	return asBool(val)
+	// asBool errors are type-shape problems with the expression itself
+	// (e.g. `dep.metadata.name` returns a string). The user's expr is
+	// broken regardless of dep state, so surface as terminal.
+	ok, err := asBool(val)
+	if err != nil {
+		return false, &celCompileErr{err}
+	}
+	return ok, nil
 }
+
+// celCompileErr signals an unrecoverable expression problem (parse,
+// type-check, or program assembly failure). Treated as terminal by
+// every caller.
+type celCompileErr struct{ err error }
+
+func (e *celCompileErr) Error() string { return e.err.Error() }
+func (e *celCompileErr) Unwrap() error { return e.err }
+
+// celEvalErr signals a runtime evaluation failure against the current
+// projection — typically a "no such attribute" because the dep's
+// status hasn't landed yet. Polling callers should treat this as
+// transient and re-evaluate on the next store event.
+type celEvalErr struct{ err error }
+
+func (e *celEvalErr) Error() string { return e.err.Error() }
+func (e *celEvalErr) Unwrap() error { return e.err }
 
 func compileReadyExpr(expr string) (cel.Program, error) {
 	if v, ok := celCache.Load(expr); ok {

@@ -440,13 +440,21 @@ func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, 
 }
 
 // tryReadyExpr evaluates expr once and translates the outcome into
-// the per-dep Event. Returns (event, true) on a definitive result
-// (Ready or eval error); returns (zero, false) when the expression
-// produced a clean false and the caller should keep waiting.
+// the per-dep Event. Returns (event, true) on a definitive result —
+// Ready, or a compile error that no amount of polling will fix.
+// Returns (zero, false) when the expression produced a clean false
+// OR a transient runtime eval error (typically a missing attribute
+// because the dep's status hasn't been populated yet) — the caller
+// should keep waiting on store events.
 func (w *Waiter) tryReadyExpr(expr string, id manifest.NamedResource) (Event, bool) {
 	ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id)
 	if err != nil {
-		return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}, true
+		var compileErr *celCompileErr
+		if errors.As(err, &compileErr) {
+			return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}, true
+		}
+		// Eval error: transient, re-poll on next event.
+		return Event{}, false
 	}
 	if ok {
 		return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}, true

@@ -53,8 +53,18 @@ func (r *renderedSet) MarkRendered(parent, child manifest.NamedResource) {
 		return
 	}
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	// First-write-wins: a child emitted by multiple parents (rare —
+	// kustomize replacements/components patterns) keeps its initial
+	// attribution. Without this guard, PR #361's fingerprint-dedup
+	// replay re-runs MarkRendered on every reconcile of every parent
+	// and silently swaps attribution to whichever parent reconciled
+	// most recently — breaking detectOrphans / ParentOf / RS-extension
+	// queries that subsequently read the wrong parent.
+	if _, exists := r.parents[child]; exists {
+		return
+	}
 	r.parents[child] = parent
-	r.mu.Unlock()
 }
 
 // has reports whether id was ever marked rendered.

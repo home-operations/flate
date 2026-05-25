@@ -37,13 +37,16 @@ func TestRenderedSet_RecordsAndQueriesParent(t *testing.T) {
 	}
 }
 
-// TestRenderedSet_LastWriterWins documents the overwrite semantic:
+// TestRenderedSet_FirstWriterWins pins the attribution semantic:
 // when a child id is rendered by two parents in the same run (rare,
-// but theoretically possible if a child KS is referenced from
-// multiple parent paths), the most recent emission wins. This
-// matches kustomize's semantics and the AddObject DeepEqual gate's
-// "last write wins" pattern.
-func TestRenderedSet_LastWriterWins(t *testing.T) {
+// but possible if a child KS is referenced from multiple parent
+// paths), the FIRST emitter owns the child. The first-write-wins
+// guard exists so PR #361's fingerprint-dedup replay — which
+// re-runs MarkRendered on every reconcile of every parent — doesn't
+// silently swap attribution to whichever parent reconciled most
+// recently (breaking detectOrphans / ParentOf / RS-extension queries
+// downstream).
+func TestRenderedSet_FirstWriterWins(t *testing.T) {
 	r := newRenderedSet()
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "n", Name: "demo"}
 	parentA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "a"}
@@ -53,7 +56,7 @@ func TestRenderedSet_LastWriterWins(t *testing.T) {
 	r.MarkRendered(parentB, child)
 
 	got, _ := r.ParentOf(child)
-	if got != parentB {
-		t.Errorf("ParentOf = %v, want last writer %v", got, parentB)
+	if got != parentA {
+		t.Errorf("ParentOf = %v, want first writer %v", got, parentA)
 	}
 }

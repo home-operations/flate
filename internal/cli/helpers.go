@@ -98,10 +98,14 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 	// diff REQUIRES a baseline — when neither --path-orig nor --base
 	// is set, auto-detect via the merge-base ladder. resolveBaseline
 	// with autoFallback=true preserves the existing "bare diff
-	// figures it out" UX.
-	if err := resolveBaseline(ctx, c, true); err != nil {
+	// figures it out" UX. Cleanup is deferred (not bound to ctx) so
+	// the tempdir survives SIGINT until both orchestrators' read
+	// paths have actually unwound.
+	cleanup, err := resolveBaseline(ctx, c, true)
+	if err != nil {
 		return diffSide{}, diffSide{}, err
 	}
+	defer cleanup()
 	currentCfg := buildOrchCfg(*c, *h)
 	origCfg := currentCfg
 	origCfg.Path, origCfg.PathOrig = c.pathOrig, c.path

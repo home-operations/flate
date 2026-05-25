@@ -644,21 +644,22 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		Existence: existence,
 		Renders:   renders,
 	})
-	o.src.Start(ctx)
-	o.ksc.Start(ctx)
-	o.hrc.Start(ctx)
-	defer o.Stop()
-
-	// Re-detect dependsOn cycles when render-emitted children
-	// land. Bootstrap's one-shot pass only sees file-loaded
-	// resources; a parent KS render that emits a child with a
-	// dependsOn pointing at another freshly-emitted (or pre-existing)
-	// peer can introduce a cycle invisible to the Bootstrap pass.
-	// breakDependsOnCycles short-circuits when no cycle is present
-	// (O(N+E) DFS, then early-return), so re-running on every
-	// KS/HR add is cheap even on render-heavy passes. The
-	// listener unsubs at orchestrator Stop via the closure
-	// captured here.
+	// Re-detect dependsOn cycles when render-emitted children land.
+	// Bootstrap's one-shot pass only sees file-loaded resources; a
+	// parent KS render that emits a child with a dependsOn pointing
+	// at another freshly-emitted (or pre-existing) peer can introduce
+	// a cycle invisible to the Bootstrap pass. breakDependsOnCycles
+	// short-circuits when no cycle is present (O(N+E) DFS, then
+	// early-return), so re-running on every KS/HR add is cheap even
+	// on render-heavy passes.
+	//
+	// REGISTERED BEFORE the controllers: listeners fire in
+	// registration order, so this strips cycle edges via store.Mutate
+	// synchronously BEFORE the controllers' listeners spawn their
+	// reconcile goroutines. Without the ordering the controller
+	// goroutine could read the un-stripped DependsOn from the store
+	// concurrently with cycle-stripping and burn its full per-dep
+	// Timeout waiting on a peer that's also waiting on it.
 	unsubCycles := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
 			return
@@ -666,6 +667,11 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		o.breakDependsOnCycles()
 	}, false)
 	defer unsubCycles()
+
+	o.src.Start(ctx)
+	o.ksc.Start(ctx)
+	o.hrc.Start(ctx)
+	defer o.Stop()
 
 	// Race ctx.Done() against task drain so a Ctrl-C during a stuck
 	// fetch / render is observable within one task's natural

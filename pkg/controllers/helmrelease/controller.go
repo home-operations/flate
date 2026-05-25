@@ -245,6 +245,34 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return err
 	}
 
+	// Wait for chart source (HelmRepository / OCIRepository / GitRepository)
+	// to be ready BEFORE the fingerprint dedup gate. A re-emit that
+	// finds the prior fingerprint cached must not replay stale docs
+	// when the upstream source has since transitioned to Failed or
+	// soft-skipped (--allow-missing-secrets newly applied) — the
+	// dedup-replay path otherwise publishes outputs the fresh path
+	// would have refused with ErrSourceSkipped.
+	srcID := manifest.NamedResource{
+		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
+	}
+	if err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout),
+		[]manifest.DependencyRef{{NamedResource: srcID}},
+		"", // status already set above
+		func(sum depwait.Summary) error {
+			return fmt.Errorf("%w: chart source %s not ready: %s",
+				manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
+		}); err != nil {
+		return err
+	}
+	// A chart source that soft-skipped (--allow-missing-secrets on its
+	// auth) marks Ready but writes no artifact and almost certainly
+	// can't be pulled anonymously either. Propagate the skip instead
+	// of letting TemplateDocs fail at the registry.
+	if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
+		return fmt.Errorf("%w: chart source %s %s",
+			manifest.ErrSourceSkipped, srcID.String(), info.Message)
+	}
+
 	// Fingerprint dedup: when the same HR id gets re-AddObject'd with
 	// the same effective spec (e.g. the parent KS render stamps
 	// kustomize.toolkit.fluxcd.io/{name,namespace} labels onto a
@@ -265,30 +293,6 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		// KS-side dedup-replay pattern.
 		c.dispatchRendered(id, existing.Manifests)
 		return nil
-	}
-
-	// Wait for chart source (HelmRepository / OCIRepository / GitRepository)
-	// to be ready. For HelmRepository we wait by existence rather than
-	// status — there's no controller updating HelmRepository status.
-	srcID := manifest.NamedResource{
-		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
-	}
-	if err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout),
-		[]manifest.DependencyRef{{NamedResource: srcID}},
-		"", // status already set above
-		func(sum depwait.Summary) error {
-			return fmt.Errorf("%w: chart source %s not ready: %s",
-				manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
-		}); err != nil {
-		return err
-	}
-	// A chart source that soft-skipped (--allow-missing-secrets on its
-	// auth) marks Ready but writes no artifact and almost certainly
-	// can't be pulled anonymously either. Propagate the skip instead
-	// of letting TemplateDocs fail at the registry.
-	if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
-		return fmt.Errorf("%w: chart source %s %s",
-			manifest.ErrSourceSkipped, srcID.String(), info.Message)
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering chart")

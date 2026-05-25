@@ -210,30 +210,41 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 //
 // Mutual exclusion with --path-orig is enforced here so every caller
 // gets the same error message.
-func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) error {
+//
+// Returns a cleanup func that callers MUST defer — it removes the
+// materialized baseline tempdir. Previously cleanup was bound to
+// `context.AfterFunc(ctx, ...)`, but ctx cancels on SIGINT
+// concurrently with orchestrator goroutines that may still be
+// reading under PathOrig (helm/kustomize/go-git filesystem reads
+// aren't all ctx-aware), producing ENOENT noise in the shutdown
+// error tail. Caller-defer'd cleanup runs after the orchestrator
+// has finished (or panicked through) the read path, eliminating
+// the race.
+//
+// Callers receive a no-op when no materialization happened (no
+// --base / no autoFallback / explicit --path-orig).
+func resolveBaseline(_ context.Context, c *commonFlags, autoFallback bool) (func(), error) {
+	noop := func() {}
 	if c.pathOrig != "" && c.base != "" {
-		return errors.New("--path-orig and --base are mutually exclusive")
+		return noop, errors.New("--path-orig and --base are mutually exclusive")
 	}
 	if c.pathOrig != "" {
 		// Explicit --path-orig — caller already specified the baseline.
-		return nil
+		return noop, nil
 	}
 	if c.base == "" && !autoFallback {
 		// No opt-in and no fallback semantics — leave c.pathOrig empty
 		// so the orchestrator runs in full-tree mode (the build/get/test
 		// default).
-		return nil
+		return noop, nil
 	}
 	res, err := baseline.AutoResolve(c.path, c.base)
 	if err != nil {
-		return err
+		return noop, err
 	}
 	c.pathOrig = res.PathOrig
-	// Schedule cleanup against ctx — fires when the CLI's root context
-	// cancels at RunE return.
-	context.AfterFunc(ctx, func() { _ = os.RemoveAll(res.TempDir) })
 	slog.Debug("baseline", "source", res.Source, "rev", res.Rev, "pathOrig", res.PathOrig)
-	return nil
+	return func() { _ = os.RemoveAll(res.TempDir) }, nil
 }
 
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
@@ -267,9 +278,14 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 	// Opt-in baseline materialization: build/get/test only fires
 	// resolveBaseline when the user explicitly set --base (or
 	// --path-orig). Bare command keeps the full-tree default.
-	if err := resolveBaseline(ctx, &c, false); err != nil {
+	// Cleanup is deferred (not bound to ctx) so the tempdir survives
+	// SIGINT until the orchestrator's read paths have actually
+	// unwound.
+	cleanup, err := resolveBaseline(ctx, &c, false)
+	if err != nil {
 		return nil, nil, err
 	}
+	defer cleanup()
 	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
 }
 

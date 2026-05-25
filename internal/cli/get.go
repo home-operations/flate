@@ -219,8 +219,11 @@ func printResources[T manifest.BaseManifest](
 	cols []format.Column, mapper func(*orchestrator.Orchestrator, T) (map[string]string, map[string]any),
 ) error {
 	objs := o.Store().ListObjects(kind)
-	rows := make([]map[string]string, 0, len(objs))
-	docs := make([]map[string]any, 0, len(objs))
+	type pair struct {
+		row map[string]string
+		doc map[string]any
+	}
+	pairs := make([]pair, 0, len(objs))
 	for _, obj := range objs {
 		if !sel.Matches(obj) {
 			continue
@@ -234,10 +237,23 @@ func printResources[T manifest.BaseManifest](
 			continue
 		}
 		row, doc := mapper(o, t)
-		rows = append(rows, row)
-		docs = append(docs, doc)
+		pairs = append(pairs, pair{row, doc})
 	}
-	sortRows(rows)
+	// Store.ListObjects iterates a Go map (random order); sort the
+	// (row, doc) tuple so every output flavor — including yaml/json —
+	// is deterministic across runs.
+	slices.SortFunc(pairs, func(a, b pair) int {
+		return cmp.Or(
+			cmp.Compare(a.row["namespace"], b.row["namespace"]),
+			cmp.Compare(a.row["name"], b.row["name"]),
+		)
+	})
+	rows := make([]map[string]string, len(pairs))
+	docs := make([]map[string]any, len(pairs))
+	for i, p := range pairs {
+		rows[i] = p.row
+		docs[i] = p.doc
+	}
 
 	switch format.Output(out) {
 	case format.OutputYAML:

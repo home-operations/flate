@@ -480,24 +480,6 @@ func TestCompareDocs_OrdersByKindNamespaceName(t *testing.T) {
 	}
 }
 
-// TestSortRows_Deterministic covers helpers.sortRows: rows must
-// land in (namespace, name) order regardless of input order.
-func TestSortRows_Deterministic(t *testing.T) {
-	rows := []map[string]string{
-		{"namespace": "b", "name": "z"},
-		{"namespace": "a", "name": "y"},
-		{"namespace": "a", "name": "x"},
-	}
-	sortRows(rows)
-	want := []string{"a/x", "a/y", "b/z"}
-	for i, r := range rows {
-		got := r["namespace"] + "/" + r["name"]
-		if got != want[i] {
-			t.Errorf("rows[%d] = %s, want %s", i, got, want[i])
-		}
-	}
-}
-
 // TestFilterCRDsOnly drops every non-CRD doc.
 func TestFilterCRDsOnly(t *testing.T) {
 	docs := []map[string]any{

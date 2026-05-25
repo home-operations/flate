@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -27,17 +26,6 @@ func firstArg(args []string) string {
 		return ""
 	}
 	return args[0]
-}
-
-// sortRows orders rows by (namespace, name) so table output is
-// deterministic across runs.
-func sortRows(rows []map[string]string) {
-	slices.SortFunc(rows, func(a, b map[string]string) int {
-		return cmp.Or(
-			cmp.Compare(a["namespace"], b["namespace"]),
-			cmp.Compare(a["name"], b["name"]),
-		)
-	})
 }
 
 // collectImages returns the union of images extracted from every

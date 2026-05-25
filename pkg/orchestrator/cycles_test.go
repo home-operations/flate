@@ -108,3 +108,46 @@ func TestBreakDependsOnCycles_StripsCycleEdges(t *testing.T) {
 		}
 	}
 }
+
+// TestBreakDependsOnCycles_RenderEmittedCycle verifies the runtime
+// cycle-detection listener: when a parent KS's render emits two
+// children whose dependsOn closes a loop, the orchestrator's
+// post-Bootstrap listener re-runs breakDependsOnCycles and strips
+// the cycle edges. Pre-fix, Bootstrap's one-shot pass never saw the
+// emitted nodes and every cycle member burned its full per-dep
+// timeout waiting on a peer that would never become Ready.
+//
+// The test invokes breakDependsOnCycles directly (mirrors what the
+// Run-time listener does) AFTER adding the emit'd children to the
+// store. End-to-end coverage of the listener wiring sits in the
+// e2e suite — but pinning the load-bearing behavior here keeps the
+// listener honest if it ever gets refactored.
+func TestBreakDependsOnCycles_RenderEmittedCycle(t *testing.T) {
+	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
+	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+
+	o := &Orchestrator{store: store.New()}
+	// Bootstrap-time graph: just one acyclic KS. No cycles to break.
+	o.store.AddObject(makeKS("acyclic", "ns"))
+	o.breakDependsOnCycles()
+
+	// Now simulate the render-emit: a parent KS adds two children
+	// whose dependsOn closes a loop. Bootstrap's pass missed these.
+	o.store.AddObject(makeKS("a", "ns", idB))
+	o.store.AddObject(makeKS("b", "ns", idA))
+	// Re-run the cycle detector (the post-Bootstrap listener fires
+	// this on every KS/HR add).
+	o.breakDependsOnCycles()
+
+	a, _ := o.store.GetObject(idA).(*manifest.Kustomization)
+	b, _ := o.store.GetObject(idB).(*manifest.Kustomization)
+	if a == nil || b == nil {
+		t.Fatal("emitted children went missing")
+	}
+	if len(a.DependsOn) != 0 {
+		t.Errorf("a's cycle edge not stripped post-emit: %+v", a.DependsOn)
+	}
+	if len(b.DependsOn) != 0 {
+		t.Errorf("b's cycle edge not stripped post-emit: %+v", b.DependsOn)
+	}
+}

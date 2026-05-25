@@ -645,6 +645,24 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.hrc.Start(ctx)
 	defer o.Stop()
 
+	// Re-detect dependsOn cycles when render-emitted children
+	// land. Bootstrap's one-shot pass only sees file-loaded
+	// resources; a parent KS render that emits a child with a
+	// dependsOn pointing at another freshly-emitted (or pre-existing)
+	// peer can introduce a cycle invisible to the Bootstrap pass.
+	// breakDependsOnCycles short-circuits when no cycle is present
+	// (O(N+E) DFS, then early-return), so re-running on every
+	// KS/HR add is cheap even on render-heavy passes. The
+	// listener unsubs at orchestrator Stop via the closure
+	// captured here.
+	unsubCycles := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
+			return
+		}
+		o.breakDependsOnCycles()
+	}, false)
+	defer unsubCycles()
+
 	// Race ctx.Done() against task drain so a Ctrl-C during a stuck
 	// fetch / render is observable within one task's natural
 	// cancellation latency rather than blocking forever on

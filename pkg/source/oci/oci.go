@@ -4,6 +4,7 @@
 package oci
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -263,10 +264,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		}
 	}
 
-	tag := versionTag(ref)
-	if tag == "" {
-		tag = "latest"
-	}
+	tag := cmp.Or(versionTag(ref), "latest")
 
 	// OCI Image Layout content store: blobs land at
 	// `slot/blobs/<algo>/<hex>` regardless of title annotations, so we

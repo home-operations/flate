@@ -1,6 +1,7 @@
 package oci
 
 import (
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -89,10 +90,7 @@ func (f *Fetcher) verifyCosignSignature(
 	if repo.Verify == nil {
 		return nil
 	}
-	provider := repo.Verify.Provider
-	if provider == "" {
-		provider = "cosign"
-	}
+	provider := cmp.Or(repo.Verify.Provider, "cosign")
 	if provider != "cosign" {
 		return fmt.Errorf("OCIRepository %s/%s: verify provider %q is not implemented; flate currently supports only %q",
 			repo.Namespace, repo.Name, provider, "cosign")

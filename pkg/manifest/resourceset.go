@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -53,13 +54,9 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 	if cr.Name == "" {
 		return nil, inputf("ResourceSet missing metadata.name")
 	}
-	ns := cr.Namespace
-	if ns == "" {
-		ns = DefaultNamespace
-	}
 	return &ResourceSet{
 		Name:            cr.Name,
-		Namespace:       ns,
+		Namespace:       cmp.Or(cr.Namespace, DefaultNamespace),
 		ResourceSetSpec: cr.Spec,
 		Labels:          cr.Labels,
 	}, nil
@@ -104,13 +101,9 @@ func parseResourceSetInputProvider(doc map[string]any) (*ResourceSetInputProvide
 	if cr.Name == "" {
 		return nil, inputf("ResourceSetInputProvider missing metadata.name")
 	}
-	ns := cr.Namespace
-	if ns == "" {
-		ns = DefaultNamespace
-	}
 	return &ResourceSetInputProvider{
 		Name:                         cr.Name,
-		Namespace:                    ns,
+		Namespace:                    cmp.Or(cr.Namespace, DefaultNamespace),
 		ResourceSetInputProviderSpec: cr.Spec,
 		Labels:                       cr.Labels,
 	}, nil

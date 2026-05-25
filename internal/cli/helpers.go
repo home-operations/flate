@@ -108,10 +108,7 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 	// its own mutex, and concurrent first-time clones of the same
 	// (url, ref) slot can race past the mkdir/Readdirnames check and
 	// step on each other.
-	cacheRoot := currentCfg.CacheDir
-	if cacheRoot == "" {
-		cacheRoot = filepath.Join(os.TempDir(), "flate-cache")
-	}
+	cacheRoot := cmp.Or(currentCfg.CacheDir, filepath.Join(os.TempDir(), "flate-cache"))
 	shared := source.NewCache(filepath.Join(cacheRoot, "sources"))
 	currentCfg.SourceCache = shared
 	origCfg.SourceCache = shared

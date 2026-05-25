@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"strings"
@@ -85,11 +86,7 @@ type ResourceFailedError struct {
 }
 
 func (e *ResourceFailedError) Error() string {
-	reason := e.Reason
-	if reason == "" {
-		reason = "unknown error"
-	}
-	return fmt.Sprintf("resource %s failed: %s", e.Resource, reason)
+	return fmt.Sprintf("resource %s failed: %s", e.Resource, cmp.Or(e.Reason, "unknown error"))
 }
 
 func (*ResourceFailedError) Unwrap() error { return ErrFlux }

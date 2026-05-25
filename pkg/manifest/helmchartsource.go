@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"cmp"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
@@ -38,22 +40,16 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	if cr.Name == "" {
 		return nil, inputf("HelmChart missing metadata.name")
 	}
-	ns := cr.Namespace
-	if ns == "" {
-		ns = DefaultNamespace
-	}
 	if cr.Spec.Chart == "" {
 		return nil, inputf("HelmChart missing spec.chart")
 	}
 	if cr.Spec.SourceRef.Name == "" {
 		return nil, inputf("HelmChart missing spec.sourceRef.name")
 	}
-	if cr.Spec.SourceRef.Kind == "" {
-		cr.Spec.SourceRef.Kind = KindHelmRepository
-	}
+	cr.Spec.SourceRef.Kind = cmp.Or(cr.Spec.SourceRef.Kind, KindHelmRepository)
 	return &HelmChartSource{
 		Name:          cr.Name,
-		Namespace:     ns,
+		Namespace:     cmp.Or(cr.Namespace, DefaultNamespace),
 		HelmChartSpec: cr.Spec,
 	}, nil
 }

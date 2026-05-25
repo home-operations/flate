@@ -430,20 +430,39 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 				"resolvedPath", currAbs)
 			return nil
 		}
-		// Diff the literal user-supplied paths so subdir-vs-subdir
-		// comparisons inside one repo work. Walking up to .git would
-		// collapse both endpoints to the same root.
-		cs, err := change.Detect(origAbs, currAbs)
+		// Widen the diff scope to each side's .git root when the user
+		// pointed at sibling subdirs of separate checkouts — the
+		// canonical PR-vs-base-branch flow `flate diff ks --path
+		// pr/cluster --path-orig base/cluster` where the actual edits
+		// live in `apps/`, outside the cluster subdir. Diffing the
+		// literal subdirs would report zero changes even though the
+		// rendered output differs. We only widen when both sides resolve
+		// to .git roots that are (a) not the same root (one checkout,
+		// two subdirs is the deliberate subdir-vs-subdir case) and
+		// (b) actually distinct from the path the user passed (no .git
+		// ancestor → FindRepoRoot returns the path unchanged).
+		diffOrig, diffCurr := origAbs, currAbs
+		origRoot := discovery.FindRepoRoot(origAbs)
+		currRoot := discovery.FindRepoRoot(currAbs)
+		widened := origRoot != origAbs && currRoot != currAbs && origRoot != currRoot
+		if widened {
+			diffOrig, diffCurr = origRoot, currRoot
+		}
+		cs, err := change.Detect(diffOrig, diffCurr)
 		if err != nil {
 			return fmt.Errorf("change detect: %w", err)
 		}
-		// Detect emits paths relative to currAbs; re-root them under
-		// repoRoot so they line up with SourceFiles keys.
-		if rel, err := filepath.Rel(repoRoot, currAbs); err == nil && rel != "." {
-			cs = cs.Reroot(rel)
+		// Detect emits paths relative to diffCurr. When we widened, that
+		// already equals repoRoot and SourceFiles keys line up. When we
+		// didn't, lift the subdir-relative paths into repoRoot's
+		// coordinate system so they match SourceFiles keys.
+		if !widened {
+			if rel, err := filepath.Rel(repoRoot, currAbs); err == nil && rel != "." {
+				cs = cs.Reroot(rel)
+			}
 		}
 		slog.Info("changed-only mode",
-			"baseline", origAbs, "current", currAbs, "changedFiles", cs.Len())
+			"baseline", diffOrig, "current", diffCurr, "changedFiles", cs.Len(), "widenedToRepoRoot", widened)
 		if cs.Len() == 0 {
 			slog.Warn("no changes detected between --path and --path-orig — output will be empty; verify both paths reference distinct snapshots")
 		}

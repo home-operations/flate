@@ -219,3 +219,108 @@ data:
 // via depwait.Waiter.Existence. An orchestrator-level duplicate
 // would require a slow fake fetcher to recreate the timing window
 // in real-time, slowing CI without catching new bugs.
+
+// TestIntegration_DiffWidensToRepoRootForSiblingCheckouts pins the
+// fix for the diff-coupling footgun seen in real-world validation:
+// when the user points `--path` at a Flux cluster subdir (e.g.
+// `<repo>/kubernetes/flux/cluster`) and `--path-orig` at the same
+// subdir of a sibling checkout, edits in `<repo>/kubernetes/apps/...`
+// must still enter the keep set. The old behavior diffed the literal
+// subdirs (which were byte-identical) and produced an empty keep set,
+// silently rendering nothing. The new behavior detects that both sides
+// resolve to distinct .git roots and widens the diff to those roots.
+func TestIntegration_DiffWidensToRepoRootForSiblingCheckouts(t *testing.T) {
+	origRoot := t.TempDir()
+	currRoot := t.TempDir()
+	// Mark both as separate git checkouts so discovery.FindRepoRoot
+	// picks them up. A bare directory is enough — change.Detect's git
+	// path runs `git diff --no-index` which doesn't read .git internals.
+	mustWrite(t, filepath.Join(origRoot, ".git", "HEAD"), "ref: refs/heads/main\n")
+	mustWrite(t, filepath.Join(currRoot, ".git", "HEAD"), "ref: refs/heads/main\n")
+
+	// Identical Flux bootstrap on both sides — the cluster subdir
+	// content is byte-identical, so a literal subdir-vs-subdir diff
+	// would return zero.
+	bootstrap := `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: https://example.test/cluster.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./kubernetes/apps/foo
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`
+	mustWrite(t, filepath.Join(origRoot, "kubernetes/flux/cluster.yaml"), bootstrap)
+	mustWrite(t, filepath.Join(currRoot, "kubernetes/flux/cluster.yaml"), bootstrap)
+
+	// The Kustomization spec.path tree lives under apps/foo — outside
+	// the flux/ subdir, exactly where real-world repos put their app
+	// manifests. The change is in this tree.
+	appKust := `resources:
+  - ./cm.yaml
+`
+	mustWrite(t, filepath.Join(origRoot, "kubernetes/apps/foo/kustomization.yaml"), appKust)
+	mustWrite(t, filepath.Join(currRoot, "kubernetes/apps/foo/kustomization.yaml"), appKust)
+	mustWrite(t, filepath.Join(origRoot, "kubernetes/apps/foo/cm.yaml"), `---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: foo-config
+  namespace: flux-system
+data:
+  value: original
+`)
+	mustWrite(t, filepath.Join(currRoot, "kubernetes/apps/foo/cm.yaml"), `---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: foo-config
+  namespace: flux-system
+data:
+  value: changed
+`)
+
+	// Point --path / --path-orig at the cluster subdir, NOT the repo
+	// root — this is the user-facing convention and the case the fix
+	// targets. The flux/cluster directory is byte-identical between
+	// the two checkouts; only kubernetes/apps/foo/cm.yaml differs.
+	currCluster := filepath.Join(currRoot, "kubernetes/flux")
+	origCluster := filepath.Join(origRoot, "kubernetes/flux")
+
+	o, err := orchestrator.New(orchestrator.Config{
+		Path:        currCluster,
+		PathOrig:    origCluster,
+		WipeSecrets: true,
+	})
+	if err != nil {
+		t.Fatalf("orchestrator.New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	f := o.Filter()
+	if f == nil {
+		t.Fatal("expected change.Filter to be wired (PathOrig was set), got nil — buildChangeFilter dropped the filter")
+	}
+	clusterApps := manifest.NamedResource{
+		Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps",
+	}
+	if !f.ShouldReconcile(clusterApps) {
+		t.Errorf("cluster-apps owns the changed file (apps/foo/cm.yaml) but was filtered out of the keep set; diff did not widen to repo root")
+	}
+}

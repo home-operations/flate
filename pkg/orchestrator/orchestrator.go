@@ -496,6 +496,15 @@ func (r *orchestratorRenderInflight) OtherActive() bool {
 	return r.tasks.ActiveCount() > 1
 }
 
+// QuiescenceCh delegates to task.Service.QuiescenceCh(1). The
+// threshold matches OtherActive's "> 1" check: the caller's own
+// goroutine is one slot, so a drain to <= 1 means no other reconcile
+// is running. depwait's waitRenderEmission selects on this channel
+// instead of polling OtherActive.
+func (r *orchestratorRenderInflight) QuiescenceCh() <-chan struct{} {
+	return r.tasks.QuiescenceCh(1)
+}
+
 // Run starts every controller, blocks until the task service drains,
 // then aggregates and returns any failures. The post-drain reporting
 // + error-string assembly lives in finalize so Run reads as a clean

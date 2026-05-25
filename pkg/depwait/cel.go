@@ -2,6 +2,7 @@ package depwait
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/google/cel-go/cel"
@@ -13,14 +14,27 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// celCache memoizes compiled CEL programs keyed by their source text.
+// celCache memoizes compileReadyExpr results keyed by source text.
 // dependsOn typically references the same expression many times (one
 // per consumer), so compiling once per process saves the parse + check
-// pass that cel-go does internally.
-var (
-	celCacheMu sync.Mutex
-	celCache   = map[string]cel.Program{}
-)
+// pass that cel-go does internally. The cache also memoizes *errors*
+// so a malformed expression doesn't recompile on every fire of
+// watchReadyExpr — every re-evaluation against a known-bad expression
+// reuses the cached error.
+//
+// sync.Map (rather than map+Mutex) was chosen because the cache is
+// read-heavy and rarely-mutated: thousands of evaluations against a
+// stable corpus of a few dozen expressions. sync.Map's read path is
+// lock-free for hits, which removes the per-evaluation Mutex
+// contention multiple parallel waiters previously paid.
+var celCache sync.Map // map[string]celCacheEntry
+
+// celCacheEntry caches one of (program, error). Exactly one field is
+// non-nil; readers branch on err first.
+type celCacheEntry struct {
+	prog cel.Program
+	err  error
+}
 
 // celEnv is the singleton CEL environment used by all ReadyExpr
 // evaluations. The declared variables `self` and `dep` mirror what
@@ -63,21 +77,29 @@ func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedReso
 }
 
 func compileReadyExpr(expr string) (cel.Program, error) {
-	celCacheMu.Lock()
-	defer celCacheMu.Unlock()
-	if prog, ok := celCache[expr]; ok {
-		return prog, nil
+	if v, ok := celCache.Load(expr); ok {
+		e := v.(celCacheEntry)
+		return e.prog, e.err
 	}
+	entry := celCacheEntry{}
 	ast, issues := celEnv.Compile(expr)
 	if issues != nil && issues.Err() != nil {
-		return nil, fmt.Errorf("compile: %w", issues.Err())
+		entry.err = fmt.Errorf("compile: %w", issues.Err())
+	} else {
+		prog, err := celEnv.Program(ast)
+		if err != nil {
+			entry.err = fmt.Errorf("program: %w", err)
+		} else {
+			entry.prog = prog
+		}
 	}
-	prog, err := celEnv.Program(ast)
-	if err != nil {
-		return nil, fmt.Errorf("program: %w", err)
-	}
-	celCache[expr] = prog
-	return prog, nil
+	// LoadOrStore: a concurrent compile of the same expr both lose
+	// races; the loser's prog/err is discarded and we return the
+	// winner's. cel-go's compilation is deterministic so the two
+	// results are equivalent.
+	actual, _ := celCache.LoadOrStore(expr, entry)
+	e := actual.(celCacheEntry)
+	return e.prog, e.err
 }
 
 // projectObject builds the unstructured-shaped value the CEL
@@ -102,6 +124,18 @@ func projectObject(s *store.Store, id manifest.NamedResource) map[string]any {
 	// the mixed snapshot can render a false positive/negative until
 	// the next event triggers re-evaluation.
 	obj, conds := s.Snapshot(id)
+	if obj == nil {
+		// Status entry without an object — only the metadata/status
+		// derived from id is reachable; labels and annotations are
+		// absent. A CEL expression like dep.metadata.labels['x']
+		// evaluating against this view sees no labels (has() returns
+		// false), which is correct: the dep isn't fully visible yet.
+		// Logged at Debug so an operator chasing a "readyExpr never
+		// satisfied" can see whether the dep had reached the store as
+		// an object or only as a phantom status entry.
+		slog.Debug("depwait: projectObject sees status without object",
+			"id", id.String())
+	}
 	condsAny := make([]any, 0, len(conds))
 	for _, c := range conds {
 		condsAny = append(condsAny, conditionToMap(c))

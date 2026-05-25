@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -185,6 +186,15 @@ type RenderInflight interface {
 	// body, so the caller's goroutine is counted; OtherActive
 	// returns true iff the total active count exceeds 1.
 	OtherActive() bool
+
+	// QuiescenceCh returns a channel closed when the pool drains to
+	// "no other work in flight" — the event-driven counterpart of
+	// OtherActive that lets waitRenderEmission select on the
+	// quiescence signal instead of polling. Each call returns a
+	// fresh channel; callers Receive once. Implementations that
+	// can't deliver an event-driven signal may return a nil channel,
+	// in which case waitRenderEmission falls back to the legacy poll.
+	QuiescenceCh() <-chan struct{}
 }
 
 // Watch concurrently watches each dep and returns a channel of Events.
@@ -234,10 +244,19 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 // safeWatchOne wraps watchOne with panic recovery — a malformed CEL
 // ReadyExpr (or any other internal bug) reports the dep as failed
 // instead of taking the orchestrator down with it.
+//
+// The recovered panic is logged with its goroutine stack so the
+// reporter can attribute "depwait panic: ..." failures to a concrete
+// site (CEL projection panicking against a malformed Snapshot, a
+// nil-typed assertion in labelsAndAnnotations, etc.). Without the
+// stack the panic message alone is often opaque.
 func safeWatchOne(ctx context.Context, w *Waiter, dep manifest.DependencyRef, timeout time.Duration) (ev Event) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("depwait: panic in watchOne", "dep", dep.String(), "panic", r)
+			slog.Error("depwait: panic in watchOne",
+				"dep", dep.String(),
+				"panic", r,
+				"stack", string(debug.Stack()))
 			ev = Event{
 				Dep:    dep.NamedResource,
 				Status: DepFailed,
@@ -351,24 +370,31 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 
 // watchReadyExpr evaluates expr against id's projected state and
 // returns DepReady when it produces true. On false / eval error it
-// blocks on the next EventStatusUpdated for id and re-evaluates.
-// Surfaces the parent ctx's timeout/cancel.
+// blocks on the next wake — fired by EITHER an EventStatusUpdated or
+// an EventObjectAdded for id — and re-evaluates.
+//
+// Subscribing to both events closes a wedge class: CEL exprs commonly
+// read `dep.metadata.labels[...]` (a property of the *object*, not
+// status), and an AddObject that lands new labels without a paired
+// SetCondition fires only EventObjectAdded. Without that subscription
+// the waiter would miss the wake and ride the per-dep timeout. For
+// kinds that emit both events on every reconcile this is harmless
+// (the chan is wake-only with a buffer-1 coalesce).
 //
 // The eval pattern runs three times — pre-subscribe (initial),
-// post-subscribe (race window between subscribe and live event),
-// and on each fire — so the evaluate-and-translate-to-Event step is
+// post-subscribe (race window between subscribe and live event), and
+// on each fire — so the evaluate-and-translate-to-Event step is
 // extracted into tryReadyExpr to keep the control flow readable.
 func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, expr string) Event {
 	if ev, done := w.tryReadyExpr(expr, id); done {
 		return ev
 	}
 
-	// Subscribe AFTER the initial eval, then re-check — closes the
-	// race where id flipped Ready between the first eval and the
-	// subscribe (we'd otherwise miss the EventStatusUpdated and
-	// block on the channel forever).
+	// One channel, two listeners — every wake re-evaluates against
+	// the latest store state. Coalesced via buffer-1 + default-send
+	// so a burst of events doesn't queue redundant evaluations.
 	ch := make(chan struct{}, 1)
-	unsub := w.Store.AddListener(store.EventStatusUpdated, func(other manifest.NamedResource, _ any) {
+	wake := func(other manifest.NamedResource, _ any) {
 		if other != id {
 			return
 		}
@@ -376,8 +402,15 @@ func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, 
 		case ch <- struct{}{}:
 		default:
 		}
-	}, false)
-	defer unsub()
+	}
+	unsubStatus := w.Store.AddListener(store.EventStatusUpdated, wake, false)
+	defer unsubStatus()
+	unsubObject := w.Store.AddListener(store.EventObjectAdded, wake, false)
+	defer unsubObject()
+
+	// Close the subscribe-vs-fire race window: an event that landed
+	// between the initial tryReadyExpr and AddListener would otherwise
+	// be missed.
 	if ev, done := w.tryReadyExpr(expr, id); done {
 		return ev
 	}
@@ -431,13 +464,19 @@ var errRenderDrained = errors.New("render pool drained without emission")
 //
 //   - Store.EventObjectAdded fires for id → returns nil (caller
 //     falls through to the regular Ready wait).
-//   - Renders.OtherActive() flips to false → returns errRenderDrained
-//     (no future emission could produce id; caller fails fast).
+//   - Renders.QuiescenceCh closes (the event-driven counterpart of
+//     OtherActive) → returns errRenderDrained (no future emission
+//     could produce id; caller fails fast).
 //   - ctx hits its deadline / cancellation → returns ctx.Err().
 //
 // An overall cap of RenderProducingTimeout is layered onto ctx so
 // the wait can't run past it even when Renders is nil (legacy
 // embedders without a task pool).
+//
+// The previous implementation polled OtherActive every 100ms. With
+// N concurrent waiters during a render that's N×10 wakes/sec doing
+// nothing useful most of the time; the quiescence channel replaces
+// the poll with one event per drain.
 func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResource) error {
 	renderCtx, renderCancel := context.WithTimeout(ctx, RenderProducingTimeout)
 	defer renderCancel()
@@ -459,27 +498,29 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 		return nil
 	}
 
-	// Polling cadence for the RenderInflight quiescence check. 100ms
-	// keeps drain detection responsive without burning CPU on tight
-	// loops; the typo case fails within ~100ms of the orchestrator's
-	// last reconcile finishing.
-	const pollInterval = 100 * time.Millisecond
-	poll := time.NewTicker(pollInterval)
-	defer poll.Stop()
+	// quiesce is a one-shot signal channel. A nil channel selects
+	// never, so embedders without a Renders wired (legacy callers)
+	// fall back to "wait for arrived or ctx" exactly as before.
+	var quiesce <-chan struct{}
+	if w.Renders != nil {
+		quiesce = w.Renders.QuiescenceCh()
+	}
 
 	for {
 		select {
 		case <-arrived:
 			return nil
-		case <-renderCtx.Done():
-			return renderCtx.Err()
-		case <-poll.C:
+		case <-quiesce:
+			// Quiescence: no other reconcile in the pool is doing
+			// work. Re-check arrived once in case the AddObject
+			// landed in the same scheduler tick as the drain; if
+			// the dep isn't here, no future emission can produce it.
 			if w.depExists(id) {
 				return nil
 			}
-			if w.Renders != nil && !w.Renders.OtherActive() {
-				return errRenderDrained
-			}
+			return errRenderDrained
+		case <-renderCtx.Done():
+			return renderCtx.Err()
 		}
 	}
 }

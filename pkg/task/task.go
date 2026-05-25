@@ -27,6 +27,19 @@ type Service struct {
 	//
 	// nil = unbounded (every Go runs in parallel). Set via NewBounded.
 	sem chan struct{}
+
+	// quiesceMu guards quiesceWaiters. Acquired only on Go/Done and
+	// QuiescenceCh; never inside fn. The waiter list is small and
+	// short-lived (one entry per depwait waitRenderEmission call).
+	quiesceMu      sync.Mutex
+	quiesceWaiters []quiesceWaiter
+}
+
+// quiesceWaiter pairs a threshold with the channel to close when the
+// active count drops to <= threshold.
+type quiesceWaiter struct {
+	threshold int64
+	ch        chan struct{}
 }
 
 // New constructs a fresh Service with unbounded concurrency.
@@ -59,7 +72,7 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 	s.wgActive.Add(1)
 	go func() {
 		defer s.wgActive.Done()
-		defer s.active.Add(-1)
+		defer s.taskDone()
 		defer func() {
 			if r := recover(); r != nil {
 				s.failures.Add(1)
@@ -76,6 +89,51 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 		}
 		fn(ctx)
 	}()
+}
+
+// taskDone decrements active and notifies any quiescence waiters
+// whose threshold the new count satisfies. Called via defer from
+// Go's body so panics and clean returns both fire it.
+func (s *Service) taskDone() {
+	now := s.active.Add(-1)
+	s.quiesceMu.Lock()
+	if len(s.quiesceWaiters) == 0 {
+		s.quiesceMu.Unlock()
+		return
+	}
+	kept := s.quiesceWaiters[:0]
+	for _, w := range s.quiesceWaiters {
+		if now <= w.threshold {
+			close(w.ch)
+			continue
+		}
+		kept = append(kept, w)
+	}
+	s.quiesceWaiters = kept
+	s.quiesceMu.Unlock()
+}
+
+// QuiescenceCh returns a channel closed when ActiveCount drops to
+// <= threshold. The channel is fresh per call; callers waiting on
+// distinct thresholds work independently. When ActiveCount is
+// already <= threshold at call time, the channel is returned closed.
+//
+// Used by depwait's render-emission wait to fire the moment no other
+// reconcile is in flight, instead of polling every 100ms. The
+// orchestrator drains exactly once per run, so a successful
+// quiescence signal is a one-shot event.
+func (s *Service) QuiescenceCh(threshold int64) <-chan struct{} {
+	ch := make(chan struct{})
+	s.quiesceMu.Lock()
+	defer s.quiesceMu.Unlock()
+	// Re-read active under quiesceMu so we don't race a concurrent
+	// taskDone that already closed waiters at the current threshold.
+	if s.active.Load() <= threshold {
+		close(ch)
+		return ch
+	}
+	s.quiesceWaiters = append(s.quiesceWaiters, quiesceWaiter{threshold: threshold, ch: ch})
+	return ch
 }
 
 // YieldSlot releases the worker-pool slot held by the current goroutine,

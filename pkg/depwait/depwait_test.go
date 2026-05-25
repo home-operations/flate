@@ -44,10 +44,11 @@ func (l lookupStub) IsFileIndexed(id manifest.NamedResource) bool {
 	return l.fileIndexed(id)
 }
 
-// rendersStub satisfies RenderInflight from an inline closure so
-// tests can pin the OtherActive() flip behavior precisely.
+// rendersStub satisfies RenderInflight from inline closures so tests
+// can pin the OtherActive / QuiescenceCh behavior precisely.
 type rendersStub struct {
 	otherActive func() bool
+	quiesce     func() <-chan struct{}
 }
 
 func (r rendersStub) OtherActive() bool {
@@ -55,6 +56,22 @@ func (r rendersStub) OtherActive() bool {
 		return false
 	}
 	return r.otherActive()
+}
+
+// QuiescenceCh returns a channel matching otherActive: closed when
+// otherActive returns false (drained), open otherwise. Returning nil
+// when no quiesce closure is wired exercises the "fall back to ctx
+// deadline" path in waitRenderEmission.
+func (r rendersStub) QuiescenceCh() <-chan struct{} {
+	if r.quiesce != nil {
+		return r.quiesce()
+	}
+	if r.otherActive != nil && !r.otherActive() {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+	return nil
 }
 
 func TestWaiter_AllReady(t *testing.T) {
@@ -491,6 +508,84 @@ func TestWaiter_PanicReportedAsFailed(t *testing.T) {
 	}
 	if msg := sum.Messages[dep]; !strings.Contains(msg, "depwait panic:") {
 		t.Errorf("expected 'depwait panic:' prefix, got %q", msg)
+	}
+}
+
+// TestWaiter_ReadyExprWakesOnObjectAdded pins the EventObjectAdded
+// subscription added alongside EventStatusUpdated in watchReadyExpr.
+// A CEL expression like `dep.metadata.labels['ready'] == 'true'`
+// depends on labels on the OBJECT, not on its status. If the labels
+// land via AddObject without a paired SetCondition, the watcher
+// previously missed the event and wedged until the per-dep timeout.
+//
+// We reproduce the wedge condition by adding the dep with the
+// required label fields AFTER the watcher subscribes, with no
+// status update at any point; the wait must return DepReady well
+// before the timeout.
+func TestWaiter_ReadyExprWakesOnObjectAdded(t *testing.T) {
+	s := store.New()
+	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "r"}
+
+	w := &Waiter{Store: s, Timeout: 3 * time.Second}
+
+	// Pre-seed status so the existence grace short-circuits and the
+	// watcher enters watchReadyExpr immediately. Status is Pending,
+	// so the built-in WatchReady would block — but the ReadyExpr
+	// path replaces that check.
+	s.UpdateStatus(id, store.StatusPending, "")
+
+	// Use a has()-guarded expression so the initial eval against a
+	// status-only projection (no object yet) doesn't error on the
+	// missing labels map — it returns false and the watcher blocks
+	// waiting for an event. The bug being pinned is that the wake
+	// MUST come via EventObjectAdded (the AddObject below), since
+	// no SetCondition fires.
+	dep := manifest.DependencyRef{
+		NamedResource: id,
+		ReadyExpr:     `has(dep.metadata.labels) && dep.metadata.labels['ready'] == 'true'`,
+	}
+
+	// Start the wait, then asynchronously AddObject with the
+	// expected label after a short delay. No SetCondition fires —
+	// the only wake source is EventObjectAdded.
+	done := make(chan Summary, 1)
+	go func() {
+		done <- WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{dep}))
+	}()
+	// Sleep long enough that the watcher has subscribed; longer than
+	// scheduler jitter, much shorter than the per-dep timeout.
+	time.Sleep(50 * time.Millisecond)
+	hr := &manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace}
+	hr.Labels = map[string]string{"ready": "true"}
+	s.AddObject(hr)
+
+	select {
+	case sum := <-done:
+		if sum.AnyFailed() || !sum.AllReady() {
+			t.Fatalf("expected ready; got %+v", sum)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("watchReadyExpr wedged — missed EventObjectAdded wake")
+	}
+}
+
+// TestCompileReadyExpr_MemoizesErrors pins the compile-error cache:
+// a known-bad expression should not recompile (and re-error) on
+// every fire. We compile twice and assert both calls return the
+// same error instance — sync.Map.LoadOrStore guarantees pointer
+// identity for the cached entry.
+func TestCompileReadyExpr_MemoizesErrors(t *testing.T) {
+	const bad = `this is not valid CEL ((` // unclosed paren = compile error
+	_, err1 := compileReadyExpr(bad)
+	if err1 == nil {
+		t.Fatal("expected compile error")
+	}
+	_, err2 := compileReadyExpr(bad)
+	if err2 == nil {
+		t.Fatal("expected error on second call")
+	}
+	if err1 != err2 {
+		t.Errorf("compile error not memoized: %p vs %p", err1, err2)
 	}
 }
 

@@ -652,13 +652,11 @@ func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
 			}
 		}
 	}
-	for id, info := range o.store.FailedResources() {
-		// Strip the `flux error: <subcategory>:` sentinel chain from the
-		// rendered message so embedders get the actual cause first.
-		// The Status field and the Store entry stay untouched — only
-		// the user-visible string is reshaped, matching the treatment
-		// the aggregated Run error and the WARN log already give.
-		info.Message = manifest.TrimSentinelPrefix(info.Message)
+	// Same projection logRecourceFailures + aggregateFailures use —
+	// see sanitizeFailed for the contract. Centralizing in one
+	// helper keeps the three readers in sync if the strip rule
+	// changes.
+	for id, info := range sanitizeFailed(o.store.FailedResources()) {
 		res.Failed[id] = info
 	}
 	maps.Copy(res.Orphans, o.orphans)

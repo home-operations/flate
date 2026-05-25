@@ -96,6 +96,24 @@ func (r *RawObject) Named() NamedResource {
 	return NamedResource{Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
 }
 
+// Clone returns a deep copy safe for mutation without aliasing the
+// store-owned source. The Spec map is recursively cloned so
+// downstream transformations (e.g. namespace inheritance,
+// substitution overlays) don't mutate the loader's parsed doc.
+//
+// The package doc advertises store-stored objects as immutable
+// (store.AddObject's reflect.DeepEqual dedup compares against shared
+// pointers), but RawObject's pre-Clone construction aliased the
+// loader's `doc[spec]` map directly — any consumer that wrote
+// through r.Spec corrupted the underlying multi-doc YAML the loader
+// reused across passes. Clone makes the immutability contract
+// enforceable instead of nominal.
+func (r *RawObject) Clone() *RawObject {
+	out := *r
+	out.Spec = DeepCopyMap(r.Spec)
+	return &out
+}
+
 // parseRawObject decodes any Kubernetes document into RawObject.
 func parseRawObject(doc map[string]any) (*RawObject, error) {
 	apiVersion := DocAPIVersion(doc)
@@ -116,6 +134,11 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 	}
 	ns := stringOr(metadata, "namespace", DefaultNamespace)
 	spec, _ := doc["spec"].(map[string]any)
+	// Deep-copy the spec map so RawObject doesn't alias the loader's
+	// parsed YAML — mutating r.Spec then corrupts the multi-doc
+	// stream the loader reuses across passes. Cheap; spec sub-trees
+	// are small relative to chart-style HR.Values.
+	spec = DeepCopyMap(spec)
 	return &RawObject{
 		Kind:       kind,
 		APIVersion: apiVersion,

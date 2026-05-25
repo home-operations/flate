@@ -232,23 +232,28 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 }
 
 // decodeBag normalizes ConfigMap/Secret data so callers see a single
-// map[string]string. binaryData values are base64-decoded.
+// map[string]string. binaryData values are base64-decoded. Non-string
+// shapes (a Secret.Data field decoded as []byte, a number leaf the
+// parser produced from an unquoted YAML scalar) get explicit handling
+// — the previous fmt.Sprint fallback silently rendered Go's Stringer
+// output, which for []byte is "[107 58]" rather than the intended
+// "k:" — silently breaking values-reference resolution.
 func decodeBag(stringData, binaryData map[string]any) (map[string]string, error) {
 	if len(stringData) == 0 && len(binaryData) == 0 {
 		return nil, nil
 	}
 	out := make(map[string]string, len(stringData)+len(binaryData))
 	for k, v := range stringData {
-		s, ok := v.(string)
-		if !ok {
-			s = fmt.Sprint(v)
+		s, err := bagValueAsString(v)
+		if err != nil {
+			return nil, fmt.Errorf("stringData[%s]: %w", k, err)
 		}
 		out[k] = s
 	}
 	for k, v := range binaryData {
-		s, ok := v.(string)
-		if !ok {
-			s = fmt.Sprint(v)
+		s, err := bagValueAsString(v)
+		if err != nil {
+			return nil, fmt.Errorf("binaryData[%s]: %w", k, err)
 		}
 		decoded, err := base64.StdEncoding.DecodeString(s)
 		if err != nil {
@@ -257,6 +262,32 @@ func decodeBag(stringData, binaryData map[string]any) (map[string]string, error)
 		out[k] = string(decoded)
 	}
 	return out, nil
+}
+
+// bagValueAsString coerces a single ConfigMap.Data / Secret.Data value
+// into the string form helm values / postBuild substitution consume.
+// Distinguishes the JSON/YAML shapes the decoder actually produces
+// (string, []byte after future schema corrections, JSON-numeric
+// scalars) from the "garbage value" case which now returns an error
+// instead of silently rendering "[107 58]"-style Stringer output.
+func bagValueAsString(v any) (string, error) {
+	switch t := v.(type) {
+	case string:
+		return t, nil
+	case []byte:
+		// Hypothetical today (the YAML decoder lands strings), but
+		// the spec-correct shape for Secret.Data is []byte and a
+		// future schema fix could land us here.
+		return string(t), nil
+	case nil:
+		return "", nil
+	case bool, int, int32, int64, uint, uint32, uint64, float32, float64:
+		// JSON scalar shapes — render via fmt.Sprint, deterministic
+		// for these types.
+		return fmt.Sprint(t), nil
+	default:
+		return "", fmt.Errorf("unsupported value type %T", v)
+	}
 }
 
 // updateHelmReleaseValues writes found into values using ref.TargetPath

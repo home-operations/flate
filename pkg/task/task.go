@@ -7,6 +7,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -219,13 +220,25 @@ func (c *Coalescer[K]) Submit(ctx context.Context, name string, key K, fn func(c
 		// On panic, Service.Go's recover catches it; we still need to
 		// clear running so a future Submit on this key is dispatched
 		// instead of silently coalescing into a slot that no longer
-		// has a runner.
+		// has a runner. If a coalesced submit had landed during the
+		// panicked run (s.pending == true), the previous code
+		// silently dropped that re-run — the event the submitter
+		// counted on was lost. Log at Warn so the loss is at least
+		// visible; the panicked run itself is already reported via
+		// Service.Go's recover. The pending re-run is genuinely
+		// dead — restarting it here would loop on the same panic if
+		// the input state is deterministic.
 		defer func() {
 			if r := recover(); r != nil {
 				c.mu.Lock()
+				lostPending := s.pending
 				s.running = false
 				s.pending = false
 				c.mu.Unlock()
+				if lostPending {
+					slog.Warn("task coalescer: dropped pending re-run because the previous run panicked",
+						"key", fmt.Sprintf("%v", key))
+				}
 				panic(r)
 			}
 		}()

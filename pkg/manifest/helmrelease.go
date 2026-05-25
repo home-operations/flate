@@ -35,6 +35,19 @@ func (h HelmChart) ChartName() string {
 	return h.RepoFullName() + "/" + h.Name
 }
 
+// IsResolved reports whether this HelmChart is in its final form —
+// i.e. NOT an unresolved chartRef placeholder. A chartRef pointing
+// at a HelmChart CRD lands in the store with RepoKind=KindHelmChart
+// and no chart Name; ResolveChartRef rewrites the HelmChart in
+// place by looking up the referenced HelmChartSource and setting
+// the chart name + version + the underlying source kind. Callers
+// that read h.Name / h.Version must either run after Prepare /
+// ResolveChartRef, or check IsResolved first — see also the empty
+// Name guarantee in chartFromHelmRelease.
+func (h HelmChart) IsResolved() bool {
+	return h.RepoKind != KindHelmChart || h.Version != ""
+}
+
 // chartFromHelmRelease projects the chart reference out of a typed
 // HelmRelease spec, unifying spec.chartRef and spec.chart into one
 // resolved shape. defaultNamespace fills in an omitted ref namespace.
@@ -46,8 +59,17 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string)
 		if ref.Name == "" {
 			return HelmChart{}, inputf("HelmRelease missing spec.chartRef.name")
 		}
+		// Leave Name empty for a chartRef → HelmChart CRD: the
+		// referenced HelmChartSource carries the actual chart name,
+		// which ResolveChartRef materializes via helmChartFromSource.
+		// The previous Name=ref.Name placeholder gave callers a wrong
+		// "<refName>" string if they read it before resolve — and
+		// IsResolved() now exposes the unresolved state explicitly so
+		// consumers can branch. For non-HelmChart chartRefs
+		// (OCIRepository/Bucket), the RepoKind is already final and
+		// Name stays empty intentionally — the underlying source's
+		// content determines the chart layout, not the ref name.
 		return HelmChart{
-			Name:          ref.Name,
 			RepoName:      ref.Name,
 			RepoNamespace: cmp.Or(ref.Namespace, defaultNamespace),
 			RepoKind:      ref.Kind,

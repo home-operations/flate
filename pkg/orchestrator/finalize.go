@@ -100,7 +100,7 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 }
 
 func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]store.StatusInfo) {
-	for id, info := range failed {
+	for id, info := range sanitizeFailed(failed) {
 		// Demoted to Debug: the same failure list is surfaced as a
 		// structured error by aggregateFailures (with file paths
 		// included) AND echoed by the test runner / build CLI's own
@@ -108,7 +108,7 @@ func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]sto
 		// stderr alongside the user-facing report and reads as
 		// "flate had an internal error" when it's just normal
 		// per-resource Flux failures the user expects to see.
-		args := []any{"id", id.String(), "reason", manifest.TrimSentinelPrefix(info.Message)}
+		args := []any{"id", id.String(), "reason", info.Message}
 		if f := o.sourceFiles[id]; f != "" {
 			args = append(args, "file", f)
 		}
@@ -118,20 +118,33 @@ func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]sto
 
 func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))
-	for id, info := range failed {
-		// Strip the `flux error: …: ` chain from user-facing messages —
-		// it's three layers of noise before the actual cause. The
-		// sentinels are still wired up for errors.Is callers (e.g.
-		// embedders branching on ErrObjectNotFound); this only affects
-		// the formatted text the CLI ultimately prints.
-		msg := manifest.TrimSentinelPrefix(info.Message)
+	for id, info := range sanitizeFailed(failed) {
 		if f := o.sourceFiles[id]; f != "" {
-			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", id.String(), f, msg))
+			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", id.String(), f, info.Message))
 		} else {
-			msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), msg))
+			msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), info.Message))
 		}
 	}
 	slices.Sort(msgs) // deterministic ordering across runs
 	return fmt.Errorf("reconcile completed with %d failure(s):\n  %s",
 		len(msgs), strings.Join(msgs, "\n  "))
+}
+
+// sanitizeFailed returns a copy of the failure map with each entry's
+// Message stripped of the `flux error: …: ` sentinel chain. Three
+// callers (logResourceFailures, aggregateFailures, Result.Failed)
+// previously inlined the same manifest.TrimSentinelPrefix call; if a
+// fourth reader appears the strip rule must be applied once at
+// snapshot time rather than re-derived at every consumer.
+//
+// The Store keeps the raw, sentinel-prefixed messages so errors.Is
+// chains on user-facing strings still work — only the projection
+// the orchestrator hands out is sanitized.
+func sanitizeFailed(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]store.StatusInfo {
+	out := make(map[manifest.NamedResource]store.StatusInfo, len(failed))
+	for id, info := range failed {
+		info.Message = manifest.TrimSentinelPrefix(info.Message)
+		out[id] = info
+	}
+	return out
 }

@@ -37,7 +37,7 @@ func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
 		clusterApps.Named(): "kubernetes/clusters/main/apps.yaml",
 		karma.Named():       "kubernetes/apps/main/observability/karma.yaml",
 	}
-	parents := BuildParentIndex(s, sourceFiles)
+	parents := BuildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
 
 	if got, want := parents[karma.Named()], clusterApps.Named(); got != want {
 		t.Errorf("karma.parent = %+v; want %+v", got, want)
@@ -76,7 +76,7 @@ func TestBuildParentIndex_DeepestPrefixWins(t *testing.T) {
 		inner.Named():      "apps/media/kustomization.yaml",
 		grandchild.Named(): "apps/media/plex/ks.yaml",
 	}
-	parents := BuildParentIndex(s, sourceFiles)
+	parents := BuildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
 
 	if got, want := parents[grandchild.Named()], inner.Named(); got != want {
 		t.Errorf("grandchild.parent = %+v; want %+v (deepest prefix)", got, want)
@@ -99,7 +99,7 @@ func TestBuildParentIndex_NoSelfMatch(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		ks.Named(): "apps/self/ks.yaml",
 	}
-	parents := BuildParentIndex(s, sourceFiles)
+	parents := BuildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
 	if _, ok := parents[ks.Named()]; ok {
 		t.Errorf("KS must not be its own parent: %v", parents)
 	}
@@ -126,7 +126,7 @@ func TestBuildParentIndex_NoSourceFileSkipped(t *testing.T) {
 		parent.Named(): "clusters/main/apps.yaml",
 		// orphan deliberately absent.
 	}
-	parents := BuildParentIndex(s, sourceFiles)
+	parents := BuildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
 	if _, ok := parents[orphan.Named()]; ok {
 		t.Errorf("KS without source file must not appear in parent index: %v", parents)
 	}

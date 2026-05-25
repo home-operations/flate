@@ -54,38 +54,31 @@ func LongestParent(prefixes []KSPathPrefix, file string, self manifest.NamedReso
 	return manifest.NamedResource{}, false
 }
 
-// BuildParentIndex maps each Flux Kustomization to its structural
-// parent — the Flux Kustomization whose spec.path is the deepest
-// strict ancestor of the child's source file. Excludes self-matches.
+// BuildParentIndexForKind maps each childKind resource to its
+// enclosing Flux Kustomization — the KS whose spec.path is the
+// deepest strict ancestor of the child's source file. Excludes
+// self-matches.
 //
 // Real Flux's reconcile chain enforces this naturally: a parent
-// Kustomization renders and applies its child Kustomizations, then
-// the kustomize-controller reconciles each child. flate's controllers
-// fire on AddObject and would otherwise race the parent's render —
-// the controller uses this index to wait for the parent's Ready
-// before reconciling, so any parent-render-time spec mutations
-// (e.g. `replacements:` injecting spec.targetNamespace) are visible
-// to the child's first reconcile.
+// Kustomization renders and applies its children, then the
+// downstream controller reconciles each. flate's controllers fire
+// on AddObject and would otherwise race the parent's render — the
+// child controllers use this index to gate reconcile on the
+// parent's Ready, so any parent-render-time spec mutations
+// (`replacements:` injecting spec.targetNamespace, `patches:`
+// rewriting HelmRelease driftDetection) are visible to the child's
+// first reconcile. Without the gate the file-loaded child renders
+// once with stale spec, the parent re-emits a mutated copy, and the
+// child renders again — twice the helm template / kustomize build
+// work for one logical resource.
 //
 // sourceFiles is the orchestrator's NamedResource → repo-relative
 // source-file map; entries without a recorded file are skipped.
-func BuildParentIndex(s *store.Store, sourceFiles map[manifest.NamedResource]string) map[manifest.NamedResource]manifest.NamedResource {
-	return buildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
-}
-
-// BuildParentIndexForKind extends BuildParentIndex to map any kind to
-// its enclosing Flux Kustomization. The HR controller uses this to
-// gate reconcile on the parent KS — without that gate, the file-
-// loaded HR renders once with stale spec, the parent KS applies
-// `replacements:` / `patches:` and re-emits a mutated HR, the HR
-// controller renders again with the canonical spec, and helm runs
-// twice for one logical resource. Same parent-prefix logic as
-// BuildParentIndex, just iterating the requested child kind.
+//
+// childKind=KindKustomization for the KS→KS parent map; pass
+// KindHelmRelease for the HR→KS map. The orchestrator builds both
+// (see discovery.Run → mergeParents).
 func BuildParentIndexForKind(s *store.Store, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
-	return buildParentIndexForKind(s, sourceFiles, childKind)
-}
-
-func buildParentIndexForKind(s *store.Store, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
 	prefixes := KSPathPrefixes(s)
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for _, obj := range s.ListObjects(childKind) {

@@ -90,7 +90,7 @@ func collectGeneratorDataFiles(ctx context.Context, root string, ignore *ignoreS
 			}
 			return nil
 		}
-		if !isKustomizationFileName(d.Name()) {
+		if !slices.Contains(kustomizationFileNames, d.Name()) {
 			return nil
 		}
 		k := readKustomization(filepath.Dir(path))
@@ -174,8 +174,3 @@ func resolveDataPath(base, rel string) (string, bool) {
 	return abs, true
 }
 
-// isKustomizationFileName reports whether name matches one of the
-// three kustomize-recognized filenames.
-func isKustomizationFileName(name string) bool {
-	return slices.Contains(kustomizationFileNames, name)
-}

@@ -7,11 +7,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -109,39 +106,8 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	}, nil
 }
 
-// resolveTransport builds a custom *http.Transport from
-// spec.certSecretRef and/or spec.proxySecretRef. Returns nil to let
-// minio-go use its default transport. The Insecure flag is
-// intentionally applied at the protocol level (normalizeEndpoint)
-// rather than the TLS layer, mirroring Flux's source-controller
-// behavior.
-func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) {
-	proxy, err := source.ResolveProxy(f.Secrets, b.Namespace, "Bucket",
-		b.Namespace+"/"+b.Name, b.ProxySecretRef)
-	if err != nil {
-		return nil, err
-	}
-	if b.CertSecretRef == nil && proxy == nil {
-		return nil, nil
-	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	if b.CertSecretRef != nil {
-		cfg, terr := source.ResolveCertSecret(f.Secrets, b.Namespace, "Bucket",
-			b.Namespace+"/"+b.Name, b.CertSecretRef)
-		if terr != nil {
-			return nil, terr
-		}
-		tr.TLSClientConfig = cfg
-	}
-	if proxy != nil {
-		pfn, perr := proxy.HTTPProxyFunc()
-		if perr != nil {
-			return nil, perr
-		}
-		tr.Proxy = pfn
-	}
-	return tr, nil
-}
+// resolveTransport lives in transport.go (paired with
+// transport_test.go).
 
 // resolveCredentials picks up accesskey/secretkey from the SecretRef
 // or falls back to anonymous (which is valid for public buckets).
@@ -170,36 +136,8 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 	return credentials.NewStaticV4(access, secret, ""), nil
 }
 
-// normalizeEndpoint splits a Flux-style endpoint into the
-// host[:port] form minio-go expects and a tls flag.
-func normalizeEndpoint(endpoint string, insecure bool) (host string, secure bool, err error) {
-	switch {
-	case strings.HasPrefix(endpoint, "https://"):
-		host = strings.TrimPrefix(endpoint, "https://")
-		secure = true
-	case strings.HasPrefix(endpoint, "http://"):
-		host = strings.TrimPrefix(endpoint, "http://")
-		secure = false
-	default:
-		host = endpoint
-		secure = !insecure
-	}
-	host = strings.TrimRight(host, "/")
-	if host == "" {
-		return "", false, errors.New("bucket endpoint is empty")
-	}
-	if _, perr := url.Parse(schemeFor(secure) + "://" + host); perr != nil {
-		return "", false, fmt.Errorf("parse Bucket endpoint %q: %w", endpoint, perr)
-	}
-	return host, secure, nil
-}
-
-func schemeFor(secure bool) string {
-	if secure {
-		return "https"
-	}
-	return "http"
-}
+// normalizeEndpoint / schemeFor live in endpoint.go (paired with
+// endpoint_test.go).
 
 // walkBucket lists the bucket under prefix, downloads each object
 // into slot preserving the prefix-relative path, and returns the
@@ -254,26 +192,8 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 	return keys, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// safeJoinUnderSlot resolves rel against slot and rejects any result
-// that would escape slot via path traversal (`..` segments) or absolute
-// paths. S3 keys are arbitrary strings; a bucket owner — accidentally
-// or deliberately — can produce a key whose filepath.FromSlash form
-// contains ../ enough times to climb past slot, and filepath.Join
-// happily cleans the climb-out without complaint. Without this guard,
-// such a key writes arbitrary files on the host. Mirrors the
-// extractTarGz protection in pkg/source/oci/layer.go.
-func safeJoinUnderSlot(slot, rel string) (string, error) {
-	joined := filepath.Join(slot, filepath.FromSlash(rel))
-	cleanSlot := filepath.Clean(slot)
-	relInside, err := filepath.Rel(cleanSlot, joined)
-	if err != nil {
-		return "", fmt.Errorf("path resolution: %w", err)
-	}
-	if relInside == ".." || strings.HasPrefix(relInside, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path traversal: %q escapes cache slot", rel)
-	}
-	return joined, nil
-}
+// safeJoinUnderSlot lives in traversal.go (paired with
+// traversal_test.go).
 
 func downloadObject(ctx context.Context, client *minio.Client, bucket, key, dst string) error {
 	obj, err := client.GetObject(ctx, bucket, key, minio.GetObjectOptions{})

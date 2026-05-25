@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -22,19 +23,26 @@ import (
 )
 
 type commonFlags struct {
-	path               string
-	pathOrig           string
-	base               string
-	namespace          string
-	labels             map[string]string
-	skipCRDs           bool
-	skipSecrets        bool
+	path                string
+	pathOrig            string
+	base                string
+	namespace           string
+	labels              map[string]string
+	skipCRDs            bool
+	skipSecrets         bool
 	allowMissingSecrets bool
-	skipKinds          []string
-	output             string
-	enableOCI          bool
-	registryConfig     string
-	concurrency        int
+	skipKinds           []string
+	output              string
+	enableOCI           bool
+	registryConfig      string
+	concurrency         int
+	// cacheDir is resolved lazily (and only when needed) via
+	// resolveCacheRoot — it points at the shared cache root used by
+	// both the orchestrator's source/helm caches and the baseline's
+	// content-addressed slots. Surfaced as a field (not just a
+	// function) so the value remains stable across multiple lookups
+	// within one command invocation.
+	cacheDir string
 }
 
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
@@ -238,26 +246,49 @@ func resolveBaseline(_ context.Context, c *commonFlags, autoFallback bool) (func
 		// default).
 		return noop, nil
 	}
-	res, err := baseline.AutoResolve(c.path, c.base)
+	res, err := baseline.AutoResolve(c.path, c.base, c.resolveCacheRoot())
 	if err != nil {
 		return noop, err
 	}
 	c.pathOrig = res.PathOrig
-	slog.Debug("baseline", "source", res.Source, "rev", res.Rev, "pathOrig", res.PathOrig)
+	slog.Debug("baseline", "source", res.Source, "rev", res.Rev, "pathOrig", res.PathOrig, "persistent", res.Persistent)
+	if res.Persistent {
+		return noop, nil
+	}
 	return func() { _ = os.RemoveAll(res.TempDir) }, nil
 }
 
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
-		Path:               c.path,
-		PathOrig:           c.pathOrig,
-		HelmOptions:        c.helmOptions(h),
-		WipeSecrets:        true,
-		EnableOCI:          c.enableOCI,
-		RegistryConfig:     c.registryConfig,
-		Concurrency:        c.concurrency,
+		Path:                c.path,
+		PathOrig:            c.pathOrig,
+		HelmOptions:         c.helmOptions(h),
+		WipeSecrets:         true,
+		EnableOCI:           c.enableOCI,
+		RegistryConfig:      c.registryConfig,
+		Concurrency:         c.concurrency,
 		AllowMissingSecrets: c.allowMissingSecrets,
+		CacheDir:            c.resolveCacheRoot(),
 	}
+}
+
+// resolveCacheRoot picks the on-disk cache root used by every persistent
+// cache (orchestrator sources, baseline slots, helm tarballs). Lazy and
+// cached on commonFlags so multiple lookups within one invocation
+// return the same value. Prefers the OS user cache dir
+// ($XDG_CACHE_HOME on Linux, ~/Library/Caches on macOS,
+// %LocalAppData% on Windows) with a "flate" subdir; falls back to
+// $TMPDIR/flate-cache when UserCacheDir errors.
+func (c *commonFlags) resolveCacheRoot() string {
+	if c.cacheDir != "" {
+		return c.cacheDir
+	}
+	if d, err := os.UserCacheDir(); err == nil && d != "" {
+		c.cacheDir = filepath.Join(d, "flate")
+	} else {
+		c.cacheDir = filepath.Join(os.TempDir(), "flate-cache")
+	}
+	return c.cacheDir
 }
 
 func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {

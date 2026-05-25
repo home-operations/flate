@@ -21,7 +21,7 @@ func TestAutoResolve_ExplicitBase(t *testing.T) {
 	commitA := initRepoWithFile(t, dir, "a.yaml", "original")
 	commitB := writeAndCommit(t, dir, "a.yaml", "updated")
 
-	res, err := AutoResolve(dir, commitA.String())
+	res, err := AutoResolve(dir, commitA.String(), "")
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestAutoResolve_UpstreamMergeBase(t *testing.T) {
 	// Move forward on the local branch.
 	writeAndCommit(t, dir, "a.yaml", "diverged")
 
-	res, err := AutoResolve(dir, "")
+	res, err := AutoResolve(dir, "", "")
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestAutoResolve_OriginHEAD(t *testing.T) {
 
 	writeAndCommit(t, dir, "a.yaml", "new")
 
-	res, err := AutoResolve(dir, "")
+	res, err := AutoResolve(dir, "", "")
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestAutoResolve_OriginMainFallback(t *testing.T) {
 
 	writeAndCommit(t, dir, "a.yaml", "new")
 
-	res, err := AutoResolve(dir, "")
+	res, err := AutoResolve(dir, "", "")
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestAutoResolve_DetachedHEAD(t *testing.T) {
 		t.Fatalf("detach HEAD: %v", err)
 	}
 
-	res, err := AutoResolve(dir, "")
+	res, err := AutoResolve(dir, "", "")
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestAutoResolve_NoGit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "f.yaml"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := AutoResolve(dir, "")
+	_, err := AutoResolve(dir, "", "")
 	if err == nil {
 		t.Fatal("expected error for non-git path")
 	}
@@ -179,7 +179,7 @@ func TestAutoResolve_Shallow(t *testing.T) {
 	}
 	// No upstream, no origin refs → the resolution ladder falls
 	// through; the shallow detection fires last.
-	_, err := AutoResolve(dir, "")
+	_, err := AutoResolve(dir, "", "")
 	if err == nil {
 		t.Fatal("expected shallow error")
 	}
@@ -196,7 +196,7 @@ func TestAutoResolve_Shallow(t *testing.T) {
 func TestAutoResolve_NoUpstream(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
-	_, err := AutoResolve(dir, "")
+	_, err := AutoResolve(dir, "", "")
 	if err == nil {
 		t.Fatal("expected no-upstream error")
 	}
@@ -223,7 +223,7 @@ func TestAutoResolve_PathOutsideRepo(t *testing.T) {
 	if err := os.Mkdir(sibling, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	_, err := AutoResolve(sibling, "")
+	_, err := AutoResolve(sibling, "", "")
 	if err == nil {
 		t.Fatal("expected error for path outside repo")
 	}
@@ -239,7 +239,7 @@ func TestAutoResolve_PathOrigMappedToSubdir(t *testing.T) {
 	commit := writeAndCommit(t, dir, "kubernetes/flux/cluster/cluster.yaml", "y")
 
 	clusterDir := filepath.Join(dir, "kubernetes", "flux", "cluster")
-	res, err := AutoResolve(clusterDir, commit.String())
+	res, err := AutoResolve(clusterDir, commit.String(), "")
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestAutoResolve_DropsGitMarker(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	commit := writeAndCommit(t, dir, "a.yaml", "y")
-	res, err := AutoResolve(dir, commit.String())
+	res, err := AutoResolve(dir, commit.String(), "")
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -275,6 +275,68 @@ func TestAutoResolve_DropsGitMarker(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Errorf(".git marker should be a directory")
+	}
+}
+
+// TestAutoResolve_CachedReusesSlot: when cacheRoot is non-empty, the
+// baseline lands at <cacheRoot>/baselines/<sha>/. A second AutoResolve
+// against the same commit returns Persistent=true with the same dir
+// and skips re-materialization. Removing a file from the materialized
+// tree before the second call would normally be a no-op since we don't
+// re-walk — locking that contract here.
+func TestAutoResolve_CachedReusesSlot(t *testing.T) {
+	dir := t.TempDir()
+	initRepoWithFile(t, dir, "a.yaml", "x")
+	commit := writeAndCommit(t, dir, "a.yaml", "y")
+	cacheRoot := t.TempDir()
+
+	res1, err := AutoResolve(dir, commit.String(), cacheRoot)
+	if err != nil {
+		t.Fatalf("AutoResolve 1: %v", err)
+	}
+	if !res1.Persistent {
+		t.Error("cached AutoResolve should report Persistent=true")
+	}
+	want := filepath.Join(cacheRoot, "baselines", commit.String())
+	if res1.TempDir != want {
+		t.Errorf("TempDir = %q, want %q", res1.TempDir, want)
+	}
+	// Stamp a sentinel so we can prove run 2 didn't re-materialize
+	// (which would replace the stamp).
+	sentinel := filepath.Join(res1.TempDir, ".flate-test-stamp")
+	if err := os.WriteFile(sentinel, []byte("kept"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res2, err := AutoResolve(dir, commit.String(), cacheRoot)
+	if err != nil {
+		t.Fatalf("AutoResolve 2: %v", err)
+	}
+	if res2.TempDir != res1.TempDir {
+		t.Errorf("second call drifted: %q vs %q", res2.TempDir, res1.TempDir)
+	}
+	if got, _ := os.ReadFile(sentinel); string(got) != "kept" { //nolint:gosec // sentinel built under t.TempDir
+		t.Errorf("second call re-materialized; sentinel = %q", got)
+	}
+}
+
+// TestAutoResolve_NoCacheRootIsTempdir confirms the legacy path still
+// works: empty cacheRoot → MkdirTemp directory, Persistent=false.
+func TestAutoResolve_NoCacheRootIsTempdir(t *testing.T) {
+	dir := t.TempDir()
+	initRepoWithFile(t, dir, "a.yaml", "x")
+	commit := writeAndCommit(t, dir, "a.yaml", "y")
+
+	res, err := AutoResolve(dir, commit.String(), "")
+	if err != nil {
+		t.Fatalf("AutoResolve: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(res.TempDir) }()
+	if res.Persistent {
+		t.Error("uncached AutoResolve should report Persistent=false")
+	}
+	if !strings.HasPrefix(filepath.Base(res.TempDir), "flate-baseline-") {
+		t.Errorf("uncached TempDir = %q, want flate-baseline-* basename", res.TempDir)
 	}
 }
 
@@ -305,7 +367,7 @@ func TestMaterialize_PreservesExecutableBit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := AutoResolve(dir, commit.String())
+	res, err := AutoResolve(dir, commit.String(), "")
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}

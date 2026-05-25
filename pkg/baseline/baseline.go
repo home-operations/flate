@@ -20,9 +20,17 @@ type Result struct {
 	// --path-orig: <TempDir>/<rel> where rel is the user's --path
 	// relative to the git repo root.
 	PathOrig string
-	// TempDir is the root of the materialized tree. Caller is
-	// responsible for os.RemoveAll once the diff is done.
+	// TempDir is the root of the materialized tree. When Persistent
+	// is false, caller is responsible for os.RemoveAll once the diff
+	// is done. When Persistent is true, the directory lives under the
+	// cache root and is meant to be reused across runs — caller MUST
+	// NOT remove it.
 	TempDir string
+	// Persistent reports whether TempDir lives under a content-
+	// addressed cache root (and so survives across runs) or is a
+	// disposable MkdirTemp directory (legacy behavior). Callers wire
+	// cleanup conditionally on this flag.
+	Persistent bool
 	// Rev is the resolved short SHA of the baseline commit, for
 	// logging and error context.
 	Rev string
@@ -39,16 +47,21 @@ type resolution struct {
 	Source string
 }
 
-// AutoResolve picks a baseline for path, materializes it to a tempdir,
-// and returns a Result with the synthetic --path-orig already mapped
-// into the baseline tree's coordinate system. When base is non-empty
-// it is the explicit --base=<rev> override; otherwise the
-// auto-detection ladder runs.
+// AutoResolve picks a baseline for path, materializes it, and returns
+// a Result with the synthetic --path-orig already mapped into the
+// baseline tree's coordinate system. When base is non-empty it is the
+// explicit --base=<rev> override; otherwise the auto-detection ladder
+// runs.
 //
-// Caller must os.RemoveAll Result.TempDir when the diff is done.
+// cacheRoot enables content-addressed reuse: when non-empty the
+// baseline lands at <cacheRoot>/baselines/<commit-sha>/ and Result is
+// marked Persistent — subsequent runs against the same commit skip
+// materialization entirely. When cacheRoot is "" the legacy
+// MkdirTemp path runs and the caller is responsible for cleanup.
+//
 // Errors carry the suggested next flag so the user knows whether to
 // pass --base=<rev> or --path-orig=<dir>.
-func AutoResolve(path, base string) (*Result, error) {
+func AutoResolve(path, base, cacheRoot string) (*Result, error) {
 	repo, repoRoot, err := openRepo(path)
 	if err != nil {
 		return nil, err
@@ -62,13 +75,76 @@ func AutoResolve(path, base string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	dir, persistent, err := materializeAt(repo, r.Hash, cacheRoot)
+	if err != nil {
+		return nil, err
+	}
+	pathOrig, err = mapToTempDir(repoRoot, dir, path)
+	if err != nil {
+		if !persistent {
+			_ = os.RemoveAll(dir)
+		}
+		return nil, err
+	}
+	return &Result{
+		PathOrig:   pathOrig,
+		TempDir:    dir,
+		Persistent: persistent,
+		Rev:        shortRev(r.Hash),
+		Source:     r.Source,
+	}, nil
+}
+
+// materializeAt produces the baseline tree on disk for hash and
+// returns (dir, persistent, err). When cacheRoot is non-empty the
+// directory lives at <cacheRoot>/baselines/<hash>/ and is reused
+// across runs; otherwise an MkdirTemp directory is allocated.
+func materializeAt(repo *git.Repository, hash plumbing.Hash, cacheRoot string) (string, bool, error) {
+	if cacheRoot != "" {
+		slot := filepath.Join(cacheRoot, "baselines", hash.String())
+		if info, err := os.Stat(slot); err == nil && info.IsDir() {
+			return slot, true, nil
+		}
+		if err := os.MkdirAll(filepath.Dir(slot), 0o750); err != nil {
+			return "", false, fmt.Errorf("baseline cache parent: %w", err)
+		}
+		// Stage in a sibling temp dir on the same filesystem so the
+		// finalize is an atomic rename — concurrent diffs against the
+		// same commit will either share the finished slot or fall
+		// through to their own stage (one wins the rename, the rest
+		// see ErrExist and clean up).
+		staging, err := os.MkdirTemp(filepath.Dir(slot), filepath.Base(slot)+".tmp.*")
+		if err != nil {
+			return "", false, fmt.Errorf("baseline staging: %w", err)
+		}
+		if err := materialize(repo, hash, staging); err != nil {
+			_ = os.RemoveAll(staging)
+			return "", false, err
+		}
+		if err := os.Mkdir(filepath.Join(staging, ".git"), 0o700); err != nil {
+			_ = os.RemoveAll(staging)
+			return "", false, fmt.Errorf("baseline .git marker: %w", err)
+		}
+		if err := os.Rename(staging, slot); err != nil {
+			_ = os.RemoveAll(staging)
+			// A racing diff may have finalized first; if the slot now
+			// exists we can adopt it without re-materializing.
+			if info, statErr := os.Stat(slot); statErr == nil && info.IsDir() {
+				return slot, true, nil
+			}
+			return "", false, fmt.Errorf("baseline finalize: %w", err)
+		}
+		return slot, true, nil
+	}
+
 	tmp, err := os.MkdirTemp("", "flate-baseline-*")
 	if err != nil {
-		return nil, fmt.Errorf("baseline tempdir: %w", err)
+		return "", false, fmt.Errorf("baseline tempdir: %w", err)
 	}
-	if err := materialize(repo, r.Hash, tmp); err != nil {
+	if err := materialize(repo, hash, tmp); err != nil {
 		_ = os.RemoveAll(tmp)
-		return nil, err
+		return "", false, err
 	}
 	// Drop a .git marker so discovery.FindRepoRoot (called by
 	// orchestrator.buildChangeFilter's repo-root widening, PR #348)
@@ -78,19 +154,9 @@ func AutoResolve(path, base string) (*Result, error) {
 	// short-circuits.
 	if err := os.Mkdir(filepath.Join(tmp, ".git"), 0o700); err != nil {
 		_ = os.RemoveAll(tmp)
-		return nil, fmt.Errorf("baseline .git marker: %w", err)
+		return "", false, fmt.Errorf("baseline .git marker: %w", err)
 	}
-	pathOrig, err = mapToTempDir(repoRoot, tmp, path)
-	if err != nil {
-		_ = os.RemoveAll(tmp)
-		return nil, err
-	}
-	return &Result{
-		PathOrig: pathOrig,
-		TempDir:  tmp,
-		Rev:      shortRev(r.Hash),
-		Source:   r.Source,
-	}, nil
+	return tmp, false, nil
 }
 
 // mapToTempDir mirrors path's relative location under repoRoot into

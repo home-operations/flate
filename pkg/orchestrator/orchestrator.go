@@ -209,6 +209,10 @@ func New(cfg Config) (*Orchestrator, error) {
 	// Store rather than maintaining a duplicate registry the HR controller
 	// would otherwise have to keep in sync via Add* push-API calls.
 	helmClient.SetSourceResolver(helm.NewStoreSourceResolver(st))
+	// Yield the worker-pool slot during OCI pulls so concurrent helm
+	// renders don't starve. Passes task.Service.YieldSlot through as
+	// a callback so pkg/helm doesn't have to import pkg/task.
+	helmClient.SetTaskYield(ts.YieldSlot)
 	srcCtrl := sourcectrl.New(st, ts)
 	// Every kind-specific fetcher is wired through source.Wrap so the
 	// concrete Fetch signature stays typed (no per-impl type

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"helm.sh/helm/v4/pkg/registry"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -215,9 +217,18 @@ func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string
 
 	pullRef := ociPullRef(ref, version)
 	_ = ctx // reserved for future per-pull cancellation when helm supports it
-	result, err := c.registry.Pull(pullRef)
-	if err != nil {
-		return "", fmt.Errorf("oci pull %s: %w", pullRef, err)
+	// Yield the worker-pool slot for the duration of the network
+	// pull so concurrent helm renders don't block the pool. No-op
+	// when SetTaskYield wasn't wired (legacy embedders).
+	var (
+		result  *registry.PullResult
+		pullErr error
+	)
+	c.yieldDuring(func() {
+		result, pullErr = c.registry.Pull(pullRef)
+	})
+	if pullErr != nil {
+		return "", fmt.Errorf("oci pull %s: %w", pullRef, pullErr)
 	}
 	if result == nil || result.Chart == nil {
 		return "", fmt.Errorf("oci pull %s: empty result", pullRef)

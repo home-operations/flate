@@ -14,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // chartCacheLocks serializes concurrent fetches of the same cached
@@ -117,7 +118,13 @@ func (c *Client) pullHelmRepoOCI(ctx context.Context, r *manifest.HelmRepository
 		syn.SecretRef = r.SecretRef
 		syn.CertSecretRef = r.CertSecretRef
 		syn.Insecure = r.Insecure
-		art, err := puller.Fetch(ctx, syn)
+		var (
+			art *store.SourceArtifact
+			err error
+		)
+		c.yieldDuring(func() {
+			art, err = puller.Fetch(ctx, syn)
+		})
 		if err != nil {
 			return "", err
 		}

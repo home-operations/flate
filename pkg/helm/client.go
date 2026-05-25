@@ -58,6 +58,12 @@ type Client struct {
 	// path: no auth/TLS surface, anonymous pulls only).
 	ociPuller OCIPuller
 
+	// taskYield, when set, wraps long-running network I/O (OCI
+	// pulls) so the worker-pool slot is released for the duration.
+	// nil = no yield (legacy behavior for embedders without a task
+	// pool). See SetTaskYield.
+	taskYield func(fn func())
+
 	// chartCache memoizes parsed *chart.Chart by on-disk path. Helm's
 	// loader.Load reparses the entire tgz on every call — for repos
 	// where many HelmReleases share a base chart (e.g. bjw-s
@@ -160,6 +166,37 @@ func (c *Client) SetSourceResolver(r SourceResolver) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.resolver = r
+}
+
+// SetTaskYield installs a callback that the helm client uses to
+// release its worker-pool slot during long-running network I/O
+// (OCI pulls). The orchestrator wires this to
+// task.Service.YieldSlot so concurrent helm renders don't block
+// the pool while one of them is mid-pull. nil disables the yield
+// (the I/O runs while still holding the slot — the legacy
+// behavior for embedders without a task pool).
+//
+// Kept as a callback rather than a direct task.Service dependency to
+// avoid importing pkg/task into pkg/helm — the orchestrator wires
+// the function reference and helm stays dependency-free.
+func (c *Client) SetTaskYield(yield func(fn func())) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.taskYield = yield
+}
+
+// yieldDuring invokes fn under the configured task-slot yield, or
+// directly when no yield is wired. fn typically wraps a long
+// network round-trip.
+func (c *Client) yieldDuring(fn func()) {
+	c.mu.RLock()
+	y := c.taskYield
+	c.mu.RUnlock()
+	if y == nil {
+		fn()
+		return
+	}
+	y(fn)
 }
 
 // Resolver returns the configured SourceResolver, or nil when none

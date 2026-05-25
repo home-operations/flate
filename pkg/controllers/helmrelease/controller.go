@@ -48,6 +48,7 @@ type Controller struct {
 	// Nil means "no parent enforcement"; matches pre-#221 behavior.
 	parentOf       func(manifest.NamedResource) (manifest.NamedResource, bool)
 	resolveMissing func(manifest.NamedResource) bool
+	isKnown        func(manifest.NamedResource) bool
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -68,6 +69,12 @@ type ReconcileOptions struct {
 	// (HelmRepository, OCIRepository, HelmChart) can be lazy-loaded
 	// the moment the HR's chartRef gate needs them.
 	ResolveMissing func(manifest.NamedResource) bool
+	// IsKnown reports whether id has a file-existence record. The
+	// orchestrator wires this so depwait distinguishes "dep is
+	// render-only and the producing chain hasn't finished yet"
+	// (no file record → keep waiting on per-dep ctx) from "dep is
+	// file-indexed but promote failed" (file record → fail fast).
+	IsKnown func(manifest.NamedResource) bool
 }
 
 // New constructs a HelmRelease controller.
@@ -87,6 +94,7 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetFilter(opts.Filter)
 	c.parentOf = opts.ParentOf
 	c.resolveMissing = opts.ResolveMissing
+	c.isKnown = opts.IsKnown
 }
 
 // lookupParent reports the structural parent KS of id via the
@@ -110,6 +118,7 @@ func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Durati
 		Parent:         id,
 		Timeout:        depwait.TimeoutFromSpec(timeout),
 		ResolveMissing: c.resolveMissing,
+		IsKnown:        c.isKnown,
 	}
 }
 

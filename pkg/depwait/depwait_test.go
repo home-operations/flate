@@ -150,6 +150,81 @@ func TestWaiter_ResolveMissingFalseStillFails(t *testing.T) {
 	}
 }
 
+// TestWaiter_RenderOnlyDepWaitsBeyondGrace covers the
+// chained-render race documented in the docstring on Waiter.IsKnown:
+// a HelmRelease emitted by a render-only leaf KS (components/ks/app
+// + APP-app-vars replacement pattern) can land in the Store seconds
+// AFTER the consuming HR's depwait started — well past the 2s
+// MissingGrace. Before IsKnown was wired, depwait would fast-fail
+// at the grace boundary even though the dep was actively being
+// produced. With IsKnown(id)=false telling depwait "no file record,
+// only render emission can produce this", the Waiter keeps watching
+// on the per-dep ctx and clears the moment the dep lands.
+func TestWaiter_RenderOnlyDepWaitsBeyondGrace(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "omada-controller"}
+
+	resolve := func(manifest.NamedResource) bool { return false }
+	isKnown := func(manifest.NamedResource) bool { return false }
+
+	// Add the dep AFTER MissingGrace expires but well before the
+	// per-dep Timeout. Mark it Ready so the regular Ready wait
+	// (which runs after we fall through the missing-dep path)
+	// completes.
+	go func() {
+		time.Sleep(MissingGrace + 500*time.Millisecond)
+		s.AddObject(&manifest.HelmRelease{Name: dep.Name, Namespace: dep.Namespace})
+		s.UpdateStatus(dep, store.StatusReady, "")
+	}()
+
+	w := &Waiter{
+		Store:          s,
+		Timeout:        MissingGrace + 5*time.Second,
+		ResolveMissing: resolve,
+		IsKnown:        isKnown,
+	}
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
+	if !sum.AllReady() {
+		t.Errorf("render-only dep that arrived after grace should clear, not fail: %+v", sum)
+	}
+}
+
+// TestWaiter_RenderOnlyDepStillFailsAfterFullTimeout pins the
+// terminal case: a render-only dep that NEVER appears (typo'd
+// dependsOn, deleted resource, or a producing chain that itself
+// failed) must still surface as "dependency not found" — just at
+// the per-dep Timeout instead of MissingGrace. The error message
+// stays the same so users grep for it the same way.
+func TestWaiter_RenderOnlyDepStillFailsAfterFullTimeout(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "never-arrives"}
+
+	resolve := func(manifest.NamedResource) bool { return false }
+	isKnown := func(manifest.NamedResource) bool { return false }
+
+	// Use a tight Timeout so the test doesn't burn 30s.
+	w := &Waiter{
+		Store:          s,
+		Timeout:        MissingGrace + 200*time.Millisecond,
+		ResolveMissing: resolve,
+		IsKnown:        isKnown,
+	}
+	start := time.Now()
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
+	elapsed := time.Since(start)
+
+	if !sum.AnyFailed() {
+		t.Fatalf("expected fail for never-appearing dep: %+v", sum)
+	}
+	// Must have waited past MissingGrace — that's the whole point.
+	if elapsed < MissingGrace {
+		t.Errorf("wait returned before grace expired: elapsed=%s, grace=%s", elapsed, MissingGrace)
+	}
+	if got := sum.Messages[dep]; got != "dependency not found" {
+		t.Errorf("expected 'dependency not found', got %q", got)
+	}
+}
+
 func TestWaiter_NoDeps(t *testing.T) {
 	w := &Waiter{Store: store.New()}
 	sum := WaitAll(w.Watch(context.Background(), nil))

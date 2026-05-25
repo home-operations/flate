@@ -103,6 +103,29 @@ type Waiter struct {
 	// lives inside that KS's own spec.path: the dep would never
 	// clear because the producing render hasn't run yet.
 	ResolveMissing func(manifest.NamedResource) bool
+
+	// IsKnown reports whether id has a file-existence record (the
+	// loader saw a YAML on disk that defines it, even if the loader
+	// kept it out of the Store under render-driven discovery).
+	// depwait uses this to distinguish two missing-dep cases when
+	// the grace window expires:
+	//
+	//   - IsKnown(id) == true and ResolveMissing(id) == false:
+	//     the file existed but promote failed (parse error, file
+	//     mutated since record). Fail fast as "dependency not found".
+	//   - IsKnown(id) == false:
+	//     no file record. The dep can only appear via a parent
+	//     render's emitRenderedChildren chain. Keep watching for
+	//     up to the per-dep Timeout — a deeply-chained kustomize
+	//     component+replacement pattern can take longer than the
+	//     2s grace to land its render output, and failing fast
+	//     surfaces a spurious "dependency not found" for a dep
+	//     that would have arrived a few seconds later.
+	//
+	// When IsKnown is nil, depwait preserves the historical fast-
+	// fail-after-grace behavior — callers that don't wire an
+	// existence index can't distinguish render-only from typo'd.
+	IsKnown func(manifest.NamedResource) bool
 }
 
 // Watch concurrently watches each dep and returns a channel of Events.
@@ -183,12 +206,29 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 		_, err := w.Store.WatchExists(graceCtx, id)
 		graceCancel()
 		if err != nil && !w.depExists(id) {
-			// Final fallback: ask the resolver to materialize the
-			// dep from the file-indexed Existence map. A true
-			// return means the dep is now in the Store and the
-			// wait can continue against built-in status / exists
-			// semantics below; false confirms it really is missing.
-			if w.ResolveMissing == nil || !w.ResolveMissing(id) {
+			// Step 1: ask the resolver to materialize the dep from
+			// the file-indexed Existence map. A true return means
+			// the dep is now in the Store and the wait can continue
+			// against built-in status / exists semantics below.
+			if w.ResolveMissing != nil && w.ResolveMissing(id) {
+				// promoted; fall through to the regular wait.
+			} else if w.IsKnown != nil && !w.IsKnown(id) {
+				// Step 2: dep has no file record — it can only arrive
+				// via a parent render's emitRenderedChildren chain.
+				// Keep watching for up to the per-dep Timeout. The
+				// 2s grace is too short for deeply-chained kustomize
+				// component+replacement patterns (parent KS → leaf
+				// KS → child HR) where the producing chain runs many
+				// kustomize builds + helm templates back-to-back.
+				if _, err := w.Store.WatchExists(ctx, id); err != nil {
+					return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+				}
+			} else {
+				// Step 3: either no IsKnown wired (legacy callers
+				// can't distinguish render-only from typo) or the
+				// dep is file-indexed but promote failed (file
+				// disappeared / parse error). Either way the dep is
+				// not coming — fail fast at the grace boundary.
 				return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
 			}
 		}

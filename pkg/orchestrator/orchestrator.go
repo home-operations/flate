@@ -454,16 +454,29 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	resolveMissing := func(id manifest.NamedResource) bool {
 		return o.existence.Promote(o.store, id, o.cfg.WipeSecrets)
 	}
+	// isKnown lets depwait distinguish "render-only dep still in
+	// flight" (no file record → wait on the per-dep ctx) from
+	// "file-indexed but promote failed" (file record → fail fast).
+	// Without this signal depwait would treat both as fast-fail,
+	// surfacing spurious "dependency not found" errors for chained
+	// kustomize-component+replacement renders (component/ks/app
+	// → leaf KS → child HR) that exceed the 2s grace window.
+	isKnown := func(id manifest.NamedResource) bool {
+		_, ok := o.existence.Get(id)
+		return ok
+	}
 	o.ksc.Configure(kustomization.Options{
 		Filter:         o.filter,
 		ParentOf:       parentResolver,
 		RenderTracker:  o.rendered,
 		ResolveMissing: resolveMissing,
+		IsKnown:        isKnown,
 	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
 		Filter:         o.filter,
 		ParentOf:       parentResolver,
 		ResolveMissing: resolveMissing,
+		IsKnown:        isKnown,
 	})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)

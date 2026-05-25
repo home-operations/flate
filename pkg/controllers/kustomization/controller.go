@@ -43,6 +43,7 @@ type Controller struct {
 	parentOf       func(manifest.NamedResource) (manifest.NamedResource, bool)
 	renderTracker  RenderTracker
 	resolveMissing func(manifest.NamedResource) bool
+	isKnown        func(manifest.NamedResource) bool
 }
 
 // RenderTracker is the tiny seam the controller uses to report
@@ -76,6 +77,13 @@ type Options struct {
 	// rendered by a sibling KS can be lazy-loaded on demand instead
 	// of failing the parent KS with "dependency not found."
 	ResolveMissing func(manifest.NamedResource) bool
+	// IsKnown reports whether id has a file-existence record. The
+	// orchestrator wires this so depwait can distinguish typo'd
+	// dependsOn (no record, fail fast — but only when IsKnown is
+	// nil) from a render-only dep still in flight (no record, keep
+	// waiting on the per-dep ctx). Forwarded to every Waiter built
+	// during reconcile.
+	IsKnown func(manifest.NamedResource) bool
 }
 
 // New constructs a Kustomization controller.
@@ -95,6 +103,7 @@ func (c *Controller) Configure(opts Options) {
 	c.parentOf = opts.ParentOf
 	c.renderTracker = opts.RenderTracker
 	c.resolveMissing = opts.ResolveMissing
+	c.isKnown = opts.IsKnown
 }
 
 // markRendered reports a parent→child render emission to the
@@ -115,6 +124,7 @@ func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Durati
 		Parent:         id,
 		Timeout:        depwait.TimeoutFromSpec(timeout),
 		ResolveMissing: c.resolveMissing,
+		IsKnown:        c.isKnown,
 	}
 }
 

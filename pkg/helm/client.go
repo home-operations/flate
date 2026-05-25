@@ -42,16 +42,30 @@ type Client struct {
 	// loader.Load reparses the entire tgz on every call — for repos
 	// where many HelmReleases share a base chart (e.g. bjw-s
 	// app-template referenced by 30+ HRs), the same chart was being
-	// re-parsed once per HR. Cache by path; the upstream cache key is
-	// already content-addressed (name-version-digest in the filename).
+	// re-parsed once per HR. The cache entry includes the file's
+	// (mtime, size) at load time so a mutable OCI tag re-pushed under
+	// the same name-version pair invalidates correctly — writeAtomic
+	// overwrites the same path, but the new mtime trips the check
+	// and the next LoadChart re-parses. Without this, every call to
+	// LoadChart serves the stale in-memory *chart.Chart.
 	//
 	// chartLoadLocks serializes first-time loads per-path so N parallel
 	// reconciles of the same chart issue exactly one loader.Load
 	// (thundering-herd coalesce); the rest hit the populated cache.
 	// Distinct paths still parse in parallel.
 	chartMu        sync.Mutex
-	chartCache     map[string]*chart.Chart
+	chartCache     map[string]chartCacheEntry
 	chartLoadLocks *keylock.KeyMap[string]
+}
+
+// chartCacheEntry pairs the parsed chart with the (mtime, size) of
+// the on-disk tgz at load time. A mismatch on a subsequent lookup
+// means the file was overwritten (mutable tag re-push, manual
+// edit) and the cache entry is stale.
+type chartCacheEntry struct {
+	chart *chart.Chart
+	mtime int64 // unix nanos
+	size  int64
 }
 
 // NewClient constructs a Client. tmpDir and cacheDir are used for
@@ -73,7 +87,7 @@ func NewClient(tmpDir, cacheDir string) (*Client, error) {
 		tmpDir:         tmpDir,
 		cacheDir:       cacheDir,
 		registry:       reg,
-		chartCache:     map[string]*chart.Chart{},
+		chartCache:     map[string]chartCacheEntry{},
 		chartLoadLocks: keylock.New[string](),
 	}, nil
 }
@@ -171,13 +185,14 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
-	// Fast path: already parsed.
-	c.chartMu.Lock()
-	if ch, ok := c.chartCache[path]; ok {
-		c.chartMu.Unlock()
+	// Fast path: already parsed AND the file hasn't been rewritten
+	// since (mtime+size match). Mutable OCI tags re-pushed under the
+	// same name-version land via writeAtomic at the same path, so the
+	// path is a stable string but the underlying bytes may have
+	// changed; without the stat check we'd serve the stale chart.
+	if ch, ok := c.lookupCachedChart(path); ok {
 		return ChartLoadResult{Path: path, Chart: ch}, nil
 	}
-	c.chartMu.Unlock()
 
 	// Coalesce parallel first-loads of the same chart so N concurrent
 	// reconciles of the same base chart (bjw-s app-template referenced
@@ -191,12 +206,9 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 
 	// Re-check under the per-path lock — another goroutine may have
 	// populated the cache while we waited.
-	c.chartMu.Lock()
-	if ch, ok := c.chartCache[path]; ok {
-		c.chartMu.Unlock()
+	if ch, ok := c.lookupCachedChart(path); ok {
 		return ChartLoadResult{Path: path, Chart: ch}, nil
 	}
-	c.chartMu.Unlock()
 
 	ch, err := loader.Load(path)
 	if err != nil {
@@ -209,8 +221,54 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 		_ = os.Remove(path)
 		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", path, err)
 	}
-	c.chartMu.Lock()
-	c.chartCache[path] = ch
-	c.chartMu.Unlock()
+	if mtime, size, ok := chartCacheFingerprint(path); ok {
+		c.chartMu.Lock()
+		c.chartCache[path] = chartCacheEntry{chart: ch, mtime: mtime, size: size}
+		c.chartMu.Unlock()
+	}
 	return ChartLoadResult{Path: path, Chart: ch}, nil
+}
+
+// lookupCachedChart returns the cached chart only when the on-disk
+// file's (mtime, size) still match the values captured at load time.
+// A mismatch (mutable OCI tag re-pushed, manual edit) returns false
+// so the caller re-parses. A missing or unstattable path also
+// returns false — the caller will surface that via loader.Load.
+func (c *Client) lookupCachedChart(path string) (*chart.Chart, bool) {
+	c.chartMu.Lock()
+	entry, ok := c.chartCache[path]
+	c.chartMu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	mtime, size, ok := chartCacheFingerprint(path)
+	if !ok {
+		return nil, false
+	}
+	if mtime != entry.mtime || size != entry.size {
+		return nil, false
+	}
+	return entry.chart, true
+}
+
+// chartCacheFingerprint returns the (mtime, size) tuple flate uses
+// to detect chart-content changes under a stable path. For a tgz
+// chart the file's own stat is the source of truth; for a directory
+// chart the directory mtime is filesystem-dependent and doesn't move
+// when sub-files change, so stat Chart.yaml — the file loader.Load
+// actually parses to derive the chart identity — instead. Returns
+// ok=false when neither is reachable.
+func chartCacheFingerprint(path string) (mtime, size int64, ok bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	if !info.IsDir() {
+		return info.ModTime().UnixNano(), info.Size(), true
+	}
+	cy, err := os.Stat(filepath.Join(path, "Chart.yaml"))
+	if err != nil {
+		return 0, 0, false
+	}
+	return cy.ModTime().UnixNano(), cy.Size(), true
 }

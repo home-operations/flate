@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -87,12 +89,26 @@ func (c *Cache) Slot(url, ref string) (*Slot, error) {
 		// Non-empty directory counts as populated. We use the presence
 		// of any entry as the indicator so a bare `mkdir` from a prior
 		// aborted run doesn't masquerade as a hit.
+		//
+		// Propagate Open / Readdirnames errors instead of silently
+		// treating them as "empty directory". A populated slot that
+		// the runner can't read (EACCES, EMFILE, a half-broken FUSE
+		// mount) used to fall through into the empty-dir RemoveAll
+		// branch — which would also fail — and the user saw a
+		// misleading "cache slot clean empty" instead of the real
+		// underlying error.
 		f, ferr := os.Open(final) //nolint:gosec // final is under the cache root
-		if ferr == nil {
-			entries, _ := f.Readdirnames(1)
-			_ = f.Close()
-			s.Exists = len(entries) > 0
+		if ferr != nil {
+			s.unlock()
+			return nil, fmt.Errorf("cache slot open: %w", ferr)
 		}
+		entries, readErr := f.Readdirnames(1)
+		_ = f.Close()
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			s.unlock()
+			return nil, fmt.Errorf("cache slot read: %w", readErr)
+		}
+		s.Exists = len(entries) > 0
 		if s.Exists {
 			s.Path = final
 			return s, nil

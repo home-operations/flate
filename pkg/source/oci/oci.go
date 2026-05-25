@@ -6,7 +6,10 @@ package oci
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -221,57 +224,18 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 	defer slot.Release()
 	if slot.Exists {
-		cachedDigest := readCachedDigest(slot.Path)
-		// `.flate-digest` is written as the FINAL step of a successful
-		// fetch (and the slot is committed via atomic rename only after
-		// that write), so its absence in a slot that has a final
-		// directory means the slot was committed from a pre-marker
-		// flate version or someone hand-modified the cache. Either way,
-		// reset and re-fetch.
-		if cachedDigest == "" {
-			if err := slot.Reset(); err != nil {
-				return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
-			}
-		} else if hasUnfinishedOCILayout(slot.Path) {
-			// Defensive: a valid `.flate-digest` should imply
-			// applyLayerSelector ran to completion and wiped the OCI
-			// Image Layout artifacts. Atomic-rename makes this much
-			// less likely (a crashed run never publishes a final
-			// slot), but legacy slots from older flate versions or
-			// hand-modifications can still trip this. Reset so the
-			// next pull rebuilds the slot cleanly.
-			slog.Warn("oci: cache slot has leftover OCI Image Layout artifacts; resetting and re-fetching",
-				"slot", slot.Path, "url", versioned)
-			if err := slot.Reset(); err != nil {
-				return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
-			}
-		} else if repo.Verify != nil {
-			// When verification is configured, re-verify the cached
-			// digest against the registry. Cheap (one metadata fetch)
-			// and closes the gap where a slot was populated under a
-			// prior policy.
-			if err := f.verifyCosignSignature(ctx, repoClient, repo, cachedDigest); err != nil {
-				// Cosign rejected the cached bytes. Without
-				// resetting, the next reconcile re-hits the same
-				// poisoned slot and fails verify identically.
-				_ = slot.Reset()
-				return nil, err
-			}
-			return &store.SourceArtifact{
-				Kind: manifest.KindOCIRepository,
-				URL:  repo.URL, LocalPath: slot.Path,
-				Revision: ociRevision(ref, cachedDigest),
-				Digest:   cachedDigest,
-			}, nil
-		} else {
-			return &store.SourceArtifact{
-				Kind: manifest.KindOCIRepository,
-				URL:  repo.URL, LocalPath: slot.Path,
-				Revision: ociRevision(ref, cachedDigest),
-				Digest:   cachedDigest,
-			}, nil
+		artifact, hit, hitErr := f.checkCacheHit(ctx, repoClient, repo, slot.Path, ref, versioned)
+		if hitErr != nil {
+			_ = slot.Reset()
+			return nil, hitErr
 		}
-		// Either reset-then-stage path falls through to a fresh pull.
+		if hit {
+			return artifact, nil
+		}
+		// Reset + restage for a fresh pull.
+		if err := slot.Reset(); err != nil {
+			return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
+		}
 		if err := slot.Stage(); err != nil {
 			return nil, fmt.Errorf("cache stage for %s: %w", versioned, err)
 		}
@@ -328,22 +292,171 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		// Release and the next run starts clean.
 		return nil, fmt.Errorf("OCIRepository %s/%s: persist cached digest: %w", repo.Namespace, repo.Name, err)
 	}
+	// Record the verify-policy fingerprint so subsequent cache hits
+	// can skip the cosign re-fetch when spec.verify is unchanged.
+	// Best-effort: a write failure costs us the next cache hit's
+	// offline win (re-verify falls back to the network) but the slot
+	// remains correct and the next pull will retry.
+	if repo.Verify != nil {
+		if err := writeVerifyMarker(slot.Path, verifyFingerprint(repo.Verify)); err != nil {
+			slog.Warn("oci: failed to persist verify marker; cache hits will re-verify online",
+				"ociRepository", repo.Namespace+"/"+repo.Name, "err", err)
+		}
+	}
 	if err := slot.Commit(); err != nil {
 		return nil, fmt.Errorf("OCIRepository %s/%s: commit slot: %w", repo.Namespace, repo.Name, err)
 	}
+	return ociArtifact(repo, slot.Path, ref, digest, desc.Size), nil
+}
+
+// ociArtifact is the single SourceArtifact-construction helper used
+// by both the cache-hit and successful-pull paths. Lifting the
+// literal out keeps the two paths from drifting (the pre-helper code
+// dropped Size on the cache-hit path), and a future field addition
+// (e.g. spec.verify provenance metadata) only touches one site.
+func ociArtifact(repo *manifest.OCIRepository, localPath string, ref manifest.OCIRepositoryRef, digest string, size int64) *store.SourceArtifact {
 	return &store.SourceArtifact{
-		Kind: manifest.KindOCIRepository,
-		URL:  repo.URL, LocalPath: slot.Path,
-		Revision: ociRevision(ref, digest),
-		Digest:   digest,
-		Size:     desc.Size,
-	}, nil
+		Kind:      manifest.KindOCIRepository,
+		URL:       repo.URL,
+		LocalPath: localPath,
+		Revision:  ociRevision(ref, digest),
+		Digest:    digest,
+		Size:      size,
+	}
+}
+
+// checkCacheHit applies the cache-hit gauntlet to a populated slot:
+// (1) require a well-formed cached digest, (2) reject leftover OCI
+// Image Layout artifacts, (3) re-verify cosign when configured (but
+// skip the re-verify when the persisted verify marker proves the
+// cached digest was checked under the same spec.verify policy —
+// closes the "offline tool that requires online" gap on flate's hot
+// path).
+//
+// Returns (artifact, true, nil) on a confirmed hit; (nil, false, nil)
+// when the slot should be reset and re-pulled; (nil, false, err) on
+// a fatal failure (e.g. cosign rejected the cached bytes).
+func (f *Fetcher) checkCacheHit(ctx context.Context, repoClient *remote.Repository, repo *manifest.OCIRepository, slotPath string, ref manifest.OCIRepositoryRef, versioned string) (*store.SourceArtifact, bool, error) {
+	cachedDigest := readCachedDigest(slotPath)
+	if cachedDigest == "" {
+		// `.flate-digest` is written as the FINAL step of a successful
+		// fetch (and the slot is committed via atomic rename only after
+		// that write), so its absence on a final slot means the slot
+		// was committed from a pre-marker flate version or someone
+		// hand-modified the cache.
+		return nil, false, nil
+	}
+	if hasUnfinishedOCILayout(slotPath) {
+		// Defensive: a valid `.flate-digest` should imply
+		// applyLayerSelector ran to completion and wiped the OCI
+		// Image Layout artifacts. Atomic-rename makes this much less
+		// likely (a crashed run never publishes a final slot), but
+		// legacy slots from older flate versions or hand-modifications
+		// can still trip this. Reset so the next pull rebuilds the
+		// slot cleanly.
+		slog.Warn("oci: cache slot has leftover OCI Image Layout artifacts; resetting and re-fetching",
+			"slot", slotPath, "url", versioned)
+		return nil, false, nil
+	}
+	if repo.Verify != nil {
+		want := verifyFingerprint(repo.Verify)
+		if want != readVerifyMarker(slotPath) {
+			// Verify policy changed since the slot was populated (or
+			// the marker is missing) — re-fetch the signature
+			// material and validate. This is the only path that
+			// hits the registry on a cache hit; with a stable verify
+			// policy and intact marker the cache hit is fully offline.
+			if err := f.verifyCosignSignature(ctx, repoClient, repo, cachedDigest); err != nil {
+				return nil, false, err
+			}
+			// Persist the new fingerprint so subsequent hits skip
+			// the network. Best-effort.
+			if err := writeVerifyMarker(slotPath, want); err != nil {
+				slog.Warn("oci: failed to persist verify marker after re-verify; future hits will re-verify online",
+					"slot", slotPath, "err", err)
+			}
+		}
+	}
+	return ociArtifact(repo, slotPath, ref, cachedDigest, 0), true, nil
 }
 
 // cachedDigestFile is the slot-relative path where flate records the
 // resolved digest of an OCIRepository pull. Used to re-verify on cache
 // hit when spec.verify is configured.
 const cachedDigestFile = ".flate-digest"
+
+// verifyMarkerFile records the cosign verify-policy fingerprint that
+// the slot's cached digest was last validated against. When the
+// current spec.verify hashes to the same value, the cache-hit path
+// can skip the re-verify roundtrip — restoring flate's offline
+// promise for sources with verify configured. A missing or
+// mismatched marker forces re-verify (covering policy changes,
+// pre-marker slots, and tampered caches).
+const verifyMarkerFile = ".flate-verified"
+
+// verifyFingerprint hashes the verify spec into a short identifier
+// stored next to the cached digest. Any meaningful change to the
+// verify policy (provider, MatchOIDCIdentity, SecretRef) produces a
+// different fingerprint and forces re-verify. JSON-marshal the spec
+// for a deterministic representation — the upstream Verify struct
+// has stable JSON tags.
+func verifyFingerprint(v *manifest.OCIRepositoryVerify) string {
+	if v == nil {
+		return ""
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		// Marshal-of-typed-struct shouldn't fail; if it does we
+		// fingerprint as empty which forces re-verify (safe default).
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:16])
+}
+
+// writeVerifyMarker persists the verify-policy fingerprint to the
+// slot atomically. Uses the same temp-file + fsync + rename dance
+// as writeCachedDigest so a crash mid-write can't leave a partial
+// fingerprint that would falsely match.
+func writeVerifyMarker(slot, fingerprint string) error {
+	dst := filepath.Join(slot, verifyMarkerFile)
+	tmp, err := os.CreateTemp(slot, ".flate-verified-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	if _, err := tmp.WriteString(fingerprint); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
+}
+
+// readVerifyMarker returns the cached fingerprint or "" when the
+// marker is missing / unreadable. Empty matches the fingerprint of a
+// nil Verify; a different non-empty value forces re-verify.
+func readVerifyMarker(slot string) string {
+	b, err := os.ReadFile(filepath.Join(slot, verifyMarkerFile)) //nolint:gosec // slot is fetcher-owned cache path
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
 
 // digestRE matches a well-formed OCI content digest:
 // "<algorithm>:<hex>" where the hex side is at least 32 chars (sha256

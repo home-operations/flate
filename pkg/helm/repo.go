@@ -21,7 +21,11 @@ import (
 var chartCacheLocks = keylock.New[string]()
 
 // writeAtomic writes data to path via a temp file + rename so partial
-// writes never appear at the target path to concurrent readers.
+// writes never appear at the target path to concurrent readers. Both
+// the file contents and the directory entry are fsynced so a
+// power-loss between rename and post-close can't leave a zero-byte
+// chart that the next Stat-OK path serves to loader.Load (which then
+// reports a misleading "corrupt chart" instead of just re-pulling).
 func writeAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
@@ -34,10 +38,26 @@ func writeAtomic(path string, data []byte) error {
 		_ = tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	// Fsync the directory so the rename's directory entry survives
+	// power loss. Without this, the contents fsync above guarantees
+	// file bytes survive but the rename can be lost — leaving the
+	// old path or no entry at all. Best-effort: fsync of a directory
+	// is not portable to every filesystem, so log+ignore on failure.
+	if d, err := os.Open(dir); err == nil { //nolint:gosec // dir = filepath.Dir(path); path is caller-controlled cache file
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 // ChartLoadResult is the loaded chart plus the on-disk path it came from.

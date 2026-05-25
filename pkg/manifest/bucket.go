@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"cmp"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
@@ -49,9 +51,7 @@ func parseBucket(doc map[string]any) (*Bucket, error) {
 	if cr.Spec.Endpoint == "" {
 		return nil, inputf("Bucket %s/%s missing spec.endpoint", cr.Namespace, cr.Name)
 	}
-	if cr.Spec.Provider == "" {
-		cr.Spec.Provider = sourcev1.BucketProviderGeneric
-	}
+	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.BucketProviderGeneric)
 	owner := cr.Namespace + "/" + cr.Name
 	if r := cr.Spec.SecretRef; r != nil {
 		if err := validateSecretRefName("Bucket", owner, "spec.secretRef", r.Name); err != nil {

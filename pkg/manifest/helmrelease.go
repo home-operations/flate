@@ -290,12 +290,8 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		if dep.Name == "" {
 			return nil, inputf("HelmRelease missing dependsOn.name")
 		}
-		depNS := dep.Namespace
-		if depNS == "" {
-			depNS = cr.Namespace
-		}
 		dependsOn = append(dependsOn, DependencyRef{
-			NamedResource: NamedResource{Kind: KindHelmRelease, Namespace: depNS, Name: dep.Name},
+			NamedResource: NamedResource{Kind: KindHelmRelease, Namespace: cmp.Or(dep.Namespace, cr.Namespace), Name: dep.Name},
 			ReadyExpr:     dep.ReadyExpr,
 		})
 	}

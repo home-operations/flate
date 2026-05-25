@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"cmp"
 	"log/slog"
 	"maps"
 	"slices"
@@ -195,10 +196,7 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 	// namespace is optional — a parent Kustomization's
 	// spec.targetNamespace may fill it in at apply time.
 	ns := cr.Namespace
-	srcNamespace := cr.Spec.SourceRef.Namespace
-	if srcNamespace == "" {
-		srcNamespace = ns
-	}
+	srcNamespace := cmp.Or(cr.Spec.SourceRef.Namespace, ns)
 
 	var substituteFrom []SubstituteReference
 	var subst map[string]any
@@ -217,12 +215,8 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 		if dep.Name == "" {
 			return nil, inputf("Kustomization missing dependsOn.name")
 		}
-		depNS := dep.Namespace
-		if depNS == "" {
-			depNS = ns
-		}
 		dependsOn = append(dependsOn, DependencyRef{
-			NamedResource: NamedResource{Kind: KindKustomization, Namespace: depNS, Name: dep.Name},
+			NamedResource: NamedResource{Kind: KindKustomization, Namespace: cmp.Or(dep.Namespace, ns), Name: dep.Name},
 			ReadyExpr:     dep.ReadyExpr,
 		})
 	}

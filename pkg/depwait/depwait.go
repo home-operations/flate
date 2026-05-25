@@ -4,6 +4,7 @@
 package depwait
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -305,11 +306,7 @@ func classify(dep manifest.NamedResource, err error, fallback string) Event {
 	}
 	var rfe *manifest.ResourceFailedError
 	if errors.As(err, &rfe) {
-		reason := rfe.Reason
-		if reason == "" {
-			reason = fallback
-		}
-		return Event{Dep: dep, Status: DepFailed, Reason: reason}
+		return Event{Dep: dep, Status: DepFailed, Reason: cmp.Or(rfe.Reason, fallback)}
 	}
 	if err != nil {
 		return Event{Dep: dep, Status: DepFailed, Reason: err.Error()}

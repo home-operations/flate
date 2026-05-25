@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"cmp"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
@@ -91,9 +93,7 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("GitRepository missing spec.url")
 	}
-	if cr.Spec.Provider == "" {
-		cr.Spec.Provider = sourcev1.GitProviderGeneric
-	}
+	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GitProviderGeneric)
 	cr.Spec.URL = ResolveEnvsubstDefaults(cr.Spec.URL)
 	if r := cr.Spec.Reference; r != nil {
 		r.Branch = ResolveEnvsubstDefaults(r.Branch)
@@ -209,9 +209,7 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("OCIRepository missing spec.url")
 	}
-	if cr.Spec.Provider == "" {
-		cr.Spec.Provider = sourcev1.GenericOCIProvider
-	}
+	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GenericOCIProvider)
 	// Pre-resolve envsubst defaults on ref fields so a chart pin like
 	// `tag: "${FLUXCD_VERSION:=v2.8.5}"` becomes "v2.8.5" before the
 	// fetcher tries to resolve it. Bare ${VAR} (no default) is left

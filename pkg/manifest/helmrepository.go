@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"cmp"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
@@ -38,9 +40,7 @@ func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("HelmRepository missing spec.url")
 	}
-	if cr.Spec.Type == "" {
-		cr.Spec.Type = RepoTypeDefault
-	}
+	cr.Spec.Type = cmp.Or(cr.Spec.Type, RepoTypeDefault)
 	owner := cr.Namespace + "/" + cr.Name
 	if r := cr.Spec.SecretRef; r != nil {
 		if err := validateSecretRefName("HelmRepository", owner, "spec.secretRef", r.Name); err != nil {

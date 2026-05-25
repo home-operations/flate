@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	"sigs.k8s.io/yaml"
 )
@@ -46,15 +47,19 @@ type Column struct {
 }
 
 // Table renders rows of map[string]string into a fixed-width table.
-// Columns are sized to the widest cell + a 4-char gutter.
+// Columns are sized to the widest cell + a 4-char gutter. Widths
+// are measured in runes (not bytes) so cells with multi-byte UTF-8
+// (paths with non-ASCII, chart names with unicode) align correctly.
+// Doesn't account for double-width CJK glyphs — adding a runewidth
+// dependency is out of scope; bring it in when CJK output matters.
 func Table(w io.Writer, cols []Column, rows []map[string]string) error {
 	widths := make([]int, len(cols))
 	for i, c := range cols {
-		widths[i] = len(c.Header)
+		widths[i] = utf8.RuneCountInString(c.Header)
 	}
 	for _, r := range rows {
 		for i, c := range cols {
-			if l := len(r[c.Key]); l > widths[i] {
+			if l := utf8.RuneCountInString(r[c.Key]); l > widths[i] {
 				widths[i] = l
 			}
 		}
@@ -79,7 +84,7 @@ func writeCol(b *bytes.Buffer, value string, width int, last bool) {
 	if last {
 		return
 	}
-	b.WriteString(strings.Repeat(" ", max(width-len(value)+4, 1)))
+	b.WriteString(strings.Repeat(" ", max(width-utf8.RuneCountInString(value)+4, 1)))
 }
 
 // YAMLMulti emits a multi-document YAML stream.

@@ -24,14 +24,14 @@ import (
 
 // Extract returns the unique sorted image references found anywhere
 // inside doc. Non-string values are ignored. Returns nil when no
-// images are found — never an error.
-func Extract(doc map[string]any) ([]string, error) {
+// images are found.
+func Extract(doc map[string]any) []string {
 	set := map[string]struct{}{}
 	walk(doc, set)
 	if len(set) == 0 {
-		return nil, nil
+		return nil
 	}
-	return slices.Sorted(maps.Keys(set)), nil
+	return slices.Sorted(maps.Keys(set))
 }
 
 // walk recursively descends into v collecting strings that look like

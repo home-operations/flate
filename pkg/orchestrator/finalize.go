@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -54,15 +55,21 @@ func (o *Orchestrator) finalize() error {
 	o.logSummary(failed)
 	o.logResourceFailures(failed)
 
+	// Compose any unattributed panic count with the aggregated
+	// per-resource failures so the panic signal isn't dropped when
+	// other resources also failed. Pre-fix, the panic counter was
+	// only consulted on the clean-aggregate path; a panicked task
+	// running alongside any normal failure looked indistinguishable
+	// from a clean reconcile to Service.Failures()-driven callers.
+	var panicErr error
+	if n := o.tasks.Failures(); n > 0 {
+		panicErr = fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n)
+	}
 	if len(failed) == 0 {
-		// Controllers attribute panics by marking the resource StatusFailed
-		// (see kustomization/helmrelease/source controllers). This catches
-		// any panic that escaped attribution — e.g. inside a future task
-		// dispatched outside the per-resource recover.
-		if n := o.tasks.Failures(); n > 0 {
-			return fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n)
-		}
-		return nil
+		return panicErr
+	}
+	if panicErr != nil {
+		return errors.Join(o.aggregateFailures(failed), panicErr)
 	}
 	return o.aggregateFailures(failed)
 }

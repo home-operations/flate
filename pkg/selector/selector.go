@@ -23,7 +23,14 @@ func (m Metadata) Matches(obj manifest.BaseManifest) bool {
 	if len(m.Labels) > 0 {
 		labels := labelsOf(obj)
 		for k, v := range m.Labels {
-			if labels[k] != v {
+			// Use comma-ok so a selector entry like `-l env=`
+			// (empty filter value) doesn't silently match every
+			// object that lacks the `env` label entirely — map
+			// lookup of a missing key returns the zero value `""`
+			// which would equal v=="" and broaden the result set
+			// well beyond intent.
+			got, ok := labels[k]
+			if !ok || got != v {
 				return false
 			}
 		}

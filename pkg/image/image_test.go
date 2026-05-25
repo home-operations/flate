@@ -22,10 +22,7 @@ func TestExtract_Deployment(t *testing.T) {
 			},
 		},
 	}
-	got, err := Extract(doc)
-	if err != nil {
-		t.Fatalf("Extract: %v", err)
-	}
+	got := Extract(doc)
 	want := []string{
 		"docker.io/library/redis:7",
 		"ghcr.io/library/nginx:1.27",
@@ -43,7 +40,7 @@ func TestExtract_FindsImageInArbitraryFieldName(t *testing.T) {
 		"kind": "Cluster",
 		"spec": map[string]any{"imageName": "ghcr.io/cloudnative-pg/postgresql:16.4"},
 	}
-	got, _ := Extract(doc)
+	got := Extract(doc)
 	if !slices.Equal(got, []string{"ghcr.io/cloudnative-pg/postgresql:16.4"}) {
 		t.Errorf("got %v", got)
 	}
@@ -61,7 +58,7 @@ func TestExtract_FindsImageInUnknownKind(t *testing.T) {
 			},
 		},
 	}
-	got, _ := Extract(doc)
+	got := Extract(doc)
 	if len(got) != 1 {
 		t.Errorf("expected 1 image, got %v", got)
 	}
@@ -73,7 +70,7 @@ func TestExtract_DigestOnly(t *testing.T) {
 			"image": "ghcr.io/owner/foo@sha256:" + sha256(),
 		},
 	}
-	got, _ := Extract(doc)
+	got := Extract(doc)
 	if len(got) != 1 {
 		t.Errorf("expected 1 image, got %v", got)
 	}
@@ -88,7 +85,7 @@ func TestExtract_Nested(t *testing.T) {
 			},
 		},
 	}
-	got, _ := Extract(doc)
+	got := Extract(doc)
 	if !slices.Equal(got, []string{"ghcr.io/x:1.0"}) {
 		t.Errorf("got %v", got)
 	}
@@ -114,10 +111,7 @@ func TestExtract_RejectsNonImages(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := map[string]any{"x": tc.value}
-			got, err := Extract(doc)
-			if err != nil {
-				t.Fatalf("Extract: %v", err)
-			}
+			got := Extract(doc)
 			if len(got) != 0 {
 				t.Errorf("expected nothing, got %v", got)
 			}

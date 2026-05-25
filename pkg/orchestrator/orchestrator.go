@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
@@ -268,6 +269,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.validateDependsOn()
 	o.breakDependsOnCycles()
 	o.warnOnDisabledOCIFeatures()
+	o.warnOnUnsupportedHelmRepoSecretRef()
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err
 	}
@@ -313,6 +315,32 @@ func (o *Orchestrator) warnOnDisabledOCIFeatures() {
 		slog.Warn("OCIRepository spec fields ignored — EnableOCI=false wires ExistenceFetcher",
 			"ociRepository", repo.Namespace+"/"+repo.Name,
 			"ignoredFields", fields)
+	}
+}
+
+// warnOnUnsupportedHelmRepoSecretRef surfaces the OCI-HelmRepository
+// + SecretRef gap at bootstrap. The helm-side
+// locateHelmRepoChart hard-errors at render time on this combo
+// (see pkg/helm/repo.go) — by then the user is one helm template
+// failure deep into a reconcile pass with a non-obvious "not yet
+// implemented" message. Warn up front so the operator can switch
+// the manifests to OCIRepository CRs (the recommended workaround)
+// before iterating.
+//
+// Triggered for any HelmRepository whose spec.type is "oci" OR
+// whose URL starts with `oci://` AND has a SecretRef — matches
+// the render-time check exactly.
+func (o *Orchestrator) warnOnUnsupportedHelmRepoSecretRef() {
+	for _, repo := range store.ListAs[*manifest.HelmRepository](o.store, manifest.KindHelmRepository) {
+		if repo.SecretRef == nil {
+			continue
+		}
+		if repo.Type != manifest.RepoTypeOCI && !strings.HasPrefix(repo.URL, "oci://") {
+			continue
+		}
+		slog.Warn("HelmRepository: SecretRef on OCI HelmRepositories is not yet implemented and will fail at render time; reference the chart via a sibling OCIRepository CR instead",
+			"helmRepository", repo.Namespace+"/"+repo.Name,
+			"url", repo.URL)
 	}
 }
 

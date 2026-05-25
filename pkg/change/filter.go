@@ -163,13 +163,32 @@ func (f *Filter) AddEmitted(emitter, child manifest.NamedResource) {
 	if !f.Enabled() {
 		return
 	}
-	f.mu.RLock()
-	_, primaryEmitter := f.primary[emitter]
-	f.mu.RUnlock()
-	if !primaryEmitter {
+	// Gate the primacy check and the keep-set mutation under a
+	// single lock acquisition so a concurrent Add or AddEmitted
+	// that promotes `emitter` to primary between our gate read and
+	// the recurse can't cause `child` to be silently dropped.
+	// addEmittedLocked reads primary and (when gated through) does
+	// the addRecursive walk under the same WLock.
+	added := f.addEmittedLocked(emitter, child)
+	if f.OnAdd == nil || len(added) == 0 {
 		return
 	}
-	f.Add(child)
+	for _, newID := range added {
+		f.OnAdd(newID)
+	}
+}
+
+// addEmittedLocked is the WLock-held body of AddEmitted: it reads
+// primary[emitter] and the recurse for child without dropping the
+// lock between them. Returns the slice of newly-keep'd ids so the
+// caller can fire OnAdd outside the lock.
+func (f *Filter) addEmittedLocked(emitter, child manifest.NamedResource) []manifest.NamedResource {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, primaryEmitter := f.primary[emitter]; !primaryEmitter {
+		return nil
+	}
+	return f.addRecursiveLocked(child)
 }
 
 // Add unconditionally extends the keep set with id (and its
@@ -209,7 +228,13 @@ func (f *Filter) Add(id manifest.NamedResource) {
 func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResource {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.addRecursiveLocked(id)
+}
 
+// addRecursiveLocked is the lock-free body of addRecursive — the
+// caller MUST hold f.mu.Lock(). Pulled out so AddEmitted can do its
+// gate-and-recurse atomically under a single lock acquisition.
+func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedResource {
 	var added []manifest.NamedResource
 	stack := []manifest.NamedResource{id}
 	for len(stack) > 0 {
@@ -228,9 +253,11 @@ func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResourc
 			added = append(added, cur)
 		}
 		// Promote ancestor-only entries to primary when a runtime
-		// add reaches them: an ancestor that ALSO becomes the emit-
-		// chain target of a primary parent is itself rendering a
-		// changed graph, so its further emissions should cascade.
+		// add reaches them: the primary parent's render contains
+		// this entry's manifest, so the entry's spec-as-rendered
+		// differs from baseline and its own emissions must cascade
+		// too. This is symmetric with resolve()'s enqueuePrimary
+		// upgrade path.
 		f.primary[cur] = struct{}{}
 		// Transitive walk: a runtime-added KS / HR pulls its
 		// sourceRef / chartRef / valuesFrom into keep with it.
@@ -260,8 +287,16 @@ func (f *Filter) resolve(objs ObjectLister) {
 		primary[id] = struct{}{}
 		if _, seen := keep[id]; !seen {
 			keep[id] = struct{}{}
-			queue = append(queue, id)
 		}
+		// Always re-queue when promoting an ancestor-only entry
+		// to primary: the BFS body uses the head's primacy at
+		// dequeue time to decide whether transitiveDeps propagate
+		// as primary or ancestor. Without the re-queue, an entry
+		// walked first as ancestor would never have its deps re-
+		// walked as primary, so chained transitive deps (a future
+		// chart-source-of-source or similar) silently stay ancestor-
+		// only. Symmetric with addRecursive's stack push.
+		queue = append(queue, id)
 	}
 	// enqueueAncestor adds id to keep without marking it primary.
 	// Ancestors render so their patches/substituteFrom apply to

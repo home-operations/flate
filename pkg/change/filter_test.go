@@ -460,6 +460,99 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 	}
 }
 
+// TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain pins the
+// 3+ level ancestor case from the home-ops layout: a single file
+// change deep under cluster-apps → kube-system → reloader →
+// reloader-app should land ONLY reloader-app and the ancestor
+// chain in keep, NOT every other ancestor's siblings (media-apps,
+// network-apps, etc.). Each ancestor renders so its patches
+// propagate (#58) but its AddEmitted calls for unrelated children
+// must skip because the ancestor itself is not primary.
+//
+// The fix's correctness rests on this chain depth — the single-
+// ancestor test alone wouldn't catch a future change that
+// accidentally promoted an ancestor to primary mid-cascade.
+func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
+	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	kubeSystem := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "kube-system"}
+	reloader := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "reloader"}
+	reloaderApp := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "reloader-app"}
+
+	// Unrelated siblings at each ancestor level — none should
+	// land in keep regardless of which level emits them.
+	mediaSibling := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "media-apps"}
+	spegelSibling := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "spegel"}
+	reloaderSibling := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "descheduler-app"}
+
+	objs := mapLister{
+		clusterApps: &manifest.Kustomization{Name: clusterApps.Name, Namespace: clusterApps.Namespace,
+			KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps"}},
+		kubeSystem: &manifest.Kustomization{Name: kubeSystem.Name, Namespace: kubeSystem.Namespace,
+			KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/kube-system"}},
+		reloader: &manifest.Kustomization{Name: reloader.Name, Namespace: reloader.Namespace,
+			KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/kube-system/reloader"}},
+		reloaderApp: &manifest.Kustomization{Name: reloaderApp.Name, Namespace: reloaderApp.Namespace,
+			KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/kube-system/reloader/app"}},
+		mediaSibling:    &manifest.Kustomization{Name: mediaSibling.Name, Namespace: mediaSibling.Namespace},
+		spegelSibling:   &manifest.Kustomization{Name: spegelSibling.Name, Namespace: spegelSibling.Namespace},
+		reloaderSibling: &manifest.Kustomization{Name: reloaderSibling.Name, Namespace: reloaderSibling.Namespace},
+	}
+
+	f := NewFilter(
+		NewSet([]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"}),
+		map[manifest.NamedResource]string{
+			clusterApps:     "kubernetes/flux/cluster-apps.yaml",
+			kubeSystem:      "kubernetes/flux/kube-system.yaml",
+			reloader:        "kubernetes/apps/kube-system/reloader/ks.yaml",
+			reloaderApp:     "kubernetes/apps/kube-system/reloader/app/ks.yaml",
+			mediaSibling:    "kubernetes/flux/media-apps.yaml",
+			spegelSibling:   "kubernetes/apps/kube-system/spegel/ks.yaml",
+			reloaderSibling: "kubernetes/apps/kube-system/descheduler/app/ks.yaml",
+		},
+		"",
+		objs,
+	)
+
+	// Precondition: the leaf and its ancestor chain are in keep.
+	for _, id := range []manifest.NamedResource{reloaderApp, reloader, kubeSystem, clusterApps} {
+		if !f.ShouldReconcile(id) {
+			t.Fatalf("expected %s in keep at resolve time; keep=%v", id, f.KeepNames())
+		}
+	}
+	// And the unrelated siblings are NOT.
+	for _, id := range []manifest.NamedResource{mediaSibling, spegelSibling, reloaderSibling} {
+		if f.ShouldReconcile(id) {
+			t.Fatalf("precondition: %s must NOT be in keep before emissions; keep=%v", id, f.KeepNames())
+		}
+	}
+
+	// Simulate cascade: each ancestor renders and emits all of
+	// its children — including the unrelated siblings. Walking
+	// the chain top-down so we cover the worst case where a
+	// primary could theoretically leak through an upper ancestor.
+	f.AddEmitted(clusterApps, kubeSystem)
+	f.AddEmitted(clusterApps, mediaSibling)
+	f.AddEmitted(kubeSystem, reloader)
+	f.AddEmitted(kubeSystem, spegelSibling)
+	f.AddEmitted(reloader, reloaderApp)
+	f.AddEmitted(reloader, reloaderSibling)
+
+	// Each ancestor (clusterApps, kubeSystem, reloader) is in
+	// keep only as ancestor-only — none of their AddEmitted calls
+	// should promote a file-loaded sibling into keep.
+	for _, id := range []manifest.NamedResource{mediaSibling, spegelSibling, reloaderSibling} {
+		if f.ShouldReconcile(id) {
+			t.Errorf("ancestor-only cascade leaked: %s joined keep via AddEmitted; keep=%v", id, f.KeepNames())
+		}
+	}
+	// Sanity: the ancestor chain itself is still kept.
+	for _, id := range []manifest.NamedResource{reloaderApp, reloader, kubeSystem, clusterApps} {
+		if !f.ShouldReconcile(id) {
+			t.Errorf("ancestor chain entry %s dropped after AddEmitted churn; keep=%v", id, f.KeepNames())
+		}
+	}
+}
+
 // TestFilter_AddEmittedFromPrimaryParent verifies the #204 path
 // still works: a primary parent (its own file changed, or it owns
 // the changed file) emitting any child — render-only or file-loaded

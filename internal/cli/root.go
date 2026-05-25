@@ -14,6 +14,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -38,8 +39,7 @@ func New(version string) *cobra.Command {
 	root.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		lvl, _ := cmd.Flags().GetString("log-level")
-		setLogLevel(lvl, cmd.ErrOrStderr())
-		return nil
+		return setLogLevel(lvl, cmd.ErrOrStderr())
 	}
 
 	root.AddCommand(
@@ -83,17 +83,25 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func setLogLevel(lvl string, w io.Writer) {
+// setLogLevel validates lvl against the published enum and installs
+// the slog default. Unknown values are rejected up-front so
+// `--log-level bogus` fails clearly instead of silently degrading to
+// info — the previous behavior misled users who typo'd `--log-level
+// dbug` and assumed Debug output was simply quiet.
+func setLogLevel(lvl string, w io.Writer) error {
 	var l slog.Level
 	switch lvl {
 	case "debug":
 		l = slog.LevelDebug
+	case "info":
+		l = slog.LevelInfo
 	case "warn":
 		l = slog.LevelWarn
 	case "error":
 		l = slog.LevelError
 	default:
-		l = slog.LevelInfo
+		return fmt.Errorf("invalid --log-level %q: must be one of debug, info, warn, error", lvl)
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l})))
+	return nil
 }

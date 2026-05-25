@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"slices"
 
 	"github.com/spf13/cobra"
@@ -122,7 +123,7 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 		out = string(format.OutputName)
 	}
 	if err := emitImageList(cmd.OutOrStdout(), imgs, out); err != nil {
-		return err
+		return errors.Join(err, runErr)
 	}
 	return runErr
 }
@@ -174,10 +175,10 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	}
 	formatted, err := diff.Render(diffs, diff.Format(outFormat))
 	if err != nil {
-		return err
+		return errors.Join(err, runErr)
 	}
 	if _, err := cmd.OutOrStdout().Write(formatted); err != nil {
-		return err
+		return errors.Join(err, runErr)
 	}
 	return runErr
 }

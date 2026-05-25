@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"errors"
 	"io"
 	"maps"
 	"slices"
@@ -126,7 +127,7 @@ func newGetAllCmd() *cobra.Command {
 				return runErr
 			}
 			if err := printCluster(cmd.OutOrStdout(), o, string(c.outputOrDefault(format.OutputYAML))); err != nil {
-				return err
+				return errors.Join(err, runErr)
 			}
 			return runErr
 		},
@@ -159,7 +160,7 @@ func newGetImagesCmd() *cobra.Command {
 			}
 			imgs := slices.Sorted(maps.Keys(collectImages(o, res, c)))
 			if err := emitImageList(cmd.OutOrStdout(), imgs, string(c.outputOrDefault(format.OutputName))); err != nil {
-				return err
+				return errors.Join(err, runErr)
 			}
 			return runErr
 		},
@@ -194,7 +195,7 @@ func resourceListCmd[T manifest.BaseManifest](
 				Labels: c.labels,
 			}
 			if err := printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper); err != nil {
-				return err
+				return errors.Join(err, runErr)
 			}
 			return runErr
 		},

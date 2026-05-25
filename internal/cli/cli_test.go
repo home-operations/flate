@@ -101,14 +101,32 @@ func TestRun_UnknownCommand(t *testing.T) {
 }
 
 // TestRun_LogLevelFlag exercises the persistent --log-level handler.
-// Just verify it doesn't crash on each accepted value plus the
-// default path.
+// Accepted enum values exit 0 on --help (the PreRunE successfully
+// installs the level). The cobra --help fast path doesn't trigger
+// PreRunE in older cobra, so we keep the original assertion shape
+// for the success values; the rejection case is covered by
+// TestRun_LogLevelFlag_RejectsInvalid below using a real command.
 func TestRun_LogLevelFlag(t *testing.T) {
-	for _, lvl := range []string{"debug", "info", "warn", "error", "bogus"} {
+	for _, lvl := range []string{"debug", "info", "warn", "error"} {
 		_, _, code := runCLI(t, "--log-level", lvl, "--help")
 		if code != 0 {
 			t.Errorf("--log-level %q exited %d", lvl, code)
 		}
+	}
+}
+
+// TestRun_LogLevelFlag_RejectsInvalid pins the validation fix: an
+// invalid --log-level value must fail loudly with a clear message
+// rather than silently defaulting to info. Without the fix
+// `--log-level dbug` (a common typo) ran at info and the user
+// thought debug output was simply quiet.
+func TestRun_LogLevelFlag_RejectsInvalid(t *testing.T) {
+	_, stderr, code := runCLI(t, "build", "all", "--log-level", "bogus", "--path", ".")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for invalid --log-level")
+	}
+	if !strings.Contains(stderr, "invalid --log-level") {
+		t.Errorf("expected 'invalid --log-level' in stderr; got %q", stderr)
 	}
 }
 

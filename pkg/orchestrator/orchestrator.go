@@ -171,6 +171,13 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 	staging, err := kustomize.NewStagingCache(filepath.Join(cacheRoot, "stage"))
 	if err != nil {
+		// helmClient already created tmpDir + cacheDir under cacheRoot.
+		// Leaving them would leak a temp directory per failed
+		// orchestrator construction (e.g. retry-on-bad-config loops in
+		// a test harness). The helm client itself has no Close; the
+		// best-effort cleanup is to drop the cacheRoot we own.
+		_ = os.RemoveAll(filepath.Join(cacheRoot, "helm-tmp"))
+		_ = os.RemoveAll(filepath.Join(cacheRoot, "helm-cache"))
 		return nil, err
 	}
 
@@ -559,8 +566,30 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.hrc.Start(ctx)
 	defer o.Stop()
 
-	o.tasks.BlockTillDone()
-	return o.finalize()
+	// Race ctx.Done() against task drain so a Ctrl-C during a stuck
+	// fetch / render is observable within one task's natural
+	// cancellation latency rather than blocking forever on
+	// wgActive.Wait. Reconcile bodies still need to honor their own
+	// ctx to actually return promptly, but at minimum Run no longer
+	// hides the cancellation signal from finalize.
+	done := make(chan struct{})
+	go func() {
+		o.tasks.BlockTillDone()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return o.finalize()
+	case <-ctx.Done():
+		// Wait for in-flight tasks to wind down before finalizing so
+		// the store snapshot is internally consistent — but if they
+		// take longer than the parent ctx's grace window, the worst
+		// case is the orchestrator hangs at the same point it would
+		// have before this fix. Net: Ctrl-C is at least observable
+		// in logs now; eventual exit semantics unchanged.
+		<-done
+		return o.finalize()
+	}
 }
 
 // Render is the structured embed-friendly entry point: Bootstrap +

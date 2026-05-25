@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"slices"
 	"strings"
@@ -185,10 +186,37 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 	if c.path == "" {
 		return nil, nil, errors.New("path is required")
 	}
+	if err := validatePathFlag("--path", c.path); err != nil {
+		return nil, nil, err
+	}
+	if c.pathOrig != "" {
+		if err := validatePathFlag("--path-orig", c.pathOrig); err != nil {
+			return nil, nil, err
+		}
+	}
 	if _, err := format.ParseOutput(c.output); err != nil {
 		return nil, nil, err
 	}
 	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
+}
+
+// validatePathFlag rejects a flag value that doesn't point at a real
+// directory, surfacing a clean typed error before the orchestrator
+// digs deep enough to fail with a generic `flate error: ...`. Both
+// the "directory missing" and "exists but is a file" cases are
+// distinct user errors worth the early bail.
+func validatePathFlag(flag, p string) error {
+	info, err := os.Stat(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%s %q does not exist", flag, p)
+		}
+		return fmt.Errorf("%s %q: %w", flag, p, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s %q is not a directory", flag, p)
+	}
+	return nil
 }
 
 // outputOrDefault returns the user's -o choice, or fallback when -o

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.19](https://github.com/home-operations/flate/compare/0.1.18...0.1.19) (2026-05-25)
+
+
+### Features
+
+* **depwait:** add RenderInflight quiescence signal for step-2 fail-fast ([#319](https://github.com/home-operations/flate/issues/319)) ([10bf86e](https://github.com/home-operations/flate/commit/10bf86efef77d38587c0f6ec934f16b4d2d670ee))
+
+
+### Bug Fixes
+
+* **change:** close AddEmitted race + symmetric BFS upgrade + cascade depth test ([#312](https://github.com/home-operations/flate/issues/312)) ([41d025e](https://github.com/home-operations/flate/commit/41d025e2c82449b27ce67d1e842932523ebb7b4c))
+* **change:** stop keep-set cascade through ancestor-only renders ([#308](https://github.com/home-operations/flate/issues/308)) ([76e065a](https://github.com/home-operations/flate/commit/76e065a14840458b25744863d65e3b84e1286114))
+* **depwait:** cap step-2 render-only wait at RenderProducingTimeout ([#313](https://github.com/home-operations/flate/issues/313)) ([955b5bd](https://github.com/home-operations/flate/commit/955b5bde1a6f749596b08f7e7130793e41e5f786))
+* **depwait:** route step-2 long-wait error through classify + missing tests ([#311](https://github.com/home-operations/flate/issues/311)) ([ac04f29](https://github.com/home-operations/flate/commit/ac04f2908e9fb05edb9e207778741cc5421143dc))
+* **depwait:** wait beyond grace for render-only deps still in flight ([#310](https://github.com/home-operations/flate/issues/310)) ([00636bb](https://github.com/home-operations/flate/commit/00636bb553689d4fa36531b1cfa156aa54be0b19))
+
+
+### Documentation
+
+* **change:** sync filter doc comments with AddEmitted-based runtime API ([#315](https://github.com/home-operations/flate/issues/315)) ([4332576](https://github.com/home-operations/flate/commit/433257605546146a4db4896d0bf2638941685a0b))
+
+
+### Code Refactoring
+
+* **change:** unexport Filter.Add → addUngated ([#317](https://github.com/home-operations/flate/issues/317)) ([478307b](https://github.com/home-operations/flate/commit/478307b528c3ca9e9a28eada3f1dd1ab29283aad))
+* **depwait:** bundle existence closures into ExistenceLookup interface ([#316](https://github.com/home-operations/flate/issues/316)) ([e0329fe](https://github.com/home-operations/flate/commit/e0329fe9c29d106c42942f5903deef3e09c403a8))
+* **depwait:** rename IsKnown → IsFileIndexed for clarity ([#314](https://github.com/home-operations/flate/issues/314)) ([429a526](https://github.com/home-operations/flate/commit/429a526ec4aa5a4b5b88589836abb05d1ad68a15))
+
 ## [0.1.18](https://github.com/home-operations/flate/compare/0.1.17...0.1.18) (2026-05-25)
 
 

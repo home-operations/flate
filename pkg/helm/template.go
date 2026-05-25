@@ -211,12 +211,7 @@ func applyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
 		if isHookDoc(doc) {
 			continue
 		}
-		md, _ := doc["metadata"].(map[string]any)
-		if md == nil {
-			md = map[string]any{}
-			doc["metadata"] = md
-		}
-		mergeStringMap(md, "labels", origin)
+		manifest.MergeStringMap(manifest.EnsureMetadata(doc), "labels", origin)
 	}
 }
 
@@ -243,13 +238,9 @@ func applyHRCommonMetadata(docs []map[string]any, cm *helmv2.CommonMetadata) {
 		if isHookDoc(doc) || manifest.DocKind(doc) == manifest.KindCustomResourceDefinition {
 			continue
 		}
-		md, _ := doc["metadata"].(map[string]any)
-		if md == nil {
-			md = map[string]any{}
-			doc["metadata"] = md
-		}
-		mergeStringMap(md, "labels", cm.Labels)
-		mergeStringMap(md, "annotations", cm.Annotations)
+		md := manifest.EnsureMetadata(doc)
+		manifest.MergeStringMap(md, "labels", cm.Labels)
+		manifest.MergeStringMap(md, "annotations", cm.Annotations)
 	}
 }
 
@@ -269,20 +260,6 @@ func isHookDoc(doc map[string]any) bool {
 	}
 	_, has := anns["helm.sh/hook"]
 	return has
-}
-
-func mergeStringMap(md map[string]any, key string, in map[string]string) {
-	if len(in) == 0 {
-		return
-	}
-	out, _ := md[key].(map[string]any)
-	if out == nil {
-		out = make(map[string]any, len(in))
-	}
-	for k, v := range in {
-		out[k] = v
-	}
-	md[key] = out
 }
 
 // releaseManifest joins rel.Manifest with hooks (when allowed) and

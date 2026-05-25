@@ -41,7 +41,7 @@ func defaultNamespace(doc map[string]any, ns string) {
 	if isClusterScoped(doc) {
 		return
 	}
-	ensureMetadata(doc)["namespace"] = ns
+	manifest.EnsureMetadata(doc)["namespace"] = ns
 }
 
 func isClusterScoped(doc map[string]any) bool {
@@ -64,36 +64,9 @@ func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {
 	if cm == nil || (len(cm.Labels) == 0 && len(cm.Annotations) == 0) {
 		return
 	}
-	md := ensureMetadata(doc)
-	mergeStringMap(md, "labels", cm.Labels)
-	mergeStringMap(md, "annotations", cm.Annotations)
-}
-
-// ensureMetadata returns doc["metadata"] as a map[string]any, lazily
-// creating one when absent (or when present as a non-map). Used by
-// the writers below; reads should prefer a direct type-assert + nil-
-// tolerant access so we don't allocate when nothing will be written.
-func ensureMetadata(doc map[string]any) map[string]any {
-	md, _ := doc["metadata"].(map[string]any)
-	if md == nil {
-		md = map[string]any{}
-		doc["metadata"] = md
-	}
-	return md
-}
-
-func mergeStringMap(md map[string]any, key string, in map[string]string) {
-	if len(in) == 0 {
-		return
-	}
-	out, _ := md[key].(map[string]any)
-	if out == nil {
-		out = make(map[string]any, len(in))
-	}
-	for k, v := range in {
-		out[k] = v
-	}
-	md[key] = out
+	md := manifest.EnsureMetadata(doc)
+	manifest.MergeStringMap(md, "labels", cm.Labels)
+	manifest.MergeStringMap(md, "annotations", cm.Annotations)
 }
 
 func disabledByReconcileAnnotation(doc map[string]any) bool {

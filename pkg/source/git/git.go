@@ -105,7 +105,8 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		refStr = cmp.Or(manifest.GitRefString(*repo.Reference), refStr)
 	}
 
-	slot, err := cache.Slot(repo.URL, refStr)
+	authID := authIdentity(repo)
+	slot, err := cache.Slot(repo.URL, refStr, authID)
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", repo.URL, err)
 	}
@@ -314,6 +315,21 @@ func updateSubmodules(repo *git.Repository, auth transport.AuthMethod) error {
 		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
 		Auth:              auth,
 	})
+}
+
+// authIdentity returns the cache-key auth tag for a GitRepository.
+// Combines the SecretRef (HTTPS / SSH creds) and ProxySecretRef the
+// fetcher binds. Returns "" for anonymous clones so they share slots
+// with the legacy un-auth-keyed layout.
+func authIdentity(repo *manifest.GitRepository) string {
+	var secret, proxy string
+	if repo.SecretRef != nil {
+		secret = source.SecretRefID(repo.Namespace, repo.SecretRef.Name)
+	}
+	if repo.ProxySecretRef != nil {
+		proxy = source.SecretRefID(repo.Namespace, repo.ProxySecretRef.Name)
+	}
+	return source.AuthIdentity(secret, proxy)
 }
 
 // readResolvedRevision returns the current commit SHA at the worktree.

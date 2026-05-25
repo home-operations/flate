@@ -78,7 +78,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 	// still holds the dead file. We treat every fetch as a miss:
 	// write to a fresh staging dir, then atomic-rename into the final
 	// slot on success.
-	slot, err := f.Cache.Slot(endpoint+"/"+b.BucketName, b.Prefix)
+	slot, err := f.Cache.Slot(endpoint+"/"+b.BucketName, b.Prefix, authIdentity(b))
 	if err != nil {
 		return nil, fmt.Errorf("bucket %s/%s cache slot: %w", b.Namespace, b.Name, err)
 	}
@@ -235,4 +235,21 @@ func downloadObject(ctx context.Context, client *minio.Client, bucket, key, dst 
 		return fmt.Errorf("copy %s: %w", key, err)
 	}
 	return nil
+}
+
+// authIdentity returns the cache-key auth tag for a Bucket. Combines
+// SecretRef (S3 access creds), CertSecretRef (TLS), and
+// ProxySecretRef. Returns "" when all are unset.
+func authIdentity(b *manifest.Bucket) string {
+	var secret, cert, proxy string
+	if b.SecretRef != nil {
+		secret = source.SecretRefID(b.Namespace, b.SecretRef.Name)
+	}
+	if b.CertSecretRef != nil {
+		cert = source.SecretRefID(b.Namespace, b.CertSecretRef.Name)
+	}
+	if b.ProxySecretRef != nil {
+		proxy = source.SecretRefID(b.Namespace, b.ProxySecretRef.Name)
+	}
+	return source.AuthIdentity(secret, cert, proxy)
 }

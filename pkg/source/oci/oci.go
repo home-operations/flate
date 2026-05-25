@@ -217,7 +217,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 
 	versioned := versionedURL(repo.URL, ref)
-	slot, err := cache.Slot(versioned, "")
+	slot, err := cache.Slot(versioned, "", authIdentity(repo))
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}
@@ -682,4 +682,25 @@ func versionTag(ref manifest.OCIRepositoryRef) string {
 		return ref.SemVer
 	}
 	return ""
+}
+
+// authIdentity returns the cache-key auth tag for an OCIRepository.
+// Combines SecretRef (registry creds), CertSecretRef (TLS material),
+// ProxySecretRef, and verify.SecretRef (cosign keys) since each can
+// change which artifact bytes a reconcile resolves to.
+func authIdentity(repo *manifest.OCIRepository) string {
+	var secret, cert, proxy, verify string
+	if repo.SecretRef != nil {
+		secret = source.SecretRefID(repo.Namespace, repo.SecretRef.Name)
+	}
+	if repo.CertSecretRef != nil {
+		cert = source.SecretRefID(repo.Namespace, repo.CertSecretRef.Name)
+	}
+	if repo.ProxySecretRef != nil {
+		proxy = source.SecretRefID(repo.Namespace, repo.ProxySecretRef.Name)
+	}
+	if repo.Verify != nil && repo.Verify.SecretRef != nil {
+		verify = source.SecretRefID(repo.Namespace, repo.Verify.SecretRef.Name)
+	}
+	return source.AuthIdentity(secret, cert, proxy, verify)
 }

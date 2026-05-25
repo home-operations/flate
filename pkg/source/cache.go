@@ -73,9 +73,14 @@ func (c *Cache) slotMu(path string) *sync.Mutex {
 // next fetch starts clean. This atomicity replaces the older
 // "write in place + .flate-* sentinels" pattern: the final slot is
 // either complete or doesn't exist, never torn.
-func (c *Cache) Slot(url, ref string) (*Slot, error) {
+func (c *Cache) Slot(url, ref, authID string) (*Slot, error) {
 	slug := slugifyRepo(url)
-	h := sha256.Sum256([]byte(url + "@" + ref))
+	// authID participates in the cache key so two source CRs with the
+	// same (URL, ref) but different SecretRef / RegistryConfig don't
+	// share a slot — otherwise the first fetch's clone is silently
+	// reused for the second auth context, bypassing the access check.
+	// Pass "" when the fetcher has no auth bound to this slot.
+	h := sha256.Sum256([]byte(url + "@" + ref + "#" + authID))
 	hash := hex.EncodeToString(h[:])[:16]
 	final := filepath.Join(c.root, "sources", slug, hash)
 

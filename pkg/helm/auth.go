@@ -19,9 +19,7 @@ func (c *Client) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Optio
 	if r.SecretRef == nil {
 		return nil, nil
 	}
-	c.mu.RLock()
-	getSec := c.secrets
-	c.mu.RUnlock()
+	getSec := c.secretGetter()
 	if getSec == nil {
 		// Use the same sentinel as the "secret not found" path so
 		// --allow-missing-secrets covers both shapes — from the
@@ -61,9 +59,7 @@ func (c *Client) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option
 	if r.CertSecretRef == nil {
 		return nil, noCleanup, nil
 	}
-	c.mu.RLock()
-	getSec := c.secrets
-	c.mu.RUnlock()
+	getSec := c.secretGetter()
 	if getSec == nil {
 		return nil, noCleanup, fmt.Errorf("%w: HelmRepository %s/%s references certSecretRef but no SecretGetter is wired",
 			manifest.ErrMissingSecret, r.Namespace, r.Name)

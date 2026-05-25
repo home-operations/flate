@@ -87,6 +87,15 @@ func (c *Client) SetSecretGetter(g SecretGetter) {
 	c.secrets = g
 }
 
+// secretGetter returns the configured SecretGetter under a read lock —
+// the snapshot helper helmRepoAuthOptions / helmRepoTLSOptions use so
+// neither has to inline the RLock-copy-RUnlock dance.
+func (c *Client) secretGetter() SecretGetter {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.secrets
+}
+
 // SetSourceResolver installs the canonical lookup surface for
 // HelmRepository / OCIRepository / local-artifact sources. helm.Client
 // reads through the resolver on every Template call — there's no

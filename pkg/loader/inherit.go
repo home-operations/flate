@@ -135,7 +135,7 @@ func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]stri
 			continue
 		}
 		out = append(out, pathEntry{
-			prefix: normalizePrefix(ks.Path),
+			prefix: NormalizePrefix(ks.Path),
 			ns:     ns,
 		})
 	}
@@ -185,9 +185,13 @@ func readKustomizeNamespace(repoRoot, dir string) string {
 	return ""
 }
 
-// normalizePrefix turns a Kustomization spec.path into a slash-
+// NormalizePrefix turns a Kustomization spec.path into a slash-
 // terminated repo-relative prefix suitable for HasPrefix matching.
-func normalizePrefix(p string) string {
+// Applies filepath.ToSlash first so Windows-style spec.path values
+// (rare, but possible since the Flux CRD doesn't constrain it)
+// normalize to the same shape as loader.SourceFiles entries.
+func NormalizePrefix(p string) string {
+	p = filepath.ToSlash(p)
 	p = strings.TrimPrefix(p, "./")
 	return strings.TrimSuffix(p, "/") + "/"
 }

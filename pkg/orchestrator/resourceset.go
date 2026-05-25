@@ -8,6 +8,7 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
@@ -43,12 +44,7 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 		if ks.Path == "" {
 			continue
 		}
-		p := filepath.ToSlash(ks.Path)
-		p = strings.TrimPrefix(p, "./")
-		if !strings.HasSuffix(p, "/") {
-			p += "/"
-		}
-		owners = append(owners, owner{prefix: p, id: ks.Named()})
+		owners = append(owners, owner{prefix: loader.NormalizePrefix(ks.Path), id: ks.Named()})
 	}
 	slices.SortFunc(owners, func(a, b owner) int {
 		return cmp.Compare(len(b.prefix), len(a.prefix))

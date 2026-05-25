@@ -29,7 +29,7 @@ func KSPathPrefixes(s *store.Store) []KSPathPrefix {
 		if ks.Path == "" {
 			continue
 		}
-		out = append(out, KSPathPrefix{ID: ks.Named(), Prefix: normalizePrefix(ks.Path)})
+		out = append(out, KSPathPrefix{ID: ks.Named(), Prefix: NormalizePrefix(ks.Path)})
 	}
 	slices.SortFunc(out, func(a, b KSPathPrefix) int {
 		return cmp.Compare(len(b.Prefix), len(a.Prefix))

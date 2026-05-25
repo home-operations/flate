@@ -237,6 +237,24 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		} else if cachedDigest == "" {
 			cachedDigest = ref.Digest
 		}
+		// Defensive: a valid `.flate-digest` should imply
+		// applyLayerSelector ran to completion and wiped the OCI
+		// Image Layout artifacts (blobs/, ingest/, oci-layout,
+		// index.json). If any of those still exist, the slot is in
+		// an inconsistent state — either an older flate version
+		// wrote `.flate-digest` before the cleanup, a concurrent
+		// process clobbered the layer.tar.gz after the marker
+		// landed, or the slot was hand-modified. Trusting the marker
+		// in that state produces the user-visible "OCIRepository
+		// artifact has neither Chart.yaml, layer.tar.gz, nor a
+		// <name>/Chart.yaml subdir" error every run. Reset so the
+		// next pull rebuilds the slot cleanly.
+		if exists && hasUnfinishedOCILayout(slot) {
+			slog.Warn("oci: cache slot has leftover OCI Image Layout artifacts; resetting and re-fetching",
+				"slot", slot, "url", versioned)
+			_ = cache.Reset(slot)
+			exists = false
+		}
 		// When verification is configured, re-verify the cached digest
 		// against the registry. Cheap (one metadata fetch) and closes the
 		// gap where a slot was populated under a prior policy.

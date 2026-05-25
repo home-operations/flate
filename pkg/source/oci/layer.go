@@ -187,6 +187,23 @@ func digestPath(slot string, d digest.Digest) string {
 	return filepath.Join(slot, ocispec.ImageBlobsDir, algo, hex)
 }
 
+// hasUnfinishedOCILayout reports whether slot still carries any of
+// the OCI Image Layout artifacts cleanupOCILayout is supposed to
+// wipe at the end of a successful fetch. Their presence means the
+// slot is in an inconsistent state: either applyLayerSelector
+// didn't run to completion, or a concurrent process modified the
+// slot after a successful fetch landed `.flate-digest`. The OCI
+// fetcher's cache-hit path uses this as a sentinel to reset stale
+// slots before serving them.
+func hasUnfinishedOCILayout(slot string) bool {
+	for _, name := range ociLayoutArtifacts {
+		if _, err := os.Stat(filepath.Join(slot, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // cleanupOCILayout removes the OCI Image Layout artifacts oras-go wrote
 // alongside the artifact blobs. By the time this runs the selected
 // layer has already been staged outside the layout subtree, so removal

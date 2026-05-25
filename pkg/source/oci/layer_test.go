@@ -369,6 +369,59 @@ func writeBlob(t *testing.T, slot string, payload []byte) digest.Digest {
 	return digest.Digest("sha256:" + hexs)
 }
 
+// TestHasUnfinishedOCILayout pins the cache-corruption sentinel
+// the OCI fetcher uses to invalidate stale cache hits: any of the
+// OCI Image Layout artifacts (blobs/, ingest/, oci-layout,
+// index.json) lingering in the slot AFTER applyLayerSelector
+// should have cleaned them up means the slot is in an
+// inconsistent state and must be reset.
+//
+// The user-visible symptom (onedr0p/home-ops repro): a crashed or
+// older flate version leaves `blobs/` + `oci-layout` in the slot
+// alongside a valid `.flate-digest`, and every subsequent fetch
+// reports "OCIRepository artifact has neither Chart.yaml,
+// layer.tar.gz, nor a <name>/Chart.yaml subdir" because the
+// `.flate-digest` marker greenlit the cache hit. The sentinel
+// catches this before the chart consumer ever sees it.
+func TestHasUnfinishedOCILayout(t *testing.T) {
+	for _, name := range ociLayoutArtifacts {
+		t.Run(name, func(t *testing.T) {
+			slot := t.TempDir()
+			// Lay down a recognized chart artifact (layer.tar.gz)
+			// so the slot looks "valid" except for the leftover
+			// layout file we're testing.
+			if err := os.WriteFile(filepath.Join(slot, copiedLayerFilename), []byte("chart"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(slot, name)
+			// blobs/ and ingest/ are directories; oci-layout and
+			// index.json are files. Both shapes count.
+			if name == ocispec.ImageBlobsDir || name == "ingest" {
+				if err := os.MkdirAll(target, 0o750); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !hasUnfinishedOCILayout(slot) {
+				t.Errorf("hasUnfinishedOCILayout(%s) = false; expected true with %s present", slot, name)
+			}
+		})
+	}
+
+	t.Run("clean_slot", func(t *testing.T) {
+		slot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(slot, copiedLayerFilename), []byte("chart"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if hasUnfinishedOCILayout(slot) {
+			t.Errorf("hasUnfinishedOCILayout(%s) = true on a clean slot with only layer.tar.gz", slot)
+		}
+	})
+}
+
 // writeManifest writes an OCI manifest blob (under blobs/sha256) for
 // layers and returns (raw bytes, digest).
 func writeManifest(t *testing.T, slot string, layers []ocispec.Descriptor) ([]byte, digest.Digest) {

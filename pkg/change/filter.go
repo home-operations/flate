@@ -39,11 +39,19 @@ type Filter struct {
 	// its internal lock so callbacks are free to take other locks.
 	OnAdd func(manifest.NamedResource)
 
-	// mu guards keep + keepByName for runtime Add(); resolve() runs
-	// once during construction before the controllers start, so it
-	// doesn't need to hold the lock.
+	// mu guards keep + keepByName + primary for runtime Add();
+	// resolve() runs once during construction before the controllers
+	// start, so it doesn't need to hold the lock.
 	mu   sync.RWMutex
 	keep map[manifest.NamedResource]struct{}
+
+	// primary is the subset of keep whose render output likely differs
+	// from baseline — file-change owners, their siblings, and runtime
+	// adds emitted by another primary entry. Ancestor-only entries
+	// (kept so parent patches apply per #58) are explicitly NOT
+	// marked primary so their render emissions don't cascade-include
+	// every file-loaded sibling via AddEmitted.
+	primary map[manifest.NamedResource]struct{}
 
 	// keepByName: (Kind, Name) presence set used as an O(1) fallback
 	// when either side of a lookup has an empty namespace.
@@ -115,35 +123,60 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	return false
 }
 
-// Add extends the keep set with id at runtime. Used by the KS
-// controller when a parent in the keep set emits id as a rendered
-// child — the file walk that built the keep set can't see those
-// emissions, but they're conceptually in-scope because the parent
-// only reconciled by passing the filter. Without this, the kustomize
-// component+replacement pattern (a parent KS emitting a per-app KS
-// via a ConfigMap-driven replacement) produces silent gaps in
-// changed-only diffs: the leaf KS isn't keep-set'd, never reconciles,
-// and its render output is missing from the diff. Issue #204.
+// AddEmitted extends the keep set with child when emitter is a
+// "primary" keep entry — i.e. one whose own render output differs
+// from baseline (its source file changed, it's a sibling of a
+// changed file under a shared owner KS, or it was itself emitted
+// by another primary parent at runtime). Ancestor-only emitters
+// (kept so their patches/substituteFrom apply to descendants per
+// #58) DON'T propagate keep to file-loaded children: their render
+// output for unrelated siblings is identical to baseline, and
+// cascading those siblings through the keep set turns a one-file
+// change into a full-tree reconcile.
 //
-// Add ALSO walks transitiveDeps recursively so a Kustomization /
-// HelmRelease added at runtime carries its sourceRef and chartRef
-// into the keep set with it. Without this, a leaf KS emitted via a
-// parent's render lands in keep, runs reconcile, asks for its
-// sourceRef's artifact, and finds nothing — the source controller
-// PreGate-skipped that source at startup because nothing in keep
-// referenced it yet. Issue #260.
+// child inherits the emitter's primacy: AddEmitted walks
+// transitiveDeps recursively for sourceRef / chartRef / valuesFrom
+// (issue #260) and marks every newly-added entry primary so their
+// own future emissions cascade correctly.
+//
+// Used by the KS controller when a parent KS in the keep set
+// renders and emits id as a child. Covers the kustomize
+// component+replacement pattern (parent emits render-only per-app
+// Kustomization from a CM-driven replacement, see #204) AND the
+// patch-propagation chain (primary parent emits patched file-loaded
+// child whose render-with-new-patches differs from baseline).
 //
 // Newly-added ids are passed to OnAdd (when configured) so the
 // orchestrator can refire dependent listeners (e.g. retrigger the
 // source controller's fetch for a source whose PreGate-skip happened
 // before its consumer joined keep).
 //
-// Ordering contract for embedders: call Add(child) BEFORE the
-// emitting Store.AddObject(child). Store events fire synchronously
-// on the calling goroutine, so the controller's listener invokes
-// PreGate (and thus ShouldReconcile) inside that AddObject — if
-// Add ran after, the listener sees the old keep set and short-
-// circuits to Ready/"unchanged".
+// Ordering contract for embedders: call AddEmitted(parent, child)
+// BEFORE the emitting Store.AddObject(child). Store events fire
+// synchronously on the calling goroutine, so the controller's
+// listener invokes PreGate (and thus ShouldReconcile) inside that
+// AddObject — if AddEmitted ran after, the listener sees the old
+// keep set and short-circuits to Ready/"unchanged".
+//
+// No-op when the filter is disabled. Safe for concurrent use.
+func (f *Filter) AddEmitted(emitter, child manifest.NamedResource) {
+	if !f.Enabled() {
+		return
+	}
+	f.mu.RLock()
+	_, primaryEmitter := f.primary[emitter]
+	f.mu.RUnlock()
+	if !primaryEmitter {
+		return
+	}
+	f.Add(child)
+}
+
+// Add unconditionally extends the keep set with id (and its
+// transitive sourceRef/chartRef/valuesFrom deps) at runtime, marking
+// every newly-inserted entry primary. Callers that need the
+// "skip when emitter is ancestor-only" gating should use AddEmitted
+// instead.
 //
 // No-op when the filter is disabled. Safe for concurrent use.
 func (f *Filter) Add(id manifest.NamedResource) {
@@ -162,10 +195,17 @@ func (f *Filter) Add(id manifest.NamedResource) {
 	}
 }
 
-// addRecursive adds id (and transitive deps) to keep, returning the
-// list of ids that were newly added (so the caller can dispatch
-// OnAdd notifications outside the lock). Holds mu for the full
-// graph walk so the recursion sees a coherent keep snapshot.
+// addRecursive adds id (and transitive deps) to keep AND primary,
+// returning the list of ids that were newly added (so the caller
+// can dispatch OnAdd notifications outside the lock). Holds mu for
+// the full graph walk so the recursion sees a coherent keep
+// snapshot.
+//
+// Every entry inserted by this path is primary: runtime adds happen
+// when a primary parent emits a child, so the child inherits primacy
+// and any future emissions IT produces also propagate. Ancestor-only
+// entries are inserted directly into f.keep (NOT f.primary) by
+// resolve()'s own walks, never via addRecursive.
 func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResource {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -175,14 +215,23 @@ func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResourc
 	for len(stack) > 0 {
 		cur := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if _, ok := f.keep[cur]; ok {
+		_, alreadyKeep := f.keep[cur]
+		_, alreadyPrimary := f.primary[cur]
+		if alreadyKeep && alreadyPrimary {
 			continue
 		}
-		f.keep[cur] = struct{}{}
-		if cur.Namespace == "" {
-			f.keepByName[nameKey{cur.Kind, cur.Name}] = struct{}{}
+		if !alreadyKeep {
+			f.keep[cur] = struct{}{}
+			if cur.Namespace == "" {
+				f.keepByName[nameKey{cur.Kind, cur.Name}] = struct{}{}
+			}
+			added = append(added, cur)
 		}
-		added = append(added, cur)
+		// Promote ancestor-only entries to primary when a runtime
+		// add reaches them: an ancestor that ALSO becomes the emit-
+		// chain target of a primary parent is itself rendering a
+		// changed graph, so its further emissions should cascade.
+		f.primary[cur] = struct{}{}
 		// Transitive walk: a runtime-added KS / HR pulls its
 		// sourceRef / chartRef / valuesFrom into keep with it.
 		// objs may be nil for tests that construct a Filter without
@@ -192,7 +241,7 @@ func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResourc
 			continue
 		}
 		for _, dep := range transitiveDeps(f.objs, cur) {
-			if _, ok := f.keep[dep]; !ok {
+			if _, ok := f.primary[dep]; !ok {
 				stack = append(stack, dep)
 			}
 		}
@@ -202,8 +251,25 @@ func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResourc
 
 func (f *Filter) resolve(objs ObjectLister) {
 	keep := make(map[manifest.NamedResource]struct{})
+	primary := make(map[manifest.NamedResource]struct{})
 	var queue []manifest.NamedResource
-	enqueue := func(id manifest.NamedResource) {
+	enqueuePrimary := func(id manifest.NamedResource) {
+		if _, isPrimary := primary[id]; isPrimary {
+			return
+		}
+		primary[id] = struct{}{}
+		if _, seen := keep[id]; !seen {
+			keep[id] = struct{}{}
+			queue = append(queue, id)
+		}
+	}
+	// enqueueAncestor adds id to keep without marking it primary.
+	// Ancestors render so their patches/substituteFrom apply to
+	// descendants (#58), but their render output for unrelated
+	// sibling children is identical to baseline — so AddEmitted
+	// must NOT keep-add those siblings on the cascade path. The
+	// primary/non-primary distinction is the gate.
+	enqueueAncestor := func(id manifest.NamedResource) {
 		if _, seen := keep[id]; seen {
 			return
 		}
@@ -217,35 +283,43 @@ func (f *Filter) resolve(objs ObjectLister) {
 	for _, file := range f.changes.Paths() {
 		for _, owner := range owners.ownersOf(file) {
 			ownersHit[owner] = struct{}{}
-			enqueue(owner)
+			enqueuePrimary(owner)
 		}
 		// Also include ancestor/meta Kustomizations whose render
 		// mutates the leaf owner's spec — parent-injected spec.patches
 		// and postBuild.substituteFrom land at parent-render time, so
 		// in changed-only mode the parent has to run too. Ancestors
 		// are NOT added to ownersHit, so the sibling-pull-in below
-		// doesn't drag in everything else they own. See #58.
+		// doesn't drag in everything else they own. See #58. They're
+		// also NOT marked primary so AddEmitted skips their unrelated
+		// emitted children — preventing the keep cascade where a
+		// one-file change pulls in the entire cluster.
 		for _, ancestor := range owners.ancestorsOf(file) {
-			enqueue(ancestor)
+			enqueueAncestor(ancestor)
 		}
 	}
 	for id, src := range f.sourceFiles {
 		if f.changes.Contains(src) {
-			enqueue(id)
+			enqueuePrimary(id)
 			continue
 		}
 		// Pull in every sibling resource that shares an affected owner.
 		for _, owner := range owners.ownersOf(src) {
 			if _, hit := ownersHit[owner]; hit {
-				enqueue(id)
+				enqueuePrimary(id)
 				break
 			}
 		}
 	}
 
 	for head := 0; head < len(queue); head++ {
+		_, headPrimary := primary[queue[head]]
 		for _, d := range transitiveDeps(objs, queue[head]) {
-			enqueue(d)
+			if headPrimary {
+				enqueuePrimary(d)
+			} else {
+				enqueueAncestor(d)
+			}
 		}
 		// Also walk the structural-parent chain of any Flux
 		// Kustomization in the keep set. A leaf change pulls in its
@@ -270,17 +344,20 @@ func (f *Filter) resolve(objs ObjectLister) {
 		// so deeper chains of meta-Kustomizations get pulled in too.
 		// queue[head] itself owns its OWN spec.path, not its source
 		// file, so the parent never collides with the KS we're walking.
+		// Structural parents are ancestor-only (their unrelated children
+		// shouldn't cascade into keep — same rationale as ancestorsOf).
 		for _, owner := range owners.ownersOf(src) {
 			if owner == queue[head] {
 				continue
 			}
-			enqueue(owner)
+			enqueueAncestor(owner)
 		}
 		for _, ancestor := range owners.ancestorsOf(src) {
-			enqueue(ancestor)
+			enqueueAncestor(ancestor)
 		}
 	}
 	f.keep = keep
+	f.primary = primary
 
 	// Index ONLY empty-namespace keep entries by (Kind, Name) — see
 	// ShouldReconcile's doc for the asymmetry rationale. Indexing

@@ -54,7 +54,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			continue
 		}
 		if p.reconcilable {
-			c.keepEmitted(p.obj.Named())
+			c.keepEmitted(id, p.obj.Named())
 			c.Store.AddObject(p.obj)
 			c.markRendered(id, p.obj.Named())
 		} else {
@@ -64,7 +64,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 	// Pass 2 — leaf reconcilables.
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
-			c.keepEmitted(p.obj.Named())
+			c.keepEmitted(id, p.obj.Named())
 			c.Store.AddObject(p.obj)
 			c.markRendered(id, p.obj.Named())
 		}
@@ -79,12 +79,19 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 // because it didn't exist on disk, never reconciles, and its render
 // output never reaches the diff comparison. Issue #204.
 //
+// Routed through Filter.AddEmitted so an ancestor-only parent
+// (kept for #58's patch-propagation but with no file change of its
+// own) doesn't cascade unrelated file-loaded children into keep on
+// every render. Primary parents — those whose own file changed or
+// that share an owner with a changed file — still propagate their
+// emissions normally.
+//
 // Called BEFORE Store.AddObject so the listener that fires
 // synchronously during AddObject sees the extended keep set when it
 // invokes PreGate.
-func (c *Controller) keepEmitted(id manifest.NamedResource) {
+func (c *Controller) keepEmitted(parent, child manifest.NamedResource) {
 	if f := c.Filter(); f != nil {
-		f.Add(id)
+		f.AddEmitted(parent, child)
 	}
 }
 

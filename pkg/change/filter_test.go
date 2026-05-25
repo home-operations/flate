@@ -391,6 +391,100 @@ func TestFilter_ShouldReconcileEmptyNamespaceFallback(t *testing.T) {
 	}
 }
 
+// TestFilter_AddEmittedRejectsAncestorOnlyEmitter pins the
+// keep-cascade fix: when a parent KS is in the keep set only as an
+// ancestor (kept so its patches/substituteFrom render before the
+// leaf descendants per #58), its file-loaded emitted children must
+// NOT auto-join keep. Without this gate, a one-file change in a
+// deeply-nested leaf cascades the entire tree into keep — every
+// ancestor renders, emits every file-loaded child, AddEmitted
+// previously called Add unconditionally, every emitted child then
+// emits its own children, and the cluster is back to a full reconcile.
+//
+// The change: AddEmitted no-ops when the emitter is in keep only
+// as an ancestor. Render-only children (no sourceFile entry) of an
+// ancestor parent are also gated out — if the ancestor's own render
+// is unchanged from baseline, anything it emits at render time is
+// unchanged too, and there's no diff to capture.
+func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
+	// reloader's OCIRepository file is the only file change. The
+	// leaf KS (reloader/app) owns that file → marked primary. The
+	// "cluster-apps" ancestor whose spec.path covers everything is
+	// kept (so its patches apply) but is NOT primary.
+	leafKS := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "reloader-app"}
+	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	siblingApp := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "media", Name: "plex-app"}
+
+	leafKSObj := &manifest.Kustomization{Name: "reloader-app", Namespace: "kube-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/kube-system/reloader/app"}}
+	clusterAppsObj := &manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps"}}
+	siblingObj := &manifest.Kustomization{Name: "plex-app", Namespace: "media",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/media/plex/app"}}
+
+	f := NewFilter(
+		NewSet([]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"}),
+		map[manifest.NamedResource]string{
+			leafKS:      "kubernetes/apps/kube-system/reloader/app/ks.yaml",
+			clusterApps: "kubernetes/flux/cluster-apps.yaml",
+			siblingApp:  "kubernetes/apps/media/plex/ks.yaml",
+		},
+		"",
+		mapLister{leafKS: leafKSObj, clusterApps: clusterAppsObj, siblingApp: siblingObj},
+	)
+
+	if !f.ShouldReconcile(leafKS) {
+		t.Fatalf("leaf KS (owner of changed file) must be in keep; keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(clusterApps) {
+		t.Fatalf("cluster-apps ancestor must be in keep (so its patches render); keep=%v", f.KeepNames())
+	}
+	if f.ShouldReconcile(siblingApp) {
+		t.Fatalf("precondition: sibling under same ancestor must NOT be in keep at resolve time; keep=%v", f.KeepNames())
+	}
+
+	// Simulate cluster-apps rendering and emitting the file-loaded
+	// sibling. AddEmitted must NOT keep-add it.
+	f.AddEmitted(clusterApps, siblingApp)
+	if f.ShouldReconcile(siblingApp) {
+		t.Errorf("AddEmitted(ancestor, sibling) over-extended keep set; sibling should remain SKIPPED; keep=%v", f.KeepNames())
+	}
+
+	// Same path but with a render-only child (no sourceFiles entry):
+	// still rejected because the emitter (ancestor) is not primary
+	// and an unchanged emitter wouldn't produce a different child.
+	renderOnly := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "rendered", Name: "from-replacement"}
+	f.AddEmitted(clusterApps, renderOnly)
+	if f.ShouldReconcile(renderOnly) {
+		t.Errorf("AddEmitted(ancestor, render-only) should reject when ancestor is not primary; keep=%v", f.KeepNames())
+	}
+}
+
+// TestFilter_AddEmittedFromPrimaryParent verifies the #204 path
+// still works: a primary parent (its own file changed, or it owns
+// the changed file) emitting any child — render-only or file-loaded
+// — keep-adds the child. This is the original AddEmitted purpose
+// and the bug-cascade prevention should not regress it.
+func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "database"}
+	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "database", Name: "leaf-app"}
+
+	f := NewFilter(
+		NewSet([]string{"apps/database/parent.yaml"}),
+		map[manifest.NamedResource]string{parent: "apps/database/parent.yaml"},
+		"",
+		emptyLister{},
+	)
+	if !f.ShouldReconcile(parent) {
+		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
+	}
+
+	f.AddEmitted(parent, child)
+	if !f.ShouldReconcile(child) {
+		t.Errorf("AddEmitted(primary parent, child) should keep-add child; keep=%v", f.KeepNames())
+	}
+}
+
 // TestFilter_KeepByNameDoesNotLeakAcrossNamespaces pins the
 // asymmetric-fallback contract: a fully-namespaced keep entry must
 // NOT match a fully-namespaced lookup that happens to share

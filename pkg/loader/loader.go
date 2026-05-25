@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -90,12 +91,22 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	}
 
 	// Pre-pass: decode every kustomization.yaml in the tree and
-	// collect the set of files referenced as configMapGenerator /
-	// secretGenerator data sources. The main walk skips those — they
-	// are valid YAML data files, not Flux manifests, and would
-	// otherwise trip the generic decode-as-map fallback with noisy
-	// WARN logs that look like real failures (issue #192).
-	dataFiles, err := collectGeneratorDataFiles(ctx, abs, ignore)
+	// collect (a) data files declared as generator inputs, (b) files
+	// declared as `resources:`, and (c) the directories that have a
+	// kustomization.yaml at all. The main walk applies three rules
+	// from this scan:
+	//
+	//   - skip generator data files (issue #192)
+	//   - skip "orphan" YAML files: a YAML in a directory governed by
+	//     a kustomization.yaml is loaded only when explicitly
+	//     referenced via `resources:`. Closes #342 — toggle stubs
+	//     left lying around next to a kustomization.yaml (a common
+	//     pattern: comment a `./vrising.yaml` line in resources to
+	//     disable that wrapper) were being discovered and reconciled
+	//     against the wrong namespace, since the parent overlay's
+	//     transforms never applied. kustomize build follows the
+	//     same graph; flate now matches that behavior.
+	scan, err := collectKustomizationScan(ctx, abs, ignore)
 	if err != nil {
 		return 0, err
 	}
@@ -120,12 +131,22 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		if ignore.matches(path, abs) {
 			return nil
 		}
-		if _, isData := dataFiles[path]; isData {
+		if _, isData := scan.DataFiles[path]; isData {
 			// Declared as configMapGenerator/secretGenerator data by
 			// a kustomization.yaml in the tree. krusty handles the
 			// file correctly at render time; the loader's job is to
 			// stay out of the way.
 			slog.Debug("loader: skipping generator data file", "path", path)
+			return nil
+		}
+		if orphan := isOrphanYAML(path, scan); orphan {
+			// Orphan: this YAML lives in a directory governed by a
+			// kustomization.yaml but isn't referenced via the
+			// `resources:` list. kustomize build wouldn't include it;
+			// flate now matches that. Common shape: a disabled toggle
+			// stub like `./vrising.yaml` left in the directory after
+			// a maintainer commented out the line in `resources:`.
+			slog.Debug("loader: skipping orphan YAML not referenced in parent kustomization.yaml", "path", path)
 			return nil
 		}
 		n, err := l.loadFile(path)
@@ -274,4 +295,35 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 func isKustomizeComponent(dir string) bool {
 	k := readKustomization(dir)
 	return k != nil && k.Kind == "Component"
+}
+
+// isOrphanYAML reports whether path should be skipped by the main
+// loader walk because it's an unreferenced YAML in a directory
+// governed by a kustomization.yaml. The rule:
+//
+//   - If the path's directory does NOT have a kustomization.yaml,
+//     the file is loaded normally (e.g. --path entry points, the
+//     bootstrap dir before the first overlay).
+//   - The kustomization.yaml file itself always loads.
+//   - Files explicitly listed in the kustomization.yaml's
+//     `resources:` always load.
+//   - Everything else in the same directory is "orphan" — toggle
+//     stubs, kustomize patches, `replacements:` payloads — and is
+//     skipped. Patches/replacements would parse as RawObject and
+//     get filtered downstream anyway; toggle stubs (the #342 case)
+//     would parse as a Flux Kustomization and reconcile against
+//     the wrong overlay state.
+//
+// Mirrors kustomize build's graph traversal: only the transitive
+// closure of `resources:` (+ generators) ends up rendered.
+func isOrphanYAML(path string, scan *kustomizationScan) bool {
+	dir := filepath.Dir(path)
+	if _, ok := scan.KustomizationDirs[dir]; !ok {
+		return false
+	}
+	if slices.Contains(kustomizationFileNames, filepath.Base(path)) {
+		return false
+	}
+	_, claimed := scan.ClaimedResources[path]
+	return !claimed
 }

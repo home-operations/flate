@@ -272,10 +272,18 @@ metadata: {name: shared, namespace: ns}
 // declared by a kustomization.yaml deep in the tree is excluded
 // during the load of a higher-level --path. Same exclusion logic;
 // just verifies the pre-pass actually walks recursively.
+//
+// manifest.yaml must be declared in resources for the loader to
+// pick it up — the orphan-skip rule (issue #342) skips YAMLs in a
+// kustomization-governed directory that aren't referenced. Without
+// the resources entry, manifest.yaml would be a toggle-stub orphan
+// and correctly excluded.
 func TestLoader_NestedKustomizationDataFile(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/notifier/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+resources:
+  - ./manifest.yaml
 configMapGenerator:
   - name: cm
     files:
@@ -292,6 +300,65 @@ metadata: {name: real, namespace: ns}
 	}
 	if s.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "real"}) == nil {
 		t.Errorf("the real manifest under the same kustomization dir must still load")
+	}
+}
+
+// TestLoader_OrphanYAMLSkipped pins the issue-#342 fix: a YAML
+// file in a directory governed by a kustomization.yaml is loaded
+// only when it appears in `resources:`. The unreferenced file (a
+// "toggle stub" — common pattern where maintainers comment out
+// resources entries to disable a wrapper without deleting the file)
+// must NOT reach the store. Before the fix, the orphan was
+// discovered and reconciled against the wrong overlay state,
+// producing spurious "dependency not found" failures for any chart
+// source the parent's namespace transform was supposed to inject.
+func TestLoader_OrphanYAMLSkipped(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/games/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: games
+resources:
+  - ./valheim.yaml
+  # - ./vrising.yaml   # disabled toggle stub
+`)
+	testutil.WriteFile(t, dir, "apps/games/valheim.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: valheim
+spec:
+  interval: 1h
+  path: ./apps/base/games/valheim
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+	testutil.WriteFile(t, dir, "apps/games/vrising.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: vrising
+spec:
+  interval: 1h
+  path: ./apps/base/games/vrising
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+	s := store.New()
+	if _, err := New(s).Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// valheim is referenced — must load. Kustomization namespace
+	// is left empty by the parser (the YAML has no
+	// metadata.namespace); the parent kustomization.yaml's
+	// `namespace:` overlay would fill it at render time.
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Name: "valheim"}) == nil {
+		t.Error("referenced Kustomization 'valheim' missing from store")
+	}
+	// vrising is NOT referenced — must be skipped as orphan.
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Name: "vrising"}) != nil {
+		t.Error("orphan Kustomization 'vrising' should not be loaded (issue #342)")
 	}
 }
 

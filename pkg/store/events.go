@@ -153,12 +153,20 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 //
 // Holding s.mu while snapshotting listeners closes the
 // AddListener-vs-writer race documented on AddListener.
+//
+// When no listeners are registered for event, fireUnderLock returns
+// a no-op closure with no allocation — AddRendered always dispatches
+// (so the listener-contract gap is closed) and must stay cheap on
+// the render hot path when nothing's listening.
 func (s *Store) fireUnderLock(event EventKind, id manifest.NamedResource, payload any) func() {
 	set := s.listeners[event]
 	if set == nil {
 		return func() {}
 	}
 	listeners := set.snapshot()
+	if len(listeners) == 0 {
+		return func() {}
+	}
 	return func() { dispatch(listeners, id, payload) }
 }
 
@@ -219,9 +227,18 @@ func (l *listenerSet) remove(id int64) {
 // snapshot returns a copy of the current listener funcs so dispatch can
 // iterate without holding the lock (and so listeners can mutate the set
 // during dispatch without affecting the current pass).
+//
+// Returns nil (not a zero-length slice) when no listeners are
+// registered so writers' fireUnderLock can short-circuit without
+// allocating — AddRendered is on the render hot path, and the
+// listener-contract guarantee shouldn't cost an allocation per
+// rendered doc when nothing's listening for that kind.
 func (l *listenerSet) snapshot() []Listener {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if len(l.entries) == 0 {
+		return nil
+	}
 	out := make([]Listener, len(l.entries))
 	for i := range l.entries {
 		out[i] = l.entries[i].fn

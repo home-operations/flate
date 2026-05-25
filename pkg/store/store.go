@@ -78,6 +78,19 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 		s.mu.Unlock()
 		return
 	}
+	s.setLocked(id, obj)
+	dispatch := s.fireUnderLock(EventObjectAdded, id, obj)
+	s.mu.Unlock()
+	dispatch()
+}
+
+// setLocked is the single funnel for inserting an object into both
+// the primary `objects` map and the secondary `byName` index. Three
+// write paths (AddObject, AddRendered, future renames) must keep
+// these two maps in sync; routing them through one helper makes the
+// "forgot to update byName" drift class structurally impossible.
+// Caller MUST hold s.mu (write lock).
+func (s *Store) setLocked(id manifest.NamedResource, obj manifest.BaseManifest) {
 	s.objects[id] = obj
 	inner, ok := s.byName[id.Kind]
 	if !ok {
@@ -85,9 +98,23 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 		s.byName[id.Kind] = inner
 	}
 	inner[nameKey(id.Namespace, id.Name)] = obj
-	dispatch := s.fireUnderLock(EventObjectAdded, id, obj)
-	s.mu.Unlock()
-	dispatch()
+}
+
+// deleteLocked is the symmetric remove for setLocked. Drops the
+// object from objects + byName + conditions + artifacts (the full
+// lifecycle wipe) and reports whether anything was present. Caller
+// MUST hold s.mu (write lock).
+func (s *Store) deleteLocked(id manifest.NamedResource) bool {
+	if _, ok := s.objects[id]; !ok {
+		return false
+	}
+	delete(s.objects, id)
+	delete(s.conditions, id)
+	delete(s.artifacts, id)
+	if inner := s.byName[id.Kind]; inner != nil {
+		delete(inner, nameKey(id.Namespace, id.Name))
+	}
+	return true
 }
 
 // Refire resets the resource's Ready condition to Pending and then
@@ -163,23 +190,21 @@ func Mutate[T interface {
 }
 
 // AddRendered records a manifest produced by helm/kustomize rendering.
-// Compared to AddObject it skips the reflect.DeepEqual dedup check and
-// the listener dispatch — rendered docs are leaves that no controller
-// listens for. The byName index is still updated so downstream
-// valuesFrom / GetByName lookups see the new object. On the build/diff
-// hot path this removes ~N×listeners closure invocations and the
-// dispatch defer/recover stack per rendered manifest.
+// Compared to AddObject it skips the reflect.DeepEqual dedup check —
+// rendered docs change on every render and the dedup would never hit.
+// Listener dispatch is unconditional: the listener-contract gap that
+// previously existed (silent miss for any future kind with listeners,
+// e.g. watching rendered Secret docs for valuesFrom invalidation) is
+// closed by routing every write through fireUnderLock. The empty-set
+// fast path in listenerSet.snapshot keeps the common "no listeners
+// for this kind" case at one mutex pair, no allocations.
 func (s *Store) AddRendered(obj manifest.BaseManifest) {
 	id := obj.Named()
 	s.mu.Lock()
-	s.objects[id] = obj
-	inner, ok := s.byName[id.Kind]
-	if !ok {
-		inner = make(map[string]manifest.BaseManifest)
-		s.byName[id.Kind] = inner
-	}
-	inner[nameKey(id.Namespace, id.Name)] = obj
+	s.setLocked(id, obj)
+	dispatch := s.fireUnderLock(EventObjectAdded, id, obj)
 	s.mu.Unlock()
+	dispatch()
 }
 
 // GetObject returns the manifest for id, or nil if not present.
@@ -215,16 +240,7 @@ func (s *Store) Snapshot(id manifest.NamedResource) (manifest.BaseManifest, []Co
 func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.objects[id]; !ok {
-		return false
-	}
-	delete(s.objects, id)
-	delete(s.conditions, id)
-	delete(s.artifacts, id)
-	if inner := s.byName[id.Kind]; inner != nil {
-		delete(inner, nameKey(id.Namespace, id.Name))
-	}
-	return true
+	return s.deleteLocked(id)
 }
 
 // GetByName returns the object matching (kind, namespace, name), or nil

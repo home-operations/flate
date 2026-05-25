@@ -43,8 +43,16 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 	// back from the store on every wake. Carrying StatusInfo through
 	// the channel directly would lose Failed→Ready transitions when
 	// the buffer-1 channel drops on a default-send.
+	//
+	// The subscribe + initial status read run under s.mu.RLock to
+	// serialize against writers: any UpdateStatus that completes
+	// AFTER this critical section will fire our listener (because
+	// we're in its listener-set snapshot); any update that completed
+	// BEFORE this section is already reflected in the GetStatus read.
+	// The wake-loop's per-event GetStatus continues to absorb later
+	// updates.
 	wake := make(chan struct{}, 1)
-	unsub := s.AddListener(EventStatusUpdated, func(other manifest.NamedResource, _ any) {
+	listener := func(other manifest.NamedResource, _ any) {
 		if other != id {
 			return
 		}
@@ -52,17 +60,17 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 		case wake <- struct{}{}:
 		default:
 		}
-	}, false)
+	}
+	initial, hasInitial, unsub := s.subscribeWithStatus(EventStatusUpdated, listener, id)
 	defer unsub()
 
-	// Re-check after subscribing to close the race window.
 	var currentFailed *StatusInfo
-	if info, ok := s.GetStatus(id); ok {
-		if info.Status == StatusReady {
-			return info, nil
+	if hasInitial {
+		if initial.Status == StatusReady {
+			return initial, nil
 		}
-		if info.Status == StatusFailed {
-			f := info
+		if initial.Status == StatusFailed {
+			f := initial
 			currentFailed = &f
 		}
 	}
@@ -108,13 +116,21 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 
 // WatchExists blocks until id is present in the store, then returns it.
 // Useful for kinds outside SupportsStatus (ConfigMap, Secret).
+//
+// Like WatchReady, the listener-register-and-initial-read pair runs
+// under s.mu.RLock so a writer that lands after we subscribed always
+// reaches our listener, and a writer that landed before we subscribed
+// is observed by the initial read. Without this pairing the listener
+// can be added after the writer's listener-set snapshot AND the
+// initial read can see the pre-write state — wedging until ctx
+// timeout.
 func (s *Store) WatchExists(ctx context.Context, id manifest.NamedResource) (manifest.BaseManifest, error) {
 	if obj := s.GetObject(id); obj != nil {
 		return obj, nil
 	}
 
 	ch := make(chan manifest.BaseManifest, 1)
-	unsub := s.AddListener(EventObjectAdded, func(other manifest.NamedResource, payload any) {
+	listener := func(other manifest.NamedResource, payload any) {
 		if other != id {
 			return
 		}
@@ -126,10 +142,10 @@ func (s *Store) WatchExists(ctx context.Context, id manifest.NamedResource) (man
 		case ch <- obj:
 		default:
 		}
-	}, false)
+	}
+	obj, unsub := s.subscribeWithObject(listener, id)
 	defer unsub()
-
-	if obj := s.GetObject(id); obj != nil {
+	if obj != nil {
 		return obj, nil
 	}
 
@@ -139,5 +155,33 @@ func (s *Store) WatchExists(ctx context.Context, id manifest.NamedResource) (man
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// subscribeWithObject atomically registers fn as an EventObjectAdded
+// listener AND reads the current object for id under one s.mu.RLock
+// acquisition. The atomicity closes the subscribe-then-recheck race
+// at the source: any writer landing after this call sees our
+// listener in its dispatch snapshot; any writer that completed
+// before this call has its object visible via the initial read.
+func (s *Store) subscribeWithObject(fn Listener, id manifest.NamedResource) (manifest.BaseManifest, Unsubscribe) {
+	set := s.listeners[EventObjectAdded]
+	s.mu.RLock()
+	handle := set.add(fn)
+	obj := s.objects[id]
+	s.mu.RUnlock()
+	return obj, func() { set.remove(handle) }
+}
+
+// subscribeWithStatus atomically registers fn as an
+// EventStatusUpdated listener AND reads the current status for id
+// under one s.mu.RLock. Mirrors subscribeWithObject for the status
+// channel; same race-closing argument.
+func (s *Store) subscribeWithStatus(_ EventKind, fn Listener, id manifest.NamedResource) (StatusInfo, bool, Unsubscribe) {
+	set := s.listeners[EventStatusUpdated]
+	s.mu.RLock()
+	handle := set.add(fn)
+	info, ok := statusInfoFromConditions(s.conditions[id])
+	s.mu.RUnlock()
+	return info, ok, func() { set.remove(handle) }
 }
 

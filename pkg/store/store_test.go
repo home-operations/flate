@@ -256,10 +256,20 @@ func TestStore_FailedResources(t *testing.T) {
 	if len(s.FailedResources()) != 0 {
 		t.Errorf("empty store should not have failures")
 	}
-	id := manifest.NamedResource{Kind: "Kustomization", Name: "x"}
+	ks := &manifest.Kustomization{Name: "x", Namespace: ""}
+	id := ks.Named()
+	s.AddObject(ks)
 	s.UpdateStatus(id, StatusFailed, "boom")
 	if got := len(s.FailedResources()); got != 1 {
 		t.Errorf("FailedResources count: %d, want 1", got)
+	}
+
+	// Phantom guard: a SetCondition that races after DeleteObject must
+	// not resurrect a failure entry for an id that no longer exists.
+	s.DeleteObject(id)
+	s.UpdateStatus(id, StatusFailed, "phantom") // simulates the race
+	if got := len(s.FailedResources()); got != 0 {
+		t.Errorf("FailedResources after DeleteObject: %d, want 0 (phantom entry leaked)", got)
 	}
 }
 
@@ -610,5 +620,68 @@ func TestStore_AddListener_FlushNoDoubleFire(t *testing.T) {
 		if got := v.(*atomic.Int64).Load(); got != 1 {
 			t.Fatalf("racer fired %d times on iteration; want exactly 1", got)
 		}
+	}
+}
+
+// TestStore_WatchExists_NoWedge stresses the subscribe-and-recheck
+// race in WatchExists: a writer that lands between the initial
+// GetObject and the listener registration must reach the waiter via
+// the atomic register-and-read pair. Without subscribeWithObject's
+// RLock-protected pairing, the listener can register after the
+// writer's dispatch snapshot AND the recheck can see pre-write state,
+// wedging the waiter until ctx expires.
+//
+// The test fires many parallel writer/waiter pairs; under -race, any
+// regression that reintroduces the race shows up as either a timeout
+// or a missing return.
+func TestStore_WatchExists_NoWedge(t *testing.T) {
+	const iters = 256
+	for range iters {
+		s := New()
+		cm := newCM("a", "ns")
+		id := cm.Named()
+
+		var got manifest.BaseManifest
+		var werr error
+		var wg sync.WaitGroup
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		wg.Add(1)
+		ready := make(chan struct{})
+		go func() {
+			defer wg.Done()
+			close(ready)
+			got, werr = s.WatchExists(ctx, id)
+		}()
+
+		<-ready
+		s.AddObject(cm)
+		wg.Wait()
+
+		if werr != nil {
+			t.Fatalf("WatchExists: %v (iter wedged — race regression)", werr)
+		}
+		if got == nil {
+			t.Fatalf("WatchExists returned nil object")
+		}
+	}
+}
+
+// TestStore_AddRendered_DispatchesListeners pins the listener contract:
+// AddRendered MUST fire EventObjectAdded so callers that listen for
+// kinds promoted via render (e.g. valuesFrom invalidation watching
+// rendered Secret docs) see the event. The original implementation
+// skipped dispatch entirely with a "rendered docs are leaves" comment;
+// adding any new listener for a render-output kind silently broke.
+func TestStore_AddRendered_DispatchesListeners(t *testing.T) {
+	s := New()
+	var seen atomic.Int64
+	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+		seen.Add(1)
+	}, false)
+	s.AddRendered(newCM("a", "ns"))
+	if got := seen.Load(); got != 1 {
+		t.Errorf("AddRendered fired %d events; want 1 (listener contract violated)", got)
 	}
 }

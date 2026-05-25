@@ -178,6 +178,11 @@ func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, message s
 // example) wakes them.
 //
 // An identical re-write of the same condition is a no-op (no event).
+//
+// SetCondition does NOT require the object to be in the store —
+// callers may legitimately establish initial state before AddObject
+// lands (e.g. tests). The FailedResources rollup filters phantoms
+// by intersecting against the object map at read time.
 func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
 	s.mu.Lock()
 	updated, changed := s.setConditionLocked(id, cond)
@@ -252,12 +257,20 @@ func conditionEqual(a, b Condition) bool {
 		a.ObservedGeneration == b.ObservedGeneration
 }
 
-// FailedResources returns every (id, info) currently in Failed state.
+// FailedResources returns every (id, info) currently in Failed state
+// for an object that is also present in the store. The "also present"
+// gate filters phantom entries: DeleteObject wipes the conditions
+// map, but a SetCondition that lands AFTER the delete (e.g. a slow
+// reconcile goroutine writing back its terminal status) would
+// otherwise resurrect a failure entry for an id that no longer exists.
+// Conditioning on s.objects ensures FailedResources never reports a
+// failure for a resource the orchestrator has explicitly removed.
 func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make(map[manifest.NamedResource]StatusInfo)
-	for id, conds := range s.conditions {
+	for id := range s.objects {
+		conds := s.conditions[id]
 		if info, ok := statusInfoFromConditions(conds); ok && info.Status == StatusFailed {
 			out[id] = info
 		}

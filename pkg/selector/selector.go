@@ -37,6 +37,10 @@ func labelsOf(obj manifest.BaseManifest) map[string]string {
 		return o.Labels
 	case *manifest.HelmRelease:
 		return o.Labels
+	case *manifest.ResourceSet:
+		return o.Labels
+	case *manifest.ResourceSetInputProvider:
+		return o.Labels
 	}
 	return nil
 }

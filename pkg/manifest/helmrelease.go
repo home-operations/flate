@@ -44,8 +44,22 @@ func (h HelmChart) ChartName() string {
 // that read h.Name / h.Version must either run after Prepare /
 // ResolveChartRef, or check IsResolved first — see also the empty
 // Name guarantee in chartFromHelmRelease.
+//
+// chartRef → Bucket / GitRepository / OCIRepository also lands with
+// Name="" intentionally (the underlying source's content determines
+// the chart layout, not the ref name). IsResolved keys on both
+// "RepoKind has a real name" AND "the bytes-determining field —
+// Name for HelmRepository, Version for chartRef-HelmChart — is
+// non-empty" so a caller that branches on IsResolved to safely
+// dereference Name doesn't get an empty subpath silently.
 func (h HelmChart) IsResolved() bool {
-	return h.RepoKind != KindHelmChart || h.Version != ""
+	if h.Name == "" {
+		return false
+	}
+	if h.RepoKind == KindHelmChart && h.Version == "" {
+		return false
+	}
+	return true
 }
 
 // chartFromHelmRelease projects the chart reference out of a typed

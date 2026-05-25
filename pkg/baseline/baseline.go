@@ -115,10 +115,12 @@ func mapToTempDir(repoRoot, tempDir, path string) (string, error) {
 	return filepath.Join(tempDir, rel), nil
 }
 
-// FindRepoRoot returns the .git ancestor of path, or "" when none
+// GitRepoRoot returns the .git ancestor of path, or "" when none
 // exists. Exposed so callers can branch on "is this a git repo" before
-// calling AutoResolve.
-func FindRepoRoot(path string) string {
+// calling AutoResolve. Renamed from FindRepoRoot to disambiguate from
+// `discovery.FindRepoRoot` which has different fallback semantics
+// (returns p unchanged when no .git exists, rather than "").
+func GitRepoRoot(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return ""
@@ -138,7 +140,7 @@ func FindRepoRoot(path string) string {
 // openRepo opens the git repo containing path. Returns the *Repository
 // and the repo root (the directory containing .git).
 func openRepo(path string) (*git.Repository, string, error) {
-	root := FindRepoRoot(path)
+	root := GitRepoRoot(path)
 	if root == "" {
 		return nil, "", fmt.Errorf("--path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout", path)
 	}

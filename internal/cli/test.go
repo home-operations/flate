@@ -43,6 +43,7 @@ func newTestCmd() *cobra.Command {
 func testCmd(use string, aliases []string, short string, args cobra.PositionalArgs, kinds ...string) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
+	var showSkipped bool
 	cmd := &cobra.Command{
 		Use:     use,
 		Aliases: aliases,
@@ -65,6 +66,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 				Kinds: kinds,
 				Name:  firstArg(argv),
 			})
+			report.ShowSkipped = showSkipped
 			report.Write(cmd.OutOrStdout())
 			if report.AnyFailed() {
 				return errors.New("test failures detected")
@@ -73,6 +75,8 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		},
 	}
 	bindCommon(cmd.Flags(), c)
+	cmd.Flags().BoolVar(&showSkipped, "show-skipped", false,
+		"include SKIPPED resources in the per-resource listing (changed-only mode hides them by default to mirror `flate diff`)")
 	if rendersHelm(kinds) {
 		bindHelmFlags(cmd.Flags(), h)
 	}

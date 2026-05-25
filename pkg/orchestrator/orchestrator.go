@@ -288,15 +288,27 @@ func (o *Orchestrator) warnOnDisabledOCIFeatures() {
 		return
 	}
 	for _, repo := range store.ListAs[*manifest.OCIRepository](o.store, manifest.KindOCIRepository) {
-		if repo.Verify == nil && repo.LayerSelector == nil {
-			continue
-		}
-		fields := []string{}
+		var fields []string
 		if repo.Verify != nil {
 			fields = append(fields, "spec.verify")
 		}
 		if repo.LayerSelector != nil {
 			fields = append(fields, "spec.layerSelector")
+		}
+		if repo.CertSecretRef != nil {
+			fields = append(fields, "spec.certSecretRef")
+		}
+		if repo.ProxySecretRef != nil {
+			fields = append(fields, "spec.proxySecretRef")
+		}
+		if repo.Insecure {
+			fields = append(fields, "spec.insecure")
+		}
+		if repo.Ignore != nil {
+			fields = append(fields, "spec.ignore")
+		}
+		if len(fields) == 0 {
+			continue
 		}
 		slog.Warn("OCIRepository spec fields ignored — EnableOCI=false wires ExistenceFetcher",
 			"ociRepository", repo.Namespace+"/"+repo.Name,

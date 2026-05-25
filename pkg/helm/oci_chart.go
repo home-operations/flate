@@ -60,9 +60,17 @@ func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (
 			r.Namespace, r.Name)
 	}
 	ver := r.Version()
-	slog.Debug("helm: OCIRepository SourceArtifact missing; falling back to helm registry client",
-		"ociRepository", r.Namespace+"/"+r.Name, "url", r.URL, "version", ver,
-		"note", "OCIRepository spec.verify/layerSelector/etc. NOT applied on this path")
+	// Operator-visible: the fallback path silently drops every
+	// security-relevant spec.* field (verify, layerSelector,
+	// certSecretRef, proxySecretRef, insecure, ignore). Bootstrap-
+	// time warnOnDisabledOCIFeatures already calls this out per
+	// CR; the per-lookup log surfaces the actual moment the
+	// fallback runs — useful both for diagnosing missing-feature
+	// surprises and for noticing when the fallback is hit
+	// unexpectedly. Upgraded from Debug to Warn so operators on
+	// default log level (info) see it.
+	slog.Warn("helm: OCIRepository SourceArtifact missing; falling back to helm registry client — spec.verify/layerSelector/etc. NOT applied on this path",
+		"ociRepository", r.Namespace+"/"+r.Name, "url", r.URL, "version", ver)
 	return c.fetchOCIChart(ctx, r.URL, ver)
 }
 

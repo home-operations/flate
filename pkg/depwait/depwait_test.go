@@ -202,10 +202,12 @@ func TestWaiter_RenderOnlyDepStillFailsAfterFullTimeout(t *testing.T) {
 	resolve := func(manifest.NamedResource) bool { return false }
 	isKnown := func(manifest.NamedResource) bool { return false }
 
-	// Use a tight Timeout so the test doesn't burn 30s.
+	// Use a tight Timeout so the test doesn't burn 30s. Add a
+	// meaningful gap (300ms) so the assertion that elapsed >=
+	// MissingGrace + 100ms actually pins the long-wait branch.
 	w := &Waiter{
 		Store:          s,
-		Timeout:        MissingGrace + 200*time.Millisecond,
+		Timeout:        MissingGrace + 300*time.Millisecond,
 		ResolveMissing: resolve,
 		IsKnown:        isKnown,
 	}
@@ -216,12 +218,88 @@ func TestWaiter_RenderOnlyDepStillFailsAfterFullTimeout(t *testing.T) {
 	if !sum.AnyFailed() {
 		t.Fatalf("expected fail for never-appearing dep: %+v", sum)
 	}
-	// Must have waited past MissingGrace — that's the whole point.
-	if elapsed < MissingGrace {
-		t.Errorf("wait returned before grace expired: elapsed=%s, grace=%s", elapsed, MissingGrace)
+	// Strictly past MissingGrace, with a 100ms cushion so a
+	// future regression that reverted step-2 to grace-boundary
+	// fast-fail wouldn't accidentally still satisfy elapsed >=
+	// MissingGrace.
+	if elapsed < MissingGrace+100*time.Millisecond {
+		t.Errorf("wait returned at or near grace boundary, not exercising step-2: elapsed=%s, threshold=%s",
+			elapsed, MissingGrace+100*time.Millisecond)
 	}
 	if got := sum.Messages[dep]; got != "dependency not found" {
 		t.Errorf("expected 'dependency not found', got %q", got)
+	}
+}
+
+// TestWaiter_FileIndexedPromoteFailsFastAtGrace pins the
+// docstring's "IsKnown(id) == true and ResolveMissing(id) == false"
+// branch: the dep is file-indexed but promote failed (parse error,
+// file mutated since record). depwait must fail fast at the grace
+// boundary — keeping the legacy "typo / broken file" UX where a
+// truly-missing dep doesn't burn the full per-dep budget.
+func TestWaiter_FileIndexedPromoteFailsFastAtGrace(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "broken"}
+
+	// Both wirings: ResolveMissing fails (promote unhappy), IsKnown
+	// returns true (file-indexed). depwait should NOT enter step-2.
+	resolve := func(manifest.NamedResource) bool { return false }
+	isKnown := func(manifest.NamedResource) bool { return true }
+
+	w := &Waiter{
+		Store:          s,
+		Timeout:        30 * time.Second, // generous; if step-2 ran we'd see it
+		ResolveMissing: resolve,
+		IsKnown:        isKnown,
+	}
+	start := time.Now()
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
+	elapsed := time.Since(start)
+
+	if !sum.AnyFailed() {
+		t.Fatalf("expected fail for broken file-indexed dep: %+v", sum)
+	}
+	if elapsed > MissingGrace+500*time.Millisecond {
+		t.Errorf("file-indexed-but-promote-failed should fast-fail at grace; elapsed=%s, cap=%s",
+			elapsed, MissingGrace+500*time.Millisecond)
+	}
+	if got := sum.Messages[dep]; got != "dependency not found" {
+		t.Errorf("expected 'dependency not found', got %q", got)
+	}
+}
+
+// TestWaiter_RenderOnlyCancelDuringLongWaitSurfacesCancelled
+// pins the classify() routing in step-2's terminal error path: a
+// parent ctx cancellation mid-long-wait must NOT be flattened into
+// "dependency not found". orchestrator shutdown should propagate
+// the cancel as DepCancelled / "cancelled" so logs and Summary
+// counters stay accurate. Without the routing, the cancel was
+// previously silently mapped to DepFailed / "dependency not found".
+func TestWaiter_RenderOnlyCancelDuringLongWaitSurfacesCancelled(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "cancelled-mid-wait"}
+
+	resolve := func(manifest.NamedResource) bool { return false }
+	isKnown := func(manifest.NamedResource) bool { return false }
+
+	w := &Waiter{
+		Store:          s,
+		Timeout:        30 * time.Second,
+		ResolveMissing: resolve,
+		IsKnown:        isKnown,
+	}
+
+	// Cancel after grace expires + 500ms — well into step-2's wait.
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(MissingGrace + 500*time.Millisecond)
+		cancel()
+	}()
+
+	sum := WaitAll(w.Watch(ctx, refs(dep)))
+	// classify() maps context.Canceled to DepCancelled / "cancelled".
+	if got := sum.Messages[dep]; got != "cancelled" {
+		t.Errorf("expected 'cancelled' after step-2 ctx cancel, got %q", got)
 	}
 }
 

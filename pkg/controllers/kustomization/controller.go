@@ -78,11 +78,11 @@ type Options struct {
 	// of failing the parent KS with "dependency not found."
 	ResolveMissing func(manifest.NamedResource) bool
 	// IsKnown reports whether id has a file-existence record. The
-	// orchestrator wires this so depwait can distinguish typo'd
-	// dependsOn (no record, fail fast — but only when IsKnown is
-	// nil) from a render-only dep still in flight (no record, keep
-	// waiting on the per-dep ctx). Forwarded to every Waiter built
-	// during reconcile.
+	// orchestrator wires this so depwait distinguishes "dep is
+	// render-only and the producing chain hasn't finished yet"
+	// (no file record → keep waiting on per-dep ctx) from "dep is
+	// file-indexed but promote failed" (file record → fail fast).
+	// Forwarded to every Waiter built during reconcile.
 	IsKnown func(manifest.NamedResource) bool
 }
 

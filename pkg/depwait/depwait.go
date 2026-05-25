@@ -220,8 +220,25 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 				// component+replacement patterns (parent KS → leaf
 				// KS → child HR) where the producing chain runs many
 				// kustomize builds + helm templates back-to-back.
+				//
+				// Route the terminal error through classify() so
+				// orchestrator-shutdown cancellation surfaces as
+				// DepCancelled (not the bare "dependency not found")
+				// and a deadline-exceeded wait reads as a real
+				// timeout. We synthesize the "dependency not found"
+				// reason only when the wait itself returned no error
+				// (impossible here — WatchExists only returns on
+				// arrival or ctx.Done) or when classify() falls
+				// through with a non-context error.
 				if _, err := w.Store.WatchExists(ctx, id); err != nil {
-					return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+					switch {
+					case errors.Is(err, context.DeadlineExceeded):
+						return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+					case errors.Is(err, context.Canceled):
+						return classify(id, err, "")
+					default:
+						return Event{Dep: id, Status: DepFailed, Reason: err.Error()}
+					}
 				}
 			} else {
 				// Step 3: either no IsKnown wired (legacy callers

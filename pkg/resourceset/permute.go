@@ -26,10 +26,22 @@ func permute(groups []providerInputs, includeEmpty bool) ([]map[string]any, erro
 	// Validate names + project to per-provider scoped lists. The
 	// normalized name keys the nested wrapper; templates access values
 	// via `inputs.<normalized-name>.foo`.
+	//
+	// Empty providers short-circuit the entire product: when
+	// includeEmpty=true and any provider has zero inputs, the
+	// Cartesian product is zero — return early so the size cap
+	// check stays meaningful (the previous second-pass at the end
+	// caught this but the size accumulator went through 0 in the
+	// process, making the cap check vacuous for any single empty
+	// provider). Mirrors upstream
+	// computePermutationsWithBacktracking's early-return.
 	scoped := make([]scopedProvider, 0, len(groups))
 	expected := uint64(1)
 	for _, g := range groups {
-		if !includeEmpty && len(g.inputs) == 0 {
+		if len(g.inputs) == 0 {
+			if includeEmpty {
+				return nil, nil
+			}
 			continue
 		}
 		norm := normalizeKeyForTemplate(g.name)
@@ -49,14 +61,6 @@ func permute(groups []providerInputs, includeEmpty bool) ([]map[string]any, erro
 	}
 	if len(scoped) == 0 {
 		return nil, nil
-	}
-	// One empty provider collapses the product. Matches upstream:
-	// computePermutationsWithBacktracking returns early if any
-	// scoped list is empty.
-	for _, p := range scoped {
-		if len(p.sets) == 0 {
-			return nil, nil
-		}
 	}
 
 	out := make([]map[string]any, 0, expected)

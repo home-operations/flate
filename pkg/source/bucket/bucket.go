@@ -17,6 +17,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -176,21 +177,33 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 	}
 	slices.SortFunc(entries, func(a, b entry) int { return cmp.Compare(a.key, b.key) })
 
+	// Download objects in parallel. Bucket fetches are network-bound
+	// (GetObject + Copy per key) and minio-go is concurrency-safe.
+	// The 8-way limit handles typical S3-style providers without
+	// hitting per-account rate caps; tuned narrow because the
+	// fetcher's job is one bucket at a time, not bulk transfer.
+	// Writes go to distinct paths under slot so no inter-goroutine
+	// coordination beyond the errgroup is needed.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
 	for _, e := range entries {
-		rel := strings.TrimPrefix(strings.TrimPrefix(e.key, prefix), "/")
-		if rel == "" {
-			rel = filepath.Base(e.key)
-		}
-		dst, err := safeJoinUnderSlot(slot, rel)
-		if err != nil {
-			return nil, "", fmt.Errorf("bucket key %q: %w", e.key, err)
-		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
-			return nil, "", err
-		}
-		if err := downloadObject(ctx, client, bucket, e.key, dst); err != nil {
-			return nil, "", err
-		}
+		g.Go(func() error {
+			rel := strings.TrimPrefix(strings.TrimPrefix(e.key, prefix), "/")
+			if rel == "" {
+				rel = filepath.Base(e.key)
+			}
+			dst, err := safeJoinUnderSlot(slot, rel)
+			if err != nil {
+				return fmt.Errorf("bucket key %q: %w", e.key, err)
+			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+				return err
+			}
+			return downloadObject(gctx, client, bucket, e.key, dst)
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, "", err
 	}
 
 	// Format matches source-controller's internal/index/digest.go:

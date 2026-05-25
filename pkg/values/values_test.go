@@ -213,6 +213,27 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 	}
 }
 
+// TestReplaceValueAtPath_SingleCharQuoteNoPanic pins the
+// len(value) >= 2 guard: a single `'` or `"` previously slipped past
+// the prefix+suffix check (prefix == suffix on a single byte) and
+// then tripped a value[1:0] slice — runtime panic. Now treated as a
+// plain scalar by ParseInto, which returns either ok or a sensible
+// error — never a panic.
+func TestReplaceValueAtPath_SingleCharQuoteNoPanic(t *testing.T) {
+	for _, val := range []string{"'", `"`, "''"} {
+		// Wrap in func() so a panic surfaces as test failure rather
+		// than aborting the whole test binary.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("replaceValueAtPath panicked on value %q: %v", val, r)
+				}
+			}()
+			_, _ = replaceValueAtPath(map[string]any{}, "leaf", val)
+		}()
+	}
+}
+
 // TestReplaceValueAtPath_TypeCoercion locks the upstream Flux contract
 // (chartutil.ReplacePathValue → strvals.ParseInto): a value flowing
 // in through ValuesReference.TargetPath is parsed as a Helm CLI

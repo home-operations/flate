@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"helm.sh/helm/v4/pkg/strvals"
@@ -308,8 +309,14 @@ func replaceValueAtPath(values map[string]any, path, value string) (map[string]a
 		doubleQuote = `"`
 	)
 	var err error
-	if (strings.HasPrefix(value, singleQuote) && strings.HasSuffix(value, singleQuote)) ||
-		(strings.HasPrefix(value, doubleQuote) && strings.HasSuffix(value, doubleQuote)) {
+	// The len >= 2 guard is load-bearing: a single-char "'" or `"`
+	// has prefix == suffix == the same byte, which would pass the
+	// boolean test below and then trip a `value[1:0]` slice — runtime
+	// panic. Untrusted Secret data shouldn't be able to crash the
+	// renderer, so reject the degenerate case explicitly.
+	if len(value) >= 2 &&
+		((strings.HasPrefix(value, singleQuote) && strings.HasSuffix(value, singleQuote)) ||
+			(strings.HasPrefix(value, doubleQuote) && strings.HasSuffix(value, doubleQuote))) {
 		stripped := value[1 : len(value)-1]
 		err = strvals.ParseIntoString(path+"="+stripped, values)
 	} else {
@@ -389,11 +396,21 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 	// doesn't match `^[_[:alpha:]][_[:alpha:][:digit:]]*$`. Without this
 	// check flate would render with the invalid keys silently dropped
 	// while real Flux would fail the Kustomization — divergent output.
+	// Collect every invalid name and report them sorted so the error
+	// message is deterministic across runs. Map iteration is
+	// randomized in Go; the previous "return first invalid name"
+	// surfaced a different bad name on each run when multiple were
+	// present, making bisection and CI noise unnecessarily painful.
+	var invalid []string
 	for name := range values {
 		if !varsubRegex.MatchString(name) {
-			return fmt.Errorf("%w: substituteFrom var name %q is invalid (must match %s)",
-				manifest.ErrInvalidSubstituteReference, name, varsubRegex.String())
+			invalid = append(invalid, name)
 		}
+	}
+	if len(invalid) > 0 {
+		slices.Sort(invalid)
+		return fmt.Errorf("%w: substituteFrom var name(s) %v invalid (must match %s)",
+			manifest.ErrInvalidSubstituteReference, invalid, varsubRegex.String())
 	}
 	ks.UpdatePostBuildSubstitutions(values)
 	return nil

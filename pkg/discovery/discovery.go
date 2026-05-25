@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -120,20 +121,18 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}, nil
 }
 
-// mergeParents combines per-kind parent maps into one. Earlier
-// arguments win on collision (which can't happen in practice — keys
-// are NamedResource with distinct Kind components — but the rule is
-// explicit so future callers don't accidentally clobber a KS parent
-// with an HR-built rebuild).
-func mergeParents(maps ...map[manifest.NamedResource]manifest.NamedResource) map[manifest.NamedResource]manifest.NamedResource {
+// mergeParents combines per-kind parent maps into one. NamedResource
+// keys are kind-segregated by construction (caller passes per-Kind
+// maps from BuildParentIndexForKind), so collisions are structurally
+// impossible. The previous "earlier wins on collision" clause was
+// dead defensive code that silently masked a programmer error if a
+// future caller leaked wrong-kind entries — drop it and let the
+// later-arguments-overwrite default surface the bug at the call
+// site instead.
+func mergeParents(perKind ...map[manifest.NamedResource]manifest.NamedResource) map[manifest.NamedResource]manifest.NamedResource {
 	out := map[manifest.NamedResource]manifest.NamedResource{}
-	for _, m := range maps {
-		for k, v := range m {
-			if _, exists := out[k]; exists {
-				continue
-			}
-			out[k] = v
-		}
+	for _, m := range perKind {
+		maps.Copy(out, m)
 	}
 	return out
 }

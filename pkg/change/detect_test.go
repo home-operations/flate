@@ -236,3 +236,47 @@ func TestSet_RerootPrependsPrefix(t *testing.T) {
 		t.Errorf("Reroot(\".\") returned a new set, want same")
 	}
 }
+
+// TestDetect_SymlinkTargetRewrite pins parity with git --no-index for
+// symlink-target changes. Pre-fix, the Go walker dropped symlinks via
+// `!d.Type().IsRegular()`, so a symlink whose target was rewritten on
+// only one side produced an empty change set on systems without git
+// on PATH (where the slow path is the only path).
+func TestDetect_SymlinkTargetRewrite(t *testing.T) {
+	before := t.TempDir()
+	after := t.TempDir()
+	// Both sides have a "link" pointing somewhere; only after's
+	// changes the target.
+	if err := os.Symlink("target-A", filepath.Join(before, "link")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if err := os.Symlink("target-B", filepath.Join(after, "link")); err != nil {
+		t.Fatal(err)
+	}
+	set, err := detectViaWalker(before, after)
+	if err != nil {
+		t.Fatalf("detectViaWalker: %v", err)
+	}
+	if !set.Contains("link") {
+		t.Errorf("walker missed symlink-target rewrite: %v", set.Paths())
+	}
+}
+
+// TestDetect_SymlinkVsRegular pins type-swap detection — a symlink on
+// one side and a regular file on the other are different "things" in
+// git's --no-index view and the walker must agree.
+func TestDetect_SymlinkVsRegular(t *testing.T) {
+	before := t.TempDir()
+	after := t.TempDir()
+	if err := os.Symlink("some-target", filepath.Join(before, "x")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	writeFile(t, after, "x", "some-target") // same byte content as target text
+	set, err := detectViaWalker(before, after)
+	if err != nil {
+		t.Fatalf("detectViaWalker: %v", err)
+	}
+	if !set.Contains("x") {
+		t.Errorf("walker missed symlink↔regular type swap: %v", set.Paths())
+	}
+}

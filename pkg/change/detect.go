@@ -240,14 +240,21 @@ func detectViaWalker(before, after string) (*Set, error) {
 
 	paths := make(map[string]struct{}, len(afterFS)/8)
 	type hashJob struct {
-		rel              string
-		beforeAbs, after string
+		rel                          string
+		beforeAbs, after             string
+		beforeSymlink, afterSymlink  bool
 	}
 	var hashJobs []hashJob
 
 	for rel, after := range afterFS {
 		bef, ok := beforeFS[rel]
 		if !ok {
+			paths[rel] = struct{}{}
+			continue
+		}
+		// A type swap (regular ↔ symlink) is a content change in git's
+		// --no-index view; flag it without bothering to hash.
+		if bef.symlink != after.symlink {
 			paths[rel] = struct{}{}
 			continue
 		}
@@ -258,7 +265,10 @@ func detectViaWalker(before, after string) (*Set, error) {
 		// Same size, unknown mtime trustworthiness — hash both sides.
 		// The pre-removal mtime fast-path silently dropped real edits
 		// on coarse-mtime filesystems; correctness over speed here.
-		hashJobs = append(hashJobs, hashJob{rel: rel, beforeAbs: bef.abs, after: after.abs})
+		hashJobs = append(hashJobs, hashJob{
+			rel: rel, beforeAbs: bef.abs, after: after.abs,
+			beforeSymlink: bef.symlink, afterSymlink: after.symlink,
+		})
 	}
 	for rel := range beforeFS {
 		if _, ok := afterFS[rel]; !ok {
@@ -274,11 +284,11 @@ func detectViaWalker(before, after string) (*Set, error) {
 		for range hashWorkers {
 			hg.Go(func() error {
 				for j := range jobs {
-					b, err := hashFile(j.beforeAbs)
+					b, err := hashEntry(j.beforeAbs, j.beforeSymlink)
 					if err != nil {
 						return err
 					}
-					a, err := hashFile(j.after)
+					a, err := hashEntry(j.after, j.afterSymlink)
 					if err != nil {
 						return err
 					}
@@ -303,17 +313,20 @@ func detectViaWalker(before, after string) (*Set, error) {
 	return &Set{paths: paths}, nil
 }
 
-// fileMeta is the (size, abs) tuple collected by scanTree. The
-// previous (size, mtime) shape supported a same-mtime-skip fast path
-// that was removed because coarse-granularity filesystems made it
-// drop real changes.
+// fileMeta is the per-entry metadata scanTree collects. symlink is
+// true when the entry is a symbolic link rather than a regular file —
+// git's --no-index diff treats symlinks as files whose "content" is
+// the link target text and reports type-swaps (symlink↔regular) as
+// content changes, so the walker mirrors that.
 type fileMeta struct {
-	size int64
-	abs  string
+	size    int64
+	abs     string
+	symlink bool
 }
 
-// scanTree walks root collecting per-file (size, abs). Mirrors
-// the directory pruning that hashTree previously did.
+// scanTree walks root collecting per-file metadata. Mirrors the
+// directory pruning that hashTree previously did, and records symlinks
+// alongside regular files so the diff matches git's --no-index view.
 func scanTree(root string) (map[string]fileMeta, error) {
 	out := map[string]fileMeta{}
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -327,7 +340,12 @@ func scanTree(root string) (map[string]fileMeta, error) {
 			}
 			return nil
 		}
-		if !d.Type().IsRegular() {
+		typ := d.Type()
+		// Regular files and symlinks both participate in the diff;
+		// other entry kinds (sockets, devices, named pipes) don't
+		// land in a Flux tree and would confuse the comparison.
+		isLink := typ&fs.ModeSymlink != 0
+		if !typ.IsRegular() && !isLink {
 			return nil
 		}
 		rel, err := filepath.Rel(root, p)
@@ -338,9 +356,12 @@ func scanTree(root string) (map[string]fileMeta, error) {
 		if err != nil {
 			return err
 		}
+		// For symlinks Info() reports the link's own size (the target
+		// path length) — exactly the bytes we'll hash via readlink.
 		out[filepath.ToSlash(rel)] = fileMeta{
-			size: info.Size(),
-			abs:  p,
+			size:    info.Size(),
+			abs:     p,
+			symlink: isLink,
 		}
 		return nil
 	})
@@ -348,6 +369,22 @@ func scanTree(root string) (map[string]fileMeta, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// hashEntry returns the SHA-256 hex digest of an entry's content. For
+// regular files this is the file body; for symlinks it's the link
+// target text (matching git --no-index's content view of a symlink),
+// so a target-rewrite is detected without following the link.
+func hashEntry(path string, isSymlink bool) (string, error) {
+	if isSymlink {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256([]byte(target))
+		return hex.EncodeToString(sum[:]), nil
+	}
+	return hashFile(path)
 }
 
 func hashFile(path string) (string, error) {

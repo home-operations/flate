@@ -517,6 +517,26 @@ func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.Nam
 		return []manifest.NamedResource{{
 			Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
 		}}
+
+	case manifest.KindHelmChart:
+		// A HelmRelease chartRef pointing at a HelmChart CRD lands the
+		// HelmChart in the BFS via the HR's RepoKind=KindHelmChart edge
+		// above. The chart's actual bytes come from the HelmChart's own
+		// sourceRef (OCIRepository/HelmRepository/GitRepository/Bucket)
+		// — follow that edge so changed-only mode keeps the backing
+		// source alive. Without this, the HelmChart sits in keep but
+		// the source artifact is PreGate-skipped and render fails
+		// "artifact not found."
+		hc, _ := objs.GetObject(id).(*manifest.HelmChartSource)
+		if hc == nil {
+			return nil
+		}
+		if hc.SourceRef.Name == "" {
+			return nil
+		}
+		return []manifest.NamedResource{{
+			Kind: hc.SourceRef.Kind, Namespace: hc.Namespace, Name: hc.SourceRef.Name,
+		}}
 	}
 	return nil
 }

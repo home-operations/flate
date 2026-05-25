@@ -6,6 +6,7 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -612,5 +613,45 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 	f.addUngated(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "cert-manager"})
 	if f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "monitoring-system", Name: "cert-manager"}) {
 		t.Errorf("Add() leaked across namespaces: monitoring-system/cert-manager matched on name alone; keep=%v", f.KeepNames())
+	}
+}
+
+// TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD pins the BFS
+// through a chartRef→HelmChart CRD: the HelmChart's own sourceRef
+// must land in keep so changed-only mode doesn't PreGate-skip the
+// backing artifact. Pre-fix, transitiveDeps had no KindHelmChart
+// branch — the HelmChart joined keep but its source artifact did
+// not, and render failed "artifact not found."
+func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "apps",
+		Chart: manifest.HelmChart{
+			RepoKind: manifest.KindHelmChart, RepoName: "demo-chart", RepoNamespace: "apps",
+		},
+	}
+	hc := &manifest.HelmChartSource{
+		Name: "demo-chart", Namespace: "apps",
+		HelmChartSpec: sourcev1.HelmChartSpec{
+			SourceRef: sourcev1.LocalHelmChartSourceReference{
+				Kind: manifest.KindOCIRepository, Name: "backing-oci",
+			},
+		},
+	}
+	hrID := hr.Named()
+	hcID := hc.Named()
+	ociID := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "backing-oci"}
+
+	f := NewFilter(
+		NewSet([]string{"hr.yaml"}),
+		map[manifest.NamedResource]string{hrID: "hr.yaml"},
+		"",
+		mapLister{hrID: hr, hcID: hc},
+	)
+
+	if !f.ShouldReconcile(hcID) {
+		t.Errorf("chartRef-HelmChart not pulled in by HR; keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(ociID) {
+		t.Errorf("HelmChart's sourceRef OCIRepository not pulled in; keep=%v", f.KeepNames())
 	}
 }

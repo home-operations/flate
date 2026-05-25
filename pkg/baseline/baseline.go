@@ -214,13 +214,13 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 	// the second is a flag fix (--base=<rev>).
 	if isShallow(repo) {
 		return nil, errors.New(
-			"baseline: cannot compute merge-base — repo appears shallow (.git/shallow present). " +
-				"In actions/checkout, set 'fetch-depth: 0'. Locally, run 'git fetch --unshallow'. " +
-				"Or pass --base=<ref> / --path-orig=<dir> explicitly.")
+			"baseline: cannot compute merge-base — repo appears shallow (.git/shallow present); " +
+				"in actions/checkout, set 'fetch-depth: 0', or locally run 'git fetch --unshallow', " +
+				"or pass --base=<ref> / --path-orig=<dir> explicitly")
 	}
 	return nil, errors.New(
 		"baseline: could not auto-detect — HEAD has no upstream, origin/HEAD is unset, " +
-			"and origin/{main,master} are absent. Pass --base=<ref> or --path-orig=<dir>.")
+			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>")
 }
 
 // upstreamHash reads the current branch's upstream from the repo

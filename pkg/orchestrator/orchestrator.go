@@ -461,7 +461,7 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 				cs = cs.Reroot(rel)
 			}
 		}
-		slog.Info("changed-only mode",
+		slog.Debug("changed-only mode",
 			"baseline", diffOrig, "current", diffCurr, "changedFiles", cs.Len(), "widenedToRepoRoot", widened)
 		if cs.Len() == 0 {
 			slog.Warn("no changes detected between --path and --path-orig — output will be empty; verify both paths reference distinct snapshots")

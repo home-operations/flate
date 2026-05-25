@@ -121,7 +121,7 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 		// happens deterministically without each diff verb needing
 		// its own defer.
 		context.AfterFunc(ctx, func() { _ = os.RemoveAll(res.TempDir) })
-		slog.Info("diff baseline", "source", res.Source, "rev", res.Rev, "pathOrig", res.PathOrig)
+		slog.Debug("diff baseline", "source", res.Source, "rev", res.Rev, "pathOrig", res.PathOrig)
 	}
 	currentCfg := buildOrchCfg(*c, *h)
 	origCfg := currentCfg

@@ -87,7 +87,7 @@ func (o *Orchestrator) demoteOrphans(failed map[manifest.NamedResource]store.Sta
 func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo) {
 	ksCount := len(o.store.ListObjects(manifest.KindKustomization))
 	hrCount := len(o.store.ListObjects(manifest.KindHelmRelease))
-	slog.Info("reconcile complete",
+	slog.Debug("reconcile complete",
 		"kustomizations", ksCount,
 		"helmReleases", hrCount,
 		"failed", len(failed))

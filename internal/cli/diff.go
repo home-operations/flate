@@ -74,7 +74,6 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	bindBase(cmd.Flags(), c)
 	// `diff all` renders HRs as part of its scope, so always bind
 	// helm flags (matches `build all` / `test all` / `get all`).
 	if kind == "" || kind == manifest.KindHelmRelease {
@@ -96,7 +95,6 @@ func newDiffImagesCmd() *cobra.Command {
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	bindBase(cmd.Flags(), c)
 	bindHelmFlags(cmd.Flags(), h)
 	cmd.Flags().BoolVar(&includeRemoved, "include-removed", false,
 		"also emit images present only in --path-orig (default: only newly added images)")

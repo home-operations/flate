@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -39,6 +41,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVar(&f.path, "path", ".", "path to the Flux cluster directory")
 	fs.StringVar(&f.pathOrig, "path-orig", "",
 		"baseline path; when set, every command runs in changed-only mode")
+	bindBase(fs, f)
 	fs.StringVarP(&f.namespace, "namespace", "n", "",
 		"limit to this namespace (default: every namespace, or just the changed ones when --path-orig is set)")
 	fs.BoolVar(&f.skipCRDs, "skip-crds", true, "exclude CRD objects from rendered output")
@@ -81,16 +84,28 @@ func bindSelector(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "label selector (key=value, repeatable)")
 }
 
-// bindBase wires the `--base` flag. Scoped to diff subcommands —
-// `--base` selects the baseline git rev that the auto-baseline flow
-// materializes; only diff consumes a baseline tree, so binding it on
-// build/get/test would silently no-op. Mutually exclusive with
-// `--path-orig` (which is the absolute-path escape hatch); the check
-// is enforced at runtime in runDiff*.
+// bindBase wires the `--base` flag. Bound on every command that
+// accepts --path-orig (build, get, test, diff). Selects the baseline
+// git rev that the auto-baseline flow materializes into a tempdir
+// for changed-only mode.
+//
+// Semantics differ per verb:
+//   - diff REQUIRES a baseline; bare command auto-detects via
+//     merge-base with @{u} / origin/HEAD / origin/{main,master}.
+//   - build/get/test do NOT auto-detect — bare command tests/builds
+//     everything (preserves the existing "full tree" default).
+//     Setting --base on these verbs opts into changed-only mode
+//     against the named rev, sharing the same materialization
+//     machinery as diff.
+//
+// Mutually exclusive with --path-orig (the absolute-path escape
+// hatch); the check fires at runtime in resolveBaselineIfRequested.
 func bindBase(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVar(&f.base, "base", "",
-		"baseline git rev (e.g. main, origin/main, HEAD~3, SHA). When unset, "+
-			"flate auto-detects via merge-base with @{u} / origin/HEAD. "+
+		"baseline git rev (e.g. main, origin/main, HEAD~3, SHA) — "+
+			"materializes the rev's tree to a tempdir and runs in changed-only mode. "+
+			"On `diff`, omitting --base auto-detects via merge-base with @{u} / origin/HEAD. "+
+			"On `build`/`get`/`test`, omitting --base keeps the default full-tree behavior. "+
 			"Mutually exclusive with --path-orig.")
 }
 
@@ -183,6 +198,44 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	}
 }
 
+// resolveBaseline runs baseline.AutoResolve when the user opted into
+// changed-only mode via --base, mutates c.pathOrig to the synthetic
+// materialized path, and schedules tempdir cleanup against ctx.
+//
+// autoFallback toggles the "fire even when both flags are empty" case
+// — true for `flate diff` (which always needs a baseline; bare
+// command auto-detects via the merge-base ladder); false for
+// build/get/test (where bare command means "no baseline, full tree",
+// and changed-only mode is opt-in via --base or --path-orig).
+//
+// Mutual exclusion with --path-orig is enforced here so every caller
+// gets the same error message.
+func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) error {
+	if c.pathOrig != "" && c.base != "" {
+		return errors.New("--path-orig and --base are mutually exclusive")
+	}
+	if c.pathOrig != "" {
+		// Explicit --path-orig — caller already specified the baseline.
+		return nil
+	}
+	if c.base == "" && !autoFallback {
+		// No opt-in and no fallback semantics — leave c.pathOrig empty
+		// so the orchestrator runs in full-tree mode (the build/get/test
+		// default).
+		return nil
+	}
+	res, err := baseline.AutoResolve(c.path, c.base)
+	if err != nil {
+		return err
+	}
+	c.pathOrig = res.PathOrig
+	// Schedule cleanup against ctx — fires when the CLI's root context
+	// cancels at RunE return.
+	context.AfterFunc(ctx, func() { _ = os.RemoveAll(res.TempDir) })
+	slog.Debug("baseline", "source", res.Source, "rev", res.Rev, "pathOrig", res.PathOrig)
+	return nil
+}
+
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
 		Path:               c.path,
@@ -209,6 +262,12 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 		}
 	}
 	if _, err := format.ParseOutput(c.output); err != nil {
+		return nil, nil, err
+	}
+	// Opt-in baseline materialization: build/get/test only fires
+	// resolveBaseline when the user explicitly set --base (or
+	// --path-orig). Bare command keeps the full-tree default.
+	if err := resolveBaseline(ctx, &c, false); err != nil {
 		return nil, nil, err
 	}
 	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))

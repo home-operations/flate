@@ -52,6 +52,8 @@ func isClusterScoped(doc map[string]any) bool {
 		"PersistentVolume",
 		"StorageClass",
 		"PriorityClass",
+		"IngressClass",
+		"ClusterIssuer",
 		"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration",
 		"APIService",
 		"Node":

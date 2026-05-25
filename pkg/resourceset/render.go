@@ -135,7 +135,7 @@ func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any,
 		if err != nil {
 			return nil, err
 		}
-		if doc == nil {
+		if doc == nil || disabledByReconcileAnnotation(doc) {
 			return nil, nil
 		}
 		return []map[string]any{doc}, nil
@@ -160,8 +160,22 @@ func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any,
 // renderResourcesTemplate templates the multi-document YAML string in
 // spec.resourcesTemplate once per input set.
 func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[string]any, error) {
+	filter := func(docs []map[string]any) []map[string]any {
+		out := docs[:0]
+		for _, doc := range docs {
+			if disabledByReconcileAnnotation(doc) {
+				continue
+			}
+			out = append(out, doc)
+		}
+		return out
+	}
 	if len(inputs) == 0 {
-		return splitMultiDoc(tmplStr, nil)
+		docs, err := splitMultiDoc(tmplStr, nil)
+		if err != nil {
+			return nil, err
+		}
+		return filter(docs), nil
 	}
 	var out []map[string]any
 	for _, in := range inputs {
@@ -169,12 +183,7 @@ func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[str
 		if err != nil {
 			return nil, err
 		}
-		for _, doc := range docs {
-			if disabledByReconcileAnnotation(doc) {
-				continue
-			}
-			out = append(out, doc)
-		}
+		out = append(out, filter(docs)...)
 	}
 	return out, nil
 }

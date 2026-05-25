@@ -31,8 +31,6 @@ const (
 
 // Options tunes Run behavior.
 type Options struct {
-	// Format selects the output flavor. Default FormatDiff.
-	Format Format
 	// StripAttrs lists annotation/label keys removed from each
 	// manifest's metadata (and pod-template metadata) before the diff
 	// is computed. Cuts chart-bump noise — annotations like
@@ -163,16 +161,18 @@ type pairKey struct {
 	// pPath disambiguates two KS parents with the same (kind, ns, name)
 	// but different spec.path — a real-world collision in repos where
 	// the same KS is rendered twice from different overlays.
-	pKind, pNS, pName, pPath string
-	kind, ns, name           string
+	pKind, pNS, pName, pPath  string
+	apiVersion                string
+	kind, ns, name            string
 }
 
 func pair(left, right []Doc) []pairedResource {
 	idx := make(map[pairKey]*pairedResource, len(left)+len(right))
 	add := func(side int, d Doc) {
 		kind := manifest.DocKind(d.Manifest)
+		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		name, ns := manifest.DocMetadata(d.Manifest)
-		k := pairKey{d.Parent.Kind, d.Parent.Namespace, d.Parent.Name, d.Parent.Path, kind, ns, name}
+		k := pairKey{d.Parent.Kind, d.Parent.Namespace, d.Parent.Name, d.Parent.Path, apiVersion, kind, ns, name}
 		p, ok := idx[k]
 		if !ok {
 			p = &pairedResource{parent: d.Parent, kind: kind, namespace: ns, name: name}

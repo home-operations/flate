@@ -167,7 +167,6 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 		outFormat = "diff"
 	}
 	diffs, err := diff.Run(origDocs, currentDocs, diff.Options{
-		Format:     diff.Format(outFormat),
 		StripAttrs: d.stripAttrs,
 	})
 	if err != nil {

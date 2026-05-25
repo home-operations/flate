@@ -83,25 +83,26 @@ func verifyTag(mode sourcev1.GitVerificationMode) bool {
 // --wipe-secrets run doesn't try to verify against a placeholder.
 func buildPGPKeyring(sec *manifest.Secret) (string, error) {
 	var out string
-	for k := range sec.StringData {
+	seen := map[string]struct{}{}
+	append1 := func(k string) {
+		if _, dup := seen[k]; dup {
+			return // StringData wins over Data per StringFromSecret
+		}
+		seen[k] = struct{}{}
 		v := source.StringFromSecret(sec, k)
 		if v == "" {
-			continue
+			return
 		}
 		if out != "" && out[len(out)-1] != '\n' {
 			out += "\n"
 		}
 		out += v
 	}
+	for k := range sec.StringData {
+		append1(k)
+	}
 	for k := range sec.Data {
-		v := source.StringFromSecret(sec, k)
-		if v == "" {
-			continue
-		}
-		if out != "" && out[len(out)-1] != '\n' {
-			out += "\n"
-		}
-		out += v
+		append1(k)
 	}
 	if out == "" {
 		return "", fmt.Errorf("verify secret carries no PGP public keys")

@@ -2,9 +2,17 @@ package source
 
 import (
 	"encoding/base64"
+	"fmt"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// MissingSecretErr wraps manifest.ErrMissingSecret so the source
+// controller's --allow-missing-secrets path matches via errors.Is.
+func MissingSecretErr(kind, ns, name, secretRef, reason string) error {
+	return fmt.Errorf("%w: %s %s/%s: secret %s/%s %s",
+		manifest.ErrMissingSecret, kind, ns, name, ns, secretRef, reason)
+}
 
 // StringFromSecret reads a key from a Secret, preferring StringData
 // over Data. Data values are base64-decoded (per k8s Secret semantics)

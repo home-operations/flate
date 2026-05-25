@@ -114,8 +114,7 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
-		return "", noCleanup, fmt.Errorf("%w: OCIRepository %s/%s: secret %s/%s not found",
-			manifest.ErrMissingSecret, repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
+		return "", noCleanup, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found")
 	}
 	configJSON := source.StringFromSecret(sec, ".dockerconfigjson")
 	if configJSON == "" {
@@ -127,10 +126,7 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 		// Same ErrMissingSecret sentinel so --allow-missing-secrets
 		// covers both — matching only the literal "secret not found"
 		// path would leave the actual reporter's case still failing.
-		return "", noCleanup, fmt.Errorf(
-			"%w: OCIRepository %s/%s: secret %s/%s missing .dockerconfigjson "+
-				"(must be type kubernetes.io/dockerconfigjson)",
-			manifest.ErrMissingSecret, repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
+		return "", noCleanup, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)")
 	}
 	tmp, err := os.CreateTemp("", "flate-oci-creds-*.json")
 	if err != nil {

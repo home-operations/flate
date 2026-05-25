@@ -27,8 +27,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
-		return nil, fmt.Errorf("%w: GitRepository %s/%s: secret %s/%s not found",
-			manifest.ErrMissingSecret, repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
+		return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found")
 	}
 	if isSSHURL(repo.URL) {
 		identity := source.StringFromSecret(sec, "identity")
@@ -36,8 +35,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 			// Empty covers both missing-key and PLACEHOLDER-wiped values
 			// (the ExternalSecret case). Same sentinel so
 			// --allow-missing-secrets covers both shapes.
-			return nil, fmt.Errorf("%w: GitRepository %s/%s: secret %s/%s missing 'identity' for SSH auth",
-				manifest.ErrMissingSecret, repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
+			return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing 'identity' for SSH auth")
 		}
 		password := source.StringFromSecret(sec, "password")
 		user := sshUserFromURL(repo.URL)
@@ -73,8 +71,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 		// Empty covers both missing-key and PLACEHOLDER-wiped values
 		// (the ExternalSecret case). Same sentinel so
 		// --allow-missing-secrets covers both shapes.
-		return nil, fmt.Errorf("%w: GitRepository %s/%s: secret %s/%s missing username/password (or bearerToken) for HTTPS auth",
-			manifest.ErrMissingSecret, repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name)
+		return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing username/password (or bearerToken) for HTTPS auth")
 	}
 	return &githttp.BasicAuth{Username: username, Password: password}, nil
 }

@@ -121,8 +121,7 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 	}
 	sec := f.Secrets(b.Namespace, b.SecretRef.Name)
 	if sec == nil {
-		return nil, fmt.Errorf("%w: bucket %s/%s: secret %s/%s not found",
-			manifest.ErrMissingSecret, b.Namespace, b.Name, b.Namespace, b.SecretRef.Name)
+		return nil, source.MissingSecretErr("bucket", b.Namespace, b.Name, b.SecretRef.Name, "not found")
 	}
 	access := source.StringFromSecret(sec, "accesskey")
 	secret := source.StringFromSecret(sec, "secretkey")
@@ -130,8 +129,7 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 		// Empty covers both missing-key and PLACEHOLDER-wiped values
 		// (the ExternalSecret case). Same sentinel so
 		// --allow-missing-secrets covers both shapes.
-		return nil, fmt.Errorf("%w: bucket %s/%s: secret %s/%s missing accesskey/secretkey",
-			manifest.ErrMissingSecret, b.Namespace, b.Name, b.Namespace, b.SecretRef.Name)
+		return nil, source.MissingSecretErr("bucket", b.Namespace, b.Name, b.SecretRef.Name, "missing accesskey/secretkey")
 	}
 	return credentials.NewStaticV4(access, secret, ""), nil
 }

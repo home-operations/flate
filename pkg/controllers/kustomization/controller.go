@@ -207,6 +207,16 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	fp := kustomizationFingerprint(ks, sourceRoot)
 	if existing, ok := c.Store.GetArtifact(id).(*store.KustomizationArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
 		slog.Debug("kustomization: skipped re-render (fingerprint unchanged)", "id", id.String())
+		// Skip kustomize.RenderFlux (the expensive bit), but still
+		// replay the cached artifact through emitRenderedChildren so
+		// the per-emission side-effects (markRendered for parent
+		// provenance + Filter.AddEmitted for runtime keep-set
+		// extension, see #260/#308) fire on every reconcile pass.
+		// Without this, a re-emit that hits dedup drops the child
+		// from the parent index and the keep-set chain — a subsequent
+		// changed-only run silently mis-attributes children to a
+		// stale parent.
+		c.emitRenderedChildren(id, existing.Manifests)
 		return nil
 	}
 

@@ -234,6 +234,13 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	fp := helmReleaseFingerprint(hr)
 	if existing, ok := c.Store.GetArtifact(id).(*store.HelmReleaseArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
 		slog.Debug("helmrelease: skipped re-render (fingerprint unchanged)", "id", id.String())
+		// Skip helm.TemplateDocs (the expensive bit), but replay the
+		// cached docs through the dispatch loop so any source CRs
+		// rendered by the chart (tofu-controller's OCIRepository,
+		// crossplane's Provider) re-fire EventObjectAdded for any
+		// listener that joined after the original render. Matches the
+		// KS-side dedup-replay pattern.
+		c.dispatchRendered(id, existing.Manifests)
 		return nil
 	}
 
@@ -268,13 +275,22 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
+	c.dispatchRendered(id, docs)
+
+	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
+	return nil
+}
+
+// dispatchRendered parses each rendered doc and lands it in the
+// store. Source CRs flow through AddObject (their controllers must
+// pick them up), other kinds via AddRendered (chart's final
+// manifests; nothing else reconciles them). Called both from the
+// fresh-render path and the fingerprint-dedup replay path so the
+// per-doc side-effects fire on every reconcile pass.
+func (c *Controller) dispatchRendered(id manifest.NamedResource, docs []map[string]any) {
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
-			// SOPS-encrypted Secret in chart output — let ParseSecret
-			// wipe its values to PLACEHOLDER below, same as cleartext
-			// Secret data when --wipe-secrets is on. flate has no SOPS
-			// keys, so the placeholder is the honest rendered value.
 			name, ns := manifest.DocMetadata(doc)
 			slog.Debug("helmrelease: SOPS-encrypted resource wiped to placeholder",
 				"id", id.String(), "ref", manifest.DocKind(doc)+" "+ns+"/"+name)
@@ -284,27 +300,12 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			slog.Debug("helmrelease: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
-		// Source CRs rendered by a chart (e.g. tofu-controller emits an
-		// OCIRepository for its TF state bundle) need to flow through
-		// the source controller's listener so they actually get
-		// fetched and produce a Ready status. Without AddObject the
-		// rendered source sits in the Store with no status and
-		// `flate test` reports it as "FAILED (no status reported)".
-		// Real Flux reconciles these the same way.
-		//
-		// Other kinds — Deployments, Services, ConfigMaps emitted as
-		// chart workload output — go via AddRendered: they're the
-		// chart's final cluster manifests, not anything flate
-		// reconciles further.
 		if isFluxSourceKind(obj) {
 			c.Store.AddObject(obj)
 		} else {
 			c.Store.AddRendered(obj)
 		}
 	}
-
-	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
-	return nil
 }
 
 // collectHRDeps returns hr's typed dependsOn entries (carrying any

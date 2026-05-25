@@ -175,19 +175,21 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	// PreferExisting lets repeated AddObject re-emission be a no-op so
 	// the loop terminates on convergence (no new objects added).
 	//
-	// ResourceSets are re-rendered every iteration rather than memoized,
-	// because a RS's inputsFrom selector may match RSIPs that only
-	// arrive after a downstream Kustomization chain expands. Without
-	// the retry, a RS whose RSIPs are produced by a child KS renders
-	// to zero docs on first pass and never recovers — observed in
-	// tholinka/home-ops where `dragonfly-acls` (a Permute RS) selects
-	// RSIPs created by an unrelated `dragonfly/manual` component
-	// applied through `renovate-operator-jobs-jobs`. Re-rendering is
-	// safe: renderResourceSet skips already-present objects in the
-	// store, so a steady-state RS contributes 0 new docs and the loop
-	// converges via the `added == 0` exit.
+	// ResourceSets are re-rendered when new inputs may have arrived.
+	// A RS's inputsFrom selector may match RSIPs that only show up
+	// after a downstream Kustomization chain expands — observed in
+	// tholinka/home-ops where `dragonfly-acls` (Permute) selects RSIPs
+	// from `renovate-operator-jobs-jobs`. The optimization: skip
+	// re-rendering an RS that already converged (produced 0 new docs
+	// on its last render) UNLESS the count of available RSIPs in the
+	// store has grown since the previous pass. RSIPs are only ever
+	// added during discovery, never removed, so a count check is
+	// sufficient — RSes that added zero docs at count C stay
+	// converged through any later pass with count == C.
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
+	rsConverged := map[manifest.NamedResource]struct{}{}
+	prevRSIPCount := len(store.ListAs[*manifest.ResourceSetInputProvider](d.cfg.Store, manifest.KindResourceSetInputProvider))
 	for {
 		added := 0
 		for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
@@ -212,7 +214,19 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			}
 			added++
 		}
+		// Re-evaluate the convergence cache when new RSIPs arrived
+		// between passes — they may match selectors that previously
+		// returned zero inputs.
+		currentRSIPCount := len(store.ListAs[*manifest.ResourceSetInputProvider](d.cfg.Store, manifest.KindResourceSetInputProvider))
+		if currentRSIPCount != prevRSIPCount {
+			rsConverged = map[manifest.NamedResource]struct{}{}
+			prevRSIPCount = currentRSIPCount
+		}
 		for _, rs := range store.ListAs[*manifest.ResourceSet](d.cfg.Store, manifest.KindResourceSet) {
+			rsID := rs.Named()
+			if _, done := rsConverged[rsID]; done {
+				continue
+			}
 			n, err := d.renderResourceSet(rs)
 			if err != nil {
 				return err
@@ -220,6 +234,8 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if n > 0 {
 				added++
 				total += n
+			} else {
+				rsConverged[rsID] = struct{}{}
 			}
 		}
 		if added == 0 {

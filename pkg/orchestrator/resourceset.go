@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -66,67 +68,93 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 		}
 	}
 
-	// Dedupe by (apiVersion, kind, ns, name) across the union of every
-	// RS's render — a name-grouped RS may legitimately render the same
-	// child from each namespace variant, and we don't want to double-
-	// emit it under the parent KS.
-	seen := map[string]struct{}{}
-	out := map[manifest.NamedResource][]map[string]any{}
+	// Render each RS in parallel — they only read shared state (the
+	// store + owners index) which is safe under concurrent reads. The
+	// dedup + accumulation step runs under a mutex so the cross-RS
+	// "first-wins" invariant is preserved (a name-grouped RS may
+	// legitimately render the same child from each namespace variant
+	// and we don't want to double-emit it under the parent KS).
+	//
+	// Concurrency limit matches the bucket fetcher (8) — render is
+	// CPU-bound, so the cap exists more to prevent goroutine
+	// explosion on huge RS-counts than as a rate limiter.
+	var (
+		mu   sync.Mutex
+		seen = map[string]struct{}{}
+		out  = map[manifest.NamedResource][]map[string]any{}
+	)
+	g := new(errgroup.Group)
+	g.SetLimit(8)
 	for _, rs := range rsList {
-		docs, err := resourceset.Render(rs, o.resolveInputProvider)
-		if err != nil || len(docs) == 0 {
-			continue
-		}
-		// Resolve parent KS in priority order:
-		//
-		//   1. renderedSet.ParentOf — most direct; set when the RS
-		//      arrived via emitRenderedChildren. No prefix matching
-		//      needed.
-		//   2. sourceFiles + path-prefix match — file-loaded RSes.
-		//   3. Name-keyed sourceFile fallback — covers a KS-
-		//      substituted variant whose namespace shifted at emit
-		//      time, identified by sharing a name with a file-loaded
-		//      sibling.
-		var parentKS manifest.NamedResource
-		var matched bool
-		if parent, ok := o.rendered.ParentOf(rs.Named()); ok {
-			parentKS, matched = parent, true
-		} else {
-			file := cmp.Or(o.sourceFiles[rs.Named()], sourceByName[rs.Name])
-			if file == "" {
-				continue
+		g.Go(func() error {
+			docs, err := resourceset.Render(rs, o.resolveInputProvider)
+			if err != nil || len(docs) == 0 {
+				return nil
 			}
-			slashFile := filepath.ToSlash(file)
-			for _, w := range owners {
-				if strings.HasPrefix(slashFile, w.prefix) {
-					parentKS = w.id
-					matched = true
-					break
+			// Resolve parent KS in priority order:
+			//   1. renderedSet.ParentOf — direct lookup.
+			//   2. sourceFiles + path-prefix match — file-loaded.
+			//   3. Name-keyed sourceFile fallback — KS-substituted
+			//      variant whose namespace shifted at emit time.
+			var parentKS manifest.NamedResource
+			if parent, ok := o.rendered.ParentOf(rs.Named()); ok {
+				parentKS = parent
+			} else {
+				file := cmp.Or(o.sourceFiles[rs.Named()], sourceByName[rs.Name])
+				if file == "" {
+					return nil
+				}
+				slashFile := filepath.ToSlash(file)
+				matched := false
+				for _, w := range owners {
+					if strings.HasPrefix(slashFile, w.prefix) {
+						parentKS = w.id
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return nil
 				}
 			}
-			if !matched {
-				continue
+			// Filter docs to RawObjects + collect dedup keys
+			// outside the mutex; the mutex only holds for the
+			// commit-to-shared-state step.
+			type emit struct {
+				key string
+				doc map[string]any
 			}
-		}
-		for _, doc := range docs {
-			parsed, perr := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: o.cfg.WipeSecrets})
-			if perr != nil {
-				continue
+			pending := make([]emit, 0, len(docs))
+			for _, doc := range docs {
+				parsed, perr := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: o.cfg.WipeSecrets})
+				if perr != nil {
+					continue
+				}
+				if _, raw := parsed.(*manifest.RawObject); !raw {
+					continue
+				}
+				key := resourceset.DedupKey(doc)
+				if key == "" {
+					continue
+				}
+				pending = append(pending, emit{key, doc})
 			}
-			if _, raw := parsed.(*manifest.RawObject); !raw {
-				continue
+			if len(pending) == 0 {
+				return nil
 			}
-			key := resourceset.DedupKey(doc)
-			if key == "" {
-				continue
+			mu.Lock()
+			defer mu.Unlock()
+			for _, e := range pending {
+				if _, dup := seen[e.key]; dup {
+					continue
+				}
+				seen[e.key] = struct{}{}
+				out[parentKS] = append(out[parentKS], e.doc)
 			}
-			if _, dup := seen[key]; dup {
-				continue
-			}
-			seen[key] = struct{}{}
-			out[parentKS] = append(out[parentKS], doc)
-		}
+			return nil
+		})
 	}
+	_ = g.Wait() // render errors are intentionally swallowed (same as before)
 	o.rsExtensions = out
 }
 

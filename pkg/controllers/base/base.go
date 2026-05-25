@@ -17,9 +17,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -42,9 +44,15 @@ type Controller struct {
 	Tasks *task.Service
 
 	started atomic.Bool
-	unsub   []store.Unsubscribe
 	coal    *task.Coalescer[manifest.NamedResource]
 	filter  *change.Filter
+
+	// unsubMu guards unsub so AddListener and Close can be called
+	// concurrently (e.g. shutdown racing a listener-triggered Submit).
+	// The slice is short-lived (registered at Start, drained at Close)
+	// and per-controller, so the lock has near-zero contention.
+	unsubMu sync.Mutex
+	unsub   []store.Unsubscribe
 
 	// kindLabel prefixes coalescer keys ("source/", "kustomization/",
 	// "helmrelease/") and labels panic logs. Set by Start.
@@ -81,17 +89,26 @@ func (c *Controller) StartLifecycle(kindLabel string) {
 
 // AddListener registers a store listener and records it so Close can
 // unsubscribe. snapshot=true matches every concrete controller's needs
-// (deliver the current store state on subscribe).
+// (deliver the current store state on subscribe). Safe to call
+// concurrently with Close.
 func (c *Controller) AddListener(event store.EventKind, l store.Listener) {
-	c.unsub = append(c.unsub, c.Store.AddListener(event, l, true))
+	u := c.Store.AddListener(event, l, true)
+	c.unsubMu.Lock()
+	c.unsub = append(c.unsub, u)
+	c.unsubMu.Unlock()
 }
 
-// Close removes every registered listener. Idempotent.
+// Close removes every registered listener. Idempotent. Safe to call
+// concurrently with AddListener — though typical use registers all
+// listeners during Start and never adds more.
 func (c *Controller) Close() {
-	for _, u := range c.unsub {
+	c.unsubMu.Lock()
+	unsubs := c.unsub
+	c.unsub = nil
+	c.unsubMu.Unlock()
+	for _, u := range unsubs {
 		u()
 	}
-	c.unsub = nil
 }
 
 // Submit enqueues a reconcile body keyed by id. Duplicate submits with
@@ -112,11 +129,59 @@ func (c *Controller) PreGate(id manifest.NamedResource, suspended bool) bool {
 		c.Store.UpdateStatus(id, store.StatusReady, store.MsgSuspended)
 		return true
 	}
-	if c.filter.Enabled() && !c.filter.ShouldReconcile(id) {
+	if c.filterActive() && !c.filter.ShouldReconcile(id) {
 		c.Store.UpdateStatus(id, store.StatusReady, store.MsgUnchanged)
 		return true
 	}
 	return false
+}
+
+// filterActive reports whether a non-nil, enabled change filter is
+// configured. Replaces the previous c.filter.Enabled() call that
+// relied on Filter.Enabled being nil-safe — making every future
+// non-pointer-deref method on *Filter latently NPE-prone. Routing
+// every read through this helper means a future method addition on
+// *Filter doesn't crash PreGate.
+func (c *Controller) filterActive() bool {
+	return c.filter != nil && c.filter.Enabled()
+}
+
+// Await blocks until each dep in deps reaches Ready, yielding the
+// caller's worker-pool slot during the wait so children depended on
+// can themselves acquire a slot and make progress. Centralizes the
+// "set pending → yield → WaitAll → check failed" dance the three
+// concrete controllers each implemented inline; the per-call-site
+// difference (which error sentinel wraps a failed summary) is
+// expressed via onFail.
+//
+// pendingMsg is the StatusPending message written before the wait —
+// surfaces in `flate test` reporting and the orchestrator's failure
+// rollup. Pass an empty string to skip the status write (e.g. when
+// the caller already set its own).
+//
+// onFail receives the depwait Summary on any AnyFailed and returns
+// the error the caller propagates. Use it to pick between
+// manifest.DependencyFailedError, ErrObjectNotFound, etc. — the
+// concrete controllers each have their own conventions.
+func (c *Controller) Await(
+	ctx context.Context,
+	id manifest.NamedResource,
+	w *depwait.Waiter,
+	deps []manifest.DependencyRef,
+	pendingMsg string,
+	onFail func(depwait.Summary) error,
+) error {
+	if pendingMsg != "" {
+		c.Store.UpdateStatus(id, store.StatusPending, pendingMsg)
+	}
+	var sum depwait.Summary
+	c.Tasks.YieldSlot(func() {
+		sum = depwait.WaitAll(w.Watch(ctx, deps))
+	})
+	if sum.AnyFailed() {
+		return onFail(sum)
+	}
+	return nil
 }
 
 // Recover catches a panic from the current goroutine and marks id
@@ -138,6 +203,15 @@ func Recover(s *store.Store, id manifest.NamedResource, logKind string) {
 // rather than the stale payload from the original event. A missing
 // object (deleted between coalescer enqueue and run) is treated as a
 // no-op rather than a failure.
+//
+// On success the terminal status write is conditional: if the
+// current status already carries an informative Ready message (a
+// soft-skip from --allow-missing-secrets, an MsgUnchanged from the
+// change filter, an MsgSuspended from PreGate), the empty-message
+// overwrite is suppressed so the informative message survives a
+// short-circuited coalesced re-run that returns nil. Plain Ready
+// (no message) and any non-Ready status get the standard "" Ready
+// write so the controller's terminal contract is preserved.
 func RunWithStatus[T manifest.BaseManifest](
 	ctx context.Context,
 	s *store.Store,
@@ -162,6 +236,11 @@ func RunWithStatus[T manifest.BaseManifest](
 			return
 		}
 		s.UpdateStatus(id, store.StatusFailed, err.Error())
+		return
+	}
+	if existing, ok := s.GetStatus(id); ok && existing.Status == store.StatusReady && existing.Message != "" {
+		// Existing Ready message is informative (skipped:, unchanged,
+		// suspended, or any future Ready sub-state) — don't clobber.
 		return
 	}
 	s.UpdateStatus(id, store.StatusReady, "")

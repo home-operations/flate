@@ -89,3 +89,33 @@ func TestRunWithStatus_MissingObject(t *testing.T) {
 		t.Error("missing object should not get a status entry")
 	}
 }
+
+// TestRunWithStatus_PreservesInformativeReadyMessage pins the
+// 3.5 fix: when a coalesced re-run returns nil but the current
+// status carries an informative Ready message (skipped:, unchanged,
+// suspended), the terminal "" Ready write must NOT clobber it. The
+// previous unconditional s.UpdateStatus(id, Ready, "") at the end
+// of RunWithStatus erased these sub-states whenever a short-circuit
+// returned nil after the message had been set.
+func TestRunWithStatus_PreservesInformativeReadyMessage(t *testing.T) {
+	for _, message := range []string{store.MsgUnchanged, store.MsgSuspended, store.SkippedPrefix + " missing secret"} {
+		t.Run(message, func(t *testing.T) {
+			s := store.New()
+			hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+			s.AddObject(hr)
+			id := hr.Named()
+			s.UpdateStatus(id, store.StatusReady, message)
+
+			base.RunWithStatus(t.Context(), s, id, "helmrelease",
+				func(_ context.Context, _ *manifest.HelmRelease) error { return nil },
+			)
+			got, _ := s.GetStatus(id)
+			if got.Status != store.StatusReady {
+				t.Errorf("status = %v, want Ready", got.Status)
+			}
+			if got.Message != message {
+				t.Errorf("informative Ready message %q was clobbered: now %q", message, got.Message)
+			}
+		})
+	}
+}

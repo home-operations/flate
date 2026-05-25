@@ -101,13 +101,17 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 // Ready+"skipped: ..." status; any other error yields Failed.
 func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) error {
 	id := obj.Named()
-	fetcher, registered := c.Fetchers[id.Kind]
-	if !registered {
-		return nil
-	}
+	// The listener already filtered by registered Kind (see
+	// onObjectAdded), so this Fetchers lookup can't miss; lookup is
+	// cheap and lets us hold a typed reference for the rest of the
+	// function. Note: the second-redundant `c.Fetchers[id.Kind]`
+	// check that lived here was dropped — it was unreachable.
+	fetcher := c.Fetchers[id.Kind]
 	// Existence short-circuit: a source we already fetched in this run
 	// stays fetched. Idempotent re-AddObject (e.g. a parent KS
 	// re-emitting a stamped copy) returns without touching the network.
+	// Read once; the coalescer guarantees no concurrent reconcile of
+	// the same id, so an existing artifact is stable across this call.
 	if c.Store.GetArtifact(id) != nil {
 		return nil
 	}

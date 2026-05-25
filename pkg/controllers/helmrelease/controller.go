@@ -166,14 +166,15 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// driftDetection / install.crds / upgrade strategy / rollback to
 	// every HR, so all of them were hit by this).
 	if parent, ok := c.lookupParent(id); ok {
-		c.Store.UpdateStatus(id, store.StatusPending, "waiting for parent KS")
-		var sum depwait.Summary
-		c.Tasks.YieldSlot(func() {
-			sum = depwait.WaitAll(c.newWaiter(id, hr.Timeout).Watch(ctx, []manifest.DependencyRef{{NamedResource: parent}}))
-		})
-		if sum.AnyFailed() {
-			return fmt.Errorf("%w: parent Kustomization %s not ready: %s",
-				manifest.ErrObjectNotFound, parent.String(), sum.Messages[parent])
+		err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout),
+			[]manifest.DependencyRef{{NamedResource: parent}},
+			"waiting for parent KS",
+			func(sum depwait.Summary) error {
+				return fmt.Errorf("%w: parent Kustomization %s not ready: %s",
+					manifest.ErrObjectNotFound, parent.String(), sum.Messages[parent])
+			})
+		if err != nil {
+			return err
 		}
 		// The parent's render may have replaced this HR in the store
 		// with a patched copy; re-read so the rest of reconcile uses
@@ -186,31 +187,26 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
-	// YieldSlot releases the worker-pool slot during the wait so the
-	// dependencies can themselves acquire one.
 	if deps := c.collectHRDeps(hr); len(deps) > 0 {
-		c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
-		var sum depwait.Summary
-		c.Tasks.YieldSlot(func() {
-			sum = depwait.WaitAll(c.newWaiter(id, hr.Timeout).Watch(ctx, deps))
-		})
-		if sum.AnyFailed() {
-			return &manifest.DependencyFailedError{
-				Parent:  id,
-				Failed:  sum.Failed,
-				Reasons: sum.Messages,
-			}
+		err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout), deps,
+			"resolving dependencies",
+			func(sum depwait.Summary) error {
+				return &manifest.DependencyFailedError{
+					Parent:  id,
+					Failed:  sum.Failed,
+					Reasons: sum.Messages,
+				}
+			})
+		if err != nil {
+			return err
 		}
-		// Re-read the HR after the dependsOn wait: while we were
-		// yielding our slot, the parent KS could have re-rendered
-		// (e.g. its own dependsOn cleared in the meantime, freeing
-		// up parent-render-time substitutions that mutate our
-		// spec). Without this refresh, an HR with explicit
+		// Re-read the HR after the dependsOn wait: the parent KS may
+		// have re-rendered (e.g. its own dependsOn cleared in the
+		// meantime, freeing up parent-render-time substitutions that
+		// mutate our spec). Without this refresh, an HR with explicit
 		// spec.dependsOn but no structural parent — or one whose
-		// parent re-emitted us after the parent-gate cleared —
-		// keeps the pre-mutation snapshot through chart
-		// resolution. Mirrors the KS controller's single
-		// refresh after its combined dep wait.
+		// parent re-emitted us after the parent-gate cleared — keeps
+		// the pre-mutation snapshot through chart resolution.
 		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
 			hr = obj
 		}
@@ -247,13 +243,14 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	srcID := manifest.NamedResource{
 		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
 	}
-	var sum depwait.Summary
-	c.Tasks.YieldSlot(func() {
-		sum = depwait.WaitAll(c.newWaiter(id, hr.Timeout).Watch(ctx, []manifest.DependencyRef{{NamedResource: srcID}}))
-	})
-	if sum.AnyFailed() {
-		return fmt.Errorf("%w: chart source %s not ready: %s",
-			manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
+	if err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout),
+		[]manifest.DependencyRef{{NamedResource: srcID}},
+		"", // status already set above
+		func(sum depwait.Summary) error {
+			return fmt.Errorf("%w: chart source %s not ready: %s",
+				manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
+		}); err != nil {
+		return err
 	}
 	// A chart source that soft-skipped (--allow-missing-secrets on its
 	// auth) marks Ready but writes no artifact and almost certainly

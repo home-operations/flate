@@ -159,20 +159,17 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 
 	deps := c.collectDeps(ks)
 	if len(deps) > 0 {
-		// Release our worker slot for the duration of the dep wait so
-		// children we depend on can acquire one and make progress.
-		// Without this, N parents on a bounded Service consume all
-		// slots while waiting for children that need a slot to run.
-		var sum depwait.Summary
-		c.Tasks.YieldSlot(func() {
-			sum = depwait.WaitAll(c.newWaiter(id, ks.Timeout).Watch(ctx, deps))
-		})
-		if sum.AnyFailed() {
-			return &manifest.DependencyFailedError{
-				Parent:  id,
-				Failed:  sum.Failed,
-				Reasons: sum.Messages,
-			}
+		err := c.Await(ctx, id, c.newWaiter(id, ks.Timeout), deps,
+			"", // status set above
+			func(sum depwait.Summary) error {
+				return &manifest.DependencyFailedError{
+					Parent:  id,
+					Failed:  sum.Failed,
+					Reasons: sum.Messages,
+				}
+			})
+		if err != nil {
+			return err
 		}
 		// Refresh the KS — our structural parent may have re-emitted
 		// us with mutated spec (e.g. `replacements:` injecting

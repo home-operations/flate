@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"io"
 	"maps"
 	"slices"
@@ -99,15 +100,7 @@ func resolveChartRefVersion(orch *orchestrator.Orchestrator, hr *manifest.HelmRe
 	switch s := obj.(type) {
 	case *manifest.OCIRepository:
 		if s.Reference != nil {
-			if s.Reference.Tag != "" {
-				return s.Reference.Tag
-			}
-			if s.Reference.SemVer != "" {
-				return s.Reference.SemVer
-			}
-			if s.Reference.Digest != "" {
-				return s.Reference.Digest
-			}
+			return cmp.Or(s.Reference.Tag, s.Reference.SemVer, s.Reference.Digest)
 		}
 	case *manifest.HelmChartSource:
 		return s.Version

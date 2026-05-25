@@ -108,11 +108,7 @@ func (e *DependencyFailedError) Error() string {
 	}
 	parts := make([]string, 0, len(e.Failed))
 	for _, f := range e.Failed {
-		reason := e.Reasons[f]
-		if reason == "" {
-			reason = "unknown error"
-		}
-		parts = append(parts, f.String()+": "+reason)
+		parts = append(parts, f.String()+": "+cmp.Or(e.Reasons[f], "unknown error"))
 	}
 	return "dependencies failed: " + strings.Join(parts, "; ")
 }

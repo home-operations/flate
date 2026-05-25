@@ -1,6 +1,7 @@
 package git
 
 import (
+	"cmp"
 	"crypto/tls"
 	"fmt"
 	"sync"
@@ -42,10 +43,7 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (*tls.Config, error) 
 		// resolveAuth reports the missing-secret error first.
 		return nil, nil
 	}
-	ca := source.StringFromSecret(sec, "ca.crt")
-	if ca == "" {
-		ca = source.StringFromSecret(sec, "caFile")
-	}
+	ca := cmp.Or(source.StringFromSecret(sec, "ca.crt"), source.StringFromSecret(sec, "caFile"))
 	if ca == "" {
 		return nil, nil
 	}

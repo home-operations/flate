@@ -19,7 +19,11 @@ import (
 // warning rather than gating the test on stale local files.
 func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]struct{} {
 	out := make(map[manifest.NamedResource]struct{})
-	prefixes := loader.KSPathPrefixes(o.store, o.cfg.Path)
+	// Use repoRoot (not cfg.Path) so KSPathPrefixes' component
+	// lookups read from the actual repo root rather than a
+	// potentially-subdir --path. Same fix as PR #358 applied to
+	// the orchestrator side.
+	prefixes := loader.KSPathPrefixes(o.store, o.repoRoot)
 	for id := range failed {
 		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
 			continue

@@ -56,13 +56,16 @@ func TimeoutFromSpec(d *metav1.Duration) time.Duration {
 	return d.Duration
 }
 
-// DepStatus enumerates the per-dependency resolution result.
+// DepStatus enumerates the per-dependency resolution result. Every
+// Watch event carries one of the terminal statuses below — there is
+// no "pending" wire value because Watch only fires when the dep
+// resolves (Ready) or hits a wait-ending condition (Failed / Timeout
+// / Cancelled).
 type DepStatus int
 
 // Possible DepStatus values.
 const (
-	DepPending DepStatus = iota
-	DepReady
+	DepReady DepStatus = iota + 1
 	DepFailed
 	DepTimeout
 	DepCancelled
@@ -75,16 +78,17 @@ type Event struct {
 	Reason string
 }
 
-// Summary tallies the final state of a Waiter run.
+// Summary tallies the final state of a Waiter run. Every dep ends
+// up in Ready or Failed (Watch always emits a terminal status); a
+// Pending slot would be dead code.
 type Summary struct {
 	Ready    []manifest.NamedResource
 	Failed   []manifest.NamedResource
-	Pending  []manifest.NamedResource
 	Messages map[manifest.NamedResource]string
 }
 
 // AllReady reports whether every dependency reached DepReady.
-func (s Summary) AllReady() bool { return len(s.Failed) == 0 && len(s.Pending) == 0 }
+func (s Summary) AllReady() bool { return len(s.Failed) == 0 }
 
 // AnyFailed reports whether at least one dependency ended in failure.
 func (s Summary) AnyFailed() bool { return len(s.Failed) > 0 }
@@ -578,8 +582,6 @@ func WaitAll(ch <-chan Event) Summary {
 			s.Ready = append(s.Ready, ev.Dep)
 		case DepFailed, DepTimeout, DepCancelled:
 			s.Failed = append(s.Failed, ev.Dep)
-		default:
-			s.Pending = append(s.Pending, ev.Dep)
 		}
 	}
 	return s

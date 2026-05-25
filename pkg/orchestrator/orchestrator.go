@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
@@ -92,6 +93,16 @@ type Orchestrator struct {
 	staging *kustomize.StagingCache
 	filter  *change.Filter
 
+	// repoRoot is the resolved .git ancestor of cfg.Path (or
+	// cfg.Path when no .git exists). Populated during Bootstrap from
+	// discovery.Result.RepoRoot. Consumed by finalize.detectOrphans
+	// to feed loader.KSPathPrefixes the correct filesystem root for
+	// `components:` lookups (cfg.Path is the user-supplied --path,
+	// which may be a subdir of the actual repo root and produce
+	// wrong component prefixes — same bug fixed in pkg/discovery by
+	// PR #358).
+	repoRoot string
+
 	// sourceFiles tracks which file produced each loaded resource. It
 	// is populated during loadManifests and consumed once by Bootstrap
 	// to construct the immutable change.Filter.
@@ -136,6 +147,11 @@ type Orchestrator struct {
 	// WithFetcher to refuse late fetcher swaps that would silently
 	// miss any source CR discovery already reconciled.
 	bootstrapped bool
+
+	// stopOnce guards Stop so a New+Bootstrap-then-abort caller's
+	// manual Stop and Run's deferred Stop don't double-close the
+	// staging cache / controller unsubs.
+	stopOnce sync.Once
 }
 
 // Result is the structured output of Orchestrator.Render: the rendered
@@ -288,6 +304,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	o.repoRoot = res.RepoRoot
 	o.sourceFiles = res.SourceFiles
 	o.parentOf = res.ParentOf
 	o.existence = res.Existence
@@ -296,6 +313,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.breakDependsOnCycles()
 	o.warnOnDisabledOCIFeatures()
 	o.warnOnUnsupportedHelmRepoSecretRef()
+	o.warnOnKSOCISourceRefWithoutOCI()
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err
 	}
@@ -367,6 +385,29 @@ func (o *Orchestrator) warnOnUnsupportedHelmRepoSecretRef() {
 		slog.Warn("HelmRepository: SecretRef on OCI HelmRepositories is not yet implemented and will fail at render time; reference the chart via a sibling OCIRepository CR instead",
 			"helmRepository", repo.Namespace+"/"+repo.Name,
 			"url", repo.URL)
+	}
+}
+
+// warnOnKSOCISourceRefWithoutOCI surfaces the EnableOCI=false +
+// KS-sourceRef=OCIRepository combo at bootstrap. Without OCI
+// reconciliation, source/ExistenceFetcher gives the OCIRepository a
+// Ready status but NO SourceArtifact — a Kustomization that needs
+// the artifact for spec.path resolution then dies at reconcile with
+// the cryptic "artifact not found", far from where the actual
+// configuration error lives. Warn up front so the operator either
+// enables OCI (--enable-oci=true / default) or restructures the KS
+// to use a GitRepository source.
+func (o *Orchestrator) warnOnKSOCISourceRefWithoutOCI() {
+	if o.cfg.EnableOCI {
+		return
+	}
+	for _, ks := range store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization) {
+		if ks.SourceKind != manifest.KindOCIRepository {
+			continue
+		}
+		slog.Warn("Kustomization sourceRef points at OCIRepository but --enable-oci=false; the synthesized existence-only artifact has no LocalPath and spec.path resolution will fail at render time",
+			"kustomization", ks.Namespace+"/"+ks.Name,
+			"sourceRef", ks.SourceNamespace+"/"+ks.SourceName)
 	}
 }
 
@@ -702,12 +743,22 @@ func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
 }
 
 // Stop shuts the controllers down in reverse-construction order and
-// releases the staging cache.
+// releases the staging cache. Safe to call multiple times: each
+// controller's Close is idempotent (drains the unsub slice once and
+// nils it), and StagingCache.Close zeroes its stages map after the
+// first cleanup. Wrapped in sync.Once so the bookkeeping reads
+// cleanly even if a caller's defer runs after Run's defer.
+//
+// Embedders who call only New + Bootstrap (without Run) MUST call
+// Stop themselves — the staging cache holds a tempdir that would
+// otherwise leak until process exit.
 func (o *Orchestrator) Stop() {
-	o.hrc.Close()
-	o.ksc.Close()
-	o.src.Close()
-	if o.staging != nil {
-		_ = o.staging.Close()
-	}
+	o.stopOnce.Do(func() {
+		o.hrc.Close()
+		o.ksc.Close()
+		o.src.Close()
+		if o.staging != nil {
+			_ = o.staging.Close()
+		}
+	})
 }

@@ -329,8 +329,12 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 // KS in the keep set may render and emit a child KS that wasn't
 // discoverable at filter-build time (kustomize component +
 // replacement patterns generate per-app Kustomizations on the fly).
-// The KS controller calls Filter.Add(child) before AddObject so the
-// listener's PreGate filter check sees the extended keep set.
+// The KS controller calls Filter.AddEmitted(parent, child) before
+// AddObject so the listener's PreGate filter check sees the
+// extended keep set. This test uses Filter.Add directly (skipping
+// the primacy gate) to seed the runtime keep without simulating
+// a parent render; the gated path is covered by the AddEmitted
+// tests below.
 //
 // Without this, the kept parent reconciles but every render-emitted
 // child gets marked Ready "unchanged" by PreGate, never reconciles,
@@ -584,8 +588,8 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 // (Kind, Name). Without this, a kept
 // Kustomization/cluster-infra/external-secrets would silently scope-in
 // an unrelated Kustomization/database/external-secrets (and likewise
-// for the runtime Filter.Add path), broadening changed-only mode in
-// ways the user can't see. The empty-namespace bridge in
+// for the runtime AddEmitted / Add paths), broadening changed-only
+// mode in ways the user can't see. The empty-namespace bridge in
 // TestFilter_ShouldReconcileEmptyNamespaceFallback is preserved
 // because it indexes only entries whose Namespace is empty.
 func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {

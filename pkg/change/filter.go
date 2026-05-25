@@ -12,28 +12,43 @@ import (
 // NewFilter — the zero value is the "no filtering" sentinel and
 // returns true from ShouldReconcile for every id.
 //
-// The keep set is built once at construction and then extended at
-// runtime by Add: a parent KS already in the keep set may render and
-// emit child KS / HR resources that the file-walk discovery phase
-// couldn't see (kustomize component + replacement patterns generate
-// Flux Kustomizations on the fly). Those children inherit the
-// parent's in-scope-ness because the parent only reconciled by
-// passing the filter in the first place. See issue #204.
+// The keep set has two tiers:
+//
+//   - "keep" entries reconcile. resolve() seeds this from file
+//     changes + ancestors of changed files (#58) + structural
+//     parents of owner KSes (#103).
+//   - "primary" is the subset whose render output likely differs
+//     from baseline: file-change owners, their siblings under the
+//     same owner, transitive deps walked from a primary entry, and
+//     runtime entries inserted by AddEmitted from a primary
+//     emitter. Ancestor-only entries are explicitly NOT primary.
+//
+// The keep set extends at runtime via AddEmitted when a primary
+// parent KS renders and emits a child the file-walk couldn't see
+// (kustomize component + replacement patterns generate Flux
+// Kustomizations on the fly — see #204). Ancestor-only emitters
+// don't propagate keep to file-loaded children, which prevents a
+// one-file change from cascading the entire tree into keep.
 type Filter struct {
 	changes     *Set
 	sourceFiles map[manifest.NamedResource]string
 	repoRoot    string
 
-	// objs is captured from NewFilter so runtime Add() can walk
-	// transitiveDeps without the caller re-supplying it. Set once
-	// at construction; never mutated.
+	// objs is captured from NewFilter so runtime AddEmitted can
+	// walk transitiveDeps without the caller re-supplying it. The
+	// pointer is set once at construction and never reassigned —
+	// but the underlying *store.Store IS mutated post-Bootstrap by
+	// controllers, so reads through objs.GetObject /
+	// objs.ListObjects must take the Store's own RLock (which
+	// transitiveDeps does internally).
 	objs ObjectLister
 
 	// OnAdd, when non-nil, fires for every id newly added to the
-	// keep set by Add (including transitive-dep recursion). The
-	// orchestrator wires this to refire EventObjectAdded for source-
-	// kind ids whose listener already short-circuited via PreGate
-	// before the consuming KS joined keep. Issue #260.
+	// keep set by AddEmitted / Add (including transitive-dep
+	// recursion). The orchestrator wires this to refire
+	// EventObjectAdded for source-kind ids whose listener already
+	// short-circuited via PreGate before the consuming KS joined
+	// keep. Issue #260.
 	//
 	// Set BEFORE controllers start. The Filter calls OnAdd outside
 	// its internal lock so callbacks are free to take other locks.
@@ -193,9 +208,13 @@ func (f *Filter) addEmittedLocked(emitter, child manifest.NamedResource) []manif
 
 // Add unconditionally extends the keep set with id (and its
 // transitive sourceRef/chartRef/valuesFrom deps) at runtime, marking
-// every newly-inserted entry primary. Callers that need the
-// "skip when emitter is ancestor-only" gating should use AddEmitted
-// instead.
+// every newly-inserted entry primary.
+//
+// PRODUCTION CODE SHOULD USE AddEmitted INSTEAD: Add bypasses the
+// primary-emitter gate that prevents the ancestor-cascade failure
+// mode. The only legitimate uses are test scaffolding that needs
+// to seed an entry without simulating a render emission, and the
+// unconditional-add primitive that AddEmitted composes onto.
 //
 // No-op when the filter is disabled. Safe for concurrent use.
 func (f *Filter) Add(id manifest.NamedResource) {

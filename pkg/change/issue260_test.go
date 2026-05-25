@@ -49,19 +49,20 @@ func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*stor
 //
 // At runtime, cluster-apps renders ./kubernetes/apps and emits
 // homepage-config. The KS controller's keepEmitted calls
-// Filter.Add(homepage-config) and AddObject(homepage-config). The
-// child KS reconciles — and its sourceRef points at the OCIRepository
-// that was PreGate-skipped at startup with no artifact.
+// Filter.AddEmitted(cluster-apps, homepage-config) and then
+// AddObject(homepage-config). The child KS reconciles — and its
+// sourceRef points at the OCIRepository that was PreGate-skipped
+// at startup with no artifact.
 //
-// Bug: Filter.Add was a one-shot add — it didn't walk transitiveDeps,
-// so the OCIRepository never entered the keep set, the source
-// controller never re-fetched it, and homepage-config's
+// Bug: the runtime add was a one-shot add — it didn't walk
+// transitiveDeps, so the OCIRepository never entered the keep set,
+// the source controller never re-fetched it, and homepage-config's
 // resolveSourceRoot surfaced "source ... artifact not found".
 //
-// Fix: Filter.Add now walks transitiveDeps recursively AND the
-// orchestrator wires Filter.OnAdd to Store.Refire so source kinds
-// that newly join keep at runtime get their listener re-fired with
-// the updated filter state.
+// Fix: addRecursive (called via AddEmitted) now walks transitiveDeps
+// recursively AND the orchestrator wires Filter.OnAdd to
+// Store.Refire so source kinds that newly join keep at runtime get
+// their listener re-fired with the updated filter state.
 func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "kubernetes/flux/cluster/ks.yaml"), clusterKS)

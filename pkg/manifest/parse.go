@@ -1,7 +1,6 @@
 package manifest
 
 import (
-	"cmp"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -157,10 +156,4 @@ func requireMetadata(kind string, doc map[string]any) (name, ns string, err erro
 	}
 	ns, _ = md["namespace"].(string)
 	return name, ns, nil
-}
-
-// stringOr returns m[k] as a string, or fallback when absent/empty.
-func stringOr(m map[string]any, k, fallback string) string {
-	v, _ := m[k].(string)
-	return cmp.Or(v, fallback)
 }

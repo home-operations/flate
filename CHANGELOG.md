@@ -1,5 +1,68 @@
 # Changelog
 
+## [0.1.18](https://github.com/home-operations/flate/compare/0.1.17...0.1.18) (2026-05-25)
+
+
+### Features
+
+* **helm:** route OCI chart pulls through source.oci.Fetcher ([#269](https://github.com/home-operations/flate/issues/269)) ([be0feca](https://github.com/home-operations/flate/commit/be0fecaaa56c0ec287695a3158b536da6e4a3090))
+
+
+### Bug Fixes
+
+* **change:** Filter.Add walks transitiveDeps + refires source listeners ([#260](https://github.com/home-operations/flate/issues/260)) ([#261](https://github.com/home-operations/flate/issues/261)) ([eaca342](https://github.com/home-operations/flate/commit/eaca3422bfc70f1d260c6ed785ecb2eb5d522079))
+* **discovery:** alias bootstrap OCIRepository sources too ([#263](https://github.com/home-operations/flate/issues/263)) ([0ac5ffe](https://github.com/home-operations/flate/commit/0ac5ffe07afe5814c3f495d913364a4ef56f93b4))
+* **orchestrator:** assert WithFetcher pre-Bootstrap + warn on ignored OCI features ([#276](https://github.com/home-operations/flate/issues/276)) ([139bf0f](https://github.com/home-operations/flate/commit/139bf0ff3946990a18ecf3db1e0f9d67c6b4dd99))
+* **source/oci:** write blobs without title annotation to slot ([#265](https://github.com/home-operations/flate/issues/265)) ([c395f08](https://github.com/home-operations/flate/commit/c395f08676afef8987a52b65e09fa3a6de018be5))
+* **store:** close AddListener double-fire race + harden Refire/Snapshot ([#274](https://github.com/home-operations/flate/issues/274)) ([c814820](https://github.com/home-operations/flate/commit/c814820d381f7fd0097cf6e4df35bb3719c0742a))
+
+
+### Miscellaneous Chores
+
+* **diff:** default-strip checksum/secret annotation ([#264](https://github.com/home-operations/flate/issues/264)) ([8549315](https://github.com/home-operations/flate/commit/85493158b15f7fab6b872708398e2612f75ddf54))
+* use existing error everywhere ([#307](https://github.com/home-operations/flate/issues/307)) ([6fc0e7b](https://github.com/home-operations/flate/commit/6fc0e7bb100921ff6cdd1aa728eddba3f725f542))
+
+
+### Code Refactoring
+
+* adopt modern stdlib helpers (maps.Copy, bytes.SplitSeq, errors.AsType) ([#299](https://github.com/home-operations/flate/issues/299)) ([ae68e91](https://github.com/home-operations/flate/commit/ae68e9151a10d2b6db4d0c72f9a8a94c44dd1db1))
+* adopt slices.Sorted(maps.Keys()) for collect+sort patterns ([#303](https://github.com/home-operations/flate/issues/303)) ([dec80b4](https://github.com/home-operations/flate/commit/dec80b476d330042e064c9b8179c78605afaa370))
+* **cli:** collapse rendersHelm to slices.Contains; inline single-kind sites ([#297](https://github.com/home-operations/flate/issues/297)) ([c1cb490](https://github.com/home-operations/flate/commit/c1cb49015b552a78ba0cfc07a498d3cf633f4d73))
+* cmp.Or sweep — two more comparator cascades ([#289](https://github.com/home-operations/flate/issues/289)) ([55b53dd](https://github.com/home-operations/flate/commit/55b53dd97db209dace231ddfe37a399e35a480b6))
+* cmp.Or sweep [#4](https://github.com/home-operations/flate/issues/4) across manifest, oci, cli, errors ([#293](https://github.com/home-operations/flate/issues/293)) ([ea13e46](https://github.com/home-operations/flate/commit/ea13e46b8f03bab394ad3ff743899476c45c6bc9))
+* cmp.Or sweep [#5](https://github.com/home-operations/flate/issues/5) — chartRef version, dep error, git TLS ([#294](https://github.com/home-operations/flate/issues/294)) ([b0860b1](https://github.com/home-operations/flate/commit/b0860b18ee932123588e88fb4b87188589929b67))
+* cmp.Or sweep round 3 — 7 more zero-fallback sites ([#291](https://github.com/home-operations/flate/issues/291)) ([aaf0b79](https://github.com/home-operations/flate/commit/aaf0b7972ea71465a642b2420caed1b9a267303c))
+* dedup kustomize-builder filename list to manifest.KustomizeBuilderFilenames ([#283](https://github.com/home-operations/flate/issues/283)) ([5311c03](https://github.com/home-operations/flate/commit/5311c03a3e5ab38055ecb41c0f79f73fb7fc3424))
+* dedup RS render-doc identity key (resourceset.DedupKey) ([#285](https://github.com/home-operations/flate/issues/285)) ([fec5616](https://github.com/home-operations/flate/commit/fec5616ebe4d99377f47fdd1b45aeda239e4722b))
+* **depwait:** extract tryReadyExpr for the 3-site eval pattern ([#286](https://github.com/home-operations/flate/issues/286)) ([d46f86d](https://github.com/home-operations/flate/commit/d46f86d08e6f3bc18f8eb7ff420efca0cb2ee9d3))
+* **diff:** collapse 6-level sort cascade with cmp.Or ([#288](https://github.com/home-operations/flate/issues/288)) ([f209e65](https://github.com/home-operations/flate/commit/f209e6523c50b0a6ea1c3e1d7dcf96a74e6b557f))
+* **discovery:** drop dead alreadyAliased skip-set + free knownSourceIDs ([#271](https://github.com/home-operations/flate/issues/271)) ([6ad8555](https://github.com/home-operations/flate/commit/6ad8555adfb9b0f0848b23e8870722c31e746756))
+* **discovery:** simplify stripDotSlash + pathUnderRoot with stdlib ([#284](https://github.com/home-operations/flate/issues/284)) ([a180d4a](https://github.com/home-operations/flate/commit/a180d4a41041ca45c61128e900e8ee7215408b25))
+* **discovery:** split aliasBootstrapSources into focused passes ([#268](https://github.com/home-operations/flate/issues/268)) ([44f6014](https://github.com/home-operations/flate/commit/44f60148aed4d29e15ad867d136ed70d7dfd290a))
+* **helm:** add private secretGetter() snapshot helper ([#302](https://github.com/home-operations/flate/issues/302)) ([b09095c](https://github.com/home-operations/flate/commit/b09095c8fa506660e33c669181f6cbfb2a024caf))
+* **helm:** observability + semver guard + distinct ambiguous error ([#273](https://github.com/home-operations/flate/issues/273)) ([e1091d2](https://github.com/home-operations/flate/commit/e1091d2d420d79b67bc3473bdfc8ed7e87a20793))
+* **helm:** route resolver snapshots through Client.Resolver() ([#301](https://github.com/home-operations/flate/issues/301)) ([deaf8e0](https://github.com/home-operations/flate/commit/deaf8e05801c40a5f61e3efc323eb50583e914b1))
+* **helm:** split repo.go into auth.go + oci_chart.go ([#287](https://github.com/home-operations/flate/issues/287)) ([eb65b65](https://github.com/home-operations/flate/commit/eb65b6572c74ac87e8ca67959aee90536ab3ad88))
+* **loader:** collapse BuildParentIndex wrappers + drop one-line helper ([#278](https://github.com/home-operations/flate/issues/278)) ([a9c603c](https://github.com/home-operations/flate/commit/a9c603ca83902b77e976a22004f5639e22933257))
+* **loader:** export NormalizePrefix and reuse in orchestrator ([#296](https://github.com/home-operations/flate/issues/296)) ([0941e1b](https://github.com/home-operations/flate/commit/0941e1b26a7089e3b1ebf2f9eff50c7ef5358f3c))
+* **manifest/helmrelease:** replace 5 zero-fallback patterns with cmp.Or ([#290](https://github.com/home-operations/flate/issues/290)) ([9679b60](https://github.com/home-operations/flate/commit/9679b606f3411ef3fe8562ea6ab6e64746cb8a3d))
+* **manifest:** centralize doc field reads behind DocKind/DocAPIVersion/DocMetadata ([#298](https://github.com/home-operations/flate/issues/298)) ([a8e3a18](https://github.com/home-operations/flate/commit/a8e3a186c6c0799bd21e9eca451aa00f23396b4c))
+* **manifest:** factor stripObjectMetadata + stripMetadataInList helpers ([#281](https://github.com/home-operations/flate/issues/281)) ([a85fa5c](https://github.com/home-operations/flate/commit/a85fa5c3b877070ec1a01209bab02b3ddef25695))
+* **manifest:** unify EnsureMetadata + MergeStringMap helpers ([#300](https://github.com/home-operations/flate/issues/300)) ([7bc7e2e](https://github.com/home-operations/flate/commit/7bc7e2e3d1b6a3a2a2a091b2dce0813b01ff9ee7))
+* **orchestrator:** cacheRoot + RS sourceFile lookup → cmp.Or ([#292](https://github.com/home-operations/flate/issues/292)) ([7f8ed56](https://github.com/home-operations/flate/commit/7f8ed5688422e17b075b0f6fd1b8ae7741d14053))
+* **orchestrator:** use slices.SortedFunc + NamedResource.Compare in cycles ([#304](https://github.com/home-operations/flate/issues/304)) ([c90e16e](https://github.com/home-operations/flate/commit/c90e16e95d8a2edc70a1b34f05085336eecc1220))
+* **resourceset:** factor ensureMetadata for the two writer paths ([#282](https://github.com/home-operations/flate/issues/282)) ([6a6cb7e](https://github.com/home-operations/flate/commit/6a6cb7e60a3890b7d00587c15b88687868fa4cb5))
+* route same-kind comparators through NamedResource.Compare ([#305](https://github.com/home-operations/flate/issues/305)) ([37553a7](https://github.com/home-operations/flate/commit/37553a7c674e711aec3723e812ce76666a01b284))
+* simplify OCIRepository.Version() — drop unused error, use cmp.Or ([#295](https://github.com/home-operations/flate/issues/295)) ([5036f5a](https://github.com/home-operations/flate/commit/5036f5a5b0c3a61288ecffaa79fd93794822e5f5))
+* **source/bucket:** split bucket.go into endpoint.go + transport.go + traversal.go ([#279](https://github.com/home-operations/flate/issues/279)) ([57a9293](https://github.com/home-operations/flate/commit/57a92930b61ff92d6318691585ab51bb734e6519))
+* **source/git:** inline refStr fallback with cmp.Or ([#306](https://github.com/home-operations/flate/issues/306)) ([d6bdaf8](https://github.com/home-operations/flate/commit/d6bdaf8c66da99c6b949ab74edc5d84dbea9a549))
+* **source/git:** split git.go into auth.go + tls.go ([#277](https://github.com/home-operations/flate/issues/277)) ([ee47c39](https://github.com/home-operations/flate/commit/ee47c39a12628d767cf15db90160f50947044e3a))
+* **source/oci:** harden cache invariants + extractTarGz traversal ([#272](https://github.com/home-operations/flate/issues/272)) ([25607bf](https://github.com/home-operations/flate/commit/25607bfb77ec818051deaba176bfcf79e1658132))
+* **source/oci:** split out flatFallbackStorage + tighten test ([#266](https://github.com/home-operations/flate/issues/266)) ([8a40b3e](https://github.com/home-operations/flate/commit/8a40b3e2c6775ea4dc31ebc0390df966fe95bea4))
+* **source/oci:** use OCI Image Layout via content/oci.Store ([#267](https://github.com/home-operations/flate/issues/267)) ([ea6fac3](https://github.com/home-operations/flate/commit/ea6fac3a60030c2e5dc32c8cfcf13fb7c12ecbe1))
+* **source/oci:** zip-bomb cap, cosign Warn, multi-layer ambiguity guard ([#275](https://github.com/home-operations/flate/issues/275)) ([491a27f](https://github.com/home-operations/flate/commit/491a27f7991d87a3290208af1f14c619618250ae))
+* **store:** encapsulate status reset inside Refire ([#270](https://github.com/home-operations/flate/issues/270)) ([88d1ad0](https://github.com/home-operations/flate/commit/88d1ad0dbfc9bee859077bdc018d33335c58cb5e))
+
 ## [0.1.17](https://github.com/home-operations/flate/compare/0.1.16...0.1.17) (2026-05-24)
 
 

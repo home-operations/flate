@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -94,8 +95,14 @@ func TestHelmRepoTLS_CertSecretNotFound(t *testing.T) {
 	}
 	_, cleanup, err := c.helmRepoTLSOptions(r)
 	cleanup()
-	if err == nil || !strings.Contains(err.Error(), "cert secret ns/missing not found") {
-		t.Errorf("expected secret-not-found error; got %v", err)
+	if err == nil {
+		t.Fatal("expected secret-not-found error; got nil")
+	}
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("expected error wrapped with manifest.ErrMissingSecret; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing") {
+		t.Errorf("expected error to name the secret 'missing'; got %v", err)
 	}
 }
 

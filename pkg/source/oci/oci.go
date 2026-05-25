@@ -296,7 +296,13 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	// Best-effort: a write failure costs us the next cache hit's
 	// offline win (re-verify falls back to the network) but the slot
 	// remains correct and the next pull will retry.
-	if repo.Verify != nil {
+	// Persist the marker ONLY for actual verification (SecretRef set).
+	// The keyless path returns success from verifyCosignSignature with
+	// just a WARN — writing the marker there would silence the WARN on
+	// every subsequent cache hit, because checkCacheHit sees the marker
+	// match and skips re-verifyCosignSignature entirely. Leave the
+	// marker absent for keyless so the WARN re-fires every reconcile.
+	if repo.Verify != nil && repo.Verify.SecretRef != nil {
 		if err := writeVerifyMarker(slot.Path, verifyFingerprint(repo.Verify)); err != nil {
 			slog.Warn("oci: failed to persist verify marker; cache hits will re-verify online",
 				"ociRepository", repo.Namespace+"/"+repo.Name, "err", err)
@@ -365,14 +371,23 @@ func (f *Fetcher) checkCacheHit(ctx context.Context, repoClient *remote.Reposito
 			// material and validate. This is the only path that
 			// hits the registry on a cache hit; with a stable verify
 			// policy and intact marker the cache hit is fully offline.
+			//
+			// Keyless verify (SecretRef==nil) intentionally leaves the
+			// marker absent (see the post-pull write site), so cache
+			// hits ALWAYS land here and verifyCosignSignature re-emits
+			// its WARN — surface the unverified-render status on every
+			// reconcile rather than once-per-process.
 			if err := f.verifyCosignSignature(ctx, repoClient, repo, cachedDigest); err != nil {
 				return nil, false, err
 			}
-			// Persist the new fingerprint so subsequent hits skip
-			// the network. Best-effort.
-			if err := writeVerifyMarker(slotPath, want); err != nil {
-				slog.Warn("oci: failed to persist verify marker after re-verify; future hits will re-verify online",
-					"slot", slotPath, "err", err)
+			// Persist the new fingerprint so subsequent hits skip the
+			// network — but only for keyed verification. Keyless skips
+			// the marker for the WARN-re-fire reason above.
+			if repo.Verify.SecretRef != nil {
+				if err := writeVerifyMarker(slotPath, want); err != nil {
+					slog.Warn("oci: failed to persist verify marker after re-verify; future hits will re-verify online",
+						"slot", slotPath, "err", err)
+				}
 			}
 		}
 	}

@@ -1,6 +1,7 @@
 package source
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -30,8 +31,14 @@ func TestResolveProxy_SecretNotFound(t *testing.T) {
 		func(_, _ string) *manifest.Secret { return nil },
 		"ns", "OCIRepository", "ns/r",
 		&manifest.LocalObjectReference{Name: "px"})
-	if err == nil || !strings.Contains(err.Error(), "proxy secret ns/px not found") {
-		t.Errorf("expected not-found error; got %v", err)
+	if err == nil {
+		t.Fatal("expected not-found error; got nil")
+	}
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("expected error wrapped with manifest.ErrMissingSecret so --allow-missing-secrets soft-skips; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "px") {
+		t.Errorf("error should name the secret; got %v", err)
 	}
 }
 

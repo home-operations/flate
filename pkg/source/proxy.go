@@ -56,8 +56,7 @@ func ResolveProxy(secrets SecretGetter, ns, ownerKind, ownerID string, ref *mani
 	}
 	sec := secrets(ns, ref.Name)
 	if sec == nil {
-		return nil, fmt.Errorf("%s %s: proxy secret %s/%s not found",
-			ownerKind, ownerID, ns, ref.Name)
+		return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "not found")
 	}
 	addr := StringFromSecret(sec, "address")
 	if addr == "" {

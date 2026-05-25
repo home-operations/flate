@@ -205,8 +205,8 @@ func (f *Fetcher) loadCosignPublicKeys(repo *manifest.OCIRepository) ([]crypto.P
 	}
 	sec := f.Secrets(repo.Namespace, repo.Verify.SecretRef.Name)
 	if sec == nil {
-		return nil, fmt.Errorf("OCIRepository %s/%s: verify secret %s/%s not found",
-			repo.Namespace, repo.Name, repo.Namespace, repo.Verify.SecretRef.Name)
+		return nil, source.MissingSecretErr("OCIRepository",
+			repo.Namespace, repo.Name, repo.Verify.SecretRef.Name, "verify secret not found")
 	}
 	var keys []crypto.PublicKey
 	// Iterate the union of StringData + Data keys so PEM blocks stored

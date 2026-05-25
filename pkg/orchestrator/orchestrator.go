@@ -211,8 +211,8 @@ func New(cfg Config) (*Orchestrator, error) {
 		ksc:      kustomization.New(st, ts, staging, cfg.WipeSecrets),
 		hrc:      helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
 		rendered: newRenderedSet(),
-		helm:    helmClient,
-		staging: staging,
+		helm:     helmClient,
+		staging:  staging,
 	}
 	return o, nil
 }
@@ -428,7 +428,7 @@ func (o *Orchestrator) attachFilter(f *change.Filter) {
 // start → drain → finalize sequence.
 func (o *Orchestrator) Run(ctx context.Context) error {
 	o.src.Configure(sourcectrl.FetchOptions{
-		Filter:             o.filter,
+		Filter:              o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	})
 	// parentResolver unifies the two sources of structural-parent
@@ -454,14 +454,14 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	resolveMissing := func(id manifest.NamedResource) bool {
 		return o.existence.Promote(o.store, id, o.cfg.WipeSecrets)
 	}
-	// isKnown lets depwait distinguish "render-only dep still in
+	// isFileIndexed lets depwait distinguish "render-only dep still in
 	// flight" (no file record → wait on the per-dep ctx) from
 	// "file-indexed but promote failed" (file record → fail fast).
 	// Without this signal depwait would treat both as fast-fail,
 	// surfacing spurious "dependency not found" errors for chained
 	// kustomize-component+replacement renders (component/ks/app
 	// → leaf KS → child HR) that exceed the 2s grace window.
-	isKnown := func(id manifest.NamedResource) bool {
+	isFileIndexed := func(id manifest.NamedResource) bool {
 		_, ok := o.existence.Get(id)
 		return ok
 	}
@@ -470,13 +470,13 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		ParentOf:       parentResolver,
 		RenderTracker:  o.rendered,
 		ResolveMissing: resolveMissing,
-		IsKnown:        isKnown,
+		IsFileIndexed:  isFileIndexed,
 	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
 		Filter:         o.filter,
 		ParentOf:       parentResolver,
 		ResolveMissing: resolveMissing,
-		IsKnown:        isKnown,
+		IsFileIndexed:  isFileIndexed,
 	})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)
@@ -486,7 +486,6 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.tasks.BlockTillDone()
 	return o.finalize()
 }
-
 
 // Render is the structured embed-friendly entry point: Bootstrap +
 // Run + collect everything an external caller needs to consume the
@@ -561,7 +560,6 @@ func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
 	return res, runErr
 }
 
-
 // Stop shuts the controllers down in reverse-construction order and
 // releases the staging cache.
 func (o *Orchestrator) Stop() {
@@ -572,4 +570,3 @@ func (o *Orchestrator) Stop() {
 		_ = o.staging.Close()
 	}
 }
-

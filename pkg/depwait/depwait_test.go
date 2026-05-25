@@ -151,13 +151,13 @@ func TestWaiter_ResolveMissingFalseStillFails(t *testing.T) {
 }
 
 // TestWaiter_RenderOnlyDepWaitsBeyondGrace covers the
-// chained-render race documented in the docstring on Waiter.IsKnown:
+// chained-render race documented in the docstring on Waiter.IsFileIndexed:
 // a HelmRelease emitted by a render-only leaf KS (components/ks/app
 // + APP-app-vars replacement pattern) can land in the Store seconds
 // AFTER the consuming HR's depwait started — well past the 2s
-// MissingGrace. Before IsKnown was wired, depwait would fast-fail
+// MissingGrace. Before IsFileIndexed was wired, depwait would fast-fail
 // at the grace boundary even though the dep was actively being
-// produced. With IsKnown(id)=false telling depwait "no file record,
+// produced. With IsFileIndexed(id)=false telling depwait "no file record,
 // only render emission can produce this", the Waiter keeps watching
 // on the per-dep ctx and clears the moment the dep lands.
 func TestWaiter_RenderOnlyDepWaitsBeyondGrace(t *testing.T) {
@@ -165,7 +165,7 @@ func TestWaiter_RenderOnlyDepWaitsBeyondGrace(t *testing.T) {
 	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "omada-controller"}
 
 	resolve := func(manifest.NamedResource) bool { return false }
-	isKnown := func(manifest.NamedResource) bool { return false }
+	isFileIndexed := func(manifest.NamedResource) bool { return false }
 
 	// Add the dep AFTER MissingGrace expires but well before the
 	// per-dep Timeout. Mark it Ready so the regular Ready wait
@@ -181,7 +181,7 @@ func TestWaiter_RenderOnlyDepWaitsBeyondGrace(t *testing.T) {
 		Store:          s,
 		Timeout:        MissingGrace + 5*time.Second,
 		ResolveMissing: resolve,
-		IsKnown:        isKnown,
+		IsFileIndexed:  isFileIndexed,
 	}
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
 	if !sum.AllReady() {
@@ -200,7 +200,7 @@ func TestWaiter_RenderOnlyDepStillFailsAfterFullTimeout(t *testing.T) {
 	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "never-arrives"}
 
 	resolve := func(manifest.NamedResource) bool { return false }
-	isKnown := func(manifest.NamedResource) bool { return false }
+	isFileIndexed := func(manifest.NamedResource) bool { return false }
 
 	// Use a tight Timeout so the test doesn't burn 30s. Add a
 	// meaningful gap (300ms) so the assertion that elapsed >=
@@ -209,7 +209,7 @@ func TestWaiter_RenderOnlyDepStillFailsAfterFullTimeout(t *testing.T) {
 		Store:          s,
 		Timeout:        MissingGrace + 300*time.Millisecond,
 		ResolveMissing: resolve,
-		IsKnown:        isKnown,
+		IsFileIndexed:  isFileIndexed,
 	}
 	start := time.Now()
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
@@ -232,7 +232,7 @@ func TestWaiter_RenderOnlyDepStillFailsAfterFullTimeout(t *testing.T) {
 }
 
 // TestWaiter_FileIndexedPromoteFailsFastAtGrace pins the
-// docstring's "IsKnown(id) == true and ResolveMissing(id) == false"
+// docstring's "IsFileIndexed(id) == true and ResolveMissing(id) == false"
 // branch: the dep is file-indexed but promote failed (parse error,
 // file mutated since record). depwait must fail fast at the grace
 // boundary — keeping the legacy "typo / broken file" UX where a
@@ -241,16 +241,16 @@ func TestWaiter_FileIndexedPromoteFailsFastAtGrace(t *testing.T) {
 	s := store.New()
 	dep := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "broken"}
 
-	// Both wirings: ResolveMissing fails (promote unhappy), IsKnown
+	// Both wirings: ResolveMissing fails (promote unhappy), IsFileIndexed
 	// returns true (file-indexed). depwait should NOT enter step-2.
 	resolve := func(manifest.NamedResource) bool { return false }
-	isKnown := func(manifest.NamedResource) bool { return true }
+	isFileIndexed := func(manifest.NamedResource) bool { return true }
 
 	w := &Waiter{
 		Store:          s,
 		Timeout:        30 * time.Second, // generous; if step-2 ran we'd see it
 		ResolveMissing: resolve,
-		IsKnown:        isKnown,
+		IsFileIndexed:  isFileIndexed,
 	}
 	start := time.Now()
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
@@ -272,7 +272,7 @@ func TestWaiter_FileIndexedPromoteFailsFastAtGrace(t *testing.T) {
 // step-2 budget cap: when a render-only dep never appears AND the
 // per-dep Timeout is much larger than RenderProducingTimeout, the
 // wait must end at the cap, not at the full per-dep budget. Before
-// the cap landed, a typo'd dependsOn (IsKnown returns false the
+// the cap landed, a typo'd dependsOn (IsFileIndexed returns false the
 // same as a render-only dep) burned the full per-dep Timeout —
 // ~30s instead of ~2s — surfacing as a UX regression vs the old
 // MissingGrace fast-fail.
@@ -286,13 +286,13 @@ func TestWaiter_RenderOnlyCappedAtRenderProducingTimeout(t *testing.T) {
 	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "typo-or-broken"}
 
 	resolve := func(manifest.NamedResource) bool { return false }
-	isKnown := func(manifest.NamedResource) bool { return false }
+	isFileIndexed := func(manifest.NamedResource) bool { return false }
 
 	w := &Waiter{
 		Store:          s,
 		Timeout:        30 * time.Second, // huge — render cap should win
 		ResolveMissing: resolve,
-		IsKnown:        isKnown,
+		IsFileIndexed:  isFileIndexed,
 	}
 	start := time.Now()
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
@@ -328,13 +328,13 @@ func TestWaiter_RenderOnlyCancelDuringLongWaitSurfacesCancelled(t *testing.T) {
 	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "cancelled-mid-wait"}
 
 	resolve := func(manifest.NamedResource) bool { return false }
-	isKnown := func(manifest.NamedResource) bool { return false }
+	isFileIndexed := func(manifest.NamedResource) bool { return false }
 
 	w := &Waiter{
 		Store:          s,
 		Timeout:        30 * time.Second,
 		ResolveMissing: resolve,
-		IsKnown:        isKnown,
+		IsFileIndexed:  isFileIndexed,
 	}
 
 	// Cancel after grace expires + 500ms — well into step-2's wait.

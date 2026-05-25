@@ -34,7 +34,7 @@ const MissingGrace = 2 * time.Second
 // RenderProducingTimeout caps how long step-2 will wait for a
 // render-only dep (no file-existence record) to appear via a parent
 // render's emitRenderedChildren chain. Bounded so a typo'd
-// dependsOn — which also returns IsKnown(id)=false and falls into
+// dependsOn — which also returns IsFileIndexed(id)=false and falls into
 // step-2 — fails in a reasonable time instead of burning the full
 // per-dep Timeout. Chosen to comfortably cover a multi-level
 // kustomize component+replacement chain (~few seconds in practice)
@@ -116,16 +116,16 @@ type Waiter struct {
 	// clear because the producing render hasn't run yet.
 	ResolveMissing func(manifest.NamedResource) bool
 
-	// IsKnown reports whether id has a file-existence record (the
+	// IsFileIndexed reports whether id has a file-existence record (the
 	// loader saw a YAML on disk that defines it, even if the loader
 	// kept it out of the Store under render-driven discovery).
 	// depwait uses this to distinguish two missing-dep cases when
 	// the grace window expires:
 	//
-	//   - IsKnown(id) == true and ResolveMissing(id) == false:
+	//   - IsFileIndexed(id) == true and ResolveMissing(id) == false:
 	//     the file existed but promote failed (parse error, file
 	//     mutated since record). Fail fast as "dependency not found".
-	//   - IsKnown(id) == false:
+	//   - IsFileIndexed(id) == false:
 	//     no file record. The dep can only appear via a parent
 	//     render's emitRenderedChildren chain. Keep watching for
 	//     up to the per-dep Timeout — a deeply-chained kustomize
@@ -134,10 +134,10 @@ type Waiter struct {
 	//     surfaces a spurious "dependency not found" for a dep
 	//     that would have arrived a few seconds later.
 	//
-	// When IsKnown is nil, depwait preserves the historical fast-
+	// When IsFileIndexed is nil, depwait preserves the historical fast-
 	// fail-after-grace behavior — callers that don't wire an
 	// existence index can't distinguish render-only from typo'd.
-	IsKnown func(manifest.NamedResource) bool
+	IsFileIndexed func(manifest.NamedResource) bool
 }
 
 // Watch concurrently watches each dep and returns a channel of Events.
@@ -224,7 +224,7 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 			// against built-in status / exists semantics below.
 			if w.ResolveMissing != nil && w.ResolveMissing(id) {
 				// promoted; fall through to the regular wait.
-			} else if w.IsKnown != nil && !w.IsKnown(id) {
+			} else if w.IsFileIndexed != nil && !w.IsFileIndexed(id) {
 				// Step 2: dep has no file record — it can only arrive
 				// via a parent render's emitRenderedChildren chain.
 				// Wait up to RenderProducingTimeout for the dep to
@@ -234,7 +234,7 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 				// runs many kustomize builds + helm templates back-
 				// to-back, but unbounded waiting on the full per-dep
 				// budget burns ~30s on typo'd dependsOn that look
-				// identical to render-only at this point (IsKnown is
+				// identical to render-only at this point (IsFileIndexed is
 				// false in both cases).
 				//
 				// The render budget is derived from the parent ctx,
@@ -265,7 +265,7 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 					}
 				}
 			} else {
-				// Step 3: either no IsKnown wired (legacy callers
+				// Step 3: either no IsFileIndexed wired (legacy callers
 				// can't distinguish render-only from typo) or the
 				// dep is file-indexed but promote failed (file
 				// disappeared / parse error). Either way the dep is

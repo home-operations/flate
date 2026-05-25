@@ -139,7 +139,7 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 			},
 		},
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
-		Contents:   map[string]any{},
+		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
 	waitForStatus(t, s, ks.Named(), store.StatusReady)
@@ -244,4 +244,3 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		t.Error("expected failure message from dep cascade")
 	}
 }
-

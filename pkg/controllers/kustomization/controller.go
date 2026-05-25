@@ -43,7 +43,7 @@ type Controller struct {
 	parentOf       func(manifest.NamedResource) (manifest.NamedResource, bool)
 	renderTracker  RenderTracker
 	resolveMissing func(manifest.NamedResource) bool
-	isKnown        func(manifest.NamedResource) bool
+	isFileIndexed  func(manifest.NamedResource) bool
 }
 
 // RenderTracker is the tiny seam the controller uses to report
@@ -77,13 +77,13 @@ type Options struct {
 	// rendered by a sibling KS can be lazy-loaded on demand instead
 	// of failing the parent KS with "dependency not found."
 	ResolveMissing func(manifest.NamedResource) bool
-	// IsKnown reports whether id has a file-existence record. The
+	// IsFileIndexed reports whether id has a file-existence record. The
 	// orchestrator wires this so depwait distinguishes "dep is
 	// render-only and the producing chain hasn't finished yet"
 	// (no file record → keep waiting on per-dep ctx) from "dep is
 	// file-indexed but promote failed" (file record → fail fast).
 	// Forwarded to every Waiter built during reconcile.
-	IsKnown func(manifest.NamedResource) bool
+	IsFileIndexed func(manifest.NamedResource) bool
 }
 
 // New constructs a Kustomization controller.
@@ -103,7 +103,7 @@ func (c *Controller) Configure(opts Options) {
 	c.parentOf = opts.ParentOf
 	c.renderTracker = opts.RenderTracker
 	c.resolveMissing = opts.ResolveMissing
-	c.isKnown = opts.IsKnown
+	c.isFileIndexed = opts.IsFileIndexed
 }
 
 // markRendered reports a parent→child render emission to the
@@ -124,7 +124,7 @@ func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Durati
 		Parent:         id,
 		Timeout:        depwait.TimeoutFromSpec(timeout),
 		ResolveMissing: c.resolveMissing,
-		IsKnown:        c.isKnown,
+		IsFileIndexed:  c.isFileIndexed,
 	}
 }
 
@@ -253,6 +253,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	})
 	return nil
 }
+
 // collectDeps assembles the dependency refs whose readiness must
 // precede this Kustomization: explicit dependsOn entries (carrying any
 // CEL ReadyExpr), the source ref, the implicit structural parent (the

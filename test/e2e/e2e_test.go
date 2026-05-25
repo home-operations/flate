@@ -454,14 +454,18 @@ func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
 	}
 }
 
-// TestE2E_OrphanedKustomizationIsWarning verifies that a ks.yaml
+// TestE2E_OrphanedKustomizationNotDiscovered verifies that a ks.yaml
 // living under another Kustomization's spec.path but NOT listed in
-// any parent kustomization.yaml is treated as an orphan: the
-// reconcile warning is surfaced, the orphan is marked Ready, and
-// the overall test does not fail. Mirrors how Flux behaves — Flux
-// never sees orphaned files because they aren't in the kustomize
-// build output.
-func TestE2E_OrphanedKustomizationIsWarning(t *testing.T) {
+// any parent kustomization.yaml is INVISIBLE to flate — it never
+// loads, never reconciles, never appears in test output. Mirrors how
+// Flux + `kustomize build` behave: orphans aren't in the rendered
+// output, so they don't exist from the cluster's perspective.
+//
+// (Previous behavior was to load the orphan via a blind tree walk
+// then downgrade its inevitable spec.path failure to a "resource
+// orphaned" warning. The graph-driven loader replaces that
+// post-hoc rescue with structural invisibility.)
+func TestE2E_OrphanedKustomizationNotDiscovered(t *testing.T) {
 	src := testdataPath(t, "orphans")
 	root := copyTree(t, src)
 
@@ -472,14 +476,10 @@ func TestE2E_OrphanedKustomizationIsWarning(t *testing.T) {
 	if !strings.Contains(wiredLine, "PASSED") {
 		t.Errorf("wired should pass: %s", wiredLine)
 	}
-	// "orphan" should also report PASSED (downgraded), not FAILED.
-	orphanLine := mustExtractLine(t, out, "Kustomization/flux-system/orphan")
-	if !strings.Contains(orphanLine, "PASSED") {
-		t.Errorf("orphan should be downgraded to PASSED: %s", orphanLine)
-	}
-	// The orphan must surface as a warning so users see the issue.
-	if !strings.Contains(out, "resource orphaned") {
-		t.Errorf(`expected "resource orphaned" warning in log:\n%s`, out)
+	// "orphan" must not appear anywhere in the test output — it was
+	// never loaded because the kustomize graph doesn't reach it.
+	if strings.Contains(out, "flux-system/orphan") {
+		t.Errorf("orphan Kustomization should be invisible to graph-driven loader; output contained reference:\n%s", out)
 	}
 }
 

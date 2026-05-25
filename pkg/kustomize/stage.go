@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // StagingCache materializes one-or-more source roots into a temp
@@ -58,6 +59,12 @@ type stage struct {
 // NewStagingCache constructs a cache that places staged copies under
 // the given parent directory. If parent is empty, the OS tempdir is
 // used.
+//
+// Sweeps any `flate-stage-*` directory under parent that's older
+// than staleStageAge — those are crashed-process leftovers from
+// runs where Close didn't fire (SIGKILL, panic, ctx not honored).
+// Best-effort: a sweep error doesn't fail construction; the dirs
+// just stay until the next successful sweep.
 func NewStagingCache(parent string) (*StagingCache, error) {
 	if parent == "" {
 		parent = os.TempDir()
@@ -65,10 +72,38 @@ func NewStagingCache(parent string) (*StagingCache, error) {
 	if err := os.MkdirAll(parent, 0o750); err != nil {
 		return nil, err
 	}
+	sweepStaleStageDirs(parent)
 	return &StagingCache{
 		stages: make(map[string]*stage),
 		root:   parent,
 	}, nil
+}
+
+// staleStageAge is the age threshold for the crash-leftover sweep.
+// 24h is conservative — long enough to never reap a long-running
+// concurrent flate process (which can't realistically run a day),
+// short enough to keep $TMPDIR from accumulating.
+const staleStageAge = 24 * time.Hour
+
+// sweepStaleStageDirs removes `flate-stage-*` directories under
+// parent whose mtime is older than staleStageAge. Best-effort: any
+// per-entry error is logged at Debug and the sweep continues.
+func sweepStaleStageDirs(parent string) {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleStageAge)
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "flate-stage-") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(parent, e.Name()))
+	}
 }
 
 // FetchRemote returns the body of urlStr, fetched at most once per

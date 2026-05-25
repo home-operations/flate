@@ -158,3 +158,54 @@ func mustWrite(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// TestNewStagingCache_SweepsStaleLeftovers pins the crash-cleanup
+// sweep: any `flate-stage-*` directory under the parent older than
+// staleStageAge is removed when a fresh StagingCache opens. Without
+// this, a process killed mid-stage (SIGKILL, panic outside Close)
+// leaks the staged tree forever.
+func TestNewStagingCache_SweepsStaleLeftovers(t *testing.T) {
+	parent := t.TempDir()
+
+	// Lay down a "leftover" stage dir with a forced-old mtime.
+	stale := filepath.Join(parent, "flate-stage-stale12345")
+	if err := os.MkdirAll(stale, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(stale, "marker"), "leftover")
+	old := time.Now().Add(-2 * staleStageAge)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	// And a fresh-looking one that must SURVIVE the sweep.
+	fresh := filepath.Join(parent, "flate-stage-fresh67890")
+	if err := os.MkdirAll(fresh, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(fresh, "marker"), "fresh")
+
+	// And an unrelated dir with the same prefix but not ours.
+	other := filepath.Join(parent, "some-other-tmp")
+	if err := os.MkdirAll(other, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	oldOther := time.Now().Add(-2 * staleStageAge)
+	if err := os.Chtimes(other, oldOther, oldOther); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewStagingCache(parent); err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale flate-stage dir survived the sweep: %v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh flate-stage dir was reaped (mtime cutoff broken): %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("non-flate dir was reaped (prefix check broken): %v", err)
+	}
+}

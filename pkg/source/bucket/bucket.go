@@ -71,33 +71,33 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 		return nil, fmt.Errorf("bucket %s/%s: minio client: %w", b.Namespace, b.Name, err)
 	}
 
-	// Cache key: bucket+prefix; reset on first error so retries start
-	// clean. The revision identifier (sha256 over sorted etags) is
-	// recomputed after listing.
-	slot, _, release, err := f.Cache.Slot(endpoint+"/"+b.BucketName, b.Prefix)
+	// Cache key: bucket+prefix. Unlike OCI / Git, the bucket fetcher
+	// has no "is the cached slot still valid?" check — walkBucket is
+	// write-only, so any file present in the slot from a previous run
+	// that was DELETED upstream between runs would be served as a
+	// ghost file. The revision hash is computed from the upstream
+	// listing, so it correctly reflects "no change" while the slot
+	// still holds the dead file. We treat every fetch as a miss:
+	// write to a fresh staging dir, then atomic-rename into the final
+	// slot on success.
+	slot, err := f.Cache.Slot(endpoint+"/"+b.BucketName, b.Prefix)
 	if err != nil {
 		return nil, fmt.Errorf("bucket %s/%s cache slot: %w", b.Namespace, b.Name, err)
 	}
-	defer release()
-
-	// Reset before walking. Unlike OCI / Git, the bucket fetcher
-	// has no "is the cached slot still valid?" check — walkBucket
-	// is write-only, so any file present in the slot from a
-	// previous run that was DELETED upstream between runs would
-	// be served as a ghost file. The revision hash is computed
-	// from the upstream listing, so it correctly reflects "no
-	// change" while the slot still holds the dead file. Reset
-	// makes every fetch a clean snapshot of the upstream prefix.
-	if err := f.Cache.Reset(slot); err != nil {
-		return nil, fmt.Errorf("bucket %s/%s reset: %w", b.Namespace, b.Name, err)
-	}
-	if err := os.MkdirAll(slot, 0o750); err != nil {
-		return nil, fmt.Errorf("bucket %s/%s recreate slot: %w", b.Namespace, b.Name, err)
+	defer slot.Release()
+	if slot.Exists {
+		// Drop the prior committed slot and re-stage so the upcoming
+		// walk writes into an empty staging dir.
+		if err := slot.Reset(); err != nil {
+			return nil, fmt.Errorf("bucket %s/%s reset: %w", b.Namespace, b.Name, err)
+		}
+		if err := slot.Stage(); err != nil {
+			return nil, fmt.Errorf("bucket %s/%s stage: %w", b.Namespace, b.Name, err)
+		}
 	}
 
-	keys, revHash, err := walkBucket(ctx, client, b.BucketName, b.Prefix, slot)
+	keys, revHash, err := walkBucket(ctx, client, b.BucketName, b.Prefix, slot.Path)
 	if err != nil {
-		_ = f.Cache.Reset(slot)
 		return nil, fmt.Errorf("bucket %s/%s walk: %w", b.Namespace, b.Name, err)
 	}
 	// Bucket uses the no-defaults ignore variant — matches upstream
@@ -105,15 +105,17 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	// ignore Matcher without VCS / extension defaults. Buckets are
 	// object stores with no VCS semantics; .jpg / .flux.yaml / etc.
 	// are legitimate content and must reach the artifact.
-	if err := source.ApplyIgnoreNoDefaults(slot, b.Ignore); err != nil {
-		_ = f.Cache.Reset(slot)
+	if err := source.ApplyIgnoreNoDefaults(slot.Path, b.Ignore); err != nil {
 		return nil, fmt.Errorf("bucket %s/%s: %w", b.Namespace, b.Name, err)
+	}
+	if err := slot.Commit(); err != nil {
+		return nil, fmt.Errorf("bucket %s/%s: commit slot: %w", b.Namespace, b.Name, err)
 	}
 
 	return &store.SourceArtifact{
 		Kind:      manifest.KindBucket,
 		URL:       fmt.Sprintf("%s://%s/%s", schemeFor(secure), endpoint, b.BucketName),
-		LocalPath: slot,
+		LocalPath: slot.Path,
 		Revision:  revHash,
 		Metadata: map[string]string{
 			"objectCount": fmt.Sprintf("%d", len(keys)),

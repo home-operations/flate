@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// TestCache_ResetSerializesAgainstSlot exercises the mutex Cache.Reset
-// acquires alongside Cache.Slot. A goroutine race-detector run with
-// many parallel Slot/Reset pairs targeting the same path must complete
-// without -race tripping. A regression that drops the lock from Reset
-// (or removes it from Slot) would fail under `go test -race`.
+// TestCache_ResetSerializesAgainstSlot exercises the per-slot mutex
+// that Slot/Release acquire. A goroutine race-detector run with many
+// parallel Slot/Commit/Reset cycles targeting the same path must
+// complete without -race tripping. A regression that drops the lock
+// from Slot would fail under `go test -race`.
 func TestCache_ResetSerializesAgainstSlot(t *testing.T) {
 	c := NewCache(t.TempDir())
 	const goroutines = 16
@@ -24,29 +24,30 @@ func TestCache_ResetSerializesAgainstSlot(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range iterations {
-				path, _, release, err := c.Slot("https://shared.example/repo", "main")
+				slot, err := c.Slot("https://shared.example/repo", "main")
 				if err != nil {
 					t.Errorf("Slot: %v", err)
 					return
 				}
-				_ = path
-				release()
+				slot.Release()
 			}
 		}()
 		go func() {
 			defer wg.Done()
 			for range iterations {
-				path, _, release, err := c.Slot("https://shared.example/repo", "main")
+				slot, err := c.Slot("https://shared.example/repo", "main")
 				if err != nil {
 					t.Errorf("Slot: %v", err)
 					return
 				}
-				if err := c.Reset(path); err != nil {
-					t.Errorf("Reset: %v", err)
-					release()
-					return
+				if slot.Exists {
+					if err := slot.Reset(); err != nil {
+						t.Errorf("Reset: %v", err)
+						slot.Release()
+						return
+					}
 				}
-				release()
+				slot.Release()
 			}
 		}()
 	}
@@ -55,8 +56,8 @@ func TestCache_ResetSerializesAgainstSlot(t *testing.T) {
 
 // TestCache_SlotSerializesSameKey: two goroutines competing for the
 // same (url, ref) must execute their critical sections serially — the
-// second caller's exists=true observation must follow the first
-// caller's writes, not race them. Reproduces the PR-137 cross-CR slot
+// second caller's Exists=true observation must follow the first
+// caller's Commit, not race it. Reproduces the PR-137 cross-CR slot
 // collision the previous Cache mutex (which guarded only allocation)
 // allowed.
 func TestCache_SlotSerializesSameKey(t *testing.T) {
@@ -71,7 +72,7 @@ func TestCache_SlotSerializesSameKey(t *testing.T) {
 	g2Start := make(chan struct{})
 	done := make(chan struct{}, 2)
 	go func() {
-		path, _, release, err := c.Slot("https://shared.example/repo", "main")
+		slot, err := c.Slot("https://shared.example/repo", "main")
 		if err != nil {
 			t.Errorf("Slot: %v", err)
 			done <- struct{}{}
@@ -81,14 +82,17 @@ func TestCache_SlotSerializesSameKey(t *testing.T) {
 		// Hold until the harness has launched G2 and confirmed it is
 		// blocked on acquisition.
 		<-g2Start
-		_ = os.WriteFile(filepath.Join(path, ".inprogress"), []byte("x"), 0o600)
+		_ = os.WriteFile(filepath.Join(slot.Path, ".inprogress"), []byte("x"), 0o600)
+		if err := slot.Commit(); err != nil {
+			t.Errorf("Commit: %v", err)
+		}
 		firstReleased.Store(true)
-		release()
+		slot.Release()
 		done <- struct{}{}
 	}()
 	<-g1Entered // G1 holds the lock.
 	go func() {
-		_, exists, release, err := c.Slot("https://shared.example/repo", "main")
+		slot, err := c.Slot("https://shared.example/repo", "main")
 		if err != nil {
 			t.Errorf("Slot: %v", err)
 			done <- struct{}{}
@@ -99,10 +103,10 @@ func TestCache_SlotSerializesSameKey(t *testing.T) {
 			t.Errorf("G2 acquired before G1 released — serialization failed")
 		}
 		secondAcquired.Store(true)
-		if !exists {
-			t.Errorf("expected exists=true on second acquisition after G1 wrote a file")
+		if !slot.Exists {
+			t.Errorf("expected Exists=true on second acquisition after G1 committed a file")
 		}
-		release()
+		slot.Release()
 		done <- struct{}{}
 	}()
 	// G2 has been launched and is now blocking on the slot lock. Tell
@@ -113,6 +117,136 @@ func TestCache_SlotSerializesSameKey(t *testing.T) {
 	if !secondAcquired.Load() {
 		t.Errorf("G2 never acquired the slot")
 	}
+}
+
+// TestCache_SlotCommitAtomicRename validates the central atomic-rename
+// guarantee: a fetcher that writes into Path and returns without
+// calling Commit leaves the final slot absent. The NEXT Slot call
+// must observe Exists=false. Without atomic rename, a torn fetch would
+// leak its partial directory and the next call would see it as a hit.
+func TestCache_SlotCommitAtomicRename(t *testing.T) {
+	c := NewCache(t.TempDir())
+
+	// First fetcher aborts after writing partial state.
+	slot, err := c.Slot("https://example.com/repo", "v1")
+	if err != nil {
+		t.Fatalf("Slot: %v", err)
+	}
+	if slot.Exists {
+		t.Fatal("fresh slot should be miss")
+	}
+	if err := os.WriteFile(filepath.Join(slot.Path, "partial"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	staging := slot.Path
+	slot.Release() // no Commit — staging must be wiped, final must stay absent
+
+	if _, err := os.Stat(staging); !os.IsNotExist(err) {
+		t.Errorf("staging dir leaked after Release without Commit: stat err = %v", err)
+	}
+
+	// Next caller must see Exists=false.
+	slot, err = c.Slot("https://example.com/repo", "v1")
+	if err != nil {
+		t.Fatalf("Slot 2: %v", err)
+	}
+	if slot.Exists {
+		t.Error("second Slot observed Exists=true after first fetcher aborted; atomic-rename guarantee broken")
+	}
+	slot.Release()
+}
+
+// TestCache_SlotCommitPersists validates the success path: write
+// staging, Commit, Release, next Slot observes Exists=true with the
+// committed contents at Path.
+func TestCache_SlotCommitPersists(t *testing.T) {
+	c := NewCache(t.TempDir())
+
+	slot, err := c.Slot("https://example.com/repo", "v1")
+	if err != nil {
+		t.Fatalf("Slot: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(slot.Path, "ok"), []byte("y"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := slot.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	committed := slot.Path
+	slot.Release()
+
+	slot, err = c.Slot("https://example.com/repo", "v1")
+	if err != nil {
+		t.Fatalf("Slot 2: %v", err)
+	}
+	if !slot.Exists {
+		t.Error("expected Exists=true after Commit")
+	}
+	if slot.Path != committed {
+		t.Errorf("Path drift: committed %q, second-acquire %q", committed, slot.Path)
+	}
+	if _, err := os.Stat(filepath.Join(slot.Path, "ok")); err != nil {
+		t.Errorf("committed file missing: %v", err)
+	}
+	slot.Release()
+}
+
+// TestCache_SlotResetThenStage validates the reset-while-holding path
+// fetchers use when a cache-hit slot is detected as stale (e.g. cosign
+// rejected the cached digest). Reset wipes the final, Stage allocates
+// a fresh staging dir, write + Commit publishes the new contents.
+func TestCache_SlotResetThenStage(t *testing.T) {
+	c := NewCache(t.TempDir())
+
+	// Seed a committed slot.
+	slot, err := c.Slot("https://example.com/repo", "v1")
+	if err != nil {
+		t.Fatalf("Slot: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(slot.Path, "old"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := slot.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	slot.Release()
+
+	// Acquire again, detect stale, reset-and-restage.
+	slot, err = c.Slot("https://example.com/repo", "v1")
+	if err != nil {
+		t.Fatalf("Slot 2: %v", err)
+	}
+	if !slot.Exists {
+		t.Fatal("expected Exists=true after seed Commit")
+	}
+	if err := slot.Reset(); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if err := slot.Stage(); err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(slot.Path, "new"), []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := slot.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	slot.Release()
+
+	slot, err = c.Slot("https://example.com/repo", "v1")
+	if err != nil {
+		t.Fatalf("Slot 3: %v", err)
+	}
+	if !slot.Exists {
+		t.Error("expected Exists=true after reset+stage+Commit")
+	}
+	if _, err := os.Stat(filepath.Join(slot.Path, "old")); err == nil {
+		t.Error("old contents survived Reset+Commit; expected wipe")
+	}
+	if _, err := os.Stat(filepath.Join(slot.Path, "new")); err != nil {
+		t.Errorf("new contents missing: %v", err)
+	}
+	slot.Release()
 }
 
 func TestSlugifyRepo(t *testing.T) {

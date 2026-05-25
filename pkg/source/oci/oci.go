@@ -215,71 +215,65 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 
 	versioned := versionedURL(repo.URL, ref)
-	slot, exists, release, err := cache.Slot(versioned, "")
+	slot, err := cache.Slot(versioned, "")
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}
-	defer release()
-	if exists {
-		cachedDigest := readCachedDigest(slot)
+	defer slot.Release()
+	if slot.Exists {
+		cachedDigest := readCachedDigest(slot.Path)
 		// `.flate-digest` is written as the FINAL step of a successful
-		// fetch, so its absence on a non-empty slot signals a crashed
-		// or aborted prior run that left partial blobs/ layout behind.
-		// (Slot.exists returns true on ANY non-empty dir.) Without
-		// this guard, the next fetch silently serves the corrupt
-		// slot as a cache hit. Fall through to a fresh pull.
-		//
-		// The previous `ref.Digest` fallback (treating a missing
-		// marker as "trusted because the spec pinned a digest") was
-		// load-bearing only on the legacy spec-pin code path that no
-		// longer exists — every successful fetch since the marker
-		// was introduced writes `.flate-digest`. Keeping the
-		// fallback meant a spec.ref.digest-pinned OCIRepository
-		// whose prior fetch died after extract but before marker
-		// write would silently serve a partially-extracted slot.
-		// Always require the marker.
+		// fetch (and the slot is committed via atomic rename only after
+		// that write), so its absence in a slot that has a final
+		// directory means the slot was committed from a pre-marker
+		// flate version or someone hand-modified the cache. Either way,
+		// reset and re-fetch.
 		if cachedDigest == "" {
-			_ = cache.Reset(slot)
-			exists = false
-		}
-		// Defensive: a valid `.flate-digest` should imply
-		// applyLayerSelector ran to completion and wiped the OCI
-		// Image Layout artifacts (blobs/, ingest/, oci-layout,
-		// index.json). If any of those still exist, the slot is in
-		// an inconsistent state — either an older flate version
-		// wrote `.flate-digest` before the cleanup, a concurrent
-		// process clobbered the layer.tar.gz after the marker
-		// landed, or the slot was hand-modified. Trusting the marker
-		// in that state produces the user-visible "OCIRepository
-		// artifact has neither Chart.yaml, layer.tar.gz, nor a
-		// <name>/Chart.yaml subdir" error every run. Reset so the
-		// next pull rebuilds the slot cleanly.
-		if exists && hasUnfinishedOCILayout(slot) {
+			if err := slot.Reset(); err != nil {
+				return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
+			}
+		} else if hasUnfinishedOCILayout(slot.Path) {
+			// Defensive: a valid `.flate-digest` should imply
+			// applyLayerSelector ran to completion and wiped the OCI
+			// Image Layout artifacts. Atomic-rename makes this much
+			// less likely (a crashed run never publishes a final
+			// slot), but legacy slots from older flate versions or
+			// hand-modifications can still trip this. Reset so the
+			// next pull rebuilds the slot cleanly.
 			slog.Warn("oci: cache slot has leftover OCI Image Layout artifacts; resetting and re-fetching",
-				"slot", slot, "url", versioned)
-			_ = cache.Reset(slot)
-			exists = false
-		}
-		// When verification is configured, re-verify the cached digest
-		// against the registry. Cheap (one metadata fetch) and closes the
-		// gap where a slot was populated under a prior policy.
-		if exists && repo.Verify != nil {
+				"slot", slot.Path, "url", versioned)
+			if err := slot.Reset(); err != nil {
+				return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
+			}
+		} else if repo.Verify != nil {
+			// When verification is configured, re-verify the cached
+			// digest against the registry. Cheap (one metadata fetch)
+			// and closes the gap where a slot was populated under a
+			// prior policy.
 			if err := f.verifyCosignSignature(ctx, repoClient, repo, cachedDigest); err != nil {
-				// Cosign rejected the cached bytes. Without resetting, the
-				// next reconcile re-hits the same poisoned slot and fails
-				// verify identically — a hard-to-debug repeated failure.
-				// Reset so a fresh pull is attempted.
-				_ = cache.Reset(slot)
+				// Cosign rejected the cached bytes. Without
+				// resetting, the next reconcile re-hits the same
+				// poisoned slot and fails verify identically.
+				_ = slot.Reset()
 				return nil, err
 			}
-		}
-		if exists {
 			return &store.SourceArtifact{
 				Kind: manifest.KindOCIRepository,
-				URL:  repo.URL, LocalPath: slot,
+				URL:  repo.URL, LocalPath: slot.Path,
 				Revision: ociRevision(ref, cachedDigest),
 				Digest:   cachedDigest,
 			}, nil
+		} else {
+			return &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository,
+				URL:  repo.URL, LocalPath: slot.Path,
+				Revision: ociRevision(ref, cachedDigest),
+				Digest:   cachedDigest,
+			}, nil
+		}
+		// Either reset-then-stage path falls through to a fresh pull.
+		if err := slot.Stage(); err != nil {
+			return nil, fmt.Errorf("cache stage for %s: %w", versioned, err)
 		}
 	}
 
@@ -290,23 +284,16 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	// no longer need a custom fallback to keep unnamed blobs on disk.
 	// applyLayerSelector reads from the same standard layout and wipes
 	// it after extracting the selected layer.
-	dest, err := orasoci.New(slot)
+	//
+	// Writes go to slot.Path which is the staging dir at this point;
+	// on success slot.Commit() atomic-renames it over the final slot.
+	// Any error path returns without committing, and Release wipes
+	// the staging dir — the final slot stays absent / unchanged,
+	// never torn.
+	dest, err := orasoci.New(slot.Path)
 	if err != nil {
 		return nil, fmt.Errorf("oras oci store: %w", err)
 	}
-	// content/oci.Store has no Close() method — all writes flush
-	// synchronously per blob via os.Rename — so reset-on-error is
-	// the only cleanup we need. Deferred + flag pattern (instead of
-	// per-error-site closure calls) so a panic between oras.Copy
-	// and writeCachedDigest also wipes the torn slot. Set finalized
-	// to true at the END of the fetch, right before returning the
-	// SourceArtifact.
-	finalized := false
-	defer func() {
-		if !finalized {
-			_ = cache.Reset(slot)
-		}
-	}()
 
 	desc, err := oras.Copy(ctx, repoClient, tag, dest, tag, oras.DefaultCopyOptions)
 	if err != nil {
@@ -319,7 +306,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 			return nil, err
 		}
 	}
-	if err := applyLayerSelector(ctx, slot, desc.Digest.String(), repo.LayerSelector); err != nil {
+	if err := applyLayerSelector(ctx, slot.Path, desc.Digest.String(), repo.LayerSelector); err != nil {
 		return nil, fmt.Errorf("OCIRepository %s/%s: layer select: %w", repo.Namespace, repo.Name, err)
 	}
 	// Source-controller's default ignore set includes `*.tar.gz`. For
@@ -329,24 +316,24 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	// extract the slot holds the extracted directory tree and the
 	// ignore semantics apply as Flux ships them.
 	if effectiveLayerOperation(repo.LayerSelector) == manifest.OCILayerOperationExtract {
-		if err := source.ApplyIgnore(slot, repo.Ignore); err != nil {
+		if err := source.ApplyIgnore(slot.Path, repo.Ignore); err != nil {
 			return nil, fmt.Errorf("OCIRepository %s/%s: %w", repo.Namespace, repo.Name, err)
 		}
 	}
-	// Persist the resolved digest so a subsequent cache hit can
-	// re-verify against the exact bytes we wrote, even when the spec
-	// pinned only a tag. A write failure isn't fatal — the next fetch
-	// just falls through to a fresh pull — but it does silently weaken
-	// spec.verify on cache hits, so log it.
-	if err := writeCachedDigest(slot, digest); err != nil {
-		slog.Warn("oci: failed to persist cached digest",
-			"ociRepository", repo.Namespace+"/"+repo.Name,
-			"err", err)
+	if err := writeCachedDigest(slot.Path, digest); err != nil {
+		// A write failure here is fatal — without it the next fetch
+		// would treat the committed slot as having "no marker" and
+		// reset+re-pull on every reconcile. Returning the error
+		// (and skipping Commit) means the staging dir is wiped by
+		// Release and the next run starts clean.
+		return nil, fmt.Errorf("OCIRepository %s/%s: persist cached digest: %w", repo.Namespace, repo.Name, err)
 	}
-	finalized = true
+	if err := slot.Commit(); err != nil {
+		return nil, fmt.Errorf("OCIRepository %s/%s: commit slot: %w", repo.Namespace, repo.Name, err)
+	}
 	return &store.SourceArtifact{
 		Kind: manifest.KindOCIRepository,
-		URL:  repo.URL, LocalPath: slot,
+		URL:  repo.URL, LocalPath: slot.Path,
 		Revision: ociRevision(ref, digest),
 		Digest:   digest,
 		Size:     desc.Size,

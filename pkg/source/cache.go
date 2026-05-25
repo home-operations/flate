@@ -52,59 +52,177 @@ func (c *Cache) slotMu(path string) *sync.Mutex {
 	return m
 }
 
-// Slot returns the path under which (url, ref) should be cached, the
-// per-slot release function the caller MUST defer, and an exists flag
-// indicating the directory was already populated.
+// Slot allocates a per-(url, ref) slot under the cache root with
+// atomic-rename finalization. Holds the slot mutex until Release is
+// called; serializes against other Slot acquisitions on the same key.
 //
-// Holding the returned release across the full fetch-and-publish
-// lifecycle serializes other fetchers (different CRs, same (url, ref))
-// against the in-flight one — see Cache type doc for the race motivation.
-func (c *Cache) Slot(url, ref string) (path string, exists bool, release func(), err error) {
+// The returned Slot's Path is:
+//
+//   - The final slot directory when Exists is true (cache hit — the
+//     fetcher reads from it directly).
+//   - A sibling staging directory when Exists is false (cache miss —
+//     the fetcher writes into it, then calls Commit to atomic-rename
+//     into the final slot).
+//
+// The staging dir lives at `<final>.tmp.<rand>`, on the same filesystem
+// as the final, so os.Rename is atomic per POSIX. If the fetcher
+// returns without committing (any error path, any panic), Release
+// removes the staging dir and the final slot is left absent — the
+// next fetch starts clean. This atomicity replaces the older
+// "write in place + .flate-* sentinels" pattern: the final slot is
+// either complete or doesn't exist, never torn.
+func (c *Cache) Slot(url, ref string) (*Slot, error) {
 	slug := slugifyRepo(url)
 	h := sha256.Sum256([]byte(url + "@" + ref))
 	hash := hex.EncodeToString(h[:])[:16]
-	path = filepath.Join(c.root, slug, hash)
+	final := filepath.Join(c.root, "sources", slug, hash)
 
-	m := c.slotMu(path)
+	m := c.slotMu(final)
 	m.Lock()
-	release = m.Unlock
+	s := &Slot{final: final, mu: m}
 
-	info, statErr := os.Stat(path)
+	info, statErr := os.Stat(final)
 	switch {
 	case statErr == nil && info.IsDir():
 		// Non-empty directory counts as populated. We use the presence
 		// of any entry as the indicator so a bare `mkdir` from a prior
 		// aborted run doesn't masquerade as a hit.
-		f, ferr := os.Open(path) //nolint:gosec // path is a cache slot under our cache root
+		f, ferr := os.Open(final) //nolint:gosec // final is under the cache root
 		if ferr == nil {
 			entries, _ := f.Readdirnames(1)
 			_ = f.Close()
-			exists = len(entries) > 0
+			s.Exists = len(entries) > 0
 		}
-		return path, exists, release, nil
+		if s.Exists {
+			s.Path = final
+			return s, nil
+		}
+		// Empty directory left from a prior aborted run — remove
+		// so the staging dir can take over cleanly.
+		if err := os.RemoveAll(final); err != nil {
+			s.unlock()
+			return nil, fmt.Errorf("cache slot clean empty: %w", err)
+		}
+		fallthrough
 	case os.IsNotExist(statErr):
-		if mkErr := os.MkdirAll(path, 0o750); mkErr != nil {
-			release()
-			return "", false, nil, mkErr
+		// Allocate a sibling staging dir on the same filesystem so
+		// the eventual rename is atomic.
+		if err := os.MkdirAll(filepath.Dir(final), 0o750); err != nil {
+			s.unlock()
+			return nil, fmt.Errorf("cache slot parent: %w", err)
 		}
-		return path, false, release, nil
+		staging, err := os.MkdirTemp(filepath.Dir(final), filepath.Base(final)+".tmp.*")
+		if err != nil {
+			s.unlock()
+			return nil, fmt.Errorf("cache slot staging: %w", err)
+		}
+		s.Path = staging
+		s.staging = staging
+		return s, nil
 	default:
-		release()
-		return "", false, nil, fmt.Errorf("cache slot stat: %w", statErr)
+		s.unlock()
+		return nil, fmt.Errorf("cache slot stat: %w", statErr)
 	}
 }
 
-// Reset removes a previously allocated slot. Called when a fetch fails
-// so retries start clean. The caller is expected to hold the slot
-// release (i.e. Reset is called from within the Slot-Acquire critical
-// section). This function does NOT take the per-slot lock — doing so
-// would self-deadlock — but it does serialize against new Slot
-// acquisitions via the absence of a sibling holder.
-func (c *Cache) Reset(path string) error {
-	if path == "" {
+// Slot is one allocated cache slot. Acquired by Cache.Slot, released
+// by the caller's deferred Release. On a cache miss the fetcher writes
+// into Path (a staging dir) and calls Commit to atomic-rename into the
+// final slot; on a cache hit Path is already the final slot.
+type Slot struct {
+	// Path is where the fetcher reads / writes:
+	//   Exists == true  → Path is the final slot (read-only use).
+	//   Exists == false → Path is the staging dir (write here, then
+	//                     Commit to finalize).
+	Path string
+	// Exists reports whether the final slot was already populated by
+	// a prior fetch. When true, the staging dance is skipped and
+	// Path is the final slot directly.
+	Exists bool
+
+	final     string
+	staging   string
+	mu        *sync.Mutex
+	committed bool
+	unlocked  bool
+}
+
+// Commit finalizes a successful fetch: atomic-rename the staging dir
+// over the final slot. No-op on a cache hit (Exists == true). Safe to
+// call multiple times. After a successful commit, Path is updated to
+// the final slot so subsequent reads work uniformly.
+func (s *Slot) Commit() error {
+	if s.Exists || s.committed {
 		return nil
 	}
-	return os.RemoveAll(path)
+	// os.Rename across an existing target is platform-dependent —
+	// remove the (definitely empty by our protocol; we checked it on
+	// Slot construction) target first so the rename is unambiguous.
+	if err := os.RemoveAll(s.final); err != nil {
+		return fmt.Errorf("cache commit prep: %w", err)
+	}
+	if err := os.Rename(s.staging, s.final); err != nil {
+		return fmt.Errorf("cache commit: %w", err)
+	}
+	s.committed = true
+	s.staging = ""
+	s.Path = s.final
+	return nil
+}
+
+// Release drops the slot mutex AND, if Commit wasn't called, removes
+// the orphan staging dir. MUST be deferred by every Cache.Slot caller.
+// Safe to call multiple times — second+ calls are no-ops.
+func (s *Slot) Release() {
+	if s.unlocked {
+		return
+	}
+	if !s.committed && s.staging != "" {
+		_ = os.RemoveAll(s.staging)
+	}
+	s.unlock()
+}
+
+// Reset wipes the final slot — used by callers that detected a stale
+// cache hit (e.g. cosign signature changed against the cached digest).
+// After Reset the slot looks like an Exists=false miss; the caller
+// can write to a new staging via a fresh Cache.Slot call, OR can call
+// Stage on this same Slot to allocate staging in place.
+func (s *Slot) Reset() error {
+	if err := os.RemoveAll(s.final); err != nil {
+		return err
+	}
+	s.Exists = false
+	s.Path = ""
+	return nil
+}
+
+// Stage allocates the staging dir for a Slot that was returned with
+// Exists == true and then explicitly Reset by the caller. The new Path
+// is the staging dir. No-op when staging is already allocated.
+func (s *Slot) Stage() error {
+	if s.staging != "" {
+		s.Path = s.staging
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(s.final), 0o750); err != nil {
+		return fmt.Errorf("cache slot stage parent: %w", err)
+	}
+	staging, err := os.MkdirTemp(filepath.Dir(s.final), filepath.Base(s.final)+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("cache slot stage: %w", err)
+	}
+	s.staging = staging
+	s.Path = staging
+	return nil
+}
+
+func (s *Slot) unlock() {
+	if s.unlocked {
+		return
+	}
+	s.unlocked = true
+	s.mu.Unlock()
 }
 
 // nonAlnum collapses non-alphanumeric (plus `.-_`) runs into a single

@@ -106,28 +106,29 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		refStr = cmp.Or(manifest.GitRefString(*repo.Reference), refStr)
 	}
 
-	slot, exists, release, err := cache.Slot(repo.URL, refStr)
+	slot, err := cache.Slot(repo.URL, refStr)
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", repo.URL, err)
 	}
-	defer release()
+	defer slot.Release()
 
-	if exists {
+	if slot.Exists {
 		// The flate-revision marker is written AFTER a successful
-		// clone+checkout, and survives ApplyIgnore (the caller wipes
-		// .git/ as part of source-controller-compatible artifact
-		// shaping; a `git.PlainOpen` check here would always fail on
-		// a previously-cached slot). Presence + non-empty content is
-		// enough to declare the slot valid.
-		if rev := readCachedRevision(slot); rev != "" {
+		// clone+checkout (and committed via atomic rename only after
+		// the marker write), so any committed slot will have it. A
+		// missing marker means a legacy slot from a pre-marker flate
+		// version or a hand-modified cache.
+		if rev := readCachedRevision(slot.Path); rev != "" {
 			return &store.SourceArtifact{
 				Kind: manifest.KindGitRepository,
-				URL:  repo.URL, LocalPath: slot, Revision: rev,
+				URL:  repo.URL, LocalPath: slot.Path, Revision: rev,
 			}, nil
 		}
-		// Stale slot — wipe and re-clone.
-		_ = cache.Reset(slot)
-		if err := os.MkdirAll(slot, 0o750); err != nil {
+		// Stale slot — wipe and stage a fresh clone target.
+		if err := slot.Reset(); err != nil {
+			return nil, err
+		}
+		if err := slot.Stage(); err != nil {
 			return nil, err
 		}
 	}
@@ -149,9 +150,12 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	if repo.RecurseSubmodules {
 		cloneOpts.RecurseSubmodules = git.DefaultSubmoduleRecursionDepth
 	}
-	cloned, err := git.PlainCloneContext(ctx, slot, false, cloneOpts)
+	// go-git's PlainCloneContext refuses to clone into a non-empty
+	// directory — but our staging dir IS that empty directory, so
+	// pass it directly. On any error, Release wipes staging; the
+	// final slot is never touched.
+	cloned, err := git.PlainCloneContext(ctx, slot.Path, false, cloneOpts)
 	if err != nil {
-		_ = cache.Reset(slot)
 		return nil, fmt.Errorf("clone %s: %w", url, err)
 	}
 
@@ -160,28 +164,26 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		ref = *repo.Reference
 	}
 	if err := checkoutRef(cloned, ref, repo.SparseCheckout); err != nil {
-		_ = cache.Reset(slot)
 		return nil, fmt.Errorf("checkout %s: %w", refStr, err)
 	}
 	if repo.RecurseSubmodules {
 		if err := updateSubmodules(cloned, auth); err != nil {
-			_ = cache.Reset(slot)
 			return nil, fmt.Errorf("submodules: %w", err)
 		}
 	}
 
-	rev, _ := readResolvedRevision(slot)
+	rev, _ := readResolvedRevision(slot.Path)
 	art := &store.SourceArtifact{
 		Kind: manifest.KindGitRepository,
-		URL:  repo.URL, LocalPath: slot, Revision: rev,
+		URL:  repo.URL, LocalPath: slot.Path, Revision: rev,
 	}
-	// Post-clone work — verification, ignore, marker — runs under the
-	// slot lock so a sibling Fetcher of the same (url, ref) can't race
-	// our writes or our error-path cache.Reset.
 	if err := f.finalize(repo, art); err != nil {
-		_ = cache.Reset(slot)
 		return nil, err
 	}
+	if err := slot.Commit(); err != nil {
+		return nil, fmt.Errorf("GitRepository %s/%s: commit slot: %w", repo.Namespace, repo.Name, err)
+	}
+	art.LocalPath = slot.Path
 	return art, nil
 }
 

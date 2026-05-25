@@ -2,7 +2,9 @@ package discovery
 
 import (
 	"log/slog"
+	"maps"
 	"net/url"
+	"slices"
 	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -125,9 +127,8 @@ func debugLogRemotes(remotes map[string]struct{}) {
 	if len(remotes) == 0 {
 		return
 	}
-	keys := make([]string, 0, len(remotes))
-	for k := range remotes {
-		keys = append(keys, k)
-	}
+	// Sorted so repeated runs over the same working tree log the
+	// remotes in a stable order.
+	keys := slices.Sorted(maps.Keys(remotes))
 	slog.Debug("discovery: working tree remotes", "count", len(keys), "remotes", keys)
 }

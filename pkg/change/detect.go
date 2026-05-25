@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -44,13 +45,8 @@ func (s *Set) Paths() []string {
 	if s == nil {
 		return nil
 	}
-	out := make([]string, 0, len(s.paths))
-	for p := range s.paths {
-		out = append(out, p)
-	}
 	// Stable order makes logs and CI output deterministic.
-	slices.Sort(out)
-	return out
+	return slices.Sorted(maps.Keys(s.paths))
 }
 
 // Contains reports whether rel is in the change set. rel is expected

@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.1.21](https://github.com/home-operations/flate/compare/0.1.20...0.1.21) (2026-05-25)
+
+
+### Features
+
+* **diff:** auto-detect baseline via git so --path-orig is optional ([#349](https://github.com/home-operations/flate/issues/349)) ([9f9cef6](https://github.com/home-operations/flate/commit/9f9cef6d3a45918a2b093c5804cb6ac34376f85d))
+* **orchestrator,helm:** widen and surface the EnableOCI=false warnings ([#327](https://github.com/home-operations/flate/issues/327)) ([2e4fe7b](https://github.com/home-operations/flate/commit/2e4fe7b0c6cb1080af43634faaf12192e63ea91a))
+* **orchestrator:** warn at bootstrap on OCI HelmRepository + SecretRef ([#329](https://github.com/home-operations/flate/issues/329)) ([2500e18](https://github.com/home-operations/flate/commit/2500e188b8c049e5cdb9f1fa9a3b302fe5bb53b6))
+
+
+### Bug Fixes
+
+* **cleanup:** bucket parallel + replaceValueAtPath panic + small fixes ([#340](https://github.com/home-operations/flate/issues/340)) ([cde049e](https://github.com/home-operations/flate/commit/cde049e4f049be3f7111cad4858eac7e9c3c75d0))
+* **deferred:** six small bugs + fragility traps from the audit ([#341](https://github.com/home-operations/flate/issues/341)) ([9723540](https://github.com/home-operations/flate/commit/97235408f8748c8555b1091db0828140cb0e66cd))
+* **depwait,task:** event-driven quiescence + missed-wake + cache + stack ([#333](https://github.com/home-operations/flate/issues/333)) ([2d59c7c](https://github.com/home-operations/flate/commit/2d59c7c59451924366e3f1f43ab39e844f46a91f))
+* **kustomize:** yaml.Node edit + stage-root lock + cancel-safe FetchRemote ([#334](https://github.com/home-operations/flate/issues/334)) ([60044f4](https://github.com/home-operations/flate/commit/60044f4cf4fbaf7e36b6edd14b4e35bb129f9f07))
+* **loader:** graph-driven walk skips orphan subtrees, not just same-dir orphans ([#347](https://github.com/home-operations/flate/issues/347)) ([9314106](https://github.com/home-operations/flate/commit/93141067db765733a810624ed91c11129a5335ed))
+* **loader:** skip orphan YAMLs not referenced by their parent kustomization.yaml ([#346](https://github.com/home-operations/flate/issues/346)) ([09d10ed](https://github.com/home-operations/flate/commit/09d10ede7632e87d845032f6613a93aa7958712d))
+* **orchestrator,cli:** ctx-aware drain + emit/run error join + flag validation ([#339](https://github.com/home-operations/flate/issues/339)) ([10ef9ae](https://github.com/home-operations/flate/commit/10ef9ae979cb8a7ed5c0ad3183b706fe64f9854a))
+* **orchestrator:** widen change.Detect to per-side .git root for sibling-checkout diffs ([#348](https://github.com/home-operations/flate/issues/348)) ([522dfe1](https://github.com/home-operations/flate/commit/522dfe197ec759b6d9d8a11a05c4358e12f65f2f))
+* **source/bucket:** reset slot before walk to avoid ghost files ([#324](https://github.com/home-operations/flate/issues/324)) ([24ed0a0](https://github.com/home-operations/flate/commit/24ed0a07684e167e544d593778036c96c2435b5f))
+* **source/oci,helm:** offline-safe cosign verify + chart cache invalidation ([#336](https://github.com/home-operations/flate/issues/336)) ([2f91d24](https://github.com/home-operations/flate/commit/2f91d240fba092cc7bfb2e1cd72d9ed361c4a749))
+* **source/oci:** atomic .flate-digest write + format validation + staged-layer sentinel ([#326](https://github.com/home-operations/flate/issues/326)) ([768ff9d](https://github.com/home-operations/flate/commit/768ff9d682a5e26fab120ac2cf367a35cc630b2f))
+* **source/oci:** reset cache slot when leftover OCI layout artifacts found ([#322](https://github.com/home-operations/flate/issues/322)) ([9737dfc](https://github.com/home-operations/flate/commit/9737dfc58c3cce69d52f9ac8b531dae8d889e2cf))
+* **source/oci:** tighten state machine — drop ref.Digest fallback, defer reset, cleanup zero-layer ([#325](https://github.com/home-operations/flate/issues/325)) ([cd3a87a](https://github.com/home-operations/flate/commit/cd3a87adf8ba5579c78dea79ecf7b08fdab4ab12))
+* **store:** close listener-race + phantom-failure + index-drift gaps ([#331](https://github.com/home-operations/flate/issues/331)) ([1187bde](https://github.com/home-operations/flate/commit/1187bde8b36e0c04b7e00163cf09eb445bd22482))
+
+
+### Performance Improvements
+
+* **change,loader:** git-aware Detect + same-size hashing + components fold ([#332](https://github.com/home-operations/flate/issues/332)) ([3ba52d2](https://github.com/home-operations/flate/commit/3ba52d23a55f3a9e2b37b017ddbdd5e61b7d9ec1))
+* **change,values:** memoize ownership lookups + in-place values merge ([#338](https://github.com/home-operations/flate/issues/338)) ([0aeee7c](https://github.com/home-operations/flate/commit/0aeee7c072e89d7f9e37e55976984522569204bc))
+* **discovery,orchestrator:** skip converged RSes + parallel post-run RS render ([#343](https://github.com/home-operations/flate/issues/343)) ([ff1bee0](https://github.com/home-operations/flate/commit/ff1bee03b1bd27fe7ae077ee0be8a10e1bd53e2d))
+
+
+### Code Refactoring
+
+* **controllers:** base.Controller.Await + nil-safe filter + status preservation ([#337](https://github.com/home-operations/flate/issues/337)) ([532bce5](https://github.com/home-operations/flate/commit/532bce55e53f0ed9da8909dfc62cbf214cbfc99f))
+* **helm:** unify OCI pulls through source/oci.Fetcher (the big lift) ([#345](https://github.com/home-operations/flate/issues/345)) ([f9ab065](https://github.com/home-operations/flate/commit/f9ab065cbbe813ca50df7e855bc7d83eebf01648))
+* **manifest:** single-source helpers for RepoName, NamespacedName, secret-ref validation ([#335](https://github.com/home-operations/flate/issues/335)) ([c408973](https://github.com/home-operations/flate/commit/c408973e6c4802c1a37ffe922296db521a52048b))
+* **source/cache:** atomic-rename slot staging ([#330](https://github.com/home-operations/flate/issues/330)) ([3d9ed6e](https://github.com/home-operations/flate/commit/3d9ed6e09bbccce11269b4e8b0e7150e0cfd948e))
+* **source/cache:** slugify by repo name, not by tag ([#328](https://github.com/home-operations/flate/issues/328)) ([1a460fd](https://github.com/home-operations/flate/commit/1a460fdaf02a2d97dd0cfa4580117c115651f432))
+* **source:** generic TypedFetcher[T] + Wrap adapter ([#344](https://github.com/home-operations/flate/issues/344)) ([1e61bc1](https://github.com/home-operations/flate/commit/1e61bc1207c6983141e9d9c4da679d234a5228da))
+
 ## [0.1.20](https://github.com/home-operations/flate/compare/0.1.19...0.1.20) (2026-05-25)
 
 

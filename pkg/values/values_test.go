@@ -9,6 +9,44 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// TestDeepMergeInto_MutatesDstPreservesSemantics pins the in-place
+// variant's contract: dst is mutated, override is read-only, and
+// the resulting tree matches DeepMerge's output for the same inputs.
+// Sub-maps from override are inserted by reference when no key
+// collides (same as DeepMerge); on a collision the recursive merge
+// produces a single in-place result, not a fresh allocation per
+// level. Used in ExpandValueReferences's hot path to avoid O(N²)
+// clones across N valuesFrom refs.
+func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
+	dst := map[string]any{
+		"a": 1,
+		"b": map[string]any{"x": 1, "y": 2},
+	}
+	override := map[string]any{
+		"a": 2,
+		"b": map[string]any{"y": 99, "z": 3},
+		"c": []any{1, 2},
+	}
+	result := DeepMergeInto(dst, override)
+	if result["a"] != 2 {
+		t.Errorf("scalar override failed: %v", result["a"])
+	}
+	bb := result["b"].(map[string]any)
+	if bb["x"] != 1 || bb["y"] != 99 || bb["z"] != 3 {
+		t.Errorf("nested merge wrong: %v", bb)
+	}
+	// In-place semantics: dst is mutated AND returned. Maps don't
+	// have native pointer identity, but the two share state — write
+	// through dst, observe in result.
+	dst["sentinel"] = "v"
+	if result["sentinel"] != "v" {
+		t.Error("DeepMergeInto must return dst itself, got distinct map")
+	}
+	if dst["a"] != 2 || dst["b"].(map[string]any)["y"] != 99 {
+		t.Error("dst not mutated as expected")
+	}
+}
+
 func TestDeepMerge(t *testing.T) {
 	base := map[string]any{
 		"a": 1,

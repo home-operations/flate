@@ -79,7 +79,8 @@ func (p *storeProvider) Secret(namespace, name string) *manifest.Secret {
 
 // DeepMerge returns a new map with override's keys merged into base.
 // Nested maps recurse; lists and scalars from override fully replace
-// values from base — matching Helm's merge semantics.
+// values from base — matching Helm's merge semantics. Both inputs
+// are read-only.
 func DeepMerge(base, override map[string]any) map[string]any {
 	out := make(map[string]any, len(base)+len(override))
 	maps.Copy(out, base)
@@ -95,6 +96,36 @@ func DeepMerge(base, override map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// DeepMergeInto merges override's keys into dst in place. Same merge
+// semantics as DeepMerge but mutates dst instead of allocating a new
+// map. Callers MUST own dst and any sub-maps reachable from it —
+// passing a map that shares sub-trees with another reachable
+// reference will corrupt that reference. Designed for hot paths
+// (ExpandValueReferences's per-ref loop) where the caller is
+// building up a fresh map across N refs and the N-1 intermediate
+// allocations DeepMerge would do are wasted.
+//
+// Sub-maps coming from override are inserted by reference (not
+// cloned) when no existing key collides — same as DeepMerge.
+// Returns dst for fluent-style use.
+func DeepMergeInto(dst, override map[string]any) map[string]any {
+	if dst == nil {
+		dst = map[string]any{}
+	}
+	for k, v := range override {
+		if existing, ok := dst[k]; ok {
+			ebm, eok := existing.(map[string]any)
+			vbm, vok := v.(map[string]any)
+			if eok && vok {
+				dst[k] = DeepMergeInto(ebm, vbm)
+				continue
+			}
+		}
+		dst[k] = v
+	}
+	return dst
 }
 
 // ExpandValueReferences resolves all spec.valuesFrom references on hr,
@@ -139,7 +170,13 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 		values = merged
 	}
 	if len(hr.Values) > 0 {
-		values = DeepMerge(values, hr.Values)
+		// hr.Values is the inline-values map decoded from the HR
+		// manifest. The Prepare path clones hr before calling here
+		// (helm.Prepare in pkg/helm), so mutating hr.Values's
+		// sub-tree is safe; reaching values as the dst would
+		// however share sub-references back into hr.Values, so
+		// build the inline layer ON TOP of our owned values map.
+		values = DeepMergeInto(values, hr.Values)
 	}
 	hr.Values = values
 	return nil
@@ -232,6 +269,10 @@ func decodeBag(stringData, binaryData map[string]any) (map[string]string, error)
 // (strvals.ParseIntoString). A naive `inner[k] = found` left every
 // targetPath value as a literal string, which broke chart-schema
 // validation against `replicaCount: integer` and similar.
+//
+// Mutates values in place — ExpandValueReferences owns the map and
+// chaining N refs through DeepMerge previously paid for N-1 wasted
+// full-tree clones (the O(N²) shape the audit flagged).
 func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any) (map[string]any, error) {
 	if ref.TargetPath != "" {
 		return replaceValueAtPath(values, ref.TargetPath, found)
@@ -250,9 +291,9 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 		return nil, fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)
 	}
 	if parsed == nil {
-		parsed = map[string]any{}
+		return values, nil
 	}
-	return DeepMerge(values, parsed), nil
+	return DeepMergeInto(values, parsed), nil
 }
 
 // replaceValueAtPath writes value into values at path using Helm's

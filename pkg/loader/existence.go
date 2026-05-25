@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -82,8 +83,6 @@ func (i *ExistenceIndex) All() map[manifest.NamedResource]string {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	out := make(map[manifest.NamedResource]string, len(i.entries))
-	for k, v := range i.entries {
-		out[k] = v
-	}
+	maps.Copy(out, i.entries)
 	return out
 }

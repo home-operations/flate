@@ -304,8 +304,7 @@ func classify(dep manifest.NamedResource, err error, fallback string) Event {
 	case errors.Is(err, context.Canceled):
 		return Event{Dep: dep, Status: DepCancelled, Reason: "cancelled"}
 	}
-	var rfe *manifest.ResourceFailedError
-	if errors.As(err, &rfe) {
+	if rfe, ok := errors.AsType[*manifest.ResourceFailedError](err); ok {
 		return Event{Dep: dep, Status: DepFailed, Reason: cmp.Or(rfe.Reason, fallback)}
 	}
 	if err != nil {

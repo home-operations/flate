@@ -185,7 +185,7 @@ func splitMultiDoc(tmplStr string, inputSet map[string]any) ([]map[string]any, e
 		return nil, err
 	}
 	var out []map[string]any
-	for _, chunk := range bytes.Split(rendered, []byte("\n---")) {
+	for chunk := range bytes.SplitSeq(rendered, []byte("\n---")) {
 		chunk = bytes.TrimSpace(chunk)
 		if len(chunk) == 0 {
 			continue

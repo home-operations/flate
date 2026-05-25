@@ -18,18 +18,32 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 		return "", err
 	}
 	root := FindRepoRoot(abs)
-
-	repo := &manifest.GitRepository{
-		Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace,
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + root},
-	}
-	id := repo.Named()
-	d.cfg.Store.AddObject(repo)
+	id := manifest.BootstrapSourceID
+	// Always seed the artifact + status: even if the user authored a
+	// GitRepository at this id (the `flux bootstrap` pattern), the
+	// canonical reference for spec.path resolution is the local
+	// working tree, not whatever URL the manifest declares. The
+	// artifact is the load-bearing piece — downstream consumers read
+	// LocalPath, not spec.url.
 	d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
 		Kind: manifest.KindGitRepository,
-		URL:  repo.URL, LocalPath: root,
+		URL:  "file://" + root, LocalPath: root,
 	})
 	d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap")
+	// Only publish the synthetic object when no user-authored
+	// equivalent exists. If the user has their own
+	// GitRepository/flux-system/flux-system in the tree, the loader's
+	// first pass (PreferExisting=false at this point) would otherwise
+	// overwrite this synthetic immediately and leave object↔artifact
+	// out of sync when overrideSelfReferentialGitRepositories doesn't
+	// fire (no remote URL match).
+	if d.cfg.Store.GetObject(id) == nil {
+		repo := &manifest.GitRepository{
+			Name: id.Name, Namespace: id.Namespace,
+			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + root},
+		}
+		d.cfg.Store.AddObject(repo)
+	}
 	return root, nil
 }
 
@@ -168,8 +182,9 @@ func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.Bas
 		// Synthetic oci:// URL — never resolved, only present so the
 		// store has something to return for spec.url reads. The
 		// SourceArtifact's LocalPath is what downstream consumers
-		// actually use.
-		url := "oci://flate-bootstrap-alias/" + id.Name
+		// actually use. Embed namespace so two distinct-namespace
+		// OCIRepositories with the same name don't collide on URL.
+		url := "oci://flate-bootstrap-alias/" + id.Namespace + "/" + id.Name
 		return &manifest.OCIRepository{
 			Name: id.Name, Namespace: id.Namespace,
 			OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: url},

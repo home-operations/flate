@@ -31,7 +31,10 @@ func (d *discoverer) promoteOrphans() {
 	if d.loader.Existence == nil {
 		return
 	}
-	prefixes := loader.KSPathPrefixes(d.cfg.Store, d.cfg.Path)
+	// Same repoRoot argument as BuildParentIndexForKind — passing
+	// cfg.Path would misread component lookups when --path is a
+	// subdir below the actual repo root.
+	prefixes := loader.KSPathPrefixes(d.cfg.Store, d.repoRoot)
 	for id := range d.loader.Existence.All() {
 		if d.cfg.Store.GetObject(id) != nil {
 			continue

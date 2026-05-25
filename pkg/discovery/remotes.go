@@ -22,7 +22,12 @@ import (
 // fail due to SOPS-wiped credentials. Aliasing the GitRepository to
 // the working tree avoids both pitfalls.
 func readWorkingTreeRemotes(repoRoot string) map[string]struct{} {
-	repo, err := gogit.PlainOpen(repoRoot)
+	// DetectDotGit follows a `.git` file pointer (git worktrees,
+	// submodules), so the URL-match aliasing still works when flate
+	// is run inside a `git worktree add`'d checkout. Without it,
+	// PlainOpen errors out and the self-referential override silently
+	// no-ops.
+	repo, err := gogit.PlainOpenWithOptions(repoRoot, &gogit.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
 		return nil
 	}

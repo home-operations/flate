@@ -92,6 +92,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.repoRoot = repoRoot
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
@@ -100,10 +101,13 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// Unified parent index over every reconcilable kind that uses a
 	// parent gate. KS and HR keys never collide because NamedResource
 	// includes Kind; downstream controllers look up by their own id
-	// and naturally filter to their own kind.
+	// and naturally filter to their own kind. Pass repoRoot — the
+	// helpers read each KS's spec.path joined under this root to
+	// follow `components:` entries; cfg.Path would misread when the
+	// user pointed --path at a subdir below the actual repo root.
 	parentOf := mergeParents(
-		loader.BuildParentIndexForKind(d.cfg.Store, d.cfg.Path, d.sourceFiles, manifest.KindKustomization),
-		loader.BuildParentIndexForKind(d.cfg.Store, d.cfg.Path, d.sourceFiles, manifest.KindHelmRelease),
+		loader.BuildParentIndexForKind(d.cfg.Store, repoRoot, d.sourceFiles, manifest.KindKustomization),
+		loader.BuildParentIndexForKind(d.cfg.Store, repoRoot, d.sourceFiles, manifest.KindHelmRelease),
 	)
 	// Orphan promotion: every Existence entry whose file path is NOT
 	// under any KS spec.path will never reach the Store through KS
@@ -141,6 +145,13 @@ type discoverer struct {
 	cfg         Config
 	loader      *loader.Loader
 	sourceFiles map[manifest.NamedResource]string
+	// repoRoot is the resolved .git ancestor of cfg.Path (or cfg.Path
+	// when no .git exists). Stored here because every consumer of
+	// loader.BuildParentIndexForKind / loader.KSPathPrefixes needs the
+	// repo-relative root used to resolve KS spec.path entries, and
+	// passing cfg.Path silently misreads `components:` lookups when
+	// the user pointed --path at a subdir.
+	repoRoot string
 }
 
 // loadManifests scans cfg.Path, then iteratively follows each loaded

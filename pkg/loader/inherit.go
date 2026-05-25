@@ -168,7 +168,7 @@ func indexKustomizeNamespaces(sourceFiles map[manifest.NamedResource]string, rep
 // a kustomization.yaml in dir (resolved relative to repoRoot), or ""
 // if no kustomize file exists or the namespace key is absent.
 func readKustomizeNamespace(repoRoot, dir string) string {
-	for _, name := range []string{"kustomization.yaml", "kustomization.yml", "Kustomization"} {
+	for _, name := range manifest.KustomizeBuilderFilenames {
 		path := filepath.Join(repoRoot, dir, name)
 		data, err := os.ReadFile(path) //nolint:gosec // path composed from known cluster layout
 		if err != nil {

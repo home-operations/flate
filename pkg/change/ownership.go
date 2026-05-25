@@ -70,7 +70,7 @@ func buildOwnership(objs ObjectLister, repoRoot string) ownershipIndex {
 // readKustomizeComponents returns the top-level `components:` field
 // of the kustomization file at base (resolved relative to repoRoot).
 func readKustomizeComponents(repoRoot, base string) []string {
-	for _, name := range []string{"kustomization.yaml", "kustomization.yml", "Kustomization"} {
+	for _, name := range manifest.KustomizeBuilderFilenames {
 		data, err := os.ReadFile(filepath.Join(repoRoot, base, name)) //nolint:gosec // path composed from known cluster layout
 		if err != nil {
 			continue

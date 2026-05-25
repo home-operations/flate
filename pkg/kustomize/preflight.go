@@ -10,10 +10,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	yaml "go.yaml.in/yaml/v4"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // remoteFetchTimeout caps each pre-flight HTTP GET. Kustomize's
@@ -64,8 +67,7 @@ func preflightRemoteResources(ctx context.Context, cache *StagingCache, root str
 		if d.IsDir() {
 			return nil
 		}
-		name := d.Name()
-		if name != "kustomization.yaml" && name != "kustomization.yml" && name != "Kustomization" {
+		if !slices.Contains(manifest.KustomizeBuilderFilenames, d.Name()) {
 			return nil
 		}
 		return rewriteURLResources(ctx, cache, path)

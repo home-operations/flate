@@ -59,3 +59,19 @@ const ValuePlaceholderTemplate = "..PLACEHOLDER_%s.."
 // rather than hard-coding the prefix.
 const ValuePlaceholderPrefix = "..PLACEHOLDER_"
 
+// KustomizeBuilderFilenames is the canonical list the kustomize tool
+// recognizes at any directory it builds — ordered by priority, first
+// match wins. Distinct from pkg/loader's `kustomizationFileNames`
+// (which includes .json for flate's generic YAML/JSON load path):
+// these three are specifically what `kustomize build` looks for at
+// runtime, and what flate's components/parent walks must agree on.
+//
+// Multiple packages need this list (kustomize render, change-filter
+// ownership, namespace inheritance) — keeping it here avoids cross-
+// package coupling on a 3-element string slice.
+var KustomizeBuilderFilenames = []string{
+	"kustomization.yaml",
+	"kustomization.yml",
+	"Kustomization",
+}
+

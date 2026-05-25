@@ -261,9 +261,12 @@ func restoreKustomizationFile(sourceRoot, stagedSub, subPath string) error {
 	return nil
 }
 
-// kustomizationFilenames is the canonical set kustomize looks for at
-// any directory it builds.
-var kustomizationFilenames = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}
+// kustomizationFilenames is the canonical set kustomize looks for
+// at any directory it builds. Aliased here so the restoreKustomizationFile
+// loop reads as a local; the canonical declaration is in
+// manifest.KustomizeBuilderFilenames so other packages don't
+// duplicate the list.
+var kustomizationFilenames = manifest.KustomizeBuilderFilenames
 
 // validatePath returns a clean ErrInput when p is missing or isn't a
 // directory.

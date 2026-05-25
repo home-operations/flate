@@ -178,20 +178,11 @@ func (o *OCIRepository) RepoName() string { return o.Namespace + "-" + o.Name }
 // Version returns the digest, tag, or semver expression in that order.
 // A semver expression is returned verbatim — callers wanting a concrete
 // tag must resolve it against remote tag listing (pkg/source).
-func (o *OCIRepository) Version() (string, error) {
-	r := o.Reference
-	if r == nil {
-		return "", nil
+func (o *OCIRepository) Version() string {
+	if o.Reference == nil {
+		return ""
 	}
-	switch {
-	case r.Digest != "":
-		return r.Digest, nil
-	case r.Tag != "":
-		return r.Tag, nil
-	case r.SemVer != "":
-		return r.SemVer, nil
-	}
-	return "", nil
+	return cmp.Or(o.Reference.Digest, o.Reference.Tag, o.Reference.SemVer)
 }
 
 // ParseOCIRepository decodes an OCIRepository CR.

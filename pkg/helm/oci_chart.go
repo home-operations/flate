@@ -59,10 +59,7 @@ func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (
 				"(likely --enable-oci=false); semver resolution requires the OCI fetcher",
 			r.Namespace, r.Name)
 	}
-	ver, err := r.Version()
-	if err != nil {
-		return "", err
-	}
+	ver := r.Version()
 	slog.Debug("helm: OCIRepository SourceArtifact missing; falling back to helm registry client",
 		"ociRepository", r.Namespace+"/"+r.Name, "url", r.URL, "version", ver,
 		"note", "OCIRepository spec.verify/layerSelector/etc. NOT applied on this path")

@@ -214,6 +214,16 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			}
 			ksExpanded[id] = struct{}{}
 			target := filepath.Join(repoRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
+			// Canonicalize via EvalSymlinks so two spec.paths that
+			// resolve to the same on-disk directory (one direct, one
+			// through a symlink) share a scanned-set key. Without
+			// this, a symlinked spec.path re-walks an already-scanned
+			// subtree. Best-effort: fall back to the joined path on
+			// any error (typical: target doesn't exist; the existing
+			// pathUnderRoot+Stat check at loadAt handles that).
+			if resolved, err := filepath.EvalSymlinks(target); err == nil {
+				target = resolved
+			}
 			if _, seen := scanned[target]; seen {
 				continue
 			}

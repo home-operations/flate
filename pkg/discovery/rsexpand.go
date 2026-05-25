@@ -28,7 +28,15 @@ func (d *discoverer) renderResourceSet(rs *manifest.ResourceSet) (int, error) {
 	for _, doc := range docs {
 		obj, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
-			slog.Debug("resourceset: skipped doc", "rs", rs.Named().NamespacedName(), "err", err)
+			// Warn rather than Debug: an RS template emitting a
+			// malformed doc is a real authoring bug (silent at Debug
+			// produces an RS that converges to zero docs and the
+			// user sees no KSes with no explanation). The doc is
+			// still skipped so other docs in the RS render proceed.
+			slog.Warn("resourceset: skipped malformed doc",
+				"rs", rs.Named().NamespacedName(),
+				"docKind", manifest.DocKind(doc),
+				"err", err)
 			continue
 		}
 		if _, ok := obj.(*manifest.RawObject); ok {

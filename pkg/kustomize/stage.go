@@ -107,17 +107,21 @@ func sweepStaleStageDirs(parent string) {
 }
 
 // FetchRemote returns the body of urlStr, fetched at most once per
-// StagingCache lifetime. Both successful bodies and benign errors
-// (4xx/5xx/timeouts) are cached and returned to every subsequent
-// caller. Concurrent first-time callers share one fetch; later
-// callers always read the cached result without re-fetching.
+// (url, success) cache entry. Successful bodies are cached for the
+// StagingCache lifetime; transient errors (DNS, connection reset,
+// timeout, 5xx) are NOT cached — the next caller retries. Only
+// definitive HTTP 4xx responses are cached as negative entries
+// (they won't change between retries within a run).
+//
+// Without the success-only cache, a single transient hiccup at
+// orchestrator startup poisoned every subsequent reconcile of every
+// KS referencing that URL for the rest of the run.
 //
 // The fetch runs in a background goroutine seeded with a detached
 // context (httpGetURL applies remoteFetchTimeout internally) so a
 // cancellation on the first caller doesn't propagate into the
-// cached error — the previous OnceValues capture poisoned every
-// subsequent FetchRemote for the same URL with context.Canceled.
-// Each caller still honors its own ctx via the select below.
+// cached error. Each caller still honors its own ctx via the
+// select below.
 func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, error) {
 	loaded, _ := c.remoteFetches.LoadOrStore(urlStr, &remoteFetch{done: make(chan struct{})})
 	rf := loaded.(*remoteFetch)
@@ -125,6 +129,18 @@ func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, 
 		go func() {
 			rf.body, rf.err = httpGetURL(context.Background(), urlStr)
 			close(rf.done)
+			// On transient failure (network / 5xx / timeout — anything
+			// that isn't a definitive 4xx), drop the cache entry so
+			// the next caller retries instead of inheriting our
+			// failure for the rest of the run. httpGetURL wraps with
+			// "http GET ...: ..." for 5xx and transport errors;
+			// 4xx surfaces via the same wrapper so the safest
+			// retry-on-error policy is to retry everything except
+			// 4xx, which we detect by substring on the wrapped
+			// status. The wrapper format is stable in stage.go.
+			if rf.err != nil && !isHTTPClientError(rf.err) {
+				c.remoteFetches.CompareAndDelete(urlStr, rf)
+			}
 		}()
 	})
 	select {
@@ -133,6 +149,30 @@ func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, 
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// isHTTPClientError reports whether err is a definitive HTTP 4xx
+// response (which won't change between retries within one run).
+// Anything else — transport errors, timeouts, 5xx — is treated as
+// transient so the cache entry gets dropped.
+func isHTTPClientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, code := range []string{
+		" 400 ", " 401 ", " 402 ", " 403 ", " 404 ",
+		" 405 ", " 406 ", " 407 ", " 408 ", " 409 ",
+		" 410 ", " 411 ", " 412 ", " 413 ", " 414 ",
+		" 415 ", " 416 ", " 417 ", " 418 ", " 421 ",
+		" 422 ", " 423 ", " 424 ", " 425 ", " 426 ",
+		" 428 ", " 429 ", " 431 ", " 451 ",
+	} {
+		if strings.Contains(msg, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // Stage returns the on-disk staged copy of source. The copy is created

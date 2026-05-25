@@ -232,7 +232,7 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	// path is a stable string but the underlying bytes may have
 	// changed; without the stat check we'd serve the stale chart.
 	if ch, ok := c.lookupCachedChart(path); ok {
-		return ChartLoadResult{Path: path, Chart: ch}, nil
+		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch)}, nil
 	}
 
 	// Coalesce parallel first-loads of the same chart so N concurrent
@@ -248,7 +248,7 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	// Re-check under the per-path lock — another goroutine may have
 	// populated the cache while we waited.
 	if ch, ok := c.lookupCachedChart(path); ok {
-		return ChartLoadResult{Path: path, Chart: ch}, nil
+		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch)}, nil
 	}
 
 	ch, err := loader.Load(path)
@@ -267,7 +267,85 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 		c.chartCache[path] = chartCacheEntry{chart: ch, mtime: mtime, size: size}
 		c.chartMu.Unlock()
 	}
-	return ChartLoadResult{Path: path, Chart: ch}, nil
+	// Hand the caller a clone — helm's Install.RunWithContext invokes
+	// chartutil.ProcessDependencies which mutates Chart.Values and the
+	// per-Dependency Enabled flags. Sharing the cached pointer races
+	// across concurrent renders.
+	return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch)}, nil
+}
+
+// cloneChartForRender returns a shallow copy of src with the fields
+// chartutil.ProcessDependencies mutates (Values, Metadata.Dependencies,
+// and recursively each subchart's same) cloned per call. Immutable
+// fields (Templates, Raw, Files, Schema, ModTime, Lock) are aliased to
+// the cached canonical to avoid copying potentially-MBs of template
+// bytes per render.
+//
+// Mutations the helm template path performs that this guards:
+//   - `c.Values = util.MergeTables/CoalesceTables(...)` rewrites
+//     Values map on the chart and on every subchart
+//     (pkg/chart/v2/util/dependencies.go:327,334).
+//   - `processDependencyConditions` sets `dep.Enabled` on each entry
+//     of `c.Metadata.Dependencies` (line 189).
+//   - `processDependencyEnabled` rewrites the dependencies slice
+//     itself (lines 223-224).
+func cloneChartForRender(src *chart.Chart) *chart.Chart {
+	if src == nil {
+		return nil
+	}
+	out := *src
+	if src.Metadata != nil {
+		md := *src.Metadata
+		if len(src.Metadata.Dependencies) > 0 {
+			md.Dependencies = make([]*chart.Dependency, len(src.Metadata.Dependencies))
+			for i, d := range src.Metadata.Dependencies {
+				if d == nil {
+					continue
+				}
+				dc := *d
+				md.Dependencies[i] = &dc
+			}
+		}
+		out.Metadata = &md
+	}
+	out.Values = cloneValuesMap(src.Values)
+	if subs := src.Dependencies(); len(subs) > 0 {
+		clones := make([]*chart.Chart, 0, len(subs))
+		for _, sub := range subs {
+			clones = append(clones, cloneChartForRender(sub))
+		}
+		out.SetDependencies(clones...)
+	}
+	return &out
+}
+
+// cloneValuesMap deep-copies a chart.Values map (`map[string]any`).
+// Mirrors pkg/manifest.DeepCopyMap but kept local to avoid widening
+// the helm→manifest import seam for one helper.
+func cloneValuesMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = cloneValuesNode(v)
+	}
+	return out
+}
+
+func cloneValuesNode(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return cloneValuesMap(t)
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = cloneValuesNode(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // lookupCachedChart returns the cached chart only when the on-disk

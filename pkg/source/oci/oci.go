@@ -46,12 +46,11 @@ type Fetcher struct {
 	Secrets        source.SecretGetter
 }
 
-// Fetch implements source.Fetcher for *manifest.OCIRepository.
-func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
-	repo, ok := obj.(*manifest.OCIRepository)
-	if !ok {
-		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
-	}
+// Fetch implements source.TypedFetcher[*manifest.OCIRepository].
+// The typed signature is wrapped via source.Wrap at orchestrator
+// registration — a payload mismatch returns ErrInput once at the
+// adapter site rather than panicking here.
+func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*store.SourceArtifact, error) {
 	if repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
 		return nil, fmt.Errorf(
 			"OCIRepository %s/%s provider %q is not implemented; flate currently supports only %q (SecretRef or --registry-config credentials)",

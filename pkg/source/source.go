@@ -15,20 +15,51 @@ package source
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Fetcher resolves a single source CR into an on-disk artifact. Each
-// kind (GitRepository, OCIRepository, Bucket, …) provides its own
-// implementation; the source controller dispatches by id.Kind.
-//
-// obj is the typed manifest payload (e.g. *manifest.GitRepository).
-// Implementations type-assert and return an InputError on mismatch
-// rather than panic.
+// Fetcher resolves a single source CR into an on-disk artifact. The
+// source controller stores Fetchers in a map keyed by Kind and
+// dispatches via this untyped interface. Concrete implementations
+// satisfy it through Wrap[T] — see TypedFetcher.
 type Fetcher interface {
 	Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error)
+}
+
+// TypedFetcher is the kind-specific Fetcher each concrete source kind
+// implements (e.g. TypedFetcher[*manifest.GitRepository] for git).
+// The typed signature removes the per-implementation
+// `obj, ok := obj.(*manifest.X)` boilerplate every fetcher
+// previously opened with — a missing assertion would have panicked.
+// Wrap[T] turns a TypedFetcher into the untyped Fetcher the
+// source controller's map needs.
+type TypedFetcher[T manifest.BaseManifest] interface {
+	Fetch(ctx context.Context, obj T) (*store.SourceArtifact, error)
+}
+
+// Wrap converts a TypedFetcher into the untyped Fetcher interface
+// used by the source-controller dispatcher map. The single
+// type-assertion site is here — a mismatched payload returns
+// ErrInput rather than panicking. Embeds the Kind label so the
+// error message names the responsible fetcher.
+func Wrap[T manifest.BaseManifest](kindLabel string, f TypedFetcher[T]) Fetcher {
+	return typedAdapter[T]{label: kindLabel, inner: f}
+}
+
+type typedAdapter[T manifest.BaseManifest] struct {
+	label string
+	inner TypedFetcher[T]
+}
+
+func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+	typed, ok := obj.(T)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s fetcher: unexpected payload %T", manifest.ErrInput, a.label, obj)
+	}
+	return a.inner.Fetch(ctx, typed)
 }
 
 // Suspendable is satisfied by source CR types that carry a

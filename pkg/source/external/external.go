@@ -31,12 +31,9 @@ import (
 //     emitting empty output.
 type Fetcher struct{}
 
-// Fetch implements source.Fetcher for *manifest.ExternalArtifact.
-func (f *Fetcher) Fetch(_ context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
-	ea, ok := obj.(*manifest.ExternalArtifact)
-	if !ok {
-		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
-	}
+// Fetch implements source.TypedFetcher[*manifest.ExternalArtifact].
+// Wrapped via source.Wrap at orchestrator registration.
+func (f *Fetcher) Fetch(_ context.Context, ea *manifest.ExternalArtifact) (*store.SourceArtifact, error) {
 	if ea.ArtifactURL == "" {
 		return nil, fmt.Errorf(
 			"ExternalArtifact %s/%s requires status.artifact to be populated for offline use — "+

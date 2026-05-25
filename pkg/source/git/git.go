@@ -35,12 +35,11 @@ type Fetcher struct {
 // httpsTransportMu is declared in tls.go (with the only caller —
 // the TLS-customized InstallProtocol path in Fetch below).
 
-// Fetch implements source.Fetcher for *manifest.GitRepository.
-func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
-	repo, ok := obj.(*manifest.GitRepository)
-	if !ok {
-		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
-	}
+// Fetch implements source.TypedFetcher[*manifest.GitRepository].
+// The typed signature is wrapped via source.Wrap at orchestrator
+// registration — a payload mismatch returns ErrInput once at the
+// adapter site rather than panicking here.
+func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*store.SourceArtifact, error) {
 	if repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
 		return nil, fmt.Errorf(
 			"GitRepository %s/%s provider %q is not implemented; flate currently supports only %q (SecretRef-based credentials)",

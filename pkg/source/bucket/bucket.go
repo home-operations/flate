@@ -34,12 +34,9 @@ type Fetcher struct {
 	Secrets source.SecretGetter
 }
 
-// Fetch implements source.Fetcher for *manifest.Bucket.
-func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
-	b, ok := obj.(*manifest.Bucket)
-	if !ok {
-		return nil, fmt.Errorf("%w: Fetcher: unexpected payload %T", manifest.ErrInput, obj)
-	}
+// Fetch implements source.TypedFetcher[*manifest.Bucket]. The typed
+// signature is wrapped via source.Wrap at orchestrator registration.
+func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceArtifact, error) {
 	if b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
 		return nil, fmt.Errorf(
 			"bucket %s/%s provider %q is not implemented; flate currently supports only %q (S3-compatible)",

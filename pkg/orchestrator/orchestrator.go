@@ -194,18 +194,27 @@ func New(cfg Config) (*Orchestrator, error) {
 	// would otherwise have to keep in sync via Add* push-API calls.
 	helmClient.SetSourceResolver(helm.NewStoreSourceResolver(st))
 	srcCtrl := sourcectrl.New(st, ts)
-	srcCtrl.Fetchers[manifest.KindGitRepository] = &git.Fetcher{Cache: cache, Secrets: secretGet}
-	srcCtrl.Fetchers[manifest.KindExternalArtifact] = &external.Fetcher{}
-	srcCtrl.Fetchers[manifest.KindBucket] = &bucket.Fetcher{Cache: cache, Secrets: secretGet}
+	// Every kind-specific fetcher is wired through source.Wrap so the
+	// concrete Fetch signature stays typed (no per-impl type
+	// assertion). The wrap label is the kind string; a mismatched
+	// payload at dispatch surfaces "<kind> fetcher: unexpected
+	// payload <T>" from the single adapter site rather than from
+	// four nearly-identical type assertions.
+	srcCtrl.Fetchers[manifest.KindGitRepository] = source.Wrap[*manifest.GitRepository](
+		manifest.KindGitRepository, &git.Fetcher{Cache: cache, Secrets: secretGet})
+	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap[*manifest.ExternalArtifact](
+		manifest.KindExternalArtifact, &external.Fetcher{})
+	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap[*manifest.Bucket](
+		manifest.KindBucket, &bucket.Fetcher{Cache: cache, Secrets: secretGet})
 	// HelmRepository: existence-only — flate resolves charts via the
 	// Helm client's registry/repo machinery directly, the controller
 	// just needs the resource to land in Ready so HelmRelease deps
 	// unblock.
 	srcCtrl.Fetchers[manifest.KindHelmRepository] = source.ExistenceFetcher{}
 	if cfg.EnableOCI {
-		srcCtrl.Fetchers[manifest.KindOCIRepository] = &oci.Fetcher{
-			Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet,
-		}
+		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap[*manifest.OCIRepository](
+			manifest.KindOCIRepository,
+			&oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet})
 	} else {
 		// --enable-oci=false: skip the real fetch but still mark each
 		// OCIRepository Ready so HRs that dependsOn one don't time out.

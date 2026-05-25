@@ -31,6 +31,18 @@ const DefaultTimeout = 30 * time.Second
 // the dep slightly later in the same run.
 const MissingGrace = 2 * time.Second
 
+// RenderProducingTimeout caps how long step-2 will wait for a
+// render-only dep (no file-existence record) to appear via a parent
+// render's emitRenderedChildren chain. Bounded so a typo'd
+// dependsOn — which also returns IsKnown(id)=false and falls into
+// step-2 — fails in a reasonable time instead of burning the full
+// per-dep Timeout. Chosen to comfortably cover a multi-level
+// kustomize component+replacement chain (~few seconds in practice)
+// while keeping a typo's wall time well under DefaultTimeout.
+//
+// Exposed as a var so tests can shrink it.
+var RenderProducingTimeout = 10 * time.Second
+
 // TimeoutFromSpec resolves a Flux spec.timeout (`*metav1.Duration` —
 // the shape used by both Kustomization and HelmRelease) into the
 // effective per-dep wait. Honors a user-supplied value when set; falls
@@ -215,29 +227,41 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 			} else if w.IsKnown != nil && !w.IsKnown(id) {
 				// Step 2: dep has no file record — it can only arrive
 				// via a parent render's emitRenderedChildren chain.
-				// Keep watching for up to the per-dep Timeout. The
-				// 2s grace is too short for deeply-chained kustomize
-				// component+replacement patterns (parent KS → leaf
-				// KS → child HR) where the producing chain runs many
-				// kustomize builds + helm templates back-to-back.
+				// Wait up to RenderProducingTimeout for the dep to
+				// land. The 2s grace is too short for deeply-chained
+				// kustomize component+replacement patterns (parent
+				// KS → leaf KS → child HR) where the producing chain
+				// runs many kustomize builds + helm templates back-
+				// to-back, but unbounded waiting on the full per-dep
+				// budget burns ~30s on typo'd dependsOn that look
+				// identical to render-only at this point (IsKnown is
+				// false in both cases).
 				//
-				// Route the terminal error through classify() so
-				// orchestrator-shutdown cancellation surfaces as
-				// DepCancelled (not the bare "dependency not found")
-				// and a deadline-exceeded wait reads as a real
-				// timeout. We synthesize the "dependency not found"
-				// reason only when the wait itself returned no error
-				// (impossible here — WatchExists only returns on
-				// arrival or ctx.Done) or when classify() falls
-				// through with a non-context error.
-				if _, err := w.Store.WatchExists(ctx, id); err != nil {
+				// The render budget is derived from the parent ctx,
+				// so the per-dep Timeout still caps total wall time:
+				// if the user sets spec.timeout=5s, we wait at most
+				// 5s here. If they set the default 30s, we cap at
+				// RenderProducingTimeout (10s) and the remaining
+				// budget is available for the downstream Ready check.
+				renderCtx, renderCancel := context.WithTimeout(ctx, RenderProducingTimeout)
+				_, werr := w.Store.WatchExists(renderCtx, id)
+				renderCancel()
+				if werr != nil {
+					// Route through classify() so parent ctx
+					// cancellation propagates as DepCancelled
+					// instead of being flattened. A renderCtx
+					// timeout (dep didn't arrive within the cap)
+					// looks like context.DeadlineExceeded — same
+					// as parent ctx expiry — and gets the same
+					// "dependency not found" treatment because
+					// both mean "dep never appeared in time."
 					switch {
-					case errors.Is(err, context.DeadlineExceeded):
+					case errors.Is(ctx.Err(), context.Canceled):
+						return classify(id, ctx.Err(), "")
+					case errors.Is(werr, context.DeadlineExceeded):
 						return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
-					case errors.Is(err, context.Canceled):
-						return classify(id, err, "")
 					default:
-						return Event{Dep: id, Status: DepFailed, Reason: err.Error()}
+						return Event{Dep: id, Status: DepFailed, Reason: werr.Error()}
 					}
 				}
 			} else {

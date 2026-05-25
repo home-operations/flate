@@ -268,6 +268,54 @@ func TestWaiter_FileIndexedPromoteFailsFastAtGrace(t *testing.T) {
 	}
 }
 
+// TestWaiter_RenderOnlyCappedAtRenderProducingTimeout pins the
+// step-2 budget cap: when a render-only dep never appears AND the
+// per-dep Timeout is much larger than RenderProducingTimeout, the
+// wait must end at the cap, not at the full per-dep budget. Before
+// the cap landed, a typo'd dependsOn (IsKnown returns false the
+// same as a render-only dep) burned the full per-dep Timeout —
+// ~30s instead of ~2s — surfacing as a UX regression vs the old
+// MissingGrace fast-fail.
+func TestWaiter_RenderOnlyCappedAtRenderProducingTimeout(t *testing.T) {
+	// Shrink the cap so the test doesn't burn 10s.
+	old := RenderProducingTimeout
+	RenderProducingTimeout = 500 * time.Millisecond
+	defer func() { RenderProducingTimeout = old }()
+
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "typo-or-broken"}
+
+	resolve := func(manifest.NamedResource) bool { return false }
+	isKnown := func(manifest.NamedResource) bool { return false }
+
+	w := &Waiter{
+		Store:          s,
+		Timeout:        30 * time.Second, // huge — render cap should win
+		ResolveMissing: resolve,
+		IsKnown:        isKnown,
+	}
+	start := time.Now()
+	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
+	elapsed := time.Since(start)
+
+	if !sum.AnyFailed() {
+		t.Fatalf("expected fail for capped render-only dep: %+v", sum)
+	}
+	// elapsed should be approximately MissingGrace + RenderProducingTimeout.
+	// Allow generous slack for slow CI but reject the uncapped 30s case.
+	upperBound := MissingGrace + RenderProducingTimeout + 1*time.Second
+	if elapsed > upperBound {
+		t.Errorf("step-2 cap not enforced: elapsed=%s, upper bound=%s", elapsed, upperBound)
+	}
+	if elapsed < MissingGrace+RenderProducingTimeout-100*time.Millisecond {
+		t.Errorf("step-2 returned before cap: elapsed=%s, lower bound=%s",
+			elapsed, MissingGrace+RenderProducingTimeout-100*time.Millisecond)
+	}
+	if got := sum.Messages[dep]; got != "dependency not found" {
+		t.Errorf("expected 'dependency not found', got %q", got)
+	}
+}
+
 // TestWaiter_RenderOnlyCancelDuringLongWaitSurfacesCancelled
 // pins the classify() routing in step-2's terminal error path: a
 // parent ctx cancellation mid-long-wait must NOT be flattened into

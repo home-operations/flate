@@ -18,11 +18,10 @@ func defaultNamespace(doc map[string]any, ns string) {
 	if ns == "" {
 		return
 	}
+	// Read existing metadata.namespace without creating one — if the
+	// doc already names a namespace, we're done. A nil-map lookup
+	// returns the zero value, so this is safe pre-ensure.
 	md, _ := doc["metadata"].(map[string]any)
-	if md == nil {
-		md = map[string]any{}
-		doc["metadata"] = md
-	}
 	if cur, _ := md["namespace"].(string); cur != "" {
 		return
 	}
@@ -32,7 +31,7 @@ func defaultNamespace(doc map[string]any, ns string) {
 	if isClusterScoped(doc) {
 		return
 	}
-	md["namespace"] = ns
+	ensureMetadata(doc)["namespace"] = ns
 }
 
 func isClusterScoped(doc map[string]any) bool {
@@ -56,13 +55,22 @@ func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {
 	if cm == nil || (len(cm.Labels) == 0 && len(cm.Annotations) == 0) {
 		return
 	}
+	md := ensureMetadata(doc)
+	mergeStringMap(md, "labels", cm.Labels)
+	mergeStringMap(md, "annotations", cm.Annotations)
+}
+
+// ensureMetadata returns doc["metadata"] as a map[string]any, lazily
+// creating one when absent (or when present as a non-map). Used by
+// the writers below; reads should prefer a direct type-assert + nil-
+// tolerant access so we don't allocate when nothing will be written.
+func ensureMetadata(doc map[string]any) map[string]any {
 	md, _ := doc["metadata"].(map[string]any)
 	if md == nil {
 		md = map[string]any{}
 		doc["metadata"] = md
 	}
-	mergeStringMap(md, "labels", cm.Labels)
-	mergeStringMap(md, "annotations", cm.Annotations)
+	return md
 }
 
 func mergeStringMap(md map[string]any, key string, in map[string]string) {

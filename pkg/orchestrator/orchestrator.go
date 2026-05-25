@@ -224,7 +224,11 @@ func New(cfg Config) (*Orchestrator, error) {
 	// payload <T>" from the single adapter site rather than from
 	// four nearly-identical type assertions.
 	srcCtrl.Fetchers[manifest.KindGitRepository] = source.Wrap[*manifest.GitRepository](
-		manifest.KindGitRepository, &git.Fetcher{Cache: cache, Secrets: secretGet})
+		manifest.KindGitRepository, &git.Fetcher{
+			Cache:   cache,
+			Secrets: secretGet,
+			Mirrors: git.NewMirrorCache(filepath.Join(cacheRoot, "git-mirrors")),
+		})
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap[*manifest.ExternalArtifact](
 		manifest.KindExternalArtifact, &external.Fetcher{})
 	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap[*manifest.Bucket](

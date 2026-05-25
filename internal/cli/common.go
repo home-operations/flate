@@ -22,6 +22,7 @@ import (
 type commonFlags struct {
 	path               string
 	pathOrig           string
+	base               string
 	namespace          string
 	labels             map[string]string
 	skipCRDs           bool
@@ -78,6 +79,19 @@ func (c *commonFlags) skipResourceKinds() []string {
 // `-l foo=bar` and do nothing.
 func bindSelector(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "label selector (key=value, repeatable)")
+}
+
+// bindBase wires the `--base` flag. Scoped to diff subcommands —
+// `--base` selects the baseline git rev that the auto-baseline flow
+// materializes; only diff consumes a baseline tree, so binding it on
+// build/get/test would silently no-op. Mutually exclusive with
+// `--path-orig` (which is the absolute-path escape hatch); the check
+// is enforced at runtime in runDiff*.
+func bindBase(fs *pflag.FlagSet, f *commonFlags) {
+	fs.StringVar(&f.base, "base", "",
+		"baseline git rev (e.g. main, origin/main, HEAD~3, SHA). When unset, "+
+			"flate auto-detects via merge-base with @{u} / origin/HEAD. "+
+			"Mutually exclusive with --path-orig.")
 }
 
 // scopedNamespaces returns the namespace filter the command should

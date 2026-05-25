@@ -12,6 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/cli"
 )
@@ -217,13 +221,57 @@ func TestE2E_DiffImagesNoChange(t *testing.T) {
 	}
 }
 
-func TestE2E_DiffImagesRequiresPathOrig(t *testing.T) {
-	out, code := runCLIExpectErr(t, "diff", "images", "--path", testdataPath(t, "simple"))
+// TestE2E_DiffAutoBaseline_Base pins the --base=<rev> escape hatch
+// end-to-end through the CLI: init a real git repo, commit a fixture,
+// modify the working tree, then `flate diff ks --path <dir> --base
+// HEAD` and assert the diff surfaces the edit. Exercises the full
+// auto-baseline plumbing (materialize → synthetic --path-orig →
+// orchestrator → diff) without needing a configured upstream.
+func TestE2E_DiffAutoBaseline_Base(t *testing.T) {
+	clusterPath, repoRoot := initGitFixture(t)
+	// Edit cm.yaml in the working tree; HEAD still has the original.
+	cm := filepath.Join(repoRoot, "kubernetes", "apps", "cm.yaml")
+	body, err := os.ReadFile(cm) //nolint:gosec // dir is t.TempDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := strings.Replace(string(body), "value: original", "value: changed", 1)
+	if mutated == string(body) {
+		t.Fatal("sentinel 'value: original' not found in fixture")
+	}
+	if err := os.WriteFile(cm, []byte(mutated), 0o600); err != nil { //nolint:gosec // dir is t.TempDir()
+		t.Fatal(err)
+	}
+	out := runCLI(t, "diff", "ks", "--path", clusterPath, "--base", "HEAD")
+	if !strings.Contains(out, "changed") {
+		t.Errorf("expected 'changed' to surface in diff body:\n%s", out)
+	}
+	if !strings.Contains(out, "original") {
+		t.Errorf("expected baseline 'original' to surface in diff body:\n%s", out)
+	}
+}
+
+// TestE2E_DiffImagesRequiresBaselineWhenNoGit pins the error UX when
+// no baseline can be auto-detected: --path lives outside a git repo
+// AND --path-orig / --base are unset. The error must name both
+// alternative flags so the user knows their options. Pre-auto-baseline
+// this test asserted "diff requires --path-orig"; with auto-baseline
+// the failure mode shifts to "no git repo" — but the suggestion in
+// the message still mentions --path-orig so the test contract is
+// upgraded, not replaced.
+func TestE2E_DiffImagesRequiresBaselineWhenNoGit(t *testing.T) {
+	// copyTree to a tempdir with no .git ancestor (t.TempDir's parent
+	// chain stops at the OS temp root, which has no .git).
+	dir := copyTree(t, testdataPath(t, "simple"))
+	out, code := runCLIExpectErr(t, "diff", "images", "--path", dir)
 	if code == 0 {
-		t.Fatalf("expected non-zero exit when --path-orig is missing, got 0:\n%s", out)
+		t.Fatalf("expected non-zero exit with no baseline source, got 0:\n%s", out)
 	}
 	if !strings.Contains(out, "--path-orig") {
-		t.Errorf("error should mention --path-orig:\n%s", out)
+		t.Errorf("error should mention --path-orig as an option:\n%s", out)
+	}
+	if !strings.Contains(out, "--base") {
+		t.Errorf("error should mention --base as an option:\n%s", out)
 	}
 }
 
@@ -514,6 +562,64 @@ func mustExtractLine(t *testing.T, haystack, needle string) string {
 	}
 	t.Fatalf("status line for %q not found in:\n%s", needle, haystack)
 	return ""
+}
+
+// initGitFixture creates a tempdir with a real git repo, commits a
+// minimal Flux fixture (one KS + one ConfigMap with a sentinel value),
+// and returns (clusterPath, repoRoot). clusterPath is the directory
+// callers pass as --path; repoRoot is the .git ancestor (so the test
+// can locate fixture files relative to it after committing).
+func initGitFixture(t *testing.T) (clusterPath, repoRoot string) {
+	t.Helper()
+	dir := t.TempDir()
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile := func(rel, body string) {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil { //nolint:gosec // dir is t.TempDir()
+			t.Fatal(err)
+		}
+	}
+	writeFile("kubernetes/flux/cluster.yaml", `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec: {url: "https://example.test/x.git"}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	writeFile("kubernetes/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+	writeFile("kubernetes/apps/cm.yaml", `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello, namespace: apps}
+data:
+  value: original
+`)
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Commit("init", &gogit.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, "kubernetes", "flux"), dir
 }
 
 // copyTree shallow-copies src into a fresh tempdir, preserving the

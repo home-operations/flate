@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/image"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -96,8 +98,30 @@ type diffSide struct {
 }
 
 func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (diffSide, diffSide, error) {
+	if c.pathOrig != "" && c.base != "" {
+		return diffSide{}, diffSide{}, errors.New("--path-orig and --base are mutually exclusive")
+	}
 	if c.pathOrig == "" {
-		return diffSide{}, diffSide{}, errors.New("diff requires --path-orig")
+		// Auto-baseline: materialize a baseline tree from git (either
+		// --base=<rev> or the auto-detect ladder) and point
+		// c.pathOrig at it for the remainder of the diff. The tempdir
+		// gets cleaned up via the context's cancel — Bootstrap reads
+		// the path-orig once and never reopens it (see PR #348's
+		// orchestrator surface mapping), so removing the tempdir
+		// after both orchestrators return is safe.
+		res, err := baseline.AutoResolve(c.path, c.base)
+		if err != nil {
+			return diffSide{}, diffSide{}, err
+		}
+		c.pathOrig = res.PathOrig
+		// Schedule cleanup via the parent context. context.AfterFunc
+		// fires when ctx is canceled OR when we explicitly call its
+		// returned stop-and-run helper at the end of the diff. The
+		// CLI cancels its root context on RunE return, so cleanup
+		// happens deterministically without each diff verb needing
+		// its own defer.
+		context.AfterFunc(ctx, func() { _ = os.RemoveAll(res.TempDir) })
+		slog.Info("diff baseline", "source", res.Source, "rev", res.Rev, "pathOrig", res.PathOrig)
 	}
 	currentCfg := buildOrchCfg(*c, *h)
 	origCfg := currentCfg

@@ -2,6 +2,7 @@
 package git
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -102,9 +103,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 
 	refStr := "HEAD"
 	if repo.Reference != nil {
-		if s := manifest.GitRefString(*repo.Reference); s != "" {
-			refStr = s
-		}
+		refStr = cmp.Or(manifest.GitRefString(*repo.Reference), refStr)
 	}
 
 	slot, exists, release, err := cache.Slot(repo.URL, refStr)

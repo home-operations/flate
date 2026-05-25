@@ -2,39 +2,115 @@ package loader
 
 import (
 	"cmp"
+	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// KSPathPrefix pairs a Kustomization id with its slash-terminated,
-// repo-relative spec.path prefix. Returned by KSPathPrefixes for use
-// in parent-index construction and orphan classification.
+// KSPathPrefix pairs a Kustomization id with one of its
+// slash-terminated, repo-relative claimed-path prefixes. A KS may
+// produce multiple prefixes — one for spec.path plus one per
+// spec.components entry, plus any on-disk `components:` referenced
+// from the kustomization.yaml living at spec.path. Sharing the same
+// ID across multiple prefixes is intentional: parent-index lookup
+// returns the longest-matching entry, and a child file inside a
+// component directory is correctly attributed to the parent that
+// includes that component.
 type KSPathPrefix struct {
 	ID     manifest.NamedResource
 	Prefix string
 }
 
-// KSPathPrefixes returns one entry per loaded Kustomization with a
-// non-empty spec.path, sorted by prefix length descending so the
-// first HasPrefix match on a given file is the most-specific
-// structural parent. The descending sort drops parent lookup from
-// O(K²) to O(K · depth) in the typical case.
-func KSPathPrefixes(s *store.Store) []KSPathPrefix {
+// KSPathPrefixes returns one or more entries per loaded Kustomization
+// with a non-empty spec.path. Each KS contributes:
+//
+//  1. Its spec.path (always).
+//  2. Each spec.components entry (when present, resolved against
+//     spec.path).
+//  3. Each entry from `components:` declared in the kustomization.yaml
+//     at spec.path (when readable from repoRoot; missing or
+//     malformed files are silently skipped — pure best-effort, the
+//     spec.path entry is enough to keep the index sound).
+//
+// Entries are sorted by prefix length descending so the first
+// HasPrefix match on a given file is the deepest claimant — a child
+// file under a parent's component dir wins over the parent's
+// spec.path. Previously this function only emitted (1); the new
+// (2)+(3) bring loader's parent index in line with change/ownership's
+// already-richer attribution, eliminating the false-orphan class
+// where a child KS lives inside a parent's component subtree.
+//
+// repoRoot is the filesystem root the kustomization-file reads
+// resolve relative to. Pass "" to skip on-disk component lookup
+// entirely (only spec.path + spec.components are recorded).
+func KSPathPrefixes(s *store.Store, repoRoot string) []KSPathPrefix {
 	var out []KSPathPrefix
+	componentCache := make(map[string][]string)
 	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
 		if ks.Path == "" {
 			continue
 		}
-		out = append(out, KSPathPrefix{ID: ks.Named(), Prefix: NormalizePrefix(ks.Path)})
+		id := ks.Named()
+		base := NormalizePrefix(ks.Path)
+		out = append(out, KSPathPrefix{ID: id, Prefix: base})
+		addComponent := func(ref string) {
+			if ref == "" || strings.Contains(ref, "://") || filepath.IsAbs(ref) {
+				return
+			}
+			resolved := path.Clean(path.Join(strings.TrimSuffix(base, "/"), ref))
+			if resolved == "." || strings.HasPrefix(resolved, "..") {
+				return
+			}
+			out = append(out, KSPathPrefix{ID: id, Prefix: resolved + "/"})
+		}
+		for _, comp := range ks.Components {
+			addComponent(comp)
+		}
+		if repoRoot != "" {
+			baseTrimmed := strings.TrimSuffix(base, "/")
+			comps, ok := componentCache[baseTrimmed]
+			if !ok {
+				comps = readKustomizeComponents(repoRoot, baseTrimmed)
+				componentCache[baseTrimmed] = comps
+			}
+			for _, comp := range comps {
+				addComponent(comp)
+			}
+		}
 	}
 	slices.SortFunc(out, func(a, b KSPathPrefix) int {
 		return cmp.Compare(len(b.Prefix), len(a.Prefix))
 	})
 	return out
+}
+
+// readKustomizeComponents returns the top-level `components:` field
+// of the kustomization file at base (resolved relative to repoRoot),
+// or nil when the file is missing / unreadable / malformed. Mirrors
+// change/ownership.go's reader so the two indexes agree on which
+// component dirs to fold into the prefix set.
+func readKustomizeComponents(repoRoot, base string) []string {
+	for _, name := range manifest.KustomizeBuilderFilenames {
+		data, err := os.ReadFile(filepath.Join(repoRoot, base, name)) //nolint:gosec // path composed from known cluster layout
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			Components []string `yaml:"components"`
+		}
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			continue
+		}
+		return doc.Components
+	}
+	return nil
 }
 
 // LongestParent returns the deepest KS whose spec.path covers file
@@ -55,9 +131,9 @@ func LongestParent(prefixes []KSPathPrefix, file string, self manifest.NamedReso
 }
 
 // BuildParentIndexForKind maps each childKind resource to its
-// enclosing Flux Kustomization — the KS whose spec.path is the
-// deepest strict ancestor of the child's source file. Excludes
-// self-matches.
+// enclosing Flux Kustomization — the KS whose spec.path or component
+// directory is the deepest strict ancestor of the child's source
+// file. Excludes self-matches.
 //
 // Real Flux's reconcile chain enforces this naturally: a parent
 // Kustomization renders and applies its children, then the
@@ -78,8 +154,14 @@ func LongestParent(prefixes []KSPathPrefix, file string, self manifest.NamedReso
 // childKind=KindKustomization for the KS→KS parent map; pass
 // KindHelmRelease for the HR→KS map. The orchestrator builds both
 // (see discovery.Run → mergeParents).
-func BuildParentIndexForKind(s *store.Store, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
-	prefixes := KSPathPrefixes(s)
+//
+// repoRoot is the filesystem root used to read each KS's
+// kustomization.yaml when folding `components:` into the prefix set;
+// pass the orchestrator's --path. An empty repoRoot means "no on-disk
+// component lookup", which still gives a correct (just slightly
+// less-precise) index built from spec.path + spec.components alone.
+func BuildParentIndexForKind(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
+	prefixes := KSPathPrefixes(s, repoRoot)
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for _, obj := range s.ListObjects(childKind) {
 		id := obj.Named()

@@ -101,8 +101,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// includes Kind; downstream controllers look up by their own id
 	// and naturally filter to their own kind.
 	parentOf := mergeParents(
-		loader.BuildParentIndexForKind(d.cfg.Store, d.sourceFiles, manifest.KindKustomization),
-		loader.BuildParentIndexForKind(d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease),
+		loader.BuildParentIndexForKind(d.cfg.Store, d.cfg.Path, d.sourceFiles, manifest.KindKustomization),
+		loader.BuildParentIndexForKind(d.cfg.Store, d.cfg.Path, d.sourceFiles, manifest.KindHelmRelease),
 	)
 	// Orphan promotion: every Existence entry whose file path is NOT
 	// under any KS spec.path will never reach the Store through KS

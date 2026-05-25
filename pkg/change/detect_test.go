@@ -2,6 +2,7 @@ package change
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -108,6 +109,76 @@ func TestDetect_SkipsDotDirsAndVendor(t *testing.T) {
 	}
 	if paths := got.Paths(); len(paths) != 1 || paths[0] != "real.yaml" {
 		t.Errorf("expected just real.yaml, got %v", paths)
+	}
+}
+
+// TestDetect_SameSizeSameMtime_StillDetected pins the correctness
+// fix: the old (size, mtime) fast path silently treated two distinct
+// same-sized files written within the same coarse-mtime tick as
+// identical, dropping real changes. Removing the fast path means
+// same-size files always get content-compared, so a write-write
+// pattern that happens within an HFS+ 1-second tick is still
+// reported. We simulate the worst case by explicitly stamping
+// identical mtimes on both files post-write.
+func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
+	before := t.TempDir()
+	after := t.TempDir()
+	writeFile(t, before, "mod.yaml", "OLD")
+	writeFile(t, after, "mod.yaml", "NEW")
+	// Exact same mtime — what the mtime-fast-path used to short-circuit on.
+	stamp := time.Now()
+	if err := os.Chtimes(filepath.Join(before, "mod.yaml"), stamp, stamp); err != nil {
+		t.Fatalf("chtimes before: %v", err)
+	}
+	if err := os.Chtimes(filepath.Join(after, "mod.yaml"), stamp, stamp); err != nil {
+		t.Fatalf("chtimes after: %v", err)
+	}
+
+	got, err := Detect(before, after)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if !got.Contains("mod.yaml") {
+		t.Errorf("Detect missed same-size same-mtime modification — fast-path regression. Paths: %v", got.Paths())
+	}
+}
+
+// TestDetectViaGit_BehavesLikeWalker pins the contract that the git
+// fast path and the Go walker fallback produce identical sets for
+// the same input — modulo the directory-prefix filter both share.
+// Skip when git isn't on PATH (minimal CI containers); the Detect
+// fallback path is what runs there.
+func TestDetectViaGit_BehavesLikeWalker(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH — fallback path is exercised by other tests")
+	}
+	before := t.TempDir()
+	after := t.TempDir()
+	writeFile(t, before, "same.yaml", "x")
+	writeFile(t, after, "same.yaml", "x")
+	writeFile(t, before, "removed.yaml", "gone")
+	writeFile(t, after, "added.yaml", "new")
+	writeFile(t, before, "mod.yaml", "AAA")
+	writeFile(t, after, "mod.yaml", "BBB")
+	// .git/ contents must NOT appear in the set — git diff --no-index
+	// happily reports them; the isFilteredPath post-filter drops them.
+	writeFile(t, before, ".git/HEAD", "a")
+	writeFile(t, after, ".git/HEAD", "b")
+
+	gotGit, err := detectViaGit(before, after)
+	if err != nil {
+		t.Fatalf("detectViaGit: %v", err)
+	}
+	gotWalker, err := detectViaWalker(before, after)
+	if err != nil {
+		t.Fatalf("detectViaWalker: %v", err)
+	}
+	want := []string{"added.yaml", "mod.yaml", "removed.yaml"}
+	if got := gotGit.Paths(); !slices.Equal(got, want) {
+		t.Errorf("git path: %v, want %v", got, want)
+	}
+	if got := gotWalker.Paths(); !slices.Equal(got, want) {
+		t.Errorf("walker path: %v, want %v (must agree with git path)", got, want)
 	}
 }
 

@@ -19,7 +19,7 @@ import (
 // warning rather than gating the test on stale local files.
 func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]struct{} {
 	out := make(map[manifest.NamedResource]struct{})
-	prefixes := loader.KSPathPrefixes(o.store)
+	prefixes := loader.KSPathPrefixes(o.store, o.cfg.Path)
 	for id := range failed {
 		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
 			continue

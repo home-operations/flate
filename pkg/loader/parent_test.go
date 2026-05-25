@@ -37,7 +37,7 @@ func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
 		clusterApps.Named(): "kubernetes/clusters/main/apps.yaml",
 		karma.Named():       "kubernetes/apps/main/observability/karma.yaml",
 	}
-	parents := BuildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
 
 	if got, want := parents[karma.Named()], clusterApps.Named(); got != want {
 		t.Errorf("karma.parent = %+v; want %+v", got, want)
@@ -76,7 +76,7 @@ func TestBuildParentIndex_DeepestPrefixWins(t *testing.T) {
 		inner.Named():      "apps/media/kustomization.yaml",
 		grandchild.Named(): "apps/media/plex/ks.yaml",
 	}
-	parents := BuildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
 
 	if got, want := parents[grandchild.Named()], inner.Named(); got != want {
 		t.Errorf("grandchild.parent = %+v; want %+v (deepest prefix)", got, want)
@@ -99,7 +99,7 @@ func TestBuildParentIndex_NoSelfMatch(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		ks.Named(): "apps/self/ks.yaml",
 	}
-	parents := BuildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
 	if _, ok := parents[ks.Named()]; ok {
 		t.Errorf("KS must not be its own parent: %v", parents)
 	}
@@ -126,7 +126,7 @@ func TestBuildParentIndex_NoSourceFileSkipped(t *testing.T) {
 		parent.Named(): "clusters/main/apps.yaml",
 		// orphan deliberately absent.
 	}
-	parents := BuildParentIndexForKind(s, sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
 	if _, ok := parents[orphan.Named()]; ok {
 		t.Errorf("KS without source file must not appear in parent index: %v", parents)
 	}
@@ -155,7 +155,7 @@ func TestKSPathPrefixes_SortsLongestFirst(t *testing.T) {
 	s.AddObject(mid)
 	s.AddObject(leaf)
 
-	prefixes := KSPathPrefixes(s)
+	prefixes := KSPathPrefixes(s, "")
 	if len(prefixes) != 3 {
 		t.Fatalf("expected 3 prefixes, got %d", len(prefixes))
 	}
@@ -179,7 +179,7 @@ func TestKSPathPrefixes_SkipsEmptyPath(t *testing.T) {
 	s.AddObject(with)
 	s.AddObject(without)
 
-	prefixes := KSPathPrefixes(s)
+	prefixes := KSPathPrefixes(s, "")
 	if len(prefixes) != 1 || prefixes[0].ID.Name != "with" {
 		t.Errorf("expected only 'with' in prefixes; got %+v", prefixes)
 	}
@@ -196,6 +196,57 @@ func TestLongestParent_SkipsSelf(t *testing.T) {
 	self := prefixes[0].ID
 	if _, ok := LongestParent(prefixes, "apps/team-a/ks.yaml", self); ok {
 		t.Errorf("LongestParent must skip self matches")
+	}
+}
+
+// TestKSPathPrefixes_IncludesSpecComponents pins the components fold:
+// a KS that lists a relative spec.components path should claim that
+// component subtree in the prefix set, so a child file living under
+// the component dir attributes back to the parent. Without this,
+// discovery's parent index treats the child as orphan and the
+// change-mode index's already-correct attribution diverges — exactly
+// the false-positive the audit's 9.1 finding called out.
+func TestKSPathPrefixes_IncludesSpecComponents(t *testing.T) {
+	s := store.New()
+	parent := &manifest.Kustomization{
+		Name: "parent", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path:       "./apps/team-a",
+			Components: []string{"../shared/observability"},
+		},
+	}
+	s.AddObject(parent)
+
+	prefixes := KSPathPrefixes(s, "")
+	// Expect TWO entries for the parent: its spec.path and the
+	// resolved component dir.
+	var sawPath, sawComponent bool
+	for _, p := range prefixes {
+		if p.ID != parent.Named() {
+			continue
+		}
+		switch p.Prefix {
+		case "apps/team-a/":
+			sawPath = true
+		case "apps/shared/observability/":
+			sawComponent = true
+		}
+	}
+	if !sawPath {
+		t.Errorf("expected prefix for spec.path; got %+v", prefixes)
+	}
+	if !sawComponent {
+		t.Errorf("expected prefix for resolved spec.components entry; got %+v", prefixes)
+	}
+
+	// Integration: LongestParent over a file under the component dir
+	// must attribute to the parent KS.
+	got, ok := LongestParent(prefixes, "apps/shared/observability/karma.yaml", manifest.NamedResource{})
+	if !ok {
+		t.Fatalf("LongestParent missed component-dir child — components fold regression")
+	}
+	if got.Name != "parent" {
+		t.Errorf("LongestParent = %q, want 'parent' (component-dir child should attribute to its containing KS)", got.Name)
 	}
 }
 
@@ -216,7 +267,7 @@ func TestLongestParent_DeepestMatchWins(t *testing.T) {
 	}
 	s.AddObject(root)
 	s.AddObject(leaf)
-	prefixes := KSPathPrefixes(s)
+	prefixes := KSPathPrefixes(s, "")
 	got, ok := LongestParent(prefixes, "apps/team-a/web/deploy.yaml", manifest.NamedResource{})
 	if !ok {
 		t.Fatalf("expected a parent match")

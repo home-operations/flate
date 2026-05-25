@@ -31,7 +31,7 @@ func (d *discoverer) promoteOrphans() {
 	if d.loader.Existence == nil {
 		return
 	}
-	prefixes := loader.KSPathPrefixes(d.cfg.Store)
+	prefixes := loader.KSPathPrefixes(d.cfg.Store, d.cfg.Path)
 	for id := range d.loader.Existence.All() {
 		if d.cfg.Store.GetObject(id) != nil {
 			continue

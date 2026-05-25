@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opencontainers/go-digest"
@@ -188,6 +189,99 @@ func TestSafeJoinTarPath(t *testing.T) {
 				t.Errorf("safeJoinTarPath(%q): %v", tc.entry, err)
 			}
 		})
+	}
+}
+
+// TestApplyLayerSelector_MultiLayerAmbiguous regresses the silent-
+// pick-first behavior: when a manifest carries multiple layers and
+// no spec.layerSelector.mediaType is set, flate must NOT silently
+// pick layers[0] (could be the wrong layer — chart vs. cosign
+// signature vs. provenance). Matches Flux source-controller behavior.
+func TestApplyLayerSelector_MultiLayerAmbiguous(t *testing.T) {
+	slot := t.TempDir()
+	layerA := mustTarGz(t, map[string]string{"a.yaml": "kind: A\n"})
+	layerB := mustTarGz(t, map[string]string{"b.yaml": "kind: B\n"})
+	digA := writeBlob(t, slot, layerA)
+	digB := writeBlob(t, slot, layerB)
+	_, manifestDigest := writeManifest(t, slot, []ocispec.Descriptor{
+		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Digest: digA, Size: int64(len(layerA))},
+		{MediaType: "application/vnd.cncf.helm.chart.provenance.v1.prov", Digest: digB, Size: int64(len(layerB))},
+	})
+
+	err := applyLayerSelector(t.Context(), slot, manifestDigest.String(), nil)
+	if err == nil {
+		t.Fatal("expected ambiguous-layer error; got nil")
+	}
+	if !strings.Contains(err.Error(), "layerSelector") {
+		t.Errorf("error should mention layerSelector as the fix; got: %v", err)
+	}
+}
+
+// TestApplyLayerSelector_MultiLayerWithSelector confirms the
+// disambiguating path: when the selector names a mediaType, the
+// matching layer is picked regardless of count.
+func TestApplyLayerSelector_MultiLayerWithSelector(t *testing.T) {
+	slot := t.TempDir()
+	chart := mustTarGz(t, map[string]string{"Chart.yaml": "apiVersion: v2\nname: x\nversion: 0.1.0\n"})
+	prov := []byte("provenance not a tarball")
+	digChart := writeBlob(t, slot, chart)
+	digProv := writeBlob(t, slot, prov)
+	_, manifestDigest := writeManifest(t, slot, []ocispec.Descriptor{
+		{MediaType: "application/vnd.cncf.helm.chart.provenance.v1.prov", Digest: digProv, Size: int64(len(prov))},
+		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Digest: digChart, Size: int64(len(chart))},
+	})
+	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
+		&manifest.OCILayerSelector{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"}); err != nil {
+		t.Fatalf("applyLayerSelector: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot, "Chart.yaml")); err != nil {
+		t.Errorf("expected Chart.yaml extracted from chart layer: %v", err)
+	}
+}
+
+// TestExtractTarGz_ZipBombRejected covers the maxExtractedBytes cap.
+// Lower the cap to 100 bytes for the test and write a 1 KiB entry —
+// extractTarGz's LimitReader catches the over-budget write and emits
+// the "extract limit" error.
+func TestExtractTarGz_ZipBombRejected(t *testing.T) {
+	orig := maxExtractedBytes
+	t.Cleanup(func() { maxExtractedBytes = orig })
+	maxExtractedBytes = 100
+
+	dir := t.TempDir()
+	tgz := filepath.Join(dir, "bomb.tar.gz")
+	f, err := os.Create(tgz) //nolint:gosec // inside t.TempDir
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	body := bytes.Repeat([]byte("A"), 1<<10) // 1 KiB > 100-byte cap
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "huge.bin", Typeflag: tar.TypeReg,
+		Size: int64(len(body)), Mode: 0o644,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	_ = tw.Close()
+	_ = gw.Close()
+	_ = f.Close()
+
+	dst := t.TempDir()
+	err = extractTarGz(tgz, dst)
+	if err == nil {
+		t.Fatal("expected extract-limit error; got nil")
+	}
+	if !strings.Contains(err.Error(), "extract limit") {
+		t.Errorf("error should mention extract limit; got: %v", err)
+	}
+	// The over-budget partial file must be removed so a retry sees
+	// a clean slot.
+	if _, err := os.Stat(filepath.Join(dst, "huge.bin")); !os.IsNotExist(err) {
+		t.Errorf("partial extract not cleaned up (err=%v)", err)
 	}
 }
 

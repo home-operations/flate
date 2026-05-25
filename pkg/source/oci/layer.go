@@ -63,7 +63,7 @@ func effectiveLayerOperation(selector *manifest.OCILayerSelector) string {
 // Layout spec (see ociLayoutArtifacts). This function:
 //
 //   - Reads the manifest blob to find the layer matching
-//     selector.MediaType (or the first layer when MediaType is empty).
+//     selector.MediaType (or the single layer when no selector is set).
 //   - Stages the layer at slot/<stagedLayerFilename> so the layout
 //     wipe in the next step can't take open handles or user-tarball
 //     entries that collide with OCI well-known names down with it.
@@ -74,9 +74,10 @@ func effectiveLayerOperation(selector *manifest.OCILayerSelector) string {
 //     <copiedLayerFilename>.
 //   - Wipes the OCI Image Layout artifacts.
 //
-// When selector is nil the default extract behavior still applies —
-// matches source-controller's behavior when spec.layerSelector is
-// omitted but the artifact has exactly one tarball layer.
+// When the selector is nil and the artifact has multiple layers, the
+// function errors rather than silently picking layers[0] — matches
+// Flux source-controller's "ambiguous selection" behavior and avoids
+// rendering the wrong layer for multi-layer artifacts.
 func applyLayerSelector(
 	_ context.Context,
 	slot string,
@@ -91,6 +92,14 @@ func applyLayerSelector(
 			return nil
 		}
 		return err
+	}
+	if len(man.Layers) > 1 && (selector == nil || selector.MediaType == "") {
+		mts := make([]string, len(man.Layers))
+		for i, l := range man.Layers {
+			mts[i] = l.MediaType
+		}
+		return fmt.Errorf("OCI artifact has %d layers but no spec.layerSelector.mediaType to disambiguate (layer mediaTypes: %v)",
+			len(man.Layers), mts)
 	}
 	layer, ok := pickLayer(man.Layers, selector)
 	if !ok {
@@ -192,12 +201,24 @@ func cleanupOCILayout(slot string) error {
 	return nil
 }
 
+// maxExtractedBytes caps the total bytes extractTarGz writes to disk
+// per call. Defends against zip-bomb-style artifacts (small gzip,
+// huge tar) that would otherwise fill the cache slot until ENOSPC.
+// 1 GiB is generous enough for every helm chart and flux-manifests
+// shape seen in the wild — the largest known charts are ~50 MiB
+// extracted — while still bounding a malicious or buggy publisher.
+//
+// var (not const) so tests can lower it without writing real-size
+// tarballs. Production callers must NOT override it.
+var maxExtractedBytes int64 = 1 << 30
+
 // extractTarGz unpacks a gzipped tarball into dst. Rejects any entry
 // whose resolved path escapes dst — covers `../` traversal, absolute
 // paths in the tar header (e.g. `/etc/passwd`), and symlink-pivoting
 // hardlinks. Symlinks/hardlinks/devices are silently skipped rather
 // than honored; Flux's source-controller does the same and helm
-// charts never depend on them.
+// charts never depend on them. Output is capped at maxExtractedBytes
+// to bound zip-bomb-style artifacts.
 func extractTarGz(src, dst string) error {
 	f, err := os.Open(src) //nolint:gosec // src lives under the fetcher's cache slot
 	if err != nil {
@@ -210,6 +231,7 @@ func extractTarGz(src, dst string) error {
 	}
 	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
+	remaining := maxExtractedBytes
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -235,10 +257,22 @@ func extractTarGz(src, dst string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // tar.Reader is size-bounded by header
+			// LimitReader caps per-call output AND turns a header that
+			// over-claims size into a short read at the limit (rather
+			// than an unbounded write). Track remaining manually so a
+			// single oversized entry surfaces a clear "extract limit"
+			// error instead of a torso-shaped truncated file.
+			n, err := io.Copy(out, io.LimitReader(tr, remaining+1))
+			if err != nil {
 				_ = out.Close()
 				return err
 			}
+			if n > remaining {
+				_ = out.Close()
+				_ = os.Remove(target)
+				return fmt.Errorf("tar entry %q exceeds %d-byte extract limit", hdr.Name, maxExtractedBytes)
+			}
+			remaining -= n
 			if err := out.Close(); err != nil {
 				return err
 			}

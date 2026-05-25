@@ -99,9 +99,13 @@ func (f *Fetcher) verifyCosignSignature(
 	}
 	if repo.Verify.SecretRef == nil {
 		// Keyless (OIDC) — flate can't reach Fulcio/Rekor offline and
-		// doesn't carry the sigstore trust roots. Log and proceed so the
-		// chart still renders for diff purposes.
-		slog.Debug("cosign keyless verification skipped; rendering unverified artifact",
+		// doesn't carry the sigstore trust roots. Log and proceed so
+		// the chart still renders for diff purposes. WARN (not Debug)
+		// so an operator who deliberately opted into spec.verify can
+		// SEE that flate skipped the verification — silent skip on a
+		// security-gating spec field is the worst-of-both-worlds
+		// outcome.
+		slog.Warn("cosign keyless verification skipped; rendering unverified artifact",
 			"ociRepository", repo.Namespace+"/"+repo.Name,
 			"digest", pulledDigest)
 		return nil

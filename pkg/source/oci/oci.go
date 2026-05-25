@@ -156,9 +156,8 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 // digest is verified against the trusted public keys before returning.
 func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, registryConfig string, tlsCfg *tls.Config, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
 	cache := f.Cache
-	if repo == nil {
-		return nil, errors.New("oci repository is nil")
-	}
+	// Note: Fetch already type-asserts repo non-nil before calling
+	// fetch(), so no nil check needed here.
 	if repo.URL == "" {
 		return nil, fmt.Errorf("%w: OCIRepository %s missing url", manifest.ErrInput, repo.RepoName())
 	}
@@ -451,6 +450,16 @@ func loadCredentials(configPath string) (credentials.Store, error) {
 	s, err := credentials.NewStoreFromDocker(opts)
 	if err != nil {
 		// Missing docker config is not fatal — anonymous pulls work.
+		// Distinguish os.ErrNotExist (the common case: no docker login
+		// on this machine) from permission / corrupt-JSON errors so an
+		// operator running flate with a broken ~/.docker/config.json
+		// gets a breadcrumb instead of a silent "401 unauthorized"
+		// from the registry.
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		slog.Debug("oci: docker credentials load failed; falling back to anonymous pulls",
+			"err", err)
 		return nil, nil
 	}
 	return s, nil

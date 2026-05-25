@@ -182,6 +182,14 @@ func (h *HelmRelease) Named() NamedResource {
 // short DependsOn / ChartValuesFiles.
 func (h *HelmRelease) Clone() *HelmRelease {
 	out := *h
+	// Deep-copy the embedded helmv2.HelmReleaseSpec: it owns several
+	// pointer/slice fields (Install, Upgrade, Test, Rollback,
+	// DriftDetection, Uninstall, KubeConfig, WaitStrategy, Chart,
+	// ChartRef, CommonMetadata, MaxHistory, Timeout, ValuesFrom,
+	// PostRenderers, HealthCheckExprs) that a shallow `out := *h`
+	// silently aliases to the store-owned canonical. Use the upstream
+	// generated DeepCopyInto.
+	h.HelmReleaseSpec.DeepCopyInto(&out.HelmReleaseSpec)
 	out.Values = DeepCopyMap(h.Values)
 	out.ChartValuesFiles = slices.Clone(h.ChartValuesFiles)
 	out.DependsOn = slices.Clone(h.DependsOn)

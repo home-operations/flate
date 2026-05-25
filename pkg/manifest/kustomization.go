@@ -89,6 +89,13 @@ func (k *Kustomization) Named() NamedResource {
 // short DependsOn / PostBuildSubstituteFrom.
 func (k *Kustomization) Clone() *Kustomization {
 	out := *k
+	// Deep-copy the embedded kustomizev1.KustomizationSpec: it owns
+	// pointer/slice fields (PostBuild.Substitute / SubstituteFrom,
+	// Decryption, KubeConfig, Patches, Images, HealthChecks,
+	// HealthCheckExprs, Components, spec DependsOn, Timeout, Interval)
+	// that a shallow `out := *k` silently aliases to the store-owned
+	// canonical. Use the upstream generated DeepCopyInto.
+	k.KustomizationSpec.DeepCopyInto(&out.KustomizationSpec)
 	out.Contents = DeepCopyMap(k.Contents)
 	out.PostBuildSubstitute = maps.Clone(k.PostBuildSubstitute)
 	out.PostBuildSubstituteFrom = slices.Clone(k.PostBuildSubstituteFrom)

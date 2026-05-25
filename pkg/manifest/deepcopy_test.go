@@ -186,7 +186,10 @@ func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 	dst := src.Clone()
 	dst.PostBuild.Substitute["K"] = "MUTATED"
 	dst.Patches[0].Patch = "MUTATED"
-	dst.KustomizationSpec.Components[0] = "MUTATED"
+	dst.Components[0] = "MUTATED"
+	// KustomizationSpec.DependsOn is shadowed by the flate-side
+	// Kustomization.DependsOn ([]DependencyRef); access through the
+	// embedded field name to disambiguate.
 	dst.KustomizationSpec.DependsOn[0].Name = "MUTATED"
 
 	if src.PostBuild.Substitute["K"] != "v" {
@@ -195,8 +198,8 @@ func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 	if src.Patches[0].Patch != "src-patch" {
 		t.Errorf("source Patches aliased: %v", src.Patches[0].Patch)
 	}
-	if src.KustomizationSpec.Components[0] != "src-comp" {
-		t.Errorf("source Components aliased: %v", src.KustomizationSpec.Components[0])
+	if src.Components[0] != "src-comp" {
+		t.Errorf("source Components aliased: %v", src.Components[0])
 	}
 	if src.KustomizationSpec.DependsOn[0].Name != "src-dep" {
 		t.Errorf("source spec DependsOn aliased: %v", src.KustomizationSpec.DependsOn[0].Name)

@@ -189,7 +189,7 @@ func (h *HelmRelease) Clone() *HelmRelease {
 	// PostRenderers, HealthCheckExprs) that a shallow `out := *h`
 	// silently aliases to the store-owned canonical. Use the upstream
 	// generated DeepCopyInto.
-	h.HelmReleaseSpec.DeepCopyInto(&out.HelmReleaseSpec)
+	h.DeepCopyInto(&out.HelmReleaseSpec)
 	out.Values = DeepCopyMap(h.Values)
 	out.ChartValuesFiles = slices.Clone(h.ChartValuesFiles)
 	out.DependsOn = slices.Clone(h.DependsOn)

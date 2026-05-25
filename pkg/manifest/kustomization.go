@@ -95,7 +95,7 @@ func (k *Kustomization) Clone() *Kustomization {
 	// HealthCheckExprs, Components, spec DependsOn, Timeout, Interval)
 	// that a shallow `out := *k` silently aliases to the store-owned
 	// canonical. Use the upstream generated DeepCopyInto.
-	k.KustomizationSpec.DeepCopyInto(&out.KustomizationSpec)
+	k.DeepCopyInto(&out.KustomizationSpec)
 	out.Contents = DeepCopyMap(k.Contents)
 	out.PostBuildSubstitute = maps.Clone(k.PostBuildSubstitute)
 	out.PostBuildSubstituteFrom = slices.Clone(k.PostBuildSubstituteFrom)

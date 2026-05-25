@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.20](https://github.com/home-operations/flate/compare/0.1.19...0.1.20) (2026-05-25)
+
+
+### Features
+
+* **test:** hide SKIPPED rows by default; --show-skipped opts in ([#321](https://github.com/home-operations/flate/issues/321)) ([fde11d7](https://github.com/home-operations/flate/commit/fde11d737b5fd274436d326179a5b70b90218c97))
+
+
+### Bug Fixes
+
+* add auto-completions for brew ([aa52b9a](https://github.com/home-operations/flate/commit/aa52b9a17e3c8b7d314fd54cb4cbbac3e3edb895))
+
 ## [0.1.19](https://github.com/home-operations/flate/compare/0.1.18...0.1.19) (2026-05-25)
 
 

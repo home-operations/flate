@@ -130,6 +130,11 @@ type Orchestrator struct {
 	// into Result.Manifests at Render time so `flate build` surfaces
 	// what the RS would create in-cluster.
 	rsExtensions map[manifest.NamedResource][]map[string]any
+
+	// bootstrapped flips true once Bootstrap returns. Read by
+	// WithFetcher to refuse late fetcher swaps that would silently
+	// miss any source CR discovery already reconciled.
+	bootstrapped bool
 }
 
 // Result is the structured output of Orchestrator.Render: the rendered
@@ -226,7 +231,17 @@ func (o *Orchestrator) Store() *store.Store { return o.store }
 //
 // Passing a nil fetcher unregisters the kind — useful for stripping a
 // default registration in tests.
+//
+// Panics if called after Bootstrap: by then discovery has already run
+// and any source CR discovered between New() and Bootstrap was
+// reconciled by whichever fetcher was registered at that moment. A
+// later swap silently misses those reconciles and the embedder gets
+// inconsistent behavior across source CRs of the same kind. Bootstrap
+// is the natural commit point for the controller wiring.
 func (o *Orchestrator) WithFetcher(kind string, f source.Fetcher) *Orchestrator {
+	if o.bootstrapped {
+		panic("orchestrator: WithFetcher called after Bootstrap; install fetchers BEFORE Bootstrap")
+	}
 	if f == nil {
 		delete(o.src.Fetchers, kind)
 		return o
@@ -255,7 +270,41 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 
 	o.validateDependsOn()
 	o.breakDependsOnCycles()
-	return o.buildChangeFilter(res.RepoRoot)
+	o.warnOnDisabledOCIFeatures()
+	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
+		return err
+	}
+	o.bootstrapped = true
+	return nil
+}
+
+// warnOnDisabledOCIFeatures surfaces the EnableOCI=false footgun: with
+// the source.ExistenceFetcher wired for OCIRepository, spec.verify,
+// spec.layerSelector, spec.certSecretRef, spec.proxySecretRef,
+// spec.insecure, and spec.ignore are all parsed from the manifests but
+// silently discarded — the source is marked Ready without a real
+// fetch. A user who configured spec.verify deserves to SEE that
+// flate skipped verification rather than discover it via "passed in
+// flate, failed in cluster".
+func (o *Orchestrator) warnOnDisabledOCIFeatures() {
+	if o.cfg.EnableOCI {
+		return
+	}
+	for _, repo := range store.ListAs[*manifest.OCIRepository](o.store, manifest.KindOCIRepository) {
+		if repo.Verify == nil && repo.LayerSelector == nil {
+			continue
+		}
+		fields := []string{}
+		if repo.Verify != nil {
+			fields = append(fields, "spec.verify")
+		}
+		if repo.LayerSelector != nil {
+			fields = append(fields, "spec.layerSelector")
+		}
+		slog.Warn("OCIRepository spec fields ignored — EnableOCI=false wires ExistenceFetcher",
+			"ociRepository", repo.Namespace+"/"+repo.Name,
+			"ignoredFields", fields)
+	}
 }
 
 // validateDependsOn drops dangling dependsOn references on both

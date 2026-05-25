@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -105,6 +106,47 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 	if len(orphans) != 0 {
 		t.Errorf("orphan detection should skip non-reconcilable kinds; got %+v", orphans)
 	}
+}
+
+// TestOrchestrator_WithFetcherAfterBootstrapPanics pins the
+// contract that WithFetcher MUST be called before Bootstrap. A
+// late swap would silently miss any source CR discovery already
+// reconciled, so we fail fast instead of pretending success.
+func TestOrchestrator_WithFetcherAfterBootstrapPanics(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: []\n")
+
+	o, err := New(Config{Path: dir, WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic when WithFetcher is called after Bootstrap")
+		}
+		msg, _ := r.(string)
+		if !strings.Contains(msg, "BEFORE Bootstrap") {
+			t.Errorf("panic message should name the ordering contract; got: %v", r)
+		}
+	}()
+	o.WithFetcher(manifest.KindOCIRepository, nil)
 }
 
 func TestOrchestrator_SimpleCluster(t *testing.T) {

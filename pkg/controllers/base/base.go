@@ -189,11 +189,20 @@ func (c *Controller) Await(
 // surfaces it. Intended for use as `defer base.Recover(store, id, "kind")`
 // in controllers that don't go through RunWithStatus (e.g. source
 // fetchers that own their own status writes).
+//
+// After recording status, re-raises the panic so the enclosing
+// task.Service.Go increments its failures counter — a panicked
+// reconcile MUST count against the orchestrator's failure gate, not
+// silently masquerade as success when Service.Failures() is consulted
+// for the final exit-code decision.
 func Recover(s *store.Store, id manifest.NamedResource, logKind string) {
-	if r := recover(); r != nil {
-		slog.Error(logKind+": panic during reconcile", "id", id.String(), "panic", r)
-		s.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
+	r := recover()
+	if r == nil {
+		return
 	}
+	slog.Error(logKind+": panic during reconcile", "id", id.String(), "panic", r)
+	s.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
+	panic(r)
 }
 
 // RunWithStatus is the standard reconcile body for controllers that
@@ -222,6 +231,17 @@ func RunWithStatus[T manifest.BaseManifest](
 	defer Recover(s, id, logKind)
 	obj, ok := s.GetObject(id).(T)
 	if !ok {
+		// Object deleted (or wrong type) between coalescer enqueue and
+		// run. A Refire-driven re-run that previously wrote
+		// StatusPending/MsgRefetching would otherwise stick at Pending
+		// forever — every depwait blocking on this id rides its full
+		// per-dep timeout. Write a terminal Ready with a brief reason
+		// so dep checks unblock and the testrunner reports cleanly.
+		// Use Ready (not Failed) because a vanished resource is the
+		// same outcome real Flux would see when the CR is deleted.
+		if info, has := s.GetStatus(id); has && info.Status != store.StatusReady {
+			s.UpdateStatus(id, store.StatusReady, "skipped: object not in store at reconcile time")
+		}
 		return
 	}
 	if err := fn(ctx, obj); err != nil {

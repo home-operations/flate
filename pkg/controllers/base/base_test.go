@@ -57,12 +57,22 @@ func TestRunWithStatus_Panic(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	// Panic must be caught and converted into StatusFailed; no re-panic.
-	base.RunWithStatus(t.Context(), s, id, "helmrelease",
-		func(_ context.Context, _ *manifest.HelmRelease) error {
-			panic("kaboom")
-		},
-	)
+	// Contract: panic is converted into StatusFailed AND re-raised
+	// so the enclosing task.Service.Go's recover increments failures
+	// (Service.Failures() must count panicked reconciles). Recover
+	// the re-raise at the test boundary and assert both pieces.
+	var rec any
+	func() {
+		defer func() { rec = recover() }()
+		base.RunWithStatus(t.Context(), s, id, "helmrelease",
+			func(_ context.Context, _ *manifest.HelmRelease) error {
+				panic("kaboom")
+			},
+		)
+	}()
+	if rec == nil {
+		t.Fatal("expected panic to be re-raised so task.Service.Go's recover counts it; got nil")
+	}
 	got, _ := s.GetStatus(id)
 	if got.Status != store.StatusFailed {
 		t.Errorf("status = %v, want Failed", got.Status)

@@ -318,7 +318,15 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 					switch {
 					case errors.Is(ctx.Err(), context.Canceled):
 						return classify(id, ctx.Err(), "")
-					case errors.Is(err, context.DeadlineExceeded), errors.Is(err, errRenderDrained):
+					case errors.Is(err, errRenderCapExceeded),
+						errors.Is(err, context.DeadlineExceeded),
+						errors.Is(err, errRenderDrained):
+						// The render-emission cap fired (or the pool
+						// drained without producing, or the wait was
+						// bounded by the per-dep Timeout) — the dep
+						// isn't going to appear. Fast-fail with
+						// "dependency not found" rather than the
+						// ambiguous "timeout" label.
 						return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
 					default:
 						return Event{Dep: id, Status: DepFailed, Reason: err.Error()}
@@ -452,6 +460,13 @@ func (w *Waiter) depExists(dep manifest.NamedResource) bool {
 	return ok
 }
 
+// errRenderCapExceeded is returned by waitRenderEmission when the
+// inner RenderProducingTimeout fires (with or without parent ctx
+// also dying). Distinguishes "cap-fired no-show" from a genuine
+// caller-cancellation, both of which would otherwise look like
+// `context.DeadlineExceeded` on the wire.
+var errRenderCapExceeded = errors.New("render-producing-timeout cap reached")
+
 // errRenderDrained is the sentinel waitRenderEmission returns when
 // the orchestrator's task pool drains while step-2 is still waiting
 // — no future emission can produce the missing dep, so the wait
@@ -520,7 +535,17 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 			}
 			return errRenderDrained
 		case <-renderCtx.Done():
-			return renderCtx.Err()
+			// Distinguish parent-canceled (caller wants to abort)
+			// from "deadline elapsed without the dep arriving"
+			// (whether the deadline came from the per-dep Timeout
+			// wrapper or from the inner RenderProducingTimeout cap).
+			// Caller-driven Cancel must propagate so the wait
+			// classifies as DepCancelled; any deadline becomes a
+			// "render couldn't produce" fast-fail.
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return ctx.Err()
+			}
+			return errRenderCapExceeded
 		}
 	}
 }

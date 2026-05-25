@@ -122,6 +122,21 @@ func TestSlugifyRepo(t *testing.T) {
 		"https://example.com/long-path/with/slashes/repo.git": "repo",
 		"oci://ghcr.io/stefanprodan/charts/podinfo":           "podinfo",
 		"": "repo",
+
+		// Tag suffix: versionedURL passes URL:tag into slugify
+		// for OCI fetches. Slug should be the chart name, NOT
+		// the tag — otherwise the cache layout collapses
+		// every release of every chart into the same `&lt;tag&gt;/`
+		// directory.
+		"oci://ghcr.io/bjw-s-labs/helm/app-template:5.0.1":           "app-template",
+		"oci://ghcr.io/bjw-s-labs/helm/app-template:1.2.3-rc4":       "app-template",
+		"oci://registry.local:5000/charts/mychart:1.2.3":             "mychart",
+		"oci://registry.local:5000/charts/mychart":                   "mychart",
+		// Digest suffix: same concern as tags.
+		"oci://ghcr.io/foo/bar@sha256:1111111111111111111111111111111111111111111111111111111111111111": "bar",
+		// SCP-style git URL with `@` userinfo must NOT be
+		// mistaken for a digest suffix.
+		"git@github.com:owner/repo": "repo",
 	}
 	for in, want := range cases {
 		if got := slugifyRepo(in); got != want {

@@ -115,10 +115,46 @@ var nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 // filesystem name limits and remain greppable.
 const maxSlugLen = 50
 
-// slugifyRepo reduces a URL to a short, filesystem-safe identifier. It
-// preserves the last path segment so cache directories are recognizable
-// when poking around manually.
+// slugifyRepo reduces a URL to a short, filesystem-safe identifier
+// matching the LAST PATH SEGMENT of the repo URL — not the version.
+// Strip OCI version suffixes (`:tag`, `@digest`) and the `.git`
+// suffix BEFORE picking the last segment, so:
+//
+//	oci://ghcr.io/bjw-s-labs/helm/app-template:5.0.1 → "app-template"
+//	oci://ghcr.io/foo/bar@sha256:abc...               → "bar"
+//	https://github.com/owner/repo.git                 → "repo"
+//	git@github.com:owner/repo.git                     → "repo"
+//
+// Without the version strip, the OCI flow always presents
+// versionedURL (URL + ":" + tag) to slugifyRepo, and every OCI
+// slot ends up under `&lt;root&gt;/sources/&lt;tag&gt;/&lt;hash&gt;` — e.g. every
+// app-template release piles under `5.0.1/`, `5.0.2/`, `5.0.3/`,
+// indistinguishable from any other chart pinned to those tags.
+// Functionally safe (hash is the real uniqueness key) but
+// useless for operators inspecting the cache. The hash component
+// of the slot path is unchanged by this function; it remains
+// computed from the raw URL + ref upstream.
 func slugifyRepo(url string) string {
+	// Strip version suffixes added by versionedURL (or hand-typed
+	// URLs that include `:tag` / `@digest`). Done in two steps to
+	// preserve scheme colons (e.g. `https:`, `oci:`): split on the
+	// LAST `@` first (digest), then look for a trailing `:` that
+	// follows the last `/` (tag, not port — registry host:port has
+	// the colon BEFORE the path's last `/`).
+	if i := strings.LastIndex(url, "@"); i >= 0 {
+		// Only treat `@` as digest if what follows looks like
+		// `<algo>:<hex>` — otherwise it's userinfo
+		// (`git@github.com`) and must be preserved for the
+		// last-segment split below.
+		if rest := url[i+1:]; strings.Contains(rest, ":") && !strings.Contains(rest, "/") {
+			url = url[:i]
+		}
+	}
+	if lastSlash := strings.LastIndex(url, "/"); lastSlash >= 0 {
+		if colon := strings.IndexByte(url[lastSlash+1:], ':'); colon >= 0 {
+			url = url[:lastSlash+1+colon]
+		}
+	}
 	url = strings.TrimSuffix(url, ".git")
 	if idx := strings.LastIndexAny(url, "/:"); idx >= 0 && idx < len(url)-1 {
 		url = url[idx+1:]

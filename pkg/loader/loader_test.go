@@ -303,6 +303,81 @@ metadata: {name: real, namespace: ns}
 	}
 }
 
+// TestLoader_OrphanNestedSubtreeSkipped pins the buroa/k8s-gitops
+// case: a commented-out wrapper KS in `default/kustomization.yaml`
+// (resources: [./valheim/ks.yaml, # ./atuin/ks.yaml]) should leave
+// BOTH the wrapper AND the deep HelmRelease under
+// `default/atuin/app/helmrelease.yaml` invisible. The wrapper lives
+// in a directory (`atuin/`) that has no kustomization.yaml of its
+// own; the HR lives in `atuin/app/` which DOES have one but is only
+// reachable via the orphan wrapper's spec.path. PR #346 fixed only
+// the same-dir orphan case; this test reproduces the deeper shape.
+func TestLoader_OrphanNestedSubtreeSkipped(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "default/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ./valheim/ks.yaml
+  # - ./atuin/ks.yaml   # commented toggle stub — should be invisible
+`)
+	for _, app := range []string{"valheim", "atuin"} {
+		testutil.WriteFile(t, dir, "default/"+app+"/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: `+app+`
+spec:
+  path: ./default/`+app+`/app
+  sourceRef: { kind: GitRepository, name: flux-system, namespace: flux-system }
+`)
+		testutil.WriteFile(t, dir, "default/"+app+"/app/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ./helmrelease.yaml
+`)
+		testutil.WriteFile(t, dir, "default/"+app+"/app/helmrelease.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: `+app+`
+spec:
+  chart:
+    spec:
+      chart: app-template
+      sourceRef: { kind: HelmRepository, name: bjw-s, namespace: flux-system }
+      version: "5.0.0"
+`)
+	}
+	s := store.New()
+	// Entry the loader at `default/` so its kustomization.yaml is the
+	// graph root. The orphan-tree skip only applies under graph-walk;
+	// see Loader.Load doc-comment.
+	if _, err := New(s).Load(context.Background(), filepath.Join(dir, "default")); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Valheim (claimed) MUST be present.
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Name: "valheim"}) == nil {
+		t.Error("claimed Kustomization 'valheim' missing")
+	}
+	// Atuin (commented out) MUST be absent.
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Name: "atuin"}) != nil {
+		t.Error("orphan Kustomization 'atuin' should be skipped (#346 deep-orphan)")
+	}
+	// Atuin's deep HR MUST also be absent — its only kustomize-graph
+	// connection is via the orphan wrapper.
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "atuin"}) != nil {
+		t.Error("HelmRelease only reachable via orphan wrapper should be skipped")
+	}
+	// Valheim's HR should NOT load via the initial graph walk either
+	// — it lives in `default/valheim/app/` which is only reachable
+	// via the wrapper's spec.path, NOT via `default/kustomization.yaml`'s
+	// resource graph. The orchestrator's discovery later calls
+	// loadAt(valheim/app/) which becomes a fresh entry-point.
+	// (This test stops before that step, so the HR is absent here —
+	// which is the correct flux-local behavior.)
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "valheim"}) != nil {
+		t.Error("HelmRelease in unreachable subtree leaked into initial walk")
+	}
+}
+
 // TestLoader_OrphanYAMLSkipped pins the issue-#342 fix: a YAML
 // file in a directory governed by a kustomization.yaml is loaded
 // only when it appears in `resources:`. The unreferenced file (a

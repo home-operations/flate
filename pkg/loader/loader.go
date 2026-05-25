@@ -90,26 +90,31 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		return 0, err
 	}
 
-	// Pre-pass: decode every kustomization.yaml in the tree and
-	// collect (a) data files declared as generator inputs, (b) files
-	// declared as `resources:`, and (c) the directories that have a
-	// kustomization.yaml at all. The main walk applies three rules
-	// from this scan:
-	//
-	//   - skip generator data files (issue #192)
-	//   - skip "orphan" YAML files: a YAML in a directory governed by
-	//     a kustomization.yaml is loaded only when explicitly
-	//     referenced via `resources:`. Closes #342 — toggle stubs
-	//     left lying around next to a kustomization.yaml (a common
-	//     pattern: comment a `./vrising.yaml` line in resources to
-	//     disable that wrapper) were being discovered and reconciled
-	//     against the wrong namespace, since the parent overlay's
-	//     transforms never applied. kustomize build follows the
-	//     same graph; flate now matches that behavior.
+	// Pre-pass: decode every kustomization.yaml in the tree to
+	// (a) identify generator data files (issue #192), (b) collect
+	// per-kustomization-dir resource edges (file + directory), and
+	// (c) record which directories are kustomize packages. The
+	// main walk uses either the kustomize-graph reachability or
+	// the orphan-aware legacy walk depending on the entry-point
+	// shape — see entryReachable below.
 	scan, err := collectKustomizationScan(ctx, abs, ignore)
 	if err != nil {
 		return 0, err
 	}
+
+	// When the entry-point IS a kustomize package, restrict the
+	// load set to files transitively reachable through the
+	// `resources:` graph. This matches `kustomize build` (and
+	// flux-local) semantics: toggle stubs commented out of
+	// kustomization.yaml stay absent, and a HelmRelease in a
+	// subtree whose only kustomize-graph reach is through an
+	// orphan wrapper KS is also absent. Closes the orphan-tree
+	// regression from #342 / buroa/k8s-gitops report.
+	//
+	// When the entry has no kustomization.yaml (an ad-hoc directory
+	// of YAMLs, the legacy --path entry shape), fall back to the
+	// recursive walk + same-dir orphan-skip from #346.
+	reachable := scan.reachable(abs)
 
 	count := 0
 	err = filepath.WalkDir(abs, func(path string, d fs.DirEntry, walkErr error) error {
@@ -123,6 +128,12 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 			if shouldSkipDir(d.Name(), path, abs, ignore) {
 				return filepath.SkipDir
 			}
+			// Graph-walk: skip subdirectories that contain no
+			// reachable files. Compared against ancestors of every
+			// reachable file (computed lazily via prefix check).
+			if reachable != nil && path != abs && !dirHasReachableContent(path, reachable) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !isManifestFile(path) {
@@ -132,20 +143,20 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 			return nil
 		}
 		if _, isData := scan.DataFiles[path]; isData {
-			// Declared as configMapGenerator/secretGenerator data by
-			// a kustomization.yaml in the tree. krusty handles the
-			// file correctly at render time; the loader's job is to
-			// stay out of the way.
 			slog.Debug("loader: skipping generator data file", "path", path)
 			return nil
 		}
-		if orphan := isOrphanYAML(path, scan); orphan {
-			// Orphan: this YAML lives in a directory governed by a
-			// kustomization.yaml but isn't referenced via the
-			// `resources:` list. kustomize build wouldn't include it;
-			// flate now matches that. Common shape: a disabled toggle
-			// stub like `./vrising.yaml` left in the directory after
-			// a maintainer commented out the line in `resources:`.
+		if reachable != nil {
+			// Graph-walk filter: only files reachable from the entry's
+			// kustomize resource graph are loaded. The kustomization.yaml
+			// itself is always in the reachable set (per scan.reachable).
+			if _, ok := reachable[path]; !ok {
+				slog.Debug("loader: skipping YAML unreachable from entry kustomize graph", "path", path)
+				return nil
+			}
+		} else if isOrphanYAML(path, scan) {
+			// Legacy walk (entry has no kustomization.yaml) — fall
+			// back to the same-dir orphan-skip from #346.
 			slog.Debug("loader: skipping orphan YAML not referenced in parent kustomization.yaml", "path", path)
 			return nil
 		}
@@ -295,6 +306,25 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 func isKustomizeComponent(dir string) bool {
 	k := readKustomization(dir)
 	return k != nil && k.Kind == "Component"
+}
+
+// dirHasReachableContent reports whether dir contains (recursively)
+// at least one path in reachable. Used by graph-walk to prune
+// SkipDir on directories with no reachable descendants — avoids
+// walking subtrees that the kustomize graph never enters.
+//
+// Linear scan over reachable. Reachable is bounded by the resource
+// graph size (at most one entry per kustomization.yaml + claimed
+// resource path), so cost stays small; turning this into a trie
+// would help for very deep graphs but isn't warranted today.
+func dirHasReachableContent(dir string, reachable map[string]struct{}) bool {
+	prefix := dir + string(filepath.Separator)
+	for r := range reachable {
+		if r == dir || strings.HasPrefix(r, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // isOrphanYAML reports whether path should be skipped by the main

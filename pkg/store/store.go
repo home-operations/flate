@@ -179,14 +179,32 @@ func Mutate[T interface {
 	manifest.BaseManifest
 	Cloneable[T]
 }](s *Store, id manifest.NamedResource, mutate func(T)) bool {
-	obj, ok := s.GetObject(id).(T)
-	if !ok {
-		return false
+	// Hold s.mu across the whole clone-mutate-write so a concurrent
+	// DeleteObject(id) or AddObject(newer) between Get and Add can't
+	// resurrect deleted state or clobber a newer write with the
+	// mutation of the previously-observed object.
+	var dispatch func()
+	ok := func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		obj, isT := s.objects[id].(T)
+		if !isT {
+			return false
+		}
+		cloned := obj.Clone()
+		mutate(cloned)
+		// Dedup parallel to AddObject — equal mutations no-op.
+		if reflect.DeepEqual(s.objects[id], cloned) {
+			return true
+		}
+		s.setLocked(id, cloned)
+		dispatch = s.fireUnderLock(EventObjectAdded, id, cloned)
+		return true
+	}()
+	if dispatch != nil {
+		dispatch()
 	}
-	cloned := obj.Clone()
-	mutate(cloned)
-	s.AddObject(cloned)
-	return true
+	return ok
 }
 
 // AddRendered records a manifest produced by helm/kustomize rendering.

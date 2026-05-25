@@ -448,22 +448,25 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 }
 
 // VarsMap returns the substitution variables for use with
-// kustomize.Substitute. Non-string values are stringified. Newline
-// characters are stripped from every value — upstream kustomize-
-// controller does the same so multi-line entries can't break inline
-// substitution into single-line YAML fields.
+// kustomize.Substitute. Non-string scalar values are stringified;
+// nested maps/slices and other unsupported shapes are silently
+// dropped with a Debug log rather than rendered as Go's default
+// `map[k:v]` / `[1 2 3]` representation, which produced literal
+// garbage substitutions diverging from upstream kustomize-controller
+// (whose LoadVariables only accepts flat string→string). Newline
+// characters are stripped from every value — upstream does the same
+// so multi-line entries can't break inline substitution into
+// single-line YAML fields.
 func VarsMap(in map[string]any) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(in))
 	for k, v := range in {
-		var s string
-		switch tv := v.(type) {
-		case string:
-			s = tv
-		default:
-			s = fmt.Sprint(v)
+		s, err := bagValueAsString(v)
+		if err != nil {
+			slog.Debug("values: dropping non-scalar substitute var", "key", k, "err", err)
+			continue
 		}
 		out[k] = strings.ReplaceAll(s, "\n", "")
 	}

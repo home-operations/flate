@@ -294,7 +294,17 @@ func mergeBase(repo *git.Repository, headCommit *object.Commit, other plumbing.H
 	if len(bases) == 0 {
 		return plumbing.ZeroHash, errors.New("no merge-base (disjoint histories)")
 	}
-	return bases[0].Hash, nil
+	// Criss-cross merges produce >1 candidate base; go-git doesn't
+	// guarantee a stable order. Pick the lexicographically-smallest
+	// hash so two `flate diff` runs against the same repo pick the
+	// same baseline — reproducibility is a stated guarantee.
+	best := bases[0].Hash
+	for _, b := range bases[1:] {
+		if b.Hash.String() < best.String() {
+			best = b.Hash
+		}
+	}
+	return best, nil
 }
 
 // isShallow reports whether the repo is a shallow clone (presence of
@@ -355,6 +365,29 @@ func materialize(repo *git.Repository, hash plumbing.Hash, root string) error {
 			slog.Warn("baseline: skipping submodule", "path", name)
 			continue
 		}
+		if entry.Mode == filemode.Symlink {
+			// go-git's filemode.IsFile() returns true for symlinks
+			// too, but writing the link-target string as a regular
+			// file would produce false diffs vs the working tree
+			// (which has actual symlinks). Materialize symlinks as
+			// real symlinks.
+			blob, err := repo.BlobObject(entry.Hash)
+			if err != nil {
+				return fmt.Errorf("load baseline symlink blob %s for %q: %w", entry.Hash, name, err)
+			}
+			target, err := readBlob(blob)
+			if err != nil {
+				return fmt.Errorf("read baseline symlink target for %q: %w", name, err)
+			}
+			path := filepath.Join(root, filepath.FromSlash(name))
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+			}
+			if err := os.Symlink(string(target), path); err != nil {
+				return fmt.Errorf("symlink %s -> %s: %w", path, target, err)
+			}
+			continue
+		}
 		if !entry.Mode.IsFile() {
 			// Trees and other non-file modes — NewTreeWalker recurses
 			// into subtrees automatically, so we don't mkdir here; the
@@ -365,11 +398,25 @@ func materialize(repo *git.Repository, hash plumbing.Hash, root string) error {
 		if err != nil {
 			return fmt.Errorf("load baseline blob %s for %q: %w", entry.Hash, name, err)
 		}
-		if err := writeBlob(filepath.Join(root, name), blob, entry.Mode); err != nil {
+		// Convert slash-separated tree path to filesystem separator
+		// for Windows portability (no-op on Linux/macOS).
+		if err := writeBlob(filepath.Join(root, filepath.FromSlash(name)), blob, entry.Mode); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// readBlob slurps the entire contents of a blob (used for symlink
+// targets, which are bounded by PATH_MAX so the in-memory cost is
+// trivial).
+func readBlob(blob *object.Blob) ([]byte, error) {
+	r, err := blob.Reader()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = r.Close() }()
+	return io.ReadAll(r)
 }
 
 // writeBlob streams blob's content to path, creating parent dirs and

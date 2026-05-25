@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -104,6 +105,21 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 				Resource: id.String(), Reason: currentFailed.Message,
 			}
 		case <-ctx.Done():
+			// Propagate ctx.Err() ONLY when the caller explicitly
+			// cancelled (context.Canceled) — otherwise (per-dep
+			// Timeout expired with a Failed observed), preserve the
+			// established "surface ResourceFailedError so dep
+			// summaries carry the real reason" semantic. Without
+			// this distinction, clean Ctrl-C on a depwait stuck on a
+			// genuinely-failed dep silently masqueraded the
+			// shutdown as a dep-failure downstream.
+			if errors.Is(ctx.Err(), context.Canceled) {
+				info := StatusInfo{}
+				if currentFailed != nil {
+					info = *currentFailed
+				}
+				return info, ctx.Err()
+			}
 			if currentFailed != nil {
 				return *currentFailed, &manifest.ResourceFailedError{
 					Resource: id.String(), Reason: currentFailed.Message,

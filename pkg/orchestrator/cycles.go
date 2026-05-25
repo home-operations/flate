@@ -1,8 +1,8 @@
 package orchestrator
 
 import (
-	"cmp"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 
@@ -112,23 +112,20 @@ func findDependencyCycles(s *store.Store, kind string) [][]manifest.NamedResourc
 	var stack []manifest.NamedResource
 	var cycles [][]manifest.NamedResource
 
-	nodes := make([]manifest.NamedResource, 0, len(graph))
-	for n := range graph {
-		nodes = append(nodes, n)
-	}
-	slices.SortFunc(nodes, func(a, b manifest.NamedResource) int {
-		return cmp.Or(cmp.Compare(a.Namespace, b.Namespace), cmp.Compare(a.Name, b.Name))
-	})
+	// Sort the visit order so cycle output is deterministic across
+	// runs. NamedResource.Compare orders by (kind, namespace, name);
+	// every node here shares the same kind, so the comparison
+	// reduces to (namespace, name) — the historical inline ordering.
+	nodes := slices.SortedFunc(maps.Keys(graph), manifest.NamedResource.Compare)
 
 	var visit func(n manifest.NamedResource)
 	visit = func(n manifest.NamedResource) {
 		color[n] = gray
 		stack = append(stack, n)
-		// Sort outgoing edges for determinism.
+		// Sort outgoing edges for determinism. Clone the slice first
+		// so the SortFunc doesn't mutate the underlying graph entry.
 		out := append([]manifest.NamedResource(nil), graph[n]...)
-		slices.SortFunc(out, func(a, b manifest.NamedResource) int {
-			return cmp.Or(cmp.Compare(a.Namespace, b.Namespace), cmp.Compare(a.Name, b.Name))
-		})
+		slices.SortFunc(out, manifest.NamedResource.Compare)
 		for _, m := range out {
 			switch color[m] {
 			case white:

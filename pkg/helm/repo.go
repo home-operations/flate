@@ -53,7 +53,7 @@ func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
 	art := c.resolveLocalSource(hr)
 	if art == nil {
 		return "", fmt.Errorf("%w: %s %s not available for HelmRelease %s",
-			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.NamespacedName())
+			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
 	}
 	path := filepath.Join(art.LocalPath, hr.Chart.Name)
 	if _, err := os.Stat(filepath.Join(path, "Chart.yaml")); err != nil {
@@ -70,7 +70,7 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	r := c.resolveHelmRepo(hr)
 	if r == nil {
 		return "", fmt.Errorf("%w: HelmRepository %s not registered for HelmRelease %s",
-			manifest.ErrObjectNotFound, hr.Chart.RepoFullName(), hr.NamespacedName())
+			manifest.ErrObjectNotFound, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
 	}
 
 	if r.Type == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://") {

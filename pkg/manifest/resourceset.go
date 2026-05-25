@@ -38,9 +38,6 @@ func (r *ResourceSet) Named() NamedResource {
 	return NamedResource{Kind: KindResourceSet, Namespace: r.Namespace, Name: r.Name}
 }
 
-// NamespacedName is "<namespace>/<name>".
-func (r *ResourceSet) NamespacedName() string { return r.Namespace + "/" + r.Name }
-
 // parseResourceSet decodes a ResourceSet CR via the flux-operator
 // typed schema (controlplane.io/v1).
 func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
@@ -85,9 +82,6 @@ type ResourceSetInputProvider struct {
 func (p *ResourceSetInputProvider) Named() NamedResource {
 	return NamedResource{Kind: KindResourceSetInputProvider, Namespace: p.Namespace, Name: p.Name}
 }
-
-// NamespacedName is "<namespace>/<name>".
-func (p *ResourceSetInputProvider) NamespacedName() string { return p.Namespace + "/" + p.Name }
 
 // parseResourceSetInputProvider decodes a ResourceSetInputProvider CR.
 func parseResourceSetInputProvider(doc map[string]any) (*ResourceSetInputProvider, error) {

@@ -64,7 +64,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 
 	inputs, err := buildInputSets(rs, resolve)
 	if err != nil {
-		return nil, fmt.Errorf("ResourceSet %s: %w", rs.NamespacedName(), err)
+		return nil, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
 	}
 	// Under Permute, an empty input slice means the Cartesian product
 	// genuinely collapsed (every-provider-empty with includeEmpty=true,
@@ -92,7 +92,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 	for i, raw := range rs.Resources {
 		rendered, err := renderResources(raw, inputs)
 		if err != nil {
-			return nil, fmt.Errorf("ResourceSet %s: spec.resources[%d]: %w", rs.NamespacedName(), i, err)
+			return nil, fmt.Errorf("ResourceSet %s: spec.resources[%d]: %w", rs.Named().NamespacedName(), i, err)
 		}
 		for _, doc := range rendered {
 			appendUnique(doc)
@@ -102,7 +102,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 	if rs.ResourcesTemplate != "" {
 		rendered, err := renderResourcesTemplate(rs.ResourcesTemplate, inputs)
 		if err != nil {
-			return nil, fmt.Errorf("ResourceSet %s: spec.resourcesTemplate: %w", rs.NamespacedName(), err)
+			return nil, fmt.Errorf("ResourceSet %s: spec.resourcesTemplate: %w", rs.Named().NamespacedName(), err)
 		}
 		for _, doc := range rendered {
 			appendUnique(doc)

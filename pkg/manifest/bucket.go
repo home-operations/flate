@@ -53,20 +53,12 @@ func parseBucket(doc map[string]any) (*Bucket, error) {
 	}
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.BucketProviderGeneric)
 	owner := cr.Namespace + "/" + cr.Name
-	if r := cr.Spec.SecretRef; r != nil {
-		if err := validateSecretRefName("Bucket", owner, "spec.secretRef", r.Name); err != nil {
-			return nil, err
-		}
-	}
-	if r := cr.Spec.CertSecretRef; r != nil {
-		if err := validateSecretRefName("Bucket", owner, "spec.certSecretRef", r.Name); err != nil {
-			return nil, err
-		}
-	}
-	if r := cr.Spec.ProxySecretRef; r != nil {
-		if err := validateSecretRefName("Bucket", owner, "spec.proxySecretRef", r.Name); err != nil {
-			return nil, err
-		}
+	if err := validateOptionalRefs("Bucket", owner,
+		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},
+		secretRefCheck{Field: "spec.certSecretRef", Ref: cr.Spec.CertSecretRef},
+		secretRefCheck{Field: "spec.proxySecretRef", Ref: cr.Spec.ProxySecretRef},
+	); err != nil {
+		return nil, err
 	}
 	return &Bucket{
 		Name:       cr.Name,

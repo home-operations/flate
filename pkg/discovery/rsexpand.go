@@ -28,7 +28,7 @@ func (d *discoverer) renderResourceSet(rs *manifest.ResourceSet) (int, error) {
 	for _, doc := range docs {
 		obj, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
-			slog.Debug("resourceset: skipped doc", "rs", rs.NamespacedName(), "err", err)
+			slog.Debug("resourceset: skipped doc", "rs", rs.Named().NamespacedName(), "err", err)
 			continue
 		}
 		if _, ok := obj.(*manifest.RawObject); ok {

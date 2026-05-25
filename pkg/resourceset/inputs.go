@@ -115,12 +115,12 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 	for _, p := range providers {
 		exported, err := p.ExportedInputs()
 		if err != nil {
-			return nil, fmt.Errorf("ResourceSetInputProvider %s: %w", p.NamespacedName(), err)
+			return nil, fmt.Errorf("ResourceSetInputProvider %s: %w", p.Named().NamespacedName(), err)
 		}
 		if exported == nil && p.Type != "" && p.Type != fluxopv1.InputProviderStatic {
 			slog.Warn("resourceset: dynamic input provider contributes no inputs offline",
-				"resourceSet", rs.NamespacedName(),
-				"provider", p.NamespacedName(),
+				"resourceSet", rs.Named().NamespacedName(),
+				"provider", p.Named().NamespacedName(),
 				"type", p.Type)
 		}
 		provBlock := map[string]any{

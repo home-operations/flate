@@ -57,8 +57,10 @@ func (g *GitRepository) Named() NamedResource {
 // Suspended reports whether reconciliation is paused on this resource.
 func (g *GitRepository) Suspended() bool { return g.Suspend }
 
-// RepoName is "<namespace>-<name>".
-func (g *GitRepository) RepoName() string { return g.Namespace + "-" + g.Name }
+// RepoName delegates to the canonical NamedResource helper so all
+// three source kinds (Git, OCI, Helm) produce identical strings on
+// the same id.
+func (g *GitRepository) RepoName() string { return g.Named().FluxResourceName() }
 
 // validateSecretRefName rejects a Secret/LocalObjectReference whose
 // Name is empty. Without this check, a typo'd YAML like
@@ -72,6 +74,34 @@ func (g *GitRepository) RepoName() string { return g.Namespace + "-" + g.Name }
 func validateSecretRefName(kind, owner, field, name string) error {
 	if name == "" {
 		return inputf("%s %s: %s.name is empty", kind, owner, field)
+	}
+	return nil
+}
+
+// secretRefCheck pairs a spec.field path with a pointer to the
+// LocalObjectReference at that path. Used in slice form with
+// validateOptionalRefs to batch every Secret-ref validation at the
+// edge of a parser.
+type secretRefCheck struct {
+	Field string
+	Ref   *LocalObjectReference
+}
+
+// validateOptionalRefs runs validateSecretRefName for each non-nil
+// ref in checks. Caller hands the parser's full list of pointer-to-
+// LocalObjectReference fields in one shot so adding a new ref to a
+// source kind's schema is a one-line edit rather than 3-5 new
+// boilerplate blocks. Value-type refs (e.g. Verification.SecretRef,
+// nested inside a *Verification) stay inline since they don't
+// share the nil-pointer-guard shape.
+func validateOptionalRefs(kind, owner string, checks ...secretRefCheck) error {
+	for _, c := range checks {
+		if c.Ref == nil {
+			continue
+		}
+		if err := validateSecretRefName(kind, owner, c.Field, c.Ref.Name); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -109,15 +139,11 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 		v.Mode = v.GetMode()
 	}
 	owner := cr.Namespace + "/" + cr.Name
-	if r := cr.Spec.SecretRef; r != nil {
-		if err := validateSecretRefName("GitRepository", owner, "spec.secretRef", r.Name); err != nil {
-			return nil, err
-		}
-	}
-	if r := cr.Spec.ProxySecretRef; r != nil {
-		if err := validateSecretRefName("GitRepository", owner, "spec.proxySecretRef", r.Name); err != nil {
-			return nil, err
-		}
+	if err := validateOptionalRefs("GitRepository", owner,
+		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},
+		secretRefCheck{Field: "spec.proxySecretRef", Ref: cr.Spec.ProxySecretRef},
+	); err != nil {
+		return nil, err
 	}
 	if v := cr.Spec.Verification; v != nil {
 		if err := validateSecretRefName("GitRepository", owner, "spec.verify.secretRef", v.SecretRef.Name); err != nil {
@@ -172,8 +198,8 @@ func (o *OCIRepository) Named() NamedResource {
 // Suspended reports whether reconciliation is paused on this resource.
 func (o *OCIRepository) Suspended() bool { return o.Suspend }
 
-// RepoName is "<namespace>-<name>".
-func (o *OCIRepository) RepoName() string { return o.Namespace + "-" + o.Name }
+// RepoName delegates to the canonical NamedResource helper.
+func (o *OCIRepository) RepoName() string { return o.Named().FluxResourceName() }
 
 // Version returns the digest, tag, or semver expression in that order.
 // A semver expression is returned verbatim — callers wanting a concrete
@@ -212,23 +238,17 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		r.Digest = ResolveEnvsubstDefaults(r.Digest)
 	}
 	owner := cr.Namespace + "/" + cr.Name
-	if r := cr.Spec.SecretRef; r != nil {
-		if err := validateSecretRefName("OCIRepository", owner, "spec.secretRef", r.Name); err != nil {
-			return nil, err
-		}
+	if err := validateOptionalRefs("OCIRepository", owner,
+		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},
+		secretRefCheck{Field: "spec.certSecretRef", Ref: cr.Spec.CertSecretRef},
+		secretRefCheck{Field: "spec.proxySecretRef", Ref: cr.Spec.ProxySecretRef},
+	); err != nil {
+		return nil, err
 	}
-	if r := cr.Spec.CertSecretRef; r != nil {
-		if err := validateSecretRefName("OCIRepository", owner, "spec.certSecretRef", r.Name); err != nil {
-			return nil, err
-		}
-	}
-	if r := cr.Spec.ProxySecretRef; r != nil {
-		if err := validateSecretRefName("OCIRepository", owner, "spec.proxySecretRef", r.Name); err != nil {
-			return nil, err
-		}
-	}
-	if v := cr.Spec.Verify; v != nil && v.SecretRef != nil {
-		if err := validateSecretRefName("OCIRepository", owner, "spec.verify.secretRef", v.SecretRef.Name); err != nil {
+	if v := cr.Spec.Verify; v != nil {
+		if err := validateOptionalRefs("OCIRepository", owner,
+			secretRefCheck{Field: "spec.verify.secretRef", Ref: v.SecretRef},
+		); err != nil {
 			return nil, err
 		}
 	}

@@ -98,9 +98,6 @@ func (k *Kustomization) Clone() *Kustomization {
 	return &out
 }
 
-// NamespacedName is "<namespace>/<name>".
-func (k *Kustomization) NamespacedName() string { return k.Namespace + "/" + k.Name }
-
 // FilterDependsOn returns a copy of deps with any entries whose target
 // is not present in known removed. known is a set of "namespace/name"
 // identifiers. The second return value is the count of dropped

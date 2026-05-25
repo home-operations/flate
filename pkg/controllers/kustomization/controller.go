@@ -325,7 +325,7 @@ func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, erro
 		// root instead of doubling ks.Path against itself (#105).
 		if ks.Path == "" {
 			return "", fmt.Errorf("%w: kustomization %s has no path and no source",
-				manifest.ErrInput, ks.NamespacedName())
+				manifest.ErrInput, ks.Named().NamespacedName())
 		}
 		srcID = manifest.BootstrapSourceID
 	}

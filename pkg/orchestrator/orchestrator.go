@@ -354,11 +354,11 @@ func (o *Orchestrator) validateDependsOn() {
 	}
 	ksList := store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization)
 	for _, ks := range ksList {
-		known[manifest.KindKustomization][ks.NamespacedName()] = struct{}{}
+		known[manifest.KindKustomization][ks.Named().NamespacedName()] = struct{}{}
 	}
 	hrList := store.ListAs[*manifest.HelmRelease](o.store, manifest.KindHelmRelease)
 	for _, hr := range hrList {
-		known[manifest.KindHelmRelease][hr.NamespacedName()] = struct{}{}
+		known[manifest.KindHelmRelease][hr.Named().NamespacedName()] = struct{}{}
 	}
 	// Mutate via the Store helper — encodes the clone-then-AddObject
 	// contract so callers don't have to remember it.

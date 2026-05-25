@@ -205,9 +205,6 @@ func (h *HelmRelease) ReleaseNamespace() string {
 	return cmp.Or(h.TargetNamespace, h.Namespace)
 }
 
-// NamespacedName is "<namespace>/<name>".
-func (h *HelmRelease) NamespacedName() string { return h.Namespace + "/" + h.Name }
-
 // HelmChartLookup returns the HelmChartSource at (namespace, name) or
 // nil when not present. The shape ResolveChartRef accepts so callers
 // can pass either a SourceResolver method (orchestrator path) or a
@@ -233,7 +230,7 @@ func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
 	src := lookup(h.Chart.RepoNamespace, h.Chart.RepoName)
 	if src == nil {
 		return fmt.Errorf("%w: HelmChartSource %s not found for HelmRelease %s",
-			ErrObjectNotFound, h.Chart.RepoFullName(), h.NamespacedName())
+			ErrObjectNotFound, h.Chart.RepoFullName(), h.Named().NamespacedName())
 	}
 	h.Chart = helmChartFromSource(src)
 	if len(src.ValuesFiles) > 0 {

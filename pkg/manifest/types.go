@@ -39,6 +39,16 @@ func (n NamedResource) NamespacedName() string {
 	return n.Namespace + "/" + n.Name
 }
 
+// FluxResourceName is the canonical "<namespace>-<name>" identifier
+// every Flux source CR uses for cache slots, OCI auth scopes, etc.
+// Single source of truth so GitRepository / OCIRepository /
+// HelmRepository all return identical strings on the same id and a
+// future format change (e.g. adding a kind prefix) only touches this
+// function.
+func (n NamedResource) FluxResourceName() string {
+	return n.Namespace + "-" + n.Name
+}
+
 // String returns "kind/namespace/name" — the canonical id form.
 func (n NamedResource) String() string {
 	return n.Kind + "/" + n.NamespacedName()

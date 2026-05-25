@@ -21,8 +21,8 @@ func (h *HelmRepository) Named() NamedResource {
 	return NamedResource{Kind: KindHelmRepository, Namespace: h.Namespace, Name: h.Name}
 }
 
-// RepoName is "<namespace>-<name>".
-func (h *HelmRepository) RepoName() string { return h.Namespace + "-" + h.Name }
+// RepoName delegates to the canonical NamedResource helper.
+func (h *HelmRepository) RepoName() string { return h.Named().FluxResourceName() }
 
 // parseHelmRepository decodes a HelmRepository CR via the
 // source-controller typed schema.
@@ -42,15 +42,11 @@ func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	}
 	cr.Spec.Type = cmp.Or(cr.Spec.Type, RepoTypeDefault)
 	owner := cr.Namespace + "/" + cr.Name
-	if r := cr.Spec.SecretRef; r != nil {
-		if err := validateSecretRefName("HelmRepository", owner, "spec.secretRef", r.Name); err != nil {
-			return nil, err
-		}
-	}
-	if r := cr.Spec.CertSecretRef; r != nil {
-		if err := validateSecretRefName("HelmRepository", owner, "spec.certSecretRef", r.Name); err != nil {
-			return nil, err
-		}
+	if err := validateOptionalRefs("HelmRepository", owner,
+		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},
+		secretRefCheck{Field: "spec.certSecretRef", Ref: cr.Spec.CertSecretRef},
+	); err != nil {
+		return nil, err
 	}
 	return &HelmRepository{
 		Name:               cr.Name,

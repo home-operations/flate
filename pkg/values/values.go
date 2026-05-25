@@ -119,7 +119,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 	for _, ref := range hr.ValuesFrom {
 		found, err := lookupValueRef(ref, hr.Namespace, provider)
 		if err != nil {
-			return fmt.Errorf("building HelmRelease %s: %w", hr.NamespacedName(), err)
+			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 		if found == "" {
 			// Resource missing. lookupValueRef only returns "" when
@@ -128,13 +128,13 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 			// case where Optional applies.
 			if !ref.Optional {
 				return fmt.Errorf("%w: HelmRelease %s: valuesFrom %s %s/%s not found",
-					manifest.ErrObjectNotFound, hr.NamespacedName(), ref.Kind, hr.Namespace, ref.Name)
+					manifest.ErrObjectNotFound, hr.Named().NamespacedName(), ref.Kind, hr.Namespace, ref.Name)
 			}
 			continue
 		}
 		merged, err := updateHelmReleaseValues(ref, found, values)
 		if err != nil {
-			return fmt.Errorf("building HelmRelease %s: %w", hr.NamespacedName(), err)
+			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 		values = merged
 	}

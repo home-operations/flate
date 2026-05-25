@@ -34,10 +34,10 @@ func firstArg(args []string) string {
 // deterministic across runs.
 func sortRows(rows []map[string]string) {
 	slices.SortFunc(rows, func(a, b map[string]string) int {
-		if c := cmp.Compare(a["namespace"], b["namespace"]); c != 0 {
-			return c
-		}
-		return cmp.Compare(a["name"], b["name"])
+		return cmp.Or(
+			cmp.Compare(a["namespace"], b["namespace"]),
+			cmp.Compare(a["name"], b["name"]),
+		)
 	})
 }
 

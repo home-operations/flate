@@ -47,13 +47,11 @@ func (n NamedResource) String() string {
 // Compare orders NamedResources by (kind, namespace, name) — returns
 // -1, 0, or +1 per cmp.Compare semantics.
 func (n NamedResource) Compare(other NamedResource) int {
-	if c := cmp.Compare(n.Kind, other.Kind); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(n.Namespace, other.Namespace); c != 0 {
-		return c
-	}
-	return cmp.Compare(n.Name, other.Name)
+	return cmp.Or(
+		cmp.Compare(n.Kind, other.Kind),
+		cmp.Compare(n.Namespace, other.Namespace),
+		cmp.Compare(n.Name, other.Name),
+	)
 }
 
 // BaseManifest is the marker interface every domain object implements.

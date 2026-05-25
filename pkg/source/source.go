@@ -53,9 +53,10 @@ func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*stor
 	return nil, nil
 }
 
-// SecretGetter resolves a Secret CR by namespace + name. Fetchers that
-// read authentication credentials (Bucket; future GitRepository
-// SecretRef; future OCIRepository SecretRef) accept one of these so
-// they don't need a back-reference to the Store. The orchestrator
-// wires it to Store.GetByName at construction time.
+// SecretGetter resolves a Secret CR by namespace + name. Fetchers
+// that read authentication, TLS, proxy, or cosign-verify material
+// from a Flux spec.*SecretRef accept one of these so they don't need
+// a back-reference to the Store. Today: GitRepository (auth + TLS),
+// OCIRepository (auth + TLS + cosign verify), Bucket (auth + TLS).
+// The orchestrator wires it to Store.GetByName at construction time.
 type SecretGetter func(namespace, name string) *manifest.Secret

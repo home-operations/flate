@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -137,7 +138,7 @@ func (c *StagingCache) copyTree(src string) (string, error) {
 		if d.IsDir() {
 			// Skip anything that isn't user content: .git / node_modules
 			// and every dot-prefixed dir (which captures .flate-cache).
-			if base == "node_modules" || (len(base) > 0 && base[0] == '.') {
+			if base == "node_modules" || strings.HasPrefix(base, ".") {
 				return fs.SkipDir
 			}
 			return os.MkdirAll(filepath.Join(dst, rel), 0o750)

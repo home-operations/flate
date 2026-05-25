@@ -2,7 +2,6 @@ package store
 
 import (
 	"log/slog"
-	"maps"
 	"slices"
 	"sync"
 
@@ -73,65 +72,99 @@ func (s *Store) OnArtifact(fn func(manifest.NamedResource, Artifact), replay boo
 // order must sort what they receive. Listener panics during replay
 // are recovered, same as live dispatch. The returned Unsubscribe
 // removes the listener.
+//
+// The flush=true path holds s.mu across the (register + capture
+// replay snapshot) pair. Without that serialization, a concurrent
+// writer (AddObject / SetCondition / SetArtifact) could update its
+// map, release s.mu, snapshot listeners (now including this fresh
+// listener because set.add already ran), and dispatch the live event
+// to fn — while THIS goroutine separately replays the same object
+// from the post-update map snapshot. The result is a double-fire.
+// Holding s.mu while we both register AND capture the replay state
+// means writers either see the listener-registered state before
+// dispatch (replay returns nothing new, live event fires once) or
+// see the pre-registered state (live event misses this listener,
+// replay fires once). Exactly-one delivery either way.
 func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscribe {
 	set, ok := s.listeners[event]
 	if !ok {
 		panic("store: unknown event kind")
 	}
+	if !flush {
+		handle := set.add(fn)
+		return func() { set.remove(handle) }
+	}
+	s.mu.Lock()
 	handle := set.add(fn)
-
-	if flush {
-		s.replayInto(event, fn)
+	pairs := s.snapshotForReplay(event)
+	s.mu.Unlock()
+	for _, p := range pairs {
+		safeInvoke(fn, p.id, p.payload)
 	}
 	return func() { set.remove(handle) }
 }
 
-// replayInto delivers existing state to a fresh listener so it can catch
-// up. Called under no lock; takes its own RLock. Listener panics are
-// recovered via safeInvoke — replay must NOT crash the controller that
-// just attached the listener (parity with live `fire` dispatch).
-func (s *Store) replayInto(event EventKind, fn Listener) {
-	switch event {
-	case EventObjectAdded:
-		s.mu.RLock()
-		snap := make(map[manifest.NamedResource]manifest.BaseManifest, len(s.objects))
-		maps.Copy(snap, s.objects)
-		s.mu.RUnlock()
-		for id, obj := range snap {
-			safeInvoke(fn, id, obj)
-		}
-	case EventStatusUpdated:
-		s.mu.RLock()
-		snap := make(map[manifest.NamedResource]StatusInfo, len(s.conditions))
-		for id, conds := range s.conditions {
-			if info, ok := statusInfoFromConditions(conds); ok {
-				snap[id] = info
-			}
-		}
-		s.mu.RUnlock()
-		for id, info := range snap {
-			safeInvoke(fn, id, info)
-		}
-	case EventArtifactUpdated:
-		s.mu.RLock()
-		snap := make(map[manifest.NamedResource]Artifact, len(s.artifacts))
-		maps.Copy(snap, s.artifacts)
-		s.mu.RUnlock()
-		for id, art := range snap {
-			safeInvoke(fn, id, art)
-		}
-	}
+// idPayload is the replay tuple snapshotForReplay returns.
+type idPayload struct {
+	id      manifest.NamedResource
+	payload any
 }
 
-// fire dispatches an event to every registered listener. Listeners run
-// synchronously on the calling goroutine. A panic in any listener is
-// recovered to prevent one bad listener from breaking the dispatch.
-func (s *Store) fire(event EventKind, id manifest.NamedResource, payload any) {
+// snapshotForReplay captures the existing-state replay for event.
+// Caller MUST hold s.mu (write lock) — the snapshot read must be
+// atomic with respect to writers' map updates so the listener-snapshot
+// they capture is consistent with the replay set returned here.
+func (s *Store) snapshotForReplay(event EventKind) []idPayload {
+	switch event {
+	case EventObjectAdded:
+		out := make([]idPayload, 0, len(s.objects))
+		for id, obj := range s.objects {
+			out = append(out, idPayload{id, obj})
+		}
+		return out
+	case EventStatusUpdated:
+		out := make([]idPayload, 0, len(s.conditions))
+		for id, conds := range s.conditions {
+			if info, ok := statusInfoFromConditions(conds); ok {
+				out = append(out, idPayload{id, info})
+			}
+		}
+		return out
+	case EventArtifactUpdated:
+		out := make([]idPayload, 0, len(s.artifacts))
+		for id, art := range s.artifacts {
+			out = append(out, idPayload{id, art})
+		}
+		return out
+	}
+	return nil
+}
+
+// fireUnderLock is the race-safe dispatcher writers MUST use: it
+// captures the listener snapshot under the caller's already-held
+// s.mu and returns a closure the caller invokes AFTER releasing the
+// lock. The pattern is:
+//
+//	s.mu.Lock()
+//	... mutate ...
+//	dispatch := s.fireUnderLock(EventX, id, payload)
+//	s.mu.Unlock()
+//	dispatch()
+//
+// Holding s.mu while snapshotting listeners closes the
+// AddListener-vs-writer race documented on AddListener.
+func (s *Store) fireUnderLock(event EventKind, id manifest.NamedResource, payload any) func() {
 	set := s.listeners[event]
 	if set == nil {
-		return
+		return func() {}
 	}
-	for _, fn := range set.snapshot() {
+	listeners := set.snapshot()
+	return func() { dispatch(listeners, id, payload) }
+}
+
+// dispatch invokes each listener with the payload, recovering panics.
+func dispatch(listeners []Listener, id manifest.NamedResource, payload any) {
+	for _, fn := range listeners {
 		safeInvoke(fn, id, payload)
 	}
 }

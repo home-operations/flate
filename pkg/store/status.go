@@ -180,16 +180,30 @@ func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, message s
 // An identical re-write of the same condition is a no-op (no event).
 func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
 	s.mu.Lock()
-	prev := s.conditions[id]
+	updated, changed := s.setConditionLocked(id, cond)
+	if !changed {
+		s.mu.Unlock()
+		return
+	}
+	newInfo, _ := statusInfoFromConditions(updated)
+	dispatch := s.fireUnderLock(EventStatusUpdated, id, newInfo)
+	s.mu.Unlock()
+	dispatch()
+}
 
-	updated := make([]Condition, 0, len(prev)+1)
+// setConditionLocked upserts cond into id's condition list and
+// returns the updated list plus whether it actually changed (an
+// identical re-write is a no-op). Caller MUST hold s.mu — used both
+// by SetCondition (which takes the lock itself) and by Refire (which
+// already holds the lock for an atomic check-and-act).
+func (s *Store) setConditionLocked(id manifest.NamedResource, cond Condition) (updated []Condition, changed bool) {
+	prev := s.conditions[id]
+	updated = make([]Condition, 0, len(prev)+1)
 	replaced := false
 	for _, c := range prev {
 		if c.Type == cond.Type {
 			if conditionEqual(c, cond) {
-				// Identical condition — nothing to do, including no event.
-				s.mu.Unlock()
-				return
+				return prev, false
 			}
 			updated = append(updated, cond)
 			replaced = true
@@ -201,10 +215,7 @@ func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
 		updated = append(updated, cond)
 	}
 	s.conditions[id] = updated
-	newInfo, _ := statusInfoFromConditions(updated)
-	s.mu.Unlock()
-
-	s.fire(EventStatusUpdated, id, newInfo)
+	return updated, true
 }
 
 // GetStatus returns the Ready-derived StatusInfo for id and whether

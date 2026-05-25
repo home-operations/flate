@@ -92,7 +92,16 @@ func compileReadyExpr(expr string) (cel.Program, error) {
 // rely on these being populated. The full spec is not yet projected;
 // CEL expressions touching spec.* read undefined (documented gap).
 func projectObject(s *store.Store, id manifest.NamedResource) map[string]any {
-	conds := s.GetConditions(id)
+	// Snapshot the object AND its conditions atomically. Independent
+	// GetObject + GetConditions calls would each take their own
+	// s.mu.RLock; between them a writer can land an AddObject and/or
+	// SetCondition, mixing the freshly-projected object with stale
+	// conditions (or vice versa). For correlation-style CEL like
+	//   dep.metadata.labels['component'] == 'cache' &&
+	//   dep.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')
+	// the mixed snapshot can render a false positive/negative until
+	// the next event triggers re-evaluation.
+	obj, conds := s.Snapshot(id)
 	condsAny := make([]any, 0, len(conds))
 	for _, c := range conds {
 		condsAny = append(condsAny, conditionToMap(c))
@@ -109,7 +118,7 @@ func projectObject(s *store.Store, id manifest.NamedResource) map[string]any {
 		// — a common Flux readiness idiom — never spuriously fail.
 		"generation": int64(1),
 	}
-	if labels, annotations := labelsAndAnnotations(s.GetObject(id)); labels != nil || annotations != nil {
+	if labels, annotations := labelsAndAnnotations(obj); labels != nil || annotations != nil {
 		if labels != nil {
 			meta["labels"] = labels
 		}

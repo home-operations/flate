@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -556,4 +558,57 @@ func TestStore_Concurrency(_ *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// TestStore_AddListener_FlushNoDoubleFire stresses the
+// AddObject-vs-AddListener race that the fireUnderLock pattern closes.
+// Without the fix, a flush=true listener registering while a sibling
+// goroutine ran AddObject for the same id could observe the object
+// TWICE: once via the live event (listener was added before the
+// writer's listener-snapshot ran) and again via the replay snapshot
+// (which captured the same object). The Coalescer hid this in
+// production by deduping per-id reconciles, but a test counter
+// surfaces it.
+func TestStore_AddListener_FlushNoDoubleFire(t *testing.T) {
+	const iterations = 200
+	for range iterations {
+		s := New()
+		// Seed enough objects that the replay snapshot is non-trivial
+		// and the race window is reachable.
+		const seed = 8
+		for i := range seed {
+			s.AddObject(newCM(fmt.Sprintf("seed-%d", i), "ns"))
+		}
+
+		var (
+			counts   sync.Map // id → atomic count
+			racerID  = manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "racer"}
+			racerObj = newCM("racer", "ns")
+		)
+
+		var startGate, done sync.WaitGroup
+		startGate.Add(1)
+		done.Add(2)
+
+		go func() {
+			defer done.Done()
+			startGate.Wait()
+			s.AddObject(racerObj)
+		}()
+		go func() {
+			defer done.Done()
+			startGate.Wait()
+			s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+				v, _ := counts.LoadOrStore(id, new(atomic.Int64))
+				v.(*atomic.Int64).Add(1)
+			}, true)
+		}()
+		startGate.Done()
+		done.Wait()
+
+		v, _ := counts.LoadOrStore(racerID, new(atomic.Int64))
+		if got := v.(*atomic.Int64).Load(); got != 1 {
+			t.Fatalf("racer fired %d times on iteration; want exactly 1", got)
+		}
+	}
 }

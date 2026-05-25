@@ -85,8 +85,9 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 		s.byName[id.Kind] = inner
 	}
 	inner[nameKey(id.Namespace, id.Name)] = obj
+	dispatch := s.fireUnderLock(EventObjectAdded, id, obj)
 	s.mu.Unlock()
-	s.fire(EventObjectAdded, id, obj)
+	dispatch()
 }
 
 // Refire resets the resource's Ready condition to Pending and then
@@ -103,16 +104,30 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 // before EventObjectAdded fires, so any depwait that reads status
 // between the two events still sees Pending.
 //
-// No-op when id is not in the store.
+// No-op when id is not in the store. The object existence check, the
+// status reset, and the event capture all run under one s.mu
+// acquisition so a concurrent DeleteObject can't slip in and leave
+// the listener dispatching against a stale object or the status map
+// resurrected with a phantom Pending entry.
 func (s *Store) Refire(id manifest.NamedResource) {
-	s.mu.RLock()
+	s.mu.Lock()
 	obj, ok := s.objects[id]
-	s.mu.RUnlock()
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
-	s.UpdateStatus(id, StatusPending, MsgRefetching)
-	s.fire(EventObjectAdded, id, obj)
+	updated, changed := s.setConditionLocked(id, readyCondition(StatusPending, MsgRefetching))
+	dispatchObj := s.fireUnderLock(EventObjectAdded, id, obj)
+	var dispatchStatus func()
+	if changed {
+		info, _ := statusInfoFromConditions(updated)
+		dispatchStatus = s.fireUnderLock(EventStatusUpdated, id, info)
+	}
+	s.mu.Unlock()
+	if dispatchStatus != nil {
+		dispatchStatus()
+	}
+	dispatchObj()
 }
 
 // Cloneable is satisfied by manifest types that can be shallowly
@@ -172,6 +187,26 @@ func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.objects[id]
+}
+
+// Snapshot returns the manifest and conditions for id captured under
+// a single RLock acquisition. Use this when a caller needs a
+// consistent view of both — e.g. depwait's CEL projection reads
+// status.conditions AND metadata.labels in one expression, and
+// independent GetObject / GetConditions calls can mix a fresh object
+// snapshot with stale conditions (or vice versa) if a writer
+// interleaves. Returns nil object and nil conditions for unknown ids.
+func (s *Store) Snapshot(id manifest.NamedResource) (manifest.BaseManifest, []Condition) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	obj := s.objects[id]
+	conds := s.conditions[id]
+	if len(conds) == 0 {
+		return obj, nil
+	}
+	out := make([]Condition, len(conds))
+	copy(out, conds)
+	return obj, out
 }
 
 // DeleteObject removes the object stored under id. Returns whether

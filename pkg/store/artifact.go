@@ -96,8 +96,9 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
 		return
 	}
 	s.artifacts[id] = artifact
+	dispatch := s.fireUnderLock(EventArtifactUpdated, id, artifact)
 	s.mu.Unlock()
-	s.fire(EventArtifactUpdated, id, artifact)
+	dispatch()
 }
 
 // GetArtifact returns the artifact for id, or nil if none was set.

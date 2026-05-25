@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -45,14 +46,10 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string)
 		if ref.Name == "" {
 			return HelmChart{}, inputf("HelmRelease missing spec.chartRef.name")
 		}
-		ns := ref.Namespace
-		if ns == "" {
-			ns = defaultNamespace
-		}
 		return HelmChart{
 			Name:          ref.Name,
 			RepoName:      ref.Name,
-			RepoNamespace: ns,
+			RepoNamespace: cmp.Or(ref.Namespace, defaultNamespace),
 			RepoKind:      ref.Kind,
 		}, nil
 	}
@@ -68,20 +65,12 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string)
 	if srcName == "" {
 		return HelmChart{}, inputf("HelmRelease missing spec.chart.spec.sourceRef.name")
 	}
-	srcNamespace := tmpl.Spec.SourceRef.Namespace
-	if srcNamespace == "" {
-		srcNamespace = defaultNamespace
-	}
-	repoKind := tmpl.Spec.SourceRef.Kind
-	if repoKind == "" {
-		repoKind = KindHelmRepository
-	}
 	return HelmChart{
 		Name:          chartName,
 		Version:       tmpl.Spec.Version,
 		RepoName:      srcName,
-		RepoNamespace: srcNamespace,
-		RepoKind:      repoKind,
+		RepoNamespace: cmp.Or(tmpl.Spec.SourceRef.Namespace, defaultNamespace),
+		RepoKind:      cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository),
 	}, nil
 }
 
@@ -90,16 +79,12 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string)
 // SourceRef (which always shares the HelmChart's namespace per Flux
 // schema).
 func helmChartFromSource(src *HelmChartSource) HelmChart {
-	kind := src.SourceRef.Kind
-	if kind == "" {
-		kind = KindHelmRepository
-	}
 	return HelmChart{
 		Name:          src.Chart,
 		Version:       src.Version,
 		RepoName:      src.SourceRef.Name,
 		RepoNamespace: src.Namespace,
-		RepoKind:      kind,
+		RepoKind:      cmp.Or(src.SourceRef.Kind, KindHelmRepository),
 	}
 }
 
@@ -199,11 +184,7 @@ func (h *HelmRelease) GetAnnotations() map[string]string { return h.Annotations 
 // rendered different resource names/labels in flate vs cluster.
 // Always non-empty.
 func (h *HelmRelease) ReleaseName() string {
-	name := h.HelmReleaseSpec.ReleaseName
-	if name == "" {
-		name = h.Name
-	}
-	return shortenReleaseName(name)
+	return shortenReleaseName(cmp.Or(h.HelmReleaseSpec.ReleaseName, h.Name))
 }
 
 // shortenReleaseName mirrors helm-controller/internal/release.ShortenName.
@@ -221,10 +202,7 @@ func shortenReleaseName(name string) string {
 
 // ReleaseNamespace returns TargetNamespace when set, otherwise Namespace.
 func (h *HelmRelease) ReleaseNamespace() string {
-	if h.TargetNamespace != "" {
-		return h.TargetNamespace
-	}
-	return h.Namespace
+	return cmp.Or(h.TargetNamespace, h.Namespace)
 }
 
 // NamespacedName is "<namespace>/<name>".

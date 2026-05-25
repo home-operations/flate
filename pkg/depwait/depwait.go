@@ -230,15 +230,20 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 // returns DepReady when it produces true. On false / eval error it
 // blocks on the next EventStatusUpdated for id and re-evaluates.
 // Surfaces the parent ctx's timeout/cancel.
+//
+// The eval pattern runs three times — pre-subscribe (initial),
+// post-subscribe (race window between subscribe and live event),
+// and on each fire — so the evaluate-and-translate-to-Event step is
+// extracted into tryReadyExpr to keep the control flow readable.
 func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, expr string) Event {
-	// Initial evaluation against current state.
-	if ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id); err != nil {
-		return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}
-	} else if ok {
-		return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}
+	if ev, done := w.tryReadyExpr(expr, id); done {
+		return ev
 	}
 
-	// Subscribe and re-check after subscribing to close the race window.
+	// Subscribe AFTER the initial eval, then re-check — closes the
+	// race where id flipped Ready between the first eval and the
+	// subscribe (we'd otherwise miss the EventStatusUpdated and
+	// block on the channel forever).
 	ch := make(chan struct{}, 1)
 	unsub := w.Store.AddListener(store.EventStatusUpdated, func(other manifest.NamedResource, _ any) {
 		if other != id {
@@ -250,26 +255,35 @@ func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, 
 		}
 	}, false)
 	defer unsub()
-	if ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id); err != nil {
-		return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}
-	} else if ok {
-		return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}
+	if ev, done := w.tryReadyExpr(expr, id); done {
+		return ev
 	}
 
 	for {
 		select {
 		case <-ch:
-			ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id)
-			if err != nil {
-				return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}
-			}
-			if ok {
-				return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}
+			if ev, done := w.tryReadyExpr(expr, id); done {
+				return ev
 			}
 		case <-ctx.Done():
 			return Event{Dep: id, Status: DepTimeout, Reason: "readyExpr timeout: " + ctx.Err().Error()}
 		}
 	}
+}
+
+// tryReadyExpr evaluates expr once and translates the outcome into
+// the per-dep Event. Returns (event, true) on a definitive result
+// (Ready or eval error); returns (zero, false) when the expression
+// produced a clean false and the caller should keep waiting.
+func (w *Waiter) tryReadyExpr(expr string, id manifest.NamedResource) (Event, bool) {
+	ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id)
+	if err != nil {
+		return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}, true
+	}
+	if ok {
+		return Event{Dep: id, Status: DepReady, Reason: "readyExpr satisfied"}, true
+	}
+	return Event{}, false
 }
 
 // depExists reports whether a dep is known to the store via either an

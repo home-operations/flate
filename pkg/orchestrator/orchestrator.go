@@ -160,10 +160,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		return nil, fmt.Errorf("orchestrator: path is required")
 	}
 
-	cacheRoot := cfg.CacheDir
-	if cacheRoot == "" {
-		cacheRoot = filepath.Join(os.TempDir(), "flate-cache")
-	}
+	cacheRoot := cmp.Or(cfg.CacheDir, filepath.Join(os.TempDir(), "flate-cache"))
 	helmClient, err := helm.NewClient(
 		filepath.Join(cacheRoot, "helm-tmp"),
 		filepath.Join(cacheRoot, "helm-cache"),

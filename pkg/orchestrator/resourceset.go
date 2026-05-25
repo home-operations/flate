@@ -96,10 +96,7 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 		if parent, ok := o.rendered.ParentOf(rs.Named()); ok {
 			parentKS, matched = parent, true
 		} else {
-			file := o.sourceFiles[rs.Named()]
-			if file == "" {
-				file = sourceByName[rs.Name]
-			}
+			file := cmp.Or(o.sourceFiles[rs.Named()], sourceByName[rs.Name])
 			if file == "" {
 				continue
 			}

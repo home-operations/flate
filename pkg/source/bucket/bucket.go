@@ -80,6 +80,21 @@ func (f *Fetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.
 	}
 	defer release()
 
+	// Reset before walking. Unlike OCI / Git, the bucket fetcher
+	// has no "is the cached slot still valid?" check — walkBucket
+	// is write-only, so any file present in the slot from a
+	// previous run that was DELETED upstream between runs would
+	// be served as a ghost file. The revision hash is computed
+	// from the upstream listing, so it correctly reflects "no
+	// change" while the slot still holds the dead file. Reset
+	// makes every fetch a clean snapshot of the upstream prefix.
+	if err := f.Cache.Reset(slot); err != nil {
+		return nil, fmt.Errorf("bucket %s/%s reset: %w", b.Namespace, b.Name, err)
+	}
+	if err := os.MkdirAll(slot, 0o750); err != nil {
+		return nil, fmt.Errorf("bucket %s/%s recreate slot: %w", b.Namespace, b.Name, err)
+	}
+
 	keys, revHash, err := walkBucket(ctx, client, b.BucketName, b.Prefix, slot)
 	if err != nil {
 		_ = f.Cache.Reset(slot)

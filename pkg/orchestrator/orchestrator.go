@@ -57,8 +57,11 @@ type Config struct {
 	// RegistryConfig is the docker config.json used for OCI auth.
 	RegistryConfig string
 
-	// CacheDir overrides the default on-disk cache root
-	// (os.TempDir()/flate-cache).
+	// CacheDir overrides the default on-disk cache root. The default
+	// follows os.UserCacheDir (XDG_CACHE_HOME on Linux, Library/Caches
+	// on macOS, %LocalAppData% on Windows) with a "flate" subdir, so
+	// the cache survives reboots and OS tmpfs cleanups. Falls back to
+	// os.TempDir()/flate-cache only when UserCacheDir errors.
 	CacheDir string
 	// SourceCache, when non-nil, is shared across orchestrators. The
 	// `flate diff` flow constructs two orchestrators that point at the
@@ -177,7 +180,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		return nil, fmt.Errorf("orchestrator: path is required")
 	}
 
-	cacheRoot := cmp.Or(cfg.CacheDir, filepath.Join(os.TempDir(), "flate-cache"))
+	cacheRoot := cmp.Or(cfg.CacheDir, defaultCacheRoot())
 	helmClient, err := helm.NewClient(
 		filepath.Join(cacheRoot, "helm-tmp"),
 		filepath.Join(cacheRoot, "helm-cache"),
@@ -789,4 +792,16 @@ func (o *Orchestrator) Stop() {
 			_ = o.staging.Close()
 		}
 	})
+}
+
+// defaultCacheRoot picks the on-disk cache root when Config.CacheDir
+// is unset. Prefers the OS user cache dir — $XDG_CACHE_HOME on Linux,
+// ~/Library/Caches on macOS, %LocalAppData% on Windows — so caches
+// survive reboots and OS tmpfs cleanups. Falls back to
+// $TMPDIR/flate-cache only when UserCacheDir errors (HOME unset, etc).
+func defaultCacheRoot() string {
+	if d, err := os.UserCacheDir(); err == nil && d != "" {
+		return filepath.Join(d, "flate")
+	}
+	return filepath.Join(os.TempDir(), "flate-cache")
 }

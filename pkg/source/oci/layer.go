@@ -107,6 +107,18 @@ func applyLayerSelector(
 			return fmt.Errorf("no layer matched mediaType %q (manifest has %d layer(s))",
 				selector.MediaType, len(man.Layers))
 		}
+		// Zero-layer artifact (no layers, no selector). Wipe the
+		// OCI Image Layout artifacts before returning — without
+		// this, the cache-hit path's hasUnfinishedOCILayout
+		// sentinel fires on the next reconcile, the slot is
+		// reset, and the next fetch reproduces the same zero-
+		// layer state → infinite reset/re-pull loop. Returning
+		// nil here means the slot is finalized empty; the
+		// downstream chart consumer surfaces a clear "no
+		// recognizable chart layout" error rather than looping.
+		if err := cleanupOCILayout(slot); err != nil {
+			return fmt.Errorf("cleanup zero-layer oci layout: %w", err)
+		}
 		return nil
 	}
 

@@ -227,15 +227,20 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		// or aborted prior run that left partial blobs/ layout behind.
 		// (Slot.exists returns true on ANY non-empty dir.) Without
 		// this guard, the next fetch silently serves the corrupt
-		// slot as a cache hit. Fall through to a fresh pull, and only
-		// honor ref.Digest as the cachedDigest when one is explicitly
-		// pinned in spec.ref.digest — the orig spec-pin path that
-		// never wrote `.flate-digest` in the first place.
-		if cachedDigest == "" && ref.Digest == "" {
+		// slot as a cache hit. Fall through to a fresh pull.
+		//
+		// The previous `ref.Digest` fallback (treating a missing
+		// marker as "trusted because the spec pinned a digest") was
+		// load-bearing only on the legacy spec-pin code path that no
+		// longer exists — every successful fetch since the marker
+		// was introduced writes `.flate-digest`. Keeping the
+		// fallback meant a spec.ref.digest-pinned OCIRepository
+		// whose prior fetch died after extract but before marker
+		// write would silently serve a partially-extracted slot.
+		// Always require the marker.
+		if cachedDigest == "" {
 			_ = cache.Reset(slot)
 			exists = false
-		} else if cachedDigest == "" {
-			cachedDigest = ref.Digest
 		}
 		// Defensive: a valid `.flate-digest` should imply
 		// applyLayerSelector ran to completion and wiped the OCI
@@ -290,25 +295,31 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		return nil, fmt.Errorf("oras oci store: %w", err)
 	}
 	// content/oci.Store has no Close() method — all writes flush
-	// synchronously per blob via os.Rename — so reset-on-error is the
-	// only cleanup we need.
-	resetOnErr := func() { _ = cache.Reset(slot) }
+	// synchronously per blob via os.Rename — so reset-on-error is
+	// the only cleanup we need. Deferred + flag pattern (instead of
+	// per-error-site closure calls) so a panic between oras.Copy
+	// and writeCachedDigest also wipes the torn slot. Set finalized
+	// to true at the END of the fetch, right before returning the
+	// SourceArtifact.
+	finalized := false
+	defer func() {
+		if !finalized {
+			_ = cache.Reset(slot)
+		}
+	}()
 
 	desc, err := oras.Copy(ctx, repoClient, tag, dest, tag, oras.DefaultCopyOptions)
 	if err != nil {
-		resetOnErr()
 		return nil, fmt.Errorf("oras copy %s: %w", versioned, err)
 	}
 
 	digest := desc.Digest.String()
 	if repo.Verify != nil {
 		if err := f.verifyCosignSignature(ctx, repoClient, repo, digest); err != nil {
-			resetOnErr()
 			return nil, err
 		}
 	}
 	if err := applyLayerSelector(ctx, slot, desc.Digest.String(), repo.LayerSelector); err != nil {
-		resetOnErr()
 		return nil, fmt.Errorf("OCIRepository %s/%s: layer select: %w", repo.Namespace, repo.Name, err)
 	}
 	// Source-controller's default ignore set includes `*.tar.gz`. For
@@ -319,7 +330,6 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	// ignore semantics apply as Flux ships them.
 	if effectiveLayerOperation(repo.LayerSelector) == manifest.OCILayerOperationExtract {
 		if err := source.ApplyIgnore(slot, repo.Ignore); err != nil {
-			resetOnErr()
 			return nil, fmt.Errorf("OCIRepository %s/%s: %w", repo.Namespace, repo.Name, err)
 		}
 	}
@@ -333,6 +343,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 			"ociRepository", repo.Namespace+"/"+repo.Name,
 			"err", err)
 	}
+	finalized = true
 	return &store.SourceArtifact{
 		Kind: manifest.KindOCIRepository,
 		URL:  repo.URL, LocalPath: slot,

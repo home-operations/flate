@@ -239,6 +239,42 @@ func TestApplyLayerSelector_MultiLayerWithSelector(t *testing.T) {
 	}
 }
 
+// TestApplyLayerSelector_ZeroLayerCleansLayoutArtifacts pins the
+// zero-layer corner case: when an OCI manifest has no layers AND
+// no selector mediaType is requested, applyLayerSelector must
+// still wipe the OCI Image Layout artifacts (blobs/, oci-layout,
+// etc.) before returning nil. Without the cleanup, the next
+// reconcile's hasUnfinishedOCILayout sentinel fires → slot reset
+// → re-fetch → same zero-layer state → infinite loop.
+//
+// The downstream chart consumer (helm) will surface a clear "no
+// recognizable chart layout" error against the empty slot — which
+// is the right operator signal, distinct from the silent retry
+// storm the bug produced.
+func TestApplyLayerSelector_ZeroLayerCleansLayoutArtifacts(t *testing.T) {
+	slot := t.TempDir()
+	// Write a manifest with no layers at all.
+	_, manifestDigest := writeManifest(t, slot, nil)
+	// Also lay down at least one layout artifact so the sentinel
+	// would fire without the cleanup.
+	if err := os.WriteFile(filepath.Join(slot, ocispec.ImageLayoutFile), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(), nil); err != nil {
+		t.Fatalf("zero-layer applyLayerSelector should not error: %v", err)
+	}
+
+	if hasUnfinishedOCILayout(slot) {
+		entries, _ := os.ReadDir(slot)
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("zero-layer slot still has OCI Image Layout artifacts after applyLayerSelector; leftover entries: %v", names)
+	}
+}
+
 // TestExtractTarGz_ZipBombRejected covers the maxExtractedBytes cap.
 // Lower the cap to 100 bytes for the test and write a 1 KiB entry —
 // extractTarGz's LimitReader catches the over-budget write and emits

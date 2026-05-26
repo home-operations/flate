@@ -76,11 +76,27 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 		}
 	}
 
-	// graceCh fires when the post-Failed grace window expires. We
-	// arm it only once a Failed has been observed.
+	// graceTimer fires when the post-Failed grace window expires.
+	// Arm it only once a Failed has been observed. We use NewTimer
+	// (not time.After) so an early return via ctx-cancel or a
+	// Ready transition can Stop() the timer — otherwise it stays
+	// armed in the runtime until expiry, leaking the underlying
+	// timer per call on the depwait hot path.
+	var graceTimer *time.Timer
 	var graceCh <-chan time.Time
+	armGrace := func() {
+		if graceTimer == nil {
+			graceTimer = time.NewTimer(FailedGrace)
+			graceCh = graceTimer.C
+		}
+	}
+	defer func() {
+		if graceTimer != nil {
+			graceTimer.Stop()
+		}
+	}()
 	if currentFailed != nil {
-		graceCh = time.After(FailedGrace)
+		armGrace()
 	}
 
 	for {
@@ -96,9 +112,7 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 			case StatusFailed:
 				f := info
 				currentFailed = &f
-				if graceCh == nil {
-					graceCh = time.After(FailedGrace)
-				}
+				armGrace()
 			}
 		case <-graceCh:
 			return *currentFailed, &manifest.ResourceFailedError{

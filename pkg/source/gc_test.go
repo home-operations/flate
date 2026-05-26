@@ -47,6 +47,32 @@ func TestSweep_AgePrunesStaleSlots(t *testing.T) {
 	}
 }
 
+func TestSweep_IgnoresSourceSlotLockFiles(t *testing.T) {
+	root := t.TempDir()
+	lockFile := filepath.Join(root, "sources", "repo", "deadbeef.lock")
+	if err := os.MkdirAll(filepath.Dir(lockFile), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockFile, []byte{}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-7 * 24 * time.Hour)
+	if err := os.Chtimes(lockFile, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Sweep(cacheroot.New(root), SweepOpts{MaxAge: 24 * time.Hour})
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if slices.Contains(res.Removed, lockFile) {
+		t.Errorf("lock file should not be swept as a source slot: %v", res.Removed)
+	}
+	if _, err := os.Stat(lockFile); err != nil {
+		t.Errorf("lock file removed from disk: %v", err)
+	}
+}
+
 // TestSweep_BaselinesAndBlobs: age applies to baselines/<sha>/ and
 // blobs/sha256/<digest>/ exactly the same way as sources.
 func TestSweep_BaselinesAndBlobs(t *testing.T) {

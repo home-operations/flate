@@ -169,6 +169,9 @@ func sweepDirByAge(dir string, depth int, cutoff time.Time, gate func(string) bo
 		return
 	}
 	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".lock") {
+			continue
+		}
 		path := filepath.Join(dir, e.Name())
 		if gate != nil && gate(e.Name()) {
 			continue

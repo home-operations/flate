@@ -16,6 +16,7 @@ require (
 	github.com/fluxcd/source-controller/api v1.8.5
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/go-task/slim-sprig/v3 v3.0.0
+	github.com/gofrs/flock v0.13.0
 	github.com/gonvenience/ytbx v1.5.0
 	github.com/google/cel-go v0.28.1
 	github.com/gosimple/slug v1.15.0
@@ -89,7 +90,6 @@ require (
 	github.com/go-openapi/swag/typeutils v0.25.5 // indirect
 	github.com/go-openapi/swag/yamlutils v0.25.5 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
-	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/gonvenience/bunt v1.4.3 // indirect
 	github.com/gonvenience/idem v0.0.3 // indirect

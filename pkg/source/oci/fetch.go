@@ -88,8 +88,13 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 
 	versioned := versionedURL(repo.URL, ref)
-	slotRef := ociCacheKey(repo, ref)
-	if !canUseCachedOCISlot(ref) {
+	tag := cmp.Or(versionTag(ref), "latest")
+	resolvedDigest, err := resolveOCIRefDigest(ctx, repoClient, ref, tag)
+	if err != nil {
+		return nil, fmt.Errorf("OCIRepository %s/%s resolve %s: %w", repo.Namespace, repo.Name, tag, err)
+	}
+	slotRef := ociCacheKey(repo, ref, resolvedDigest)
+	if resolvedDigest == "" {
 		slotRef = source.MutableCacheKey(slotRef)
 	}
 	slot, err := cache.Slot(ctx, repo.URL, slotRef, authIdentity(repo))
@@ -97,8 +102,8 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}
 	defer slot.Release()
-	if slot.Exists && canUseCachedOCISlot(ref) {
-		artifact, hit, hitErr := f.checkCacheHit(ctx, repoClient, repo, slot.Path, ref, versioned)
+	if slot.Exists && resolvedDigest != "" {
+		artifact, hit, hitErr := f.checkCacheHit(ctx, repoClient, repo, slot.Path, ref, versioned, resolvedDigest)
 		if hitErr != nil {
 			_ = slot.Reset()
 			return nil, hitErr
@@ -122,8 +127,6 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		}
 	}
 
-	tag := cmp.Or(versionTag(ref), "latest")
-
 	// OCI Image Layout content store: blobs land at
 	// `slot/blobs/<algo>/<hex>` regardless of title annotations, so we
 	// no longer need a custom fallback to keep unnamed blobs on disk.
@@ -146,6 +149,9 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 
 	digest := desc.Digest.String()
+	if resolvedDigest != "" && digest != resolvedDigest {
+		return nil, fmt.Errorf("OCIRepository %s/%s: resolved digest %s but copied %s", repo.Namespace, repo.Name, resolvedDigest, digest)
+	}
 	if repo.Verify != nil {
 		if err := f.verifyCosignSignature(ctx, repoClient, repo, digest); err != nil {
 			return nil, err
@@ -212,11 +218,18 @@ func ociArtifact(repo *manifest.OCIRepository, localPath string, ref manifest.OC
 	}
 }
 
-func canUseCachedOCISlot(ref manifest.OCIRepositoryRef) bool {
-	return ref.Digest != ""
+func resolveOCIRefDigest(ctx context.Context, repoClient *remote.Repository, ref manifest.OCIRepositoryRef, tag string) (string, error) {
+	if ref.Digest != "" {
+		return ref.Digest, nil
+	}
+	desc, err := repoClient.Resolve(ctx, tag)
+	if err != nil {
+		return "", err
+	}
+	return desc.Digest.String(), nil
 }
 
-func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) string {
+func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, resolvedDigest string) string {
 	ignore := ""
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
@@ -231,7 +244,7 @@ func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) st
 		LayerOperation string `json:"layerOperation,omitempty"`
 		Ignore         string `json:"ignore,omitempty"`
 	}{
-		Ref:            cmp.Or(versionTag(ref), "latest"),
+		Ref:            cmp.Or(resolvedDigest, versionTag(ref), "latest"),
 		LayerMediaType: mediaType,
 		LayerOperation: effectiveLayerOperation(repo.LayerSelector),
 		Ignore:         ignore,
@@ -256,7 +269,7 @@ func ociCacheKeyHash(v any) string {
 // Returns (artifact, true, nil) on a confirmed hit; (nil, false, nil)
 // when the slot should be reset and re-pulled; (nil, false, err) on
 // a fatal failure (e.g. cosign rejected the cached bytes).
-func (f *Fetcher) checkCacheHit(ctx context.Context, repoClient *remote.Repository, repo *manifest.OCIRepository, slotPath string, ref manifest.OCIRepositoryRef, versioned string) (*store.SourceArtifact, bool, error) {
+func (f *Fetcher) checkCacheHit(ctx context.Context, repoClient *remote.Repository, repo *manifest.OCIRepository, slotPath string, ref manifest.OCIRepositoryRef, versioned, expectedDigest string) (*store.SourceArtifact, bool, error) {
 	cachedDigest := readCachedDigest(slotPath)
 	if cachedDigest == "" {
 		// `.flate-digest` is written as the FINAL step of a successful
@@ -276,6 +289,9 @@ func (f *Fetcher) checkCacheHit(ctx context.Context, repoClient *remote.Reposito
 		// slot cleanly.
 		slog.Warn("oci: cache slot has leftover OCI Image Layout artifacts; resetting and re-fetching",
 			"slot", slotPath, "url", versioned)
+		return nil, false, nil
+	}
+	if expectedDigest != "" && cachedDigest != expectedDigest {
 		return nil, false, nil
 	}
 	if repo.Verify != nil {

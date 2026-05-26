@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
@@ -20,12 +22,9 @@ import (
 // sources. Each (url, ref) tuple gets its own slot, so multiple revisions
 // of the same upstream coexist without clobbering one another.
 //
-// The cache is safe for concurrent use. A per-slot mutex serializes the
-// full fetch-write-read lifecycle on a single slot — two distinct
-// source CRs with the same (url, ref) hash to the same slot, and
-// without per-slot locking one would observe the other mid-write
-// (e.g. read an empty marker, call Reset, wipe the in-progress clone).
-// Different slots proceed in parallel.
+// The cache is safe for concurrent use. Per-slot locks serialize the
+// full fetch-write-read lifecycle on a single slot. Different slots
+// proceed in parallel.
 type Cache struct {
 	layout cacheroot.Layout
 	// locks is the canonical per-slot mutex provider. Sharing the
@@ -82,6 +81,14 @@ func (c *Cache) Slot(ctx context.Context, url, ref, authID string) (*Slot, error
 		return nil, err
 	}
 	s := &Slot{final: final, release: release}
+	if err := os.MkdirAll(filepath.Dir(final), 0o750); err != nil {
+		s.unlock()
+		return nil, fmt.Errorf("cache slot parent: %w", err)
+	}
+	if err := s.lockFile(ctx); err != nil {
+		s.unlock()
+		return nil, err
+	}
 
 	info, statErr := os.Stat(final)
 	switch {
@@ -123,10 +130,6 @@ func (c *Cache) Slot(ctx context.Context, url, ref, authID string) (*Slot, error
 	case os.IsNotExist(statErr):
 		// Allocate a sibling staging dir on the same filesystem so
 		// the eventual rename is atomic.
-		if err := os.MkdirAll(filepath.Dir(final), 0o750); err != nil {
-			s.unlock()
-			return nil, fmt.Errorf("cache slot parent: %w", err)
-		}
 		staging, err := os.MkdirTemp(filepath.Dir(final), filepath.Base(final)+".tmp.*")
 		if err != nil {
 			s.unlock()
@@ -159,6 +162,7 @@ type Slot struct {
 	final     string
 	staging   string
 	release   func() // keylock release; populated by Cache.Slot
+	fileLock  *flock.Flock
 	committed bool
 	unlocked  bool
 }
@@ -253,11 +257,35 @@ func (s *Slot) Stage() error {
 	return nil
 }
 
+func (s *Slot) lockFile(ctx context.Context) error {
+	s.fileLock = flock.New(s.final+".lock", flock.SetPermissions(0o600))
+	locked, err := s.fileLock.TryLockContext(ctx, 100*time.Millisecond)
+	if err != nil {
+		_ = s.fileLock.Close()
+		s.fileLock = nil
+		return fmt.Errorf("cache slot lock: %w", err)
+	}
+	if !locked {
+		_ = s.fileLock.Close()
+		s.fileLock = nil
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("cache slot lock: %w", err)
+		}
+		return errors.New("cache slot lock: not acquired")
+	}
+	return nil
+}
+
 func (s *Slot) unlock() {
 	if s.unlocked {
 		return
 	}
 	s.unlocked = true
+	if s.fileLock != nil {
+		_ = s.fileLock.Unlock()
+		_ = s.fileLock.Close()
+		s.fileLock = nil
+	}
 	s.release()
 }
 

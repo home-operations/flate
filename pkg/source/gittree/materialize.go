@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -72,6 +73,10 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 		entry object.TreeEntry
 	}
 	entries := make(chan item, opts.Workers*4)
+	// go-git's filesystem object storage reuses packfile scanners and
+	// caches internally, so keep repository reads single-threaded while
+	// preserving concurrent filesystem writes.
+	objects := &serializedObjectReader{repo: repo}
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -79,7 +84,7 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 		walker := object.NewTreeWalker(tree, true, nil)
 		defer walker.Close()
 		for {
-			name, entry, werr := walker.Next()
+			name, entry, werr := objects.nextTreeEntry(walker)
 			if errors.Is(werr, io.EOF) {
 				return nil
 			}
@@ -116,7 +121,7 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 	for range opts.Workers {
 		g.Go(func() error {
 			for it := range entries {
-				if err := writeEntry(repo, it.entry, root, it.name); err != nil {
+				if err := writeEntry(objects, it.entry, root, it.name); err != nil {
 					return err
 				}
 			}
@@ -126,17 +131,52 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 	return g.Wait()
 }
 
+type serializedObjectReader struct {
+	repo *git.Repository
+	mu   sync.Mutex
+}
+
+func (r *serializedObjectReader) nextTreeEntry(walker *object.TreeWalker) (string, object.TreeEntry, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return walker.Next()
+}
+
+func (r *serializedObjectReader) readBlobBytes(hash plumbing.Hash) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	blob, err := r.repo.BlobObject(hash)
+	if err != nil {
+		return nil, fmt.Errorf("load symlink blob %s: %w", hash, err)
+	}
+	return readBlobBytes(blob)
+}
+
+func (r *serializedObjectReader) copyBlobTo(hash plumbing.Hash, name string, w io.Writer) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	blob, err := r.repo.BlobObject(hash)
+	if err != nil {
+		return fmt.Errorf("load blob %s for %q: %w", hash, name, err)
+	}
+	reader, err := blob.Reader()
+	if err != nil {
+		return fmt.Errorf("blob reader %q: %w", name, err)
+	}
+	defer func() { _ = reader.Close() }()
+	if _, err := io.Copy(w, reader); err != nil {
+		return fmt.Errorf("copy blob %q: %w", name, err)
+	}
+	return nil
+}
+
 // writeEntry materializes one tree entry — a symlink or a blob — at
 // root/name. The walker pre-created the parent dir, so we don't
 // MkdirAll here.
-func writeEntry(repo *git.Repository, entry object.TreeEntry, root, name string) error {
+func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, name string) error {
 	dst := filepath.Join(root, filepath.FromSlash(name))
 	if entry.Mode == filemode.Symlink {
-		blob, err := repo.BlobObject(entry.Hash)
-		if err != nil {
-			return fmt.Errorf("load symlink blob %s for %q: %w", entry.Hash, name, err)
-		}
-		target, err := readBlobBytes(blob)
+		target, err := objects.readBlobBytes(entry.Hash)
 		if err != nil {
 			return fmt.Errorf("read symlink target for %q: %w", name, err)
 		}
@@ -145,11 +185,7 @@ func writeEntry(repo *git.Repository, entry object.TreeEntry, root, name string)
 		}
 		return nil
 	}
-	blob, err := repo.BlobObject(entry.Hash)
-	if err != nil {
-		return fmt.Errorf("load blob %s for %q: %w", entry.Hash, name, err)
-	}
-	return writeBlobTo(dst, blob, entry.Mode)
+	return writeBlobTo(dst, objects, entry.Hash, entry.Mode, name)
 }
 
 // readBlobBytes returns the full contents of a blob. Used for symlink
@@ -166,7 +202,7 @@ func readBlobBytes(blob *object.Blob) ([]byte, error) {
 // writeBlobTo streams blob's content to dst with mode-derived
 // permissions (executable bit preserved from filemode.Executable).
 // Caller (Materialize's walker) has already created the parent dir.
-func writeBlobTo(dst string, blob *object.Blob, mode filemode.FileMode) error {
+func writeBlobTo(dst string, objects *serializedObjectReader, hash plumbing.Hash, mode filemode.FileMode, name string) error {
 	perm := os.FileMode(0o600)
 	if mode == filemode.Executable {
 		perm = 0o700
@@ -176,13 +212,8 @@ func writeBlobTo(dst string, blob *object.Blob, mode filemode.FileMode) error {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}
 	defer func() { _ = out.Close() }()
-	r, err := blob.Reader()
-	if err != nil {
-		return fmt.Errorf("blob reader %s: %w", dst, err)
-	}
-	defer func() { _ = r.Close() }()
-	if _, err := io.Copy(out, r); err != nil {
-		return fmt.Errorf("copy %s: %w", dst, err)
+	if err := objects.copyBlobTo(hash, name, out); err != nil {
+		return err
 	}
 	return nil
 }

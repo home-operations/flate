@@ -31,6 +31,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/atomic"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -429,36 +430,11 @@ func verifyFingerprint(v *manifest.OCIRepositoryVerify) string {
 }
 
 // writeVerifyMarker persists the verify-policy fingerprint to the
-// slot atomically. Uses the same temp-file + fsync + rename dance
-// as writeCachedDigest so a crash mid-write can't leave a partial
-// fingerprint that would falsely match.
+// slot atomically. atomic.WriteFile handles the temp-file + fsync +
+// rename dance so a crash mid-write can't leave a partial fingerprint
+// that would falsely match.
 func writeVerifyMarker(slot, fingerprint string) error {
-	dst := filepath.Join(slot, verifyMarkerFile)
-	tmp, err := os.CreateTemp(slot, ".flate-verified-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpPath) }
-	if _, err := tmp.WriteString(fingerprint); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := os.Rename(tmpPath, dst); err != nil {
-		cleanup()
-		return err
-	}
-	return nil
+	return atomic.WriteFile(filepath.Join(slot, verifyMarkerFile), []byte(fingerprint), 0o600, true)
 }
 
 // readVerifyMarker returns the cached fingerprint or "" when the
@@ -480,38 +456,12 @@ func readVerifyMarker(slot string) string {
 // "signature not found" error, treat it as a missing marker.
 var digestRE = regexp.MustCompile(`^[a-z0-9]+:[a-fA-F0-9]{32,}$`)
 
-// writeCachedDigest persists digest atomically: write to a sibling
-// temp file, fsync, then rename into place. Without atomicity, a
-// crash mid-write could leave a partial digest string that would
-// later mis-read on cache hit and trigger a misleading cosign
-// failure on the next reconcile.
+// writeCachedDigest persists digest atomically via atomic.WriteFile.
+// Without atomicity, a crash mid-write could leave a partial digest
+// string that would later mis-read on cache hit and trigger a
+// misleading cosign failure on the next reconcile.
 func writeCachedDigest(slot, digest string) error {
-	dst := filepath.Join(slot, cachedDigestFile)
-	tmp, err := os.CreateTemp(slot, ".flate-digest-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpPath) }
-	if _, err := tmp.WriteString(digest); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := os.Rename(tmpPath, dst); err != nil {
-		cleanup()
-		return err
-	}
-	return nil
+	return atomic.WriteFile(filepath.Join(slot, cachedDigestFile), []byte(digest), 0o600, true)
 }
 
 // readCachedDigest returns the cached digest only when it parses as a

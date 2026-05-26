@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/home-operations/flate/pkg/source/atomic"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -57,11 +58,15 @@ func (r *Refs) Get(key string) (string, bool) {
 	return digest, true
 }
 
-// Put records (key → digest) durably via atomic rename. Concurrent
-// writers to the same key serialize on the Refs mutex; different keys
-// proceed in parallel. Overwriting an existing key is supported (an
-// upstream tag re-resolved to a new digest) — the rename atomically
-// replaces the file.
+// Put records (key → digest) durably via atomic.WriteFile.
+// Concurrent writers to the same key serialize on the Refs mutex;
+// different keys proceed in parallel. Overwriting an existing key is
+// supported (an upstream tag re-resolved to a new digest) — the
+// rename atomically replaces the file.
+//
+// syncDir=false: refs files are cheap to rebuild on the next
+// reconcile (they're just digest lookups), so the fsync barrier is
+// not worth the per-render I/O cost.
 func (r *Refs) Put(key, digest string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -72,24 +77,7 @@ func (r *Refs) Put(key, digest string) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(r.dir, ".tmp.*")
-	if err != nil {
-		return fmt.Errorf("refs staging: %w", err)
-	}
-	if _, err := tmp.WriteString(digest); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-		return fmt.Errorf("refs write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return fmt.Errorf("refs close: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), final); err != nil {
-		_ = os.Remove(tmp.Name())
-		return fmt.Errorf("refs finalize: %w", err)
-	}
-	return nil
+	return atomic.WriteFile(final, []byte(digest), 0o600, false)
 }
 
 // pathFor URL-escapes key into a single-segment filename. Refuses keys

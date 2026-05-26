@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -39,6 +41,13 @@ import (
 //
 // Encoding it once means new pre-reconcile concerns (rate-limit,
 // retries, debug-mode toggle) drop into one place and propagate.
+//
+// The KS and HR controllers additionally share depwait configuration
+// (Existence, Renders) and a pre-reconcile preflight check (Preflight,
+// ParentOf). Configure these via SetDepwait / SetPreflight / SetParentOf
+// before Start so reconcile bodies can call NewWaiter, PreflightError,
+// and LookupParent without each controller duplicating the nil-check
+// boilerplate.
 type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
@@ -57,6 +66,14 @@ type Controller struct {
 	// kindLabel prefixes coalescer keys ("source/", "kustomization/",
 	// "helmrelease/") and labels panic logs. Set by Start.
 	kindLabel string
+
+	// Shared KS/HR depwait and preflight state. Set via SetDepwait,
+	// SetPreflight, SetParentOf. The source controller leaves these nil;
+	// KS and HR configure them before Start via their Configure methods.
+	existence depwait.ExistenceLookup
+	renders   depwait.RenderInflight
+	preflight func(manifest.NamedResource) (string, bool)
+	parentOf  func(manifest.NamedResource) (manifest.NamedResource, bool)
 }
 
 // New constructs a base controller. Concrete controllers call this
@@ -77,6 +94,86 @@ func (c *Controller) SetFilter(f *change.Filter) {
 
 // Filter returns the configured filter (may be nil-but-non-active).
 func (c *Controller) Filter() *change.Filter { return c.filter }
+
+// SetDepwait installs the depwait resolution wires. Panics after Start.
+func (c *Controller) SetDepwait(existence depwait.ExistenceLookup, renders depwait.RenderInflight) {
+	if c.started.Load() {
+		panic("controller: SetDepwait called after Start")
+	}
+	c.existence = existence
+	c.renders = renders
+}
+
+// SetPreflight installs the pre-reconcile failure reporter. Panics after Start.
+func (c *Controller) SetPreflight(f func(manifest.NamedResource) (string, bool)) {
+	if c.started.Load() {
+		panic("controller: SetPreflight called after Start")
+	}
+	c.preflight = f
+}
+
+// SetParentOf installs the structural parent resolver. Panics after Start.
+func (c *Controller) SetParentOf(f func(manifest.NamedResource) (manifest.NamedResource, bool)) {
+	if c.started.Load() {
+		panic("controller: SetParentOf called after Start")
+	}
+	c.parentOf = f
+}
+
+// LookupParent reports the structural parent KS of id via the
+// configured resolver, or (zero, false) when no parent exists or no
+// resolver was configured.
+func (c *Controller) LookupParent(id manifest.NamedResource) (manifest.NamedResource, bool) {
+	if c.parentOf == nil {
+		return manifest.NamedResource{}, false
+	}
+	return c.parentOf(id)
+}
+
+// PreflightFailure reports the pre-reconcile failure for id if the
+// orchestrator detected a dependency-graph error. Returns ("", false)
+// when no preflight check is configured or no failure was recorded.
+func (c *Controller) PreflightFailure(id manifest.NamedResource) (string, bool) {
+	if c.preflight == nil {
+		return "", false
+	}
+	return c.preflight(id)
+}
+
+// PreflightError returns an error wrapping the preflight failure
+// message for id, or nil when no failure is recorded. Used at each
+// yield point inside reconcile so a cycle detection or topology error
+// published mid-flight aborts the current pass without waiting.
+func (c *Controller) PreflightError(id manifest.NamedResource) error {
+	if msg, failed := c.PreflightFailure(id); failed {
+		return errors.New(msg)
+	}
+	return nil
+}
+
+// NewWaiter constructs a depwait.Waiter pre-wired with the
+// controller's Store, Existence lookup, and Renders quiescence signal,
+// parented to id and budgeted from timeout. HR and KS controllers call
+// this rather than constructing their own Waiter literals so the
+// Existence/Renders wiring is set once in Configure and flows through
+// automatically.
+func (c *Controller) NewWaiter(id manifest.NamedResource, timeout *metav1.Duration) *depwait.Waiter {
+	return &depwait.Waiter{
+		Store:     c.Store,
+		Parent:    id,
+		Timeout:   depwait.TimeoutFromSpec(timeout),
+		Existence: c.existence,
+		Renders:   c.renders,
+	}
+}
+
+// IsFileIndexed reports whether id is tracked by the file-existence
+// index wired at Configure time. Returns false when no index is
+// configured (offline / unit-test paths), which degrades safely by
+// treating the resource as not-file-indexed.
+func (c *Controller) IsFileIndexed(id manifest.NamedResource) bool {
+	return c.existence != nil && c.existence.IsFileIndexed(id)
+}
 
 // StartLifecycle flips the started gate and allocates the coalescer.
 // Concrete controllers call this from their Start(ctx) before

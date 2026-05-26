@@ -9,11 +9,8 @@ package helmrelease
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -39,18 +36,6 @@ type Controller struct {
 	// templates.
 	WipeSecrets bool
 
-	// parentOf resolves each HR to its enclosing Flux KS at lookup
-	// time. The closure unifies two parent sources:
-	//   - file-loaded HRs: pre-built path-prefix index from
-	//     loader.BuildParentIndexForKind.
-	//   - render-emitted HRs (chart-of-charts, KS-substituted copies):
-	//     the orchestrator's renderedSet.ParentOf, populated when the
-	//     parent KS's emitRenderedChildren fires.
-	// Nil means "no parent enforcement"; matches pre-#221 behavior.
-	parentOf  func(manifest.NamedResource) (manifest.NamedResource, bool)
-	existence depwait.ExistenceLookup
-	renders   depwait.RenderInflight
-	preflight func(manifest.NamedResource) (string, bool)
 	// allowMissingSecrets extends the source-controller flag to
 	// HelmRelease valuesFrom refs that cannot be resolved offline.
 	allowMissingSecrets bool
@@ -105,36 +90,10 @@ func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wip
 // read-only once dispatch begins.
 func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetFilter(opts.Filter)
-	c.parentOf = opts.ParentOf
-	c.existence = opts.Existence
-	c.renders = opts.Renders
-	c.preflight = opts.PreflightFailure
+	c.SetDepwait(opts.Existence, opts.Renders)
+	c.SetPreflight(opts.PreflightFailure)
+	c.SetParentOf(opts.ParentOf)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
-}
-
-// lookupParent reports the structural parent KS of id via the
-// configured resolver, or (zero, false) when no parent exists or no
-// resolver was configured.
-func (c *Controller) lookupParent(id manifest.NamedResource) (manifest.NamedResource, bool) {
-	if c.parentOf == nil {
-		return manifest.NamedResource{}, false
-	}
-	return c.parentOf(id)
-}
-
-// newWaiter constructs a depwait.Waiter pre-wired with the
-// controller's Store and lazy-promotion fallback, parented to id and
-// budgeted from timeout (typically hr.Timeout). Centralizes the
-// boilerplate so the parent-KS gate, dependsOn wait, and chart-
-// source wait don't drift apart.
-func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Duration) *depwait.Waiter {
-	return &depwait.Waiter{
-		Store:     c.Store,
-		Parent:    id,
-		Timeout:   depwait.TimeoutFromSpec(timeout),
-		Existence: c.existence,
-		Renders:   c.renders,
-	}
 }
 
 // Start registers the listeners. The controller runs until Close.
@@ -160,7 +119,7 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 		if c.PreGate(id, hr.Suspend) {
 			return
 		}
-		if msg, failed := c.preflightFailure(id); failed {
+		if msg, failed := c.PreflightFailure(id); failed {
 			c.Store.UpdateStatus(id, store.StatusFailed, msg)
 			return
 		}
@@ -170,23 +129,9 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 	}
 }
 
-func (c *Controller) preflightFailure(id manifest.NamedResource) (string, bool) {
-	if c.preflight == nil {
-		return "", false
-	}
-	return c.preflight(id)
-}
-
-func (c *Controller) preflightError(id manifest.NamedResource) error {
-	if msg, failed := c.preflightFailure(id); failed {
-		return errors.New(msg)
-	}
-	return nil
-}
-
 func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) error {
 	id := hr.Named()
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 
@@ -200,8 +145,8 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// parent-patching chain (tholinka/home-ops's cluster KS applies
 	// driftDetection / install.crds / upgrade strategy / rollback to
 	// every HR, so all of them were hit by this).
-	if parent, ok := c.lookupParent(id); ok {
-		err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout),
+	if parent, ok := c.LookupParent(id); ok {
+		err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout),
 			[]manifest.DependencyRef{{NamedResource: parent}},
 			"waiting for parent KS",
 			func(sum depwait.Summary) error {
@@ -219,14 +164,14 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			hr = obj
 		}
 	}
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
 	if deps := c.collectHRDeps(hr); len(deps) > 0 {
-		err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout), deps,
+		err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout), deps,
 			"resolving dependencies",
 			func(sum depwait.Summary) error {
 				return &manifest.DependencyFailedError{
@@ -249,7 +194,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			hr = obj
 		}
 	}
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 
@@ -272,7 +217,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			break
 		}
 		var preSum depwait.Summary
-		if err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout), preDeps,
+		if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout), preDeps,
 			"awaiting pre-render references",
 			func(sum depwait.Summary) error {
 				preSum = sum
@@ -302,7 +247,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		}
 		break
 	}
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 
@@ -326,7 +271,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	srcID := manifest.NamedResource{
 		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
 	}
-	if err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout),
+	if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout),
 		[]manifest.DependencyRef{{NamedResource: srcID}},
 		"", // status already set above
 		func(sum depwait.Summary) error {
@@ -343,7 +288,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return fmt.Errorf("%w: chart source %s %s",
 			manifest.ErrSourceSkipped, srcID.String(), info.Message)
 	}
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 
@@ -358,7 +303,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// the HR-render time on real-world trees.
 	fp := helmReleaseFingerprint(hr)
 	if existing, ok := c.Store.GetArtifact(id).(*store.HelmReleaseArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
-		if err := c.preflightError(id); err != nil {
+		if err := c.PreflightError(id); err != nil {
 			return err
 		}
 		slog.Debug("helmrelease: skipped re-render (fingerprint unchanged)", "id", id.String())
@@ -373,7 +318,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering chart")
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 	docs, err := c.Helm.TemplateDocs(ctx, hr, hr.Values, c.Options)
@@ -382,7 +327,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 	c.emitRenderedChildren(id, docs)
@@ -457,7 +402,7 @@ func (c *Controller) omitValuesFrom(
 			filtered = append(filtered, ref)
 			continue
 		}
-		if c.existence != nil && c.existence.IsFileIndexed(id) {
+		if c.IsFileIndexed(id) {
 			filtered = append(filtered, ref)
 			continue
 		}

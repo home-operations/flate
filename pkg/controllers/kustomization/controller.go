@@ -7,12 +7,9 @@ package kustomization
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -40,12 +37,8 @@ type Controller struct {
 	// parsing rendered manifests.
 	WipeSecrets bool
 
-	// Set via Configure() — see Options.
-	parentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
+	// renderTracker receives every reconcilable child emitted during render.
 	renderTracker RenderTracker
-	existence     depwait.ExistenceLookup
-	renders       depwait.RenderInflight
-	preflight     func(manifest.NamedResource) (string, bool)
 }
 
 // RenderTracker is the tiny seam the controller uses to report
@@ -107,11 +100,10 @@ func New(s *store.Store, t *task.Service, staging *kustomize.StagingCache, wipeS
 // read-only once the controller is dispatching.
 func (c *Controller) Configure(opts Options) {
 	c.SetFilter(opts.Filter)
-	c.parentOf = opts.ParentOf
+	c.SetDepwait(opts.Existence, opts.Renders)
+	c.SetPreflight(opts.PreflightFailure)
+	c.SetParentOf(opts.ParentOf)
 	c.renderTracker = opts.RenderTracker
-	c.existence = opts.Existence
-	c.renders = opts.Renders
-	c.preflight = opts.PreflightFailure
 }
 
 // markRendered reports a parent→child render emission to the
@@ -120,19 +112,6 @@ func (c *Controller) Configure(opts Options) {
 func (c *Controller) markRendered(parent, child manifest.NamedResource) {
 	if c.renderTracker != nil {
 		c.renderTracker.MarkRendered(parent, child)
-	}
-}
-
-// newWaiter constructs a depwait.Waiter pre-wired with the
-// controller's Store and lazy-promotion fallback, parented to id and
-// budgeted from timeout (typically ks.Timeout).
-func (c *Controller) newWaiter(id manifest.NamedResource, timeout *metav1.Duration) *depwait.Waiter {
-	return &depwait.Waiter{
-		Store:     c.Store,
-		Parent:    id,
-		Timeout:   depwait.TimeoutFromSpec(timeout),
-		Existence: c.existence,
-		Renders:   c.renders,
 	}
 }
 
@@ -154,7 +133,7 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 		if c.PreGate(id, ks.Suspend) {
 			return
 		}
-		if msg, failed := c.preflightFailure(id); failed {
+		if msg, failed := c.PreflightFailure(id); failed {
 			c.Store.UpdateStatus(id, store.StatusFailed, msg)
 			return
 		}
@@ -164,30 +143,16 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 	}
 }
 
-func (c *Controller) preflightFailure(id manifest.NamedResource) (string, bool) {
-	if c.preflight == nil {
-		return "", false
-	}
-	return c.preflight(id)
-}
-
-func (c *Controller) preflightError(id manifest.NamedResource) error {
-	if msg, failed := c.preflightFailure(id); failed {
-		return errors.New(msg)
-	}
-	return nil
-}
-
 func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) error {
 	id := ks.Named()
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
 
 	deps := c.collectDeps(ks)
 	if len(deps) > 0 {
-		err := c.Await(ctx, id, c.newWaiter(id, ks.Timeout), deps,
+		err := c.Await(ctx, id, c.NewWaiter(id, ks.Timeout), deps,
 			"", // status set above
 			func(sum depwait.Summary) error {
 				return &manifest.DependencyFailedError{
@@ -209,7 +174,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 			ks = fresh
 		}
 	}
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 
@@ -228,7 +193,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	if err != nil {
 		return err
 	}
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 
@@ -240,7 +205,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	// post-Prepare inputs are byte-identical. Same pattern as HR (#219).
 	fp := kustomizationFingerprint(ks, sourceRoot)
 	if existing, ok := c.Store.GetArtifact(id).(*store.KustomizationArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
-		if err := c.preflightError(id); err != nil {
+		if err := c.PreflightError(id); err != nil {
 			return err
 		}
 		slog.Debug("kustomization: skipped re-render (fingerprint unchanged)", "id", id.String())
@@ -258,7 +223,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering")
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 	data, err := kustomize.RenderFlux(ctx, c.Staging, sourceRoot, ks.Path, ks.Contents)
@@ -292,7 +257,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
-	if err := c.preflightError(id); err != nil {
+	if err := c.PreflightError(id); err != nil {
 		return err
 	}
 	c.emitRenderedChildren(id, docs)
@@ -335,10 +300,8 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 			},
 		})
 	}
-	if c.parentOf != nil {
-		if parent, ok := c.parentOf(ks.Named()); ok {
-			deps = append(deps, manifest.DependencyRef{NamedResource: parent})
-		}
+	if parent, ok := c.LookupParent(ks.Named()); ok {
+		deps = append(deps, manifest.DependencyRef{NamedResource: parent})
 	}
 	for _, ref := range ks.PostBuildSubstituteFrom {
 		if ref.Optional {

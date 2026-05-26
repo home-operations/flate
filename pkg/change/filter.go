@@ -295,9 +295,13 @@ func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedR
 }
 
 func (f *Filter) resolve(objs ObjectLister) {
-	keep := make(map[manifest.NamedResource]struct{})
-	primary := make(map[manifest.NamedResource]struct{})
-	var queue []manifest.NamedResource
+	// Capacity hint: the final keep set is roughly proportional to the
+	// source-files map; prime both maps and the BFS queue at that size
+	// to avoid repeated rehash/realloc on the initial resolve scan.
+	hint := len(f.sourceFiles)
+	keep := make(map[manifest.NamedResource]struct{}, hint)
+	primary := make(map[manifest.NamedResource]struct{}, hint)
+	queue := make([]manifest.NamedResource, 0, hint)
 	enqueuePrimary := func(id manifest.NamedResource) {
 		if _, isPrimary := primary[id]; isPrimary {
 			return

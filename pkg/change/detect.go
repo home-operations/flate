@@ -118,8 +118,7 @@ func Detect(before, after string) (*Set, error) {
 	// operators can investigate). LookPath returns
 	// *exec.Error{Err: ErrNotFound}; everything else is a real
 	// fault on the git path that callers might want to know about.
-	var lookErr *exec.Error
-	if !errors.As(err, &lookErr) || !errors.Is(lookErr.Err, exec.ErrNotFound) {
+	if lookErr, ok := errors.AsType[*exec.Error](err); !ok || !errors.Is(lookErr.Err, exec.ErrNotFound) {
 		slog.Debug("change.Detect: git path failed, falling back to Go walker", "err", err)
 	}
 	return detectViaWalker(before, after)
@@ -160,8 +159,7 @@ func detectViaGit(before, after string) (*Set, error) {
 		// Exit 1 = differences found (expected); other exits = real
 		// failure (e.g. one path doesn't exist, missing-newline
 		// complaints, etc.).
-		var ee *exec.ExitError
-		if !errors.As(runErr, &ee) || ee.ExitCode() != 1 {
+		if ee, ok := errors.AsType[*exec.ExitError](runErr); !ok || ee.ExitCode() != 1 {
 			return nil, runErr
 		}
 	}
@@ -170,15 +168,29 @@ func detectViaGit(before, after string) (*Set, error) {
 	afterPrefix := filepath.ToSlash(absAfter) + "/"
 	paths := make(map[string]struct{})
 
-	// Output format with --name-status -z (and --no-renames): an even
-	// number of NUL-separated fields, status then path, repeated. A
-	// trailing empty field after the final NUL is normal.
-	parts := bytes.Split(stdout.Bytes(), []byte{0})
-	for i := 0; i+1 < len(parts); i += 2 {
-		if len(parts[i]) == 0 || len(parts[i+1]) == 0 {
+	// Output format with --name-status -z (and --no-renames): NUL-separated
+	// (status, path) pairs. Walk with IndexByte to avoid the full subslice
+	// allocation that bytes.Split would produce for large diffs.
+	data := stdout.Bytes()
+	for len(data) > 0 {
+		// Consume status field.
+		i := bytes.IndexByte(data, 0)
+		if i < 0 {
+			break
+		}
+		status := data[:i]
+		data = data[i+1:]
+		// Consume path field.
+		j := bytes.IndexByte(data, 0)
+		if j < 0 {
+			break
+		}
+		rawPath := data[:j]
+		data = data[j+1:]
+		if len(status) == 0 || len(rawPath) == 0 {
 			continue
 		}
-		p := filepath.ToSlash(string(parts[i+1]))
+		p := filepath.ToSlash(string(rawPath))
 		var rel string
 		switch {
 		case strings.HasPrefix(p, beforePrefix):

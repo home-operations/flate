@@ -42,7 +42,11 @@ type ownershipIndex struct {
 // specific claimant. Kustomization-file reads are memoized by
 // directory so KSes sharing a spec.path don't re-stat the same disk.
 func buildOwnership(objs ObjectLister, repoRoot string) ownershipIndex {
-	var claims []ksClaim
+	ksList := objs.ListObjects(manifest.KindKustomization)
+	// Each KS contributes at least one claim (its own spec.path) plus a
+	// variable number of component paths. Pre-allocate for the base case
+	// to avoid repeated backing-array copies during the append loop.
+	claims := make([]ksClaim, 0, len(ksList))
 	add := func(id manifest.NamedResource, base, ref string) {
 		if ref == "" || strings.Contains(ref, "://") || filepath.IsAbs(ref) {
 			return
@@ -54,7 +58,7 @@ func buildOwnership(objs ObjectLister, repoRoot string) ownershipIndex {
 		claims = append(claims, ksClaim{id: id, path: resolved + "/"})
 	}
 	componentCache := make(map[string][]string)
-	for _, obj := range objs.ListObjects(manifest.KindKustomization) {
+	for _, obj := range ksList {
 		ks, ok := obj.(*manifest.Kustomization)
 		if !ok || ks.Path == "" {
 			continue

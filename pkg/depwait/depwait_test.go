@@ -323,8 +323,12 @@ func TestWaiter_FileIndexedPromoteFailsFastAtGrace(t *testing.T) {
 // wait must end at the cap, not at the full per-dep budget. Before
 // the cap landed, a typo'd dependsOn (IsFileIndexed returns false the
 // same as a render-only dep) burned the full per-dep Timeout —
-// ~30s instead of ~2s — surfacing as a UX regression vs the old
-// MissingGrace fast-fail.
+// ~30s instead of ~RenderProducingTimeout.
+//
+// With Existence wired, MissingGrace is skipped entirely — Promote
+// is synchronous so there's nothing to wait for at the grace
+// boundary. The cap thus equals RenderProducingTimeout (not
+// MissingGrace + RenderProducingTimeout).
 func TestWaiter_RenderOnlyCappedAtRenderProducingTimeout(t *testing.T) {
 	// Shrink the cap so the test doesn't burn 10s.
 	old := RenderProducingTimeout
@@ -349,15 +353,16 @@ func TestWaiter_RenderOnlyCappedAtRenderProducingTimeout(t *testing.T) {
 	if !sum.AnyFailed() {
 		t.Fatalf("expected fail for capped render-only dep: %+v", sum)
 	}
-	// elapsed should be approximately MissingGrace + RenderProducingTimeout.
-	// Allow generous slack for slow CI but reject the uncapped 30s case.
-	upperBound := MissingGrace + RenderProducingTimeout + 1*time.Second
+	// elapsed should be approximately RenderProducingTimeout (grace
+	// is skipped when Existence is wired). Allow generous slack for
+	// slow CI but reject the uncapped 30s case.
+	upperBound := RenderProducingTimeout + 1*time.Second
 	if elapsed > upperBound {
 		t.Errorf("step-2 cap not enforced: elapsed=%s, upper bound=%s", elapsed, upperBound)
 	}
-	if elapsed < MissingGrace+RenderProducingTimeout-100*time.Millisecond {
+	if elapsed < RenderProducingTimeout-100*time.Millisecond {
 		t.Errorf("step-2 returned before cap: elapsed=%s, lower bound=%s",
-			elapsed, MissingGrace+RenderProducingTimeout-100*time.Millisecond)
+			elapsed, RenderProducingTimeout-100*time.Millisecond)
 	}
 	if got := sum.Messages[dep]; got != "dependency not found" {
 		t.Errorf("expected 'dependency not found', got %q", got)

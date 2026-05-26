@@ -277,73 +277,14 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 
 	id := dep.NamedResource
 
-	// Fail fast on deps that never made it into the store: wait a
-	// short grace window for a late-arriving render output, then
-	// surface a clear error instead of timing out at the full
-	// per-dep budget. We treat "object exists" OR "status known" as
-	// proof of presence — the latter covers controllers that update
-	// status before AddObject (and unit tests that set status only).
+	// Fail fast on deps that never made it into the store: branch on
+	// the Existence index (when wired) before burning MissingGrace.
+	// We treat "object exists" OR "status known" as proof of presence
+	// — the latter covers controllers that update status before
+	// AddObject (and unit tests that set status only).
 	if !w.depExists(id) {
-		graceCtx, graceCancel := context.WithTimeout(ctx, MissingGrace)
-		_, err := w.Store.WatchExists(graceCtx, id)
-		graceCancel()
-		if err != nil && !w.depExists(id) {
-			// Step 1: ask the existence lookup to materialize the
-			// dep from the file-indexed Existence map. A true return
-			// means the dep is now in the Store and the wait can
-			// continue against built-in status / exists semantics
-			// below.
-			switch {
-			case w.Existence != nil && w.Existence.Promote(id):
-				// promoted; fall through to the regular wait.
-			case w.Existence != nil && !w.Existence.IsFileIndexed(id):
-				// Step 2: dep has no file record — it can only arrive
-				// via a parent render's emitRenderedChildren chain.
-				// Two complementary signals bound the wait:
-				//
-				//   - RenderProducingTimeout caps the absolute wall
-				//     time so a missing Renders signal doesn't burn
-				//     the full per-dep Timeout. Legacy embedders
-				//     without a task pool get this cap as the only
-				//     bound.
-				//   - Renders.OtherActive() short-circuits the wait
-				//     once no other reconcile in the pool is doing
-				//     work — at that point, no future render can
-				//     produce the missing dep. Typo'd dependsOn
-				//     fails as soon as the orchestrator drains
-				//     instead of waiting the full cap.
-				//
-				// On a real chain (the omada-controller-style
-				// component+replacement render), other reconciles
-				// stay active while the producing chain runs, so
-				// OtherActive returns true and the wait holds open
-				// until the dep arrives via subscription.
-				if err := w.waitRenderEmission(ctx, id); err != nil {
-					switch {
-					case errors.Is(ctx.Err(), context.Canceled):
-						return classify(id, ctx.Err(), "")
-					case errors.Is(err, errRenderCapExceeded),
-						errors.Is(err, context.DeadlineExceeded),
-						errors.Is(err, errRenderDrained):
-						// The render-emission cap fired (or the pool
-						// drained without producing, or the wait was
-						// bounded by the per-dep Timeout) — the dep
-						// isn't going to appear. Fast-fail with
-						// "dependency not found" rather than the
-						// ambiguous "timeout" label.
-						return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
-					default:
-						return Event{Dep: id, Status: DepFailed, Reason: err.Error()}
-					}
-				}
-			default:
-				// Step 3: either no Existence wired (legacy callers
-				// can't distinguish render-only from typo) or the
-				// dep is file-indexed but Promote failed (file
-				// disappeared / parse error). Either way the dep is
-				// not coming — fail fast at the grace boundary.
-				return Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
-			}
+		if err := w.resolveMissing(ctx, id); err != nil {
+			return *err
 		}
 	}
 
@@ -378,6 +319,71 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 		}
 	}
 	return Event{Dep: id, Status: DepReady, Reason: info.Message}
+}
+
+// resolveMissing handles the "dep isn't in the store yet" branch.
+// Returns a non-nil Event pointer when the wait should terminate
+// (success cases fall through to the normal Ready/Exists wait by
+// returning nil).
+//
+// Branch order depends on whether the embedder wired an Existence
+// index. Orchestrator path (Existence != nil): try synchronous
+// Promote first, then route file-indexed-but-unpromotable failures
+// to fast-fail and render-only deps to waitRenderEmission. The 2s
+// MissingGrace is pure wall-clock waste here — Promote is the
+// authoritative materializer, and waitRenderEmission has its own
+// EventObjectAdded subscription for the chained-render race.
+//
+// Legacy path (Existence == nil): preserves the historic
+// "WatchExists with grace, fast-fail on timeout" shape since
+// embedders without an existence index can't distinguish typo from
+// render-only.
+func (w *Waiter) resolveMissing(ctx context.Context, id manifest.NamedResource) *Event {
+	if w.Existence == nil {
+		graceCtx, graceCancel := context.WithTimeout(ctx, MissingGrace)
+		_, err := w.Store.WatchExists(graceCtx, id)
+		graceCancel()
+		if err != nil && !w.depExists(id) {
+			return &Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+		}
+		return nil
+	}
+
+	if w.Existence.Promote(id) {
+		// Lazy-promoted into the Store; fall through to the regular
+		// wait.
+		return nil
+	}
+	if w.Existence.IsFileIndexed(id) {
+		// File was indexed at scan time but Promote failed — parse
+		// error, file mutated since record, etc. No amount of waiting
+		// will materialize this dep.
+		return &Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+	}
+
+	// No file record: dep can only arrive via a parent render's
+	// emitRenderedChildren chain. waitRenderEmission has its own
+	// EventObjectAdded subscription (no race) and is bounded by
+	// RenderProducingTimeout / QuiescenceCh / parent ctx.
+	if err := w.waitRenderEmission(ctx, id); err != nil {
+		switch {
+		case errors.Is(ctx.Err(), context.Canceled):
+			ev := classify(id, ctx.Err(), "")
+			return &ev
+		case errors.Is(err, errRenderCapExceeded),
+			errors.Is(err, context.DeadlineExceeded),
+			errors.Is(err, errRenderDrained):
+			// The render-emission cap fired (or the pool drained
+			// without producing, or the wait was bounded by the
+			// per-dep Timeout) — the dep isn't going to appear.
+			// Fast-fail with "dependency not found" rather than the
+			// ambiguous "timeout" label.
+			return &Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+		default:
+			return &Event{Dep: id, Status: DepFailed, Reason: err.Error()}
+		}
+	}
+	return nil
 }
 
 // watchReadyExpr evaluates expr against id's projected state and

@@ -5,6 +5,7 @@ package verify
 
 import (
 	"fmt"
+	"strings"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
@@ -85,9 +86,10 @@ func matchesTag(mode sourcev1.GitVerificationMode) bool {
 // Treats source.StringFromSecret's PLACEHOLDER wipe as missing so a
 // --wipe-secrets run doesn't try to verify against a placeholder.
 func buildPGPKeyring(sec *manifest.Secret) (string, error) {
-	var out string
-	seen := map[string]struct{}{}
-	append1 := func(k string) {
+	seen := make(map[string]struct{}, len(sec.StringData)+len(sec.Data))
+	var b strings.Builder
+	needsNL := false // true when previous block didn't end with '\n'
+	add := func(k string) {
 		if _, dup := seen[k]; dup {
 			return // StringData wins over Data per StringFromSecret
 		}
@@ -96,21 +98,22 @@ func buildPGPKeyring(sec *manifest.Secret) (string, error) {
 		if v == "" {
 			return
 		}
-		if out != "" && out[len(out)-1] != '\n' {
-			out += "\n"
+		if needsNL {
+			b.WriteByte('\n')
 		}
-		out += v
+		b.WriteString(v)
+		needsNL = len(v) > 0 && v[len(v)-1] != '\n'
 	}
 	for k := range sec.StringData {
-		append1(k)
+		add(k)
 	}
 	for k := range sec.Data {
-		append1(k)
+		add(k)
 	}
-	if out == "" {
+	if b.Len() == 0 {
 		return "", fmt.Errorf("verify secret carries no PGP public keys")
 	}
-	return out, nil
+	return b.String(), nil
 }
 
 func verifyCommit(repo *git.Repository, hash plumbing.Hash, keyring string) error {

@@ -55,8 +55,17 @@ type kvPairGenerator struct {
 	Envs      []string `json:"envs,omitempty"      yaml:"envs,omitempty"`
 }
 
-// kustomizationFileNames is the ordered list kustomize checks; first
-// match wins.
+// kustomizationFileNames is the set of filenames the loader treats as a
+// kustomization root during its filesystem walk. The first match in a
+// directory wins.
+//
+// NOTE: this list intentionally differs from manifest.KustomizeBuilderFilenames:
+//   - it includes "kustomization.json" so flate's generic YAML/JSON load path
+//     can discover kustomization roots stored as JSON (kustomize also accepts
+//     this format at build time even though it is rarely used in the wild).
+//   - it omits the bare "Kustomization" name (no extension) which kustomize
+//     build supports but which the loader never encounters in practice —
+//     keeping the loader's list minimal avoids false-positive directory matches.
 var kustomizationFileNames = [3]string{
 	"kustomization.yaml",
 	"kustomization.yml",

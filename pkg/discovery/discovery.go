@@ -277,7 +277,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		}
 	}
 	l.PreferExisting = false
-	slog.Debug("discovery: loaded objects", "count", total, "scanRoot", scanRoot, "sourceRoot", repoRoot)
+	slog.Debug("discovery: loaded objects", "count", total, "scan_root", scanRoot, "source_root", repoRoot)
 	return nil
 }
 

@@ -149,17 +149,14 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 	for _, ref := range hr.ValuesFrom {
 		found, err := lookupValueRef(ref, hr.Namespace, provider)
 		if err != nil {
-			var missing *missingValueRefError
-			if ref.Optional && errors.As(err, &missing) {
+			if _, ok := errors.AsType[*missingValueRefError](err); ok && ref.Optional {
 				continue
 			}
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
-		merged, err := updateHelmReleaseValues(ref, found, values)
-		if err != nil {
+		if err := updateHelmReleaseValues(ref, found, values); err != nil {
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
-		values = merged
 	}
 	if len(hr.Values) > 0 {
 		// hr.Values is the inline-values map decoded from the HR
@@ -168,7 +165,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 		// sub-tree is safe; reaching values as the dst would
 		// however share sub-references back into hr.Values, so
 		// build the inline layer ON TOP of our owned values map.
-		values = DeepMergeInto(values, hr.Values)
+		DeepMergeInto(values, hr.Values)
 	}
 	hr.Values = values
 	return nil
@@ -176,46 +173,46 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 
 // lookupValueRef returns the raw string value referenced by ref.
 func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) (string, error) {
-	var data map[string]string
-	var err error
-	switch ref.Kind {
-	case manifest.KindSecret:
-		s := p.Secret(namespace, ref.Name)
-		if s != nil {
-			data, err = decodeBag(s.StringData, s.Data)
-		}
-	case manifest.KindConfigMap:
-		c := p.ConfigMap(namespace, ref.Name)
-		if c != nil {
-			// valuesFrom reads only ConfigMap.data; upstream
-			// fluxcd/pkg/chartutil/values.go ChartValuesFromReferences
-			// pulls from typedRes.Data[ref.GetValuesKey()] and never
-			// touches BinaryData. Pass nil so a ConfigMap carrying
-			// binaryData doesn't quietly leak base64-decoded entries
-			// into hr.Values — flate would render with keys real Flux
-			// never sees.
-			data, err = decodeBag(c.Data, nil)
-		}
-	default:
-		return "", fmt.Errorf("%w: unsupported valuesFrom kind %s", manifest.ErrInvalidValuesReference, ref.Kind)
-	}
+	data, err := lookupResourceData(ref.Kind, namespace, ref.Name, p)
 	if err != nil {
 		return "", err
 	}
 	if data == nil {
-		return "", &missingValueRefError{
-			kind: ref.Kind, namespace: namespace, name: ref.Name,
-		}
+		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name}
 	}
-
 	key := ref.GetValuesKey()
 	val, ok := data[key]
 	if !ok {
-		return "", &missingValueRefError{
-			kind: ref.Kind, namespace: namespace, name: ref.Name, key: key,
-		}
+		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name, key: key}
 	}
 	return val, nil
+}
+
+// lookupResourceData fetches and decodes the data bag for a ConfigMap or
+// Secret. Returns nil when the resource is not found (no error). Hard errors
+// (unsupported kind, malformed binaryData) always surface regardless of
+// Optional.
+func lookupResourceData(kind, namespace, name string, p Provider) (map[string]string, error) {
+	switch kind {
+	case manifest.KindSecret:
+		if s := p.Secret(namespace, name); s != nil {
+			return decodeBag(s.StringData, s.Data)
+		}
+		return nil, nil
+	case manifest.KindConfigMap:
+		if c := p.ConfigMap(namespace, name); c != nil {
+			// valuesFrom/substituteFrom read only ConfigMap.data; upstream
+			// fluxcd/pkg/chartutil/values.go ChartValuesFromReferences
+			// pulls from typedRes.Data exclusively and never touches
+			// BinaryData. Pass nil so a ConfigMap carrying binaryData
+			// doesn't quietly leak base64-decoded entries — flate would
+			// render with keys real Flux never sees.
+			return decodeBag(c.Data, nil)
+		}
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported kind %s", manifest.ErrInvalidValuesReference, kind)
+	}
 }
 
 type missingValueRefError struct {
@@ -284,9 +281,8 @@ func bagValueAsString(v any) (string, error) {
 	case string:
 		return t, nil
 	case []byte:
-		// Hypothetical today (the YAML decoder lands strings), but
-		// the spec-correct shape for Secret.Data is []byte and a
-		// future schema fix could land us here.
+		// Secret.Data is spec-correct as []byte; a future schema fix or a
+		// non-standard decoder could land values here.
 		return string(t), nil
 	case nil:
 		return "", nil
@@ -311,12 +307,13 @@ func bagValueAsString(v any) (string, error) {
 // targetPath value as a literal string, which broke chart-schema
 // validation against `replicaCount: integer` and similar.
 //
-// Mutates values in place — ExpandValueReferences owns the map and
-// chaining N refs through DeepMerge previously paid for N-1 wasted
-// full-tree clones (the O(N²) shape the audit flagged).
-func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any) (map[string]any, error) {
+// Mutates values in place — ExpandValueReferences owns the accumulator
+// map; using DeepMergeInto avoids the O(N²) full-tree clone DeepMerge
+// would pay across N valuesFrom refs.
+func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any) error {
 	if ref.TargetPath != "" {
-		return replaceValueAtPath(values, ref.TargetPath, found)
+		_, err := replaceValueAtPath(values, ref.TargetPath, found)
+		return err
 	}
 
 	// Wiped Secret values surface here as the literal placeholder
@@ -325,16 +322,16 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 	// `secretGenerator` wrapping a SOPS-encrypted values.yaml) doesn't
 	// block the whole HR render.
 	if manifest.IsValuePlaceholder(found) {
-		return values, nil
+		return nil
 	}
 	var parsed map[string]any
 	if err := yaml.Unmarshal([]byte(found), &parsed); err != nil {
-		return nil, fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)
+		return fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)
 	}
-	if parsed == nil {
-		return values, nil
+	if parsed != nil {
+		DeepMergeInto(values, parsed)
 	}
-	return DeepMergeInto(values, parsed), nil
+	return nil
 }
 
 // replaceValueAtPath writes value into values at path using Helm's
@@ -348,17 +345,16 @@ func replaceValueAtPath(values map[string]any, path, value string) (map[string]a
 		singleQuote = "'"
 		doubleQuote = `"`
 	)
-	var err error
 	// The len >= 2 guard is load-bearing: a single-char "'" or `"`
 	// has prefix == suffix == the same byte, which would pass the
 	// boolean test below and then trip a `value[1:0]` slice — runtime
 	// panic. Untrusted Secret data shouldn't be able to crash the
 	// renderer, so reject the degenerate case explicitly.
+	var err error
 	if len(value) >= 2 &&
 		((strings.HasPrefix(value, singleQuote) && strings.HasSuffix(value, singleQuote)) ||
 			(strings.HasPrefix(value, doubleQuote) && strings.HasSuffix(value, doubleQuote))) {
-		stripped := value[1 : len(value)-1]
-		err = strvals.ParseIntoString(path+"="+stripped, values)
+		err = strvals.ParseIntoString(path+"="+value[1:len(value)-1], values)
 	} else {
 		err = strvals.ParseInto(path+"="+value, values)
 	}
@@ -387,28 +383,15 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 	// substituteFrom first into a fresh map, then layer inline on top.
 	values := map[string]any{}
 	for _, ref := range ks.PostBuildSubstituteFrom {
-		var data map[string]string
-		var err error
-		switch ref.Kind {
-		case manifest.KindSecret:
-			s := p.Secret(ks.Namespace, ref.Name)
-			if s != nil {
-				data, err = decodeBag(s.StringData, s.Data)
-			}
-		case manifest.KindConfigMap:
-			c := p.ConfigMap(ks.Namespace, ref.Name)
-			if c != nil {
-				// substituteFrom only reads cm.Data — upstream
-				// kustomize-controller does NOT expose binaryData as
-				// substitution vars. Pass nil to skip that branch.
-				data, err = decodeBag(c.Data, nil)
-			}
-		default:
-			slog.Debug("values: unsupported SubstituteReference kind",
-				"id", ks.Named().String(), "kind", ref.Kind)
-			continue
-		}
+		data, err := lookupResourceData(ref.Kind, ks.Namespace, ref.Name, p)
 		if err != nil {
+			if errors.Is(err, manifest.ErrInvalidValuesReference) {
+				// Unsupported kind — log and skip rather than failing the
+				// whole KS, matching upstream's lenient substituteFrom handling.
+				slog.Debug("values: unsupported SubstituteReference kind",
+					"id", ks.Named().String(), "kind", ref.Kind)
+				continue
+			}
 			return err
 		}
 		if data == nil {

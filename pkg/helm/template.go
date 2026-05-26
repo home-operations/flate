@@ -306,9 +306,9 @@ func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests
 // filterShowOnly keeps only sections whose "# Source: <path>" header
 // matches one of the requested template paths.
 func filterShowOnly(content string, paths []string) string {
-	want := make(map[string]struct{}, len(paths))
+	want := make(map[string]bool, len(paths))
 	for _, p := range paths {
-		want[p] = struct{}{}
+		want[p] = true
 	}
 	var out strings.Builder
 	for section := range strings.SplitSeq(content, "\n---\n") {
@@ -319,7 +319,7 @@ func filterShowOnly(content string, paths []string) string {
 				break
 			}
 		}
-		if _, ok := want[header]; !ok {
+		if !want[header] {
 			continue
 		}
 		if out.Len() > 0 {

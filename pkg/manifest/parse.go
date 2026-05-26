@@ -21,16 +21,14 @@ func decodeTyped[T any](doc map[string]any, out *T) error {
 	return json.Unmarshal(raw, out)
 }
 
-// DocKind returns the "kind" field of a manifest document, or "" if
-// absent. Centralizes the doc["kind"].(string) cast.
+// DocKind returns the "kind" field of a manifest document, or "" if absent.
 func DocKind(doc map[string]any) string {
 	k, _ := doc["kind"].(string)
 	return k
 }
 
 // DocAPIVersion returns the "apiVersion" field of a manifest document,
-// or "" if absent. Centralizes the doc["apiVersion"].(string) cast so
-// callers don't repeat the same one-liner.
+// or "" if absent.
 func DocAPIVersion(doc map[string]any) string {
 	v, _ := doc["apiVersion"].(string)
 	return v

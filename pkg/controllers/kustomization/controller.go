@@ -7,6 +7,7 @@ package kustomization
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -172,7 +173,7 @@ func (c *Controller) preflightFailure(id manifest.NamedResource) (string, bool) 
 
 func (c *Controller) preflightError(id manifest.NamedResource) error {
 	if msg, failed := c.preflightFailure(id); failed {
-		return fmt.Errorf("%s", msg)
+		return errors.New(msg)
 	}
 	return nil
 }

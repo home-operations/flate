@@ -62,7 +62,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		}
 	}
 	// Pass 2 — leaf reconcilables.
-	leaves := make([]manifest.BaseManifest, 0)
+	var leaves []manifest.BaseManifest
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			c.keepEmitted(id, p.obj.Named())

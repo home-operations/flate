@@ -67,16 +67,15 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			}
 			name := firstArg(argv)
 			docs := []map[string]any{}
-			var collectErr error
+			var emitErr error
 			for _, kind := range kinds {
 				rendered, err := collectRendered(o, res, kind, name, c, b)
 				if err != nil {
-					collectErr = err
+					emitErr = err
 					break
 				}
 				docs = append(docs, rendered...)
 			}
-			emitErr := collectErr
 			if emitErr == nil {
 				emitErr = emitDocs(cmd.OutOrStdout(), docs, c.outputOrDefault(format.OutputYAML))
 			}
@@ -126,9 +125,7 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 			continue
 		}
 		matched++
-		// res.Manifests is the structured render output keyed by
-		// NamedResource — no more Store.GetArtifact + type-assertion
-		// dance. A missing entry means the resource didn't render
+		// A missing entry means the resource didn't render
 		// (failed, suspended, or produced zero docs).
 		mans, ok := res.Manifests[id]
 		if !ok || len(mans) == 0 {

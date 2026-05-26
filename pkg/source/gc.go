@@ -95,7 +95,7 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 	}{
 		{layout.Sources(), 2, nil},
 		{layout.Baselines(), 1, nil},
-		{layout.Blobs(), 1, func(name string) bool { _, ok := live[name]; return ok }},
+		{layout.Blobs(), 1, func(name string) bool { return live[name] }},
 	}
 	if opts.IncludeMirrors {
 		ageRoots = append(ageRoots, struct {
@@ -117,8 +117,8 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 // the set of digests they point at. Used to gate blob sweep: a fresh
 // ref must always be able to resolve, even if its blob is "old".
 // Malformed or missing refs land in res.Errors but don't abort.
-func markLiveDigests(layout cacheroot.Layout, res *SweepResult) map[string]struct{} {
-	live := map[string]struct{}{}
+func markLiveDigests(layout cacheroot.Layout, res *SweepResult) map[string]bool {
+	live := map[string]bool{}
 	refsRoot := layout.RefsRoot()
 	_ = filepath.WalkDir(refsRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -138,7 +138,7 @@ func markLiveDigests(layout cacheroot.Layout, res *SweepResult) map[string]struc
 		}
 		digest := strings.TrimSpace(string(b))
 		if looksLikeDigest(digest) {
-			live[digest] = struct{}{}
+			live[digest] = true
 		}
 		return nil
 	})

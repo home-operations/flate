@@ -412,10 +412,7 @@ func (o *Orchestrator) replacePreflightFailures(failures map[manifest.NamedResou
 		o.preflightFailures = nil
 		return cleared
 	}
-	o.preflightFailures = make(map[manifest.NamedResource]string, len(failures))
-	for id, msg := range failures {
-		o.preflightFailures[id] = msg
-	}
+	o.preflightFailures = maps.Clone(failures)
 	return cleared
 }
 

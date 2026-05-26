@@ -43,7 +43,11 @@ func cachedRevisionFresh(slot string, maxAge time.Duration) (string, bool) {
 	if err != nil || time.Since(info.ModTime()) > maxAge {
 		return "", false
 	}
-	rev := readCachedRevision(slot)
+	b, err := os.ReadFile(path) //nolint:gosec // slot is fetcher-owned cache path
+	if err != nil {
+		return "", false
+	}
+	rev := strings.TrimSpace(string(b))
 	return rev, rev != ""
 }
 

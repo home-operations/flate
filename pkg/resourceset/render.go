@@ -76,16 +76,13 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 		return nil, nil
 	}
 	var docs []map[string]any
-	seen := map[string]struct{}{}
+	seen := map[string]bool{}
 	appendUnique := func(doc map[string]any) {
 		key := DedupKey(doc)
-		if key == "" {
+		if key == "" || seen[key] {
 			return
 		}
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
+		seen[key] = true
 		docs = append(docs, doc)
 	}
 

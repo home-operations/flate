@@ -71,7 +71,7 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource, quies
 		default:
 		}
 	}
-	initial, hasInitial, unsub := s.subscribeWithStatus(EventStatusUpdated, listener, id)
+	initial, hasInitial, unsub := s.subscribeWithStatus(listener, id)
 	defer unsub()
 
 	var currentFailed *StatusInfo
@@ -251,7 +251,7 @@ func (s *Store) subscribeWithObject(fn Listener, id manifest.NamedResource) (man
 // EventStatusUpdated listener AND reads the current status for id
 // under one s.mu.RLock. Mirrors subscribeWithObject for the status
 // channel; same race-closing argument.
-func (s *Store) subscribeWithStatus(_ EventKind, fn Listener, id manifest.NamedResource) (StatusInfo, bool, Unsubscribe) {
+func (s *Store) subscribeWithStatus(fn Listener, id manifest.NamedResource) (StatusInfo, bool, Unsubscribe) {
 	set := s.listeners[EventStatusUpdated]
 	s.mu.RLock()
 	handle := set.add(fn)

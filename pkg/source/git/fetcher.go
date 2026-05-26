@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -247,7 +248,7 @@ func gitCacheKey(repo *manifest.GitRepository, refLabel string) string {
 	}{
 		Ref:               refLabel,
 		Ignore:            ignore,
-		SparseCheckout:    append([]string(nil), repo.SparseCheckout...),
+		SparseCheckout:    slices.Clone(repo.SparseCheckout),
 		RecurseSubmodules: repo.RecurseSubmodules,
 		Verify:            gitVerifyCacheKey(repo.Namespace, repo.Verification),
 	}

@@ -503,8 +503,7 @@ func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, 
 func (w *Waiter) tryReadyExpr(expr string, id manifest.NamedResource) (Event, bool) {
 	ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id)
 	if err != nil {
-		var compileErr *celCompileErr
-		if errors.As(err, &compileErr) {
+		if _, ok := errors.AsType[*celCompileErr](err); ok {
 			return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}, true
 		}
 		// Eval error: transient, re-poll on next event.
@@ -577,7 +576,6 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 	}, false)
 	defer unsub()
 	if w.depExists(id) {
-		slog.Debug("depwait: render-only dependency already exists", "parent", w.Parent.String(), "dep", id.String(), "duration", time.Since(started))
 		return nil
 	}
 
@@ -614,10 +612,8 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 			// classifies as DepCancelled; any deadline becomes a
 			// "render couldn't produce" fast-fail.
 			if errors.Is(ctx.Err(), context.Canceled) {
-				slog.Debug("depwait: render-only dependency cancelled", "parent", w.Parent.String(), "dep", id.String(), "duration", time.Since(started))
 				return ctx.Err()
 			}
-			slog.Debug("depwait: render-only dependency cap reached", "parent", w.Parent.String(), "dep", id.String(), "duration", time.Since(started))
 			return errRenderCapExceeded
 		}
 	}

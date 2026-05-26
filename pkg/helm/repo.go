@@ -214,8 +214,7 @@ func (c *Client) chartTarballByDigest(digest string) (string, bool) {
 }
 
 func normalizeChartDigest(digest string) string {
-	digest = strings.TrimSpace(digest)
-	return strings.TrimPrefix(digest, "sha256:")
+	return strings.TrimPrefix(strings.TrimSpace(digest), "sha256:")
 }
 
 func chartDownloadKey(r *manifest.HelmRepository, hr *manifest.HelmRelease, cv *repo.ChartVersion, chartURL, digest string) string {

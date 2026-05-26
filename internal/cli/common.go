@@ -37,12 +37,8 @@ type commonFlags struct {
 	enableOCI           bool
 	registryConfig      string
 	concurrency         int
-	// cacheDir is resolved lazily (and only when needed) via
-	// resolveCacheRoot — it points at the shared cache root used by
-	// both the orchestrator's source/helm caches and the baseline's
-	// content-addressed slots. Surfaced as a field (not just a
-	// function) so the value remains stable across multiple lookups
-	// within one command invocation.
+	// cacheDir is resolved lazily via resolveCacheRoot and memoized so
+	// multiple lookups within one invocation return the same value.
 	cacheDir string
 }
 
@@ -262,13 +258,6 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	}
 }
 
-// resolveCacheRoot picks the on-disk cache root used by every persistent
-// cache (orchestrator sources, baseline slots, helm tarballs). Lazy and
-// cached on commonFlags so multiple lookups within one invocation
-// return the same value. Prefers the OS user cache dir
-// ($XDG_CACHE_HOME on Linux, ~/Library/Caches on macOS,
-// %LocalAppData% on Windows) with a "flate" subdir; falls back to
-// $TMPDIR/flate-cache when UserCacheDir errors.
 func (c *commonFlags) resolveCacheRoot() string {
 	if c.cacheDir == "" {
 		c.cacheDir = cacheroot.Default()
@@ -291,9 +280,6 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 	if _, err := format.ParseOutput(c.output); err != nil {
 		return nil, nil, err
 	}
-	// Opt-in baseline materialization: build/get/test only fires
-	// resolveBaseline when the user explicitly set --base (or
-	// --path-orig). Bare command keeps the full-tree default.
 	// Cleanup is deferred (not bound to ctx) so the tempdir survives
 	// SIGINT until the orchestrator's read paths have actually
 	// unwound.
@@ -347,10 +333,8 @@ func (c *commonFlags) requireOutput(allowed ...format.Output) error {
 	if c.output == string(format.OutputTable) {
 		return nil
 	}
-	for _, a := range allowed {
-		if format.Output(c.output) == a {
-			return nil
-		}
+	if slices.Contains(allowed, format.Output(c.output)) {
+		return nil
 	}
 	names := make([]string, 0, len(allowed)+1)
 	names = append(names, string(format.OutputTable))
@@ -369,11 +353,6 @@ func (c *commonFlags) requireOutput(allowed ...format.Output) error {
 // resource failures: the partial output is still usable. A nil
 // orchestrator indicates a fatal init/bootstrap error and callers
 // should bail.
-//
-// Dogfooding Render here closes a drift hazard the iter-13 review
-// flagged: the embed API and the CLI used to read rendered artifacts
-// through different code paths (CLI reached straight into the Store
-// with a type assertion). Now there's one path.
 func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
 	o, err := orchestrator.New(cfg)
 	if err != nil {

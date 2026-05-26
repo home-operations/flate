@@ -199,8 +199,10 @@ func digestPath(slot string, d digest.Digest) string {
 // Either signals an inconsistent slot. The OCI fetcher's cache-hit
 // path uses this to reset stale slots before serving them.
 func hasUnfinishedOCILayout(slot string) bool {
-	candidates := append([]string{stagedLayerFilename}, ociLayoutArtifacts...)
-	for _, name := range candidates {
+	if _, err := os.Stat(filepath.Join(slot, stagedLayerFilename)); err == nil {
+		return true
+	}
+	for _, name := range ociLayoutArtifacts {
 		if _, err := os.Stat(filepath.Join(slot, name)); err == nil {
 			return true
 		}

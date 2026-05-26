@@ -212,8 +212,5 @@ func writeBlobTo(dst string, objects *serializedObjectReader, hash plumbing.Hash
 		return fmt.Errorf("create %s: %w", dst, err)
 	}
 	defer func() { _ = out.Close() }()
-	if err := objects.copyBlobTo(hash, name, out); err != nil {
-		return err
-	}
-	return nil
+	return objects.copyBlobTo(hash, name, out)
 }

@@ -117,23 +117,18 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}
 	defer slot.Release()
-	if slot.Exists && resolvedDigest != "" {
-		artifact, hit, hitErr := f.checkCacheHit(ctx, repoClient, repo, slot.Path, ref, versioned, resolvedDigest)
-		if hitErr != nil {
-			_ = slot.Reset()
-			return nil, hitErr
+	if slot.Exists {
+		if resolvedDigest != "" {
+			artifact, hit, hitErr := f.checkCacheHit(ctx, repoClient, repo, slot.Path, ref, versioned, resolvedDigest)
+			if hitErr != nil {
+				_ = slot.Reset()
+				return nil, hitErr
+			}
+			if hit {
+				return artifact, nil
+			}
 		}
-		if hit {
-			return artifact, nil
-		}
-		// Reset + restage for a fresh pull.
-		if err := slot.Reset(); err != nil {
-			return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
-		}
-		if err := slot.Stage(); err != nil {
-			return nil, fmt.Errorf("cache stage for %s: %w", versioned, err)
-		}
-	} else if slot.Exists {
+		// Stale or unresolved slot — wipe and stage a fresh pull target.
 		if err := slot.Reset(); err != nil {
 			return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
 		}

@@ -68,8 +68,15 @@ func cachedDigestFresh(slot string, maxAge time.Duration) (string, bool) {
 	if err != nil || time.Since(info.ModTime()) > maxAge {
 		return "", false
 	}
-	digest := readCachedDigest(slot)
-	return digest, digest != ""
+	b, err := os.ReadFile(path) //nolint:gosec // slot is fetcher-owned cache path
+	if err != nil {
+		return "", false
+	}
+	d := strings.TrimSpace(string(b))
+	if !digestRE.MatchString(d) {
+		return "", false
+	}
+	return d, true
 }
 
 // verifyFingerprint hashes the verify spec into a short identifier

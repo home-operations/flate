@@ -127,11 +127,7 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 		return runErr
 	}
 	imgs := imageSetDiff(collectImages(orig.O, orig.Res, c), collectImages(current.O, current.Res, c), includeRemoved)
-	out := c.output
-	if out == string(format.OutputTable) {
-		out = string(format.OutputName)
-	}
-	if err := emitImageList(cmd.OutOrStdout(), imgs, out); err != nil {
+	if err := emitImageList(cmd.OutOrStdout(), imgs, string(c.outputOrDefault(format.OutputName))); err != nil {
 		return errors.Join(err, scopedDiffRunError(orig, current, c, runErr))
 	}
 	return scopedDiffRunError(orig, current, c, runErr)
@@ -175,17 +171,13 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
 	}
 
-	outFormat := c.output
-	if outFormat == "table" {
-		outFormat = outputDiff
-	}
 	diffs, err := diff.Run(origDocs, currentDocs, diff.Options{
 		StripAttrs: d.stripAttrs,
 	})
 	if err != nil {
 		return errors.Join(err, diffRunErr)
 	}
-	formatted, err := diff.Render(diffs, diff.Format(outFormat))
+	formatted, err := diff.Render(diffs, diff.Format(c.outputOrDefault(format.Output(outputDiff))))
 	if err != nil {
 		return errors.Join(err, diffRunErr)
 	}
@@ -212,11 +204,9 @@ type diffSide struct {
 // on changed-only diffs.
 func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (diffSide, diffSide, error) {
 	// diff REQUIRES a baseline — when neither --path-orig nor --base
-	// is set, auto-detect via the merge-base ladder. resolveBaseline
-	// with autoFallback=true preserves the existing "bare diff
-	// figures it out" UX. Cleanup is deferred (not bound to ctx) so
-	// the tempdir survives SIGINT until both orchestrators' read
-	// paths have actually unwound.
+	// is set, auto-detect via the merge-base ladder. Cleanup is
+	// deferred (not bound to ctx) so the tempdir survives SIGINT
+	// until both orchestrators' read paths have actually unwound.
 	cleanup, err := resolveBaseline(ctx, c, true)
 	if err != nil {
 		return diffSide{}, diffSide{}, err

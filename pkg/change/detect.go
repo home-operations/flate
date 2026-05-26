@@ -2,7 +2,6 @@ package change
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -278,7 +277,7 @@ func detectViaWalker(before, after string) (*Set, error) {
 
 	if len(hashJobs) > 0 {
 		var mu sync.Mutex
-		hg, _ := errgroup.WithContext(context.Background())
+		var hg errgroup.Group
 		const hashWorkers = 8
 		jobs := make(chan hashJob, len(hashJobs))
 		for range hashWorkers {

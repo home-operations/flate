@@ -119,7 +119,6 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) e
 
 	c.Store.UpdateStatus(id, store.StatusPending, "fetching")
 	started := time.Now()
-	slog.Debug("source: fetch", "id", id.String())
 
 	// Release the worker slot during the fetch so consumers of this
 	// source (KS/HR depwait watchers) can acquire one and make

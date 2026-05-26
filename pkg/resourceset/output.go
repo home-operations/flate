@@ -58,8 +58,9 @@ func isClusterScoped(doc map[string]any) bool {
 		"APIService",
 		"Node":
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {
@@ -76,17 +77,18 @@ func applyOwnerLabels(doc map[string]any, rs *manifest.ResourceSet) {
 		return
 	}
 	md := manifest.EnsureMetadata(doc)
-	manifest.MergeStringMap(md, "labels", map[string]string{
-		fluxopv1.OwnerLabelResourceSetName:      rs.Name,
-		fluxopv1.OwnerLabelResourceSetNamespace: rs.Namespace,
-	})
+	labels, _ := md["labels"].(map[string]any)
+	if labels == nil {
+		labels = make(map[string]any, 2)
+	}
+	labels[fluxopv1.OwnerLabelResourceSetName] = rs.Name
+	labels[fluxopv1.OwnerLabelResourceSetNamespace] = rs.Namespace
+	md["labels"] = labels
 }
 
 func disabledByReconcileAnnotation(doc map[string]any) bool {
 	md, _ := doc["metadata"].(map[string]any)
 	ann, _ := md["annotations"].(map[string]any)
-	if v, _ := ann[fluxopv1.ReconcileAnnotation].(string); v == fluxopv1.DisabledValue {
-		return true
-	}
-	return false
+	v, _ := ann[fluxopv1.ReconcileAnnotation].(string)
+	return v == fluxopv1.DisabledValue
 }

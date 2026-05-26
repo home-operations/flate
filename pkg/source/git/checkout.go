@@ -20,18 +20,11 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 	if err != nil {
 		return err
 	}
-	// newOpts builds a CheckoutOptions pre-populated with sparse-checkout
-	// directories when configured. Repeated per call-site because
-	// CheckoutOptions is consumed by each Checkout invocation.
-	newOpts := func() *git.CheckoutOptions {
+	checkout := func(set func(*git.CheckoutOptions)) error {
 		opts := &git.CheckoutOptions{}
 		if len(sparse) > 0 {
 			opts.SparseCheckoutDirectories = append(opts.SparseCheckoutDirectories, sparse...)
 		}
-		return opts
-	}
-	checkout := func(set func(*git.CheckoutOptions)) error {
-		opts := newOpts()
 		set(opts)
 		return wt.Checkout(opts)
 	}

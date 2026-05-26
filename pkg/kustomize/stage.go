@@ -8,10 +8,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // StagingCache materializes one-or-more source roots into a temp
@@ -217,11 +220,25 @@ func (c *StagingCache) Close() error {
 // copyTree makes a fresh directory and copies every regular file from
 // src into it. Symlinks are dereferenced (we want the file content),
 // dotfiles are skipped to keep stages clean.
+//
+// The walk collects file-copy tasks serially (cheap, also creates the
+// destination directory skeleton) and then fans them out across a
+// worker pool. Each task is independent — hardlinks are atomic; byte
+// copies operate on distinct dst paths — so concurrency is safe. The
+// pool is capped at runtime.NumCPU because the cost per task is I/O,
+// not CPU, and over-fanning would just thrash the page cache.
 func (c *StagingCache) copyTree(src string) (string, error) {
 	dst, err := os.MkdirTemp(c.root, "flate-stage-*")
 	if err != nil {
 		return "", err
 	}
+
+	type task struct {
+		srcPath, dstPath string
+		mode             os.FileMode
+	}
+	var tasks []task
+
 	walkErr := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -242,7 +259,6 @@ func (c *StagingCache) copyTree(src string) (string, error) {
 			}
 			return os.MkdirAll(filepath.Join(dst, rel), 0o750)
 		}
-		// Read regular files (or follow symlinks to regular files).
 		info, err := os.Stat(path)
 		if err != nil {
 			// A dangling symlink in the user's working tree (a common
@@ -260,11 +276,22 @@ func (c *StagingCache) copyTree(src string) (string, error) {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		return copyFile(path, filepath.Join(dst, rel), info.Mode())
+		tasks = append(tasks, task{path, filepath.Join(dst, rel), info.Mode()})
+		return nil
 	})
 	if walkErr != nil {
 		_ = os.RemoveAll(dst)
 		return "", fmt.Errorf("stage %s: %w", src, walkErr)
+	}
+
+	g, _ := errgroup.WithContext(context.Background())
+	g.SetLimit(runtime.NumCPU())
+	for _, t := range tasks {
+		g.Go(func() error { return copyFile(t.srcPath, t.dstPath, t.mode) })
+	}
+	if err := g.Wait(); err != nil {
+		_ = os.RemoveAll(dst)
+		return "", fmt.Errorf("stage %s: %w", src, err)
 	}
 	return dst, nil
 }

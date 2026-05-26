@@ -1,7 +1,7 @@
-// Package external implements the source.Fetcher for
-// KindExternalArtifact (third-party-published artifacts under Flux's
-// source-controller schema). Only file:// URLs are resolvable from
-// offline flate; other URL schemes fail-loud.
+// Package external implements source.TypedFetcher for ExternalArtifact.
+// ExternalArtifact is published by a third-party controller into a live
+// cluster; flate runs offline and cannot reach that controller. Only
+// status.artifact URLs pre-filled with a file:// scheme are resolvable.
 package external
 
 import (
@@ -13,22 +13,9 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Fetcher resolves an ExternalArtifact CR into a
-// SourceArtifact. Because ExternalArtifact is the contract a
-// third-party controller uses to publish content into a live cluster,
-// flate (which runs offline) has no general way to fetch from the
-// upstream URL. Two modes are supported:
-//
-//  1. The CR's status.artifact has been pre-populated in the YAML with
-//     a `file://` URL. flate trusts the local path and surfaces it
-//     verbatim as a SourceArtifact so downstream Kustomizations or
-//     HelmReleases referencing the artifact can resolve.
-//
-//  2. status.artifact is unset or its URL is not file://. flate cannot
-//     resolve the content; the fetcher returns an error. Any consumer
-//     that references this ExternalArtifact will fail-loud with a
-//     "source artifact not found" message — preferable to silently
-//     emitting empty output.
+// Fetcher is the stateless source.TypedFetcher for ExternalArtifact CRs.
+// Requires status.artifact.url to be a file:// path; all other URLs are
+// offline-unresolvable and return an actionable error.
 type Fetcher struct{}
 
 // Fetch implements source.TypedFetcher[*manifest.ExternalArtifact].
@@ -42,11 +29,8 @@ func (f *Fetcher) Fetch(_ context.Context, ea *manifest.ExternalArtifact) (*stor
 			ea.Namespace, ea.Name,
 		)
 	}
-	localPath := ""
-	if rest, ok := strings.CutPrefix(ea.ArtifactURL, "file://"); ok {
-		localPath = rest
-	}
-	if localPath == "" {
+	localPath, ok := strings.CutPrefix(ea.ArtifactURL, "file://")
+	if !ok {
 		return nil, fmt.Errorf(
 			"ExternalArtifact %s/%s status.artifact.url %q is not a file:// URL — flate can only resolve local artifacts offline",
 			ea.Namespace, ea.Name, ea.ArtifactURL,

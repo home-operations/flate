@@ -97,9 +97,18 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 // Go's body so panics and clean returns both fire it.
 func (s *Service) taskDone() {
 	now := s.active.Add(-1)
+	s.notifyQuiescence(now)
+}
+
+// notifyQuiescence closes every registered quiescence waiter whose
+// threshold the new active count satisfies. Called anywhere the
+// count drops — taskDone on goroutine exit AND YieldQuiescent on
+// entry — so depwait-blocked tasks don't keep the pool from
+// declaring quiescence on their own absence of productive work.
+func (s *Service) notifyQuiescence(now int64) {
 	s.quiesceMu.Lock()
+	defer s.quiesceMu.Unlock()
 	if len(s.quiesceWaiters) == 0 {
-		s.quiesceMu.Unlock()
 		return
 	}
 	kept := s.quiesceWaiters[:0]
@@ -111,7 +120,6 @@ func (s *Service) taskDone() {
 		kept = append(kept, w)
 	}
 	s.quiesceWaiters = kept
-	s.quiesceMu.Unlock()
 }
 
 // QuiescenceCh returns a channel closed when ActiveCount drops to
@@ -139,9 +147,16 @@ func (s *Service) QuiescenceCh(threshold int64) <-chan struct{} {
 
 // YieldSlot releases the worker-pool slot held by the current goroutine,
 // runs fn, then re-acquires a slot before returning. Use this around
-// blocking waits (e.g. depwait) so queued tasks can make progress while
-// the holder is parked on external state. Without this, N tasks waiting
-// on each other for slot-gated work deadlock under NewBounded(N).
+// blocking waits where fn is still doing productive work (helm template
+// running, network fetch in flight) so queued tasks can make progress
+// while the holder is I/O-bound. Without this, N tasks waiting on each
+// other for slot-gated work deadlock under NewBounded(N).
+//
+// Compare YieldQuiescent: that variant additionally decrements the
+// active count for callers waiting on OTHER tasks' work (depwait).
+// YieldSlot keeps the active count incremented because the caller IS
+// producing — quiescence-aware consumers must NOT see the caller as
+// idle.
 //
 // MUST be called only from inside a body launched by Service.Go —
 // calling from outside corrupts the semaphore accounting.
@@ -159,6 +174,38 @@ func (s *Service) YieldSlot(fn func()) {
 	}
 	<-s.sem
 	defer func() { s.sem <- struct{}{} }()
+	fn()
+}
+
+// YieldQuiescent releases the worker slot AND decrements the active
+// count for the duration of fn. Use when fn is a wait on external
+// state that cannot itself produce store mutations — typically
+// depwait blocking on a dep that other tasks must produce. The
+// decrement lets QuiescenceCh fire on the caller's behalf: a
+// depwait-blocked task shouldn't keep the orchestrator from
+// declaring quiescence on its own absence of productive work.
+//
+// Without this hop, two reconciles both blocked in depwait (e.g. a
+// parent KS waiting on a typo'd dependsOn and its child HR waiting
+// on the parent's status) hold ActiveCount at 2 indefinitely —
+// QuiescenceCh(1) never fires and both waiters ride the full
+// RenderProducingTimeout cap.
+//
+// MUST be called only from inside a body launched by Service.Go —
+// calling from outside corrupts the active counter.
+//
+// Both the active increment and the slot re-acquire are deferred so
+// a panic inside fn still restores both counters; without that,
+// Service.Go's outer `defer s.taskDone()` would over-decrement on
+// unwind.
+func (s *Service) YieldQuiescent(fn func()) {
+	if s.sem != nil {
+		<-s.sem
+		defer func() { s.sem <- struct{}{} }()
+	}
+	now := s.active.Add(-1)
+	s.notifyQuiescence(now)
+	defer s.active.Add(1)
 	fn()
 }
 

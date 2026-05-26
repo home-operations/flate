@@ -581,24 +581,26 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 }
 
 // orchestratorRenderInflight adapts task.Service.ActiveCount into
-// depwait.RenderInflight. OtherActive returns true when the pool
-// has more than one task running — the caller's own goroutine is
-// always one of them since depwait runs inside a Submit'd reconcile
-// body, so a count of 1 means "just me, no future emissions can
-// produce my missing dep".
+// depwait.RenderInflight. OtherActive returns true when any task
+// is doing productive work — the caller itself is parked in
+// task.Service.YieldQuiescent (see base.Controller.Await), so its
+// own slot is excluded from the count and a non-zero active reading
+// is by definition "other work in flight".
 type orchestratorRenderInflight struct{ tasks *task.Service }
 
 func (r *orchestratorRenderInflight) OtherActive() bool {
-	return r.tasks.ActiveCount() > 1
+	return r.tasks.ActiveCount() > 0
 }
 
-// QuiescenceCh delegates to task.Service.QuiescenceCh(1). The
-// threshold matches OtherActive's "> 1" check: the caller's own
-// goroutine is one slot, so a drain to <= 1 means no other reconcile
-// is running. depwait's waitRenderEmission selects on this channel
-// instead of polling OtherActive.
+// QuiescenceCh delegates to task.Service.QuiescenceCh(0). The
+// threshold is 0 because depwait callers reach this method while
+// inside YieldQuiescent, which has already decremented the caller's
+// own active slot — drain-to-zero means no productive task remains
+// in the pool. Without YieldQuiescent's hop, two reconciles each
+// blocked in depwait would pin the count at 2 and miss this signal
+// entirely.
 func (r *orchestratorRenderInflight) QuiescenceCh() <-chan struct{} {
-	return r.tasks.QuiescenceCh(1)
+	return r.tasks.QuiescenceCh(0)
 }
 
 // Run starts every controller, blocks until the task service drains,

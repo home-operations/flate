@@ -175,7 +175,13 @@ func (c *Controller) Await(
 		c.Store.UpdateStatus(id, store.StatusPending, pendingMsg)
 	}
 	var sum depwait.Summary
-	c.Tasks.YieldSlot(func() {
+	// YieldQuiescent (not YieldSlot): the wait is on OTHER tasks'
+	// work, so this task isn't producing anything while parked.
+	// Decrementing active lets QuiescenceCh fire on a render-only
+	// dep the moment no productive task remains — without it, two
+	// reconciles both blocked in depwait hold the count at 2 and
+	// burn the full RenderProducingTimeout cap.
+	c.Tasks.YieldQuiescent(func() {
 		sum = depwait.WaitAll(w.Watch(ctx, deps))
 	})
 	if sum.AnyFailed() {

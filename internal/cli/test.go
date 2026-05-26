@@ -44,7 +44,6 @@ func newTestCmd() *cobra.Command {
 func testCmd(use string, aliases []string, short string, args cobra.PositionalArgs, kinds ...string) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
-	var showSkipped bool
 	cmd := &cobra.Command{
 		Use:     use,
 		Aliases: aliases,
@@ -75,7 +74,6 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if name != "" && report.Matched == 0 {
 				return errors.Join(fmt.Errorf("no %s named %q in --path", testKindName(kinds), name), runErr)
 			}
-			report.ShowSkipped = showSkipped
 			if err := report.Write(cmd.OutOrStdout()); err != nil {
 				return errors.Join(err, runErr)
 			}
@@ -86,8 +84,6 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	cmd.Flags().BoolVar(&showSkipped, "show-skipped", false,
-		"include SKIPPED resources in the per-resource listing (changed-only mode hides them by default to mirror `flate diff`)")
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }

@@ -56,34 +56,17 @@ type Report struct {
 	Skipped int
 	Failed  int
 	Matched int
-	// ShowSkipped controls whether SKIPPED cases appear in the
-	// per-resource listing that Write emits. When false (the
-	// default), only PASSED and FAILED rows are printed — matching
-	// `flate diff`'s output discipline (no output for unchanged
-	// resources). The summary footer still surfaces the SKIPPED
-	// count so callers know how many were filtered.
-	ShowSkipped bool
 }
 
 // AnyFailed reports whether any case failed.
 func (r Report) AnyFailed() bool { return r.Failed > 0 }
 
-// Write renders the report in a pytest-like format to w. SKIPPED
-// cases are suppressed from the per-resource listing unless
-// ShowSkipped is set, mirroring `flate diff`'s "only what changed"
-// output. The summary footer reports the full count regardless.
+// Write renders the report in a pytest-like format to w.
 func (r Report) Write(w io.Writer) error {
 	var b strings.Builder
-	visible := len(r.Cases)
-	if !r.ShowSkipped {
-		visible = r.Passed + r.Failed
-	}
 	fmt.Fprintln(&b, "============================================= test session starts =============================================")
-	fmt.Fprintf(&b, "collected %d items\n\n", visible)
+	fmt.Fprintf(&b, "collected %d items\n\n", len(r.Cases))
 	for _, c := range r.Cases {
-		if c.Outcome == OutcomeSkipped && !r.ShowSkipped {
-			continue
-		}
 		var status string
 		switch c.Outcome {
 		case OutcomePassed:

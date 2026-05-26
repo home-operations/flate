@@ -93,12 +93,7 @@ func TestRun_IncludePredicate(t *testing.T) {
 	}
 }
 
-// TestWrite_HidesSkippedByDefault pins the output-consistency
-// behavior: under changed-only mode, unchanged resources are
-// SKIPPED — they have no per-resource information worth surfacing
-// (the summary count is enough). `flate diff` already follows this
-// discipline (no diff line for unchanged); `flate test` matches.
-func TestWrite_HidesSkippedByDefault(t *testing.T) {
+func TestWrite_ShowsSkippedByDefault(t *testing.T) {
 	s := store.New()
 	passed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "changed"}
 	skipped := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "untouched"}
@@ -118,55 +113,20 @@ func TestWrite_HidesSkippedByDefault(t *testing.T) {
 	if !strings.Contains(out, "changed") {
 		t.Errorf("PASSED row must appear: %s", out)
 	}
-	if strings.Contains(out, "untouched") {
-		t.Errorf("SKIPPED row must be hidden by default; got:\n%s", out)
-	}
-	// Summary line still surfaces the SKIPPED count so callers
-	// can see how many resources the change-filter excluded.
-	if !strings.Contains(out, "1 skipped") {
-		t.Errorf("summary must report SKIPPED count even when rows are hidden: %s", out)
-	}
-	// "collected" reflects the rendered row count, not the raw
-	// case count — otherwise users see "collected 2" but only one
-	// row of output, which reads as a bug.
-	if !strings.Contains(out, "collected 1 items") {
-		t.Errorf("collected-count must match visible rows: %s", out)
-	}
-}
-
-// TestWrite_ShowSkippedSurfacesEverything pins the opt-in path:
-// callers that DO want the full breakdown (debugging unexpected
-// skips, verifying changed-only mode is working as intended) get
-// every row back when ShowSkipped is true.
-func TestWrite_ShowSkippedSurfacesEverything(t *testing.T) {
-	s := store.New()
-	passed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "changed"}
-	skipped := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "untouched"}
-	s.AddObject(&manifest.Kustomization{Name: passed.Name, Namespace: passed.Namespace})
-	s.AddObject(&manifest.Kustomization{Name: skipped.Name, Namespace: skipped.Namespace})
-	s.UpdateStatus(passed, store.StatusReady, "")
-	s.UpdateStatus(skipped, store.StatusReady, store.MsgUnchanged)
-
-	rep := Run(Job{Store: s})
-	rep.ShowSkipped = true
-
-	var b bytes.Buffer
-	if err := rep.Write(&b); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	out := b.String()
-
 	if !strings.Contains(out, "untouched") {
-		t.Errorf("SKIPPED row must appear with ShowSkipped: %s", out)
+		t.Errorf("SKIPPED row must appear by default: %s", out)
 	}
 	if !strings.Contains(out, "SKIPPED (unchanged)") {
 		t.Errorf("SKIPPED row should carry its reason: %s", out)
 	}
+	if !strings.Contains(out, "1 skipped") {
+		t.Errorf("summary must report SKIPPED count: %s", out)
+	}
+	if !strings.Contains(out, "collected 2 items") {
+		t.Errorf("collected-count must include SKIPPED rows: %s", out)
+	}
 }
 
-// TestWrite_FailedNeverHidden ensures the suppression is scoped to
-// SKIPPED only — a FAILED row must always print regardless of
-// ShowSkipped, since that's the row the user reads to fix things.
 func TestWrite_FailedNeverHidden(t *testing.T) {
 	s := store.New()
 	failed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "broken"}

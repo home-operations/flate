@@ -632,18 +632,10 @@ func versionTag(ref manifest.OCIRepositoryRef) string {
 // ProxySecretRef, and verify.SecretRef (cosign keys) since each can
 // change which artifact bytes a reconcile resolves to.
 func authIdentity(repo *manifest.OCIRepository) string {
-	var secret, cert, proxy, verify string
-	if repo.SecretRef != nil {
-		secret = source.SecretRefID(repo.Namespace, repo.SecretRef.Name)
+	var verifyRef *manifest.LocalObjectReference
+	if repo.Verify != nil {
+		verifyRef = repo.Verify.SecretRef
 	}
-	if repo.CertSecretRef != nil {
-		cert = source.SecretRefID(repo.Namespace, repo.CertSecretRef.Name)
-	}
-	if repo.ProxySecretRef != nil {
-		proxy = source.SecretRefID(repo.Namespace, repo.ProxySecretRef.Name)
-	}
-	if repo.Verify != nil && repo.Verify.SecretRef != nil {
-		verify = source.SecretRefID(repo.Namespace, repo.Verify.SecretRef.Name)
-	}
-	return source.AuthIdentity(secret, cert, proxy, verify)
+	return source.AuthIdentityFromRefs(repo.Namespace,
+		repo.SecretRef, repo.CertSecretRef, repo.ProxySecretRef, verifyRef)
 }

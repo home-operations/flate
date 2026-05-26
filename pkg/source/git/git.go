@@ -391,14 +391,8 @@ func updateSubmodules(repo *git.Repository, auth transport.AuthMethod) error {
 // fetcher binds. Returns "" for anonymous clones so they share slots
 // with the legacy un-auth-keyed layout.
 func authIdentity(repo *manifest.GitRepository) string {
-	var secret, proxy string
-	if repo.SecretRef != nil {
-		secret = source.SecretRefID(repo.Namespace, repo.SecretRef.Name)
-	}
-	if repo.ProxySecretRef != nil {
-		proxy = source.SecretRefID(repo.Namespace, repo.ProxySecretRef.Name)
-	}
-	return source.AuthIdentity(secret, proxy)
+	return source.AuthIdentityFromRefs(repo.Namespace,
+		repo.SecretRef, repo.ProxySecretRef)
 }
 
 // readResolvedRevision returns the current commit SHA at the worktree.

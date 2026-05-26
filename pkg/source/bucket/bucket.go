@@ -241,15 +241,6 @@ func downloadObject(ctx context.Context, client *minio.Client, bucket, key, dst 
 // SecretRef (S3 access creds), CertSecretRef (TLS), and
 // ProxySecretRef. Returns "" when all are unset.
 func authIdentity(b *manifest.Bucket) string {
-	var secret, cert, proxy string
-	if b.SecretRef != nil {
-		secret = source.SecretRefID(b.Namespace, b.SecretRef.Name)
-	}
-	if b.CertSecretRef != nil {
-		cert = source.SecretRefID(b.Namespace, b.CertSecretRef.Name)
-	}
-	if b.ProxySecretRef != nil {
-		proxy = source.SecretRefID(b.Namespace, b.ProxySecretRef.Name)
-	}
-	return source.AuthIdentity(secret, cert, proxy)
+	return source.AuthIdentityFromRefs(b.Namespace,
+		b.SecretRef, b.CertSecretRef, b.ProxySecretRef)
 }

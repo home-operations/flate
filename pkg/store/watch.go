@@ -34,7 +34,16 @@ var FailedGrace = 3 * time.Second
 // flate's parent-Kustomization render can re-emit a child after the
 // child's initial reconcile has already failed; the grace window
 // lets that recovery land before dependents propagate the failure.
-func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (StatusInfo, error) {
+//
+// quiesce, when non-nil, cancels the grace as soon as it closes — a
+// signal from the embedder that "no future reconcile could re-emit
+// this dep" (e.g., the orchestrator's task pool has drained). For a
+// typo'd dependsOn there's nothing to re-emit, so the grace is pure
+// wall-clock waste; the quiesce hook lets dep-waiters fast-fail the
+// moment the orchestrator gives up on finding more work. Pass nil
+// from contexts that can't surface that signal (legacy callers,
+// tests) and the wait keeps its full grace budget.
+func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource, quiesce <-chan struct{}) (StatusInfo, error) {
 	// Short-circuit on Ready — no transition to wait for.
 	if info, ok := s.GetStatus(id); ok && info.Status == StatusReady {
 		return info, nil
@@ -84,11 +93,18 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 	// timer per call on the depwait hot path.
 	var graceTimer *time.Timer
 	var graceCh <-chan time.Time
+	// quiesced flips true the first time the embedder's quiesce
+	// channel fires — see the quiesce case below. Once set, any
+	// later Failed observation short-circuits the grace; armGrace
+	// also checks it so a Failed already pending when quiesce
+	// arrives doesn't re-arm a useless grace.
+	quiesced := false
 	armGrace := func() {
-		if graceTimer == nil {
-			graceTimer = time.NewTimer(FailedGrace)
-			graceCh = graceTimer.C
+		if quiesced || graceTimer != nil {
+			return
 		}
+		graceTimer = time.NewTimer(FailedGrace)
+		graceCh = graceTimer.C
 	}
 	defer func() {
 		if graceTimer != nil {
@@ -97,6 +113,12 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 	}()
 	if currentFailed != nil {
 		armGrace()
+	}
+
+	failNow := func() (StatusInfo, error) {
+		return *currentFailed, &manifest.ResourceFailedError{
+			Resource: id.String(), Reason: currentFailed.Message,
+		}
 	}
 
 	for {
@@ -112,12 +134,35 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource) (Stat
 			case StatusFailed:
 				f := info
 				currentFailed = &f
+				// If the embedder already signalled quiescence, no
+				// re-emit is coming — return the Failed immediately
+				// instead of arming a wasted grace window. This is
+				// the dominant termination path for typo'd dependsOn:
+				// quiesce fires when the orchestrator's task pool
+				// drains, then the parent KS's status flips to
+				// Failed, and we land here.
+				if quiesced {
+					return failNow()
+				}
 				armGrace()
 			}
 		case <-graceCh:
-			return *currentFailed, &manifest.ResourceFailedError{
-				Resource: id.String(), Reason: currentFailed.Message,
+			return failNow()
+		case <-quiesce:
+			// Embedder signalled "no future reconcile can re-emit
+			// this dep". Two cases:
+			//   - Failed already observed: short-circuit the grace
+			//     immediately (no point waiting for a re-emit that
+			//     can't happen).
+			//   - Failed not yet observed: record the quiesced state
+			//     so the next Failed transition skips the grace, and
+			//     nil out the channel so the closed receive doesn't
+			//     busy-spin.
+			if currentFailed != nil {
+				return failNow()
 			}
+			quiesced = true
+			quiesce = nil
 		case <-ctx.Done():
 			// Propagate ctx.Err() ONLY when the caller explicitly
 			// cancelled (context.Canceled) — otherwise (per-dep

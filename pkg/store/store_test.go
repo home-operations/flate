@@ -303,7 +303,7 @@ func TestStore_WatchReady_AlreadyReady(t *testing.T) {
 	s := New()
 	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}
 	s.UpdateStatus(id, StatusReady, "")
-	info, err := s.WatchReady(context.Background(), id)
+	info, err := s.WatchReady(context.Background(), id, nil)
 	if err != nil {
 		t.Fatalf("WatchReady: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestStore_WatchReady_TransitionsToReady(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := s.WatchReady(ctx, id); err != nil {
+	if _, err := s.WatchReady(ctx, id, nil); err != nil {
 		t.Fatalf("WatchReady: %v", err)
 	}
 }
@@ -331,7 +331,7 @@ func TestStore_WatchReady_FailedYieldsError(t *testing.T) {
 	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}
 	s.UpdateStatus(id, StatusFailed, "denied")
 
-	_, err := s.WatchReady(context.Background(), id)
+	_, err := s.WatchReady(context.Background(), id, nil)
 	var rfe *manifest.ResourceFailedError
 	if !errors.As(err, &rfe) {
 		t.Fatalf("expected ResourceFailedError, got %v", err)
@@ -358,7 +358,7 @@ func TestStore_WatchReady_FailedFlipsBeforeGrace(t *testing.T) {
 		s.UpdateStatus(id, StatusReady, "")
 	}()
 
-	info, err := s.WatchReady(context.Background(), id)
+	info, err := s.WatchReady(context.Background(), id, nil)
 	if err != nil {
 		t.Fatalf("expected nil err after Failed→Ready flip, got %v", err)
 	}
@@ -385,7 +385,7 @@ func TestStore_WatchReady_FailedFailedReady(t *testing.T) {
 		s.UpdateStatus(id, StatusReady, "")
 	}()
 
-	info, err := s.WatchReady(context.Background(), id)
+	info, err := s.WatchReady(context.Background(), id, nil)
 	if err != nil {
 		t.Fatalf("expected nil err after Failed→Failed→Ready flip, got %v", err)
 	}
@@ -407,7 +407,7 @@ func TestStore_WatchReady_GraceExpiresOnSustainedFailed(t *testing.T) {
 		s.UpdateStatus(id, StatusFailed, "second")
 	}()
 
-	info, err := s.WatchReady(context.Background(), id)
+	info, err := s.WatchReady(context.Background(), id, nil)
 	if err == nil {
 		t.Fatalf("expected ResourceFailedError after grace expiration")
 	}
@@ -439,7 +439,7 @@ func TestStore_WatchReady_ContextCancel(t *testing.T) {
 	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := s.WatchReady(ctx, id)
+	_, err := s.WatchReady(ctx, id, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}

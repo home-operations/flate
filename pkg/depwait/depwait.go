@@ -302,7 +302,16 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 		return w.watchReadyExpr(ctx, id, dep.ReadyExpr)
 	}
 
-	info, err := w.Store.WatchReady(ctx, id)
+	// Pass the orchestrator's quiescence channel (when wired) so the
+	// store's post-Failed grace can short-circuit the moment no other
+	// reconcile is in flight — a typo'd dependsOn won't be saved by a
+	// future re-emit, and burning the full grace adds visible wall time
+	// to errored runs (worst case: 3s × depth of chained parent gates).
+	var quiesce <-chan struct{}
+	if w.Renders != nil {
+		quiesce = w.Renders.QuiescenceCh()
+	}
+	info, err := w.Store.WatchReady(ctx, id, quiesce)
 	if err != nil {
 		return classify(id, err, info.Message)
 	}

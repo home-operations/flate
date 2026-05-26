@@ -49,16 +49,18 @@ func FindRepoRoot(p string) string {
 // pathUnderRoot.
 func stripDotSlash(p string) string {
 	for {
-		switch {
-		case strings.HasPrefix(p, "./"):
-			p = p[2:]
-		case p == ".":
-			return ""
-		case strings.HasPrefix(p, "/"):
-			p = p[1:]
-		default:
-			return p
+		if after, ok := strings.CutPrefix(p, "./"); ok {
+			p = after
+			continue
 		}
+		if after, ok := strings.CutPrefix(p, "/"); ok {
+			p = after
+			continue
+		}
+		if p == "." {
+			return ""
+		}
+		return p
 	}
 }
 

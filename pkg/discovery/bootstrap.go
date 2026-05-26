@@ -85,14 +85,13 @@ func (d *discoverer) aliasBootstrapSources(repoRoot string) {
 // with `dependency not found`. Returns the IDs aliased so the multi-
 // source WARN sees them.
 func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifest.NamedResource {
+	// existing doubles as a dedup set: after a successful publish we add
+	// the new id so repeated sourceRefs across KSes are skipped without
+	// a second map.
 	existing := knownSourceIDs(d.cfg.Store, manifest.KindGitRepository, manifest.KindOCIRepository)
-	seen := make(map[manifest.NamedResource]struct{})
 	var aliased []manifest.NamedResource
 	for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
 		id := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-		if _, dup := seen[id]; dup {
-			continue
-		}
 		if _, ok := existing[id]; ok {
 			continue
 		}
@@ -103,7 +102,7 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 			// than a misleading half-publish would.
 			continue
 		}
-		seen[id] = struct{}{}
+		existing[id] = struct{}{}
 		aliased = append(aliased, id)
 	}
 	return aliased
@@ -216,8 +215,8 @@ func warnIfMultipleBootstrapAliases(aliased []manifest.NamedResource, repoRoot s
 		return
 	}
 	names := make([]string, len(aliased))
-	for i, id := range aliased {
-		names[i] = id.String()
+	for i := range len(aliased) {
+		names[i] = aliased[i].String()
 	}
 	slog.Warn("discovery: aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
 		"count", len(aliased), "ids", names, "localPath", repoRoot)

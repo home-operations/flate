@@ -221,11 +221,10 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if _, seen := ksExpanded[id]; seen {
 				continue
 			}
+			ksExpanded[id] = struct{}{}
 			if ks.Path == "" {
-				ksExpanded[id] = struct{}{}
 				continue
 			}
-			ksExpanded[id] = struct{}{}
 			target := filepath.Join(repoRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
 			// Canonicalize via EvalSymlinks so two spec.paths that
 			// resolve to the same on-disk directory (one direct, one

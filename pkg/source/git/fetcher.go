@@ -15,6 +15,7 @@ package git
 import (
 	"cmp"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"strings"
@@ -78,7 +79,7 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*sto
 		return nil, err
 	}
 	defer restore()
-	return f.fetch(ctx, repo, auth, proxy)
+	return f.fetch(ctx, repo, auth, proxy, tlsCfg)
 }
 
 // fetch clones the GitRepository, then runs verification, ignore, and
@@ -91,7 +92,11 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*sto
 // auth may be nil for anonymous clones; proxy may be nil for direct.
 // Supported transports: HTTPS (anonymous, basic, bearer), SSH (key
 // from SecretRef or ssh-agent), and file:// URLs.
-func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
+//
+// tlsCfg is the already-resolved spec.secretRef CA bundle (resolved by
+// Fetch); pass through to fetchViaMirror so the mirror path doesn't
+// re-resolve the Secret + re-parse the PEM bundle.
+func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth transport.AuthMethod, proxy *source.ProxyConfig, tlsCfg *tls.Config) (*store.SourceArtifact, error) {
 	cache := f.Cache
 	if repo == nil {
 		return nil, errors.New("git repository is nil")
@@ -140,7 +145,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	}
 
 	if f.canUseMirror(repo, url) {
-		return f.fetchViaMirror(ctx, repo, refStr, slot, auth, proxy)
+		return f.fetchViaMirror(ctx, repo, refStr, slot, auth, proxy, tlsCfg)
 	}
 
 	cloneOpts := &git.CloneOptions{URL: url, NoCheckout: true, Auth: auth}
@@ -244,11 +249,11 @@ func (f *Fetcher) canUseMirror(repo *manifest.GitRepository, _ string) bool {
 // materialize the tree into the slot's staging dir. PGP verification
 // runs against the mirror (which has the object store); ApplyIgnore
 // and the revision-marker write reuse the standard finalize.
-func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitRepository, refStr string, slot *source.Slot, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
-	tlsCfg, err := f.resolveTLS(repo)
-	if err != nil {
-		return nil, err
-	}
+//
+// tlsCfg is the caller's pre-resolved spec.secretRef CA bundle —
+// hoisting it out of this function avoids re-reading the Secret +
+// re-parsing PEM on every mirror fetch.
+func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitRepository, refStr string, slot *source.Slot, auth transport.AuthMethod, proxy *source.ProxyConfig, tlsCfg *tls.Config) (*store.SourceArtifact, error) {
 	mirrorRepo, err := f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, tlsCfg)
 	if err != nil {
 		return nil, err

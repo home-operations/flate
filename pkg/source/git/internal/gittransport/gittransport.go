@@ -28,6 +28,11 @@ var mu sync.Mutex
 // caller MUST defer. Acquires the process-global mutex on entry; the
 // restore releases it after re-installing the default client.
 //
+// The restore func is wrapped with sync.OnceFunc so a double-call
+// (e.g., explicit cleanup followed by defer) is a no-op rather than
+// a panic on unlock-of-unlocked-mutex. Today's only call sites defer
+// it immediately, but the OnceFunc guard makes the API hard to misuse.
+//
 // When tlsCfg is nil there's nothing to customize: returns a no-op
 // restore and no error, no lock acquired.
 func InstallHTTPS(tlsCfg *tls.Config, proxy *source.ProxyConfig) (func(), error) {
@@ -41,8 +46,8 @@ func InstallHTTPS(tlsCfg *tls.Config, proxy *source.ProxyConfig) (func(), error)
 		return nil, err
 	}
 	client.InstallProtocol("https", githttp.NewClient(&http.Client{Transport: tr}))
-	return func() {
+	return sync.OnceFunc(func() {
 		client.InstallProtocol("https", githttp.DefaultClient)
 		mu.Unlock()
-	}, nil
+	}), nil
 }

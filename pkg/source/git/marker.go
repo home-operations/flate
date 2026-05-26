@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5"
+
+	"github.com/home-operations/flate/pkg/source/atomic"
 )
 
 // cachedRevisionFile holds the resolved commit SHA of a fetched slot.
@@ -14,8 +16,13 @@ import (
 // git.PlainOpen.
 const cachedRevisionFile = ".flate-git-revision"
 
+// writeCachedRevision persists rev atomically — matches the OCI
+// marker's durability shape (atomic.WriteFile with syncDir). A crash
+// mid-write would otherwise leave a partial SHA that the next
+// reconcile reads back via TrimSpace, surfacing as a torn-but-non-
+// empty marker that the cache-hit gate treats as live.
 func writeCachedRevision(slot, rev string) error {
-	return os.WriteFile(filepath.Join(slot, cachedRevisionFile), []byte(rev), 0o600)
+	return atomic.WriteFile(filepath.Join(slot, cachedRevisionFile), []byte(rev), 0o600, true)
 }
 
 func readCachedRevision(slot string) string {

@@ -1,6 +1,7 @@
 package source
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,8 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 
+	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -27,10 +28,10 @@ import (
 // Different slots proceed in parallel.
 type Cache struct {
 	layout cacheroot.Layout
-	mu     sync.Mutex // guards locks
-	// locks holds a sync.Mutex per slot path. Lazily created; never
-	// reaped — the slot count is bounded by user-declared sources.
-	locks map[string]*sync.Mutex
+	// locks is the canonical per-slot mutex provider. Sharing the
+	// keylock.KeyMap implementation with helm + blob keeps cancellation
+	// semantics and lifetime management consistent across the cache.
+	locks *keylock.KeyMap[string]
 }
 
 // NewCache constructs a Cache backed by the supplied Layout. The
@@ -43,23 +44,7 @@ func NewCache(layout cacheroot.Layout) *Cache {
 	if layout.Root == "" {
 		layout.Root = filepath.Join(os.TempDir(), "flate-cache")
 	}
-	return &Cache{layout: layout}
-}
-
-// slotMu returns the per-slot mutex for path, creating it on first
-// access. Caller must NOT hold c.mu.
-func (c *Cache) slotMu(path string) *sync.Mutex {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.locks == nil {
-		c.locks = make(map[string]*sync.Mutex)
-	}
-	m, ok := c.locks[path]
-	if !ok {
-		m = &sync.Mutex{}
-		c.locks[path] = m
-	}
-	return m
+	return &Cache{layout: layout, locks: keylock.New[string]()}
 }
 
 // Slot allocates a per-(url, ref) slot under the cache root with
@@ -81,7 +66,7 @@ func (c *Cache) slotMu(path string) *sync.Mutex {
 // next fetch starts clean. This atomicity replaces the older
 // "write in place + .flate-* sentinels" pattern: the final slot is
 // either complete or doesn't exist, never torn.
-func (c *Cache) Slot(url, ref, authID string) (*Slot, error) {
+func (c *Cache) Slot(ctx context.Context, url, ref, authID string) (*Slot, error) {
 	slug := slugifyRepo(url)
 	// authID participates in the cache key so two source CRs with the
 	// same (URL, ref) but different SecretRef / RegistryConfig don't
@@ -92,9 +77,11 @@ func (c *Cache) Slot(url, ref, authID string) (*Slot, error) {
 	hash := hex.EncodeToString(h[:])[:16]
 	final := c.layout.SourceSlot(slug, hash)
 
-	m := c.slotMu(final)
-	m.Lock()
-	s := &Slot{final: final, mu: m}
+	release, err := c.locks.Acquire(ctx, final)
+	if err != nil {
+		return nil, err
+	}
+	s := &Slot{final: final, release: release}
 
 	info, statErr := os.Stat(final)
 	switch {
@@ -171,7 +158,7 @@ type Slot struct {
 
 	final     string
 	staging   string
-	mu        *sync.Mutex
+	release   func() // keylock release; populated by Cache.Slot
 	committed bool
 	unlocked  bool
 }
@@ -251,7 +238,7 @@ func (s *Slot) unlock() {
 		return
 	}
 	s.unlocked = true
-	s.mu.Unlock()
+	s.release()
 }
 
 // nonAlnum collapses non-alphanumeric (plus `.-_`) runs into a single

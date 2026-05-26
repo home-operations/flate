@@ -78,7 +78,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 	// still holds the dead file. We treat every fetch as a miss:
 	// write to a fresh staging dir, then atomic-rename into the final
 	// slot on success.
-	slot, err := f.Cache.Slot(endpoint+"/"+b.BucketName, b.Prefix, authIdentity(b))
+	slot, err := f.Cache.Slot(ctx, endpoint+"/"+b.BucketName, b.Prefix, authIdentity(b))
 	if err != nil {
 		return nil, fmt.Errorf("bucket %s/%s cache slot: %w", b.Namespace, b.Name, err)
 	}

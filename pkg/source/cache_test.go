@@ -1,6 +1,7 @@
 package source
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -26,7 +27,7 @@ func TestCache_ResetSerializesAgainstSlot(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range iterations {
-				slot, err := c.Slot("https://shared.example/repo", "main", "")
+				slot, err := c.Slot(context.Background(), "https://shared.example/repo", "main", "")
 				if err != nil {
 					t.Errorf("Slot: %v", err)
 					return
@@ -37,7 +38,7 @@ func TestCache_ResetSerializesAgainstSlot(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range iterations {
-				slot, err := c.Slot("https://shared.example/repo", "main", "")
+				slot, err := c.Slot(context.Background(), "https://shared.example/repo", "main", "")
 				if err != nil {
 					t.Errorf("Slot: %v", err)
 					return
@@ -74,7 +75,7 @@ func TestCache_SlotSerializesSameKey(t *testing.T) {
 	g2Start := make(chan struct{})
 	done := make(chan struct{}, 2)
 	go func() {
-		slot, err := c.Slot("https://shared.example/repo", "main", "")
+		slot, err := c.Slot(context.Background(), "https://shared.example/repo", "main", "")
 		if err != nil {
 			t.Errorf("Slot: %v", err)
 			done <- struct{}{}
@@ -94,7 +95,7 @@ func TestCache_SlotSerializesSameKey(t *testing.T) {
 	}()
 	<-g1Entered // G1 holds the lock.
 	go func() {
-		slot, err := c.Slot("https://shared.example/repo", "main", "")
+		slot, err := c.Slot(context.Background(), "https://shared.example/repo", "main", "")
 		if err != nil {
 			t.Errorf("Slot: %v", err)
 			done <- struct{}{}
@@ -130,7 +131,7 @@ func TestCache_SlotCommitAtomicRename(t *testing.T) {
 	c := NewCache(cacheroot.New(t.TempDir()))
 
 	// First fetcher aborts after writing partial state.
-	slot, err := c.Slot("https://example.com/repo", "v1", "")
+	slot, err := c.Slot(context.Background(), "https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestCache_SlotCommitAtomicRename(t *testing.T) {
 	}
 
 	// Next caller must see Exists=false.
-	slot, err = c.Slot("https://example.com/repo", "v1", "")
+	slot, err = c.Slot(context.Background(), "https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot 2: %v", err)
 	}
@@ -164,7 +165,7 @@ func TestCache_SlotCommitAtomicRename(t *testing.T) {
 func TestCache_SlotCommitPersists(t *testing.T) {
 	c := NewCache(cacheroot.New(t.TempDir()))
 
-	slot, err := c.Slot("https://example.com/repo", "v1", "")
+	slot, err := c.Slot(context.Background(), "https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestCache_SlotCommitPersists(t *testing.T) {
 	committed := slot.Path
 	slot.Release()
 
-	slot, err = c.Slot("https://example.com/repo", "v1", "")
+	slot, err = c.Slot(context.Background(), "https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot 2: %v", err)
 	}
@@ -199,12 +200,12 @@ func TestCache_SlotCommitPersists(t *testing.T) {
 // auth context, bypassing the access check.
 func TestCache_AuthIDIsolatesSlots(t *testing.T) {
 	c := NewCache(cacheroot.New(t.TempDir()))
-	a, err := c.Slot("https://example.com/repo", "v1", "team-a/git-creds")
+	a, err := c.Slot(context.Background(), "https://example.com/repo", "v1", "team-a/git-creds")
 	if err != nil {
 		t.Fatalf("Slot a: %v", err)
 	}
 	defer a.Release()
-	b, err := c.Slot("https://example.com/repo", "v1", "team-b/git-creds")
+	b, err := c.Slot(context.Background(), "https://example.com/repo", "v1", "team-b/git-creds")
 	if err != nil {
 		t.Fatalf("Slot b: %v", err)
 	}
@@ -214,13 +215,13 @@ func TestCache_AuthIDIsolatesSlots(t *testing.T) {
 	}
 	// Empty authID must still collide with itself.
 	c2 := NewCache(cacheroot.New(t.TempDir()))
-	x, err := c2.Slot("https://example.com/repo", "v1", "")
+	x, err := c2.Slot(context.Background(), "https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot x: %v", err)
 	}
 	y := filepath.Dir(x.Path)
 	x.Release()
-	z, err := c2.Slot("https://example.com/repo", "v1", "")
+	z, err := c2.Slot(context.Background(), "https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot z: %v", err)
 	}
@@ -238,7 +239,7 @@ func TestCache_SlotResetThenStage(t *testing.T) {
 	c := NewCache(cacheroot.New(t.TempDir()))
 
 	// Seed a committed slot.
-	slot, err := c.Slot("https://example.com/repo", "v1", "")
+	slot, err := c.Slot(context.Background(), "https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot: %v", err)
 	}
@@ -251,7 +252,7 @@ func TestCache_SlotResetThenStage(t *testing.T) {
 	slot.Release()
 
 	// Acquire again, detect stale, reset-and-restage.
-	slot, err = c.Slot("https://example.com/repo", "v1", "")
+	slot, err = c.Slot(context.Background(), "https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot 2: %v", err)
 	}
@@ -272,7 +273,7 @@ func TestCache_SlotResetThenStage(t *testing.T) {
 	}
 	slot.Release()
 
-	slot, err = c.Slot("https://example.com/repo", "v1", "")
+	slot, err = c.Slot(context.Background(), "https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot 3: %v", err)
 	}

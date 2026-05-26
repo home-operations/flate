@@ -2,6 +2,7 @@ package blob
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -16,7 +17,7 @@ import (
 func TestStore_PutBytesDigestPath(t *testing.T) {
 	s := NewStore(cacheroot.New(t.TempDir()))
 	content := []byte("hello world")
-	dir, digest, err := s.PutBytes(content, "data.txt")
+	dir, digest, err := s.PutBytes(context.Background(), content, "data.txt")
 	if err != nil {
 		t.Fatalf("PutBytes: %v", err)
 	}
@@ -40,11 +41,11 @@ func TestStore_PutBytesDigestPath(t *testing.T) {
 func TestStore_SameContentSharesSlot(t *testing.T) {
 	s := NewStore(cacheroot.New(t.TempDir()))
 	content := []byte("dedup me")
-	dir1, d1, err := s.PutBytes(content, "a.txt")
+	dir1, d1, err := s.PutBytes(context.Background(), content, "a.txt")
 	if err != nil {
 		t.Fatalf("Put 1: %v", err)
 	}
-	dir2, d2, err := s.PutBytes(content, "a.txt")
+	dir2, d2, err := s.PutBytes(context.Background(), content, "a.txt")
 	if err != nil {
 		t.Fatalf("Put 2: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestStore_ConcurrentPutsCoalesce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, d, err := s.PutBytes(content, "data")
+			_, d, err := s.PutBytes(context.Background(), content, "data")
 			if err != nil {
 				errs.Add(1)
 				return

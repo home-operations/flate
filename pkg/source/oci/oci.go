@@ -217,7 +217,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 
 	versioned := versionedURL(repo.URL, ref)
-	slot, err := cache.Slot(versioned, "", authIdentity(repo))
+	slot, err := cache.Slot(ctx, versioned, "", authIdentity(repo))
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}

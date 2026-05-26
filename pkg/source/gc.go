@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/pkg/source/blob"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -70,6 +71,14 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 	if opts.MaxAge > 0 {
 		cutoff = time.Now().Add(-opts.MaxAge)
 	}
+
+	// Hold the exclusive GC lock for the entire mark + sweep so no
+	// blob.Refs.Put can land an atomic-rename between markLiveDigests
+	// and the blob sweep — the race would otherwise purge a freshly-
+	// referenced blob as orphan-old. Refs.Put takes the shared lock so
+	// the gate is invisible for the common case (no GC running).
+	unlockGC := blob.LockGC()
+	defer unlockGC()
 
 	live := markLiveDigests(layout, &res)
 

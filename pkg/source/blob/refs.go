@@ -48,7 +48,12 @@ func NewRefs(layout cacheroot.Layout, category string) *Refs {
 // torn write doesn't surface as a sentinel.
 //
 // Consults the in-memory cache first; a hit avoids the disk read
-// entirely. A miss falls through to ReadFile and populates the cache.
+// entirely. A miss falls through to ReadFile and populates the cache
+// via LoadOrStore — if a concurrent Put landed a newer digest into
+// mem between our ReadFile (which may have observed the old contents)
+// and our cache-fill, the Put's value wins. Without LoadOrStore, this
+// Get could overwrite the Put's NEW with the disk-read OLD and poison
+// the cache for the rest of the run.
 func (r *Refs) Get(key string) (string, bool) {
 	if v, ok := r.mem.Load(key); ok {
 		digest, _ := v.(string)
@@ -66,7 +71,11 @@ func (r *Refs) Get(key string) (string, bool) {
 	if digest == "" {
 		return "", false
 	}
-	r.mem.Store(key, digest)
+	if v, loaded := r.mem.LoadOrStore(key, digest); loaded {
+		if existing, _ := v.(string); existing != "" {
+			return existing, true
+		}
+	}
 	return digest, true
 }
 
@@ -76,10 +85,16 @@ func (r *Refs) Get(key string) (string, bool) {
 // supported (an upstream tag re-resolved to a new digest) — the
 // rename atomically replaces the file.
 //
+// Takes the package-level GC shared lock for the duration of the
+// write so a concurrent gc.Sweep can't observe a not-yet-written ref
+// during mark and then purge its blob during sweep (see gclock.go).
+//
 // syncDir=false on the underlying atomic write: refs files are cheap
 // to rebuild on the next reconcile, so the fsync barrier is not worth
 // the per-render I/O cost.
 func (r *Refs) Put(key, digest string) error {
+	unlockGC := RLockGC()
+	defer unlockGC()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := os.MkdirAll(r.dir, 0o750); err != nil {

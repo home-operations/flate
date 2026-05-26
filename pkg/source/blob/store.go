@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -64,11 +65,21 @@ func (s *Store) Exists(digest string) bool {
 // and return without rewriting. ctx cancellation aborts the lock
 // acquire (no write performed).
 //
+// Takes the package-level GC shared lock so a concurrent gc.Sweep
+// can't delete a blob between the Exists check and the caller's
+// subsequent Refs.Put. The early-return path also refreshes the
+// blob's mtime — without that bump, a reused-but-old blob whose
+// "fresh" ref lands after Sweep's mark walk would be age-pruned even
+// though a live caller just touched it.
+//
 // Returns the populated blob directory path and the computed digest.
 func (s *Store) PutBytes(ctx context.Context, content []byte, filename string) (string, string, error) {
 	sum := sha256.Sum256(content)
 	digest := hex.EncodeToString(sum[:])
 	dir := s.Path(digest)
+
+	unlockGC := RLockGC()
+	defer unlockGC()
 
 	release, err := s.locks.Acquire(ctx, digest)
 	if err != nil {
@@ -77,6 +88,8 @@ func (s *Store) PutBytes(ctx context.Context, content []byte, filename string) (
 	defer release()
 
 	if s.Exists(digest) {
+		now := time.Now()
+		_ = os.Chtimes(dir, now, now)
 		return dir, digest, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {

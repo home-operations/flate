@@ -1,12 +1,15 @@
 package source
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/source/blob"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -184,6 +187,67 @@ func TestSweep_UnreferencedOldBlobIsPruned(t *testing.T) {
 	res, _ := Sweep(cacheroot.New(root), SweepOpts{MaxAge: 24 * time.Hour})
 	if !slices.Contains(res.Removed, blob) {
 		t.Errorf("orphan blob survived: %v", res.Removed)
+	}
+}
+
+// TestSweep_PutInFlightPreservesBlob is the regression test for the
+// mark↔sweep race fix in gclock.go. The caller's PutBytes + Refs.Put
+// pair runs concurrently with Sweep; the invariant is "if the ref
+// landed, its blob still resolves" — i.e., no ref points at a freshly-
+// purged blob.
+//
+// Pre-fix: Sweep marks refs before PutBytes refreshes the (old) blob's
+// mtime, then ages-out the blob; Refs.Put then writes a ref pointing
+// at a deleted blob. Post-fix: PutBytes holds RLockGC and refreshes
+// mtime, Refs.Put holds RLockGC, Sweep holds the exclusive LockGC —
+// the three operations serialize cleanly so the invariant holds in
+// every interleaving.
+func TestSweep_PutInFlightPreservesBlob(t *testing.T) {
+	layout := cacheroot.New(t.TempDir())
+	store := blob.NewStore(layout)
+	refs := blob.NewRefs(layout, "test")
+
+	// Pre-seed an OLD blob so Sweep would age-prune it on the next pass.
+	content := []byte("payload")
+	dir, digest, err := store.PutBytes(context.Background(), content, "f.bin")
+	if err != nil {
+		t.Fatalf("seed PutBytes: %v", err)
+	}
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	// Race the (PutBytes → Refs.Put) pair against Sweep with a tight
+	// MaxAge that would otherwise reap the seeded blob.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if _, _, perr := store.PutBytes(context.Background(), content, "f.bin"); perr != nil {
+			t.Errorf("racing PutBytes: %v", perr)
+			return
+		}
+		if perr := refs.Put("k", digest); perr != nil {
+			t.Errorf("racing Refs.Put: %v", perr)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if _, serr := Sweep(layout, SweepOpts{MaxAge: 1 * time.Nanosecond}); serr != nil {
+			t.Errorf("Sweep: %v", serr)
+		}
+	}()
+	wg.Wait()
+
+	// Invariant: if the ref landed, its blob must resolve.
+	if got, ok := refs.Get("k"); ok {
+		if got != digest {
+			t.Fatalf("ref points at unexpected digest %q (want %q)", got, digest)
+		}
+		if _, err := os.Stat(layout.Blob(got)); err != nil {
+			t.Errorf("ref → blob invariant broken: ref exists but blob is gone: %v", err)
+		}
 	}
 }
 

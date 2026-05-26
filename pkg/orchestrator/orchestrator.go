@@ -228,15 +228,15 @@ func New(cfg Config) (*Orchestrator, error) {
 	// payload at dispatch surfaces "<kind> fetcher: unexpected
 	// payload <T>" from the single adapter site rather than from
 	// four nearly-identical type assertions.
-	srcCtrl.Fetchers[manifest.KindGitRepository] = source.Wrap[*manifest.GitRepository](
+	srcCtrl.Fetchers[manifest.KindGitRepository] = source.Wrap(
 		manifest.KindGitRepository, &git.Fetcher{
 			Cache:   cache,
 			Secrets: secretGet,
 			Mirrors: mirror.New(layout),
 		})
-	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap[*manifest.ExternalArtifact](
+	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap(
 		manifest.KindExternalArtifact, &external.Fetcher{})
-	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap[*manifest.Bucket](
+	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap(
 		manifest.KindBucket, &bucket.Fetcher{Cache: cache, Secrets: secretGet})
 	// HelmRepository: existence-only — flate resolves charts via the
 	// Helm client's registry/repo machinery directly, the controller
@@ -245,7 +245,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	srcCtrl.Fetchers[manifest.KindHelmRepository] = source.ExistenceFetcher{}
 	if cfg.EnableOCI {
 		ociFetcher := &oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet}
-		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap[*manifest.OCIRepository](
+		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap(
 			manifest.KindOCIRepository, ociFetcher)
 		// Share the same fetcher with helm.Client so HelmRepository
 		// (type=oci) and OCIRepository chart resolution both route
@@ -746,9 +746,7 @@ func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
 	// see sanitizeFailed for the contract. Centralizing in one
 	// helper keeps the three readers in sync if the strip rule
 	// changes.
-	for id, info := range sanitizeFailed(o.store.FailedResources()) {
-		res.Failed[id] = info
-	}
+	maps.Copy(res.Failed, sanitizeFailed(o.store.FailedResources()))
 	maps.Copy(res.Orphans, o.orphans)
 	return res, errors.Join(runErr, rsErr)
 }

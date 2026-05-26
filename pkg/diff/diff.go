@@ -74,7 +74,7 @@ type ResourceDiff struct {
 // Header returns the flux-local-style "[path] Parent: ns/name
 // Child: ns/name" prefix used in diff output.
 func (d ResourceDiff) Header() string {
-	var parts []string
+	parts := make([]string, 0, 3)
 	if d.Parent.Path != "" {
 		parts = append(parts, d.Parent.Path)
 	}

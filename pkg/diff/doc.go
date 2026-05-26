@@ -16,11 +16,9 @@
 //
 // Three output flavors are supported:
 //
-//   - Diff — concatenated dyff bodies, one per resource. Multi-
-//     resource output prefixes each body with a single `#`-style
-//     header line identifying the parent KS/HR; single-resource
-//     output omits the header because dyff's `@@ <path> @@` is
-//     unambiguous on its own (the default).
+//   - Diff — concatenated dyff bodies, one per resource. Every body
+//     is prefixed with a single `#`-style header line identifying
+//     the parent KS/HR and the child resource (the default).
 //   - YAML — structured YAML where each entry is a resource and its
 //     dyff body.
 //   - JSON — same shape as YAML, marshaled as JSON.

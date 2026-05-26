@@ -273,7 +273,16 @@ func restoreKustomizationFile(sourceRoot, stagedSub, subPath string) error {
 				rmErrs = append(rmErrs, fmt.Errorf("remove staged %s: %w", other, err))
 			}
 		}
-		if err := os.WriteFile(filepath.Join(stagedSub, name), data, info.Mode().Perm()); err != nil { //nolint:gosec // stagedSub is our own tempdir
+		// Break any hardlink to source before writing — copyFile may
+		// have linked the staged path to the source inode (so renders
+		// that don't mutate the file share storage), but an O_TRUNC
+		// write would clobber the source's bytes. os.Remove drops just
+		// the staged directory entry; the source's link survives.
+		stagedPath := filepath.Join(stagedSub, name)
+		if err := os.Remove(stagedPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			rmErrs = append(rmErrs, fmt.Errorf("unlink staged %s: %w", name, err))
+		}
+		if err := os.WriteFile(stagedPath, data, info.Mode().Perm()); err != nil { //nolint:gosec // stagedSub is our own tempdir
 			rmErrs = append(rmErrs, fmt.Errorf("write staged %s: %w", name, err))
 		}
 		return errors.Join(rmErrs...)

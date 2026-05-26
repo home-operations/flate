@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -268,7 +269,28 @@ func (c *StagingCache) copyTree(src string) (string, error) {
 	return dst, nil
 }
 
+// copyFile materializes srcPath at dstPath. Hardlinks when source and
+// destination sit on the same filesystem — a stage of a monorepo would
+// otherwise duplicate gigabytes of bytes on every render. Falls back to
+// a stream copy on cross-device (EXDEV) failures so the cache continues
+// to work when a user points --cache-dir at a different volume than
+// their working tree.
+//
+// Callers that mutate the staged file MUST first os.Remove it so the
+// hardlink is broken before write — otherwise an O_TRUNC|O_WRONLY open
+// on the staged path would modify the source's underlying inode.
+// flux.go's restoreKustomizationFile follows that protocol; new write
+// sites must too.
 func copyFile(srcPath, dstPath string, mode os.FileMode) error {
+	if err := os.Link(srcPath, dstPath); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		// Other Link failures (permissions, source missing) fall
+		// through to the copy path so unusual filesystems still work.
+		// The cross-device case is the only one we explicitly classify
+		// to keep the fast path readable.
+		_ = err
+	}
 	src, err := os.Open(srcPath) //nolint:gosec // srcPath is a tree-walk result under our source root
 	if err != nil {
 		return err

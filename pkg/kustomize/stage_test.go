@@ -209,3 +209,80 @@ func TestNewStagingCache_SweepsStaleLeftovers(t *testing.T) {
 		t.Errorf("non-flate dir was reaped (prefix check broken): %v", err)
 	}
 }
+
+// TestStagingCache_HardlinksWhenSameFilesystem confirms the perf win:
+// staged files share an inode with their source when the source and
+// the cache tempdir sit on the same filesystem (the common case). A
+// matching inode number on both sides proves we're not paying for a
+// full-tree byte copy on every render.
+func TestStagingCache_HardlinksWhenSameFilesystem(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	srcFile := filepath.Join(src, "kustomization.yaml")
+	mustWrite(t, srcFile, "resources: []\n")
+
+	cache, err := NewStagingCache(filepath.Join(root, "stage"))
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	staged, err := cache.Stage(src)
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	stagedFile := filepath.Join(staged, "kustomization.yaml")
+	si, err := os.Stat(srcFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	di, err := os.Stat(stagedFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(si, di) {
+		t.Errorf("expected staged file to share an inode with source (hardlink); same-file check failed")
+	}
+}
+
+// TestRestoreKustomization_DoesNotMutateSource is the safety net for
+// hardlink staging: even though the stage's kustomization.yaml may
+// share an inode with the source, restoreKustomizationFile must
+// os.Remove the staged link before WriteFile so the source's bytes
+// stay intact across renders.
+func TestRestoreKustomization_DoesNotMutateSource(t *testing.T) {
+	src := t.TempDir()
+	srcKust := filepath.Join(src, "kustomization.yaml")
+	mustWrite(t, srcKust, "original\n")
+
+	cache, err := NewStagingCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	staged, err := cache.Stage(src)
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	// Pretend the Generator wrote over the staged kustomization. If
+	// the staged file is still hard-linked to the source, this writes
+	// to the source's inode and corrupts it.
+	if err := restoreKustomizationFile(src, staged, ""); err != nil {
+		t.Fatalf("restoreKustomizationFile: %v", err)
+	}
+	// Overwrite the staged file simulating Generator output.
+	if err := os.WriteFile(filepath.Join(staged, "kustomization.yaml"), []byte("rewritten\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(srcKust) //nolint:gosec // srcKust under t.TempDir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original\n" {
+		t.Errorf("source kustomization.yaml mutated by stage write: got %q", got)
+	}
+}

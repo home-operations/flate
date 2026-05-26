@@ -2,6 +2,7 @@ package helmrelease
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,7 +10,6 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -99,41 +99,15 @@ func TestController_FilterUnchangedShortCircuitsToReady(t *testing.T) {
 	}
 }
 
-func TestController_AllowMissingSecretsSynthesizesGeneratedValuesFromSecret(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
-name: mychart
-version: 0.1.0
-`)
-	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .Release.Name }}-cm
-data:
-  clientId: {{ .Values.oauth.clientId | quote }}
-`)
-
+func TestController_AllowMissingSecretsSkipsGeneratedValuesFromSecret(t *testing.T) {
 	_, st := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
-	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
-	st.AddObject(src)
-	st.SetArtifact(src.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
-	})
-	st.UpdateStatus(src.Named(), store.StatusReady, "")
 	st.AddObject(&manifest.RawObject{
 		Kind:       "ExternalSecret",
 		APIVersion: "external-secrets.io/v1",
 		Name:       "app-creds",
 		Namespace:  "default",
 		Spec: map[string]any{
-			"target": map[string]any{
-				"name": "app-values",
-				"template": map[string]any{
-					"data": map[string]any{
-						"values.yaml": "oauth:\n  clientId: {{ .clientId }}\n",
-					},
-				},
-			},
+			"target": map[string]any{"name": "app-values"},
 		},
 	})
 	hr := &manifest.HelmRelease{
@@ -144,33 +118,15 @@ data:
 				{Kind: manifest.KindSecret, Name: "app-values"},
 			},
 		},
-		Chart: manifest.HelmChart{
-			Name:          "mychart",
-			RepoName:      "charts",
-			RepoNamespace: "flux-system",
-			RepoKind:      manifest.KindGitRepository,
-		},
 	}
 	st.AddObject(hr)
 
 	info := waitForStatus(t, st, hr.Named(), store.StatusReady)
-	if store.IsSkipped(info) {
-		t.Fatalf("generated valuesFrom Secret should render with placeholders, got skip: %+v", info)
+	if !store.IsSkipped(info) {
+		t.Fatalf("expected generated valuesFrom Secret to soft-skip; got %+v", info)
 	}
-	secret, ok := store.GetByName[*manifest.Secret](st, manifest.KindSecret, "default", "app-values")
-	if !ok {
-		t.Fatal("synthetic valuesFrom Secret was not added to the store")
-	}
-	values, _ := secret.StringData["values.yaml"].(string)
-	if !manifest.IsValuePlaceholder(values) {
-		t.Fatalf("synthetic values.yaml lacks placeholders:\n%s", values)
-	}
-	art, ok := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
-	if !ok {
-		t.Fatal("HelmRelease artifact was not written")
-	}
-	if got := renderedConfigMapValue(art.Manifests, "clientId"); got != "..PLACEHOLDER_clientId.." {
-		t.Fatalf("rendered clientId = %q, want placeholder", got)
+	if !strings.Contains(info.Message, "ExternalSecret/default/app-creds") {
+		t.Errorf("skip reason should name the producer, got %q", info.Message)
 	}
 }
 
@@ -252,20 +208,6 @@ func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
 }
 
 func metav1Duration(d time.Duration) metav1.Duration { return metav1.Duration{Duration: d} }
-
-func renderedConfigMapValue(docs []map[string]any, key string) string {
-	for _, doc := range docs {
-		if manifest.DocKind(doc) != manifest.KindConfigMap {
-			continue
-		}
-		data, _ := doc["data"].(map[string]any)
-		value, _ := data[key].(string)
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
 
 func TestController_CollectHRDepsClone(t *testing.T) {
 	c, _ := newTestController(t, nil)

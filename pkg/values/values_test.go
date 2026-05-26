@@ -98,28 +98,6 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 	}
 }
 
-func TestExpandValueReferences_MergesValuesFileWithPlaceholderLeaves(t *testing.T) {
-	secret := &manifest.Secret{
-		Name: "generated", Namespace: "default",
-		StringData: map[string]any{
-			"values.yaml": "oauth:\n  clientId: ..PLACEHOLDER_clientId..\n",
-		},
-	}
-	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "generated"}},
-		},
-	}
-	if err := ExpandValueReferences(hr, &SliceProvider{Secrets: []*manifest.Secret{secret}}); err != nil {
-		t.Fatalf("ExpandValueReferences: %v", err)
-	}
-	oauth := hr.Values["oauth"].(map[string]any)
-	if oauth["clientId"] != "..PLACEHOLDER_clientId.." {
-		t.Fatalf("oauth.clientId = %q", oauth["clientId"])
-	}
-}
-
 // TestExpandValueReferences_IgnoresConfigMapBinaryData locks the
 // upstream contract: valuesFrom on a ConfigMap reads only .data,
 // never .binaryData. fluxcd/pkg/chartutil/values.go's

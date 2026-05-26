@@ -319,15 +319,16 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 		return replaceValueAtPath(values, ref.TargetPath, found)
 	}
 
+	// Wiped Secret values surface here as the literal placeholder
+	// string. yaml.Unmarshal of a scalar string into a map errors out
+	// — treat as empty so a wiped values-file (common pattern: kustomize
+	// `secretGenerator` wrapping a SOPS-encrypted values.yaml) doesn't
+	// block the whole HR render.
+	if manifest.IsValuePlaceholder(found) {
+		return values, nil
+	}
 	var parsed map[string]any
 	if err := yaml.Unmarshal([]byte(found), &parsed); err != nil {
-		// Wiped Secret values can surface here as a literal placeholder
-		// scalar. Treat that one shape as empty so a wiped values-file
-		// doesn't block the render, but still allow valid YAML maps whose
-		// leaves contain placeholders from generated ExternalSecrets.
-		if manifest.IsValuePlaceholder(found) {
-			return values, nil
-		}
 		return nil, fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)
 	}
 	if parsed == nil {

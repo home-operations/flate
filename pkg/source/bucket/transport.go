@@ -1,6 +1,7 @@
 package bucket
 
 import (
+	"crypto/tls"
 	"net/http"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -26,24 +27,13 @@ func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) 
 	if err != nil {
 		return nil, err
 	}
-	if b.CertSecretRef == nil && proxy == nil {
-		return nil, nil
-	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	var tlsCfg *tls.Config
 	if b.CertSecretRef != nil {
-		cfg, terr := source.ResolveCertSecret(f.Secrets, b.Namespace, "Bucket",
+		tlsCfg, err = source.ResolveCertSecret(f.Secrets, b.Namespace, "Bucket",
 			b.Namespace+"/"+b.Name, b.CertSecretRef)
-		if terr != nil {
-			return nil, terr
+		if err != nil {
+			return nil, err
 		}
-		tr.TLSClientConfig = cfg
 	}
-	if proxy != nil {
-		pfn, perr := proxy.HTTPProxyFunc()
-		if perr != nil {
-			return nil, perr
-		}
-		tr.Proxy = pfn
-	}
-	return tr, nil
+	return source.NewHTTPTransport(tlsCfg, proxy)
 }

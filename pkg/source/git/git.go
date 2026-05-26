@@ -72,16 +72,11 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*sto
 	if tlsCfg != nil {
 		httpsTransportMu.Lock()
 		defer httpsTransportMu.Unlock()
-		tr := &http.Transport{TLSClientConfig: tlsCfg}
-		if proxy != nil {
-			pfn, perr := proxy.HTTPProxyFunc()
-			if perr != nil {
-				return nil, perr
-			}
-			tr.Proxy = pfn
+		tr, terr := source.NewHTTPTransport(tlsCfg, proxy)
+		if terr != nil {
+			return nil, terr
 		}
-		httpsClient := &http.Client{Transport: tr}
-		client.InstallProtocol("https", githttp.NewClient(httpsClient))
+		client.InstallProtocol("https", githttp.NewClient(&http.Client{Transport: tr}))
 		defer client.InstallProtocol("https", githttp.DefaultClient)
 	}
 	return f.fetch(ctx, repo, auth, proxy)

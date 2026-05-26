@@ -177,19 +177,12 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	// Compose the http.Client transport: oras's retry transport over a
 	// customized http.Transport when TLS or proxy is configured. Without
 	// either, oras's default is used.
+	baseTransport, err := source.NewHTTPTransport(tlsCfg, proxy)
+	if err != nil {
+		return nil, err
+	}
 	var httpClient *http.Client
-	if tlsCfg != nil || proxy != nil {
-		baseTransport := http.DefaultTransport.(*http.Transport).Clone()
-		if tlsCfg != nil {
-			baseTransport.TLSClientConfig = tlsCfg
-		}
-		if proxy != nil {
-			pfn, perr := proxy.HTTPProxyFunc()
-			if perr != nil {
-				return nil, perr
-			}
-			baseTransport.Proxy = pfn
-		}
+	if baseTransport != nil {
 		httpClient = &http.Client{Transport: retry.NewTransport(baseTransport)}
 	}
 	if credStore != nil {

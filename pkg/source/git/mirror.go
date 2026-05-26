@@ -76,13 +76,9 @@ func (m *MirrorCache) openOrFetch(ctx context.Context, url string, auth transpor
 	if tlsCfg != nil {
 		httpsTransportMu.Lock()
 		defer httpsTransportMu.Unlock()
-		tr := &http.Transport{TLSClientConfig: tlsCfg}
-		if proxy != nil {
-			pfn, perr := proxy.HTTPProxyFunc()
-			if perr != nil {
-				return nil, perr
-			}
-			tr.Proxy = pfn
+		tr, terr := source.NewHTTPTransport(tlsCfg, proxy)
+		if terr != nil {
+			return nil, terr
 		}
 		client.InstallProtocol("https", githttp.NewClient(&http.Client{Transport: tr}))
 		defer client.InstallProtocol("https", githttp.DefaultClient)

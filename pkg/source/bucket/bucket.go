@@ -6,9 +6,13 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -38,10 +42,9 @@ type Fetcher struct {
 // signature is wrapped via source.Wrap at orchestrator registration.
 func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceArtifact, error) {
 	if b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
-		return nil, fmt.Errorf(
-			"bucket %s/%s provider %q is not implemented; flate currently supports only %q (S3-compatible)",
+		return nil, source.ErrUnsupportedProvider("Bucket",
 			b.Namespace, b.Name, b.Provider, sourcev1.BucketProviderGeneric,
-		)
+			"S3-compatible")
 	}
 
 	creds, err := f.resolveCredentials(b)
@@ -121,8 +124,35 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 	}, nil
 }
 
-// resolveTransport lives in transport.go (paired with
-// transport_test.go).
+// resolveTransport builds the http.Transport minio-go should use when
+// the Bucket carries a CertSecretRef (custom CA / client cert / TLS
+// disabled) and/or a ProxySecretRef. Returns nil when both are absent
+// so the minio-go default transport is used.
+//
+// CertSecretRef key conventions (matching Flux):
+//   - ca.crt    — PEM-encoded CA bundle, root-trust the server cert
+//   - tls.crt + tls.key — client cert for mTLS
+//
+// spec.insecure (HTTP-only endpoint) is NOT a TLS-level toggle but
+// intentionally applied at the protocol level (normalizeEndpoint)
+// rather than the TLS layer, mirroring Flux's source-controller
+// behavior.
+func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) {
+	proxy, err := source.ResolveProxy(f.Secrets, b.Namespace, "Bucket",
+		b.Namespace+"/"+b.Name, b.ProxySecretRef)
+	if err != nil {
+		return nil, err
+	}
+	var tlsCfg *tls.Config
+	if b.CertSecretRef != nil {
+		tlsCfg, err = source.ResolveCertSecret(f.Secrets, b.Namespace, "Bucket",
+			b.Namespace+"/"+b.Name, b.CertSecretRef)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return source.NewHTTPTransport(tlsCfg, proxy)
+}
 
 // resolveCredentials picks up accesskey/secretkey from the SecretRef
 // or falls back to anonymous (which is valid for public buckets).
@@ -149,8 +179,36 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 	return credentials.NewStaticV4(access, secret, ""), nil
 }
 
-// normalizeEndpoint / schemeFor live in endpoint.go (paired with
-// endpoint_test.go).
+// normalizeEndpoint splits a Flux-style endpoint into the
+// host[:port] form minio-go expects and a tls flag.
+func normalizeEndpoint(endpoint string, insecure bool) (host string, secure bool, err error) {
+	switch {
+	case strings.HasPrefix(endpoint, "https://"):
+		host = strings.TrimPrefix(endpoint, "https://")
+		secure = true
+	case strings.HasPrefix(endpoint, "http://"):
+		host = strings.TrimPrefix(endpoint, "http://")
+		secure = false
+	default:
+		host = endpoint
+		secure = !insecure
+	}
+	host = strings.TrimRight(host, "/")
+	if host == "" {
+		return "", false, errors.New("bucket endpoint is empty")
+	}
+	if _, perr := url.Parse(schemeFor(secure) + "://" + host); perr != nil {
+		return "", false, fmt.Errorf("parse Bucket endpoint %q: %w", endpoint, perr)
+	}
+	return host, secure, nil
+}
+
+func schemeFor(secure bool) string {
+	if secure {
+		return "https"
+	}
+	return "http"
+}
 
 // walkBucket lists the bucket under prefix, downloads each object
 // into slot preserving the prefix-relative path, and returns the

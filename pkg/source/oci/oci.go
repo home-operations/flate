@@ -53,10 +53,9 @@ type Fetcher struct {
 // adapter site rather than panicking here.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*store.SourceArtifact, error) {
 	if repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
-		return nil, fmt.Errorf(
-			"OCIRepository %s/%s provider %q is not implemented; flate currently supports only %q (SecretRef or --registry-config credentials)",
+		return nil, source.ErrUnsupportedProvider("OCIRepository",
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GenericOCIProvider,
-		)
+			"SecretRef or --registry-config credentials")
 	}
 	configPath, cleanup, err := f.resolveRegistryConfig(repo)
 	if err != nil {

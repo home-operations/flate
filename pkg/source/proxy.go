@@ -2,7 +2,6 @@ package source
 
 import (
 	"fmt"
-	"net/http"
 	"net/url"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -17,8 +16,11 @@ type ProxyConfig struct {
 	Password string
 }
 
-// URL parses Address into a *url.URL. The caller pre-validated
-// non-empty by checking the return of ResolveProxy.
+// URL parses Address into a *url.URL with optional basic-auth user
+// info applied. The caller pre-validated non-empty by checking the
+// return of ResolveProxy. Used by NewHTTPTransport when pinning a
+// transport's Proxy function; the OCI / Bucket / HTTP-Git transports
+// pick this up uniformly.
 func (p *ProxyConfig) URL() (*url.URL, error) {
 	u, err := url.Parse(p.Address)
 	if err != nil {
@@ -28,17 +30,6 @@ func (p *ProxyConfig) URL() (*url.URL, error) {
 		u.User = url.UserPassword(p.Username, p.Password)
 	}
 	return u, nil
-}
-
-// HTTPProxyFunc returns a net/http.Transport.Proxy function pinned to
-// this proxy. Use when configuring an http.Transport for the OCI,
-// Bucket, or HTTP-Git transports.
-func (p *ProxyConfig) HTTPProxyFunc() (func(*http.Request) (*url.URL, error), error) {
-	u, err := p.URL()
-	if err != nil {
-		return nil, err
-	}
-	return http.ProxyURL(u), nil
 }
 
 // ResolveProxy reads ref's Secret via secrets and decodes it into a

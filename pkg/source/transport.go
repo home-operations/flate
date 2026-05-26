@@ -28,11 +28,11 @@ func NewHTTPTransport(tlsCfg *tls.Config, proxy *ProxyConfig) (*http.Transport, 
 		tr.TLSClientConfig = tlsCfg
 	}
 	if proxy != nil {
-		pfn, err := proxy.HTTPProxyFunc()
+		u, err := proxy.URL()
 		if err != nil {
 			return nil, err
 		}
-		tr.Proxy = pfn
+		tr.Proxy = http.ProxyURL(u)
 	}
 	return tr, nil
 }

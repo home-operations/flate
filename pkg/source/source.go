@@ -84,6 +84,19 @@ func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*stor
 	return nil, nil
 }
 
+// ErrUnsupportedProvider is the canonical "we only support X" error
+// returned by every fetcher's provider gate. Centralizes the wording
+// so a new provider added to one fetcher matches the others by default
+// — and so an operator parsing logs sees one consistent shape across
+// GitRepository / OCIRepository / Bucket failures.
+//
+// hint is a short parenthetical that names what the supported provider
+// expects (e.g. "SecretRef-based credentials" or "S3-compatible").
+func ErrUnsupportedProvider(kind, namespace, name, got, want, hint string) error {
+	return fmt.Errorf("%s %s/%s provider %q is not implemented; flate currently supports only %q (%s)",
+		kind, namespace, name, got, want, hint)
+}
+
 // SecretGetter resolves a Secret CR by namespace + name. Fetchers
 // that read authentication, TLS, proxy, or cosign-verify material
 // from a Flux spec.*SecretRef accept one of these so they don't need

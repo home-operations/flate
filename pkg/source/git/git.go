@@ -51,10 +51,9 @@ type Fetcher struct {
 // adapter site rather than panicking here.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*store.SourceArtifact, error) {
 	if repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
-		return nil, fmt.Errorf(
-			"GitRepository %s/%s provider %q is not implemented; flate currently supports only %q (SecretRef-based credentials)",
+		return nil, source.ErrUnsupportedProvider("GitRepository",
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GitProviderGeneric,
-		)
+			"SecretRef-based credentials")
 	}
 	auth, err := f.resolveAuth(repo)
 	if err != nil {

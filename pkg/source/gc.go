@@ -36,7 +36,8 @@ type SweepResult struct {
 	// "kind" of cache that lost the entry — sources/, baselines/, etc.
 	Removed []string
 	// Bytes is the cumulative size of removed entries before deletion.
-	// Approximate — du-style recursive walk per entry.
+	// Computed during the same walk that decides removal so the sweep
+	// stays O(files) overall.
 	Bytes int64
 	// Errors aggregates per-entry I/O errors. Sweep continues past
 	// individual failures and reports them here so a single permissions
@@ -45,17 +46,21 @@ type SweepResult struct {
 }
 
 // Sweep prunes stale entries from the cache root described by layout
-// according to opts. Walks the layout-managed subdirectories — sources,
-// baselines, blobs — and removes top-level entries whose mtime is older
-// than opts.MaxAge. Dangling refs files whose digest no longer
-// materializes in the blob store are removed regardless of age.
+// using a mark-sweep strategy:
 //
-// Mirrors (layout.GitMirrors()) are preserved by default; pass
-// IncludeMirrors to age-prune them too.
+//  1. MARK — read every refs/<category>/<key> file, build the set of
+//     digests still referenced from disk.
+//  2. SWEEP — walk the layout-managed subtrees (sources, baselines,
+//     blobs, optionally git-mirrors) and remove entries older than
+//     MaxAge. Blobs whose digest is in the live set survive
+//     regardless of age — a fresh ref must always resolve.
+//  3. ORPHAN refs — drop refs whose digest no longer materializes a
+//     blob. Runs regardless of MaxAge; these are dead pointers and
+//     refs cost nothing on disk anyway.
 //
-// Returns a SweepResult with the (would-be-)removed paths and a count
-// of recoverable bytes. Individual I/O errors land in Result.Errors
-// rather than short-circuiting the sweep.
+// Mirrors are preserved by default; pass IncludeMirrors to age-prune
+// them too. Individual I/O errors land in Result.Errors rather than
+// short-circuiting the sweep.
 func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 	var res SweepResult
 	if layout.Root == "" {
@@ -66,26 +71,32 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 		cutoff = time.Now().Add(-opts.MaxAge)
 	}
 
+	live := markLiveDigests(layout, &res)
+
 	// Each entry pairs a directory to sweep with the depth at which
-	// the age comparison applies. Sources land at <root>/sources/
-	// <slug>/<hash>/, so age comparison is two levels in; everything
-	// else compares mtime of the immediate child.
+	// the age comparison applies and whether the leaf's basename is
+	// a content digest to consult the live set with. Sources land at
+	// <root>/sources/<slug>/<hash>/ so age comparison is two levels
+	// in; blobs sit one level below the algo segment and are gated
+	// by mark.
 	ageRoots := []struct {
 		dir   string
 		depth int
+		gate  func(name string) bool // skip when gate returns true
 	}{
-		{layout.Sources(), 2},
-		{layout.Baselines(), 1},
-		{layout.Blobs(), 1},
+		{layout.Sources(), 2, nil},
+		{layout.Baselines(), 1, nil},
+		{layout.Blobs(), 1, func(name string) bool { _, ok := live[name]; return ok }},
 	}
 	if opts.IncludeMirrors {
 		ageRoots = append(ageRoots, struct {
 			dir   string
 			depth int
-		}{layout.GitMirrors(), 1})
+			gate  func(name string) bool
+		}{layout.GitMirrors(), 1, nil})
 	}
 	for _, ar := range ageRoots {
-		sweepDirByAge(ar.dir, ar.depth, cutoff, opts.DryRun, &res)
+		sweepDirByAge(ar.dir, ar.depth, cutoff, ar.gate, opts.DryRun, &res)
 	}
 
 	sweepDanglingRefs(layout, opts.DryRun, &res)
@@ -93,11 +104,48 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 	return res, nil
 }
 
+// markLiveDigests walks every refs/<category>/<key> file and returns
+// the set of digests they point at. Used to gate blob sweep: a fresh
+// ref must always be able to resolve, even if its blob is "old".
+// Malformed or missing refs land in res.Errors but don't abort.
+func markLiveDigests(layout cacheroot.Layout, res *SweepResult) map[string]struct{} {
+	live := map[string]struct{}{}
+	refsRoot := layout.RefsRoot()
+	_ = filepath.WalkDir(refsRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fs.SkipDir
+			}
+			res.Errors = append(res.Errors, fmt.Errorf("mark refs %s: %w", path, err))
+			return nil
+		}
+		if d.IsDir() || strings.HasPrefix(d.Name(), ".tmp.") {
+			return nil
+		}
+		b, rerr := os.ReadFile(path) //nolint:gosec // path is a WalkDir result under refsRoot
+		if rerr != nil {
+			res.Errors = append(res.Errors, fmt.Errorf("mark read %s: %w", path, rerr))
+			return nil
+		}
+		digest := strings.TrimSpace(string(b))
+		if looksLikeDigest(digest) {
+			live[digest] = struct{}{}
+		}
+		return nil
+	})
+	return live
+}
+
 // sweepDirByAge removes immediate-child entries of dir whose mtime is
-// older than cutoff. depth=1 compares mtime of dir's children;
-// depth=2 recurses one more level (sources/<slug>/<hash> — the slug
-// wrapper would otherwise shield stale hash slots from comparison).
-func sweepDirByAge(dir string, depth int, cutoff time.Time, dryRun bool, res *SweepResult) {
+// older than cutoff. depth>1 recurses (sources/<slug>/<hash> — the
+// slug wrapper would otherwise shield stale hash slots from
+// comparison). gate, when non-nil, is consulted with the leaf name
+// before age is checked; returning true preserves the entry.
+//
+// Sizes accumulate during this single walk; entries that survive the
+// age check don't contribute to res.Bytes, but neither do they get
+// re-walked elsewhere — the sweep stays O(files) overall.
+func sweepDirByAge(dir string, depth int, cutoff time.Time, gate func(string) bool, dryRun bool, res *SweepResult) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -107,26 +155,25 @@ func sweepDirByAge(dir string, depth int, cutoff time.Time, dryRun bool, res *Sw
 	}
 	if depth > 1 {
 		for _, e := range entries {
-			sweepDirByAge(filepath.Join(dir, e.Name()), depth-1, cutoff, dryRun, res)
+			sweepDirByAge(filepath.Join(dir, e.Name()), depth-1, cutoff, gate, dryRun, res)
 		}
 		return
 	}
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
+		if gate != nil && gate(e.Name()) {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("stat %s: %w", path, err))
 			continue
 		}
-		if cutoff.IsZero() {
+		if cutoff.IsZero() || info.ModTime().After(cutoff) {
 			continue
 		}
-		if info.ModTime().After(cutoff) {
-			continue
-		}
-		size := entrySize(path)
+		res.Bytes += entrySize(path)
 		res.Removed = append(res.Removed, path)
-		res.Bytes += size
 		if dryRun {
 			continue
 		}
@@ -140,6 +187,10 @@ func sweepDirByAge(dir string, depth int, cutoff time.Time, dryRun bool, res *Sw
 // (recursively) and removes entries whose stored digest no longer
 // materializes a blob in the layout's blob store. Refs files are tiny
 // so we read each one to compare.
+//
+// This runs AFTER the blob age sweep — if the mark phase preserved
+// blobs that live refs point at, only genuinely-dead pointers (or
+// orphaned .tmp.* staging files from torn writes) remain here.
 func sweepDanglingRefs(layout cacheroot.Layout, dryRun bool, res *SweepResult) {
 	refsRoot := layout.RefsRoot()
 	_ = filepath.WalkDir(refsRoot, func(path string, d fs.DirEntry, err error) error {
@@ -174,10 +225,6 @@ func sweepDanglingRefs(layout cacheroot.Layout, dryRun bool, res *SweepResult) {
 			}
 			return nil
 		}
-		// Reject anything that doesn't look like a sha256 hex — defense
-		// against a hostile or corrupt refs file injecting a traversal
-		// path. The filepath.Join below would normalize "../..", but
-		// rejecting upfront keeps the blame closer to the source.
 		if !looksLikeDigest(digest) {
 			res.Errors = append(res.Errors, fmt.Errorf("refs %s: bogus digest %q", path, digest))
 			return nil
@@ -186,9 +233,6 @@ func sweepDanglingRefs(layout cacheroot.Layout, dryRun bool, res *SweepResult) {
 		if _, err := os.Stat(blobPath); err == nil { //nolint:gosec // digest gated by looksLikeDigest above
 			return nil
 		}
-		// The digest this ref points at has been swept away — drop the
-		// pointer so future lookups don't keep claiming "we know about
-		// this digest, but it's gone".
 		res.Removed = append(res.Removed, path)
 		if !dryRun {
 			if err := os.Remove(path); err != nil { //nolint:gosec // path is a WalkDir result under refsRoot

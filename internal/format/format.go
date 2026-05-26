@@ -65,13 +65,20 @@ func Table(w io.Writer, cols []Column, rows []map[string]string) error {
 		}
 	}
 	var b bytes.Buffer
+	// +1 newline per row (header + data rows); each cell padded to width+gutter
+	totalCols := 0
+	for _, w := range widths {
+		totalCols += w + 4
+	}
+	b.Grow((1 + len(rows)) * (totalCols + 1))
+	last := len(cols) - 1
 	for i, c := range cols {
-		writeCol(&b, c.Header, widths[i], i == len(cols)-1)
+		writeCol(&b, c.Header, widths[i], i == last)
 	}
 	b.WriteByte('\n')
 	for _, r := range rows {
 		for i, c := range cols {
-			writeCol(&b, r[c.Key], widths[i], i == len(cols)-1)
+			writeCol(&b, r[c.Key], widths[i], i == last)
 		}
 		b.WriteByte('\n')
 	}
@@ -84,7 +91,11 @@ func writeCol(b *bytes.Buffer, value string, width int, last bool) {
 	if last {
 		return
 	}
-	b.WriteString(strings.Repeat(" ", max(width-utf8.RuneCountInString(value)+4, 1)))
+	// Write padding directly to avoid the temporary string that strings.Repeat allocates.
+	pad := max(width-utf8.RuneCountInString(value)+4, 1)
+	for range pad {
+		b.WriteByte(' ')
+	}
 }
 
 // YAMLMulti emits a multi-document YAML stream.
@@ -123,15 +134,17 @@ func JSON(w io.Writer, value any) error {
 	if _, err := w.Write(out); err != nil {
 		return err
 	}
-	_, err = w.Write([]byte("\n"))
+	_, err = io.WriteString(w, "\n")
 	return err
 }
 
 // Name emits one resource name per line.
 func Name(w io.Writer, items []map[string]string, key string) error {
 	var b bytes.Buffer
+	b.Grow(len(items) * 32) // rough estimate: 32 bytes per name
 	for _, it := range items {
-		fmt.Fprintln(&b, it[key])
+		b.WriteString(it[key])
+		b.WriteByte('\n')
 	}
 	_, err := w.Write(b.Bytes())
 	return err

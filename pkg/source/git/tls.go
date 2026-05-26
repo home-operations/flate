@@ -4,20 +4,14 @@ import (
 	"cmp"
 	"crypto/tls"
 	"fmt"
-	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// httpsTransportMu serializes the brief window where a per-CR HTTPS
-// client is installed as go-git's process-global transport. go-git v5
-// has no per-CloneOptions TLS hook, so custom-CA fetches must hold
-// this lock across InstallProtocol → clone → restore. Package-global
-// because `client.InstallProtocol` is itself process-global — a
-// per-Fetcher mutex would race when two Fetchers run concurrently
-// and clobber each other's transport.
-var httpsTransportMu sync.Mutex
+// The shared HTTPS-transport install lock moved to
+// internal/gittransport so the bare-mirror subpackage can use the
+// same gate without a circular import.
 
 // resolveTLS builds a *tls.Config from spec.secretRef for HTTPS
 // GitRepositories using a custom CA. Returns nil when no CA material

@@ -1,4 +1,7 @@
-package git
+// Package verify performs PGP signature verification against a
+// freshly cloned GitRepository's HEAD commit and/or referenced tag,
+// matching source-controller's spec.verify behavior.
+package verify
 
 import (
 	"fmt"
@@ -11,15 +14,15 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// verifySignatures applies the PGP verification configured by
-// spec.verify against the freshly-cloned repository. Returns nil
-// when no verification is configured. Fails loud on any failure —
-// missing secret, malformed keys, unsigned/badly-signed object.
+// Signatures applies the PGP verification configured by spec.verify
+// against the cloned repository at resolvedRef. Returns nil when no
+// verification is configured. Fails loud on any failure — missing
+// secret, malformed keys, unsigned/badly-signed object.
 //
 // The Secret named by spec.verify.secretRef may carry multiple
 // ASCII-armored public keys (any *.asc filename); they're
 // concatenated into a single keyring before verification.
-func verifySignatures(secrets source.SecretGetter, repo *manifest.GitRepository, cloned *git.Repository, resolvedRef plumbing.Hash) error {
+func Signatures(secrets source.SecretGetter, repo *manifest.GitRepository, cloned *git.Repository, resolvedRef plumbing.Hash) error {
 	if repo.Verification == nil {
 		return nil
 	}
@@ -43,13 +46,13 @@ func verifySignatures(secrets source.SecretGetter, repo *manifest.GitRepository,
 		return fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
 	}
 
-	if verifyHEAD(mode) {
+	if matchesHEAD(mode) {
 		if err := verifyCommit(cloned, resolvedRef, keyring); err != nil {
 			return fmt.Errorf("GitRepository %s/%s: HEAD verify: %w",
 				repo.Namespace, repo.Name, err)
 		}
 	}
-	if verifyTag(mode) {
+	if matchesTag(mode) {
 		tagName := ""
 		if repo.Reference != nil {
 			tagName = repo.Reference.Tag
@@ -66,17 +69,17 @@ func verifySignatures(secrets source.SecretGetter, repo *manifest.GitRepository,
 	return nil
 }
 
-func verifyHEAD(mode sourcev1.GitVerificationMode) bool {
+func matchesHEAD(mode sourcev1.GitVerificationMode) bool {
 	return mode == sourcev1.ModeGitHEAD || mode == sourcev1.ModeGitTagAndHEAD
 }
 
-func verifyTag(mode sourcev1.GitVerificationMode) bool {
+func matchesTag(mode sourcev1.GitVerificationMode) bool {
 	return mode == sourcev1.ModeGitTag || mode == sourcev1.ModeGitTagAndHEAD
 }
 
 // buildPGPKeyring concatenates every string value in the Secret into
 // one armored keyring. Each value is expected to be an armored PGP
-// public key block; flate doesn't validate the shape here — go-git's
+// public key block; the helper doesn't validate the shape — go-git's
 // Commit/Tag .Verify rejects malformed keyrings.
 //
 // Treats source.StringFromSecret's PLACEHOLDER wipe as missing so a

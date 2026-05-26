@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,11 +14,12 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/git/internal/gittransport"
+	"github.com/home-operations/flate/pkg/source/git/mirror"
+	"github.com/home-operations/flate/pkg/source/git/verify"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -39,11 +39,8 @@ import (
 type Fetcher struct {
 	Cache   *source.Cache
 	Secrets source.SecretGetter
-	Mirrors *MirrorCache
+	Mirrors *mirror.Cache
 }
-
-// httpsTransportMu is declared in tls.go (with the only caller —
-// the TLS-customized InstallProtocol path in Fetch below).
 
 // Fetch implements source.TypedFetcher[*manifest.GitRepository].
 // The typed signature is wrapped via source.Wrap at orchestrator
@@ -69,16 +66,11 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*sto
 	if err != nil {
 		return nil, err
 	}
-	if tlsCfg != nil {
-		httpsTransportMu.Lock()
-		defer httpsTransportMu.Unlock()
-		tr, terr := source.NewHTTPTransport(tlsCfg, proxy)
-		if terr != nil {
-			return nil, terr
-		}
-		client.InstallProtocol("https", githttp.NewClient(&http.Client{Transport: tr}))
-		defer client.InstallProtocol("https", githttp.DefaultClient)
+	restore, err := gittransport.InstallHTTPS(tlsCfg, proxy)
+	if err != nil {
+		return nil, err
 	}
+	defer restore()
 	return f.fetch(ctx, repo, auth, proxy)
 }
 
@@ -210,7 +202,7 @@ func (f *Fetcher) finalize(repo *manifest.GitRepository, art *store.SourceArtifa
 		if herr != nil {
 			return fmt.Errorf("verify: resolve HEAD: %w", herr)
 		}
-		if err := verifySignatures(f.Secrets, repo, cloned, head.Hash()); err != nil {
+		if err := verify.Signatures(f.Secrets, repo, cloned, head.Hash()); err != nil {
 			return err
 		}
 	}
@@ -254,19 +246,19 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 	if err != nil {
 		return nil, err
 	}
-	mirror, err := f.Mirrors.openOrFetch(ctx, repo.URL, auth, proxy, tlsCfg)
+	mirrorRepo, err := f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, tlsCfg)
 	if err != nil {
 		return nil, err
 	}
-	hash, err := resolveRefHash(mirror, repo.Reference)
+	hash, err := resolveRefHash(mirrorRepo, repo.Reference)
 	if err != nil {
 		return nil, fmt.Errorf("GitRepository %s/%s ref %q: %w", repo.Namespace, repo.Name, refStr, err)
 	}
-	if err := materializeTree(ctx, mirror, hash, slot.Path); err != nil {
+	if err := materializeTree(ctx, mirrorRepo, hash, slot.Path); err != nil {
 		return nil, fmt.Errorf("materialize %s at %s: %w", hash, refStr, err)
 	}
 	if repo.Verification != nil {
-		if err := verifySignatures(f.Secrets, repo, mirror, hash); err != nil {
+		if err := verify.Signatures(f.Secrets, repo, mirrorRepo, hash); err != nil {
 			return nil, err
 		}
 	}

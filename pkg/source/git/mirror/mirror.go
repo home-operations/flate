@@ -1,4 +1,8 @@
-package git
+// Package mirror implements the bare-clone object store shared
+// across GitRepository fetches. One bare mirror per upstream URL is
+// kept warm across runs; per-(URL, ref) cache slots materialize
+// their worktrees from it without re-cloning on every reconcile.
+package mirror
 
 import (
 	"context"
@@ -7,40 +11,37 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 )
 
-// MirrorCache holds one bare clone per unique upstream URL. The mirror
-// is the persistent object store that incremental Fetches update; the
+// Cache holds one bare clone per unique upstream URL. The mirror is
+// the persistent object store that incremental Fetches update; the
 // per-(URL, ref) cache slots materialize their worktrees from it
 // without re-cloning across runs or across refs of the same repo.
 //
-// Construct via NewMirrorCache; pass to Fetcher.Mirrors. A nil
+// Construct via New; pass to git.Fetcher.Mirrors. A nil
 // Fetcher.Mirrors disables mirroring — the legacy PlainClone-into-slot
 // path runs unchanged (used by tests and any caller that prefers the
 // older behavior).
-type MirrorCache struct {
+type Cache struct {
 	layout cacheroot.Layout
 	locks  *keylock.KeyMap[string]
 }
 
-// NewMirrorCache constructs a MirrorCache backed by the supplied
-// Layout. The git-mirrors subtree is created lazily on first
-// openOrFetch.
-func NewMirrorCache(layout cacheroot.Layout) *MirrorCache {
-	return &MirrorCache{layout: layout, locks: keylock.New[string]()}
+// New constructs a Cache backed by the supplied Layout. The
+// git-mirrors subtree is created lazily on first OpenOrFetch.
+func New(layout cacheroot.Layout) *Cache {
+	return &Cache{layout: layout, locks: keylock.New[string]()}
 }
 
 // urlHash returns the stable directory name for url's mirror. The hash
@@ -53,36 +54,32 @@ func urlHash(url string) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 
-func (m *MirrorCache) pathFor(url string) string {
+func (m *Cache) pathFor(url string) string {
 	return m.layout.GitMirror(urlHash(url))
 }
 
-// openOrFetch returns the bare mirror repo for url, ensuring it carries
-// up-to-date refs. First call for a URL runs a bare clone; subsequent
-// calls incrementally Fetch. Holds the per-URL lock across the network
-// operation so two concurrent callers serialize.
+// OpenOrFetch returns the bare mirror repo for url, ensuring it
+// carries up-to-date refs. First call for a URL runs a bare clone;
+// subsequent calls incrementally Fetch. Holds the per-URL lock across
+// the network operation so two concurrent callers serialize.
 //
 // auth/proxy/tlsCfg are applied to whichever network operation runs
 // (clone or fetch). For HTTPS with a custom TLS config, the global
-// httpsTransportMu protocol-install dance is repeated to match the
-// non-mirror path's contract.
-func (m *MirrorCache) openOrFetch(ctx context.Context, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, tlsCfg *tls.Config) (*git.Repository, error) {
+// process-level transport-install lock (gittransport.InstallHTTPS) is
+// taken so concurrent mirror Fetches don't clobber each other's
+// transport.
+func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, tlsCfg *tls.Config) (*git.Repository, error) {
 	release, err := m.locks.Acquire(ctx, urlHash(url))
 	if err != nil {
 		return nil, err
 	}
 	defer release()
 
-	if tlsCfg != nil {
-		httpsTransportMu.Lock()
-		defer httpsTransportMu.Unlock()
-		tr, terr := source.NewHTTPTransport(tlsCfg, proxy)
-		if terr != nil {
-			return nil, terr
-		}
-		client.InstallProtocol("https", githttp.NewClient(&http.Client{Transport: tr}))
-		defer client.InstallProtocol("https", githttp.DefaultClient)
+	restore, err := gittransport.InstallHTTPS(tlsCfg, proxy)
+	if err != nil {
+		return nil, err
 	}
+	defer restore()
 
 	path := m.pathFor(url)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
@@ -119,7 +116,7 @@ func (m *MirrorCache) openOrFetch(ctx context.Context, url string, auth transpor
 // fetchInto runs an incremental Fetch against the mirror's remote with
 // the mirror refspec — every branch and tag updates in place. Treats
 // NoErrAlreadyUpToDate as a clean noop.
-func (m *MirrorCache) fetchInto(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig) error {
+func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig) error {
 	opts := &git.FetchOptions{
 		Auth: auth,
 		RefSpecs: []config.RefSpec{

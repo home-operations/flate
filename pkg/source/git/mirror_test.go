@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/source/git/mirror"
 )
 
 // TestMirror_BareClonePersistsAcrossFetches confirms that a Fetcher
@@ -31,7 +32,7 @@ func TestMirror_BareClonePersistsAcrossFetches(t *testing.T) {
 		Name: "t", Namespace: "flux-system",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
 	}
-	f := &Fetcher{Cache: cache, Mirrors: NewMirrorCache(layout)}
+	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout)}
 
 	art, err := f.Fetch(context.Background(), repo)
 	if err != nil {
@@ -69,7 +70,7 @@ func TestMirror_BareClonePersistsAcrossFetches(t *testing.T) {
 // We don't actually wire up a submodule repo — we only assert the
 // branch decision via canUseMirror.
 func TestMirror_FallsBackForSubmodules(t *testing.T) {
-	f := &Fetcher{Mirrors: NewMirrorCache(cacheroot.New(t.TempDir()))}
+	f := &Fetcher{Mirrors: mirror.New(cacheroot.New(t.TempDir()))}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{
@@ -106,7 +107,7 @@ func TestMirror_TagResolvesAcrossRefs(t *testing.T) {
 
 	layout := cacheroot.New(t.TempDir())
 	cache := source.NewCache(layout)
-	f := &Fetcher{Cache: cache, Mirrors: NewMirrorCache(layout)}
+	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout)}
 
 	// First: fetch a tag.
 	tagRepo := &manifest.GitRepository{

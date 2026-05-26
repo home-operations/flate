@@ -25,6 +25,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/bucket"
 	"github.com/home-operations/flate/pkg/source/external"
 	"github.com/home-operations/flate/pkg/source/git"
+	"github.com/home-operations/flate/pkg/source/git/mirror"
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -225,7 +226,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		manifest.KindGitRepository, &git.Fetcher{
 			Cache:   cache,
 			Secrets: secretGet,
-			Mirrors: git.NewMirrorCache(layout),
+			Mirrors: mirror.New(layout),
 		})
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap[*manifest.ExternalArtifact](
 		manifest.KindExternalArtifact, &external.Fetcher{})

@@ -1,4 +1,4 @@
-package git
+package verify
 
 import (
 	"strings"
@@ -10,27 +10,27 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestVerifySignatures_NilVerifyIsNoOp(t *testing.T) {
+func TestSignatures_NilVerifyIsNoOp(t *testing.T) {
 	repo := &manifest.GitRepository{Name: "r", Namespace: "ns"}
-	if err := verifySignatures(nil, repo, nil, plumbing.ZeroHash); err != nil {
+	if err := Signatures(nil, repo, nil, plumbing.ZeroHash); err != nil {
 		t.Errorf("nil Verify should be a no-op, got %v", err)
 	}
 }
 
-func TestVerifySignatures_RequiresSecretRef(t *testing.T) {
+func TestSignatures_RequiresSecretRef(t *testing.T) {
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{
 			Verification: &manifest.GitRepositoryVerify{Mode: manifest.GitVerifyModeHEAD},
 		},
 	}
-	err := verifySignatures(nil, repo, nil, plumbing.ZeroHash)
+	err := Signatures(nil, repo, nil, plumbing.ZeroHash)
 	if err == nil || !strings.Contains(err.Error(), "secretRef is required") {
 		t.Errorf("expected secretRef-required error; got %v", err)
 	}
 }
 
-func TestVerifySignatures_RequiresSecretGetter(t *testing.T) {
+func TestSignatures_RequiresSecretGetter(t *testing.T) {
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{
@@ -40,13 +40,13 @@ func TestVerifySignatures_RequiresSecretGetter(t *testing.T) {
 			},
 		},
 	}
-	err := verifySignatures(nil, repo, nil, plumbing.ZeroHash)
+	err := Signatures(nil, repo, nil, plumbing.ZeroHash)
 	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {
 		t.Errorf("expected SecretGetter error; got %v", err)
 	}
 }
 
-func TestVerifySignatures_SecretNotFound(t *testing.T) {
+func TestSignatures_SecretNotFound(t *testing.T) {
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{
@@ -57,7 +57,7 @@ func TestVerifySignatures_SecretNotFound(t *testing.T) {
 		},
 	}
 	getter := func(_, _ string) *manifest.Secret { return nil }
-	err := verifySignatures(getter, repo, nil, plumbing.ZeroHash)
+	err := Signatures(getter, repo, nil, plumbing.ZeroHash)
 	if err == nil || !strings.Contains(err.Error(), "verify secret") || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected not-found error; got %v", err)
 	}
@@ -109,7 +109,7 @@ func TestBuildPGPKeyring(t *testing.T) {
 	}
 }
 
-func TestVerifyHEAD_Tag_HelperMatrix(t *testing.T) {
+func TestMatchesHEAD_Tag_HelperMatrix(t *testing.T) {
 	cases := []struct {
 		mode    sourcev1.GitVerificationMode
 		wantH   bool
@@ -122,11 +122,11 @@ func TestVerifyHEAD_Tag_HelperMatrix(t *testing.T) {
 		{"unknown", false, false},
 	}
 	for _, tc := range cases {
-		if got := verifyHEAD(tc.mode); got != tc.wantH {
-			t.Errorf("verifyHEAD(%q) = %v, want %v", tc.mode, got, tc.wantH)
+		if got := matchesHEAD(tc.mode); got != tc.wantH {
+			t.Errorf("matchesHEAD(%q) = %v, want %v", tc.mode, got, tc.wantH)
 		}
-		if got := verifyTag(tc.mode); got != tc.wantTag {
-			t.Errorf("verifyTag(%q) = %v, want %v", tc.mode, got, tc.wantTag)
+		if got := matchesTag(tc.mode); got != tc.wantTag {
+			t.Errorf("matchesTag(%q) = %v, want %v", tc.mode, got, tc.wantTag)
 		}
 	}
 }

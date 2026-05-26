@@ -127,6 +127,66 @@ func TestSweep_DanglingRefsCleaned(t *testing.T) {
 	}
 }
 
+// TestSweep_LiveRefPreservesOldBlob is the mark-sweep contract: a
+// blob whose digest is referenced by a live ref must survive the age
+// sweep, even when its mtime is older than MaxAge. Without mark, the
+// fresh ref would silently point at a deleted blob and the next
+// render would hit ENOENT.
+func TestSweep_LiveRefPreservesOldBlob(t *testing.T) {
+	root := t.TempDir()
+	const digest = "2222222222222222222222222222222222222222222222222222222222222222"
+
+	blob := filepath.Join(root, "blobs", "sha256", digest)
+	if err := os.MkdirAll(blob, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// Stamp the blob old so the age sweep would otherwise grab it.
+	old := time.Now().Add(-365 * 24 * time.Hour)
+	if err := os.Chtimes(blob, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh ref points at this digest — the chart we just resolved.
+	if err := os.MkdirAll(filepath.Join(root, "refs", "charts"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	ref := filepath.Join(root, "refs", "charts", "live-chart")
+	if err := os.WriteFile(ref, []byte(digest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, _ := Sweep(cacheroot.New(root), SweepOpts{MaxAge: 24 * time.Hour})
+	if slices.Contains(res.Removed, blob) {
+		t.Error("live-referenced blob was swept by age — mark phase broken")
+	}
+	if _, err := os.Stat(blob); err != nil {
+		t.Errorf("live blob removed from disk: %v", err)
+	}
+	if slices.Contains(res.Removed, ref) {
+		t.Error("live ref removed; should have survived (blob exists)")
+	}
+}
+
+// TestSweep_UnreferencedOldBlobIsPruned proves the inverse — an old
+// blob with NO ref still pointing at it gets swept.
+func TestSweep_UnreferencedOldBlobIsPruned(t *testing.T) {
+	root := t.TempDir()
+	const digest = "3333333333333333333333333333333333333333333333333333333333333333"
+	blob := filepath.Join(root, "blobs", "sha256", digest)
+	if err := os.MkdirAll(blob, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(blob, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	res, _ := Sweep(cacheroot.New(root), SweepOpts{MaxAge: 24 * time.Hour})
+	if !slices.Contains(res.Removed, blob) {
+		t.Errorf("orphan blob survived: %v", res.Removed)
+	}
+}
+
 // TestSweep_DryRunReports: DryRun emits the would-be-removed list
 // without touching disk.
 func TestSweep_DryRunReports(t *testing.T) {

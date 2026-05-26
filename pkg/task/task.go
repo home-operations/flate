@@ -279,8 +279,7 @@ func (c *Coalescer[K]) Submit(ctx context.Context, name string, key K, fn func(c
 			if r := recover(); r != nil {
 				c.mu.Lock()
 				lostPending := s.pending
-				s.running = false
-				s.pending = false
+				delete(c.slot, key)
 				c.mu.Unlock()
 				if lostPending {
 					slog.Warn("task coalescer: dropped pending re-run because the previous run panicked",
@@ -293,7 +292,7 @@ func (c *Coalescer[K]) Submit(ctx context.Context, name string, key K, fn func(c
 			fn(ctx)
 			c.mu.Lock()
 			if !s.pending {
-				s.running = false
+				delete(c.slot, key)
 				c.mu.Unlock()
 				return
 			}

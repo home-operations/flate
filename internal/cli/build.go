@@ -110,6 +110,7 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.
 	slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
 		return a.Named().Compare(b.Named())
 	})
+	skipKinds := c.skipResourceKinds()
 	matched := 0
 	for _, obj := range objs {
 		id := obj.Named()
@@ -147,7 +148,7 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.
 			// kind set (orchestrator.go:555), so this is a no-op for
 			// the CLI path. Kept for SDK callers who hand-build a
 			// Result and pass it through writeRendered. See #169.
-			docs = manifest.DropKinds(docs, c.skipResourceKinds())
+			docs = manifest.DropKinds(docs, skipKinds)
 			if len(docs) == 0 {
 				continue
 			}

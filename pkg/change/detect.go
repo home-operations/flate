@@ -240,9 +240,9 @@ func detectViaWalker(before, after string) (*Set, error) {
 
 	paths := make(map[string]struct{}, len(afterFS)/8)
 	type hashJob struct {
-		rel                          string
-		beforeAbs, after             string
-		beforeSymlink, afterSymlink  bool
+		rel                         string
+		beforeAbs, afterAbs         string
+		beforeSymlink, afterSymlink bool
 	}
 	var hashJobs []hashJob
 
@@ -266,7 +266,7 @@ func detectViaWalker(before, after string) (*Set, error) {
 		// The pre-removal mtime fast-path silently dropped real edits
 		// on coarse-mtime filesystems; correctness over speed here.
 		hashJobs = append(hashJobs, hashJob{
-			rel: rel, beforeAbs: bef.abs, after: after.abs,
+			rel: rel, beforeAbs: bef.abs, afterAbs: after.abs,
 			beforeSymlink: bef.symlink, afterSymlink: after.symlink,
 		})
 	}
@@ -288,7 +288,7 @@ func detectViaWalker(before, after string) (*Set, error) {
 					if err != nil {
 						return err
 					}
-					a, err := hashEntry(j.after, j.afterSymlink)
+					a, err := hashEntry(j.afterAbs, j.afterSymlink)
 					if err != nil {
 						return err
 					}
@@ -335,7 +335,7 @@ func scanTree(root string) (map[string]fileMeta, error) {
 		}
 		base := d.Name()
 		if d.IsDir() {
-			if base != root && shouldSkipDir(base) {
+			if p != root && shouldSkipDir(base) {
 				return fs.SkipDir
 			}
 			return nil

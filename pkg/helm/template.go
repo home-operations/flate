@@ -186,13 +186,7 @@ func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, val
 	}
 	applyHRCommonMetadata(docs, hr.CommonMetadata)
 	applyHROriginLabels(docs, hr)
-	skip := opts.SkipResourceKinds()
-	if len(skip) == 0 {
-		return docs, nil
-	}
-	return slices.DeleteFunc(docs, func(doc map[string]any) bool {
-		return slices.Contains(skip, manifest.DocKind(doc))
-	}), nil
+	return manifest.DropKinds(docs, opts.SkipResourceKinds()), nil
 }
 
 // applyHROriginLabels stamps the helm.toolkit.fluxcd.io/{name,namespace}
@@ -337,4 +331,3 @@ func filterShowOnly(content string, paths []string) string {
 func isTestHook(h *release.Hook) bool {
 	return slices.Contains(h.Events, release.HookTest)
 }
-

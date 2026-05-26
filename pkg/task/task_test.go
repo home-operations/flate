@@ -104,6 +104,12 @@ func TestCoalescer_RecoversSlotAfterPanic(t *testing.T) {
 	if got := s.Failures(); got != 1 {
 		t.Errorf("Service.Failures: expected 1, got %d", got)
 	}
+	c.mu.Lock()
+	slots := len(c.slot)
+	c.mu.Unlock()
+	if slots != 0 {
+		t.Errorf("panicked slot was retained: len(slot) = %d, want 0", slots)
+	}
 
 	// Slot must be unlocked: a fresh Submit on the same key runs.
 	c.Submit(context.Background(), "recovery", "k", func(_ context.Context) {
@@ -112,6 +118,21 @@ func TestCoalescer_RecoversSlotAfterPanic(t *testing.T) {
 	s.BlockTillDone()
 	if got := calls.Load(); got != 2 {
 		t.Errorf("post-panic Submit blocked: expected 2 runs total, got %d", got)
+	}
+}
+
+func TestCoalescer_DropsIdleSlots(t *testing.T) {
+	s := New()
+	c := NewCoalescer[string](s)
+
+	c.Submit(context.Background(), "a", "a", func(_ context.Context) {})
+	s.BlockTillDone()
+
+	c.mu.Lock()
+	got := len(c.slot)
+	c.mu.Unlock()
+	if got != 0 {
+		t.Errorf("idle coalescer slots = %d, want 0", got)
 	}
 }
 

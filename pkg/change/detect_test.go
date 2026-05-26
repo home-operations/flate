@@ -98,9 +98,8 @@ func TestDetect_SkipsDotDirsAndVendor(t *testing.T) {
 	writeFile(t, before, "vendor/dep/file.go", "a")
 	writeFile(t, after, "vendor/dep/file.go", "b")
 	// Sanity check: a real file change still surfaces. Use
-	// different-sized content so the detector flags via size diff —
-	// same-size + same-mtime would be (correctly) skipped on
-	// filesystems with coarse mtime resolution.
+	// different-sized content so the detector flags via size diff and
+	// keeps the test focused on directory filtering.
 	writeFile(t, before, "real.yaml", "short")
 	writeFile(t, after, "real.yaml", "a longer payload")
 	got, err := Detect(before, after)
@@ -109,6 +108,24 @@ func TestDetect_SkipsDotDirsAndVendor(t *testing.T) {
 	}
 	if paths := got.Paths(); len(paths) != 1 || paths[0] != "real.yaml" {
 		t.Errorf("expected just real.yaml, got %v", paths)
+	}
+}
+
+func TestDetectViaWalker_DoesNotSkipHiddenScanRoot(t *testing.T) {
+	parent := t.TempDir()
+	before := filepath.Join(parent, ".before")
+	after := filepath.Join(parent, ".after")
+	writeFile(t, before, "same.yaml", "x")
+	writeFile(t, after, "same.yaml", "x")
+	writeFile(t, before, "mod.yaml", "old")
+	writeFile(t, after, "mod.yaml", "new")
+
+	got, err := detectViaWalker(before, after)
+	if err != nil {
+		t.Fatalf("detectViaWalker: %v", err)
+	}
+	if paths := got.Paths(); !slices.Equal(paths, []string{"mod.yaml"}) {
+		t.Errorf("hidden scan root paths = %v, want [mod.yaml]", paths)
 	}
 }
 

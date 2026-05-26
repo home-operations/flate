@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 )
 
@@ -45,15 +44,28 @@ func DocAPIVersion(doc map[string]any) string {
 // already filters HR output upstream; this is the canonical helper
 // for downstream code that needs the same operation.
 func DropKinds(docs []map[string]any, drop []string) []map[string]any {
-	if len(drop) == 0 {
+	if len(drop) == 0 || len(docs) == 0 {
 		return docs
 	}
-	out := make([]map[string]any, 0, len(docs))
-	for _, doc := range docs {
-		if slices.Contains(drop, DocKind(doc)) {
+	dropSet := make(map[string]struct{}, len(drop))
+	for _, kind := range drop {
+		dropSet[kind] = struct{}{}
+	}
+	var out []map[string]any
+	for i, doc := range docs {
+		if _, skip := dropSet[DocKind(doc)]; skip {
+			if out == nil {
+				out = make([]map[string]any, 0, len(docs)-1)
+				out = append(out, docs[:i]...)
+			}
 			continue
 		}
-		out = append(out, doc)
+		if out != nil {
+			out = append(out, doc)
+		}
+	}
+	if out == nil {
+		return docs
 	}
 	return out
 }

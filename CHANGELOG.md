@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.1.22](https://github.com/home-operations/flate/compare/0.1.21...0.1.22) (2026-05-26)
+
+
+### Features
+
+* **baseline:** content-addressed slot at &lt;cache&gt;/baselines/&lt;sha&gt;/ ([#379](https://github.com/home-operations/flate/issues/379)) ([22da538](https://github.com/home-operations/flate/commit/22da5381e60caea7dfe66ce91a1f737dba2bf60a))
+* **cli:** --base opts into changed-only mode on build/get/test too ([#363](https://github.com/home-operations/flate/issues/363)) ([6d7b3cb](https://github.com/home-operations/flate/commit/6d7b3cb65127e9a1c63dc5f22b449c91e7d06868))
+* **helm:** in-process HelmRepository index cache ([#380](https://github.com/home-operations/flate/issues/380)) ([0eb44d8](https://github.com/home-operations/flate/commit/0eb44d8a8ad2ce282dfac5f9b05c796880c5be75))
+* **helm:** OCI pulls yield the worker-pool slot ([#366](https://github.com/home-operations/flate/issues/366)) ([cdb8d2b](https://github.com/home-operations/flate/commit/cdb8d2b7bdfb2238175a97215f36c2b371da9513))
+* **kustomize:** StagingCache sweeps stale flate-stage-* leftovers on open ([#367](https://github.com/home-operations/flate/issues/367)) ([bf3d79a](https://github.com/home-operations/flate/commit/bf3d79a06e562d1aa727ba1d1ff0eda93cc42ad2))
+* **orchestrator:** incremental cycle detection on render-emit ([#365](https://github.com/home-operations/flate/issues/365)) ([b29a9fc](https://github.com/home-operations/flate/commit/b29a9fc0d716ad075aab94c1ea0e6a962be954cf))
+* **orchestrator:** XDG-compliant default cache root ([#376](https://github.com/home-operations/flate/issues/376)) ([2f1aa46](https://github.com/home-operations/flate/commit/2f1aa461a37da09649ce9ed52c11596c8d44e2a8))
+* **source,cli:** cache GC + flate cache gc command ([#383](https://github.com/home-operations/flate/issues/383)) ([07a570b](https://github.com/home-operations/flate/commit/07a570bdbf1d7c5b68168747870763b60e920bc0))
+* **source/blob:** CAS store + refs; migrate helm tarball cache ([#382](https://github.com/home-operations/flate/issues/382)) ([96ed561](https://github.com/home-operations/flate/commit/96ed56163f8f32a0b6ba67b416bf66096557c42e))
+* **source/git:** bare-mirror + tree-walk worktree materialization ([#381](https://github.com/home-operations/flate/issues/381)) ([7fa2999](https://github.com/home-operations/flate/commit/7fa2999e320e425b496c93ffe5bcdb711e0412de))
+* **source:** auth identity in cache slot key ([#377](https://github.com/home-operations/flate/issues/377)) ([f11db0e](https://github.com/home-operations/flate/commit/f11db0ef41cbf47e48044fcfd98d40a464ab3c2f))
+
+
+### Bug Fixes
+
+* **change:** chartRef→HelmChart BFS + git/walker symlink parity ([#356](https://github.com/home-operations/flate/issues/356)) ([937ffe2](https://github.com/home-operations/flate/commit/937ffe2319bb924f8f9cc5fed40395a8f17e4957))
+* **cli:** get -o yaml/json output now deterministic ([#375](https://github.com/home-operations/flate/issues/375)) ([6bbfd7f](https://github.com/home-operations/flate/commit/6bbfd7fb03d95621fc532968930688e0b7a262b7))
+* **controllers:** fingerprint dedup replays emit side-effects (KS + HR) ([#361](https://github.com/home-operations/flate/issues/361)) ([58aa822](https://github.com/home-operations/flate/commit/58aa822bef1ccfc33783676fc000c75c8404e66b))
+* **controllers:** Recover re-raises + Refire type-miss writes terminal + depwait cap sentinel ([#359](https://github.com/home-operations/flate/issues/359)) ([4bb2ccb](https://github.com/home-operations/flate/commit/4bb2ccb3d4e6183588f3a2feaf15343084d44406))
+* **depwait:** CEL eval errors are transient, not terminal ([#374](https://github.com/home-operations/flate/issues/374)) ([f534ef3](https://github.com/home-operations/flate/commit/f534ef3646d586315ea30a214de66d529150104e))
+* **diff:** pair key includes Parent.Path to disambiguate same-named KSes ([#353](https://github.com/home-operations/flate/issues/353)) ([7c6bca8](https://github.com/home-operations/flate/commit/7c6bca85e5cc3f52c40ef5ce01a0557937e0a11e))
+* **discovery:** repo-root threading + bootstrap GR survival + worktree detect + OCI alias ns ([#358](https://github.com/home-operations/flate/issues/358)) ([77c63f4](https://github.com/home-operations/flate/commit/77c63f489713712a7ac82eea07ee5027bf3b3fa7))
+* **helm:** chart cache returns per-render clone to avoid ProcessDependencies race ([#351](https://github.com/home-operations/flate/issues/351)) ([729bd7c](https://github.com/home-operations/flate/commit/729bd7cf19748c115820e5cabea5fd5b9cc861fb))
+* **helm:** OCI fallback cache key includes tag/digest ([#384](https://github.com/home-operations/flate/issues/384)) ([42fe304](https://github.com/home-operations/flate/commit/42fe3045252f048c5099328102ff2f7a1c6383d7))
+* **helmrelease:** await chartRef-HelmChart + non-optional valuesFrom before Prepare ([#360](https://github.com/home-operations/flate/issues/360)) ([809af62](https://github.com/home-operations/flate/commit/809af62bae10317735bd04eb47ae268b79ad6b8d))
+* **loader:** scan-root ignore + relax kustomization stat + apiVersion gate on Component ([#357](https://github.com/home-operations/flate/issues/357)) ([773dbf6](https://github.com/home-operations/flate/commit/773dbf69d5de4c071fe36797071510680626f5ee))
+* **manifest:** Clone deep-copies embedded helm/kustomize spec ([#350](https://github.com/home-operations/flate/issues/350)) ([b158ae2](https://github.com/home-operations/flate/commit/b158ae2aa88a1d5234ea6caf49197af54ec1b695))
+* **orchestrator,depwait:** wave-3 leftover audit findings ([#364](https://github.com/home-operations/flate/issues/364)) ([06228c3](https://github.com/home-operations/flate/commit/06228c349be008281298acf6213c7fc9709b6352))
+* **source:** wrap missing-secret errors + don't silence cosign keyless warning ([#352](https://github.com/home-operations/flate/issues/352)) ([b0f3e8d](https://github.com/home-operations/flate/commit/b0f3e8dd8ec942c981a90d37dcd9aded9816576b))
+* **store:** AddListener flush=false serializes via s.mu to avoid missed events ([#354](https://github.com/home-operations/flate/issues/354)) ([d4cb788](https://github.com/home-operations/flate/commit/d4cb78857e968fdfaa5b48de0e750c38fbae9492))
+* third-pass batch 2 — helm/loader/manifest correctness ([#369](https://github.com/home-operations/flate/issues/369)) ([b04b005](https://github.com/home-operations/flate/commit/b04b005e0f40233a140d0f82b30d0dccf5585a70))
+* third-pass batch 3 — store/values/baseline correctness ([#370](https://github.com/home-operations/flate/issues/370)) ([4d162bc](https://github.com/home-operations/flate/commit/4d162bc1de3735374c4d1ac7c1838d70b3a552d1))
+* third-pass batch 4 — discovery loadAt + RS warn + kustomize transient retry ([#371](https://github.com/home-operations/flate/issues/371)) ([7d90b2c](https://github.com/home-operations/flate/commit/7d90b2c7a6c0f7ab6768f455d3a1ef1ae263b82e))
+* third-pass regressions from PR [#349](https://github.com/home-operations/flate/issues/349) / [#361](https://github.com/home-operations/flate/issues/361) / [#365](https://github.com/home-operations/flate/issues/365) ([#368](https://github.com/home-operations/flate/issues/368)) ([a8396d9](https://github.com/home-operations/flate/commit/a8396d9e94e0e92a958111d18a40f2b6e8e788dc))
+
+
+### Performance Improvements
+
+* **kustomize:** hardlink stage files instead of byte-copying ([#385](https://github.com/home-operations/flate/issues/385)) ([d69651e](https://github.com/home-operations/flate/commit/d69651eb5cb34386fed54247055941d373a9e1dc))
+* **kustomize:** parallel stage copy via worker pool ([#395](https://github.com/home-operations/flate/issues/395)) ([0bc780b](https://github.com/home-operations/flate/commit/0bc780b50b97c50db0a1c2f8e486285491c0d3be))
+* **source/gittree:** parallel + unified tree-walk materialization ([#393](https://github.com/home-operations/flate/issues/393)) ([cdf5913](https://github.com/home-operations/flate/commit/cdf5913a86487252341e37e41c05950964bd3aee))
+
+
+### Code Refactoring
+
+* **source/atomic:** one helper, four file-write sites ([#389](https://github.com/home-operations/flate/issues/389)) ([54a58fe](https://github.com/home-operations/flate/commit/54a58fefbd3d842b0a2d1a5f91215979ed1bb6f3))
+* **source/gc:** mark-sweep — live refs preserve their blobs ([#391](https://github.com/home-operations/flate/issues/391)) ([404e76d](https://github.com/home-operations/flate/commit/404e76db39e6b3825b1d952c9f8cf2d36ab37e09))
+* **source:** cacheroot.Layout owns all cache paths ([#386](https://github.com/home-operations/flate/issues/386)) ([1c167ae](https://github.com/home-operations/flate/commit/1c167ae72090e3a088c56d5157586500873ad205))
+* **source:** final cache polish ([#390](https://github.com/home-operations/flate/issues/390)) ([0db7dfc](https://github.com/home-operations/flate/commit/0db7dfcde75435062c1707c7c4e013c8e5275316))
+* **source:** unify per-key locks via internal/keylock ([#392](https://github.com/home-operations/flate/issues/392)) ([eb1f6d0](https://github.com/home-operations/flate/commit/eb1f6d06efa439c0e59887b78ccb2ce50e259939))
+
 ## [0.1.21](https://github.com/home-operations/flate/compare/0.1.20...0.1.21) (2026-05-25)
 
 

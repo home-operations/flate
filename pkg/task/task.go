@@ -7,7 +7,6 @@ package task
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -66,7 +65,7 @@ func NewBounded(workers int) *Service {
 }
 
 // Go launches an active task. ctx is propagated to fn. Completion is
-// reported via WaitActive / BlockTillDone. When the Service is
+// reported via BlockTillDone. When the Service is
 // bounded (NewBounded), fn waits on the worker semaphore before it
 // executes — but Go itself never blocks.
 func (s *Service) Go(ctx context.Context, name string, fn func(context.Context)) {
@@ -99,19 +98,17 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 	}()
 }
 
-// taskDone decrements active and notifies any quiescence waiters
-// whose threshold the new count satisfies. Called via defer from
-// Go's body so panics and clean returns both fire it.
+// taskDone is deferred in Go so both clean returns and panics fire
+// the decrement and quiescence notification.
 func (s *Service) taskDone() {
 	now := s.active.Add(-1)
 	s.notifyQuiescence(now)
 }
 
-// notifyQuiescence closes every registered quiescence waiter whose
-// threshold the new active count satisfies. Called anywhere the
-// count drops — taskDone on goroutine exit AND YieldQuiescent on
-// entry — so depwait-blocked tasks don't keep the pool from
-// declaring quiescence on their own absence of productive work.
+// notifyQuiescence is called on every active-count decrement —
+// goroutine exit (taskDone) AND YieldQuiescent entry — so
+// depwait-blocked tasks don't prevent the pool from reaching
+// quiescence on their own absence of productive work.
 func (s *Service) notifyQuiescence(now int64) {
 	s.quiesceMu.Lock()
 	defer s.quiesceMu.Unlock()
@@ -271,17 +268,10 @@ func (c *Coalescer[K]) Submit(ctx context.Context, name string, key K, fn func(c
 	c.mu.Unlock()
 
 	c.svc.Go(ctx, name, func(ctx context.Context) {
-		// On panic, Service.Go's recover catches it; we still need to
-		// clear running so a future Submit on this key is dispatched
-		// instead of silently coalescing into a slot that no longer
-		// has a runner. If a coalesced submit had landed during the
-		// panicked run (s.pending == true), the previous code
-		// silently dropped that re-run — the event the submitter
-		// counted on was lost. Log at Warn so the loss is at least
-		// visible; the panicked run itself is already reported via
-		// Service.Go's recover. The pending re-run is genuinely
-		// dead — restarting it here would loop on the same panic if
-		// the input state is deterministic.
+		// On panic, clear the slot before re-raising so future Submits
+		// on this key dispatch normally. If a pending re-run exists it
+		// is dropped — restarting on deterministic-panic input loops —
+		// and logged so the loss is observable.
 		defer func() {
 			if r := recover(); r != nil {
 				c.mu.Lock()
@@ -290,7 +280,7 @@ func (c *Coalescer[K]) Submit(ctx context.Context, name string, key K, fn func(c
 				c.mu.Unlock()
 				if lostPending {
 					slog.Warn("task coalescer: dropped pending re-run because the previous run panicked",
-						"key", fmt.Sprintf("%v", key))
+						"key", key)
 				}
 				panic(r)
 			}

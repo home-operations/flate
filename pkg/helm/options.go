@@ -1,7 +1,6 @@
 package helm
 
 import (
-	"slices"
 	"strings"
 
 	"helm.sh/helm/v4/pkg/chart/common"
@@ -45,7 +44,15 @@ type Options struct {
 // SkipResourceKinds returns the union of canonical and user-specified
 // kinds to drop from rendered output.
 func (o Options) SkipResourceKinds() []string {
-	out := append([]string{}, o.SkipKinds...)
+	extra := 0
+	if o.SkipCRDs {
+		extra++
+	}
+	if o.SkipSecrets {
+		extra++
+	}
+	out := make([]string, len(o.SkipKinds), len(o.SkipKinds)+extra)
+	copy(out, o.SkipKinds)
 	if o.SkipCRDs {
 		out = append(out, "CustomResourceDefinition")
 	}
@@ -72,10 +79,10 @@ func (o Options) capabilities() (*common.Capabilities, error) {
 	return caps, nil
 }
 
-// splitComma splits s on commas / whitespace, dropping empty entries.
+// splitComma splits s on commas / whitespace into non-empty tokens.
+// strings.FieldsFunc already skips empty spans, so no post-filter needed.
 func splitComma(s string) []string {
-	fields := strings.FieldsFunc(s, func(r rune) bool {
+	return strings.FieldsFunc(s, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t'
 	})
-	return slices.DeleteFunc(fields, func(p string) bool { return p == "" })
 }

@@ -80,7 +80,7 @@ type Client struct {
 	// reconciles of the same chart issue exactly one loader.Load
 	// (thundering-herd coalesce); the rest hit the populated cache.
 	// Distinct paths still parse in parallel.
-	chartMu        sync.Mutex
+	chartMu        sync.RWMutex
 	chartCache     map[string]chartCacheEntry
 	chartLoadLocks *keylock.KeyMap[string]
 
@@ -424,9 +424,9 @@ func cloneValuesNode(v any) any {
 // so the caller re-parses. A missing or unstattable path also
 // returns false — the caller will surface that via loader.Load.
 func (c *Client) lookupCachedChart(path string) (*chart.Chart, bool) {
-	c.chartMu.Lock()
+	c.chartMu.RLock()
 	entry, ok := c.chartCache[path]
-	c.chartMu.Unlock()
+	c.chartMu.RUnlock()
 	if !ok {
 		return nil, false
 	}

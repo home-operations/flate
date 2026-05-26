@@ -14,21 +14,12 @@ import (
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/atomic"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 // chartCacheLocks serializes concurrent fetches of the same cached
 // chart tarball so two reconcilers don't race on the same file.
 var chartCacheLocks = keylock.New[string]()
-
-// writeAtomic delegates to pkg/source/atomic.WriteFile (with
-// syncDir=true so chart tarballs survive power loss). Kept as a
-// package-local thin wrapper so existing call sites keep their
-// hard-coded perm without each having to import atomic.
-func writeAtomic(path string, data []byte) error {
-	return atomic.WriteFile(path, data, 0o600, true)
-}
 
 // ChartLoadResult is the loaded chart plus the on-disk path it came from.
 type ChartLoadResult struct {

@@ -304,22 +304,20 @@ func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests
 }
 
 // filterShowOnly keeps only sections whose "# Source: <path>" header
-// matches one of the requested template paths.
+// matches one of the requested template paths. Paths lists are short
+// (typically 1-5 entries from --show-only), so linear scan avoids a
+// map allocation on the hot render path.
 func filterShowOnly(content string, paths []string) string {
-	want := make(map[string]bool, len(paths))
-	for _, p := range paths {
-		want[p] = true
-	}
 	var out strings.Builder
 	for section := range strings.SplitSeq(content, "\n---\n") {
-		header := ""
+		var header string
 		for line := range strings.SplitSeq(section, "\n") {
 			if rest, ok := strings.CutPrefix(line, "# Source: "); ok {
 				header = rest
 				break
 			}
 		}
-		if !want[header] {
+		if !slices.Contains(paths, header) {
 			continue
 		}
 		if out.Len() > 0 {

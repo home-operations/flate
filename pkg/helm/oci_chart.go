@@ -12,6 +12,7 @@ import (
 	"helm.sh/helm/v4/pkg/registry"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/atomic"
 )
 
 // locateOCIChart resolves a chart whose source is an OCIRepository.
@@ -239,23 +240,19 @@ func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string
 	if result == nil || result.Chart == nil {
 		return "", fmt.Errorf("oci pull %s: empty result", pullRef)
 	}
-	if err := writeAtomic(target, result.Chart.Data); err != nil {
+	if err := atomic.WriteFile(target, result.Chart.Data, 0o600, true); err != nil {
 		return "", err
 	}
 	return target, nil
 }
 
-// safeName sanitizes an OCI ref's base name into a filesystem-safe
-// token for the on-disk cache target.
+// safeName sanitizes an OCI ref into a filesystem-safe token for the
+// on-disk cache target. Non-alphanumeric / non-separator runes become '-'.
 func safeName(s string) string {
-	out := strings.Builder{}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-' || r == '_' || r == '.':
-			out.WriteRune(r)
-		default:
-			out.WriteRune('-')
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			return r
 		}
-	}
-	return out.String()
+		return '-'
+	}, s)
 }

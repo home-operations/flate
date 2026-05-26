@@ -54,6 +54,13 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffe
 		return nil, fmt.Errorf("postRenderer: write helm output: %w", err)
 	}
 
+	patches := make([]kustypes.Patch, len(k.Patches))
+	for i, p := range k.Patches {
+		patches[i] = kustypes.Patch{
+			Patch:  p.Patch,
+			Target: adaptSelector(p.Target),
+		}
+	}
 	cfg := kustypes.Kustomization{
 		TypeMeta: kustypes.TypeMeta{
 			APIVersion: kustypes.KustomizationVersion,
@@ -61,12 +68,7 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffe
 		},
 		Resources: []string{inputFile},
 		Images:    adaptImages(k.Images),
-	}
-	for _, p := range k.Patches {
-		cfg.Patches = append(cfg.Patches, kustypes.Patch{
-			Patch:  p.Patch,
-			Target: adaptSelector(p.Target),
-		})
+		Patches:   patches,
 	}
 
 	raw, err := json.Marshal(cfg)
@@ -116,10 +118,10 @@ func adaptSelector(sel *kustomize.Selector) *kustypes.Selector {
 		LabelSelector:      sel.LabelSelector,
 		AnnotationSelector: sel.AnnotationSelector,
 	}
+	out.Group = sel.Group
+	out.Version = sel.Version
+	out.Kind = sel.Kind
 	out.Name = sel.Name
 	out.Namespace = sel.Namespace
-	out.Group = sel.Group
-	out.Kind = sel.Kind
-	out.Version = sel.Version
 	return out
 }

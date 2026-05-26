@@ -70,11 +70,26 @@ func nameKey(namespace, name string) string { return namespace + "/" + name }
 // AddObject inserts a manifest. Re-adding an equal object is a no-op.
 // Re-adding a different object overwrites the existing entry AND still
 // dispatches an ObjectAdded event (so newer values propagate).
+//
+// The equal-prev fast path reads under RLock and runs reflect.DeepEqual
+// outside the write lock. Reflection on a typed CR is the slowest
+// operation in this method; keeping it off the write path means
+// re-emits (a common pattern when a parent KS re-renders unchanged
+// children) don't block concurrent readers.
 func (s *Store) AddObject(obj manifest.BaseManifest) {
 	id := obj.Named()
-	s.mu.Lock()
+	s.mu.RLock()
 	prev, exists := s.objects[id]
+	s.mu.RUnlock()
 	if exists && reflect.DeepEqual(prev, obj) {
+		return
+	}
+	s.mu.Lock()
+	// Re-check under the write lock: a concurrent AddObject may have
+	// landed the same object between our RUnlock and Lock. Without the
+	// re-check we'd dispatch a redundant event for a write the previous
+	// goroutine already did.
+	if cur, ok := s.objects[id]; ok && reflect.DeepEqual(cur, obj) {
 		s.mu.Unlock()
 		return
 	}

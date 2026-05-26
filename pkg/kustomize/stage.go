@@ -259,6 +259,19 @@ func (c *StagingCache) copyTree(src string) (string, error) {
 			}
 			return os.MkdirAll(filepath.Join(dst, rel), 0o750)
 		}
+		// Only stat when we need to follow a symlink — DirEntry already
+		// carries the file-type bits for regular entries. Skipping the
+		// stat on 50k regular files in a monorepo eliminates the same
+		// number of syscalls; hardlinks inherit mode from source so the
+		// fallback-copy's mode field is only consulted on cross-FS
+		// stages (EXDEV), where 0o600 is acceptable for kustomize input.
+		if d.Type()&fs.ModeSymlink == 0 {
+			if !d.Type().IsRegular() {
+				return nil
+			}
+			tasks = append(tasks, task{path, filepath.Join(dst, rel), 0o600})
+			return nil
+		}
 		info, err := os.Stat(path)
 		if err != nil {
 			// A dangling symlink in the user's working tree (a common
@@ -268,7 +281,7 @@ func (c *StagingCache) copyTree(src string) (string, error) {
 			// reconcile wouldn't either — so skip silently when the
 			// target is missing. Other Stat errors (permissions, I/O)
 			// still surface.
-			if d.Type()&fs.ModeSymlink != 0 && errors.Is(err, fs.ErrNotExist) {
+			if errors.Is(err, fs.ErrNotExist) {
 				return nil
 			}
 			return err

@@ -90,10 +90,20 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 				opts.OnSubmodule(name)
 				continue
 			}
+			if entry.Mode == filemode.Dir {
+				// Pre-create the directory once on the walker. Without
+				// this, every worker that writes a blob into the dir
+				// would re-call MkdirAll for the same parent — on a
+				// 50k-file monorepo with 5k unique dirs, that's 10×
+				// the syscalls. Walker is single-threaded so each
+				// unique dir is created once.
+				dir := filepath.Join(root, filepath.FromSlash(name))
+				if err := os.MkdirAll(dir, 0o750); err != nil {
+					return fmt.Errorf("mkdir %s: %w", dir, err)
+				}
+				continue
+			}
 			if entry.Mode != filemode.Symlink && !entry.Mode.IsFile() {
-				// Tree entries; NewTreeWalker recurses into subtrees
-				// automatically. The per-blob writer MkdirAll's its
-				// parent on demand, so we don't need to mkdir here.
 				continue
 			}
 			select {
@@ -117,7 +127,8 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 }
 
 // writeEntry materializes one tree entry — a symlink or a blob — at
-// root/name. Caller has already gated by mode (symlink or IsFile).
+// root/name. The walker pre-created the parent dir, so we don't
+// MkdirAll here.
 func writeEntry(repo *git.Repository, entry object.TreeEntry, root, name string) error {
 	dst := filepath.Join(root, filepath.FromSlash(name))
 	if entry.Mode == filemode.Symlink {
@@ -128,9 +139,6 @@ func writeEntry(repo *git.Repository, entry object.TreeEntry, root, name string)
 		target, err := readBlobBytes(blob)
 		if err != nil {
 			return fmt.Errorf("read symlink target for %q: %w", name, err)
-		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
-			return fmt.Errorf("mkdir %s: %w", filepath.Dir(dst), err)
 		}
 		if err := os.Symlink(string(target), dst); err != nil {
 			return fmt.Errorf("symlink %s -> %s: %w", dst, target, err)
@@ -157,12 +165,8 @@ func readBlobBytes(blob *object.Blob) ([]byte, error) {
 
 // writeBlobTo streams blob's content to dst with mode-derived
 // permissions (executable bit preserved from filemode.Executable).
-// Creates the parent dir as needed; concurrent calls to the same
-// parent are safe because os.MkdirAll is idempotent.
+// Caller (Materialize's walker) has already created the parent dir.
 func writeBlobTo(dst string, blob *object.Blob, mode filemode.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(dst), err)
-	}
 	perm := os.FileMode(0o600)
 	if mode == filemode.Executable {
 		perm = 0o700

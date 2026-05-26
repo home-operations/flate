@@ -1,8 +1,9 @@
 package testutil
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -33,13 +34,33 @@ func randomSerial(t *testing.T) *big.Int {
 	return n
 }
 
+// ecKey generates an ephemeral ECDSA P-256 key. P-256 is accepted by
+// tls.X509KeyPair and x509.NewCertPool; it is ~20x faster to generate
+// than RSA-2048 at equivalent security, which matters in tests that
+// call these helpers in tight loops.
+func ecKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa: %v", err)
+	}
+	return priv
+}
+
+// pemKey encodes an ECDSA private key as a PKCS#8 PEM block.
+func pemKey(t *testing.T, priv *ecdsa.PrivateKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatalf("MarshalPKCS8PrivateKey: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+}
+
 // SelfSignedCA returns a PEM-encoded CA certificate.
 func SelfSignedCA(t *testing.T) string {
 	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa: %v", err)
-	}
+	priv := ecKey(t)
 	tmpl := &x509.Certificate{
 		SerialNumber: randomSerial(t),
 		Subject:      pkix.Name{CommonName: "flate-test-ca"},
@@ -56,20 +77,17 @@ func SelfSignedCA(t *testing.T) string {
 }
 
 // SelfSignedServerCert returns a PEM-encoded server+client cert and
-// matching RSA private key — usable as both a TLS server cert and a
+// matching ECDSA private key — usable as both a TLS server cert and a
 // CA bundle (IsCA=true).
 func SelfSignedServerCert(t *testing.T) (cert, key string) {
 	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa: %v", err)
-	}
+	priv := ecKey(t)
 	tmpl := &x509.Certificate{
 		SerialNumber: randomSerial(t),
 		Subject:      pkix.Name{CommonName: "flate-test"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(certValidity),
-		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		IsCA:         true,
 	}
@@ -77,36 +95,25 @@ func SelfSignedServerCert(t *testing.T) (cert, key string) {
 	if err != nil {
 		t.Fatalf("CreateCertificate: %v", err)
 	}
-	cert = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	key = string(pem.EncodeToMemory(&pem.Block{
-		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv),
-	}))
-	return cert, key
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), pemKey(t, priv)
 }
 
 // SelfSignedClientCert returns a PEM-encoded client cert and matching
-// RSA private key — ExtKeyUsage is ClientAuth only.
+// ECDSA private key — ExtKeyUsage is ClientAuth only.
 func SelfSignedClientCert(t *testing.T) (cert, key string) {
 	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa: %v", err)
-	}
+	priv := ecKey(t)
 	tmpl := &x509.Certificate{
 		SerialNumber: randomSerial(t),
 		Subject:      pkix.Name{CommonName: "flate-test-client"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(certValidity),
-		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
 	if err != nil {
 		t.Fatalf("CreateCertificate: %v", err)
 	}
-	cert = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	key = string(pem.EncodeToMemory(&pem.Block{
-		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv),
-	}))
-	return cert, key
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), pemKey(t, priv)
 }

@@ -223,9 +223,7 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 
 	var wg sync.WaitGroup
 	for _, dep := range deps {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// Recover from panics in watchOne (e.g. malformed CEL expression
 			// evaluating against an unexpected payload type) so the whole
 			// run isn't killed. The dep is reported failed instead.
@@ -235,7 +233,7 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 			// dropped events on cancellation, leaving the consumer with
 			// a Pending dep that would time out at the full budget.
 			out <- safeWatchOne(ctx, w, dep, timeout)
-		}()
+		})
 	}
 
 	go func() {

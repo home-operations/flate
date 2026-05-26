@@ -3,6 +3,7 @@ package resourceset
 import (
 	"fmt"
 	"hash/adler32"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -64,15 +65,17 @@ func permute(groups []providerInputs, includeEmpty bool) ([]map[string]any, erro
 	}
 
 	out := make([]map[string]any, 0, expected)
-	// Index vector — selectedInputs[i] is the index of the chosen
-	// input set within provider i. Standard mixed-radix counter.
+	// Index vector — sel[i] is the index of the chosen input set
+	// within provider i. Standard mixed-radix counter.
 	sel := make([]int, len(scoped))
+	// idParts is pre-allocated and reused across iterations; each
+	// element is overwritten before strings.Join, so no GC churn.
+	idParts := make([]string, len(scoped))
 	for {
 		perm := make(map[string]any, len(scoped)+1)
-		idParts := make([]string, 0, len(scoped))
 		for i, p := range scoped {
 			perm[p.name] = p.sets[sel[i]]
-			idParts = append(idParts, fmt.Sprintf("%s=%d", p.name, sel[i]))
+			idParts[i] = p.name + "=" + strconv.Itoa(sel[i])
 		}
 		perm["id"] = permID(strings.Join(idParts, "/"))
 		out = append(out, perm)
@@ -107,7 +110,7 @@ type scopedProvider struct {
 // in-cluster so diffs surface the actual configuration delta rather
 // than an id-format mismatch.
 func permID(s string) string {
-	return fmt.Sprintf("%d", adler32.Checksum([]byte(s)))
+	return strconv.FormatUint(uint64(adler32.Checksum([]byte(s))), 10)
 }
 
 // normalizeKeyForTemplate mirrors flux-operator/internal/inputs/keys.go:
@@ -121,22 +124,25 @@ func permID(s string) string {
 // Used here rather than re-exporting from upstream because flux-operator's
 // inputs package is in internal/.
 func normalizeKeyForTemplate(s string) string {
-	mapped := strings.Map(func(r rune) rune {
+	var b strings.Builder
+	b.Grow(len(s))
+	pendingUnderscore := false
+	for _, r := range s {
 		r = unicode.ToLower(r)
 		if unicode.IsSpace(r) || unicode.IsPunct(r) {
-			return '_'
+			pendingUnderscore = true
+			continue
 		}
 		if ('a' <= r && r <= 'z') || ('0' <= r && r <= '9') {
-			return r
+			if pendingUnderscore && b.Len() > 0 {
+				b.WriteByte('_')
+			}
+			pendingUnderscore = false
+			b.WriteRune(r)
+			continue
 		}
-		return -1
-	}, s)
-	parts := strings.Split(mapped, "_")
-	out := parts[:0]
-	for _, p := range parts {
-		if p != "" {
-			out = append(out, p)
-		}
+		// Drop characters outside [a-z0-9] without emitting underscore
+		// (they are neither word chars nor separators — rare Unicode).
 	}
-	return strings.Join(out, "_")
+	return b.String()
 }

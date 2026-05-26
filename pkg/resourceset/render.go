@@ -75,14 +75,18 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 	if len(inputs) == 0 && rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute {
 		return nil, nil
 	}
+
+	seen := make(map[string]struct{})
 	var docs []map[string]any
-	seen := map[string]bool{}
 	appendUnique := func(doc map[string]any) {
 		key := DedupKey(doc)
-		if key == "" || seen[key] {
+		if key == "" {
 			return
 		}
-		seen[key] = true
+		if _, dup := seen[key]; dup {
+			return
+		}
+		seen[key] = struct{}{}
 		docs = append(docs, doc)
 	}
 
@@ -116,19 +120,23 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 
 // renderResources templates a single spec.resources entry once per
 // input set (or once with nil when inputs is empty), returning the
-// decoded YAML docs.
+// decoded YAML docs. The template is parsed once and executed N times
+// to avoid repeated parse overhead on large input matrices.
 func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	yamlTemplate, err := yaml.JSONToYAML(raw.Raw)
+	yamlBytes, err := yaml.JSONToYAML(raw.Raw)
 	if err != nil {
 		return nil, fmt.Errorf("convert template to YAML: %w", err)
 	}
-	tmplStr := string(yamlTemplate)
+	pt, err := parseTemplate(string(yamlBytes))
+	if err != nil {
+		return nil, err
+	}
 
 	if len(inputs) == 0 {
-		doc, err := renderSingle(tmplStr, nil)
+		doc, err := renderSingle(pt, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -137,16 +145,13 @@ func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any,
 		}
 		return []map[string]any{doc}, nil
 	}
-	var out []map[string]any
+	out := make([]map[string]any, 0, len(inputs))
 	for _, in := range inputs {
-		doc, err := renderSingle(tmplStr, in)
+		doc, err := renderSingle(pt, in)
 		if err != nil {
 			return nil, err
 		}
-		if doc == nil {
-			continue
-		}
-		if disabledByReconcileAnnotation(doc) {
+		if doc == nil || disabledByReconcileAnnotation(doc) {
 			continue
 		}
 		out = append(out, doc)
@@ -155,38 +160,46 @@ func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any,
 }
 
 // renderResourcesTemplate templates the multi-document YAML string in
-// spec.resourcesTemplate once per input set.
+// spec.resourcesTemplate once per input set. The template is parsed once
+// and executed N times to avoid repeated parse overhead on large input
+// matrices.
 func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[string]any, error) {
-	filter := func(docs []map[string]any) []map[string]any {
-		out := docs[:0]
-		for _, doc := range docs {
-			if disabledByReconcileAnnotation(doc) {
-				continue
-			}
-			out = append(out, doc)
-		}
-		return out
+	pt, err := parseTemplate(tmplStr)
+	if err != nil {
+		return nil, err
 	}
 	if len(inputs) == 0 {
-		docs, err := splitMultiDoc(tmplStr, nil)
+		docs, err := splitMultiDoc(pt, nil)
 		if err != nil {
 			return nil, err
 		}
-		return filter(docs), nil
+		return filterDisabled(docs), nil
 	}
 	var out []map[string]any
 	for _, in := range inputs {
-		docs, err := splitMultiDoc(tmplStr, in)
+		docs, err := splitMultiDoc(pt, in)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, filter(docs)...)
+		out = append(out, filterDisabled(docs)...)
 	}
 	return out, nil
 }
 
-func splitMultiDoc(tmplStr string, inputSet map[string]any) ([]map[string]any, error) {
-	rendered, err := execute(tmplStr, inputSet)
+// filterDisabled removes docs carrying the reconcile-disabled annotation
+// in place, reusing the slice backing array.
+func filterDisabled(docs []map[string]any) []map[string]any {
+	out := docs[:0]
+	for _, doc := range docs {
+		if !disabledByReconcileAnnotation(doc) {
+			out = append(out, doc)
+		}
+	}
+	return out
+}
+
+func splitMultiDoc(pt *parsedTemplate, inputSet map[string]any) ([]map[string]any, error) {
+	rendered, err := executeTemplate(pt, inputSet)
 	if err != nil {
 		return nil, err
 	}
@@ -208,8 +221,8 @@ func splitMultiDoc(tmplStr string, inputSet map[string]any) ([]map[string]any, e
 	return out, nil
 }
 
-func renderSingle(tmplStr string, inputSet map[string]any) (map[string]any, error) {
-	rendered, err := execute(tmplStr, inputSet)
+func renderSingle(pt *parsedTemplate, inputSet map[string]any) (map[string]any, error) {
+	rendered, err := executeTemplate(pt, inputSet)
 	if err != nil {
 		return nil, err
 	}

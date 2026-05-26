@@ -17,8 +17,8 @@ import (
 // raw (un-normalized) name. Used to dispatch on spec.inputStrategy:
 // Flatten concatenates; Permute scopes by name and Cartesian-products.
 type providerInputs struct {
-	name   string             // raw provider name (rs.Name for inline; RSIP.Name otherwise)
-	inputs []map[string]any   // each set already carries its `provider` block
+	name   string           // raw provider name (rs.Name for inline; RSIP.Name otherwise)
+	inputs []map[string]any // each set already carries its `provider` block
 }
 
 // buildInputSets gathers per-provider input lists then dispatches on
@@ -50,8 +50,13 @@ func buildInputSets(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[s
 	if rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute {
 		return permute(groups, rs.InputStrategy.IncludeEmptyProviders)
 	}
-	// Default: Flatten — concatenate every provider's input list.
-	var out []map[string]any
+	// Default: Flatten — pre-size out to total input count across all
+	// providers to avoid incremental reallocations.
+	total := 0
+	for _, g := range groups {
+		total += len(g.inputs)
+	}
+	out := make([]map[string]any, 0, total)
 	for _, g := range groups {
 		out = append(out, g.inputs...)
 	}
@@ -64,7 +69,9 @@ func buildInputSets(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[s
 // order. Each input set is stamped with a `provider` block so
 // templates can recover which CR sourced the values.
 func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) ([]providerInputs, error) {
-	var groups []providerInputs
+	// Pre-size: 1 for inline + one slot per inputsFrom reference (upper
+	// bound; deduplicated entries may yield fewer).
+	groups := make([]providerInputs, 0, 1+len(rs.InputsFrom))
 
 	// Provider 0: the ResourceSet itself with its inline spec.inputs.
 	inlineProv := map[string]any{
@@ -119,7 +126,7 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 		}
 		if exported == nil && p.Type != "" && p.Type != fluxopv1.InputProviderStatic {
 			slog.Warn("resourceset: dynamic input provider contributes no inputs offline",
-				"resourceSet", rs.Named().NamespacedName(),
+				"resource_set", rs.Named().NamespacedName(),
 				"provider", p.Named().NamespacedName(),
 				"type", p.Type)
 		}
@@ -140,7 +147,7 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 }
 
 func decodeInputSet(in fluxopv1.ResourceSetInput) map[string]any {
-	decoded := map[string]any{}
+	decoded := make(map[string]any, len(in))
 	for k, v := range in {
 		if v == nil {
 			decoded[k] = nil

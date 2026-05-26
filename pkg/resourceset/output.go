@@ -44,23 +44,27 @@ func defaultNamespace(doc map[string]any, ns string) {
 	manifest.EnsureMetadata(doc)["namespace"] = ns
 }
 
+// clusterScopedKinds is the set of well-known cluster-scoped Kubernetes
+// kinds. Using a map gives O(1) lookup vs the O(n) switch it replaces.
+var clusterScopedKinds = map[string]struct{}{
+	"Namespace":                       {},
+	"ClusterRole":                     {},
+	"ClusterRoleBinding":              {},
+	"CustomResourceDefinition":        {},
+	"PersistentVolume":                {},
+	"StorageClass":                    {},
+	"PriorityClass":                   {},
+	"IngressClass":                    {},
+	"ClusterIssuer":                   {},
+	"MutatingWebhookConfiguration":   {},
+	"ValidatingWebhookConfiguration": {},
+	"APIService":                      {},
+	"Node":                            {},
+}
+
 func isClusterScoped(doc map[string]any) bool {
-	switch manifest.DocKind(doc) {
-	case "Namespace",
-		"ClusterRole", "ClusterRoleBinding",
-		"CustomResourceDefinition",
-		"PersistentVolume",
-		"StorageClass",
-		"PriorityClass",
-		"IngressClass",
-		"ClusterIssuer",
-		"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration",
-		"APIService",
-		"Node":
-		return true
-	default:
-		return false
-	}
+	_, ok := clusterScopedKinds[manifest.DocKind(doc)]
+	return ok
 }
 
 func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {
@@ -73,9 +77,6 @@ func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {
 }
 
 func applyOwnerLabels(doc map[string]any, rs *manifest.ResourceSet) {
-	if rs == nil {
-		return
-	}
 	md := manifest.EnsureMetadata(doc)
 	labels, _ := md["labels"].(map[string]any)
 	if labels == nil {

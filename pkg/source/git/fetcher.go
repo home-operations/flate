@@ -1,4 +1,15 @@
 // Package git implements the source.Fetcher for KindGitRepository.
+//
+// File map:
+//
+//	fetcher.go    — Fetcher type, Fetch entry, fetch + fetchViaMirror, authIdentity
+//	auth.go       — SecretRef → transport.AuthMethod resolution
+//	tls.go        — spec.secretRef.ca.crt → *tls.Config
+//	ssh.go        — SSH URL / user extraction
+//	checkout.go   — checkoutRef + updateSubmodules
+//	resolve.go    — ref → commit hash (mirror path)
+//	materialize.go — gittree.Materialize bridge
+//	marker.go     — .flate-git-revision slot marker + worktree HEAD lookup
 package git
 
 import (
@@ -6,13 +17,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -72,10 +80,6 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*sto
 	defer restore()
 	return f.fetch(ctx, repo, auth, proxy)
 }
-
-// resolveTLS / resolveAuth / isSSHURL / sshUserFromURL split into
-// tls.go and auth.go (mirroring the existing tls_test.go and
-// auth_test.go layouts).
 
 // fetch clones the GitRepository, then runs verification, ignore, and
 // the cache-marker write — ALL inside the per-slot critical section.
@@ -278,105 +282,6 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 	return art, nil
 }
 
-// cachedRevisionFile holds the resolved commit SHA of a fetched slot.
-// Written post-clone, BEFORE the caller's ApplyIgnore wipes .git/, so
-// future cache-hit checks can validate the slot without re-running
-// git.PlainOpen.
-const cachedRevisionFile = ".flate-git-revision"
-
-func writeCachedRevision(slot, rev string) error {
-	return os.WriteFile(filepath.Join(slot, cachedRevisionFile), []byte(rev), 0o600)
-}
-
-func readCachedRevision(slot string) string {
-	b, err := os.ReadFile(filepath.Join(slot, cachedRevisionFile)) //nolint:gosec // slot is fetcher-owned cache path
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
-}
-
-func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []string) error {
-	wt, err := repo.Worktree()
-	if err != nil {
-		return err
-	}
-	// newOpts builds a CheckoutOptions pre-populated with sparse-checkout
-	// directories when configured. Repeated per call-site because
-	// CheckoutOptions is consumed by each Checkout invocation.
-	newOpts := func() *git.CheckoutOptions {
-		opts := &git.CheckoutOptions{}
-		if len(sparse) > 0 {
-			opts.SparseCheckoutDirectories = append(opts.SparseCheckoutDirectories, sparse...)
-		}
-		return opts
-	}
-	checkout := func(set func(*git.CheckoutOptions)) error {
-		opts := newOpts()
-		set(opts)
-		return wt.Checkout(opts)
-	}
-	switch {
-	case ref.Name != "":
-		// Full ref name takes precedence (e.g. "refs/pull/420/head",
-		// "refs/tags/v1.2.3"). Resolve against the cloned repo so the
-		// remote-tracking layer (refs/remotes/origin/...) is checked
-		// too — go-git's PlainClone fetches all refs but normalizes
-		// branches under refs/remotes/origin.
-		rev := plumbing.Revision(ref.Name)
-		if h, err := repo.ResolveRevision(rev); err == nil {
-			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
-		}
-		// Fall through: try resolving as a remote-tracking ref. This
-		// handles refs/heads/<branch> by mapping to refs/remotes/origin/<branch>.
-		if rest, ok := strings.CutPrefix(ref.Name, "refs/heads/"); ok {
-			remote := plumbing.NewRemoteReferenceName("origin", rest)
-			if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
-				return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
-			}
-		}
-		return fmt.Errorf("%w: unable to resolve git ref %q", manifest.ErrInput, ref.Name)
-	case ref.Commit != "":
-		return checkout(func(o *git.CheckoutOptions) { o.Hash = plumbing.NewHash(ref.Commit) })
-	case ref.Tag != "":
-		if h, err := repo.ResolveRevision(plumbing.Revision("refs/tags/" + ref.Tag)); err == nil {
-			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
-		}
-		return checkout(func(o *git.CheckoutOptions) { o.Branch = plumbing.NewTagReferenceName(ref.Tag) })
-	case ref.Branch != "":
-		remoteRef := plumbing.NewRemoteReferenceName("origin", ref.Branch)
-		if h, err := repo.ResolveRevision(plumbing.Revision(remoteRef)); err == nil {
-			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
-		}
-		return checkout(func(o *git.CheckoutOptions) { o.Branch = plumbing.NewBranchReferenceName(ref.Branch) })
-	case ref.SemVer != "":
-		return fmt.Errorf("%w: GitRepository semver ref is not supported yet", manifest.ErrInput)
-	}
-	// No ref: just check out HEAD (with sparse, if configured).
-	return checkout(func(*git.CheckoutOptions) {})
-}
-
-// updateSubmodules initializes and pulls submodules in the cloned
-// worktree. Mirrors `git submodule update --init --recursive`. The
-// parent's auth is reused for each submodule's fetch — Flux's
-// behavior assumes a single credential source per GitRepository CR,
-// even when submodules live on different hosts.
-func updateSubmodules(repo *git.Repository, auth transport.AuthMethod) error {
-	wt, err := repo.Worktree()
-	if err != nil {
-		return err
-	}
-	subs, err := wt.Submodules()
-	if err != nil {
-		return err
-	}
-	return subs.Update(&git.SubmoduleUpdateOptions{
-		Init:              true,
-		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
-		Auth:              auth,
-	})
-}
-
 // authIdentity returns the cache-key auth tag for a GitRepository.
 // Combines the SecretRef (HTTPS / SSH creds) and ProxySecretRef the
 // fetcher binds. Returns "" for anonymous clones so they share slots
@@ -384,18 +289,4 @@ func updateSubmodules(repo *git.Repository, auth transport.AuthMethod) error {
 func authIdentity(repo *manifest.GitRepository) string {
 	return source.AuthIdentityFromRefs(repo.Namespace,
 		repo.SecretRef, repo.ProxySecretRef)
-}
-
-// readResolvedRevision returns the current commit SHA at the worktree.
-// Best-effort: returns empty string on any failure.
-func readResolvedRevision(slot string) (string, error) {
-	repo, err := git.PlainOpen(slot)
-	if err != nil {
-		return "", err
-	}
-	h, err := repo.Head()
-	if err != nil {
-		return "", err
-	}
-	return h.Hash().String(), nil
 }

@@ -203,24 +203,28 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 		return "", err
 	}
 
-	// Include the HelmRepository's identity in the cache key so two
-	// repos that publish the same chart name + version don't
-	// overwrite each other's tarball on disk. Without the repo
-	// prefix, `nginx:15.0.0` from repo A and a different
-	// `nginx:15.0.0` from repo B alternately overwrote each other's
-	// bytes; the in-memory chartCache (keyed by path) then served
-	// whichever bytes were last written.
-	cacheKey := safeName(r.Namespace+"-"+r.Name+"-"+hr.Chart.Name) + "-" + cv.Version + ".tgz"
-	target := filepath.Join(c.cacheDir, cacheKey)
+	// Hot path: lookup the previously-resolved digest for this
+	// (repo, chart, version) identity in chartRefs, then ask chartBlobs
+	// to confirm the blob still exists. Two HelmRepositories that
+	// publish a chart with identical bytes share one blob slot — the
+	// refs table is the only place the (repo, name, version) tuple
+	// shows up.
+	refKey := safeName(r.Namespace+"-"+r.Name+"-"+hr.Chart.Name) + "-" + cv.Version
+	if path, ok := c.chartTarballFromCAS(refKey); ok {
+		return path, nil
+	}
 
-	release, err := chartCacheLocks.Acquire(ctx, target)
+	// Coalesce concurrent downloads on the refKey — the digest is
+	// only knowable post-download, so the per-digest lock inside
+	// chartBlobs can't serve this duty.
+	release, err := chartCacheLocks.Acquire(ctx, refKey)
 	if err != nil {
 		return "", err
 	}
 	defer release()
 
-	if _, err := os.Stat(target); err == nil {
-		return target, nil
+	if path, ok := c.chartTarballFromCAS(refKey); ok {
+		return path, nil
 	}
 	g, err := getter.NewHTTPGetter()
 	if err != nil {
@@ -230,10 +234,25 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	if err != nil {
 		return "", fmt.Errorf("download %s: %w", chartURL, err)
 	}
-	if err := writeAtomic(target, buf.Bytes()); err != nil {
-		return "", err
+	dir, digest, err := c.chartBlobs.PutBytes(buf.Bytes(), "chart.tgz")
+	if err != nil {
+		return "", fmt.Errorf("store chart %s: %w", chartURL, err)
 	}
-	return target, nil
+	if err := c.chartRefs.Put(refKey, digest); err != nil {
+		return "", fmt.Errorf("record chart ref %s: %w", refKey, err)
+	}
+	return filepath.Join(dir, "chart.tgz"), nil
+}
+
+// chartTarballFromCAS returns the on-disk path to a previously-stored
+// chart tarball for refKey, or ("", false) when either the ref is
+// unknown or its digest is no longer materialized in the blob store.
+func (c *Client) chartTarballFromCAS(refKey string) (string, bool) {
+	digest, ok := c.chartRefs.Get(refKey)
+	if !ok || !c.chartBlobs.Exists(digest) {
+		return "", false
+	}
+	return filepath.Join(c.chartBlobs.Path(digest), "chart.tgz"), true
 }
 
 // helmRepoAuthOptions / helmRepoTLSOptions live in auth.go (paired

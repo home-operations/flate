@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/blob"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -96,6 +97,16 @@ type Client struct {
 	// run reuse with etag/If-Modified-Since is a future layer.
 	indexCache sync.Map // map[string]*repo.IndexFile
 	indexLocks *keylock.KeyMap[string]
+
+	// chartBlobs is the content-addressed storage for downloaded
+	// helm chart tarballs. chartRefs maps the per-release identity
+	// tuple `(namespace, name, chartName, version)` to the current
+	// digest — so two HelmRepositories that happen to publish a
+	// chart with identical bytes share one on-disk slot, and a
+	// reconfigured cluster reading the same charts hits the CAS
+	// path without re-downloading.
+	chartBlobs *blob.Store
+	chartRefs  *blob.Refs
 }
 
 // chartCacheEntry pairs the parsed chart with the (mtime, size) of
@@ -130,6 +141,8 @@ func NewClient(tmpDir, cacheDir string) (*Client, error) {
 		chartCache:     map[string]chartCacheEntry{},
 		chartLoadLocks: keylock.New[string](),
 		indexLocks:     keylock.New[string](),
+		chartBlobs:     blob.NewStore(cacheDir),
+		chartRefs:      blob.NewRefs(filepath.Join(cacheDir, "refs", "chart-tarballs")),
 	}, nil
 }
 

@@ -1,0 +1,124 @@
+// Package blob is a small content-addressed storage layer for flate's
+// fetched artifacts. Blobs are indexed by sha256 digest; two artifacts
+// with identical content share the same on-disk slot regardless of
+// which CR resolved them. The store is the substrate the cache rework
+// builds on — see pkg/source for ref-keyed slots that compose with
+// this CAS via separate ref tables.
+//
+// Layout under root:
+//
+//	<root>/blobs/sha256/<hex>/
+//
+// Each blob is a directory so individual files (chart.tgz, README,
+// etc.) can sit inside it without escaping the digest namespace.
+package blob
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+// Store manages a content-addressed blob directory on disk. Safe for
+// concurrent use; per-digest mutexes serialize PutFile/PutBytes for
+// the same digest so two callers writing the same content don't race
+// on the rename finalize.
+type Store struct {
+	root string
+
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+// NewStore constructs a Store rooted at dir. The blobs/sha256/
+// substructure is created lazily on first write.
+func NewStore(dir string) *Store {
+	return &Store{root: dir}
+}
+
+// Path returns the on-disk path for digest. Does not stat — callers
+// use Exists to check populated-ness.
+func (s *Store) Path(digest string) string {
+	return filepath.Join(s.root, "blobs", "sha256", digest)
+}
+
+// Exists reports whether a blob has been finalized for digest.
+func (s *Store) Exists(digest string) bool {
+	info, err := os.Stat(s.Path(digest))
+	return err == nil && info.IsDir()
+}
+
+// PutBytes installs content as a single file named filename inside the
+// blob directory keyed by content's sha256. The digest is recomputed
+// from the bytes (never trusted from caller input). Concurrent callers
+// targeting the same digest serialize on a per-digest mutex; the first
+// finalizes via atomic rename and the rest observe ErrExists internally
+// and return without rewriting.
+//
+// Returns the populated blob directory path and the computed digest.
+func (s *Store) PutBytes(content []byte, filename string) (string, string, error) {
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+	dir := s.Path(digest)
+
+	lock := s.lockFor(digest)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if s.Exists(digest) {
+		return dir, digest, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
+		return "", "", fmt.Errorf("blob parent: %w", err)
+	}
+	staging, err := os.MkdirTemp(filepath.Dir(dir), filepath.Base(dir)+".tmp.*")
+	if err != nil {
+		return "", "", fmt.Errorf("blob staging: %w", err)
+	}
+	target := filepath.Join(staging, filename)
+	if err := os.WriteFile(target, content, 0o600); err != nil {
+		_ = os.RemoveAll(staging)
+		return "", "", fmt.Errorf("blob write: %w", err)
+	}
+	if err := os.Rename(staging, dir); err != nil {
+		_ = os.RemoveAll(staging)
+		// A racing writer may have finalized while we were composing
+		// staging. If the blob now exists with the same digest, adopt
+		// it — content-addressing guarantees identical bytes.
+		if errors.Is(err, os.ErrExist) || s.Exists(digest) {
+			return dir, digest, nil
+		}
+		return "", "", fmt.Errorf("blob finalize: %w", err)
+	}
+	return dir, digest, nil
+}
+
+// PutReader is the streaming variant of PutBytes. Useful when the
+// caller has an io.Reader but doesn't want to buffer the whole
+// artifact in memory.
+func (s *Store) PutReader(r io.Reader, filename string) (string, string, error) {
+	buf, err := io.ReadAll(r)
+	if err != nil {
+		return "", "", err
+	}
+	return s.PutBytes(buf, filename)
+}
+
+func (s *Store) lockFor(digest string) *sync.Mutex {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.locks == nil {
+		s.locks = make(map[string]*sync.Mutex)
+	}
+	mx, ok := s.locks[digest]
+	if !ok {
+		mx = &sync.Mutex{}
+		s.locks[digest] = mx
+	}
+	return mx
+}

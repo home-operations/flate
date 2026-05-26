@@ -38,3 +38,19 @@ func TestLayout_Paths(t *testing.T) {
 		})
 	}
 }
+
+// TestNew_CleansRoot confirms that New normalises dirty roots so that
+// the app3/app4 hot-path helpers can skip a second filepath.Clean pass.
+func TestNew_CleansRoot(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/cache/", "/cache"},
+		{"/cache//sub/..", "/cache"},
+		{"/cache/.", "/cache"},
+	}
+	for _, c := range cases {
+		l := New(c.in)
+		if l.Root != c.want {
+			t.Errorf("New(%q).Root = %q, want %q", c.in, l.Root, c.want)
+		}
+	}
+}

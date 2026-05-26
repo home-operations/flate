@@ -668,13 +668,11 @@ func TestStore_WatchExists_NoWedge(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		wg.Add(1)
 		ready := make(chan struct{})
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			close(ready)
 			got, werr = s.WatchExists(ctx, id)
-		}()
+		})
 
 		<-ready
 		s.AddObject(cm)
@@ -735,9 +733,7 @@ func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
 	for i := range writers {
 		s.AddObject(newCM("init"+strings.Repeat("x", i), "ns"))
 	}
-	writerWG.Add(1)
-	go func() {
-		defer writerWG.Done()
+	writerWG.Go(func() {
 		<-registerReady
 		// Spin writes while the registrar runs. Some will land before
 		// AddListener returns; some after.
@@ -748,7 +744,7 @@ func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
 		// One more guaranteed-post-registration write that the
 		// listener MUST observe.
 		s.AddObject(newCM("definite-post", "ns"))
-	}()
+	})
 	close(registerReady)
 	s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if id.Name == "definite-post" {

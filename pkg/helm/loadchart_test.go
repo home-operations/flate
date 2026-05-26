@@ -69,9 +69,7 @@ description: test
 	)
 	startGate.Add(1)
 	for range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			startGate.Wait()
 			res, err := cli.LoadChart(context.Background(), hr)
 			if err != nil {
@@ -80,7 +78,7 @@ description: test
 				return
 			}
 			pointers <- res.Chart
-		}()
+		})
 	}
 	startGate.Done()
 	wg.Wait()

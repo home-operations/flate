@@ -65,16 +65,14 @@ func TestStore_ConcurrentPutsCoalesce(t *testing.T) {
 	var errs atomic.Int32
 	digests := make([]string, goroutines)
 	for i := range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, d, err := s.PutBytes(context.Background(), content, "data")
 			if err != nil {
 				errs.Add(1)
 				return
 			}
 			digests[i] = d
-		}()
+		})
 	}
 	wg.Wait()
 	if got := errs.Load(); got != 0 {

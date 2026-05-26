@@ -18,24 +18,23 @@ func insecureIgnoreHostKey(_ string, _ net.Addr, _ ssh.PublicKey) error {
 }
 
 // knownHostsCallback returns an SSH HostKeyCallback that validates
-// against the provided known_hosts data. The data is materialized to
-// a temp file because golang.org/x/crypto/ssh/knownhosts only exposes
-// a file-based New constructor.
+// against the provided known_hosts data. knownhosts.New only accepts
+// file paths, so we materialize a temp file; New reads and parses it
+// synchronously and returns a callback that holds the parsed data in
+// memory, so the file is safe to remove immediately after New returns.
 func knownHostsCallback(data []byte) (ssh.HostKeyCallback, error) {
 	f, err := os.CreateTemp("", "flate-known-hosts-*")
 	if err != nil {
 		return nil, fmt.Errorf("temp known_hosts: %w", err)
 	}
+	name := f.Name()
+	defer os.Remove(name) //nolint:errcheck // best-effort cleanup of temp file
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
-		_ = os.Remove(f.Name())
 		return nil, fmt.Errorf("write known_hosts: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(f.Name())
 		return nil, fmt.Errorf("close known_hosts: %w", err)
 	}
-	// Note: the file leaks until process exit. Acceptable for a CLI
-	// run; revisit if flate ever grows a watch mode.
-	return knownhosts.New(f.Name())
+	return knownhosts.New(name)
 }

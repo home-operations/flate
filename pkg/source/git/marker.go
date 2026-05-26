@@ -1,6 +1,7 @@
 package git
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,12 +39,18 @@ func cachedRevisionFresh(slot string, maxAge time.Duration) (string, bool) {
 	if maxAge <= 0 {
 		return "", false
 	}
-	path := filepath.Join(slot, cachedRevisionFile)
-	info, err := os.Stat(path)
+	// Single open: fstat for mtime, then read — avoids the TOCTOU window
+	// between a separate os.Stat and os.ReadFile on a fetcher-written file.
+	f, err := os.Open(filepath.Join(slot, cachedRevisionFile)) //nolint:gosec // slot is fetcher-owned cache path
+	if err != nil {
+		return "", false
+	}
+	defer f.Close() //nolint:errcheck
+	info, err := f.Stat()
 	if err != nil || time.Since(info.ModTime()) > maxAge {
 		return "", false
 	}
-	b, err := os.ReadFile(path) //nolint:gosec // slot is fetcher-owned cache path
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return "", false
 	}

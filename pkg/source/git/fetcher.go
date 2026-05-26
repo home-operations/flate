@@ -318,13 +318,23 @@ func (f *Fetcher) finalize(repo *manifest.GitRepository, art *store.SourceArtifa
 			return err
 		}
 	}
+	return applyIgnoreAndMark(repo, art)
+}
+
+// applyIgnoreAndMark applies the source-controller-compatible ignore
+// patterns to the materialized slot, then writes the revision marker.
+// Separated from finalize so the mirror path can call it without
+// re-opening the local worktree for verification (the mirror path
+// verifies against the bare-repo object store instead).
+//
+// The marker is written AFTER ApplyIgnore so it survives user-supplied
+// "exclude all" patterns (common: `/*` + reincludes). Next run's
+// cache-hit check avoids the expensive re-clone for big repos whose
+// .git/ was wiped by the ignore step.
+func applyIgnoreAndMark(repo *manifest.GitRepository, art *store.SourceArtifact) error {
 	if err := source.ApplyIgnore(art.LocalPath, repo.Ignore); err != nil {
 		return fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
 	}
-	// Write the revision marker AFTER ApplyIgnore so it survives any
-	// user-supplied "exclude all" patterns (common — `/*` + reincludes).
-	// Next run's cache-hit check (readCachedRevision) avoids the
-	// expensive re-clone for big repos whose .git/ was wiped by ignore.
 	if art.Revision != "" {
 		_ = writeCachedRevision(art.LocalPath, art.Revision)
 	}
@@ -352,7 +362,7 @@ func (f *Fetcher) canUseMirror(repo *manifest.GitRepository, _ string) bool {
 // per-URL mirror, resolve the requested ref to a commit hash, then
 // materialize the tree into the slot's staging dir. PGP verification
 // runs against the mirror (which has the object store); ApplyIgnore
-// and the revision-marker write reuse the standard finalize.
+// and the revision-marker write delegate to applyIgnoreAndMark.
 //
 // tlsCfg is the caller's pre-resolved spec.secretRef CA bundle —
 // hoisting it out of this function avoids re-reading the Secret +
@@ -378,11 +388,8 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 		Kind: manifest.KindGitRepository,
 		URL:  repo.URL, LocalPath: slot.Path, Revision: hash.String(),
 	}
-	if err := source.ApplyIgnore(art.LocalPath, repo.Ignore); err != nil {
-		return nil, fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
-	}
-	if art.Revision != "" {
-		_ = writeCachedRevision(art.LocalPath, art.Revision)
+	if err := applyIgnoreAndMark(repo, art); err != nil {
+		return nil, err
 	}
 	if err := slot.Commit(); err != nil {
 		return nil, fmt.Errorf("GitRepository %s/%s: commit slot: %w", repo.Namespace, repo.Name, err)

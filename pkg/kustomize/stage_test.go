@@ -2,6 +2,7 @@ package kustomize
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -284,5 +285,32 @@ func TestRestoreKustomization_DoesNotMutateSource(t *testing.T) {
 	}
 	if string(got) != "original\n" {
 		t.Errorf("source kustomization.yaml mutated by stage write: got %q", got)
+	}
+}
+
+// TestIsHTTPClientError pins the 4xx-detection contract after a bug
+// where the previous implementation checked for " 4xx " (with surrounding
+// spaces) and never matched "HTTP 404" (the exact format httpGetURL
+// emits), causing every 4xx to be treated as transient and retried.
+func TestIsHTTPClientError(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want bool
+	}{
+		{"HTTP 400", true},
+		{"HTTP 404", true},
+		{"HTTP 418", true},
+		{"HTTP 499", true},
+		{"HTTP 500", false},  // 5xx is transient
+		{"HTTP 200", false},  // success never hits this path, but guard it
+		{"connection refused", false},
+		{"context deadline exceeded", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		got := isHTTPClientError(fmt.Errorf("%s", tc.msg))
+		if got != tc.want {
+			t.Errorf("isHTTPClientError(%q) = %v, want %v", tc.msg, got, tc.want)
+		}
 	}
 }

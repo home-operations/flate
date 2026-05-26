@@ -151,10 +151,10 @@ func findMappingValue(doc *yaml.Node, key string) *yaml.Node {
 	if root.Kind != yaml.MappingNode {
 		return nil
 	}
-	// MappingNode.Content is [key, value, key, value, ...].
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == key {
-			return root.Content[i+1]
+	// MappingNode.Content is [key, value, key, value, ...]; iterate as pairs.
+	for pair := range slices.Chunk(root.Content, 2) {
+		if len(pair) == 2 && pair[0].Value == key {
+			return pair[1]
 		}
 	}
 	return nil

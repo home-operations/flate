@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -159,24 +160,21 @@ func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, 
 // response (which won't change between retries within one run).
 // Anything else — transport errors, timeouts, 5xx — is treated as
 // transient so the cache entry gets dropped.
+//
+// httpGetURL emits errors with the exact format "HTTP <code>", so we
+// parse the trailing decimal and range-check for 400–499 rather than
+// doing substring matching with padding spaces (which silently missed
+// end-of-string codes).
 func isHTTPClientError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	for _, code := range []string{
-		" 400 ", " 401 ", " 402 ", " 403 ", " 404 ",
-		" 405 ", " 406 ", " 407 ", " 408 ", " 409 ",
-		" 410 ", " 411 ", " 412 ", " 413 ", " 414 ",
-		" 415 ", " 416 ", " 417 ", " 418 ", " 421 ",
-		" 422 ", " 423 ", " 424 ", " 425 ", " 426 ",
-		" 428 ", " 429 ", " 431 ", " 451 ",
-	} {
-		if strings.Contains(msg, code) {
-			return true
-		}
+	_, after, ok := strings.Cut(err.Error(), "HTTP ")
+	if !ok {
+		return false
 	}
-	return false
+	code, parseErr := strconv.Atoi(after)
+	return parseErr == nil && code >= 400 && code < 500
 }
 
 // Stage returns the on-disk staged copy of source. The copy is created

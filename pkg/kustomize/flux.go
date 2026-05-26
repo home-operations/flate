@@ -166,22 +166,12 @@ func applyCommonMetadata(rm resmap.ResMap, rawSpec map[string]any) error {
 	}
 	for _, r := range rm.Resources() {
 		if len(labels) > 0 {
-			merged := maps.Clone(r.GetLabels())
-			if merged == nil {
-				merged = map[string]string{}
-			}
-			maps.Copy(merged, labels)
-			if err := r.SetLabels(merged); err != nil {
+			if err := r.SetLabels(overlayStringMap(r.GetLabels(), labels)); err != nil {
 				return err
 			}
 		}
 		if len(annotations) > 0 {
-			merged := maps.Clone(r.GetAnnotations())
-			if merged == nil {
-				merged = map[string]string{}
-			}
-			maps.Copy(merged, annotations)
-			if err := r.SetAnnotations(merged); err != nil {
+			if err := r.SetAnnotations(overlayStringMap(r.GetAnnotations(), annotations)); err != nil {
 				return err
 			}
 		}
@@ -205,25 +195,28 @@ func applyOwnerLabels(rm resmap.ResMap, rawSpec map[string]any) error {
 	}
 	namespace, _ := md["namespace"].(string)
 	const group = "kustomize.toolkit.fluxcd.io"
-	owner := map[string]string{
-		group + "/name":      name,
-		group + "/namespace": namespace,
+	// Build owner overlay with only non-empty values so a cluster-scoped
+	// Kustomization (no namespace) doesn't clobber an existing namespace label.
+	owner := make(map[string]string, 2)
+	owner[group+"/name"] = name
+	if namespace != "" {
+		owner[group+"/namespace"] = namespace
 	}
 	for _, r := range rm.Resources() {
-		merged := maps.Clone(r.GetLabels())
-		if merged == nil {
-			merged = map[string]string{}
-		}
-		for k, v := range owner {
-			if v != "" {
-				merged[k] = v
-			}
-		}
-		if err := r.SetLabels(merged); err != nil {
+		if err := r.SetLabels(overlayStringMap(r.GetLabels(), owner)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// overlayStringMap returns a copy of base with every entry from overlay
+// merged in. overlay wins on key collisions. RNode.GetLabels /
+// GetAnnotations always return a non-nil map, so base is never nil here.
+func overlayStringMap(base, overlay map[string]string) map[string]string {
+	out := maps.Clone(base)
+	maps.Copy(out, overlay)
+	return out
 }
 
 func stringMap(v any) map[string]string {

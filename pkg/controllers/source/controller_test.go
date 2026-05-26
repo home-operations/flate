@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
@@ -36,9 +38,7 @@ func newController(t *testing.T, fetchers map[string]src.Fetcher) (*Controller, 
 	st := store.New()
 	ts := task.New()
 	c := New(st, ts)
-	for k, f := range fetchers {
-		c.Fetchers[k] = f
-	}
+	maps.Copy(c.Fetchers, fetchers)
 	c.Start(context.Background())
 	t.Cleanup(func() {
 		c.Close()
@@ -203,7 +203,7 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 		change.NewSet(nil), // no changed files
 		map[manifest.NamedResource]string{},
 		"",
-		mapLister{},
+		testutil.MapLister{},
 	)
 	c := New(st, ts)
 	c.Fetchers[manifest.KindGitRepository] = f
@@ -229,15 +229,3 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 	}
 }
 
-type mapLister map[manifest.NamedResource]manifest.BaseManifest
-
-func (m mapLister) GetObject(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
-func (m mapLister) ListObjects(kind string) []manifest.BaseManifest {
-	var out []manifest.BaseManifest
-	for id, obj := range m {
-		if id.Kind == kind {
-			out = append(out, obj)
-		}
-	}
-	return out
-}

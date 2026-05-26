@@ -87,7 +87,7 @@ func TestController_FilterUnchangedShortCircuitsToReady(t *testing.T) {
 		change.NewSet(nil),
 		map[manifest.NamedResource]string{},
 		"",
-		mapLister{},
+		testutil.MapLister{},
 	)
 	_, st := newTestController(t, filter)
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default"}
@@ -283,15 +283,3 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 	}
 }
 
-type mapLister map[manifest.NamedResource]manifest.BaseManifest
-
-func (m mapLister) GetObject(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
-func (m mapLister) ListObjects(kind string) []manifest.BaseManifest {
-	var out []manifest.BaseManifest
-	for id, obj := range m {
-		if id.Kind == kind {
-			out = append(out, obj)
-		}
-	}
-	return out
-}

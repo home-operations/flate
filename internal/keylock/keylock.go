@@ -8,6 +8,9 @@ import (
 	"sync"
 )
 
+// noop is the zero-allocation release func returned on cancelled acquires.
+var noop = func() {}
+
 // KeyMap holds one lock per key value, allocated on first use.
 type KeyMap[K comparable] struct {
 	mu    sync.Mutex
@@ -36,6 +39,6 @@ func (m *KeyMap[K]) Acquire(ctx context.Context, key K) (release func(), err err
 	case lock <- struct{}{}:
 		return func() { <-lock }, nil
 	case <-ctx.Done():
-		return func() {}, ctx.Err()
+		return noop, ctx.Err()
 	}
 }

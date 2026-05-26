@@ -22,8 +22,8 @@ func TestWriteFile_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestWriteFile_OverwriteAtomic: a second write replaces the first
-// without ever exposing a torn intermediate state.
+// TestWriteFile_OverwriteAtomic verifies idempotent overwrite: the second
+// call must fully replace the first with no torn intermediate state visible.
 func TestWriteFile_OverwriteAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "data")
@@ -39,11 +39,10 @@ func TestWriteFile_OverwriteAtomic(t *testing.T) {
 	}
 }
 
-// TestWriteFile_StagingCleanedOnError: when an error occurs after the
-// temp file exists, the temp file is removed.
-func TestWriteFile_StagingCleanedOnError(t *testing.T) {
+// TestWriteFile_NoStagingRemnants guards the cleanup defer: after a successful
+// write no .tmp-* sibling should remain in the directory.
+func TestWriteFile_NoStagingRemnants(t *testing.T) {
 	dir := t.TempDir()
-	// Write succeeds; on success we want NO leftover .tmp-* files.
 	if err := WriteFile(filepath.Join(dir, "data"), []byte("x"), 0o600, false); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +54,8 @@ func TestWriteFile_StagingCleanedOnError(t *testing.T) {
 	}
 }
 
-// TestWriteFile_PermRespected: perm is applied to the final file.
+// TestWriteFile_PermRespected verifies that perm is applied to the renamed file
+// (umask may narrow it further, so the test asserts perm-or-stricter).
 func TestWriteFile_PermRespected(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "data")

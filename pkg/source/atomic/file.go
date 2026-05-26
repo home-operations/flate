@@ -1,8 +1,8 @@
-// Package atomic carries the small "stage-then-rename" file write
-// helper every flate cache writer used to reinvent (helm.writeAtomic,
-// oci.writeCachedDigest, oci.writeVerifyMarker, blob.Refs.Put). One
-// implementation, one set of error shapes, one place to revisit if
-// the durability story needs to change.
+// Package atomic provides a stage-then-rename WriteFile primitive. Using a
+// sibling temp file + os.Rename collapses what would otherwise be a
+// create-write-close-chmod-rename sequence into a single visible transition,
+// satisfying POSIX atomicity for cache writers that must never expose a partial
+// or zero-byte file to concurrent readers.
 package atomic
 
 import (
@@ -11,20 +11,20 @@ import (
 	"path/filepath"
 )
 
-// WriteFile installs data at path via a sibling temp file + atomic
-// rename. Concurrent readers either see the previous contents or the
-// new ones — never a torn write, never a zero-byte file from a
-// power-loss between create and rename.
+// WriteFile writes data to path atomically. The file is first written to a
+// sibling temp file in the same directory (ensuring rename stays on the same
+// filesystem / inode device), then renamed into place. Readers always observe
+// either the previous complete contents or the new complete contents.
 //
-// perm is the final file's permission bits (umask still applies via
-// CreateTemp). On any error, the staging file is removed and path is
+// perm is applied to the staged file before rename; umask still applies via
+// CreateTemp. On any error after staging, the temp file is removed and path is
 // left untouched.
 //
-// When syncDir is true, the function fsyncs both the staged file's
-// contents AND the containing directory's entry after the rename so
-// the rename survives power loss. Set false for high-churn caches
-// where durability doesn't justify the I/O barrier (e.g. ref pointers
-// that are cheap to re-derive on the next reconcile).
+// syncDir controls the durability guarantee. When true the function calls
+// Sync on the staged file before rename, then opens and fsyncs the directory
+// after rename — this flushes the rename journal entry so the new name
+// survives a power loss. Set false for high-churn caches whose values are
+// cheap to re-derive on the next reconcile.
 func WriteFile(path string, data []byte, perm os.FileMode, syncDir bool) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
@@ -32,9 +32,8 @@ func WriteFile(path string, data []byte, perm os.FileMode, syncDir bool) error {
 		return fmt.Errorf("atomic stage: %w", err)
 	}
 	tmpName := tmp.Name()
-	// On any error path we want the staging file gone. The double-
-	// defer with a sentinel keeps the success path's defer a no-op
-	// without the caller having to think about it.
+	// Guard ensures the staging file is removed on any error path without
+	// requiring every return site to call os.Remove explicitly.
 	committed := false
 	defer func() {
 		if !committed {
@@ -47,6 +46,9 @@ func WriteFile(path string, data []byte, perm os.FileMode, syncDir bool) error {
 		return fmt.Errorf("atomic write: %w", err)
 	}
 	if syncDir {
+		// Flush data to the storage device before rename so a crash
+		// between Sync and Rename doesn't leave the old name pointing
+		// at a partially-written inode.
 		if err := tmp.Sync(); err != nil {
 			_ = tmp.Close()
 			return fmt.Errorf("atomic sync: %w", err)
@@ -63,9 +65,11 @@ func WriteFile(path string, data []byte, perm os.FileMode, syncDir bool) error {
 	}
 	committed = true
 	if syncDir {
-		// Best-effort directory fsync — see writeAtomic's history
-		// for why this matters and why it's allowed to fail on
-		// filesystems that don't expose the operation.
+		// Fsyncing the directory persists the rename's directory entry
+		// update. Without this, a crash after Rename but before the
+		// journal flushes can leave the directory pointing at the old
+		// name. Best-effort: some filesystems (tmpfs, network FS) ignore
+		// fsync on directories without returning an error.
 		if d, derr := os.Open(dir); derr == nil { //nolint:gosec // dir = filepath.Dir(path); caller-controlled path
 			_ = d.Sync()
 			_ = d.Close()

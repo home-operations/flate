@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -244,11 +245,22 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 	}
 
 	if base != "" {
-		h, err := repo.ResolveRevision(plumbing.Revision(base))
-		if err != nil {
-			return nil, fmt.Errorf("could not resolve --base=%q: %w", base, err)
+		if h, err := repo.ResolveRevision(plumbing.Revision(base)); err == nil {
+			return &resolution{Hash: *h, Source: "explicit --base=" + base}, nil
 		}
-		return &resolution{Hash: *h, Source: "explicit --base=" + base}, nil
+		// CI checkouts (actions/checkout with default fetch-depth=1)
+		// land the PR's branch but not local branch refs for sibling
+		// branches — only remote-tracking ones. Retry as origin/<base>
+		// so `--base main` works without forcing CI users to type
+		// `--base origin/main`. Skip the fallback when base already
+		// looks remote-qualified to keep the error close to intent.
+		if !strings.ContainsRune(base, '/') {
+			remote := "origin/" + base
+			if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
+				return &resolution{Hash: *h, Source: "explicit --base=" + base + " (via " + remote + ")"}, nil
+			}
+		}
+		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s", base, base)
 	}
 
 	// 1. @{u} via the branch config (go-git's ResolveRevision doesn't

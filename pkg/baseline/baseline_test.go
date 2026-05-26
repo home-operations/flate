@@ -103,6 +103,50 @@ func TestAutoResolve_OriginHEAD(t *testing.T) {
 	}
 }
 
+// TestAutoResolve_ExplicitBaseFallsBackToOrigin locks the CI ergonomic
+// the workflow-side broke on: `--base main` on a checkout that has
+// only `origin/main` (no local main ref) must resolve via the
+// remote-tracking branch. actions/checkout with default
+// fetch-depth=1 lands the PR branch and origin/* but no sibling
+// local refs; we shouldn't force users to type `--base origin/main`.
+func TestAutoResolve_ExplicitBaseFallsBackToOrigin(t *testing.T) {
+	dir := t.TempDir()
+	mainCommit := initRepoWithFile(t, dir, "a.yaml", "base")
+	repo := openHelper(t, dir)
+	// Simulate the CI checkout: only the remote-tracking ref exists.
+	setRef(t, repo, plumbing.NewRemoteReferenceName("origin", "main"), mainCommit)
+	writeAndCommit(t, dir, "a.yaml", "pr-tip")
+
+	res, err := AutoResolve(dir, "main", cacheroot.Layout{})
+	if err != nil {
+		t.Fatalf("AutoResolve(--base=main) should fall back to origin/main: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(res.TempDir) }()
+	if got := res.Rev; got != shortRev(mainCommit) {
+		t.Errorf("Rev = %q, want %q", got, shortRev(mainCommit))
+	}
+	if !strings.Contains(res.Source, "via origin/main") {
+		t.Errorf("Source = %q, want to mention 'via origin/main'", res.Source)
+	}
+}
+
+// TestAutoResolve_ExplicitBaseNeitherLocalNorRemote: when --base
+// resolves neither locally nor as origin/<base>, the error names
+// both lookup attempts so the user knows what to fix.
+func TestAutoResolve_ExplicitBaseNeitherLocalNorRemote(t *testing.T) {
+	dir := t.TempDir()
+	initRepoWithFile(t, dir, "a.yaml", "base")
+	writeAndCommit(t, dir, "a.yaml", "pr-tip")
+
+	_, err := AutoResolve(dir, "nonexistent", cacheroot.Layout{})
+	if err == nil {
+		t.Fatal("expected error for unresolvable --base")
+	}
+	if !strings.Contains(err.Error(), "origin/nonexistent") {
+		t.Errorf("error should mention the remote fallback was tried: %v", err)
+	}
+}
+
 // TestAutoResolve_OriginMainFallback exercises the third rung: no
 // @{u}, no origin/HEAD, but origin/main exists.
 func TestAutoResolve_OriginMainFallback(t *testing.T) {

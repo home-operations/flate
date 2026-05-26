@@ -237,7 +237,7 @@ func resolveBaseline(_ context.Context, c *commonFlags, autoFallback bool) (func
 		return noop, err
 	}
 	c.pathOrig = res.PathOrig
-	slog.Debug("baseline", "source", res.Source, "rev", res.Rev, "pathOrig", res.PathOrig, "persistent", res.Persistent)
+	slog.Debug("baseline", "source", res.Source, "rev", res.Rev, "path_orig", res.PathOrig, "persistent", res.Persistent)
 	if res.Persistent {
 		return noop, nil
 	}
@@ -336,10 +336,10 @@ func (c *commonFlags) requireOutput(allowed ...format.Output) error {
 	if slices.Contains(allowed, format.Output(c.output)) {
 		return nil
 	}
-	names := make([]string, 0, len(allowed)+1)
-	names = append(names, string(format.OutputTable))
-	for _, a := range allowed {
-		names = append(names, string(a))
+	names := make([]string, len(allowed)+1)
+	names[0] = string(format.OutputTable)
+	for i, a := range allowed {
+		names[i+1] = string(a)
 	}
 	return fmt.Errorf("--output %q not supported by this subcommand (want one of: %s)",
 		c.output, strings.Join(names, ", "))

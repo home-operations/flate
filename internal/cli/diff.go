@@ -330,9 +330,6 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 	matched := 0
 	for _, obj := range objs {
 		id := obj.Named()
-		if id.Kind != kind {
-			continue
-		}
 		if name != "" && id.Name != name {
 			continue
 		}

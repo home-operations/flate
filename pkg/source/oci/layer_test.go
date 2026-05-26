@@ -192,28 +192,25 @@ func TestSafeJoinTarPath(t *testing.T) {
 	}
 }
 
-// TestApplyLayerSelector_MultiLayerAmbiguous regresses the silent-
-// pick-first behavior: when a manifest carries multiple layers and
-// no spec.layerSelector.mediaType is set, flate must NOT silently
-// pick layers[0] (could be the wrong layer — chart vs. cosign
-// signature vs. provenance). Matches Flux source-controller behavior.
-func TestApplyLayerSelector_MultiLayerAmbiguous(t *testing.T) {
+func TestApplyLayerSelector_DefaultsToFirstLayer(t *testing.T) {
 	slot := t.TempDir()
-	layerA := mustTarGz(t, map[string]string{"a.yaml": "kind: A\n"})
-	layerB := mustTarGz(t, map[string]string{"b.yaml": "kind: B\n"})
-	digA := writeBlob(t, slot, layerA)
-	digB := writeBlob(t, slot, layerB)
+	first := mustTarGz(t, map[string]string{"first.yaml": "kind: First\n"})
+	second := mustTarGz(t, map[string]string{"Chart.yaml": "apiVersion: v2\nname: x\nversion: 0.1.0\n"})
+	digFirst := writeBlob(t, slot, first)
+	digSecond := writeBlob(t, slot, second)
 	_, manifestDigest := writeManifest(t, slot, []ocispec.Descriptor{
-		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Digest: digA, Size: int64(len(layerA))},
-		{MediaType: "application/vnd.cncf.helm.chart.provenance.v1.prov", Digest: digB, Size: int64(len(layerB))},
+		{MediaType: "application/vnd.unknown", Digest: digFirst, Size: int64(len(first))},
+		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Digest: digSecond, Size: int64(len(second))},
 	})
 
-	err := applyLayerSelector(t.Context(), slot, manifestDigest.String(), nil)
-	if err == nil {
-		t.Fatal("expected ambiguous-layer error; got nil")
+	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(), nil); err != nil {
+		t.Fatalf("applyLayerSelector: %v", err)
 	}
-	if !strings.Contains(err.Error(), "layerSelector") {
-		t.Errorf("error should mention layerSelector as the fix; got: %v", err)
+	if _, err := os.Stat(filepath.Join(slot, "first.yaml")); err != nil {
+		t.Errorf("expected first layer extracted by default: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot, "Chart.yaml")); !os.IsNotExist(err) {
+		t.Errorf("default selection should not extract second layer, stat err=%v", err)
 	}
 }
 
@@ -240,12 +237,11 @@ func TestApplyLayerSelector_MultiLayerWithSelector(t *testing.T) {
 }
 
 // TestApplyLayerSelector_ZeroLayerCleansLayoutArtifacts pins the
-// zero-layer corner case: when an OCI manifest has no layers AND
-// no selector mediaType is requested, applyLayerSelector must
-// still wipe the OCI Image Layout artifacts (blobs/, oci-layout,
-// etc.) before returning nil. Without the cleanup, the next
-// reconcile's hasUnfinishedOCILayout sentinel fires → slot reset
-// → re-fetch → same zero-layer state → infinite loop.
+// zero-layer corner case: when an OCI manifest has no layers,
+// applyLayerSelector must still wipe the OCI Image Layout artifacts
+// (blobs/, oci-layout, etc.) before returning nil. Without the
+// cleanup, the next reconcile's hasUnfinishedOCILayout sentinel fires
+// → slot reset → re-fetch → same zero-layer state → infinite loop.
 //
 // The downstream chart consumer (helm) will surface a clear "no
 // recognizable chart layout" error against the empty slot — which

@@ -63,7 +63,7 @@ func effectiveLayerOperation(selector *manifest.OCILayerSelector) string {
 // Layout spec (see ociLayoutArtifacts). This function:
 //
 //   - Reads the manifest blob to find the layer matching
-//     selector.MediaType (or the single layer when no selector is set).
+//     selector.MediaType (or the first layer when no selector is set).
 //   - Stages the layer at slot/<stagedLayerFilename> so the layout
 //     wipe in the next step can't take open handles or user-tarball
 //     entries that collide with OCI well-known names down with it.
@@ -73,11 +73,6 @@ func effectiveLayerOperation(selector *manifest.OCILayerSelector) string {
 //   - For Operation = "copy", renames the staged layer to
 //     <copiedLayerFilename>.
 //   - Wipes the OCI Image Layout artifacts.
-//
-// When the selector is nil and the artifact has multiple layers, the
-// function errors rather than silently picking layers[0] — matches
-// Flux source-controller's "ambiguous selection" behavior and avoids
-// rendering the wrong layer for multi-layer artifacts.
 func applyLayerSelector(
 	_ context.Context,
 	slot string,
@@ -93,19 +88,11 @@ func applyLayerSelector(
 		}
 		return err
 	}
-	if len(man.Layers) > 1 && (selector == nil || selector.MediaType == "") {
-		mts := make([]string, len(man.Layers))
-		for i, l := range man.Layers {
-			mts[i] = l.MediaType
-		}
-		return fmt.Errorf("OCI artifact has %d layers but no spec.layerSelector.mediaType to disambiguate (layer mediaTypes: %v)",
-			len(man.Layers), mts)
-	}
 	layer, ok := pickLayer(man.Layers, selector)
 	if !ok {
-		if selector != nil && selector.MediaType != "" {
+		if len(man.Layers) > 0 {
 			return fmt.Errorf("no layer matched mediaType %q (manifest has %d layer(s))",
-				selector.MediaType, len(man.Layers))
+				layerMediaType(selector), len(man.Layers))
 		}
 		// Zero-layer artifact (no layers, no selector). Wipe the
 		// OCI Image Layout artifacts before returning — without

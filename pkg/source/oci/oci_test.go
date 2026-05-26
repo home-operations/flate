@@ -235,3 +235,28 @@ func TestShouldResolveOCISemver(t *testing.T) {
 		})
 	}
 }
+
+func TestLayerMediaTypeMatchesFluxEmptyDefault(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		selector *manifest.OCILayerSelector
+		want     string
+	}{
+		{"nil selector", nil, ""},
+		{"empty selector", &manifest.OCILayerSelector{}, ""},
+		{
+			"explicit selector",
+			&manifest.OCILayerSelector{MediaType: "application/vnd.cncf.flux.content.v1.tar+gzip"},
+			"application/vnd.cncf.flux.content.v1.tar+gzip",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := layerMediaType(tc.selector); got != tc.want {
+				t.Errorf("layerMediaType() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -93,10 +93,8 @@ func (r *Refs) Get(key string) (string, bool) {
 // to rebuild on the next reconcile, so the fsync barrier is not worth
 // the per-render I/O cost.
 func (r *Refs) Put(key, digest string) error {
-	unlockGC := RLockGC()
-	defer unlockGC()
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// MkdirAll is idempotent and safe to call without the mutex; moving
+	// it outside shrinks the critical section around the atomic rename.
 	if err := os.MkdirAll(r.dir, 0o750); err != nil {
 		return fmt.Errorf("refs dir: %w", err)
 	}
@@ -104,6 +102,10 @@ func (r *Refs) Put(key, digest string) error {
 	if err != nil {
 		return err
 	}
+	unlockGC := RLockGC()
+	defer unlockGC()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if err := atomic.WriteFile(final, []byte(digest), 0o600, false); err != nil {
 		return err
 	}

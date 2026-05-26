@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -77,6 +76,7 @@ func (s *Store) PutBytes(ctx context.Context, content []byte, filename string) (
 	sum := sha256.Sum256(content)
 	digest := hex.EncodeToString(sum[:])
 	dir := s.Path(digest)
+	parent := filepath.Dir(dir)
 
 	unlockGC := RLockGC()
 	defer unlockGC()
@@ -92,10 +92,10 @@ func (s *Store) PutBytes(ctx context.Context, content []byte, filename string) (
 		_ = os.Chtimes(dir, now, now)
 		return dir, digest, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
+	if err := os.MkdirAll(parent, 0o750); err != nil {
 		return "", "", fmt.Errorf("blob parent: %w", err)
 	}
-	staging, err := os.MkdirTemp(filepath.Dir(dir), filepath.Base(dir)+".tmp.*")
+	staging, err := os.MkdirTemp(parent, filepath.Base(dir)+".tmp.*")
 	if err != nil {
 		return "", "", fmt.Errorf("blob staging: %w", err)
 	}
@@ -116,15 +116,3 @@ func (s *Store) PutBytes(ctx context.Context, content []byte, filename string) (
 	}
 	return dir, digest, nil
 }
-
-// PutReader is the streaming variant of PutBytes. Useful when the
-// caller has an io.Reader but doesn't want to buffer the whole
-// artifact in memory.
-func (s *Store) PutReader(ctx context.Context, r io.Reader, filename string) (string, string, error) {
-	buf, err := io.ReadAll(r)
-	if err != nil {
-		return "", "", err
-	}
-	return s.PutBytes(ctx, buf, filename)
-}
-

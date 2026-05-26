@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -92,8 +93,8 @@ func ociRevision(ref manifest.OCIRepositoryRef, digest string) string {
 // Mirrors source-controller's `getTagBySemver` (ocirepository_controller.go).
 func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, expr, filterPattern, mediaType string) (string, error) {
 	var collected []string
-	if err := repoClient.Tags(ctx, "", func(tags []string) error {
-		collected = append(collected, tags...)
+	if err := repoClient.Tags(ctx, "", func(batch []string) error {
+		collected = append(collected, batch...)
 		return nil
 	}); err != nil {
 		return "", fmt.Errorf("list tags: %w", err)
@@ -117,7 +118,7 @@ func pickSemverTag(tags []string, expr, filterPattern, mediaType string) (string
 		}
 	}
 
-	var matching semver.Collection
+	matching := make(semver.Collection, 0, len(tags))
 	for _, tag := range tags {
 		if pattern != nil && !pattern.MatchString(tag) {
 			continue
@@ -133,14 +134,8 @@ func pickSemverTag(tags []string, expr, filterPattern, mediaType string) (string
 	if len(matching) == 0 {
 		return "", fmt.Errorf("no tag matched semver %q (filter %q)", expr, filterPattern)
 	}
-	// Highest match wins.
-	hi := 0
-	for i := 1; i < len(matching); i++ {
-		if matching[hi].LessThan(matching[i]) {
-			hi = i
-		}
-	}
-	return convertSemVerToOCITag(matching[hi].Original(), mediaType), nil
+	best := slices.MaxFunc(matching, (*semver.Version).Compare)
+	return convertSemVerToOCITag(best.Original(), mediaType), nil
 }
 
 const helmChartLayerMediaType = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"

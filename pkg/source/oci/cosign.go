@@ -220,7 +220,7 @@ func (f *Fetcher) loadCosignPublicKeys(repo *manifest.OCIRepository) ([]crypto.P
 	for k := range sec.Data {
 		seen[k] = struct{}{}
 	}
-	var keys []crypto.PublicKey
+	keys := make([]crypto.PublicKey, 0, len(seen))
 	for k := range seen {
 		s := source.StringFromSecret(sec, k)
 		if s == "" {

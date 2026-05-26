@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,12 +64,16 @@ func cachedDigestFresh(slot string, maxAge time.Duration) (string, bool) {
 	if maxAge <= 0 {
 		return "", false
 	}
-	path := filepath.Join(slot, cachedDigestFile)
-	info, err := os.Stat(path)
+	f, err := os.Open(filepath.Join(slot, cachedDigestFile)) //nolint:gosec // slot is fetcher-owned cache path
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
 	if err != nil || time.Since(info.ModTime()) > maxAge {
 		return "", false
 	}
-	b, err := os.ReadFile(path) //nolint:gosec // slot is fetcher-owned cache path
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return "", false
 	}

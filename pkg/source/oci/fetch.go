@@ -282,13 +282,9 @@ func ociResolveCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepository
 }
 
 func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, resolvedDigest string) string {
-	ignore := ""
+	var ignore string
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
-	}
-	mediaType := ""
-	if repo.LayerSelector != nil {
-		mediaType = repo.LayerSelector.MediaType
 	}
 	payload := struct {
 		Ref            string `json:"ref"`
@@ -297,7 +293,7 @@ func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, re
 		Ignore         string `json:"ignore,omitempty"`
 	}{
 		Ref:            cmp.Or(resolvedDigest, versionTag(ref), "latest"),
-		LayerMediaType: mediaType,
+		LayerMediaType: layerMediaType(repo.LayerSelector),
 		LayerOperation: effectiveLayerOperation(repo.LayerSelector),
 		Ignore:         ignore,
 	}

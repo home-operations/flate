@@ -12,6 +12,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // Result describes a materialized baseline tree on disk.
@@ -53,15 +55,15 @@ type resolution struct {
 // explicit --base=<rev> override; otherwise the auto-detection ladder
 // runs.
 //
-// cacheRoot enables content-addressed reuse: when non-empty the
-// baseline lands at <cacheRoot>/baselines/<commit-sha>/ and Result is
-// marked Persistent — subsequent runs against the same commit skip
-// materialization entirely. When cacheRoot is "" the legacy
+// layout enables content-addressed reuse: when layout.Root is non-
+// empty the baseline lands at layout.Baseline(commitSHA) and Result
+// is marked Persistent — subsequent runs against the same commit
+// skip materialization entirely. When layout.Root is "" the legacy
 // MkdirTemp path runs and the caller is responsible for cleanup.
 //
 // Errors carry the suggested next flag so the user knows whether to
 // pass --base=<rev> or --path-orig=<dir>.
-func AutoResolve(path, base, cacheRoot string) (*Result, error) {
+func AutoResolve(path, base string, layout cacheroot.Layout) (*Result, error) {
 	repo, repoRoot, err := openRepo(path)
 	if err != nil {
 		return nil, err
@@ -76,7 +78,7 @@ func AutoResolve(path, base, cacheRoot string) (*Result, error) {
 		return nil, err
 	}
 
-	dir, persistent, err := materializeAt(repo, r.Hash, cacheRoot)
+	dir, persistent, err := materializeAt(repo, r.Hash, layout)
 	if err != nil {
 		return nil, err
 	}
@@ -97,12 +99,12 @@ func AutoResolve(path, base, cacheRoot string) (*Result, error) {
 }
 
 // materializeAt produces the baseline tree on disk for hash and
-// returns (dir, persistent, err). When cacheRoot is non-empty the
-// directory lives at <cacheRoot>/baselines/<hash>/ and is reused
-// across runs; otherwise an MkdirTemp directory is allocated.
-func materializeAt(repo *git.Repository, hash plumbing.Hash, cacheRoot string) (string, bool, error) {
-	if cacheRoot != "" {
-		slot := filepath.Join(cacheRoot, "baselines", hash.String())
+// returns (dir, persistent, err). When layout.Root is non-empty the
+// directory lives at layout.Baseline(hash) and is reused across runs;
+// otherwise an MkdirTemp directory is allocated.
+func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.Layout) (string, bool, error) {
+	if layout.Root != "" {
+		slot := layout.Baseline(hash.String())
 		if info, err := os.Stat(slot); err == nil && info.IsDir() {
 			return slot, true, nil
 		}

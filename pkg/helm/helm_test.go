@@ -12,6 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func TestTemplate_LocalChart(t *testing.T) {
@@ -30,7 +31,7 @@ data:
   greeting: {{ .Values.greeting }}
 `)
 
-	cli, err := NewClient(t.TempDir(), t.TempDir())
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -72,7 +73,7 @@ func helmChartFixture(t *testing.T) *Client {
 	testutil.WriteFile(t, dir, "mychart/templates/test-hook.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-test\n  annotations:\n    \"helm.sh/hook\": test\ndata:\n  k: v\n")
 
-	cli, err := NewClient(t.TempDir(), t.TempDir())
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

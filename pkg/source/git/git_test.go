@@ -13,13 +13,14 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func TestFetcher_LocalFileURL(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := source.NewCache(t.TempDir())
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
@@ -56,7 +57,7 @@ func TestFetcher_RefByName(t *testing.T) {
 	mustInitRepo(t, src)
 	tagged := mustTagHEAD(t, src, "v0.1.0")
 
-	cache := source.NewCache(t.TempDir())
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{
@@ -80,7 +81,7 @@ func TestFetcher_RefByName_Unresolvable(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := source.NewCache(t.TempDir())
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{
@@ -107,7 +108,7 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 		"README.md":             "top-level",
 	})
 
-	cache := source.NewCache(t.TempDir())
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{
@@ -141,7 +142,7 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 	})
 
 	patterns := "*.tmp\ndocs/\n"
-	cache := source.NewCache(t.TempDir())
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{
@@ -173,7 +174,7 @@ func TestFetcher_CacheMarkerSurvivesIgnore(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := source.NewCache(t.TempDir())
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	patterns := "/*\n!/hello.txt\n"
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",

@@ -22,6 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // Store manages a content-addressed blob directory on disk. Safe for
@@ -29,22 +31,24 @@ import (
 // the same digest so two callers writing the same content don't race
 // on the rename finalize.
 type Store struct {
-	root string
+	layout cacheroot.Layout
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
 }
 
-// NewStore constructs a Store rooted at dir. The blobs/sha256/
-// substructure is created lazily on first write.
-func NewStore(dir string) *Store {
-	return &Store{root: dir}
+// NewStore constructs a Store backed by the supplied Layout. The
+// blob subtree is created lazily on first write; Layout's blob
+// path methods are the single source of truth for on-disk
+// positioning.
+func NewStore(layout cacheroot.Layout) *Store {
+	return &Store{layout: layout}
 }
 
 // Path returns the on-disk path for digest. Does not stat — callers
 // use Exists to check populated-ness.
 func (s *Store) Path(digest string) string {
-	return filepath.Join(s.root, "blobs", "sha256", digest)
+	return s.layout.Blob(digest)
 }
 
 // Exists reports whether a blob has been finalized for digest.

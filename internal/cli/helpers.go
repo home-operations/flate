@@ -17,6 +17,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -104,7 +105,7 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 	// (url, ref) slot can race past the mkdir/Readdirnames check and
 	// step on each other.
 	cacheRoot := cmp.Or(currentCfg.CacheDir, filepath.Join(os.TempDir(), "flate-cache"))
-	shared := source.NewCache(filepath.Join(cacheRoot, "sources"))
+	shared := source.NewCache(cacheroot.New(cacheRoot))
 	currentCfg.SourceCache = shared
 	origCfg.SourceCache = shared
 

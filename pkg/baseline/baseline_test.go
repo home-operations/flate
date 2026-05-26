@@ -11,6 +11,8 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // TestAutoResolve_ExplicitBase pins the --base=<rev> escape hatch: an
@@ -21,7 +23,7 @@ func TestAutoResolve_ExplicitBase(t *testing.T) {
 	commitA := initRepoWithFile(t, dir, "a.yaml", "original")
 	commitB := writeAndCommit(t, dir, "a.yaml", "updated")
 
-	res, err := AutoResolve(dir, commitA.String(), "")
+	res, err := AutoResolve(dir, commitA.String(), cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -60,7 +62,7 @@ func TestAutoResolve_UpstreamMergeBase(t *testing.T) {
 	// Move forward on the local branch.
 	writeAndCommit(t, dir, "a.yaml", "diverged")
 
-	res, err := AutoResolve(dir, "", "")
+	res, err := AutoResolve(dir, "", cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -91,7 +93,7 @@ func TestAutoResolve_OriginHEAD(t *testing.T) {
 
 	writeAndCommit(t, dir, "a.yaml", "new")
 
-	res, err := AutoResolve(dir, "", "")
+	res, err := AutoResolve(dir, "", cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -112,7 +114,7 @@ func TestAutoResolve_OriginMainFallback(t *testing.T) {
 
 	writeAndCommit(t, dir, "a.yaml", "new")
 
-	res, err := AutoResolve(dir, "", "")
+	res, err := AutoResolve(dir, "", cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -142,7 +144,7 @@ func TestAutoResolve_DetachedHEAD(t *testing.T) {
 		t.Fatalf("detach HEAD: %v", err)
 	}
 
-	res, err := AutoResolve(dir, "", "")
+	res, err := AutoResolve(dir, "", cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -159,7 +161,7 @@ func TestAutoResolve_NoGit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "f.yaml"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := AutoResolve(dir, "", "")
+	_, err := AutoResolve(dir, "", cacheroot.Layout{})
 	if err == nil {
 		t.Fatal("expected error for non-git path")
 	}
@@ -179,7 +181,7 @@ func TestAutoResolve_Shallow(t *testing.T) {
 	}
 	// No upstream, no origin refs → the resolution ladder falls
 	// through; the shallow detection fires last.
-	_, err := AutoResolve(dir, "", "")
+	_, err := AutoResolve(dir, "", cacheroot.Layout{})
 	if err == nil {
 		t.Fatal("expected shallow error")
 	}
@@ -196,7 +198,7 @@ func TestAutoResolve_Shallow(t *testing.T) {
 func TestAutoResolve_NoUpstream(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
-	_, err := AutoResolve(dir, "", "")
+	_, err := AutoResolve(dir, "", cacheroot.Layout{})
 	if err == nil {
 		t.Fatal("expected no-upstream error")
 	}
@@ -223,7 +225,7 @@ func TestAutoResolve_PathOutsideRepo(t *testing.T) {
 	if err := os.Mkdir(sibling, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	_, err := AutoResolve(sibling, "", "")
+	_, err := AutoResolve(sibling, "", cacheroot.Layout{})
 	if err == nil {
 		t.Fatal("expected error for path outside repo")
 	}
@@ -239,7 +241,7 @@ func TestAutoResolve_PathOrigMappedToSubdir(t *testing.T) {
 	commit := writeAndCommit(t, dir, "kubernetes/flux/cluster/cluster.yaml", "y")
 
 	clusterDir := filepath.Join(dir, "kubernetes", "flux", "cluster")
-	res, err := AutoResolve(clusterDir, commit.String(), "")
+	res, err := AutoResolve(clusterDir, commit.String(), cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -264,7 +266,7 @@ func TestAutoResolve_DropsGitMarker(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	commit := writeAndCommit(t, dir, "a.yaml", "y")
-	res, err := AutoResolve(dir, commit.String(), "")
+	res, err := AutoResolve(dir, commit.String(), cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -290,7 +292,7 @@ func TestAutoResolve_CachedReusesSlot(t *testing.T) {
 	commit := writeAndCommit(t, dir, "a.yaml", "y")
 	cacheRoot := t.TempDir()
 
-	res1, err := AutoResolve(dir, commit.String(), cacheRoot)
+	res1, err := AutoResolve(dir, commit.String(), cacheroot.New(cacheRoot))
 	if err != nil {
 		t.Fatalf("AutoResolve 1: %v", err)
 	}
@@ -308,7 +310,7 @@ func TestAutoResolve_CachedReusesSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res2, err := AutoResolve(dir, commit.String(), cacheRoot)
+	res2, err := AutoResolve(dir, commit.String(), cacheroot.New(cacheRoot))
 	if err != nil {
 		t.Fatalf("AutoResolve 2: %v", err)
 	}
@@ -327,7 +329,7 @@ func TestAutoResolve_NoCacheRootIsTempdir(t *testing.T) {
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	commit := writeAndCommit(t, dir, "a.yaml", "y")
 
-	res, err := AutoResolve(dir, commit.String(), "")
+	res, err := AutoResolve(dir, commit.String(), cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -367,7 +369,7 @@ func TestMaterialize_PreservesExecutableBit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := AutoResolve(dir, commit.String(), "")
+	res, err := AutoResolve(dir, commit.String(), cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}

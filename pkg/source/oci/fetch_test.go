@@ -20,6 +20,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // TestFetcher_ExtractsLayerWithoutTitleAnnotation regresses the silent
@@ -43,7 +44,7 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
-	f := &Fetcher{Cache: source.NewCache(t.TempDir())}
+	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
 	repo := &manifest.OCIRepository{
 		Name:      "flux-manifests",
 		Namespace: "flux-system",
@@ -100,7 +101,7 @@ func TestFetcher_PartialSlotInvalidated(t *testing.T) {
 	)
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
-	cache := source.NewCache(t.TempDir())
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	f := &Fetcher{Cache: cache}
 	repo := &manifest.OCIRepository{
 		Name:      "partial",
@@ -168,7 +169,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 	)
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
-	f := &Fetcher{Cache: source.NewCache(t.TempDir())}
+	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
 	repo := &manifest.OCIRepository{
 		Name:      "collider",
 		Namespace: "test",

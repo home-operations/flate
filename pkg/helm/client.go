@@ -1,7 +1,6 @@
 package helm
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/blob"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -119,11 +119,21 @@ type chartCacheEntry struct {
 	size  int64
 }
 
-// NewClient constructs a Client. tmpDir and cacheDir are used for
-// scratch chart downloads. Both will be created if absent.
-func NewClient(tmpDir, cacheDir string) (*Client, error) {
-	tmpDir = cmp.Or(tmpDir, filepath.Join(os.TempDir(), "flate-helm"))
-	cacheDir = cmp.Or(cacheDir, filepath.Join(os.TempDir(), "flate-helm-cache"))
+// NewClient constructs a Client backed by the supplied Layout. The
+// helm-tmp/ and helm-cache/ directories are taken from the Layout —
+// helm.Client never composes its own paths. The chart-tarball CAS is
+// rooted at the SHARED <root>/blobs/sha256/ blob store so identical
+// chart bytes deduplicate across HelmRepositories and across
+// orchestrator embedders.
+func NewClient(layout cacheroot.Layout) (*Client, error) {
+	if layout.Root == "" {
+		// Embedders that don't wire a cache root still need a working
+		// client. Anchor under the OS tempdir so the legacy default
+		// keeps working.
+		layout.Root = filepath.Join(os.TempDir(), "flate-cache")
+	}
+	tmpDir := layout.HelmTmp()
+	cacheDir := layout.HelmCache()
 	if err := os.MkdirAll(tmpDir, 0o750); err != nil {
 		return nil, err
 	}
@@ -141,8 +151,8 @@ func NewClient(tmpDir, cacheDir string) (*Client, error) {
 		chartCache:     map[string]chartCacheEntry{},
 		chartLoadLocks: keylock.New[string](),
 		indexLocks:     keylock.New[string](),
-		chartBlobs:     blob.NewStore(cacheDir),
-		chartRefs:      blob.NewRefs(filepath.Join(cacheDir, "refs", "chart-tarballs")),
+		chartBlobs:     blob.NewStore(layout),
+		chartRefs:      blob.NewRefs(layout, "chart-tarballs"),
 	}, nil
 }
 

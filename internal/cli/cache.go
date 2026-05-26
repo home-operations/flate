@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // newCacheCmd builds the `flate cache` subcommand tree. Today there's
@@ -50,8 +51,8 @@ Set --dry-run to see what would be removed without touching disk.`,
 			if f.maxAge < 0 {
 				return errors.New("--max-age must be non-negative")
 			}
-			root := c.resolveCacheRoot()
-			res, err := source.Sweep(root, source.SweepOpts{
+			layout := cacheroot.New(c.resolveCacheRoot())
+			res, err := source.Sweep(layout, source.SweepOpts{
 				MaxAge:         f.maxAge,
 				IncludeMirrors: f.includeMirrors,
 				DryRun:         f.dryRun,

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // SweepOpts tunes Sweep's behavior.
@@ -42,21 +44,21 @@ type SweepResult struct {
 	Errors []error
 }
 
-// Sweep prunes stale entries under root according to opts. Walks the
-// known per-cache subdirectories (sources/, baselines/, blobs/sha256/)
-// and removes top-level entries whose mtime is older than opts.MaxAge.
-// Dangling refs files whose digest no longer materializes in
-// blobs/sha256/ are removed regardless of age.
+// Sweep prunes stale entries from the cache root described by layout
+// according to opts. Walks the layout-managed subdirectories — sources,
+// baselines, blobs — and removes top-level entries whose mtime is older
+// than opts.MaxAge. Dangling refs files whose digest no longer
+// materializes in the blob store are removed regardless of age.
 //
-// Mirrors at <root>/git-mirrors are preserved by default; pass
+// Mirrors (layout.GitMirrors()) are preserved by default; pass
 // IncludeMirrors to age-prune them too.
 //
 // Returns a SweepResult with the (would-be-)removed paths and a count
 // of recoverable bytes. Individual I/O errors land in Result.Errors
 // rather than short-circuiting the sweep.
-func Sweep(root string, opts SweepOpts) (SweepResult, error) {
+func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 	var res SweepResult
-	if root == "" {
+	if layout.Root == "" {
 		return res, fmt.Errorf("sweep: empty cache root")
 	}
 	cutoff := time.Time{}
@@ -64,28 +66,38 @@ func Sweep(root string, opts SweepOpts) (SweepResult, error) {
 		cutoff = time.Now().Add(-opts.MaxAge)
 	}
 
-	ageRoots := []string{
-		filepath.Join(root, "sources"),
-		filepath.Join(root, "baselines"),
-		filepath.Join(root, "blobs", "sha256"),
+	// Each entry pairs a directory to sweep with the depth at which
+	// the age comparison applies. Sources land at <root>/sources/
+	// <slug>/<hash>/, so age comparison is two levels in; everything
+	// else compares mtime of the immediate child.
+	ageRoots := []struct {
+		dir   string
+		depth int
+	}{
+		{layout.Sources(), 2},
+		{layout.Baselines(), 1},
+		{layout.Blobs(), 1},
 	}
 	if opts.IncludeMirrors {
-		ageRoots = append(ageRoots, filepath.Join(root, "git-mirrors"))
+		ageRoots = append(ageRoots, struct {
+			dir   string
+			depth int
+		}{layout.GitMirrors(), 1})
 	}
-	for _, dir := range ageRoots {
-		sweepDirByAge(dir, cutoff, opts.DryRun, &res)
+	for _, ar := range ageRoots {
+		sweepDirByAge(ar.dir, ar.depth, cutoff, opts.DryRun, &res)
 	}
 
-	sweepDanglingRefs(filepath.Join(root, "refs"), root, opts.DryRun, &res)
+	sweepDanglingRefs(layout, opts.DryRun, &res)
 
 	return res, nil
 }
 
 // sweepDirByAge removes immediate-child entries of dir whose mtime is
-// older than cutoff. For sources/ this is one level deeper (slug/hash)
-// — we descend one extra level so the slug/ wrapper doesn't shield
-// stale hash slots from age comparison.
-func sweepDirByAge(dir string, cutoff time.Time, dryRun bool, res *SweepResult) {
+// older than cutoff. depth=1 compares mtime of dir's children;
+// depth=2 recurses one more level (sources/<slug>/<hash> — the slug
+// wrapper would otherwise shield stale hash slots from comparison).
+func sweepDirByAge(dir string, depth int, cutoff time.Time, dryRun bool, res *SweepResult) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -93,11 +105,9 @@ func sweepDirByAge(dir string, cutoff time.Time, dryRun bool, res *SweepResult) 
 		}
 		return
 	}
-	// sources/ has an extra slug/ level — recurse one deeper so the
-	// final hash dirs are the age targets.
-	if filepath.Base(dir) == "sources" {
+	if depth > 1 {
 		for _, e := range entries {
-			sweepDirByAge(filepath.Join(dir, e.Name()), cutoff, dryRun, res)
+			sweepDirByAge(filepath.Join(dir, e.Name()), depth-1, cutoff, dryRun, res)
 		}
 		return
 	}
@@ -126,11 +136,12 @@ func sweepDirByAge(dir string, cutoff time.Time, dryRun bool, res *SweepResult) 
 	}
 }
 
-// sweepDanglingRefs walks every file under refsRoot (recursively) and
-// removes entries whose stored digest no longer materializes a blob
-// under <cacheRoot>/blobs/sha256/. Refs files are tiny so we read
-// each one to compare.
-func sweepDanglingRefs(refsRoot, cacheRoot string, dryRun bool, res *SweepResult) {
+// sweepDanglingRefs walks every file under the layout's refs root
+// (recursively) and removes entries whose stored digest no longer
+// materializes a blob in the layout's blob store. Refs files are tiny
+// so we read each one to compare.
+func sweepDanglingRefs(layout cacheroot.Layout, dryRun bool, res *SweepResult) {
+	refsRoot := layout.RefsRoot()
 	_ = filepath.WalkDir(refsRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -171,7 +182,7 @@ func sweepDanglingRefs(refsRoot, cacheRoot string, dryRun bool, res *SweepResult
 			res.Errors = append(res.Errors, fmt.Errorf("refs %s: bogus digest %q", path, digest))
 			return nil
 		}
-		blobPath := filepath.Join(cacheRoot, "blobs", "sha256", digest)
+		blobPath := layout.Blob(digest)
 		if _, err := os.Stat(blobPath); err == nil { //nolint:gosec // digest gated by looksLikeDigest above
 			return nil
 		}

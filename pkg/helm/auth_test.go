@@ -8,10 +8,11 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func TestHelmRepoTLS_NoCertSecretIsNoOp(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -30,7 +31,7 @@ func TestHelmRepoTLS_NoCertSecretIsNoOp(t *testing.T) {
 }
 
 func TestHelmRepoTLS_FromSecret(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestHelmRepoTLS_FromSecret(t *testing.T) {
 }
 
 func TestHelmRepoTLS_AllKeysMissing(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -82,7 +83,7 @@ func TestHelmRepoTLS_AllKeysMissing(t *testing.T) {
 }
 
 func TestHelmRepoTLS_CertSecretNotFound(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestHelmRepoTLS_CertSecretNotFound(t *testing.T) {
 }
 
 func TestHelmRepoAuth_NoSecretIsAnonymous(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestHelmRepoAuth_NoSecretIsAnonymous(t *testing.T) {
 }
 
 func TestHelmRepoAuth_BasicAuthFromSecret(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -156,7 +157,7 @@ func TestHelmRepoAuth_BasicAuthFromSecret(t *testing.T) {
 }
 
 func TestHelmRepoAuth_MissingCreds(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -176,7 +177,7 @@ func TestHelmRepoAuth_MissingCreds(t *testing.T) {
 }
 
 func TestHelmRepoAuth_SecretWipedTreatedAsMissing(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -201,7 +202,7 @@ func TestHelmRepoAuth_SecretWipedTreatedAsMissing(t *testing.T) {
 }
 
 func TestHelmRepoAuth_NoGetter(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -218,7 +219,7 @@ func TestHelmRepoAuth_NoGetter(t *testing.T) {
 }
 
 func TestHelmRepoAuth_SecretNotFound(t *testing.T) {
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

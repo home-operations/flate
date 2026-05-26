@@ -9,10 +9,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func TestStore_PutBytesDigestPath(t *testing.T) {
-	s := NewStore(t.TempDir())
+	s := NewStore(cacheroot.New(t.TempDir()))
 	content := []byte("hello world")
 	dir, digest, err := s.PutBytes(content, "data.txt")
 	if err != nil {
@@ -36,7 +38,7 @@ func TestStore_PutBytesDigestPath(t *testing.T) {
 }
 
 func TestStore_SameContentSharesSlot(t *testing.T) {
-	s := NewStore(t.TempDir())
+	s := NewStore(cacheroot.New(t.TempDir()))
 	content := []byte("dedup me")
 	dir1, d1, err := s.PutBytes(content, "a.txt")
 	if err != nil {
@@ -55,7 +57,7 @@ func TestStore_SameContentSharesSlot(t *testing.T) {
 }
 
 func TestStore_ConcurrentPutsCoalesce(t *testing.T) {
-	s := NewStore(t.TempDir())
+	s := NewStore(cacheroot.New(t.TempDir()))
 	content := []byte("racy")
 	const goroutines = 16
 	var wg sync.WaitGroup

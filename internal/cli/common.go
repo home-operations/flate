@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 type commonFlags struct {
@@ -246,7 +247,7 @@ func resolveBaseline(_ context.Context, c *commonFlags, autoFallback bool) (func
 		// default).
 		return noop, nil
 	}
-	res, err := baseline.AutoResolve(c.path, c.base, c.resolveCacheRoot())
+	res, err := baseline.AutoResolve(c.path, c.base, cacheroot.New(c.resolveCacheRoot()))
 	if err != nil {
 		return noop, err
 	}

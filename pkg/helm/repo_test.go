@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"helm.sh/helm/v4/pkg/getter"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 const indexYAMLFixture = `apiVersion: v1
@@ -32,7 +33,7 @@ func TestFetchIndex_CachesAcrossCalls(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -68,7 +69,7 @@ func TestFetchIndex_DistinctKeysFetchSeparately(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(t.TempDir(), t.TempDir())
+	c, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // TestSweep_AgePrunesStaleSlots: a slot whose mtime is older than
@@ -27,7 +29,7 @@ func TestSweep_AgePrunesStaleSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Sweep(root, SweepOpts{MaxAge: 24 * time.Hour})
+	res, err := Sweep(cacheroot.New(root), SweepOpts{MaxAge: 24 * time.Hour})
 	if err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
@@ -60,7 +62,7 @@ func TestSweep_BaselinesAndBlobs(t *testing.T) {
 		}
 	}
 
-	res, _ := Sweep(root, SweepOpts{MaxAge: 24 * time.Hour})
+	res, _ := Sweep(cacheroot.New(root), SweepOpts{MaxAge: 24 * time.Hour})
 	if len(res.Removed) != 2 {
 		t.Errorf("Removed = %v, want 2 entries", res.Removed)
 	}
@@ -80,12 +82,12 @@ func TestSweep_MirrorsPreservedByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, _ := Sweep(root, SweepOpts{MaxAge: 24 * time.Hour})
+	res, _ := Sweep(cacheroot.New(root), SweepOpts{MaxAge: 24 * time.Hour})
 	if slices.Contains(res.Removed, mirror) {
 		t.Error("mirror swept without IncludeMirrors")
 	}
 
-	res, _ = Sweep(root, SweepOpts{MaxAge: 24 * time.Hour, IncludeMirrors: true})
+	res, _ = Sweep(cacheroot.New(root), SweepOpts{MaxAge: 24 * time.Hour, IncludeMirrors: true})
 	if !slices.Contains(res.Removed, mirror) {
 		t.Errorf("mirror not swept with IncludeMirrors: %v", res.Removed)
 	}
@@ -116,7 +118,7 @@ func TestSweep_DanglingRefsCleaned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, _ := Sweep(root, SweepOpts{})
+	res, _ := Sweep(cacheroot.New(root), SweepOpts{})
 	if !slices.Contains(res.Removed, dangling) {
 		t.Errorf("dangling ref not removed: %v", res.Removed)
 	}
@@ -138,7 +140,7 @@ func TestSweep_DryRunReports(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, _ := Sweep(root, SweepOpts{MaxAge: 24 * time.Hour, DryRun: true})
+	res, _ := Sweep(cacheroot.New(root), SweepOpts{MaxAge: 24 * time.Hour, DryRun: true})
 	if !slices.Contains(res.Removed, slot) {
 		t.Errorf("DryRun didn't report stale slot: %v", res.Removed)
 	}

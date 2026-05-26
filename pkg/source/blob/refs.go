@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // Refs is a tiny on-disk key→digest lookup table that sits beside the
@@ -26,10 +28,12 @@ type Refs struct {
 	mu  sync.Mutex
 }
 
-// NewRefs constructs a Refs table rooted at dir. The directory is
-// created lazily on first Put.
-func NewRefs(dir string) *Refs {
-	return &Refs{dir: dir}
+// NewRefs constructs a Refs table for one category under the supplied
+// Layout. category names a stable subdirectory under <root>/refs/
+// (e.g. "chart-tarballs") that GC and introspection tooling share with
+// the writer. The directory is created lazily on first Put.
+func NewRefs(layout cacheroot.Layout, category string) *Refs {
+	return &Refs{dir: layout.RefsCategory(category)}
 }
 
 // Get reads the digest stored under key, or returns ("", false) when

@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/bucket"
 	"github.com/home-operations/flate/pkg/source/external"
 	"github.com/home-operations/flate/pkg/source/git"
@@ -180,29 +181,26 @@ func New(cfg Config) (*Orchestrator, error) {
 		return nil, fmt.Errorf("orchestrator: path is required")
 	}
 
-	cacheRoot := cmp.Or(cfg.CacheDir, defaultCacheRoot())
-	helmClient, err := helm.NewClient(
-		filepath.Join(cacheRoot, "helm-tmp"),
-		filepath.Join(cacheRoot, "helm-cache"),
-	)
+	layout := cacheroot.New(cmp.Or(cfg.CacheDir, defaultCacheRoot()))
+	helmClient, err := helm.NewClient(layout)
 	if err != nil {
 		return nil, err
 	}
-	staging, err := kustomize.NewStagingCache(filepath.Join(cacheRoot, "stage"))
+	staging, err := kustomize.NewStagingCache(layout.Stage())
 	if err != nil {
-		// helmClient already created tmpDir + cacheDir under cacheRoot.
-		// Leaving them would leak a temp directory per failed
-		// orchestrator construction (e.g. retry-on-bad-config loops in
-		// a test harness). The helm client itself has no Close; the
-		// best-effort cleanup is to drop the cacheRoot we own.
-		_ = os.RemoveAll(filepath.Join(cacheRoot, "helm-tmp"))
-		_ = os.RemoveAll(filepath.Join(cacheRoot, "helm-cache"))
+		// helmClient already created tmpDir + cacheDir under the
+		// cache root. Leaving them would leak a temp directory per
+		// failed orchestrator construction (e.g. retry-on-bad-config
+		// loops in a test harness). The helm client itself has no
+		// Close; the best-effort cleanup is to drop the dirs we own.
+		_ = os.RemoveAll(layout.HelmTmp())
+		_ = os.RemoveAll(layout.HelmCache())
 		return nil, err
 	}
 
 	st := store.New()
 	ts := task.NewBounded(cfg.Concurrency)
-	cache := cmp.Or(cfg.SourceCache, source.NewCache(filepath.Join(cacheRoot, "sources")))
+	cache := cmp.Or(cfg.SourceCache, source.NewCache(layout))
 	secretGet := func(ns, name string) *manifest.Secret {
 		s, _ := store.GetByName[*manifest.Secret](st, manifest.KindSecret, ns, name)
 		return s
@@ -227,7 +225,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		manifest.KindGitRepository, &git.Fetcher{
 			Cache:   cache,
 			Secrets: secretGet,
-			Mirrors: git.NewMirrorCache(filepath.Join(cacheRoot, "git-mirrors")),
+			Mirrors: git.NewMirrorCache(layout),
 		})
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap[*manifest.ExternalArtifact](
 		manifest.KindExternalArtifact, &external.Fetcher{})

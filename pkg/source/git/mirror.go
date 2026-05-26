@@ -19,6 +19,7 @@ import (
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // MirrorCache holds one bare clone per unique upstream URL. The mirror
@@ -31,16 +32,17 @@ import (
 // path runs unchanged (used by tests and any caller that prefers the
 // older behavior).
 type MirrorCache struct {
-	root string
+	layout cacheroot.Layout
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
 }
 
-// NewMirrorCache constructs a MirrorCache rooted at dir. The directory
-// is created lazily on first openOrFetch.
-func NewMirrorCache(dir string) *MirrorCache {
-	return &MirrorCache{root: dir}
+// NewMirrorCache constructs a MirrorCache backed by the supplied
+// Layout. The git-mirrors subtree is created lazily on first
+// openOrFetch.
+func NewMirrorCache(layout cacheroot.Layout) *MirrorCache {
+	return &MirrorCache{layout: layout}
 }
 
 // urlHash returns the stable directory name for url's mirror. The hash
@@ -54,7 +56,7 @@ func urlHash(url string) string {
 }
 
 func (m *MirrorCache) pathFor(url string) string {
-	return filepath.Join(m.root, urlHash(url))
+	return m.layout.GitMirror(urlHash(url))
 }
 
 // lockFor returns the per-URL mutex, creating it on first access. Used

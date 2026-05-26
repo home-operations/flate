@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // TestCache_ResetSerializesAgainstSlot exercises the per-slot mutex
@@ -14,7 +16,7 @@ import (
 // complete without -race tripping. A regression that drops the lock
 // from Slot would fail under `go test -race`.
 func TestCache_ResetSerializesAgainstSlot(t *testing.T) {
-	c := NewCache(t.TempDir())
+	c := NewCache(cacheroot.New(t.TempDir()))
 	const goroutines = 16
 	const iterations = 32
 	var wg sync.WaitGroup
@@ -61,7 +63,7 @@ func TestCache_ResetSerializesAgainstSlot(t *testing.T) {
 // collision the previous Cache mutex (which guarded only allocation)
 // allowed.
 func TestCache_SlotSerializesSameKey(t *testing.T) {
-	c := NewCache(t.TempDir())
+	c := NewCache(cacheroot.New(t.TempDir()))
 	var firstReleased, secondAcquired atomic.Bool
 
 	// g1Entered closes when G1 has acquired the slot lock; g2Start
@@ -125,7 +127,7 @@ func TestCache_SlotSerializesSameKey(t *testing.T) {
 // must observe Exists=false. Without atomic rename, a torn fetch would
 // leak its partial directory and the next call would see it as a hit.
 func TestCache_SlotCommitAtomicRename(t *testing.T) {
-	c := NewCache(t.TempDir())
+	c := NewCache(cacheroot.New(t.TempDir()))
 
 	// First fetcher aborts after writing partial state.
 	slot, err := c.Slot("https://example.com/repo", "v1", "")
@@ -160,7 +162,7 @@ func TestCache_SlotCommitAtomicRename(t *testing.T) {
 // staging, Commit, Release, next Slot observes Exists=true with the
 // committed contents at Path.
 func TestCache_SlotCommitPersists(t *testing.T) {
-	c := NewCache(t.TempDir())
+	c := NewCache(cacheroot.New(t.TempDir()))
 
 	slot, err := c.Slot("https://example.com/repo", "v1", "")
 	if err != nil {
@@ -196,7 +198,7 @@ func TestCache_SlotCommitPersists(t *testing.T) {
 // otherwise the first fetch's clone is silently reused for the second
 // auth context, bypassing the access check.
 func TestCache_AuthIDIsolatesSlots(t *testing.T) {
-	c := NewCache(t.TempDir())
+	c := NewCache(cacheroot.New(t.TempDir()))
 	a, err := c.Slot("https://example.com/repo", "v1", "team-a/git-creds")
 	if err != nil {
 		t.Fatalf("Slot a: %v", err)
@@ -211,7 +213,7 @@ func TestCache_AuthIDIsolatesSlots(t *testing.T) {
 		t.Errorf("auth-keyed slots should differ, both got %q", a.Path)
 	}
 	// Empty authID must still collide with itself.
-	c2 := NewCache(t.TempDir())
+	c2 := NewCache(cacheroot.New(t.TempDir()))
 	x, err := c2.Slot("https://example.com/repo", "v1", "")
 	if err != nil {
 		t.Fatalf("Slot x: %v", err)
@@ -233,7 +235,7 @@ func TestCache_AuthIDIsolatesSlots(t *testing.T) {
 // rejected the cached digest). Reset wipes the final, Stage allocates
 // a fresh staging dir, write + Commit publishes the new contents.
 func TestCache_SlotResetThenStage(t *testing.T) {
-	c := NewCache(t.TempDir())
+	c := NewCache(cacheroot.New(t.TempDir()))
 
 	// Seed a committed slot.
 	slot, err := c.Slot("https://example.com/repo", "v1", "")

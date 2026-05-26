@@ -1,12 +1,13 @@
 package blob
 
 import (
-	"path/filepath"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func TestRefs_RoundTrip(t *testing.T) {
-	r := NewRefs(filepath.Join(t.TempDir(), "refs"))
+	r := NewRefs(cacheroot.New(t.TempDir()), "test")
 	if _, ok := r.Get("missing"); ok {
 		t.Error("unset key should miss")
 	}
@@ -20,7 +21,7 @@ func TestRefs_RoundTrip(t *testing.T) {
 }
 
 func TestRefs_OverwritePicksUpNewDigest(t *testing.T) {
-	r := NewRefs(filepath.Join(t.TempDir(), "refs"))
+	r := NewRefs(cacheroot.New(t.TempDir()), "test")
 	_ = r.Put("k", "old")
 	_ = r.Put("k", "new")
 	got, _ := r.Get("k")

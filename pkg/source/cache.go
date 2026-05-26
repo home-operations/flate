@@ -1,7 +1,6 @@
 package source
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // Cache manages a content-addressed on-disk directory for fetched
@@ -25,17 +26,24 @@ import (
 // (e.g. read an empty marker, call Reset, wipe the in-progress clone).
 // Different slots proceed in parallel.
 type Cache struct {
-	root string
-	mu   sync.Mutex // guards locks
+	layout cacheroot.Layout
+	mu     sync.Mutex // guards locks
 	// locks holds a sync.Mutex per slot path. Lazily created; never
 	// reaped — the slot count is bounded by user-declared sources.
 	locks map[string]*sync.Mutex
 }
 
-// NewCache constructs a Cache rooted at dir. If dir is empty, a
-// flate-cache subdirectory under os.TempDir() is used.
-func NewCache(dir string) *Cache {
-	return &Cache{root: cmp.Or(dir, filepath.Join(os.TempDir(), "flate-cache"))}
+// NewCache constructs a Cache backed by the supplied Layout. The
+// caller-owned Layout is the single source of truth for cache paths;
+// this Cache asks it for SourceSlot positions and never composes its
+// own. When the Layout's Root is empty, a flate-cache subdirectory
+// under os.TempDir() is used so embedders that don't wire CacheDir
+// still work.
+func NewCache(layout cacheroot.Layout) *Cache {
+	if layout.Root == "" {
+		layout.Root = filepath.Join(os.TempDir(), "flate-cache")
+	}
+	return &Cache{layout: layout}
 }
 
 // slotMu returns the per-slot mutex for path, creating it on first
@@ -82,7 +90,7 @@ func (c *Cache) Slot(url, ref, authID string) (*Slot, error) {
 	// Pass "" when the fetcher has no auth bound to this slot.
 	h := sha256.Sum256([]byte(url + "@" + ref + "#" + authID))
 	hash := hex.EncodeToString(h[:])[:16]
-	final := filepath.Join(c.root, "sources", slug, hash)
+	final := c.layout.SourceSlot(slug, hash)
 
 	m := c.slotMu(final)
 	m.Lock()
@@ -303,5 +311,8 @@ func slugifyRepo(url string) string {
 	if len(url) > maxSlugLen {
 		url = url[:maxSlugLen]
 	}
-	return cmp.Or(url, "repo")
+	if url == "" {
+		return "repo"
+	}
+	return url
 }

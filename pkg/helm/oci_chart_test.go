@@ -15,6 +15,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // TestLocateOCIChart_PrefersSourceArtifactExtract is the headline of
@@ -89,7 +90,7 @@ func TestLocateOCIChart_PrefersSourceArtifactCopy(t *testing.T) {
 func TestLocateOCIChart_FallsBackWhenNoArtifact(t *testing.T) {
 	t.Parallel()
 
-	cli, err := NewClient(t.TempDir(), t.TempDir())
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -145,7 +146,7 @@ func TestLocateOCIChart_FallsBackWhenNoArtifact(t *testing.T) {
 func TestLocateOCIChart_RoutesThroughPullerWhenWired(t *testing.T) {
 	t.Parallel()
 
-	cli, err := NewClient(t.TempDir(), t.TempDir())
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -295,7 +296,7 @@ func TestLocateOCIChart_AmbiguousSubdirs(t *testing.T) {
 func TestLocateOCIChart_FallbackSemverRefused(t *testing.T) {
 	t.Parallel()
 
-	cli, err := NewClient(t.TempDir(), t.TempDir())
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -351,7 +352,7 @@ func TestOCIChartPathFromArtifact_MissingLayer(t *testing.T) {
 // would have produced.
 func setupOCIChartTest(t *testing.T, slot, label string) (*Client, *manifest.HelmRelease) {
 	t.Helper()
-	cli, err := NewClient(t.TempDir(), t.TempDir())
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

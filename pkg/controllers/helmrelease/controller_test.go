@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -34,7 +35,7 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	t.Helper()
 	st := store.New()
 	ts := task.New()
-	hc, err := helm.NewClient(t.TempDir(), t.TempDir())
+	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
 	}

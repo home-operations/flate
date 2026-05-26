@@ -9,6 +9,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -46,7 +47,7 @@ data:
 		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
 	})
 
-	cli, err := helm.NewClient(t.TempDir(), t.TempDir())
+	cli, err := helm.NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

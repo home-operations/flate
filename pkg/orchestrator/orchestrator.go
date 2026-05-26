@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/secretgen"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -48,13 +49,11 @@ type Config struct {
 	// EnableOCI turns on OCIRepository reconciliation.
 	EnableOCI bool
 	// AllowMissingSecrets converts source auth-secret-not-found errors
-	// and generated HelmRelease valuesFrom Secret references into skips
-	// rather than failures. Use when secrets are materialized on the live
-	// cluster (ExternalSecret, SealedSecret, etc.) and can't appear in
-	// the offline tree. Skipped resources mark Ready with a "skipped:"
-	// reason; downstream KS / HR consumers propagate the skip so the
-	// dependency chain doesn't surface as a cascade of failures in
-	// `flate test`.
+	// into skips and synthesizes placeholder Secrets for ExternalSecret /
+	// SealedSecret outputs that only exist in the live cluster. Skipped
+	// source resources mark Ready with a "skipped:" reason; generated
+	// valuesFrom Secrets use placeholder data so HelmReleases can keep
+	// rendering offline.
 	AllowMissingSecrets bool
 
 	// RegistryConfig is the docker config.json used for OCI auth.
@@ -650,6 +649,27 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		o.failDependsOnCycles()
 	}, false)
 	defer unsubCycles()
+
+	if o.cfg.AllowMissingSecrets {
+		unsubGeneratedSecrets := o.store.AddListener(store.EventObjectAdded, func(_ manifest.NamedResource, payload any) {
+			raw, ok := payload.(*manifest.RawObject)
+			if !ok {
+				return
+			}
+			secret, ok := secretgen.FromRaw(raw)
+			if !ok {
+				return
+			}
+			if existing := o.store.GetByName(manifest.KindSecret, secret.Namespace, secret.Name); existing != nil {
+				return
+			}
+			slog.Debug("orchestrator: synthesized generated Secret",
+				"secret", secret.Named().String(),
+				"producer", raw.Named().String())
+			o.store.AddObject(secret)
+		}, false)
+		defer unsubGeneratedSecrets()
+	}
 
 	// Keep depwait's render-quiescence signal open while listener
 	// flushes submit the bootstrap objects. Without this marker, a

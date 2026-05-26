@@ -38,6 +38,7 @@ kind: Kustomization
 metadata:
   name: apps
   namespace: flux-system
+  labels: {app.kubernetes.io/name: apps}
 spec:
   interval: 10m
   path: ./apps
@@ -274,9 +275,44 @@ func TestRun_GetKS_NameFilter(t *testing.T) {
 	}
 }
 
+func TestRun_GetKS_NameFilter_NoMatch(t *testing.T) {
+	path := writeFixture(t)
+	_, stderr, code := runCLI(t, "get", "ks", "nonexistent", "--path", path)
+	if code == 0 {
+		t.Fatal("expected non-zero for nonexistent name on get")
+	}
+	if !strings.Contains(stderr, "nonexistent") {
+		t.Errorf("error should name the typo'd argument: %q", stderr)
+	}
+}
+
+func TestRun_GetKS_NameFilter_LabelMismatchIsEmpty(t *testing.T) {
+	path := writeFixture(t)
+	stdout, stderr, code := runCLI(t, "get", "ks", "apps", "--path", path, "-l", "app.kubernetes.io/name=other")
+	if code != 0 {
+		t.Fatalf("get ks apps with non-matching label exited %d: %s", code, stderr)
+	}
+	if strings.Contains(stderr, "no Kustomization named") {
+		t.Fatalf("name existed but label filter was reported as a missing name: %s", stderr)
+	}
+	if strings.Contains(stdout, "apps") {
+		t.Errorf("label mismatch should filter out apps:\n%s", stdout)
+	}
+}
+
+func TestRun_GetKS_NameFilter_NamespaceMismatchFails(t *testing.T) {
+	path := writeFixture(t)
+	_, stderr, code := runCLI(t, "get", "ks", "apps", "--path", path, "-n", "other")
+	if code == 0 {
+		t.Fatal("expected non-zero for name outside namespace scope")
+	}
+	if !strings.Contains(stderr, "apps") {
+		t.Errorf("error should name the scoped-out argument: %q", stderr)
+	}
+}
+
 // TestRun_BuildKS_NameFilter_NoMatch is the error path: typo name on
-// build should fail loud (the get verb is permissive — filters
-// silently — but build can't render a nonexistent target).
+// build should fail loud instead of rendering an empty target.
 func TestRun_BuildKS_NameFilter_NoMatch(t *testing.T) {
 	path := writeFixture(t)
 	_, stderr, code := runCLI(t, "build", "ks", "nonexistent", "--path", path)
@@ -393,6 +429,48 @@ func TestRun_TestAll_RespectsNamespace(t *testing.T) {
 	}
 }
 
+func TestRun_TestKS_NameFilter_NoMatch(t *testing.T) {
+	path := writeFixture(t)
+	_, stderr, code := runCLI(t, "test", "ks", "nonexistent", "--path", path)
+	if code == 0 {
+		t.Fatal("expected non-zero for nonexistent name on test")
+	}
+	if !strings.Contains(stderr, "nonexistent") {
+		t.Errorf("error should name the typo'd argument: %q", stderr)
+	}
+}
+
+func TestRun_TestAll_ReturnsStdoutWriteError(t *testing.T) {
+	path := writeFixture(t)
+	want := errors.New("stdout closed")
+	var stderr bytes.Buffer
+	code := Run([]string{"test", "all", "--path", path}, failingWriter{err: want}, &stderr)
+	if code == 0 {
+		t.Fatal("expected non-zero for stdout write failure")
+	}
+	if !strings.Contains(stderr.String(), want.Error()) {
+		t.Errorf("stderr should include writer error %q: %q", want, stderr.String())
+	}
+}
+
+func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
+	path := writeFixture(t)
+	if err := os.Remove(filepath.Join(path, "apps", "cm.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runCLI(t, "test", "all", "--path", path)
+	if code == 0 {
+		t.Fatal("expected non-zero for failed reconcile")
+	}
+	if !strings.Contains(stdout, "FAILED") {
+		t.Errorf("stdout should still include failed test row:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "reconcile completed") {
+		t.Errorf("stderr should preserve scoped run error, got %q", stderr)
+	}
+}
+
 // TestRun_TestAll_RejectsOutput covers test's new -o rejection
 // (test only emits plain-text).
 func TestRun_TestAll_RejectsOutput(t *testing.T) {
@@ -442,6 +520,19 @@ func TestRun_DiffKS_ExplicitDiffOutput(t *testing.T) {
 	_, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig, "-o", "diff")
 	if code != 0 {
 		t.Fatalf("diff ks -o diff exited %d: %s", code, stderr)
+	}
+}
+
+func TestRun_DiffKS_NameFilter_NoMatch(t *testing.T) {
+	current := writeFixture(t)
+	orig := t.TempDir()
+	copyTree(t, current, orig)
+	_, stderr, code := runCLI(t, "diff", "ks", "nonexistent", "--path", current, "--path-orig", orig)
+	if code == 0 {
+		t.Fatal("expected non-zero for nonexistent name on diff")
+	}
+	if !strings.Contains(stderr, "nonexistent") {
+		t.Errorf("error should name the typo'd argument: %q", stderr)
 	}
 }
 
@@ -651,3 +742,11 @@ func TestJoinRunErrors(t *testing.T) {
 type dummyErr struct{ s string }
 
 func (d *dummyErr) Error() string { return d.s }
+
+type failingWriter struct {
+	err error
+}
+
+func (w failingWriter) Write(_ []byte) (int, error) {
+	return 0, w.err
+}

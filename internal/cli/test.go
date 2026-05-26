@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -61,20 +62,27 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			// reconcile failures, so the runErr is informational here —
 			// the structured report is what the user reads. We still
 			// surface a non-zero exit on any failure.
+			name := firstArg(argv)
 			report := testrunner.Run(testrunner.Job{
 				Store: o.Store(),
 				Kinds: kinds,
-				Name:  firstArg(argv),
+				Name:  name,
 				Include: func(id manifest.NamedResource) bool {
 					return c.includeNamespace(o.Filter(), id.Namespace)
 				},
 			})
-			report.ShowSkipped = showSkipped
-			report.Write(cmd.OutOrStdout())
-			if report.AnyFailed() {
-				return errors.New("test failures detected")
+			runErr = scopedRunError(o, res, c, runErr)
+			if name != "" && report.Matched == 0 {
+				return errors.Join(fmt.Errorf("no %s named %q in --path", testKindName(kinds), name), runErr)
 			}
-			return scopedRunError(o, res, c, runErr)
+			report.ShowSkipped = showSkipped
+			if err := report.Write(cmd.OutOrStdout()); err != nil {
+				return errors.Join(err, runErr)
+			}
+			if report.AnyFailed() {
+				return errors.Join(errors.New("test failures detected"), runErr)
+			}
+			return runErr
 		},
 	}
 	bindCommon(cmd.Flags(), c)
@@ -82,4 +90,11 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		"include SKIPPED resources in the per-resource listing (changed-only mode hides them by default to mirror `flate diff`)")
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
+}
+
+func testKindName(kinds []string) string {
+	if len(kinds) == 1 {
+		return kinds[0]
+	}
+	return "resource"
 }

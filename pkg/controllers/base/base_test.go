@@ -129,3 +129,24 @@ func TestRunWithStatus_PreservesInformativeReadyMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestRunWithStatus_PreservesExternalFailure(t *testing.T) {
+	s := store.New()
+	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+	s.AddObject(hr)
+	id := hr.Named()
+
+	base.RunWithStatus(t.Context(), s, id, "helmrelease",
+		func(_ context.Context, _ *manifest.HelmRelease) error {
+			s.UpdateStatus(id, store.StatusFailed, "dependency cycle detected")
+			return nil
+		},
+	)
+	got, _ := s.GetStatus(id)
+	if got.Status != store.StatusFailed {
+		t.Errorf("status = %v, want Failed", got.Status)
+	}
+	if got.Message != "dependency cycle detected" {
+		t.Errorf("external failure message was clobbered: %q", got.Message)
+	}
+}

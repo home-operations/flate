@@ -37,6 +37,9 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 	}
 	switch {
 	case ref.Commit != "":
+		if err := validateCommitBranch(repo, plumbing.NewHash(ref.Commit), ref.Branch); err != nil {
+			return err
+		}
 		return checkout(func(o *git.CheckoutOptions) { o.Hash = plumbing.NewHash(ref.Commit) })
 	case ref.Name != "":
 		// Full ref name takes precedence (e.g. "refs/pull/420/head",

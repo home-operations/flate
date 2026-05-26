@@ -77,17 +77,10 @@ func (o *Orchestrator) finalize() error {
 
 // cascadeParentFailures downgrades render-emitted children whose
 // ancestor (via renderedSet.ParentOf) ended up Failed. Closes a race
-// window where a parent KS's first reconcile transiently sets Ready
-// (validateDependsOn dropped a dangling dep at Bootstrap; reconcile
-// passes; renders; emits children; sets Ready), then a sibling
-// parent's render re-emits the parent with the dropped dep
-// restored, the second reconcile fails, and the children that
-// already observed the brief Ready window have proceeded to their
-// own Ready state. Without this cascade, dependents that raced past
-// their parent gate stay Ready in the final report even though the
-// parent is Failed — producing the "sometimes only the KS fails,
-// sometimes both fail" non-determinism users hit on typo'd
-// dependsOn.
+// window where a parent KS's first reconcile sets Ready, emits
+// children, and then a later re-emission of that parent fails. Without
+// this cascade, dependents that already passed their parent gate stay
+// Ready in the final report even though the parent is Failed.
 //
 // Walks the ParentOf chain per child so a deep render tree (grand-
 // parent → parent → child) propagates failures all the way down in

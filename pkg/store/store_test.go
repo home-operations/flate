@@ -72,6 +72,26 @@ func TestStore_AddObject_CloneTriggersUpdate(t *testing.T) {
 	}
 }
 
+func TestStore_AddObjectsDispatchesAfterAllWrites(t *testing.T) {
+	s := New()
+	a := newCM("a", "ns")
+	b := newCM("b", "ns")
+	idA := a.Named()
+	idB := b.Named()
+
+	var sawBOnA bool
+	s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id == idA {
+			sawBOnA = s.GetObject(idB) != nil
+		}
+	}, false)
+
+	s.AddObjects([]manifest.BaseManifest{a, b})
+	if !sawBOnA {
+		t.Fatal("listener for first object did not see later batch sibling")
+	}
+}
+
 func TestStore_AddListener_Flush(t *testing.T) {
 	s := New()
 	s.AddObject(newCM("a", "ns"))
@@ -691,10 +711,11 @@ func TestStore_AddRendered_DispatchesListeners(t *testing.T) {
 // listener registered with flush=false against a hot writer doesn't
 // miss the next live event. Pre-fix, the non-flush branch took
 // set.mu but not s.mu, so a writer could:
-//   1. Lock s.mu, mutate store.
-//   2. Capture set.snapshot() under set.mu (independent of s.mu).
-//   3. Release s.mu.
-//   4. Dispatch to the pre-add snapshot.
+//  1. Lock s.mu, mutate store.
+//  2. Capture set.snapshot() under set.mu (independent of s.mu).
+//  3. Release s.mu.
+//  4. Dispatch to the pre-add snapshot.
+//
 // while the registrar slid set.add(fn) between steps 2 and 4. fn
 // silently misses the live event. Holding s.mu around set.add
 // closes the window. Test races N writers against AddListener and
@@ -704,10 +725,10 @@ func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
 	s := New()
 	const writers = 64
 	var (
-		writerWG sync.WaitGroup
+		writerWG      sync.WaitGroup
 		registerReady = make(chan struct{})
-		registered = make(chan struct{})
-		seen atomic.Int64
+		registered    = make(chan struct{})
+		seen          atomic.Int64
 	)
 	// Pre-populate so AddObject takes the "update existing" path
 	// uniformly — keeps test deterministic.

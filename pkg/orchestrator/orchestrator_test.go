@@ -3,9 +3,12 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -191,6 +194,78 @@ data: {k: v}
 	}
 }
 
+func TestOrchestrator_DependsOnCanArriveFromRenderedKustomization(t *testing.T) {
+	dir := t.TempDir()
+	produced := `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: produced
+  namespace: flux-system
+spec:
+  path: ./produced
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(produced))
+	}))
+	t.Cleanup(srv.Close)
+	testutil.WriteFile(t, dir, "flux/producer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: producer
+  namespace: flux-system
+spec:
+  path: ./producer
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "flux/consumer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: flux-system
+spec:
+  path: ./consumer
+  dependsOn:
+    - name: produced
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "producer/kustomization.yaml", "resources:\n- "+srv.URL+"/produced.yaml\n")
+	testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, dir, "consumer/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: consumer}
+data: {k: v}
+`)
+	testutil.WriteFile(t, dir, "produced/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, dir, "produced/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: produced}
+data: {k: v}
+`)
+
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	consumerID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "consumer"}
+	if msg, ok := o.preflightFailure(consumerID); ok {
+		t.Fatalf("consumer should wait for rendered dependency, not fail preflight: %s", msg)
+	}
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, name := range []string{"produced", "consumer"} {
+		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		info, ok := o.Store().GetStatus(id)
+		if !ok || info.Status != store.StatusReady {
+			t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
+		}
+	}
+}
+
 func TestOrchestrator_RunReturnsContextCancellation(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -223,6 +298,56 @@ data: {k: v}
 	cancel()
 	if err := o.Run(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run with pre-canceled context = %v, want context.Canceled", err)
+	}
+}
+
+func TestExpandResourceSetsPostRun_ReturnsRenderError(t *testing.T) {
+	parent := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+	}
+	rs := &manifest.ResourceSet{
+		Name: "broken", Namespace: "flux-system",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: << inputs.nonexistent >>
+`,
+		},
+	}
+	o := &Orchestrator{
+		store:    store.New(),
+		rendered: newRenderedSet(),
+		sourceFiles: map[manifest.NamedResource]string{
+			rs.Named(): "apps/resourceset.yaml",
+		},
+	}
+	o.store.AddObject(parent)
+	o.store.AddObject(rs)
+
+	err := o.expandResourceSetsPostRun(context.Background())
+	if err == nil {
+		t.Fatal("expected ResourceSet render error")
+	}
+	if !strings.Contains(err.Error(), "ResourceSet/flux-system/broken") {
+		t.Fatalf("error should identify ResourceSet: %v", err)
+	}
+	info, ok := o.store.GetStatus(rs.Named())
+	if !ok || info.Status != store.StatusFailed {
+		t.Fatalf("ResourceSet status = (%+v, %v), want Failed", info, ok)
+	}
+}
+
+func TestExpandResourceSetsPostRun_RespectsCanceledContext(t *testing.T) {
+	rs := &manifest.ResourceSet{Name: "apps", Namespace: "flux-system"}
+	o := &Orchestrator{store: store.New()}
+	o.store.AddObject(rs)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := o.expandResourceSetsPostRun(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expandResourceSetsPostRun canceled = %v, want context.Canceled", err)
 	}
 }
 

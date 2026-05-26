@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -134,7 +135,7 @@ func rewriteURLResources(ctx context.Context, cache *StagingCache, ksFile string
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ksFile, out, 0o600)
+	return writeStagedFile(ksFile, out, 0o600)
 }
 
 // findMappingValue returns the value node for the first mapping
@@ -179,6 +180,13 @@ func fetchRemoteResource(ctx context.Context, cache *StagingCache, dir, urlStr s
 		return "", err
 	}
 	return name, nil
+}
+
+func writeStagedFile(path string, data []byte, mode fs.FileMode) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return os.WriteFile(path, data, mode) //nolint:gosec // path is inside flate's staged copy
 }
 
 // httpGetURL is the actual network call cache.FetchRemote dispatches

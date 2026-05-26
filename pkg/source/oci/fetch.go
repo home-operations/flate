@@ -3,7 +3,10 @@ package oci
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -85,12 +88,16 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 
 	versioned := versionedURL(repo.URL, ref)
-	slot, err := cache.Slot(ctx, versioned, "", authIdentity(repo))
+	slotRef := ociCacheKey(repo, ref)
+	if !canUseCachedOCISlot(ref) {
+		slotRef = source.MutableCacheKey(slotRef)
+	}
+	slot, err := cache.Slot(ctx, repo.URL, slotRef, authIdentity(repo))
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}
 	defer slot.Release()
-	if slot.Exists {
+	if slot.Exists && canUseCachedOCISlot(ref) {
 		artifact, hit, hitErr := f.checkCacheHit(ctx, repoClient, repo, slot.Path, ref, versioned)
 		if hitErr != nil {
 			_ = slot.Reset()
@@ -100,6 +107,13 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 			return artifact, nil
 		}
 		// Reset + restage for a fresh pull.
+		if err := slot.Reset(); err != nil {
+			return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
+		}
+		if err := slot.Stage(); err != nil {
+			return nil, fmt.Errorf("cache stage for %s: %w", versioned, err)
+		}
+	} else if slot.Exists {
 		if err := slot.Reset(); err != nil {
 			return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
 		}
@@ -196,6 +210,39 @@ func ociArtifact(repo *manifest.OCIRepository, localPath string, ref manifest.OC
 		Digest:    digest,
 		Size:      size,
 	}
+}
+
+func canUseCachedOCISlot(ref manifest.OCIRepositoryRef) bool {
+	return ref.Digest != ""
+}
+
+func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) string {
+	ignore := ""
+	if repo.Ignore != nil {
+		ignore = *repo.Ignore
+	}
+	mediaType := ""
+	if repo.LayerSelector != nil {
+		mediaType = repo.LayerSelector.MediaType
+	}
+	payload := struct {
+		Ref            string `json:"ref"`
+		LayerMediaType string `json:"layerMediaType,omitempty"`
+		LayerOperation string `json:"layerOperation,omitempty"`
+		Ignore         string `json:"ignore,omitempty"`
+	}{
+		Ref:            cmp.Or(versionTag(ref), "latest"),
+		LayerMediaType: mediaType,
+		LayerOperation: effectiveLayerOperation(repo.LayerSelector),
+		Ignore:         ignore,
+	}
+	return payload.Ref + "#opts:" + ociCacheKeyHash(payload)
+}
+
+func ociCacheKeyHash(v any) string {
+	b, _ := json.Marshal(v)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
 }
 
 // checkCacheHit applies the cache-hit gauntlet to a populated slot:

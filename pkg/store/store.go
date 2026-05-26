@@ -99,6 +99,38 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 	dispatch()
 }
 
+// AddObjects inserts multiple manifests, then dispatches their events
+// after every changed object is visible in the store. Use this when a
+// render emits a coherent sibling set whose listeners need the whole
+// set before reacting.
+func (s *Store) AddObjects(objs []manifest.BaseManifest) {
+	if len(objs) == 0 {
+		return
+	}
+	type event struct {
+		id  manifest.NamedResource
+		obj manifest.BaseManifest
+	}
+	s.mu.Lock()
+	events := make([]event, 0, len(objs))
+	for _, obj := range objs {
+		id := obj.Named()
+		if cur, ok := s.objects[id]; ok && reflect.DeepEqual(cur, obj) {
+			continue
+		}
+		s.setLocked(id, obj)
+		events = append(events, event{id: id, obj: obj})
+	}
+	dispatches := make([]func(), 0, len(events))
+	for _, e := range events {
+		dispatches = append(dispatches, s.fireUnderLock(EventObjectAdded, e.id, e.obj))
+	}
+	s.mu.Unlock()
+	for _, dispatch := range dispatches {
+		dispatch()
+	}
+}
+
 // setLocked is the single funnel for inserting an object into both
 // the primary `objects` map and the secondary `byName` index. Three
 // write paths (AddObject, AddRendered, future renames) must keep
@@ -186,10 +218,10 @@ type Cloneable[T any] interface {
 // clone-then-AddObject. Returns false when no object of type T is
 // stored under id (no-op).
 //
-// Use this for any post-load mutation — validateDependsOn pruning,
-// namespace-inheritance rewrites, alias seeding. Listeners fire as
-// they would on a fresh AddObject (intentionally — downstream
-// controllers re-reconcile against the mutated spec).
+// Use this for any post-load mutation such as namespace-inheritance
+// rewrites or alias seeding. Listeners fire as they would on a fresh
+// AddObject (intentionally — downstream controllers re-reconcile
+// against the mutated spec).
 func Mutate[T interface {
 	manifest.BaseManifest
 	Cloneable[T]
@@ -310,4 +342,3 @@ func (s *Store) ListObjects(kind string) []manifest.BaseManifest {
 	}
 	return out
 }
-

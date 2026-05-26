@@ -556,6 +556,75 @@ func TestRender_MissingKeyErrors(t *testing.T) {
 	}
 }
 
+func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "apps", Namespace: "flux-system",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			InputsFrom: []fluxopv1.InputProviderReference{{
+				Kind: manifest.KindResourceSetInputProvider, Name: "branches",
+			}},
+			Resources: []*apix.JSON{
+				jsonTmpl(t, `{
+					"apiVersion": "v1", "kind": "ConfigMap",
+					"metadata": {"name": "<< inputs.name >>", "namespace": "flux-system"},
+					"data": {"id": "<< inputs.id >>"}
+				}`),
+			},
+		},
+	}
+	rsip := &manifest.ResourceSetInputProvider{
+		Name: "branches", Namespace: "flux-system",
+		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
+			Type: fluxopv1.InputProviderGitHubBranch,
+		},
+		Status: fluxopv1.ResourceSetInputProviderStatus{
+			ExportedInputs: []fluxopv1.ResourceSetInput{{
+				"name": jsonTmpl(t, `"feature-a"`),
+				"id":   jsonTmpl(t, `"status-id"`),
+			}},
+		},
+	}
+
+	docs, err := resourceset.Render(rs, func(fluxopv1.InputProviderReference, string) ([]*manifest.ResourceSetInputProvider, error) {
+		return []*manifest.ResourceSetInputProvider{rsip}, nil
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected one status-exported doc, got %d", len(docs))
+	}
+	if docs[0]["metadata"].(map[string]any)["name"] != "feature-a" {
+		t.Fatalf("status exported name not used: %+v", docs[0])
+	}
+	if docs[0]["data"].(map[string]any)["id"] != "status-id" {
+		t.Fatalf("status exported id should be preserved: %+v", docs[0])
+	}
+}
+
+func TestResourceSetInputProvider_StatusExportedInputsOverrideDerivedID(t *testing.T) {
+	rsip := &manifest.ResourceSetInputProvider{
+		Name: "static", Namespace: "flux-system",
+		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
+			Type:          fluxopv1.InputProviderStatic,
+			DefaultValues: fluxopv1.ResourceSetInput{"id": jsonTmpl(t, `"default-id"`)},
+		},
+		Status: fluxopv1.ResourceSetInputProviderStatus{
+			ExportedInputs: []fluxopv1.ResourceSetInput{{
+				"id": jsonTmpl(t, `"exported-id"`),
+			}},
+		},
+	}
+
+	inputs, err := rsip.ExportedInputs()
+	if err != nil {
+		t.Fatalf("ExportedInputs: %v", err)
+	}
+	if len(inputs) != 1 || inputs[0]["id"] != "exported-id" {
+		t.Fatalf("status exported id should win, got %+v", inputs)
+	}
+}
+
 // TestRender_MalformedTemplateErrors surfaces a parse error rather than
 // silently swallowing the broken template.
 func TestRender_MalformedTemplateErrors(t *testing.T) {

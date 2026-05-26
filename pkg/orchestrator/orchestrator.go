@@ -9,7 +9,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -141,6 +140,14 @@ type Orchestrator struct {
 	// from genuine successes. Keyed by id, value is the original
 	// failure message.
 	orphans map[manifest.NamedResource]string
+
+	// preflightFailures records dependency cycles found before a
+	// controller renders the resource. Controllers consult it from
+	// their object listeners and mark the resource Failed instead of
+	// waiting on a graph that cannot converge.
+	cycleMu           sync.Mutex
+	preflightMu       sync.RWMutex
+	preflightFailures map[manifest.NamedResource]string
 
 	// rsExtensions holds non-Flux docs produced by ResourceSet renders,
 	// keyed by the owning structural-parent Kustomization. Populated
@@ -320,10 +327,8 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.parentOf = res.ParentOf
 	o.existence = res.Existence
 
-	o.validateDependsOn()
-	o.breakDependsOnCycles()
+	o.failDependsOnCycles()
 	o.warnOnDisabledOCIFeatures()
-	o.warnOnUnsupportedHelmRepoSecretRef()
 	o.warnOnKSOCISourceRefWithoutOCI()
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err
@@ -373,32 +378,6 @@ func (o *Orchestrator) warnOnDisabledOCIFeatures() {
 	}
 }
 
-// warnOnUnsupportedHelmRepoSecretRef surfaces the OCI-HelmRepository
-// + SecretRef gap at bootstrap. The helm-side
-// locateHelmRepoChart hard-errors at render time on this combo
-// (see pkg/helm/repo.go) — by then the user is one helm template
-// failure deep into a reconcile pass with a non-obvious "not yet
-// implemented" message. Warn up front so the operator can switch
-// the manifests to OCIRepository CRs (the recommended workaround)
-// before iterating.
-//
-// Triggered for any HelmRepository whose spec.type is "oci" OR
-// whose URL starts with `oci://` AND has a SecretRef — matches
-// the render-time check exactly.
-func (o *Orchestrator) warnOnUnsupportedHelmRepoSecretRef() {
-	for _, repo := range store.ListAs[*manifest.HelmRepository](o.store, manifest.KindHelmRepository) {
-		if repo.SecretRef == nil {
-			continue
-		}
-		if repo.Type != manifest.RepoTypeOCI && !strings.HasPrefix(repo.URL, "oci://") {
-			continue
-		}
-		slog.Warn("HelmRepository: SecretRef on OCI HelmRepositories is not yet implemented and will fail at render time; reference the chart via a sibling OCIRepository CR instead",
-			"helmRepository", repo.Namespace+"/"+repo.Name,
-			"url", repo.URL)
-	}
-}
-
 // warnOnKSOCISourceRefWithoutOCI surfaces the EnableOCI=false +
 // KS-sourceRef=OCIRepository combo at bootstrap. Without OCI
 // reconciliation, source/ExistenceFetcher gives the OCIRepository a
@@ -422,38 +401,31 @@ func (o *Orchestrator) warnOnKSOCISourceRefWithoutOCI() {
 	}
 }
 
-// validateDependsOn drops dangling dependsOn references on both
-// Kustomizations and HelmReleases so the dependency-wait phase fails
-// fast on typos instead of stalling out the full per-dep budget.
-func (o *Orchestrator) validateDependsOn() {
-	known := map[string]map[string]struct{}{
-		manifest.KindKustomization: {},
-		manifest.KindHelmRelease:   {},
-	}
-	ksList := store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization)
-	for _, ks := range ksList {
-		known[manifest.KindKustomization][ks.Named().NamespacedName()] = struct{}{}
-	}
-	hrList := store.ListAs[*manifest.HelmRelease](o.store, manifest.KindHelmRelease)
-	for _, hr := range hrList {
-		known[manifest.KindHelmRelease][hr.Named().NamespacedName()] = struct{}{}
-	}
-	// Mutate via the Store helper — encodes the clone-then-AddObject
-	// contract so callers don't have to remember it.
-	for _, ks := range ksList {
-		kept, dropped := manifest.FilterDependsOn(ks.DependsOn, known[manifest.KindKustomization])
-		if dropped == 0 {
-			continue
+func (o *Orchestrator) replacePreflightFailures(failures map[manifest.NamedResource]string) []manifest.NamedResource {
+	o.preflightMu.Lock()
+	defer o.preflightMu.Unlock()
+	var cleared []manifest.NamedResource
+	for id := range o.preflightFailures {
+		if _, stillFailed := failures[id]; !stillFailed {
+			cleared = append(cleared, id)
 		}
-		store.Mutate(o.store, ks.Named(), func(k *manifest.Kustomization) { k.DependsOn = kept })
 	}
-	for _, hr := range hrList {
-		kept, dropped := manifest.FilterDependsOn(hr.DependsOn, known[manifest.KindHelmRelease])
-		if dropped == 0 {
-			continue
-		}
-		store.Mutate(o.store, hr.Named(), func(h *manifest.HelmRelease) { h.DependsOn = kept })
+	if len(failures) == 0 {
+		o.preflightFailures = nil
+		return cleared
 	}
+	o.preflightFailures = make(map[manifest.NamedResource]string, len(failures))
+	for id, msg := range failures {
+		o.preflightFailures[id] = msg
+	}
+	return cleared
+}
+
+func (o *Orchestrator) preflightFailure(id manifest.NamedResource) (string, bool) {
+	o.preflightMu.RLock()
+	defer o.preflightMu.RUnlock()
+	msg, ok := o.preflightFailures[id]
+	return msg, ok
 }
 
 // buildChangeFilter computes the file-level change set (if changed-only
@@ -641,45 +613,58 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}
 	renders := &orchestratorRenderInflight{tasks: o.tasks}
 	o.ksc.Configure(kustomization.Options{
-		Filter:        o.filter,
-		ParentOf:      parentResolver,
-		RenderTracker: o.rendered,
-		Existence:     existence,
-		Renders:       renders,
+		Filter:           o.filter,
+		ParentOf:         parentResolver,
+		RenderTracker:    o.rendered,
+		Existence:        existence,
+		Renders:          renders,
+		PreflightFailure: o.preflightFailure,
 	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
-		Filter:    o.filter,
-		ParentOf:  parentResolver,
-		Existence: existence,
-		Renders:   renders,
+		Filter:           o.filter,
+		ParentOf:         parentResolver,
+		Existence:        existence,
+		Renders:          renders,
+		PreflightFailure: o.preflightFailure,
 	})
 	// Re-detect dependsOn cycles when render-emitted children land.
 	// Bootstrap's one-shot pass only sees file-loaded resources; a
-	// parent KS render that emits a child with a dependsOn pointing
-	// at another freshly-emitted (or pre-existing) peer can introduce
-	// a cycle invisible to the Bootstrap pass. breakDependsOnCycles
+	// parent KS render that emits a child with a dependsOn pointing at
+	// another freshly-emitted (or pre-existing) peer can introduce a
+	// cycle invisible to the Bootstrap pass. failDependsOnCycles
 	// short-circuits when no cycle is present (O(N+E) DFS, then
-	// early-return), so re-running on every KS/HR add is cheap even
-	// on render-heavy passes.
+	// early-return), so re-running on every KS/HR add is cheap even on
+	// render-heavy passes.
 	//
-	// REGISTERED BEFORE the controllers: listeners fire in
-	// registration order, so this strips cycle edges via store.Mutate
-	// synchronously BEFORE the controllers' listeners spawn their
-	// reconcile goroutines. Without the ordering the controller
-	// goroutine could read the un-stripped DependsOn from the store
-	// concurrently with cycle-stripping and burn its full per-dep
-	// Timeout waiting on a peer that's also waiting on it.
+	// REGISTERED BEFORE the controllers: listeners fire in registration
+	// order, so this records preflight failures synchronously BEFORE the
+	// controllers' listeners spawn their reconcile goroutines. Without
+	// the ordering the controller goroutine could start waiting on a peer
+	// that's also waiting on it.
 	unsubCycles := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
 			return
 		}
-		o.breakDependsOnCycles()
+		o.failDependsOnCycles()
 	}, false)
 	defer unsubCycles()
 
+	// Keep depwait's render-quiescence signal open while listener
+	// flushes submit the bootstrap objects. Without this marker, a
+	// Kustomization can start waiting on a render-emitted dependency
+	// before the producer's replay event has been submitted and
+	// incorrectly conclude that the render pool is drained.
+	startupDone := make(chan struct{})
+	o.tasks.Go(ctx, "orchestrator/startup", func(ctx context.Context) {
+		select {
+		case <-startupDone:
+		case <-ctx.Done():
+		}
+	})
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)
 	o.hrc.Start(ctx)
+	close(startupDone)
 	defer o.Stop()
 
 	// Race ctx.Done() against task drain so a Ctrl-C during a stuck
@@ -728,7 +713,7 @@ func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
 	// pre-Bootstrap renders see only literal-file RSIPs and miss
 	// these. The output attributes non-Flux children to the owning
 	// parent KS so `flate build` surfaces them.
-	o.expandResourceSetsPostRun()
+	rsErr := o.expandResourceSetsPostRun(ctx)
 	res := &Result{
 		Manifests: map[manifest.NamedResource][]map[string]any{},
 		Failed:    map[manifest.NamedResource]store.StatusInfo{},
@@ -775,7 +760,7 @@ func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
 		res.Failed[id] = info
 	}
 	maps.Copy(res.Orphans, o.orphans)
-	return res, runErr
+	return res, errors.Join(runErr, rsErr)
 }
 
 // Stop shuts the controllers down in reverse-construction order and

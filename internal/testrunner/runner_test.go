@@ -2,6 +2,7 @@ package testrunner
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -21,7 +22,9 @@ func TestRun_AllPass(t *testing.T) {
 		t.Errorf("expected 2 passed, got %+v", rep)
 	}
 	var b bytes.Buffer
-	rep.Write(&b)
+	if err := rep.Write(&b); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
 	if !strings.Contains(b.String(), "2 passed") {
 		t.Errorf("missing summary: %s", b.String())
 	}
@@ -107,7 +110,9 @@ func TestWrite_HidesSkippedByDefault(t *testing.T) {
 	rep := Run(Job{Store: s})
 
 	var b bytes.Buffer
-	rep.Write(&b)
+	if err := rep.Write(&b); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
 	out := b.String()
 
 	if !strings.Contains(out, "changed") {
@@ -146,7 +151,9 @@ func TestWrite_ShowSkippedSurfacesEverything(t *testing.T) {
 	rep.ShowSkipped = true
 
 	var b bytes.Buffer
-	rep.Write(&b)
+	if err := rep.Write(&b); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
 	out := b.String()
 
 	if !strings.Contains(out, "untouched") {
@@ -168,8 +175,56 @@ func TestWrite_FailedNeverHidden(t *testing.T) {
 
 	rep := Run(Job{Store: s})
 	var b bytes.Buffer
-	rep.Write(&b)
+	if err := rep.Write(&b); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
 	if !strings.Contains(b.String(), "FAILED") {
 		t.Errorf("FAILED row must appear by default: %s", b.String())
 	}
+}
+
+func TestRun_DeterministicOrderAndMatchCount(t *testing.T) {
+	s := store.New()
+	for _, id := range []manifest.NamedResource{
+		{Kind: manifest.KindKustomization, Namespace: "z", Name: "last"},
+		{Kind: manifest.KindKustomization, Namespace: "a", Name: "first"},
+		{Kind: manifest.KindKustomization, Namespace: "m", Name: "middle"},
+	} {
+		s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+		s.UpdateStatus(id, store.StatusReady, "")
+	}
+
+	rep := Run(Job{Store: s, Kinds: []string{manifest.KindKustomization}})
+
+	if rep.Matched != 3 {
+		t.Fatalf("Matched = %d, want 3", rep.Matched)
+	}
+	got := []manifest.NamedResource{rep.Cases[0].ID, rep.Cases[1].ID, rep.Cases[2].ID}
+	want := []manifest.NamedResource{
+		{Kind: manifest.KindKustomization, Namespace: "a", Name: "first"},
+		{Kind: manifest.KindKustomization, Namespace: "m", Name: "middle"},
+		{Kind: manifest.KindKustomization, Namespace: "z", Name: "last"},
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("case order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestWrite_ReturnsWriterError(t *testing.T) {
+	want := errors.New("write failed")
+	rep := Report{Cases: []Case{{ID: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "apps"}}}}
+
+	if err := rep.Write(errWriter{err: want}); !errors.Is(err, want) {
+		t.Fatalf("Write error = %v, want %v", err, want)
+	}
+}
+
+type errWriter struct {
+	err error
+}
+
+func (w errWriter) Write(_ []byte) (int, error) {
+	return 0, w.err
 }

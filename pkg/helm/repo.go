@@ -81,6 +81,7 @@ func (c *Client) pullHelmRepoOCI(ctx context.Context, r *manifest.HelmRepository
 			Namespace: r.Namespace,
 		}
 		syn.URL = chartURL
+		syn.Provider = r.Provider
 		if hr.Chart.Version != "" {
 			ref := &manifest.OCIRepositoryRef{}
 			if strings.Contains(hr.Chart.Version, ":") {
@@ -172,27 +173,18 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 		return "", err
 	}
 
-	// Hot path: lookup the previously-resolved digest for this
-	// (repo, chart, version) identity in chartRefs, then ask chartBlobs
-	// to confirm the blob still exists. Two HelmRepositories that
-	// publish a chart with identical bytes share one blob slot — the
-	// refs table is the only place the (repo, name, version) tuple
-	// shows up.
-	refKey := safeName(r.Namespace+"-"+r.Name+"-"+hr.Chart.Name) + "-" + cv.Version
-	if path, ok := c.chartTarballFromCAS(refKey); ok {
+	wantDigest := normalizeChartDigest(cv.Digest)
+	if path, ok := c.chartTarballByDigest(wantDigest); ok {
 		return path, nil
 	}
 
-	// Coalesce concurrent downloads on the refKey — the digest is
-	// only knowable post-download, so the per-digest lock inside
-	// chartBlobs can't serve this duty.
-	release, err := chartCacheLocks.Acquire(ctx, refKey)
+	release, err := chartCacheLocks.Acquire(ctx, chartDownloadKey(r, hr, cv, chartURL, wantDigest))
 	if err != nil {
 		return "", err
 	}
 	defer release()
 
-	if path, ok := c.chartTarballFromCAS(refKey); ok {
+	if path, ok := c.chartTarballByDigest(wantDigest); ok {
 		return path, nil
 	}
 	g, err := getter.NewHTTPGetter()
@@ -207,21 +199,30 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	if err != nil {
 		return "", fmt.Errorf("store chart %s: %w", chartURL, err)
 	}
-	if err := c.chartRefs.Put(refKey, digest); err != nil {
-		return "", fmt.Errorf("record chart ref %s: %w", refKey, err)
+	if wantDigest != "" && digest != wantDigest {
+		return "", fmt.Errorf("chart %s@%s digest mismatch: index has %s, downloaded %s",
+			hr.Chart.Name, cv.Version, wantDigest, digest)
 	}
 	return filepath.Join(dir, "chart.tgz"), nil
 }
 
-// chartTarballFromCAS returns the on-disk path to a previously-stored
-// chart tarball for refKey, or ("", false) when either the ref is
-// unknown or its digest is no longer materialized in the blob store.
-func (c *Client) chartTarballFromCAS(refKey string) (string, bool) {
-	digest, ok := c.chartRefs.Get(refKey)
-	if !ok || !c.chartBlobs.Exists(digest) {
+func (c *Client) chartTarballByDigest(digest string) (string, bool) {
+	if digest == "" || !c.chartBlobs.Exists(digest) {
 		return "", false
 	}
 	return filepath.Join(c.chartBlobs.Path(digest), "chart.tgz"), true
+}
+
+func normalizeChartDigest(digest string) string {
+	digest = strings.TrimSpace(digest)
+	return strings.TrimPrefix(digest, "sha256:")
+}
+
+func chartDownloadKey(r *manifest.HelmRepository, hr *manifest.HelmRelease, cv *repo.ChartVersion, chartURL, digest string) string {
+	if digest != "" {
+		return "sha256:" + digest
+	}
+	return safeName(r.Namespace+"-"+r.Name+"-"+hr.Chart.Name) + "-" + cv.Version + "@" + chartURL
 }
 
 // helmRepoAuthOptions / helmRepoTLSOptions live in auth.go (paired

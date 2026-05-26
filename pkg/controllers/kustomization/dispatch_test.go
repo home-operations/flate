@@ -3,7 +3,10 @@ package kustomization
 import (
 	"testing"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 // TestShouldDispatchAsObject_KnownKinds documents which kinds the
@@ -98,5 +101,50 @@ func TestPass1Pass2Categories(t *testing.T) {
 		if isLeafReconcilable(k) && !shouldDispatchAsObject(k) {
 			t.Errorf("%T is a leaf reconcilable but not dispatch-as-object", k)
 		}
+	}
+}
+
+func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
+	s := store.New()
+	c := &Controller{Controller: base.New(s, task.New())}
+	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
+	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
+
+	var sawBOnA bool
+	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id == idA {
+			sawBOnA = s.GetObject(idB) != nil
+		}
+	}, false)
+
+	c.emitRenderedChildren(parent, []map[string]any{
+		fluxKustomizationDoc("a", "b"),
+		fluxKustomizationDoc("b", "a"),
+	})
+	if !sawBOnA {
+		t.Fatal("first leaf dispatch did not see later emitted sibling")
+	}
+}
+
+func fluxKustomizationDoc(name, dep string) map[string]any {
+	return map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "ns",
+		},
+		"spec": map[string]any{
+			"interval": "10m",
+			"path":     "./" + name,
+			"sourceRef": map[string]any{
+				"kind": "GitRepository",
+				"name": "repo",
+			},
+			"dependsOn": []any{
+				map[string]any{"name": dep},
+			},
+		},
 	}
 }

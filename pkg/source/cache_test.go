@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -349,5 +350,20 @@ func TestSlugifyRepo(t *testing.T) {
 		if got := slugifyRepo(in); got != want {
 			t.Errorf("slugifyRepo(%q) = %q want %q", in, got, want)
 		}
+	}
+}
+
+func TestMutableCacheKeyIsUnique(t *testing.T) {
+	base := "branch:main#opts:abc123"
+	a := MutableCacheKey(base)
+	b := MutableCacheKey(base)
+	if a == b {
+		t.Fatalf("MutableCacheKey returned the same key twice: %q", a)
+	}
+	if !strings.HasPrefix(a, base+"#mutable:") {
+		t.Fatalf("MutableCacheKey(%q) = %q", base, a)
+	}
+	if !strings.HasPrefix(b, base+"#mutable:") {
+		t.Fatalf("MutableCacheKey(%q) = %q", base, b)
 	}
 }

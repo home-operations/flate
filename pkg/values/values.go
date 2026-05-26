@@ -2,6 +2,7 @@ package values
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -133,16 +134,13 @@ func DeepMergeInto(dst, override map[string]any) map[string]any {
 // merges them with hr.Values (inline values take precedence per Helm
 // semantics), and writes the result back to hr.Values.
 //
-// Honors ValuesReference.Optional: missing references on Optional=true
-// refs are skipped silently; missing references on Optional=false (the
-// default) return ErrObjectNotFound so the orchestrator can surface a
-// real failure or honor --allow-missing-secrets. Matches Flux's helm-
-// controller, which fails the reconcile on a missing non-optional
-// valuesFrom but tolerates a missing optional one.
+// Honors ValuesReference.Optional: missing resources or values keys on
+// Optional=true refs are skipped silently; Optional=false refs fail.
+// Matches Flux helm-controller chartutil semantics.
 //
-// Hard errors from the lookup itself — unsupported kind, missing key
-// in a present resource, malformed binaryData — always bubble up; they
-// are unrelated to whether the ref is optional.
+// Hard errors from the lookup itself — unsupported kind, malformed
+// binaryData — always bubble up; they are unrelated to whether the ref
+// is optional.
 func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 	if hr == nil || len(hr.ValuesFrom) == 0 {
 		return nil
@@ -151,18 +149,11 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 	for _, ref := range hr.ValuesFrom {
 		found, err := lookupValueRef(ref, hr.Namespace, provider)
 		if err != nil {
-			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
-		}
-		if found == "" {
-			// Resource missing. lookupValueRef only returns "" when
-			// the underlying CM/Secret was absent AND no TargetPath
-			// short-circuit produced a placeholder; that's the only
-			// case where Optional applies.
-			if !ref.Optional {
-				return fmt.Errorf("%w: HelmRelease %s: valuesFrom %s %s/%s not found",
-					manifest.ErrObjectNotFound, hr.Named().NamespacedName(), ref.Kind, hr.Namespace, ref.Name)
+			var missing *missingValueRefError
+			if ref.Optional && errors.As(err, &missing) {
+				continue
 			}
-			continue
+			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 		merged, err := updateHelmReleaseValues(ref, found, values)
 		if err != nil {
@@ -183,10 +174,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 	return nil
 }
 
-// lookupValueRef returns the raw string value referenced by ref, or an
-// empty string when the referenced object is missing and the ref is
-// optional. Missing-but-optional refs with a target_path produce a
-// placeholder so the downstream YAML still parses.
+// lookupValueRef returns the raw string value referenced by ref.
 func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) (string, error) {
 	var data map[string]string
 	var err error
@@ -215,20 +203,41 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 		return "", err
 	}
 	if data == nil {
-		// Missing reference.
-		if ref.TargetPath != "" {
-			return fmt.Sprintf(manifest.ValuePlaceholderTemplate, ref.Name), nil
+		return "", &missingValueRefError{
+			kind: ref.Kind, namespace: namespace, name: ref.Name,
 		}
-		return "", nil
 	}
 
 	key := ref.GetValuesKey()
 	val, ok := data[key]
 	if !ok {
-		return "", fmt.Errorf("%w: key %q not found in %s/%s",
-			manifest.ErrInvalidValuesReference, key, namespace, ref.Name)
+		return "", &missingValueRefError{
+			kind: ref.Kind, namespace: namespace, name: ref.Name, key: key,
+		}
 	}
 	return val, nil
+}
+
+type missingValueRefError struct {
+	kind      string
+	namespace string
+	name      string
+	key       string
+}
+
+func (e *missingValueRefError) Error() string {
+	if e.key != "" {
+		return fmt.Sprintf("valuesFrom %s %s/%s key %q not found",
+			e.kind, e.namespace, e.name, e.key)
+	}
+	return fmt.Sprintf("valuesFrom %s %s/%s not found", e.kind, e.namespace, e.name)
+}
+
+func (e *missingValueRefError) Unwrap() error {
+	if e.key != "" {
+		return manifest.ErrInvalidValuesReference
+	}
+	return manifest.ErrObjectNotFound
 }
 
 // decodeBag normalizes ConfigMap/Secret data so callers see a single

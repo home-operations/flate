@@ -4,7 +4,7 @@
 //
 //   - get   ks|hr|images|all — list Flux objects, images, or cluster summary.
 //   - build ks|hr|all        — render Flux objects to YAML.
-//   - diff  ks|hr|images     — compare current vs. another path.
+//   - diff  ks|hr|images|all — compare current vs. another path.
 //   - test  ks|hr|all        — report reconcile status.
 //
 // Use New() to obtain a cobra.Command for embedding flate in a parent

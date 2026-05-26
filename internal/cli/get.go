@@ -3,6 +3,7 @@ package cli
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"slices"
@@ -218,12 +219,17 @@ func printResources[T manifest.BaseManifest](
 		doc map[string]any
 	}
 	pairs := make([]pair, 0, len(objs))
+	nameExists := sel.Name == ""
 	for _, obj := range objs {
-		if !sel.Matches(obj) {
+		if sel.Name != "" && obj.Named().Name != sel.Name {
 			continue
 		}
 		id := obj.Named()
 		if !c.includeNamespace(o.Filter(), id.Namespace) {
+			continue
+		}
+		nameExists = true
+		if !(selector.Metadata{Labels: sel.Labels}).Matches(obj) {
 			continue
 		}
 		t, ok := obj.(T)
@@ -232,6 +238,9 @@ func printResources[T manifest.BaseManifest](
 		}
 		row, doc := mapper(o, t)
 		pairs = append(pairs, pair{row, doc})
+	}
+	if !nameExists {
+		return fmt.Errorf("no %s named %q in --path", kind, sel.Name)
 	}
 	// Store.ListObjects iterates a Go map (random order); sort the
 	// (row, doc) tuple so every output flavor — including yaml/json —

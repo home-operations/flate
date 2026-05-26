@@ -15,7 +15,10 @@ package git
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -106,19 +109,23 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		return nil, fmt.Errorf("%w: GitRepository %s missing url", manifest.ErrInput, repo.RepoName())
 	}
 
-	refStr := "HEAD"
+	refLabel := "HEAD"
 	if repo.Reference != nil {
-		refStr = cmp.Or(manifest.GitRefString(*repo.Reference), refStr)
+		refLabel = cmp.Or(gitRefLabel(*repo.Reference), refLabel)
+	}
+	slotRef := gitCacheKey(repo, refLabel)
+	if !canUseCachedGitSlot(repo.Reference) {
+		slotRef = source.MutableCacheKey(slotRef)
 	}
 
 	authID := authIdentity(repo)
-	slot, err := cache.Slot(ctx, repo.URL, refStr, authID)
+	slot, err := cache.Slot(ctx, repo.URL, slotRef, authID)
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", repo.URL, err)
 	}
 	defer slot.Release()
 
-	if slot.Exists {
+	if slot.Exists && canUseCachedGitSlot(repo.Reference) {
 		// The flate-revision marker is written AFTER a successful
 		// clone+checkout (and committed via atomic rename only after
 		// the marker write), so any committed slot will have it. A
@@ -137,6 +144,13 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		if err := slot.Stage(); err != nil {
 			return nil, err
 		}
+	} else if slot.Exists {
+		if err := slot.Reset(); err != nil {
+			return nil, err
+		}
+		if err := slot.Stage(); err != nil {
+			return nil, err
+		}
 	}
 
 	url := repo.URL
@@ -146,7 +160,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	}
 
 	if f.canUseMirror(repo, url) {
-		return f.fetchViaMirror(ctx, repo, refStr, slot, auth, proxy, tlsCfg)
+		return f.fetchViaMirror(ctx, repo, refLabel, slot, auth, proxy, tlsCfg)
 	}
 
 	cloneOpts := &git.CloneOptions{URL: url, NoCheckout: true, Auth: auth}
@@ -177,7 +191,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		return nil, err
 	}
 	if err := checkoutRef(cloned, ref, repo.SparseCheckout); err != nil {
-		return nil, fmt.Errorf("checkout %s: %w", refStr, err)
+		return nil, fmt.Errorf("checkout %s: %w", refLabel, err)
 	}
 	if repo.RecurseSubmodules {
 		if err := updateSubmodules(cloned, auth); err != nil {
@@ -205,6 +219,56 @@ func effectiveNamedRef(ref manifest.GitRepositoryRef) string {
 		return ""
 	}
 	return ref.Name
+}
+
+func gitRefLabel(ref manifest.GitRepositoryRef) string {
+	if ref.Commit != "" && ref.Branch != "" {
+		return "branch:" + ref.Branch + "@commit:" + ref.Commit
+	}
+	return manifest.GitRefString(ref)
+}
+
+func gitCacheKey(repo *manifest.GitRepository, refLabel string) string {
+	ignore := ""
+	if repo.Ignore != nil {
+		ignore = *repo.Ignore
+	}
+	payload := struct {
+		Ref               string   `json:"ref"`
+		Ignore            string   `json:"ignore,omitempty"`
+		SparseCheckout    []string `json:"sparseCheckout,omitempty"`
+		RecurseSubmodules bool     `json:"recurseSubmodules,omitempty"`
+		Verify            string   `json:"verify,omitempty"`
+	}{
+		Ref:               refLabel,
+		Ignore:            ignore,
+		SparseCheckout:    append([]string(nil), repo.SparseCheckout...),
+		RecurseSubmodules: repo.RecurseSubmodules,
+		Verify:            gitVerifyCacheKey(repo.Namespace, repo.Verification),
+	}
+	return refLabel + "#opts:" + cacheKeyHash(payload)
+}
+
+func gitVerifyCacheKey(namespace string, v *manifest.GitRepositoryVerify) string {
+	if v == nil {
+		return ""
+	}
+	return string(v.GetMode()) + ":" + namespace + "/" + v.SecretRef.Name
+}
+
+func cacheKeyHash(v any) string {
+	b, _ := json.Marshal(v)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
+}
+
+func canUseCachedGitSlot(ref *manifest.GitRepositoryRef) bool {
+	return ref != nil &&
+		ref.Commit != "" &&
+		ref.Branch == "" &&
+		ref.Tag == "" &&
+		ref.SemVer == "" &&
+		ref.Name == ""
 }
 
 func fetchExplicitNamedRef(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig, name string) error {

@@ -49,6 +49,7 @@ type Controller struct {
 	parentOf  func(manifest.NamedResource) (manifest.NamedResource, bool)
 	existence depwait.ExistenceLookup
 	renders   depwait.RenderInflight
+	preflight func(manifest.NamedResource) (string, bool)
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -76,6 +77,10 @@ type ReconcileOptions struct {
 	// short-circuits to "dependency not found" once Renders reports
 	// no other reconcile is in flight.
 	Renders depwait.RenderInflight
+	// PreflightFailure reports dependency-graph errors discovered by the
+	// orchestrator before reconcile. When set for an id, the controller
+	// marks the resource Failed and does not render it.
+	PreflightFailure func(manifest.NamedResource) (string, bool)
 }
 
 // New constructs a HelmRelease controller.
@@ -96,6 +101,7 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 	c.parentOf = opts.ParentOf
 	c.existence = opts.Existence
 	c.renders = opts.Renders
+	c.preflight = opts.PreflightFailure
 }
 
 // lookupParent reports the structural parent KS of id via the
@@ -146,14 +152,35 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 		if c.PreGate(id, hr.Suspend) {
 			return
 		}
+		if msg, failed := c.preflightFailure(id); failed {
+			c.Store.UpdateStatus(id, store.StatusFailed, msg)
+			return
+		}
 		c.Submit(ctx, id, func(ctx context.Context) {
 			base.RunWithStatus(ctx, c.Store, id, "helmrelease", c.reconcile)
 		})
 	}
 }
 
+func (c *Controller) preflightFailure(id manifest.NamedResource) (string, bool) {
+	if c.preflight == nil {
+		return "", false
+	}
+	return c.preflight(id)
+}
+
+func (c *Controller) preflightError(id manifest.NamedResource) error {
+	if msg, failed := c.preflightFailure(id); failed {
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
 func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) error {
 	id := hr.Named()
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 
 	// Parent gate: if this HR was file-loaded under a Flux KS's
 	// spec.path, wait for that KS to finish reconciling before
@@ -184,6 +211,9 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			hr = obj
 		}
 	}
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
@@ -211,6 +241,9 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			hr = obj
 		}
 	}
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 
 	// Pre-Prepare existence waits: helm.Prepare reads from the live
 	// Store synchronously, returning ErrObjectNotFound for missing
@@ -233,6 +266,9 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
 			hr = obj
 		}
+	}
+	if err := c.preflightError(id); err != nil {
+		return err
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving chart")
@@ -272,6 +308,9 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return fmt.Errorf("%w: chart source %s %s",
 			manifest.ErrSourceSkipped, srcID.String(), info.Message)
 	}
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 
 	// Fingerprint dedup: when the same HR id gets re-AddObject'd with
 	// the same effective spec (e.g. the parent KS render stamps
@@ -284,6 +323,9 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// the HR-render time on real-world trees.
 	fp := helmReleaseFingerprint(hr)
 	if existing, ok := c.Store.GetArtifact(id).(*store.HelmReleaseArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
+		if err := c.preflightError(id); err != nil {
+			return err
+		}
 		slog.Debug("helmrelease: skipped re-render (fingerprint unchanged)", "id", id.String())
 		// Skip helm.TemplateDocs (the expensive bit), but replay the
 		// cached docs through the dispatch loop so any source CRs
@@ -296,12 +338,18 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering chart")
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 	docs, err := c.Helm.TemplateDocs(ctx, hr, hr.Values, c.Options)
 	if err != nil {
 		return err
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 	c.emitRenderedChildren(id, docs)
 
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})

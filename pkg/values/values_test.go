@@ -1,6 +1,7 @@
 package values
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -153,6 +154,7 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
+		Values: map[string]any{"existing": "kept"},
 		HelmReleaseSpec: helmv2.HelmReleaseSpec{
 			ValuesFrom: []manifest.ValuesReference{
 				{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k", Optional: true},
@@ -163,8 +165,50 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 	if err := ExpandValueReferences(hr, provider); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
-	if got, _ := hr.Values["k"].(string); got == "" {
-		t.Errorf("expected placeholder, got %v", hr.Values["k"])
+	if _, ok := hr.Values["k"]; ok {
+		t.Errorf("optional missing targetPath ref should be skipped, got %v", hr.Values["k"])
+	}
+	if hr.Values["existing"] != "kept" {
+		t.Errorf("inline values should remain: %+v", hr.Values)
+	}
+}
+
+func TestExpandValueReferences_MissingRequiredTargetPathFails(t *testing.T) {
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k"},
+			},
+		},
+	}
+
+	err := ExpandValueReferences(hr, &SliceProvider{})
+	if !errors.Is(err, manifest.ErrObjectNotFound) {
+		t.Fatalf("missing required targetPath ref = %v, want ErrObjectNotFound", err)
+	}
+}
+
+func TestExpandValueReferences_MissingOptionalKeySkipped(t *testing.T) {
+	cm := &manifest.ConfigMap{
+		Name: "extra", Namespace: "default",
+		Data: map[string]any{"other.yaml": "ignored: true\n"},
+	}
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		Values: map[string]any{"existing": "kept"},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "extra", ValuesKey: "missing.yaml", Optional: true},
+			},
+		},
+	}
+
+	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}); err != nil {
+		t.Fatalf("ExpandValueReferences: %v", err)
+	}
+	if hr.Values["existing"] != "kept" || len(hr.Values) != 1 {
+		t.Errorf("optional missing key should leave values unchanged: %+v", hr.Values)
 	}
 }
 

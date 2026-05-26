@@ -30,24 +30,25 @@ docker pull ghcr.io/home-operations/flate:latest
 flate get ks       --path ./kubernetes
 flate build hr     --path ./kubernetes plex
 flate diff ks      --path ./kubernetes --path-orig ../baseline/kubernetes
+flate diff all     --path ./kubernetes --path-orig ../baseline/kubernetes
 flate diff images  --path ./kubernetes --path-orig ../baseline/kubernetes -o json
 flate test all     --path ./kubernetes
 ```
 
-The `[name]` positional on `build`/`diff`/`test` is matched against the resource's bare name (`metadata.name`), not `namespace/name`. Use `-n / --namespace` to scope.
+The `[name]` positional on `get ks/hr` and `build`/`diff`/`test ks/hr` is matched against the resource's bare name (`metadata.name`), not `namespace/name`. Use `-n / --namespace` to scope.
 
-Every command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag. All commands run the same offline reconcile pipeline before producing output, so referenced Git, OCI, Helm, Bucket, or remote kustomize sources must be reachable or already cached.
+Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag. `get`, `build`, `diff`, and `test` all run the same offline reconcile pipeline before producing output, so referenced Git, OCI, Helm, Bucket, or remote kustomize sources must be reachable. Immutable pins can reuse cache; mutable refs refresh.
 
 | Verb | Targets | Notes |
 |---|---|---|
 | `get` | `ks`, `hr`, `images`, `all` | List or summarize. `-o table` / `yaml` / `json` / `name`. |
 | `build` | `ks`, `hr`, `all` | Render Kustomizations and HelmReleases to YAML or JSON. |
-| `diff` | `ks`, `hr`, `images` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output github` mode. K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
+| `diff` | `ks`, `hr`, `images`, `all` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output github` mode. K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
 | `test` | `ks`, `hr`, `all` | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure. |
 
-`get ks` and `get hr` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart`). Helm template flags are available on every reconcile-running subcommand because flate reconciles the full graph before filtering output. Every subcommand accepts `--allow-missing-secrets` to soft-skip sources whose auth Secret is missing or PLACEHOLDER-wiped — see [Behaviors](#behaviors).
+`get ks` and `get hr` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart`). Helm template flags are available on every reconcile-running subcommand because flate reconciles the full graph before filtering output. Reconcile-running subcommands accept `--allow-missing-secrets` to soft-skip sources whose auth Secret is missing or PLACEHOLDER-wiped — see [Behaviors](#behaviors).
 
-**Default output filters.** `--skip-secrets` and `--skip-crds` both default to `true` — `build`/`diff`/`test` strip rendered `Secret` and `CustomResourceDefinition` objects from output. Pass `--skip-secrets=false` / `--skip-crds=false` to include them; `--skip-kinds <kind>` (repeatable) drops additional kinds. These are output-stream filters, distinct from `--allow-missing-secrets`, which gates *source fetch* on missing auth Secrets.
+**Default output filters.** `--skip-secrets` and `--skip-crds` both default to `true` — `build` and `diff` strip rendered `Secret` and `CustomResourceDefinition` objects from manifest output. Pass `--skip-secrets=false` / `--skip-crds=false` to include them; `--skip-kinds <kind>` (repeatable) drops additional kinds. These are output-stream filters, distinct from `--allow-missing-secrets`, which gates *source fetch* on missing auth Secrets.
 
 ## Changed-only mode
 
@@ -70,7 +71,7 @@ flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
 |---|---|---|
 | `GitRepository` | full | HTTPS: `username` + `password` or `bearerToken`. SSH: `identity` (+ optional `password`, `known_hosts`). |
 | `OCIRepository` | full | `.dockerconfigjson`. Falls back to `--registry-config`, then `~/.docker/config.json`. |
-| `HelmRepository` | full | HTTP basic: `username` + `password`. OCI flavor: use a sibling `OCIRepository`. |
+| `HelmRepository` | full | HTTP basic: `username` + `password`; OCI flavor routes through the OCI puller. |
 | `HelmChart` | full | Inline (`HR.spec.chart`) and standalone CRD. |
 | `Bucket` | `generic` only | `accesskey` + `secretkey`. `aws`/`gcp`/`azure` fail loud — use static creds. |
 | `ExternalArtifact` | `file://` only | `status.artifact.url` must be a local path. |
@@ -134,7 +135,7 @@ Other entry points worth knowing:
 discovery → Store ⇄ events ⇄ controllers (source · kustomization · helmrelease)
 ```
 
-Pipeline: bootstrap-source seed → loader pre-pass excluding `configMapGenerator`/`secretGenerator` data files → file walk → `spec.path` + ResourceSet fixed-point expansion → bootstrap-source aliasing for unresolved `GitRepository` refs → namespace inheritance → parent index → `dependsOn` validation + cycle break → change-filter → controllers fire → render → render-time keep-set extension for emitted children → orphan demotion → output.
+Pipeline: bootstrap-source seed → loader pre-pass excluding `configMapGenerator`/`secretGenerator` data files → file walk → `spec.path` + ResourceSet fixed-point expansion → bootstrap-source aliasing for unresolved `GitRepository` refs → namespace inheritance → parent index → `dependsOn` cycle preflight → change-filter → controllers fire → render → render-time keep-set extension for emitted children → orphan demotion → output.
 
 The Store is the single source of truth. Every stored manifest is immutable; mutation routes through `Store.Mutate[T]` (clone, mutate, AddObject). Helm chart loads coalesce through a per-path keylock — N parallel reconciles of the same chart issue exactly one parse.
 

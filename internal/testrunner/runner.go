@@ -12,6 +12,7 @@ package testrunner
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -54,6 +55,7 @@ type Report struct {
 	Passed  int
 	Skipped int
 	Failed  int
+	Matched int
 	// ShowSkipped controls whether SKIPPED cases appear in the
 	// per-resource listing that Write emits. When false (the
 	// default), only PASSED and FAILED rows are printed — matching
@@ -70,7 +72,7 @@ func (r Report) AnyFailed() bool { return r.Failed > 0 }
 // cases are suppressed from the per-resource listing unless
 // ShowSkipped is set, mirroring `flate diff`'s "only what changed"
 // output. The summary footer reports the full count regardless.
-func (r Report) Write(w io.Writer) {
+func (r Report) Write(w io.Writer) error {
 	var b strings.Builder
 	visible := len(r.Cases)
 	if !r.ShowSkipped {
@@ -98,7 +100,8 @@ func (r Report) Write(w io.Writer) {
 		b.WriteByte('\n')
 	}
 	fmt.Fprintf(&b, "\n%d passed, %d skipped, %d failed\n", r.Passed, r.Skipped, r.Failed)
-	_, _ = io.WriteString(w, b.String())
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 // Run inspects the store and produces a Report. When j.Kinds is empty,
@@ -111,7 +114,11 @@ func Run(j Job) Report {
 	}
 	var rep Report
 	for _, kind := range kinds {
-		for _, obj := range j.Store.ListObjects(kind) {
+		objs := j.Store.ListObjects(kind)
+		slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
+			return a.Named().Compare(b.Named())
+		})
+		for _, obj := range objs {
 			id := obj.Named()
 			if j.Name != "" && id.Name != j.Name {
 				continue
@@ -132,6 +139,7 @@ func Run(j Job) Report {
 			if id == manifest.BootstrapSourceID {
 				continue
 			}
+			rep.Matched++
 			c := classify(j.Store, id)
 			switch c.Outcome {
 			case OutcomePassed:

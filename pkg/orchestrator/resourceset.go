@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"cmp"
+	"context"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,10 +30,13 @@ import (
 // it's too late in the pipeline to add reconcilable objects. Discovery
 // is the canonical seeding point for Flux-kind RS children; this pass
 // only handles the visibility gap for non-Flux output.
-func (o *Orchestrator) expandResourceSetsPostRun() {
+func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 	rsList := store.ListAs[*manifest.ResourceSet](o.store, manifest.KindResourceSet)
 	if len(rsList) == 0 {
-		return
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	// Owner index keyed by deepest spec.path prefix wins, mirroring
 	// loader.BuildParentIndex. The RS's source-file path lives below
@@ -83,12 +87,19 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 		seen = map[string]struct{}{}
 		out  = map[manifest.NamedResource][]map[string]any{}
 	)
-	g := new(errgroup.Group)
+	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(8)
 	for _, rs := range rsList {
 		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
 			docs, err := resourceset.Render(rs, o.resolveInputProvider)
-			if err != nil || len(docs) == 0 {
+			if err != nil {
+				o.store.UpdateStatus(rs.Named(), store.StatusFailed, err.Error())
+				return err
+			}
+			if len(docs) == 0 {
 				return nil
 			}
 			// Resolve parent KS in priority order:
@@ -154,8 +165,22 @@ func (o *Orchestrator) expandResourceSetsPostRun() {
 			return nil
 		})
 	}
-	_ = g.Wait() // render errors are intentionally swallowed (same as before)
+	err := g.Wait()
 	o.rsExtensions = out
+	if err != nil {
+		failed := map[manifest.NamedResource]store.StatusInfo{}
+		for _, rs := range rsList {
+			id := rs.Named()
+			if info, ok := o.store.GetStatus(id); ok && info.Status == store.StatusFailed {
+				failed[id] = info
+			}
+		}
+		if len(failed) > 0 {
+			return o.aggregateFailures(failed)
+		}
+		return err
+	}
+	return nil
 }
 
 // resolveInputProvider mirrors discovery.resolveInputProvider but

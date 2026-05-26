@@ -175,15 +175,20 @@ func (c *Controller) Await(
 		c.Store.UpdateStatus(id, store.StatusPending, pendingMsg)
 	}
 	var sum depwait.Summary
-	// YieldQuiescent (not YieldSlot): the wait is on OTHER tasks'
-	// work, so this task isn't producing anything while parked.
-	// Decrementing active lets QuiescenceCh fire on a render-only
-	// dep the moment no productive task remains — without it, two
-	// reconciles both blocked in depwait hold the count at 2 and
-	// burn the full RenderProducingTimeout cap.
-	c.Tasks.YieldQuiescent(func() {
+	runWait := func() {
 		sum = depwait.WaitAll(w.Watch(ctx, deps))
-	})
+	}
+	if w.ReadyNow(deps) {
+		runWait()
+	} else {
+		// YieldQuiescent (not YieldSlot): the wait is on OTHER tasks'
+		// work, so this task isn't producing anything while parked.
+		// Decrementing active lets QuiescenceCh fire on a render-only
+		// dep the moment no productive task remains. The ReadyNow fast
+		// path above keeps an immediately-unblocked producer counted as
+		// active so consumers do not observe a false drained pool.
+		c.Tasks.YieldQuiescent(runWait)
+	}
 	if sum.AnyFailed() {
 		return onFail(sum)
 	}
@@ -264,10 +269,15 @@ func RunWithStatus[T manifest.BaseManifest](
 		s.UpdateStatus(id, store.StatusFailed, err.Error())
 		return
 	}
-	if existing, ok := s.GetStatus(id); ok && existing.Status == store.StatusReady && existing.Message != "" {
-		// Existing Ready message is informative (skipped:, unchanged,
-		// suspended, or any future Ready sub-state) — don't clobber.
-		return
+	if existing, ok := s.GetStatus(id); ok {
+		if existing.Status == store.StatusFailed {
+			return
+		}
+		if existing.Status == store.StatusReady && existing.Message != "" {
+			// Existing Ready message is informative (skipped:, unchanged,
+			// suspended, or any future Ready sub-state) — don't clobber.
+			return
+		}
 	}
 	s.UpdateStatus(id, store.StatusReady, "")
 }

@@ -98,15 +98,11 @@ type Client struct {
 	indexCache sync.Map // map[string]*repo.IndexFile
 	indexLocks *keylock.KeyMap[string]
 
-	// chartBlobs is the content-addressed storage for downloaded
-	// helm chart tarballs. chartRefs maps the per-release identity
-	// tuple `(namespace, name, chartName, version)` to the current
-	// digest — so two HelmRepositories that happen to publish a
-	// chart with identical bytes share one on-disk slot, and a
-	// reconfigured cluster reading the same charts hits the CAS
-	// path without re-downloading.
+	// chartBlobs is the content-addressed storage for downloaded helm
+	// chart tarballs. HelmRepository charts hit this cache only when
+	// index.yaml supplies a digest; entries without a digest are
+	// treated as mutable and downloaded on each run.
 	chartBlobs *blob.Store
-	chartRefs  *blob.Refs
 }
 
 // chartCacheEntry pairs the parsed chart with the (mtime, size) of
@@ -152,7 +148,6 @@ func NewClient(layout cacheroot.Layout) (*Client, error) {
 		chartLoadLocks: keylock.New[string](),
 		indexLocks:     keylock.New[string](),
 		chartBlobs:     blob.NewStore(layout),
-		chartRefs:      blob.NewRefs(layout, "chart-tarballs"),
 	}, nil
 }
 

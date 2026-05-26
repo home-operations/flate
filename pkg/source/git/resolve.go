@@ -29,7 +29,11 @@ func resolveRefHash(repo *git.Repository, ref *manifest.GitRepositoryRef) (plumb
 	}
 	switch {
 	case ref.Commit != "":
-		return plumbing.NewHash(ref.Commit), nil
+		hash := plumbing.NewHash(ref.Commit)
+		if err := validateCommitBranch(repo, hash, ref.Branch); err != nil {
+			return plumbing.ZeroHash, err
+		}
+		return hash, nil
 	case ref.Name != "":
 		return resolveNamedRef(repo, ref.Name)
 	case ref.SemVer != "":
@@ -72,6 +76,32 @@ func resolveBranch(repo *git.Repository, name string) (plumbing.Hash, error) {
 	return plumbing.ZeroHash, fmt.Errorf("branch %q not found in mirror", name)
 }
 
+func validateCommitBranch(repo *git.Repository, commit plumbing.Hash, branch string) error {
+	if branch == "" {
+		return nil
+	}
+	branchHash, ok := lookupBranch(repo, branch)
+	if !ok {
+		return fmt.Errorf("branch %q not found for commit %s", branch, commit)
+	}
+	commitObj, err := repo.CommitObject(commit)
+	if err != nil {
+		return fmt.Errorf("commit %s not found: %w", commit, err)
+	}
+	branchObj, err := repo.CommitObject(branchHash)
+	if err != nil {
+		return fmt.Errorf("branch %q target %s is not a commit: %w", branch, branchHash, err)
+	}
+	reachable, err := commitObj.IsAncestor(branchObj)
+	if err != nil {
+		return fmt.Errorf("check commit %s reachability from branch %q: %w", commit, branch, err)
+	}
+	if !reachable {
+		return fmt.Errorf("commit %s is not reachable from branch %q", commit, branch)
+	}
+	return nil
+}
+
 func lookupTag(repo *git.Repository, name string) (plumbing.Hash, bool) {
 	tag, err := repo.Tag(name)
 	if err != nil {
@@ -85,11 +115,16 @@ func lookupTag(repo *git.Repository, name string) (plumbing.Hash, bool) {
 }
 
 func lookupBranch(repo *git.Repository, name string) (plumbing.Hash, bool) {
-	r, err := repo.Reference(plumbing.NewBranchReferenceName(name), true)
-	if err != nil {
-		return plumbing.ZeroHash, false
+	for _, refName := range []plumbing.ReferenceName{
+		plumbing.NewBranchReferenceName(name),
+		plumbing.NewRemoteReferenceName("origin", name),
+	} {
+		r, err := repo.Reference(refName, true)
+		if err == nil {
+			return r.Hash(), true
+		}
 	}
-	return r.Hash(), true
+	return plumbing.ZeroHash, false
 }
 
 // resolveSemver picks the highest tag in repo satisfying expr.

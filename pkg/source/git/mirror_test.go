@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -53,13 +54,15 @@ func TestMirror_BareClonePersistsAcrossFetches(t *testing.T) {
 		t.Errorf("expected one mirror dir, got %d: %v", len(entries), entries)
 	}
 
-	// Second fetch reuses the slot AND the mirror.
+	// Second fetch reuses the mirror. The mutable HEAD ref gets a fresh
+	// worktree slot so no in-place reset can race consumers of the first
+	// artifact.
 	art2, err := f.Fetch(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("Fetch 2: %v", err)
 	}
-	if art2.LocalPath != art.LocalPath {
-		t.Errorf("slot path drifted: %s vs %s", art.LocalPath, art2.LocalPath)
+	if art2.Revision != art.Revision {
+		t.Errorf("revision drifted: %s vs %s", art.Revision, art2.Revision)
 	}
 	entries2, _ := os.ReadDir(mirrorDir)
 	if len(entries2) != 1 {
@@ -166,6 +169,36 @@ func TestMirror_RefNameResolvesNonBranchRefs(t *testing.T) {
 	}
 	if art.Revision != want {
 		t.Errorf("revision = %q, want %q", art.Revision, want)
+	}
+}
+
+func TestMirror_CommitMustBeReachableFromBranch(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	initial := mustHead(t, src)
+	mainOnly := mustCommitFile(t, src, "main-only.txt", "main")
+	mustSetRefToHash(t, src, "refs/heads/staging", initial)
+
+	layout := cacheroot.New(t.TempDir())
+	cache := source.NewCache(layout)
+	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout)}
+	repo := &manifest.GitRepository{
+		Name: "constrained", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL: "file://" + src,
+			Reference: &sourcev1.GitRepositoryRef{
+				Branch: "staging",
+				Commit: mainOnly,
+			},
+		},
+	}
+
+	_, err := f.Fetch(context.Background(), repo)
+	if err == nil {
+		t.Fatal("expected branch-constrained commit fetch to fail through mirror")
+	}
+	if !strings.Contains(err.Error(), "not reachable from branch") {
+		t.Fatalf("error should explain branch reachability, got %v", err)
 	}
 }
 

@@ -63,14 +63,13 @@ func TestDetectDependsOnCycles_NoCycleNoOutput(t *testing.T) {
 	}
 }
 
-// TestBreakDependsOnCycles_StripsCycleEdges verifies the runtime
-// behavior the user cares about: after Bootstrap, KSes that were in
-// a cycle have their cycle-closing dependsOn entries dropped. Their
-// reconcile won't hang 30s waiting on a peer that can't become Ready.
-func TestBreakDependsOnCycles_StripsCycleEdges(t *testing.T) {
+// TestFailDependsOnCycles_RecordsPreflightFailures verifies the runtime
+// behavior the user cares about: cycle members fail before render, while
+// their Flux dependsOn graph remains intact.
+func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
 	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
-	// `extra` is an acyclic dep — it must SURVIVE the strip.
+	// `extra` is an acyclic dep — it must not be marked failed.
 	idExtra := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "extra"}
 
 	o := &Orchestrator{store: store.New()}
@@ -78,58 +77,90 @@ func TestBreakDependsOnCycles_StripsCycleEdges(t *testing.T) {
 	o.store.AddObject(makeKS("b", "ns", idA))
 	o.store.AddObject(makeKS("extra", "ns"))
 
-	o.breakDependsOnCycles()
+	o.failDependsOnCycles()
 
 	a, _ := o.store.GetObject(idA).(*manifest.Kustomization)
 	b, _ := o.store.GetObject(idB).(*manifest.Kustomization)
 	if a == nil || b == nil {
 		t.Fatal("post-Bootstrap objects went missing")
 	}
-	// a should no longer depend on b (cycle edge), but should still
-	// depend on extra (acyclic).
-	for _, d := range a.DependsOn {
-		if d.NamedResource == idB {
-			t.Errorf("a→b cycle edge not stripped from a.DependsOn: %+v", a.DependsOn)
+	if len(a.DependsOn) != 2 || len(b.DependsOn) != 1 {
+		t.Fatalf("cycle detection must not rewrite dependsOn: a=%+v b=%+v", a.DependsOn, b.DependsOn)
+	}
+	for _, id := range []manifest.NamedResource{idA, idB} {
+		msg, ok := o.preflightFailure(id)
+		if !ok || !strings.Contains(msg, "dependency cycle detected") {
+			t.Fatalf("%s preflight failure = %q, %v", id, msg, ok)
 		}
 	}
-	hasExtra := false
-	for _, d := range a.DependsOn {
-		if d.NamedResource == idExtra {
-			hasExtra = true
-		}
+	if msg, ok := o.preflightFailure(idExtra); ok {
+		t.Fatalf("acyclic dependency was marked failed: %q", msg)
 	}
-	if !hasExtra {
-		t.Errorf("a→extra acyclic dep was stripped along with the cycle edge: %+v", a.DependsOn)
+}
+
+func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
+	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
+	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+
+	o := &Orchestrator{store: store.New()}
+	o.store.AddObject(makeKS("a", "ns", idB))
+	o.store.AddObject(makeKS("b", "ns", idA))
+	o.failDependsOnCycles()
+	if msg, ok := o.preflightFailure(idA); !ok || !strings.Contains(msg, "dependency cycle detected") {
+		t.Fatalf("initial cycle was not recorded: %q, %v", msg, ok)
 	}
-	// b should have lost its only edge.
-	for _, d := range b.DependsOn {
-		if d.NamedResource == idA {
-			t.Errorf("b→a cycle edge not stripped: %+v", b.DependsOn)
+
+	o.store.AddObject(makeKS("a", "ns"))
+	o.failDependsOnCycles()
+	for _, id := range []manifest.NamedResource{idA, idB} {
+		if msg, ok := o.preflightFailure(id); ok {
+			t.Fatalf("resolved cycle member still has preflight failure %s: %q", id, msg)
 		}
 	}
 }
 
-// TestBreakDependsOnCycles_RenderEmittedCycle verifies the runtime
+func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
+	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
+	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+
+	o := &Orchestrator{store: store.New()}
+	o.store.AddObject(makeKS("a", "ns", idB))
+	o.store.AddObject(makeKS("b", "ns", idA))
+	o.failDependsOnCycles()
+
+	seen := map[manifest.NamedResource]int{}
+	o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		seen[id]++
+	}, false)
+
+	o.store.AddObject(makeKS("a", "ns"))
+	o.failDependsOnCycles()
+
+	if seen[idB] == 0 {
+		t.Fatal("resolved cycle member b was not refired after preflight failure cleared")
+	}
+}
+
+// TestFailDependsOnCycles_RenderEmittedCycle verifies the runtime
 // cycle-detection listener: when a parent KS's render emits two
 // children whose dependsOn closes a loop, the orchestrator's
-// post-Bootstrap listener re-runs breakDependsOnCycles and strips
-// the cycle edges. Pre-fix, Bootstrap's one-shot pass never saw the
-// emitted nodes and every cycle member burned its full per-dep
-// timeout waiting on a peer that would never become Ready.
+// post-Bootstrap listener re-runs failDependsOnCycles and records
+// preflight failures. Bootstrap's one-shot pass never saw the emitted
+// nodes.
 //
-// The test invokes breakDependsOnCycles directly (mirrors what the
+// The test invokes failDependsOnCycles directly (mirrors what the
 // Run-time listener does) AFTER adding the emit'd children to the
 // store. End-to-end coverage of the listener wiring sits in the
 // e2e suite — but pinning the load-bearing behavior here keeps the
 // listener honest if it ever gets refactored.
-func TestBreakDependsOnCycles_RenderEmittedCycle(t *testing.T) {
+func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 
 	o := &Orchestrator{store: store.New()}
 	// Bootstrap-time graph: just one acyclic KS. No cycles to break.
 	o.store.AddObject(makeKS("acyclic", "ns"))
-	o.breakDependsOnCycles()
+	o.failDependsOnCycles()
 
 	// Now simulate the render-emit: a parent KS adds two children
 	// whose dependsOn closes a loop. Bootstrap's pass missed these.
@@ -137,17 +168,17 @@ func TestBreakDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 	o.store.AddObject(makeKS("b", "ns", idA))
 	// Re-run the cycle detector (the post-Bootstrap listener fires
 	// this on every KS/HR add).
-	o.breakDependsOnCycles()
+	o.failDependsOnCycles()
 
 	a, _ := o.store.GetObject(idA).(*manifest.Kustomization)
 	b, _ := o.store.GetObject(idB).(*manifest.Kustomization)
 	if a == nil || b == nil {
 		t.Fatal("emitted children went missing")
 	}
-	if len(a.DependsOn) != 0 {
-		t.Errorf("a's cycle edge not stripped post-emit: %+v", a.DependsOn)
-	}
-	if len(b.DependsOn) != 0 {
-		t.Errorf("b's cycle edge not stripped post-emit: %+v", b.DependsOn)
+	for _, id := range []manifest.NamedResource{idA, idB} {
+		msg, ok := o.preflightFailure(id)
+		if !ok || !strings.Contains(msg, "dependency cycle detected") {
+			t.Fatalf("%s preflight failure = %q, %v", id, msg, ok)
+		}
 	}
 }

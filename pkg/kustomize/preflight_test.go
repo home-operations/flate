@@ -131,6 +131,49 @@ func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 	}
 }
 
+func TestRenderFlux_RemotePreflightDoesNotMutateSourceNestedKustomization(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote}\n"))
+	}))
+	t.Cleanup(srv.Close)
+
+	src := t.TempDir()
+	mustWriteFile(t, filepath.Join(src, "kustomization.yaml"), "resources:\n  - ./child\n")
+	child := "resources:\n  - " + srv.URL + "/remote.yaml\n"
+	mustWriteFile(t, filepath.Join(src, "child", "kustomization.yaml"), child)
+
+	cache, err := NewStagingCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	_, err = RenderFlux(context.Background(), cache, src, ".", map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata": map[string]any{
+			"name":      "apps",
+			"namespace": "flux-system",
+		},
+		"spec": map[string]any{"path": "."},
+	})
+	if err != nil {
+		t.Fatalf("RenderFlux: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(src, "child", "kustomization.yaml")) //nolint:gosec // src is t.TempDir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != child {
+		t.Fatalf("source nested kustomization was mutated:\nwant %q\ngot  %q", child, got)
+	}
+	matches, _ := filepath.Glob(filepath.Join(src, "child", ".flate-remote-*.yaml"))
+	if len(matches) != 0 {
+		t.Fatalf("remote preflight wrote fetched files into source tree: %v", matches)
+	}
+}
+
 // TestPreflightRemoteResources_HonorsAlternateFilenames sanity-
 // checks the filename matcher: kustomize accepts kustomization.yml
 // and Kustomization in addition to kustomization.yaml.

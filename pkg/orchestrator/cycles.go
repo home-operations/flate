@@ -27,71 +27,35 @@ func (o *Orchestrator) detectDependsOnCycles() [][]manifest.NamedResource {
 	return all
 }
 
-// breakDependsOnCycles detects cycles and strips the dependsOn edges
-// between cycle members so depwait completes immediately. The cycle
-// path is logged for the user to see — flate's reconcile output may
-// then show whatever real failure (or success) the cycle members
-// have once they're no longer waiting on each other. Without this,
-// every cycle member burned its full per-dep budget waiting for a
-// peer that would never become Ready.
-//
-// Stripping is the pragmatic choice: the alternative (pre-marking
-// every member Failed with the cycle message) loses the message when
-// the controller's reconcile overwrites status. The warn log keeps
-// the cycle information visible regardless.
-func (o *Orchestrator) breakDependsOnCycles() {
+// failDependsOnCycles detects cycles and records preflight failures for
+// every cycle member. Flux blocks cyclic dependency graphs; flate must
+// fail those resources before render instead of stripping edges and
+// rendering manifests that would not reconcile in-cluster.
+func (o *Orchestrator) failDependsOnCycles() {
+	o.cycleMu.Lock()
 	cycles := o.detectDependsOnCycles()
-	if len(cycles) == 0 {
-		return
-	}
-	// Collect every id involved in any cycle, keyed by kind, so we can
-	// strip its dependsOn edges only against cycle peers of the same
-	// kind. A KS in a cycle with another KS still keeps any legitimate
-	// dependsOn entry on a non-cycle KS — only the cycle edge goes.
-	inCycle := map[string]map[manifest.NamedResource]struct{}{
-		manifest.KindKustomization: {},
-		manifest.KindHelmRelease:   {},
-	}
+	failures := map[manifest.NamedResource]string{}
 	for _, path := range cycles {
-		slog.Warn("dependency cycle detected; stripping cycle edges to fail fast",
-			"cycle", formatCyclePath(path))
+		msg := "dependency cycle detected: " + formatCyclePath(path)
+		slog.Warn("dependency cycle detected", "cycle", formatCyclePath(path))
 		for _, id := range path {
-			if set, ok := inCycle[id.Kind]; ok {
-				set[id] = struct{}{}
+			if id.Kind == manifest.KindKustomization || id.Kind == manifest.KindHelmRelease {
+				failures[id] = msg
 			}
 		}
 	}
-	for _, k := range store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization) {
-		if _, member := inCycle[manifest.KindKustomization][k.Named()]; !member {
-			continue
-		}
-		stripped := stripCycleDeps(k.DependsOn, inCycle[manifest.KindKustomization])
-		store.Mutate(o.store, k.Named(), func(x *manifest.Kustomization) { x.DependsOn = stripped })
-	}
-	for _, h := range store.ListAs[*manifest.HelmRelease](o.store, manifest.KindHelmRelease) {
-		if _, member := inCycle[manifest.KindHelmRelease][h.Named()]; !member {
-			continue
-		}
-		stripped := stripCycleDeps(h.DependsOn, inCycle[manifest.KindHelmRelease])
-		store.Mutate(o.store, h.Named(), func(x *manifest.HelmRelease) { x.DependsOn = stripped })
-	}
+	cleared := o.replacePreflightFailures(failures)
+	o.cycleMu.Unlock()
+	o.refireClearedPreflightFailures(cleared)
 }
 
-// stripCycleDeps returns deps minus any entry whose target is in the
-// cycle set. The original slice is left untouched (the caller swaps
-// the returned value into a fresh Clone via store.Mutate).
-func stripCycleDeps(deps []manifest.DependencyRef, cycleMembers map[manifest.NamedResource]struct{}) []manifest.DependencyRef {
-	if len(deps) == 0 {
-		return deps
-	}
-	out := make([]manifest.DependencyRef, 0, len(deps))
-	for _, d := range deps {
-		if _, ok := cycleMembers[d.NamedResource]; ok {
-			continue
+func (o *Orchestrator) refireClearedPreflightFailures(ids []manifest.NamedResource) {
+	slices.SortFunc(ids, manifest.NamedResource.Compare)
+	for _, id := range ids {
+		if id.Kind == manifest.KindKustomization || id.Kind == manifest.KindHelmRelease {
+			o.store.Refire(id)
 		}
-		out = append(out, d)
 	}
-	return out
 }
 
 // findDependencyCycles walks the dependsOn graph of one kind using

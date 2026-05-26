@@ -73,6 +73,7 @@ type ResourceSetInputProvider struct {
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 
 	fluxopv1.ResourceSetInputProviderSpec `json:",inline" yaml:",inline"`
+	Status                                fluxopv1.ResourceSetInputProviderStatus `json:"status,omitempty" yaml:"status,omitempty"`
 
 	Labels map[string]string `json:"-" yaml:"-"`
 }
@@ -98,6 +99,7 @@ func parseResourceSetInputProvider(doc map[string]any) (*ResourceSetInputProvide
 		Name:                         cr.Name,
 		Namespace:                    cr.Namespace,
 		ResourceSetInputProviderSpec: cr.Spec,
+		Status:                       cr.Status,
 		Labels:                       cr.Labels,
 	}, nil
 }
@@ -109,20 +111,16 @@ func parseResourceSetInputProvider(doc map[string]any) (*ResourceSetInputProvide
 // APIs offline. Each returned set is a fresh map[string]any safe for
 // the caller to mutate (e.g. to inject the provider block).
 func (p *ResourceSetInputProvider) ExportedInputs() ([]map[string]any, error) {
+	if len(p.Status.ExportedInputs) > 0 {
+		return decodeResourceSetInputs(p.Status.ExportedInputs)
+	}
 	switch p.Type {
 	case fluxopv1.InputProviderStatic, "":
-		defaults := map[string]any{}
-		for k, v := range p.DefaultValues {
-			if v == nil {
-				defaults[k] = nil
-				continue
-			}
-			var raw any
-			if err := json.Unmarshal(v.Raw, &raw); err != nil {
-				return nil, fmt.Errorf("defaultValues[%s]: %w", k, err)
-			}
-			defaults[k] = raw
+		exported, err := decodeResourceSetInputs([]fluxopv1.ResourceSetInput{p.DefaultValues})
+		if err != nil {
+			return nil, fmt.Errorf("defaultValues: %w", err)
 		}
+		defaults := exported[0]
 		// Upstream injects a synthetic "id" derived from the RSIP UID.
 		// flate has no UIDs; a deterministic hash of namespace/name is
 		// stable across runs and still uniquely identifies the input set
@@ -133,6 +131,26 @@ func (p *ResourceSetInputProvider) ExportedInputs() ([]map[string]any, error) {
 		return []map[string]any{defaults}, nil
 	}
 	return nil, nil
+}
+
+func decodeResourceSetInputs(inputs []fluxopv1.ResourceSetInput) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(inputs))
+	for i, in := range inputs {
+		decoded := map[string]any{}
+		for k, v := range in {
+			if v == nil {
+				decoded[k] = nil
+				continue
+			}
+			var raw any
+			if err := json.Unmarshal(v.Raw, &raw); err != nil {
+				return nil, fmt.Errorf("input[%d].%s: %w", i, k, err)
+			}
+			decoded[k] = raw
+		}
+		out = append(out, decoded)
+	}
+	return out, nil
 }
 
 // derivedID is the placeholder for upstream's UID-derived id field —

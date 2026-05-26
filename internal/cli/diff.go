@@ -168,8 +168,12 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	if orig.O == nil || current.O == nil {
 		return runErr
 	}
-	origDocs := gatherAllArtifacts(orig.O, orig.Res, kind, name, c)
-	currentDocs := gatherAllArtifacts(current.O, current.Res, kind, name, c)
+	origDocs, origMatched := gatherAllArtifacts(orig.O, orig.Res, kind, name, c)
+	currentDocs, currentMatched := gatherAllArtifacts(current.O, current.Res, kind, name, c)
+	diffRunErr := scopedDiffRunError(orig, current, c, runErr)
+	if name != "" && origMatched+currentMatched == 0 {
+		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
+	}
 
 	outFormat := c.output
 	if outFormat == "table" {
@@ -179,16 +183,16 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 		StripAttrs: d.stripAttrs,
 	})
 	if err != nil {
-		return err
+		return errors.Join(err, diffRunErr)
 	}
 	formatted, err := diff.Render(diffs, diff.Format(outFormat))
 	if err != nil {
-		return errors.Join(err, scopedDiffRunError(orig, current, c, runErr))
+		return errors.Join(err, diffRunErr)
 	}
 	if _, err := cmd.OutOrStdout().Write(formatted); err != nil {
-		return errors.Join(err, scopedDiffRunError(orig, current, c, runErr))
+		return errors.Join(err, diffRunErr)
 	}
-	return scopedDiffRunError(orig, current, c, runErr)
+	return diffRunErr
 }
 
 // diffSide pairs an Orchestrator with its render Result. Diff
@@ -301,12 +305,13 @@ func scopedDiffRunError(orig, current diffSide, c *commonFlags, runErr error) er
 // Kustomization- and HelmRelease-rendered manifests in one pass.
 // Each kind's docs are gathered separately so the diff header
 // attribution (parent KS vs parent HR) stays accurate.
-func gatherAllArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) []diff.Doc {
+func gatherAllArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) ([]diff.Doc, int) {
 	if kind != "" {
 		return gatherArtifacts(o, res, kind, name, c)
 	}
-	out := gatherArtifacts(o, res, manifest.KindKustomization, name, c)
-	return append(out, gatherArtifacts(o, res, manifest.KindHelmRelease, name, c)...)
+	out, matched := gatherArtifacts(o, res, manifest.KindKustomization, name, c)
+	hrs, hrMatched := gatherArtifacts(o, res, manifest.KindHelmRelease, name, c)
+	return append(out, hrs...), matched + hrMatched
 }
 
 // gatherArtifacts collects every rendered manifest produced by the
@@ -318,7 +323,7 @@ func gatherAllArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, 
 // Reads res.Manifests for the rendered docs; falls back to the Store
 // only to recover the producing object's spec.path (the diff header
 // shows it for KS parents).
-func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) []diff.Doc {
+func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) ([]diff.Doc, int) {
 	var out []diff.Doc
 	// Defensive re-drop of --skip-secrets / --skip-crds / --skip-kinds.
 	// Orchestrator.Render already applies the same set to Result.Manifests
@@ -328,7 +333,13 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 	if c != nil {
 		skip = c.skipResourceKinds()
 	}
-	for id, docs := range res.Manifests {
+	objs := o.Store().ListObjects(kind)
+	slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
+		return a.Named().Compare(b.Named())
+	})
+	matched := 0
+	for _, obj := range objs {
+		id := obj.Named()
 		if id.Kind != kind {
 			continue
 		}
@@ -336,6 +347,11 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 			continue
 		}
 		if c != nil && !c.includeNamespace(o.Filter(), id.Namespace) {
+			continue
+		}
+		matched++
+		docs, ok := res.Manifests[id]
+		if !ok {
 			continue
 		}
 		parent := diff.Parent{Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
@@ -346,5 +362,5 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 			out = append(out, diff.Doc{Manifest: m, Parent: parent})
 		}
 	}
-	return out
+	return out, matched
 }

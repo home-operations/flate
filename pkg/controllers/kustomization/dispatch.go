@@ -62,13 +62,15 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		}
 	}
 	// Pass 2 — leaf reconcilables.
+	leaves := make([]manifest.BaseManifest, 0)
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			c.keepEmitted(id, p.obj.Named())
-			c.Store.AddObject(p.obj)
 			c.markRendered(id, p.obj.Named())
+			leaves = append(leaves, p.obj)
 		}
 	}
+	c.Store.AddObjects(leaves)
 }
 
 // keepEmitted extends the change filter's keep set so render-emitted

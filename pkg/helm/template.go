@@ -283,15 +283,17 @@ func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests
 	var b strings.Builder
 	b.Grow(size)
 	b.WriteString(rel.Manifest)
+	lastNewline := strings.HasSuffix(rel.Manifest, "\n")
 	if !disableHooks {
 		for _, h := range rel.Hooks {
 			if skipTests && isTestHook(h) {
 				continue
 			}
-			if !strings.HasSuffix(b.String(), "\n") {
+			if !lastNewline {
 				b.WriteByte('\n')
 			}
 			fmt.Fprintf(&b, "---\n# Source: %s\n%s", h.Path, h.Manifest)
+			lastNewline = strings.HasSuffix(h.Manifest, "\n")
 		}
 	}
 	out := b.String()

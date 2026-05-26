@@ -44,6 +44,7 @@ type Controller struct {
 	renderTracker RenderTracker
 	existence     depwait.ExistenceLookup
 	renders       depwait.RenderInflight
+	preflight     func(manifest.NamedResource) (string, bool)
 }
 
 // RenderTracker is the tiny seam the controller uses to report
@@ -85,6 +86,10 @@ type Options struct {
 	// fails as soon as the orchestrator drains instead of burning
 	// the full RenderProducingTimeout cap.
 	Renders depwait.RenderInflight
+	// PreflightFailure reports dependency-graph errors discovered by the
+	// orchestrator before reconcile. When set for an id, the controller
+	// marks the resource Failed and does not render it.
+	PreflightFailure func(manifest.NamedResource) (string, bool)
 }
 
 // New constructs a Kustomization controller.
@@ -105,6 +110,7 @@ func (c *Controller) Configure(opts Options) {
 	c.renderTracker = opts.RenderTracker
 	c.existence = opts.Existence
 	c.renders = opts.Renders
+	c.preflight = opts.PreflightFailure
 }
 
 // markRendered reports a parent→child render emission to the
@@ -147,14 +153,35 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 		if c.PreGate(id, ks.Suspend) {
 			return
 		}
+		if msg, failed := c.preflightFailure(id); failed {
+			c.Store.UpdateStatus(id, store.StatusFailed, msg)
+			return
+		}
 		c.Submit(ctx, id, func(ctx context.Context) {
 			base.RunWithStatus(ctx, c.Store, id, "kustomization", c.reconcile)
 		})
 	}
 }
 
+func (c *Controller) preflightFailure(id manifest.NamedResource) (string, bool) {
+	if c.preflight == nil {
+		return "", false
+	}
+	return c.preflight(id)
+}
+
+func (c *Controller) preflightError(id manifest.NamedResource) error {
+	if msg, failed := c.preflightFailure(id); failed {
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
 func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) error {
 	id := ks.Named()
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
 
 	deps := c.collectDeps(ks)
@@ -181,6 +208,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 			ks = fresh
 		}
 	}
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving source artifact")
 	sourceRoot, err := c.resolveSourceRoot(ks)
@@ -197,6 +227,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	if err != nil {
 		return err
 	}
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 
 	// Fingerprint dedup: the same id may receive multiple AddObject
 	// events with the same effective spec (e.g. when the structural
@@ -206,6 +239,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	// post-Prepare inputs are byte-identical. Same pattern as HR (#219).
 	fp := kustomizationFingerprint(ks, sourceRoot)
 	if existing, ok := c.Store.GetArtifact(id).(*store.KustomizationArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
+		if err := c.preflightError(id); err != nil {
+			return err
+		}
 		slog.Debug("kustomization: skipped re-render (fingerprint unchanged)", "id", id.String())
 		// Skip kustomize.RenderFlux (the expensive bit), but still
 		// replay the cached artifact through emitRenderedChildren so
@@ -221,6 +257,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering")
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 	data, err := kustomize.RenderFlux(ctx, c.Staging, sourceRoot, ks.Path, ks.Contents)
 	if err != nil {
 		return err
@@ -252,6 +291,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
+	if err := c.preflightError(id); err != nil {
+		return err
+	}
 	c.emitRenderedChildren(id, docs)
 
 	c.Store.SetArtifact(id, &store.KustomizationArtifact{

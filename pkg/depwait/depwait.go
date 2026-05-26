@@ -245,6 +245,42 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 	return out
 }
 
+// ReadyNow reports whether every dependency is already satisfied
+// without waiting. Controllers use this to avoid marking a reconcile
+// quiescent while it is only confirming dependencies that are ready
+// and can continue producing render output immediately.
+func (w *Waiter) ReadyNow(deps []manifest.DependencyRef) bool {
+	for _, dep := range deps {
+		if !w.readyNow(dep) {
+			return false
+		}
+	}
+	return true
+}
+
+func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
+	id := dep.NamedResource
+	if !w.depExists(id) {
+		return false
+	}
+	if !store.SupportsStatus(id.Kind) {
+		return true
+	}
+	if dep.ReadyExpr != "" && !w.AdditiveReadyExpr {
+		ev, done := w.tryReadyExpr(dep.ReadyExpr, id)
+		return done && ev.Status == DepReady
+	}
+	info, ok := w.Store.GetStatus(id)
+	if !ok || info.Status != store.StatusReady {
+		return false
+	}
+	if dep.ReadyExpr != "" {
+		ev, done := w.tryReadyExpr(dep.ReadyExpr, id)
+		return done && ev.Status == DepReady
+	}
+	return true
+}
+
 // safeWatchOne wraps watchOne with panic recovery — a malformed CEL
 // ReadyExpr (or any other internal bug) reports the dep as failed
 // instead of taking the orchestrator down with it.

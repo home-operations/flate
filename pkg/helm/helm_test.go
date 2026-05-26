@@ -8,11 +8,12 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
+	release "helm.sh/helm/v4/pkg/release/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestTemplate_LocalChart(t *testing.T) {
@@ -156,6 +157,24 @@ func TestTemplate_HRInstallDisableHooks(t *testing.T) {
 	// render path.
 	if !strings.Contains(out, "demo-cm") {
 		t.Errorf("expected non-hook ConfigMap to still render: %s", out)
+	}
+}
+
+func TestReleaseManifest_HookSeparators(t *testing.T) {
+	rel := &release.Release{
+		Manifest: "kind: ConfigMap",
+		Hooks: []*release.Hook{
+			{Path: "hooks/a.yaml", Manifest: "kind: Job", Events: []release.HookEvent{release.HookPreInstall}},
+			{Path: "hooks/b.yaml", Manifest: "kind: Secret\n", Events: []release.HookEvent{release.HookPreInstall}},
+		},
+	}
+
+	got := releaseManifest(rel, Options{}, false, false)
+	want := "kind: ConfigMap\n" +
+		"---\n# Source: hooks/a.yaml\nkind: Job\n" +
+		"---\n# Source: hooks/b.yaml\nkind: Secret\n"
+	if got != want {
+		t.Errorf("releaseManifest hook separators mismatch\nwant:\n%q\ngot:\n%q", want, got)
 	}
 }
 

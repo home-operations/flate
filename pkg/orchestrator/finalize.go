@@ -51,6 +51,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 // point reads as start → drain → finalize.
 func (o *Orchestrator) finalize() error {
 	failed := o.store.FailedResources()
+	o.cascadeParentFailures(failed)
 	o.demoteOrphans(failed)
 	o.logSummary(failed)
 	o.logResourceFailures(failed)
@@ -72,6 +73,70 @@ func (o *Orchestrator) finalize() error {
 		return errors.Join(o.aggregateFailures(failed), panicErr)
 	}
 	return o.aggregateFailures(failed)
+}
+
+// cascadeParentFailures downgrades render-emitted children whose
+// ancestor (via renderedSet.ParentOf) ended up Failed. Closes a race
+// window where a parent KS's first reconcile transiently sets Ready
+// (validateDependsOn dropped a dangling dep at Bootstrap; reconcile
+// passes; renders; emits children; sets Ready), then a sibling
+// parent's render re-emits the parent with the dropped dep
+// restored, the second reconcile fails, and the children that
+// already observed the brief Ready window have proceeded to their
+// own Ready state. Without this cascade, dependents that raced past
+// their parent gate stay Ready in the final report even though the
+// parent is Failed — producing the "sometimes only the KS fails,
+// sometimes both fail" non-determinism users hit on typo'd
+// dependsOn.
+//
+// Walks the ParentOf chain per child so a deep render tree (grand-
+// parent → parent → child) propagates failures all the way down in
+// one pass. Cycle-guard via a visited set keeps the walk bounded.
+func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]store.StatusInfo) {
+	ancestorFailure := func(child manifest.NamedResource) (manifest.NamedResource, store.StatusInfo, bool) {
+		visited := map[manifest.NamedResource]struct{}{child: {}}
+		cur := child
+		for {
+			parent, ok := o.rendered.ParentOf(cur)
+			if !ok {
+				return manifest.NamedResource{}, store.StatusInfo{}, false
+			}
+			if _, dup := visited[parent]; dup {
+				return manifest.NamedResource{}, store.StatusInfo{}, false
+			}
+			visited[parent] = struct{}{}
+			if info, isFailed := failed[parent]; isFailed {
+				return parent, info, true
+			}
+			cur = parent
+		}
+	}
+	cascade := func(child manifest.NamedResource) {
+		if _, alreadyFailed := failed[child]; alreadyFailed {
+			return
+		}
+		info, ok := o.store.GetStatus(child)
+		if !ok || info.Status != store.StatusReady {
+			return
+		}
+		parent, parentInfo, hasFailed := ancestorFailure(child)
+		if !hasFailed {
+			return
+		}
+		msg := fmt.Sprintf("parent %s failed: %s", parent.String(), parentInfo.Message)
+		o.store.UpdateStatus(child, store.StatusFailed, msg)
+		failed[child] = store.StatusInfo{Status: store.StatusFailed, Message: msg}
+		slog.Debug("cascaded parent failure to child",
+			"child", child.String(),
+			"parent", parent.String(),
+			"reason", parentInfo.Message)
+	}
+	for _, ks := range store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization) {
+		cascade(ks.Named())
+	}
+	for _, hr := range store.ListAs[*manifest.HelmRelease](o.store, manifest.KindHelmRelease) {
+		cascade(hr.Named())
+	}
 }
 
 // demoteOrphans filters out resources whose source files sit under

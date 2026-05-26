@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/go-git/go-git/v5"
@@ -43,8 +44,7 @@ type Result struct {
 	Source string
 }
 
-// resolution carries the result of picking a baseline rev: the commit
-// hash plus a Source label naming how it was found.
+// resolution carries the result of picking a baseline rev.
 type resolution struct {
 	Hash   plumbing.Hash
 	Source string
@@ -69,11 +69,10 @@ func AutoResolve(path, base string, layout cacheroot.Layout) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	pathOrig, err := mapToTempDir(repoRoot, "", path) // sanity-check the relpath BEFORE we materialize
-	if err != nil {
+	// Validate path is inside the repo early, before any expensive work.
+	if _, err := relToRepo(repoRoot, path); err != nil {
 		return nil, err
 	}
-	_ = pathOrig // computed only to surface "outside the repo" early
 	r, err := resolve(repo, base)
 	if err != nil {
 		return nil, err
@@ -83,12 +82,16 @@ func AutoResolve(path, base string, layout cacheroot.Layout) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	pathOrig, err = mapToTempDir(repoRoot, dir, path)
+	rel, err := relToRepo(repoRoot, path)
 	if err != nil {
 		if !persistent {
 			_ = os.RemoveAll(dir)
 		}
 		return nil, err
+	}
+	pathOrig := dir
+	if rel != "." {
+		pathOrig = filepath.Join(dir, rel)
 	}
 	return &Result{
 		PathOrig:   pathOrig,
@@ -121,13 +124,9 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		if err != nil {
 			return "", false, fmt.Errorf("baseline staging: %w", err)
 		}
-		if err := materialize(repo, hash, staging); err != nil {
+		if err := materializeAndMark(repo, hash, staging); err != nil {
 			_ = os.RemoveAll(staging)
 			return "", false, err
-		}
-		if err := os.Mkdir(filepath.Join(staging, ".git"), 0o700); err != nil {
-			_ = os.RemoveAll(staging)
-			return "", false, fmt.Errorf("baseline .git marker: %w", err)
 		}
 		if err := os.Rename(staging, slot); err != nil {
 			_ = os.RemoveAll(staging)
@@ -145,28 +144,34 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 	if err != nil {
 		return "", false, fmt.Errorf("baseline tempdir: %w", err)
 	}
-	if err := materialize(repo, hash, tmp); err != nil {
+	if err := materializeAndMark(repo, hash, tmp); err != nil {
 		_ = os.RemoveAll(tmp)
 		return "", false, err
-	}
-	// Drop a .git marker so discovery.FindRepoRoot (called by
-	// orchestrator.buildChangeFilter's repo-root widening, PR #348)
-	// lifts the synthetic --path-orig to tmp, lining up with the
-	// current side's repoRoot. Without it, the per-side .git roots
-	// match (both fall back to the passed path) and the widening
-	// short-circuits.
-	if err := os.Mkdir(filepath.Join(tmp, ".git"), 0o700); err != nil {
-		_ = os.RemoveAll(tmp)
-		return "", false, fmt.Errorf("baseline .git marker: %w", err)
 	}
 	return tmp, false, nil
 }
 
-// mapToTempDir mirrors path's relative location under repoRoot into
-// tempDir. Used twice: once with an empty tempDir to validate the
-// path is inside the repo before we do anything expensive, and once
-// with the real tempDir after materialization.
-func mapToTempDir(repoRoot, tempDir, path string) (string, error) {
+// materializeAndMark extracts the commit tree into root and drops a
+// .git marker directory.
+//
+// The .git marker is required so discovery.FindRepoRoot (used by
+// orchestrator.buildChangeFilter's repo-root widening, PR #348) lifts
+// the synthetic --path-orig to root, lining up with the current side's
+// repoRoot. Without it, the per-side .git roots match (both fall back
+// to the passed path) and the widening short-circuits.
+func materializeAndMark(repo *git.Repository, hash plumbing.Hash, root string) error {
+	if err := materialize(repo, hash, root); err != nil {
+		return err
+	}
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o700); err != nil {
+		return fmt.Errorf("baseline .git marker: %w", err)
+	}
+	return nil
+}
+
+// relToRepo returns path's location relative to repoRoot. Returns "."
+// when path equals repoRoot. Errors when path escapes the repo.
+func relToRepo(repoRoot, path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
@@ -175,13 +180,10 @@ func mapToTempDir(repoRoot, tempDir, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if rel == "." {
-		return tempDir, nil
+	if rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return rel, nil
 	}
-	if rel == ".." || filepath.IsAbs(rel) || len(rel) >= 3 && rel[:3] == ".."+string(filepath.Separator) {
-		return "", fmt.Errorf("--path %q is outside the git repo at %q; pass --path-orig explicitly", path, repoRoot)
-	}
-	return filepath.Join(tempDir, rel), nil
+	return "", fmt.Errorf("--path %q is outside the git repo at %q; pass --path-orig explicitly", path, repoRoot)
 }
 
 // GitRepoRoot returns the .git ancestor of path, or "" when none
@@ -342,8 +344,8 @@ func upstreamHash(repo *git.Repository, head *plumbing.Reference) (plumbing.Hash
 // non-standard configs don't get mangled.
 func branchMergeToRemoteTracking(remote, merge string) plumbing.ReferenceName {
 	const prefix = "refs/heads/"
-	if len(merge) > len(prefix) && merge[:len(prefix)] == prefix {
-		return plumbing.NewRemoteReferenceName(remote, merge[len(prefix):])
+	if name, ok := strings.CutPrefix(merge, prefix); ok {
+		return plumbing.NewRemoteReferenceName(remote, name)
 	}
 	return plumbing.ReferenceName(merge)
 }
@@ -378,42 +380,22 @@ func mergeBase(repo *git.Repository, headCommit *object.Commit, other plumbing.H
 	// guarantee a stable order. Pick the lexicographically-smallest
 	// hash so two `flate diff` runs against the same repo pick the
 	// same baseline — reproducibility is a stated guarantee.
-	best := bases[0].Hash
-	for _, b := range bases[1:] {
-		if b.Hash.String() < best.String() {
-			best = b.Hash
-		}
-	}
-	return best, nil
+	best := slices.MinFunc(bases, func(a, b *object.Commit) int {
+		return strings.Compare(a.Hash.String(), b.Hash.String())
+	})
+	return best.Hash, nil
 }
 
 // isShallow reports whether the repo is a shallow clone (presence of
 // .git/shallow). Used to distinguish "merge-base unreachable because
 // CI shallow-cloned" from "merge-base unreachable because no upstream".
 func isShallow(repo *git.Repository) bool {
-	root, err := repoStorerPath(repo)
+	wt, err := repo.Worktree()
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(filepath.Join(root, "shallow"))
+	_, err = os.Stat(filepath.Join(wt.Filesystem.Root(), ".git", "shallow"))
 	return err == nil
-}
-
-// repoStorerPath returns the on-disk .git directory for repo. go-git
-// hides this behind the Storer interface, but every repo opened via
-// PlainOpen uses a filesystem-backed Storer pointing at .git/. Walk up
-// from cwd via the same FindRepoRoot we use elsewhere — simpler and
-// avoids reflection on go-git's internals.
-func repoStorerPath(repo *git.Repository) (string, error) {
-	// repo.Worktree().Filesystem.Root() returns the worktree root;
-	// .git lives at <root>/.git for non-bare repos. go-git's
-	// Worktree.Filesystem is the worktree's billy.FS, so Root() is
-	// guaranteed to point at the working tree.
-	wt, err := repo.Worktree()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(wt.Filesystem.Root(), ".git"), nil
 }
 
 // materialize extracts every blob in commit's tree to root via the
@@ -437,4 +419,3 @@ func shortRev(h plumbing.Hash) string {
 	}
 	return s[:7]
 }
-

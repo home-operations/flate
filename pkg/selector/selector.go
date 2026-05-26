@@ -1,7 +1,8 @@
 // Package selector implements metadata filtering used by every flate
 // command. Selectors are translated from CLI flags by the cli package
 // and consumed by controllers and the orchestrator to decide which
-// Kustomizations/HelmReleases to consider.
+// Kustomizations, HelmReleases, ResourceSets, and ResourceSetInputProviders
+// to consider.
 package selector
 
 import "github.com/home-operations/flate/pkg/manifest"

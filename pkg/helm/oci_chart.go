@@ -203,10 +203,14 @@ func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string
 	if c.registry == nil {
 		return "", errors.New("helm registry client not initialized")
 	}
-	// Key on the FULL trimmed ref (registry+path), not filepath.Base —
-	// two distinct registries publishing a chart with the same final
-	// path segment would otherwise collide on a single cache file.
-	target := filepath.Join(c.cacheDir, safeName(strings.TrimPrefix(ref, "oci://"))+"-"+version+".tgz")
+	pullRef := ociPullRef(ref, version)
+	// Key on the FULL pull reference (registry+path PLUS the tag or
+	// `@sha256:…` digest) so a tag-pulled artifact and a digest-pulled
+	// one for the same chart don't collide on a single cache file.
+	// The previous `safeName(ref) + "-" + version` shape collided
+	// `chart:1.2.3` with `chart@sha256:1.2.3-shaped-string` and let
+	// a tag re-push silently serve stale bytes to a digest reference.
+	target := filepath.Join(c.cacheDir, safeName(strings.TrimPrefix(pullRef, "oci://"))+".tgz")
 
 	release, err := chartCacheLocks.Acquire(ctx, target)
 	if err != nil {
@@ -218,7 +222,6 @@ func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string
 		return target, nil
 	}
 
-	pullRef := ociPullRef(ref, version)
 	_ = ctx // reserved for future per-pull cancellation when helm supports it
 	// Yield the worker-pool slot for the duration of the network
 	// pull so concurrent helm renders don't block the pool. No-op

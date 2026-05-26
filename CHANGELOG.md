@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.1.24](https://github.com/home-operations/flate/compare/0.1.23...0.1.24) (2026-05-26)
+
+
+### Bug Fixes
+
+* **orchestrator:** cascade parent failures to render-emitted children ([#414](https://github.com/home-operations/flate/issues/414)) ([cc051d7](https://github.com/home-operations/flate/commit/cc051d7317b5dfd732612cb807e4dd67c70ca973))
+* **source:** close mark-sweep race between gc.Sweep and Refs.Put ([#405](https://github.com/home-operations/flate/issues/405)) ([a045111](https://github.com/home-operations/flate/commit/a0451114381386bea0e4d318fa8bf1e48b61213a))
+* **store:** stop the post-Failed grace timer on early return ([#400](https://github.com/home-operations/flate/issues/400)) ([bf6f8be](https://github.com/home-operations/flate/commit/bf6f8bec818eb5a280ba6f6b8d69669dee275989))
+
+
+### Performance Improvements
+
+* **depwait:** skip MissingGrace when Existence index is wired ([#412](https://github.com/home-operations/flate/issues/412)) ([f06c774](https://github.com/home-operations/flate/commit/f06c7742026233d82a3021233f27e6ecfe64e5fa))
+* drop unnecessary syscalls and narrow the AddObject lock ([#404](https://github.com/home-operations/flate/issues/404)) ([75331cb](https://github.com/home-operations/flate/commit/75331cb7307ee0cf22ed6eb1507cf1bdad63e72c))
+* **task:** YieldQuiescent decrements active for depwait yields ([#413](https://github.com/home-operations/flate/issues/413)) ([80781aa](https://github.com/home-operations/flate/commit/80781aaa75506b8676d8e01c089923dabe77a70e))
+
+
+### Miscellaneous Chores
+
+* no need for draft PR ([fc4522b](https://github.com/home-operations/flate/commit/fc4522b6090449fa99c5f4fcdd6e7053e85dfeb7))
+
+
+### Code Refactoring
+
+* **cli, controllers:** naming + file organization ([#403](https://github.com/home-operations/flate/issues/403)) ([090d075](https://github.com/home-operations/flate/commit/090d0750fe89570b699e5e82b978839e271997cf))
+* **manifest:** dedup readKustomizeComponents ([#401](https://github.com/home-operations/flate/issues/401)) ([ad8de44](https://github.com/home-operations/flate/commit/ad8de440cd38ea14d5a7525142e490170f0e2b45))
+* **source/git:** split verify and mirror into subpackages ([#408](https://github.com/home-operations/flate/issues/408)) ([23e764b](https://github.com/home-operations/flate/commit/23e764b78bc4ea9d801482b1862734601438cc3a))
+* **source:** collapse fetcher authIdentity helpers into AuthIdentityFromRefs ([#406](https://github.com/home-operations/flate/issues/406)) ([75799fe](https://github.com/home-operations/flate/commit/75799fe01d150f1ab06b958763ae4de705ce5e3f))
+* **source:** consolidate bucket subpackage files and fetcher boilerplate ([#407](https://github.com/home-operations/flate/issues/407)) ([afb252c](https://github.com/home-operations/flate/commit/afb252c4457951f0e7819bbb53892453f411dcf0))
+* **source:** give every fetcher subpackage a controller-shaped layout ([#409](https://github.com/home-operations/flate/issues/409)) ([d0e7fb1](https://github.com/home-operations/flate/commit/d0e7fb183e41098346a20e79fdd7bae4f931d012))
+* **source:** shared NewHTTPTransport factory ([#402](https://github.com/home-operations/flate/issues/402)) ([e92181d](https://github.com/home-operations/flate/commit/e92181d67ec338cacba2e443078e77c8a5f31864))
+
 ## [0.1.23](https://github.com/home-operations/flate/compare/0.1.22...0.1.23) (2026-05-26)
 
 

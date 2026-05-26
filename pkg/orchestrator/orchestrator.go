@@ -48,13 +48,10 @@ type Config struct {
 	// EnableOCI turns on OCIRepository reconciliation.
 	EnableOCI bool
 	// AllowMissingSecrets converts source auth-secret-not-found errors
-	// and generated HelmRelease valuesFrom Secret references into skips
-	// rather than failures. Use when secrets are materialized on the live
-	// cluster (ExternalSecret, SealedSecret, etc.) and can't appear in
-	// the offline tree. Skipped resources mark Ready with a "skipped:"
-	// reason; downstream KS / HR consumers propagate the skip so the
-	// dependency chain doesn't surface as a cascade of failures in
-	// `flate test`.
+	// into skips and omits HelmRelease valuesFrom Secret/ConfigMap refs
+	// that cannot materialize in the offline tree. Skipped source
+	// resources mark Ready with a "skipped:" reason; omitted valuesFrom
+	// refs let HelmReleases render with the remaining values.
 	AllowMissingSecrets bool
 
 	// RegistryConfig is the docker config.json used for OCI auth.

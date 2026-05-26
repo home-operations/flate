@@ -1,13 +1,5 @@
 // Package bucket implements the source.Fetcher for KindBucket
 // (S3-compatible object storage via minio-go).
-//
-// File map:
-//
-//	fetcher.go    — Fetcher type, Fetch entry, authIdentity
-//	auth.go       — credentials + transport (TLS+proxy) resolution
-//	endpoint.go   — Flux endpoint normalization, scheme picker
-//	walk.go       — list + parallel download + content-addressed revision
-//	traversal.go  — safe path join (defense in depth against key escape)
 package bucket
 
 import (

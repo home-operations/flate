@@ -12,14 +12,11 @@ import (
 func normalizeEndpoint(endpoint string, insecure bool) (host string, secure bool, err error) {
 	switch {
 	case strings.HasPrefix(endpoint, "https://"):
-		host = strings.TrimPrefix(endpoint, "https://")
-		secure = true
+		host, secure = strings.TrimPrefix(endpoint, "https://"), true
 	case strings.HasPrefix(endpoint, "http://"):
-		host = strings.TrimPrefix(endpoint, "http://")
-		secure = false
+		host, secure = strings.TrimPrefix(endpoint, "http://"), false
 	default:
-		host = endpoint
-		secure = !insecure
+		host, secure = endpoint, !insecure
 	}
 	host = strings.TrimRight(host, "/")
 	if host == "" {

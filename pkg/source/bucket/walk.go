@@ -1,12 +1,12 @@
 package bucket
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +15,11 @@ import (
 	"github.com/minio/minio-go/v7"
 	"golang.org/x/sync/errgroup"
 )
+
+// downloadBufSize is the per-goroutine write buffer for object downloads.
+// 256 KiB amortises syscall overhead across the typical S3 object without
+// holding large chunks in memory when many goroutines run concurrently.
+const downloadBufSize = 256 << 10
 
 // walkBucket lists the bucket under prefix, downloads each object
 // into slot preserving the prefix-relative path, and returns the
@@ -31,8 +36,7 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 			return nil, "", obj.Err
 		}
 		if strings.HasSuffix(obj.Key, "/") {
-			// "Directory" placeholder — skip.
-			continue
+			continue // S3 directory-placeholder objects
 		}
 		entries = append(entries, entry{key: obj.Key, etag: obj.ETag})
 	}
@@ -73,10 +77,10 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 	// for identical contents — change detection across runs and any
 	// readyExpr keyed off status.artifact.revision would never align.
 	h := sha256.New()
-	keys := make([]string, 0, len(entries))
-	for _, e := range entries {
+	keys := make([]string, len(entries))
+	for i, e := range entries {
 		_, _ = fmt.Fprintf(h, "%s %s\n", e.key, e.etag)
-		keys = append(keys, e.key)
+		keys[i] = e.key
 	}
 	return keys, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
@@ -87,13 +91,19 @@ func downloadObject(ctx context.Context, client *minio.Client, bucket, key, dst 
 		return err
 	}
 	defer func() { _ = obj.Close() }()
+
 	f, err := os.Create(dst) //nolint:gosec // dst is composed from cache slot + bucket key
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-	if _, err := io.Copy(f, obj); err != nil {
+	bw := bufio.NewWriterSize(f, downloadBufSize)
+	if _, err := bw.ReadFrom(obj); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("copy %s: %w", key, err)
 	}
-	return nil
+	if err := bw.Flush(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("flush %s: %w", key, err)
+	}
+	return f.Close()
 }

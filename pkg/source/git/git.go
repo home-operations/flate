@@ -116,7 +116,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	}
 
 	authID := authIdentity(repo)
-	slot, err := cache.Slot(repo.URL, refStr, authID)
+	slot, err := cache.Slot(ctx, repo.URL, refStr, authID)
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", repo.URL, err)
 	}

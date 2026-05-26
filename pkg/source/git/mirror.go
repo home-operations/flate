@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -18,6 +17,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
+	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
@@ -33,16 +33,14 @@ import (
 // older behavior).
 type MirrorCache struct {
 	layout cacheroot.Layout
-
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks  *keylock.KeyMap[string]
 }
 
 // NewMirrorCache constructs a MirrorCache backed by the supplied
 // Layout. The git-mirrors subtree is created lazily on first
 // openOrFetch.
 func NewMirrorCache(layout cacheroot.Layout) *MirrorCache {
-	return &MirrorCache{layout: layout}
+	return &MirrorCache{layout: layout, locks: keylock.New[string]()}
 }
 
 // urlHash returns the stable directory name for url's mirror. The hash
@@ -59,24 +57,6 @@ func (m *MirrorCache) pathFor(url string) string {
 	return m.layout.GitMirror(urlHash(url))
 }
 
-// lockFor returns the per-URL mutex, creating it on first access. Used
-// by openOrFetch to serialize concurrent Fetches against the same
-// mirror — go-git's pack-file writes are not concurrent-safe.
-func (m *MirrorCache) lockFor(url string) *sync.Mutex {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.locks == nil {
-		m.locks = make(map[string]*sync.Mutex)
-	}
-	k := urlHash(url)
-	mx, ok := m.locks[k]
-	if !ok {
-		mx = &sync.Mutex{}
-		m.locks[k] = mx
-	}
-	return mx
-}
-
 // openOrFetch returns the bare mirror repo for url, ensuring it carries
 // up-to-date refs. First call for a URL runs a bare clone; subsequent
 // calls incrementally Fetch. Holds the per-URL lock across the network
@@ -87,9 +67,11 @@ func (m *MirrorCache) lockFor(url string) *sync.Mutex {
 // httpsTransportMu protocol-install dance is repeated to match the
 // non-mirror path's contract.
 func (m *MirrorCache) openOrFetch(ctx context.Context, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, tlsCfg *tls.Config) (*git.Repository, error) {
-	lock := m.lockFor(url)
-	lock.Lock()
-	defer lock.Unlock()
+	release, err := m.locks.Acquire(ctx, urlHash(url))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	if tlsCfg != nil {
 		httpsTransportMu.Lock()
@@ -128,7 +110,7 @@ func (m *MirrorCache) openOrFetch(ctx context.Context, url string, auth transpor
 			URL: proxy.Address, Username: proxy.Username, Password: proxy.Password,
 		}
 	}
-	repo, err := git.PlainCloneContext(ctx, path, true, cloneOpts) // bare = true
+	repo, err = git.PlainCloneContext(ctx, path, true, cloneOpts) // bare = true
 	if err != nil {
 		// Leave nothing partial behind so the next attempt re-clones
 		// from scratch rather than tripping over a half-written mirror.

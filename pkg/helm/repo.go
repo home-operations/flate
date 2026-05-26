@@ -234,7 +234,7 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	if err != nil {
 		return "", fmt.Errorf("download %s: %w", chartURL, err)
 	}
-	dir, digest, err := c.chartBlobs.PutBytes(buf.Bytes(), "chart.tgz")
+	dir, digest, err := c.chartBlobs.PutBytes(ctx, buf.Bytes(), "chart.tgz")
 	if err != nil {
 		return "", fmt.Errorf("store chart %s: %w", chartURL, err)
 	}

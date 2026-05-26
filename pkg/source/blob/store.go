@@ -14,6 +14,7 @@
 package blob
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -21,20 +22,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 
+	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // Store manages a content-addressed blob directory on disk. Safe for
-// concurrent use; per-digest mutexes serialize PutFile/PutBytes for
-// the same digest so two callers writing the same content don't race
-// on the rename finalize.
+// concurrent use; the keylock.KeyMap serializes Put for the same digest
+// so two callers writing the same content don't race on rename
+// finalize.
 type Store struct {
 	layout cacheroot.Layout
-
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks  *keylock.KeyMap[string]
 }
 
 // NewStore constructs a Store backed by the supplied Layout. The
@@ -42,7 +41,7 @@ type Store struct {
 // path methods are the single source of truth for on-disk
 // positioning.
 func NewStore(layout cacheroot.Layout) *Store {
-	return &Store{layout: layout}
+	return &Store{layout: layout, locks: keylock.New[string]()}
 }
 
 // Path returns the on-disk path for digest. Does not stat — callers
@@ -60,19 +59,22 @@ func (s *Store) Exists(digest string) bool {
 // PutBytes installs content as a single file named filename inside the
 // blob directory keyed by content's sha256. The digest is recomputed
 // from the bytes (never trusted from caller input). Concurrent callers
-// targeting the same digest serialize on a per-digest mutex; the first
+// targeting the same digest serialize on a per-digest lock; the first
 // finalizes via atomic rename and the rest observe ErrExists internally
-// and return without rewriting.
+// and return without rewriting. ctx cancellation aborts the lock
+// acquire (no write performed).
 //
 // Returns the populated blob directory path and the computed digest.
-func (s *Store) PutBytes(content []byte, filename string) (string, string, error) {
+func (s *Store) PutBytes(ctx context.Context, content []byte, filename string) (string, string, error) {
 	sum := sha256.Sum256(content)
 	digest := hex.EncodeToString(sum[:])
 	dir := s.Path(digest)
 
-	lock := s.lockFor(digest)
-	lock.Lock()
-	defer lock.Unlock()
+	release, err := s.locks.Acquire(ctx, digest)
+	if err != nil {
+		return "", "", err
+	}
+	defer release()
 
 	if s.Exists(digest) {
 		return dir, digest, nil
@@ -105,24 +107,11 @@ func (s *Store) PutBytes(content []byte, filename string) (string, string, error
 // PutReader is the streaming variant of PutBytes. Useful when the
 // caller has an io.Reader but doesn't want to buffer the whole
 // artifact in memory.
-func (s *Store) PutReader(r io.Reader, filename string) (string, string, error) {
+func (s *Store) PutReader(ctx context.Context, r io.Reader, filename string) (string, string, error) {
 	buf, err := io.ReadAll(r)
 	if err != nil {
 		return "", "", err
 	}
-	return s.PutBytes(buf, filename)
+	return s.PutBytes(ctx, buf, filename)
 }
 
-func (s *Store) lockFor(digest string) *sync.Mutex {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.locks == nil {
-		s.locks = make(map[string]*sync.Mutex)
-	}
-	mx, ok := s.locks[digest]
-	if !ok {
-		mx = &sync.Mutex{}
-		s.locks[digest] = mx
-	}
-	return mx
-}

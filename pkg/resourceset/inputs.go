@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // providerInputs is one per-provider list of input sets carrying its
@@ -176,4 +177,44 @@ func MatchSelector(sel *metav1.LabelSelector, lbls map[string]string) (bool, err
 		return false, err
 	}
 	return s.Matches(labels.Set(lbls)), nil
+}
+
+// StoreResolver returns a ProviderResolver backed by s. Name-only refs
+// perform a direct id lookup; selector refs walk the store's
+// ResourceSetInputProviders in the requested namespace and filter by
+// metadata.labels. This is the canonical implementation shared by
+// discovery and the orchestrator — both call sites previously carried
+// identical local copies.
+func StoreResolver(s *store.Store) ProviderResolver {
+	return func(ref fluxopv1.InputProviderReference, namespace string) ([]*manifest.ResourceSetInputProvider, error) {
+		if ref.Name != "" {
+			id := manifest.NamedResource{
+				Kind:      manifest.KindResourceSetInputProvider,
+				Namespace: namespace,
+				Name:      ref.Name,
+			}
+			obj, ok := store.Get[*manifest.ResourceSetInputProvider](s, id)
+			if !ok {
+				return nil, nil
+			}
+			return []*manifest.ResourceSetInputProvider{obj}, nil
+		}
+		if ref.Selector == nil {
+			return nil, nil
+		}
+		var out []*manifest.ResourceSetInputProvider
+		for _, p := range store.ListAs[*manifest.ResourceSetInputProvider](s, manifest.KindResourceSetInputProvider) {
+			if p.Namespace != namespace {
+				continue
+			}
+			match, err := MatchSelector(ref.Selector, p.Labels)
+			if err != nil {
+				return nil, err
+			}
+			if match {
+				out = append(out, p)
+			}
+		}
+		return out, nil
+	}
 }

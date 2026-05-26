@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/pkg/loader"
@@ -95,7 +94,7 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 			if err := gctx.Err(); err != nil {
 				return err
 			}
-			docs, err := resourceset.Render(rs, o.resolveInputProvider)
+			docs, err := resourceset.Render(rs, resourceset.StoreResolver(o.store))
 			if err != nil {
 				o.store.UpdateStatus(rs.Named(), store.StatusFailed, err.Error())
 				return err
@@ -178,41 +177,4 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-// resolveInputProvider mirrors discovery.resolveInputProvider but
-// against the post-Run store, which now includes RSIPs emitted by
-// the KS controller from kustomize substitution. Same semantics:
-// name-only refs hit the exact id; selector refs walk the requested
-// namespace's RSIPs and filter by metadata.labels.
-func (o *Orchestrator) resolveInputProvider(ref fluxopv1.InputProviderReference, namespace string) ([]*manifest.ResourceSetInputProvider, error) {
-	if ref.Name != "" {
-		id := manifest.NamedResource{
-			Kind:      manifest.KindResourceSetInputProvider,
-			Namespace: namespace,
-			Name:      ref.Name,
-		}
-		obj, ok := store.Get[*manifest.ResourceSetInputProvider](o.store, id)
-		if !ok {
-			return nil, nil
-		}
-		return []*manifest.ResourceSetInputProvider{obj}, nil
-	}
-	if ref.Selector == nil {
-		return nil, nil
-	}
-	var out []*manifest.ResourceSetInputProvider
-	for _, p := range store.ListAs[*manifest.ResourceSetInputProvider](o.store, manifest.KindResourceSetInputProvider) {
-		if p.Namespace != namespace {
-			continue
-		}
-		match, err := resourceset.MatchSelector(ref.Selector, p.Labels)
-		if err != nil {
-			return nil, err
-		}
-		if match {
-			out = append(out, p)
-		}
-	}
-	return out, nil
 }

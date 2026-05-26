@@ -214,7 +214,7 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 		}
 	}
 
-	var dependsOn []DependencyRef
+	dependsOn := make([]DependencyRef, 0, len(cr.Spec.DependsOn))
 	for _, dep := range cr.Spec.DependsOn {
 		if dep.Name == "" {
 			return nil, inputf("Kustomization missing dependsOn.name")

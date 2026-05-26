@@ -136,7 +136,7 @@ func (p *ResourceSetInputProvider) ExportedInputs() ([]map[string]any, error) {
 func decodeResourceSetInputs(inputs []fluxopv1.ResourceSetInput) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(inputs))
 	for i, in := range inputs {
-		decoded := map[string]any{}
+		decoded := make(map[string]any, len(in))
 		for k, v := range in {
 			if v == nil {
 				decoded[k] = nil

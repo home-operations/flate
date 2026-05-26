@@ -326,7 +326,7 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	if cr.Spec.Upgrade != nil && cr.Spec.Upgrade.CRDs != "" {
 		crdsPolicy = string(cr.Spec.Upgrade.CRDs)
 	}
-	var dependsOn []DependencyRef
+	dependsOn := make([]DependencyRef, 0, len(cr.Spec.DependsOn))
 	for _, dep := range cr.Spec.DependsOn {
 		if dep.Name == "" {
 			return nil, inputf("HelmRelease missing dependsOn.name")

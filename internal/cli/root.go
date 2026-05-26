@@ -47,6 +47,7 @@ func New(version string) *cobra.Command {
 		newBuildCmd(),
 		newDiffCmd(),
 		newTestCmd(),
+		newCacheCmd(),
 	)
 	return root
 }

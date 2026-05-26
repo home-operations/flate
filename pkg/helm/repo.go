@@ -185,7 +185,7 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 	allOpts := append(authOpts, tlsOpts...)
 
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	idx, err := c.fetchIndex(indexURL, allOpts)
+	idx, err := c.fetchIndex(ctx, r.Namespace+"/"+r.Name+"@"+indexURL, indexURL, allOpts)
 	if err != nil {
 		return "", err
 	}
@@ -239,8 +239,30 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 // helmRepoAuthOptions / helmRepoTLSOptions live in auth.go (paired
 // with auth_test.go).
 
-// fetchIndex downloads and parses a HelmRepository index.yaml.
-func (c *Client) fetchIndex(indexURL string, opts []getter.Option) (*repo.IndexFile, error) {
+// fetchIndex returns the parsed index.yaml for a HelmRepository. The
+// parsed *repo.IndexFile is memoized on Client.indexCache for the
+// process lifetime, keyed by `<ns>/<name>@<indexURL>`. N concurrent
+// HelmReleases pointing at the same repo coalesce on indexLocks so
+// exactly one HTTP fetch runs and the rest hit the populated cache.
+//
+// cacheKey is derived by the caller (locateHelmRepoChart) so the
+// cache distinguishes two HelmRepository CRs that share a URL but
+// may carry different auth contexts. The HTTP fetch itself uses opts
+// (auth, TLS) the caller resolved against the CR's SecretRef.
+func (c *Client) fetchIndex(ctx context.Context, cacheKey, indexURL string, opts []getter.Option) (*repo.IndexFile, error) {
+	if v, ok := c.indexCache.Load(cacheKey); ok {
+		return v.(*repo.IndexFile), nil
+	}
+	release, err := c.indexLocks.Acquire(ctx, cacheKey)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	// Re-check after acquiring the lock: a sibling that beat us into
+	// the critical section populated the entry while we waited.
+	if v, ok := c.indexCache.Load(cacheKey); ok {
+		return v.(*repo.IndexFile), nil
+	}
 	g, err := getter.NewHTTPGetter()
 	if err != nil {
 		return nil, err
@@ -266,6 +288,7 @@ func (c *Client) fetchIndex(indexURL string, opts []getter.Option) (*repo.IndexF
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", indexURL, err)
 	}
+	c.indexCache.Store(cacheKey, idx)
 	return idx, nil
 }
 

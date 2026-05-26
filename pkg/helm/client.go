@@ -82,6 +82,20 @@ type Client struct {
 	chartMu        sync.Mutex
 	chartCache     map[string]chartCacheEntry
 	chartLoadLocks *keylock.KeyMap[string]
+
+	// indexCache holds parsed HelmRepository index.yaml documents for
+	// the lifetime of this Client. The same Client serves every
+	// HelmRelease in one orchestrator run, so N HRs pointing at the
+	// same HelmRepository now share a single index fetch instead of
+	// re-downloading it N times. Keyed by `<ns>/<name>@<indexURL>`
+	// so two HelmRepository CRs that happen to share a URL still get
+	// distinct entries (their auth contexts may differ, and a private
+	// feed can serve different bytes per credential set).
+	//
+	// In-process only — there is no on-disk index cache yet; cross-
+	// run reuse with etag/If-Modified-Since is a future layer.
+	indexCache sync.Map // map[string]*repo.IndexFile
+	indexLocks *keylock.KeyMap[string]
 }
 
 // chartCacheEntry pairs the parsed chart with the (mtime, size) of
@@ -115,6 +129,7 @@ func NewClient(tmpDir, cacheDir string) (*Client, error) {
 		registry:       reg,
 		chartCache:     map[string]chartCacheEntry{},
 		chartLoadLocks: keylock.New[string](),
+		indexLocks:     keylock.New[string](),
 	}, nil
 }
 

@@ -224,7 +224,7 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 	var wg sync.WaitGroup
 	for _, dep := range deps {
 		wg.Add(1)
-		go func(dep manifest.DependencyRef) {
+		go func() {
 			defer wg.Done()
 			// Recover from panics in watchOne (e.g. malformed CEL expression
 			// evaluating against an unexpected payload type) so the whole
@@ -235,7 +235,7 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 			// dropped events on cancellation, leaving the consumer with
 			// a Pending dep that would time out at the full budget.
 			out <- safeWatchOne(ctx, w, dep, timeout)
-		}(dep)
+		}()
 	}
 
 	go func() {
@@ -411,22 +411,22 @@ func (w *Waiter) resolveMissing(ctx context.Context, id manifest.NamedResource) 
 	// EventObjectAdded subscription (no race) and is bounded by
 	// RenderProducingTimeout / QuiescenceCh / parent ctx.
 	if err := w.waitRenderEmission(ctx, id); err != nil {
-		switch {
-		case errors.Is(ctx.Err(), context.Canceled):
-			ev := classify(id, ctx.Err(), "")
+		// waitRenderEmission returns ctx.Err() (context.Canceled)
+		// on parent cancellation — propagate as DepCancelled so logs
+		// and Summary counters stay accurate.
+		if errors.Is(err, context.Canceled) {
+			ev := classify(id, err, "")
 			return &ev
-		case errors.Is(err, errRenderCapExceeded),
-			errors.Is(err, context.DeadlineExceeded),
-			errors.Is(err, errRenderDrained):
-			// The render-emission cap fired (or the pool drained
-			// without producing, or the wait was bounded by the
-			// per-dep Timeout) — the dep isn't going to appear.
-			// Fast-fail with "dependency not found" rather than the
-			// ambiguous "timeout" label.
-			return &Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
-		default:
-			return &Event{Dep: id, Status: DepFailed, Reason: err.Error()}
 		}
+		// All non-cancel terminations (render cap, pool drain, deadline)
+		// mean the dep isn't going to appear. Fast-fail with the
+		// canonical message instead of the ambiguous "timeout" label.
+		if errors.Is(err, errRenderCapExceeded) ||
+			errors.Is(err, context.DeadlineExceeded) ||
+			errors.Is(err, errRenderDrained) {
+			return &Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+		}
+		return &Event{Dep: id, Status: DepFailed, Reason: err.Error()}
 	}
 	return nil
 }
@@ -503,7 +503,7 @@ func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, 
 func (w *Waiter) tryReadyExpr(expr string, id manifest.NamedResource) (Event, bool) {
 	ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id)
 	if err != nil {
-		if _, ok := errors.AsType[*celCompileErr](err); ok {
+		if _, isCompile := errors.AsType[*celCompileErr](err); isCompile {
 			return Event{Dep: id, Status: DepFailed, Reason: "readyExpr: " + err.Error()}, true
 		}
 		// Eval error: transient, re-poll on next event.

@@ -181,17 +181,16 @@ func projectObject(s *store.Store, id manifest.NamedResource) map[string]any {
 		// — a common Flux readiness idiom — never spuriously fail.
 		"generation": int64(1),
 	}
-	if labels, annotations := labelsAndAnnotations(obj); labels != nil || annotations != nil {
-		if labels != nil {
-			meta["labels"] = labels
-		}
-		if annotations != nil {
-			meta["annotations"] = annotations
-		}
+	labels, annotations := labelsAndAnnotations(obj)
+	if labels != nil {
+		meta["labels"] = labels
+	}
+	if annotations != nil {
+		meta["annotations"] = annotations
 	}
 	return map[string]any{
 		"kind":       id.Kind,
-		"apiVersion": apiVersionFor(id.Kind),
+		"apiVersion": kindAPIVersion[id.Kind],
 		"metadata":   meta,
 		"status": map[string]any{
 			"observedGeneration": int64(1),
@@ -238,25 +237,19 @@ func conditionToMap(c metav1.Condition) map[string]any {
 	}
 }
 
-// apiVersionFor returns the well-known apiVersion for kinds flate
-// tracks. Used so CEL expressions inspecting `object.apiVersion`
-// behave sensibly. Unknown kinds get an empty apiVersion — that's
-// fine; most ReadyExpr formulations don't read it.
-func apiVersionFor(kind string) string {
-	switch kind {
-	case manifest.KindKustomization:
-		return manifest.FluxKustomizeDomain + "/v1"
-	case manifest.KindHelmRelease:
-		return manifest.HelmReleaseDomain + "/v2"
-	case manifest.KindGitRepository,
-		manifest.KindOCIRepository,
-		manifest.KindHelmRepository,
-		manifest.KindHelmChart,
-		manifest.KindBucket,
-		manifest.KindExternalArtifact:
-		return manifest.SourceDomain + "/v1"
-	}
-	return ""
+// kindAPIVersion maps each tracked Kind to its canonical apiVersion.
+// Used by projectObject so CEL expressions inspecting object.apiVersion
+// behave sensibly. Kinds absent from the map return "" — most ReadyExpr
+// formulations don't read it, so the empty value is a safe default.
+var kindAPIVersion = map[string]string{
+	manifest.KindKustomization:   manifest.FluxKustomizeDomain + "/v1",
+	manifest.KindHelmRelease:     manifest.HelmReleaseDomain + "/v2",
+	manifest.KindGitRepository:   manifest.SourceDomain + "/v1",
+	manifest.KindOCIRepository:   manifest.SourceDomain + "/v1",
+	manifest.KindHelmRepository:  manifest.SourceDomain + "/v1",
+	manifest.KindHelmChart:       manifest.SourceDomain + "/v1",
+	manifest.KindBucket:          manifest.SourceDomain + "/v1",
+	manifest.KindExternalArtifact: manifest.SourceDomain + "/v1",
 }
 
 func asBool(v ref.Val) (bool, error) {

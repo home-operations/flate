@@ -1,13 +1,10 @@
 package change
 
 import (
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
-
-	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -70,7 +67,7 @@ func buildOwnership(objs ObjectLister, repoRoot string) ownershipIndex {
 		}
 		comps, ok := componentCache[base]
 		if !ok {
-			comps = readKustomizeComponents(repoRoot, base)
+			comps = manifest.ReadKustomizeComponents(repoRoot, base)
 			componentCache[base] = comps
 		}
 		for _, comp := range comps {
@@ -83,25 +80,6 @@ func buildOwnership(objs ObjectLister, repoRoot string) ownershipIndex {
 		ownersCache:    make(map[string][]manifest.NamedResource),
 		ancestorsCache: make(map[string][]manifest.NamedResource),
 	}
-}
-
-// readKustomizeComponents returns the top-level `components:` field
-// of the kustomization file at base (resolved relative to repoRoot).
-func readKustomizeComponents(repoRoot, base string) []string {
-	for _, name := range manifest.KustomizeBuilderFilenames {
-		data, err := os.ReadFile(filepath.Join(repoRoot, base, name)) //nolint:gosec // path composed from known cluster layout
-		if err != nil {
-			continue
-		}
-		var doc struct {
-			Components []string `yaml:"components"`
-		}
-		if err := yaml.Unmarshal(data, &doc); err != nil {
-			continue
-		}
-		return doc.Components
-	}
-	return nil
 }
 
 // ownersOf returns every KS that claims the longest-matching prefix

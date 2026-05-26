@@ -2,13 +2,10 @@ package loader
 
 import (
 	"cmp"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
-
-	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -77,7 +74,7 @@ func KSPathPrefixes(s *store.Store, repoRoot string) []KSPathPrefix {
 			baseTrimmed := strings.TrimSuffix(base, "/")
 			comps, ok := componentCache[baseTrimmed]
 			if !ok {
-				comps = readKustomizeComponents(repoRoot, baseTrimmed)
+				comps = manifest.ReadKustomizeComponents(repoRoot, baseTrimmed)
 				componentCache[baseTrimmed] = comps
 			}
 			for _, comp := range comps {
@@ -91,27 +88,6 @@ func KSPathPrefixes(s *store.Store, repoRoot string) []KSPathPrefix {
 	return out
 }
 
-// readKustomizeComponents returns the top-level `components:` field
-// of the kustomization file at base (resolved relative to repoRoot),
-// or nil when the file is missing / unreadable / malformed. Mirrors
-// change/ownership.go's reader so the two indexes agree on which
-// component dirs to fold into the prefix set.
-func readKustomizeComponents(repoRoot, base string) []string {
-	for _, name := range manifest.KustomizeBuilderFilenames {
-		data, err := os.ReadFile(filepath.Join(repoRoot, base, name)) //nolint:gosec // path composed from known cluster layout
-		if err != nil {
-			continue
-		}
-		var doc struct {
-			Components []string `yaml:"components"`
-		}
-		if err := yaml.Unmarshal(data, &doc); err != nil {
-			continue
-		}
-		return doc.Components
-	}
-	return nil
-}
 
 // LongestParent returns the deepest KS whose spec.path covers file
 // (slash-normalized repo-relative path), excluding self. The second

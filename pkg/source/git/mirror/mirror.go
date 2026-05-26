@@ -7,7 +7,6 @@ package mirror
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -79,12 +78,7 @@ func proxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
 // carries up-to-date refs. First call for a URL runs a bare clone;
 // subsequent calls incrementally Fetch. Holds the per-URL lock across
 // the network operation so two concurrent callers serialize.
-//
-// tlsCfg is accepted for API compatibility; the caller (Fetch) already
-// holds the process-global HTTPS-transport lock for the duration of the
-// mirror operation, so installing it here would deadlock.
-func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, tlsCfg *tls.Config, plan FetchPlan) (*git.Repository, error) {
-	_ = tlsCfg // transport lock held by caller; see gittransport.InstallHTTPS
+func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, plan FetchPlan) (*git.Repository, error) {
 	release, err := m.locks.Acquire(ctx, urlHash(url))
 	if err != nil {
 		return nil, err

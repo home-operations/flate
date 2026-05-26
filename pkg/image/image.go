@@ -22,9 +22,7 @@ import (
 	"github.com/distribution/reference"
 )
 
-// Extract returns the unique sorted image references found anywhere
-// inside doc. Non-string values are ignored. Returns nil when no
-// images are found.
+// Extract returns nil when no images are found.
 func Extract(doc map[string]any) []string {
 	set := map[string]struct{}{}
 	walk(doc, set)
@@ -34,8 +32,6 @@ func Extract(doc map[string]any) []string {
 	return slices.Sorted(maps.Keys(set))
 }
 
-// walk recursively descends into v collecting strings that look like
-// OCI image references.
 func walk(v any, set map[string]struct{}) {
 	switch tv := v.(type) {
 	case map[string]any:
@@ -47,18 +43,18 @@ func walk(v any, set map[string]struct{}) {
 			walk(item, set)
 		}
 	case string:
-		if IsImageRef(tv) {
+		if isImageRef(tv) {
 			set[tv] = struct{}{}
 		}
 	}
 }
 
-// IsImageRef reports whether s looks like a tagged or digested OCI
-// image reference. distribution/reference is permissive — many
-// non-image strings ("count:up0", "system:auth-delegator",
-// "localhost:11220") parse cleanly as `name:tag` — so we apply
-// cheap heuristics first to weed out common false positives.
-func IsImageRef(s string) bool {
+// isImageRef reports whether s looks like a tagged or digested OCI image
+// reference. distribution/reference is permissive — many non-image strings
+// ("count:up0", "system:auth-delegator", "localhost:11220") parse cleanly as
+// `name:tag` — so we apply cheap heuristics first to weed out common false
+// positives.
+func isImageRef(s string) bool {
 	if len(s) < 5 {
 		return false
 	}

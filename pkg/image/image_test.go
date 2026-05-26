@@ -119,7 +119,7 @@ func TestExtract_RejectsNonImages(t *testing.T) {
 	}
 }
 
-func TestIsImageRef(t *testing.T) {
+func Test_isImageRef(t *testing.T) {
 	yes := []string{
 		"ghcr.io/owner/repo:v1",
 		"ghcr.io/owner/repo@sha256:" + sha256(),
@@ -131,7 +131,7 @@ func TestIsImageRef(t *testing.T) {
 	}
 	for _, s := range yes {
 		t.Run("yes/"+s, func(t *testing.T) {
-			if !IsImageRef(s) {
+			if !isImageRef(s) {
 				t.Errorf("expected image ref")
 			}
 		})
@@ -160,14 +160,13 @@ func TestIsImageRef(t *testing.T) {
 	}
 	for _, s := range no {
 		t.Run("no/"+s, func(t *testing.T) {
-			if IsImageRef(s) {
+			if isImageRef(s) {
 				t.Errorf("expected NOT image ref")
 			}
 		})
 	}
 }
 
-// sha256 returns a 64-hex stub used as a digest fixture.
 func sha256() string {
 	return "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 }

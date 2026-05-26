@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.23](https://github.com/home-operations/flate/compare/0.1.22...0.1.23) (2026-05-26)
+
+
+### Bug Fixes
+
+* **baseline:** --base main falls back to origin/main on CI checkouts ([#397](https://github.com/home-operations/flate/issues/397)) ([53ccce0](https://github.com/home-operations/flate/commit/53ccce0aa739ebc2d9b11b5c96b34ce394102af2))
+* **loader:** materialize Component configMapGenerator/secretGenerator ([#399](https://github.com/home-operations/flate/issues/399)) ([48e53b2](https://github.com/home-operations/flate/commit/48e53b2774fc10599971c982e70b3a349fe159bc))
+
 ## [0.1.22](https://github.com/home-operations/flate/compare/0.1.21...0.1.22) (2026-05-26)
 
 

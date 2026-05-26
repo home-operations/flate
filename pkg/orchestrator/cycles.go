@@ -96,12 +96,9 @@ func findDependencyCycles(s *store.Store, kind string) [][]manifest.NamedResourc
 				visit(m)
 			case gray:
 				// Back-edge to a node currently on the stack → cycle.
-				start := 0
-				for i, sNode := range stack {
-					if sNode == m {
-						start = i
-						break
-					}
+				start := slices.Index(stack, m)
+				if start < 0 {
+					start = 0
 				}
 				cycle := append([]manifest.NamedResource(nil), stack[start:]...)
 				cycle = append(cycle, m) // close the loop visually

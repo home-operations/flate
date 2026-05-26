@@ -124,11 +124,10 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 			"parent", parent.String(),
 			"reason", parentInfo.Message)
 	}
-	for _, ks := range store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization) {
-		cascade(ks.Named())
-	}
-	for _, hr := range store.ListAs[*manifest.HelmRelease](o.store, manifest.KindHelmRelease) {
-		cascade(hr.Named())
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+		for _, obj := range o.store.ListObjects(kind) {
+			cascade(obj.Named())
+		}
 	}
 }
 
@@ -158,7 +157,7 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 	hrCount := len(o.store.ListObjects(manifest.KindHelmRelease))
 	slog.Debug("reconcile complete",
 		"kustomizations", ksCount,
-		"helmReleases", hrCount,
+		"helm_releases", hrCount,
 		"failed", len(failed))
 	// Surface a clear warning when the scan turned up nothing — covers
 	// the "typo'd --path that happens to be an empty directory" case
@@ -177,11 +176,11 @@ func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]sto
 		// stderr alongside the user-facing report and reads as
 		// "flate had an internal error" when it's just normal
 		// per-resource Flux failures the user expects to see.
-		args := []any{"id", id.String(), "reason", info.Message}
 		if f := o.sourceFiles[id]; f != "" {
-			args = append(args, "file", f)
+			slog.Debug("resource failed", "id", id.String(), "reason", info.Message, "file", f)
+		} else {
+			slog.Debug("resource failed", "id", id.String(), "reason", info.Message)
 		}
-		slog.Debug("resource failed", args...)
 	}
 }
 

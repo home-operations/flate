@@ -371,8 +371,8 @@ func (o *Orchestrator) warnOnDisabledOCIFeatures() {
 			continue
 		}
 		slog.Warn("OCIRepository spec fields ignored — EnableOCI=false wires ExistenceFetcher",
-			"ociRepository", repo.Namespace+"/"+repo.Name,
-			"ignoredFields", fields)
+			"oci_repository", repo.Namespace+"/"+repo.Name,
+			"ignored_fields", fields)
 	}
 }
 
@@ -395,14 +395,14 @@ func (o *Orchestrator) warnOnKSOCISourceRefWithoutOCI() {
 		}
 		slog.Warn("Kustomization sourceRef points at OCIRepository but --enable-oci=false; the synthesized existence-only artifact has no LocalPath and spec.path resolution will fail at render time",
 			"kustomization", ks.Namespace+"/"+ks.Name,
-			"sourceRef", ks.SourceNamespace+"/"+ks.SourceName)
+			"source_ref", ks.SourceNamespace+"/"+ks.SourceName)
 	}
 }
 
 func (o *Orchestrator) replacePreflightFailures(failures map[manifest.NamedResource]string) []manifest.NamedResource {
 	o.preflightMu.Lock()
 	defer o.preflightMu.Unlock()
-	var cleared []manifest.NamedResource
+	cleared := make([]manifest.NamedResource, 0, len(o.preflightFailures))
 	for id := range o.preflightFailures {
 		if _, stillFailed := failures[id]; !stillFailed {
 			cleared = append(cleared, id)
@@ -446,7 +446,7 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 		// silently render zero output.
 		if origAbs == currAbs {
 			slog.Warn("--path and --path-orig resolve to the same directory; ignoring --path-orig",
-				"resolvedPath", currAbs)
+				"resolved_path", currAbs)
 			return nil
 		}
 		// Widen the diff scope to each side's .git root when the user
@@ -481,7 +481,7 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 			}
 		}
 		slog.Debug("changed-only mode",
-			"baseline", diffOrig, "current", diffCurr, "changedFiles", cs.Len(), "widenedToRepoRoot", widened)
+			"baseline", diffOrig, "current", diffCurr, "changed_files", cs.Len(), "widened_to_repo_root", widened)
 		if cs.Len() == 0 {
 			slog.Warn("no changes detected between --path and --path-orig — output will be empty; verify both paths reference distinct snapshots")
 		}
@@ -515,15 +515,9 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 			o.store.Refire(id)
 		}
 	}
-	o.attachFilter(f)
+	o.filter = f
 	slog.Debug("changed-only keep set", "size", o.filter.Size(), "items", o.filter.KeepNames())
 	return nil
-}
-
-// attachFilter records the resolved Filter; controllers consume it
-// via Configure() at Run time.
-func (o *Orchestrator) attachFilter(f *change.Filter) {
-	o.filter = f
 }
 
 // orchestratorExistence adapts the orchestrator's

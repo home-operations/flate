@@ -45,8 +45,9 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 		prefix string
 		id     manifest.NamedResource
 	}
-	var owners []owner
-	for _, ks := range store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization) {
+	ksList := store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization)
+	owners := make([]owner, 0, len(ksList))
+	for _, ks := range ksList {
 		if ks.Path == "" {
 			continue
 		}
@@ -116,17 +117,13 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 					return nil
 				}
 				slashFile := filepath.ToSlash(file)
-				matched := false
-				for _, w := range owners {
-					if strings.HasPrefix(slashFile, w.prefix) {
-						parentKS = w.id
-						matched = true
-						break
-					}
-				}
-				if !matched {
+				i := slices.IndexFunc(owners, func(w owner) bool {
+					return strings.HasPrefix(slashFile, w.prefix)
+				})
+				if i < 0 {
 					return nil
 				}
+				parentKS = owners[i].id
 			}
 			// Filter docs to RawObjects + collect dedup keys
 			// outside the mutex; the mutex only holds for the

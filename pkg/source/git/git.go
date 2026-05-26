@@ -267,7 +267,7 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 	if err != nil {
 		return nil, fmt.Errorf("GitRepository %s/%s ref %q: %w", repo.Namespace, repo.Name, refStr, err)
 	}
-	if err := materializeTree(mirror, hash, slot.Path); err != nil {
+	if err := materializeTree(ctx, mirror, hash, slot.Path); err != nil {
 		return nil, fmt.Errorf("materialize %s at %s: %w", hash, refStr, err)
 	}
 	if repo.Verification != nil {

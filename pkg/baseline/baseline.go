@@ -1,19 +1,19 @@
 package baseline
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 // Result describes a materialized baseline tree on disk.
@@ -404,115 +404,16 @@ func repoStorerPath(repo *git.Repository) (string, error) {
 	return filepath.Join(wt.Filesystem.Root(), ".git"), nil
 }
 
-// materialize extracts every blob in commit's tree to root, mirroring
-// the original directory structure. Submodules are warn-and-skipped —
-// flate's GitRepository fetcher handles submodules via go-git's
-// submodule API, but for a baseline diff the submodule's state is
-// rarely what the user wants to compare against, and the extra fetch
-// would couple `flate diff` to network availability.
+// materialize extracts every blob in commit's tree to root via the
+// shared gittree.Materialize helper. The materialization runs in
+// parallel; submodules log at slog.Warn and are skipped (the
+// submodule's state rarely matches what flate is rendering).
 func materialize(repo *git.Repository, hash plumbing.Hash, root string) error {
-	commit, err := repo.CommitObject(hash)
-	if err != nil {
-		return fmt.Errorf("load baseline commit %s: %w", hash, err)
-	}
-	tree, err := commit.Tree()
-	if err != nil {
-		return fmt.Errorf("load baseline tree: %w", err)
-	}
-	walker := object.NewTreeWalker(tree, true, nil)
-	defer walker.Close()
-	for {
-		name, entry, err := walker.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("walk baseline tree: %w", err)
-		}
-		if entry.Mode == filemode.Submodule {
-			slog.Warn("baseline: skipping submodule", "path", name)
-			continue
-		}
-		if entry.Mode == filemode.Symlink {
-			// go-git's filemode.IsFile() returns true for symlinks
-			// too, but writing the link-target string as a regular
-			// file would produce false diffs vs the working tree
-			// (which has actual symlinks). Materialize symlinks as
-			// real symlinks.
-			blob, err := repo.BlobObject(entry.Hash)
-			if err != nil {
-				return fmt.Errorf("load baseline symlink blob %s for %q: %w", entry.Hash, name, err)
-			}
-			target, err := readBlob(blob)
-			if err != nil {
-				return fmt.Errorf("read baseline symlink target for %q: %w", name, err)
-			}
-			path := filepath.Join(root, filepath.FromSlash(name))
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-			}
-			if err := os.Symlink(string(target), path); err != nil {
-				return fmt.Errorf("symlink %s -> %s: %w", path, target, err)
-			}
-			continue
-		}
-		if !entry.Mode.IsFile() {
-			// Trees and other non-file modes — NewTreeWalker recurses
-			// into subtrees automatically, so we don't mkdir here; the
-			// per-file write below MkdirAll's the parent on demand.
-			continue
-		}
-		blob, err := repo.BlobObject(entry.Hash)
-		if err != nil {
-			return fmt.Errorf("load baseline blob %s for %q: %w", entry.Hash, name, err)
-		}
-		// Convert slash-separated tree path to filesystem separator
-		// for Windows portability (no-op on Linux/macOS).
-		if err := writeBlob(filepath.Join(root, filepath.FromSlash(name)), blob, entry.Mode); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// readBlob slurps the entire contents of a blob (used for symlink
-// targets, which are bounded by PATH_MAX so the in-memory cost is
-// trivial).
-func readBlob(blob *object.Blob) ([]byte, error) {
-	r, err := blob.Reader()
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = r.Close() }()
-	return io.ReadAll(r)
-}
-
-// writeBlob streams blob's content to path, creating parent dirs and
-// preserving the executable bit. All other mode bits are normalized to
-// 0o600 — the materialized tree is read-only for the diff and never
-// promoted to a real working tree.
-func writeBlob(path string, blob *object.Blob, mode filemode.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-	}
-	perm := os.FileMode(0o600)
-	if mode == filemode.Executable {
-		perm = 0o700
-	}
-	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm) //nolint:gosec // path is composed under a tempdir we own
-	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	defer func() { _ = out.Close() }()
-	reader, err := blob.Reader()
-	if err != nil {
-		return fmt.Errorf("read blob for %s: %w", path, err)
-	}
-	defer func() { _ = reader.Close() }()
-	if _, err := io.Copy(out, reader); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
+	return gittree.Materialize(context.Background(), repo, hash, root, gittree.Options{
+		OnSubmodule: func(path string) {
+			slog.Warn("baseline: skipping submodule", "path", path)
+		},
+	})
 }
 
 // shortRev formats a hash as the conventional 7-char prefix used in

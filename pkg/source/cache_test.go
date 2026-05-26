@@ -323,6 +323,89 @@ func TestCache_SlotResetThenStage(t *testing.T) {
 	slot.Release()
 }
 
+func TestCache_StageRefreshPreservesOldSlotOnAbort(t *testing.T) {
+	c := NewCache(cacheroot.New(t.TempDir()))
+
+	slot, err := c.Slot(context.Background(), "https://example.com/repo", "v1", "")
+	if err != nil {
+		t.Fatalf("Slot: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(slot.Path, "old"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := slot.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	slot.Release()
+
+	slot, err = c.Slot(context.Background(), "https://example.com/repo", "v1", "")
+	if err != nil {
+		t.Fatalf("Slot refresh: %v", err)
+	}
+	if err := slot.StageRefresh(); err != nil {
+		t.Fatalf("StageRefresh: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(slot.Path, "new"), []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	slot.Release()
+
+	slot, err = c.Slot(context.Background(), "https://example.com/repo", "v1", "")
+	if err != nil {
+		t.Fatalf("Slot after abort: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot.Path, "old")); err != nil {
+		t.Errorf("old slot should survive aborted refresh: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot.Path, "new")); !os.IsNotExist(err) {
+		t.Errorf("aborted refresh staging leaked into final slot: %v", err)
+	}
+	slot.Release()
+}
+
+func TestCache_StageRefreshReplacesOldSlotOnCommit(t *testing.T) {
+	c := NewCache(cacheroot.New(t.TempDir()))
+
+	slot, err := c.Slot(context.Background(), "https://example.com/repo", "v1", "")
+	if err != nil {
+		t.Fatalf("Slot: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(slot.Path, "old"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := slot.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	slot.Release()
+
+	slot, err = c.Slot(context.Background(), "https://example.com/repo", "v1", "")
+	if err != nil {
+		t.Fatalf("Slot refresh: %v", err)
+	}
+	if err := slot.StageRefresh(); err != nil {
+		t.Fatalf("StageRefresh: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(slot.Path, "new"), []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := slot.Commit(); err != nil {
+		t.Fatalf("Commit refresh: %v", err)
+	}
+	slot.Release()
+
+	slot, err = c.Slot(context.Background(), "https://example.com/repo", "v1", "")
+	if err != nil {
+		t.Fatalf("Slot after refresh: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot.Path, "old")); !os.IsNotExist(err) {
+		t.Errorf("old slot survived committed refresh: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot.Path, "new")); err != nil {
+		t.Errorf("new slot missing after committed refresh: %v", err)
+	}
+	slot.Release()
+}
+
 func TestSlugifyRepo(t *testing.T) {
 	cases := map[string]string{
 		"https://github.com/owner/cluster.git":                "cluster",

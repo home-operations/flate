@@ -2,6 +2,7 @@ package helmrelease
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,8 +12,8 @@ import (
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -95,6 +96,37 @@ func TestController_FilterUnchangedShortCircuitsToReady(t *testing.T) {
 	info := waitForStatus(t, st, hr.Named(), store.StatusReady)
 	if info.Message != "unchanged" {
 		t.Errorf("expected unchanged short-circuit; got %q", info.Message)
+	}
+}
+
+func TestController_AllowMissingSecretsSkipsGeneratedValuesFromSecret(t *testing.T) {
+	_, st := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
+	st.AddObject(&manifest.RawObject{
+		Kind:       "ExternalSecret",
+		APIVersion: "external-secrets.io/v1",
+		Name:       "app-creds",
+		Namespace:  "default",
+		Spec: map[string]any{
+			"target": map[string]any{"name": "app-values"},
+		},
+	})
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Interval: metav1Duration(time.Hour),
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: manifest.KindSecret, Name: "app-values"},
+			},
+		},
+	}
+	st.AddObject(hr)
+
+	info := waitForStatus(t, st, hr.Named(), store.StatusReady)
+	if !store.IsSkipped(info) {
+		t.Fatalf("expected generated valuesFrom Secret to soft-skip; got %+v", info)
+	}
+	if !strings.Contains(info.Message, "ExternalSecret/default/app-creds") {
+		t.Errorf("skip reason should name the producer, got %q", info.Message)
 	}
 }
 

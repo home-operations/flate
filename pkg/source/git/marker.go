@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 
@@ -31,6 +32,19 @@ func readCachedRevision(slot string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+func cachedRevisionFresh(slot string, maxAge time.Duration) (string, bool) {
+	if maxAge <= 0 {
+		return "", false
+	}
+	path := filepath.Join(slot, cachedRevisionFile)
+	info, err := os.Stat(path)
+	if err != nil || time.Since(info.ModTime()) > maxAge {
+		return "", false
+	}
+	rev := readCachedRevision(slot)
+	return rev, rev != ""
 }
 
 // readResolvedRevision returns the current commit SHA at the worktree.

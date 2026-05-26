@@ -172,6 +172,9 @@ type Slot struct {
 // call multiple times. After a successful commit, Path is updated to
 // the final slot so subsequent reads work uniformly.
 func (s *Slot) Commit() error {
+	if s.Exists && s.staging != "" {
+		return s.commitRefresh()
+	}
 	if s.Exists || s.committed {
 		return nil
 	}
@@ -190,6 +193,29 @@ func (s *Slot) Commit() error {
 		}
 		return fmt.Errorf("cache commit: %w", err)
 	}
+	s.committed = true
+	s.staging = ""
+	s.Path = s.final
+	return nil
+}
+
+func (s *Slot) commitRefresh() error {
+	backup, err := os.MkdirTemp(filepath.Dir(s.final), filepath.Base(s.final)+".old.*")
+	if err != nil {
+		return fmt.Errorf("cache refresh backup: %w", err)
+	}
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("cache refresh backup clean: %w", err)
+	}
+	if err := os.Rename(s.final, backup); err != nil {
+		_ = os.RemoveAll(backup)
+		return fmt.Errorf("cache refresh move old: %w", err)
+	}
+	if err := os.Rename(s.staging, s.final); err != nil {
+		_ = os.Rename(backup, s.final)
+		return fmt.Errorf("cache refresh commit: %w", err)
+	}
+	_ = os.RemoveAll(backup)
 	s.committed = true
 	s.staging = ""
 	s.Path = s.final
@@ -251,6 +277,28 @@ func (s *Slot) Stage() error {
 	staging, err := os.MkdirTemp(filepath.Dir(s.final), filepath.Base(s.final)+".tmp.*")
 	if err != nil {
 		return fmt.Errorf("cache slot stage: %w", err)
+	}
+	s.staging = staging
+	s.Path = staging
+	return nil
+}
+
+// StageRefresh allocates a staging directory while preserving the
+// current final slot until Commit. It is for interval-based refreshes:
+// readers keep a usable old artifact if the fetch fails before commit,
+// while a successful Commit replaces the final slot under the held
+// slot lock.
+func (s *Slot) StageRefresh() error {
+	if !s.Exists {
+		return s.Stage()
+	}
+	if s.staging != "" {
+		s.Path = s.staging
+		return nil
+	}
+	staging, err := os.MkdirTemp(filepath.Dir(s.final), filepath.Base(s.final)+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("cache slot refresh stage: %w", err)
 	}
 	s.staging = staging
 	s.Path = staging

@@ -147,6 +147,52 @@ func TestMirror_TagResolvesAcrossRefs(t *testing.T) {
 	}
 }
 
+func TestMirror_TagRefreshFetchesOnlyRequestedTag(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	v1 := mustTagHEAD(t, src, "v1.0.0")
+
+	layout := cacheroot.New(t.TempDir())
+	cache := source.NewCache(layout)
+	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout)}
+	repo := &manifest.GitRepository{
+		Name: "tagged", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:       "file://" + src,
+			Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
+		},
+	}
+	if _, err := f.Fetch(context.Background(), repo); err != nil {
+		t.Fatalf("Fetch v1: %v", err)
+	}
+
+	mustCommitFile(t, src, "v2.txt", "v2")
+	mustTagHEAD(t, src, "v2.0.0")
+
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch v1 again: %v", err)
+	}
+	if art.Revision != v1 {
+		t.Errorf("revision = %q, want %q", art.Revision, v1)
+	}
+
+	entries, err := os.ReadDir(layout.GitMirrors())
+	if err != nil {
+		t.Fatalf("ReadDir mirrors: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one mirror dir, got %d", len(entries))
+	}
+	mirrorRepo, err := git.PlainOpen(filepath.Join(layout.GitMirrors(), entries[0].Name()))
+	if err != nil {
+		t.Fatalf("PlainOpen mirror: %v", err)
+	}
+	if _, err := mirrorRepo.Tag("v2.0.0"); err == nil {
+		t.Fatal("exact tag refresh fetched unrelated tag v2.0.0")
+	}
+}
+
 func TestMirror_RefNameResolvesNonBranchRefs(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)

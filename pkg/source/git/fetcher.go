@@ -114,9 +114,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		refLabel = cmp.Or(gitRefLabel(*repo.Reference), refLabel)
 	}
 	slotRef := gitCacheKey(repo, refLabel)
-	if !canUseCachedGitSlot(repo.Reference) {
-		slotRef = source.MutableCacheKey(slotRef)
-	}
+	mutableRef := !canUseCachedGitSlot(repo.Reference)
 
 	authID := authIdentity(repo)
 	slot, err := cache.Slot(ctx, repo.URL, slotRef, authID)
@@ -125,31 +123,38 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	}
 	defer slot.Release()
 
-	if slot.Exists && canUseCachedGitSlot(repo.Reference) {
+	if slot.Exists {
 		// The flate-revision marker is written AFTER a successful
 		// clone+checkout (and committed via atomic rename only after
 		// the marker write), so any committed slot will have it. A
 		// missing marker means a legacy slot from a pre-marker flate
 		// version or a hand-modified cache.
 		if rev := readCachedRevision(slot.Path); rev != "" {
-			return &store.SourceArtifact{
-				Kind: manifest.KindGitRepository,
-				URL:  repo.URL, LocalPath: slot.Path, Revision: rev,
-			}, nil
+			if !mutableRef {
+				return &store.SourceArtifact{
+					Kind: manifest.KindGitRepository,
+					URL:  repo.URL, LocalPath: slot.Path, Revision: rev,
+				}, nil
+			}
+			if rev, ok := cachedRevisionFresh(slot.Path, repo.Interval.Duration); ok {
+				return &store.SourceArtifact{
+					Kind: manifest.KindGitRepository,
+					URL:  repo.URL, LocalPath: slot.Path, Revision: rev,
+				}, nil
+			}
 		}
-		// Stale slot — wipe and stage a fresh clone target.
-		if err := slot.Reset(); err != nil {
-			return nil, err
-		}
-		if err := slot.Stage(); err != nil {
-			return nil, err
-		}
-	} else if slot.Exists {
-		if err := slot.Reset(); err != nil {
-			return nil, err
-		}
-		if err := slot.Stage(); err != nil {
-			return nil, err
+		if mutableRef {
+			if err := slot.StageRefresh(); err != nil {
+				return nil, err
+			}
+		} else {
+			// Stale immutable slot — wipe and stage a fresh clone target.
+			if err := slot.Reset(); err != nil {
+				return nil, err
+			}
+			if err := slot.Stage(); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -352,7 +357,7 @@ func (f *Fetcher) canUseMirror(repo *manifest.GitRepository, _ string) bool {
 // hoisting it out of this function avoids re-reading the Secret +
 // re-parsing PEM on every mirror fetch.
 func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitRepository, refStr string, slot *source.Slot, auth transport.AuthMethod, proxy *source.ProxyConfig, tlsCfg *tls.Config) (*store.SourceArtifact, error) {
-	mirrorRepo, err := f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, tlsCfg)
+	mirrorRepo, err := f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, tlsCfg, mirrorFetchPlan(repo.Reference))
 	if err != nil {
 		return nil, err
 	}
@@ -383,6 +388,38 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 	}
 	art.LocalPath = slot.Path
 	return art, nil
+}
+
+func mirrorFetchPlan(ref *manifest.GitRepositoryRef) mirror.FetchPlan {
+	if ref == nil {
+		return mirror.FetchPlan{}
+	}
+	switch {
+	case ref.Commit != "" && ref.Branch != "":
+		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
+			config.RefSpec("+refs/heads/" + ref.Branch + ":refs/heads/" + ref.Branch),
+		}}
+	case ref.Commit != "":
+		return mirror.FetchPlan{}
+	case ref.Name != "":
+		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
+			config.RefSpec("+" + ref.Name + ":" + ref.Name),
+		}}
+	case ref.SemVer != "":
+		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
+			config.RefSpec("+refs/tags/*:refs/tags/*"),
+		}}
+	case ref.Tag != "":
+		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
+			config.RefSpec("+refs/tags/" + ref.Tag + ":refs/tags/" + ref.Tag),
+		}}
+	case ref.Branch != "":
+		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
+			config.RefSpec("+refs/heads/" + ref.Branch + ":refs/heads/" + ref.Branch),
+		}}
+	default:
+		return mirror.FetchPlan{}
+	}
 }
 
 // authIdentity returns the cache-key auth tag for a GitRepository.

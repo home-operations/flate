@@ -37,7 +37,7 @@ flate test all     --path ./kubernetes
 
 The `[name]` positional on `get ks/hr` and `build`/`diff`/`test ks/hr` is matched against the resource's bare name (`metadata.name`), not `namespace/name`. Use `-n / --namespace` to scope.
 
-Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag. `get`, `build`, `diff`, and `test` all run the same offline reconcile pipeline before producing output, so referenced Git, OCI, Helm, Bucket, or remote kustomize sources must be reachable. Immutable pins can reuse cache; mutable refs refresh.
+Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag. `get`, `build`, `diff`, and `test` all run the same offline reconcile pipeline before producing output, so referenced Git, OCI, Helm, Bucket, or remote kustomize sources must be reachable. Source caches respect Flux intervals: immutable pins reuse cache; mutable refs refresh when their interval expires.
 
 | Verb | Targets | Notes |
 |---|---|---|
@@ -46,9 +46,9 @@ Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig
 | `diff` | `ks`, `hr`, `images`, `all` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output github` mode. K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
 | `test` | `ks`, `hr`, `all` | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure. |
 
-`get ks` and `get hr` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart`). Helm template flags are available on every reconcile-running subcommand because flate reconciles the full graph before filtering output. Reconcile-running subcommands accept `--allow-missing-secrets` to soft-skip sources whose auth Secret is missing or PLACEHOLDER-wiped — see [Behaviors](#behaviors).
+`get ks` and `get hr` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart`). Helm template flags are available on every reconcile-running subcommand because flate reconciles the full graph before filtering output. Reconcile-running subcommands accept `--allow-missing-secrets` to soft-skip source auth Secrets and generated HR `valuesFrom` Secrets that only exist in the live cluster — see [Behaviors](#behaviors).
 
-**Default output filters.** `--skip-secrets` and `--skip-crds` both default to `true` — `build` and `diff` strip rendered `Secret` and `CustomResourceDefinition` objects from manifest output. Pass `--skip-secrets=false` / `--skip-crds=false` to include them; `--skip-kinds <kind>` (repeatable) drops additional kinds. These are output-stream filters, distinct from `--allow-missing-secrets`, which gates *source fetch* on missing auth Secrets.
+**Default output filters.** `--skip-secrets` and `--skip-crds` both default to `true` — `build` and `diff` strip rendered `Secret` and `CustomResourceDefinition` objects from manifest output. Pass `--skip-secrets=false` / `--skip-crds=false` to include them; `--skip-kinds <kind>` (repeatable) drops additional kinds. These are output-stream filters, distinct from `--allow-missing-secrets`, which gates source auth and generated HR values Secret readiness.
 
 ## Changed-only mode
 
@@ -84,7 +84,7 @@ PLACEHOLDER-wiped values (the always-on wipe of cleartext Secret data) are treat
 
 **`spec.suspend`** — honored on every reconcilable CR. Suspended resources mark `Ready / "suspended"` and produce no rendered output.
 
-**`--allow-missing-secrets`** — off by default. When set, a source whose auth `secretRef` is missing or PLACEHOLDER-wiped marks `Ready / "skipped: …"` instead of `Failed`, and consumers (KS `sourceRef`, HR `chartRef`) propagate the skip so `flate test` reports SKIPPED rather than a cascade of FAILED. Intended for repos that materialize auth on the live cluster via ExternalSecret / SealedSecret. Typos in `secretRef.name` are rejected at parse time so they don't silently fall into this path. Scope is auth `secretRef` only — verify, cert, and proxy `secretRef`s still fail loud, since silently dropping verification or TLS material is a security downgrade.
+**`--allow-missing-secrets`** — off by default. When set, a source whose auth `secretRef` is missing or PLACEHOLDER-wiped marks `Ready / "skipped: …"` instead of `Failed`, and consumers (KS `sourceRef`, HR `chartRef`) propagate the skip so `flate test` reports SKIPPED rather than a cascade of FAILED. HelmReleases also skip immediately when a non-optional `valuesFrom` Secret is generated by an in-cluster secret controller such as ExternalSecret or SealedSecret. Intended for repos that materialize secrets on the live cluster. Verify, cert, and proxy `secretRef`s still fail loud, since silently dropping verification or TLS material is a security downgrade.
 
 **`spec.dependsOn[].readyExpr` (CEL)** — evaluated against `self` and `dep` projections, matching upstream kustomize- and helm-controller binding:
 

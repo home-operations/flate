@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -45,7 +46,7 @@ type Controller struct {
 // onto the controller. Filter narrows fetches to sources referenced by
 // changed resources in changed-only mode.
 type FetchOptions struct {
-	Filter             *change.Filter
+	Filter              *change.Filter
 	AllowMissingSecrets bool
 }
 
@@ -117,6 +118,7 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) e
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "fetching")
+	started := time.Now()
 	slog.Debug("source: fetch", "id", id.String())
 
 	// Release the worker slot during the fetch so consumers of this
@@ -130,12 +132,14 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) e
 		artifact, fetchErr = fetcher.Fetch(ctx, obj)
 	})
 	if fetchErr != nil {
+		slog.Debug("source: fetch failed", "id", id.String(), "duration", time.Since(started), "err", fetchErr)
 		if c.allowMissingSecrets && errors.Is(fetchErr, manifest.ErrMissingSecret) {
 			slog.Info("source: skipped (missing secret)", "id", id.String(), "err", fetchErr)
 			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(fetchErr.Error()))
 		}
 		return fetchErr
 	}
+	slog.Debug("source: fetch complete", "id", id.String(), "duration", time.Since(started), "artifact", artifact != nil)
 	// An ExistenceFetcher returns (nil, nil) — the kind doesn't produce
 	// an on-disk artifact (HelmRepository; OCIRepository when fetching
 	// is disabled). RunWithStatus will still mark Ready so dependsOn

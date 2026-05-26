@@ -56,9 +56,9 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.BoolVar(&f.skipCRDs, "skip-crds", true, "exclude CRD objects from rendered output")
 	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
 	fs.BoolVar(&f.allowMissingSecrets, "allow-missing-secrets", false,
-		"soft-skip sources whose auth Secret is missing or whose values are placeholders "+
-			"(typical when the live cluster materializes auth via ExternalSecret); dependent "+
-			"Kustomizations/HelmReleases propagate the skip. Verify/cert/proxy secretRefs still fail loud.")
+		"soft-skip source auth Secrets and HelmRelease valuesFrom Secrets that only materialize "+
+			"in the live cluster; dependent Kustomizations/HelmReleases propagate the skip. "+
+			"Verify/cert/proxy secretRefs still fail loud.")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
 	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, yaml, json, name")
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")

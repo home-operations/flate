@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -78,6 +79,37 @@ func TestFetcher_MutableDefaultRefRefreshesCache(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(art2.LocalPath, "later.txt")); err != nil {
 		t.Fatalf("refreshed checkout missing later.txt: %v", err)
+	}
+}
+
+func TestFetcher_MutableRefUsesFreshIntervalCache(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:      "file://" + src,
+			Interval: metav1.Duration{Duration: time.Hour},
+		},
+	}
+	f := &Fetcher{Cache: cache}
+
+	art1, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch first: %v", err)
+	}
+	mustCommitFile(t, src, "later.txt", "new content")
+	art2, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch second: %v", err)
+	}
+	if art2.Revision != art1.Revision {
+		t.Fatalf("fresh interval cache should reuse revision %s, got %s", art1.Revision, art2.Revision)
+	}
+	if _, err := os.Stat(filepath.Join(art2.LocalPath, "later.txt")); !os.IsNotExist(err) {
+		t.Fatalf("fresh interval cache should not include later commit, stat err=%v", err)
 	}
 }
 

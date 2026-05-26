@@ -13,11 +13,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -237,6 +239,41 @@ func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
 	}
 	if got := mustReadFile(t, filepath.Join(art2.LocalPath, "app.yaml")); !strings.Contains(got, "v2") {
 		t.Fatalf("second fetch content = %q", got)
+	}
+}
+
+func TestFetcher_MutableTagUsesFreshIntervalResolveCache(t *testing.T) {
+	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+	v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
+	srv, setArtifact := startMutableFakeRegistry(t, v1, v2)
+
+	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	repo := &manifest.OCIRepository{
+		Name:      "mutable",
+		Namespace: "test",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
+			Insecure:  true,
+			Interval:  metav1.Duration{Duration: time.Hour},
+			Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
+		},
+	}
+
+	art1, err := f.Fetch(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("first Fetch: %v", err)
+	}
+	setArtifact(1)
+	srv.Close()
+	art2, err := f.Fetch(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("second Fetch should use fresh resolve cache without registry: %v", err)
+	}
+	if art2.Digest != art1.Digest {
+		t.Fatalf("fresh interval cache should reuse digest %s, got %s", art1.Digest, art2.Digest)
+	}
+	if got := mustReadFile(t, filepath.Join(art2.LocalPath, "app.yaml")); !strings.Contains(got, "v1") {
+		t.Fatalf("fresh interval cache content = %q", got)
 	}
 }
 

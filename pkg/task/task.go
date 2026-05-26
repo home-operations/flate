@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Service tracks active goroutines.
@@ -72,8 +73,14 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 	s.active.Add(1)
 	s.wgActive.Add(1)
 	go func() {
+		started := time.Now()
 		defer s.wgActive.Done()
 		defer s.taskDone()
+		defer func() {
+			if d := time.Since(started); d > time.Second {
+				slog.Debug("task complete", "name", name, "duration", d)
+			}
+		}()
 		defer func() {
 			if r := recover(); r != nil {
 				s.failures.Add(1)

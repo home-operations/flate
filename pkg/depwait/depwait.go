@@ -559,6 +559,7 @@ var errRenderDrained = errors.New("render pool drained without emission")
 // nothing useful most of the time; the quiescence channel replaces
 // the poll with one event per drain.
 func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResource) error {
+	started := time.Now()
 	renderCtx, renderCancel := context.WithTimeout(ctx, RenderProducingTimeout)
 	defer renderCancel()
 
@@ -576,6 +577,7 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 	}, false)
 	defer unsub()
 	if w.depExists(id) {
+		slog.Debug("depwait: render-only dependency already exists", "parent", w.Parent.String(), "dep", id.String(), "duration", time.Since(started))
 		return nil
 	}
 
@@ -590,6 +592,7 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 	for {
 		select {
 		case <-arrived:
+			slog.Debug("depwait: render-only dependency arrived", "parent", w.Parent.String(), "dep", id.String(), "duration", time.Since(started))
 			return nil
 		case <-quiesce:
 			// Quiescence: no other reconcile in the pool is doing
@@ -597,8 +600,10 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 			// landed in the same scheduler tick as the drain; if
 			// the dep isn't here, no future emission can produce it.
 			if w.depExists(id) {
+				slog.Debug("depwait: render-only dependency arrived at quiescence", "parent", w.Parent.String(), "dep", id.String(), "duration", time.Since(started))
 				return nil
 			}
+			slog.Debug("depwait: render-only dependency drained", "parent", w.Parent.String(), "dep", id.String(), "duration", time.Since(started))
 			return errRenderDrained
 		case <-renderCtx.Done():
 			// Distinguish parent-canceled (caller wants to abort)
@@ -609,8 +614,10 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 			// classifies as DepCancelled; any deadline becomes a
 			// "render couldn't produce" fast-fail.
 			if errors.Is(ctx.Err(), context.Canceled) {
+				slog.Debug("depwait: render-only dependency cancelled", "parent", w.Parent.String(), "dep", id.String(), "duration", time.Since(started))
 				return ctx.Err()
 			}
+			slog.Debug("depwait: render-only dependency cap reached", "parent", w.Parent.String(), "dep", id.String(), "duration", time.Since(started))
 			return errRenderCapExceeded
 		}
 	}

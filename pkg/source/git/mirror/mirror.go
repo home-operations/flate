@@ -38,6 +38,13 @@ type Cache struct {
 	locks  *keylock.KeyMap[string]
 }
 
+// FetchPlan narrows the mirror update to the refs needed by one
+// GitRepository. An empty RefSpecs slice preserves the historical full
+// mirror refresh.
+type FetchPlan struct {
+	RefSpecs []config.RefSpec
+}
+
 // New constructs a Cache backed by the supplied Layout. The
 // git-mirrors subtree is created lazily on first OpenOrFetch.
 func New(layout cacheroot.Layout) *Cache {
@@ -68,7 +75,7 @@ func (m *Cache) pathFor(url string) string {
 // process-level transport-install lock (gittransport.InstallHTTPS) is
 // taken so concurrent mirror Fetches don't clobber each other's
 // transport.
-func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, tlsCfg *tls.Config) (*git.Repository, error) {
+func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, tlsCfg *tls.Config, plan FetchPlan) (*git.Repository, error) {
 	release, err := m.locks.Acquire(ctx, urlHash(url))
 	if err != nil {
 		return nil, err
@@ -88,7 +95,7 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 
 	repo, openErr := git.PlainOpen(path)
 	if openErr == nil {
-		if err := m.fetchInto(ctx, repo, auth, proxy); err != nil {
+		if err := m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs); err != nil {
 			return nil, err
 		}
 		return repo, nil
@@ -110,7 +117,7 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 		_ = os.RemoveAll(path)
 		return nil, fmt.Errorf("mirror clone %s: %w", url, err)
 	}
-	if err := m.fetchInto(ctx, repo, auth, proxy); err != nil {
+	if err := m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs); err != nil {
 		_ = os.RemoveAll(path)
 		return nil, err
 	}
@@ -121,12 +128,13 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 // the mirror refspec — every server ref updates in place, including
 // explicit spec.ref.name targets such as refs/pull/* and refs/merge-*.
 // Treats NoErrAlreadyUpToDate as a clean noop.
-func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig) error {
+func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig, refSpecs []config.RefSpec) error {
+	if len(refSpecs) == 0 {
+		refSpecs = []config.RefSpec{"+refs/*:refs/*"}
+	}
 	opts := &git.FetchOptions{
-		Auth: auth,
-		RefSpecs: []config.RefSpec{
-			"+refs/*:refs/*",
-		},
+		Auth:     auth,
+		RefSpecs: refSpecs,
 	}
 	if proxy != nil {
 		opts.ProxyOptions = transport.ProxyOptions{

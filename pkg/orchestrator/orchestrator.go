@@ -47,13 +47,14 @@ type Config struct {
 	WipeSecrets bool
 	// EnableOCI turns on OCIRepository reconciliation.
 	EnableOCI bool
-	// AllowMissingSecrets converts auth-secret-not-found errors during
-	// source fetch into a skip rather than a failure. Use when secrets
-	// are materialized on the live cluster (ExternalSecret, etc.) and
-	// can't appear in the offline tree. Skipped sources mark Ready with
-	// a "skipped:" reason and produce no artifact; downstream KS / HR
-	// consumers propagate the skip so the dependency chain doesn't
-	// surface as a cascade of failures in `flate test`.
+	// AllowMissingSecrets converts source auth-secret-not-found errors
+	// and generated HelmRelease valuesFrom Secret references into skips
+	// rather than failures. Use when secrets are materialized on the live
+	// cluster (ExternalSecret, SealedSecret, etc.) and can't appear in
+	// the offline tree. Skipped resources mark Ready with a "skipped:"
+	// reason; downstream KS / HR consumers propagate the skip so the
+	// dependency chain doesn't surface as a cascade of failures in
+	// `flate test`.
 	AllowMissingSecrets bool
 
 	// RegistryConfig is the docker config.json used for OCI auth.
@@ -621,11 +622,12 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		PreflightFailure: o.preflightFailure,
 	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
-		Filter:           o.filter,
-		ParentOf:         parentResolver,
-		Existence:        existence,
-		Renders:          renders,
-		PreflightFailure: o.preflightFailure,
+		Filter:              o.filter,
+		ParentOf:            parentResolver,
+		Existence:           existence,
+		Renders:             renders,
+		PreflightFailure:    o.preflightFailure,
+		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	})
 	// Re-detect dependsOn cycles when render-emitted children land.
 	// Bootstrap's one-shot pass only sees file-loaded resources; a

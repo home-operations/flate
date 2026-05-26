@@ -79,6 +79,13 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	if repo.Reference != nil {
 		ref = *repo.Reference
 	}
+	resolveSlot, resolvedDigest, err := cachedOCIResolve(ctx, cache, repo, ref, authIdentity(repo))
+	if err != nil {
+		return nil, err
+	}
+	if resolveSlot != nil {
+		defer resolveSlot.Release()
+	}
 	if shouldResolveOCISemver(ref) {
 		resolved, err := resolveOCISemver(ctx, repoClient, ref.SemVer, ref.SemverFilter, layerMediaType(repo.LayerSelector))
 		if err != nil {
@@ -89,9 +96,17 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 
 	versioned := versionedURL(repo.URL, ref)
 	tag := cmp.Or(versionTag(ref), "latest")
-	resolvedDigest, err := resolveOCIRefDigest(ctx, repoClient, ref, tag)
-	if err != nil {
-		return nil, fmt.Errorf("OCIRepository %s/%s resolve %s: %w", repo.Namespace, repo.Name, tag, err)
+	if resolvedDigest == "" {
+		resolvedDigest, err = resolveOCIRefDigest(ctx, repoClient, ref, tag)
+		if err != nil {
+			return nil, fmt.Errorf("OCIRepository %s/%s resolve %s: %w", repo.Namespace, repo.Name, tag, err)
+		}
+		if err := persistOCIResolve(resolveSlot, resolvedDigest); err != nil {
+			return nil, err
+		}
+	}
+	if resolveSlot != nil {
+		resolveSlot.Release()
 	}
 	slotRef := ociCacheKey(repo, ref, resolvedDigest)
 	if resolvedDigest == "" {
@@ -143,7 +158,11 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		return nil, fmt.Errorf("oras oci store: %w", err)
 	}
 
-	desc, err := oras.Copy(ctx, repoClient, tag, dest, tag, oras.DefaultCopyOptions)
+	copyRef := tag
+	if resolvedDigest != "" {
+		copyRef = resolvedDigest
+	}
+	desc, err := oras.Copy(ctx, repoClient, copyRef, dest, tag, oras.DefaultCopyOptions)
 	if err != nil {
 		return nil, fmt.Errorf("oras copy %s: %w", versioned, err)
 	}
@@ -227,6 +246,44 @@ func resolveOCIRefDigest(ctx context.Context, repoClient *remote.Repository, ref
 		return "", err
 	}
 	return desc.Digest.String(), nil
+}
+
+func cachedOCIResolve(ctx context.Context, cache *source.Cache, repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, authID string) (*source.Slot, string, error) {
+	if ref.Digest != "" || ref.SemVer != "" {
+		return nil, "", nil
+	}
+	slot, err := cache.Slot(ctx, repo.URL, ociResolveCacheKey(repo, ref), authID)
+	if err != nil {
+		return nil, "", fmt.Errorf("cache resolve slot for %s: %w", repo.URL, err)
+	}
+	if slot.Exists {
+		if digest, ok := cachedDigestFresh(slot.Path, repo.Interval.Duration); ok {
+			return slot, digest, nil
+		}
+	}
+	return slot, "", nil
+}
+
+func persistOCIResolve(slot *source.Slot, digest string) error {
+	if slot == nil || digest == "" {
+		return nil
+	}
+	if slot.Exists {
+		if err := slot.StageRefresh(); err != nil {
+			return fmt.Errorf("cache resolve stage: %w", err)
+		}
+	}
+	if err := writeCachedDigest(slot.Path, digest); err != nil {
+		return fmt.Errorf("cache resolve digest: %w", err)
+	}
+	if err := slot.Commit(); err != nil {
+		return fmt.Errorf("cache resolve commit: %w", err)
+	}
+	return nil
+}
+
+func ociResolveCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) string {
+	return "resolve:" + ociCacheKey(repo, ref, "")
 }
 
 func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, resolvedDigest string) string {

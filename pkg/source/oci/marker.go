@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/atomic"
@@ -56,6 +57,19 @@ func readCachedDigest(slot string) string {
 		return ""
 	}
 	return s
+}
+
+func cachedDigestFresh(slot string, maxAge time.Duration) (string, bool) {
+	if maxAge <= 0 {
+		return "", false
+	}
+	path := filepath.Join(slot, cachedDigestFile)
+	info, err := os.Stat(path)
+	if err != nil || time.Since(info.ModTime()) > maxAge {
+		return "", false
+	}
+	digest := readCachedDigest(slot)
+	return digest, digest != ""
 }
 
 // verifyFingerprint hashes the verify spec into a short identifier

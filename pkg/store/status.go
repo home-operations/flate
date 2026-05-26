@@ -265,12 +265,18 @@ func conditionEqual(a, b Condition) bool {
 // otherwise resurrect a failure entry for an id that no longer exists.
 // Conditioning on s.objects ensures FailedResources never reports a
 // failure for a resource the orchestrator has explicitly removed.
+//
+// Iterating conditions rather than objects is faster when most objects
+// don't have conditions yet (common during bootstrap) — avoids the
+// secondary map lookup for every un-reconciled object.
 func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make(map[manifest.NamedResource]StatusInfo)
-	for id := range s.objects {
-		conds := s.conditions[id]
+	for id, conds := range s.conditions {
+		if _, inStore := s.objects[id]; !inStore {
+			continue
+		}
 		if info, ok := statusInfoFromConditions(conds); ok && info.Status == StatusFailed {
 			out[id] = info
 		}

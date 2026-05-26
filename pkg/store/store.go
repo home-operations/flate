@@ -7,6 +7,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// numEventKinds is the number of distinct EventKind values (1-based, so
+// index 0 is unused). A fixed-size array indexed directly by EventKind
+// removes the map lookup and bucket overhead on every dispatch path.
+const numEventKinds = 3
+
 // Store is the central in-memory state container.
 //
 // # Immutability contract
@@ -42,27 +47,26 @@ type Store struct {
 	// Secret resolution) O(1) instead of O(total objects of that kind).
 	byName map[string]map[string]manifest.BaseManifest
 
-	// listeners is keyed by EventKind. Each entry is a slice of
-	// (id, listener) pairs. We use a slice + linear scan because:
-	//   - listener counts are tiny (a handful per event)
-	//   - removal preserves order
-	//   - Unsubscribe identity is the slice index encoded in a closure
-	listeners map[EventKind]*listenerSet
+	// listeners is indexed by EventKind (1-based; index 0 unused). A
+	// fixed-size array beats a map here: the set of kinds is closed,
+	// the index arithmetic is O(1) with no hash, and the array itself
+	// is inline in the Store struct rather than a separately-allocated
+	// map header. Every dispatch path benefits.
+	listeners [numEventKinds + 1]*listenerSet
 }
 
 // New constructs an empty Store.
 func New() *Store {
-	return &Store{
+	s := &Store{
 		objects:    make(map[manifest.NamedResource]manifest.BaseManifest),
 		conditions: make(map[manifest.NamedResource][]Condition),
 		artifacts:  make(map[manifest.NamedResource]Artifact),
 		byName:     make(map[string]map[string]manifest.BaseManifest),
-		listeners: map[EventKind]*listenerSet{
-			EventObjectAdded:     newListenerSet(),
-			EventStatusUpdated:   newListenerSet(),
-			EventArtifactUpdated: newListenerSet(),
-		},
 	}
+	s.listeners[EventObjectAdded] = newListenerSet()
+	s.listeners[EventStatusUpdated] = newListenerSet()
+	s.listeners[EventArtifactUpdated] = newListenerSet()
+	return s
 }
 
 func nameKey(namespace, name string) string { return namespace + "/" + name }

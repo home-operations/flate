@@ -86,10 +86,10 @@ func (s *Store) OnArtifact(fn func(manifest.NamedResource, Artifact), replay boo
 // see the pre-registered state (live event misses this listener,
 // replay fires once). Exactly-one delivery either way.
 func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscribe {
-	set, ok := s.listeners[event]
-	if !ok {
+	if event < 1 || int(event) > numEventKinds {
 		panic("store: unknown event kind")
 	}
+	set := s.listeners[event]
 	if !flush {
 		// Even the no-replay path serializes via s.mu so a concurrent
 		// writer can't snapshot listeners (under set.mu alone) and then
@@ -169,21 +169,14 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 // (so the listener-contract gap is closed) and must stay cheap on
 // the render hot path when nothing's listening.
 func (s *Store) fireUnderLock(event EventKind, id manifest.NamedResource, payload any) func() {
-	set := s.listeners[event]
-	if set == nil {
-		return func() {}
-	}
-	listeners := set.snapshot()
+	listeners := s.listeners[event].snapshot()
 	if len(listeners) == 0 {
 		return func() {}
 	}
-	return func() { dispatch(listeners, id, payload) }
-}
-
-// dispatch invokes each listener with the payload, recovering panics.
-func dispatch(listeners []Listener, id manifest.NamedResource, payload any) {
-	for _, fn := range listeners {
-		safeInvoke(fn, id, payload)
+	return func() {
+		for _, fn := range listeners {
+			safeInvoke(fn, id, payload)
+		}
 	}
 }
 
@@ -250,8 +243,8 @@ func (l *listenerSet) snapshot() []Listener {
 		return nil
 	}
 	out := make([]Listener, len(l.entries))
-	for i := range l.entries {
-		out[i] = l.entries[i].fn
+	for i, e := range l.entries {
+		out[i] = e.fn
 	}
 	return out
 }

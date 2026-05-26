@@ -126,7 +126,7 @@ func newGetAllCmd() *cobra.Command {
 			if o == nil {
 				return runErr
 			}
-			if err := printCluster(cmd.OutOrStdout(), o, string(c.outputOrDefault(format.OutputYAML))); err != nil {
+			if err := printCluster(cmd.OutOrStdout(), o, c, string(c.outputOrDefault(format.OutputYAML))); err != nil {
 				return errors.Join(err, runErr)
 			}
 			return runErr
@@ -281,10 +281,10 @@ var (
 	}
 )
 
-func printCluster(w io.Writer, o *orchestrator.Orchestrator, out string) error {
+func printCluster(w io.Writer, o *orchestrator.Orchestrator, c *commonFlags, out string) error {
 	summary := map[string]any{
-		"kustomizations": len(o.Store().ListObjects(manifest.KindKustomization)),
-		"helmReleases":   len(o.Store().ListObjects(manifest.KindHelmRelease)),
+		"kustomizations": countObjects(o, c, manifest.KindKustomization),
+		"helmReleases":   countObjects(o, c, manifest.KindHelmRelease),
 	}
 	if format.Output(out) == format.OutputJSON {
 		return format.JSON(w, summary)
@@ -292,3 +292,12 @@ func printCluster(w io.Writer, o *orchestrator.Orchestrator, out string) error {
 	return format.YAML(w, summary)
 }
 
+func countObjects(o *orchestrator.Orchestrator, c *commonFlags, kind string) int {
+	count := 0
+	for _, obj := range o.Store().ListObjects(kind) {
+		if c == nil || c.includeNamespace(o.Filter(), obj.Named().Namespace) {
+			count++
+		}
+	}
+	return count
+}

@@ -26,6 +26,9 @@ type Job struct {
 	Kinds []string
 	// Name optionally narrows the report to a single resource.
 	Name string
+	// Include optionally narrows the report by resource identity.
+	// Nil includes every resource that passes Kinds and Name.
+	Include func(manifest.NamedResource) bool
 }
 
 // Outcome enumerates the per-resource result.
@@ -111,6 +114,9 @@ func Run(j Job) Report {
 		for _, obj := range j.Store.ListObjects(kind) {
 			id := obj.Named()
 			if j.Name != "" && id.Name != j.Name {
+				continue
+			}
+			if j.Include != nil && !j.Include(id) {
 				continue
 			}
 			// Skip the synthetic bootstrap GitRepository the

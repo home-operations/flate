@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -21,8 +22,8 @@ import (
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/bucket"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/external"
 	"github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/git/mirror"
@@ -694,16 +695,15 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
-		return o.finalize()
+		return errors.Join(o.finalize(), ctx.Err())
 	case <-ctx.Done():
 		// Wait for in-flight tasks to wind down before finalizing so
-		// the store snapshot is internally consistent — but if they
-		// take longer than the parent ctx's grace window, the worst
-		// case is the orchestrator hangs at the same point it would
-		// have before this fix. Net: Ctrl-C is at least observable
-		// in logs now; eventual exit semantics unchanged.
+		// the store snapshot is internally consistent, then preserve
+		// the cancellation in the returned error. Queued bounded tasks
+		// may never acquire a worker slot once ctx is canceled; a clean
+		// partial snapshot must not look like a successful full run.
 		<-done
-		return o.finalize()
+		return errors.Join(o.finalize(), ctx.Err())
 	}
 }
 
@@ -798,4 +798,3 @@ func (o *Orchestrator) Stop() {
 		}
 	})
 }
-

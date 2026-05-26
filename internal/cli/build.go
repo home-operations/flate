@@ -65,14 +65,20 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			if o == nil {
 				return runErr
 			}
-			w := cmd.OutOrStdout()
 			name := firstArg(argv)
-			var emitErr error
+			docs := []map[string]any{}
+			var collectErr error
 			for _, kind := range kinds {
-				if err := writeRendered(w, o, res, kind, name, c, b); err != nil {
-					emitErr = err
+				rendered, err := collectRendered(o, res, kind, name, c, b)
+				if err != nil {
+					collectErr = err
 					break
 				}
+				docs = append(docs, rendered...)
+			}
+			emitErr := collectErr
+			if emitErr == nil {
+				emitErr = emitDocs(cmd.OutOrStdout(), docs, c.outputOrDefault(format.OutputYAML))
 			}
 			// Per-resource Run failures: emit whatever we rendered, then
 			// flip the exit code so CI pipelines piping `flate build` into
@@ -97,7 +103,7 @@ func applyBuildFlags(c *commonFlags, b *buildFlags) {
 	}
 }
 
-func writeRendered(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags, b *buildFlags) error {
+func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags, b *buildFlags) ([]map[string]any, error) {
 	// Walk every loaded object of this kind so an explicit name positional
 	// that didn't render (failed reconcile, suspended, no docs) still
 	// counts as a match — without this the typo-detection error below
@@ -112,6 +118,7 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.
 	})
 	skipKinds := c.skipResourceKinds()
 	matched := 0
+	var out []map[string]any
 	for _, obj := range objs {
 		id := obj.Named()
 		if name != "" && id.Name != name {
@@ -145,31 +152,26 @@ func writeRendered(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.
 		} else {
 			// Defensive re-drop. Orchestrator.Render already filters
 			// Result.Manifests at the embed boundary using the same
-			// kind set (orchestrator.go:555), so this is a no-op for
-			// the CLI path. Kept for SDK callers who hand-build a
-			// Result and pass it through writeRendered. See #169.
+			// kind set, so this is a no-op for the normal CLI path.
 			docs = manifest.DropKinds(docs, skipKinds)
 			if len(docs) == 0 {
 				continue
 			}
 		}
-		if err := emitDocs(w, docs, c.outputOrDefault(format.OutputYAML)); err != nil {
-			return err
-		}
+		out = append(out, docs...)
 	}
 	// An explicit name positional that matches nothing in the store
 	// should error rather than silently emit an empty render — a typo
 	// shouldn't look like a successful build of a nonexistent resource.
 	if name != "" && matched == 0 {
-		return fmt.Errorf("no %s named %q in --path", kind, name)
+		return nil, fmt.Errorf("no %s named %q in --path", kind, name)
 	}
-	return nil
+	return out, nil
 }
 
 // emitDocs writes a sequence of rendered docs as either multi-doc YAML
-// (the default for `flate build`) or a single JSON array — the two
-// formats the agent quorum agreed make sense for build output. Other
-// -o values are rejected earlier by requireOutput.
+// (the default for `flate build`) or a single JSON array. Other -o
+// values are rejected earlier by requireOutput.
 func emitDocs(w io.Writer, docs []map[string]any, out format.Output) error {
 	switch out {
 	case format.OutputJSON:

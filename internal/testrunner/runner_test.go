@@ -70,6 +70,26 @@ func TestRun_NoStatus(t *testing.T) {
 	}
 }
 
+func TestRun_IncludePredicate(t *testing.T) {
+	s := store.New()
+	alpha := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "alpha", Name: "apps"}
+	beta := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "beta", Name: "apps"}
+	s.AddObject(&manifest.Kustomization{Name: alpha.Name, Namespace: alpha.Namespace})
+	s.AddObject(&manifest.Kustomization{Name: beta.Name, Namespace: beta.Namespace})
+	s.UpdateStatus(alpha, store.StatusReady, "")
+	s.UpdateStatus(beta, store.StatusReady, "")
+
+	rep := Run(Job{
+		Store: s,
+		Include: func(id manifest.NamedResource) bool {
+			return id.Namespace == "alpha"
+		},
+	})
+	if rep.Passed != 1 || len(rep.Cases) != 1 || rep.Cases[0].ID != alpha {
+		t.Errorf("Include predicate report = %+v, want only %s", rep, alpha)
+	}
+}
+
 // TestWrite_HidesSkippedByDefault pins the output-consistency
 // behavior: under changed-only mode, unchanged resources are
 // SKIPPED — they have no per-resource information worth surfacing

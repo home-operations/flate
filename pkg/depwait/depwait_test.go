@@ -394,8 +394,8 @@ func TestWaiter_RenderInflightDrainShortCircuits(t *testing.T) {
 	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "network", Name: "typo-or-gone"}
 
 	w := &Waiter{
-		Store:     s,
-		Timeout:   30 * time.Second,
+		Store:   s,
+		Timeout: 30 * time.Second,
 		Existence: lookupStub{
 			promote:     func(manifest.NamedResource) bool { return false },
 			fileIndexed: func(manifest.NamedResource) bool { return false },
@@ -436,8 +436,8 @@ func TestWaiter_RenderInflightActiveHoldsTheWait(t *testing.T) {
 	// Renders is "active" throughout; the only thing that ends the
 	// wait is the dep arriving via AddObject.
 	w := &Waiter{
-		Store:     s,
-		Timeout:   MissingGrace + 5*time.Second,
+		Store:   s,
+		Timeout: MissingGrace + 5*time.Second,
 		Existence: lookupStub{
 			promote:     func(manifest.NamedResource) bool { return false },
 			fileIndexed: func(manifest.NamedResource) bool { return false },
@@ -490,6 +490,25 @@ func TestWaiter_RenderOnlyCancelDuringLongWaitSurfacesCancelled(t *testing.T) {
 	// classify() maps context.Canceled to DepCancelled / "cancelled".
 	if got := sum.Messages[dep]; got != "cancelled" {
 		t.Errorf("expected 'cancelled' after step-2 ctx cancel, got %q", got)
+	}
+}
+
+func TestWaiter_ReadyExprCancelSurfacesCancelled(t *testing.T) {
+	s := store.New()
+	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: "expr-cancelled"}
+	s.AddObject(&manifest.Kustomization{Name: dep.Name, Namespace: dep.Namespace})
+	s.UpdateStatus(dep, store.StatusPending, "waiting")
+
+	w := &Waiter{Store: s, Timeout: 30 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	sum := WaitAll(w.Watch(ctx, []manifest.DependencyRef{{
+		NamedResource: dep,
+		ReadyExpr:     "false",
+	}}))
+	if got := sum.Messages[dep]; got != "cancelled" {
+		t.Errorf("expected readyExpr cancellation to report 'cancelled', got %q", got)
 	}
 }
 

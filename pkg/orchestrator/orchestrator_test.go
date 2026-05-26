@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -187,6 +188,41 @@ data: {k: v}
 	}
 	if got := len(o.Store().ListObjects(manifest.KindConfigMap)); got < 1 {
 		t.Errorf("expected at least 1 ConfigMap after reconcile, got %d", got)
+	}
+}
+
+func TestOrchestrator_RunReturnsContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello}
+data: {k: v}
+`)
+
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 1})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := o.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run with pre-canceled context = %v, want context.Canceled", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,41 @@ metadata: {name: hello, namespace: apps}
 data:
   greeting: hi
 `)
+	return k8s
+}
+
+func writeMultiNamespaceFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	k8s := filepath.Join(root, "kubernetes")
+	for _, tc := range []struct {
+		name      string
+		namespace string
+		path      string
+	}{
+		{name: "apps-a", namespace: "alpha", path: "apps-a"},
+		{name: "apps-b", namespace: "beta", path: "apps-b"},
+	} {
+		mustWrite(t, filepath.Join(k8s, "flux", tc.name+".yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: `+tc.name+`
+  namespace: `+tc.namespace+`
+spec:
+  interval: 10m
+  path: ./`+tc.path+`
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+		mustWrite(t, filepath.Join(k8s, tc.path, "kustomization.yaml"), "resources:\n- cm.yaml\n")
+		mustWrite(t, filepath.Join(k8s, tc.path, "cm.yaml"), `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: `+tc.name+`, namespace: `+tc.namespace+`}
+data:
+  greeting: hi
+`)
+	}
 	return k8s
 }
 
@@ -158,6 +194,21 @@ func TestRun_BuildAll(t *testing.T) {
 	}
 }
 
+func TestRun_BuildAll_JSONSingleDocument(t *testing.T) {
+	path := writeMultiNamespaceFixture(t)
+	stdout, stderr, code := runCLI(t, "build", "all", "--path", path, "-o", "json")
+	if code != 0 {
+		t.Fatalf("build all -o json exited %d: stderr=%s", code, stderr)
+	}
+	var docs []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &docs); err != nil {
+		t.Fatalf("build all -o json emitted invalid JSON: %v\n%s", err, stdout)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("expected 2 rendered docs, got %d: %#v", len(docs), docs)
+	}
+}
+
 // TestRun_BuildKS_RejectsBadOutput exercises requireOutput on the
 // build subcommand: build accepts yaml + json, not name.
 func TestRun_BuildKS_RejectsBadOutput(t *testing.T) {
@@ -181,6 +232,17 @@ func TestRun_BuildAll_OnlyCRDs(t *testing.T) {
 	}
 	if strings.Contains(stdout, "kind: ConfigMap") {
 		t.Errorf("--only-crds should filter out ConfigMap; got:\n%s", stdout)
+	}
+}
+
+func TestRun_BuildAll_OnlyCRDs_JSONEmptyArray(t *testing.T) {
+	path := writeFixture(t)
+	stdout, stderr, code := runCLI(t, "build", "all", "--path", path, "--only-crds", "-o", "json")
+	if code != 0 {
+		t.Fatalf("build --only-crds -o json exited %d: %s", code, stderr)
+	}
+	if strings.TrimSpace(stdout) != "[]" {
+		t.Errorf("empty JSON render = %q, want []", stdout)
 	}
 }
 
@@ -264,6 +326,21 @@ func TestRun_GetAll_Yaml(t *testing.T) {
 	}
 }
 
+func TestRun_GetAll_RespectsNamespace(t *testing.T) {
+	path := writeMultiNamespaceFixture(t)
+	stdout, stderr, code := runCLI(t, "get", "all", "--path", path, "-o", "json", "-n", "alpha")
+	if code != 0 {
+		t.Fatalf("get all -n alpha exited %d: %s", code, stderr)
+	}
+	var summary map[string]int
+	if err := json.Unmarshal([]byte(stdout), &summary); err != nil {
+		t.Fatalf("get all emitted invalid JSON: %v\n%s", err, stdout)
+	}
+	if summary["kustomizations"] != 1 || summary["helmReleases"] != 0 {
+		t.Errorf("namespace-scoped summary = %#v, want 1 KS and 0 HR", summary)
+	}
+}
+
 // TestRun_GetImages_NameDefault exercises the default name format
 // (one image per line).
 func TestRun_GetImages_NameDefault(t *testing.T) {
@@ -298,6 +375,20 @@ func TestRun_TestAll(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "PASSED") {
 		t.Errorf("expected PASSED in test report:\n%s", stdout)
+	}
+}
+
+func TestRun_TestAll_RespectsNamespace(t *testing.T) {
+	path := writeMultiNamespaceFixture(t)
+	stdout, stderr, code := runCLI(t, "test", "all", "--path", path, "-n", "alpha")
+	if code != 0 {
+		t.Fatalf("test all -n alpha exited %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Kustomization/alpha/apps-a") {
+		t.Errorf("namespace-scoped test output missing alpha KS:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Kustomization/beta/apps-b") {
+		t.Errorf("namespace-scoped test output included beta KS:\n%s", stdout)
 	}
 }
 
@@ -340,6 +431,16 @@ func TestRun_DiffKS_TwoTreesNoDelta(t *testing.T) {
 	}
 	if strings.Contains(stdout, "@@") {
 		t.Errorf("identical tree should produce no hunks:\n%s", stdout)
+	}
+}
+
+func TestRun_DiffKS_ExplicitDiffOutput(t *testing.T) {
+	current := writeFixture(t)
+	orig := t.TempDir()
+	copyTree(t, current, orig)
+	_, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig, "-o", "diff")
+	if code != 0 {
+		t.Fatalf("diff ks -o diff exited %d: %s", code, stderr)
 	}
 }
 
@@ -467,10 +568,10 @@ func TestCompareDocs_OrdersByKindNamespaceName(t *testing.T) {
 		a, b map[string]any
 		want int
 	}{
-		{mkDoc("ConfigMap", "a", "x"), mkDoc("Secret", "a", "x"), -1},     // kind wins
-		{mkDoc("CM", "a", "x"), mkDoc("CM", "b", "x"), -1},                // ns wins after kind tie
-		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "y"), -1},                // name wins last
-		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "x"), 0},                 // identical
+		{mkDoc("ConfigMap", "a", "x"), mkDoc("Secret", "a", "x"), -1}, // kind wins
+		{mkDoc("CM", "a", "x"), mkDoc("CM", "b", "x"), -1},            // ns wins after kind tie
+		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "y"), -1},            // name wins last
+		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "x"), 0},             // identical
 	}
 	for _, tc := range cases {
 		got := compareDocs(tc.a, tc.b)

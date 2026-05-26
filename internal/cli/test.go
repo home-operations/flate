@@ -65,6 +65,9 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 				Store: o.Store(),
 				Kinds: kinds,
 				Name:  firstArg(argv),
+				Include: func(id manifest.NamedResource) bool {
+					return c.includeNamespace(o.Filter(), id.Namespace)
+				},
 			})
 			report.ShowSkipped = showSkipped
 			report.Write(cmd.OutOrStdout())

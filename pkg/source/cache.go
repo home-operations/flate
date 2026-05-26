@@ -171,19 +171,39 @@ func (s *Slot) Commit() error {
 	if s.Exists || s.committed {
 		return nil
 	}
-	// os.Rename across an existing target is platform-dependent —
-	// remove the (definitely empty by our protocol; we checked it on
-	// Slot construction) target first so the rename is unambiguous.
-	if err := os.RemoveAll(s.final); err != nil {
-		return fmt.Errorf("cache commit prep: %w", err)
-	}
 	if err := os.Rename(s.staging, s.final); err != nil {
+		if existingSlotPopulated(s.final) {
+			// Another process using the same cache root may have
+			// finalized this slot while we were staging. keylock only
+			// coordinates goroutines in this process, so adopt the
+			// existing non-empty slot instead of deleting it.
+			_ = os.RemoveAll(s.staging)
+			s.committed = true
+			s.staging = ""
+			s.Path = s.final
+			s.Exists = true
+			return nil
+		}
 		return fmt.Errorf("cache commit: %w", err)
 	}
 	s.committed = true
 	s.staging = ""
 	s.Path = s.final
 	return nil
+}
+
+func existingSlotPopulated(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	f, err := os.Open(path) //nolint:gosec // path is the cache slot final path
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	entries, err := f.Readdirnames(1)
+	return err == nil && len(entries) > 0
 }
 
 // Release drops the slot mutex AND, if Commit wasn't called, removes

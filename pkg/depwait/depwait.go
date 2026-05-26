@@ -449,6 +449,9 @@ func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, 
 				return ev
 			}
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return Event{Dep: id, Status: DepCancelled, Reason: "cancelled"}
+			}
 			return Event{Dep: id, Status: DepTimeout, Reason: "readyExpr timeout: " + ctx.Err().Error()}
 		}
 	}

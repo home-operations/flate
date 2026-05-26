@@ -194,6 +194,39 @@ func TestCache_SlotCommitPersists(t *testing.T) {
 	slot.Release()
 }
 
+func TestCache_CommitAdoptsExistingFinalSlot(t *testing.T) {
+	c := NewCache(cacheroot.New(t.TempDir()))
+
+	slot, err := c.Slot(context.Background(), "https://example.com/repo", "v1", "")
+	if err != nil {
+		t.Fatalf("Slot: %v", err)
+	}
+	staging := slot.Path
+	if err := os.WriteFile(filepath.Join(staging, "ours"), []byte("ours"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(slot.final, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(slot.final, "theirs"), []byte("theirs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := slot.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot.final, "theirs")); err != nil {
+		t.Errorf("existing final slot was not preserved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot.final, "ours")); !os.IsNotExist(err) {
+		t.Errorf("staged contents should not overwrite adopted final slot; stat err=%v", err)
+	}
+	if _, err := os.Stat(staging); !os.IsNotExist(err) {
+		t.Errorf("adopted staging dir leaked: %v", err)
+	}
+	slot.Release()
+}
+
 // TestCache_AuthIDIsolatesSlots locks in that two source CRs with the
 // same (URL, ref) but different auth IDs do not collide on disk —
 // otherwise the first fetch's clone is silently reused for the second
@@ -302,10 +335,10 @@ func TestSlugifyRepo(t *testing.T) {
 		// the tag — otherwise the cache layout collapses
 		// every release of every chart into the same `&lt;tag&gt;/`
 		// directory.
-		"oci://ghcr.io/bjw-s-labs/helm/app-template:5.0.1":           "app-template",
-		"oci://ghcr.io/bjw-s-labs/helm/app-template:1.2.3-rc4":       "app-template",
-		"oci://registry.local:5000/charts/mychart:1.2.3":             "mychart",
-		"oci://registry.local:5000/charts/mychart":                   "mychart",
+		"oci://ghcr.io/bjw-s-labs/helm/app-template:5.0.1":     "app-template",
+		"oci://ghcr.io/bjw-s-labs/helm/app-template:1.2.3-rc4": "app-template",
+		"oci://registry.local:5000/charts/mychart:1.2.3":       "mychart",
+		"oci://registry.local:5000/charts/mychart":             "mychart",
 		// Digest suffix: same concern as tags.
 		"oci://ghcr.io/foo/bar@sha256:1111111111111111111111111111111111111111111111111111111111111111": "bar",
 		// SCP-style git URL with `@` userinfo must NOT be

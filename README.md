@@ -36,7 +36,7 @@ flate test all     --path ./kubernetes
 
 The `[name]` positional on `build`/`diff`/`test` is matched against the resource's bare name (`metadata.name`), not `namespace/name`. Use `-n / --namespace` to scope.
 
-Every command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag.
+Every command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag. All commands run the same offline reconcile pipeline before producing output, so referenced Git, OCI, Helm, Bucket, or remote kustomize sources must be reachable or already cached.
 
 | Verb | Targets | Notes |
 |---|---|---|

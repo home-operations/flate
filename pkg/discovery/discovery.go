@@ -97,7 +97,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 	d.aliasBootstrapSources(repoRoot)
-	loader.ApplyNamespaceInheritance(d.cfg.Store, d.sourceFiles, repoRoot)
+	d.applyNamespaces(repoRoot)
 	// Materialize configMapGenerator / secretGenerator entries the
 	// file walker collected. The effective namespace comes from the
 	// enclosing Flux Kustomization, which is only known now that
@@ -130,6 +130,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		Existence:   l.Existence,
 		WipeSecrets: cfg.WipeSecrets,
 	}, nil
+}
+
+func (d *discoverer) applyNamespaces(repoRoot string) {
+	loader.ApplyNamespaceInheritance(d.cfg.Store, d.sourceFiles, repoRoot)
+	loader.ApplyDefaultNamespaces(d.cfg.Store, d.sourceFiles)
 }
 
 // mergeParents combines per-kind parent maps into one. NamedResource
@@ -187,6 +192,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	if err := d.loadAt(ctx, l, scanRoot, scanned, &total); err != nil {
 		return err
 	}
+	d.applyNamespaces(repoRoot)
 
 	// Fixed-point expansion: each pass renders Kustomizations the prior
 	// pass discovered, plus ResourceSets that may emit further KSes.
@@ -240,6 +246,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if err := d.loadAt(ctx, l, target, scanned, &total); err != nil {
 				return err
 			}
+			d.applyNamespaces(repoRoot)
 			added++
 		}
 		// Re-evaluate the convergence cache when new RSIPs arrived
@@ -292,4 +299,3 @@ func (d *discoverer) loadAt(ctx context.Context, l *loader.Loader, dir string, s
 	*total += n
 	return nil
 }
-

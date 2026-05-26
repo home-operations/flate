@@ -186,6 +186,24 @@ spec:
 	}
 }
 
+func TestParseHelmChartSource_PreservesEmptyNamespace(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata: {name: c}
+spec:
+  chart: nginx
+  sourceRef: {kind: HelmRepository, name: r}
+`)
+	hc, err := parseHelmChartSource(doc)
+	if err != nil {
+		t.Fatalf("parseHelmChartSource: %v", err)
+	}
+	if hc.Namespace != "" {
+		t.Errorf("namespace=%q want empty before loader inheritance/defaulting", hc.Namespace)
+	}
+}
+
 func TestParseGitRepository_Verify(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -449,9 +467,9 @@ spec:
 // silent soft-skip — masking the typo entirely.
 func TestParse_EmptySecretRefNameRejected(t *testing.T) {
 	cases := []struct {
-		name string
-		yaml string
-		want string
+		name  string
+		yaml  string
+		want  string
 		parse func(map[string]any) error
 	}{
 		{
@@ -566,7 +584,7 @@ spec:
 	}
 }
 
-func TestParseResourceSet_DefaultsNamespace(t *testing.T) {
+func TestParseResourceSet_PreservesEmptyNamespace(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
@@ -578,8 +596,26 @@ spec: {}
 	if err != nil {
 		t.Fatalf("parseResourceSet: %v", err)
 	}
-	if rs.Namespace != DefaultNamespace {
-		t.Errorf("namespace=%q want %q", rs.Namespace, DefaultNamespace)
+	if rs.Namespace != "" {
+		t.Errorf("namespace=%q want empty before loader inheritance/defaulting", rs.Namespace)
+	}
+}
+
+func TestParseResourceSetInputProvider_PreservesEmptyNamespace(t *testing.T) {
+	doc := mustYAML(t, `
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: apps
+spec:
+  type: Static
+`)
+	rsip, err := parseResourceSetInputProvider(doc)
+	if err != nil {
+		t.Fatalf("parseResourceSetInputProvider: %v", err)
+	}
+	if rsip.Namespace != "" {
+		t.Errorf("namespace=%q want empty before loader inheritance/defaulting", rsip.Namespace)
 	}
 }
 
@@ -880,6 +916,27 @@ spec:
 	}
 }
 
+func TestGitRefString_Precedence(t *testing.T) {
+	ref := GitRepositoryRef{
+		Branch: "main",
+		Tag:    "v1.0.0",
+		SemVer: ">=1.0",
+		Name:   "refs/heads/release",
+		Commit: "0123456789abcdef0123456789abcdef01234567",
+	}
+	if got, want := GitRefString(ref), "commit:0123456789abcdef0123456789abcdef01234567"; got != want {
+		t.Errorf("GitRefString precedence = %q, want %q", got, want)
+	}
+	ref.Commit = ""
+	if got, want := GitRefString(ref), "name:refs/heads/release"; got != want {
+		t.Errorf("GitRefString name precedence = %q, want %q", got, want)
+	}
+	ref.Name = ""
+	if got, want := GitRefString(ref), "semver:>=1.0"; got != want {
+		t.Errorf("GitRefString semver precedence = %q, want %q", got, want)
+	}
+}
+
 func TestParseKustomization_DependsOn(t *testing.T) {
 	doc := mustYAML(t, `
 apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -1093,7 +1150,6 @@ metadata: {name: x}`, "Foo"},
 		})
 	}
 }
-
 
 func TestStripResourceAttributes(t *testing.T) {
 	r := map[string]any{

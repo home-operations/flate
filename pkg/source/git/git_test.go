@@ -96,6 +96,125 @@ func TestFetcher_RefByName_Unresolvable(t *testing.T) {
 	}
 }
 
+func TestFetcher_RefByNameFallbackFetchesExplicitRef(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepoWithFiles(t, src, map[string]string{
+		"apps/a/manifest.yaml": "kind: ConfigMap",
+		"apps/b/manifest.yaml": "kind: Secret",
+	})
+	want := mustSetRefToHEAD(t, src, "refs/pull/1/head")
+
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:            "file://" + src,
+			Reference:      &sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"},
+			SparseCheckout: []string{"apps/a"},
+		},
+	}
+	f := &Fetcher{Cache: cache}
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch non-branch ref.name with sparse checkout: %v", err)
+	}
+	if art.Revision != want {
+		t.Errorf("revision = %q, want %q", art.Revision, want)
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "a", "manifest.yaml")); err != nil {
+		t.Errorf("sparse-included file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "b", "manifest.yaml")); !os.IsNotExist(err) {
+		t.Errorf("sparse-excluded file should be absent; stat err = %v", err)
+	}
+}
+
+func TestFetcher_SemVerRef(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	mustTagHEAD(t, src, "v1.0.0")
+	want := mustCommitFile(t, src, "version.txt", "v1.1.0")
+	mustTagHEAD(t, src, "v1.1.0")
+
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:       "file://" + src,
+			Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0", SemVer: ">=1.1.0"},
+		},
+	}
+	f := &Fetcher{Cache: cache}
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch semver: %v", err)
+	}
+	if art.Revision != want {
+		t.Errorf("semver revision = %q, want %q", art.Revision, want)
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "version.txt")); err != nil {
+		t.Errorf("semver checkout missing v1.1 file: %v", err)
+	}
+}
+
+func TestFetcher_CommitPrecedesRefName(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	first := mustTagHEAD(t, src, "v1.0.0")
+	mustCommitFile(t, src, "version.txt", "v1.1.0")
+	mustTagHEAD(t, src, "v1.1.0")
+
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL: "file://" + src,
+			Reference: &sourcev1.GitRepositoryRef{
+				Commit: first,
+				Name:   "refs/tags/v1.1.0",
+			},
+		},
+	}
+	f := &Fetcher{Cache: cache}
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch commit+name: %v", err)
+	}
+	if art.Revision != first {
+		t.Errorf("revision = %q, want commit %q", art.Revision, first)
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "version.txt")); !os.IsNotExist(err) {
+		t.Errorf("commit should have won over ref.name; version.txt stat err = %v", err)
+	}
+}
+
+func TestFetcher_CommitPrecedesUnresolvableRefName(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	first := mustTagHEAD(t, src, "v1.0.0")
+	mustCommitFile(t, src, "version.txt", "v1.1.0")
+
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL: "file://" + src,
+			Reference: &sourcev1.GitRepositoryRef{
+				Commit: first,
+				Name:   "refs/pull/does-not-exist/head",
+			},
+		},
+	}
+	f := &Fetcher{Cache: cache}
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch commit+unresolvable name: %v", err)
+	}
+	if art.Revision != first {
+		t.Errorf("revision = %q, want commit %q", art.Revision, first)
+	}
+}
+
 // TestFetcher_SparseCheckout exercises spec.sparseCheckout — when
 // the repo declares specific directories, the worktree contains only
 // those (plus any tree-root metadata go-git keeps).
@@ -257,6 +376,32 @@ func mustTagHEAD(t *testing.T, dir, tag string) string {
 		t.Fatalf("CreateTag: %v", err)
 	}
 	return head.Hash().String()
+}
+
+func mustCommitFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	r, err := git.PlainOpen(dir)
+	if err != nil {
+		t.Fatalf("PlainOpen: %v", err)
+	}
+	full := filepath.Join(dir, name)
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree: %v", err)
+	}
+	if _, err := wt.Add(name); err != nil {
+		t.Fatalf("Add %s: %v", name, err)
+	}
+	hash, err := wt.Commit("update "+name, &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(1, 0)},
+	})
+	if err != nil {
+		t.Fatalf("Commit %s: %v", name, err)
+	}
+	return hash.String()
 }
 
 // mustInitRepo creates a minimal git repo at dir with one file and one

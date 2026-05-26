@@ -71,6 +71,17 @@ func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {
 	manifest.MergeStringMap(md, "annotations", cm.Annotations)
 }
 
+func applyOwnerLabels(doc map[string]any, rs *manifest.ResourceSet) {
+	if rs == nil {
+		return
+	}
+	md := manifest.EnsureMetadata(doc)
+	manifest.MergeStringMap(md, "labels", map[string]string{
+		fluxopv1.OwnerLabelResourceSetName:      rs.Name,
+		fluxopv1.OwnerLabelResourceSetNamespace: rs.Namespace,
+	})
+}
+
 func disabledByReconcileAnnotation(doc map[string]any) bool {
 	md, _ := doc["metadata"].(map[string]any)
 	ann, _ := md["annotations"].(map[string]any)

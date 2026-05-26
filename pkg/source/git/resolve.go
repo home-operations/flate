@@ -15,6 +15,7 @@ import (
 // source-controller:
 //
 //   - explicit Commit always wins
+//   - Name resolves a full git ref like refs/heads/main or refs/pull/1/head
 //   - SemVer picks the highest tag satisfying the constraint
 //   - Tag resolves by name (annotated or lightweight)
 //   - Branch resolves by name
@@ -29,14 +30,24 @@ func resolveRefHash(repo *git.Repository, ref *manifest.GitRepositoryRef) (plumb
 	switch {
 	case ref.Commit != "":
 		return plumbing.NewHash(ref.Commit), nil
+	case ref.Name != "":
+		return resolveNamedRef(repo, ref.Name)
 	case ref.SemVer != "":
 		return resolveSemver(repo, ref.SemVer)
 	case ref.Tag != "":
-		return resolveTagOrBranch(repo, ref.Tag, true)
+		return resolveTag(repo, ref.Tag)
 	case ref.Branch != "":
-		return resolveTagOrBranch(repo, ref.Branch, false)
+		return resolveBranch(repo, ref.Branch)
 	}
 	return resolveHEAD(repo)
+}
+
+func resolveNamedRef(repo *git.Repository, name string) (plumbing.Hash, error) {
+	h, err := repo.ResolveRevision(plumbing.Revision(name))
+	if err == nil {
+		return *h, nil
+	}
+	return plumbing.ZeroHash, fmt.Errorf("ref %q not found in mirror", name)
 }
 
 func resolveHEAD(repo *git.Repository) (plumbing.Hash, error) {
@@ -47,23 +58,15 @@ func resolveHEAD(repo *git.Repository) (plumbing.Hash, error) {
 	return head.Hash(), nil
 }
 
-// resolveTagOrBranch tries tag-first then branch-first depending on
-// preferTag. Annotated tags are dereferenced via TagObject when
-// present; lightweight tags resolve directly.
-func resolveTagOrBranch(repo *git.Repository, name string, preferTag bool) (plumbing.Hash, error) {
-	if preferTag {
-		if h, ok := lookupTag(repo, name); ok {
-			return h, nil
-		}
-		if h, ok := lookupBranch(repo, name); ok {
-			return h, nil
-		}
-		return plumbing.ZeroHash, fmt.Errorf("tag %q not found in mirror", name)
-	}
-	if h, ok := lookupBranch(repo, name); ok {
+func resolveTag(repo *git.Repository, name string) (plumbing.Hash, error) {
+	if h, ok := lookupTag(repo, name); ok {
 		return h, nil
 	}
-	if h, ok := lookupTag(repo, name); ok {
+	return plumbing.ZeroHash, fmt.Errorf("tag %q not found in mirror", name)
+}
+
+func resolveBranch(repo *git.Repository, name string) (plumbing.Hash, error) {
+	if h, ok := lookupBranch(repo, name); ok {
 		return h, nil
 	}
 	return plumbing.ZeroHash, fmt.Errorf("branch %q not found in mirror", name)

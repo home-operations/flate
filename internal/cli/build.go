@@ -86,13 +86,11 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			// errors.Join surfaces both an emit-time IO failure AND the
 			// partial-failure list — previously the emit error masked
 			// the run failures, so CI fixed the wrong thing.
-			return errors.Join(emitErr, runErr)
+			return errors.Join(emitErr, scopedRunError(o, res, c, runErr))
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	if rendersHelm(kinds) {
-		bindHelmFlags(cmd.Flags(), h)
-	}
+	bindHelmFlags(cmd.Flags(), h)
 	bindBuildFlags(cmd.Flags(), b)
 	return cmd
 }

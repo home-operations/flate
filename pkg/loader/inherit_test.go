@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -206,5 +207,112 @@ func TestApplyNamespaceInheritance_HRChartRepoNamespaceTracksHR(t *testing.T) {
 	}).(*manifest.HelmRelease)
 	if updated.Chart.RepoNamespace != "media" {
 		t.Errorf("Chart.RepoNamespace=%q want media", updated.Chart.RepoNamespace)
+	}
+}
+
+func TestApplyNamespaceInheritance_FluxOperatorAndHelmChartSource(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "apps/platform/kustomization.yaml", "namespace: platform\n")
+
+	s := store.New()
+	ks := &manifest.Kustomization{
+		Name: "workload",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{
+				Kind: manifest.KindGitRepository,
+				Name: "repo",
+			},
+		},
+		SourceKind:      manifest.KindGitRepository,
+		SourceName:      "repo",
+		SourceNamespace: "",
+		Contents: map[string]any{
+			"metadata": map[string]any{"name": "workload"},
+		},
+		DependsOn: []manifest.DependencyRef{{
+			NamedResource: manifest.NamedResource{Kind: manifest.KindKustomization, Name: "infra"},
+		}},
+	}
+	rs := &manifest.ResourceSet{Name: "apps"}
+	rsip := &manifest.ResourceSetInputProvider{Name: "apps-inputs"}
+	hc := &manifest.HelmChartSource{
+		Name: "chart",
+		HelmChartSpec: sourcev1.HelmChartSpec{
+			Chart: "podinfo",
+			SourceRef: sourcev1.LocalHelmChartSourceReference{
+				Kind: manifest.KindHelmRepository,
+				Name: "podinfo",
+			},
+		},
+	}
+	s.AddObject(ks)
+	s.AddObject(rs)
+	s.AddObject(rsip)
+	s.AddObject(hc)
+
+	sourceFiles := map[manifest.NamedResource]string{
+		ks.Named():   "apps/platform/ks.yaml",
+		rs.Named():   "apps/platform/resourceset.yaml",
+		rsip.Named(): "apps/platform/rsip.yaml",
+		hc.Named():   "apps/platform/chart.yaml",
+	}
+	ApplyNamespaceInheritance(s, sourceFiles, root)
+
+	for _, id := range []manifest.NamedResource{
+		{Kind: manifest.KindKustomization, Namespace: "platform", Name: "workload"},
+		{Kind: manifest.KindResourceSet, Namespace: "platform", Name: "apps"},
+		{Kind: manifest.KindResourceSetInputProvider, Namespace: "platform", Name: "apps-inputs"},
+		{Kind: manifest.KindHelmChart, Namespace: "platform", Name: "chart"},
+	} {
+		if got := s.GetObject(id); got == nil {
+			t.Fatalf("expected %s to be reindexed; sourceFiles=%v", id, sourceFiles)
+		}
+		if _, ok := sourceFiles[id]; !ok {
+			t.Fatalf("sourceFiles missing rewritten id %s; sourceFiles=%v", id, sourceFiles)
+		}
+	}
+
+	updated, _ := s.GetObject(manifest.NamedResource{
+		Kind: manifest.KindKustomization, Namespace: "platform", Name: "workload",
+	}).(*manifest.Kustomization)
+	if updated.SourceNamespace != "platform" {
+		t.Errorf("SourceNamespace=%q want platform", updated.SourceNamespace)
+	}
+	if updated.DependsOn[0].Namespace != "platform" {
+		t.Errorf("DependsOn namespace=%q want platform", updated.DependsOn[0].Namespace)
+	}
+	md := updated.Contents["metadata"].(map[string]any)
+	if md["namespace"] != "platform" {
+		t.Errorf("Contents metadata.namespace=%v want platform", md["namespace"])
+	}
+}
+
+func TestApplyDefaultNamespaces_LateFallback(t *testing.T) {
+	s := store.New()
+	rs := &manifest.ResourceSet{Name: "apps"}
+	rsip := &manifest.ResourceSetInputProvider{Name: "apps-inputs"}
+	hc := &manifest.HelmChartSource{Name: "chart"}
+	s.AddObject(rs)
+	s.AddObject(rsip)
+	s.AddObject(hc)
+	sourceFiles := map[manifest.NamedResource]string{
+		rs.Named():   "resourceset.yaml",
+		rsip.Named(): "rsip.yaml",
+		hc.Named():   "chart.yaml",
+	}
+
+	ApplyDefaultNamespaces(s, sourceFiles)
+
+	for _, id := range []manifest.NamedResource{
+		{Kind: manifest.KindResourceSet, Namespace: manifest.DefaultNamespace, Name: "apps"},
+		{Kind: manifest.KindResourceSetInputProvider, Namespace: manifest.DefaultNamespace, Name: "apps-inputs"},
+		{Kind: manifest.KindHelmChart, Namespace: manifest.DefaultNamespace, Name: "chart"},
+	} {
+		if got := s.GetObject(id); got == nil {
+			t.Fatalf("expected %s after defaulting; sourceFiles=%v", id, sourceFiles)
+		}
+		if _, ok := sourceFiles[id]; !ok {
+			t.Fatalf("sourceFiles missing defaulted id %s; sourceFiles=%v", id, sourceFiles)
+		}
 	}
 }

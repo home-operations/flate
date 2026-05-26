@@ -399,6 +399,32 @@ func TestRender_CommonMetadata(t *testing.T) {
 	}
 }
 
+func TestRender_OwnerLabels(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "apps", Namespace: "tenant-a",
+		ResourceSetSpec: fluxopv1.ResourceSetSpec{
+			Resources: []*apix.JSON{
+				jsonTmpl(t, `{
+					"apiVersion": "v1", "kind": "ConfigMap",
+					"metadata": {"name": "x"}
+				}`),
+			},
+		},
+	}
+	docs, err := resourceset.Render(rs, nil)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	md := docs[0]["metadata"].(map[string]any)
+	labels, _ := md["labels"].(map[string]any)
+	if labels[fluxopv1.OwnerLabelResourceSetName] != "apps" {
+		t.Errorf("owner name label missing: %v", labels)
+	}
+	if labels[fluxopv1.OwnerLabelResourceSetNamespace] != "tenant-a" {
+		t.Errorf("owner namespace label missing: %v", labels)
+	}
+}
+
 // TestRender_SprigFunctions exercises a few stdlib + slugify funcs to
 // confirm the template engine plumbs them through.
 func TestRender_SprigFunctions(t *testing.T) {

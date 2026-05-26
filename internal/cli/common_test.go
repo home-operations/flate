@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestScopedNamespaces_ExplicitNamespaceWins(t *testing.T) {
@@ -67,6 +71,132 @@ func TestIncludeNamespace_RespectsExplicitFilter(t *testing.T) {
 	}
 	if c.includeNamespace(&change.Filter{}, "default") {
 		t.Error("non-matching namespace must fail")
+	}
+}
+
+func TestScopedRunError_FiltersOutsideNamespace(t *testing.T) {
+	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New orchestrator: %v", err)
+	}
+	res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+		{Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}: {
+			Status:  store.StatusFailed,
+			Message: "media failed",
+		},
+		{Kind: manifest.KindKustomization, Namespace: "default", Name: "other"}: {
+			Status:  store.StatusFailed,
+			Message: "default failed",
+		},
+	}}
+
+	got := scopedRunError(o, res, &commonFlags{namespace: "media"}, aggregateScopedFailures(res.Failed))
+	if got == nil {
+		t.Fatal("expected scoped failure")
+	}
+	if !strings.Contains(got.Error(), "media failed") {
+		t.Errorf("scoped error missing media failure: %v", got)
+	}
+	if strings.Contains(got.Error(), "default failed") {
+		t.Errorf("scoped error included default failure: %v", got)
+	}
+}
+
+func TestScopedRunError_ReturnsNilWhenOnlyOutsideNamespaceFailed(t *testing.T) {
+	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New orchestrator: %v", err)
+	}
+	res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+		{Kind: manifest.KindKustomization, Namespace: "default", Name: "other"}: {
+			Status:  store.StatusFailed,
+			Message: "default failed",
+		},
+	}}
+
+	if got := scopedRunError(o, res, &commonFlags{namespace: "media"}, aggregateScopedFailures(res.Failed)); got != nil {
+		t.Fatalf("scopedRunError = %v, want nil", got)
+	}
+}
+
+func TestScopedRunError_PreservesUnattributedRunError(t *testing.T) {
+	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New orchestrator: %v", err)
+	}
+	res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+		{Kind: manifest.KindKustomization, Namespace: "default", Name: "other"}: {
+			Status:  store.StatusFailed,
+			Message: "default failed",
+		},
+	}}
+	panicErr := errors.New("1 task(s) panicked without per-resource attribution; check logs")
+	runErr := errors.Join(aggregateScopedFailures(res.Failed), panicErr)
+
+	got := scopedRunError(o, res, &commonFlags{namespace: "media"}, runErr)
+	if got == nil {
+		t.Fatal("expected unattributed error to be preserved")
+	}
+	if !errors.Is(got, panicErr) {
+		t.Errorf("scoped error did not preserve panic error identity: %v", got)
+	}
+	if strings.Contains(got.Error(), "default failed") {
+		t.Errorf("scoped error included hidden resource failure: %v", got)
+	}
+}
+
+func TestScopedRunError_CancellationStillFiltersHiddenFailures(t *testing.T) {
+	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New orchestrator: %v", err)
+	}
+	res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+		{Kind: manifest.KindKustomization, Namespace: "default", Name: "other"}: {
+			Status:  store.StatusFailed,
+			Message: "default failed",
+		},
+	}}
+	runErr := errors.Join(aggregateScopedFailures(res.Failed), context.Canceled)
+
+	got := scopedRunError(o, res, &commonFlags{namespace: "media"}, runErr)
+	if !errors.Is(got, context.Canceled) {
+		t.Fatalf("scopedRunError should preserve cancellation identity, got %v", got)
+	}
+	if strings.Contains(got.Error(), "default failed") {
+		t.Errorf("canceled scoped error included hidden resource failure: %v", got)
+	}
+}
+
+func TestScopedRunError_JoinsScopedAndUnattributed(t *testing.T) {
+	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New orchestrator: %v", err)
+	}
+	res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+		{Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}: {
+			Status:  store.StatusFailed,
+			Message: "media failed",
+		},
+		{Kind: manifest.KindKustomization, Namespace: "default", Name: "other"}: {
+			Status:  store.StatusFailed,
+			Message: "default failed",
+		},
+	}}
+	panicErr := errors.New("1 task(s) panicked without per-resource attribution; check logs")
+	runErr := errors.Join(aggregateScopedFailures(res.Failed), panicErr)
+
+	got := scopedRunError(o, res, &commonFlags{namespace: "media"}, runErr)
+	if got == nil {
+		t.Fatal("expected scoped failure")
+	}
+	if !strings.Contains(got.Error(), "media failed") {
+		t.Errorf("scoped error missing visible failure: %v", got)
+	}
+	if !errors.Is(got, panicErr) {
+		t.Errorf("scoped error did not preserve panic error identity: %v", got)
+	}
+	if strings.Contains(got.Error(), "default failed") {
+		t.Errorf("scoped error included hidden resource failure: %v", got)
 	}
 }
 

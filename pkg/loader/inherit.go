@@ -73,6 +73,58 @@ func ApplyNamespaceInheritance(s *store.Store, sourceFiles map[manifest.NamedRes
 	}
 }
 
+// ApplyDefaultNamespaces preserves flate's flux-system fallback for
+// top-level Flux Operator and HelmChart source objects after namespace
+// inheritance has had a chance to project kustomize/Flux namespaces.
+func ApplyDefaultNamespaces(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
+	defaultResourceSets(s, sourceFiles)
+	defaultResourceSetInputProviders(s, sourceFiles)
+	defaultHelmChartSources(s, sourceFiles)
+}
+
+func defaultResourceSets(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
+	for _, obj := range store.ListAs[*manifest.ResourceSet](s, manifest.KindResourceSet) {
+		if obj.Namespace != "" {
+			continue
+		}
+		c := *obj
+		c.Namespace = manifest.DefaultNamespace
+		reindexObject(s, sourceFiles, obj.Named(), &c)
+	}
+}
+
+func defaultResourceSetInputProviders(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
+	for _, obj := range store.ListAs[*manifest.ResourceSetInputProvider](s, manifest.KindResourceSetInputProvider) {
+		if obj.Namespace != "" {
+			continue
+		}
+		c := *obj
+		c.Namespace = manifest.DefaultNamespace
+		reindexObject(s, sourceFiles, obj.Named(), &c)
+	}
+}
+
+func defaultHelmChartSources(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
+	for _, obj := range store.ListAs[*manifest.HelmChartSource](s, manifest.KindHelmChart) {
+		if obj.Namespace != "" {
+			continue
+		}
+		c := *obj
+		c.Namespace = manifest.DefaultNamespace
+		reindexObject(s, sourceFiles, obj.Named(), &c)
+	}
+}
+
+func reindexObject(s *store.Store, sourceFiles map[manifest.NamedResource]string, old manifest.NamedResource, obj manifest.BaseManifest) {
+	file, hasFile := sourceFiles[old]
+	s.DeleteObject(old)
+	s.AddObject(obj)
+	if hasFile {
+		delete(sourceFiles, old)
+		sourceFiles[obj.Named()] = file
+	}
+}
+
 // pathEntry pairs a slash-suffixed directory prefix with the namespace
 // to apply to anything underneath it.
 type pathEntry struct {
@@ -204,9 +256,20 @@ func NormalizePrefix(p string) string {
 func cloneWithNamespace(obj manifest.BaseManifest, ns string) manifest.BaseManifest {
 	switch o := obj.(type) {
 	case *manifest.Kustomization:
-		c := *o
+		c := o.Clone()
 		c.Namespace = ns
-		return &c
+		if c.SourceRef.Namespace == "" {
+			c.SourceNamespace = ns
+		}
+		for i := range c.DependsOn {
+			if c.DependsOn[i].Namespace == "" {
+				c.DependsOn[i].Namespace = ns
+			}
+		}
+		if c.Contents != nil {
+			manifest.EnsureMetadata(c.Contents)["namespace"] = ns
+		}
+		return c
 	case *manifest.HelmRelease:
 		c := *o
 		c.Namespace = ns
@@ -229,6 +292,14 @@ func cloneWithNamespace(obj manifest.BaseManifest, ns string) manifest.BaseManif
 		c.Namespace = ns
 		return &c
 	case *manifest.HelmChartSource:
+		c := *o
+		c.Namespace = ns
+		return &c
+	case *manifest.ResourceSet:
+		c := *o
+		c.Namespace = ns
+		return &c
+	case *manifest.ResourceSetInputProvider:
 		c := *o
 		c.Namespace = ns
 		return &c

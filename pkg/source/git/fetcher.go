@@ -22,6 +22,7 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -172,6 +173,9 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	if repo.Reference != nil {
 		ref = *repo.Reference
 	}
+	if err := fetchExplicitNamedRef(ctx, cloned, auth, proxy, effectiveNamedRef(ref)); err != nil {
+		return nil, err
+	}
 	if err := checkoutRef(cloned, ref, repo.SparseCheckout); err != nil {
 		return nil, fmt.Errorf("checkout %s: %w", refStr, err)
 	}
@@ -194,6 +198,36 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	}
 	art.LocalPath = slot.Path
 	return art, nil
+}
+
+func effectiveNamedRef(ref manifest.GitRepositoryRef) string {
+	if ref.Commit != "" {
+		return ""
+	}
+	return ref.Name
+}
+
+func fetchExplicitNamedRef(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig, name string) error {
+	if name == "" {
+		return nil
+	}
+	remote, err := repo.Remote("origin")
+	if err != nil {
+		return err
+	}
+	opts := &git.FetchOptions{
+		Auth:     auth,
+		RefSpecs: []config.RefSpec{config.RefSpec("+" + name + ":" + name)},
+	}
+	if proxy != nil {
+		opts.ProxyOptions = transport.ProxyOptions{
+			URL: proxy.Address, Username: proxy.Username, Password: proxy.Password,
+		}
+	}
+	if err := remote.FetchContext(ctx, opts); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return fmt.Errorf("fetch ref.name %s: %w", name, err)
+	}
+	return nil
 }
 
 // finalize runs PGP verification (when configured), applies the

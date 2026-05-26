@@ -1,7 +1,6 @@
 package manifest
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -53,7 +52,7 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 	}
 	return &ResourceSet{
 		Name:            cr.Name,
-		Namespace:       cmp.Or(cr.Namespace, DefaultNamespace),
+		Namespace:       cr.Namespace,
 		ResourceSetSpec: cr.Spec,
 		Labels:          cr.Labels,
 	}, nil
@@ -97,7 +96,7 @@ func parseResourceSetInputProvider(doc map[string]any) (*ResourceSetInputProvide
 	}
 	return &ResourceSetInputProvider{
 		Name:                         cr.Name,
-		Namespace:                    cmp.Or(cr.Namespace, DefaultNamespace),
+		Namespace:                    cr.Namespace,
 		ResourceSetInputProviderSpec: cr.Spec,
 		Labels:                       cr.Labels,
 	}, nil

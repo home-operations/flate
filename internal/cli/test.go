@@ -53,7 +53,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if err := c.requireOutput(); err != nil {
 				return err
 			}
-			o, _, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
@@ -74,14 +74,12 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if report.AnyFailed() {
 				return errors.New("test failures detected")
 			}
-			return runErr
+			return scopedRunError(o, res, c, runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c)
 	cmd.Flags().BoolVar(&showSkipped, "show-skipped", false,
 		"include SKIPPED resources in the per-resource listing (changed-only mode hides them by default to mirror `flate diff`)")
-	if rendersHelm(kinds) {
-		bindHelmFlags(cmd.Flags(), h)
-	}
+	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }

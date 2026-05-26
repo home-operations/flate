@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -456,6 +457,23 @@ func TestRun_DiffImages_NameDefault(t *testing.T) {
 	}
 }
 
+func TestRun_DiffImages_RespectsNamespaceFailures(t *testing.T) {
+	current := writeMultiNamespaceFixture(t)
+	orig := t.TempDir()
+	copyTree(t, current, orig)
+	if err := os.RemoveAll(filepath.Join(current, "apps-b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(orig, "apps-b")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runCLI(t, "diff", "images", "--path", current, "--path-orig", orig, "-n", "alpha")
+	if code != 0 {
+		t.Fatalf("diff images -n alpha should ignore beta reconcile failure, exited %d: %s", code, stderr)
+	}
+}
+
 func copyTree(t *testing.T, src, dst string) {
 	t.Helper()
 	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
@@ -493,49 +511,32 @@ func TestBindCommon_DefaultValues(t *testing.T) {
 	}
 }
 
-// TestBindHelmFlags_OnHRSubcommandOnly guards the rendersHelm() gate:
-// `build ks` should NOT carry helm-template flags, but `build hr` and
-// `build all` should.
-func TestBindHelmFlags_OnHRSubcommandOnly(t *testing.T) {
+// TestBindHelmFlags_OnReconcilingSubcommands guards the reconcile-first
+// contract: even KS-shaped output commands run the full reconcile graph, so
+// helm-template flags must be available consistently.
+func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 	cmd := New("test")
-	cases := []struct {
-		argv         []string
-		wantHelmFlag bool
-	}{
-		{argv: []string{"build", "ks"}, wantHelmFlag: false},
-		{argv: []string{"build", "hr"}, wantHelmFlag: true},
-		{argv: []string{"build", "all"}, wantHelmFlag: true},
-		{argv: []string{"diff", "ks"}, wantHelmFlag: false},
-		{argv: []string{"diff", "hr"}, wantHelmFlag: true},
-		{argv: []string{"diff", "all"}, wantHelmFlag: true},
-	}
-	for _, tc := range cases {
-		sub, _, err := cmd.Find(tc.argv)
+	for _, argv := range [][]string{
+		{"build", "ks"},
+		{"build", "hr"},
+		{"build", "all"},
+		{"diff", "ks"},
+		{"diff", "hr"},
+		{"diff", "all"},
+		{"get", "all"},
+		{"get", "images"},
+		{"get", "ks"},
+		{"get", "hr"},
+		{"test", "all"},
+		{"test", "ks"},
+		{"test", "hr"},
+	} {
+		sub, _, err := cmd.Find(argv)
 		if err != nil {
-			t.Fatalf("find %v: %v", tc.argv, err)
+			t.Fatalf("find %v: %v", argv, err)
 		}
-		got := sub.Flags().Lookup("kube-version") != nil
-		if got != tc.wantHelmFlag {
-			t.Errorf("%v: helm flag binding = %v, want %v", tc.argv, got, tc.wantHelmFlag)
-		}
-	}
-}
-
-// TestRendersHelm_Pure exercises the unexported predicate directly so
-// edge cases stay covered when verb registration shifts.
-func TestRendersHelm_Pure(t *testing.T) {
-	cases := []struct {
-		kinds []string
-		want  bool
-	}{
-		{kinds: []string{"Kustomization"}, want: false},
-		{kinds: []string{"HelmRelease"}, want: true},
-		{kinds: []string{"Kustomization", "HelmRelease"}, want: true},
-		{kinds: nil, want: false},
-	}
-	for _, tc := range cases {
-		if got := rendersHelm(tc.kinds); got != tc.want {
-			t.Errorf("rendersHelm(%v) = %v, want %v", tc.kinds, got, tc.want)
+		if sub.Flags().Lookup("kube-version") == nil {
+			t.Errorf("%v: missing helm flag kube-version", argv)
 		}
 	}
 }
@@ -631,6 +632,18 @@ func TestJoinRunErrors(t *testing.T) {
 		}
 		if !tc.wantNil && !strings.Contains(got.Error(), tc.wantSub) {
 			t.Errorf("orig=%v curr=%v: error %q missing %q", tc.orig, tc.curr, got, tc.wantSub)
+		}
+		if tc.orig != nil && !strings.Contains(got.Error(), tc.orig.Error()) {
+			t.Errorf("orig=%v curr=%v: error %q missing orig detail", tc.orig, tc.curr, got)
+		}
+		if tc.curr != nil && !strings.Contains(got.Error(), tc.curr.Error()) {
+			t.Errorf("orig=%v curr=%v: error %q missing current detail", tc.orig, tc.curr, got)
+		}
+		if tc.orig != nil && !errors.Is(got, tc.orig) {
+			t.Errorf("orig=%v curr=%v: errors.Is missing orig", tc.orig, tc.curr)
+		}
+		if tc.curr != nil && !errors.Is(got, tc.curr) {
+			t.Errorf("orig=%v curr=%v: errors.Is missing current", tc.orig, tc.curr)
 		}
 	}
 }

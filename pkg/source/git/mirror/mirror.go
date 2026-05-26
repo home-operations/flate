@@ -110,18 +110,22 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 		_ = os.RemoveAll(path)
 		return nil, fmt.Errorf("mirror clone %s: %w", url, err)
 	}
+	if err := m.fetchInto(ctx, repo, auth, proxy); err != nil {
+		_ = os.RemoveAll(path)
+		return nil, err
+	}
 	return repo, nil
 }
 
 // fetchInto runs an incremental Fetch against the mirror's remote with
-// the mirror refspec — every branch and tag updates in place. Treats
-// NoErrAlreadyUpToDate as a clean noop.
+// the mirror refspec — every server ref updates in place, including
+// explicit spec.ref.name targets such as refs/pull/* and refs/merge-*.
+// Treats NoErrAlreadyUpToDate as a clean noop.
 func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig) error {
 	opts := &git.FetchOptions{
 		Auth: auth,
 		RefSpecs: []config.RefSpec{
-			"+refs/heads/*:refs/heads/*",
-			"+refs/tags/*:refs/tags/*",
+			"+refs/*:refs/*",
 		},
 	}
 	if proxy != nil {

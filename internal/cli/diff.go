@@ -87,11 +87,7 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	// `diff all` renders HRs as part of its scope, so always bind
-	// helm flags (matches `build all` / `test all` / `get all`).
-	if kind == "" || kind == manifest.KindHelmRelease {
-		bindHelmFlags(cmd.Flags(), h)
-	}
+	bindHelmFlags(cmd.Flags(), h)
 	bindDiffFlags(cmd, d)
 	return cmd
 }
@@ -136,9 +132,9 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 		out = string(format.OutputName)
 	}
 	if err := emitImageList(cmd.OutOrStdout(), imgs, out); err != nil {
-		return errors.Join(err, runErr)
+		return errors.Join(err, scopedDiffRunError(orig, current, c, runErr))
 	}
-	return runErr
+	return scopedDiffRunError(orig, current, c, runErr)
 }
 
 // imageSetDiff returns the sorted images added in current; when
@@ -187,12 +183,12 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	}
 	formatted, err := diff.Render(diffs, diff.Format(outFormat))
 	if err != nil {
-		return errors.Join(err, runErr)
+		return errors.Join(err, scopedDiffRunError(orig, current, c, runErr))
 	}
 	if _, err := cmd.OutOrStdout().Write(formatted); err != nil {
-		return errors.Join(err, runErr)
+		return errors.Join(err, scopedDiffRunError(orig, current, c, runErr))
 	}
-	return runErr
+	return scopedDiffRunError(orig, current, c, runErr)
 }
 
 // diffSide pairs an Orchestrator with its render Result. Diff
@@ -201,6 +197,7 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 type diffSide struct {
 	O   *orchestrator.Orchestrator
 	Res *orchestrator.Result
+	Err error
 }
 
 // runDiffOrchestrators boots two orchestrators with each side's
@@ -242,7 +239,7 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		o, res, err := runOrchestratorCfg(gctx, currentCfg)
-		current = diffSide{O: o, Res: res}
+		current = diffSide{O: o, Res: res, Err: err}
 		currErr = err
 		// Fatal Bootstrap errors return nil orchestrator — propagate
 		// those so the errgroup cancels its sibling. Per-resource Run
@@ -255,7 +252,7 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 	})
 	g.Go(func() error {
 		o, res, err := runOrchestratorCfg(gctx, origCfg)
-		orig = diffSide{O: o, Res: res}
+		orig = diffSide{O: o, Res: res, Err: err}
 		origErr = err
 		if o == nil {
 			return err
@@ -276,13 +273,27 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 func joinRunErrors(orig, curr error) error {
 	switch {
 	case orig != nil && curr != nil:
-		return fmt.Errorf("both snapshots had reconcile failures:\n  orig: %s\n  current: %s", orig, curr)
+		return errors.Join(
+			errors.New("both snapshots had reconcile failures"),
+			fmt.Errorf("orig snapshot: %w", orig),
+			fmt.Errorf("current snapshot: %w", curr),
+		)
 	case orig != nil:
 		return fmt.Errorf("orig snapshot: %w", orig)
 	case curr != nil:
 		return fmt.Errorf("current snapshot: %w", curr)
 	}
 	return nil
+}
+
+func scopedDiffRunError(orig, current diffSide, c *commonFlags, runErr error) error {
+	if runErr == nil {
+		return nil
+	}
+	return joinRunErrors(
+		scopedRunError(orig.O, orig.Res, c, orig.Err),
+		scopedRunError(current.O, current.Res, c, current.Err),
+	)
 }
 
 // gatherAllArtifacts is gatherArtifacts with a kind="" shortcut for

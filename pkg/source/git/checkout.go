@@ -13,8 +13,8 @@ import (
 
 // checkoutRef checks out the worktree at the requested ref, applying
 // sparse-checkout directories when configured. Mirrors source-
-// controller's ref-resolution order: Name > Commit > Tag > Branch >
-// SemVer (unsupported here), falling back to HEAD when no ref is set.
+// controller's ref-resolution order: Commit > Name > SemVer > Tag >
+// Branch, falling back to HEAD when no ref is set.
 func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []string) error {
 	wt, err := repo.Worktree()
 	if err != nil {
@@ -36,12 +36,13 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 		return wt.Checkout(opts)
 	}
 	switch {
+	case ref.Commit != "":
+		return checkout(func(o *git.CheckoutOptions) { o.Hash = plumbing.NewHash(ref.Commit) })
 	case ref.Name != "":
 		// Full ref name takes precedence (e.g. "refs/pull/420/head",
 		// "refs/tags/v1.2.3"). Resolve against the cloned repo so the
-		// remote-tracking layer (refs/remotes/origin/...) is checked
-		// too — go-git's PlainClone fetches all refs but normalizes
-		// branches under refs/remotes/origin.
+		// explicitly fetched ref wins; branch refs may still exist only
+		// under refs/remotes/origin from the default clone refspec.
 		rev := plumbing.Revision(ref.Name)
 		if h, err := repo.ResolveRevision(rev); err == nil {
 			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
@@ -55,8 +56,12 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 			}
 		}
 		return fmt.Errorf("%w: unable to resolve git ref %q", manifest.ErrInput, ref.Name)
-	case ref.Commit != "":
-		return checkout(func(o *git.CheckoutOptions) { o.Hash = plumbing.NewHash(ref.Commit) })
+	case ref.SemVer != "":
+		h, err := resolveSemver(repo, ref.SemVer)
+		if err != nil {
+			return err
+		}
+		return checkout(func(o *git.CheckoutOptions) { o.Hash = h })
 	case ref.Tag != "":
 		if h, err := repo.ResolveRevision(plumbing.Revision("refs/tags/" + ref.Tag)); err == nil {
 			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
@@ -68,8 +73,6 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
 		}
 		return checkout(func(o *git.CheckoutOptions) { o.Branch = plumbing.NewBranchReferenceName(ref.Branch) })
-	case ref.SemVer != "":
-		return fmt.Errorf("%w: GitRepository semver ref is not supported yet", manifest.ErrInput)
 	}
 	// No ref: just check out HEAD (with sparse, if configured).
 	return checkout(func(*git.CheckoutOptions) {})

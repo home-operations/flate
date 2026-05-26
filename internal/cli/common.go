@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 type commonFlags struct {
@@ -161,17 +162,6 @@ type helmFlags struct {
 	showOnly             []string
 	enableDNS            bool
 	skipSchemaValidation bool
-}
-
-// rendersHelm reports whether the supplied kinds slice contains
-// KindHelmRelease, used to gate bindHelmFlags off of subcommands
-// (`build ks`, `diff ks`, `test ks`) that only render Kustomizations.
-// Without this gate the helm-template flags were silently accepted
-// on KS-only subcommands and no-op'd — confusing to users who set
-// e.g. `--show-only templates/foo.yaml` on `flate build ks` and
-// wondered why nothing changed.
-func rendersHelm(kinds []string) bool {
-	return slices.Contains(kinds, manifest.KindHelmRelease)
 }
 
 func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
@@ -407,6 +397,68 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestr
 		return nil, nil, err
 	}
 	return o, res, err
+}
+
+func scopedRunError(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, runErr error) error {
+	if runErr == nil {
+		return nil
+	}
+	if o == nil || res == nil {
+		return runErr
+	}
+	extras := nonResourceRunErrors(runErr)
+	failed := make(map[manifest.NamedResource]store.StatusInfo, len(res.Failed))
+	for id, info := range res.Failed {
+		if c == nil || c.includeNamespace(o.Filter(), id.Namespace) {
+			failed[id] = info
+		}
+	}
+	if len(failed) == 0 {
+		return errors.Join(extras...)
+	}
+	return errors.Join(aggregateScopedFailures(failed), errors.Join(extras...))
+}
+
+func aggregateScopedFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
+	msgs := make([]string, 0, len(failed))
+	for id, info := range failed {
+		msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), info.Message))
+	}
+	slices.Sort(msgs)
+	return fmt.Errorf("reconcile completed with %d failure(s):\n  %s",
+		len(msgs), strings.Join(msgs, "\n  "))
+}
+
+func nonResourceRunErrors(err error) []error {
+	var out []error
+	for _, leaf := range flattenErrors(err) {
+		if isResourceAggregateError(leaf) {
+			continue
+		}
+		out = append(out, leaf)
+	}
+	return out
+}
+
+func flattenErrors(err error) []error {
+	if err == nil {
+		return nil
+	}
+	if uw, ok := err.(interface{ Unwrap() []error }); ok {
+		var out []error
+		for _, child := range uw.Unwrap() {
+			out = append(out, flattenErrors(child)...)
+		}
+		return out
+	}
+	if uw, ok := err.(interface{ Unwrap() error }); ok {
+		return flattenErrors(uw.Unwrap())
+	}
+	return []error{err}
+}
+
+func isResourceAggregateError(err error) bool {
+	return strings.HasPrefix(err.Error(), "reconcile completed with ")
 }
 
 func cmdContext(cmd *cobra.Command) context.Context {

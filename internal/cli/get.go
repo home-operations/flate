@@ -58,7 +58,8 @@ func newGetHRCmd() *cobra.Command {
 		func(orch *orchestrator.Orchestrator, o *manifest.HelmRelease) (row map[string]string, doc map[string]any) {
 			version := o.Chart.Version
 			// chartRef HRs leave hr.Chart.Version empty — the version is
-			// pinned on the referenced OCIRepository (ref.tag) or
+			// pinned on the referenced OCIRepository (ref.digest,
+			// ref.semver, or ref.tag) or
 			// HelmChart CRD (spec.version). Surface that for display
 			// instead of an empty column.
 			if version == "" {
@@ -91,8 +92,8 @@ func newGetHRCmd() *cobra.Command {
 
 // resolveChartRefVersion looks up the version pinned on the source CR
 // that hr.Chart references. For OCIRepository the source's
-// spec.ref.tag (or semver) is the version; for the HelmChart CRD the
-// version field is part of the CRD spec.
+// spec.ref digest, semver, or tag is the version; for the HelmChart
+// CRD the version field is part of the CRD spec.
 func resolveChartRefVersion(orch *orchestrator.Orchestrator, hr *manifest.HelmRelease) string {
 	srcID := manifest.NamedResource{
 		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
@@ -101,7 +102,7 @@ func resolveChartRefVersion(orch *orchestrator.Orchestrator, hr *manifest.HelmRe
 	switch s := obj.(type) {
 	case *manifest.OCIRepository:
 		if s.Reference != nil {
-			return cmp.Or(s.Reference.Tag, s.Reference.SemVer, s.Reference.Digest)
+			return cmp.Or(s.Reference.Digest, s.Reference.SemVer, s.Reference.Tag)
 		}
 	case *manifest.HelmChartSource:
 		return s.Version
@@ -122,14 +123,14 @@ func newGetAllCmd() *cobra.Command {
 			if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
 				return err
 			}
-			o, _, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
 			if err := printCluster(cmd.OutOrStdout(), o, c, string(c.outputOrDefault(format.OutputYAML))); err != nil {
-				return errors.Join(err, runErr)
+				return errors.Join(err, scopedRunError(o, res, c, runErr))
 			}
-			return runErr
+			return scopedRunError(o, res, c, runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c)
@@ -160,9 +161,9 @@ func newGetImagesCmd() *cobra.Command {
 			}
 			imgs := slices.Sorted(maps.Keys(collectImages(o, res, c)))
 			if err := emitImageList(cmd.OutOrStdout(), imgs, string(c.outputOrDefault(format.OutputName))); err != nil {
-				return errors.Join(err, runErr)
+				return errors.Join(err, scopedRunError(o, res, c, runErr))
 			}
-			return runErr
+			return scopedRunError(o, res, c, runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c)
@@ -186,7 +187,7 @@ func resourceListCmd[T manifest.BaseManifest](
 		Short:   short,
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			o, _, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
@@ -195,21 +196,14 @@ func resourceListCmd[T manifest.BaseManifest](
 				Labels: c.labels,
 			}
 			if err := printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper); err != nil {
-				return errors.Join(err, runErr)
+				return errors.Join(err, scopedRunError(o, res, c, runErr))
 			}
-			return runErr
+			return scopedRunError(o, res, c, runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c)
 	bindSelector(cmd.Flags(), c)
-	// Only attach helm-template flags when the kind being listed
-	// actually depends on Helm rendering — `get ks` listings don't,
-	// so showing --show-only / --no-hooks / --kube-version etc.
-	// confuses readers who'll wonder why the KS table cares about
-	// chart templating. Same gate `build` / `diff` / `test` use.
-	if kind == manifest.KindHelmRelease {
-		bindHelmFlags(cmd.Flags(), h)
-	}
+	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
 

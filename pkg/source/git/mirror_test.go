@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -140,4 +142,64 @@ func TestMirror_TagResolvesAcrossRefs(t *testing.T) {
 	if art.LocalPath == art2.LocalPath {
 		t.Error("different refs should land in different slots")
 	}
+}
+
+func TestMirror_RefNameResolvesNonBranchRefs(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	want := mustSetRefToHEAD(t, src, "refs/pull/1/head")
+
+	layout := cacheroot.New(t.TempDir())
+	cache := source.NewCache(layout)
+	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout)}
+	repo := &manifest.GitRepository{
+		Name: "pull", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{
+			URL:       "file://" + src,
+			Reference: &sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"},
+		},
+	}
+
+	art, err := f.Fetch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Fetch ref.name through mirror: %v", err)
+	}
+	if art.Revision != want {
+		t.Errorf("revision = %q, want %q", art.Revision, want)
+	}
+}
+
+func TestResolveRefHash_TagAndBranchAreStrict(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	mustSetRefToHEAD(t, src, "refs/heads/branch-only")
+	mustTagHEAD(t, src, "tag-only")
+
+	repo, err := git.PlainOpen(src)
+	if err != nil {
+		t.Fatalf("PlainOpen: %v", err)
+	}
+	if _, err := resolveRefHash(repo, &manifest.GitRepositoryRef{Tag: "branch-only"}); err == nil {
+		t.Fatal("tag lookup should not fall back to a branch with the same name")
+	}
+	if _, err := resolveRefHash(repo, &manifest.GitRepositoryRef{Branch: "tag-only"}); err == nil {
+		t.Fatal("branch lookup should not fall back to a tag with the same name")
+	}
+}
+
+func mustSetRefToHEAD(t *testing.T, dir, refName string) string {
+	t.Helper()
+	r, err := git.PlainOpen(dir)
+	if err != nil {
+		t.Fatalf("PlainOpen: %v", err)
+	}
+	head, err := r.Head()
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	ref := plumbing.NewHashReference(plumbing.ReferenceName(refName), head.Hash())
+	if err := r.Storer.SetReference(ref); err != nil {
+		t.Fatalf("SetReference %s: %v", refName, err)
+	}
+	return head.Hash().String()
 }

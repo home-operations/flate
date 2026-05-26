@@ -3,7 +3,6 @@ package resourceset
 import (
 	"bytes"
 	"fmt"
-	"strings"
 	"text/template"
 
 	sprig "github.com/go-task/slim-sprig/v3"
@@ -63,5 +62,5 @@ func mustToYaml(v any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimRight(string(out), "\n"), nil
+	return string(out), nil
 }

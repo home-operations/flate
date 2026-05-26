@@ -10,20 +10,20 @@ import (
 type GitRepositoryRef = sourcev1.GitRepositoryRef
 
 // GitRefString returns "branch:main", "tag:v1.2.3", etc., or empty when
-// the ref is empty. Precedence (matches Flux source-controller):
-// name > commit > tag > branch > semver.
+// the ref is empty. Precedence matches Flux source-controller:
+// commit > name > semver > tag > branch.
 func GitRefString(r GitRepositoryRef) string {
 	switch {
-	case r.Name != "":
-		return "name:" + r.Name
 	case r.Commit != "":
 		return "commit:" + r.Commit
+	case r.Name != "":
+		return "name:" + r.Name
+	case r.SemVer != "":
+		return "semver:" + r.SemVer
 	case r.Tag != "":
 		return "tag:" + r.Tag
 	case r.Branch != "":
 		return "branch:" + r.Branch
-	case r.SemVer != "":
-		return "semver:" + r.SemVer
 	}
 	return ""
 }
@@ -201,14 +201,14 @@ func (o *OCIRepository) Suspended() bool { return o.Suspend }
 // RepoName delegates to the canonical NamedResource helper.
 func (o *OCIRepository) RepoName() string { return o.Named().FluxResourceName() }
 
-// Version returns the digest, tag, or semver expression in that order.
+// Version returns the digest, semver expression, or tag in that order.
 // A semver expression is returned verbatim — callers wanting a concrete
 // tag must resolve it against remote tag listing (pkg/source).
 func (o *OCIRepository) Version() string {
 	if o.Reference == nil {
 		return ""
 	}
-	return cmp.Or(o.Reference.Digest, o.Reference.Tag, o.Reference.SemVer)
+	return cmp.Or(o.Reference.Digest, o.Reference.SemVer, o.Reference.Tag)
 }
 
 // ParseOCIRepository decodes an OCIRepository CR.

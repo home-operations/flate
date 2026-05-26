@@ -111,11 +111,11 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 
 	for _, doc := range docs {
 		defaultNamespace(doc, rs.Namespace)
+		applyOwnerLabels(doc, rs)
 		applyCommonMetadata(doc, rs.CommonMetadata)
 	}
 	return docs, nil
 }
-
 
 // renderResources templates a single spec.resources entry once per
 // input set (or once with nil when inputs is empty), returning the
@@ -225,4 +225,3 @@ func renderSingle(tmplStr string, inputSet map[string]any) (map[string]any, erro
 	}
 	return doc, nil
 }
-

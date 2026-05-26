@@ -71,12 +71,13 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 
 	// Resolve spec.ref into a concrete (tag-or-digest) BEFORE choosing
 	// the cache slot, so different semver matches don't share a slot.
+	// Flux precedence is digest > semver > tag.
 	var ref manifest.OCIRepositoryRef
 	if repo.Reference != nil {
 		ref = *repo.Reference
 	}
-	if ref.SemVer != "" {
-		resolved, err := resolveOCISemver(ctx, repoClient, ref.SemVer, ref.SemverFilter)
+	if shouldResolveOCISemver(ref) {
+		resolved, err := resolveOCISemver(ctx, repoClient, ref.SemVer, ref.SemverFilter, layerMediaType(repo.LayerSelector))
 		if err != nil {
 			return nil, fmt.Errorf("OCIRepository %s semver: %w", repo.RepoName(), err)
 		}

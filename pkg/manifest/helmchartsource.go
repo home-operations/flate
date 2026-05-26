@@ -49,7 +49,7 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	cr.Spec.SourceRef.Kind = cmp.Or(cr.Spec.SourceRef.Kind, KindHelmRepository)
 	return &HelmChartSource{
 		Name:          cr.Name,
-		Namespace:     cmp.Or(cr.Namespace, DefaultNamespace),
+		Namespace:     cr.Namespace,
 		HelmChartSpec: cr.Spec,
 	}, nil
 }

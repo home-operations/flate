@@ -14,6 +14,7 @@ func TestPickSemverTag(t *testing.T) {
 		tags    []string
 		expr    string
 		filter  string
+		media   string
 		want    string
 		wantErr string
 	}{
@@ -39,6 +40,13 @@ func TestPickSemverTag(t *testing.T) {
 			tags: []string{"latest", "main", "1.0.0", "foo-bar"},
 			expr: ">=0.0.1",
 			want: "1.0.0",
+		},
+		{
+			name:  "helm chart tags map underscore build metadata",
+			tags:  []string{"1.0.0_build.1", "1.0.0_build.2", "1.0.1"},
+			expr:  ">=1.0.0 <1.0.1",
+			media: helmChartLayerMediaType,
+			want:  "1.0.0_build.1",
 		},
 		{
 			name:    "no match returns error",
@@ -70,7 +78,7 @@ func TestPickSemverTag(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := pickSemverTag(tc.tags, tc.expr, tc.filter)
+			got, err := pickSemverTag(tc.tags, tc.expr, tc.filter, tc.media)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want substring %q", err, tc.wantErr)
@@ -191,8 +199,8 @@ func TestVersionTag(t *testing.T) {
 		want string
 	}{
 		{"digest wins", manifest.OCIRepositoryRef{Digest: "sha256:abc", Tag: "v1"}, "sha256:abc"},
-		{"tag when no digest", manifest.OCIRepositoryRef{Tag: "v1"}, "v1"},
-		{"semver when no tag/digest", manifest.OCIRepositoryRef{SemVer: ">=1.0"}, ">=1.0"},
+		{"semver wins over tag", manifest.OCIRepositoryRef{Tag: "v1", SemVer: ">=1.0"}, ">=1.0"},
+		{"tag when no digest/semver", manifest.OCIRepositoryRef{Tag: "v1"}, "v1"},
 		{"empty returns empty", manifest.OCIRepositoryRef{}, ""},
 	}
 	for _, tc := range cases {
@@ -201,6 +209,28 @@ func TestVersionTag(t *testing.T) {
 			got := versionTag(tc.ref)
 			if got != tc.want {
 				t.Errorf("versionTag(%+v) = %q, want %q", tc.ref, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShouldResolveOCISemver(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		ref  manifest.OCIRepositoryRef
+		want bool
+	}{
+		{"semver only resolves", manifest.OCIRepositoryRef{SemVer: ">=1.0"}, true},
+		{"semver wins over tag", manifest.OCIRepositoryRef{SemVer: ">=1.0", Tag: "1.0.0"}, true},
+		{"digest suppresses semver", manifest.OCIRepositoryRef{Digest: "sha256:abc", SemVer: ">=1.0"}, false},
+		{"tag only does not resolve", manifest.OCIRepositoryRef{Tag: "1.0.0"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := shouldResolveOCISemver(tc.ref); got != tc.want {
+				t.Errorf("shouldResolveOCISemver(%+v) = %v, want %v", tc.ref, got, tc.want)
 			}
 		})
 	}

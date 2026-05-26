@@ -61,6 +61,3 @@ func (i *ignoreSet) matches(path, root string) bool {
 	return false
 }
 
-func (i *ignoreSet) matchesDir(full, root string) bool {
-	return i.matches(full, root)
-}

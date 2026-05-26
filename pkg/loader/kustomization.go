@@ -57,7 +57,7 @@ type kvPairGenerator struct {
 
 // kustomizationFileNames is the ordered list kustomize checks; first
 // match wins.
-var kustomizationFileNames = []string{
+var kustomizationFileNames = [3]string{
 	"kustomization.yaml",
 	"kustomization.yml",
 	"kustomization.json",

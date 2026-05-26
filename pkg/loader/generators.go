@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"cmp"
 	"encoding/base64"
 	"strings"
 
@@ -44,7 +45,7 @@ func collectGeneratorRecords(k *kustomization, file string) []generatorRecord {
 	if k == nil {
 		return nil
 	}
-	var out []generatorRecord
+	out := make([]generatorRecord, 0, len(k.ConfigMapGenerator)+len(k.SecretGenerator))
 	for _, g := range k.ConfigMapGenerator {
 		if g.Name == "" {
 			continue
@@ -77,13 +78,8 @@ func collectGeneratorRecords(k *kustomization, file string) []generatorRecord {
 // to match what a real k8s Secret carries; ConfigMaps land in Data
 // as strings.
 func (r generatorRecord) materialize(parentNS string) manifest.BaseManifest {
-	ns := parentNS
-	if r.kustomizationNS != "" {
-		ns = r.kustomizationNS
-	}
-	if r.entryNS != "" {
-		ns = r.entryNS
-	}
+	// kustomize precedence: entry.namespace > kustomization.namespace > parent namespace.
+	ns := cmp.Or(r.entryNS, r.kustomizationNS, parentNS)
 	if r.isConfigMap {
 		data := make(map[string]any, len(r.literals))
 		for _, lit := range r.literals {

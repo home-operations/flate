@@ -23,6 +23,7 @@
 package loader
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io/fs"
@@ -458,10 +459,7 @@ func parentNamespaceFor(prefixes []KSPathPrefix, s *store.Store, absPath, repoRo
 	// KS's own namespace (where the KS CR lives). For generated CMs
 	// we want the post-render namespace because that's what
 	// substituteFrom in downstream KSes references.
-	if ks.TargetNamespace != "" {
-		return ks.TargetNamespace
-	}
-	return ks.Namespace
+	return cmp.Or(ks.TargetNamespace, ks.Namespace)
 }
 
 // recordSource maps a resource id back to the on-disk file it was
@@ -514,16 +512,12 @@ func isDiscoveryKind(obj manifest.BaseManifest) bool {
 	return false
 }
 
-var manifestExtensions = map[string]struct{}{
-	".yaml": {},
-	".yml":  {},
-	".json": {},
-}
-
 func isManifestFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	_, ok := manifestExtensions[ext]
-	return ok
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml", ".json":
+		return true
+	}
+	return false
 }
 
 // shouldSkipDir applies the ad-hoc walk's directory-prune rules.
@@ -541,10 +535,7 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 	if strings.HasPrefix(name, ".") && name != "." {
 		return true
 	}
-	if ignore.matchesDir(full, root) {
-		return true
-	}
-	return false
+	return ignore.matches(full, root)
 }
 
 // kustomizationFilePath returns the absolute path of dir's

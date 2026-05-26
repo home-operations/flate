@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"cmp"
 	"os"
 	"path"
 	"path/filepath"
@@ -77,41 +78,23 @@ func ApplyNamespaceInheritance(s *store.Store, sourceFiles map[manifest.NamedRes
 // top-level Flux Operator and HelmChart source objects after namespace
 // inheritance has had a chance to project kustomize/Flux namespaces.
 func ApplyDefaultNamespaces(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
-	defaultResourceSets(s, sourceFiles)
-	defaultResourceSetInputProviders(s, sourceFiles)
-	defaultHelmChartSources(s, sourceFiles)
+	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSet](s, manifest.KindResourceSet),
+		func(o *manifest.ResourceSet) *manifest.ResourceSet { c := *o; c.Namespace = manifest.DefaultNamespace; return &c })
+	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSetInputProvider](s, manifest.KindResourceSetInputProvider),
+		func(o *manifest.ResourceSetInputProvider) *manifest.ResourceSetInputProvider { c := *o; c.Namespace = manifest.DefaultNamespace; return &c })
+	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.HelmChartSource](s, manifest.KindHelmChart),
+		func(o *manifest.HelmChartSource) *manifest.HelmChartSource { c := *o; c.Namespace = manifest.DefaultNamespace; return &c })
 }
 
-func defaultResourceSets(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
-	for _, obj := range store.ListAs[*manifest.ResourceSet](s, manifest.KindResourceSet) {
-		if obj.Namespace != "" {
+// applyDefaultNS assigns manifest.DefaultNamespace to every object in objs
+// whose current namespace is empty, then reindexes it in the store.
+// withNS must return a new object (shallow copy) with the namespace set.
+func applyDefaultNS[T manifest.BaseManifest](s *store.Store, sourceFiles map[manifest.NamedResource]string, objs []T, withNS func(T) T) {
+	for _, obj := range objs {
+		if obj.Named().Namespace != "" {
 			continue
 		}
-		c := *obj
-		c.Namespace = manifest.DefaultNamespace
-		reindexObject(s, sourceFiles, obj.Named(), &c)
-	}
-}
-
-func defaultResourceSetInputProviders(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
-	for _, obj := range store.ListAs[*manifest.ResourceSetInputProvider](s, manifest.KindResourceSetInputProvider) {
-		if obj.Namespace != "" {
-			continue
-		}
-		c := *obj
-		c.Namespace = manifest.DefaultNamespace
-		reindexObject(s, sourceFiles, obj.Named(), &c)
-	}
-}
-
-func defaultHelmChartSources(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
-	for _, obj := range store.ListAs[*manifest.HelmChartSource](s, manifest.KindHelmChart) {
-		if obj.Namespace != "" {
-			continue
-		}
-		c := *obj
-		c.Namespace = manifest.DefaultNamespace
-		reindexObject(s, sourceFiles, obj.Named(), &c)
+		reindexObject(s, sourceFiles, obj.Named(), withNS(obj))
 	}
 }
 
@@ -174,10 +157,7 @@ func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]stri
 		if ks.Path == "" {
 			continue
 		}
-		ns := ks.TargetNamespace
-		if ns == "" {
-			ns = ks.Namespace
-		}
+		ns := cmp.Or(ks.TargetNamespace, ks.Namespace)
 		if ns == "" {
 			if file, ok := sourceFiles[ks.Named()]; ok {
 				ns = resolveNamespace(file, nil, kust)

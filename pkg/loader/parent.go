@@ -88,7 +88,6 @@ func KSPathPrefixes(s *store.Store, repoRoot string) []KSPathPrefix {
 	return out
 }
 
-
 // LongestParent returns the deepest KS whose spec.path covers file
 // (slash-normalized repo-relative path), excluding self. The second
 // return reports whether a parent was found. prefixes is expected to

@@ -17,6 +17,7 @@ import (
 type kustomization struct {
 	APIVersion         string            `json:"apiVersion"                   yaml:"apiVersion"`
 	Kind               string            `json:"kind"                         yaml:"kind"`
+	Namespace          string            `json:"namespace,omitempty"          yaml:"namespace,omitempty"`
 	Resources          []string          `json:"resources,omitempty"          yaml:"resources,omitempty"`
 	Components         []string          `json:"components,omitempty"         yaml:"components,omitempty"`
 	ConfigMapGenerator []kvPairGenerator `json:"configMapGenerator,omitempty" yaml:"configMapGenerator,omitempty"`
@@ -42,11 +43,16 @@ func (k *kustomization) isKustomizeComponent() bool {
 	return strings.HasPrefix(k.APIVersion, kustomizeAPIPrefix)
 }
 
-// kvPairGenerator captures the file/env entries of a configMap or
-// secret generator. Literals are inline strings and stay out of scope.
+// kvPairGenerator captures one configMap or secret generator entry.
+// Name + Namespace + Literals participate in flate's generator
+// discovery (see generators.go); Files / Envs are tracked so the
+// outer kustomization can exclude them from resource scans.
 type kvPairGenerator struct {
-	Files []string `json:"files,omitempty" yaml:"files,omitempty"`
-	Envs  []string `json:"envs,omitempty"  yaml:"envs,omitempty"`
+	Name      string   `json:"name,omitempty"      yaml:"name,omitempty"`
+	Namespace string   `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Literals  []string `json:"literals,omitempty"  yaml:"literals,omitempty"`
+	Files     []string `json:"files,omitempty"     yaml:"files,omitempty"`
+	Envs      []string `json:"envs,omitempty"      yaml:"envs,omitempty"`
 }
 
 // kustomizationFileNames is the ordered list kustomize checks; first
@@ -161,5 +167,19 @@ func resolveDataPath(base, rel string) (string, bool) {
 		return "", false
 	}
 	return abs, true
+}
+
+// resolveComponentPath is the components: counterpart to
+// resolveDataPath. kustomize's `components:` legitimately escapes the
+// calling kustomization's directory (e.g. `../components/cluster-
+// settings` is the canonical Flux pattern), so the in-base
+// constraint resolveDataPath enforces is too strict for this field.
+// We still reject URLs and absolute paths — flate's loader only
+// follows local relative components.
+func resolveComponentPath(base, rel string) (string, bool) {
+	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "://") {
+		return "", false
+	}
+	return filepath.Clean(filepath.Join(base, rel)), true
 }
 

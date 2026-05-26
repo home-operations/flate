@@ -444,3 +444,64 @@ spec:
 		t.Errorf("non-matching upstream GitRepository must NOT receive a working-tree alias artifact")
 	}
 }
+
+// TestRun_ComponentGeneratorMaterializesCM mirrors home-operations/flate
+// issue #396: a Flux Kustomization references a kustomize Component
+// whose configMapGenerator produces cluster-settings. Without the
+// generator-discovery pass, depwait can't find the CM (no on-disk
+// YAML to walk to) and every downstream KS with `substituteFrom:
+// [cluster-settings]` fails. The fix synthesizes the CM at the
+// Flux KS's namespace and registers it in the store + ExistenceIndex.
+func TestRun_ComponentGeneratorMaterializesCM(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Flux Kustomization in flux-system pointing at ./cluster
+	mustWrite(t, filepath.Join(dir, "flux", "ks.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-config
+  namespace: flux-system
+spec:
+  path: ./cluster
+  sourceRef: {kind: GitRepository, name: flux-system}
+  interval: 10m
+`)
+	// cluster/kustomization.yaml references the Component
+	mustWrite(t, filepath.Join(dir, "cluster", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1
+kind: Kustomization
+components:
+  - ../components/cluster-settings
+`)
+	// Component declares the configMapGenerator
+	mustWrite(t, filepath.Join(dir, "components", "cluster-settings", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+configMapGenerator:
+  - name: cluster-settings
+    literals:
+      - DOMAIN=example.com
+      - TIMEZONE=UTC
+`)
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	cmID := manifest.NamedResource{
+		Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings",
+	}
+	cm, _ := store.GetByName[*manifest.ConfigMap](st, manifest.KindConfigMap, "flux-system", "cluster-settings")
+	if cm == nil {
+		t.Fatalf("ConfigMap %s not synthesized from configMapGenerator", cmID)
+	}
+	if got, _ := cm.Data["DOMAIN"].(string); got != "example.com" {
+		t.Errorf("DOMAIN = %q, want example.com", got)
+	}
+	if got, _ := cm.Data["TIMEZONE"].(string); got != "UTC" {
+		t.Errorf("TIMEZONE = %q, want UTC", got)
+	}
+}

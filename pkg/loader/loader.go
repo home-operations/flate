@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -85,6 +86,15 @@ type Loader struct {
 	// keeps out of the Store. Nil disables the bookkeeping (the
 	// default for non-DiscoveryOnly callers).
 	Existence *ExistenceIndex
+
+	// generators accumulates configMapGenerator/secretGenerator
+	// entries observed during the walk. After Load returns, the
+	// orchestrator finalizes them via FinalizeGenerators — the
+	// effective namespace depends on which Flux Kustomization
+	// encloses each kustomization.yaml, and that's only known once
+	// the full walk completes.
+	generatorsMu sync.Mutex
+	generators   []generatorRecord
 }
 
 // New returns a Loader configured to wipe secrets.
@@ -157,6 +167,14 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 
 	k := readKustomization(dir)
 	if k != nil {
+		// Harvest configMapGenerator/secretGenerator entries
+		// regardless of whether this is a Kustomization or Component
+		// — both can declare generators, and downstream depwait
+		// lookups for substituteFrom CMs need the synthesized
+		// records either way.
+		if kpath, ok := kustomizationFilePath(dir); ok {
+			w.loader.recordGenerators(collectGeneratorRecords(k, kpath))
+		}
 		if k.isKustomizeComponent() {
 			slog.Debug("loader: skipping kustomize Component directory", "dir", dir)
 			return 0, nil
@@ -251,7 +269,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		if cerr := ctx.Err(); cerr != nil {
 			return count, cerr
 		}
-		abs, ok := resolveDataPath(dir, comp)
+		abs, ok := resolveComponentPath(dir, comp)
 		if !ok {
 			continue
 		}
@@ -356,6 +374,94 @@ func (l *Loader) loadFile(path string) (int, error) {
 		count++
 	}
 	return count, nil
+}
+
+// recordGenerators appends generator records observed during a walk.
+// The orchestrator's Bootstrap calls FinalizeGenerators after Load
+// returns to resolve effective namespaces and inject the synthesized
+// CMs/Secrets into the store.
+func (l *Loader) recordGenerators(records []generatorRecord) {
+	if len(records) == 0 {
+		return
+	}
+	l.generatorsMu.Lock()
+	defer l.generatorsMu.Unlock()
+	l.generators = append(l.generators, records...)
+}
+
+// FinalizeGenerators materializes every harvested configMapGenerator/
+// secretGenerator entry into the store. Effective namespace is
+// resolved per kustomize precedence: the entry's own namespace wins,
+// then the kustomization.yaml's namespace, then the enclosing Flux
+// Kustomization's namespace (looked up via KSPathPrefixes against
+// the source file).
+//
+// Synthesized objects honor PreferExisting: if an explicit CM/Secret
+// with the same id already came from a real on-disk YAML, we don't
+// overwrite it with the generated placeholder.
+//
+// repoRoot is the filesystem root used to compute slash-relative
+// paths for the parent lookup; pass the same root the change filter
+// is keyed against (the Flux KS spec.path prefixes are
+// repoRoot-relative).
+func (l *Loader) FinalizeGenerators(repoRoot string) {
+	l.generatorsMu.Lock()
+	records := l.generators
+	l.generators = nil
+	l.generatorsMu.Unlock()
+	if len(records) == 0 {
+		return
+	}
+	prefixes := KSPathPrefixes(l.Store, repoRoot)
+	seen := make(map[manifest.NamedResource]struct{}, len(records))
+	for _, r := range records {
+		parentNS := parentNamespaceFor(prefixes, l.Store, r.file, repoRoot)
+		obj := r.materialize(parentNS)
+		id := obj.Named()
+		if _, dup := seen[id]; dup {
+			// Iterative discovery re-walks the same kustomization.yaml
+			// across passes; the second occurrence is a duplicate.
+			continue
+		}
+		seen[id] = struct{}{}
+		if l.Store.GetObject(id) != nil {
+			// Real CM/Secret YAML already won; don't overwrite.
+			continue
+		}
+		l.Store.AddObject(obj)
+		l.recordSource(id, r.file)
+		if l.Existence != nil {
+			l.Existence.Record(id, r.file)
+		}
+	}
+}
+
+// parentNamespaceFor resolves the enclosing Flux Kustomization's
+// namespace for the file at absPath. Falls back to "" when the file
+// sits outside any KS spec.path / component — depwait's name-only
+// fallback may still match in that case.
+func parentNamespaceFor(prefixes []KSPathPrefix, s *store.Store, absPath, repoRoot string) string {
+	rel, err := filepath.Rel(repoRoot, absPath)
+	if err != nil {
+		return ""
+	}
+	owner, ok := LongestParent(prefixes, rel, manifest.NamedResource{})
+	if !ok {
+		return ""
+	}
+	ks, _ := store.GetByName[*manifest.Kustomization](s, manifest.KindKustomization, owner.Namespace, owner.Name)
+	if ks == nil {
+		return ""
+	}
+	// Flux's render-time namespace precedence: spec.targetNamespace
+	// (the resource's effective namespace post-render) wins over the
+	// KS's own namespace (where the KS CR lives). For generated CMs
+	// we want the post-render namespace because that's what
+	// substituteFrom in downstream KSes references.
+	if ks.TargetNamespace != "" {
+		return ks.TargetNamespace
+	}
+	return ks.Namespace
 }
 
 // recordSource maps a resource id back to the on-disk file it was

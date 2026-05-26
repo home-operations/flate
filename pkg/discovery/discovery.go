@@ -98,6 +98,13 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	d.aliasBootstrapSources(repoRoot)
 	loader.ApplyNamespaceInheritance(d.cfg.Store, d.sourceFiles, repoRoot)
+	// Materialize configMapGenerator / secretGenerator entries the
+	// file walker collected. The effective namespace comes from the
+	// enclosing Flux Kustomization, which is only known now that
+	// the full KS tree is loaded. Resolves the depwait gap where a
+	// substituteFrom references a CM produced by a Component's
+	// generator (issue #396).
+	l.FinalizeGenerators(repoRoot)
 	// Unified parent index over every reconcilable kind that uses a
 	// parent gate. KS and HR keys never collide because NamedResource
 	// includes Kind; downstream controllers look up by their own id

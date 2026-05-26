@@ -10,7 +10,27 @@
 // New(root); pass by value freely.
 package cacheroot
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+)
+
+// Default returns the on-disk cache root for embedders that don't
+// override it. Prefers the OS user cache dir ($XDG_CACHE_HOME on
+// Linux, ~/Library/Caches on macOS, %LocalAppData% on Windows) with
+// a "flate" subdir, so caches survive reboots and OS tmpfs cleanups.
+// Falls back to $TMPDIR/flate-cache only when UserCacheDir errors
+// (HOME unset, etc.).
+//
+// One canonical implementation here; the CLI and the orchestrator
+// both consume it, and tests that want a determinic root pass an
+// explicit Root via Layout{Root: …} or New(...).
+func Default() string {
+	if d, err := os.UserCacheDir(); err == nil && d != "" {
+		return filepath.Join(d, "flate")
+	}
+	return filepath.Join(os.TempDir(), "flate-cache")
+}
 
 // Layout describes where the various caches live under a single root.
 // All methods return absolute paths derived from Root + a constant

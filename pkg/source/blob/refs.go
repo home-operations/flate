@@ -24,9 +24,15 @@ import (
 // (os.Rename), avoids parsing a single index file under contention,
 // and survives partial writes — a corrupted entry just looks like a
 // cache miss.
+//
+// An in-memory cache (sync.Map) sits in front of the disk reads so
+// the hot path — a render with N HelmReleases against the same repo
+// — doesn't pay a syscall per lookup. The cache is populated by
+// every successful Get/Put and invalidated by Put.
 type Refs struct {
 	dir string
-	mu  sync.Mutex
+	mu  sync.Mutex // serializes disk-writing Puts
+	mem sync.Map   // map[string]string — key → digest
 }
 
 // NewRefs constructs a Refs table for one category under the supplied
@@ -40,9 +46,14 @@ func NewRefs(layout cacheroot.Layout, category string) *Refs {
 // Get reads the digest stored under key, or returns ("", false) when
 // the key is unknown. Treats partial or empty entries as misses so a
 // torn write doesn't surface as a sentinel.
+//
+// Consults the in-memory cache first; a hit avoids the disk read
+// entirely. A miss falls through to ReadFile and populates the cache.
 func (r *Refs) Get(key string) (string, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	if v, ok := r.mem.Load(key); ok {
+		digest, _ := v.(string)
+		return digest, digest != ""
+	}
 	path, err := r.pathFor(key)
 	if err != nil {
 		return "", false
@@ -55,6 +66,7 @@ func (r *Refs) Get(key string) (string, bool) {
 	if digest == "" {
 		return "", false
 	}
+	r.mem.Store(key, digest)
 	return digest, true
 }
 
@@ -64,9 +76,9 @@ func (r *Refs) Get(key string) (string, bool) {
 // supported (an upstream tag re-resolved to a new digest) — the
 // rename atomically replaces the file.
 //
-// syncDir=false: refs files are cheap to rebuild on the next
-// reconcile (they're just digest lookups), so the fsync barrier is
-// not worth the per-render I/O cost.
+// syncDir=false on the underlying atomic write: refs files are cheap
+// to rebuild on the next reconcile, so the fsync barrier is not worth
+// the per-render I/O cost.
 func (r *Refs) Put(key, digest string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -77,7 +89,11 @@ func (r *Refs) Put(key, digest string) error {
 	if err != nil {
 		return err
 	}
-	return atomic.WriteFile(final, []byte(digest), 0o600, false)
+	if err := atomic.WriteFile(final, []byte(digest), 0o600, false); err != nil {
+		return err
+	}
+	r.mem.Store(key, digest)
+	return nil
 }
 
 // pathFor URL-escapes key into a single-segment filename. Refuses keys

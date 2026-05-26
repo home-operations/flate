@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -281,13 +280,8 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 // %LocalAppData% on Windows) with a "flate" subdir; falls back to
 // $TMPDIR/flate-cache when UserCacheDir errors.
 func (c *commonFlags) resolveCacheRoot() string {
-	if c.cacheDir != "" {
-		return c.cacheDir
-	}
-	if d, err := os.UserCacheDir(); err == nil && d != "" {
-		c.cacheDir = filepath.Join(d, "flate")
-	} else {
-		c.cacheDir = filepath.Join(os.TempDir(), "flate-cache")
+	if c.cacheDir == "" {
+		c.cacheDir = cacheroot.Default()
 	}
 	return c.cacheDir
 }

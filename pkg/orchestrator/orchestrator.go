@@ -181,7 +181,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		return nil, fmt.Errorf("orchestrator: path is required")
 	}
 
-	layout := cacheroot.New(cmp.Or(cfg.CacheDir, defaultCacheRoot()))
+	layout := cacheroot.New(cmp.Or(cfg.CacheDir, cacheroot.Default()))
 	helmClient, err := helm.NewClient(layout)
 	if err != nil {
 		return nil, err
@@ -796,14 +796,3 @@ func (o *Orchestrator) Stop() {
 	})
 }
 
-// defaultCacheRoot picks the on-disk cache root when Config.CacheDir
-// is unset. Prefers the OS user cache dir — $XDG_CACHE_HOME on Linux,
-// ~/Library/Caches on macOS, %LocalAppData% on Windows — so caches
-// survive reboots and OS tmpfs cleanups. Falls back to
-// $TMPDIR/flate-cache only when UserCacheDir errors (HOME unset, etc).
-func defaultCacheRoot() string {
-	if d, err := os.UserCacheDir(); err == nil && d != "" {
-		return filepath.Join(d, "flate")
-	}
-	return filepath.Join(os.TempDir(), "flate-cache")
-}

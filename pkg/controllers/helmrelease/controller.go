@@ -291,7 +291,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		// crossplane's Provider) re-fire EventObjectAdded for any
 		// listener that joined after the original render. Matches the
 		// KS-side dedup-replay pattern.
-		c.dispatchRendered(id, existing.Manifests)
+		c.emitRenderedChildren(id, existing.Manifests)
 		return nil
 	}
 
@@ -302,19 +302,19 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
-	c.dispatchRendered(id, docs)
+	c.emitRenderedChildren(id, docs)
 
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
 	return nil
 }
 
-// dispatchRendered parses each rendered doc and lands it in the
+// emitRenderedChildren parses each rendered doc and lands it in the
 // store. Source CRs flow through AddObject (their controllers must
 // pick them up), other kinds via AddRendered (chart's final
 // manifests; nothing else reconciles them). Called both from the
 // fresh-render path and the fingerprint-dedup replay path so the
 // per-doc side-effects fire on every reconcile pass.
-func (c *Controller) dispatchRendered(id manifest.NamedResource, docs []map[string]any) {
+func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any) {
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {

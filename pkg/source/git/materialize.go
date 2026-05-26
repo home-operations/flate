@@ -90,7 +90,7 @@ func readBlobBytes(blob *object.Blob) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	return io.ReadAll(r)
 }
 
@@ -105,16 +105,16 @@ func writeBlobTo(dst string, blob *object.Blob, mode filemode.FileMode) error {
 	if mode == filemode.Executable {
 		perm = 0o700
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm) //nolint:gosec // dst is built from the mirror's commit tree under the cache slot
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 	r, err := blob.Reader()
 	if err != nil {
 		return fmt.Errorf("blob reader %s: %w", dst, err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if _, err := io.Copy(out, r); err != nil {
 		return fmt.Errorf("copy %s: %w", dst, err)
 	}

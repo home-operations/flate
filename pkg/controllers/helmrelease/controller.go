@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -54,6 +55,19 @@ type Controller struct {
 
 	// renderTracker receives every source-kind child emitted during render.
 	renderTracker RenderTracker
+
+	// rawProducerIndex is an in-memory index populated by the store
+	// listener in Start. It maps the target NamedResource (the Secret
+	// that a producer generates) to the producer's own NamedResource
+	// (the ExternalSecret or SealedSecret in the store). This replaces
+	// the O(N) Store.ListObjects("") scan in generatedValuesProducer with
+	// an O(1) sync.Map lookup, eliminating the per-reconcile read-lock
+	// contention on the store when --allow-missing-secrets is active.
+	//
+	// Key:   manifest.NamedResource — the generated Secret's identity
+	//        (Kind=KindSecret, Namespace, Name)
+	// Value: manifest.NamedResource — the producer's identity
+	rawProducerIndex sync.Map
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -125,7 +139,66 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 // the canonical Store. One fewer push-registry to keep in sync.
 func (c *Controller) Start(ctx context.Context) {
 	c.StartLifecycle("helmrelease")
+	c.AddListener(store.EventObjectAdded, c.onRawProducerAdded())
 	c.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx))
+}
+
+// onRawProducerAdded returns a listener that indexes RawObject producers
+// (ExternalSecret, SealedSecret) into rawProducerIndex. Registered with
+// flush=true (via AddListener) so the index is populated with any objects
+// already in the store at Start time and kept current as new objects arrive.
+//
+// The index maps targetID → producer.Named(), mirroring the classification
+// logic in rawProducesValuesRef so generatedValuesProducer can be answered
+// in O(1) without a full-store scan.
+func (c *Controller) onRawProducerAdded() store.Listener {
+	return func(_ manifest.NamedResource, payload any) {
+		raw, ok := payload.(*manifest.RawObject)
+		if !ok {
+			return
+		}
+		targetID, ok := rawProducerTargetID(raw)
+		if !ok {
+			return
+		}
+		c.rawProducerIndex.Store(targetID, raw.Named())
+	}
+}
+
+// rawProducerTargetID returns the NamedResource of the Secret that raw
+// will produce, or (zero, false) when raw is not a recognised producer kind.
+// This mirrors the classification in rawProducesValuesRef but returns the
+// target identity rather than a boolean, so the index can be keyed by it.
+func rawProducerTargetID(raw *manifest.RawObject) (manifest.NamedResource, bool) {
+	switch raw.Kind {
+	case "ExternalSecret":
+		target, _ := raw.Spec["target"].(map[string]any)
+		targetName, _ := target["name"].(string)
+		if targetName == "" {
+			targetName = raw.Name
+		}
+		return manifest.NamedResource{
+			Kind:      manifest.KindSecret,
+			Namespace: raw.Namespace,
+			Name:      targetName,
+		}, true
+	case "SealedSecret":
+		targetName := raw.Name
+		if tmpl, _ := raw.Spec["template"].(map[string]any); tmpl != nil {
+			if metadata, _ := tmpl["metadata"].(map[string]any); metadata != nil {
+				if name, _ := metadata["name"].(string); name != "" {
+					targetName = name
+				}
+			}
+		}
+		return manifest.NamedResource{
+			Kind:      manifest.KindSecret,
+			Namespace: raw.Namespace,
+			Name:      targetName,
+		}, true
+	default:
+		return manifest.NamedResource{}, false
+	}
 }
 
 func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {

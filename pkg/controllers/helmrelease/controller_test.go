@@ -396,6 +396,147 @@ func TestEmitRenderedChildren_NilTrackerAndNilFilterAreNoops(t *testing.T) {
 	}
 }
 
+// TestRawProducerIndex_ExternalSecretWithExplicitTarget verifies that an
+// ExternalSecret with spec.target.name set is indexed under that explicit
+// target name, and that generatedValuesProducer returns the producer identity
+// for a matching Secret ref.
+func TestRawProducerIndex_ExternalSecretWithExplicitTarget(t *testing.T) {
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
+
+	producer := &manifest.RawObject{
+		Kind:       "ExternalSecret",
+		APIVersion: "external-secrets.io/v1",
+		Name:       "app-creds",
+		Namespace:  "default",
+		Spec: map[string]any{
+			"target": map[string]any{"name": "app-values"},
+		},
+	}
+	st.AddObject(producer)
+
+	target := manifest.NamedResource{
+		Kind:      manifest.KindSecret,
+		Namespace: "default",
+		Name:      "app-values",
+	}
+	got, ok := c.generatedValuesProducer(target)
+	if !ok {
+		t.Fatal("generatedValuesProducer returned false; expected producer to be indexed")
+	}
+	if got.Kind != "ExternalSecret" || got.Namespace != "default" || got.Name != "app-creds" {
+		t.Errorf("generatedValuesProducer returned %v; want ExternalSecret/default/app-creds", got)
+	}
+}
+
+// TestRawProducerIndex_ExternalSecretFallsBackToOwnName verifies that an
+// ExternalSecret with no spec.target.name is indexed under its own .metadata.name.
+func TestRawProducerIndex_ExternalSecretFallsBackToOwnName(t *testing.T) {
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
+
+	producer := &manifest.RawObject{
+		Kind:       "ExternalSecret",
+		APIVersion: "external-secrets.io/v1",
+		Name:       "my-secret",
+		Namespace:  "staging",
+		Spec:       map[string]any{},
+	}
+	st.AddObject(producer)
+
+	target := manifest.NamedResource{
+		Kind:      manifest.KindSecret,
+		Namespace: "staging",
+		Name:      "my-secret",
+	}
+	got, ok := c.generatedValuesProducer(target)
+	if !ok {
+		t.Fatal("generatedValuesProducer returned false; expected producer to be indexed via own name")
+	}
+	if got.Name != "my-secret" || got.Namespace != "staging" {
+		t.Errorf("generatedValuesProducer returned %v; want ExternalSecret/staging/my-secret", got)
+	}
+}
+
+// TestRawProducerIndex_SealedSecretWithTemplateMetadataName verifies that a
+// SealedSecret with spec.template.metadata.name is indexed under that name.
+func TestRawProducerIndex_SealedSecretWithTemplateMetadataName(t *testing.T) {
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
+
+	producer := &manifest.RawObject{
+		Kind:       "SealedSecret",
+		APIVersion: "bitnami.com/v1alpha1",
+		Name:       "sealed-db",
+		Namespace:  "prod",
+		Spec: map[string]any{
+			"template": map[string]any{
+				"metadata": map[string]any{"name": "db-password"},
+			},
+		},
+	}
+	st.AddObject(producer)
+
+	target := manifest.NamedResource{
+		Kind:      manifest.KindSecret,
+		Namespace: "prod",
+		Name:      "db-password",
+	}
+	got, ok := c.generatedValuesProducer(target)
+	if !ok {
+		t.Fatal("generatedValuesProducer returned false for SealedSecret with template.metadata.name")
+	}
+	if got.Name != "sealed-db" || got.Namespace != "prod" {
+		t.Errorf("generatedValuesProducer returned %v; want SealedSecret/prod/sealed-db", got)
+	}
+}
+
+// TestRawProducerIndex_Missing verifies that generatedValuesProducer returns
+// false for a Secret that has no matching producer in the index.
+func TestRawProducerIndex_Missing(t *testing.T) {
+	c, _ := newTestControllerWithOptions(t, ReconcileOptions{})
+
+	target := manifest.NamedResource{
+		Kind:      manifest.KindSecret,
+		Namespace: "default",
+		Name:      "no-such-secret",
+	}
+	if _, ok := c.generatedValuesProducer(target); ok {
+		t.Error("generatedValuesProducer returned true for a non-existent producer; want false")
+	}
+}
+
+// TestRawProducerIndex_NamespaceIsolation verifies that a producer in
+// namespace A does not match a query for the same name in namespace B.
+func TestRawProducerIndex_NamespaceIsolation(t *testing.T) {
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
+
+	st.AddObject(&manifest.RawObject{
+		Kind:       "ExternalSecret",
+		APIVersion: "external-secrets.io/v1",
+		Name:       "svc-creds",
+		Namespace:  "team-a",
+		Spec:       map[string]any{},
+	})
+
+	// Same name, different namespace — must not match.
+	crossNS := manifest.NamedResource{
+		Kind:      manifest.KindSecret,
+		Namespace: "team-b",
+		Name:      "svc-creds",
+	}
+	if _, ok := c.generatedValuesProducer(crossNS); ok {
+		t.Error("generatedValuesProducer matched a producer from a different namespace; want false")
+	}
+
+	// Same namespace — must match.
+	sameNS := manifest.NamedResource{
+		Kind:      manifest.KindSecret,
+		Namespace: "team-a",
+		Name:      "svc-creds",
+	}
+	if _, ok := c.generatedValuesProducer(sameNS); !ok {
+		t.Error("generatedValuesProducer did not match producer in same namespace; want true")
+	}
+}
+
 func TestController_CollectHRDepsClone(t *testing.T) {
 	c, _ := newTestController(t, nil)
 	hr := &manifest.HelmRelease{

@@ -80,46 +80,10 @@ func (c *Controller) valuesRefExists(id manifest.NamedResource) bool {
 }
 
 func (c *Controller) generatedValuesProducer(id manifest.NamedResource) (manifest.NamedResource, bool) {
-	for _, obj := range c.Store.ListObjects("") {
-		raw, ok := obj.(*manifest.RawObject)
-		if !ok || raw.Namespace != id.Namespace {
-			continue
-		}
-		if rawProducesValuesRef(raw, id) {
-			return raw.Named(), true
-		}
+	if v, ok := c.rawProducerIndex.Load(id); ok {
+		return v.(manifest.NamedResource), true
 	}
 	return manifest.NamedResource{}, false
-}
-
-func rawProducesValuesRef(raw *manifest.RawObject, id manifest.NamedResource) bool {
-	switch raw.Kind {
-	case "ExternalSecret":
-		if id.Kind != manifest.KindSecret {
-			return false
-		}
-		target, _ := raw.Spec["target"].(map[string]any)
-		targetName, _ := target["name"].(string)
-		if targetName == "" {
-			targetName = raw.Name
-		}
-		return targetName == id.Name
-	case "SealedSecret":
-		if id.Kind != manifest.KindSecret {
-			return false
-		}
-		targetName := raw.Name
-		if tmpl, _ := raw.Spec["template"].(map[string]any); tmpl != nil {
-			if metadata, _ := tmpl["metadata"].(map[string]any); metadata != nil {
-				if name, _ := metadata["name"].(string); name != "" {
-					targetName = name
-				}
-			}
-		}
-		return targetName == id.Name
-	default:
-		return false
-	}
 }
 
 func valuesRefID(hr *manifest.HelmRelease, ref manifest.ValuesReference) (manifest.NamedResource, bool) {

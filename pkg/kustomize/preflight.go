@@ -189,6 +189,19 @@ func writeStagedFile(path string, data []byte, mode fs.FileMode) error {
 	return os.WriteFile(path, data, mode) //nolint:gosec // path is inside flate's staged copy
 }
 
+// httpStatusError is a typed sentinel returned by httpGetURL when the
+// server responds with a non-2xx status code. Using a named type
+// (rather than a formatted string) lets isHTTPClientError classify
+// errors via errors.As so the check is robust against wrapping —
+// fmt.Errorf("preflight: %w", err) still matches.
+type httpStatusError struct {
+	Code int
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d", e.Code)
+}
+
 // httpGetURL is the actual network call cache.FetchRemote dispatches
 // through OnceValues. Lives here (not on the StagingCache) because
 // it's a preflight detail — the cache only owns the dedup discipline.
@@ -205,7 +218,7 @@ func httpGetURL(ctx context.Context, urlStr string) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, &httpStatusError{Code: resp.StatusCode}
 	}
 	// Cap with LimitReader +1 so we can detect overflow precisely:
 	// read up to remoteFetchMaxBytes+1, and if we actually got

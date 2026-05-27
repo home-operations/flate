@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -137,12 +136,9 @@ func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, 
 			// On transient failure (network / 5xx / timeout — anything
 			// that isn't a definitive 4xx), drop the cache entry so
 			// the next caller retries instead of inheriting our
-			// failure for the rest of the run. httpGetURL wraps with
-			// "http GET ...: ..." for 5xx and transport errors;
-			// 4xx surfaces via the same wrapper so the safest
-			// retry-on-error policy is to retry everything except
-			// 4xx, which we detect by substring on the wrapped
-			// status. The wrapper format is stable in stage.go.
+			// failure for the rest of the run. isHTTPClientError uses
+			// errors.As against httpStatusError so it stays correct
+			// even when the error is wrapped (e.g. "preflight: %w").
 			if rf.err != nil && !isHTTPClientError(rf.err) {
 				c.remoteFetches.CompareAndDelete(urlStr, rf)
 			}
@@ -161,20 +157,11 @@ func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, 
 // Anything else — transport errors, timeouts, 5xx — is treated as
 // transient so the cache entry gets dropped.
 //
-// httpGetURL emits errors with the exact format "HTTP <code>", so we
-// parse the trailing decimal and range-check for 400–499 rather than
-// doing substring matching with padding spaces (which silently missed
-// end-of-string codes).
+// Uses errors.As against httpStatusError so the check stays correct
+// when the error is wrapped (e.g. fmt.Errorf("preflight: %w", err)).
 func isHTTPClientError(err error) bool {
-	if err == nil {
-		return false
-	}
-	_, after, ok := strings.Cut(err.Error(), "HTTP ")
-	if !ok {
-		return false
-	}
-	code, parseErr := strconv.Atoi(after)
-	return parseErr == nil && code >= 400 && code < 500
+	var hse *httpStatusError
+	return errors.As(err, &hse) && hse.Code >= 400 && hse.Code < 500
 }
 
 // Stage returns the on-disk staged copy of source. The copy is created

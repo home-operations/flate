@@ -288,29 +288,34 @@ func TestRestoreKustomization_DoesNotMutateSource(t *testing.T) {
 	}
 }
 
-// TestIsHTTPClientError pins the 4xx-detection contract after a bug
-// where the previous implementation checked for " 4xx " (with surrounding
-// spaces) and never matched "HTTP 404" (the exact format httpGetURL
-// emits), causing every 4xx to be treated as transient and retried.
+// TestIsHTTPClientError pins the 4xx-detection contract: only HTTP
+// 4xx responses (definitive client errors) return true; 5xx, transport
+// errors and nil all return false. Uses the httpStatusError sentinel
+// directly (so the test is independent of the string format) and also
+// verifies that wrapping via fmt.Errorf still classifies correctly —
+// the whole point of the typed sentinel over string parsing.
 func TestIsHTTPClientError(t *testing.T) {
 	cases := []struct {
-		msg  string
+		name string
+		err  error
 		want bool
 	}{
-		{"HTTP 400", true},
-		{"HTTP 404", true},
-		{"HTTP 418", true},
-		{"HTTP 499", true},
-		{"HTTP 500", false},  // 5xx is transient
-		{"HTTP 200", false},  // success never hits this path, but guard it
-		{"connection refused", false},
-		{"context deadline exceeded", false},
-		{"", false},
+		{"400", &httpStatusError{Code: 400}, true},
+		{"404", &httpStatusError{Code: 404}, true},
+		{"418", &httpStatusError{Code: 418}, true},
+		{"499", &httpStatusError{Code: 499}, true},
+		{"500 transient", &httpStatusError{Code: 500}, false},
+		{"200 never-client-error", &httpStatusError{Code: 200}, false},
+		{"wrapped 404", fmt.Errorf("preflight: %w", &httpStatusError{Code: 404}), true},
+		{"wrapped 500", fmt.Errorf("preflight: %w", &httpStatusError{Code: 500}), false},
+		{"transport error", fmt.Errorf("connection refused"), false},
+		{"deadline", fmt.Errorf("context deadline exceeded"), false},
+		{"nil", nil, false},
 	}
 	for _, tc := range cases {
-		got := isHTTPClientError(fmt.Errorf("%s", tc.msg))
+		got := isHTTPClientError(tc.err)
 		if got != tc.want {
-			t.Errorf("isHTTPClientError(%q) = %v, want %v", tc.msg, got, tc.want)
+			t.Errorf("isHTTPClientError(%q) = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

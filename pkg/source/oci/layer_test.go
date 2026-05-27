@@ -155,42 +155,9 @@ func TestApplyLayerSelector_MediaTypeUnmatched(t *testing.T) {
 	}
 }
 
-// TestSafeJoinTarPath covers the three escape shapes the helper is
-// supposed to reject: relative `../` traversal, absolute paths in the
-// tar header, and the happy path that must NOT be rejected.
-func TestSafeJoinTarPath(t *testing.T) {
-	t.Parallel()
-	dst := t.TempDir()
-	cases := []struct {
-		name      string
-		entry     string
-		wantError bool
-	}{
-		{"relative traversal", "../escape.txt", true},
-		{"deep relative traversal", "../../../etc/passwd", true},
-		{"absolute path", "/etc/passwd", true},
-		{"absolute deep path", "/var/run/secrets/token", true},
-		{"sneaky cleaned traversal", "foo/../../escape", true},
-		{"clean traversal back to dst is fine", "foo/../bar.txt", false},
-		{"plain relative", "Chart.yaml", false},
-		{"nested relative", "templates/cm.yaml", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := safeJoinTarPath(dst, tc.entry)
-			if tc.wantError {
-				if err == nil {
-					t.Errorf("safeJoinTarPath(%q) = %q, nil; want escape error", tc.entry, got)
-				}
-				return
-			}
-			if err != nil {
-				t.Errorf("safeJoinTarPath(%q): %v", tc.entry, err)
-			}
-		})
-	}
-}
+// TestSafeJoinTarPath — test cases have moved to
+// pkg/source/safepath/safepath_test.go (TestSafeJoin_RejectAbsolute).
+// Integration coverage is retained via TestApplyLayerSelector_TraversalRejected.
 
 func TestApplyLayerSelector_DefaultsToFirstLayer(t *testing.T) {
 	slot := t.TempDir()

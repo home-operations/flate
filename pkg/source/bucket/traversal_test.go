@@ -10,7 +10,8 @@ import (
 // malicious / mis-curated S3 keys whose name would climb out of the
 // cache slot via ../ segments or absolute paths. Without this guard,
 // `filepath.Join` cleans the climb-out and writeFile() lands on
-// arbitrary host paths.
+// arbitrary host paths. Full unit coverage including rejectAbsolute
+// semantics lives in pkg/source/safepath/safepath_test.go.
 func TestSafeJoinUnderSlot(t *testing.T) {
 	slot := filepath.Join(t.TempDir(), "slot")
 	cases := []struct {

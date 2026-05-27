@@ -16,6 +16,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
 // copiedLayerFilename is the deterministic name layers are stored
@@ -263,7 +264,7 @@ func extractTarGz(src, dst string) error {
 		if err != nil {
 			return fmt.Errorf("tar: %w", err)
 		}
-		target, err := safeJoinTarPath(dst, hdr.Name)
+		target, err := safepath.SafeJoin(dst, hdr.Name, true)
 		if err != nil {
 			return err
 		}
@@ -276,7 +277,7 @@ func extractTarGz(src, dst string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // target stays under dst (safeJoinTarPath enforced)
+			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // target stays under dst (safepath.SafeJoin enforced)
 			if err != nil {
 				return err
 			}
@@ -313,32 +314,3 @@ func extractTarGz(src, dst string) error {
 	return nil
 }
 
-// safeJoinTarPath joins a tar entry's declared name against dst and
-// verifies the resolved path stays strictly inside dst. Defends
-// against three escape shapes:
-//
-//   - Relative traversal: `../../escape.txt` (filepath.Clean
-//     collapses; Rel reports `..` prefix).
-//   - Absolute path: `/etc/passwd` (filepath.Join silently strips the
-//     leading `/` and roots inside dst, which Rel can't detect after
-//     the fact — so we reject any entryName that filepath.IsAbs flags
-//     OR that has a Windows-style volume name, BEFORE the Join).
-//   - Symlink-pivot: a prior symlink entry creating a back-pointer.
-//     Mitigated by extractTarGz's default-case silent skip of
-//     symlinks; this guard catches the residual case if symlinks
-//     are ever re-enabled.
-//
-// Mirrors the bucket source's safeJoinUnderSlot — both packages need
-// the same guarantee.
-func safeJoinTarPath(dst, entryName string) (string, error) {
-	clean := filepath.Clean(entryName)
-	if filepath.IsAbs(clean) || filepath.VolumeName(clean) != "" {
-		return "", fmt.Errorf("tar entry escapes target directory: %q", entryName)
-	}
-	target := filepath.Join(dst, clean)
-	rel, err := filepath.Rel(dst, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("tar entry escapes target directory: %q", entryName)
-	}
-	return target, nil
-}

@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -200,13 +201,7 @@ func (s *Slot) Commit() error {
 }
 
 func (s *Slot) commitRefresh() error {
-	backup, err := os.MkdirTemp(filepath.Dir(s.final), filepath.Base(s.final)+".old.*")
-	if err != nil {
-		return fmt.Errorf("cache refresh backup: %w", err)
-	}
-	if err := os.RemoveAll(backup); err != nil {
-		return fmt.Errorf("cache refresh backup clean: %w", err)
-	}
+	backup := filepath.Join(filepath.Dir(s.final), filepath.Base(s.final)+".old."+randomHex(8))
 	if err := os.Rename(s.final, backup); err != nil {
 		_ = os.RemoveAll(backup)
 		return fmt.Errorf("cache refresh move old: %w", err)
@@ -220,6 +215,16 @@ func (s *Slot) commitRefresh() error {
 	s.staging = ""
 	s.Path = s.final
 	return nil
+}
+
+// randomHex returns n random bytes encoded as a lowercase hex string (2n chars).
+// Panics if crypto/rand is unavailable — which cannot happen on supported platforms.
+func randomHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand unavailable: " + err.Error())
+	}
+	return hex.EncodeToString(b)
 }
 
 func existingSlotPopulated(path string) bool {

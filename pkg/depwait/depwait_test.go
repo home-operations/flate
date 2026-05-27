@@ -45,23 +45,16 @@ func (l lookupStub) IsFileIndexed(id manifest.NamedResource) bool {
 }
 
 // rendersStub satisfies RenderInflight from inline closures so tests
-// can pin the OtherActive / QuiescenceCh behavior precisely.
+// can pin the QuiescenceCh behavior precisely.
 type rendersStub struct {
 	otherActive func() bool
 	quiesce     func() <-chan struct{}
 }
 
-func (r rendersStub) OtherActive() bool {
-	if r.otherActive == nil {
-		return false
-	}
-	return r.otherActive()
-}
-
-// QuiescenceCh returns a channel matching otherActive: closed when
-// otherActive returns false (drained), open otherwise. Returning nil
-// when no quiesce closure is wired exercises the "fall back to ctx
-// deadline" path in waitRenderEmission.
+// QuiescenceCh returns a closed channel when otherActive returns
+// false (drained), nil when otherActive returns true (active), and
+// delegates to quiesce when explicitly set. Returning nil exercises
+// the "fall back to ctx deadline" path in waitRenderEmission.
 func (r rendersStub) QuiescenceCh() <-chan struct{} {
 	if r.quiesce != nil {
 		return r.quiesce()

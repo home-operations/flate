@@ -73,37 +73,43 @@ func (s *Store) OnArtifact(fn func(manifest.NamedResource, Artifact), replay boo
 // are recovered, same as live dispatch. The returned Unsubscribe
 // removes the listener.
 //
-// The flush=true path holds s.mu across the (register + capture
-// replay snapshot) pair. Without that serialization, a concurrent
-// writer (AddObject / SetCondition / SetArtifact) could update its
-// map, release s.mu, snapshot listeners (now including this fresh
-// listener because set.add already ran), and dispatch the live event
-// to fn — while THIS goroutine separately replays the same object
-// from the post-update map snapshot. The result is a double-fire.
-// Holding s.mu while we both register AND capture the replay state
-// means writers either see the listener-registered state before
-// dispatch (replay returns nothing new, live event fires once) or
-// see the pre-registered state (live event misses this listener,
-// replay fires once). Exactly-one delivery either way.
+// Lock strategy:
+//   - flush=false: holds s.mu.RLock() during set.add so a concurrent
+//     writer can't snapshot listeners (fireUnderLock) and dispatch
+//     before fn is registered. RLock is sufficient because the
+//     non-flush path doesn't read or write store maps.
+//   - flush=true: holds s.mu.Lock() across (register + snapshot) so
+//     the pair is atomic with respect to writers. Without the write
+//     lock, a concurrent AddObject could update the map, snapshot
+//     listeners (already including fn via set.add), and dispatch —
+//     while this goroutine replays the same object from the
+//     post-update map snapshot, double-firing fn. Exactly-one
+//     delivery is the invariant.
 func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscribe {
 	if event < 1 || int(event) > numEventKinds {
 		panic("store: unknown event kind")
 	}
 	set := s.listeners[event]
 	if !flush {
-		// Even the no-replay path serializes via s.mu so a concurrent
-		// writer can't snapshot listeners (under set.mu alone) and then
-		// dispatch BEFORE this fn lands in the set. Without the s.mu
-		// hold, a registration racing AddObject can miss the very
-		// event it was registered for: writer takes s.mu → captures
-		// pre-add snapshot via set.snapshot → releases s.mu → registrar
-		// runs set.add(fn) → writer's deferred dispatch fires the
-		// pre-snapshot listeners, fn is silently missing.
-		s.mu.Lock()
+		// The no-replay path needs only a read lock on s.mu. Writers
+		// hold s.mu.Lock() while capturing their listener-set snapshot
+		// (fireUnderLock), so holding s.mu.RLock() here is exclusive
+		// with any concurrent writer's lock acquisition: the writer
+		// either (a) completes its snapshot BEFORE this add (fn misses
+		// that event — expected, the listener wasn't registered yet) or
+		// (b) starts AFTER this add (fn is in the snapshot — correct).
+		// Without any s.mu hold, a writer could snapshot listeners under
+		// set.mu alone, release s.mu, and dispatch before fn lands —
+		// silently missing the very event the caller registered for.
+		// RLock is sufficient because we're only mutating set (which
+		// has its own internal mutex), not s.objects/conditions/artifacts.
+		s.mu.RLock()
 		handle := set.add(fn)
-		s.mu.Unlock()
+		s.mu.RUnlock()
 		return func() { set.remove(handle) }
 	}
+	// flush=true: must hold write lock so the (register + capture
+	// replay snapshot) pair is atomic with respect to writers.
 	s.mu.Lock()
 	handle := set.add(fn)
 	pairs := s.snapshotForReplay(event)

@@ -120,13 +120,12 @@ type Waiter struct {
 	Existence ExistenceLookup
 
 	// Renders, when non-nil, drives the step-2 fast-fail signal:
-	// during the render-only long wait, depwait polls
-	// Renders.OtherActive(); a false return means no other
-	// reconcile in the orchestrator is doing work, so no future
-	// render can produce the missing dep. The wait short-circuits
-	// to "dependency not found" instead of burning the full
-	// RenderProducingTimeout cap. When Renders is nil, step-2 falls
-	// back to the fixed cap alone (preserves the legacy timing).
+	// when the orchestrator's task pool drains (no other reconcile
+	// is doing work), no future render can produce the missing dep.
+	// The wait short-circuits to "dependency not found" instead of
+	// burning the full RenderProducingTimeout cap. When Renders is
+	// nil, step-2 falls back to the fixed cap alone (preserves the
+	// legacy timing).
 	Renders RenderInflight
 }
 
@@ -167,11 +166,7 @@ type ExistenceLookup interface {
 }
 
 // RenderInflight is the positive quiescence signal depwait's step-2
-// uses to fail fast on truly-missing render-only deps. The
-// orchestrator's implementation reads from task.Service.ActiveCount
-// — true when more than the caller's own goroutine is active in
-// the task pool (and could therefore still emit the missing dep);
-// false when the orchestrator has drained.
+// uses to fail fast on truly-missing render-only deps.
 //
 // Semantically the inverse of the Existence-based step-2 wait: that
 // path keeps waiting on the absence of a finite signal
@@ -184,20 +179,11 @@ type ExistenceLookup interface {
 // — embedders that don't drive a task pool get the legacy
 // behavior.
 type RenderInflight interface {
-	// OtherActive reports whether at least one reconcile beyond the
-	// caller's own task is still running in the orchestrator's task
-	// pool. depwait calls this from inside a Submit'd reconcile
-	// body, so the caller's goroutine is counted; OtherActive
-	// returns true iff the total active count exceeds 1.
-	OtherActive() bool
-
 	// QuiescenceCh returns a channel closed when the pool drains to
-	// "no other work in flight" — the event-driven counterpart of
-	// OtherActive that lets waitRenderEmission select on the
-	// quiescence signal instead of polling. Each call returns a
-	// fresh channel; callers Receive once. Implementations that
-	// can't deliver an event-driven signal may return a nil channel,
-	// in which case waitRenderEmission falls back to the legacy poll.
+	// "no other work in flight". Each call returns a fresh channel;
+	// callers receive once. Implementations that can't deliver an
+	// event-driven signal may return a nil channel, in which case
+	// waitRenderEmission falls back to the timeout cap.
 	QuiescenceCh() <-chan struct{}
 }
 
@@ -542,19 +528,13 @@ var errRenderDrained = errors.New("render pool drained without emission")
 //
 //   - Store.EventObjectAdded fires for id → returns nil (caller
 //     falls through to the regular Ready wait).
-//   - Renders.QuiescenceCh closes (the event-driven counterpart of
-//     OtherActive) → returns errRenderDrained (no future emission
-//     could produce id; caller fails fast).
+//   - Renders.QuiescenceCh closes → returns errRenderDrained (no
+//     future emission could produce id; caller fails fast).
 //   - ctx hits its deadline / cancellation → returns ctx.Err().
 //
 // An overall cap of RenderProducingTimeout is layered onto ctx so
 // the wait can't run past it even when Renders is nil (legacy
 // embedders without a task pool).
-//
-// The previous implementation polled OtherActive every 100ms. With
-// N concurrent waiters during a render that's N×10 wakes/sec doing
-// nothing useful most of the time; the quiescence channel replaces
-// the poll with one event per drain.
 func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResource) error {
 	started := time.Now()
 	renderCtx, renderCancel := context.WithTimeout(ctx, RenderProducingTimeout)

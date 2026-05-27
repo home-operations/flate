@@ -319,6 +319,49 @@ func TestStore_ListObjects_ByKindIndex(t *testing.T) {
 	}
 }
 
+// TestStore_ListObjects_DeterministicOrder pins the sort contract:
+// two ListObjects calls with concurrent concurrent adds must return
+// objects in the same (Kind, Namespace, Name) order. Without the
+// sort, Go map iteration is randomized and ownership tie-breaking in
+// change/ownership.go can attribute the same file to different KS
+// owners on different runs.
+func TestStore_ListObjects_DeterministicOrder(t *testing.T) {
+	s := New()
+	// Add objects in non-alphabetical order so insertion order can't
+	// accidentally hide a missing sort.
+	objects := []*manifest.ConfigMap{
+		{Name: "z", Namespace: "b"},
+		{Name: "a", Namespace: "z"},
+		{Name: "m", Namespace: "a"},
+		{Name: "a", Namespace: "a"},
+		{Name: "z", Namespace: "a"},
+	}
+	for _, obj := range objects {
+		s.AddObject(obj)
+	}
+
+	first := s.ListObjects(manifest.KindConfigMap)
+	second := s.ListObjects(manifest.KindConfigMap)
+
+	if len(first) != len(second) {
+		t.Fatalf("lengths differ: %d vs %d", len(first), len(second))
+	}
+	for i := range first {
+		a, b := first[i].Named(), second[i].Named()
+		if a != b {
+			t.Errorf("position %d differs between calls: %v vs %v", i, a, b)
+		}
+	}
+	// Verify the order is actually sorted by (namespace, name) within
+	// the same kind.
+	for i := 1; i < len(first); i++ {
+		prev, cur := first[i-1].Named(), first[i].Named()
+		if prev.Compare(cur) > 0 {
+			t.Errorf("unsorted at [%d]: %v > %v", i, prev, cur)
+		}
+	}
+}
+
 func TestStore_WatchReady_AlreadyReady(t *testing.T) {
 	s := New()
 	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}

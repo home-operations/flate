@@ -542,17 +542,9 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	return ok
 }
 
-// orchestratorRenderInflight adapts task.Service.ActiveCount into
-// depwait.RenderInflight. OtherActive returns true when any task
-// is doing productive work — the caller itself is parked in
-// task.Service.YieldQuiescent (see base.Controller.Await), so its
-// own slot is excluded from the count and a non-zero active reading
-// is by definition "other work in flight".
+// orchestratorRenderInflight adapts task.Service into
+// depwait.RenderInflight.
 type orchestratorRenderInflight struct{ tasks *task.Service }
-
-func (r *orchestratorRenderInflight) OtherActive() bool {
-	return r.tasks.ActiveCount() > 0
-}
 
 // QuiescenceCh delegates to task.Service.QuiescenceCh(0). The
 // threshold is 0 because depwait callers reach this method while

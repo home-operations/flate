@@ -2,6 +2,7 @@ package store
 
 import (
 	"reflect"
+	"slices"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -324,25 +325,36 @@ func (s *Store) GetByName(kind, namespace, name string) manifest.BaseManifest {
 	return nil
 }
 
-// ListObjects returns every stored manifest, optionally filtered by kind.
-// An empty kind matches all objects. The byName index is hit directly
-// when kind is set — O(K) instead of O(N) — which matters on the
-// orchestrator's per-pass list calls when one kind dominates the
-// store (HelmReleases are typically the bulk).
+// ListObjects returns every stored manifest, optionally filtered by kind,
+// sorted deterministically by (Kind, Namespace, Name). An empty kind
+// matches all objects. The byName index is hit directly when kind is set
+// — O(K) instead of O(N) — which matters on the orchestrator's per-pass
+// list calls when one kind dominates the store (HelmReleases are
+// typically the bulk).
+//
+// Deterministic order is a correctness requirement: ownership
+// tie-breaking in change/ownership.go (and any future tie-break) must
+// produce the same winner across runs. Go map iteration is randomized,
+// so without sorting the same file can be attributed to different
+// KS owners on different runs.
 func (s *Store) ListObjects(kind string) []manifest.BaseManifest {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	var out []manifest.BaseManifest
 	if kind != "" {
 		inner := s.byName[kind]
-		out := make([]manifest.BaseManifest, 0, len(inner))
+		out = make([]manifest.BaseManifest, 0, len(inner))
 		for _, obj := range inner {
 			out = append(out, obj)
 		}
-		return out
+	} else {
+		out = make([]manifest.BaseManifest, 0, len(s.objects))
+		for _, obj := range s.objects {
+			out = append(out, obj)
+		}
 	}
-	out := make([]manifest.BaseManifest, 0, len(s.objects))
-	for _, obj := range s.objects {
-		out = append(out, obj)
-	}
+	slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
+		return a.Named().Compare(b.Named())
+	})
 	return out
 }

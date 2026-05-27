@@ -12,14 +12,9 @@ import (
 	"helm.sh/helm/v4/pkg/getter"
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
-	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-// chartCacheLocks serializes concurrent fetches of the same cached
-// chart tarball so two reconcilers don't race on the same file.
-var chartCacheLocks = keylock.New[string]()
 
 // ChartLoadResult is the loaded chart plus the on-disk path it came from.
 type ChartLoadResult struct {
@@ -169,7 +164,7 @@ func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelea
 		return path, nil
 	}
 
-	release, err := chartCacheLocks.Acquire(ctx, chartDownloadKey(r, hr, cv, chartURL, wantDigest))
+	release, err := c.chartDownloadLocks.Acquire(ctx, chartDownloadKey(r, hr, cv, chartURL, wantDigest))
 	if err != nil {
 		return "", err
 	}

@@ -213,7 +213,7 @@ func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string
 	// a tag re-push silently serve stale bytes to a digest reference.
 	target := filepath.Join(c.cacheDir, safeName(strings.TrimPrefix(pullRef, "oci://"))+".tgz")
 
-	release, err := chartCacheLocks.Acquire(ctx, target)
+	release, err := c.chartDownloadLocks.Acquire(ctx, target)
 	if err != nil {
 		return "", err
 	}

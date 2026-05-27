@@ -103,6 +103,13 @@ type Client struct {
 	// index.yaml supplies a digest; entries without a digest are
 	// treated as mutable and downloaded on each run.
 	chartBlobs *blob.Store
+
+	// chartDownloadLocks serializes concurrent downloads of the same
+	// chart tarball so two reconcilers don't race writing the same
+	// cache file. Keyed by content-address digest (when available) or
+	// a name+version+URL token — matches the pattern of chartLoadLocks
+	// and indexLocks above.
+	chartDownloadLocks *keylock.KeyMap[string]
 }
 
 // chartCacheEntry pairs the parsed chart with the (mtime, size) of
@@ -141,13 +148,14 @@ func NewClient(layout cacheroot.Layout) (*Client, error) {
 		return nil, fmt.Errorf("helm registry: %w", err)
 	}
 	return &Client{
-		tmpDir:         tmpDir,
-		cacheDir:       cacheDir,
-		registry:       reg,
-		chartCache:     map[string]chartCacheEntry{},
-		chartLoadLocks: keylock.New[string](),
-		indexLocks:     keylock.New[string](),
-		chartBlobs:     blob.NewStore(layout),
+		tmpDir:             tmpDir,
+		cacheDir:           cacheDir,
+		registry:           reg,
+		chartCache:         map[string]chartCacheEntry{},
+		chartLoadLocks:     keylock.New[string](),
+		indexLocks:         keylock.New[string](),
+		chartDownloadLocks: keylock.New[string](),
+		chartBlobs:         blob.NewStore(layout),
 	}, nil
 }
 
@@ -378,7 +386,7 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 		}
 		out.Metadata = &md
 	}
-	out.Values = cloneValuesMap(src.Values)
+	out.Values = manifest.DeepCopyMap(src.Values)
 	if subs := src.Dependencies(); len(subs) > 0 {
 		clones := make([]*chart.Chart, 0, len(subs))
 		for _, sub := range subs {
@@ -387,35 +395,6 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 		out.SetDependencies(clones...)
 	}
 	return &out
-}
-
-// cloneValuesMap deep-copies a chart.Values map (`map[string]any`).
-// Mirrors pkg/manifest.DeepCopyMap but kept local to avoid widening
-// the helm→manifest import seam for one helper.
-func cloneValuesMap(src map[string]any) map[string]any {
-	if src == nil {
-		return nil
-	}
-	out := make(map[string]any, len(src))
-	for k, v := range src {
-		out[k] = cloneValuesNode(v)
-	}
-	return out
-}
-
-func cloneValuesNode(v any) any {
-	switch t := v.(type) {
-	case map[string]any:
-		return cloneValuesMap(t)
-	case []any:
-		out := make([]any, len(t))
-		for i, e := range t {
-			out[i] = cloneValuesNode(e)
-		}
-		return out
-	default:
-		return v
-	}
 }
 
 // lookupCachedChart returns the cached chart only when the on-disk

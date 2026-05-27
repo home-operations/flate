@@ -22,6 +22,18 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
+// RenderTracker is the seam the controller uses to report
+// "this child id was emitted by THIS parent HR's render" to the
+// orchestrator. Nil is OK — the controller no-ops.
+//
+// Mirrors kustomization.RenderTracker; the parent linkage feeds
+// detectOrphans, the parent resolver, and ResourceSet extension
+// attribution for charts that render source CRs (tofu-controller's
+// OCIRepository pattern, ESO's HelmRepository fallback).
+type RenderTracker interface {
+	MarkRendered(parent, child manifest.NamedResource)
+}
+
 // Controller orchestrates HelmRelease reconciliation. Reconcile-shaping
 // state (Filter, ParentOf) flows in via Configure exactly once before Start.
 type Controller struct {
@@ -39,6 +51,9 @@ type Controller struct {
 	// allowMissingSecrets extends the source-controller flag to
 	// HelmRelease valuesFrom refs that cannot be resolved offline.
 	allowMissingSecrets bool
+
+	// renderTracker receives every source-kind child emitted during render.
+	renderTracker RenderTracker
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -53,6 +68,11 @@ type Controller struct {
 type ReconcileOptions struct {
 	Filter   *change.Filter
 	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
+	// RenderTracker receives every source-kind child emitted during HR
+	// render. Mirrors kustomization.Options.RenderTracker; feeds the
+	// orchestrator's parent-provenance index (detectOrphans, parent
+	// resolver, ResourceSet attribution). Nil is OK — no-op.
+	RenderTracker RenderTracker
 	// Existence is the file-existence lookup the orchestrator wires
 	// against the loader's ExistenceIndex. depwait uses it to lazy-
 	// promote file-indexed deps (HelmRepository, OCIRepository,
@@ -94,6 +114,7 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetPreflight(opts.PreflightFailure)
 	c.SetParentOf(opts.ParentOf)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
+	c.renderTracker = opts.RenderTracker
 }
 
 // Start registers the listeners. The controller runs until Close.
@@ -342,6 +363,15 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 // manifests; nothing else reconciles them). Called both from the
 // fresh-render path and the fingerprint-dedup replay path so the
 // per-doc side-effects fire on every reconcile pass.
+//
+// A single-pass loop is safe here because isFluxSourceKind restricts
+// AddObject dispatch to pure source kinds (HelmRepository,
+// OCIRepository, GitRepository, Bucket, HelmChartSource,
+// ExternalArtifact). None of those fire a reconcile that would race
+// a "data first" ordering constraint — unlike KS's two-pass strategy
+// which guards leaf KS/HR controllers that read ConfigMap/Secret
+// substituteFrom data emitted in the same batch. HR-emitting-HR or
+// HR-emitting-KS is deliberately excluded from this controller.
 func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any) {
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
 	for _, doc := range docs {
@@ -356,10 +386,41 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			continue
 		}
 		if isFluxSourceKind(obj) {
+			// keepEmitted BEFORE AddObject: the listener that fires
+			// synchronously during AddObject must see the extended
+			// keep set when it invokes PreGate. Mirrors the ordering
+			// in kustomization.emitRenderedChildren.
+			c.keepEmitted(id, obj.Named())
 			c.Store.AddObject(obj)
+			c.markRendered(id, obj.Named())
 		} else {
 			c.Store.AddRendered(obj)
 		}
+	}
+}
+
+// keepEmitted extends the change filter's keep set so render-emitted
+// source children pass the changed-only-mode PreGate check. Without
+// this, a chart that renders a source CR (tofu-controller's
+// OCIRepository, ESO's HelmRepository) would silently drop that child
+// from the diff comparison in changed-only mode. Mirrors
+// kustomization.keepEmitted (issue #260/#308).
+//
+// Called BEFORE Store.AddObject so the listener that fires
+// synchronously during AddObject sees the extended keep set.
+func (c *Controller) keepEmitted(parent, child manifest.NamedResource) {
+	if f := c.Filter(); f != nil {
+		f.AddEmitted(parent, child)
+	}
+}
+
+// markRendered reports a parent→child render emission to the
+// orchestrator's tracker if one is wired; no-op otherwise.
+// Centralizes the nil-check so the reconcile body stays readable.
+// Mirrors kustomization.markRendered.
+func (c *Controller) markRendered(parent, child manifest.NamedResource) {
+	if c.renderTracker != nil {
+		c.renderTracker.MarkRendered(parent, child)
 	}
 }
 

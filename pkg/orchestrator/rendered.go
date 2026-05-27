@@ -33,12 +33,14 @@ func newRenderedSet() *renderedSet {
 	return &renderedSet{parents: make(map[manifest.NamedResource]manifest.NamedResource)}
 }
 
-// MarkRendered satisfies kustomization.RenderTracker. Called by the
-// KS controller for every reconcilable child it emits from a render,
-// passing the parent KS's id alongside the child's. The parent
-// linkage replaces the previous file-path prefix-match used by
-// loader.BuildParentIndexForKind — render-emitted children have no
-// source file, but they DO have a known parent.
+// MarkRendered satisfies kustomization.RenderTracker and
+// helmrelease.RenderTracker. Called by the KS controller for every
+// reconcilable child it emits, and by the HR controller for every
+// source-kind child it emits, passing the parent's id alongside the
+// child's. The parent linkage replaces the previous file-path
+// prefix-match used by loader.BuildParentIndexForKind —
+// render-emitted children have no source file, but they DO have a
+// known parent.
 //
 // Self-edges are dropped: a KS whose spec.path covers its own
 // definition file (the Zariel/home-ops pattern — cluster KS at

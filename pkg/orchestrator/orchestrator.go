@@ -608,6 +608,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.hrc.Configure(helmrelease.ReconcileOptions{
 		Filter:              o.filter,
 		ParentOf:            parentResolver,
+		RenderTracker:       o.rendered,
 		Existence:           existence,
 		Renders:             renders,
 		PreflightFailure:    o.preflightFailure,

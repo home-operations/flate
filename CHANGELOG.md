@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.26](https://github.com/home-operations/flate/compare/0.1.25...0.1.26) (2026-05-27)
+
+
+### Features
+
+* **action:** default version to the action's pinned ref ([#481](https://github.com/home-operations/flate/issues/481)) ([29e373d](https://github.com/home-operations/flate/commit/29e373dbf09e6b766108590878be38093b63fa37))
+* **action:** install via mise + optional XDG cache between runs ([#480](https://github.com/home-operations/flate/issues/480)) ([8d0204c](https://github.com/home-operations/flate/commit/8d0204c7eda3d6aeb91714a056f18d30bce6bb12))
+
+
+### Code Refactoring
+
+* **source:** drop dead MutableCacheKey fallback + clarify commitRefresh unique-name pattern ([#478](https://github.com/home-operations/flate/issues/478)) ([ca71637](https://github.com/home-operations/flate/commit/ca71637a508a52fcc4bcd60ff960e43333fd3c6c))
+
 ## [0.1.25](https://github.com/home-operations/flate/compare/0.1.24...0.1.25) (2026-05-27)
 
 

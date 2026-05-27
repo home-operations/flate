@@ -9,9 +9,12 @@ branding:
 
 inputs:
   version:
-    description: flate version to install (e.g. "0.1.25"), or "latest"
+    description: |
+      flate version to install (e.g. "0.1.25") or "latest". When unset, the action
+      installs the version matching the ref it was pinned to (e.g. @0.1.26 → 0.1.26);
+      branches and SHAs fall back to "latest".
     required: false
-    default: latest
+    default: ""
   token:
     description: GitHub token used by mise to resolve and download releases without hitting unauthenticated rate limits
     required: false
@@ -36,17 +39,68 @@ runs:
   using: composite
   steps:
     - id: resolve
-      name: Resolve flate cache dir
+      name: Resolve flate target
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_REPO: ${{ github.action_repository }}
       run: |
         set -euo pipefail
-        # Mirrors Go's os.UserCacheDir() — the path flate's cacheroot.Default() resolves to.
+
+        # SemVer pattern — used both to recognize tag-style refs and to filter
+        # candidate tags when a SHA-pin is mapped back to a release.
+        semver='^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+
+        # Resolve which flate version to install. Precedence:
+        #   1. explicit `version:` input
+        #   2. action ref is a SemVer tag (@0.1.26, @v0.1.26)
+        #   3. action ref is a commit SHA whose commit a SemVer tag points at
+        #      (looked up via the GitHub tags API on the action's own repo —
+        #       supports the SHA-pinning security pattern)
+        #   4. "latest"
+        version="${INPUT_VERSION}"
+        from=""
+
+        if [[ -n "${version}" ]]; then
+          from="input"
+        elif [[ "${ACTION_REF:-}" =~ ${semver} ]]; then
+          version="${ACTION_REF#v}"
+          from="action ref ${ACTION_REF}"
+        elif [[ "${ACTION_REF:-}" =~ ^[0-9a-f]{7,40}$ ]] && command -v jq >/dev/null; then
+          auth=()
+          [[ -n "${INPUT_TOKEN}" ]] && auth=(-H "Authorization: Bearer ${INPUT_TOKEN}")
+          tag=$(curl -fsSL --max-time 10 \
+                -H "Accept: application/vnd.github+json" \
+                "${auth[@]}" \
+                "https://api.github.com/repos/${ACTION_REPO}/tags?per_page=100" 2>/dev/null \
+            | jq -r --arg sha "${ACTION_REF}" --arg re "${semver}" '
+                [.[] | select(.commit.sha | startswith($sha)) | .name | select(test($re))] | first // ""
+              ' 2>/dev/null || true)
+          if [[ -n "${tag}" ]]; then
+            version="${tag#v}"
+            from="action ref ${ACTION_REF} → tag ${tag}"
+          fi
+        fi
+
+        if [[ -z "${version}" ]]; then
+          version="latest"
+          from="default (action ref \"${ACTION_REF:-<none>}\" is not a release tag)"
+        fi
+        echo "resolved flate version: ${version} (from ${from})"
+
+        # Cache dir: mirrors Go's os.UserCacheDir() — the path flate's cacheroot.Default() resolves to.
         case "${RUNNER_OS}" in
           Linux)   dir="${XDG_CACHE_HOME:-${HOME}/.cache}/flate" ;;
           macOS)   dir="${HOME}/Library/Caches/flate" ;;
           Windows) dir="${LOCALAPPDATA}/flate" ;;
         esac
-        echo "cache-dir=${dir}" >> "${GITHUB_OUTPUT}"
+
+        {
+          echo "version=${version}"
+          echo "cache-dir=${dir}"
+        } >> "${GITHUB_OUTPUT}"
 
     - id: cache
       if: ${{ inputs.cache == 'true' }}
@@ -65,7 +119,7 @@ runs:
       with:
         cache: false
         tool_versions: |
-          github:home-operations/flate ${{ inputs.version }}
+          github:home-operations/flate ${{ steps.resolve.outputs.version }}
 
     - id: verify
       name: Verify flate

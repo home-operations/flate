@@ -7,7 +7,6 @@ import (
 	"maps"
 	"strings"
 	"testing"
-	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
@@ -47,21 +46,6 @@ func newController(t *testing.T, fetchers map[string]src.Fetcher) (*Controller, 
 	return c, st
 }
 
-func waitForStatus(t *testing.T, st *store.Store, id manifest.NamedResource, want store.Status) store.StatusInfo {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		info, ok := st.GetStatus(id)
-		if ok && info.Status == want {
-			return info
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	info, _ := st.GetStatus(id)
-	t.Fatalf("status %v not reached within deadline; last=%+v", want, info)
-	return info
-}
-
 func TestController_FetchesAndStoresArtifact(t *testing.T) {
 	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "u", LocalPath: "/tmp"}}
 	_, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
@@ -72,7 +56,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	waitForStatus(t, st, repo.Named(), store.StatusReady)
+	testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
 	if f.calls != 1 {
 		t.Errorf("expected 1 fetch call, got %d", f.calls)
 	}
@@ -91,7 +75,7 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := waitForStatus(t, st, repo.Named(), store.StatusFailed)
+	info := testutil.WaitForStatus(t, st, repo.Named(), store.StatusFailed)
 	if info.Message != "boom" {
 		t.Errorf("Failed reason = %q, want %q", info.Message, "boom")
 	}
@@ -107,7 +91,7 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := waitForStatus(t, st, repo.Named(), store.StatusReady)
+	info := testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
 	if info.Message != "suspended" {
 		t.Errorf("expected suspended message; got %q", info.Message)
 	}
@@ -141,7 +125,7 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
 	}
 	st.AddObject(oci)
-	waitForStatus(t, st, oci.Named(), store.StatusReady)
+	testutil.WaitForStatus(t, st, oci.Named(), store.StatusReady)
 }
 
 func TestController_AllowMissingSecretsConvertsFailureToSkip(t *testing.T) {
@@ -165,7 +149,7 @@ func TestController_AllowMissingSecretsConvertsFailureToSkip(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := waitForStatus(t, st, repo.Named(), store.StatusReady)
+	info := testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
 	if !store.IsSkipped(info) {
 		t.Errorf("expected skipped status, got %+v", info)
 	}
@@ -189,7 +173,7 @@ func TestController_AllowMissingSecretsOffStillFails(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	waitForStatus(t, st, repo.Named(), store.StatusFailed)
+	testutil.WaitForStatus(t, st, repo.Named(), store.StatusFailed)
 }
 
 func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
@@ -220,7 +204,7 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := waitForStatus(t, st, repo.Named(), store.StatusReady)
+	info := testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
 	if info.Message != "unchanged" {
 		t.Errorf("expected unchanged short-circuit; got %q", info.Message)
 	}

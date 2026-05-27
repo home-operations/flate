@@ -11,6 +11,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -71,20 +72,6 @@ func mustWriteFile(t *testing.T, p, body string) {
 	}
 }
 
-func waitForStatus(t *testing.T, s *store.Store, id manifest.NamedResource, want store.Status) store.StatusInfo {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if info, ok := s.GetStatus(id); ok && info.Status == want {
-			return info
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	info, _ := s.GetStatus(id)
-	t.Fatalf("status %v not reached; last=%+v", want, info)
-	return info
-}
-
 // TestReconcile_HappyPath drives the full reconcile flow: AddObject
 // fires the listener, depwait clears (no deps), kustomize renders,
 // emitRenderedChildren lands the ConfigMap as a rendered artifact,
@@ -103,7 +90,7 @@ func TestReconcile_HappyPath(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	info := waitForStatus(t, s, ks.Named(), store.StatusReady)
+	info := testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
 	if info.Message != "" {
 		t.Errorf("unexpected Ready message: %q", info.Message)
 	}
@@ -142,7 +129,7 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	waitForStatus(t, s, ks.Named(), store.StatusReady)
+	testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
 	firstFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
 
 	// Re-AddObject a copy with kustomize ownership labels stamped.
@@ -180,7 +167,7 @@ func TestReconcile_SuspendShortCircuits(t *testing.T) {
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 	}
 	s.AddObject(ks)
-	info := waitForStatus(t, s, ks.Named(), store.StatusReady)
+	info := testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
 	if info.Message != "suspended" {
 		t.Errorf("expected Ready/suspended, got %+v", info)
 	}
@@ -207,7 +194,7 @@ func TestReconcile_MissingPathFails(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	info := waitForStatus(t, s, ks.Named(), store.StatusFailed)
+	info := testutil.WaitForStatus(t, s, ks.Named(), store.StatusFailed)
 	if info.Message == "" {
 		t.Error("expected non-empty failure message")
 	}
@@ -239,7 +226,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	info := waitForStatus(t, s, ks.Named(), store.StatusFailed)
+	info := testutil.WaitForStatus(t, s, ks.Named(), store.StatusFailed)
 	if info.Message == "" {
 		t.Error("expected failure message from dep cascade")
 	}

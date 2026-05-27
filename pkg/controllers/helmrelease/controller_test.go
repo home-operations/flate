@@ -54,20 +54,6 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	return c, st
 }
 
-func waitForStatus(t *testing.T, st *store.Store, id manifest.NamedResource, want store.Status) store.StatusInfo {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if info, ok := st.GetStatus(id); ok && info.Status == want {
-			return info
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	info, _ := st.GetStatus(id)
-	t.Fatalf("status %v not reached; last=%+v", want, info)
-	return info
-}
-
 func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 	_, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
@@ -76,7 +62,7 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 	}
 	st.AddObject(hr)
 
-	info := waitForStatus(t, st, hr.Named(), store.StatusReady)
+	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusReady)
 	if info.Message != "suspended" {
 		t.Errorf("expected suspended; got %q", info.Message)
 	}
@@ -93,7 +79,7 @@ func TestController_FilterUnchangedShortCircuitsToReady(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default"}
 	st.AddObject(hr)
 
-	info := waitForStatus(t, st, hr.Named(), store.StatusReady)
+	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusReady)
 	if info.Message != "unchanged" {
 		t.Errorf("expected unchanged short-circuit; got %q", info.Message)
 	}
@@ -155,7 +141,7 @@ data:
 	}
 	st.AddObject(hr)
 
-	info := waitForStatus(t, st, hr.Named(), store.StatusReady)
+	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusReady)
 	if store.IsSkipped(info) {
 		t.Fatalf("generated valuesFrom refs should be omitted, not skip the HelmRelease: %+v", info)
 	}

@@ -15,56 +15,58 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// Signatures applies the PGP verification configured by spec.verify
-// against the cloned repository at resolvedRef. Returns nil when no
-// verification is configured. Fails loud on any failure — missing
-// secret, malformed keys, unsigned/badly-signed object.
+// GitVerificationMode is the Flux GitVerificationMode type re-exported
+// so callers do not need to import sourcev1 just to call Signatures.
+type GitVerificationMode = sourcev1.GitVerificationMode
+
+// Signatures applies PGP verification for the given namespace/name owner,
+// looking up the keyring secret secretRefName in ns, applying the given
+// mode, and (for tag/tagAndHEAD modes) verifying the annotated tag tagName.
+// Pass tagName="" when mode does not require it. Returns nil when mode is
+// unrecognised/empty (i.e. no verification configured).
 //
-// The Secret named by spec.verify.secretRef may carry multiple
-// ASCII-armored public keys (any *.asc filename); they're
-// concatenated into a single keyring before verification.
-func Signatures(secrets source.SecretGetter, repo *manifest.GitRepository, cloned *git.Repository, resolvedRef plumbing.Hash) error {
-	if repo.Verification == nil {
+// Fails loud on any failure — missing secret, malformed keys,
+// unsigned/badly-signed object.
+//
+// The Secret named by secretRefName may carry multiple ASCII-armored public
+// keys (any *.asc filename); they're concatenated into a single keyring
+// before verification.
+func Signatures(secrets source.SecretGetter, ns, name, secretRefName string, mode GitVerificationMode, tagName string, cloned *git.Repository, resolvedRef plumbing.Hash) error {
+	if !matchesHEAD(mode) && !matchesTag(mode) {
 		return nil
 	}
-	v := repo.Verification
-	mode := v.GetMode()
-	if v.SecretRef.Name == "" {
+	if secretRefName == "" {
 		return fmt.Errorf("GitRepository %s/%s: spec.verify.secretRef is required",
-			repo.Namespace, repo.Name)
+			ns, name)
 	}
 	if secrets == nil {
 		return fmt.Errorf("GitRepository %s/%s: spec.verify set but no source.SecretGetter is wired",
-			repo.Namespace, repo.Name)
+			ns, name)
 	}
-	sec := secrets(repo.Namespace, v.SecretRef.Name)
+	sec := secrets(ns, secretRefName)
 	if sec == nil {
 		return fmt.Errorf("GitRepository %s/%s: verify secret %s/%s not found",
-			repo.Namespace, repo.Name, repo.Namespace, v.SecretRef.Name)
+			ns, name, ns, secretRefName)
 	}
 	keyring, err := buildPGPKeyring(sec)
 	if err != nil {
-		return fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
+		return fmt.Errorf("GitRepository %s/%s: %w", ns, name, err)
 	}
 
 	if matchesHEAD(mode) {
 		if err := verifyCommit(cloned, resolvedRef, keyring); err != nil {
 			return fmt.Errorf("GitRepository %s/%s: HEAD verify: %w",
-				repo.Namespace, repo.Name, err)
+				ns, name, err)
 		}
 	}
 	if matchesTag(mode) {
-		tagName := ""
-		if repo.Reference != nil {
-			tagName = repo.Reference.Tag
-		}
 		if tagName == "" {
 			return fmt.Errorf("GitRepository %s/%s: verify mode %q requires spec.ref.tag",
-				repo.Namespace, repo.Name, mode)
+				ns, name, mode)
 		}
 		if err := verifyTagObject(cloned, tagName, keyring); err != nil {
 			return fmt.Errorf("GitRepository %s/%s: tag verify: %w",
-				repo.Namespace, repo.Name, err)
+				ns, name, err)
 		}
 	}
 	return nil

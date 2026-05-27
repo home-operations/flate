@@ -309,7 +309,11 @@ func (f *Fetcher) finalize(repo *manifest.GitRepository, art *store.SourceArtifa
 		if herr != nil {
 			return fmt.Errorf("verify: resolve HEAD: %w", herr)
 		}
-		if err := verify.Signatures(f.Secrets, repo, cloned, head.Hash()); err != nil {
+		tagName := ""
+		if repo.Reference != nil {
+			tagName = repo.Reference.Tag
+		}
+		if err := verify.Signatures(f.Secrets, repo.Namespace, repo.Name, repo.Verification.SecretRef.Name, repo.Verification.GetMode(), tagName, cloned, head.Hash()); err != nil {
 			return err
 		}
 	}
@@ -371,7 +375,11 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 		return nil, fmt.Errorf("materialize %s at %s: %w", hash, refStr, err)
 	}
 	if repo.Verification != nil {
-		if err := verify.Signatures(f.Secrets, repo, mirrorRepo, hash); err != nil {
+		tagName := ""
+		if repo.Reference != nil {
+			tagName = repo.Reference.Tag
+		}
+		if err := verify.Signatures(f.Secrets, repo.Namespace, repo.Name, repo.Verification.SecretRef.Name, repo.Verification.GetMode(), tagName, mirrorRepo, hash); err != nil {
 			return nil, err
 		}
 	}

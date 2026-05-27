@@ -18,23 +18,24 @@ func insecureIgnoreHostKey(_ string, _ net.Addr, _ ssh.PublicKey) error {
 }
 
 // knownHostsCallback returns an SSH HostKeyCallback that validates
-// against the provided known_hosts data. knownhosts.New only accepts
-// file paths, so we materialize a temp file; New reads and parses it
-// synchronously and returns a callback that holds the parsed data in
-// memory, so the file is safe to remove immediately after New returns.
+// against the provided known_hosts data. It feeds the data through an
+// os.Pipe so no temp file is written to disk; the write side is closed
+// before New returns so New reads all data synchronously.
 func knownHostsCallback(data []byte) (ssh.HostKeyCallback, error) {
-	f, err := os.CreateTemp("", "flate-known-hosts-*")
+	r, w, err := os.Pipe()
 	if err != nil {
-		return nil, fmt.Errorf("temp known_hosts: %w", err)
+		return nil, fmt.Errorf("pipe known_hosts: %w", err)
 	}
-	name := f.Name()
-	defer os.Remove(name) //nolint:errcheck // best-effort cleanup of temp file
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("write known_hosts: %w", err)
+	writeErr := make(chan error, 1)
+	go func() {
+		_, werr := w.Write(data)
+		writeErr <- werr
+		_ = w.Close() // write side closed after data is sent
+	}()
+	cb, parseErr := knownhosts.New(fmt.Sprintf("/dev/fd/%d", r.Fd()))
+	_ = r.Close() // read side no longer needed after New returns
+	if werr := <-writeErr; werr != nil && parseErr == nil {
+		return nil, fmt.Errorf("write known_hosts pipe: %w", werr)
 	}
-	if err := f.Close(); err != nil {
-		return nil, fmt.Errorf("close known_hosts: %w", err)
-	}
-	return knownhosts.New(name)
+	return cb, parseErr
 }

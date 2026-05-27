@@ -4,60 +4,35 @@ import (
 	"strings"
 	"testing"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestSignatures_NilVerifyIsNoOp(t *testing.T) {
-	repo := &manifest.GitRepository{Name: "r", Namespace: "ns"}
-	if err := Signatures(nil, repo, nil, plumbing.ZeroHash); err != nil {
-		t.Errorf("nil Verify should be a no-op, got %v", err)
+	// Empty mode — neither HEAD nor tag — should be a no-op.
+	if err := Signatures(nil, "ns", "r", "", "", "", nil, plumbing.ZeroHash); err != nil {
+		t.Errorf("empty mode should be a no-op, got %v", err)
 	}
 }
 
 func TestSignatures_RequiresSecretRef(t *testing.T) {
-	repo := &manifest.GitRepository{
-		Name: "r", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			Verification: &manifest.GitRepositoryVerify{Mode: manifest.GitVerifyModeHEAD},
-		},
-	}
-	err := Signatures(nil, repo, nil, plumbing.ZeroHash)
+	err := Signatures(nil, "ns", "r", "", manifest.GitVerifyModeHEAD, "", nil, plumbing.ZeroHash)
 	if err == nil || !strings.Contains(err.Error(), "secretRef is required") {
 		t.Errorf("expected secretRef-required error; got %v", err)
 	}
 }
 
 func TestSignatures_RequiresSecretGetter(t *testing.T) {
-	repo := &manifest.GitRepository{
-		Name: "r", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			Verification: &manifest.GitRepositoryVerify{
-				Mode:      manifest.GitVerifyModeHEAD,
-				SecretRef: manifest.LocalObjectReference{Name: "keys"},
-			},
-		},
-	}
-	err := Signatures(nil, repo, nil, plumbing.ZeroHash)
+	err := Signatures(nil, "ns", "r", "keys", manifest.GitVerifyModeHEAD, "", nil, plumbing.ZeroHash)
 	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {
 		t.Errorf("expected SecretGetter error; got %v", err)
 	}
 }
 
 func TestSignatures_SecretNotFound(t *testing.T) {
-	repo := &manifest.GitRepository{
-		Name: "r", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			Verification: &manifest.GitRepositoryVerify{
-				Mode:      manifest.GitVerifyModeHEAD,
-				SecretRef: manifest.LocalObjectReference{Name: "missing"},
-			},
-		},
-	}
 	getter := func(_, _ string) *manifest.Secret { return nil }
-	err := Signatures(getter, repo, nil, plumbing.ZeroHash)
+	err := Signatures(getter, "ns", "r", "missing", manifest.GitVerifyModeHEAD, "", nil, plumbing.ZeroHash)
 	if err == nil || !strings.Contains(err.Error(), "verify secret") || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected not-found error; got %v", err)
 	}
@@ -111,7 +86,7 @@ func TestBuildPGPKeyring(t *testing.T) {
 
 func TestMatchesHEAD_Tag_HelperMatrix(t *testing.T) {
 	cases := []struct {
-		mode    sourcev1.GitVerificationMode
+		mode    GitVerificationMode
 		wantH   bool
 		wantTag bool
 	}{

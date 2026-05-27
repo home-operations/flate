@@ -181,6 +181,7 @@ func resourceListCmd[T manifest.BaseManifest](
 	cols []format.Column, mapper func(*orchestrator.Orchestrator, T) (map[string]string, map[string]any),
 ) *cobra.Command {
 	c := &commonFlags{}
+	l := &listFlags{}
 	h := &helmFlags{}
 	cmd := &cobra.Command{
 		Use:     use + " [name]",
@@ -194,7 +195,7 @@ func resourceListCmd[T manifest.BaseManifest](
 			}
 			sel := selector.Metadata{
 				Name:   firstArg(args),
-				Labels: c.labels,
+				Labels: l.labels,
 			}
 			if err := printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper); err != nil {
 				return errors.Join(err, scopedRunError(o, res, c, runErr))
@@ -203,7 +204,7 @@ func resourceListCmd[T manifest.BaseManifest](
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	bindSelector(cmd.Flags(), c)
+	bindSelector(cmd.Flags(), l)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }

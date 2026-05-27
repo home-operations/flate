@@ -28,7 +28,6 @@ type commonFlags struct {
 	pathOrig            string
 	base                string
 	namespace           string
-	labels              map[string]string
 	skipCRDs            bool
 	skipSecrets         bool
 	allowMissingSecrets bool
@@ -81,11 +80,18 @@ func (c *commonFlags) skipResourceKinds() []string {
 	}.SkipResourceKinds()
 }
 
+// listFlags holds flags that are only meaningful for list/get commands.
+// Kept separate from commonFlags so commands that don't filter by labels
+// (build/diff/test) don't carry a dead field.
+type listFlags struct {
+	labels map[string]string
+}
+
 // bindSelector wires the `-l/--selector` flag. Scoped to commands that
 // actually filter by labels — today, only `get`. Binding it on
 // commands that ignore it (build/diff/test) would silently accept
 // `-l foo=bar` and do nothing.
-func bindSelector(fs *pflag.FlagSet, f *commonFlags) {
+func bindSelector(fs *pflag.FlagSet, f *listFlags) {
 	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "label selector (key=value, repeatable)")
 }
 
@@ -258,11 +264,18 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	}
 }
 
-func (c *commonFlags) resolveCacheRoot() string {
-	if c.cacheDir == "" {
-		c.cacheDir = cacheroot.Default()
+// resolveCacheRoot returns dir if non-empty, or the platform default.
+// The result is memoized back into dir so repeated calls within one
+// invocation are cheap and return the same path.
+func resolveCacheRoot(dir *string) string {
+	if *dir == "" {
+		*dir = cacheroot.Default()
 	}
-	return c.cacheDir
+	return *dir
+}
+
+func (c *commonFlags) resolveCacheRoot() string {
+	return resolveCacheRoot(&c.cacheDir)
 }
 
 func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
@@ -276,9 +289,6 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 		if err := validatePathFlag("--path-orig", c.pathOrig); err != nil {
 			return nil, nil, err
 		}
-	}
-	if _, err := format.ParseOutput(c.output); err != nil {
-		return nil, nil, err
 	}
 	// Cleanup is deferred (not bound to ctx) so the tempdir survives
 	// SIGINT until the orchestrator's read paths have actually

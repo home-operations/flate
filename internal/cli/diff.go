@@ -22,8 +22,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-const outputDiff = "diff"
-
 func newDiffCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diff",
@@ -157,7 +155,7 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	// diff has no `name` output mode; only diff/yaml/json are
 	// meaningful. Reject early so the user sees a clear error instead
 	// of "unknown diff format" from pkg/diff.
-	if err := c.requireOutput(format.Output(outputDiff), format.OutputYAML, format.OutputJSON); err != nil {
+	if err := c.requireOutput(format.Output(diff.FormatDiff), format.OutputYAML, format.OutputJSON); err != nil {
 		return err
 	}
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
@@ -177,7 +175,7 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	if err != nil {
 		return errors.Join(err, diffRunErr)
 	}
-	formatted, err := diff.Render(diffs, diff.Format(c.outputOrDefault(format.Output(outputDiff))))
+	formatted, err := diff.Render(diffs, diff.Format(c.outputOrDefault(format.Output(diff.FormatDiff))))
 	if err != nil {
 		return errors.Join(err, diffRunErr)
 	}

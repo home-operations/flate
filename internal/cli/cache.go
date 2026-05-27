@@ -23,6 +23,18 @@ func newCacheCmd() *cobra.Command {
 	return cmd
 }
 
+// cacheFlags holds the minimal set of flags needed by cache sub-commands.
+// It intentionally avoids embedding commonFlags — cache gc doesn't need
+// --path, --output, namespace filters, helm options, or any other
+// reconcile-oriented flag.
+type cacheFlags struct {
+	cacheDir string
+}
+
+func (f *cacheFlags) resolveRoot() string {
+	return resolveCacheRoot(&f.cacheDir)
+}
+
 // cacheGCFlags captures the GC verb's input.
 type cacheGCFlags struct {
 	maxAge         time.Duration
@@ -35,7 +47,7 @@ type cacheGCFlags struct {
 // optionally extends the prune to git mirrors.
 func newCacheGCCmd() *cobra.Command {
 	f := &cacheGCFlags{}
-	c := &commonFlags{}
+	cf := &cacheFlags{}
 	cmd := &cobra.Command{
 		Use:   "gc",
 		Short: "Prune stale entries from flate's on-disk cache",
@@ -51,7 +63,7 @@ Set --dry-run to see what would be removed without touching disk.`,
 			if f.maxAge < 0 {
 				return errors.New("--max-age must be non-negative")
 			}
-			layout := cacheroot.New(c.resolveCacheRoot())
+			layout := cacheroot.New(cf.resolveRoot())
 			res, err := source.Sweep(layout, source.SweepOpts{
 				MaxAge:         f.maxAge,
 				IncludeMirrors: f.includeMirrors,
@@ -86,7 +98,7 @@ Set --dry-run to see what would be removed without touching disk.`,
 		"also age-prune git mirrors (default off — mirrors are expensive to rebuild)")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false,
 		"report what would be removed without touching disk")
-	cmd.Flags().StringVar(&c.cacheDir, "cache-dir", "",
+	cmd.Flags().StringVar(&cf.cacheDir, "cache-dir", "",
 		"cache root to sweep (defaults to the same path flate uses for fetched artifacts)")
 	return cmd
 }

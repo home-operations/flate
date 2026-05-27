@@ -209,7 +209,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 	// lets parseFile recognize a Flux Kustomization that happens to
 	// be authored at the `kustomization.yaml` filename (rare but
 	// permitted).
-	if kpath, ok := kustomizationFilePath(dir); ok && !w.ignore.matches(kpath, w.scanRoot) {
+	if kpath, ok := kustomizationFilePath(dir); ok && !w.ignore.matches(kpath, w.scanRoot, false) {
 		n, err := w.loader.loadFile(kpath)
 		if err != nil {
 			slog.Warn("loader: kustomization file failed to parse", "path", kpath, "err", err)
@@ -249,7 +249,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		if _, isData := dataFiles[abs]; isData {
 			continue
 		}
-		if w.ignore.matches(abs, w.scanRoot) {
+		if w.ignore.matches(abs, w.scanRoot, false) {
 			continue
 		}
 		n, err := w.loader.loadFile(abs)
@@ -332,7 +332,7 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 		if !isManifestFile(path) {
 			return nil
 		}
-		if w.ignore.matches(path, w.scanRoot) {
+		if w.ignore.matches(path, w.scanRoot, false) {
 			return nil
 		}
 		n, err := w.loader.loadFile(path)
@@ -535,7 +535,7 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 	if strings.HasPrefix(name, ".") && name != "." {
 		return true
 	}
-	return ignore.matches(full, root)
+	return ignore.matches(full, root, true)
 }
 
 // kustomizationFilePath returns the absolute path of dir's

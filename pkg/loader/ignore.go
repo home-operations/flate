@@ -53,9 +53,12 @@ func loadIgnore(root string) (*ignoreSet, error) {
 	return out, nil
 }
 
-// matches reports whether path (an absolute file path under root)
-// should be ignored.
-func (i *ignoreSet) matches(path, root string) bool {
+// matches reports whether path (an absolute path under root) should be
+// ignored. isDir must be true when path is a directory; this is required so
+// that trailing-slash patterns in .krmignore (e.g. "tmp/") — which the
+// gitignore parser marks as dirOnly — are evaluated correctly. Passing false
+// for a directory causes dirOnly patterns to silently never fire.
+func (i *ignoreSet) matches(path, root string, isDir bool) bool {
 	if i == nil || i.matcher == nil {
 		return false
 	}
@@ -71,5 +74,5 @@ func (i *ignoreSet) matches(path, root string) bool {
 	domain := strings.Split(rootSlash, "/")
 	relParts := strings.Split(relSlash, "/")
 	segments := append(append([]string(nil), domain...), relParts...)
-	return i.matcher.Match(segments, false)
+	return i.matcher.Match(segments, isDir)
 }

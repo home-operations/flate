@@ -36,7 +36,7 @@ func TestLoadIgnore_GlobStarMatchesAcrossDirectories(t *testing.T) {
 	}
 	for _, tc := range cases {
 		abs := filepath.Join(root, filepath.FromSlash(tc.rel))
-		if got := ig.matches(abs, root); got != tc.wantHit {
+		if got := ig.matches(abs, root, false); got != tc.wantHit {
 			t.Errorf("matches(%q) = %v, want %v", tc.rel, got, tc.wantHit)
 		}
 	}
@@ -55,13 +55,13 @@ func TestLoadIgnore_SingleGlobPattern(t *testing.T) {
 
 	abs := func(rel string) string { return filepath.Join(root, filepath.FromSlash(rel)) }
 
-	if !ig.matches(abs("apps/foo.yaml"), root) {
+	if !ig.matches(abs("apps/foo.yaml"), root, false) {
 		t.Error("apps/foo.yaml should match apps/*.yaml")
 	}
-	if ig.matches(abs("apps/sub/foo.yaml"), root) {
+	if ig.matches(abs("apps/sub/foo.yaml"), root, false) {
 		t.Error("apps/sub/foo.yaml must NOT match single-level apps/*.yaml")
 	}
-	if ig.matches(abs("other/foo.yaml"), root) {
+	if ig.matches(abs("other/foo.yaml"), root, false) {
 		t.Error("other/foo.yaml must NOT match apps/*.yaml")
 	}
 }
@@ -75,7 +75,7 @@ func TestLoadIgnore_NoFile(t *testing.T) {
 		t.Fatalf("loadIgnore on missing file: %v", err)
 	}
 	// Should match nothing.
-	if ig.matches(filepath.Join(root, "anything.yaml"), root) {
+	if ig.matches(filepath.Join(root, "anything.yaml"), root, false) {
 		t.Error("empty ignore set should not match anything")
 	}
 }
@@ -95,8 +95,60 @@ apps/junk/**
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
-	if !ig.matches(filepath.Join(root, "apps", "junk", "x.yaml"), root) {
+	if !ig.matches(filepath.Join(root, "apps", "junk", "x.yaml"), root, false) {
 		t.Error("apps/junk/x.yaml should match after blank lines and comments are stripped")
+	}
+}
+
+// TestLoadIgnore_DirOnlyPattern verifies that trailing-slash patterns in
+// .krmignore (e.g. "tmp/") — which the gitignore parser marks as dirOnly —
+// only fire when isDir=true for the directory itself. This is the regression
+// test for the bug where ignoreSet.matches always passed false to the gitignore
+// Matcher, causing dirOnly patterns to silently never fire against directory
+// paths (shouldSkipDir never pruned those directories during walks).
+//
+// gitignore semantics for "tmp/":
+//   - the directory "tmp" itself matches only when isDir=true
+//   - files *inside* tmp/ (e.g. tmp/file.yaml) also match because the "tmp"
+//     segment matches at a non-terminal position in the path — this is standard
+//     gitignore behaviour (everything under an ignored dir is also ignored)
+func TestLoadIgnore_DirOnlyPattern(t *testing.T) {
+	root := t.TempDir()
+	// "tmp/" — trailing slash means "only match directories named tmp"
+	testutil.WriteFile(t, root, ".krmignore", "tmp/\n")
+
+	ig, err := loadIgnore(root)
+	if err != nil {
+		t.Fatalf("loadIgnore: %v", err)
+	}
+
+	tmpDir := filepath.Join(root, "tmp")
+	tmpFile := filepath.Join(root, "tmp", "file.yaml")
+	tmpBare := filepath.Join(root, "tmp.yaml") // file at root named "tmp.yaml" — must NOT match
+	otherDir := filepath.Join(root, "other")
+
+	// isDir=true: the pattern is dir-only, must match the tmp directory itself.
+	if !ig.matches(tmpDir, root, true) {
+		t.Error("tmp/ pattern should match the 'tmp' directory (isDir=true)")
+	}
+	// isDir=false for the bare name "tmp" at the root level: the dir-only
+	// guard fires here (segment is the terminal one), so a file named "tmp"
+	// must NOT match.
+	if ig.matches(tmpDir, root, false) {
+		t.Error("tmp/ pattern must NOT match a file named 'tmp' at root level (isDir=false, terminal segment)")
+	}
+	// Files inside tmp/ also match — "tmp" appears as a non-terminal segment
+	// so dirOnly does not block it; this is standard gitignore semantics.
+	if !ig.matches(tmpFile, root, false) {
+		t.Error("tmp/ pattern should match files inside 'tmp/' (non-terminal segment)")
+	}
+	// A file called "tmp.yaml" at root level must not match.
+	if ig.matches(tmpBare, root, false) {
+		t.Error("tmp/ pattern must NOT match 'tmp.yaml' (different name)")
+	}
+	// Unrelated directory must not match.
+	if ig.matches(otherDir, root, true) {
+		t.Error("tmp/ pattern must NOT match an unrelated directory")
 	}
 }
 

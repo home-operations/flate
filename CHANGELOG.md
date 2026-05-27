@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.27](https://github.com/home-operations/flate/compare/0.1.26...0.1.27) (2026-05-27)
+
+
+### Features
+
+* **cli:** bind every flag to a FLATE_* env var ([#482](https://github.com/home-operations/flate/issues/482)) ([10ef361](https://github.com/home-operations/flate/commit/10ef36177e8d1434eb65388a7e0602e23d3becb9))
+
 ## [0.1.26](https://github.com/home-operations/flate/compare/0.1.25...0.1.26) (2026-05-27)
 
 

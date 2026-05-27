@@ -129,11 +129,8 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 			}
 		}
 		// Stale or unresolved slot — wipe and stage a fresh pull target.
-		if err := slot.Reset(); err != nil {
-			return nil, fmt.Errorf("cache reset for %s: %w", versioned, err)
-		}
-		if err := slot.Stage(); err != nil {
-			return nil, fmt.Errorf("cache stage for %s: %w", versioned, err)
+		if err := slot.Refresh(); err != nil {
+			return nil, fmt.Errorf("cache refresh for %s: %w", versioned, err)
 		}
 	}
 

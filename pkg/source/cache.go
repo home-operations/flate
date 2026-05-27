@@ -263,6 +263,18 @@ func (s *Slot) Reset() error {
 	return nil
 }
 
+// Refresh wipes the final slot and allocates a fresh staging directory
+// in one step. It is equivalent to calling Reset followed by Stage and
+// is intended for callers that detect a stale immutable cache hit and
+// need to re-fetch from scratch. The Reset+Stage sequence is preserved
+// unchanged; this method exists only to avoid repeating the pair.
+func (s *Slot) Refresh() error {
+	if err := s.Reset(); err != nil {
+		return err
+	}
+	return s.Stage()
+}
+
 // Stage allocates the staging dir for a Slot that was returned with
 // Exists == true and then explicitly Reset by the caller. The new Path
 // is the staging dir. No-op when staging is already allocated.

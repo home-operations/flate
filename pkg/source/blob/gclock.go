@@ -22,17 +22,20 @@ import "sync"
 // the (rare) GC sweep.
 var gcMu sync.RWMutex
 
-// RLockGC acquires a shared lock against the GC sweep. Caller must
-// invoke the returned function to release.
-func RLockGC() func() {
+// rLockGC acquires a shared lock against the GC sweep. Caller must
+// invoke the returned function to release. Internal to the blob
+// package — callers outside blob use WithSweepLock.
+func rLockGC() func() {
 	gcMu.RLock()
 	return gcMu.RUnlock
 }
 
-// LockGC acquires the exclusive sweep lock. Held across mark + sweep
-// so no Refs.Put can finalize within the window. Caller must invoke
-// the returned function to release.
-func LockGC() func() {
+// WithSweepLock acquires the exclusive sweep lock, calls fn, then
+// releases the lock. Held across mark + sweep so no Refs.Put can
+// finalize within the window. The error returned by fn is propagated
+// unchanged; the lock is always released.
+func WithSweepLock(fn func() error) error {
 	gcMu.Lock()
-	return gcMu.Unlock
+	defer gcMu.Unlock()
+	return fn()
 }

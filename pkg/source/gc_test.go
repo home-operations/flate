@@ -224,10 +224,10 @@ func TestSweep_UnreferencedOldBlobIsPruned(t *testing.T) {
 //
 // Pre-fix: Sweep marks refs before PutBytes refreshes the (old) blob's
 // mtime, then ages-out the blob; Refs.Put then writes a ref pointing
-// at a deleted blob. Post-fix: PutBytes holds RLockGC and refreshes
-// mtime, Refs.Put holds RLockGC, Sweep holds the exclusive LockGC —
-// the three operations serialize cleanly so the invariant holds in
-// every interleaving.
+// at a deleted blob. Post-fix: PutBytes holds rLockGC and refreshes
+// mtime, Refs.Put holds rLockGC, Sweep holds the exclusive lock via
+// blob.WithSweepLock — the three operations serialize cleanly so the
+// invariant holds in every interleaving.
 func TestSweep_PutInFlightPreservesBlob(t *testing.T) {
 	layout := cacheroot.New(t.TempDir())
 	store := blob.NewStore(layout)

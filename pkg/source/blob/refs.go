@@ -102,7 +102,7 @@ func (r *Refs) Put(key, digest string) error {
 	if err != nil {
 		return err
 	}
-	unlockGC := RLockGC()
+	unlockGC := rLockGC()
 	defer unlockGC()
 	r.mu.Lock()
 	defer r.mu.Unlock()

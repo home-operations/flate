@@ -1,7 +1,7 @@
 ---
 # yaml-language-server: $schema=https://json.schemastore.org/github-action.json
 name: Setup flate CLI
-description: A GitHub Action for installing the flate CLI
+description: Install the flate CLI via mise and optionally cache its on-disk store between runs
 author: home-operations
 branding:
   color: purple
@@ -9,119 +9,68 @@ branding:
 
 inputs:
   version:
-    description: flate version (e.g. 0.1.3), defaults to the latest release
+    description: flate version to install (e.g. "0.1.25"), or "latest"
     required: false
-  bindir:
-    description: Alternative location for the flate binary, defaults to a path under $RUNNER_TOOL_CACHE
-    required: false
+    default: latest
   token:
-    description: Token used to authenticate against the GitHub.com API
+    description: GitHub token used by mise to resolve and download releases without hitting unauthenticated rate limits
     required: false
+    default: ${{ github.token }}
+  cache:
+    description: Restore and save flate's XDG cache (sources, helm charts, git mirrors, blobs) between runs
+    required: false
+    default: "false"
+
+outputs:
+  version:
+    description: Resolved flate version (without the leading "v")
+    value: ${{ steps.verify.outputs.version }}
+  cache-dir:
+    description: On-disk path flate uses for its persistent cache on this runner
+    value: ${{ steps.resolve.outputs.cache-dir }}
+  cache-hit:
+    description: Whether a previous flate cache was restored (only meaningful when cache=true)
+    value: ${{ steps.cache.outputs.cache-hit }}
 
 runs:
   using: composite
   steps:
-    - name: Download flate
+    - id: resolve
+      name: Resolve flate cache dir
       shell: bash
-      env:
-        VERSION: ${{ inputs.version }}
-        FLATE_TOOL_DIR: ${{ inputs.bindir }}
-        TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
-
-        if [[ -z "${VERSION}" || "${VERSION}" == "latest" ]]; then
-          if [[ -n "${TOKEN}" ]]; then
-            VERSION=$(curl -fsSL -H "Authorization: token ${TOKEN}" \
-              https://api.github.com/repos/home-operations/flate/releases/latest \
-              | grep tag_name | cut -d '"' -f 4)
-          else
-            VERSION=$(curl -w '%{url_effective}\n' -IsSL \
-              https://github.com/home-operations/flate/releases/latest \
-              -o /dev/null | sed 's|^.*/||')
-          fi
-        fi
-        if [[ -z "${VERSION}" ]]; then
-          echo "Unable to determine flate version"
-          exit 1
-        fi
-        VERSION="${VERSION#v}"
-
-        OS=$(echo "${RUNNER_OS}" | tr '[:upper:]' '[:lower:]')
-        if [[ "${OS}" == "macos" ]]; then
-          OS="darwin"
-        fi
-
-        ARCH=$(echo "${RUNNER_ARCH}" | tr '[:upper:]' '[:lower:]')
-        case "${ARCH}" in
-          x64|x86_64) ARCH="amd64" ;;
-          aarch64) ARCH="arm64" ;;
+        # Mirrors Go's os.UserCacheDir() — the path flate's cacheroot.Default() resolves to.
+        case "${RUNNER_OS}" in
+          Linux)   dir="${XDG_CACHE_HOME:-${HOME}/.cache}/flate" ;;
+          macOS)   dir="${HOME}/Library/Caches/flate" ;;
+          Windows) dir="${LOCALAPPDATA}/flate" ;;
         esac
+        echo "cache-dir=${dir}" >> "${GITHUB_OUTPUT}"
 
-        EXEC="flate"
-        ARCHIVE="flate_${VERSION}_${OS}_${ARCH}.tar.gz"
-        if [[ "${OS}" == "windows" ]]; then
-          EXEC="flate.exe"
-          ARCHIVE="flate_${VERSION}_${OS}_${ARCH}.zip"
-        fi
+    - id: cache
+      if: ${{ inputs.cache == 'true' }}
+      name: Restore flate cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ steps.resolve.outputs.cache-dir }}
+        key: flate-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          flate-${{ runner.os }}-${{ runner.arch }}-
 
-        if [[ -z "${FLATE_TOOL_DIR}" ]]; then
-          FLATE_TOOL_DIR="${RUNNER_TOOL_CACHE}/flate/${VERSION}/${OS}/${ARCH}"
-        fi
+    - name: Install flate
+      uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+      with:
+        cache: false
+        tool_versions: |
+          github:home-operations/flate ${{ inputs.version }}
 
-        if [[ ! -x "${FLATE_TOOL_DIR}/${EXEC}" ]]; then
-          DL_DIR="$(mktemp -dt flate-XXXXXX)"
-          trap 'rm -rf "${DL_DIR}"' EXIT
-
-          BASE_URL="https://github.com/home-operations/flate/releases/download/${VERSION}"
-
-          max_retries=5
-          retry_delay=5
-          download() {
-            local url=$1 dest=$2 attempt
-            for attempt in $(seq 1 ${max_retries}); do
-              echo "Downloading ${url} (attempt ${attempt}/${max_retries})"
-              if curl -fsSL -o "${dest}" "${url}"; then
-                return 0
-              fi
-              if [[ ${attempt} -lt ${max_retries} ]]; then
-                sleep ${retry_delay}
-              fi
-            done
-            echo "Failed to download ${url} after ${max_retries} attempts"
-            return 1
-          }
-
-          download "${BASE_URL}/${ARCHIVE}" "${DL_DIR}/${ARCHIVE}"
-          download "${BASE_URL}/${ARCHIVE}.sha256" "${DL_DIR}/${ARCHIVE}.sha256"
-
-          echo "Verifying checksum"
-          if command -v sha256sum > /dev/null; then
-            sum=$(sha256sum "${DL_DIR}/${ARCHIVE}" | awk '{print $1}')
-          elif command -v openssl > /dev/null; then
-            sum=$(openssl sha256 "${DL_DIR}/${ARCHIVE}" | awk '{print $2}')
-          else
-            echo "Neither sha256sum nor openssl found"
-            exit 1
-          fi
-          expected=$(awk '{print $1}' "${DL_DIR}/${ARCHIVE}.sha256")
-          if [[ "${sum}" != "${expected}" ]]; then
-            echo "Checksum mismatch for ${ARCHIVE}: got ${sum}, expected ${expected}"
-            exit 1
-          fi
-
-          echo "Installing flate to ${FLATE_TOOL_DIR}"
-          mkdir -p "${FLATE_TOOL_DIR}"
-          if [[ "${OS}" == "windows" ]]; then
-            unzip -q "${DL_DIR}/${ARCHIVE}" "${EXEC}" -d "${FLATE_TOOL_DIR}"
-          else
-            tar xzf "${DL_DIR}/${ARCHIVE}" -C "${FLATE_TOOL_DIR}" "${EXEC}"
-          fi
-          chmod +x "${FLATE_TOOL_DIR}/${EXEC}"
-        fi
-
-        echo "${FLATE_TOOL_DIR}" >> "${GITHUB_PATH}"
-
-    - name: Print flate version
+    - id: verify
+      name: Verify flate
       shell: bash
-      run: flate --version
+      run: |-
+        set -euo pipefail
+        version=$(flate --version | awk '{print $NF}')
+        echo "version=${version}" >> "${GITHUB_OUTPUT}"

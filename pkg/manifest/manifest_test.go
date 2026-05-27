@@ -981,16 +981,16 @@ spec:
 		t.Errorf("substitute = %+v", k.PostBuildSubstitute)
 	}
 
-	kept, dropped := FilterDependsOn(k.DependsOn, map[string]struct{}{"flux-system/infra": {}})
+	kept, dropped := filterDependsOn(k.DependsOn, map[string]struct{}{"flux-system/infra": {}})
 	if len(kept) != 1 || kept[0].NamespacedName() != "flux-system/infra" {
-		t.Errorf("FilterDependsOn kept = %v", kept)
+		t.Errorf("filterDependsOn kept = %v", kept)
 	}
 	if dropped == 0 {
 		t.Errorf("expected at least one dropped entry")
 	}
 }
 
-// FilterDependsOn is the free function shared by KS and HR pruning;
+// filterDependsOn is the free function shared by KS and HR pruning;
 // verify it works on a synthetic HR-style dep list too.
 func TestFilterDependsOn_AcrossKinds(t *testing.T) {
 	deps := []DependencyRef{
@@ -998,7 +998,7 @@ func TestFilterDependsOn_AcrossKinds(t *testing.T) {
 		{NamedResource: NamedResource{Kind: KindHelmRelease, Namespace: "media", Name: "gone"}},
 	}
 	known := map[string]struct{}{"media/plex": {}}
-	kept, dropped := FilterDependsOn(deps, known)
+	kept, dropped := filterDependsOn(deps, known)
 	if len(kept) != 1 || kept[0].NamespacedName() != "media/plex" {
 		t.Errorf("kept = %v", kept)
 	}
@@ -1007,13 +1007,13 @@ func TestFilterDependsOn_AcrossKinds(t *testing.T) {
 	}
 
 	// nil-known: every dep dropped.
-	_, dropped = FilterDependsOn(deps, nil)
+	_, dropped = filterDependsOn(deps, nil)
 	if dropped != 2 {
 		t.Errorf("nil-known dropped = %d, want 2", dropped)
 	}
 
 	// empty deps: no work, no allocation.
-	out, dropped := FilterDependsOn(nil, known)
+	out, dropped := filterDependsOn(nil, known)
 	if out != nil || dropped != 0 {
 		t.Errorf("empty deps: out=%v dropped=%d", out, dropped)
 	}
@@ -1087,6 +1087,50 @@ stringData:
 			t.Errorf("data was wiped despite false: %v", s.Data["password"])
 		}
 	})
+}
+
+// TestParseSecret_Idempotent pins the copy-before-mutate fix: parseSecret
+// must not write placeholders back into the caller-owned doc map.
+// Previously the wipe loop mutated doc["data"] in place, so a second
+// parse on the same doc would re-encode an already-encoded placeholder,
+// producing base64(PLACEHOLDER_<base64(PLACEHOLDER_key)>) and causing
+// spurious EventObjectAdded on every cache-hit reconcile.
+func TestParseSecret_Idempotent(t *testing.T) {
+	const yamlDoc = `
+apiVersion: v1
+kind: Secret
+metadata: {name: s, namespace: ns}
+data:
+  token: c2VjcmV0
+stringData:
+  apiKey: plaintext
+`
+	doc := mustYAML(t, yamlDoc)
+
+	s1, err := parseSecret(doc, true)
+	if err != nil {
+		t.Fatalf("first parse: %v", err)
+	}
+	s2, err := parseSecret(doc, true)
+	if err != nil {
+		t.Fatalf("second parse: %v", err)
+	}
+
+	// Both parses must yield identical placeholder values.
+	if s1.Data["token"] != s2.Data["token"] {
+		t.Errorf("data not idempotent: first=%q second=%q", s1.Data["token"], s2.Data["token"])
+	}
+	if s1.StringData["apiKey"] != s2.StringData["apiKey"] {
+		t.Errorf("stringData not idempotent: first=%q second=%q", s1.StringData["apiKey"], s2.StringData["apiKey"])
+	}
+
+	// The original doc must be unmodified: still the raw base64 value.
+	if got := doc["data"].(map[string]any)["token"]; got != "c2VjcmV0" {
+		t.Errorf("parseSecret mutated doc[\"data\"]: got %q want %q", got, "c2VjcmV0")
+	}
+	if got := doc["stringData"].(map[string]any)["apiKey"]; got != "plaintext" {
+		t.Errorf("parseSecret mutated doc[\"stringData\"]: got %q want %q", got, "plaintext")
+	}
 }
 
 func TestParseDoc_Dispatch(t *testing.T) {

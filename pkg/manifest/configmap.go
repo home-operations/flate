@@ -62,22 +62,28 @@ func parseSecret(doc map[string]any, wipeSecrets bool) (*Secret, error) {
 	}
 	s := &Secret{Name: name, Namespace: ns}
 	if data, ok := doc["data"].(map[string]any); ok {
-		if wipeSecrets {
-			for k := range data {
-				data[k] = base64.StdEncoding.EncodeToString(
+		out := make(map[string]any, len(data))
+		for k, v := range data {
+			if wipeSecrets {
+				out[k] = base64.StdEncoding.EncodeToString(
 					fmt.Appendf(nil, ValuePlaceholderTemplate, k),
 				)
+			} else {
+				out[k] = v
 			}
 		}
-		s.Data = data
+		s.Data = out
 	}
 	if sd, ok := doc["stringData"].(map[string]any); ok {
-		if wipeSecrets {
-			for k := range sd {
-				sd[k] = fmt.Sprintf(ValuePlaceholderTemplate, k)
+		out := make(map[string]any, len(sd))
+		for k, v := range sd {
+			if wipeSecrets {
+				out[k] = fmt.Sprintf(ValuePlaceholderTemplate, k)
+			} else {
+				out[k] = v
 			}
 		}
-		s.StringData = sd
+		s.StringData = out
 	}
 	return s, nil
 }

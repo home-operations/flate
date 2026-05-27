@@ -22,11 +22,6 @@ func (h *HelmChartSource) Named() NamedResource {
 	return NamedResource{Kind: KindHelmChart, Namespace: h.Namespace, Name: h.Name}
 }
 
-// ResourceFullName is "<namespace>-<name>".
-func (h *HelmChartSource) ResourceFullName() string {
-	return h.Namespace + "-" + h.Name
-}
-
 // parseHelmChartSource decodes a standalone HelmChart CRD via the
 // source-controller typed schema.
 func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {

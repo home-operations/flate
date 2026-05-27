@@ -25,12 +25,7 @@ type Kustomization struct {
 
 	kustomizev1.KustomizationSpec `json:",inline" yaml:",inline"`
 
-	HelmRepos        []*HelmRepository  `json:"helmRepos,omitempty"        yaml:"helmRepos,omitempty"`
-	OCIRepos         []*OCIRepository   `json:"ociRepos,omitempty"         yaml:"ociRepos,omitempty"`
-	HelmReleases     []*HelmRelease     `json:"helmReleases,omitempty"     yaml:"helmReleases,omitempty"`
-	ConfigMaps       []*ConfigMap       `json:"configMaps,omitempty"       yaml:"configMaps,omitempty"`
-	Secrets          []*Secret          `json:"secrets,omitempty"          yaml:"secrets,omitempty"`
-	HelmChartSources []*HelmChartSource `json:"helmChartSources,omitempty" yaml:"helmChartSources,omitempty"`
+	Secrets []*Secret `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 
 	// SourcePath is the location on disk this Kustomization was loaded
 	// from (config.kubernetes.io/path annotation).
@@ -105,14 +100,14 @@ func (k *Kustomization) Clone() *Kustomization {
 	return &out
 }
 
-// FilterDependsOn returns a copy of deps with any entries whose target
+// filterDependsOn returns a copy of deps with any entries whose target
 // is not present in known removed. known is a set of "namespace/name"
 // identifiers. The second return value is the count of dropped
 // entries. Pure function — does not mutate deps. Callers updating a
 // stored object should follow the Store's immutability contract:
 // shallow-copy the object, set the new DependsOn on the copy, then
 // re-AddObject the copy.
-func FilterDependsOn(deps []DependencyRef, known map[string]struct{}) ([]DependencyRef, int) {
+func filterDependsOn(deps []DependencyRef, known map[string]struct{}) ([]DependencyRef, int) {
 	if len(deps) == 0 {
 		return deps, 0
 	}

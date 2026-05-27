@@ -40,15 +40,8 @@ func (m Metadata) Matches(obj manifest.BaseManifest) bool {
 }
 
 func labelsOf(obj manifest.BaseManifest) map[string]string {
-	switch o := obj.(type) {
-	case *manifest.Kustomization:
-		return o.Labels
-	case *manifest.HelmRelease:
-		return o.Labels
-	case *manifest.ResourceSet:
-		return o.Labels
-	case *manifest.ResourceSetInputProvider:
-		return o.Labels
+	if o, ok := obj.(interface{ GetLabels() map[string]string }); ok {
+		return o.GetLabels()
 	}
 	return nil
 }

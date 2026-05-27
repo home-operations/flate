@@ -13,6 +13,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/atomic"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // locateOCIChart resolves a chart whose source is an OCIRepository.
@@ -51,7 +52,11 @@ func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (
 	// registry-client pull when no puller was wired (EnableOCI=false
 	// orchestrator runs, embedders without OCI).
 	if puller := c.ociPullerSnapshot(); puller != nil {
-		art, err := puller.Fetch(ctx, r)
+		var (
+			art *store.SourceArtifact
+			err error
+		)
+		c.yieldDuring(func() { art, err = puller.Fetch(ctx, r) })
 		if err != nil {
 			return "", err
 		}

@@ -143,15 +143,17 @@ type Orchestrator struct {
 	// controller renders the resource. Controllers consult it from
 	// their object listeners and mark the resource Failed instead of
 	// waiting on a graph that cannot converge.
-	cycleMu           sync.Mutex
+	// preflightMu guards the full detect-replace-refire unit in
+	// failDependsOnCycles and serializes reads in preflightFailure.
 	preflightMu       sync.RWMutex
 	preflightFailures map[manifest.NamedResource]string
 
 	// rsExtensions holds non-Flux docs produced by ResourceSet renders,
 	// keyed by the owning structural-parent Kustomization. Populated
-	// during Bootstrap (from discovery.Result.RSExtensions); merged
-	// into Result.Manifests at Render time so `flate build` surfaces
-	// what the RS would create in-cluster.
+	// by expandResourceSetsPostRun (called from Render) after Run
+	// completes, so it sees RSIPs emitted via KS-controller kustomize
+	// substitution; merged into Result.Manifests at Render time so
+	// `flate build` surfaces what the RS would create in-cluster.
 	rsExtensions map[manifest.NamedResource][]map[string]any
 
 	// bootstrapped flips true once Bootstrap returns. Read by
@@ -399,9 +401,11 @@ func (o *Orchestrator) warnOnKSOCISourceRefWithoutOCI() {
 	}
 }
 
+// replacePreflightFailures replaces the current preflight-failure map
+// with failures and returns the IDs that were previously failing but
+// are no longer present in the new set (cleared entries). Must be
+// called while holding preflightMu for writing.
 func (o *Orchestrator) replacePreflightFailures(failures map[manifest.NamedResource]string) []manifest.NamedResource {
-	o.preflightMu.Lock()
-	defer o.preflightMu.Unlock()
 	cleared := make([]manifest.NamedResource, 0, len(o.preflightFailures))
 	for id := range o.preflightFailures {
 		if _, stillFailed := failures[id]; !stillFailed {

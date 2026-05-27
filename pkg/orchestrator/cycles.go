@@ -31,8 +31,12 @@ func (o *Orchestrator) detectDependsOnCycles() [][]manifest.NamedResource {
 // every cycle member. Flux blocks cyclic dependency graphs; flate must
 // fail those resources before render instead of stripping edges and
 // rendering manifests that would not reconcile in-cluster.
+//
+// preflightMu serializes the full detect-replace unit: the write lock
+// is held for cycle detection + map replacement, then released before
+// the refire calls so store listeners do not re-enter this path under
+// the lock.
 func (o *Orchestrator) failDependsOnCycles() {
-	o.cycleMu.Lock()
 	cycles := o.detectDependsOnCycles()
 	failures := map[manifest.NamedResource]string{}
 	for _, path := range cycles {
@@ -44,8 +48,9 @@ func (o *Orchestrator) failDependsOnCycles() {
 			}
 		}
 	}
+	o.preflightMu.Lock()
 	cleared := o.replacePreflightFailures(failures)
-	o.cycleMu.Unlock()
+	o.preflightMu.Unlock()
 	o.refireClearedPreflightFailures(cleared)
 }
 

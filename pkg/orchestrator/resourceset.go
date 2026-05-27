@@ -79,16 +79,17 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 	// legitimately render the same child from each namespace variant
 	// and we don't want to double-emit it under the parent KS).
 	//
-	// Concurrency limit matches the bucket fetcher (8) — render is
-	// CPU-bound, so the cap exists more to prevent goroutine
-	// explosion on huge RS-counts than as a rate limiter.
+	// Concurrency cap respects Config.Concurrency when set so operators
+	// who request serial/deterministic runs (Concurrency: 1) also get
+	// that here; default is rsExpansionDefaultConcurrency (8).
+	const rsExpansionDefaultConcurrency = 8
 	var (
 		mu   sync.Mutex
 		seen = map[string]struct{}{}
 		out  = map[manifest.NamedResource][]map[string]any{}
 	)
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
+	g.SetLimit(cmp.Or(o.cfg.Concurrency, rsExpansionDefaultConcurrency))
 	for _, rs := range rsList {
 		g.Go(func() error {
 			if err := gctx.Err(); err != nil {

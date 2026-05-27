@@ -38,6 +38,12 @@ func New(version string) *cobra.Command {
 	}
 	root.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		// Env binding runs first so FLATE_LOG_LEVEL is honored by the
+		// validation below, and downstream RunE bodies see flags that
+		// reflect the merged (CLI > env > default) view.
+		if err := applyEnvVars(cmd); err != nil {
+			return err
+		}
 		lvl, _ := cmd.Flags().GetString("log-level")
 		return setLogLevel(lvl, cmd.ErrOrStderr())
 	}
@@ -49,6 +55,7 @@ func New(version string) *cobra.Command {
 		newTestCmd(),
 		newCacheCmd(),
 	)
+	annotateEnvUsage(root)
 	return root
 }
 

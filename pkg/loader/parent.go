@@ -11,6 +11,17 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+// NormalizePrefix turns a Kustomization spec.path into a slash-
+// terminated repo-relative prefix suitable for HasPrefix matching.
+// Applies filepath.ToSlash first so Windows-style spec.path values
+// (rare, but possible since the Flux CRD doesn't constrain it)
+// normalize to the same shape as loader.SourceFiles entries.
+func NormalizePrefix(p string) string {
+	p = filepath.ToSlash(p)
+	p = strings.TrimPrefix(p, "./")
+	return strings.TrimSuffix(p, "/") + "/"
+}
+
 // KSPathPrefix pairs a Kustomization id with one of its
 // slash-terminated, repo-relative claimed-path prefixes. A KS may
 // produce multiple prefixes — one for spec.path plus one per

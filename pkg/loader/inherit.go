@@ -217,17 +217,6 @@ func readKustomizeNamespace(repoRoot, dir string) string {
 	return ""
 }
 
-// NormalizePrefix turns a Kustomization spec.path into a slash-
-// terminated repo-relative prefix suitable for HasPrefix matching.
-// Applies filepath.ToSlash first so Windows-style spec.path values
-// (rare, but possible since the Flux CRD doesn't constrain it)
-// normalize to the same shape as loader.SourceFiles entries.
-func NormalizePrefix(p string) string {
-	p = filepath.ToSlash(p)
-	p = strings.TrimPrefix(p, "./")
-	return strings.TrimSuffix(p, "/") + "/"
-}
-
 // cloneWithNamespace returns a shallow copy of obj with metadata.namespace
 // (and HelmRelease.Chart.RepoNamespace, when implicit) rewritten to ns.
 // Returns nil for kinds the loader doesn't reposition. Honors the Store

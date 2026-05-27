@@ -77,38 +77,40 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 	// and the blob sweep — the race would otherwise purge a freshly-
 	// referenced blob as orphan-old. Refs.Put takes the shared lock so
 	// the gate is invisible for the common case (no GC running).
-	unlockGC := blob.LockGC()
-	defer unlockGC()
+	if err := blob.WithSweepLock(func() error {
+		live := markLiveDigests(layout, &res)
 
-	live := markLiveDigests(layout, &res)
-
-	// Each entry pairs a directory to sweep with the depth at which
-	// the age comparison applies and whether the leaf's basename is
-	// a content digest to consult the live set with. Sources land at
-	// <root>/sources/<slug>/<hash>/ so age comparison is two levels
-	// in; blobs sit one level below the algo segment and are gated
-	// by mark.
-	ageRoots := []struct {
-		dir   string
-		depth int
-		gate  func(name string) bool // skip when gate returns true
-	}{
-		{layout.Sources(), 2, nil},
-		{layout.Baselines(), 1, nil},
-		{layout.Blobs(), 1, func(name string) bool { return live[name] }},
-	}
-	if opts.IncludeMirrors {
-		ageRoots = append(ageRoots, struct {
+		// Each entry pairs a directory to sweep with the depth at which
+		// the age comparison applies and whether the leaf's basename is
+		// a content digest to consult the live set with. Sources land at
+		// <root>/sources/<slug>/<hash>/ so age comparison is two levels
+		// in; blobs sit one level below the algo segment and are gated
+		// by mark.
+		ageRoots := []struct {
 			dir   string
 			depth int
-			gate  func(name string) bool
-		}{layout.GitMirrors(), 1, nil})
-	}
-	for _, ar := range ageRoots {
-		sweepDirByAge(ar.dir, ar.depth, cutoff, ar.gate, opts.DryRun, &res)
-	}
+			gate  func(name string) bool // skip when gate returns true
+		}{
+			{layout.Sources(), 2, nil},
+			{layout.Baselines(), 1, nil},
+			{layout.Blobs(), 1, func(name string) bool { return live[name] }},
+		}
+		if opts.IncludeMirrors {
+			ageRoots = append(ageRoots, struct {
+				dir   string
+				depth int
+				gate  func(name string) bool
+			}{layout.GitMirrors(), 1, nil})
+		}
+		for _, ar := range ageRoots {
+			sweepDirByAge(ar.dir, ar.depth, cutoff, ar.gate, opts.DryRun, &res)
+		}
 
-	sweepDanglingRefs(layout, opts.DryRun, &res)
+		sweepDanglingRefs(layout, opts.DryRun, &res)
+		return nil
+	}); err != nil {
+		return res, err
+	}
 
 	return res, nil
 }

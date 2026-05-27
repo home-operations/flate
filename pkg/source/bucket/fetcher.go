@@ -75,11 +75,8 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 	if slot.Exists {
 		// Drop the prior committed slot and re-stage so the upcoming
 		// walk writes into an empty staging dir.
-		if err := slot.Reset(); err != nil {
-			return nil, fmt.Errorf("bucket %s/%s reset: %w", b.Namespace, b.Name, err)
-		}
-		if err := slot.Stage(); err != nil {
-			return nil, fmt.Errorf("bucket %s/%s stage: %w", b.Namespace, b.Name, err)
+		if err := slot.Refresh(); err != nil {
+			return nil, fmt.Errorf("bucket %s/%s refresh: %w", b.Namespace, b.Name, err)
 		}
 	}
 

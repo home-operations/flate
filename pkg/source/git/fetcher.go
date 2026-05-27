@@ -145,10 +145,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 			}
 		} else {
 			// Stale immutable slot — wipe and stage a fresh clone target.
-			if err := slot.Reset(); err != nil {
-				return nil, err
-			}
-			if err := slot.Stage(); err != nil {
+			if err := slot.Refresh(); err != nil {
 				return nil, err
 			}
 		}

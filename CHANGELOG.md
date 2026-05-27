@@ -1,5 +1,83 @@
 # Changelog
 
+## [0.1.25](https://github.com/home-operations/flate/compare/0.1.24...0.1.25) (2026-05-27)
+
+
+### Bug Fixes
+
+* **controllers/helmrelease:** wire keepEmitted+markRendered in emitRenderedChildren ([#476](https://github.com/home-operations/flate/issues/476)) ([c648833](https://github.com/home-operations/flate/commit/c6488333b7bd1a56718782e3ed25741e14b0d885))
+* **discovery:** normalize slog attribute keys to snake_case ([#459](https://github.com/home-operations/flate/issues/459)) ([644da89](https://github.com/home-operations/flate/commit/644da8962ab0c578023231df7c5aa9b933f28171))
+* **kustomize:** isHTTPClientError 4xx detection + idiom cleanups ([#451](https://github.com/home-operations/flate/issues/451)) ([f5f0b1f](https://github.com/home-operations/flate/commit/f5f0b1f2a07b3c48dc1d1d395e724979c7e7c1bd))
+* **kustomize:** typed httpStatusError sentinel survives error wrapping ([#467](https://github.com/home-operations/flate/issues/467)) ([9020cc1](https://github.com/home-operations/flate/commit/9020cc1df189cf919d48e8fc8c5cbc4b0f879df9))
+* **loader:** .krmignore ** patterns now match (was silently no-op) + move NormalizePrefix ([#462](https://github.com/home-operations/flate/issues/462)) ([993d687](https://github.com/home-operations/flate/commit/993d687c084bcc343ceb140a603ead8a6e18c026))
+* **loader:** propagate isDir to gitignore matcher (trailing-slash patterns now prune dirs) ([#474](https://github.com/home-operations/flate/issues/474)) ([3fa4c50](https://github.com/home-operations/flate/commit/3fa4c50aa0e7d521f3c11a2fa64c7fbe9e19a1ba))
+* **manifest,selector:** apply the changes that iter-10 PR [#460](https://github.com/home-operations/flate/issues/460) promised but didn't ship ([#472](https://github.com/home-operations/flate/issues/472)) ([d12a17f](https://github.com/home-operations/flate/commit/d12a17f6d05d4881c3499c65b578b923beb4fe08))
+* **manifest:** parseSecret in-place mutation + dead-code sweep + add GetLabels for selector dedupe ([#460](https://github.com/home-operations/flate/issues/460)) ([8bce374](https://github.com/home-operations/flate/commit/8bce37445989216a32d67a95d7b7eb669a5eb854))
+* **mirror:** remove deadlocking InstallHTTPS call inside OpenOrFetch ([#450](https://github.com/home-operations/flate/issues/450)) ([cdd8927](https://github.com/home-operations/flate/commit/cdd89272b068ce7f9a52c1f537afa32b4e2a84ed))
+* **selector:** correct package doc to list all four supported types ([#427](https://github.com/home-operations/flate/issues/427)) ([4c857d6](https://github.com/home-operations/flate/commit/4c857d62cc2f81e22fd12be9227546bac800ab46))
+* **source/cache:** drop duplicate Slot.Refresh — fixes broken build ([#471](https://github.com/home-operations/flate/issues/471)) ([32e045e](https://github.com/home-operations/flate/commit/32e045e0acf22c638e990702cee9173503326f86))
+
+
+### Performance Improvements
+
+* **cacheroot:** drop redundant filepath.Clean from every path call ([#432](https://github.com/home-operations/flate/issues/432)) ([fc872cb](https://github.com/home-operations/flate/commit/fc872cbaac4d4a954409065a545a2f9d0377e4db))
+* **change:** drop NUL-parse subslices, errors.AsType, capacity hints ([#441](https://github.com/home-operations/flate/issues/441)) ([fb18894](https://github.com/home-operations/flate/commit/fb18894591f9c8811d6ab4f1f0fba1c4c8bcf9f4))
+* **controllers/helmrelease:** O(1) raw-producer index removes full-store scan from --allow-missing-secrets path ([#477](https://github.com/home-operations/flate/issues/477)) ([0b8937d](https://github.com/home-operations/flate/commit/0b8937d5f9c226069547e7f9569daf27009645ec))
+* **git/verify:** strings.Builder in buildPGPKeyring ([#435](https://github.com/home-operations/flate/issues/435)) ([7ec04f3](https://github.com/home-operations/flate/commit/7ec04f3dc1df5608503267936171b8bb9c444aaf))
+* **helm:** yield worker-pool slot during locateOCIChart puller.Fetch ([#473](https://github.com/home-operations/flate/issues/473)) ([fb2946f](https://github.com/home-operations/flate/commit/fb2946f56e785fb313d25c0dbb90513763f369b7))
+* **internal/format:** drop per-call allocations on table render ([#425](https://github.com/home-operations/flate/issues/425)) ([f43d27b](https://github.com/home-operations/flate/commit/f43d27b5d3acbc3f3838a6538212345459bd63db))
+* **manifest:** preallocate dependsOn slices and input decode maps ([#444](https://github.com/home-operations/flate/issues/444)) ([508e398](https://github.com/home-operations/flate/commit/508e398c84de981d00bd896581d15ad7ac57864a))
+* **resourceset:** parse-once template hot path, O(1) cluster-scope, alloc reduction ([#443](https://github.com/home-operations/flate/issues/443)) ([45cb07e](https://github.com/home-operations/flate/commit/45cb07e11484c5e59108b8455b977dc33ac72d94))
+* **source/bucket:** buffered IO + preallocated keys + close-error propagation ([#434](https://github.com/home-operations/flate/issues/434)) ([6eed82e](https://github.com/home-operations/flate/commit/6eed82e74a28ef819c72c8746b4ed0e657644dd2))
+* **store:** fixed-size listener array, inline dispatch, condition-first scan ([#440](https://github.com/home-operations/flate/issues/440)) ([6276c1f](https://github.com/home-operations/flate/commit/6276c1f988c65768ba307e62c45a3070db47bd67))
+
+
+### Documentation
+
+* **gittransport:** tighten doc comments to why-only ([#436](https://github.com/home-operations/flate/issues/436)) ([558374e](https://github.com/home-operations/flate/commit/558374e1a90875baa29f5c6a05bf3dcebe906dcd))
+* **loader,manifest:** clarify why kustomization filename lists differ ([#455](https://github.com/home-operations/flate/issues/455)) ([ead2bd6](https://github.com/home-operations/flate/commit/ead2bd69c0992d8eb743a31405b1a7a3dc52c84b))
+* **source/atomic:** replace what-comments with POSIX-semantics rationale ([#430](https://github.com/home-operations/flate/issues/430)) ([03952c4](https://github.com/home-operations/flate/commit/03952c46d71885b4da088f4bcf99b028c46d02a3))
+
+
+### Miscellaneous Chores
+
+* post-merge cleanup pass on PRs [#413](https://github.com/home-operations/flate/issues/413)-[#420](https://github.com/home-operations/flate/issues/420) ([#421](https://github.com/home-operations/flate/issues/421)) ([12acb14](https://github.com/home-operations/flate/commit/12acb14755752da23d7747bf79c9301619996cd1))
+
+
+### Code Refactoring
+
+* **cli:** move labels out of commonFlags, drop dup output validate, split cache gc flags ([#469](https://github.com/home-operations/flate/issues/469)) ([608d8bf](https://github.com/home-operations/flate/commit/608d8bff79d5914d582d5e6ff97d49a3ff38dfcf))
+* **cli:** snake_case slog, remove dead kind guard, fix names alloc ([#452](https://github.com/home-operations/flate/issues/452)) ([4293cf0](https://github.com/home-operations/flate/commit/4293cf0ceaae1e49a5daab63641a2dcf7c159bc0))
+* consolidate resolveInputProvider into pkg/resourceset.StoreResolver ([#454](https://github.com/home-operations/flate/issues/454)) ([dd52572](https://github.com/home-operations/flate/commit/dd52572457b87a2760aa6d660e481c97fb49f2bb))
+* **controllers:** consolidate preflight/waiter/parent into base.Controller ([#453](https://github.com/home-operations/flate/issues/453)) ([559d7e8](https://github.com/home-operations/flate/commit/559d7e8001ac469bd3cfe91615cc213b04c22328))
+* **controllers:** WaitForStatus → testutil, split HR valuesfrom into own file ([#468](https://github.com/home-operations/flate/issues/468)) ([7e3f10c](https://github.com/home-operations/flate/commit/7e3f10c201021860244875b0046f8d5d3f12778f))
+* **depwait:** map lookup for apiVersion, Go 1.22 loop vars, WaitGroup.Go ([#439](https://github.com/home-operations/flate/issues/439)) ([ce4339d](https://github.com/home-operations/flate/commit/ce4339dc32bcf7edfbab4d079d43f9683b6cd235))
+* **discovery:** collapse redundant maps, CutPrefix, range-over-int ([#442](https://github.com/home-operations/flate/issues/442)) ([1653805](https://github.com/home-operations/flate/commit/165380551c6eae39924f1262bd0352b980f759f0))
+* **format:** drop dead ParseOutput and ValidOutputs ([#475](https://github.com/home-operations/flate/issues/475)) ([c528190](https://github.com/home-operations/flate/commit/c528190f75de5c2c63acf33da5bf6b3526988fdd))
+* **helm:** move chartCacheLocks onto Client, drop cloneValuesMap dup ([#461](https://github.com/home-operations/flate/issues/461)) ([c8a018c](https://github.com/home-operations/flate/commit/c8a018c619977e991e4202cd72dd8add5ec3aa0a))
+* **keylock:** drop heap alloc on cancelled Acquire ([#428](https://github.com/home-operations/flate/issues/428)) ([8e8c676](https://github.com/home-operations/flate/commit/8e8c6762640cc39060cbdb57f01b6461df602f8b))
+* **loader:** generic applyDefaultNS, cmp.Or for namespace precedence ([#446](https://github.com/home-operations/flate/issues/446)) ([1008655](https://github.com/home-operations/flate/commit/1008655f1768234ba80aa5cfb63f878c4232d03a))
+* **mirror:** drop unused tlsCfg param from OpenOrFetch ([#457](https://github.com/home-operations/flate/issues/457)) ([d1bb504](https://github.com/home-operations/flate/commit/d1bb50453291aa430f9f7421a04f7d6fcfe4f2d2))
+* **orchestrator:** collapse cycleMu+preflightMu, honor Concurrency in RS expansion ([#463](https://github.com/home-operations/flate/issues/463)) ([11fae8d](https://github.com/home-operations/flate/commit/11fae8dc51fa6bd345ffaf3f533586f33699f1a5))
+* **orchestrator:** snake_case slog, slices/maps idioms, dead helper inline ([#447](https://github.com/home-operations/flate/issues/447)) ([e1f2680](https://github.com/home-operations/flate/commit/e1f2680db0c7b2238828dcad9c92e368e0c280f3))
+* **pkg/baseline:** collapse dual-mode helper, dedupe materialize ([#423](https://github.com/home-operations/flate/issues/423)) ([72ac309](https://github.com/home-operations/flate/commit/72ac30976cd3824275045e4d176765956b7686b6))
+* **pkg/diff:** preallocate Header parts, fix stale doc claim ([#422](https://github.com/home-operations/flate/issues/422)) ([4cc0d39](https://github.com/home-operations/flate/commit/4cc0d39203ec93606d4cfc8f8a27b11159712d6a))
+* **pkg/helm:** inline writeAtomic shim, RWMutex for chart cache reads ([#445](https://github.com/home-operations/flate/issues/445)) ([c5bea76](https://github.com/home-operations/flate/commit/c5bea7659a8ca75f930aa1b0b7e0bfdd491a5a81))
+* **pkg/image:** unexport unused IsImageRef, prune what-comments ([#424](https://github.com/home-operations/flate/issues/424)) ([04cc123](https://github.com/home-operations/flate/commit/04cc123b0ad882836b934a9c7d723ee5a60df031))
+* **pkg/task:** drop fmt import, trim what-comments, fix stale doc ([#437](https://github.com/home-operations/flate/issues/437)) ([4888c68](https://github.com/home-operations/flate/commit/4888c681cab56593ced2e9cdd92282e4b5401dee))
+* **pkg/values:** dedupe resource lookup, errors.AsType, simplify in-place merges ([#438](https://github.com/home-operations/flate/issues/438)) ([518f174](https://github.com/home-operations/flate/commit/518f1742aa26e77d4ce18e499aec4962a2bec74e))
+* **source,blob:** WithSweepLock encapsulates GC mutex, Slot.Refresh consolidates Reset+Stage ([#465](https://github.com/home-operations/flate/issues/465)) ([6c4faf3](https://github.com/home-operations/flate/commit/6c4faf380a47016ec082ab83b7b089bc3971baa3))
+* **source/blob:** drop dead PutReader, tighten lock scopes ([#433](https://github.com/home-operations/flate/issues/433)) ([26bbf95](https://github.com/home-operations/flate/commit/26bbf9559214d2ee48102b17a1b5f752a39a6b90))
+* **source/external:** tighten docs, inline CutPrefix check ([#431](https://github.com/home-operations/flate/issues/431)) ([581936e](https://github.com/home-operations/flate/commit/581936ea7d3860f8b4a2d11097ccff0c1fa0085d))
+* **source/git:** decouple verify from manifest type, drop ssh known_hosts tempfile ([#464](https://github.com/home-operations/flate/issues/464)) ([ea6aabc](https://github.com/home-operations/flate/commit/ea6aabcfc0a9e2e5764d004ea8772863b421135b))
+* **source/git:** fix known-hosts temp leak, single-open marker, dedupe ignore+mark ([#449](https://github.com/home-operations/flate/issues/449)) ([5e50b52](https://github.com/home-operations/flate/commit/5e50b520dd30658d60082aea7b824f5a04289522))
+* **source/oci:** slices.MaxFunc, single open for stat+read, pre-alloc ([#448](https://github.com/home-operations/flate/issues/448)) ([ba24794](https://github.com/home-operations/flate/commit/ba2479478b67eecc00fdbe018898bea79e1a7a67))
+* **source:** extract SafeJoin to shared pkg/source/safepath ([#470](https://github.com/home-operations/flate/issues/470)) ([0056fd2](https://github.com/home-operations/flate/commit/0056fd226277229f2926cc4ea6166aa33525adfc))
+* **store,depwait:** remove dead OtherActive, RLock AddListener, sort ListObjects ([#466](https://github.com/home-operations/flate/issues/466)) ([06fa4e1](https://github.com/home-operations/flate/commit/06fa4e19d53129580949be32f9b545cf50ce7226))
+* **testutil:** consolidate mapLister test fixture, replace m[k]=v with maps.Copy ([#456](https://github.com/home-operations/flate/issues/456)) ([7b94c5a](https://github.com/home-operations/flate/commit/7b94c5a6e1536fdaec6d90037189d3041571de03))
+* **testutil:** RSA-2048 → ECDSA P-256 for test certs ([#429](https://github.com/home-operations/flate/issues/429)) ([dc6d853](https://github.com/home-operations/flate/commit/dc6d8533608e9bb2fa5366f78e26c8fd08744e2b))
+* WaitGroup.Go sweep across pkg/{blob,helm,store} tests ([#458](https://github.com/home-operations/flate/issues/458)) ([dc272ab](https://github.com/home-operations/flate/commit/dc272abff5a4eb121deec298b57680deb88d19b5))
+
 ## [0.1.24](https://github.com/home-operations/flate/compare/0.1.23...0.1.24) (2026-05-26)
 
 

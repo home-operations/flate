@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.28](https://github.com/home-operations/flate/compare/0.1.27...0.1.28) (2026-05-28)
+
+
+### Miscellaneous Chores
+
+* **deps:** update go modules ([#484](https://github.com/home-operations/flate/issues/484)) ([767a65d](https://github.com/home-operations/flate/commit/767a65da430a7b422b39f4fd218b240364a298ae))
+
 ## [0.1.27](https://github.com/home-operations/flate/compare/0.1.26...0.1.27) (2026-05-27)
 
 

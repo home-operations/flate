@@ -354,6 +354,65 @@ func (f *Fetcher) canUseMirror(repo *manifest.GitRepository, _ string) bool {
 	return true
 }
 
+// Prewarm runs the mirror update (OpenOrFetch) for repo without
+// allocating a cache slot or materializing a worktree. Intended to be
+// called in parallel with controller startup so the network I/O for
+// bulky repos overlaps with the orchestrator's cheap listener-replay
+// work — by the time the source controller's reconcile lands on this
+// GitRepository, the per-URL mirror lock is uncontested and
+// OpenOrFetch returns instantly (incremental Fetch sees
+// NoErrAlreadyUpToDate).
+//
+// Returns nil when the Fetcher has no Mirrors configured or when repo
+// cannot use the mirror path (submodules / sparse checkout) — the
+// normal Fetch path will run unchanged. Resolves auth, TLS, and proxy
+// the same way Fetch does so a misconfigured GitRepository surfaces
+// the same error here as it would during reconcile.
+//
+// Pre-warm errors are intended to be logged by the caller, not
+// returned to the user — the real Fetch path will hit the same
+// error and produce the canonical status update.
+func (f *Fetcher) Prewarm(ctx context.Context, repo *manifest.GitRepository) error {
+	if repo == nil {
+		return errors.New("git repository is nil")
+	}
+	if repo.URL == "" {
+		return fmt.Errorf("%w: GitRepository %s missing url", manifest.ErrInput, repo.RepoName())
+	}
+	if repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
+		// The real Fetch path would reject this too; skip silently so
+		// the source controller's reconcile is the canonical reporter.
+		return nil
+	}
+	url := repo.URL
+	if rest, ok := strings.CutPrefix(url, "file://"); ok {
+		url = rest
+	}
+	if !f.canUseMirror(repo, url) {
+		return nil
+	}
+	auth, err := f.resolveAuth(repo)
+	if err != nil {
+		return err
+	}
+	tlsCfg, err := f.resolveTLS(repo)
+	if err != nil {
+		return err
+	}
+	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "GitRepository",
+		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
+	if err != nil {
+		return err
+	}
+	restore, err := gittransport.InstallHTTPS(tlsCfg, proxy)
+	if err != nil {
+		return err
+	}
+	defer restore()
+	_, err = f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, mirrorFetchPlan(repo.Reference))
+	return err
+}
+
 // fetchViaMirror runs the bare-mirror path: open-or-update the
 // per-URL mirror, resolve the requested ref to a commit hash, then
 // materialize the tree into the slot's staging dir. PGP verification

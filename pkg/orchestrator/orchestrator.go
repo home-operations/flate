@@ -9,7 +9,10 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
@@ -104,6 +107,16 @@ type Orchestrator struct {
 	helm    *helm.Client
 	staging *kustomize.StagingCache
 	filter  *change.Filter
+
+	// gitFetcher holds the typed *git.Fetcher constructed in New so
+	// Run can drive Prewarm against every discovered GitRepository in
+	// parallel with controller startup. The source controller already
+	// holds the same fetcher wrapped behind source.Wrap; we keep a
+	// direct reference because Prewarm is a typed call (one URL per
+	// GitRepository) the wrapper doesn't expose. nil when the orchestrator
+	// is built without a git fetcher (tests that strip the default via
+	// WithFetcher(KindGitRepository, nil)) — Run's pre-warm pass skips.
+	gitFetcher *git.Fetcher
 
 	// repoRoot is the resolved .git ancestor of cfg.Path (or
 	// cfg.Path when no .git exists). Populated during Bootstrap from
@@ -262,12 +275,13 @@ func New(cfg Config) (*Orchestrator, error) {
 	// payload at dispatch surfaces "<kind> fetcher: unexpected
 	// payload <T>" from the single adapter site rather than from
 	// four nearly-identical type assertions.
+	gitFetcher := &git.Fetcher{
+		Cache:   cache,
+		Secrets: secretGet,
+		Mirrors: mirror.New(layout),
+	}
 	srcCtrl.Fetchers[manifest.KindGitRepository] = source.Wrap(
-		manifest.KindGitRepository, &git.Fetcher{
-			Cache:   cache,
-			Secrets: secretGet,
-			Mirrors: mirror.New(layout),
-		})
+		manifest.KindGitRepository, gitFetcher)
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap(
 		manifest.KindExternalArtifact, &external.Fetcher{})
 	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap(
@@ -308,6 +322,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		staging:        staging,
 		componentCache: manifest.NewComponentCache(),
 		depGraph:       newDependencyGraph(),
+		gitFetcher:     gitFetcher,
 	}
 	return o, nil
 }
@@ -698,9 +713,50 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		case <-ctx.Done():
 		}
 	})
-	o.src.Start(ctx)
-	o.ksc.Start(ctx)
-	o.hrc.Start(ctx)
+	// Start all three controllers in parallel + pre-warm every
+	// GitRepository's bare mirror at the same time. Three benefits:
+	//   1. Each Controller.Start runs AddListener(flush=true), which
+	//      replays every bootstrap object through the listener under
+	//      the store's write lock. The replays themselves still
+	//      serialize on s.mu, but launching them concurrently removes
+	//      goroutine-startup overhead and stays forward-compatible
+	//      with sharded-store work (Phase 3.1).
+	//   2. The three controllers have mutually exclusive Kind filters
+	//      (source → GitRepository/OCIRepository/Bucket/External,
+	//      ksc → Kustomization, hrc → HelmRelease), so the order in
+	//      which their listeners land in the listener-set slice
+	//      doesn't affect correctness — each filter ignores
+	//      everything outside its own Kind.
+	//   3. The cycle-detection listener registered above runs at
+	//      slice position 0 and stays there: errgroup launches the
+	//      controllers AFTER unsubCycles is in place, so future
+	//      EventObjectAdded fires still hit cycle detection before
+	//      KS/HR controllers' listeners — the precondition for the
+	//      preflight-failure routing comment above.
+	//
+	// Mirror pre-warm runs as a fourth sibling: every GitRepository's
+	// per-URL bare mirror is opened/fetched in a bounded errgroup so
+	// the heavy network I/O overlaps with the lightweight controller
+	// startup. The source controller's reconcile then sees a warm
+	// mirror and OpenOrFetch returns instantly. Pre-warm errors are
+	// logged here, not propagated — the source controller will retry
+	// the same path during reconcile and produce the canonical
+	// per-source status update.
+	//
+	// IMPORTANT: pass the unwrapped ctx, not the errgroup's gctx, into
+	// every controller and the pre-warm. Controller listeners submit
+	// reconcile bodies via task.Coalescer.Submit that propagate ctx
+	// into long-running render goroutines; if those captured the
+	// errgroup's gctx, they'd inherit cancellation the moment g.Wait
+	// returns and abort with "context canceled" before any KS/HR could
+	// finish. The errgroup here is a pure barrier, not a cancellation
+	// scope.
+	var g errgroup.Group
+	g.Go(func() error { o.src.Start(ctx); return nil })
+	g.Go(func() error { o.ksc.Start(ctx); return nil })
+	g.Go(func() error { o.hrc.Start(ctx); return nil })
+	g.Go(func() error { o.prewarmGitMirrors(ctx); return nil })
+	_ = g.Wait()
 	close(startupDone)
 	defer o.Stop()
 
@@ -727,6 +783,59 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		<-done
 		return errors.Join(o.finalize(), ctx.Err())
 	}
+}
+
+// prewarmGitMirrors fires Prewarm against every discovered
+// GitRepository in parallel. Called from Run inside the same errgroup
+// that launches the controller Start calls, so the network I/O
+// overlaps with controller startup. The per-URL mirror lock inside
+// mirror.Cache.OpenOrFetch already serializes duplicate-URL pre-warms,
+// so a bounded errgroup is sufficient — no per-URL coalescing needed
+// here.
+//
+// Pre-warm failures are logged at debug level only. The source
+// controller's reconcile of the same GitRepository will retry the
+// fetch path immediately after Start returns and is the canonical
+// reporter for per-source errors (auth, TLS, missing-secret). Logging
+// at error level here would double-report transient network failures
+// users see in the per-resource status output.
+//
+// No-op when:
+//   - The orchestrator was built without a git fetcher (test path
+//     that strips the default via WithFetcher(KindGitRepository, nil)).
+//   - The git fetcher has no Mirrors configured.
+//   - There are no GitRepository objects in the store.
+func (o *Orchestrator) prewarmGitMirrors(ctx context.Context) {
+	if o.gitFetcher == nil || o.gitFetcher.Mirrors == nil {
+		return
+	}
+	repos := store.ListAs[*manifest.GitRepository](o.store, manifest.KindGitRepository)
+	if len(repos) == 0 {
+		return
+	}
+	limit := o.cfg.Concurrency
+	if limit <= 0 {
+		// Mirror the task.NewBounded default — I/O-bound work, cap at
+		// 4x NumCPU so a tiny machine with many GitRepositories still
+		// makes progress, and a huge fleet doesn't fork-bomb the file
+		// descriptors / git transport pool.
+		limit = runtime.NumCPU() * 4
+	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(limit)
+	for _, repo := range repos {
+		repo := repo
+		g.Go(func() error {
+			if err := o.gitFetcher.Prewarm(gctx, repo); err != nil {
+				slog.Debug("git: mirror prewarm failed (source controller will retry)",
+					"git_repository", repo.Namespace+"/"+repo.Name,
+					"url", repo.URL,
+					"err", err)
+			}
+			return nil
+		})
+	}
+	_ = g.Wait()
 }
 
 // Render is the structured embed-friendly entry point: Bootstrap +

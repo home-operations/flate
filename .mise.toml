@@ -17,6 +17,19 @@ run = "go vet ./..."
 description = "Run tests with coverage"
 run = "go test $(go list ./...) -coverprofile cover.out"
 
+[tasks.bench]
+description = "Run benchmark suite (use BENCH=Pattern to filter, COUNT=N to repeat)"
+run = """
+mkdir -p bench/results && \
+go test -run=^$ -bench="${BENCH:-.}" -benchmem -count="${COUNT:-1}" -timeout=20m ./pkg/loader ./pkg/change ./pkg/manifest ./pkg/store ./pkg/kustomize ./pkg/helm ./pkg/values ./pkg/depwait ./pkg/diff ./pkg/source/git | tee "bench/results/$(date +%Y%m%dT%H%M%S)-$(git rev-parse --short HEAD)$([ -n "$(git status --porcelain)" ] && echo -dirty).txt"
+"""
+
+[tasks.bench-baseline]
+description = "Refresh bench/baseline.txt by running the bench suite"
+run = """
+go test -run=^$ -bench=. -benchmem -count=5 -timeout=30m ./pkg/loader ./pkg/change ./pkg/manifest ./pkg/store ./pkg/kustomize ./pkg/helm ./pkg/values ./pkg/depwait ./pkg/diff ./pkg/source/git > bench/baseline.txt
+"""
+
 [tasks.lint]
 description = "Run golangci-lint"
 run = "golangci-lint run"

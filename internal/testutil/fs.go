@@ -10,7 +10,11 @@ import (
 
 // WriteFile writes body to root/rel, creating any missing parent
 // directories. Fails the test on any I/O error.
-func WriteFile(t *testing.T, root, rel, body string) {
+//
+// Accepts testing.TB so benchmarks (*testing.B) can share the same
+// fixture helper as unit tests (*testing.T) — fixture building is
+// part of the bench's setup phase, not the measured loop.
+func WriteFile(t testing.TB, root, rel, body string) {
 	t.Helper()
 	p := filepath.Join(root, rel)
 	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {

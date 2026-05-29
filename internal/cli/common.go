@@ -39,6 +39,14 @@ type commonFlags struct {
 	// cacheDir is resolved lazily via resolveCacheRoot and memoized so
 	// multiple lookups within one invocation return the same value.
 	cacheDir string
+	// profileMode selects a runtime profile to capture for the run.
+	// Empty disables profiling; valid values are "cpu", "mem", "block",
+	// "mutex", and "trace". Wired through startProfile in profile.go.
+	profileMode string
+	// profileOut is the directory profile files land in. Defaults to
+	// the current working directory when --profile is set and no
+	// --profile-out is given.
+	profileOut string
 }
 
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
@@ -60,6 +68,10 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
+	fs.StringVar(&f.profileMode, "profile", "",
+		"write a runtime profile: cpu, mem, block, mutex, or trace (off by default)")
+	fs.StringVar(&f.profileOut, "profile-out", ".",
+		"directory to write profile files into (used with --profile)")
 }
 
 // skipResourceKinds delegates to helm.Options.SkipResourceKinds so

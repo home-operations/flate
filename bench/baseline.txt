@@ -1,0 +1,2 @@
+# Baseline pending — regenerate with `mise run bench-baseline` once
+# Phase 0.1's benchmark suite has landed.

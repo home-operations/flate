@@ -15,6 +15,7 @@ Thumbs.db
 # Others
 .dev/
 .run/
+bench/results/
 bin/
 dist/
 tmp/

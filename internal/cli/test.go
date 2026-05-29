@@ -53,6 +53,11 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if err := c.requireOutput(); err != nil {
 				return err
 			}
+			stopProfile, err := startProfile(c.profileMode, c.profileOut)
+			if err != nil {
+				return err
+			}
+			defer stopProfile()
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr

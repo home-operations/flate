@@ -61,6 +61,11 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
 				return err
 			}
+			stopProfile, err := startProfile(c.profileMode, c.profileOut)
+			if err != nil {
+				return err
+			}
+			defer stopProfile()
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr

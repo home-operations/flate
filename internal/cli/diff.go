@@ -120,6 +120,11 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 	if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputName); err != nil {
 		return err
 	}
+	stopProfile, err := startProfile(c.profileMode, c.profileOut)
+	if err != nil {
+		return err
+	}
+	defer stopProfile()
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
 	if orig.O == nil || current.O == nil {
 		return runErr
@@ -158,6 +163,11 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	if err := c.requireOutput(format.Output(diff.FormatDiff), format.OutputYAML, format.OutputJSON); err != nil {
 		return err
 	}
+	stopProfile, err := startProfile(c.profileMode, c.profileOut)
+	if err != nil {
+		return err
+	}
+	defer stopProfile()
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
 	if orig.O == nil || current.O == nil {
 		return runErr

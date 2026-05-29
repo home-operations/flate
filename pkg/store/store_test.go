@@ -878,3 +878,121 @@ func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
 		t.Errorf("listener missed the post-registration definite-post event (saw %d, want 1) — non-flush race regression", got)
 	}
 }
+
+// TestStore_ListenerSnapshotPool_NoLostEvents stresses the pooled
+// listener-snapshot path under concurrent fires. With 10 goroutines
+// firing 100 events each against a 50-listener set, every listener
+// must observe every event — losing one means the pool aliasing
+// is wrong (the dispatcher iterated a slice that had already been
+// released and recycled by another fire). Run under -race for the
+// full guarantee.
+func TestStore_ListenerSnapshotPool_NoLostEvents(t *testing.T) {
+	s := New()
+	const (
+		numListeners = 50
+		numFirers    = 10
+		eventsPer    = 100
+	)
+	totalEvents := int64(numFirers * eventsPer)
+	wantPerListener := totalEvents
+
+	counts := make([]atomic.Int64, numListeners)
+	for i := range numListeners {
+		i := i
+		s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+			counts[i].Add(1)
+		}, false)
+	}
+
+	var wg sync.WaitGroup
+	for g := range numFirers {
+		wg.Go(func() {
+			for n := range eventsPer {
+				// Distinct names per (goroutine, event) so the
+				// AddObject dedup never short-circuits — each call
+				// must fire EventObjectAdded.
+				name := fmt.Sprintf("g%d-n%d", g, n)
+				s.AddObject(newCM(name, "ns"))
+			}
+		})
+	}
+	wg.Wait()
+
+	for i := range numListeners {
+		if got := counts[i].Load(); got != wantPerListener {
+			t.Errorf("listener[%d] observed %d events, want %d (pool aliasing dropped a fire?)", i, got, wantPerListener)
+		}
+	}
+}
+
+// TestStore_SetConditionLocked_StableSliceLength asserts the in-place
+// rebuild contract for setConditionLocked: mutating the same condition
+// type N times leaves the conditions slice at length 1, not N. The
+// pre-fix implementation rebuilt the slice from scratch on every
+// transition (O(N) allocations across N transitions); the in-place
+// overwrite drops every allocation past the first.
+//
+// Counting GetConditions length is sufficient — the contract is "one
+// entry per unique Type, in-place updates do not grow the slice".
+func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
+	s := New()
+	id := newCM("a", "ns").Named()
+
+	for i := range 100 {
+		// Alternate status/message so every call is non-equal — the
+		// no-op short-circuit must NOT kick in, forcing each call
+		// through the overwrite branch.
+		status := StatusPending
+		if i%2 == 0 {
+			status = StatusReady
+		}
+		s.UpdateStatus(id, status, fmt.Sprintf("iter-%d", i))
+	}
+
+	conds := s.GetConditions(id)
+	if got := len(conds); got != 1 {
+		t.Errorf("conditions slice length = %d after 100 same-type mutations, want 1", got)
+	}
+}
+
+// TestStore_SetConditionLocked_AppendsDistinctTypes pins the
+// fall-through-to-append path for new condition types: a Healthy
+// transition on top of an existing Ready must produce a 2-entry
+// slice, with both entries preserved across subsequent same-type
+// updates. The in-place mutation rule applies per-Type, not globally.
+func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
+	s := New()
+	id := newCM("a", "ns").Named()
+
+	s.UpdateStatus(id, StatusReady, "ok")
+	s.SetCondition(id, metav1.Condition{
+		Type:    ConditionHealthy,
+		Status:  metav1.ConditionTrue,
+		Reason:  "Healthy",
+		Message: "healthy",
+	})
+
+	conds := s.GetConditions(id)
+	if got := len(conds); got != 2 {
+		t.Fatalf("conditions length = %d, want 2 (Ready + Healthy)", got)
+	}
+
+	// Mutating one in place must leave the other alone and keep length stable.
+	s.UpdateStatus(id, StatusFailed, "boom")
+	conds = s.GetConditions(id)
+	if got := len(conds); got != 2 {
+		t.Errorf("conditions length = %d after Ready transition, want 2", got)
+	}
+	var sawReady, sawHealthy bool
+	for _, c := range conds {
+		switch c.Type {
+		case ConditionReady:
+			sawReady = true
+		case ConditionHealthy:
+			sawHealthy = true
+		}
+	}
+	if !sawReady || !sawHealthy {
+		t.Errorf("expected both Ready and Healthy; sawReady=%v sawHealthy=%v", sawReady, sawHealthy)
+	}
+}

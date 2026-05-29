@@ -201,24 +201,48 @@ func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
 // identical re-write is a no-op). Caller MUST hold s.mu — used both
 // by SetCondition (which takes the lock itself) and by Refire (which
 // already holds the lock for an atomic check-and-act).
+//
+// Mutates the existing slice in place when cond.Type already exists.
+// The hot path is "same condition type, new status/message" (every
+// reconcile transition flips the Ready condition); the prior
+// implementation rebuilt the full slice on each hit, allocating an
+// O(len(prev)) backing array per update. In-place overwrite drops
+// that allocation entirely while preserving the no-op fast path
+// (identical re-write returns the original slice with changed=false).
+//
+// Appending a never-seen type still allocates — that's the normal
+// slice-growth path and unavoidable. The Conditions slice is short
+// (Ready + occasional Healthy) so the steady state hits the
+// overwrite branch on every reconcile.
+//
+// The returned slice ALIASES s.conditions[id] when an existing entry
+// is overwritten (it IS the live backing array). Listeners that read
+// the slice MUST do so before the next write under s.mu — current
+// callers project a StatusInfo immediately under the same lock, so
+// no aliasing hazard exists today. A future caller that holds onto
+// the returned slice past s.mu's release would observe further
+// mutations and MUST copy first; statusInfoFromConditions matches
+// this contract by reading values out of the slice in-place.
 func (s *Store) setConditionLocked(id manifest.NamedResource, cond Condition) (updated []Condition, changed bool) {
 	prev := s.conditions[id]
-	updated = make([]Condition, 0, len(prev)+1)
-	replaced := false
-	for _, c := range prev {
-		if c.Type == cond.Type {
-			if conditionEqual(c, cond) {
-				return prev, false
-			}
-			updated = append(updated, cond)
-			replaced = true
+	for i := range prev {
+		if prev[i].Type != cond.Type {
 			continue
 		}
-		updated = append(updated, c)
+		if conditionEqual(prev[i], cond) {
+			return prev, false
+		}
+		prev[i] = cond
+		// s.conditions[id] already references this backing array —
+		// no reassignment needed. Returning prev (now mutated) keeps
+		// the original allocation alive instead of replacing it.
+		return prev, true
 	}
-	if !replaced {
-		updated = append(updated, cond)
-	}
+	// New condition type: extend the slice. This branch is rare
+	// (Ready + Healthy is the only multi-type combination flate
+	// emits today) so the per-call allocation cost is amortized
+	// across the lifetime of the resource.
+	updated = append(prev, cond)
 	s.conditions[id] = updated
 	return updated, true
 }

@@ -174,12 +174,20 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 // a no-op closure with no allocation — AddRendered always dispatches
 // (so the listener-contract gap is closed) and must stay cheap on
 // the render hot path when nothing's listening.
+//
+// The snapshot slice is drawn from a sync.Pool keyed on capacity
+// bucket and released back after dispatch via defer (so a panicking
+// listener still returns it). The returned closure owns the slice
+// exclusively — the dispatcher MUST NOT alias it past the closure
+// call. listenerSet.snapshot is the only entry to the pool; never
+// retain the result beyond fireUnderLock's returned closure.
 func (s *Store) fireUnderLock(event EventKind, id manifest.NamedResource, payload any) func() {
 	listeners := s.listeners[event].snapshot()
 	if len(listeners) == 0 {
 		return func() {}
 	}
 	return func() {
+		defer releaseListenerSnapshot(listeners)
 		for _, fn := range listeners {
 			safeInvoke(fn, id, payload)
 		}
@@ -242,15 +250,92 @@ func (l *listenerSet) remove(id int64) {
 // allocating — AddRendered is on the render hot path, and the
 // listener-contract guarantee shouldn't cost an allocation per
 // rendered doc when nothing's listening for that kind.
+//
+// Non-empty snapshots are drawn from listenerSnapshotPools, bucketed
+// by capacity (16/64/256/1024). Callers MUST hand the result to
+// releaseListenerSnapshot exactly once after dispatch and MUST NOT
+// retain any reference to the slice past that point — the slice is
+// recycled and a future fire will overwrite its contents. See
+// fireUnderLock for the canonical release pattern.
 func (l *listenerSet) snapshot() []Listener {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if len(l.entries) == 0 {
 		return nil
 	}
-	out := make([]Listener, len(l.entries))
-	for i, e := range l.entries {
-		out[i] = e.fn
+	bucket := poolBucket(len(l.entries))
+	out := *listenerSnapshotPools[bucket].Get().(*[]Listener)
+	// Reset to zero length; release nils out entries on Put so the
+	// pooled slice carries no stale closure references, but the
+	// length is whatever the previous fire grew it to. Truncate
+	// here and let append below land each listener back.
+	out = out[:0]
+	for _, e := range l.entries {
+		out = append(out, e.fn)
 	}
 	return out
+}
+
+// listenerSnapshotPools holds reusable []Listener backing arrays
+// bucketed by capacity. Bucket boundaries (16/64/256/1024) cover the
+// observed listener-fanout shape: most events fire against <16
+// listeners (per-kind controller subscriptions); a few high-fanout
+// fixtures (the orchestrator's parallel test harness) reach into
+// the hundreds. A 4-bucket scheme keeps the pool footprint bounded
+// while letting each fire land in a same-or-larger slot.
+//
+// The pool stores *[]Listener (pointer-to-slice) — sync.Pool
+// internally retains values by interface{}, and stashing a bare
+// []Listener would force an alloc on every Put for the slice
+// header escape. Pointer-to-slice keeps the put alloc-free.
+var listenerSnapshotPools = [4]sync.Pool{
+	{New: func() any { s := make([]Listener, 0, 16); return &s }},
+	{New: func() any { s := make([]Listener, 0, 64); return &s }},
+	{New: func() any { s := make([]Listener, 0, 256); return &s }},
+	{New: func() any { s := make([]Listener, 0, 1024); return &s }},
+}
+
+// poolBucket maps a listener count (or slice capacity at release
+// time) to a listenerSnapshotPools index. Inputs above the largest
+// bucket round down to the 1024-cap bucket — those slices grow
+// past the pooled capacity on Get's append and the runtime
+// reallocates a fresh backing array, but the pooled header is
+// still recyclable for the next fire of comparable size.
+func poolBucket(n int) int {
+	switch {
+	case n <= 16:
+		return 0
+	case n <= 64:
+		return 1
+	case n <= 256:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// releaseListenerSnapshot hands snap back to the appropriate pool.
+// No-op for nil (the empty-set fast path from snapshot). Callers MUST
+// drop every reference to snap after calling this — a later fire
+// will recycle the backing array and any retained alias would race
+// with that fire's writes.
+//
+// Bucket selection uses capacity (not length), matching the size
+// the slice was drawn at. A slice that grew past its original
+// bucket via append still returns to whichever bucket its current
+// cap matches; the bucket-down rule means an over-large slice
+// lands in the largest pool slot, which is the correct home for
+// the next fire that happens to need that much room.
+func releaseListenerSnapshot(snap []Listener) {
+	if snap == nil {
+		return
+	}
+	// Clear listener references so the pool doesn't pin payload
+	// closures (each Listener may close over arbitrary state).
+	for i := range snap {
+		snap[i] = nil
+	}
+	bucket := poolBucket(cap(snap))
+	snap = snap[:0]
+	listenerSnapshotPools[bucket].Put(&snap)
 }

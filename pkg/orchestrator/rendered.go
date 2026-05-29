@@ -56,13 +56,41 @@ func (r *renderedSet) MarkRendered(parent, child manifest.NamedResource) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// First-write-wins: a child emitted by multiple parents (rare —
-	// kustomize replacements/components patterns) keeps its initial
-	// attribution. Without this guard, PR #361's fingerprint-dedup
-	// replay re-runs MarkRendered on every reconcile of every parent
-	// and silently swaps attribution to whichever parent reconciled
-	// most recently — breaking detectOrphans / ParentOf / RS-extension
-	// queries that subsequently read the wrong parent.
+	r.markLocked(parent, child)
+}
+
+// MarkRenderedBatch records multiple parent→child edges atomically
+// under a single lock acquisition. Used by the KS controller's
+// emitRenderedChildren loop, which would otherwise pay N full Lock
+// acquisitions on r.mu for the N children of a single render. Same
+// semantics as N successive MarkRendered calls (self-edges dropped,
+// first-write-wins on duplicates). No-op for an empty children slice.
+func (r *renderedSet) MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
+	if len(children) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, child := range children {
+		if parent == child {
+			continue
+		}
+		r.markLocked(parent, child)
+	}
+}
+
+// markLocked is the lock-held body shared by MarkRendered and
+// MarkRenderedBatch. Caller MUST hold r.mu (write lock). Drops
+// self-edges and applies first-write-wins on duplicate children.
+//
+// First-write-wins: a child emitted by multiple parents (rare —
+// kustomize replacements/components patterns) keeps its initial
+// attribution. Without this guard, PR #361's fingerprint-dedup
+// replay re-runs MarkRendered on every reconcile of every parent
+// and silently swaps attribution to whichever parent reconciled
+// most recently — breaking detectOrphans / ParentOf / RS-extension
+// queries that subsequently read the wrong parent.
+func (r *renderedSet) markLocked(parent, child manifest.NamedResource) {
 	if _, exists := r.parents[child]; exists {
 		return
 	}

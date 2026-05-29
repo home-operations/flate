@@ -48,15 +48,22 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		}
 		objs = append(objs, parsed{obj: obj, reconcilable: shouldDispatchAsObject(obj)})
 	}
+	// Accumulate every reconcilable child's id across both passes so
+	// the renderedSet write can flush through MarkRenderedBatch in a
+	// single lock acquisition. N children → 1 r.mu.Lock instead of N
+	// (the prior per-child markRendered loop was the contention hot
+	// spot on KS-heavy fixtures).
+	rendered := make([]manifest.NamedResource, 0, len(objs))
 	// Pass 1 — data first.
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			continue
 		}
 		if p.reconcilable {
-			c.keepEmitted(id, p.obj.Named())
+			childID := p.obj.Named()
+			c.keepEmitted(id, childID)
 			c.Store.AddObject(p.obj)
-			c.markRendered(id, p.obj.Named())
+			rendered = append(rendered, childID)
 		} else {
 			c.Store.AddRendered(p.obj)
 		}
@@ -65,11 +72,13 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 	var leaves []manifest.BaseManifest
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
-			c.keepEmitted(id, p.obj.Named())
-			c.markRendered(id, p.obj.Named())
+			childID := p.obj.Named()
+			c.keepEmitted(id, childID)
+			rendered = append(rendered, childID)
 			leaves = append(leaves, p.obj)
 		}
 	}
+	c.markRenderedBatch(id, rendered)
 	c.Store.AddObjects(leaves)
 }
 

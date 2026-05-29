@@ -251,12 +251,24 @@ func renderedConfigMapValue(docs []map[string]any, key string) string {
 }
 
 // spyTracker records every MarkRendered call for inspection in tests.
+// Batch calls expand into one per-child record so legacy assertions
+// that count individual parent→child emissions stay correct as the
+// controller switches from N MarkRendered calls to one batched flush.
 type spyTracker struct {
 	calls []struct{ parent, child manifest.NamedResource }
 }
 
 func (s *spyTracker) MarkRendered(parent, child manifest.NamedResource) {
 	s.calls = append(s.calls, struct{ parent, child manifest.NamedResource }{parent, child})
+}
+
+func (s *spyTracker) MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
+	for _, child := range children {
+		if parent == child {
+			continue
+		}
+		s.calls = append(s.calls, struct{ parent, child manifest.NamedResource }{parent, child})
+	}
 }
 
 // TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered asserts

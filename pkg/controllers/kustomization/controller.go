@@ -49,8 +49,15 @@ type Controller struct {
 // resolver (combined with the file-loaded path-prefix index), and
 // ResourceSet extension attribution — every place that needs to
 // query parent provenance for render-emitted resources.
+//
+// MarkRenderedBatch records multiple children under a single lock
+// acquisition — used by emitRenderedChildren to avoid N round-trips
+// on the renderedSet mutex when a render emits N reconcilable
+// children. The single-child MarkRendered stays for ad-hoc callers
+// and remains semantically equivalent to MarkRenderedBatch(parent, {child}).
 type RenderTracker interface {
 	MarkRendered(parent, child manifest.NamedResource)
+	MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource)
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto
@@ -106,13 +113,17 @@ func (c *Controller) Configure(opts Options) {
 	c.renderTracker = opts.RenderTracker
 }
 
-// markRendered reports a parent→child render emission to the
+// markRenderedBatch reports parent→child render emissions to the
 // orchestrator's tracker if one is wired; no-op otherwise.
-// Centralizes the nil-check so the reconcile body stays readable.
-func (c *Controller) markRendered(parent, child manifest.NamedResource) {
-	if c.renderTracker != nil {
-		c.renderTracker.MarkRendered(parent, child)
+// Centralizes the nil-check and empty-slice guard so the reconcile
+// body stays readable. The emit loop accumulates every reconcilable
+// child it emits and flushes through this helper exactly once,
+// holding the renderedSet lock for one acquisition instead of N.
+func (c *Controller) markRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
+	if c.renderTracker == nil || len(children) == 0 {
+		return
 	}
+	c.renderTracker.MarkRenderedBatch(parent, children)
 }
 
 // Start registers the listener that drives reconciliation.

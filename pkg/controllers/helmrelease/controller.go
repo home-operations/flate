@@ -31,8 +31,15 @@ import (
 // detectOrphans, the parent resolver, and ResourceSet extension
 // attribution for charts that render source CRs (tofu-controller's
 // OCIRepository pattern, ESO's HelmRepository fallback).
+//
+// MarkRenderedBatch records multiple children under a single lock
+// acquisition — used by the emit loop to avoid N round-trips on the
+// renderedSet mutex when a render emits N source-kind children. The
+// single-child MarkRendered stays for ad-hoc callers and remains
+// semantically equivalent to MarkRenderedBatch(parent, {child}).
 type RenderTracker interface {
 	MarkRendered(parent, child manifest.NamedResource)
+	MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource)
 }
 
 // Controller orchestrates HelmRelease reconciliation. Reconcile-shaping
@@ -447,6 +454,12 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 // HR-emitting-KS is deliberately excluded from this controller.
 func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any) {
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
+	// Accumulate every source-kind child id so the renderedSet write
+	// flushes through MarkRenderedBatch in a single lock acquisition.
+	// Charts that emit multiple source CRs (rare today but
+	// tofu-controller-style HRs already hit this) used to pay N r.mu
+	// acquisitions; one batched write replaces all of them.
+	var rendered []manifest.NamedResource
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
 			name, ns := manifest.DocMetadata(doc)
@@ -465,13 +478,15 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			// synchronously during AddObject must see the extended
 			// keep set when it invokes PreGate. Mirrors the ordering
 			// in kustomization.emitRenderedChildren.
-			c.keepEmitted(id, obj.Named())
+			childID := obj.Named()
+			c.keepEmitted(id, childID)
 			c.Store.AddObject(obj)
-			c.markRendered(id, obj.Named())
+			rendered = append(rendered, childID)
 		} else {
 			c.Store.AddRendered(obj)
 		}
 	}
+	c.markRenderedBatch(id, rendered)
 }
 
 // keepEmitted extends the change filter's keep set so render-emitted
@@ -489,14 +504,18 @@ func (c *Controller) keepEmitted(parent, child manifest.NamedResource) {
 	}
 }
 
-// markRendered reports a parent→child render emission to the
+// markRenderedBatch reports parent→child render emissions to the
 // orchestrator's tracker if one is wired; no-op otherwise.
-// Centralizes the nil-check so the reconcile body stays readable.
-// Mirrors kustomization.markRendered.
-func (c *Controller) markRendered(parent, child manifest.NamedResource) {
-	if c.renderTracker != nil {
-		c.renderTracker.MarkRendered(parent, child)
+// Centralizes the nil-check and empty-slice guard so the reconcile
+// body stays readable. The emit loop accumulates every source-kind
+// child it emits and flushes through this helper exactly once,
+// holding the renderedSet lock for one acquisition instead of N.
+// Mirrors kustomization.markRenderedBatch.
+func (c *Controller) markRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
+	if c.renderTracker == nil || len(children) == 0 {
+		return
 	}
+	c.renderTracker.MarkRenderedBatch(parent, children)
 }
 
 // collectHRDeps returns hr's typed dependsOn entries (carrying any

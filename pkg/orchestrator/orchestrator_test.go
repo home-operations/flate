@@ -920,3 +920,222 @@ spec:
 		t.Errorf("rendered %s missing after Run; producer reconcile did not materialize the substituteFrom CM", cmID)
 	}
 }
+
+// TestOrchestrator_BootstrapIsIdempotent locks the A.1 invariant:
+// Bootstrap mutates orchestrator state (sourceFiles, parentOf,
+// existence, depGraph, componentCache, filter). A second call must
+// be a no-op so any caller (Render, embedders, test harnesses) that
+// runs through Bootstrap twice doesn't replay discovery and double-
+// mutate those indexes.
+//
+// Probes via three signals that differ pre/post fix:
+//  1. Store object counts must not change. Discovery's AddObject is
+//     idempotent today but this is the hard fence against future
+//     accumulation logic.
+//  2. The change.Filter pointer must be stable. Pre-fix,
+//     buildChangeFilter ran twice and replaced o.filter with a brand-
+//     new instance — the second filter dropped any OnAdd hook the
+//     first pass wired into the store's listener set.
+//  3. o.bootstrapped must already be true before the second call,
+//     pinning the guard's read site.
+func TestOrchestrator_BootstrapIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	origDir := t.TempDir()
+	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hello
+data: {k: v}
+`)
+	// Baseline with different content forces changed-only mode, which
+	// makes buildChangeFilter actually construct a filter we can pin
+	// across the two Bootstrap calls.
+	testutil.WriteFile(t, origDir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./other
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+
+	o, err := New(Config{Path: dir, PathOrig: origDir, WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(o.Stop)
+
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap (1st): %v", err)
+	}
+	if !o.bootstrapped {
+		t.Fatal("orchestrator.bootstrapped must be true after first Bootstrap")
+	}
+	ksCount1 := len(o.Store().ListObjects(manifest.KindKustomization))
+	cmCount1 := len(o.Store().ListObjects(manifest.KindConfigMap))
+	filter1 := o.Filter()
+	if filter1 == nil {
+		t.Fatal("expected non-nil change filter when PathOrig differs from Path")
+	}
+
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap (2nd): %v", err)
+	}
+	ksCount2 := len(o.Store().ListObjects(manifest.KindKustomization))
+	cmCount2 := len(o.Store().ListObjects(manifest.KindConfigMap))
+	filter2 := o.Filter()
+
+	if ksCount1 != ksCount2 {
+		t.Errorf("Kustomization count differs across Bootstrap calls: %d -> %d", ksCount1, ksCount2)
+	}
+	if cmCount1 != cmCount2 {
+		t.Errorf("ConfigMap count differs across Bootstrap calls: %d -> %d", cmCount1, cmCount2)
+	}
+	if filter1 != filter2 {
+		t.Errorf("change filter pointer must be stable across Bootstrap calls; "+
+			"got %p -> %p (pre-fix buildChangeFilter re-ran and constructed a fresh filter)",
+			filter1, filter2)
+	}
+	// Sentinel: the apps KS must be present after both passes — never
+	// duplicated, never dropped. The Store is keyed by NamedResource
+	// so a true duplicate would be a no-op; this check pins that the
+	// canonical id is reachable post second-Bootstrap.
+	appsID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	if got := o.Store().GetObject(appsID); got == nil {
+		t.Errorf("apps KS missing after second Bootstrap")
+	}
+}
+
+// TestOrchestrator_RenderCalledTwiceProducesIdenticalArtifacts pins
+// the embedder contract: a second Render on the same orchestrator
+// returns the same Result.Manifests. Render itself is sync.Once-
+// guarded since the controllers' Configure hooks panic if invoked
+// after Start; the cache returns the first call's Result/err pair.
+func TestOrchestrator_RenderCalledTwiceProducesIdenticalArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hello
+data: {k: v}
+`)
+
+	o, err := New(Config{Path: dir, WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(o.Stop)
+
+	res1, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render (1st): %v", err)
+	}
+	res2, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render (2nd): %v", err)
+	}
+
+	if len(res1.Manifests) != len(res2.Manifests) {
+		t.Fatalf("Render.Manifests key count differs: %d -> %d", len(res1.Manifests), len(res2.Manifests))
+	}
+	for id, mans1 := range res1.Manifests {
+		mans2, ok := res2.Manifests[id]
+		if !ok {
+			t.Errorf("second Render dropped key %s", id)
+			continue
+		}
+		if len(mans1) != len(mans2) {
+			t.Errorf("Render.Manifests[%s] doc count differs: %d -> %d", id, len(mans1), len(mans2))
+			continue
+		}
+		for i := range mans1 {
+			k1, _ := mans1[i]["kind"].(string)
+			k2, _ := mans2[i]["kind"].(string)
+			md1, _ := mans1[i]["metadata"].(map[string]any)
+			md2, _ := mans2[i]["metadata"].(map[string]any)
+			n1, _ := md1["name"].(string)
+			n2, _ := md2["name"].(string)
+			if k1 != k2 || n1 != n2 {
+				t.Errorf("Render.Manifests[%s][%d] differs: (%s/%s) -> (%s/%s)",
+					id, i, k1, n1, k2, n2)
+			}
+		}
+	}
+	if len(res1.Failed) != len(res2.Failed) {
+		t.Errorf("Render.Failed count differs: %d -> %d", len(res1.Failed), len(res2.Failed))
+	}
+	if len(res1.Orphans) != len(res2.Orphans) {
+		t.Errorf("Render.Orphans count differs: %d -> %d", len(res1.Orphans), len(res2.Orphans))
+	}
+}
+
+// TestOrchestrator_RenderErrorPathStopsCleanly pins the A.5 invariant:
+// when Render returns (nil, err) the orchestrator's Stop has already
+// fired, so the staging cache + helm client + controller listeners
+// don't survive in memory until process exit.
+//
+// Detects the bug by probing o.stopOnce: if Render fired Stop, our
+// follow-up stopOnce.Do is a no-op (sync.Once already triggered).
+// Pre-fix the deferred Stop didn't exist, so the probe would still
+// run and flip `probeFired` to true — flagging the leak.
+func TestOrchestrator_RenderErrorPathStopsCleanly(t *testing.T) {
+	// Non-existent path forces Bootstrap -> discovery.Run -> os.Stat
+	// to fail, which is the canonical (nil, err) embed path.
+	o, err := New(Config{Path: "/nonexistent/orchestrator-render-cleanup", WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	res, err := o.Render(context.Background())
+	if err == nil {
+		t.Fatal("expected Render error for non-existent path")
+	}
+	if res != nil {
+		t.Errorf("Render returned non-nil Result on Bootstrap error: %+v", res)
+	}
+
+	// Probe: if Render's deferred Stop fired, stopOnce is already
+	// triggered and this Do is a no-op. Pre-fix the deferred Stop
+	// didn't exist, the orchestrator's staging cache + helm client
+	// would survive in memory, and probeFired would flip true.
+	probeFired := false
+	o.stopOnce.Do(func() { probeFired = true })
+	if probeFired {
+		t.Fatal("Render error path did not fire Stop; staging cache + helm client leaked")
+	}
+
+	// And a separate Stop call must still be a true no-op — the
+	// sync.Once guard composes safely with the deferred Stop above
+	// and any explicit caller Stop. No panic from double-Close.
+	o.Stop()
+}

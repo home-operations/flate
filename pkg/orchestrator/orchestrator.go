@@ -221,6 +221,19 @@ type Orchestrator struct {
 	// miss any source CR discovery already reconciled.
 	bootstrapped bool
 
+	// renderOnce serializes the Run + Result-collection phase so a
+	// second Render returns the cached Result/err pair instead of
+	// re-driving the controllers. The underlying controllers' Configure
+	// hooks panic if invoked after Start (the "reconcile-shaping config
+	// is frozen once dispatch begins" invariant), so a naive re-Run
+	// would panic even with Bootstrap idempotent. Caching at the Render
+	// boundary is the embed-friendly answer: embedders that retry
+	// Render get back the original artifacts without paying the
+	// controller-restart cost.
+	renderOnce   sync.Once
+	renderResult *Result
+	renderErr    error
+
 	// stopOnce guards Stop so a New+Bootstrap-then-abort caller's
 	// manual Stop and Run's deferred Stop don't double-close the
 	// staging cache / controller unsubs.
@@ -390,7 +403,20 @@ func (o *Orchestrator) Filter() *change.Filter { return o.filter }
 // existence-only sources Ready, and prepares the change filter.
 // Delegates the load / expand / alias phase to pkg/discovery; the
 // remainder is dependency validation + change-filter construction.
+//
+// Idempotent: a second call returns nil without re-running discovery.
+// Bootstrap mutates orchestrator state (sourceFiles, parentOf,
+// existence, depGraph, componentCache, filter); replaying it would
+// rebuild the change.Filter from scratch, dropping any OnAdd hook
+// already wired into the store's listener set. Centralizing the
+// guard here means Render, embedders, and test harnesses all get
+// the invariant for free. A partial-failure path that returns before
+// flipping bootstrapped=true leaves the orchestrator eligible for a
+// clean retry on the next call.
 func (o *Orchestrator) Bootstrap(ctx context.Context) error {
+	if o.bootstrapped {
+		return nil
+	}
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
 		ComponentCache: o.componentCache,
@@ -874,8 +900,33 @@ func (o *Orchestrator) prewarmGitMirrors(ctx context.Context) {
 // so the caller sees both the partial output and the failure list.
 // An error from Bootstrap (the load phase) is fatal and returns
 // (nil, err); errors from Run yield (result, err).
+//
+// On any returned error, render defers Stop so embedders that receive
+// (nil, err) — Bootstrap failure paths in particular — don't leak the
+// staging cache tempdir and helm client until process exit. Stop is
+// sync.Once-guarded so the deferred call composes safely with Run's
+// own deferred Stop and any explicit caller Stop.
+//
+// Idempotent: a second call returns the cached Result/err pair from
+// the first. The controllers' Configure hooks panic if invoked after
+// Start (reconcile-shaping config is frozen once dispatch begins), so
+// a re-Run would panic. Caching at this boundary lets embedders retry
+// Render without restarting controllers — pair with Bootstrap's same
+// guarantee guard above.
 func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
-	if err := o.Bootstrap(ctx); err != nil {
+	o.renderOnce.Do(func() {
+		o.renderResult, o.renderErr = o.render(ctx)
+	})
+	return o.renderResult, o.renderErr
+}
+
+func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
+	defer func() {
+		if err != nil {
+			o.Stop()
+		}
+	}()
+	if err = o.Bootstrap(ctx); err != nil {
 		return nil, err
 	}
 	runErr := o.Run(ctx)

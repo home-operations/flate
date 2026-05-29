@@ -94,6 +94,17 @@ type Config struct {
 	// The CLI flag `--helm-template-cache-mb` exposes this in MB
 	// units; embedders pass bytes directly.
 	HelmTemplateCacheBytes int64
+
+	// HelmRenderCacheBytes caps the persistent on-disk helm template-
+	// output cache (Phase 3.4a). Cross-process reuse: repeat `flate
+	// build` / `flate diff` invocations against the same checkout
+	// short-circuit the helm render entirely when the chart
+	// fingerprint + resolved values + opts tuple hits the disk layer.
+	// <= 0 disables disk caching; the in-memory layer (sized by
+	// HelmTemplateCacheBytes) continues to operate independently.
+	// The CLI flag `--helm-render-cache-mb` exposes this in MB
+	// units; embedders pass bytes directly.
+	HelmRenderCacheBytes int64
 }
 
 // Orchestrator wires controllers and drives reconciliation.
@@ -234,9 +245,18 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 
 	layout := cacheroot.New(cmp.Or(cfg.CacheDir, cacheroot.Default()))
-	helmClient, err := helm.NewClientWithOptions(layout, helm.ClientOptions{
+	helmClientOpts := helm.ClientOptions{
 		TemplateCacheBytes: cfg.HelmTemplateCacheBytes,
-	})
+		RenderCacheBytes:   cfg.HelmRenderCacheBytes,
+	}
+	// Only point the disk layer at a concrete path when the persistent
+	// cache is enabled (HelmRenderCacheBytes > 0). Leaving the root
+	// blank when disabled lets the disk-cache constructor short-circuit
+	// without performing any directory layout pre-checks.
+	if cfg.HelmRenderCacheBytes > 0 {
+		helmClientOpts.RenderCacheRoot = layout.RenderHelmCache()
+	}
+	helmClient, err := helm.NewClientWithOptions(layout, helmClientOpts)
 	if err != nil {
 		return nil, err
 	}

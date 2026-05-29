@@ -64,6 +64,12 @@ const (
 	HelmTmpDir    = "helm-tmp"
 	HelmCacheDir  = "helm-cache"
 	StageDir      = "stage"
+	// RenderHelmCacheDir holds the persisted helm template-output
+	// cache (Phase 3.4a). Entries are sharded `<root>/render/helm/<hex[:2]>/<hex>`
+	// where <hex> is the full sha256 of the template-cache key. Content
+	// is gzipped rendered manifest bytes. Cross-process safe via atomic
+	// rename; eviction is mtime-LRU bounded by the caller's byte cap.
+	RenderHelmCacheDir = "render/helm"
 )
 
 // pathSep is the platform separator as a string, used by the join
@@ -165,3 +171,9 @@ func (l Layout) HelmCache() string { return app2(l.Root, HelmCacheDir) }
 // Stage returns the kustomize staging root. Per-render stage dirs land
 // inside as flate-stage-<rand>.
 func (l Layout) Stage() string { return app2(l.Root, StageDir) }
+
+// RenderHelmCache returns the parent directory of the persisted helm
+// template-output cache. Entries live under sharded subdirs keyed by
+// the first two hex chars of the cache key; the disk layer in
+// pkg/helm owns the layout below this root.
+func (l Layout) RenderHelmCache() string { return app2(l.Root, RenderHelmCacheDir) }

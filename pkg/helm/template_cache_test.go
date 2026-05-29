@@ -19,7 +19,7 @@ import (
 // facing contract — Template's "cached, ok := c.Get(key)" branch relies
 // on it.
 func TestTemplateCache_GetMissReturnsFalse(t *testing.T) {
-	c := newTemplateCache(1024)
+	c := newTemplateCache(1024, nil)
 	if _, ok := c.Get("nope"); ok {
 		t.Fatalf("expected miss on empty cache, got hit")
 	}
@@ -48,13 +48,13 @@ func TestTemplateCache_NilReceiverNoops(t *testing.T) {
 // Distinct from a positive but tiny limit (which would still construct
 // a cache that just evicts everything).
 func TestTemplateCache_DisabledOnZeroLimit(t *testing.T) {
-	if newTemplateCache(0) != nil {
+	if newTemplateCache(0, nil) != nil {
 		t.Errorf("limit=0 should disable the cache (nil)")
 	}
-	if newTemplateCache(-1) != nil {
+	if newTemplateCache(-1, nil) != nil {
 		t.Errorf("negative limit should disable the cache (nil)")
 	}
-	if newTemplateCache(1) == nil {
+	if newTemplateCache(1, nil) == nil {
 		t.Errorf("positive limit must construct a real cache")
 	}
 }
@@ -66,7 +66,7 @@ func TestTemplateCache_DisabledOnZeroLimit(t *testing.T) {
 // 100-byte entries and a 300-byte limit, only the last 3 inserts
 // survive (matching plan §2.2 step 1).
 func TestTemplateCache_LRUEvictionByLimit(t *testing.T) {
-	c := newTemplateCache(300)
+	c := newTemplateCache(300, nil)
 	for _, k := range []string{"a", "b", "c", "d", "e"} {
 		// Each value is exactly 100 bytes so the math is obvious.
 		c.Put(k, strings.Repeat("x", 100))
@@ -95,7 +95,7 @@ func TestTemplateCache_LRUEvictionByLimit(t *testing.T) {
 // codifies this exact case: insert A B C, Get A, insert D — D's
 // insertion evicts B (the new LRU tail), not A (now the MRU).
 func TestTemplateCache_GetPromotesToFront(t *testing.T) {
-	c := newTemplateCache(300)
+	c := newTemplateCache(300, nil)
 	c.Put("a", strings.Repeat("x", 100))
 	c.Put("b", strings.Repeat("x", 100))
 	c.Put("c", strings.Repeat("x", 100))
@@ -122,7 +122,7 @@ func TestTemplateCache_GetPromotesToFront(t *testing.T) {
 // inserts add their byte cost, evictions subtract it, and a key
 // replacement only counts the new entry's cost (not the sum of both).
 func TestTemplateCache_SizeTracking(t *testing.T) {
-	c := newTemplateCache(1024)
+	c := newTemplateCache(1024, nil)
 	c.Put("x", strings.Repeat("y", 100))
 	if got := c.Size(); got != 100 {
 		t.Errorf("Size after one insert = %d, want 100", got)
@@ -142,7 +142,7 @@ func TestTemplateCache_SizeTracking(t *testing.T) {
 // thrashing every other entry out to make room (the entry would just
 // be the next eviction target anyway).
 func TestTemplateCache_OversizedEntryRejected(t *testing.T) {
-	c := newTemplateCache(100)
+	c := newTemplateCache(100, nil)
 	c.Put("small", strings.Repeat("y", 50))
 	c.Put("huge", strings.Repeat("y", 200))
 	if _, ok := c.Get("huge"); ok {
@@ -160,7 +160,7 @@ func TestTemplateCache_OversizedEntryRejected(t *testing.T) {
 // same key under the same value doesn't grow the cache twice — the
 // stale entry is removed before the fresh one lands.
 func TestTemplateCache_ReplaceDoesNotDuplicate(t *testing.T) {
-	c := newTemplateCache(1024)
+	c := newTemplateCache(1024, nil)
 	c.Put("k", "value")
 	c.Put("k", "value")
 	if got := c.Len(); got != 1 {
@@ -176,7 +176,7 @@ func TestTemplateCache_ReplaceDoesNotDuplicate(t *testing.T) {
 // invariant the LRU might be violating. The pass condition is "no
 // race detector / panic"; the cached values themselves are arbitrary.
 func TestTemplateCache_ConcurrentSafety(t *testing.T) {
-	c := newTemplateCache(64 << 10)
+	c := newTemplateCache(64 << 10, nil)
 	var wg sync.WaitGroup
 	for i := range 32 {
 		wg.Add(1)

@@ -37,6 +37,15 @@ type templateCache struct {
 	size  int64 // current total bytes
 	list  *list.List
 	index map[string]*list.Element
+
+	// disk is the persistent cross-process layer (Phase 3.4a). nil
+	// when disk caching is disabled (RenderCacheBytes <= 0 or empty
+	// RenderCacheRoot). Get falls through to disk on memory miss and
+	// promotes hits to the in-process LRU; Put writes through to disk
+	// after the in-process insert. The disk layer is content-
+	// addressed so two processes pointing at the same root share
+	// entries safely.
+	disk *diskRenderCache
 }
 
 // templateEntry is the value type stored in templateCache.list. cost
@@ -50,41 +59,76 @@ type templateEntry struct {
 }
 
 // newTemplateCache constructs a templateCache with the given byte
-// limit. A limit of 0 (or negative) returns nil — callers wire that
-// through as "caching disabled" and never reach Get/Put.
-func newTemplateCache(limitBytes int64) *templateCache {
-	if limitBytes <= 0 {
+// limit and (optional) disk-backed layer. A limit of 0 (or negative)
+// AND a nil disk cache returns nil — callers wire that through as
+// "caching disabled" and never reach Get/Put.
+//
+// Passing disk != nil with limitBytes <= 0 still returns a valid
+// cache: the in-memory layer becomes a write-through to disk on every
+// Put (size accounting stays at zero, so eviction is a no-op), and
+// Get falls straight through to disk. That shape is useful for
+// embedders that want cross-process reuse without the memory cost of
+// a same-process LRU.
+func newTemplateCache(limitBytes int64, disk *diskRenderCache) *templateCache {
+	if limitBytes <= 0 && disk == nil {
 		return nil
 	}
 	return &templateCache{
 		limit: limitBytes,
 		list:  list.New(),
 		index: map[string]*list.Element{},
+		disk:  disk,
 	}
 }
 
 // Get returns the cached value for key, promoting the entry to the
 // front of the LRU list. Returns (zero, false) on miss or when c is
 // nil (the "caching disabled" sentinel).
+//
+// On an in-memory miss with a wired disk layer, Get reads through to
+// disk and promotes the hit back into the LRU so subsequent same-
+// process Gets stay fast. Cross-process disk hits incur a gunzip read
+// (cheap vs. the helm render they avoid).
 func (c *templateCache) Get(key string) (string, bool) {
 	if c == nil {
 		return "", false
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	el, ok := c.index[key]
+	if el, ok := c.index[key]; ok {
+		c.list.MoveToFront(el)
+		v := el.Value.(*templateEntry).value
+		c.mu.Unlock()
+		return v, true
+	}
+	c.mu.Unlock()
+
+	// In-memory miss. Try the disk layer. Reads run unsynchronized —
+	// atomic-rename writes mean we either see the previous complete
+	// payload or the new one, never a torn read.
+	if c.disk == nil {
+		return "", false
+	}
+	raw, ok := c.disk.Get(key)
 	if !ok {
 		return "", false
 	}
-	c.list.MoveToFront(el)
-	return el.Value.(*templateEntry).value, true
+	v := string(raw)
+	// Promote to the in-memory LRU so the second same-process Get
+	// skips the disk read entirely. Reuses putLocked's eviction
+	// accounting — including the "single entry exceeds limit" guard.
+	c.mu.Lock()
+	c.putLocked(key, v)
+	c.mu.Unlock()
+	return v, true
 }
 
 // Put inserts (or replaces) the entry for key. Evicts least-recently-
 // used entries from the back until the running total is within limit.
-// An entry whose own cost exceeds the limit is rejected (silently —
-// the alternative is "store but immediately evict on the next Put",
-// which churns the list for no benefit).
+// An entry whose own cost exceeds the limit is rejected from the in-
+// memory layer (silently — the alternative is "store but immediately
+// evict on the next Put", which churns the list for no benefit). The
+// disk layer still receives the write — it has its own (much larger)
+// size cap and the oversized-skip heuristic doesn't apply there.
 //
 // nil-receiver no-ops so callers can unconditionally Put after a
 // render without re-checking the constructor wiring.
@@ -92,9 +136,24 @@ func (c *templateCache) Put(key, value string) {
 	if c == nil {
 		return
 	}
-	cost := int64(len(value))
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.putLocked(key, value)
+	c.mu.Unlock()
+	// Write through to the disk layer outside the in-memory lock so
+	// the gzip + atomic-write doesn't hold off concurrent Gets. Put
+	// no-ops on a nil disk receiver.
+	if c.disk != nil {
+		c.disk.Put(key, []byte(value))
+	}
+}
+
+// putLocked inserts (or replaces) the in-memory entry for key. Must
+// be called with c.mu held. Pulled out of Put so Get's disk-promote
+// path can reuse the same eviction accounting without duplicating the
+// "oversized rejected", "replacement drops old", and "evict from
+// back" branches.
+func (c *templateCache) putLocked(key, value string) {
+	cost := int64(len(value))
 	// Replacement: drop the old entry first so the size accounting
 	// stays correct (the replacement's cost may differ from the
 	// previous entry's).

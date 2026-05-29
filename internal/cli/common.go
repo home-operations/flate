@@ -52,6 +52,14 @@ type commonFlags struct {
 	// orchestrator.Config.HelmTemplateCacheBytes into the helm.Client
 	// constructor.
 	helmTemplateCacheMB int
+	// helmRenderCacheMB caps the persistent on-disk helm template-
+	// output cache in megabytes (Phase 3.4a). Default 1024; 0
+	// disables. Plumbed through orchestrator.Config.HelmRenderCacheBytes
+	// into the helm.Client constructor. Cross-process: repeat `flate
+	// build` / `flate diff` runs against the same checkout reuse
+	// previously-rendered manifests instead of re-running
+	// action.Install.RunWithContext.
+	helmRenderCacheMB int
 }
 
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
@@ -82,6 +90,13 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	// debugging the uncached helm render path).
 	fs.IntVar(&f.helmTemplateCacheMB, "helm-template-cache-mb", 256,
 		"size of the in-memory helm template-output cache in megabytes (0 disables)")
+	// 1 GiB default mirrors helm.DefaultRenderCacheBytes. Cross-process:
+	// repeat `flate build`/`flate diff` runs against the same checkout
+	// hit the persistent cache and short-circuit the helm render. 0
+	// disables (useful when debugging the uncached path or in shared
+	// CI runners where disk cost outweighs the rerun savings).
+	fs.IntVar(&f.helmRenderCacheMB, "helm-render-cache-mb", 1024,
+		"size of the persistent on-disk helm template-output cache in megabytes (0 disables)")
 }
 
 // skipResourceKinds delegates to helm.Options.SkipResourceKinds so
@@ -284,6 +299,7 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		AllowMissingSecrets:    c.allowMissingSecrets,
 		CacheDir:               c.resolveCacheRoot(),
 		HelmTemplateCacheBytes: int64(c.helmTemplateCacheMB) << 20,
+		HelmRenderCacheBytes:   int64(c.helmRenderCacheMB) << 20,
 	}
 }
 

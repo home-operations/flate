@@ -29,6 +29,7 @@ func TestLayout_Paths(t *testing.T) {
 		{"HelmTmp", l.HelmTmp(), "/cache/helm-tmp"},
 		{"HelmCache", l.HelmCache(), "/cache/helm-cache"},
 		{"Stage", l.Stage(), "/cache/stage"},
+		{"RenderHelmCache", l.RenderHelmCache(), "/cache/render/helm"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

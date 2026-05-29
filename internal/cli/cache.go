@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,42 @@ func newCacheCmd() *cobra.Command {
 		Short: "Inspect and prune flate's on-disk cache",
 	}
 	cmd.AddCommand(newCacheGCCmd())
+	cmd.AddCommand(newCacheClearRenderCmd())
+	return cmd
+}
+
+// newCacheClearRenderCmd wires `flate cache clear-render` — wipes the
+// persisted helm template-output cache. Cheap to rebuild (every miss
+// just re-runs action.Install) so we don't need an age filter or dry-
+// run dance: it's a one-shot truncate of <root>/render/helm. Useful
+// when a chart's render path changes shape (helm dependency bump,
+// flate's filter pipeline updated) and the user wants to drop the
+// stale entries without waiting for them to age out.
+func newCacheClearRenderCmd() *cobra.Command {
+	cf := &cacheFlags{}
+	cmd := &cobra.Command{
+		Use:   "clear-render",
+		Short: "Delete the persistent helm template-output cache",
+		Long: `Removes <cache-root>/render/helm in its entirety. The next render
+re-populates the cache as templates are computed. Use when a helm
+dependency upgrade or a flate post-render change makes the on-disk
+entries semantically stale faster than the size cap would prune
+them.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			layout := cacheroot.New(cf.resolveRoot())
+			dir := layout.RenderHelmCache()
+			// os.RemoveAll on a non-existent path returns nil — the
+			// "no cache to clear" idempotency is free. Any other
+			// error is a real filesystem fault worth surfacing.
+			if err := os.RemoveAll(dir); err != nil {
+				return fmt.Errorf("clear %s: %w", dir, err)
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "cleared %s\n", dir)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cf.cacheDir, "cache-dir", "",
+		"cache root containing the render cache (defaults to the same path flate uses for fetched artifacts)")
 	return cmd
 }
 

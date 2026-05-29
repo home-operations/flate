@@ -177,6 +177,18 @@ type ClientOptions struct {
 	// cache. <= 0 disables the cache. Use DefaultTemplateCacheBytes
 	// for the project-wide default.
 	TemplateCacheBytes int64
+
+	// RenderCacheBytes caps the persistent on-disk helm template-
+	// output cache (Phase 3.4a). <= 0 disables disk caching. Disk
+	// caching is also disabled when RenderCacheRoot is empty even
+	// if RenderCacheBytes > 0 — the wiring requires both.
+	RenderCacheBytes int64
+
+	// RenderCacheRoot is the on-disk directory the persistent
+	// template-output cache writes into (typically
+	// layout.RenderHelmCache()). Empty disables disk caching even
+	// when RenderCacheBytes > 0.
+	RenderCacheRoot string
 }
 
 // DefaultTemplateCacheBytes is the historical default size of the
@@ -185,8 +197,17 @@ type ClientOptions struct {
 // disables).
 const DefaultTemplateCacheBytes int64 = 256 << 20
 
+// DefaultRenderCacheBytes is the default size of the persistent
+// helm template-output cache: 1 GiB. The CLI surfaces this through
+// the --helm-render-cache-mb flag (1024 by default; 0 disables).
+const DefaultRenderCacheBytes int64 = 1024 << 20
+
 // DefaultClientOptions returns the ClientOptions a vanilla NewClient
-// call uses — historical project defaults baked in.
+// call uses — historical project defaults baked in. Disk caching is
+// off by default at the constructor level: a vanilla NewClient
+// caller hasn't provided a cache root, so we can't safely choose
+// one for them. Callers wanting disk caching populate
+// RenderCacheRoot explicitly (typically from layout.RenderHelmCache()).
 func DefaultClientOptions() ClientOptions {
 	return ClientOptions{
 		TemplateCacheBytes: DefaultTemplateCacheBytes,
@@ -201,10 +222,21 @@ func DefaultClientOptions() ClientOptions {
 // bytes deduplicate across HelmRepositories and across orchestrator
 // embedders.
 //
+// Disk-backed template-output cache defaults to enabled at
+// DefaultRenderCacheBytes, rooted at layout.RenderHelmCache(). When
+// layout.Root is empty (an embedder explicitly opted out of any
+// persistent cache) the disk layer auto-disables so we don't write
+// into the OS tempdir under a synthesised "flate-cache" subdir.
+//
 // Embedders that need to tune cache sizing (TemplateCacheBytes, …)
 // should call NewClientWithOptions instead.
 func NewClient(layout cacheroot.Layout) (*Client, error) {
-	return NewClientWithOptions(layout, DefaultClientOptions())
+	opts := DefaultClientOptions()
+	if layout.Root != "" {
+		opts.RenderCacheBytes = DefaultRenderCacheBytes
+		opts.RenderCacheRoot = layout.RenderHelmCache()
+	}
+	return NewClientWithOptions(layout, opts)
 }
 
 // NewClientWithOptions is NewClient with explicit ClientOptions.
@@ -241,7 +273,10 @@ func NewClientWithOptions(layout cacheroot.Layout, opts ClientOptions) (*Client,
 		chartDownloadLocks: keylock.New[string](),
 		chartBlobs:         blob.NewStore(layout),
 		valuesCache:        values.NewCache(),
-		templateCache:      newTemplateCache(opts.TemplateCacheBytes),
+		templateCache: newTemplateCache(
+			opts.TemplateCacheBytes,
+			newDiskRenderCache(opts.RenderCacheRoot, opts.RenderCacheBytes),
+		),
 	}, nil
 }
 

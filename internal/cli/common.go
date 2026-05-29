@@ -47,6 +47,11 @@ type commonFlags struct {
 	// the current working directory when --profile is set and no
 	// --profile-out is given.
 	profileOut string
+	// helmTemplateCacheMB caps the in-memory helm template-output
+	// cache in megabytes. Default 256; 0 disables. Plumbed through
+	// orchestrator.Config.HelmTemplateCacheBytes into the helm.Client
+	// constructor.
+	helmTemplateCacheMB int
 }
 
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
@@ -72,6 +77,11 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 		"write a runtime profile: cpu, mem, block, mutex, or trace (off by default)")
 	fs.StringVar(&f.profileOut, "profile-out", ".",
 		"directory to write profile files into (used with --profile)")
+	// 256 MiB default mirrors helm.DefaultTemplateCacheBytes. 0 disables
+	// the cache entirely (useful in memory-constrained CI or when
+	// debugging the uncached helm render path).
+	fs.IntVar(&f.helmTemplateCacheMB, "helm-template-cache-mb", 256,
+		"size of the in-memory helm template-output cache in megabytes (0 disables)")
 }
 
 // skipResourceKinds delegates to helm.Options.SkipResourceKinds so
@@ -264,15 +274,16 @@ func resolveBaseline(_ context.Context, c *commonFlags, autoFallback bool) (func
 
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
-		Path:                c.path,
-		PathOrig:            c.pathOrig,
-		HelmOptions:         c.helmOptions(h),
-		WipeSecrets:         true,
-		EnableOCI:           c.enableOCI,
-		RegistryConfig:      c.registryConfig,
-		Concurrency:         c.concurrency,
-		AllowMissingSecrets: c.allowMissingSecrets,
-		CacheDir:            c.resolveCacheRoot(),
+		Path:                   c.path,
+		PathOrig:               c.pathOrig,
+		HelmOptions:            c.helmOptions(h),
+		WipeSecrets:            true,
+		EnableOCI:              c.enableOCI,
+		RegistryConfig:         c.registryConfig,
+		Concurrency:            c.concurrency,
+		AllowMissingSecrets:    c.allowMissingSecrets,
+		CacheDir:               c.resolveCacheRoot(),
+		HelmTemplateCacheBytes: int64(c.helmTemplateCacheMB) << 20,
 	}
 }
 

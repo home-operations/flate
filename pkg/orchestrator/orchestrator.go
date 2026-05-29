@@ -82,6 +82,15 @@ type Config struct {
 	// unaffected. Sensible default for I/O-bound work is
 	// runtime.NumCPU() * 4.
 	Concurrency int
+
+	// HelmTemplateCacheBytes caps the in-memory helm template-output
+	// cache. Repeat HRs with identical effective inputs (chart
+	// fingerprint, resolved values, render options) hit the cache and
+	// skip action.Install.RunWithContext — the single largest CPU +
+	// allocation consumer in the codebase. <= 0 disables the cache.
+	// The CLI flag `--helm-template-cache-mb` exposes this in MB
+	// units; embedders pass bytes directly.
+	HelmTemplateCacheBytes int64
 }
 
 // Orchestrator wires controllers and drives reconciliation.
@@ -205,7 +214,9 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 
 	layout := cacheroot.New(cmp.Or(cfg.CacheDir, cacheroot.Default()))
-	helmClient, err := helm.NewClient(layout)
+	helmClient, err := helm.NewClientWithOptions(layout, helm.ClientOptions{
+		TemplateCacheBytes: cfg.HelmTemplateCacheBytes,
+	})
 	if err != nil {
 		return nil, err
 	}

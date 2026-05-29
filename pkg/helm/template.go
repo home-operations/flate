@@ -22,6 +22,16 @@ import (
 
 // Template renders a HelmRelease and returns the rendered manifest as a
 // single YAML string (multiple documents separated by "---" lines).
+//
+// Output is cached by computeTemplateKey when c.templateCache is wired
+// (NewClient's default, sized by ClientOptions.TemplateCacheBytes).
+// Cache hits skip action.Install.RunWithContext — the single largest
+// CPU + allocation consumer in the codebase (cited at ~300 MB on a
+// 200-HR run). Each key folds in every input that affects the
+// rendered bytes (chart content fingerprint, fully-resolved values,
+// render Options, HR-level action.Install fields like ReleaseName,
+// CRDs policy, hooks, post-renderers) so a stale entry never serves
+// a different render.
 func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, opts Options) (string, error) {
 	loaded, err := c.LoadChart(ctx, hr)
 	if err != nil {
@@ -130,6 +140,21 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		finalValues = values.DeepMerge(base, hrValues)
 	}
 
+	// Output cache: the same (chart fingerprint, finalValues, opts,
+	// hr-fields) tuple deterministically produces the same rendered
+	// manifest. Repeat HRs with the same effective spec hit the cache
+	// and skip inst.RunWithContext — the call cited at ~300 MB of
+	// allocations per 200-HR run. The key folds in every render-
+	// affecting input, so cache hits are byte-identical to the
+	// uncached path (also pinned by an integration test).
+	var key string
+	if c.templateCache != nil {
+		key = computeTemplateKey(loaded.Fingerprint, loaded.Chart, finalValues, opts, hr)
+		if cached, ok := c.templateCache.Get(key); ok {
+			return cached, nil
+		}
+	}
+
 	rel, err := inst.RunWithContext(ctx, loaded.Chart, finalValues)
 	if err != nil {
 		return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
@@ -143,7 +168,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	// rendered output when the HR explicitly enables them or the
 	// CLI overrides. CLI --skip-tests always wins.
 	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
-	return releaseManifest(relV1, opts, disableHooks, skipTests), nil
+	out := releaseManifest(relV1, opts, disableHooks, skipTests)
+	if c.templateCache != nil {
+		c.templateCache.Put(key, out)
+	}
+	return out, nil
 }
 
 // mergeChartValuesFiles is the cache-aware entry point: it consults

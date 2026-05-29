@@ -17,9 +17,20 @@ import (
 )
 
 // ChartLoadResult is the loaded chart plus the on-disk path it came from.
+//
+// Fingerprint, when non-empty, is a content-addressed sha256 hex of
+// the chart's loader.Load inputs (Metadata + Templates + Files +
+// Schema + chart defaults + subchart contents). Computed lazily by
+// LoadChart so the template-output cache can build a stable key
+// without re-walking the chart on every render. Memoized per
+// (Client, path) keyed by the same (mtime, size) fingerprint
+// chartCacheEntry uses, so a mutable OCI re-push invalidates this
+// digest just as it invalidates the cached *chart.Chart pointer.
+// Empty when the template cache is disabled.
 type ChartLoadResult struct {
-	Path  string
-	Chart *chart.Chart
+	Path        string
+	Chart       *chart.Chart
+	Fingerprint string
 }
 
 // locateLocalChart resolves a chart whose source is a fetched on-disk

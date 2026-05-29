@@ -19,11 +19,56 @@ import (
 // the testdata/simple/charts/mychart chart referenced in the plan.
 // Each b.Loop iteration runs one Template — the same shape every HR
 // reconcile drives.
+//
+// With the template-output cache wired (NewClient's default) this
+// benchmark exercises the cache HIT path after the first iteration:
+// the first Template call populates the cache, every subsequent one
+// serves from memory. Compare BenchmarkTemplate_AppTemplateChartUncached
+// for the miss-path baseline.
 func BenchmarkTemplate_AppTemplateChart(b *testing.B) {
 	chartDir := stageBenchChartDir(b)
 	cli, err := NewClient(cacheroot.New(b.TempDir()))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
+	}
+	cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", chartDir))
+
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name:          "mychart",
+			RepoName:      "chart-repo",
+			RepoNamespace: "flux-system",
+			RepoKind:      manifest.KindGitRepository,
+		},
+	}
+	values := map[string]any{"greeting": "hello"}
+	ctx := context.Background()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		out, err := cli.Template(ctx, hr, values, Options{})
+		if err != nil {
+			b.Fatalf("Template: %v", err)
+		}
+		if !strings.Contains(out, "demo-cm") {
+			b.Fatalf("missing rendered name")
+		}
+	}
+}
+
+// BenchmarkTemplate_AppTemplateChartUncached measures helm.Template
+// on the cache MISS path — TemplateCacheBytes=0 disables the cache
+// so every iteration runs action.Install.RunWithContext end to end.
+// This is the Phase 2.2 baseline; comparing against
+// BenchmarkTemplate_AppTemplateChart (cache hit) quantifies the
+// cache's wall-time + allocation savings on warm renders.
+func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
+	chartDir := stageBenchChartDir(b)
+	cli, err := NewClientWithOptions(cacheroot.New(b.TempDir()), ClientOptions{TemplateCacheBytes: 0})
+	if err != nil {
+		b.Fatalf("NewClientWithOptions: %v", err)
 	}
 	cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", chartDir))
 

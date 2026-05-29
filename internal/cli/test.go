@@ -3,17 +3,21 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
+	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// `test` emits a human-readable reconcile report. No structured-output
-// support yet; reject any non-default `-o` so users don't silently get
-// the same plain-text output regardless of what they ask for. When
-// adding json/yaml here later, pass them through requireOutput.
+// `test` emits a human-readable reconcile report. Plain text is the
+// default; `-o markdown` swaps in the GitHub-flavored report shape
+// (pipe-table summary + per-outcome task-list sections) for PR
+// comments. Any other `-o` value is rejected so users don't silently
+// get the same plain-text output regardless of what they ask for.
+// When adding json/yaml here later, pass them through requireOutput.
 
 func newTestCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -50,7 +54,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		Short:   short,
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
-			if err := c.requireOutput(); err != nil {
+			if err := c.requireOutput(format.OutputMarkdown); err != nil {
 				return err
 			}
 			stopProfile, err := startProfile(c.profileMode, c.profileOut)
@@ -79,7 +83,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if name != "" && report.Matched == 0 {
 				return errors.Join(fmt.Errorf("no %s named %q in --path", testKindName(kinds), name), runErr)
 			}
-			if err := report.Write(cmd.OutOrStdout()); err != nil {
+			if err := emitTestReport(cmd.OutOrStdout(), report, c.outputOrDefault(format.OutputText)); err != nil {
 				return errors.Join(err, runErr)
 			}
 			if report.AnyFailed() {
@@ -98,4 +102,17 @@ func testKindName(kinds []string) string {
 		return kinds[0]
 	}
 	return "resource"
+}
+
+// emitTestReport dispatches the report to the renderer that matches
+// the requested -o. The text path (default) keeps the pytest-style
+// output testrunner.Report.Write produces; the markdown path emits
+// the GitHub-flavored shape from testrunner.Report.WriteMarkdown.
+func emitTestReport(w io.Writer, r testrunner.Report, out format.Output) error {
+	switch out {
+	case format.OutputMarkdown:
+		return r.WriteMarkdown(w)
+	default:
+		return r.Write(w)
+	}
 }

@@ -33,13 +33,25 @@ func collectImages(o *orchestrator.Orchestrator, res *orchestrator.Result, c *co
 }
 
 // emitImageList writes a sorted image list — JSON / YAML when
-// requested, otherwise one image per line.
+// requested, a GitHub-flavored bulleted list with `code`-fenced refs
+// under markdown, otherwise one image per line.
 func emitImageList(w io.Writer, imgs []string, out string) error {
 	switch format.Output(out) {
 	case format.OutputJSON:
 		return format.JSON(w, imgs)
 	case format.OutputYAML:
 		return format.YAML(w, imgs)
+	case format.OutputMarkdown:
+		// Bulleted list — the image refs are flat strings, so a pipe
+		// table buys nothing over `- \`ref\`` which renders inline
+		// code in PR comments and is the natural counterpart to the
+		// one-per-line plain-text shape.
+		for _, img := range imgs {
+			if _, err := io.WriteString(w, "- `"+img+"`\n"); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	for _, img := range imgs {
 		if _, err := io.WriteString(w, img+"\n"); err != nil {

@@ -156,6 +156,22 @@ func TestEnv_HelpAdvertisesEnvVars(t *testing.T) {
 			t.Errorf("--help should not advertise %q — env binding is skipped for it", banned)
 		}
 	}
+	// The `-o`/`--output` flag's description line must mention
+	// markdown so users discover the format alongside the existing
+	// table/yaml/json/name set.
+	var outputLine string
+	for line := range strings.SplitSeq(stdout, "\n") {
+		if strings.Contains(line, "--output") {
+			outputLine = line
+			break
+		}
+	}
+	if outputLine == "" {
+		t.Fatalf("--help missing --output line:\n%s", stdout)
+	}
+	if !strings.Contains(outputLine, "markdown") {
+		t.Errorf("--output description should advertise markdown: %q", outputLine)
+	}
 }
 
 // TestEnvKey pins the kebab→snake transform so future refactors don't

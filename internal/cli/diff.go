@@ -157,10 +157,12 @@ func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []stri
 }
 
 func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kind, name string) error {
-	// diff has no `name` output mode; only diff/yaml/json are
+	// diff has no `name` output mode; only diff/yaml/json/markdown are
 	// meaningful. Reject early so the user sees a clear error instead
-	// of "unknown diff format" from pkg/diff.
-	if err := c.requireOutput(format.Output(diff.FormatDiff), format.OutputYAML, format.OutputJSON); err != nil {
+	// of "unknown diff format" from pkg/diff. OutputMarkdown's string
+	// value matches diff.FormatMarkdown so the cast below routes it to
+	// the markdown renderer without an extra switch.
+	if err := c.requireOutput(format.Output(diff.FormatDiff), format.OutputYAML, format.OutputJSON, format.OutputMarkdown); err != nil {
 		return err
 	}
 	stopProfile, err := startProfile(c.profileMode, c.profileOut)

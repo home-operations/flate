@@ -79,7 +79,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 			"that only materialize in the live cluster. "+
 			"Verify/cert/proxy secretRefs still fail loud.")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
-	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, yaml, json, name")
+	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, yaml, json, name, markdown")
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.StringVar(&f.cacheDir, "cache-dir", "",

@@ -565,6 +565,103 @@ func TestRun_DiffImages_RespectsNamespaceFailures(t *testing.T) {
 	}
 }
 
+// TestBuild_OutputMarkdown pins the build → markdown shape: every
+// rendered doc lands under an `### <kind>/...` heading wrapping a
+// fenced YAML block (the Layer A MarkdownDocs contract).
+func TestBuild_OutputMarkdown(t *testing.T) {
+	path := writeFixture(t)
+	stdout, stderr, code := runCLI(t, "build", "all", "-o", "markdown", "--path", path)
+	if code != 0 {
+		t.Fatalf("build all -o markdown exited %d: %s", code, stderr)
+	}
+	for _, want := range []string{"```yaml", "### "} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in markdown output:\n%s", want, stdout)
+		}
+	}
+}
+
+// TestGet_OutputMarkdown pins the get → markdown shape: a GFM pipe
+// table with the standard header/separator/data rows the format
+// package emits.
+func TestGet_OutputMarkdown(t *testing.T) {
+	path := writeFixture(t)
+	stdout, stderr, code := runCLI(t, "get", "ks", "-o", "markdown", "--path", path)
+	if code != 0 {
+		t.Fatalf("get ks -o markdown exited %d: %s", code, stderr)
+	}
+	for _, want := range []string{"| ", "| --- "} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in markdown table:\n%s", want, stdout)
+		}
+	}
+}
+
+// TestGetAll_OutputMarkdown covers the cluster-summary path:
+// `## Cluster summary` heading + a two-row pipe table.
+func TestGetAll_OutputMarkdown(t *testing.T) {
+	path := writeFixture(t)
+	stdout, stderr, code := runCLI(t, "get", "all", "-o", "markdown", "--path", path)
+	if code != 0 {
+		t.Fatalf("get all -o markdown exited %d: %s", code, stderr)
+	}
+	for _, want := range []string{"## Cluster summary", "Kustomizations", "HelmReleases", "| --- "} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in cluster summary markdown:\n%s", want, stdout)
+		}
+	}
+}
+
+// TestTest_OutputMarkdown pins the test → markdown shape: the
+// pipe-table summary header that testrunner.Report.WriteMarkdown
+// emits, plus the per-outcome H2 section for the only outcome the
+// fixture can produce (Passed).
+func TestTest_OutputMarkdown(t *testing.T) {
+	path := writeFixture(t)
+	stdout, stderr, code := runCLI(t, "test", "ks", "-o", "markdown", "--path", path)
+	if code != 0 {
+		t.Fatalf("test ks -o markdown exited %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "| Passed | Skipped | Failed | Matched |") {
+		t.Errorf("missing summary header:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "## Passed") &&
+		!strings.Contains(stdout, "## Skipped") &&
+		!strings.Contains(stdout, "## Failed") {
+		t.Errorf("missing at least one outcome section:\n%s", stdout)
+	}
+}
+
+// TestDiff_OutputMarkdown drives a non-trivial diff (baseline tree
+// has a ConfigMap with different data than current) and asserts the
+// Layer B markdown render: the `# Diff` heading, an `### <header>`
+// per resource, and the ```diff fence wrapping the dyff body.
+func TestDiff_OutputMarkdown(t *testing.T) {
+	current := writeFixture(t)
+	orig := t.TempDir()
+	copyTree(t, current, filepath.Join(orig, "kubernetes"))
+	// Mutate the baseline ConfigMap so the diff renders a non-empty
+	// hunk. Without the delta `diff.Render` returns the empty-set
+	// "_No changes._" body and the ```diff fence assertion misses.
+	mustWrite(t, filepath.Join(orig, "kubernetes", "apps", "cm.yaml"), `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello, namespace: apps}
+data:
+  greeting: hola
+`)
+	stdout, stderr, code := runCLI(t, "diff", "ks", "-o", "markdown",
+		"--path", current, "--path-orig", filepath.Join(orig, "kubernetes"))
+	if code != 0 {
+		t.Fatalf("diff ks -o markdown exited %d: %s", code, stderr)
+	}
+	for _, want := range []string{"# Diff", "### ", "```diff"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in diff markdown:\n%s", want, stdout)
+		}
+	}
+}
+
 func copyTree(t *testing.T, src, dst string) {
 	t.Helper()
 	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {

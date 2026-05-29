@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -118,10 +119,10 @@ func newGetAllCmd() *cobra.Command {
 		Use:   "all",
 		Short: "Summarize every Kustomization and HelmRelease",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// printCluster emits a key/value summary; only yaml/json
+			// printCluster emits a key/value summary; yaml/json/markdown
 			// shape it. Reject `-o name` (which printCluster used to
 			// silently coerce to yaml) for parity with build/diff.
-			if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
+			if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputMarkdown); err != nil {
 				return err
 			}
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
@@ -151,9 +152,9 @@ func newGetImagesCmd() *cobra.Command {
 		Short: "List container images across the cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Mirrors `diff images`: name is the natural default
-			// (one image per line); yaml/json are the structured
-			// alternatives. Reject anything else loudly.
-			if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputName); err != nil {
+			// (one image per line); yaml/json/markdown are the
+			// structured alternatives. Reject anything else loudly.
+			if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputName, format.OutputMarkdown); err != nil {
 				return err
 			}
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
@@ -266,6 +267,8 @@ func printResources[T manifest.BaseManifest](
 		return format.JSON(w, docs)
 	case format.OutputName:
 		return format.Name(w, rows, "name")
+	case format.OutputMarkdown:
+		return format.MarkdownTable(w, cols, rows)
 	}
 	return format.Table(w, cols, rows)
 }
@@ -286,12 +289,31 @@ var (
 )
 
 func printCluster(w io.Writer, o *orchestrator.Orchestrator, c *commonFlags, out string) error {
+	ksCount := countObjects(o, c, manifest.KindKustomization)
+	hrCount := countObjects(o, c, manifest.KindHelmRelease)
 	summary := map[string]any{
-		"kustomizations": countObjects(o, c, manifest.KindKustomization),
-		"helmReleases":   countObjects(o, c, manifest.KindHelmRelease),
+		"kustomizations": ksCount,
+		"helmReleases":   hrCount,
 	}
-	if format.Output(out) == format.OutputJSON {
+	switch format.Output(out) {
+	case format.OutputJSON:
 		return format.JSON(w, summary)
+	case format.OutputMarkdown:
+		// Two-row pipe table fronted by an H2 — slots into PR
+		// comments and step summaries without further massaging.
+		if _, err := io.WriteString(w, "## Cluster summary\n\n"); err != nil {
+			return err
+		}
+		return format.MarkdownTable(w,
+			[]format.Column{
+				{Header: "Resource", Key: "resource"},
+				{Header: "Count", Key: "count"},
+			},
+			[]map[string]string{
+				{"resource": "Kustomizations", "count": strconv.Itoa(ksCount)},
+				{"resource": "HelmReleases", "count": strconv.Itoa(hrCount)},
+			},
+		)
 	}
 	return format.YAML(w, summary)
 }

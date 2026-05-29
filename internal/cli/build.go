@@ -58,7 +58,7 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			applyBuildFlags(c, b)
 			// build only emits manifest streams; reject -o values that
 			// don't make sense (e.g. name, which is a get-only concept).
-			if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
+			if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputMarkdown); err != nil {
 				return err
 			}
 			stopProfile, err := startProfile(c.profileMode, c.profileOut)
@@ -170,12 +170,15 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 }
 
 // emitDocs writes a sequence of rendered docs as either multi-doc YAML
-// (the default for `flate build`) or a single JSON array. Other -o
-// values are rejected earlier by requireOutput.
+// (the default for `flate build`), a single JSON array, or a
+// GitHub-flavored Markdown stream (H3 header + fenced YAML per doc).
+// Other -o values are rejected earlier by requireOutput.
 func emitDocs(w io.Writer, docs []map[string]any, out format.Output) error {
 	switch out {
 	case format.OutputJSON:
 		return format.JSON(w, docs)
+	case format.OutputMarkdown:
+		return format.MarkdownDocs(w, docs)
 	default:
 		return format.YAMLMulti(w, docs)
 	}

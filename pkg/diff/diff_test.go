@@ -251,22 +251,16 @@ func TestRender_DiffHeaderAlwaysEmitted(t *testing.T) {
 //     (derived from the dyff body),
 //   - One H3 + ```diff fence per ResourceDiff, with the dyff body
 //     passed through verbatim inside the fence,
-//   - The "no changes" sentinel for an empty diff set.
+//   - An empty diff set renders as the empty document so callers
+//     (e.g. PR-comment automation) can skip posting entirely.
 func TestRender_Markdown(t *testing.T) {
-	t.Run("empty diffs emits no-changes sentinel", func(t *testing.T) {
+	t.Run("empty diffs render as the empty document", func(t *testing.T) {
 		out, err := Render(nil, FormatMarkdown)
 		if err != nil {
 			t.Fatalf("Render: %v", err)
 		}
-		s := string(out)
-		if !strings.Contains(s, "# Diff") {
-			t.Errorf("missing top-level heading; got:\n%s", s)
-		}
-		if !strings.Contains(s, "_No changes._") {
-			t.Errorf("missing no-changes sentinel; got:\n%s", s)
-		}
-		if strings.Contains(s, "```diff") {
-			t.Errorf("empty diff should not emit any code fence; got:\n%s", s)
+		if len(out) != 0 {
+			t.Errorf("expected empty output for empty diff set, got:\n%s", out)
 		}
 	})
 
@@ -354,7 +348,10 @@ func TestResourceDiff_Header(t *testing.T) {
 		},
 		Kind: "HelmRelease", Namespace: "media", Name: "qui",
 	}
-	want = "kubernetes/apps/media/qui/app Kustomization: media/qui HelmRelease: media/qui"
+	// Parent.Path is preserved on the struct (for JSON/YAML
+	// consumers) but deliberately omitted from the human header so
+	// KS-owned and HR-owned entries render symmetrically.
+	want = "Kustomization: media/qui HelmRelease: media/qui"
 	if got := ksDiff.Header(); got != want {
 		t.Errorf("KS header:\n got %q\nwant %q", got, want)
 	}

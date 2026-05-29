@@ -72,13 +72,13 @@ type ResourceDiff struct {
 	Diff      string `json:"diff"                yaml:"diff"`
 }
 
-// Header returns the flux-local-style "[path] Parent: ns/name
-// Child: ns/name" prefix used in diff output.
+// Header returns the "Parent: ns/name Child: ns/name" prefix used
+// in diff output. The Kustomization source path is intentionally
+// omitted so KS-owned and HR-owned resources render symmetrically
+// — `Parent.Path` survives on the struct for JSON/YAML consumers
+// but never appears in the human-facing header.
 func (d ResourceDiff) Header() string {
-	parts := make([]string, 0, 3)
-	if d.Parent.Path != "" {
-		parts = append(parts, d.Parent.Path)
-	}
+	parts := make([]string, 0, 2)
 	if d.Parent.Kind != "" {
 		parts = append(parts, fmt.Sprintf("%s: %s", d.Parent.Kind, joinNS(d.Parent.Namespace, d.Parent.Name)))
 	}
@@ -160,14 +160,15 @@ func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 // ResourceDiff wrapping the dyff body verbatim. Classification is
 // inferred from the dyff body's root-level markers — `! + ` for
 // wholesale additions, `! - ` for wholesale removals, anything else
-// is treated as a modification.
+// is treated as a modification. An empty diff set renders as the
+// empty document so the markdown output can be dropped into a PR
+// comment unconditionally without a "no changes" placeholder.
 func renderMarkdown(diffs []ResourceDiff) []byte {
+	if len(diffs) == 0 {
+		return nil
+	}
 	var b bytes.Buffer
 	b.WriteString("# Diff\n")
-	if len(diffs) == 0 {
-		b.WriteString("\n_No changes._\n")
-		return b.Bytes()
-	}
 	var added, modified, removed int
 	for _, d := range diffs {
 		switch classifyDiff(d.Diff) {

@@ -64,9 +64,17 @@ func BenchmarkListObjects_Sorted(b *testing.B) {
 }
 
 // BenchmarkSetArtifact_DeepEqual measures SetArtifact against a
-// previous identical artifact — the slow path that runs
-// reflect.DeepEqual across the full structure before deciding the
-// write is a no-op. Models the re-emit pattern.
+// previous identical artifact — the no-op dedup path that decides
+// the write is redundant. Pre-Item-7 this was reflect.DeepEqual
+// across the full structure; Item 7 adds a pointer-identity
+// short-circuit ahead of DeepEqual so the SAME-pointer re-set (the
+// shape this bench drives — fetchers cache their own SourceArtifact
+// and re-publish it on every tick) skips reflection entirely.
+//
+// The bench keeps the same name + shape as the Phase 0 baseline so
+// the delta in PR descriptions is apples-to-apples. The
+// distinct-pointer dedup path (KS / HR re-emit with re-decoded
+// maps) is measured by BenchmarkSetArtifact_DistinctDedup below.
 func BenchmarkSetArtifact_DeepEqual(b *testing.B) {
 	s := New()
 	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
@@ -93,5 +101,42 @@ func BenchmarkSetArtifact_DeepEqual(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		s.SetArtifact(id, art)
+	}
+}
+
+// BenchmarkSetArtifact_DistinctDedup measures the KS / HR re-emit
+// dedup path: a fresh-pointer artifact with byte-identical content.
+// Item 7's pointer-identity short-circuit can't help here (pointers
+// differ); reflect.DeepEqual still runs. Companion to
+// BenchmarkSetArtifact_DeepEqual which measures the same-pointer
+// fast path.
+func BenchmarkSetArtifact_DistinctDedup(b *testing.B) {
+	s := New()
+	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	manifests := make([]map[string]any, 0, 20)
+	for i := range 20 {
+		manifests = append(manifests, map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":      fmt.Sprintf("cm-%d", i),
+				"namespace": "default",
+			},
+			"data": map[string]any{
+				"key": fmt.Sprintf("value-%d", i),
+			},
+		})
+	}
+	art := &KustomizationArtifact{Path: "./apps", Manifests: manifests}
+	s.SetArtifact(id, art)
+	// Distinct-pointer twin with shared sub-slice — matches the
+	// re-emit shape where docs are decoded into fresh outer
+	// structs but their backing maps survive across reconciles.
+	twin := &KustomizationArtifact{Path: art.Path, Manifests: art.Manifests}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		s.SetArtifact(id, twin)
 	}
 }

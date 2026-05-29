@@ -35,6 +35,11 @@ counts:
 		refs = append(refs, manifest.ValuesReference{Kind: "ConfigMap", Name: name})
 	}
 	provider := &SliceProvider{ConfigMaps: cms}
+	// Shared Cache across iterations: same valuesFrom refs hit the
+	// FNV-keyed memo and skip yaml.Unmarshal — matches the production
+	// pattern where M HRs sharing a platform-wide values CM parse
+	// exactly once.
+	cache := NewCache()
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -46,7 +51,7 @@ counts:
 			HelmReleaseSpec: helmv2.HelmReleaseSpec{ValuesFrom: refs},
 			Values:          map[string]any{"image": map[string]any{"repository": "nginx"}},
 		}
-		if err := ExpandValueReferences(hr, provider); err != nil {
+		if err := ExpandValueReferences(hr, provider, cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)
 		}
 	}

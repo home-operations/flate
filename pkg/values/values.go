@@ -2,13 +2,16 @@ package values
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"maps"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 
 	"helm.sh/helm/v4/pkg/strvals"
 	"sigs.k8s.io/yaml"
@@ -130,6 +133,90 @@ func DeepMergeInto(dst, override map[string]any) map[string]any {
 	return dst
 }
 
+// Cache memoizes parsed-YAML output of valuesFrom refs across HRs.
+// One HR with N valuesFrom refs hits each entry once; M HRs sharing
+// the same ConfigMap/Secret/key tuple (a common pattern when a
+// platform values CM is referenced by every app HR) re-yaml.Unmarshal'd
+// the same bytes M times. Cache key folds the content hash so a
+// mutation to the underlying object (re-AddObject) invalidates
+// naturally without an explicit listener.
+//
+// Stored values are TREATED AS IMMUTABLE — callers receive a deep
+// clone before mutation so concurrent ExpandValueReferences calls
+// can't observe a partially-modified sub-tree. The cache itself is
+// safe for concurrent use.
+//
+// Zero value is a no-op cache: NewCache or a non-nil *Cache must
+// be supplied to opt into memoization. nil is the legacy fast path
+// for tests / one-shot embedders.
+type Cache struct {
+	m sync.Map // map[uint64]map[string]any
+}
+
+// NewCache returns an empty *Cache ready for use. Construct one per
+// orchestrator run and pass to ExpandValueReferences.
+func NewCache() *Cache { return &Cache{} }
+
+// lookup returns the cached parsed-values map for key. Callers MUST
+// NOT mutate the returned map; the cache's defensive-clone happens at
+// the call site (ExpandValueReferences) which knows whether the value
+// will be merged through DeepMergeInto (mutating) or read-only.
+func (c *Cache) lookup(key uint64) (map[string]any, bool) {
+	if c == nil {
+		return nil, false
+	}
+	v, ok := c.m.Load(key)
+	if !ok {
+		return nil, false
+	}
+	return v.(map[string]any), true
+}
+
+// store memoizes parsed under key. No-op when c is nil so the
+// non-cached path stays branchless on the caller.
+func (c *Cache) store(key uint64, parsed map[string]any) {
+	if c == nil {
+		return
+	}
+	c.m.Store(key, parsed)
+}
+
+// valuesRefCacheKey folds (ref.Kind, namespace, ref.Name, valuesKey,
+// content-hash) into a FNV64 key. Including the content hash means
+// any mutation to the underlying ConfigMap/Secret data shifts the
+// key — re-AddObject changes the bytes, the new bytes hash differently,
+// and the next lookup misses naturally. No explicit invalidation needed.
+//
+// Why FNV64 (stdlib hash/fnv) over sha256: collision probability across
+// the small key-space a single flate run produces (≤ thousands of
+// entries) is effectively zero, and FNV is ~10× cheaper. The previous-
+// cache convention elsewhere in flate (chartValuesCache, store hashing)
+// uses sha256 for stable cross-run keys; this cache is single-run only,
+// so the faster hash is fine.
+func valuesRefCacheKey(kind, namespace, name, valuesKey, content string) uint64 {
+	// hash.Hash.Write never returns an error per its contract; the
+	// _, _ = drains the (int, error) tuple so gosec G104 doesn't flag
+	// every byte fed into the digest.
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(kind))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(namespace))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(name))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(valuesKey))
+	_, _ = h.Write([]byte{0})
+	// Mix the content length into the hash explicitly so two refs that
+	// happen to FNV-collide on the same prefix don't end up sharing
+	// a cache entry; binary.LittleEndian.PutUint64 produces 8 stable
+	// bytes regardless of the host architecture.
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], uint64(len(content)))
+	_, _ = h.Write(b[:])
+	_, _ = h.Write([]byte(content))
+	return h.Sum64()
+}
+
 // ExpandValueReferences resolves all spec.valuesFrom references on hr,
 // merges them with hr.Values (inline values take precedence per Helm
 // semantics), and writes the result back to hr.Values.
@@ -141,7 +228,12 @@ func DeepMergeInto(dst, override map[string]any) map[string]any {
 // Hard errors from the lookup itself — unsupported kind, malformed
 // binaryData — always bubble up; they are unrelated to whether the ref
 // is optional.
-func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
+//
+// cache may be nil — tests and embedders without an orchestrator pass
+// nil and pay the (small) per-ref yaml.Unmarshal cost. Orchestrators
+// supply a Cache constructed at startup so refs shared across HRs
+// (a common pattern for platform-wide values CMs) parse exactly once.
+func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *Cache) error {
 	if hr == nil || len(hr.ValuesFrom) == 0 {
 		return nil
 	}
@@ -154,7 +246,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider) error {
 			}
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
-		if err := updateHelmReleaseValues(ref, found, values); err != nil {
+		if err := updateHelmReleaseValues(ref, found, values, hr.Namespace, cache); err != nil {
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 	}
@@ -310,7 +402,13 @@ func bagValueAsString(v any) (string, error) {
 // Mutates values in place — ExpandValueReferences owns the accumulator
 // map; using DeepMergeInto avoids the O(N²) full-tree clone DeepMerge
 // would pay across N valuesFrom refs.
-func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any) error {
+//
+// The cache, when non-nil, memoizes parsed-YAML output by
+// (kind, namespace, name, valuesKey, content-hash). The targetPath
+// path bypasses the cache — strvals parsing already mutates values
+// in place per-call and is comparatively cheap (no map allocation
+// for the parsed tree).
+func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any, namespace string, cache *Cache) error {
 	if ref.TargetPath != "" {
 		_, err := replaceValueAtPath(values, ref.TargetPath, found)
 		return err
@@ -324,12 +422,25 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 	if manifest.IsValuePlaceholder(found) {
 		return nil
 	}
+	key := valuesRefCacheKey(ref.Kind, namespace, ref.Name, ref.GetValuesKey(), found)
+	if parsed, ok := cache.lookup(key); ok {
+		// Cached parse — clone before merge because DeepMergeInto
+		// inserts sub-maps by reference when no key collides; mutating
+		// the dst would corrupt the cached canonical for the next
+		// consumer.
+		DeepMergeInto(values, manifest.DeepCopyMap(parsed))
+		return nil
+	}
 	var parsed map[string]any
 	if err := yaml.Unmarshal([]byte(found), &parsed); err != nil {
 		return fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)
 	}
 	if parsed != nil {
-		DeepMergeInto(values, parsed)
+		// Cache the parsed tree first (canonical, untouched), then
+		// merge a clone into values so the cache entry stays
+		// immutable for later consumers.
+		cache.store(key, parsed)
+		DeepMergeInto(values, manifest.DeepCopyMap(parsed))
 	}
 	return nil
 }

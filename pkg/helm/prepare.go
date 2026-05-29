@@ -22,12 +22,16 @@ import (
 // orchestrator's HR controller call Prepare then TemplateDocs. The
 // returned *HelmRelease is the cloned, resolved one — pass it to
 // Template / TemplateDocs and discard once rendered.
-func Prepare(hr *manifest.HelmRelease, lookup manifest.HelmChartLookup, provider values.Provider) (*manifest.HelmRelease, error) {
+//
+// The Client's per-orchestrator values.Cache is threaded through so
+// platform-wide valuesFrom CMs (a common pattern: one app-config CM
+// referenced by N HRs) parse exactly once across the entire run.
+func Prepare(hr *manifest.HelmRelease, lookup manifest.HelmChartLookup, provider values.Provider, cache *values.Cache) (*manifest.HelmRelease, error) {
 	hr = hr.Clone()
 	if err := hr.ResolveChartRef(lookup); err != nil {
 		return nil, err
 	}
-	if err := values.ExpandValueReferences(hr, provider); err != nil {
+	if err := values.ExpandValueReferences(hr, provider, cache); err != nil {
 		return nil, err
 	}
 	return hr, nil

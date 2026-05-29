@@ -350,7 +350,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// the same pre-render dance an embedder calling TemplateDocs
 	// directly performs. Keeping one canonical implementation here
 	// means changes to the contract only land in one place.
-	hr, err := helm.Prepare(hr, c.Helm.Resolver().HelmChart, values.NewStoreProvider(c.Store))
+	hr, err := helm.Prepare(hr, c.Helm.Resolver().HelmChart, values.NewStoreProvider(c.Store), c.Helm.ValuesCache())
 	if err != nil {
 		return err
 	}
@@ -458,6 +458,8 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			slog.Debug("helmrelease: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
+		// docs is retained on the HelmReleaseArtifact.Manifests; do
+		// NOT return any entry to the decoded-map pool here.
 		if isFluxSourceKind(obj) {
 			// keepEmitted BEFORE AddObject: the listener that fires
 			// synchronously during AddObject must see the extended

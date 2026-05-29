@@ -572,6 +572,84 @@ func TestStore_SetArtifact(t *testing.T) {
 	}
 }
 
+// TestStore_SetArtifact_DistinctPointerDedup pins Item 7's primary
+// dedup contract: a re-set with a DISTINCT POINTER but
+// content-equal artifact is a no-op. The KS / HR re-emit case —
+// rendered docs decode into fresh maps every reconcile — drives
+// this in production.
+func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	makeArt := func() *KustomizationArtifact {
+		return &KustomizationArtifact{
+			Path: "./apps",
+			Manifests: []map[string]any{
+				{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "cm-1", "namespace": "default"},
+					"data":       map[string]any{"k": "v"},
+				},
+			},
+		}
+	}
+
+	events := 0
+	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
+
+	s.SetArtifact(id, makeArt())
+	s.SetArtifact(id, makeArt()) // fresh pointer, identical content
+	s.SetArtifact(id, makeArt()) // fresh pointer, identical content
+
+	if events != 1 {
+		t.Errorf("expected 1 event despite 3 sets with identical content, got %d", events)
+	}
+}
+
+// TestStore_SetArtifact_PointerIdentityShortCircuit pins Item 7's
+// pointer-identity fast path: re-setting the SAME pointer skips
+// reflection entirely. Source-controller refresh loops cache their
+// own SourceArtifact and re-publish it on every tick; the
+// short-circuit cuts that hot path from ~58 ns (reflect.DeepEqual on
+// aliased pointers) to ~17 ns (the map lookup alone).
+func TestStore_SetArtifact_PointerIdentityShortCircuit(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "r"}
+	art := &SourceArtifact{Kind: "GitRepository", URL: "https://example", LocalPath: "/tmp/x"}
+
+	events := 0
+	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
+
+	s.SetArtifact(id, art)
+	s.SetArtifact(id, art) // same pointer
+	s.SetArtifact(id, art) // same pointer
+
+	if events != 1 {
+		t.Errorf("expected 1 event for same-pointer re-set, got %d", events)
+	}
+}
+
+// TestStore_SetArtifact_DifferentContent pins the inverse: a
+// re-set with DIFFERENT content fires an event.
+func TestStore_SetArtifact_DifferentContent(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+
+	events := 0
+	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
+
+	s.SetArtifact(id, &KustomizationArtifact{Path: "./apps", Manifests: []map[string]any{
+		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm-1"}},
+	}})
+	s.SetArtifact(id, &KustomizationArtifact{Path: "./apps", Manifests: []map[string]any{
+		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm-2"}},
+	}})
+
+	if events != 2 {
+		t.Errorf("expected 2 events for distinct content, got %d", events)
+	}
+}
+
 func TestStore_ListenerPanicIsolated(t *testing.T) {
 	s := New()
 	other := 0

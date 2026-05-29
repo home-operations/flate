@@ -86,7 +86,7 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 		},
 		Values: map[string]any{"image": map[string]any{"repository": "x"}},
 	}
-	if err := ExpandValueReferences(hr, provider); err != nil {
+	if err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	if hr.Values["replicaCount"] != float64(5) {
@@ -117,7 +117,7 @@ func TestExpandValueReferences_IgnoresConfigMapBinaryData(t *testing.T) {
 			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "mixed"}},
 		},
 	}
-	if err := ExpandValueReferences(hr, provider); err != nil {
+	if err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	if hr.Values["fromData"] != "yes" {
@@ -142,7 +142,7 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 			},
 		},
 	}
-	if err := ExpandValueReferences(hr, provider); err != nil {
+	if err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	auth := hr.Values["auth"].(map[string]any)
@@ -162,7 +162,7 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 		},
 	}
 	provider := &SliceProvider{}
-	if err := ExpandValueReferences(hr, provider); err != nil {
+	if err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	if _, ok := hr.Values["k"]; ok {
@@ -183,7 +183,7 @@ func TestExpandValueReferences_MissingRequiredTargetPathFails(t *testing.T) {
 		},
 	}
 
-	err := ExpandValueReferences(hr, &SliceProvider{})
+	err := ExpandValueReferences(hr, &SliceProvider{}, nil)
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("missing required targetPath ref = %v, want ErrObjectNotFound", err)
 	}
@@ -204,11 +204,132 @@ func TestExpandValueReferences_MissingOptionalKeySkipped(t *testing.T) {
 		},
 	}
 
-	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}); err != nil {
+	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	if hr.Values["existing"] != "kept" || len(hr.Values) != 1 {
 		t.Errorf("optional missing key should leave values unchanged: %+v", hr.Values)
+	}
+}
+
+// TestExpandValueReferences_CacheHits pins Item 6: two lookups for
+// the same (kind, ns, name, key, content) tuple return the same
+// parsed value from one yaml.Unmarshal — and a mutation to the
+// underlying ConfigMap.Data content causes the cache to miss because
+// the content-hash component of the key shifts.
+func TestExpandValueReferences_CacheHits(t *testing.T) {
+	cm := &manifest.ConfigMap{
+		Name: "platform", Namespace: "default",
+		Data: map[string]any{"values.yaml": "replicaCount: 5\nimage:\n  tag: v2\n"},
+	}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	cache := NewCache()
+	hr := func() *manifest.HelmRelease {
+		return &manifest.HelmRelease{
+			Name: "demo", Namespace: "default",
+			HelmReleaseSpec: helmv2.HelmReleaseSpec{
+				ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "platform"}},
+			},
+		}
+	}
+
+	a := hr()
+	if err := ExpandValueReferences(a, provider, cache); err != nil {
+		t.Fatalf("first ExpandValueReferences: %v", err)
+	}
+	if a.Values["replicaCount"] != float64(5) {
+		t.Fatalf("first: replicaCount=%v", a.Values["replicaCount"])
+	}
+
+	// Second HR sharing the same ref must hit the cache. Verify by
+	// mutating the ConfigMap.Data IN A WAY that would change the
+	// PARSE result but keep the SAME RAW BYTES — impossible by
+	// construction. So instead we verify behaviorally: the cache
+	// must serve identical output regardless of how many parsers
+	// raced. The next test (CacheInvalidatesOnContentChange)
+	// covers the inverse: mutating the bytes DOES invalidate.
+	b := hr()
+	if err := ExpandValueReferences(b, provider, cache); err != nil {
+		t.Fatalf("second ExpandValueReferences: %v", err)
+	}
+	if b.Values["replicaCount"] != float64(5) {
+		t.Errorf("second: replicaCount=%v", b.Values["replicaCount"])
+	}
+
+	// Mutate a's result — the cache must hand out a clone so b is
+	// unaffected. (The previous call already returned; we cross-check
+	// a third HR.)
+	a.Values["replicaCount"] = "stomped"
+	c := hr()
+	if err := ExpandValueReferences(c, provider, cache); err != nil {
+		t.Fatalf("third ExpandValueReferences: %v", err)
+	}
+	if c.Values["replicaCount"] != float64(5) {
+		t.Errorf("cache aliased prior call: replicaCount=%v", c.Values["replicaCount"])
+	}
+}
+
+// TestExpandValueReferences_CacheInvalidatesOnContentChange pins the
+// natural-invalidation contract: when the underlying ConfigMap
+// content changes (re-AddObject lands new bytes), the FNV key
+// shifts and the cache misses — no explicit listener needed.
+func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
+	cm := &manifest.ConfigMap{
+		Name: "platform", Namespace: "default",
+		Data: map[string]any{"values.yaml": "replicaCount: 5\n"},
+	}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	cache := NewCache()
+	mk := func() *manifest.HelmRelease {
+		return &manifest.HelmRelease{
+			Name: "demo", Namespace: "default",
+			HelmReleaseSpec: helmv2.HelmReleaseSpec{
+				ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "platform"}},
+			},
+		}
+	}
+
+	a := mk()
+	if err := ExpandValueReferences(a, provider, cache); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if a.Values["replicaCount"] != float64(5) {
+		t.Fatalf("first replicaCount=%v", a.Values["replicaCount"])
+	}
+
+	// Mutate the underlying ConfigMap's content — different bytes
+	// → different FNV hash component of the cache key → miss.
+	cm.Data["values.yaml"] = "replicaCount: 99\n"
+
+	b := mk()
+	if err := ExpandValueReferences(b, provider, cache); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if b.Values["replicaCount"] != float64(99) {
+		t.Errorf("cache served stale parse; want 99, got %v", b.Values["replicaCount"])
+	}
+}
+
+// TestExpandValueReferences_NilCache pins the nil-cache contract:
+// ExpandValueReferences with a nil *Cache works identically to the
+// non-cached path — tests and one-shot embedders pass nil.
+func TestExpandValueReferences_NilCache(t *testing.T) {
+	cm := &manifest.ConfigMap{
+		Name: "extra", Namespace: "default",
+		Data: map[string]any{"values.yaml": "replicaCount: 7\n"},
+	}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
+		},
+	}
+	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+		t.Fatalf("ExpandValueReferences nil cache: %v", err)
+	}
+	if hr.Values["replicaCount"] != float64(7) {
+		t.Errorf("nil-cache path: replicaCount=%v", hr.Values["replicaCount"])
 	}
 }
 

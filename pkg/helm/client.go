@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/blob"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // SecretGetter is the same shape as source.SecretGetter; aliased so
@@ -84,6 +85,23 @@ type Client struct {
 	chartCache     map[string]chartCacheEntry
 	chartLoadLocks *keylock.KeyMap[string]
 
+	// chartValuesCache memoizes mergeChartValuesFiles output keyed by
+	// (chart name + version + joined valuesFiles list). Multiple HRs
+	// sharing a base chart and the same spec.chart.spec.valuesFiles
+	// stack (common: bjw-s app-template with a fixed set of layered
+	// values-*.yaml files) re-yaml.Unmarshal'd the same bytes once per
+	// HR. The cache holds the canonical merged map; callers receive
+	// a deep clone (defensive-copy convention matching indexCache)
+	// because downstream DeepMerge layering mutates the result.
+	//
+	// Guarded by chartMu — same lock as chartCache. The two caches
+	// share a lifecycle (both live for the duration of the Client)
+	// and a relatively low write rate (one entry per unique
+	// chart+valuesFiles tuple per orchestrator run); a separate
+	// mutex would just add coordination overhead with no contention
+	// reduction.
+	chartValuesCache map[string]map[string]any
+
 	// indexCache holds parsed HelmRepository index.yaml documents for
 	// the lifetime of this Client. The same Client serves every
 	// HelmRelease in one orchestrator run, so N HRs pointing at the
@@ -103,6 +121,14 @@ type Client struct {
 	// index.yaml supplies a digest; entries without a digest are
 	// treated as mutable and downloaded on each run.
 	chartBlobs *blob.Store
+
+	// valuesCache memoizes parsed-YAML output of ExpandValueReferences
+	// across HRs in this Client's lifetime. One HR with 10 valuesFrom
+	// refs hits each entry once; M HRs sharing a platform-wide values
+	// CM re-yaml.Unmarshal'd the same bytes M times without this.
+	// Lives for the Client lifetime — re-creating per Template call
+	// would defeat the cross-HR sharing that delivers the win.
+	valuesCache *values.Cache
 
 	// chartDownloadLocks serializes concurrent downloads of the same
 	// chart tarball so two reconcilers don't race writing the same
@@ -152,12 +178,20 @@ func NewClient(layout cacheroot.Layout) (*Client, error) {
 		cacheDir:           cacheDir,
 		registry:           reg,
 		chartCache:         map[string]chartCacheEntry{},
+		chartValuesCache:   map[string]map[string]any{},
 		chartLoadLocks:     keylock.New[string](),
 		indexLocks:         keylock.New[string](),
 		chartDownloadLocks: keylock.New[string](),
 		chartBlobs:         blob.NewStore(layout),
+		valuesCache:        values.NewCache(),
 	}, nil
 }
+
+// ValuesCache returns the Client's per-orchestrator valuesFrom parse
+// cache so callers (helm.Prepare, the HR controller) can pass it
+// through to values.ExpandValueReferences. Always non-nil for
+// Clients constructed via NewClient.
+func (c *Client) ValuesCache() *values.Cache { return c.valuesCache }
 
 // SetSecretGetter installs a Secret lookup function so HelmRepository
 // SecretRef credentials can be resolved at pull time. Safe to call

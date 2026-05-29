@@ -353,6 +353,118 @@ func TestStagingCache_PersistentSentinelWritten(t *testing.T) {
 	}
 }
 
+// TestStagingCache_PartialStageRebuildsOnNextRun pins the
+// post-rename-pre-sentinel crash recovery contract: if a process
+// renames the staging tree into place but crashes before writing the
+// .flate-stage-complete sentinel, the next Stage call for the same
+// fingerprint MUST rebuild (or otherwise re-emit the sentinel) rather
+// than adopt the incomplete tree.
+//
+// Pre-fix, the sentinel was written into the tmp dir BEFORE rename, so
+// any partial-rename or crash-after-sentinel-write would leave the
+// final dir with a sentinel inside it — making subsequent runs
+// short-circuit on a tree they couldn't trust. Post-fix, the sentinel
+// is only written after the rename succeeds, so a crash window leaves
+// the dir sentinel-free and the next Stage call rebuilds.
+func TestStagingCache_PartialStageRebuildsOnNextRun(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+
+	root := t.TempDir()
+	cache1, err := NewStagingCache(root, 0)
+	if err != nil {
+		t.Fatalf("NewStagingCache 1: %v", err)
+	}
+
+	const fp = "deadbeef11111111000000000000000000000000000000000000000000000000"
+	staged, err := cache1.Stage(context.Background(), src, fp)
+	if err != nil {
+		t.Fatalf("Stage 1: %v", err)
+	}
+	sentinel := filepath.Join(staged, stageCompleteSentinel)
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("sentinel missing after initial Stage: %v", err)
+	}
+	if err := cache1.Close(); err != nil {
+		t.Fatalf("cache1.Close: %v", err)
+	}
+
+	// Simulate the post-rename-pre-sentinel crash window: the tree is
+	// fully renamed into the final slot, but the sentinel was never
+	// written (or was lost). A correct implementation must observe
+	// "no sentinel" and rebuild on the next Stage call.
+	if err := os.Remove(sentinel); err != nil {
+		t.Fatalf("simulate crash (remove sentinel): %v", err)
+	}
+
+	// Fresh cache instance — the in-process promise from cache1 is gone,
+	// so the reattempt has to take the on-disk path.
+	cache2, err := NewStagingCache(root, 0)
+	if err != nil {
+		t.Fatalf("NewStagingCache 2: %v", err)
+	}
+	t.Cleanup(func() { _ = cache2.Close() })
+
+	staged2, err := cache2.Stage(context.Background(), src, fp)
+	if err != nil {
+		t.Fatalf("Stage 2 (after simulated crash): %v", err)
+	}
+	if staged2 != staged {
+		t.Errorf("Stage 2 landed at %q, want %q", staged2, staged)
+	}
+	// The sentinel MUST be present again — either rebuilt or rewritten.
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Errorf("sentinel not restored after rebuild: %v", err)
+	}
+	// And the tree contents survived.
+	if _, err := os.Stat(filepath.Join(staged2, "kustomization.yaml")); err != nil {
+		t.Errorf("kustomization.yaml missing after rebuild: %v", err)
+	}
+}
+
+// TestStagingCache_SentinelWrittenAfterRename is the regression fence
+// for the post-fix ordering: stage a fingerprint, then assert that the
+// final dir exists, contains the sentinel, and has no `.tmp.*`
+// siblings lingering in the prefix dir. Together with the partial-stage
+// recovery test above, this pins the rename-then-sentinel invariant.
+func TestStagingCache_SentinelWrittenAfterRename(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+
+	root := t.TempDir()
+	cache, err := NewStagingCache(root, 0)
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	const fp = "abcdef9876543210000000000000000000000000000000000000000000000000"
+	staged, err := cache.Stage(context.Background(), src, fp)
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+
+	// Final dir exists and carries the sentinel.
+	if _, err := os.Stat(staged); err != nil {
+		t.Fatalf("final dir missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(staged, stageCompleteSentinel)); err != nil {
+		t.Errorf("sentinel missing from final dir: %v", err)
+	}
+
+	// No `.tmp.*` siblings remain in the prefix shard.
+	prefixDir := filepath.Dir(staged)
+	entries, err := os.ReadDir(prefixDir)
+	if err != nil {
+		t.Fatalf("read prefix dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp.") {
+			t.Errorf("leftover staging tmpdir in prefix: %q", e.Name())
+		}
+	}
+}
+
 // TestStagingCache_PersistentSameFingerprintSkipsRebuild proves that
 // a second Stage call for the same fingerprint is a no-op: no
 // additional copyTree pass fires, and the existing sentinel mtime is

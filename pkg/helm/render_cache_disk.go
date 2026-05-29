@@ -160,6 +160,10 @@ func (c *diskRenderCache) Put(key string, payload []byte) {
 	// syncDir=false: a render cache miss is cheap to re-derive on the
 	// next invocation, so we trade durability for write throughput.
 	// Mirrors atomic.WriteFile's documented "high-churn cache" mode.
+	//
+	// atomic.WriteFile removes its staged tmpfile on any error path
+	// (see pkg/source/atomic/file.go's committed-bool defer guard),
+	// so a failed Put can't leak partial state into the cache root.
 	if err := atomic.WriteFile(p, buf.Bytes(), 0o600, false); err != nil {
 		slog.Debug("helm render cache: write", "path", p, "err", err)
 		return

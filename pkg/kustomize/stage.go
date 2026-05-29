@@ -354,6 +354,18 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 		return "", fmt.Errorf("stage parent: %w", err)
 	}
 
+	// Clear any partial stage left over from a crash window between
+	// rename and sentinel-write: the final dir exists but carries no
+	// sentinel. The rebuild rename below would otherwise hit
+	// ENOTEMPTY/EEXIST. Removing here is safe — the sentinel check
+	// above ran under fpLocks so we're not racing an in-process peer,
+	// and a cross-process peer that lands a complete tree+sentinel
+	// after our recheck would be observed below via the rename's
+	// adoption branch.
+	if _, err := os.Stat(dir); err == nil {
+		_ = os.RemoveAll(dir)
+	}
+
 	// Stage into a sibling tempdir + atomic rename so concurrent
 	// readers never observe a partial tree.
 	staging, err := os.MkdirTemp(filepath.Dir(dir), filepath.Base(dir)+".tmp.*")
@@ -364,13 +376,14 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 		_ = os.RemoveAll(staging)
 		return "", err
 	}
-	// Write the sentinel BEFORE rename so readers that observe the
-	// final dir always see a sentinel. The sentinel is empty; its
-	// presence alone is the signal.
-	if err := atomicfile.WriteFile(filepath.Join(staging, stageCompleteSentinel), nil, 0o600, false); err != nil {
-		_ = os.RemoveAll(staging)
-		return "", fmt.Errorf("stage sentinel: %w", err)
-	}
+	// Rename FIRST, sentinel AFTER. If we wrote the sentinel into the
+	// tmp dir and then crashed (or the rename failed mid-flight on a
+	// filesystem that doesn't truly fulfill POSIX atomicity), a
+	// subsequent reader could observe an incomplete tree with a
+	// sentinel inside it and skip the rebuild. By renaming the
+	// sentinel-free tree first and writing the sentinel into the
+	// renamed dir, any crash window leaves the dir without a sentinel,
+	// which the read path correctly treats as "not complete, rebuild."
 	if err := os.Rename(staging, dir); err != nil {
 		_ = os.RemoveAll(staging)
 		// A racing peer process beat us to it. Adopt the winner —
@@ -381,6 +394,18 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 			return dir, nil
 		}
 		return "", fmt.Errorf("stage finalize: %w", err)
+	}
+	// Sentinel is empty; its presence alone is the signal. Use
+	// atomic.WriteFile so a crash during this write doesn't leave a
+	// partially-named or zero-length sentinel that confuses a later
+	// reader — either the sentinel is fully present or it isn't.
+	if err := atomicfile.WriteFile(sentinel, nil, 0o600, false); err != nil {
+		// The tree is intact at dir; we just couldn't write the
+		// sentinel. Leave the tree in place — the next Stage call
+		// observes the sentinel-free dir and rebuilds via the
+		// partial-stage-clear path above. Returning an error here
+		// surfaces the underlying problem to the caller.
+		return "", fmt.Errorf("stage sentinel: %w", err)
 	}
 	c.cacheStagePromise(fingerprint, dir)
 	c.maybeKickSweep()

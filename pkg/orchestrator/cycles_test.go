@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -179,6 +180,112 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 		msg, ok := o.preflightFailure(id)
 		if !ok || !strings.Contains(msg, "dependency cycle detected") {
 			t.Fatalf("%s preflight failure = %q, %v", id, msg, ok)
+		}
+	}
+}
+
+// TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle stresses the
+// incremental hot path: feed the graph 10k acyclic edges via the
+// per-event listener API, assert no false positive, then add a single
+// cycle-introducing edge and assert it's flagged. Mirrors the post-
+// Bootstrap listener: every store add hits updateDependencyGraphFor
+// with exactly one id, no batched DFS.
+func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
+	const N = 10000
+	o := &Orchestrator{store: store.New()}
+
+	// Chain: ks-0 → ks-1 → ks-2 → ... → ks-(N-1). Pure DAG.
+	ids := make([]manifest.NamedResource, N)
+	for i := range N {
+		ids[i] = manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: fmt.Sprintf("ks-%05d", i)}
+	}
+	for i := range N {
+		var deps []manifest.NamedResource
+		if i+1 < N {
+			deps = []manifest.NamedResource{ids[i+1]}
+		}
+		o.store.AddObject(makeKS(ids[i].Name, ids[i].Namespace, deps...))
+		o.updateDependencyGraphFor(ids[i])
+	}
+	if got := o.depGraph.Failures(); len(got) != 0 {
+		t.Fatalf("acyclic chain reported cycles: %v", got)
+	}
+	for _, id := range ids {
+		if msg, ok := o.preflightFailure(id); ok {
+			t.Fatalf("acyclic %s flagged: %q", id, msg)
+		}
+	}
+
+	// Close the chain: ks-(N-1) → ks-0 creates one huge cycle.
+	o.store.AddObject(makeKS(ids[N-1].Name, ids[N-1].Namespace, ids[0]))
+	o.updateDependencyGraphFor(ids[N-1])
+
+	failures := o.depGraph.Failures()
+	if len(failures) != N {
+		t.Fatalf("cycle-closing edge should flag every chain member; got %d / %d", len(failures), N)
+	}
+	for _, id := range ids {
+		if msg, ok := o.preflightFailure(id); !ok || !strings.Contains(msg, "dependency cycle detected") {
+			t.Fatalf("%s preflight after cycle close = %q, %v", id, msg, ok)
+		}
+	}
+}
+
+// TestUpdateDependencyGraphFor_BreaksCycle exercises the remove path:
+// stand up a cycle via the incremental API, then rewrite one id's
+// dependsOn to break it; every previously-failed member must clear.
+func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
+	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
+	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+	idC := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "c"}
+
+	o := &Orchestrator{store: store.New()}
+	o.store.AddObject(makeKS("a", "ns", idB))
+	o.updateDependencyGraphFor(idA)
+	o.store.AddObject(makeKS("b", "ns", idC))
+	o.updateDependencyGraphFor(idB)
+	o.store.AddObject(makeKS("c", "ns", idA))
+	o.updateDependencyGraphFor(idC)
+
+	for _, id := range []manifest.NamedResource{idA, idB, idC} {
+		if msg, ok := o.preflightFailure(id); !ok || !strings.Contains(msg, "dependency cycle detected") {
+			t.Fatalf("%s pre-break = %q, %v", id, msg, ok)
+		}
+	}
+
+	// Rewrite c to drop its dep on a; cycle dissolves.
+	o.store.AddObject(makeKS("c", "ns"))
+	o.updateDependencyGraphFor(idC)
+
+	for _, id := range []manifest.NamedResource{idA, idB, idC} {
+		if msg, ok := o.preflightFailure(id); ok {
+			t.Fatalf("%s post-break still failed: %q", id, msg)
+		}
+	}
+}
+
+// TestUpdateDependencyGraphFor_HelmRelease verifies the same
+// incremental update works for HelmRelease objects — the listener
+// dispatches both kinds through one path.
+func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
+	idX := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "x"}
+	idY := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "y"}
+
+	o := &Orchestrator{store: store.New()}
+	o.store.AddObject(&manifest.HelmRelease{
+		Name: "x", Namespace: "ns",
+		DependsOn: []manifest.DependencyRef{{NamedResource: idY}},
+	})
+	o.updateDependencyGraphFor(idX)
+	o.store.AddObject(&manifest.HelmRelease{
+		Name: "y", Namespace: "ns",
+		DependsOn: []manifest.DependencyRef{{NamedResource: idX}},
+	})
+	o.updateDependencyGraphFor(idY)
+
+	for _, id := range []manifest.NamedResource{idX, idY} {
+		if msg, ok := o.preflightFailure(id); !ok || !strings.Contains(msg, "dependency cycle detected") {
+			t.Fatalf("HR %s preflight = %q, %v", id, msg, ok)
 		}
 	}
 }

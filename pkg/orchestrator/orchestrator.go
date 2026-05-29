@@ -171,6 +171,13 @@ type Orchestrator struct {
 	preflightMu       sync.RWMutex
 	preflightFailures map[manifest.NamedResource]string
 
+	// depGraph maintains an incremental copy of the same-kind
+	// dependsOn graph so cycle detection on EventObjectAdded touches
+	// only the edges that changed instead of rerunning the full tri-
+	// color DFS over every Kustomization / HelmRelease. Lives for the
+	// life of the orchestrator; populated lazily as objects are added.
+	depGraph *dependencyGraph
+
 	// rsExtensions holds non-Flux docs produced by ResourceSet renders,
 	// keyed by the owning structural-parent Kustomization. Populated
 	// by expandResourceSetsPostRun (called from Render) after Run
@@ -300,6 +307,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		helm:           helmClient,
 		staging:        staging,
 		componentCache: manifest.NewComponentCache(),
+		depGraph:       newDependencyGraph(),
 	}
 	return o, nil
 }
@@ -655,10 +663,15 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	// Bootstrap's one-shot pass only sees file-loaded resources; a
 	// parent KS render that emits a child with a dependsOn pointing at
 	// another freshly-emitted (or pre-existing) peer can introduce a
-	// cycle invisible to the Bootstrap pass. failDependsOnCycles
-	// short-circuits when no cycle is present (O(N+E) DFS, then
-	// early-return), so re-running on every KS/HR add is cheap even on
-	// render-heavy passes.
+	// cycle invisible to the Bootstrap pass.
+	//
+	// Hot path: updateDependencyGraphFor touches only the changed id's
+	// edges. The pre-Phase-2.6 implementation re-ran a full O(N+E) DFS
+	// on every event — N events × O(N+E) at bootstrap turned 5k-object
+	// repos into a quadratic cycle-detection storm. Incremental updates
+	// keep each event O(reachable from new dst) in the healthy case and
+	// fall back to a per-failed-node revalidation only when an edge is
+	// removed.
 	//
 	// REGISTERED BEFORE the controllers: listeners fire in registration
 	// order, so this records preflight failures synchronously BEFORE the
@@ -669,7 +682,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
 			return
 		}
-		o.failDependsOnCycles()
+		o.updateDependencyGraphFor(id)
 	}, false)
 	defer unsubCycles()
 

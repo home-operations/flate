@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.1.29](https://github.com/home-operations/flate/compare/0.1.28...0.1.29) (2026-05-29)
+
+
+### Features
+
+* --output markdown for build, diff, test, get ([#491](https://github.com/home-operations/flate/issues/491)) ([7e90725](https://github.com/home-operations/flate/commit/7e90725374c0e0f1d8dbdb903b51215fabb84fe3))
+* **cli:** expose --cache-dir on build/diff/test/get ([#490](https://github.com/home-operations/flate/issues/490)) ([8d1e540](https://github.com/home-operations/flate/commit/8d1e540d75de2516201f0d67ff67b483e836dca5))
+
+
+### Bug Fixes
+
+* idempotency bugs + Go 1.22-1.26 modernization + lint config ([#489](https://github.com/home-operations/flate/issues/489)) ([e276e08](https://github.com/home-operations/flate/commit/e276e08bf267b542523d117b6923c3643a93a5b0))
+* keep substituteFrom producer Kustomizations in changed-only mode ([#487](https://github.com/home-operations/flate/issues/487)) ([7e58a4d](https://github.com/home-operations/flate/commit/7e58a4d7933cb47a901cbff639b1c674f45cd693))
+
+
+### Performance Improvements
+
+* phases 0–3 (benchmarks, caches, sharding) — 34% faster warm on real repo ([#488](https://github.com/home-operations/flate/issues/488)) ([29de74b](https://github.com/home-operations/flate/commit/29de74ba270b0a1cd404a92cb55b19f8d6af255f))
+
+
+### Miscellaneous Chores
+
+* make action baby ([8ed64e5](https://github.com/home-operations/flate/commit/8ed64e52c1dc658002f1406d46edfe799489a291))
+
 ## [0.1.28](https://github.com/home-operations/flate/compare/0.1.27...0.1.28) (2026-05-28)
 
 

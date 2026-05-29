@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.33](https://github.com/home-operations/flate/compare/0.1.32...0.1.33) (2026-05-29)
+
+
+### Bug Fixes
+
+* **diff:** redact ConfigMap binaryData ([#496](https://github.com/home-operations/flate/issues/496)) ([065df63](https://github.com/home-operations/flate/commit/065df632770a7e939f93a8653cde808a59be7952))
+
 ## [0.1.32](https://github.com/home-operations/flate/compare/0.1.31...0.1.32) (2026-05-29)
 
 

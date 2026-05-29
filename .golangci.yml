@@ -7,10 +7,13 @@ linters:
   default: standard
   enable:
     - gosec
+    - intrange
     - misspell
+    - modernize
     - revive
     - unconvert
     - unparam
+    - usestdlibvars
   exclusions:
     rules:
       - path: _test\.go

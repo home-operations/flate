@@ -24,9 +24,10 @@ const (
 	// fence. K8s-aware: list entries are matched by identifier
 	// (container name, env-var name, etc.), so reordering a list
 	// produces no diff churn.
-	FormatDiff Format = "diff"
-	FormatYAML Format = "yaml"
-	FormatJSON Format = "json"
+	FormatDiff     Format = "diff"
+	FormatYAML     Format = "yaml"
+	FormatJSON     Format = "json"
+	FormatMarkdown Format = "markdown"
 )
 
 // Options tunes Run behavior.
@@ -147,8 +148,69 @@ func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 		return yaml.Marshal(diffs)
 	case FormatJSON:
 		return json.MarshalIndent(diffs, "", "  ")
+	case FormatMarkdown:
+		return renderMarkdown(diffs), nil
 	}
 	return nil, fmt.Errorf("unknown diff format %q", format)
+}
+
+// renderMarkdown emits a PR-comment-friendly view of the diff set:
+// a `# Diff` heading, a pipe-table summary by classification
+// (added/modified/removed), and one H3 + ```diff fence per
+// ResourceDiff wrapping the dyff body verbatim. Classification is
+// inferred from the dyff body's root-level markers — `! + ` for
+// wholesale additions, `! - ` for wholesale removals, anything else
+// is treated as a modification.
+func renderMarkdown(diffs []ResourceDiff) []byte {
+	var b bytes.Buffer
+	b.WriteString("# Diff\n")
+	if len(diffs) == 0 {
+		b.WriteString("\n_No changes._\n")
+		return b.Bytes()
+	}
+	var added, modified, removed int
+	for _, d := range diffs {
+		switch classifyDiff(d.Diff) {
+		case "added":
+			added++
+		case "removed":
+			removed++
+		default:
+			modified++
+		}
+	}
+	fmt.Fprintf(&b, "\n| Added | Modified | Removed | Total |\n")
+	b.WriteString("| --- | --- | --- | --- |\n")
+	fmt.Fprintf(&b, "| %d | %d | %d | %d |\n\n", added, modified, removed, len(diffs))
+	for _, d := range diffs {
+		fmt.Fprintf(&b, "### %s\n\n", d.Header())
+		b.WriteString("```diff\n")
+		b.WriteString(d.Diff)
+		if !strings.HasSuffix(d.Diff, "\n") {
+			b.WriteByte('\n')
+		}
+		b.WriteString("```\n\n")
+	}
+	return b.Bytes()
+}
+
+// classifyDiff inspects a dyff body and returns one of "added",
+// "removed", or "modified". Wholesale additions/removals from
+// Run() emit a `(root level)` header followed by an `! + ` /
+// `! - ` map-entries marker; anything else is a per-path
+// modification.
+func classifyDiff(body string) string {
+	if !strings.Contains(body, "@@ (root level) @@") {
+		return "modified"
+	}
+	switch {
+	case strings.Contains(body, "\n! + "):
+		return "added"
+	case strings.Contains(body, "\n! - "):
+		return "removed"
+	default:
+		return "modified"
+	}
 }
 
 type pairedResource struct {

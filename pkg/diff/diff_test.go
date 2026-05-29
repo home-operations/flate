@@ -245,6 +245,87 @@ func TestRender_DiffHeaderAlwaysEmitted(t *testing.T) {
 	})
 }
 
+// TestRender_Markdown pins the FormatMarkdown shape:
+//   - Top-level `# Diff` heading,
+//   - A pipe-table summary classifying entries as added/modified/removed
+//     (derived from the dyff body),
+//   - One H3 + ```diff fence per ResourceDiff, with the dyff body
+//     passed through verbatim inside the fence,
+//   - The "no changes" sentinel for an empty diff set.
+func TestRender_Markdown(t *testing.T) {
+	t.Run("empty diffs emits no-changes sentinel", func(t *testing.T) {
+		out, err := Render(nil, FormatMarkdown)
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		s := string(out)
+		if !strings.Contains(s, "# Diff") {
+			t.Errorf("missing top-level heading; got:\n%s", s)
+		}
+		if !strings.Contains(s, "_No changes._") {
+			t.Errorf("missing no-changes sentinel; got:\n%s", s)
+		}
+		if strings.Contains(s, "```diff") {
+			t.Errorf("empty diff should not emit any code fence; got:\n%s", s)
+		}
+	})
+
+	t.Run("mixed added/modified/removed", func(t *testing.T) {
+		// Modified resource: same name in both, value differs.
+		left := []Doc{
+			cm("modme", "ns", "owner", "v1"),
+			cm("removeme", "ns", "owner", "v1"), // removal: only on left
+		}
+		right := []Doc{
+			cm("modme", "ns", "owner", "v2"),
+			cm("addme", "ns", "owner", "v1"), // addition: only on right
+		}
+		diffs, err := Run(left, right, Options{})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if len(diffs) != 3 {
+			t.Fatalf("expected 3 diff entries (add + mod + remove), got %d:\n%+v", len(diffs), diffs)
+		}
+		out, err := Render(diffs, FormatMarkdown)
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		s := string(out)
+
+		// Top-level heading.
+		if !strings.Contains(s, "# Diff") {
+			t.Errorf("missing top-level heading; got:\n%s", s)
+		}
+
+		// Summary table classifying one of each.
+		if !strings.Contains(s, "| Added | Modified | Removed | Total |") {
+			t.Errorf("missing summary table header; got:\n%s", s)
+		}
+		if !strings.Contains(s, "| 1 | 1 | 1 | 3 |") {
+			t.Errorf("missing/incorrect summary row (expected 1 added, 1 modified, 1 removed, 3 total); got:\n%s", s)
+		}
+
+		// Per-resource sections: one H3 heading + ```diff fence each.
+		for _, d := range diffs {
+			heading := "### " + d.Header()
+			if !strings.Contains(s, heading) {
+				t.Errorf("missing per-resource heading %q; got:\n%s", heading, s)
+			}
+			// Body must appear verbatim inside the fence.
+			if !strings.Contains(s, d.Diff) {
+				t.Errorf("dyff body for %s missing from output; got:\n%s", d.Header(), s)
+			}
+		}
+		if !strings.Contains(s, "```diff\n") {
+			t.Errorf("missing ```diff fence opener; got:\n%s", s)
+		}
+		if !strings.Contains(s, "\n```\n") {
+			t.Errorf("missing closing fence; got:\n%s", s)
+		}
+	})
+}
+
 func TestFormat_JSON(t *testing.T) {
 	diffs := []ResourceDiff{{Kind: "ConfigMap", Name: "a", Diff: "..."}}
 	out, err := Render(diffs, FormatJSON)

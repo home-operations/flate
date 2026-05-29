@@ -584,12 +584,12 @@ func TestSweepStageBySize_EvictsOldestUnderLimit(t *testing.T) {
 	}
 }
 
-// BenchmarkStagingCache_MultiKSPerRoot measures the warm-rerun cost
+// BenchmarkStagingCache_PersistentRerun measures the warm-rerun cost
 // of staging the same source tree N times with the same fingerprint.
 // The persistent CAS path skips copyTree after the first Stage call;
 // every subsequent call is essentially a stat + chtimes pair. Before
 // Phase 3.4b every iteration paid the full os.Link per file walk.
-func BenchmarkStagingCache_MultiKSPerRoot(b *testing.B) {
+func BenchmarkStagingCache_PersistentRerun(b *testing.B) {
 	src := b.TempDir()
 	// Synthesize 200 small files under a handful of subdirs so the
 	// copyTree pass has measurable depth + breadth.

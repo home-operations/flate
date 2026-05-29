@@ -25,7 +25,7 @@ data:
   k: v
 `)
 
-	cache, err := NewStagingCache(b.TempDir())
+	cache, err := NewStagingCache(b.TempDir(), 0)
 	if err != nil {
 		b.Fatalf("NewStagingCache: %v", err)
 	}
@@ -42,7 +42,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, src, ".", rawSpec)
+		out, err := RenderFlux(ctx, cache, src, ".", "", rawSpec)
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -90,7 +90,7 @@ data:
 `, i))
 	}
 
-	cache, err := NewStagingCache(b.TempDir())
+	cache, err := NewStagingCache(b.TempDir(), 0)
 	if err != nil {
 		b.Fatalf("NewStagingCache: %v", err)
 	}
@@ -107,7 +107,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, src, ".", rawSpec)
+		out, err := RenderFlux(ctx, cache, src, ".", "", rawSpec)
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -134,7 +134,7 @@ func BenchmarkStagingCache_MultiKSPerRoot(b *testing.B) {
 			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-%d\n  namespace: ns\ndata:\n  k: v\n", i))
 	}
 
-	cache, err := NewStagingCache(b.TempDir())
+	cache, err := NewStagingCache(b.TempDir(), 0)
 	if err != nil {
 		b.Fatalf("NewStagingCache: %v", err)
 	}
@@ -142,7 +142,8 @@ func BenchmarkStagingCache_MultiKSPerRoot(b *testing.B) {
 
 	// Warm the cache so the bench measures the warm-stage hit, not the
 	// one-shot initial copy.
-	if _, err := cache.Stage(src); err != nil {
+	ctx := context.Background()
+	if _, err := cache.Stage(ctx, src, ""); err != nil {
 		b.Fatalf("warm Stage: %v", err)
 	}
 
@@ -156,7 +157,7 @@ func BenchmarkStagingCache_MultiKSPerRoot(b *testing.B) {
 			// downstream — here we measure the stage-lookup cost
 			// alone since that's the synchronization point.
 			ctr.Add(1)
-			path, err := cache.Stage(src)
+			path, err := cache.Stage(ctx, src, "")
 			if err != nil {
 				b.Fatalf("Stage: %v", err)
 			}

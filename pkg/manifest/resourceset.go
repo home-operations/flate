@@ -76,7 +76,7 @@ type ResourceSetInputProvider struct {
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 
 	fluxopv1.ResourceSetInputProviderSpec `json:",inline" yaml:",inline"`
-	Status                                fluxopv1.ResourceSetInputProviderStatus `json:"status,omitempty" yaml:"status,omitempty"`
+	Status                                fluxopv1.ResourceSetInputProviderStatus `json:"status,omitzero" yaml:"status,omitempty"`
 
 	Labels map[string]string `json:"-" yaml:"-"`
 }

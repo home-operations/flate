@@ -35,7 +35,7 @@ func ResolveEnvsubstDefaults(s string) string {
 // maybeHasEnvsubst is a cheap precheck — most strings have no `${`
 // at all, and ReplaceAllString allocates even when nothing matches.
 func maybeHasEnvsubst(s string) bool {
-	for i := 0; i < len(s)-1; i++ {
+	for i := range len(s) - 1 {
 		if s[i] == '$' && s[i+1] == '{' {
 			return true
 		}

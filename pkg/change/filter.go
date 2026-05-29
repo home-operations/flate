@@ -497,7 +497,10 @@ func (f *Filter) resolve(objs ObjectLister) {
 		}
 	}
 
-	for head := 0; head < len(queue); head++ {
+	// NOTE: queue grows inside the loop via enqueuePrimary/enqueueAncestor.
+	// Re-evaluate len(queue) each iteration; do NOT convert to `range queue`
+	// (intrange linter must not auto-fix this — see //nolint above).
+	for head := 0; head < len(queue); head++ { //nolint:intrange // queue grows during iteration
 		_, headPrimary := primary[queue[head]]
 		for _, d := range transitiveDeps(objs, queue[head]) {
 			if headPrimary {

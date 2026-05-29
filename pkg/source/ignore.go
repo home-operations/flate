@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/fluxcd/pkg/sourceignore"
@@ -125,12 +126,12 @@ func pruneEmptyDirs(root string) error {
 		return fmt.Errorf("sourceignore prune walk: %w", err)
 	}
 	// Bottom-up by path length: deepest first.
-	for i := len(dirs) - 1; i >= 0; i-- {
-		entries, err := os.ReadDir(dirs[i])
+	for _, v := range slices.Backward(dirs) {
+		entries, err := os.ReadDir(v)
 		if err != nil || len(entries) > 0 {
 			continue
 		}
-		_ = os.Remove(dirs[i])
+		_ = os.Remove(v)
 	}
 	return nil
 }

@@ -437,10 +437,9 @@ func TestReplaceValueAtPath_TypeCoercion(t *testing.T) {
 func walkPath(t *testing.T, m map[string]any, path string) any {
 	t.Helper()
 	cur := any(m)
-	parts := strings.Split(path, ".")
-	for _, p := range parts {
-		if idx := strings.IndexByte(p, '['); idx >= 0 {
-			key := p[:idx]
+	parts := strings.SplitSeq(path, ".")
+	for p := range parts {
+		if key, _, ok := strings.Cut(p, "["); ok {
 			if cm, ok := cur.(map[string]any); ok {
 				cur = cm[key]
 			}

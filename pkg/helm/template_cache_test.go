@@ -179,15 +179,13 @@ func TestTemplateCache_ConcurrentSafety(t *testing.T) {
 	c := newTemplateCache(64 << 10, nil)
 	var wg sync.WaitGroup
 	for i := range 32 {
-		wg.Add(1)
-		go func(seed int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range 200 {
-				key := string(rune('a' + (seed+j)%26))
+				key := string(rune('a' + (i+j)%26))
 				c.Put(key, strings.Repeat(key, 8))
 				_, _ = c.Get(key)
 			}
-		}(i)
+		})
 	}
 	wg.Wait()
 	// Size should never exceed the limit even under contention.

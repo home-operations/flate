@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -663,8 +663,8 @@ func sweepStageBySize(root string, maxBytes int64) error {
 		return nil
 	}
 	// Oldest first; evict until under cap.
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].mtime.Before(entries[j].mtime)
+	slices.SortFunc(entries, func(a, b stageEntry) int {
+		return a.mtime.Compare(b.mtime)
 	})
 	for _, e := range entries {
 		if total <= maxBytes {

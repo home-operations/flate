@@ -555,7 +555,7 @@ func TestE2E_SubstituteDisabledAnnotation(t *testing.T) {
 
 func mustExtractLine(t *testing.T, haystack, needle string) string {
 	t.Helper()
-	for _, line := range strings.Split(haystack, "\n") {
+	for line := range strings.SplitSeq(haystack, "\n") {
 		if strings.Contains(line, needle) && (strings.Contains(line, "PASSED") || strings.Contains(line, "FAILED")) {
 			return line
 		}

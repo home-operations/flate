@@ -705,12 +705,12 @@ func BenchmarkStagingCache_PersistentRerun(b *testing.B) {
 	src := b.TempDir()
 	// Synthesize 200 small files under a handful of subdirs so the
 	// copyTree pass has measurable depth + breadth.
-	for d := 0; d < 10; d++ {
+	for d := range 10 {
 		dir := filepath.Join(src, fmt.Sprintf("d%02d", d))
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			b.Fatal(err)
 		}
-		for f := 0; f < 20; f++ {
+		for f := range 20 {
 			path := filepath.Join(dir, fmt.Sprintf("f%02d.yaml", f))
 			if err := os.WriteFile(path, []byte("kind: ConfigMap\n"), 0o600); err != nil {
 				b.Fatal(err)
@@ -731,8 +731,7 @@ func BenchmarkStagingCache_PersistentRerun(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := cache.Stage(context.Background(), src, fp); err != nil {
 			b.Fatalf("Stage: %v", err)
 		}

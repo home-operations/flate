@@ -900,7 +900,6 @@ func TestStore_ListenerSnapshotPool_NoLostEvents(t *testing.T) {
 
 	counts := make([]atomic.Int64, numListeners)
 	for i := range numListeners {
-		i := i
 		s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
 			counts[i].Add(1)
 		}, false)
@@ -1017,9 +1016,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 
 	// 4 goroutines on Kustomizations, 4 on HelmReleases.
 	for w := range workers {
-		wg.Add(1)
-		go func(w int) {
-			defer wg.Done()
+		wg.Go(func() {
 			isKS := w%2 == 0
 			for i := range N {
 				if isKS {
@@ -1034,7 +1031,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 					_ = s.GetObject(hr.Named())
 				}
 			}
-		}(w)
+		})
 	}
 	wg.Wait()
 
@@ -1070,9 +1067,7 @@ func TestStore_CrossKindOperationDoesntDeadlock(t *testing.T) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	for w := range goroutines {
-		wg.Add(1)
-		go func(w int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range ops {
 				switch (w + i) % 5 {
 				case 0:
@@ -1092,7 +1087,7 @@ func TestStore_CrossKindOperationDoesntDeadlock(t *testing.T) {
 					s.SetArtifact(hr.Named(), &HelmReleaseArtifact{Manifests: nil, Fingerprint: "x"})
 				}
 			}
-		}(w)
+		})
 	}
 	go func() { wg.Wait(); close(done) }()
 	select {

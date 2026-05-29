@@ -215,8 +215,8 @@ func warnIfMultipleBootstrapAliases(aliased []manifest.NamedResource, repoRoot s
 		return
 	}
 	names := make([]string, len(aliased))
-	for i := range len(aliased) {
-		names[i] = aliased[i].String()
+	for i, a := range aliased {
+		names[i] = a.String()
 	}
 	slog.Warn("discovery: aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
 		"count", len(aliased), "ids", names, "localPath", repoRoot)

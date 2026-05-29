@@ -2,6 +2,7 @@ package helm
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"errors"
 	"io"
@@ -9,7 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
 	atomicflag "sync/atomic"
 	"time"
@@ -248,11 +249,11 @@ func (c *diskRenderCache) sweep() {
 	// against ties (sort by mtime then path) so two test entries
 	// written within the same nanosecond don't evict in
 	// platform-dependent order.
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].mtime != entries[j].mtime {
-			return entries[i].mtime < entries[j].mtime
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.mtime, b.mtime); c != 0 {
+			return c
 		}
-		return entries[i].path < entries[j].path
+		return cmp.Compare(a.path, b.path)
 	})
 
 	for _, e := range entries {

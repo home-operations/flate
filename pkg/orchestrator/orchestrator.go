@@ -876,7 +876,6 @@ func (o *Orchestrator) prewarmGitMirrors(ctx context.Context) {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(limit)
 	for _, repo := range repos {
-		repo := repo
 		g.Go(func() error {
 			if err := o.gitFetcher.Prewarm(gctx, repo); err != nil {
 				slog.Debug("git: mirror prewarm failed (source controller will retry)",

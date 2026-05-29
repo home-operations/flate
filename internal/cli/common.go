@@ -82,6 +82,11 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, yaml, json, name")
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
+	fs.StringVar(&f.cacheDir, "cache-dir", "",
+		"on-disk cache root for source artifacts, helm charts, kustomize stages, "+
+			"and persistent render output. Defaults to $XDG_CACHE_HOME/flate "+
+			"(Linux), ~/Library/Caches/flate (macOS), %LocalAppData%/flate "+
+			"(Windows), falling back to $TMPDIR/flate-cache if those error.")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
 	fs.StringVar(&f.profileMode, "profile", "",

@@ -142,6 +142,7 @@ func TestEnv_HelpAdvertisesEnvVars(t *testing.T) {
 		"[env: FLATE_SKIP_CRDS]",
 		"[env: FLATE_SKIP_KINDS]",
 		"[env: FLATE_CONCURRENCY]",
+		"[env: FLATE_CACHE_DIR]",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("--help missing %q\n%s", want, stdout)

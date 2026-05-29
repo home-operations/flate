@@ -3,8 +3,12 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/change"
@@ -12,6 +16,63 @@ import (
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+// TestBindCommon_CacheDirFlag pins that --cache-dir is wired on every
+// commonFlags subcommand and ends up on commonFlags.cacheDir for the
+// downstream buildOrchCfg → orchestrator.Config.CacheDir handoff.
+func TestBindCommon_CacheDirFlag(t *testing.T) {
+	var f commonFlags
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	bindCommon(fs, &f)
+	if err := fs.Parse([]string{"--cache-dir", "/tmp/explicit"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if f.cacheDir != "/tmp/explicit" {
+		t.Errorf("cacheDir = %q, want /tmp/explicit", f.cacheDir)
+	}
+}
+
+// TestCacheDir_FlagAndEnvPopulateRoot runs build all twice — once via
+// --cache-dir and once via FLATE_CACHE_DIR — against fresh tempdirs
+// and asserts each one ends up non-empty. The kustomize stage cache
+// writes into <cacheDir>/stage even for the inline-ConfigMap fixture,
+// so a successful build populates the dir if the flag flowed through
+// to orchestrator.Config.CacheDir.
+func TestCacheDir_FlagAndEnvPopulateRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		via  func(t *testing.T, root string) []string
+	}{
+		{
+			name: "flag",
+			via:  func(_ *testing.T, root string) []string { return []string{"--cache-dir", root} },
+		},
+		{
+			name: "env",
+			via: func(t *testing.T, root string) []string {
+				t.Setenv("FLATE_CACHE_DIR", root)
+				return nil
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeFixture(t)
+			cacheRoot := filepath.Join(t.TempDir(), "cache")
+			args := append([]string{"build", "all", "--path", path}, tc.via(t, cacheRoot)...)
+			_, stderr, code := runCLI(t, args...)
+			if code != 0 {
+				t.Fatalf("build all (%s) exited %d: %s", tc.name, code, stderr)
+			}
+			entries, err := os.ReadDir(cacheRoot)
+			if err != nil {
+				t.Fatalf("read cache root %q: %v", cacheRoot, err)
+			}
+			if len(entries) == 0 {
+				t.Errorf("cache root %q is empty after build — --cache-dir / FLATE_CACHE_DIR did not flow through", cacheRoot)
+			}
+		})
+	}
+}
 
 func TestScopedNamespaces_ExplicitNamespaceWins(t *testing.T) {
 	c := &commonFlags{namespace: "media"}

@@ -43,6 +43,17 @@ type Filter struct {
 	// transitiveDeps does internally).
 	objs ObjectLister
 
+	// componentCache, when non-nil, memoizes
+	// manifest.ReadKustomizeComponents reads across Filter resolution
+	// and other Bootstrap consumers (loader.KSPathPrefixes, discovery's
+	// parent-index passes). The orchestrator wires one cache per
+	// Bootstrap so the kustomization.yaml at each spec.path is read
+	// once. Set via SetComponentCache BEFORE the resolve() call (i.e.
+	// before NewFilter returns); the resolve()-time buildOwnership
+	// reads it once and stops using it after. nil is fine — buildOwnership
+	// falls back to a per-call cache. See manifest.ComponentCache.
+	componentCache *manifest.ComponentCache
+
 	// OnAdd, when non-nil, fires for every id newly added to the
 	// keep set by AddEmitted / Add (including transitive-dep
 	// recursion). The orchestrator wires this to refire
@@ -105,11 +116,25 @@ type nameKey struct{ kind, name string }
 //  4. BFS over chart sources, sourceRef, and valuesFrom to pull in
 //     upstream dependencies. dependsOn is intentionally excluded.
 func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister) *Filter {
+	return NewFilterWithCache(changes, sourceFiles, repoRoot, objs, nil)
+}
+
+// NewFilterWithCache is NewFilter with a shared
+// *manifest.ComponentCache threaded into resolve()'s buildOwnership
+// call. The orchestrator instantiates one cache per Bootstrap and
+// passes the same pointer here and to the loader so a single
+// kustomization.yaml's `components:` field is read once across the
+// entire Bootstrap (vs. once per consumer: loader's parent index,
+// discovery's orphan promotion, and the Filter's ownership index all
+// previously re-read disk). Pass nil to fall back to a per-resolve
+// local cache.
+func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache) *Filter {
 	f := &Filter{
-		changes:     changes,
-		sourceFiles: sourceFiles,
-		repoRoot:    repoRoot,
-		objs:        objs,
+		changes:        changes,
+		sourceFiles:    sourceFiles,
+		repoRoot:       repoRoot,
+		objs:           objs,
+		componentCache: cache,
 	}
 	if changes == nil {
 		return f
@@ -436,7 +461,7 @@ func (f *Filter) resolve(objs ObjectLister) {
 		queue = append(queue, id)
 	}
 
-	owners := buildOwnership(objs, f.repoRoot)
+	owners := buildOwnership(objs, f.repoRoot, f.componentCache)
 	f.producersByID, f.producersByName = buildProducerIndex(f.sourceFiles, owners)
 	ownersHit := make(map[manifest.NamedResource]struct{})
 

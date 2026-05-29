@@ -33,8 +33,10 @@ func (d *discoverer) promoteOrphans() {
 	}
 	// Same repoRoot argument as BuildParentIndexForKind — passing
 	// cfg.Path would misread component lookups when --path is a
-	// subdir below the actual repo root.
-	prefixes := loader.KSPathPrefixes(d.cfg.Store, d.repoRoot)
+	// subdir below the actual repo root. Route through the shared
+	// component cache so the kustomization.yaml reads already done
+	// by the parent-index passes are served from memory.
+	prefixes := loader.KSPathPrefixesWithCache(d.cfg.Store, d.repoRoot, d.cfg.ComponentCache)
 	for id := range d.loader.Existence.All() {
 		if d.cfg.Store.GetObject(id) != nil {
 			continue

@@ -72,12 +72,20 @@ var kustomizationFileNames = [3]string{
 	"kustomization.json",
 }
 
-// readKustomization opens dir/kustomization.{yaml,yml,json} and decodes
-// the subset of fields the loader uses. Returns nil when no
+// readKustomizationAt opens dir/kustomization.{yaml,yml,json}, decodes
+// the subset of fields the loader uses, and returns both the parsed
+// body and the resolved file path. Returns (nil, "") when no
 // kustomization file exists in dir or when decode fails — the latter
-// is treated as "absent" because krusty's render path will surface the
-// real error later with better context than the loader can.
-func readKustomization(dir string) *kustomization {
+// is treated as "absent" because krusty's render path will surface
+// the real error later with better context than the loader can.
+//
+// The caller hands the returned path forward to walkKustomize /
+// walkComponentData so they don't open the same file again. Before
+// the dedup, descend opened the kustomization.yaml once here, then
+// kustomizationFilePath stat'd it for the generator harvest, then
+// walkKustomize re-stat'd it to load the file itself — three opens
+// of the same path per package directory.
+func readKustomizationAt(dir string) (*kustomization, string) {
 	for _, name := range kustomizationFileNames {
 		path := filepath.Join(dir, name)
 		data, err := os.ReadFile(path) //nolint:gosec // path joined under the user-supplied scan root
@@ -88,9 +96,9 @@ func readKustomization(dir string) *kustomization {
 		if err := yaml.Unmarshal(data, &k); err != nil {
 			continue
 		}
-		return &k
+		return &k, path
 	}
-	return nil
+	return nil, ""
 }
 
 // dataFilesFor returns the set of file paths declared as

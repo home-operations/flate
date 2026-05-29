@@ -58,9 +58,29 @@ type KSPathPrefix struct {
 // repoRoot is the filesystem root the kustomization-file reads
 // resolve relative to. Pass "" to skip on-disk component lookup
 // entirely (only spec.path + spec.components are recorded).
+//
+// On-disk component reads route through a local cache so a single
+// call doesn't re-read the same kustomization.yaml across KSes that
+// share a spec.path. Cross-call sharing is the orchestrator's job —
+// see KSPathPrefixesWithCache.
 func KSPathPrefixes(s *store.Store, repoRoot string) []KSPathPrefix {
+	return KSPathPrefixesWithCache(s, repoRoot, nil)
+}
+
+// KSPathPrefixesWithCache is KSPathPrefixes with a shared component
+// cache threaded in. The orchestrator instantiates one cache per
+// Bootstrap and passes it to every consumer (discovery's orphan
+// promotion, BuildParentIndexForKind, the orchestrator's finalize
+// detectOrphans, change.buildOwnership) so the kustomization.yaml at
+// each spec.path is read once per Bootstrap instead of once per
+// consumer. Pass nil to fall back to the per-call cache.
+func KSPathPrefixesWithCache(s *store.Store, repoRoot string, cache *manifest.ComponentCache) []KSPathPrefix {
 	var out []KSPathPrefix
-	componentCache := make(map[string][]string)
+	// Local cache backs the nil-shared-cache path so multi-KS calls
+	// that share a spec.path still dedup. When the caller supplies a
+	// shared cache, ComponentCache.Get already handles dedup and the
+	// local map is unused.
+	localCache := make(map[string][]string)
 	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
 		if ks.Path == "" {
 			continue
@@ -83,10 +103,16 @@ func KSPathPrefixes(s *store.Store, repoRoot string) []KSPathPrefix {
 		}
 		if repoRoot != "" {
 			baseTrimmed := strings.TrimSuffix(base, "/")
-			comps, ok := componentCache[baseTrimmed]
-			if !ok {
-				comps = manifest.ReadKustomizeComponents(repoRoot, baseTrimmed)
-				componentCache[baseTrimmed] = comps
+			var comps []string
+			if cache != nil {
+				comps = cache.Get(repoRoot, baseTrimmed)
+			} else {
+				var ok bool
+				comps, ok = localCache[baseTrimmed]
+				if !ok {
+					comps = manifest.ReadKustomizeComponents(repoRoot, baseTrimmed)
+					localCache[baseTrimmed] = comps
+				}
 			}
 			for _, comp := range comps {
 				addComponent(comp)
@@ -147,7 +173,17 @@ func LongestParent(prefixes []KSPathPrefix, file string, self manifest.NamedReso
 // component lookup", which still gives a correct (just slightly
 // less-precise) index built from spec.path + spec.components alone.
 func BuildParentIndexForKind(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
-	prefixes := KSPathPrefixes(s, repoRoot)
+	return BuildParentIndexForKindWithCache(s, repoRoot, sourceFiles, childKind, nil)
+}
+
+// BuildParentIndexForKindWithCache is BuildParentIndexForKind with a
+// shared *manifest.ComponentCache threaded into the KSPathPrefixes
+// call. Used by discovery so the KS-parent-map build and the
+// HR-parent-map build share component-file reads across the two
+// passes — without sharing, each invocation walks the same KS list
+// and re-reads every kustomization.yaml's `components:` independently.
+func BuildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string, cache *manifest.ComponentCache) map[manifest.NamedResource]manifest.NamedResource {
+	prefixes := KSPathPrefixesWithCache(s, repoRoot, cache)
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for _, obj := range s.ListObjects(childKind) {
 		id := obj.Named()

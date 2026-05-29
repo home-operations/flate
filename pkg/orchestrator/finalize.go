@@ -23,8 +23,10 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 	// Use repoRoot (not cfg.Path) so KSPathPrefixes' component
 	// lookups read from the actual repo root rather than a
 	// potentially-subdir --path. Same fix as PR #358 applied to
-	// the orchestrator side.
-	prefixes := loader.KSPathPrefixes(o.store, o.repoRoot)
+	// the orchestrator side. Route through the shared component
+	// cache populated during Bootstrap so the per-KS component file
+	// reads are served from memory rather than re-stat'd here.
+	prefixes := loader.KSPathPrefixesWithCache(o.store, o.repoRoot, o.componentCache)
 	for id := range failed {
 		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
 			continue

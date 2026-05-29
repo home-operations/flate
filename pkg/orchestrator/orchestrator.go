@@ -132,6 +132,20 @@ type Orchestrator struct {
 	// other file-indexed dep on demand.
 	existence *loader.ExistenceIndex
 
+	// componentCache memoizes manifest.ReadKustomizeComponents reads
+	// across every Bootstrap consumer that walks the KS list: the
+	// loader's FinalizeGenerators (KSPathPrefixes), discovery's
+	// parent-index builds and orphan-promotion pass, the change
+	// filter's buildOwnership, and finalize.detectOrphans. Without
+	// the shared cache each consumer re-reads every kustomization.yaml
+	// once — N consumers × K KSes file opens per Bootstrap; with it,
+	// each (repoRoot, base) pair is read exactly once. Live for the
+	// life of the orchestrator (cleared via GC when the Orchestrator
+	// is collected), instantiated fresh per New() so test harnesses
+	// that reuse an orchestrator across re-Bootstrap cycles still pick
+	// up on-disk edits.
+	componentCache *manifest.ComponentCache
+
 	// orphans records resources Run demoted from Failed → Ready because
 	// they aren't referenced by any parent KS. Populated during Run,
 	// surfaced via Render() so embedders can distinguish orphan-skips
@@ -265,15 +279,16 @@ func New(cfg Config) (*Orchestrator, error) {
 		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.ExistenceFetcher{}
 	}
 	o := &Orchestrator{
-		cfg:      cfg,
-		store:    st,
-		tasks:    ts,
-		src:      srcCtrl,
-		ksc:      kustomization.New(st, ts, staging, cfg.WipeSecrets),
-		hrc:      helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
-		rendered: newRenderedSet(),
-		helm:     helmClient,
-		staging:  staging,
+		cfg:            cfg,
+		store:          st,
+		tasks:          ts,
+		src:            srcCtrl,
+		ksc:            kustomization.New(st, ts, staging, cfg.WipeSecrets),
+		hrc:            helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		rendered:       newRenderedSet(),
+		helm:           helmClient,
+		staging:        staging,
+		componentCache: manifest.NewComponentCache(),
 	}
 	return o, nil
 }
@@ -318,6 +333,7 @@ func (o *Orchestrator) Filter() *change.Filter { return o.filter }
 func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
+		ComponentCache: o.componentCache,
 	})
 	if err != nil {
 		return err
@@ -494,7 +510,7 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	if changes == nil {
 		return nil
 	}
-	f := change.NewFilter(changes, o.sourceFiles, repoRoot, o.store)
+	f := change.NewFilterWithCache(changes, o.sourceFiles, repoRoot, o.store, o.componentCache)
 	// Wire OnAdd so a runtime keep-set extension (KS controller's
 	// emitRenderedChildren → keepEmitted) refires any source whose
 	// listener already short-circuited via PreGate before the

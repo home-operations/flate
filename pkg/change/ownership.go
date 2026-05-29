@@ -39,9 +39,13 @@ type ownershipIndex struct {
 // buildOwnership records every Flux KS's spec.path, spec.components,
 // and any `components:` referenced from the kustomization.yaml at
 // spec.path. Sorted longest-prefix first so lookup returns the most
-// specific claimant. Kustomization-file reads are memoized by
-// directory so KSes sharing a spec.path don't re-stat the same disk.
-func buildOwnership(objs ObjectLister, repoRoot string) ownershipIndex {
+// specific claimant. Kustomization-file reads are memoized via the
+// shared *manifest.ComponentCache (when supplied) so KSes sharing a
+// spec.path don't re-stat the same disk — AND so the same reads done
+// by loader.KSPathPrefixes during discovery are served from cache
+// here. nil cache falls back to a per-call local map; behavior is
+// identical, just without cross-call sharing.
+func buildOwnership(objs ObjectLister, repoRoot string, cache *manifest.ComponentCache) ownershipIndex {
 	ksList := objs.ListObjects(manifest.KindKustomization)
 	// Each KS contributes at least one claim (its own spec.path) plus a
 	// variable number of component paths. Pre-allocate for the base case
@@ -57,7 +61,10 @@ func buildOwnership(objs ObjectLister, repoRoot string) ownershipIndex {
 		}
 		claims = append(claims, ksClaim{id: id, path: resolved + "/"})
 	}
-	componentCache := make(map[string][]string)
+	// Local cache backs the nil-shared-cache path so multi-KS calls
+	// that share a spec.path still dedup. When the caller supplies a
+	// shared cache, ComponentCache.Get already handles dedup.
+	localCache := make(map[string][]string)
 	for _, obj := range ksList {
 		ks, ok := obj.(*manifest.Kustomization)
 		if !ok || ks.Path == "" {
@@ -69,10 +76,16 @@ func buildOwnership(objs ObjectLister, repoRoot string) ownershipIndex {
 		for _, comp := range ks.Components {
 			add(id, base, comp)
 		}
-		comps, ok := componentCache[base]
-		if !ok {
-			comps = manifest.ReadKustomizeComponents(repoRoot, base)
-			componentCache[base] = comps
+		var comps []string
+		if cache != nil {
+			comps = cache.Get(repoRoot, base)
+		} else {
+			var ok bool
+			comps, ok = localCache[base]
+			if !ok {
+				comps = manifest.ReadKustomizeComponents(repoRoot, base)
+				localCache[base] = comps
+			}
 		}
 		for _, comp := range comps {
 			add(id, base, comp)

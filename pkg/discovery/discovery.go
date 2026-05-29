@@ -64,6 +64,15 @@ type Config struct {
 	Path        string
 	Store       *store.Store
 	WipeSecrets bool
+	// ComponentCache, when non-nil, memoizes
+	// manifest.ReadKustomizeComponents reads across discovery's
+	// internal passes (parent-index build, orphan promotion, the
+	// loader's FinalizeGenerators KSPathPrefixes) and any later
+	// consumer that shares the same pointer (change.Filter,
+	// finalize.detectOrphans). The orchestrator wires one cache per
+	// Bootstrap; pass nil for standalone discovery callers (tests,
+	// embedders) that don't need cross-consumer sharing.
+	ComponentCache *manifest.ComponentCache
 }
 
 // Run performs the full discovery phase against cfg and writes results
@@ -83,6 +92,12 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// sweep, or depwait's lazy-promotion fallback.
 	l.Options.DiscoveryOnly = true
 	l.Existence = loader.NewExistenceIndex()
+	// Thread the shared component cache through to the loader so
+	// FinalizeGenerators' KSPathPrefixes reads come from cache (and
+	// land cache entries for the subsequent parent-index +
+	// orphan-promotion passes below). nil is fine here — the loader
+	// falls back to a per-call cache.
+	l.ComponentCache = cfg.ComponentCache
 	d := &discoverer{
 		cfg:         cfg,
 		loader:      l,
@@ -113,8 +128,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// follow `components:` entries; cfg.Path would misread when the
 	// user pointed --path at a subdir below the actual repo root.
 	parentOf := mergeParents(
-		loader.BuildParentIndexForKind(d.cfg.Store, repoRoot, d.sourceFiles, manifest.KindKustomization),
-		loader.BuildParentIndexForKind(d.cfg.Store, repoRoot, d.sourceFiles, manifest.KindHelmRelease),
+		loader.BuildParentIndexForKindWithCache(d.cfg.Store, repoRoot, d.sourceFiles, manifest.KindKustomization, cfg.ComponentCache),
+		loader.BuildParentIndexForKindWithCache(d.cfg.Store, repoRoot, d.sourceFiles, manifest.KindHelmRelease, cfg.ComponentCache),
 	)
 	// Orphan promotion: every Existence entry whose file path is NOT
 	// under any KS spec.path will never reach the Store through KS

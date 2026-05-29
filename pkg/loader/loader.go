@@ -88,6 +88,16 @@ type Loader struct {
 	// default for non-DiscoveryOnly callers).
 	Existence *ExistenceIndex
 
+	// ComponentCache, when non-nil, is the shared component-file
+	// cache used by FinalizeGenerators' KSPathPrefixes call. Wired
+	// by the orchestrator at Bootstrap so the loader, discovery's
+	// parent-index passes, the orphan-promotion pass, the orchestrator's
+	// finalize detectOrphans, and change.buildOwnership all read each
+	// kustomization.yaml's `components:` field at most once per
+	// Bootstrap. nil falls back to per-call caches with no cross-call
+	// sharing (the pre-1.A behavior).
+	ComponentCache *manifest.ComponentCache
+
 	// generators accumulates configMapGenerator/secretGenerator
 	// entries observed during the walk. After Load returns, the
 	// orchestrator finalizes them via FinalizeGenerators — the
@@ -123,10 +133,11 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		return 0, err
 	}
 	w := walker{
-		loader:   l,
-		ignore:   ignore,
-		visited:  map[string]struct{}{},
-		scanRoot: abs,
+		loader:      l,
+		ignore:      ignore,
+		visited:     map[string]struct{}{},
+		scanRoot:    abs,
+		ignoreCache: map[ignoreKey]bool{},
 	}
 	return w.descend(ctx, abs)
 }
@@ -145,6 +156,50 @@ type walker struct {
 	// instead of scan-root-relative.
 	scanRoot string
 	visited  map[string]struct{}
+
+	// ignoreCache memoizes ignore.matches results for the duration of
+	// one Load. matches does a filepath.Rel + slash-split + gitignore
+	// match per call, and the file path / isDir tuple are the only
+	// inputs — same path always yields the same answer. The cache
+	// turns a per-file matcher walk into a per-unique-path matcher
+	// walk; deep package trees with thousands of resources gain the
+	// most. scanRoot isn't part of the key because it's fixed for
+	// the walker's lifetime; mixing different roots in one cache
+	// would silently poison results.
+	//
+	// Unsynchronized: a walker is single-threaded per Load (same
+	// pattern as visited above). Concurrent Loads each construct
+	// their own walker.
+	ignoreCache map[ignoreKey]bool
+}
+
+// ignoreKey identifies one ignore.matches lookup. isDir matters
+// because gitignore's trailing-slash dirOnly patterns evaluate
+// differently for files vs. directories — see ignoreSet.matches.
+type ignoreKey struct {
+	path  string
+	isDir bool
+}
+
+// ignoreMatches is the walker's memoized wrapper around
+// ignoreSet.matches. Routes every call through ignoreCache so
+// repeated checks against the same path (the common case: the same
+// file gets stat'd and walked) cost one map probe instead of a fresh
+// filepath.Rel + gitignore matcher walk.
+func (w *walker) ignoreMatches(path string, isDir bool) bool {
+	if w.ignore == nil || w.ignore.matcher == nil {
+		// Mirrors ignoreSet.matches's nil short-circuit so we don't
+		// pollute the cache with cold-path entries that would never
+		// be hit again.
+		return false
+	}
+	key := ignoreKey{path: path, isDir: isDir}
+	if v, ok := w.ignoreCache[key]; ok {
+		return v
+	}
+	v := w.ignore.matches(path, w.scanRoot, isDir)
+	w.ignoreCache[key] = v
+	return v
 }
 
 // descend dispatches on the kind of directory dir is:
@@ -166,14 +221,21 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 	}
 	w.visited[dir] = struct{}{}
 
-	k := readKustomization(dir)
+	// readKustomizationAt returns the resolved file path alongside the
+	// parsed body so descend can hand both forward to walkKustomize /
+	// walkComponentData without a second kustomizationFilePath stat.
+	// Before this dedup, every package directory cost three opens of
+	// the same kustomization.yaml: readKustomization here,
+	// kustomizationFilePath for the generator harvest, then
+	// kustomizationFilePath again inside walkKustomize.
+	k, kpath := readKustomizationAt(dir)
 	if k != nil {
 		// Harvest configMapGenerator/secretGenerator entries
 		// regardless of whether this is a Kustomization or Component
 		// — both can declare generators, and downstream depwait
 		// lookups for substituteFrom CMs need the synthesized
 		// records either way.
-		if kpath, ok := kustomizationFilePath(dir); ok {
+		if kpath != "" {
 			w.loader.recordGenerators(collectGeneratorRecords(k, kpath))
 		}
 		if k.isKustomizeComponent() {
@@ -191,7 +253,7 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 			}
 			return 0, nil
 		}
-		return w.walkKustomize(ctx, dir, k)
+		return w.walkKustomize(ctx, dir, k, kpath)
 	}
 	return w.walkAdHoc(ctx, dir)
 }
@@ -211,7 +273,7 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 // kustomize's directive fields) reference YAMLs that are kustomize
 // directives, NOT Flux manifests — they're not in `resources:` so
 // they don't load. Matches `kustomize build` precisely.
-func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization) (int, error) {
+func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization, kpath string) (int, error) {
 	dataFiles := dataFilesFor(dir, k)
 	count := 0
 
@@ -219,8 +281,10 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 	// visibility for any consumer that inspects on-disk shape, and
 	// lets parseFile recognize a Flux Kustomization that happens to
 	// be authored at the `kustomization.yaml` filename (rare but
-	// permitted).
-	if kpath, ok := kustomizationFilePath(dir); ok && !w.ignore.matches(kpath, w.scanRoot, false) {
+	// permitted). kpath comes from the descend-side readKustomizationAt
+	// (or the walkAdHoc fallback) so we don't re-stat the same file
+	// the caller already opened.
+	if kpath != "" && !w.ignoreMatches(kpath, false) {
 		n, err := w.loader.loadFile(kpath)
 		if err != nil {
 			slog.Warn("loader: kustomization file failed to parse", "path", kpath, "err", err)
@@ -260,7 +324,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		if _, isData := dataFiles[abs]; isData {
 			continue
 		}
-		if w.ignore.matches(abs, w.scanRoot, false) {
+		if w.ignoreMatches(abs, false) {
 			continue
 		}
 		n, err := w.loader.loadFile(abs)
@@ -319,7 +383,7 @@ func (w *walker) walkComponentData(ctx context.Context, dir string, k *kustomiza
 			return 0, cerr
 		}
 		abs, ok := resolveDataPath(dir, r)
-		if !ok || w.ignore.matches(abs, w.scanRoot, false) || !isManifestFile(abs) {
+		if !ok || w.ignoreMatches(abs, false) || !isManifestFile(abs) {
 			continue
 		}
 		info, err := os.Stat(abs)
@@ -352,7 +416,7 @@ func (w *walker) walkComponentData(ctx context.Context, dir string, k *kustomiza
 			continue
 		}
 		w.visited[abs] = struct{}{}
-		nested := readKustomization(abs)
+		nested, _ := readKustomizationAt(abs)
 		if nested == nil || !nested.isKustomizeComponent() {
 			// A Component that points at a non-Component dir is
 			// malformed for kustomize purposes; skip rather than
@@ -386,7 +450,7 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			if shouldSkipDir(d.Name(), path, w.scanRoot, w.ignore) {
+			if w.shouldSkipDir(d.Name(), path) {
 				return filepath.SkipDir
 			}
 			if path == root {
@@ -394,8 +458,10 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 			}
 			// Subdirectory: if it's a kustomize package, switch to
 			// graph walk and SkipDir to keep filepath.WalkDir from
-			// descending again.
-			if k := readKustomization(path); k != nil {
+			// descending again. Pull the file path out of the same
+			// read so walkKustomize doesn't open kustomization.yaml a
+			// second time.
+			if k, kpath := readKustomizationAt(path); k != nil {
 				if k.isKustomizeComponent() {
 					// Mirror descend's DiscoveryOnly gate: harvest
 					// CM/Secret data files from Component subtrees so
@@ -409,7 +475,7 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 					return filepath.SkipDir
 				}
 				w.visited[path] = struct{}{}
-				n, err := w.walkKustomize(ctx, path, k)
+				n, err := w.walkKustomize(ctx, path, k, kpath)
 				if err != nil {
 					return err
 				}
@@ -421,7 +487,7 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 		if !isManifestFile(path) {
 			return nil
 		}
-		if w.ignore.matches(path, w.scanRoot, false) {
+		if w.ignoreMatches(path, false) {
 			return nil
 		}
 		n, err := w.loader.loadFile(path)
@@ -533,7 +599,15 @@ func (l *Loader) FinalizeGenerators(repoRoot string) {
 	if len(records) == 0 {
 		return
 	}
-	prefixes := KSPathPrefixes(l.Store, repoRoot)
+	// Build the prefix list once for the entire generator loop.
+	// parentNamespaceFor needs it for each record's LongestParent
+	// lookup; building it per record would walk every Kustomization
+	// and re-read every kustomization.yaml's `components:` once per
+	// record — O(M×K) where M is records and K is KSes. The shared
+	// ComponentCache (when present) drops the per-KS cost too, so a
+	// repeat finalize pass within the same Bootstrap doesn't re-stat
+	// disk.
+	prefixes := KSPathPrefixesWithCache(l.Store, repoRoot, l.ComponentCache)
 	seen := make(map[manifest.NamedResource]struct{}, len(records))
 	for _, r := range records {
 		parentNS := parentNamespaceFor(prefixes, l.Store, r.file, repoRoot)
@@ -643,7 +717,11 @@ func isManifestFile(path string) bool {
 // shouldSkipDir applies the ad-hoc walk's directory-prune rules.
 // Not used by walkKustomize — that path follows explicit resource
 // entries and trusts the user's kustomize manifests.
-func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
+//
+// Lives on walker so the final ignore check routes through the
+// per-Load matches cache — without it, every directory in the tree
+// re-runs filepath.Rel + gitignore.Match for the same path.
+func (w *walker) shouldSkipDir(name, full string) bool {
 	switch name {
 	case ".git", "node_modules", ".cache":
 		return true
@@ -655,31 +733,6 @@ func shouldSkipDir(name, full, root string, ignore *ignoreSet) bool {
 	if strings.HasPrefix(name, ".") && name != "." {
 		return true
 	}
-	return ignore.matches(full, root, true)
+	return w.ignoreMatches(full, true)
 }
 
-// kustomizationFilePath returns the absolute path of dir's
-// kustomization.{yaml,yml,json} (first match wins, matching kustomize's
-// own filename precedence). Returns ("", false) when none exists.
-//
-// Uses os.Stat (follows symlinks) rather than restricting to regular
-// files via Lstat-IsRegular: readKustomization (which actually parses
-// the file) reads through symlinks happily, so the two need to agree
-// or descend silently classifies the dir as a kustomize package via
-// readKustomization but walkKustomize skips loading the file itself.
-func kustomizationFilePath(dir string) (string, bool) {
-	for _, name := range kustomizationFileNames {
-		p := filepath.Join(dir, name)
-		info, err := os.Stat(p)
-		if err != nil {
-			continue
-		}
-		if info.IsDir() {
-			// `kustomization.yaml/` is nonsense — refuse and let the
-			// next candidate filename try.
-			continue
-		}
-		return p, true
-	}
-	return "", false
-}

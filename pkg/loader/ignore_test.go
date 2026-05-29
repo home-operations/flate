@@ -152,6 +152,72 @@ func TestLoadIgnore_DirOnlyPattern(t *testing.T) {
 	}
 }
 
+// TestWalkerIgnoreMatches_MemoMatchesUncached asserts the walker's
+// memoized ignoreMatches returns identical results to the raw
+// ignoreSet.matches across hit and miss. The contract is "same input
+// → same output, but cheaper" — the cache must never flip a result.
+func TestWalkerIgnoreMatches_MemoMatchesUncached(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, ".krmignore", "apps/junk/**\ntmp/\n")
+	ig, err := loadIgnore(root)
+	if err != nil {
+		t.Fatalf("loadIgnore: %v", err)
+	}
+	w := walker{
+		ignore:      ig,
+		scanRoot:    root,
+		visited:     map[string]struct{}{},
+		ignoreCache: map[ignoreKey]bool{},
+	}
+
+	cases := []struct {
+		rel   string
+		isDir bool
+	}{
+		{"apps/junk/file.yaml", false},
+		{"apps/junk/sub/file.yaml", false},
+		{"apps/other/file.yaml", false},
+		{"tmp", true},
+		{"tmp", false}, // same path, different isDir → distinct cache entry
+		{"unrelated/path.yaml", false},
+	}
+	for _, tc := range cases {
+		abs := filepath.Join(root, filepath.FromSlash(tc.rel))
+		want := ig.matches(abs, root, tc.isDir)
+		// First call — miss.
+		if got := w.ignoreMatches(abs, tc.isDir); got != want {
+			t.Errorf("ignoreMatches(%q, isDir=%v) miss = %v, want %v", tc.rel, tc.isDir, got, want)
+		}
+		// Second call — hit. Result must match.
+		if got := w.ignoreMatches(abs, tc.isDir); got != want {
+			t.Errorf("ignoreMatches(%q, isDir=%v) hit = %v, want %v", tc.rel, tc.isDir, got, want)
+		}
+	}
+
+	// Sanity: every input populated a cache entry.
+	if got, want := len(w.ignoreCache), len(cases); got != want {
+		t.Errorf("ignoreCache size after %d distinct lookups = %d, want %d", want, got, want)
+	}
+}
+
+// TestWalkerIgnoreMatches_NilMatcherShortCircuits asserts the cache
+// isn't populated when the ignore set is empty — every call returns
+// false immediately and a cluster-sized walk shouldn't grow a map
+// for free.
+func TestWalkerIgnoreMatches_NilMatcherShortCircuits(t *testing.T) {
+	w := walker{
+		ignore:      &ignoreSet{}, // no matcher
+		scanRoot:    "/tmp",
+		ignoreCache: map[ignoreKey]bool{},
+	}
+	if got := w.ignoreMatches("/tmp/x.yaml", false); got {
+		t.Errorf("nil matcher should always return false; got true")
+	}
+	if len(w.ignoreCache) != 0 {
+		t.Errorf("nil matcher must not populate cache; got %d entries", len(w.ignoreCache))
+	}
+}
+
 // TestNormalizePrefix_LivesInParent is a compile-time + behavioural check
 // that NormalizePrefix is accessible from the parent.go scope (i.e. the
 // move didn't accidentally make it unexported or shadow it).

@@ -111,29 +111,31 @@ func (a *HelmReleaseArtifact) RenderedManifests() []map[string]any { return a.Ma
 //     DeepEqual on the artifact size you have, this is a wash. Bench
 //     it."). The pointer-identity short-circuit is the residual win.
 func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
-	s.mu.Lock()
-	prev, exists := s.artifacts[id]
+	sh := s.shardFor(id)
+	sh.mu.Lock()
+	prev, exists := sh.artifacts[id]
 	// Trivial fast path: the same pointer is being re-set. Identical
 	// content by construction; skip reflection entirely. This is the
 	// hot path when a fetcher caches its own SourceArtifact and
 	// re-publishes it on every refresh tick.
 	if exists && prev == artifact {
-		s.mu.Unlock()
+		sh.mu.Unlock()
 		return
 	}
 	if exists && reflect.DeepEqual(prev, artifact) {
-		s.mu.Unlock()
+		sh.mu.Unlock()
 		return
 	}
-	s.artifacts[id] = artifact
+	sh.artifacts[id] = artifact
 	dispatch := s.fireUnderLock(EventArtifactUpdated, id, artifact)
-	s.mu.Unlock()
+	sh.mu.Unlock()
 	dispatch()
 }
 
 // GetArtifact returns the artifact for id, or nil if none was set.
 func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.artifacts[id]
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+	return sh.artifacts[id]
 }

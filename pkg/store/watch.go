@@ -54,7 +54,7 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource, quies
 	// the channel directly would lose Failed→Ready transitions when
 	// the buffer-1 channel drops on a default-send.
 	//
-	// The subscribe + initial status read run under s.mu.RLock to
+	// The subscribe + initial status read run under rLockAll to
 	// serialize against writers: any UpdateStatus that completes
 	// AFTER this critical section will fire our listener (because
 	// we're in its listener-set snapshot); any update that completed
@@ -193,7 +193,7 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource, quies
 // Useful for kinds outside SupportsStatus (ConfigMap, Secret).
 //
 // Like WatchReady, the listener-register-and-initial-read pair runs
-// under s.mu.RLock so a writer that lands after we subscribed always
+// under rLockAll so a writer that lands after we subscribed always
 // reaches our listener, and a writer that landed before we subscribed
 // is observed by the initial read. Without this pairing the listener
 // can be added after the writer's listener-set snapshot AND the
@@ -233,30 +233,40 @@ func (s *Store) WatchExists(ctx context.Context, id manifest.NamedResource) (man
 }
 
 // subscribeWithObject atomically registers fn as an EventObjectAdded
-// listener AND reads the current object for id under one s.mu.RLock
+// listener AND reads the current object for id under one rLockAll
 // acquisition. The atomicity closes the subscribe-then-recheck race
 // at the source: any writer landing after this call sees our
 // listener in its dispatch snapshot; any writer that completed
 // before this call has its object visible via the initial read.
+//
+// rLockAll is required (not just the target shard's RLock) because
+// AddListener's no-flush path takes every shard's RLock — using a
+// single-shard RLock here would leave a window where a writer on
+// shard X can fire AFTER our set.add but BEFORE we read sh.objects,
+// missing both the listener delivery and the recheck. Holding every
+// shard's RLock matches the AddListener invariant and only costs
+// what AddListener already pays.
 func (s *Store) subscribeWithObject(fn Listener, id manifest.NamedResource) (manifest.BaseManifest, Unsubscribe) {
 	set := s.listeners[EventObjectAdded]
-	s.mu.RLock()
+	sh := s.shardFor(id)
+	s.rLockAll()
 	handle := set.add(fn)
-	obj := s.objects[id]
-	s.mu.RUnlock()
+	obj := sh.objects[id]
+	s.rUnlockAll()
 	return obj, func() { set.remove(handle) }
 }
 
 // subscribeWithStatus atomically registers fn as an
 // EventStatusUpdated listener AND reads the current status for id
-// under one s.mu.RLock. Mirrors subscribeWithObject for the status
-// channel; same race-closing argument.
+// under one rLockAll. Mirrors subscribeWithObject for the status
+// channel; same race-closing argument and same per-shard rationale.
 func (s *Store) subscribeWithStatus(fn Listener, id manifest.NamedResource) (StatusInfo, bool, Unsubscribe) {
 	set := s.listeners[EventStatusUpdated]
-	s.mu.RLock()
+	sh := s.shardFor(id)
+	s.rLockAll()
 	handle := set.add(fn)
-	info, ok := statusInfoFromConditions(s.conditions[id])
-	s.mu.RUnlock()
+	info, ok := statusInfoFromConditions(sh.conditions[id])
+	s.rUnlockAll()
 	return info, ok, func() { set.remove(handle) }
 }
 

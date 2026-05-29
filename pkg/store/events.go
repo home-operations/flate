@@ -73,47 +73,51 @@ func (s *Store) OnArtifact(fn func(manifest.NamedResource, Artifact), replay boo
 // are recovered, same as live dispatch. The returned Unsubscribe
 // removes the listener.
 //
-// Lock strategy:
-//   - flush=false: holds s.mu.RLock() during set.add so a concurrent
-//     writer can't snapshot listeners (fireUnderLock) and dispatch
-//     before fn is registered. RLock is sufficient because the
-//     non-flush path doesn't read or write store maps.
-//   - flush=true: holds s.mu.Lock() across (register + snapshot) so
-//     the pair is atomic with respect to writers. Without the write
-//     lock, a concurrent AddObject could update the map, snapshot
-//     listeners (already including fn via set.add), and dispatch —
-//     while this goroutine replays the same object from the
-//     post-update map snapshot, double-firing fn. Exactly-one
-//     delivery is the invariant.
+// Lock strategy (sharded):
+//   - flush=false: holds every shard's RLock during set.add so a
+//     concurrent writer can't snapshot listeners (fireUnderLock) and
+//     dispatch before fn is registered. We need RLocks on ALL shards
+//     because a writer on any shard runs fireUnderLock under its own
+//     shard's write lock — without holding every shard's RLock here,
+//     a concurrent writer on shard X could snapshot listeners (not
+//     yet including fn), release shard X's lock, and dispatch while
+//     fn is being added. The cost (one rLockAll per AddListener) is
+//     paid once at controller wiring time, not on the dispatch hot
+//     path.
+//   - flush=true: holds every shard's write lock across (register +
+//     snapshot) so the pair is atomic with respect to writers. Without
+//     the write locks, a concurrent AddObject on some shard could
+//     update its map, snapshot listeners (already including fn via
+//     set.add), and dispatch — while this goroutine replays the same
+//     object from the post-update map snapshot, double-firing fn.
+//     Exactly-one delivery is the invariant; the canonical-order
+//     lockAll prevents deadlock between two simultaneous flush=true
+//     calls.
 func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscribe {
 	if event < 1 || int(event) > numEventKinds {
 		panic("store: unknown event kind")
 	}
 	set := s.listeners[event]
 	if !flush {
-		// The no-replay path needs only a read lock on s.mu. Writers
-		// hold s.mu.Lock() while capturing their listener-set snapshot
-		// (fireUnderLock), so holding s.mu.RLock() here is exclusive
-		// with any concurrent writer's lock acquisition: the writer
-		// either (a) completes its snapshot BEFORE this add (fn misses
-		// that event — expected, the listener wasn't registered yet) or
-		// (b) starts AFTER this add (fn is in the snapshot — correct).
-		// Without any s.mu hold, a writer could snapshot listeners under
-		// set.mu alone, release s.mu, and dispatch before fn lands —
-		// silently missing the very event the caller registered for.
-		// RLock is sufficient because we're only mutating set (which
-		// has its own internal mutex), not s.objects/conditions/artifacts.
-		s.mu.RLock()
+		// All-shard RLock closes the dispatcher-vs-add race uniformly
+		// across shards. Writers acquire their single shard's write
+		// lock to fire — RLocking every shard here forces the writer
+		// to wait until our set.add completes, so the writer's
+		// listener snapshot either pre-dates this add (and our fn
+		// correctly misses that pre-existing event) or post-dates it
+		// (and our fn is in the snapshot — correct).
+		s.rLockAll()
 		handle := set.add(fn)
-		s.mu.RUnlock()
+		s.rUnlockAll()
 		return func() { set.remove(handle) }
 	}
-	// flush=true: must hold write lock so the (register + capture
-	// replay snapshot) pair is atomic with respect to writers.
-	s.mu.Lock()
+	// flush=true: must hold every shard's write lock so the
+	// (register + capture replay snapshot) pair is atomic with
+	// respect to writers anywhere in the store.
+	s.lockAll()
 	handle := set.add(fn)
 	pairs := s.snapshotForReplay(event)
-	s.mu.Unlock()
+	s.unlockAll()
 	for _, p := range pairs {
 		safeInvoke(fn, p.id, p.payload)
 	}
@@ -127,29 +131,48 @@ type idPayload struct {
 }
 
 // snapshotForReplay captures the existing-state replay for event.
-// Caller MUST hold s.mu (write lock) — the snapshot read must be
-// atomic with respect to writers' map updates so the listener-snapshot
-// they capture is consistent with the replay set returned here.
+// Caller MUST hold every shard's write lock (via lockAll) — the
+// snapshot read walks every shard and must be atomic with respect to
+// writers' map updates so the listener-snapshot they capture is
+// consistent with the replay set returned here.
 func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 	switch event {
 	case EventObjectAdded:
-		out := make([]idPayload, 0, len(s.objects))
-		for id, obj := range s.objects {
-			out = append(out, idPayload{id, obj})
+		total := 0
+		for i := range s.shards {
+			total += len(s.shards[i].objects)
+		}
+		out := make([]idPayload, 0, total)
+		for i := range s.shards {
+			for id, obj := range s.shards[i].objects {
+				out = append(out, idPayload{id, obj})
+			}
 		}
 		return out
 	case EventStatusUpdated:
-		out := make([]idPayload, 0, len(s.conditions))
-		for id, conds := range s.conditions {
-			if info, ok := statusInfoFromConditions(conds); ok {
-				out = append(out, idPayload{id, info})
+		total := 0
+		for i := range s.shards {
+			total += len(s.shards[i].conditions)
+		}
+		out := make([]idPayload, 0, total)
+		for i := range s.shards {
+			for id, conds := range s.shards[i].conditions {
+				if info, ok := statusInfoFromConditions(conds); ok {
+					out = append(out, idPayload{id, info})
+				}
 			}
 		}
 		return out
 	case EventArtifactUpdated:
-		out := make([]idPayload, 0, len(s.artifacts))
-		for id, art := range s.artifacts {
-			out = append(out, idPayload{id, art})
+		total := 0
+		for i := range s.shards {
+			total += len(s.shards[i].artifacts)
+		}
+		out := make([]idPayload, 0, total)
+		for i := range s.shards {
+			for id, art := range s.shards[i].artifacts {
+				out = append(out, idPayload{id, art})
+			}
 		}
 		return out
 	}
@@ -158,17 +181,19 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 
 // fireUnderLock is the race-safe dispatcher writers MUST use: it
 // captures the listener snapshot under the caller's already-held
-// s.mu and returns a closure the caller invokes AFTER releasing the
-// lock. The pattern is:
+// shard lock and returns a closure the caller invokes AFTER releasing
+// the lock. The pattern is:
 //
-//	s.mu.Lock()
-//	... mutate ...
+//	sh.mu.Lock()
+//	... mutate sh.objects / sh.conditions / sh.artifacts ...
 //	dispatch := s.fireUnderLock(EventX, id, payload)
-//	s.mu.Unlock()
+//	sh.mu.Unlock()
 //	dispatch()
 //
-// Holding s.mu while snapshotting listeners closes the
-// AddListener-vs-writer race documented on AddListener.
+// Holding the shard lock while snapshotting listeners closes the
+// AddListener-vs-writer race documented on AddListener: a
+// flush=false add holds every shard's RLock, so the snapshot
+// captured here cannot interleave with an in-progress add.
 //
 // When no listeners are registered for event, fireUnderLock returns
 // a no-op closure with no allocation — AddRendered always dispatches

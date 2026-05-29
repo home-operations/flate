@@ -829,17 +829,19 @@ func TestStore_AddRendered_DispatchesListeners(t *testing.T) {
 // TestStore_AddListenerNoFlush_NoMissedConcurrentWrites pins that a
 // listener registered with flush=false against a hot writer doesn't
 // miss the next live event. Pre-fix, the non-flush branch took
-// set.mu but not s.mu, so a writer could:
-//  1. Lock s.mu, mutate store.
-//  2. Capture set.snapshot() under set.mu (independent of s.mu).
-//  3. Release s.mu.
+// set.mu but not the store lock, so a writer could:
+//  1. Lock its shard, mutate.
+//  2. Capture set.snapshot() under set.mu (independent of the shard).
+//  3. Release the shard.
 //  4. Dispatch to the pre-add snapshot.
 //
 // while the registrar slid set.add(fn) between steps 2 and 4. fn
-// silently misses the live event. Holding s.mu around set.add
-// closes the window. Test races N writers against AddListener and
-// asserts the listener observes every AddObject made after its own
-// goroutine acquired the lock.
+// silently misses the live event. Holding every shard's RLock
+// around set.add closes the window (writers fire under their own
+// shard's write lock, exclusive with the registrar's RLock). Test
+// races N writers against AddListener and asserts the listener
+// observes every AddObject made after its own goroutine acquired
+// the lock.
 func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
 	s := New()
 	const writers = 64
@@ -994,5 +996,109 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	}
 	if !sawReady || !sawHealthy {
 		t.Errorf("expected both Ready and Healthy; sawReady=%v sawHealthy=%v", sawReady, sawHealthy)
+	}
+}
+
+// TestStore_ShardedConcurrentDifferentKinds hammers two distinct Kinds
+// (Kustomization, HelmRelease) from many goroutines concurrently and
+// asserts the operations complete cleanly under -race. The KS and HR
+// Kinds hash to different shards (verified manually: KS→14, HR→10), so
+// the workload exercises the cross-Kind parallelism that justifies the
+// shard refactor — under the old single-mutex design these goroutines
+// would all serialize on the single global lock. The bug bar here is correctness, not
+// timing: -race surfaces any shard-locking mistake (cross-shard
+// dangling reads, missed unlock paths, deadlocks) as a data race or
+// hang within the 30s test budget.
+func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
+	s := New()
+	const N = 50
+	const workers = 8
+	var wg sync.WaitGroup
+
+	// 4 goroutines on Kustomizations, 4 on HelmReleases.
+	for w := range workers {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			isKS := w%2 == 0
+			for i := range N {
+				if isKS {
+					ks := &manifest.Kustomization{Name: fmt.Sprintf("ks-%d-%d", w, i), Namespace: "ns"}
+					s.AddObject(ks)
+					s.UpdateStatus(ks.Named(), StatusReady, "ok")
+					_ = s.GetObject(ks.Named())
+				} else {
+					hr := &manifest.HelmRelease{Name: fmt.Sprintf("hr-%d-%d", w, i), Namespace: "ns"}
+					s.AddObject(hr)
+					s.UpdateStatus(hr.Named(), StatusReady, "ok")
+					_ = s.GetObject(hr.Named())
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	// Sanity: every object landed.
+	if got := len(s.ListObjects(manifest.KindKustomization)); got != N*(workers/2) {
+		t.Errorf("expected %d KSes, got %d", N*(workers/2), got)
+	}
+	if got := len(s.ListObjects(manifest.KindHelmRelease)); got != N*(workers/2) {
+		t.Errorf("expected %d HRs, got %d", N*(workers/2), got)
+	}
+}
+
+// TestStore_CrossKindOperationDoesntDeadlock pounds the cross-shard
+// paths (ListObjects(""), FailedResources, AddListener(replay=true))
+// from many goroutines while per-shard writers churn through different
+// Kinds. The canonical-order lockAll/rLockAll rule prevents two
+// cross-shard operations from deadlocking by taking shards in opposing
+// orders. Any regression that locks shards out-of-order — e.g. a
+// future lockAll variant that iterates from N-1 down to 0 — produces
+// a hang within the 30s test timeout.
+func TestStore_CrossKindOperationDoesntDeadlock(t *testing.T) {
+	s := New()
+	const goroutines = 32
+	const ops = 30
+
+	// Seed with a mix of kinds across multiple shards.
+	for i := range 10 {
+		s.AddObject(&manifest.Kustomization{Name: fmt.Sprintf("ks-%d", i), Namespace: "ns"})
+		s.AddObject(&manifest.HelmRelease{Name: fmt.Sprintf("hr-%d", i), Namespace: "ns"})
+		s.AddObject(newCM(fmt.Sprintf("cm-%d", i), "ns"))
+	}
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	for w := range goroutines {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := range ops {
+				switch (w + i) % 5 {
+				case 0:
+					_ = s.ListObjects("")
+				case 1:
+					_ = s.FailedResources()
+				case 2:
+					unsub := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) {}, true)
+					unsub()
+				case 3:
+					ks := &manifest.Kustomization{Name: fmt.Sprintf("ks-w%d-i%d", w, i), Namespace: "ns"}
+					s.AddObject(ks)
+					s.UpdateStatus(ks.Named(), StatusFailed, "boom")
+				case 4:
+					hr := &manifest.HelmRelease{Name: fmt.Sprintf("hr-w%d-i%d", w, i), Namespace: "ns"}
+					s.AddObject(hr)
+					s.SetArtifact(hr.Named(), &HelmReleaseArtifact{Manifests: nil, Fingerprint: "x"})
+				}
+			}
+		}(w)
+	}
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		// Success — no deadlock.
+	case <-time.After(30 * time.Second):
+		t.Fatal("cross-shard ops deadlocked (lockAll canonical-order regression?)")
 	}
 }

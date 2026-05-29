@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.31](https://github.com/home-operations/flate/compare/0.1.30...0.1.31) (2026-05-29)
+
+
+### Bug Fixes
+
+* **diff:** empty markdown is empty, drop KS path from header ([#493](https://github.com/home-operations/flate/issues/493)) ([987ee91](https://github.com/home-operations/flate/commit/987ee91e40e97ab23fbe5b12e7ca59febe501cbb))
+
 ## [0.1.30](https://github.com/home-operations/flate/compare/0.1.29...0.1.30) (2026-05-29)
 
 

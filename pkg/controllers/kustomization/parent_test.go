@@ -3,6 +3,10 @@ package kustomization
 import (
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -110,6 +114,104 @@ func TestCollectDeps_SubstituteFromIgnoresMalformedRefs(t *testing.T) {
 	c := New(store.New(), nil, nil, false)
 	if deps := c.collectDeps(ks); len(deps) != 0 {
 		t.Errorf("expected no deps from malformed substituteFrom refs; got %+v", deps)
+	}
+}
+
+// TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer pins the
+// changed-only producer-KS depwait edge: when the substituteFrom
+// ConfigMap is rendered by another Flux Kustomization, that producer
+// is appended as its own dep so the consumer waits for the producer's
+// reconcile (which materializes the CM) before rendering. See #418.
+func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
+	consumerObj := &manifest.Kustomization{
+		Name: "cluster-apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps"},
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
+		},
+	}
+	producerObj := &manifest.Kustomization{
+		Name: "cluster-vars", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/flux/vars"},
+	}
+	consumer := consumerObj.Named()
+	producer := producerObj.Named()
+	// DiscoveryOnly-indexed CM (Namespace="") — kustomize's namespace
+	// directive hasn't run yet at file-walk time.
+	cmObj := &manifest.ConfigMap{Name: "cluster-settings", Namespace: ""}
+	cmID := cmObj.Named()
+
+	f := change.NewFilter(
+		change.NewSet([]string{"kubernetes/apps/changed.yaml"}),
+		map[manifest.NamedResource]string{
+			consumer: "kubernetes/flux/cluster-apps.yaml",
+			producer: "kubernetes/flux/cluster-vars.yaml",
+			cmID:     "kubernetes/flux/vars/cluster-settings.yaml",
+		},
+		"",
+		testutil.MapLister{consumer: consumerObj, producer: producerObj, cmID: cmObj},
+	)
+
+	c := New(store.New(), nil, nil, false)
+	c.Configure(Options{Filter: f})
+	deps := c.collectDeps(consumerObj)
+
+	wantCM := manifest.NamedResource{
+		Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings",
+	}
+	var sawCM, sawProducer bool
+	for _, d := range deps {
+		if d.NamedResource == wantCM {
+			sawCM = true
+		}
+		if d.NamedResource == producer {
+			sawProducer = true
+		}
+	}
+	if !sawCM {
+		t.Errorf("expected substituteFrom CM dep %+v in deps %+v", wantCM, deps)
+	}
+	if !sawProducer {
+		t.Errorf("expected producer KS dep %+v in deps %+v", producer, deps)
+	}
+}
+
+// TestCollectDeps_SkipsSelfProducer pins the bjw-s self-substitute
+// pattern: a KS that produces its own substituteFrom ConfigMap must
+// NOT be appended as a dep on itself (would self-loop in depwait).
+// See #418.
+func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
+	selfObj := &manifest.Kustomization{
+		Name: "app", Namespace: "foo",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/foo/app"},
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "settings"},
+		},
+	}
+	self := selfObj.Named()
+	// CM rendered by self — file lives under self's spec.path so
+	// ownersOf returns self in the producer index.
+	cmObj := &manifest.ConfigMap{Name: "settings", Namespace: ""}
+	cmID := cmObj.Named()
+
+	f := change.NewFilter(
+		change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}),
+		map[manifest.NamedResource]string{
+			self: "kubernetes/foo/app/ks.yaml",
+			cmID: "kubernetes/foo/app/settings.yaml",
+		},
+		"",
+		testutil.MapLister{self: selfObj, cmID: cmObj},
+	)
+
+	c := New(store.New(), nil, nil, false)
+	c.Configure(Options{Filter: f})
+	deps := c.collectDeps(selfObj)
+
+	for _, d := range deps {
+		if d.NamedResource == self {
+			t.Errorf("self-producer must not appear as its own dep; got %+v", deps)
+		}
 	}
 }
 

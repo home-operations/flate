@@ -655,3 +655,352 @@ func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 		t.Errorf("HelmChart's sourceRef OCIRepository not pulled in; keep=%v", f.KeepNames())
 	}
 }
+
+// TestFilter_SubstituteFromConfigMapKeepsProducerKustomization pins
+// issue #418: a kept Kustomization with a non-Optional
+// postBuild.substituteFrom ConfigMap must pull the producer KS that
+// renders that CM into keep, even when the producer's own files
+// didn't change. Without this, changed-only mode fails reconcile
+// with "ConfigMap/flux-system/cluster-settings: dependency not found"
+// because the producer never runs and the CM never materializes.
+//
+// The producer joins keep as ancestor-only — NOT primary — so its
+// render output for unrelated siblings can't cascade into changed-
+// only scope (the #204 keep-cascade rationale).
+func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) {
+	clusterAppsObj := &manifest.Kustomization{
+		Name: "cluster-apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path: "kubernetes/apps",
+		},
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
+		},
+	}
+	clusterVarsObj := &manifest.Kustomization{
+		Name: "cluster-vars", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path: "kubernetes/flux/vars",
+			// The CM lives in a shared Component referenced by
+			// cluster-vars — ownersOf returns cluster-vars for any
+			// file under the resolved component path.
+			Components: []string{"../../components/cluster-settings"},
+		},
+	}
+	ntfyObj := &manifest.Kustomization{
+		Name: "ntfy", Namespace: "communication",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path: "kubernetes/apps/communication/ntfy/app",
+		},
+	}
+	hrObj := &manifest.HelmRelease{Name: "ntfy", Namespace: "communication"}
+	// rawSettings is the DiscoveryOnly-indexed pre-render form:
+	// Namespace="" because kustomize's namespace directive hasn't
+	// run yet at file-walk time.
+	rawSettings := &manifest.ConfigMap{Name: "cluster-settings", Namespace: ""}
+	rawSettingsID := rawSettings.Named()
+
+	clusterApps := clusterAppsObj.Named()
+	clusterVars := clusterVarsObj.Named()
+	ntfy := ntfyObj.Named()
+	hr := hrObj.Named()
+	// renderedSettings is the form the consumer KS waits on once
+	// kustomize's namespace directive has stamped flux-system onto
+	// the rendered CM.
+	renderedSettings := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
+
+	f := NewFilter(
+		NewSet([]string{"kubernetes/apps/communication/ntfy/app/helmrelease.yaml"}),
+		map[manifest.NamedResource]string{
+			clusterApps:   "kubernetes/flux/cluster-apps.yaml",
+			clusterVars:   "kubernetes/flux/cluster-vars.yaml",
+			ntfy:          "kubernetes/apps/communication/ntfy/ks.yaml",
+			hr:            "kubernetes/apps/communication/ntfy/app/helmrelease.yaml",
+			rawSettingsID: "kubernetes/components/cluster-settings/cluster-settings.yaml",
+		},
+		"",
+		mapLister{
+			clusterApps:   clusterAppsObj,
+			clusterVars:   clusterVarsObj,
+			ntfy:          ntfyObj,
+			hr:            hrObj,
+			rawSettingsID: rawSettings,
+		},
+	)
+
+	// The leaf HR's file changed, so ntfy + the cluster-apps
+	// ancestor are pulled in; the rendered ConfigMap is a
+	// substituteFrom dep of cluster-apps; and cluster-vars is the
+	// producer of that ConfigMap.
+	for _, id := range []manifest.NamedResource{clusterApps, ntfy, hr, renderedSettings, clusterVars} {
+		if !f.ShouldReconcile(id) {
+			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
+		}
+	}
+	// The producer is ancestor-only: AddEmitted from cluster-vars
+	// to a sentinel child must reject (producer is NOT primary).
+	sentinel := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "unrelated", Name: "sentinel"}
+	f.AddEmitted(clusterVars, sentinel)
+	if f.ShouldReconcile(sentinel) {
+		t.Errorf("producer cluster-vars must be ancestor-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v", f.KeepNames())
+	}
+}
+
+// TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly
+// covers the runtime AddEmitted path: a primary parent KS emits a
+// child KS at render time, and that child has a substituteFrom CM
+// produced by an unchanged third KS. The producer must land in keep
+// (so the CM materializes) but stay dependency-only — its render
+// output for unrelated siblings is unchanged, so promoting it would
+// re-introduce the #204 cascade. See #418.
+func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T) {
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent-apps"}
+	childObj := &manifest.Kustomization{
+		Name: "child-app", Namespace: "apps",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path: "kubernetes/apps/child",
+		},
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "shared-settings"},
+		},
+	}
+	child := childObj.Named()
+	producerObj := &manifest.Kustomization{
+		Name: "settings-producer", Namespace: "apps",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path: "kubernetes/apps/settings",
+		},
+	}
+	producer := producerObj.Named()
+	// CM with namespace="" mirrors the DiscoveryOnly pre-render form.
+	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "", Name: "shared-settings"}
+	cmObj := &manifest.ConfigMap{Name: cmID.Name, Namespace: cmID.Namespace}
+
+	f := NewFilter(
+		NewSet([]string{"kubernetes/parent/parent.yaml"}),
+		map[manifest.NamedResource]string{
+			parent:   "kubernetes/parent/parent.yaml",
+			producer: "kubernetes/apps/settings/ks.yaml",
+			cmID:     "kubernetes/apps/settings/cm.yaml",
+		},
+		"",
+		mapLister{producer: producerObj, child: childObj, cmID: cmObj},
+	)
+
+	if !f.ShouldReconcile(parent) {
+		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
+	}
+	if f.ShouldReconcile(producer) {
+		t.Fatalf("precondition: producer must NOT be in keep before AddEmitted runs; keep=%v", f.KeepNames())
+	}
+
+	// Primary parent emits child at render time. AddEmitted walks
+	// child's transitiveDeps, hits the substituteFrom CM, and pulls
+	// the producer in dependency-only.
+	f.AddEmitted(parent, child)
+
+	if !f.ShouldReconcile(child) {
+		t.Errorf("child must be in keep after AddEmitted from primary parent; keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(producer) {
+		t.Errorf("producer of child's substituteFrom CM must be in keep; keep=%v", f.KeepNames())
+	}
+	// Producer is dependency-only: AddEmitted from producer to a
+	// sentinel child must reject because producer is not primary.
+	sentinel := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "unrelated", Name: "sentinel"}
+	f.AddEmitted(producer, sentinel)
+	if f.ShouldReconcile(sentinel) {
+		t.Errorf("producer must be dependency-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v", f.KeepNames())
+	}
+}
+
+// TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer pins that
+// a runtime-added producer KS is delivered to OnAdd. The orchestrator
+// wires OnAdd → Store.Refire for KindKustomization (#418); without
+// the OnAdd dispatch, an unchanged producer joining keep at runtime
+// would stay PreGate-skipped and its CM would never materialize.
+func TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer(t *testing.T) {
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent-apps"}
+	childObj := &manifest.Kustomization{
+		Name: "child-app", Namespace: "apps",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/child"},
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "shared-settings"},
+		},
+	}
+	child := childObj.Named()
+	producerObj := &manifest.Kustomization{
+		Name: "settings-producer", Namespace: "apps",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/settings"},
+	}
+	producer := producerObj.Named()
+	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "", Name: "shared-settings"}
+	cmObj := &manifest.ConfigMap{Name: cmID.Name, Namespace: cmID.Namespace}
+
+	f := NewFilter(
+		NewSet([]string{"kubernetes/parent/parent.yaml"}),
+		map[manifest.NamedResource]string{
+			parent:   "kubernetes/parent/parent.yaml",
+			producer: "kubernetes/apps/settings/ks.yaml",
+			cmID:     "kubernetes/apps/settings/cm.yaml",
+		},
+		"",
+		mapLister{producer: producerObj, child: childObj, cmID: cmObj},
+	)
+
+	var added []manifest.NamedResource
+	f.OnAdd = func(id manifest.NamedResource) {
+		added = append(added, id)
+	}
+
+	f.AddEmitted(parent, child)
+
+	if !slices.Contains(added, producer) {
+		t.Errorf("OnAdd must fire for the runtime-added producer KS; added=%v", added)
+	}
+}
+
+// TestFilter_ChainedSubstituteFromProducers covers the chained
+// producer case: KS A has substituteFrom CM-a (produced by KS B);
+// KS B has substituteFrom CM-b (produced by KS C). C must land in
+// keep as ancestor — without the chain walk, an unchanged C would
+// silently be skipped and B's render would fail. See #418.
+func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
+	aObj := &manifest.Kustomization{
+		Name: "consumer", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/consumer"},
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "cm-a"},
+		},
+	}
+	bObj := &manifest.Kustomization{
+		Name: "producer-b", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/b"},
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "cm-b"},
+		},
+	}
+	cObj := &manifest.Kustomization{
+		Name: "producer-c", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/c"},
+	}
+	a, b, c := aObj.Named(), bObj.Named(), cObj.Named()
+
+	cmA := &manifest.ConfigMap{Name: "cm-a", Namespace: ""}
+	cmAID := cmA.Named()
+	cmB := &manifest.ConfigMap{Name: "cm-b", Namespace: ""}
+	cmBID := cmB.Named()
+
+	f := NewFilter(
+		NewSet([]string{"kubernetes/consumer/file.yaml"}),
+		map[manifest.NamedResource]string{
+			a:     "kubernetes/consumer/ks.yaml",
+			b:     "kubernetes/b/ks.yaml",
+			c:     "kubernetes/c/ks.yaml",
+			cmAID: "kubernetes/b/cm-a.yaml",
+			cmBID: "kubernetes/c/cm-b.yaml",
+		},
+		"",
+		mapLister{a: aObj, b: bObj, c: cObj, cmAID: cmA, cmBID: cmB},
+	)
+
+	if !f.ShouldReconcile(a) {
+		t.Fatalf("consumer A must be in keep (file change); keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(b) {
+		t.Errorf("producer B (renders cm-a) must be in keep; keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(c) {
+		t.Errorf("chained producer C (renders cm-b consumed by B) must be in keep; keep=%v", f.KeepNames())
+	}
+}
+
+// TestFilter_SelfProducerSkippedInResolve pins the bjw-s
+// self-substitute pattern: a KS may produce its own
+// postBuild.substituteFrom CM. The BFS must NOT enqueue the KS as
+// its own ancestor (would infinite-loop or self-edge). See #418.
+func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
+	selfObj := &manifest.Kustomization{
+		Name: "self", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/self"},
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "self-settings"},
+		},
+	}
+	self := selfObj.Named()
+	// CM lives at spec.path of self — so ownersOf returns self.
+	cmObj := &manifest.ConfigMap{Name: "self-settings", Namespace: ""}
+	cmID := cmObj.Named()
+
+	f := NewFilter(
+		NewSet([]string{"kubernetes/self/changed.yaml"}),
+		map[manifest.NamedResource]string{
+			self: "kubernetes/self/ks.yaml",
+			cmID: "kubernetes/self/cm.yaml",
+		},
+		"",
+		mapLister{self: selfObj, cmID: cmObj},
+	)
+
+	if !f.ShouldReconcile(self) {
+		t.Errorf("self KS must be in keep; keep=%v", f.KeepNames())
+	}
+	// Sanity: no infinite loop happened (we made it here). Also
+	// confirm self only appears once in the producer index — not as
+	// its own ancestor via enqueueAncestor.
+	prods := f.ProducersFor(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "self-settings"})
+	if !slices.Contains(prods, self) {
+		t.Errorf("producers index should still contain self for cm-by-name lookup; got=%v", prods)
+	}
+}
+
+// TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces pins the
+// asymmetric producer-byName rule, mirroring
+// TestFilter_KeepByNameDoesNotLeakAcrossNamespaces. A producer KS
+// renders a CM in namespace ns1; an unrelated producer in ns2
+// renders a same-named CM in ns2. A ProducersFor lookup on
+// CM/ns1/shared MUST return only the ns1 producer — never the ns2
+// one. See #418.
+func TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
+	// Both producer KSes spec a CM named "shared". The CMs land at
+	// distinct on-disk paths, so ownersOf attributes each producer
+	// only to its own CM file.
+	aObj := &manifest.Kustomization{
+		Name: "producer-a", Namespace: "ns1",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "p1"},
+	}
+	bObj := &manifest.Kustomization{
+		Name: "producer-b", Namespace: "ns2",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "p2"},
+	}
+	a, b := aObj.Named(), bObj.Named()
+
+	// The DiscoveryOnly-indexed CMs are in their respective on-disk
+	// paths but have explicit namespace already (so they land in
+	// producersByID only — NOT producersByName).
+	cmNS1 := &manifest.ConfigMap{Name: "shared", Namespace: "ns1"}
+	cmNS1ID := cmNS1.Named()
+	cmNS2 := &manifest.ConfigMap{Name: "shared", Namespace: "ns2"}
+	cmNS2ID := cmNS2.Named()
+
+	f := NewFilter(
+		NewSet([]string{"unrelated.yaml"}),
+		map[manifest.NamedResource]string{
+			a:       "p1/ks.yaml",
+			b:       "p2/ks.yaml",
+			cmNS1ID: "p1/cm.yaml",
+			cmNS2ID: "p2/cm.yaml",
+		},
+		"",
+		mapLister{a: aObj, b: bObj, cmNS1ID: cmNS1, cmNS2ID: cmNS2},
+	)
+
+	gotNS1 := f.ProducersFor(cmNS1ID)
+	if !slices.Equal(gotNS1, []manifest.NamedResource{a}) {
+		t.Errorf("ProducersFor(CM/ns1/shared) leaked across namespaces: got %v, want [%v]", gotNS1, a)
+	}
+	gotNS2 := f.ProducersFor(cmNS2ID)
+	if !slices.Equal(gotNS2, []manifest.NamedResource{b}) {
+		t.Errorf("ProducersFor(CM/ns2/shared) leaked across namespaces: got %v, want [%v]", gotNS2, b)
+	}
+}

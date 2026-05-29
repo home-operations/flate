@@ -178,6 +178,17 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 		}
 		if k.isKustomizeComponent() {
 			slog.Debug("loader: skipping kustomize Component directory", "dir", dir)
+			// DiscoveryOnly callers still need the change filter's
+			// producer index to see ConfigMap/Secret data files that
+			// happen to live inside a Component subtree — a sibling
+			// KS's substituteFrom dep can't resolve to its producing
+			// KS otherwise. walkComponentData records those files
+			// without publishing Component-housed Flux CRs (which are
+			// frequently `${VAR}`-templated and not renderable
+			// standalone).
+			if w.loader.Options.DiscoveryOnly {
+				return w.walkComponentData(ctx, dir, k)
+			}
 			return 0, nil
 		}
 		return w.walkKustomize(ctx, dir, k)
@@ -287,6 +298,75 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 	return count, nil
 }
 
+// walkComponentData records direct ConfigMap/Secret resources from
+// kustomize Components during DiscoveryOnly loads without publishing
+// templated Flux CRs as standalone objects. The change filter's
+// producer index needs the data files source-recorded so a downstream
+// substituteFrom consumer can resolve its producing KS, but a
+// Component's own `${VAR}`-templated Flux CRs are NOT renderable
+// standalone — publishing them would corrupt discovery.
+//
+// Component-of-Component graphs recurse via k.Components; w.visited
+// terminates Component cycles (same primitive descend uses for the
+// non-Component graph). We deliberately do NOT call descend() for
+// nested Components — that would re-enter the regular walk and load
+// any non-Component YAMLs from the Component subtree, defeating the
+// whole point of the skip. Stay limited to CM/Secret data-file
+// recording.
+func (w *walker) walkComponentData(ctx context.Context, dir string, k *kustomization) (int, error) {
+	for _, r := range k.Resources {
+		if cerr := ctx.Err(); cerr != nil {
+			return 0, cerr
+		}
+		abs, ok := resolveDataPath(dir, r)
+		if !ok || w.ignore.matches(abs, w.scanRoot, false) || !isManifestFile(abs) {
+			continue
+		}
+		info, err := os.Stat(abs)
+		if err != nil || info.IsDir() {
+			// Directories under a Component's `resources:` are sibling
+			// kustomize packages, not bare data files; the producer
+			// index is fed by files, so skip rather than recurse. A
+			// nested kustomize package authored inside a Component is
+			// vanishingly rare and would be loaded via its enclosing
+			// Flux KS spec.path instead.
+			continue
+		}
+		if err := w.loader.recordDataFile(abs); err != nil {
+			slog.Warn("loader: component data file failed to parse", "path", abs, "err", err)
+		}
+	}
+	for _, comp := range k.Components {
+		if cerr := ctx.Err(); cerr != nil {
+			return 0, cerr
+		}
+		abs, ok := resolveComponentPath(dir, comp)
+		if !ok {
+			continue
+		}
+		info, err := os.Stat(abs)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if _, seen := w.visited[abs]; seen {
+			continue
+		}
+		w.visited[abs] = struct{}{}
+		nested := readKustomization(abs)
+		if nested == nil || !nested.isKustomizeComponent() {
+			// A Component that points at a non-Component dir is
+			// malformed for kustomize purposes; skip rather than
+			// descend into walkKustomize, which would publish Flux
+			// CRs we deliberately keep hidden under Component subtrees.
+			continue
+		}
+		if _, err := w.walkComponentData(ctx, abs, nested); err != nil {
+			return 0, err
+		}
+	}
+	return 0, nil
+}
+
 // walkAdHoc handles entry points that aren't themselves kustomize
 // packages: walks the filesystem tree, loading every YAML, and
 // switching to walkKustomize when it encounters a sub-directory
@@ -317,6 +397,15 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 			// descending again.
 			if k := readKustomization(path); k != nil {
 				if k.isKustomizeComponent() {
+					// Mirror descend's DiscoveryOnly gate: harvest
+					// CM/Secret data files from Component subtrees so
+					// the producer index can resolve substituteFrom
+					// deps even when the entry was the ad-hoc walk.
+					if w.loader.Options.DiscoveryOnly {
+						if _, err := w.walkComponentData(ctx, path, k); err != nil {
+							return err
+						}
+					}
 					return filepath.SkipDir
 				}
 				w.visited[path] = struct{}{}
@@ -375,6 +464,37 @@ func (l *Loader) loadFile(path string) (int, error) {
 		count++
 	}
 	return count, nil
+}
+
+// recordDataFile parses absPath and records any ConfigMap/Secret
+// objects into the Existence index and SourceFiles map without
+// adding them to the Store. Used by walkComponentData so the change
+// filter's producer index can resolve substituteFrom data deps to
+// their renderer KS without publishing untemplated Component-subtree
+// resources. Mirrors loadFile's PreferExisting + Existence + source
+// bookkeeping but skips AddObject and skips non-data kinds.
+func (l *Loader) recordDataFile(absPath string) error {
+	objs, err := parseFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+	if err != nil {
+		return err
+	}
+	for _, obj := range objs {
+		id := obj.Named()
+		if id.Kind != manifest.KindConfigMap && id.Kind != manifest.KindSecret {
+			// Non-data kinds (most commonly templated Flux CRs in a
+			// Component subtree) intentionally stay invisible — the
+			// producer-index use case is data-only.
+			continue
+		}
+		if l.PreferExisting && l.Store.GetObject(id) != nil {
+			continue
+		}
+		if l.Existence != nil {
+			l.Existence.Record(id, absPath)
+		}
+		l.recordSource(id, absPath)
+	}
+	return nil
 }
 
 // recordGenerators appends generator records observed during a walk.

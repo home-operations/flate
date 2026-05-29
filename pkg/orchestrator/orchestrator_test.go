@@ -12,6 +12,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -716,5 +717,151 @@ func TestOrchestrator_TypedListener(t *testing.T) {
 	s.UpdateStatus(id, store.StatusFailed, "boom")
 	if seen.Status != store.StatusFailed || seen.Message != "boom" {
 		t.Errorf("typed listener did not receive payload: %+v", seen)
+	}
+}
+
+// TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer is the
+// end-to-end regression fence for issue #418. A leaf HelmRelease
+// change under cluster-apps must NOT cause cluster-apps's reconcile
+// to fail with "ConfigMap/flux-system/cluster-settings: dependency
+// not found" because the producer Kustomization (cluster-vars) that
+// renders the substituteFrom ConfigMap was skipped from the keep set.
+//
+// Wiring under test:
+//   - cluster-apps (KS, flux-system) consumes ConfigMap/cluster-settings
+//     via spec.postBuild.substituteFrom.
+//   - cluster-vars (KS, flux-system) renders that CM through a kustomize
+//     Component subtree at kubernetes/components/cluster-settings.
+//   - cluster-apps's spec.path covers an ntfy subtree whose HR file is
+//     the only changed file. The HR is suspended so no chart pull is
+//     needed for this offline fixture.
+//
+// Expectations:
+//  1. cluster-vars is in the filter keep set (ancestor-only — the
+//     producer must reconcile but doesn't promote its other children).
+//  2. Run does NOT fail with "dependency not found" for the CM.
+//  3. The producer's artifact is materialized in the store.
+//  4. The rendered ConfigMap is materialized in the store.
+func TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer(t *testing.T) {
+	dir := t.TempDir()
+
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./kubernetes/apps
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings
+`)
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-vars.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-vars
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./kubernetes/flux/vars
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+	testutil.WriteFile(t, dir, "kubernetes/flux/vars/kustomization.yaml", `namespace: flux-system
+components:
+  - ../../components/cluster-settings
+`)
+	testutil.WriteFile(t, dir, "kubernetes/components/cluster-settings/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - cluster-settings.yaml
+`)
+	testutil.WriteFile(t, dir, "kubernetes/components/cluster-settings/cluster-settings.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-settings
+data:
+  CLUSTER_DOMAIN: example.test
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", `resources:
+  - communication/ntfy/ks.yaml
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ntfy
+  namespace: communication
+spec:
+  interval: 10m
+  path: ./kubernetes/apps/communication/ntfy/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/app/kustomization.yaml", `resources:
+  - helmrelease.yaml
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/app/helmrelease.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: ntfy
+  namespace: communication
+spec:
+  interval: 10m
+  suspend: true
+  chartRef:
+    kind: OCIRepository
+    name: ntfy
+    namespace: flux-system
+`)
+
+	o, err := New(Config{
+		Path:        dir,
+		WipeSecrets: true,
+		ExternalChanges: change.NewSet([]string{
+			"kubernetes/apps/communication/ntfy/app/helmrelease.yaml",
+		}),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	producerID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-vars"}
+	f := o.Filter()
+	if f == nil {
+		t.Fatalf("Filter() returned nil; ExternalChanges should have activated changed-only mode")
+	}
+	if !f.ShouldReconcile(producerID) {
+		t.Fatalf("producer %s must be in keep set; keep=%v", producerID, f.KeepNames())
+	}
+
+	if err := o.Run(context.Background()); err != nil {
+		if strings.Contains(err.Error(), "ConfigMap/flux-system/cluster-settings: dependency not found") {
+			t.Fatalf("changed-only skipped unchanged substituteFrom producer: %v", err)
+		}
+		t.Fatalf("Run: %v", err)
+	}
+
+	if got := o.Store().GetArtifact(producerID); got == nil {
+		t.Errorf("producer %s artifact missing after Run; producer was kept but never reconciled", producerID)
+	}
+	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
+	if got := o.Store().GetObject(cmID); got == nil {
+		t.Errorf("rendered %s missing after Run; producer reconcile did not materialize the substituteFrom CM", cmID)
 	}
 }

@@ -275,14 +275,16 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 // CEL ReadyExpr), the source ref, the implicit structural parent (the
 // enclosing Flux KS that renders us — must finish first so any
 // parent-render-time spec injections land before our reconcile), and
-// every non-Optional postBuild.substituteFrom ConfigMap.
+// every non-Optional postBuild.substituteFrom ConfigMap (or, in
+// changed-only mode, the unchanged producer Kustomization that renders
+// that ConfigMap).
 //
-// substituteFrom ConfigMap edges fix the race where the referenced CM
-// is emitted by another KS's render: without the edge, KS-A would
-// race KS-B and Prepare would silently expand with empty values for
-// vars that should have come from KS-B's CM. Flux's eventual-
-// consistency reconcile loop self-heals; flate is one-shot, so a
-// missed substitution shows up as broken rendered output.
+// substituteFrom ConfigMap/producer edges fix the race where the
+// referenced CM is emitted by another KS's render: without the edge,
+// KS-A would race KS-B and Prepare would silently expand with empty
+// values for vars that should have come from KS-B's CM. Flux's
+// eventual-consistency reconcile loop self-heals; flate is one-shot,
+// so a missed substitution shows up as broken rendered output.
 //
 // Secret refs are deliberately NOT added as depwait edges. In real
 // repos substituteFrom Secrets are almost always SOPS-encrypted or
@@ -316,11 +318,26 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 		if ref.Name == "" {
 			continue
 		}
-		deps = append(deps, manifest.DependencyRef{
-			NamedResource: manifest.NamedResource{
-				Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name,
-			},
-		})
+		depID := manifest.NamedResource{Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name}
+		deps = append(deps, manifest.DependencyRef{NamedResource: depID})
+		// In changed-only mode, when the substituteFrom CM is rendered
+		// by another Flux Kustomization (the producer), wait on that
+		// producer too — the CM dep alone doesn't gate ordering when
+		// the producer's reconcile is what materializes the CM. Only
+		// KS producers form depwait edges (generator-produced CMs have
+		// no controller to wait on); skip the self-producer case
+		// (bjw-s self-substitute pattern).
+		if f := c.Filter(); f != nil {
+			for _, producer := range f.ProducersFor(depID) {
+				if producer == ks.Named() {
+					continue
+				}
+				if producer.Kind != manifest.KindKustomization {
+					continue
+				}
+				deps = append(deps, manifest.DependencyRef{NamedResource: producer})
+			}
+		}
 	}
 	return deps
 }

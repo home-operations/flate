@@ -472,6 +472,190 @@ spec:
 	}
 }
 
+// TestLoader_DiscoveryOnlyRecordsComponentDataResources pins the
+// Phase 1B contract: under DiscoveryOnly, kustomize Component
+// subtrees still skip publishing standalone Flux CRs (the templated
+// ones don't render outside their parent KS) but the loader walks
+// the Component's `resources:` for ConfigMap/Secret data files and
+// records them in Existence + SourceFiles. This is what lets the
+// change filter's producer index resolve a downstream KS's
+// substituteFrom dep to the unchanged renderer KS that owns the
+// Component (issue #418).
+func TestLoader_DiscoveryOnlyRecordsComponentDataResources(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "components/settings/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - ./cluster-settings.yaml
+  - ./templated-ks.yaml
+`)
+	testutil.WriteFile(t, dir, "components/settings/cluster-settings.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-settings
+  namespace: flux-system
+data:
+  FOO: bar
+`)
+	testutil.WriteFile(t, dir, "components/settings/templated-ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: "${APP}-leak", namespace: ns}
+spec:
+  path: ./irrelevant
+  sourceRef: {kind: GitRepository, name: flux-system}
+  interval: 1h
+`)
+	s := store.New()
+	l := New(s)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	l.SourceFiles = map[manifest.NamedResource]string{}
+	l.SourceRoot = dir
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
+	if _, ok := l.Existence.Get(cmID); !ok {
+		t.Errorf("Component-housed CM must be recorded in Existence under DiscoveryOnly")
+	}
+	if _, ok := l.SourceFiles[cmID]; !ok {
+		t.Errorf("Component-housed CM must be recorded in SourceFiles under DiscoveryOnly")
+	}
+	if s.GetObject(cmID) != nil {
+		t.Errorf("Component-housed CM must NOT be in Store under DiscoveryOnly (existence-only)")
+	}
+	// The templated KS would be filtered upstream by parseFile's
+	// envsubst guard even if walkComponentData tried to publish it,
+	// but this assertion pins the "Component CRs stay hidden" contract
+	// at the boundary the caller cares about: the Store.
+	leakID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-leak"}
+	if s.GetObject(leakID) != nil {
+		t.Errorf("templated Flux CR inside a Component must NOT leak into the Store")
+	}
+}
+
+// TestLoader_DiscoveryOnlyRecordsNestedComponentData pins the
+// Component-of-Component recursion in walkComponentData: an outer
+// Component that references an inner Component via `components:`
+// must surface the inner Component's CM/Secret data files into the
+// producer index. The reference PR (tjwallace/flate#1) walked only
+// `resources:` and missed this graph shape — this test is the fence.
+func TestLoader_DiscoveryOnlyRecordsNestedComponentData(t *testing.T) {
+	dir := t.TempDir()
+	// Outer Component points at inner via `components:`. The path is
+	// relative to the outer Component's directory; resolveComponentPath
+	// allows the `..` escape that resolveDataPath forbids.
+	testutil.WriteFile(t, dir, "components/outer/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+components:
+  - ../inner
+`)
+	testutil.WriteFile(t, dir, "components/inner/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - ./shared.yaml
+`)
+	testutil.WriteFile(t, dir, "components/inner/shared.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-cm
+  namespace: flux-system
+data:
+  KEY: value
+`)
+	s := store.New()
+	l := New(s)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	l.SourceFiles = map[manifest.NamedResource]string{}
+	l.SourceRoot = dir
+	// Drive the loader at the outer Component directly — same shape
+	// as TestLoader_SkipsKustomizeComponentSubtree's entry pattern.
+	if _, err := l.Load(context.Background(), filepath.Join(dir, "components/outer")); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "shared-cm"}
+	if _, ok := l.Existence.Get(id); !ok {
+		t.Errorf("inner Component CM reached via Component-of-Component must be recorded in Existence")
+	}
+	if _, ok := l.SourceFiles[id]; !ok {
+		t.Errorf("inner Component CM must be recorded in SourceFiles")
+	}
+}
+
+// TestLoader_DiscoveryOnlyComponentCycleTerminates pins the
+// w.visited cycle protection in walkComponentData: a pair of
+// Components that reference each other via `components:` must not
+// infinite-loop. The same primitive descend uses; verify here so a
+// future change can't drop it.
+func TestLoader_DiscoveryOnlyComponentCycleTerminates(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "components/a/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+components:
+  - ../b
+`)
+	testutil.WriteFile(t, dir, "components/b/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+components:
+  - ../a
+`)
+	s := store.New()
+	l := New(s)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	// No timeout context: if cycle protection fails, the test hangs
+	// and the test framework's overall timeout surfaces the bug.
+	if _, err := l.Load(context.Background(), filepath.Join(dir, "components/a")); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+// TestLoader_NonDiscoveryOnlyStillSkipsComponents is the pre-existing
+// behavior fence: when DiscoveryOnly is OFF, Component subtrees stay
+// fully invisible — no CM/Secret data files surface in Existence or
+// SourceFiles. Without this fence the new walkComponentData gate
+// could be loosened by mistake and silently leak Component-housed
+// CMs into non-DiscoveryOnly Store-loading consumers.
+func TestLoader_NonDiscoveryOnlyStillSkipsComponents(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "components/settings/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - ./cluster-settings.yaml
+`)
+	testutil.WriteFile(t, dir, "components/settings/cluster-settings.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-settings
+  namespace: flux-system
+data:
+  FOO: bar
+`)
+	s := store.New()
+	l := New(s)
+	// DiscoveryOnly intentionally OFF.
+	l.Existence = NewExistenceIndex()
+	l.SourceFiles = map[manifest.NamedResource]string{}
+	l.SourceRoot = dir
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
+	if _, ok := l.Existence.Get(cmID); ok {
+		t.Errorf("non-DiscoveryOnly walk must not record Component-housed CMs in Existence")
+	}
+	if _, ok := l.SourceFiles[cmID]; ok {
+		t.Errorf("non-DiscoveryOnly walk must not record Component-housed CMs in SourceFiles")
+	}
+	if s.GetObject(cmID) != nil {
+		t.Errorf("non-DiscoveryOnly walk must not publish Component-housed CMs to the Store")
+	}
+}
+
 // TestLoader_RespectsCanceledContext asserts the walk bails out on
 // context cancellation. Useful when a stuck NFS mount or symlink
 // loop would otherwise block Bootstrap indefinitely.

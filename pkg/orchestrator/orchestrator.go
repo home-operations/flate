@@ -504,18 +504,28 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	// Issue #260. Refire owns the status reset that closes the
 	// depwait race — see Store.Refire.
 	//
+	// Kustomization is included for the symmetric substituteFrom
+	// producer case (#418): when a primary parent emits a child KS
+	// at render time and that child consumes a substituteFrom CM
+	// produced by an unchanged producer KS, addRecursive pulls the
+	// producer into keep dependency-only — but the producer's own
+	// listener already PreGate-skipped during Bootstrap, leaving no
+	// CM in the store. Refire re-runs the producer so the CM lands
+	// before the consuming KS's depwait expires.
+	//
 	// Kinds limited to the source-controller-managed set (those wired
-	// with a Fetcher in the constructor above). HelmChart resources
-	// are read directly by helm.storeResolver without a Fetcher, so
-	// Refire on a HelmChart id would write a Pending status that no
-	// controller transitions back to Ready.
+	// with a Fetcher in the constructor above) plus Kustomization.
+	// HelmChart resources are read directly by helm.storeResolver
+	// without a Fetcher, so Refire on a HelmChart id would write a
+	// Pending status that no controller transitions back to Ready.
 	f.OnAdd = func(id manifest.NamedResource) {
 		switch id.Kind {
 		case manifest.KindGitRepository,
 			manifest.KindOCIRepository,
 			manifest.KindHelmRepository,
 			manifest.KindBucket,
-			manifest.KindExternalArtifact:
+			manifest.KindExternalArtifact,
+			manifest.KindKustomization:
 			o.store.Refire(id)
 		}
 	}

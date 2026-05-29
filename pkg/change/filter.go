@@ -71,6 +71,18 @@ type Filter struct {
 	// keepByName: (Kind, Name) presence set used as an O(1) fallback
 	// when either side of a lookup has an empty namespace.
 	keepByName map[nameKey]struct{}
+
+	// producersByID and producersByName map file-backed data resources
+	// (ConfigMap/Secret) to the Flux Kustomizations whose spec.path
+	// renders them. Two maps mirror the keepByName empty-namespace
+	// bridge: DiscoveryOnly indexes the raw on-disk ConfigMap before
+	// kustomize's namespace directive has rendered, but consumers wait
+	// on the namespaced form. Built once during resolve() and read-only
+	// after — so the BFS-local lookup in resolve() and the lock-held
+	// runtime lookups can both share the same maps without copying.
+	// See #418.
+	producersByID   map[manifest.NamedResource][]manifest.NamedResource
+	producersByName map[nameKey][]manifest.NamedResource
 }
 
 type nameKey struct{ kind, name string }
@@ -136,6 +148,45 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 		return true
 	}
 	return false
+}
+
+// ProducersFor returns Flux Kustomizations that render the file-backed
+// data resource id. Populated only for Enabled filters; used by
+// controllers to add ordering edges for data deps that arrive via
+// another KS's render — e.g. a postBuild.substituteFrom ConfigMap
+// rendered by an unchanged producer KS in changed-only mode. See
+// #418.
+//
+// Returns a copy — callers append-without-aliasing the filter's
+// internal state.
+func (f *Filter) ProducersFor(id manifest.NamedResource) []manifest.NamedResource {
+	if !f.Enabled() {
+		return nil
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return slices.Clone(f.producersFor(id))
+}
+
+// producersFor returns Flux Kustomizations that render the file-backed
+// data resource id. Read-only after resolve(); caller must already
+// hold f.mu (when called from runtime paths) or be inside resolve()
+// (read-only construction).
+//
+// The id-namespace asymmetry mirrors ShouldReconcile / keepByName:
+// the byName fallback fires only when the lookup id IS namespaced,
+// so a fully-namespaced producer entry can't silently match an
+// unrelated fully-namespaced consumer that happens to share
+// (Kind, Name).
+func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResource {
+	if f == nil {
+		return nil
+	}
+	out := f.producersByID[id]
+	if id.Namespace != "" {
+		out = appendUniqueProducers(out, f.producersByName[nameKey{id.Kind, id.Name}])
+	}
+	return out
 }
 
 // AddEmitted extends the keep set with child when emitter is a
@@ -289,6 +340,57 @@ func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedR
 			if _, ok := f.primary[dep]; !ok {
 				stack = append(stack, dep)
 			}
+			// Producers of a runtime-discovered substituteFrom CM
+			// must reconcile so the CM materializes, but they stay
+			// dependency-only — promoting them to primary would
+			// re-introduce the #204 keep cascade (an unchanged
+			// producer's render output for unrelated siblings is
+			// identical to baseline). See #418.
+			added = append(added, f.addDependencyOnlyRecursiveLocked(f.producersFor(dep)...)...)
+		}
+	}
+	return added
+}
+
+// addDependencyOnlyRecursiveLocked extends the keep set with ids
+// (and their transitive sourceRef/chartRef/valuesFrom deps AND any
+// producers of those deps) at runtime WITHOUT marking the entries
+// primary. The caller MUST hold f.mu.Lock().
+//
+// Used for runtime substituteFrom-producer promotion: a primary
+// consumer reaches a CM whose producing KS is unchanged. The
+// producer must reconcile so the CM materializes, but its render
+// output for unrelated siblings matches baseline — promoting it
+// to primary would re-introduce the #204 keep cascade.
+//
+// Chained producers are walked: a producer that itself has a
+// substituteFrom CM produced by another KS pulls that KS in too,
+// again ancestor-only. See #418.
+func (f *Filter) addDependencyOnlyRecursiveLocked(ids ...manifest.NamedResource) []manifest.NamedResource {
+	var added []manifest.NamedResource
+	stack := slices.Clone(ids)
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, alreadyKeep := f.keep[cur]; alreadyKeep {
+			continue
+		}
+		f.keep[cur] = struct{}{}
+		if cur.Namespace == "" {
+			f.keepByName[nameKey{cur.Kind, cur.Name}] = struct{}{}
+		}
+		added = append(added, cur)
+		if f.objs == nil {
+			continue
+		}
+		for _, dep := range transitiveDeps(f.objs, cur) {
+			stack = append(stack, dep)
+			for _, producer := range f.producersFor(dep) {
+				if producer == cur {
+					continue
+				}
+				stack = append(stack, producer)
+			}
 		}
 	}
 	return added
@@ -335,6 +437,7 @@ func (f *Filter) resolve(objs ObjectLister) {
 	}
 
 	owners := buildOwnership(objs, f.repoRoot)
+	f.producersByID, f.producersByName = buildProducerIndex(f.sourceFiles, owners)
 	ownersHit := make(map[manifest.NamedResource]struct{})
 
 	for _, file := range f.changes.Paths() {
@@ -376,6 +479,26 @@ func (f *Filter) resolve(objs ObjectLister) {
 				enqueuePrimary(d)
 			} else {
 				enqueueAncestor(d)
+			}
+			// If a data dependency is rendered by another Flux
+			// Kustomization, that producer must run so the data
+			// object materializes. Producers are ancestor-only —
+			// their output is needed, but an unchanged producer
+			// should NOT become a primary emitter that cascades
+			// unrelated children into changed-only scope (the #204
+			// cascade rationale applies). Skip the self-producer
+			// case (a KS that produces its own substituteFrom CM —
+			// bjw-s self-substitute pattern). See #418.
+			//
+			// Read producersByID/producersByName directly via the
+			// unlocked producersFor: resolve() runs pre-publication
+			// (f.keep / f.primary not yet set), so the public
+			// ProducersFor's RLock contract is not established here.
+			for _, producer := range f.producersFor(d) {
+				if producer == queue[head] {
+					continue
+				}
+				enqueueAncestor(producer)
 			}
 		}
 		// Also walk the structural-parent chain of any Flux
@@ -487,8 +610,55 @@ type ObjectLister interface {
 	ListObjects(kind string) []manifest.BaseManifest
 }
 
+// buildProducerIndex maps file-backed data resources to the
+// Kustomization(s) that render their files. Exact id matches cover
+// namespaced resources and finalized generators; the name map covers
+// the common kustomize-namespace case where DiscoveryOnly indexed a
+// raw ConfigMap/Secret with namespace="" but the consuming KS waits
+// on the rendered namespace.
+//
+// Indexing by name only for empty-namespace ids mirrors keepByName's
+// asymmetric rule (see ShouldReconcile / keepByName comments) —
+// without it, a producer of ConfigMap/cluster-infra/shared would
+// silently match a ConfigMap/database/shared consumer lookup. See
+// #418.
+func buildProducerIndex(sourceFiles map[manifest.NamedResource]string, owners ownershipIndex) (map[manifest.NamedResource][]manifest.NamedResource, map[nameKey][]manifest.NamedResource) {
+	byID := make(map[manifest.NamedResource][]manifest.NamedResource)
+	byName := make(map[nameKey][]manifest.NamedResource)
+	for id, file := range sourceFiles {
+		if id.Kind != manifest.KindConfigMap && id.Kind != manifest.KindSecret {
+			continue
+		}
+		producers := owners.ownersOf(file)
+		if len(producers) == 0 {
+			continue
+		}
+		byID[id] = appendUniqueProducers(byID[id], producers)
+		if id.Namespace == "" {
+			key := nameKey{id.Kind, id.Name}
+			byName[key] = appendUniqueProducers(byName[key], producers)
+		}
+	}
+	return byID, byName
+}
+
+// appendUniqueProducers extends dst with the producer ids in src,
+// deduping against dst. Used during producer-index construction and
+// at producersFor merge time; the slices are short (typically a
+// single owner KS per data file) so the linear scan is cheaper than
+// a map intermediary.
+func appendUniqueProducers(dst []manifest.NamedResource, src []manifest.NamedResource) []manifest.NamedResource {
+	for _, id := range src {
+		if !slices.Contains(dst, id) {
+			dst = append(dst, id)
+		}
+	}
+	return dst
+}
+
 // transitiveDeps returns the references id needs to render — chart
-// sources, KS sourceRef, valuesFrom. dependsOn is intentionally
+// sources, KS sourceRef, valuesFrom, and non-Optional
+// postBuild.substituteFrom ConfigMaps. dependsOn is intentionally
 // excluded: it's a reconcile-ordering signal in real Flux, not a
 // content dependency, so it adds nothing to an offline render.
 // Skipped resources still get marked Ready by their controllers, so
@@ -515,12 +685,25 @@ func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.Nam
 		if ks == nil {
 			return nil
 		}
-		if ks.SourceKind == "" || ks.SourceName == "" {
-			return nil
+		var out []manifest.NamedResource
+		if ks.SourceKind != "" && ks.SourceName != "" {
+			out = append(out, manifest.NamedResource{
+				Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
+			})
 		}
-		return []manifest.NamedResource{{
-			Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
-		}}
+		for _, ref := range ks.PostBuildSubstituteFrom {
+			// Mirrors collectDeps in pkg/controllers/kustomization:
+			// Optional refs are best-effort; Secrets are SOPS/ExternalSecret-
+			// managed and can't be materialized offline; empty Name is
+			// malformed. See #418.
+			if ref.Optional || ref.Kind != manifest.KindConfigMap || ref.Name == "" {
+				continue
+			}
+			out = append(out, manifest.NamedResource{
+				Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name,
+			})
+		}
+		return out
 
 	case manifest.KindHelmChart:
 		// A HelmRelease chartRef pointing at a HelmChart CRD lands the

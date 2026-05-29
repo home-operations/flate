@@ -45,7 +45,7 @@ data: {greeting: hi}
 	})
 	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "ready")
 
-	cache, err := kustomize.NewStagingCache(t.TempDir())
+	cache, err := kustomize.NewStagingCache(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
 	}

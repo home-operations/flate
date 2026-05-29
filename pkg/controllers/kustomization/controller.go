@@ -7,9 +7,15 @@ package kustomization
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -190,7 +196,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving source artifact")
-	sourceRoot, err := c.resolveSourceRoot(ks)
+	sourceRoot, sourceFingerprint, err := c.resolveSourceRootAndFingerprint(ks)
 	if err != nil {
 		return err
 	}
@@ -237,7 +243,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	data, err := kustomize.RenderFlux(ctx, c.Staging, sourceRoot, ks.Path, ks.Contents)
+	data, err := kustomize.RenderFlux(ctx, c.Staging, sourceRoot, sourceFingerprint, ks.Path, ks.Contents)
 	if err != nil {
 		return err
 	}
@@ -357,6 +363,20 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 // be built from — i.e. the source artifact's local path. The Flux
 // renderer then joins ks.Path onto this root.
 func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, error) {
+	path, _, err := c.resolveSourceRootAndFingerprint(ks)
+	return path, err
+}
+
+// resolveSourceRootAndFingerprint returns the source's on-disk root
+// AND its content-addressed fingerprint. The fingerprint feeds the
+// persistent kustomize staging cache: when non-empty, repeat renders
+// against the same artifact skip the copyTree pass entirely. Empty
+// is the right answer when the source has no stable content
+// identifier (the bootstrap working-tree alias, local-path
+// GitRepository overrides, sources soft-skipped via
+// --allow-missing-secrets) — the caller falls back to per-process
+// scratch staging and rebuilds from scratch each run.
+func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization) (string, string, error) {
 	srcID := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 	if ks.SourceKind == "" || ks.SourceName == "" {
 		// Child Kustomizations that inherit sourceRef from a parent's
@@ -365,7 +385,7 @@ func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, erro
 		// working tree) so the first reconcile resolves to the repo
 		// root instead of doubling ks.Path against itself (#105).
 		if ks.Path == "" {
-			return "", fmt.Errorf("%w: kustomization %s has no path and no source",
+			return "", "", fmt.Errorf("%w: kustomization %s has no path and no source",
 				manifest.ErrInput, ks.Named().NamespacedName())
 		}
 		srcID = manifest.BootstrapSourceID
@@ -377,13 +397,94 @@ func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, erro
 		// that as a typed skip so the caller can mark the KS skipped too
 		// rather than reporting a generic "artifact not found" failure.
 		if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
-			return "", fmt.Errorf("%w: source %s %s", manifest.ErrSourceSkipped, srcID.String(), info.Message)
+			return "", "", fmt.Errorf("%w: source %s %s", manifest.ErrSourceSkipped, srcID.String(), info.Message)
 		}
-		return "", fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
+		return "", "", fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
 	}
 	if sa, ok := art.(*store.SourceArtifact); ok {
-		return sa.LocalPath, nil
+		// Prefer the content-addressed Digest when the fetcher
+		// supplied one (OCI); fall back to Revision (the git commit
+		// SHA) so git-backed sources also key the persistent stage
+		// cache.
+		//
+		// The bootstrap source is the working-tree alias — fetchers
+		// don't run for it and Revision/Digest are empty. We compute
+		// a coarse (path + top-level dirent mtime tuple) hash so
+		// repeated invocations against an untouched tree still hit
+		// the cache, and any local edit invalidates it. Same
+		// treatment applies to any other artifact that landed
+		// without a fetcher-supplied fingerprint
+		// (`overrideSelfReferentialGitRepositories`) — they too
+		// resolve to the user's working tree.
+		fp := sa.Digest
+		if fp == "" {
+			fp = sourceFingerprintFromRevision(sa.Revision)
+		}
+		if fp == "" {
+			fp = workingTreeFingerprint(sa.LocalPath)
+		}
+		return sa.LocalPath, fp, nil
 	}
-	return "", fmt.Errorf("%w: unsupported source artifact type %T for %s",
+	return "", "", fmt.Errorf("%w: unsupported source artifact type %T for %s",
 		manifest.ErrFlux, art, srcID.String())
+}
+
+// sourceFingerprintFromRevision normalizes a git-style Revision
+// string into a stage-cache key. The git fetcher records the raw
+// commit SHA, which is already a valid fingerprint. Future fetchers
+// may follow Flux's `<branch>@sha1:<sha>` convention — strip the
+// prefix so the cache key stays content-only.
+func sourceFingerprintFromRevision(rev string) string {
+	if rev == "" {
+		return ""
+	}
+	// "main@sha1:abcd..." or "sha256:abcd..." — keep only the trailing
+	// content-addressed token. Plain SHAs pass through unchanged.
+	if i := strings.LastIndexAny(rev, ":@"); i >= 0 && i+1 < len(rev) {
+		return rev[i+1:]
+	}
+	return rev
+}
+
+// workingTreeFingerprint computes a coarse fingerprint of the working
+// tree at path: a hash of (absPath, top-level entry names + mtimes).
+// Cheap (one ReadDir, no recursive walk) and good enough to invalidate
+// the persistent stage on the editor-save / git-checkout cases that
+// matter for repeat-render usage. A user who edits a deeply-nested
+// file without touching anything at the root would slip past — that's
+// an accepted limitation; the working tree was never a clean
+// content-addressed surface to begin with. The expensive fix would be
+// a full-tree content hash; not worth it for a soft cache invalidator.
+func workingTreeFingerprint(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return ""
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte(abs))
+	for _, e := range entries {
+		// Skip dot-prefixed entries (.git, .flate-cache, IDE state)
+		// so the cache survives changes inside those — they're not
+		// inputs to the kustomize build.
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		_, _ = h.Write([]byte(e.Name()))
+		_, _ = h.Write([]byte(info.ModTime().UTC().Format(time.RFC3339Nano)))
+		if !e.IsDir() {
+			_, _ = h.Write([]byte(strconv.FormatInt(info.Size(), 10)))
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

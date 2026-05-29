@@ -106,6 +106,13 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 			sweepDirByAge(ar.dir, ar.depth, cutoff, ar.gate, opts.DryRun, &res)
 		}
 
+		// Persistent kustomize stage cache: <root>/stage/<fp[:2]>/<fp>/.
+		// The per-process scratch tempdirs (`flate-stage-*`) and
+		// in-progress staging tempdirs (`.tmp.*`) share the same
+		// parent and must be skipped by name so the GC doesn't reap
+		// a peer process's live stage.
+		sweepStageCacheByAge(layout.Stage(), cutoff, opts.DryRun, &res)
+
 		sweepDanglingRefs(layout, opts.DryRun, &res)
 		return nil
 	}); err != nil {
@@ -193,6 +200,74 @@ func sweepDirByAge(dir string, depth int, cutoff time.Time, gate func(string) bo
 		}
 		if err := os.RemoveAll(path); err != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
+}
+
+// sweepStageCacheByAge walks the persistent kustomize stage cache at
+// stageRoot and removes fingerprint entries whose mtime is older than
+// cutoff. Skips the per-process `flate-stage-*` scratch dirs and any
+// `.tmp.*` in-flight staging dirs at both levels so a concurrent
+// flate process's live staging tree is preserved.
+func sweepStageCacheByAge(stageRoot string, cutoff time.Time, dryRun bool, res *SweepResult) {
+	if cutoff.IsZero() {
+		return
+	}
+	prefixes, err := os.ReadDir(stageRoot)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			res.Errors = append(res.Errors, fmt.Errorf("read %s: %w", stageRoot, err))
+		}
+		return
+	}
+	for _, p := range prefixes {
+		if !p.IsDir() {
+			continue
+		}
+		name := p.Name()
+		if strings.HasPrefix(name, "flate-stage-") || strings.Contains(name, ".tmp.") {
+			continue
+		}
+		prefixDir := filepath.Join(stageRoot, name)
+		entries, err := os.ReadDir(prefixDir)
+		if err != nil {
+			continue
+		}
+		removedAny := false
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			leaf := e.Name()
+			if strings.Contains(leaf, ".tmp.") {
+				continue
+			}
+			full := filepath.Join(prefixDir, leaf)
+			info, err := e.Info()
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("stat %s: %w", full, err))
+				continue
+			}
+			if info.ModTime().After(cutoff) {
+				continue
+			}
+			res.Bytes += entrySize(full)
+			res.Removed = append(res.Removed, full)
+			if dryRun {
+				continue
+			}
+			if err := os.RemoveAll(full); err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("remove %s: %w", full, err))
+				continue
+			}
+			removedAny = true
+		}
+		// Best-effort empty-shell cleanup so repeated sweeps don't
+		// accumulate dead 2-char prefix dirs.
+		if removedAny && !dryRun {
+			if rem, err := os.ReadDir(prefixDir); err == nil && len(rem) == 0 {
+				_ = os.Remove(prefixDir)
+			}
 		}
 	}
 }

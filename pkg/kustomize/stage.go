@@ -6,32 +6,79 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/home-operations/flate/internal/keylock"
+	atomicfile "github.com/home-operations/flate/pkg/source/atomic"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
-// StagingCache materializes one-or-more source roots into a temp
+// stageCompleteSentinel marks a content-addressed stage directory as
+// fully materialized. Its presence lets subsequent processes skip the
+// copyTree pass entirely — a crash mid-build leaves no sentinel, so
+// the next Stage call rebuilds from scratch.
+const stageCompleteSentinel = ".flate-stage-complete"
+
+// StagingCache materializes one-or-more source roots into a stage
 // directory so Flux's kustomize Generator can safely write into the
 // staged copy without touching the user's working tree.
 //
-// Staging is done at most once per source root via sync.OnceValues.
-// The first reconciliation against a root pays the copy cost; every
-// subsequent reconciliation (including for other Kustomizations rooted
-// at the same source artifact) reuses the same stage.
+// Two staging modes:
+//   - Content-addressed (the fast path). When the caller supplies a
+//     source fingerprint (git commit SHA, OCI digest, etc.), the stage
+//     lands at <layout.Stage()>/<fp[:2]>/<fp>/ guarded by a sentinel
+//     file. Subsequent runs — including across processes — observe
+//     the sentinel and skip the copyTree pass entirely. Eviction is
+//     LRU by mtime, capped by maxBytes.
+//   - Per-process scratch (the fallback). Used when the source has no
+//     stable fingerprint (local-path sources whose mtimes shift on
+//     every editor save, for instance). Each Stage call materializes
+//     a `flate-stage-*` tempdir under layout.Stage(); the entire set
+//     is removed on Close.
 //
-// Lifecycle is tied to the surrounding orchestrator run — call Close
-// to remove every staged copy.
+// Lifecycle for both modes is tied to the surrounding orchestrator
+// run — call Close to clean up scratch stages and release in-memory
+// state. Persistent CAS stages survive Close so the next process
+// reuses them.
 type StagingCache struct {
+	// root is the persistent stage cache parent (layout.Stage()). All
+	// persistent CAS directories land beneath it. When empty, the
+	// cache degrades to per-process behavior in an OS tempdir.
+	root string
+
+	// maxBytes caps the persistent stage cache. 0 disables eviction
+	// (unbounded growth — the GC subcommand still handles cleanup).
+	maxBytes int64
+
+	// mu guards stages + remoteFetches initialization. The persistent
+	// path uses fpLocks for per-fingerprint serialization; mu is only
+	// held briefly to look up or insert the in-process stage record.
 	mu     sync.Mutex
 	stages map[string]*stage
-	root   string
+	// fpLocks serializes concurrent Stage calls for the same
+	// fingerprint within one process. Cross-process serialization is
+	// not provided — concurrent flate invocations rebuilding the same
+	// fingerprint just race on the atomic rename; the loser observes
+	// the winner's sentinel via the cross-process retry below.
+	fpLocks *keylock.KeyMap[string]
+
+	// sweepInflight is a single-flight gate: when the persistent cache
+	// trips its size cap, exactly one Stage call kicks the sweep on a
+	// background goroutine and every other concurrent caller observes
+	// the in-flight bit and skips.
+	sweepInflight atomic.Bool
+
 	// remoteFetches dedupes URL fetches across every preflight pass in
 	// one orchestrator run. A single kustomization.yaml URL may be
 	// reached via multiple Flux Kustomizations (parent emits a child
@@ -56,31 +103,49 @@ type remoteFetch struct {
 	err   error
 }
 
+// stage holds the per-source materialization promise. The OnceValues
+// pattern keeps copyTree work to one execution per key within the
+// process even if multiple goroutines call Stage concurrently.
 type stage struct {
 	once func() (string, error)
+	// persistent flags content-addressed stages so Close skips them —
+	// only per-process scratch stages get removed on shutdown.
+	persistent bool
 }
 
-// NewStagingCache constructs a cache that places staged copies under
-// the given parent directory. If parent is empty, the OS tempdir is
-// used.
+// NewStagingCache constructs a cache that places per-process scratch
+// stages and persistent content-addressed stages under parent. If
+// parent is empty, the OS tempdir is used (and persistent staging is
+// effectively disabled — every Stage call materializes a scratch
+// dir). maxBytes caps the persistent cache; 0 disables eviction.
 //
 // Sweeps any `flate-stage-*` directory under parent that's older
 // than staleStageAge — those are crashed-process leftovers from
 // runs where Close didn't fire (SIGKILL, panic, ctx not honored).
 // Best-effort: a sweep error doesn't fail construction; the dirs
 // just stay until the next successful sweep.
-func NewStagingCache(parent string) (*StagingCache, error) {
-	if parent == "" {
-		parent = os.TempDir()
+func NewStagingCache(parent string, maxBytes int64) (*StagingCache, error) {
+	root := parent
+	if root == "" {
+		root = os.TempDir()
 	}
-	if err := os.MkdirAll(parent, 0o750); err != nil {
+	if err := os.MkdirAll(root, 0o750); err != nil {
 		return nil, err
 	}
-	sweepStaleStageDirs(parent)
+	sweepStaleStageDirs(root)
 	return &StagingCache{
-		stages: make(map[string]*stage),
-		root:   parent,
+		stages:   make(map[string]*stage),
+		root:     root,
+		maxBytes: maxBytes,
+		fpLocks:  keylock.New[string](),
 	}, nil
+}
+
+// NewStagingCacheFromLayout is the orchestrator's preferred constructor
+// — it pulls the persistent stage root from the supplied Layout so all
+// path policy lives in one place.
+func NewStagingCacheFromLayout(layout cacheroot.Layout, maxBytes int64) (*StagingCache, error) {
+	return NewStagingCache(layout.Stage(), maxBytes)
 }
 
 // staleStageAge is the age threshold for the crash-leftover sweep.
@@ -92,6 +157,10 @@ const staleStageAge = 24 * time.Hour
 // sweepStaleStageDirs removes `flate-stage-*` directories under
 // parent whose mtime is older than staleStageAge. Best-effort: any
 // per-entry error is logged at Debug and the sweep continues.
+//
+// Persistent content-addressed dirs use 2-char fan-out prefixes and
+// are explicitly NOT touched here — their lifecycle is governed by
+// LRU eviction (sweepBySize) and the GC subcommand.
 func sweepStaleStageDirs(parent string) {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
@@ -164,18 +233,48 @@ func isHTTPClientError(err error) bool {
 	return errors.As(err, &hse) && hse.Code >= 400 && hse.Code < 500
 }
 
-// Stage returns the on-disk staged copy of source. The copy is created
-// on first call; concurrent callers block on a single sync.OnceValues.
-func (c *StagingCache) Stage(source string) (string, error) {
+// Stage returns the on-disk staged copy of source.
+//
+// When fingerprint is non-empty, the persistent content-addressed
+// path is used: <root>/<fp[:2]>/<fp>/ guarded by a sentinel. A
+// previous (or concurrent peer) run that finished the same
+// fingerprint lets us skip copyTree entirely — the single largest
+// CPU saving across cold and warm reruns.
+//
+// When fingerprint is empty (local-path sources whose mtimes shift
+// faster than a hash could keep up, or any source for which no
+// canonical digest is available), the cache falls back to the legacy
+// per-process behavior: a `flate-stage-*` tempdir under root,
+// memoized by source path for the life of the cache, removed on
+// Close.
+func (c *StagingCache) Stage(ctx context.Context, source, fingerprint string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(source)
 	if err == nil {
 		source = resolved
 	}
+	if fingerprint == "" {
+		return c.stagePerProcess(source)
+	}
+	return c.stagePersistent(ctx, source, fingerprint)
+}
+
+// stagePerProcess implements the legacy fallback for sources that
+// don't carry a stable fingerprint: one tempdir per source, memoized
+// for the life of the cache via sync.OnceValues, removed on Close.
+func (c *StagingCache) stagePerProcess(source string) (string, error) {
 	c.mu.Lock()
 	s, ok := c.stages[source]
 	if !ok {
 		copyOnce := sync.OnceValues(func() (string, error) {
-			return c.copyTree(source)
+			dst, err := os.MkdirTemp(c.root, "flate-stage-*")
+			if err != nil {
+				return "", err
+			}
+			if err := c.copyTreeInto(source, dst); err != nil {
+				_ = os.RemoveAll(dst)
+				return "", err
+			}
+			return dst, nil
 		})
 		s = &stage{once: copyOnce}
 		c.stages[source] = s
@@ -184,40 +283,164 @@ func (c *StagingCache) Stage(source string) (string, error) {
 	return s.once()
 }
 
-// Close removes every staged copy.
+// stagePersistent implements the content-addressed fast path. The
+// staged tree lands at root/<fp[:2]>/<fp>/ and a sentinel file is
+// written atomically on completion so subsequent processes can skip
+// copyTree.
+//
+// Per-fingerprint serialization within the process is handled by
+// fpLocks. Cross-process races (two flate invocations rebuilding the
+// same fingerprint simultaneously) are tolerated: each writes into
+// its own tempdir; the loser's rename returns ENOTEMPTY and we
+// retry against the winner's sentinel.
+func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint string) (string, error) {
+	// Compose the on-disk slot. We reproduce the layout's prefix math
+	// here to keep this package free of an explicit Layout dep — the
+	// Stage constructor is given a parent dir, not a typed Layout, so
+	// downstream tests stay simple.
+	prefix := fingerprint
+	if len(prefix) > 2 {
+		prefix = prefix[:2]
+	}
+	dir := filepath.Join(c.root, prefix, fingerprint)
+	sentinel := filepath.Join(dir, stageCompleteSentinel)
+
+	// Cache an in-memory record so repeated lookups for the same
+	// fingerprint within one process skip even the sentinel stat.
+	c.mu.Lock()
+	s, ok := c.stages[fingerprint]
+	if ok && s.persistent {
+		c.mu.Unlock()
+		if dir, err := s.once(); err == nil {
+			c.maybeKickSweep()
+			return dir, nil
+		}
+		// Fall through to a fresh attempt if the cached promise
+		// failed — a transient error shouldn't poison the slot for
+		// the run.
+	} else {
+		c.mu.Unlock()
+	}
+
+	// Fast path: sentinel already present from a previous (or
+	// concurrent peer) run. Touch the dir's mtime so LRU eviction
+	// keeps recently-used stages alive.
+	if _, err := os.Stat(sentinel); err == nil {
+		c.cacheStagePromise(fingerprint, dir)
+		now := time.Now()
+		_ = os.Chtimes(dir, now, now)
+		c.maybeKickSweep()
+		return dir, nil
+	}
+
+	// Slow path: serialize concurrent builds within the process.
+	release, err := c.fpLocks.Acquire(ctx, fingerprint)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+
+	// Recheck under the lock — another goroutine may have populated
+	// the sentinel while we were blocked.
+	if _, err := os.Stat(sentinel); err == nil {
+		c.cacheStagePromise(fingerprint, dir)
+		now := time.Now()
+		_ = os.Chtimes(dir, now, now)
+		c.maybeKickSweep()
+		return dir, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
+		return "", fmt.Errorf("stage parent: %w", err)
+	}
+
+	// Stage into a sibling tempdir + atomic rename so concurrent
+	// readers never observe a partial tree.
+	staging, err := os.MkdirTemp(filepath.Dir(dir), filepath.Base(dir)+".tmp.*")
+	if err != nil {
+		return "", fmt.Errorf("stage tmp: %w", err)
+	}
+	if err := c.copyTreeInto(source, staging); err != nil {
+		_ = os.RemoveAll(staging)
+		return "", err
+	}
+	// Write the sentinel BEFORE rename so readers that observe the
+	// final dir always see a sentinel. The sentinel is empty; its
+	// presence alone is the signal.
+	if err := atomicfile.WriteFile(filepath.Join(staging, stageCompleteSentinel), nil, 0o600, false); err != nil {
+		_ = os.RemoveAll(staging)
+		return "", fmt.Errorf("stage sentinel: %w", err)
+	}
+	if err := os.Rename(staging, dir); err != nil {
+		_ = os.RemoveAll(staging)
+		// A racing peer process beat us to it. Adopt the winner —
+		// content addressing guarantees the trees are equivalent.
+		if _, statErr := os.Stat(sentinel); statErr == nil {
+			c.cacheStagePromise(fingerprint, dir)
+			c.maybeKickSweep()
+			return dir, nil
+		}
+		return "", fmt.Errorf("stage finalize: %w", err)
+	}
+	c.cacheStagePromise(fingerprint, dir)
+	c.maybeKickSweep()
+	return dir, nil
+}
+
+// cacheStagePromise installs a satisfied stage record so subsequent
+// in-process lookups for the same fingerprint return the same path
+// without an additional os.Stat.
+func (c *StagingCache) cacheStagePromise(fingerprint, dir string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if existing, ok := c.stages[fingerprint]; ok && existing.persistent {
+		return
+	}
+	d := dir
+	c.stages[fingerprint] = &stage{
+		persistent: true,
+		once:       func() (string, error) { return d, nil },
+	}
+}
+
+// Close removes every per-process scratch stage. Persistent
+// content-addressed stages survive — they're the whole point of the
+// cache and are owned by the LRU sweep + GC subcommand.
 func (c *StagingCache) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var errs []error
-	for _, s := range c.stages {
+	for key, s := range c.stages {
+		if s.persistent {
+			continue
+		}
 		path, err := s.once()
 		if err != nil {
+			delete(c.stages, key)
 			continue
 		}
 		if err := os.RemoveAll(path); err != nil {
 			errs = append(errs, err)
 		}
+		delete(c.stages, key)
 	}
-	c.stages = make(map[string]*stage)
 	return errors.Join(errs...)
 }
 
-// copyTree makes a fresh directory and copies every regular file from
-// src into it. Symlinks are dereferenced (we want the file content),
-// dotfiles are skipped to keep stages clean.
+// copyTreeInto materializes every regular file from src into dst.
+// Symlinks are dereferenced, dotfiles are skipped to keep stages
+// clean. Caller owns dst — copyTreeInto neither creates nor removes
+// it on failure (so the persistent path can stage into a sibling
+// tempdir and atomically rename).
 //
-// The walk collects file-copy tasks serially (cheap, also creates the
-// destination directory skeleton) and then fans them out across a
-// worker pool. Each task is independent — hardlinks are atomic; byte
-// copies operate on distinct dst paths — so concurrency is safe. The
-// pool is capped at runtime.NumCPU because the cost per task is I/O,
-// not CPU, and over-fanning would just thrash the page cache.
-func (c *StagingCache) copyTree(src string) (string, error) {
-	dst, err := os.MkdirTemp(c.root, "flate-stage-*")
-	if err != nil {
-		return "", err
-	}
-
+// The walk collects file-copy tasks serially (cheap, also creates
+// the destination directory skeleton) and then fans them out across
+// a worker pool. Each task is independent — hardlinks are atomic;
+// byte copies operate on distinct dst paths — so concurrency is
+// safe. The pool is capped at runtime.NumCPU because the cost per
+// task is I/O, not CPU, and over-fanning would just thrash the page
+// cache.
+func (c *StagingCache) copyTreeInto(src, dst string) error {
 	type task struct {
 		srcPath, dstPath string
 		mode             os.FileMode
@@ -278,8 +501,7 @@ func (c *StagingCache) copyTree(src string) (string, error) {
 		return nil
 	})
 	if walkErr != nil {
-		_ = os.RemoveAll(dst)
-		return "", fmt.Errorf("stage %s: %w", src, walkErr)
+		return fmt.Errorf("stage %s: %w", src, walkErr)
 	}
 
 	g, _ := errgroup.WithContext(context.Background())
@@ -288,10 +510,9 @@ func (c *StagingCache) copyTree(src string) (string, error) {
 		g.Go(func() error { return copyFile(t.srcPath, t.dstPath, t.mode) })
 	}
 	if err := g.Wait(); err != nil {
-		_ = os.RemoveAll(dst)
-		return "", fmt.Errorf("stage %s: %w", src, err)
+		return fmt.Errorf("stage %s: %w", src, err)
 	}
-	return dst, nil
+	return nil
 }
 
 // copyFile materializes srcPath at dstPath. Hardlinks when source and
@@ -330,4 +551,131 @@ func copyFile(srcPath, dstPath string, mode os.FileMode) error {
 		return err
 	}
 	return dst.Close()
+}
+
+// maybeKickSweep starts an asynchronous LRU sweep when the persistent
+// cache exceeds maxBytes. The sweepInflight flag single-flights the
+// check so concurrent Stage calls don't each launch a sweep.
+func (c *StagingCache) maybeKickSweep() {
+	if c.maxBytes <= 0 || c.root == "" {
+		return
+	}
+	if !c.sweepInflight.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer c.sweepInflight.Store(false)
+		if err := sweepStageBySize(c.root, c.maxBytes); err != nil {
+			slog.Debug("stage cache sweep", "err", err)
+		}
+	}()
+}
+
+// stageEntry summarizes one persistent stage directory under the
+// cache root for the LRU sweep.
+type stageEntry struct {
+	path  string
+	mtime time.Time
+	size  int64
+}
+
+// sweepStageBySize walks root and, when total size exceeds maxBytes,
+// removes the oldest entries (by mtime) until size is at or below the
+// cap. Entries currently being staged into (`.tmp.*` siblings) are
+// ignored — they don't carry sentinels yet and would be wasteful to
+// reap mid-build. The per-process scratch tempdirs (flate-stage-*)
+// are likewise skipped here; their lifecycle is Close-bound.
+func sweepStageBySize(root string, maxBytes int64) error {
+	// Walk the two-char prefix layer and collect every fingerprint
+	// dir's mtime + size. Stage entries don't recurse — they cap at
+	// one fingerprint deep.
+	prefixes, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	var entries []stageEntry
+	var total int64
+	for _, p := range prefixes {
+		if !p.IsDir() {
+			continue
+		}
+		name := p.Name()
+		// Skip per-process scratch + transient tempdirs.
+		if strings.HasPrefix(name, "flate-stage-") || strings.HasPrefix(name, ".tmp.") {
+			continue
+		}
+		prefixDir := filepath.Join(root, name)
+		fps, err := os.ReadDir(prefixDir)
+		if err != nil {
+			continue
+		}
+		for _, fp := range fps {
+			if !fp.IsDir() {
+				continue
+			}
+			fpName := fp.Name()
+			if strings.Contains(fpName, ".tmp.") {
+				continue
+			}
+			full := filepath.Join(prefixDir, fpName)
+			// Reject anything missing the sentinel — likely an
+			// abandoned partial build that some other process is
+			// still racing on. The legacy crash sweep cleans those
+			// up; LRU shouldn't.
+			if _, err := os.Stat(filepath.Join(full, stageCompleteSentinel)); err != nil {
+				continue
+			}
+			info, err := os.Stat(full)
+			if err != nil {
+				continue
+			}
+			size := dirSize(full)
+			entries = append(entries, stageEntry{path: full, mtime: info.ModTime(), size: size})
+			total += size
+		}
+	}
+	if total <= maxBytes {
+		return nil
+	}
+	// Oldest first; evict until under cap.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].mtime.Before(entries[j].mtime)
+	})
+	for _, e := range entries {
+		if total <= maxBytes {
+			break
+		}
+		if err := os.RemoveAll(e.path); err != nil {
+			slog.Debug("stage cache evict", "path", e.path, "err", err)
+			continue
+		}
+		total -= e.size
+		// Best-effort: drop the prefix dir if it's now empty so
+		// repeated sweeps don't accumulate dead 2-char shells.
+		prefixDir := filepath.Dir(e.path)
+		if rem, err := os.ReadDir(prefixDir); err == nil && len(rem) == 0 {
+			_ = os.Remove(prefixDir)
+		}
+	}
+	return nil
+}
+
+// dirSize walks path and returns the cumulative byte size of every
+// regular file. Hardlinks inflate the count (one byte counted per
+// link, not per inode); accuracy here is "close enough" — the cap is
+// for soft eviction, not accounting.
+func dirSize(path string) int64 {
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
+	return total
 }

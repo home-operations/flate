@@ -57,8 +57,13 @@ var stageLocks = keylock.New[string]()
 // by `cache` which produces a writable copy. rawSpec must be the
 // original Flux Kustomization document (the Contents field on
 // manifest.Kustomization). subPath is the spec.path value relative to
-// sourceRoot.
-func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath string, rawSpec map[string]any) ([]byte, error) {
+// sourceRoot. sourceFingerprint, when non-empty, keys the persistent
+// content-addressed stage cache so subsequent runs against the same
+// resolved artifact skip the copyTree pass entirely. Empty falls
+// back to per-process scratch staging (the right behavior for
+// local-path sources whose mtimes shift faster than a fingerprint
+// can keep up).
+func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, sourceFingerprint, subPath string, rawSpec map[string]any) ([]byte, error) {
 	if cache == nil {
 		return nil, errors.New("kustomize: nil staging cache")
 	}
@@ -79,7 +84,7 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, subPath st
 		return nil, err
 	}
 
-	staged, err := cache.Stage(sourceRoot)
+	staged, err := cache.Stage(ctx, sourceRoot, sourceFingerprint)
 	if err != nil {
 		return nil, err
 	}

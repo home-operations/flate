@@ -142,13 +142,13 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSourceNestedKustomization(t *tes
 	child := "resources:\n  - " + srv.URL + "/remote.yaml\n"
 	mustWriteFile(t, filepath.Join(src, "child", "kustomization.yaml"), child)
 
-	cache, err := NewStagingCache(t.TempDir())
+	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
 	}
 	t.Cleanup(func() { _ = cache.Close() })
 
-	_, err = RenderFlux(context.Background(), cache, src, ".", map[string]any{
+	_, err = RenderFlux(context.Background(), cache, src, "", ".", map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata": map[string]any{
@@ -271,7 +271,7 @@ func mustWriteFile(t *testing.T, path, body string) {
 // its own remote-fetch dedup table (no cross-test cache hits).
 func newPreflightCache(t *testing.T) *StagingCache {
 	t.Helper()
-	c, err := NewStagingCache(t.TempDir())
+	c, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
 	}

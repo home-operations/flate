@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,13 +33,13 @@ func TestStagingCache_CopyTree_SkipsBrokenSymlink(t *testing.T) {
 		t.Fatalf("create symlink: %v", err)
 	}
 
-	cache, err := NewStagingCache(t.TempDir())
+	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
 	}
 	t.Cleanup(func() { _ = cache.Close() })
 
-	staged, err := cache.Stage(src)
+	staged, err := cache.Stage(context.Background(), src, "")
 	if err != nil {
 		t.Fatalf("Stage should ignore broken symlinks; got %v", err)
 	}
@@ -65,13 +66,13 @@ func TestStagingCache_CopyTree_FollowsLiveSymlink(t *testing.T) {
 		t.Fatalf("create symlink: %v", err)
 	}
 
-	cache, err := NewStagingCache(t.TempDir())
+	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
 	}
 	t.Cleanup(func() { _ = cache.Close() })
 
-	staged, err := cache.Stage(src)
+	staged, err := cache.Stage(context.Background(), src, "")
 	if err != nil {
 		t.Fatalf("Stage: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestStagingCache_FetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	cache, err := NewStagingCache(t.TempDir())
+	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
 	}
@@ -196,7 +197,7 @@ func TestNewStagingCache_SweepsStaleLeftovers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := NewStagingCache(parent); err != nil {
+	if _, err := NewStagingCache(parent, 0); err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
 	}
 
@@ -225,13 +226,13 @@ func TestStagingCache_HardlinksWhenSameFilesystem(t *testing.T) {
 	srcFile := filepath.Join(src, "kustomization.yaml")
 	mustWrite(t, srcFile, "resources: []\n")
 
-	cache, err := NewStagingCache(filepath.Join(root, "stage"))
+	cache, err := NewStagingCache(filepath.Join(root, "stage"), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
 	}
 	t.Cleanup(func() { _ = cache.Close() })
 
-	staged, err := cache.Stage(src)
+	staged, err := cache.Stage(context.Background(), src, "")
 	if err != nil {
 		t.Fatalf("Stage: %v", err)
 	}
@@ -259,13 +260,13 @@ func TestRestoreKustomization_DoesNotMutateSource(t *testing.T) {
 	srcKust := filepath.Join(src, "kustomization.yaml")
 	mustWrite(t, srcKust, "original\n")
 
-	cache, err := NewStagingCache(t.TempDir())
+	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
 	}
 	t.Cleanup(func() { _ = cache.Close() })
 
-	staged, err := cache.Stage(src)
+	staged, err := cache.Stage(context.Background(), src, "")
 	if err != nil {
 		t.Fatalf("Stage: %v", err)
 	}
@@ -316,6 +317,312 @@ func TestIsHTTPClientError(t *testing.T) {
 		got := isHTTPClientError(tc.err)
 		if got != tc.want {
 			t.Errorf("isHTTPClientError(%q) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestStagingCache_PersistentSentinelWritten pins Phase 3.4b's
+// staging contract: a Stage call with a non-empty fingerprint lands
+// at <root>/<fp[:2]>/<fp>/ and writes the .flate-stage-complete
+// sentinel atomically.
+func TestStagingCache_PersistentSentinelWritten(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+
+	root := t.TempDir()
+	cache, err := NewStagingCache(root, 0)
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	const fp = "deadbeefcafef00d000000000000000000000000000000000000000000000000"
+	staged, err := cache.Stage(context.Background(), src, fp)
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	want := filepath.Join(root, fp[:2], fp)
+	if staged != want {
+		t.Errorf("staged path = %q, want %q", staged, want)
+	}
+	if _, err := os.Stat(filepath.Join(staged, stageCompleteSentinel)); err != nil {
+		t.Errorf("sentinel missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(staged, "kustomization.yaml")); err != nil {
+		t.Errorf("kustomization.yaml missing from stage: %v", err)
+	}
+}
+
+// TestStagingCache_PersistentSameFingerprintSkipsRebuild proves that
+// a second Stage call for the same fingerprint is a no-op: no
+// additional copyTree pass fires, and the existing sentinel mtime is
+// preserved (a rebuild would re-write the sentinel via atomic
+// rename and bump the mtime).
+func TestStagingCache_PersistentSameFingerprintSkipsRebuild(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+
+	root := t.TempDir()
+	cache, err := NewStagingCache(root, 0)
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	const fp = "1111111111111111111111111111111111111111111111111111111111111111"
+	staged1, err := cache.Stage(context.Background(), src, fp)
+	if err != nil {
+		t.Fatalf("Stage 1: %v", err)
+	}
+	sentinel := filepath.Join(staged1, stageCompleteSentinel)
+	info1, err := os.Stat(sentinel)
+	if err != nil {
+		t.Fatalf("sentinel stat: %v", err)
+	}
+
+	// Force a measurable mtime delta if the second Stage rewrites.
+	time.Sleep(20 * time.Millisecond)
+
+	staged2, err := cache.Stage(context.Background(), src, fp)
+	if err != nil {
+		t.Fatalf("Stage 2: %v", err)
+	}
+	if staged1 != staged2 {
+		t.Errorf("Stage 2 path = %q, want %q", staged2, staged1)
+	}
+	info2, err := os.Stat(sentinel)
+	if err != nil {
+		t.Fatalf("sentinel stat 2: %v", err)
+	}
+	if !info1.ModTime().Equal(info2.ModTime()) {
+		t.Errorf("sentinel mtime changed across Stage calls (rebuild happened) — was %v, now %v",
+			info1.ModTime(), info2.ModTime())
+	}
+}
+
+// TestStagingCache_PersistentDistinctFingerprintsDistinctDirs proves
+// the namespace partitioning: two source trees hashed to different
+// fingerprints get independent staged copies.
+func TestStagingCache_PersistentDistinctFingerprintsDistinctDirs(t *testing.T) {
+	srcA := t.TempDir()
+	mustWrite(t, filepath.Join(srcA, "a.yaml"), "kind: A\n")
+	srcB := t.TempDir()
+	mustWrite(t, filepath.Join(srcB, "b.yaml"), "kind: B\n")
+
+	root := t.TempDir()
+	cache, err := NewStagingCache(root, 0)
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	const fpA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const fpB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	stagedA, err := cache.Stage(context.Background(), srcA, fpA)
+	if err != nil {
+		t.Fatalf("Stage A: %v", err)
+	}
+	stagedB, err := cache.Stage(context.Background(), srcB, fpB)
+	if err != nil {
+		t.Fatalf("Stage B: %v", err)
+	}
+	if stagedA == stagedB {
+		t.Fatalf("distinct fingerprints landed at same dir: %q", stagedA)
+	}
+	if _, err := os.Stat(filepath.Join(stagedA, "a.yaml")); err != nil {
+		t.Errorf("A.yaml missing from staged A: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stagedB, "b.yaml")); err != nil {
+		t.Errorf("B.yaml missing from staged B: %v", err)
+	}
+}
+
+// TestStagingCache_CrossProcessReuse stands in for a real
+// cross-process scenario: build the stage with one cache instance,
+// close it, point a fresh cache at the same root, and observe that
+// the second Stage call reuses the existing dir via the sentinel
+// without recopying. The proof is the original sentinel mtime
+// surviving the second Stage call (a rebuild would atomically
+// rename a fresh sibling into place and the mtime would change).
+func TestStagingCache_CrossProcessReuse(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+
+	root := t.TempDir()
+	const fp = "cafebabe00000000000000000000000000000000000000000000000000000000"
+
+	// "Process 1": fresh cache, builds the persistent stage.
+	cache1, err := NewStagingCache(root, 0)
+	if err != nil {
+		t.Fatalf("NewStagingCache 1: %v", err)
+	}
+	staged1, err := cache1.Stage(context.Background(), src, fp)
+	if err != nil {
+		t.Fatalf("Stage 1: %v", err)
+	}
+	sentinel := filepath.Join(staged1, stageCompleteSentinel)
+	info1, err := os.Stat(sentinel)
+	if err != nil {
+		t.Fatalf("sentinel stat: %v", err)
+	}
+	if err := cache1.Close(); err != nil {
+		t.Fatalf("cache1.Close: %v", err)
+	}
+	// Persistent stages MUST survive Close.
+	if _, err := os.Stat(staged1); err != nil {
+		t.Fatalf("persistent stage removed on Close: %v", err)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	// "Process 2": fresh cache at the same root; Stage should
+	// short-circuit on the sentinel.
+	cache2, err := NewStagingCache(root, 0)
+	if err != nil {
+		t.Fatalf("NewStagingCache 2: %v", err)
+	}
+	t.Cleanup(func() { _ = cache2.Close() })
+
+	staged2, err := cache2.Stage(context.Background(), src, fp)
+	if err != nil {
+		t.Fatalf("Stage 2: %v", err)
+	}
+	if staged1 != staged2 {
+		t.Errorf("process 2 Stage path = %q, want %q", staged2, staged1)
+	}
+	info2, err := os.Stat(sentinel)
+	if err != nil {
+		t.Fatalf("sentinel stat 2: %v", err)
+	}
+	// We allow chtimes to bump the dir mtime (LRU touch), but the
+	// SENTINEL file mtime is the rebuild signal — it stays put.
+	if !info1.ModTime().Equal(info2.ModTime()) {
+		t.Errorf("sentinel mtime changed across processes (rebuild happened) — was %v, now %v",
+			info1.ModTime(), info2.ModTime())
+	}
+}
+
+// TestStagingCache_PerProcessFallbackForEmptyFingerprint pins the
+// fallback contract: when no fingerprint is supplied (local-path
+// sources, the working-tree alias), Stage falls back to per-process
+// scratch staging in a `flate-stage-*` tempdir and that tempdir is
+// removed on Close.
+func TestStagingCache_PerProcessFallbackForEmptyFingerprint(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "k.yaml"), "x: 1\n")
+
+	root := t.TempDir()
+	cache, err := NewStagingCache(root, 0)
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+
+	staged, err := cache.Stage(context.Background(), src, "")
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	if !strings.Contains(staged, "flate-stage-") {
+		t.Errorf("expected per-process flate-stage-* dir; got %q", staged)
+	}
+	if _, err := os.Stat(filepath.Join(staged, "k.yaml")); err != nil {
+		t.Errorf("staged file missing: %v", err)
+	}
+	if err := cache.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Stat(staged); !os.IsNotExist(err) {
+		t.Errorf("per-process stage survived Close: %v", err)
+	}
+}
+
+// TestSweepStageBySize_EvictsOldestUnderLimit pins the LRU contract:
+// when total cache size exceeds maxBytes, the sweep removes the
+// oldest entries first until size is at or below the cap.
+func TestSweepStageBySize_EvictsOldestUnderLimit(t *testing.T) {
+	root := t.TempDir()
+
+	// Three fingerprint stages of increasing mtime, each ~1KiB.
+	stamps := []time.Time{
+		time.Now().Add(-3 * time.Hour),
+		time.Now().Add(-2 * time.Hour),
+		time.Now().Add(-1 * time.Hour),
+	}
+	fps := []string{
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+	}
+	for i, fp := range fps {
+		dir := filepath.Join(root, fp[:2], fp)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		// 1 KiB payload so total reliably crosses our 2 KiB cap.
+		body := make([]byte, 1024)
+		if err := os.WriteFile(filepath.Join(dir, "data"), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, stageCompleteSentinel), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(dir, stamps[i], stamps[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := sweepStageBySize(root, 2*1024); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	// Oldest (fps[0]) MUST be gone; the two newer ones MUST survive.
+	if _, err := os.Stat(filepath.Join(root, fps[0][:2], fps[0])); !os.IsNotExist(err) {
+		t.Errorf("oldest stage not evicted: %v", err)
+	}
+	for _, fp := range fps[1:] {
+		if _, err := os.Stat(filepath.Join(root, fp[:2], fp)); err != nil {
+			t.Errorf("newer stage %s reaped: %v", fp[:8], err)
+		}
+	}
+}
+
+// BenchmarkStagingCache_MultiKSPerRoot measures the warm-rerun cost
+// of staging the same source tree N times with the same fingerprint.
+// The persistent CAS path skips copyTree after the first Stage call;
+// every subsequent call is essentially a stat + chtimes pair. Before
+// Phase 3.4b every iteration paid the full os.Link per file walk.
+func BenchmarkStagingCache_MultiKSPerRoot(b *testing.B) {
+	src := b.TempDir()
+	// Synthesize 200 small files under a handful of subdirs so the
+	// copyTree pass has measurable depth + breadth.
+	for d := 0; d < 10; d++ {
+		dir := filepath.Join(src, fmt.Sprintf("d%02d", d))
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			b.Fatal(err)
+		}
+		for f := 0; f < 20; f++ {
+			path := filepath.Join(dir, fmt.Sprintf("f%02d.yaml", f))
+			if err := os.WriteFile(path, []byte("kind: ConfigMap\n"), 0o600); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	const fp = "feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface"
+
+	cache, err := NewStagingCache(b.TempDir(), 0)
+	if err != nil {
+		b.Fatalf("NewStagingCache: %v", err)
+	}
+	b.Cleanup(func() { _ = cache.Close() })
+
+	// Warm: first call populates the persistent stage.
+	if _, err := cache.Stage(context.Background(), src, fp); err != nil {
+		b.Fatalf("warm Stage: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := cache.Stage(context.Background(), src, fp); err != nil {
+			b.Fatalf("Stage: %v", err)
 		}
 	}
 }

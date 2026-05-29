@@ -168,8 +168,14 @@ func (l Layout) HelmTmp() string { return app2(l.Root, HelmTmpDir) }
 // chart tarball CAS and chart-tarball refs table sit under.
 func (l Layout) HelmCache() string { return app2(l.Root, HelmCacheDir) }
 
-// Stage returns the kustomize staging root. Per-render stage dirs land
-// inside as flate-stage-<rand>.
+// Stage returns the kustomize staging root. Two consumers share it:
+//   - Per-process scratch stages land as flate-stage-<rand> children (legacy
+//     fallback for sources without a content-addressable fingerprint).
+//   - Persistent content-addressed stages land at <stage>/<digest[:2]>/<digest>/
+//     keyed by the source artifact's fingerprint (git SHA, OCI digest…).
+//
+// The two-char fan-out prefix keeps any one subdir below typical FS dirent
+// limits and never collides with the `flate-stage-` legacy prefix.
 func (l Layout) Stage() string { return app2(l.Root, StageDir) }
 
 // RenderHelmCache returns the parent directory of the persisted helm
@@ -177,3 +183,15 @@ func (l Layout) Stage() string { return app2(l.Root, StageDir) }
 // the first two hex chars of the cache key; the disk layer in
 // pkg/helm owns the layout below this root.
 func (l Layout) RenderHelmCache() string { return app2(l.Root, RenderHelmCacheDir) }
+
+// StageEntry returns the on-disk persistent stage directory for the
+// given source fingerprint. The fingerprint must be a non-empty
+// printable token (commit SHA, OCI digest, content hash); callers
+// fall back to per-process staging when no fingerprint is available.
+func (l Layout) StageEntry(fingerprint string) string {
+	prefix := fingerprint
+	if len(prefix) > 2 {
+		prefix = prefix[:2]
+	}
+	return app4(l.Root, StageDir, prefix, fingerprint)
+}

@@ -36,6 +36,12 @@ import (
 
 // Config carries everything the orchestrator needs.
 type Config struct {
+	// StageCacheBytes caps the persistent kustomize stage cache. 0
+	// disables eviction (unbounded growth — the GC subcommand still
+	// handles age-based cleanup). The flag's expected unit is mebibytes
+	// at the CLI layer; this field is bytes.
+	StageCacheBytes int64
+
 	// Path is the directory to scan for Flux objects.
 	Path string
 	// PathOrig, when non-empty, switches every command into
@@ -260,7 +266,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	if err != nil {
 		return nil, err
 	}
-	staging, err := kustomize.NewStagingCache(layout.Stage())
+	staging, err := kustomize.NewStagingCacheFromLayout(layout, cfg.StageCacheBytes)
 	if err != nil {
 		// helmClient already created tmpDir + cacheDir under the
 		// cache root. Leaving them would leak a temp directory per

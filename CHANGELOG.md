@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.30](https://github.com/home-operations/flate/compare/0.1.29...0.1.30) (2026-05-29)
+
+
+### Features
+
+* update action to use new cache dir ([e56f782](https://github.com/home-operations/flate/commit/e56f782c062d9af992231ad057086aed1b3a03c5))
+
 ## [0.1.29](https://github.com/home-operations/flate/compare/0.1.28...0.1.29) (2026-05-29)
 
 

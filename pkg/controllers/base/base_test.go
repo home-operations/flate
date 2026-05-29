@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -148,5 +150,130 @@ func TestRunWithStatus_PreservesExternalFailure(t *testing.T) {
 	}
 	if got.Message != "dependency cycle detected" {
 		t.Errorf("external failure message was clobbered: %q", got.Message)
+	}
+}
+
+// TestController_CloseDrainsConcurrentAddListener exercises the
+// Close-vs-AddListener race. Many goroutines register listeners while
+// a single goroutine runs Close. The contract is that exactly ONE
+// Close call must leave no listener registered against the store —
+// either Close drained the listener directly OR the closed flag
+// caused AddListener to refuse / roll back. A listener that registers
+// AFTER Close's snapshot but BEFORE Close releases the unsubMu lock
+// must NOT leak.
+//
+// We verify by firing EventObjectAdded AFTER Close returns and
+// counting handler invocations; we deliberately do NOT call Close
+// twice (a second Close would mask the leak by draining the slice
+// that grew between the first Close's snapshot and its lock release).
+// Run under -race over many iterations to catch the snapshot-after-
+// append window that the closed flag closes.
+func TestController_CloseDrainsConcurrentAddListener(t *testing.T) {
+	t.Parallel()
+
+	const goroutines = 256
+
+	for iter := range 100 {
+		s := store.New()
+		c := base.New(s, nil)
+
+		var fired atomic.Int64
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		closeDone := make(chan struct{})
+
+		for range goroutines {
+			wg.Go(func() {
+				<-start
+				c.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) {
+					fired.Add(1)
+				})
+			})
+		}
+
+		// Release goroutines and run a single Close concurrently. Wait
+		// for both the Close and every AddListener to finish before
+		// firing the post-close event — that way the test asks "after
+		// the dust settles, has Close drained everything that managed
+		// to register?". A pre-fix run that snapshotted before an
+		// AddListener landed leaves that listener registered, and the
+		// post-close event will fire it.
+		close(start)
+		go func() {
+			c.Close()
+			close(closeDone)
+		}()
+		wg.Wait()
+		<-closeDone
+
+		// Snapshot-replay during AddListener may have fired the handler
+		// at registration time. Only NEW events after Close matter for
+		// the leak check.
+		fired.Store(0)
+
+		hr := &manifest.HelmRelease{Name: "post-close", Namespace: "ns"}
+		s.AddObject(hr)
+
+		if got := fired.Load(); got != 0 {
+			t.Fatalf("iter %d: %d listeners still active after Close — leak", iter, got)
+		}
+	}
+}
+
+// TestController_AddListenerAfterCloseIsNoOp pins the post-Close
+// refusal: a fresh AddListener once Close has returned must register
+// nothing in the underlying store.
+func TestController_AddListenerAfterCloseIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	s := store.New()
+	c := base.New(s, nil)
+
+	c.Close()
+
+	var fired atomic.Int64
+	c.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) {
+		fired.Add(1)
+	})
+
+	// Fire an event. The refused listener must not run.
+	hr := &manifest.HelmRelease{Name: "after-close", Namespace: "ns"}
+	s.AddObject(hr)
+
+	if got := fired.Load(); got != 0 {
+		t.Fatalf("AddListener after Close fired %d times; want 0 (registration must be refused)", got)
+	}
+}
+
+// TestController_DoubleCloseIsSafe pins the Swap-based double-Close
+// idempotency: a second Close must not re-iterate an already-drained
+// slice (which would call each unsub twice) and must not panic.
+func TestController_DoubleCloseIsSafe(t *testing.T) {
+	t.Parallel()
+
+	s := store.New()
+	c := base.New(s, nil)
+
+	var fired atomic.Int64
+	c.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) {
+		fired.Add(1)
+	})
+
+	// First Close drains the registered listener.
+	c.Close()
+	// Second Close must be a no-op — Swap-on-closed returns true so
+	// the drain loop is skipped entirely. If the slice were re-iterated
+	// after c.unsub = nil, this would be a benign nil-range; the real
+	// regression we are guarding against is a future refactor that
+	// captures the slice outside the Swap branch and double-fires.
+	c.Close()
+
+	// Fire an event to confirm the listener was unsubscribed exactly
+	// once (the post-Close store has no listener and won't fire).
+	hr := &manifest.HelmRelease{Name: "double-close", Namespace: "ns"}
+	s.AddObject(hr)
+
+	if got := fired.Load(); got != 0 {
+		t.Fatalf("listener fired %d times after double Close; want 0", got)
 	}
 }

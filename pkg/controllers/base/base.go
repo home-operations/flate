@@ -56,6 +56,14 @@ type Controller struct {
 	coal    *task.Coalescer[manifest.NamedResource]
 	filter  *change.Filter
 
+	// closed is set by Close so any later AddListener short-circuits
+	// rather than appending into a slice nobody will drain. The flag
+	// is checked once on the fast path (no lock) and re-checked under
+	// unsubMu before the append so a Close racing AddListener cannot
+	// snapshot c.unsub and miss a registration landing just after.
+	// Matches the started lifecycle-gate pattern above.
+	closed atomic.Bool
+
 	// unsubMu guards unsub so AddListener and Close can be called
 	// concurrently (e.g. shutdown racing a listener-triggered Submit).
 	// The slice is short-lived (registered at Start, drained at Close)
@@ -187,19 +195,42 @@ func (c *Controller) StartLifecycle(kindLabel string) {
 // AddListener registers a store listener and records it so Close can
 // unsubscribe. snapshot=true matches every concrete controller's needs
 // (deliver the current store state on subscribe). Safe to call
-// concurrently with Close.
+// concurrently with Close — once Close has flipped the closed gate,
+// any in-flight or later AddListener is refused and the registration
+// is rolled back so the underlying store does not retain a listener
+// the controller will never unsubscribe.
 func (c *Controller) AddListener(event store.EventKind, l store.Listener) {
+	// Fast path: avoid the store registration entirely when Close has
+	// already started. The post-lock re-check below catches the TOCTOU
+	// window where Close flips closed between this load and the lock.
+	if c.closed.Load() {
+		return
+	}
 	u := c.Store.AddListener(event, l, true)
 	c.unsubMu.Lock()
+	if c.closed.Load() {
+		// Close set the flag and drained c.unsub between our fast-path
+		// check and the lock — releasing the store registration here
+		// matches what Close would have done with our entry.
+		c.unsubMu.Unlock()
+		u()
+		return
+	}
 	c.unsub = append(c.unsub, u)
 	c.unsubMu.Unlock()
 }
 
-// Close removes every registered listener. Idempotent. Safe to call
-// concurrently with AddListener — though typical use registers all
-// listeners during Start and never adds more.
+// Close removes every registered listener and refuses any later
+// AddListener so a late call from a shutdown-racing goroutine cannot
+// leak a registration past us. Idempotent: a second Close is a no-op
+// because the closed flag is set via Swap.
 func (c *Controller) Close() {
 	c.unsubMu.Lock()
+	if c.closed.Swap(true) {
+		// Another Close already drained and marked us closed.
+		c.unsubMu.Unlock()
+		return
+	}
 	unsubs := c.unsub
 	c.unsub = nil
 	c.unsubMu.Unlock()

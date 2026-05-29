@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.32](https://github.com/home-operations/flate/compare/0.1.31...0.1.32) (2026-05-29)
+
+
+### Miscellaneous Chores
+
+* default base ([91f8f0d](https://github.com/home-operations/flate/commit/91f8f0d93dccffcc8c1ac69c56685e49424632ab))
+* default base ([cb4c9f1](https://github.com/home-operations/flate/commit/cb4c9f1a45e584f539ecc5b80a778a6b359b5b4b))
+
 ## [0.1.31](https://github.com/home-operations/flate/compare/0.1.30...0.1.31) (2026-05-29)
 
 

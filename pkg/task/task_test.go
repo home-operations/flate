@@ -45,7 +45,7 @@ func TestNewBounded_LimitsConcurrentBodies(t *testing.T) {
 }
 
 func TestNewBounded_Unbounded(t *testing.T) {
-	// Workers <= 0 disables bounding; matches New().
+	// Workers <= 0 disables bounding; matches NewUnbounded.
 	s := NewBounded(0)
 	if s.sem != nil {
 		t.Errorf("expected nil semaphore for workers=0")
@@ -53,6 +53,29 @@ func TestNewBounded_Unbounded(t *testing.T) {
 	s = NewBounded(-1)
 	if s.sem != nil {
 		t.Errorf("expected nil semaphore for workers=-1")
+	}
+}
+
+// TestNew_DefaultsToBounded asserts the package default — New
+// no longer spawns an unbounded pool; embedders that fan out
+// thousands of submits get throttled by runtime.NumCPU()*4
+// without having to opt in.
+func TestNew_DefaultsToBounded(t *testing.T) {
+	s := New()
+	if s.sem == nil {
+		t.Fatal("New() returned a Service with no worker cap; expected bounded default")
+	}
+	if got, want := cap(s.sem), defaultWorkers; got != want {
+		t.Errorf("New() worker cap = %d, want %d", got, want)
+	}
+}
+
+// TestNewUnbounded_HasNoCap pins the explicit opt-in path: callers
+// who deliberately want unbounded fan-out must call NewUnbounded.
+func TestNewUnbounded_HasNoCap(t *testing.T) {
+	u := NewUnbounded()
+	if u.sem != nil {
+		t.Errorf("NewUnbounded should not allocate a semaphore")
 	}
 }
 
@@ -261,7 +284,7 @@ func TestYieldSlot_AllowsChildrenWhenParentsFillPool(t *testing.T) {
 // TestYieldSlot_UnboundedIsNoOp asserts the no-pool path runs fn
 // transparently.
 func TestYieldSlot_UnboundedIsNoOp(t *testing.T) {
-	s := New()
+	s := NewUnbounded()
 	called := false
 	s.YieldSlot(func() { called = true })
 	if !called {

@@ -9,7 +9,9 @@ import (
 
 // BenchmarkDecodeDocs_LargeFile measures DecodeDocs against a 50-doc
 // multi-document YAML stream — the typical size of a chart-rendered
-// or List-bundled file the loader hands to the manifest parser.
+// or List-bundled file the loader hands to the manifest parser. Each
+// iteration releases the docs back to the internal pool to model the
+// loader's parseFile → ReleaseDoc lifecycle.
 func BenchmarkDecodeDocs_LargeFile(b *testing.B) {
 	var buf bytes.Buffer
 	for i := range 50 {
@@ -38,6 +40,9 @@ data:
 		}
 		if len(docs) != 50 {
 			b.Fatalf("expected 50 docs, got %d", len(docs))
+		}
+		for _, d := range docs {
+			ReleaseDoc(d)
 		}
 	}
 }

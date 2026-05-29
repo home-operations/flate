@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -1388,6 +1389,135 @@ metadata: {name: b, namespace: ns}
 	}
 	if !slices.Equal(names, []string{"a", "b"}) {
 		t.Errorf("names = %v", names)
+	}
+}
+
+// TestParseDoc_PoolReuseConsistency drives the DecodeDocs sync.Pool
+// hard: 1000 parse-and-release iterations on a fixed input must yield
+// byte-identical typed results. Catches any aliasing or stale-state
+// bug introduced by reusing a cleared map[string]any across decodes.
+//
+// Covers the three retention shapes:
+//   - HelmRelease (decodeTyped JSON round-trip, no doc retention)
+//   - Kustomization (retains the TOP-LEVEL doc as Contents — must not
+//     be returned to the pool)
+//   - ConfigMap (aliases the inner data submap; clear(top) leaves the
+//     submap independently rooted)
+func TestParseDoc_PoolReuseConsistency(t *testing.T) {
+	hr := []byte(`
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: app
+  namespace: default
+spec:
+  chart:
+    spec:
+      chart: app-template
+      version: "3.5.1"
+      sourceRef:
+        kind: HelmRepository
+        name: bjw-s
+        namespace: flux-system
+  values:
+    replicas: 2
+    env:
+      TZ: UTC
+`)
+	ks := []byte(`
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system}
+  postBuild:
+    substitute:
+      X: y
+`)
+	cm := []byte(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm
+  namespace: ns
+data:
+  key1: value1
+  key2: value2
+`)
+
+	const iters = 1000
+	opts := defaultParseDocOptions()
+
+	for i := range iters {
+		// HelmRelease: doc fully releasable.
+		docs, err := DecodeDocs(bytes.NewReader(hr))
+		if err != nil {
+			t.Fatalf("HR iter %d DecodeDocs: %v", i, err)
+		}
+		obj, err := ParseDoc(docs[0], opts)
+		if err != nil {
+			t.Fatalf("HR iter %d ParseDoc: %v", i, err)
+		}
+		got, ok := obj.(*HelmRelease)
+		if !ok {
+			t.Fatalf("HR iter %d: not *HelmRelease", i)
+		}
+		if got.Name != "app" || got.Namespace != "default" {
+			t.Fatalf("HR iter %d: wrong identity %s/%s", i, got.Namespace, got.Name)
+		}
+		if got.Chart.Name != "app-template" || got.Chart.Version != "3.5.1" {
+			t.Fatalf("HR iter %d: chart drift %+v", i, got.Chart)
+		}
+		ReleaseIfNotRetained(docs[0], obj)
+
+		// Kustomization: must NOT be released (Contents retains doc).
+		ksDocs, err := DecodeDocs(bytes.NewReader(ks))
+		if err != nil {
+			t.Fatalf("KS iter %d DecodeDocs: %v", i, err)
+		}
+		kobj, err := ParseDoc(ksDocs[0], opts)
+		if err != nil {
+			t.Fatalf("KS iter %d ParseDoc: %v", i, err)
+		}
+		k, ok := kobj.(*Kustomization)
+		if !ok {
+			t.Fatalf("KS iter %d: not *Kustomization", i)
+		}
+		if k.Name != "apps" || k.Path != "./apps" {
+			t.Fatalf("KS iter %d: drift %s %s", i, k.Name, k.Path)
+		}
+		// Validate retained Contents survives ReleaseIfNotRetained.
+		ReleaseIfNotRetained(ksDocs[0], kobj)
+		if k.Contents["kind"] != "Kustomization" {
+			t.Fatalf("KS iter %d: Contents corrupted after Release: %v", i, k.Contents)
+		}
+
+		// ConfigMap: aliases inner data submap. Release of top-level
+		// must not corrupt the parsed inner data.
+		cmDocs, err := DecodeDocs(bytes.NewReader(cm))
+		if err != nil {
+			t.Fatalf("CM iter %d DecodeDocs: %v", i, err)
+		}
+		cobj, err := ParseDoc(cmDocs[0], opts)
+		if err != nil {
+			t.Fatalf("CM iter %d ParseDoc: %v", i, err)
+		}
+		c, ok := cobj.(*ConfigMap)
+		if !ok {
+			t.Fatalf("CM iter %d: not *ConfigMap", i)
+		}
+		if c.Data["key1"] != "value1" || c.Data["key2"] != "value2" {
+			t.Fatalf("CM iter %d: data drift %v", i, c.Data)
+		}
+		ReleaseIfNotRetained(cmDocs[0], cobj)
+		// Re-check after release: pooled top-level is gone but the
+		// inner submap must still hold our values.
+		if c.Data["key1"] != "value1" || c.Data["key2"] != "value2" {
+			t.Fatalf("CM iter %d: data corrupted post-release %v", i, c.Data)
+		}
 	}
 }
 

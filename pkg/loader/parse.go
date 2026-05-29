@@ -42,17 +42,21 @@ func parseFile(path string, opts manifest.ParseDocOptions) ([]manifest.BaseManif
 		obj, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
 			slog.Debug("loader: doc skipped", "path", path, "err", err)
+			manifest.ReleaseDoc(doc)
 			continue
 		}
 		if _, ok := obj.(*manifest.RawObject); ok {
+			manifest.ReleaseDoc(doc)
 			continue
 		}
 		id := obj.Named()
 		if manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace) {
 			slog.Debug("loader: skipped template doc (unresolved envsubst in name/namespace)",
 				"path", path, "id", id.String())
+			manifest.ReleaseIfNotRetained(doc, obj)
 			continue
 		}
+		manifest.ReleaseIfNotRetained(doc, obj)
 		out = append(out, obj)
 	}
 	return out, nil

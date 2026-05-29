@@ -8,10 +8,18 @@ package task
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// defaultWorkers caps Go-body concurrency in a Service constructed via
+// New. Sized for I/O-bound work (helm template / oras pull / git
+// clone) — sufficient to saturate the CPU while leaving headroom for
+// blocked network calls. Embedders that need a different cap should
+// call NewBounded explicitly.
+var defaultWorkers = runtime.NumCPU() * 4
 
 // Service tracks active goroutines.
 type Service struct {
@@ -43,26 +51,40 @@ type quiesceWaiter struct {
 	ch        chan struct{}
 }
 
-// New constructs a fresh Service with unbounded concurrency.
-func New() *Service { return &Service{} }
+// New constructs a Service with the package-default bounded worker
+// pool (runtime.NumCPU() * 4). This was previously unbounded — every
+// Go call spawned a goroutine that ran immediately — which is a
+// foot-gun for embedders that fan out thousands of submits and rely
+// on the pool to throttle. Callers that genuinely need unbounded
+// concurrency must use NewUnbounded explicitly.
+func New() *Service { return NewBounded(defaultWorkers) }
 
 // NewBounded constructs a Service that caps the number of concurrently
 // executing active-task bodies at workers. Submitting more does not
 // block — the surplus goroutines exist but wait on an internal
 // semaphore until a slot opens. workers <= 0 disables bounding
-// (equivalent to New).
+// (equivalent to NewUnbounded).
 //
 // Sized for I/O-bound work: helm template / oras pull / git clone all
 // release the worker briefly while blocked on the network. A sensible
 // default is runtime.NumCPU() * 4, but callers know their workload
 // better than the package does.
 func NewBounded(workers int) *Service {
-	s := New()
+	s := &Service{}
 	if workers > 0 {
 		s.sem = make(chan struct{}, workers)
 	}
 	return s
 }
+
+// NewUnbounded constructs a Service with no concurrency cap — every
+// Go submission runs immediately on a fresh goroutine. Use only when
+// the caller's workload is naturally bounded (single-digit submits,
+// fixed-fanout testing harness) or when the caller manages its own
+// throttling on top of the Service. Most production paths should
+// prefer NewBounded with a workload-sized cap, or New for the
+// package default.
+func NewUnbounded() *Service { return &Service{} }
 
 // Go launches an active task. ctx is propagated to fn. Completion is
 // reported via BlockTillDone. When the Service is

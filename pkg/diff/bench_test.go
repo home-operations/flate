@@ -25,11 +25,13 @@ func BenchmarkDiff_LargeTree(b *testing.B) {
 	}
 }
 
-// BenchmarkApplyStrip measures applyStrip against a 100-doc set with
-// 5 strip attrs — the pre-diff sanitization pass that pulls common
+// BenchmarkNormalizeDocs measures normalizeDocs against a 100-doc set
+// with 5 strip attrs — the pre-diff sanitization pass that pulls
 // chart-bump noise (helm.sh/chart, checksum/config, …) out of every
-// resource's metadata before dyff sees it.
-func BenchmarkApplyStrip(b *testing.B) {
+// resource's metadata and redacts ConfigMap.binaryData before dyff
+// sees them. The corpus carries no binaryData, so this exercises the
+// strip path plus the docsContainBinaryData short-circuit walk.
+func BenchmarkNormalizeDocs(b *testing.B) {
 	const n = 100
 	docs := make([]Doc, 0, n)
 	for i := range n {
@@ -46,7 +48,7 @@ func BenchmarkApplyStrip(b *testing.B) {
 						"app.kubernetes.io/name": fmt.Sprintf("app-%d", i),
 					},
 					"annotations": map[string]any{
-						"checksum/config":   fmt.Sprintf("%d", i*31),
+						"checksum/config":                   fmt.Sprintf("%d", i*31),
 						"deployment.kubernetes.io/revision": "1",
 					},
 				},
@@ -78,7 +80,7 @@ func BenchmarkApplyStrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = applyStrip(docs, attrs)
+		_ = normalizeDocs(docs, attrs)
 	}
 }
 

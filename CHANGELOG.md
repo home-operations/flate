@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.34](https://github.com/home-operations/flate/compare/0.1.33...0.1.34) (2026-05-30)
+
+
+### Documentation
+
+* **readme:** editorial pass — fix stale claims, add ToC, reorder ([#513](https://github.com/home-operations/flate/issues/513)) ([e683754](https://github.com/home-operations/flate/commit/e6837543ee6724e84e871444aadbbe391c6ea8bf))
+
+
+### Code Refactoring
+
+* **controllers:** drop test-only resolveSourceRoot wrapper ([#499](https://github.com/home-operations/flate/issues/499)) ([8df2c3f](https://github.com/home-operations/flate/commit/8df2c3f73a87906933c78a688fdf92f304b374cd))
+* drop test-only AllReady, trim stale comments ([#501](https://github.com/home-operations/flate/issues/501)) ([9f5b0b1](https://github.com/home-operations/flate/commit/9f5b0b14033e89606dbfcb18b92e0a0f086c26fe))
+* **helm:** extract newInstallAction, move test-only hooks, fix name collision ([#502](https://github.com/home-operations/flate/issues/502)) ([3419b9a](https://github.com/home-operations/flate/commit/3419b9ac28810ec7e77e0851d7082cd2e988d944))
+* **kustomize:** flatten copyFile, fix preflight comment, split stage.go ([#506](https://github.com/home-operations/flate/issues/506)) ([1e22e8a](https://github.com/home-operations/flate/commit/1e22e8ad17a309de99b14636cc6c0d0b5091b51f))
+* **orchestrator:** remove dead cycle code, split Run, drop test-only MarkRendered ([#498](https://github.com/home-operations/flate/issues/498)) ([4c12d1e](https://github.com/home-operations/flate/commit/4c12d1e2cc5edabff2cd2a0e30eb5c294aa2ea6a))
+* **source:** dedup cacheKeyHash/allocStaging, strip stale tag ([#500](https://github.com/home-operations/flate/issues/500)) ([951f23b](https://github.com/home-operations/flate/commit/951f23ba112e9fa1f49dc7a52f3c3dd706654ef5))
+* unify disk-cache sweep + atomic CAS staging (internal/diskcache, internal/cas) ([#504](https://github.com/home-operations/flate/issues/504)) ([7f6a618](https://github.com/home-operations/flate/commit/7f6a6180c527d8d9741e28060f7a8e747fe0144f))
+
 ## [0.1.33](https://github.com/home-operations/flate/compare/0.1.32...0.1.33) (2026-05-29)
 
 

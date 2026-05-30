@@ -203,4 +203,3 @@ func benchLocalChartResolver(b *testing.B, name, namespace, dir string) SourceRe
 	})
 	return NewStoreSourceResolver(st)
 }
-

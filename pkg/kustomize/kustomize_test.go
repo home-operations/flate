@@ -3,12 +3,12 @@ package kustomize
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 // TestRenderFlux_RespectsCanceledContext asserts the renderer bails
@@ -127,16 +127,9 @@ func TestSubstitute_BashSubstringRemoval(t *testing.T) {
 // itself does not.
 func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 	src := t.TempDir()
-	if err := os.WriteFile(filepath.Join(src, "cm.yaml"), []byte(
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\n  labels:\n    app: x\n  annotations:\n    note: y\ndata:\n  k: v\n",
-	), 0o600); err != nil {
-		t.Fatalf("write cm: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "kustomization.yaml"), []byte(
-		"resources:\n- cm.yaml\n",
-	), 0o600); err != nil {
-		t.Fatalf("write kustomization: %v", err)
-	}
+	testutil.WriteFile(t, src, "cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\n  labels:\n    app: x\n  annotations:\n    note: y\ndata:\n  k: v\n")
+	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 
 	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
@@ -199,16 +192,9 @@ func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 // caught here.
 func TestRenderFlux_CommonMetadataOverridesOwnerLabels(t *testing.T) {
 	src := t.TempDir()
-	if err := os.WriteFile(filepath.Join(src, "cm.yaml"), []byte(
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n",
-	), 0o600); err != nil {
-		t.Fatalf("write cm: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "kustomization.yaml"), []byte(
-		"resources:\n- cm.yaml\n",
-	), 0o600); err != nil {
-		t.Fatalf("write kustomization: %v", err)
-	}
+	testutil.WriteFile(t, src, "cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n")
+	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)
@@ -254,16 +240,9 @@ func TestRenderFlux_CommonMetadataOverridesOwnerLabels(t *testing.T) {
 // resources even without spec.commonMetadata.
 func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
 	src := t.TempDir()
-	if err := os.WriteFile(filepath.Join(src, "cm.yaml"), []byte(
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n",
-	), 0o600); err != nil {
-		t.Fatalf("write cm: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "kustomization.yaml"), []byte(
-		"resources:\n- cm.yaml\n",
-	), 0o600); err != nil {
-		t.Fatalf("write kustomization: %v", err)
-	}
+	testutil.WriteFile(t, src, "cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n")
+	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStagingCache: %v", err)

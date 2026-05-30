@@ -5,18 +5,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/source"
 )
 
+// writeFile drops a one-byte marker file at dir/rel for ignore-walk
+// fixtures — contents are irrelevant, only presence matters.
 func writeFile(t *testing.T, dir, rel string) {
 	t.Helper()
-	p := filepath.Join(dir, rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(p), err)
-	}
-	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
-		t.Fatalf("write %s: %v", p, err)
-	}
+	testutil.WriteFile(t, dir, rel, "x")
 }
 
 func exists(t *testing.T, p string) bool {

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 // TestPreflightRemoteResources_RewritesSuccessfulFetch confirms the
@@ -25,7 +27,7 @@ func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 
 	stage := t.TempDir()
 	ks := filepath.Join(stage, "kustomization.yaml")
-	mustWriteFile(t, ks, "resources:\n  - "+srv.URL+"/foo.yaml\n")
+	testutil.WriteFileAt(t, ks, "resources:\n  - "+srv.URL+"/foo.yaml\n")
 
 	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
 		t.Fatalf("preflight: %v", err)
@@ -71,7 +73,7 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 
 	stage := t.TempDir()
 	ks := filepath.Join(stage, "kustomization.yaml")
-	mustWriteFile(t, ks, "resources:\n  - "+srv.URL+"/missing.yaml\n")
+	testutil.WriteFileAt(t, ks, "resources:\n  - "+srv.URL+"/missing.yaml\n")
 
 	err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage)
 	if err == nil {
@@ -91,7 +93,7 @@ func TestPreflightRemoteResources_IgnoresLocalEntries(t *testing.T) {
 	stage := t.TempDir()
 	ks := filepath.Join(stage, "kustomization.yaml")
 	body := "resources:\n  - ./local.yaml\n  - ../shared/cm.yaml\n"
-	mustWriteFile(t, ks, body)
+	testutil.WriteFileAt(t, ks, body)
 
 	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
 		t.Fatalf("preflight: %v", err)
@@ -117,9 +119,9 @@ func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	mustWriteFile(t, filepath.Join(stage, "kustomization.yaml"),
+	testutil.WriteFileAt(t, filepath.Join(stage, "kustomization.yaml"),
 		"resources:\n  - ./components/x\n")
-	mustWriteFile(t, filepath.Join(nested, "kustomization.yaml"),
+	testutil.WriteFileAt(t, filepath.Join(nested, "kustomization.yaml"),
 		"resources:\n  - "+srv.URL+"/nested.yaml\n")
 
 	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
@@ -138,9 +140,9 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSourceNestedKustomization(t *tes
 	t.Cleanup(srv.Close)
 
 	src := t.TempDir()
-	mustWriteFile(t, filepath.Join(src, "kustomization.yaml"), "resources:\n  - ./child\n")
+	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), "resources:\n  - ./child\n")
 	child := "resources:\n  - " + srv.URL + "/remote.yaml\n"
-	mustWriteFile(t, filepath.Join(src, "child", "kustomization.yaml"), child)
+	testutil.WriteFileAt(t, filepath.Join(src, "child", "kustomization.yaml"), child)
 
 	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
@@ -186,7 +188,7 @@ func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 	for _, name := range []string{"kustomization.yml", "Kustomization"} {
 		t.Run(name, func(t *testing.T) {
 			stage := t.TempDir()
-			mustWriteFile(t, filepath.Join(stage, name),
+			testutil.WriteFileAt(t, filepath.Join(stage, name),
 				"resources:\n  - "+srv.URL+"/x.yaml\n")
 			if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
 				t.Fatalf("preflight: %v", err)
@@ -222,7 +224,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			t.Fatal(err)
 		}
-		mustWriteFile(t, filepath.Join(dir, "kustomization.yaml"),
+		testutil.WriteFileAt(t, filepath.Join(dir, "kustomization.yaml"),
 			"resources:\n  - "+srv.URL+"/shared.yaml\n")
 	}
 
@@ -247,23 +249,13 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 	// is the actual production pattern — one preflight per
 	// RenderFlux invocation.)
 	stage2 := t.TempDir()
-	mustWriteFile(t, filepath.Join(stage2, "kustomization.yaml"),
+	testutil.WriteFileAt(t, filepath.Join(stage2, "kustomization.yaml"),
 		"resources:\n  - "+srv.URL+"/shared.yaml\n")
 	if err := preflightRemoteResources(context.Background(), cache, stage2); err != nil {
 		t.Fatalf("second preflight: %v", err)
 	}
 	if hits != 1 {
 		t.Errorf("expected 1 network call across both runs, got %d", hits)
-	}
-}
-
-func mustWriteFile(t *testing.T, path, body string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -323,7 +315,7 @@ namespace: my-app
 `
 	dir := t.TempDir()
 	ks := filepath.Join(dir, "kustomization.yaml")
-	mustWriteFile(t, ks, original)
+	testutil.WriteFileAt(t, ks, original)
 
 	if err := rewriteURLResources(context.Background(), newPreflightCache(t), ks); err != nil {
 		t.Fatalf("rewriteURLResources: %v", err)

@@ -176,7 +176,7 @@ func TestTemplateCache_ReplaceDoesNotDuplicate(t *testing.T) {
 // invariant the LRU might be violating. The pass condition is "no
 // race detector / panic"; the cached values themselves are arbitrary.
 func TestTemplateCache_ConcurrentSafety(t *testing.T) {
-	c := newTemplateCache(64 << 10, nil)
+	c := newTemplateCache(64<<10, nil)
 	var wg sync.WaitGroup
 	for i := range 32 {
 		wg.Go(func() {

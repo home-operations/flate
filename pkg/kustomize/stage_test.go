@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 // TestStagingCache_CopyTree_SkipsBrokenSymlink locks the fix for
@@ -24,7 +26,7 @@ func TestStagingCache_CopyTree_SkipsBrokenSymlink(t *testing.T) {
 	src := t.TempDir()
 
 	// One real file Flux cares about.
-	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
 
 	// One dangling symlink at the root — the exact shape m00nwtchr's
 	// .pre-commit-config.yaml landed as in their local checkout.
@@ -61,7 +63,7 @@ func TestStagingCache_CopyTree_SkipsBrokenSymlink(t *testing.T) {
 func TestStagingCache_CopyTree_FollowsLiveSymlink(t *testing.T) {
 	src := t.TempDir()
 	target := filepath.Join(src, "real.yaml")
-	mustWrite(t, target, "kind: ConfigMap\n")
+	testutil.WriteFileAt(t, target, "kind: ConfigMap\n")
 	if err := os.Symlink(target, filepath.Join(src, "alias.yaml")); err != nil {
 		t.Fatalf("create symlink: %v", err)
 	}
@@ -151,16 +153,6 @@ func TestStagingCache_FetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
 	}
 }
 
-func mustWrite(t *testing.T, path, body string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // TestNewStagingCache_SweepsStaleLeftovers pins the crash-cleanup
 // sweep: any `flate-stage-*` directory under the parent older than
 // staleStageAge is removed when a fresh StagingCache opens. Without
@@ -174,7 +166,7 @@ func TestNewStagingCache_SweepsStaleLeftovers(t *testing.T) {
 	if err := os.MkdirAll(stale, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(stale, "marker"), "leftover")
+	testutil.WriteFileAt(t, filepath.Join(stale, "marker"), "leftover")
 	old := time.Now().Add(-2 * staleStageAge)
 	if err := os.Chtimes(stale, old, old); err != nil {
 		t.Fatal(err)
@@ -185,7 +177,7 @@ func TestNewStagingCache_SweepsStaleLeftovers(t *testing.T) {
 	if err := os.MkdirAll(fresh, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(fresh, "marker"), "fresh")
+	testutil.WriteFileAt(t, filepath.Join(fresh, "marker"), "fresh")
 
 	// And an unrelated dir with the same prefix but not ours.
 	other := filepath.Join(parent, "some-other-tmp")
@@ -224,7 +216,7 @@ func TestStagingCache_HardlinksWhenSameFilesystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	srcFile := filepath.Join(src, "kustomization.yaml")
-	mustWrite(t, srcFile, "resources: []\n")
+	testutil.WriteFileAt(t, srcFile, "resources: []\n")
 
 	cache, err := NewStagingCache(filepath.Join(root, "stage"), 0)
 	if err != nil {
@@ -258,7 +250,7 @@ func TestStagingCache_HardlinksWhenSameFilesystem(t *testing.T) {
 func TestRestoreKustomization_DoesNotMutateSource(t *testing.T) {
 	src := t.TempDir()
 	srcKust := filepath.Join(src, "kustomization.yaml")
-	mustWrite(t, srcKust, "original\n")
+	testutil.WriteFileAt(t, srcKust, "original\n")
 
 	cache, err := NewStagingCache(t.TempDir(), 0)
 	if err != nil {
@@ -327,7 +319,7 @@ func TestIsHTTPClientError(t *testing.T) {
 // sentinel atomically.
 func TestStagingCache_PersistentSentinelWritten(t *testing.T) {
 	src := t.TempDir()
-	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
 
 	root := t.TempDir()
 	cache, err := NewStagingCache(root, 0)
@@ -368,7 +360,7 @@ func TestStagingCache_PersistentSentinelWritten(t *testing.T) {
 // the dir sentinel-free and the next Stage call rebuilds.
 func TestStagingCache_PartialStageRebuildsOnNextRun(t *testing.T) {
 	src := t.TempDir()
-	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
 
 	root := t.TempDir()
 	cache1, err := NewStagingCache(root, 0)
@@ -429,7 +421,7 @@ func TestStagingCache_PartialStageRebuildsOnNextRun(t *testing.T) {
 // recovery test above, this pins the rename-then-sentinel invariant.
 func TestStagingCache_SentinelWrittenAfterRename(t *testing.T) {
 	src := t.TempDir()
-	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
 
 	root := t.TempDir()
 	cache, err := NewStagingCache(root, 0)
@@ -472,7 +464,7 @@ func TestStagingCache_SentinelWrittenAfterRename(t *testing.T) {
 // rename and bump the mtime).
 func TestStagingCache_PersistentSameFingerprintSkipsRebuild(t *testing.T) {
 	src := t.TempDir()
-	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
 
 	root := t.TempDir()
 	cache, err := NewStagingCache(root, 0)
@@ -517,9 +509,9 @@ func TestStagingCache_PersistentSameFingerprintSkipsRebuild(t *testing.T) {
 // fingerprints get independent staged copies.
 func TestStagingCache_PersistentDistinctFingerprintsDistinctDirs(t *testing.T) {
 	srcA := t.TempDir()
-	mustWrite(t, filepath.Join(srcA, "a.yaml"), "kind: A\n")
+	testutil.WriteFileAt(t, filepath.Join(srcA, "a.yaml"), "kind: A\n")
 	srcB := t.TempDir()
-	mustWrite(t, filepath.Join(srcB, "b.yaml"), "kind: B\n")
+	testutil.WriteFileAt(t, filepath.Join(srcB, "b.yaml"), "kind: B\n")
 
 	root := t.TempDir()
 	cache, err := NewStagingCache(root, 0)
@@ -558,7 +550,7 @@ func TestStagingCache_PersistentDistinctFingerprintsDistinctDirs(t *testing.T) {
 // rename a fresh sibling into place and the mtime would change).
 func TestStagingCache_CrossProcessReuse(t *testing.T) {
 	src := t.TempDir()
-	mustWrite(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), "resources: []\n")
 
 	root := t.TempDir()
 	const fp = "cafebabe00000000000000000000000000000000000000000000000000000000"
@@ -621,7 +613,7 @@ func TestStagingCache_CrossProcessReuse(t *testing.T) {
 // removed on Close.
 func TestStagingCache_PerProcessFallbackForEmptyFingerprint(t *testing.T) {
 	src := t.TempDir()
-	mustWrite(t, filepath.Join(src, "k.yaml"), "x: 1\n")
+	testutil.WriteFileAt(t, filepath.Join(src, "k.yaml"), "x: 1\n")
 
 	root := t.TempDir()
 	cache, err := NewStagingCache(root, 0)

@@ -13,8 +13,8 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // TestLoadChart_CoalescesConcurrentFirstLoad verifies that N parallel
@@ -164,18 +164,15 @@ description: first
 	// changes both size and mtime; the future-mtime stamp guards
 	// against coarse-granularity filesystems where same-second
 	// rewrites can collide.
-	mustWriteFile := func(rel, body string) {
+	writeFuture := func(rel, body string) {
 		t.Helper()
-		path := filepath.Join(dir, rel)
-		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		testutil.WriteFile(t, dir, rel, body)
 		future := time.Now().Add(2 * time.Hour)
-		if err := os.Chtimes(path, future, future); err != nil {
+		if err := os.Chtimes(filepath.Join(dir, rel), future, future); err != nil {
 			t.Fatal(err)
 		}
 	}
-	mustWriteFile("mychart/Chart.yaml", `apiVersion: v2
+	writeFuture("mychart/Chart.yaml", `apiVersion: v2
 name: mychart
 version: 0.1.0
 description: second-version-different-size-and-mtime

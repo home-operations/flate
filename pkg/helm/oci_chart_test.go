@@ -6,16 +6,16 @@ import (
 	"compress/gzip"
 	"context"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // TestLocateOCIChart_PrefersSourceArtifactExtract is the headline of
@@ -60,9 +60,7 @@ func TestLocateOCIChart_PrefersSourceArtifactCopy(t *testing.T) {
 	slot := t.TempDir()
 	chartTGZ := buildChartTarGz(t, "mychart", "0.1.0")
 	tgzPath := filepath.Join(slot, copiedOCILayerFilename)
-	if err := os.WriteFile(tgzPath, chartTGZ, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFileAt(t, tgzPath, string(chartTGZ))
 
 	cli, hr := setupOCIChartTest(t, slot, "copied")
 
@@ -123,9 +121,7 @@ func TestLocateOCIChart_FallsBackWhenNoArtifact(t *testing.T) {
 	// safeName(trimmedRef)+"-"+version+".tgz" — full ref (registry+
 	// path), not just the basename, to avoid cross-registry collisions.
 	cacheTarget := filepath.Join(cli.cacheDir, "ghcr.io-test-chart-0.1.0.tgz")
-	if err := os.WriteFile(cacheTarget, buildChartTarGz(t, "chart", "0.1.0"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFileAt(t, cacheTarget, string(buildChartTarGz(t, "chart", "0.1.0")))
 
 	path, err := cli.locateOCIChart(t.Context(), hr)
 	if err != nil {
@@ -163,13 +159,8 @@ func TestLocateOCIChart_RoutesThroughPullerWhenWired(t *testing.T) {
 
 	slot := t.TempDir()
 	chartDir := filepath.Join(slot, "chart")
-	if err := os.MkdirAll(chartDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(chartDir, "Chart.yaml"),
-		[]byte("apiVersion: v2\nname: chart\nversion: 0.1.0\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFileAt(t, filepath.Join(chartDir, "Chart.yaml"),
+		"apiVersion: v2\nname: chart\nversion: 0.1.0\n")
 	var pulledFor *manifest.OCIRepository
 	cli.SetOCIPuller(stubPuller{
 		fetch: func(_ context.Context, r *manifest.OCIRepository) (*store.SourceArtifact, error) {
@@ -229,17 +220,12 @@ func TestLocateOCIChart_PrefersSourceArtifactChartnameSubdir(t *testing.T) {
 
 	slot := t.TempDir()
 	chartDir := filepath.Join(slot, "vector") // dir name matches the publisher's chart, not hr.Chart.Name
-	if err := os.MkdirAll(filepath.Join(chartDir, "templates"), 0o750); err != nil {
-		t.Fatal(err)
-	}
 	writeChartFiles(t, chartDir, "vector", "0.52.0")
 	// Real source/oci slots also contain `.flate-digest` (and possibly
 	// `.flate-layer.tar.gz` from a `copy` op). Drop one to verify the
 	// hidden-prefix filter in findChartSubdir doesn't mistake it for
 	// a Chart.yaml-less subdir.
-	if err := os.WriteFile(filepath.Join(slot, ".flate-digest"), []byte("sha256:abcd"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFileAt(t, filepath.Join(slot, ".flate-digest"), "sha256:abcd")
 
 	cli, hr := setupOCIChartTest(t, slot, "subdir")
 	// hr.Chart.Name purposely differs from the on-disk subdir name to
@@ -269,11 +255,7 @@ func TestLocateOCIChart_AmbiguousSubdirs(t *testing.T) {
 
 	slot := t.TempDir()
 	for _, name := range []string{"chart-a", "chart-b"} {
-		dir := filepath.Join(slot, name)
-		if err := os.MkdirAll(filepath.Join(dir, "templates"), 0o750); err != nil {
-			t.Fatal(err)
-		}
-		writeChartFiles(t, dir, name, "0.1.0")
+		writeChartFiles(t, filepath.Join(slot, name), name, "0.1.0")
 	}
 
 	cli, hr := setupOCIChartTest(t, slot, "ambiguous")
@@ -388,16 +370,9 @@ func setupOCIChartTest(t *testing.T, slot, label string) (*Client, *manifest.Hel
 // files at slot root.
 func writeChartFiles(t *testing.T, root, name, version string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(root, "Chart.yaml"),
-		[]byte("apiVersion: v2\nname: "+name+"\nversion: "+version+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "templates"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "templates", "_helpers.tpl"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFile(t, root, "Chart.yaml",
+		"apiVersion: v2\nname: "+name+"\nversion: "+version+"\n")
+	testutil.WriteFile(t, root, "templates/_helpers.tpl", "")
 }
 
 // buildChartTarGz returns a gzipped tarball of a minimal helm chart
@@ -409,7 +384,7 @@ func buildChartTarGz(t *testing.T, name, version string) []byte {
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
 	files := map[string]string{
-		name + "/Chart.yaml":              "apiVersion: v2\nname: " + name + "\nversion: " + version + "\n",
+		name + "/Chart.yaml":             "apiVersion: v2\nname: " + name + "\nversion: " + version + "\n",
 		name + "/templates/_helpers.tpl": "",
 	}
 	for path, body := range files {

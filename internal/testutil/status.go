@@ -8,6 +8,18 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+// NewStoreWithStatuses returns a fresh Store with each id pre-set to
+// the given status (empty message), collapsing the store.New() +
+// per-id UpdateStatus boilerplate common to dependency and render
+// tests that need a pre-populated store.
+func NewStoreWithStatuses(statuses map[manifest.NamedResource]store.Status) *store.Store {
+	s := store.New()
+	for id, st := range statuses {
+		s.UpdateStatus(id, st, "")
+	}
+	return s
+}
+
 // WaitForStatus polls st until id reaches want status or a 2-second
 // deadline expires. It is the shared polling helper used by controller
 // tests (helmrelease, kustomization, source) to avoid identical inline

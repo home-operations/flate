@@ -20,3 +20,7 @@ func (m MapLister) ListObjects(kind string) []manifest.BaseManifest {
 	}
 	return out
 }
+
+// EmptyLister returns a MapLister with no entries — a minimal non-nil
+// ObjectLister for tests that only need to construct a change.Filter.
+func EmptyLister() MapLister { return MapLister{} }

@@ -19,6 +19,7 @@ require (
 	github.com/gofrs/flock v0.13.0
 	github.com/gonvenience/ytbx v1.5.0
 	github.com/google/cel-go v0.28.1
+	github.com/google/go-cmp v0.7.0
 	github.com/gosimple/slug v1.15.0
 	github.com/homeport/dyff v1.12.0
 	github.com/minio/minio-go/v7 v7.2.0

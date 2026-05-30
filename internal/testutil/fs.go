@@ -24,3 +24,16 @@ func WriteFile(t testing.TB, root, rel, body string) {
 		t.Fatalf("write %s: %v", p, err)
 	}
 }
+
+// WriteFileAt writes body to path (absolute or cwd-relative), creating
+// any missing parent directories. Companion to WriteFile for callers
+// that already hold a full path rather than a root+rel split.
+func WriteFileAt(t testing.TB, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}

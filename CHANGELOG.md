@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.35](https://github.com/home-operations/flate/compare/0.1.34...0.1.35) (2026-05-30)
+
+
+### Performance Improvements
+
+* **cold-start:** cache helm schema compile + raise GC target ([#514](https://github.com/home-operations/flate/issues/514)) ([3392823](https://github.com/home-operations/flate/commit/3392823b44e17c28b54d7bfa651923a08ce2c72b))
+
 ## [0.1.34](https://github.com/home-operations/flate/compare/0.1.33...0.1.34) (2026-05-30)
 
 

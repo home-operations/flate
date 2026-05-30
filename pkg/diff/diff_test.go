@@ -3,6 +3,8 @@ package diff
 import (
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 func cm(name, ns, key, value string) Doc {
@@ -46,9 +48,7 @@ func TestRun_NoChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(diffs) != 0 {
-		t.Errorf("expected zero diffs, got %d", len(diffs))
-	}
+	assert.Equal(t, len(diffs), 0)
 }
 
 // TestRun_AddedAndRemoved covers the case where the only change is
@@ -61,9 +61,7 @@ func TestRun_AddedAndRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(diffs) != 2 {
-		t.Errorf("expected 2 diffs for add+remove, got %d", len(diffs))
-	}
+	assert.Equal(t, len(diffs), 2) // one add + one remove
 }
 
 // TestRun_Deletion verifies a wholly-removed resource produces a
@@ -336,10 +334,7 @@ func TestResourceDiff_Header(t *testing.T) {
 		Parent: Parent{Kind: "HelmRelease", Namespace: "media", Name: "qui"},
 		Kind:   "Deployment", Namespace: "media", Name: "qui",
 	}
-	want := "HelmRelease: media/qui Deployment: media/qui"
-	if got := hrDiff.Header(); got != want {
-		t.Errorf("HR header:\n got %q\nwant %q", got, want)
-	}
+	assert.Equal(t, hrDiff.Header(), "HelmRelease: media/qui Deployment: media/qui")
 
 	ksDiff := ResourceDiff{
 		Parent: Parent{
@@ -351,10 +346,7 @@ func TestResourceDiff_Header(t *testing.T) {
 	// Parent.Path is preserved on the struct (for JSON/YAML
 	// consumers) but deliberately omitted from the human header so
 	// KS-owned and HR-owned entries render symmetrically.
-	want = "Kustomization: media/qui HelmRelease: media/qui"
-	if got := ksDiff.Header(); got != want {
-		t.Errorf("KS header:\n got %q\nwant %q", got, want)
-	}
+	assert.Equal(t, ksDiff.Header(), "Kustomization: media/qui HelmRelease: media/qui")
 }
 
 // TestRun_StripAttrsRemovesNoise pins that Options.StripAttrs is
@@ -383,9 +375,7 @@ func TestRun_StripAttrsRemovesNoise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(diffs) != 0 {
-		t.Errorf("stripped annotation should produce no diff entries; got %d:\n%+v", len(diffs), diffs)
-	}
+	assert.Equal(t, len(diffs), 0) // stripped annotation produces no entries
 
 	// Sanity: without --strip-attr, the same change DOES surface as
 	// a diff — proves the strip is what's suppressing the entry.
@@ -393,9 +383,7 @@ func TestRun_StripAttrsRemovesNoise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(diffs) != 1 {
-		t.Errorf("control: unstripped annotation change should surface; got %d diffs", len(diffs))
-	}
+	assert.Equal(t, len(diffs), 1) // control: unstripped change surfaces
 }
 
 // TestRun_RedactsConfigMapBinaryData locks the ConfigMap.binaryData

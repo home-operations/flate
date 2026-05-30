@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -16,7 +17,7 @@ import (
 // children whose deps already landed; the wait should never block.
 func BenchmarkWatchReady_ManyDeps(b *testing.B) {
 	s := store.New()
-	deps := make([]manifest.DependencyRef, 0, 50)
+	ids := make([]manifest.NamedResource, 0, 50)
 	for i := range 50 {
 		id := manifest.NamedResource{
 			Kind: manifest.KindGitRepository, Namespace: "ns",
@@ -24,8 +25,9 @@ func BenchmarkWatchReady_ManyDeps(b *testing.B) {
 		}
 		s.AddObject(&manifest.GitRepository{Name: id.Name, Namespace: id.Namespace})
 		s.UpdateStatus(id, store.StatusReady, "")
-		deps = append(deps, manifest.DependencyRef{NamedResource: id})
+		ids = append(ids, id)
 	}
+	deps := testutil.DepRefs(ids...)
 	w := &Waiter{Store: s, Timeout: 5 * time.Second}
 	ctx := context.Background()
 

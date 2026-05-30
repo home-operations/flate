@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 func TestNewBounded_LimitsConcurrentBodies(t *testing.T) {
@@ -65,9 +67,7 @@ func TestNew_DefaultsToBounded(t *testing.T) {
 	if s.sem == nil {
 		t.Fatal("New() returned a Service with no worker cap; expected bounded default")
 	}
-	if got, want := cap(s.sem), defaultWorkers; got != want {
-		t.Errorf("New() worker cap = %d, want %d", got, want)
-	}
+	assert.Equal(t, cap(s.sem), defaultWorkers)
 }
 
 // TestNewUnbounded_HasNoCap pins the explicit opt-in path: callers
@@ -89,9 +89,7 @@ func TestService_BlockTillDone(t *testing.T) {
 		})
 	}
 	s.BlockTillDone()
-	if n.Load() != 50 {
-		t.Errorf("expected 50, got %d", n.Load())
-	}
+	assert.Equal(t, n.Load(), int64(50))
 }
 
 func TestService_PanicCountedAndRecovered(t *testing.T) {
@@ -100,9 +98,7 @@ func TestService_PanicCountedAndRecovered(t *testing.T) {
 		panic("oops")
 	})
 	s.BlockTillDone()
-	if s.Failures() != 1 {
-		t.Errorf("expected 1 failure, got %d", s.Failures())
-	}
+	assert.Equal(t, s.Failures(), int64(1))
 }
 
 // TestCoalescer_RecoversSlotAfterPanic guards a stuck-slot bug: if
@@ -124,24 +120,18 @@ func TestCoalescer_RecoversSlotAfterPanic(t *testing.T) {
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("panicking call: expected 1 run, got %d", got)
 	}
-	if got := s.Failures(); got != 1 {
-		t.Errorf("Service.Failures: expected 1, got %d", got)
-	}
+	assert.Equal(t, s.Failures(), int64(1))
 	c.mu.Lock()
 	slots := len(c.slot)
 	c.mu.Unlock()
-	if slots != 0 {
-		t.Errorf("panicked slot was retained: len(slot) = %d, want 0", slots)
-	}
+	assert.Equal(t, slots, 0) // panicked slot must not be retained
 
 	// Slot must be unlocked: a fresh Submit on the same key runs.
 	c.Submit(context.Background(), "recovery", "k", func(_ context.Context) {
 		calls.Add(1)
 	})
 	s.BlockTillDone()
-	if got := calls.Load(); got != 2 {
-		t.Errorf("post-panic Submit blocked: expected 2 runs total, got %d", got)
-	}
+	assert.Equal(t, calls.Load(), int64(2)) // post-panic Submit re-runs
 }
 
 func TestCoalescer_DropsIdleSlots(t *testing.T) {
@@ -154,9 +144,7 @@ func TestCoalescer_DropsIdleSlots(t *testing.T) {
 	c.mu.Lock()
 	got := len(c.slot)
 	c.mu.Unlock()
-	if got != 0 {
-		t.Errorf("idle coalescer slots = %d, want 0", got)
-	}
+	assert.Equal(t, got, 0) // idle slots dropped
 }
 
 func TestCoalescer_SerializesPerKey(t *testing.T) {
@@ -195,9 +183,7 @@ func TestCoalescer_SerializesPerKey(t *testing.T) {
 	close(gate)
 	s.BlockTillDone()
 
-	if got := runs.Load(); got != 2 {
-		t.Errorf("expected exactly 2 runs (initial + 1 coalesced re-run), got %d", got)
-	}
+	assert.Equal(t, runs.Load(), int64(2)) // initial + 1 coalesced re-run
 	if peak := maxConcurrent.Load(); peak > 1 {
 		t.Errorf("Coalescer permitted %d concurrent runs for same key; must be 1", peak)
 	}

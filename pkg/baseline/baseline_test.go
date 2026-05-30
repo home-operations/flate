@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -202,9 +203,7 @@ func TestAutoResolve_DetachedHEAD(t *testing.T) {
 // error with a message naming the alternative flags.
 func TestAutoResolve_NoGit(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "f.yaml"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFileAt(t, filepath.Join(dir, "f.yaml"), "x")
 	_, err := AutoResolve(dir, "", cacheroot.Layout{})
 	if err == nil {
 		t.Fatal("expected error for non-git path")
@@ -435,13 +434,7 @@ func initRepoWithFile(t *testing.T, dir, path, content string) plumbing.Hash {
 	if err != nil {
 		t.Fatal(err)
 	}
-	full := filepath.Join(dir, path)
-	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFileAt(t, filepath.Join(dir, path), content)
 	wt, err := r.Worktree()
 	if err != nil {
 		t.Fatal(err)
@@ -460,10 +453,7 @@ func initRepoWithFile(t *testing.T, dir, path, content string) plumbing.Hash {
 
 func writeAndCommit(t *testing.T, dir, path, content string) plumbing.Hash {
 	t.Helper()
-	full := filepath.Join(dir, path)
-	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFileAt(t, filepath.Join(dir, path), content)
 	r := openHelper(t, dir)
 	wt, err := r.Worktree()
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -31,9 +32,7 @@ func TestStore_AddObjectIdempotent(t *testing.T) {
 
 	s.AddObject(cm)
 	s.AddObject(cm)
-	if count != 1 {
-		t.Errorf("expected exactly 1 event for two identical adds, got %d", count)
-	}
+	assert.Equal(t, count, 1) // exactly 1 event for two identical adds
 	if got := s.GetObject(id); got == nil {
 		t.Errorf("GetObject after AddObject returned nil")
 	}
@@ -60,9 +59,8 @@ func TestStore_AddObject_CloneTriggersUpdate(t *testing.T) {
 	clone.Data = map[string]any{"k": "v"}
 	s.AddObject(&clone)
 
-	if seen != 2 {
-		t.Errorf("expected two AddObject events (initial + clone), got %d", seen)
-	}
+	assert.Equal(t, seen, 2) // initial + clone
+
 	got, ok := s.GetObject(id).(*manifest.ConfigMap)
 	if !ok {
 		t.Fatalf("expected *manifest.ConfigMap, got %T", s.GetObject(id))
@@ -101,9 +99,7 @@ func TestStore_AddListener_Flush(t *testing.T) {
 	s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		got = append(got, id.Name)
 	}, true)
-	if len(got) != 2 {
-		t.Errorf("expected 2 replayed, got %d", len(got))
-	}
+	assert.Equal(t, len(got), 2) // both seeds replayed
 }
 
 // TestStore_Refire_ResetsStatusBeforeDispatch pins the contract that
@@ -145,9 +141,7 @@ func TestStore_Refire_NoopMissingID(t *testing.T) {
 	fired := 0
 	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) { fired++ }, false)
 	s.Refire(id) // must not panic, must not dispatch
-	if fired != 0 {
-		t.Errorf("Refire on missing id fired %d events; want 0", fired)
-	}
+	assert.Equal(t, fired, 0)
 	if _, ok := s.GetStatus(id); ok {
 		t.Errorf("Refire on missing id left status behind")
 	}
@@ -164,9 +158,7 @@ func TestStore_UpdateStatus_Idempotent(t *testing.T) {
 	s.UpdateStatus(id, StatusPending, "starting")
 	s.UpdateStatus(id, StatusPending, "starting")
 	s.UpdateStatus(id, StatusReady, "done")
-	if count != 2 {
-		t.Errorf("expected 2 status events, got %d", count)
-	}
+	assert.Equal(t, count, 2)
 	info, ok := s.GetStatus(id)
 	if !ok || info.Status != StatusReady {
 		t.Errorf("status: %+v ok=%v", info, ok)
@@ -187,12 +179,9 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 		statusEvents++
 	}, false)
 	s.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue, Reason: "Healthy"})
-	if statusEvents != 1 {
-		t.Errorf("non-Ready SetCondition fired %d events; want 1", statusEvents)
-	}
-	got := s.GetConditions(id)
-	if len(got) != 2 {
-		t.Fatalf("expected 2 conditions, got %d", len(got))
+	assert.Equal(t, statusEvents, 1) // non-Ready SetCondition still fires
+	if got := len(s.GetConditions(id)); got != 2 {
+		t.Fatalf("expected 2 conditions, got %d", got)
 	}
 }
 
@@ -211,9 +200,7 @@ func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 		Type: ConditionReady, Status: metav1.ConditionTrue,
 		Reason: ReasonSucceeded, Message: "ok",
 	})
-	if statusEvents != 1 {
-		t.Errorf("Ready SetCondition fired %d events; want 1", statusEvents)
-	}
+	assert.Equal(t, statusEvents, 1)
 }
 
 func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
@@ -225,9 +212,7 @@ func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
 	cond := Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: ReasonSucceeded}
 	s.SetCondition(id, cond)
 	s.SetCondition(id, cond)
-	if statusEvents != 1 {
-		t.Errorf("identical SetCondition fired %d events; want 1", statusEvents)
-	}
+	assert.Equal(t, statusEvents, 1) // identical SetCondition is a no-op
 }
 
 // Mutate encodes the clone-then-AddObject pattern. Verify it clones
@@ -252,9 +237,7 @@ func TestStore_Mutate(t *testing.T) {
 	if !ok {
 		t.Fatalf("Mutate returned false on a present id")
 	}
-	if fired != 1 {
-		t.Errorf("expected EventObjectAdded to fire once on Mutate; got %d", fired)
-	}
+	assert.Equal(t, fired, 1) // EventObjectAdded fires once on Mutate
 	// Original pointer unchanged (clone semantics).
 	if len(orig.DependsOn) != 1 {
 		t.Errorf("original pointer was mutated; clone failed: %v", orig.DependsOn)
@@ -274,24 +257,19 @@ func TestStore_Mutate(t *testing.T) {
 
 func TestStore_FailedResources(t *testing.T) {
 	s := New()
-	if len(s.FailedResources()) != 0 {
-		t.Errorf("empty store should not have failures")
-	}
+	assert.Equal(t, len(s.FailedResources()), 0) // empty store
+
 	ks := &manifest.Kustomization{Name: "x", Namespace: ""}
 	id := ks.Named()
 	s.AddObject(ks)
 	s.UpdateStatus(id, StatusFailed, "boom")
-	if got := len(s.FailedResources()); got != 1 {
-		t.Errorf("FailedResources count: %d, want 1", got)
-	}
+	assert.Equal(t, len(s.FailedResources()), 1)
 
 	// Phantom guard: a SetCondition that races after DeleteObject must
 	// not resurrect a failure entry for an id that no longer exists.
 	s.DeleteObject(id)
-	s.UpdateStatus(id, StatusFailed, "phantom") // simulates the race
-	if got := len(s.FailedResources()); got != 0 {
-		t.Errorf("FailedResources after DeleteObject: %d, want 0 (phantom entry leaked)", got)
-	}
+	s.UpdateStatus(id, StatusFailed, "phantom")  // simulates the race
+	assert.Equal(t, len(s.FailedResources()), 0) // phantom entry must not leak
 }
 
 // PR125 switched ListObjects(kind) to a byName-index walk when kind is
@@ -304,19 +282,11 @@ func TestStore_ListObjects_ByKindIndex(t *testing.T) {
 	s.AddObject(newCM("b", "ns2"))
 	s.AddObject(&manifest.Secret{Name: "s", Namespace: "ns1"})
 
-	if got := len(s.ListObjects(manifest.KindConfigMap)); got != 2 {
-		t.Errorf("ListObjects(KindConfigMap) = %d, want 2", got)
-	}
-	if got := len(s.ListObjects(manifest.KindSecret)); got != 1 {
-		t.Errorf("ListObjects(KindSecret) = %d, want 1", got)
-	}
-	if got := len(s.ListObjects("")); got != 3 {
-		t.Errorf("ListObjects(\"\") = %d, want 3", got)
-	}
+	assert.Equal(t, len(s.ListObjects(manifest.KindConfigMap)), 2)
+	assert.Equal(t, len(s.ListObjects(manifest.KindSecret)), 1)
+	assert.Equal(t, len(s.ListObjects("")), 3) // empty kind walks all
 	s.DeleteObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns1", Name: "a"})
-	if got := len(s.ListObjects(manifest.KindConfigMap)); got != 1 {
-		t.Errorf("after Delete: ListObjects(KindConfigMap) = %d, want 1", got)
-	}
+	assert.Equal(t, len(s.ListObjects(manifest.KindConfigMap)), 1) // index stays consistent
 }
 
 // TestStore_ListObjects_DeterministicOrder pins the sort contract:
@@ -547,9 +517,7 @@ func TestStore_AddListener_Unsubscribe(t *testing.T) {
 	s.AddObject(newCM("a", "ns"))
 	unsub()
 	s.AddObject(newCM("b", "ns"))
-	if count != 1 {
-		t.Errorf("expected 1 event after unsubscribe, got %d", count)
-	}
+	assert.Equal(t, count, 1) // post-unsubscribe add is silent
 }
 
 func TestStore_SetArtifact(t *testing.T) {
@@ -563,9 +531,7 @@ func TestStore_SetArtifact(t *testing.T) {
 	}, false)
 	s.SetArtifact(id, art)
 	s.SetArtifact(id, art) // idempotent
-	if count != 1 {
-		t.Errorf("expected 1 artifact event, got %d", count)
-	}
+	assert.Equal(t, count, 1)
 	got := s.GetArtifact(id)
 	if got == nil {
 		t.Errorf("GetArtifact: nil")
@@ -601,9 +567,7 @@ func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
 	s.SetArtifact(id, makeArt()) // fresh pointer, identical content
 	s.SetArtifact(id, makeArt()) // fresh pointer, identical content
 
-	if events != 1 {
-		t.Errorf("expected 1 event despite 3 sets with identical content, got %d", events)
-	}
+	assert.Equal(t, events, 1) // content-equal re-sets dedup
 }
 
 // TestStore_SetArtifact_PointerIdentityShortCircuit pins Item 7's
@@ -624,9 +588,7 @@ func TestStore_SetArtifact_PointerIdentityShortCircuit(t *testing.T) {
 	s.SetArtifact(id, art) // same pointer
 	s.SetArtifact(id, art) // same pointer
 
-	if events != 1 {
-		t.Errorf("expected 1 event for same-pointer re-set, got %d", events)
-	}
+	assert.Equal(t, events, 1) // same-pointer re-set short-circuits
 }
 
 // TestStore_SetArtifact_DifferentContent pins the inverse: a
@@ -645,9 +607,7 @@ func TestStore_SetArtifact_DifferentContent(t *testing.T) {
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm-2"}},
 	}})
 
-	if events != 2 {
-		t.Errorf("expected 2 events for distinct content, got %d", events)
-	}
+	assert.Equal(t, events, 2) // distinct content fires each time
 }
 
 func TestStore_ListenerPanicIsolated(t *testing.T) {
@@ -660,9 +620,7 @@ func TestStore_ListenerPanicIsolated(t *testing.T) {
 		other++
 	}, false)
 	s.AddObject(newCM("a", "ns")) // should not crash
-	if other != 1 {
-		t.Errorf("other listener should still have run, got %d", other)
-	}
+	assert.Equal(t, other, 1)     // sibling listener still ran
 }
 
 // AddListener with flush=true replays existing store contents into the
@@ -686,9 +644,7 @@ func TestStore_ListenerPanicRecoveredDuringReplay(t *testing.T) {
 	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
 		other++
 	}, true)
-	if other != 2 {
-		t.Errorf("post-panic listener should replay 2 objects, got %d", other)
-	}
+	assert.Equal(t, other, 2) // store healthy after recovered replay panic
 }
 
 func TestStore_Concurrency(_ *testing.T) {
@@ -821,9 +777,7 @@ func TestStore_AddRendered_DispatchesListeners(t *testing.T) {
 		seen.Add(1)
 	}, false)
 	s.AddRendered(newCM("a", "ns"))
-	if got := seen.Load(); got != 1 {
-		t.Errorf("AddRendered fired %d events; want 1 (listener contract violated)", got)
-	}
+	assert.Equal(t, seen.Load(), int64(1)) // AddRendered must dispatch
 }
 
 // TestStore_AddListenerNoFlush_NoMissedConcurrentWrites pins that a
@@ -950,10 +904,7 @@ func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
 		s.UpdateStatus(id, status, fmt.Sprintf("iter-%d", i))
 	}
 
-	conds := s.GetConditions(id)
-	if got := len(conds); got != 1 {
-		t.Errorf("conditions slice length = %d after 100 same-type mutations, want 1", got)
-	}
+	assert.Equal(t, len(s.GetConditions(id)), 1) // in-place overwrite, no growth
 }
 
 // TestStore_SetConditionLocked_AppendsDistinctTypes pins the

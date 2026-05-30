@@ -8,29 +8,9 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
-
-// emptyLister is enough for filter resolution tests where transitiveDeps
-// would otherwise fail to find the parent KS in a real store.
-type emptyLister struct{}
-
-func (emptyLister) GetObject(manifest.NamedResource) manifest.BaseManifest { return nil }
-func (emptyLister) ListObjects(string) []manifest.BaseManifest             { return nil }
-
-// mapLister returns canned objects from a map for transitive-deps testing.
-type mapLister map[manifest.NamedResource]manifest.BaseManifest
-
-func (m mapLister) GetObject(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
-func (m mapLister) ListObjects(kind string) []manifest.BaseManifest {
-	out := make([]manifest.BaseManifest, 0, len(m))
-	for id, obj := range m {
-		if id.Kind == kind {
-			out = append(out, obj)
-		}
-	}
-	return out
-}
 
 func TestFilter_DisabledKeepsEverything(t *testing.T) {
 	var f Filter
@@ -46,7 +26,7 @@ func TestFilter_ResolveDirectMatch(t *testing.T) {
 		NewSet([]string{"apps/x/helmrelease.yaml"}),
 		map[manifest.NamedResource]string{hr: "apps/x/helmrelease.yaml"},
 		"",
-		emptyLister{},
+		testutil.EmptyLister(),
 	)
 	if !f.ShouldReconcile(hr) {
 		t.Fatalf("expected direct-match keep; keep=%v", f.KeepNames())
@@ -81,7 +61,7 @@ func TestFilter_SharedComponentPropagatesToAllConsumers(t *testing.T) {
 			hrAtuin: "apps/default/atuin/app/helmrelease.yaml",
 		},
 		"",
-		mapLister{ksPlex: plex, ksAtuin: atuin},
+		testutil.MapLister{ksPlex: plex, ksAtuin: atuin},
 	)
 
 	for _, id := range []manifest.NamedResource{ksPlex, ksAtuin, hrPlex, hrAtuin} {
@@ -117,7 +97,7 @@ func TestFilter_AncestorKSAlsoKept(t *testing.T) {
 			hrPlex: "apps/media/plex/app/helmrelease.yaml",
 		},
 		"",
-		mapLister{metaID: meta, plexID: plex},
+		testutil.MapLister{metaID: meta, plexID: plex},
 	)
 
 	for _, id := range []manifest.NamedResource{plexID, hrPlex, metaID} {
@@ -157,7 +137,7 @@ func TestFilter_StructuralParentOfOwnerKSAlsoKept(t *testing.T) {
 			hrActual: "apps/base/self-hosted/actual/helmrelease.yaml",
 		},
 		"",
-		mapLister{parentID: parent, leafID: leaf},
+		testutil.MapLister{parentID: parent, leafID: leaf},
 	)
 
 	for _, id := range []manifest.NamedResource{hrActual, leafID, parentID} {
@@ -196,7 +176,7 @@ func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 			hrAtuin: "apps/default/atuin/app/helmrelease.yaml",
 		},
 		"",
-		mapLister{metaID: meta, plexID: plex, atuinID: atuin},
+		testutil.MapLister{metaID: meta, plexID: plex, atuinID: atuin},
 	)
 
 	if !f.ShouldReconcile(metaID) {
@@ -223,7 +203,7 @@ func TestFilter_KeepNamespaces(t *testing.T) {
 		NewSet([]string{"a.yaml", "b.yaml", "c.yaml"}),
 		map[manifest.NamedResource]string{a: "a.yaml", b: "b.yaml", c: "c.yaml"},
 		"",
-		mapLister{a: ksA, b: ksB, c: ksCluster},
+		testutil.MapLister{a: ksA, b: ksB, c: ksCluster},
 	)
 	ns := f.KeepNamespaces()
 	got := make([]string, 0, len(ns))
@@ -257,7 +237,7 @@ func TestFilter_TransitiveDepsHelmRelease(t *testing.T) {
 		NewSet([]string{"hr.yaml"}),
 		map[manifest.NamedResource]string{hrID: "hr.yaml"},
 		"",
-		mapLister{hrID: hr},
+		testutil.MapLister{hrID: hr},
 	)
 
 	if !f.ShouldReconcile(repoID) {
@@ -284,7 +264,7 @@ func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 		NewSet([]string{"ks.yaml"}),
 		map[manifest.NamedResource]string{ksID: "ks.yaml"},
 		"",
-		mapLister{ksID: ks},
+		testutil.MapLister{ksID: ks},
 	)
 
 	if !f.ShouldReconcile(gitID) {
@@ -315,7 +295,7 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 		NewSet([]string{"a.yaml"}),
 		map[manifest.NamedResource]string{aID: "a.yaml"},
 		"",
-		mapLister{aID: a, bID: b},
+		testutil.MapLister{aID: a, bID: b},
 	)
 
 	if !f.ShouldReconcile(aID) {
@@ -351,7 +331,7 @@ func TestFilter_AddExtendsKeepSetAtRuntime(t *testing.T) {
 		NewSet([]string{"apps/database/parent.yaml"}),
 		map[manifest.NamedResource]string{parent: "apps/database/parent.yaml"},
 		"",
-		emptyLister{},
+		testutil.EmptyLister(),
 	)
 	if !f.ShouldReconcile(parent) {
 		t.Fatalf("parent must be in keep set from file change; keep=%v", f.KeepNames())
@@ -387,7 +367,7 @@ func TestFilter_ShouldReconcileEmptyNamespaceFallback(t *testing.T) {
 		NewSet([]string{"f"}),
 		map[manifest.NamedResource]string{hrLoaded: "f"},
 		"",
-		emptyLister{},
+		testutil.EmptyLister(),
 	)
 	// keep contains hrLoaded (namespace=""); a lookup with namespace=media
 	// must still hit via the (Kind, Name) fallback index.
@@ -435,7 +415,7 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 			siblingApp:  "kubernetes/apps/media/plex/ks.yaml",
 		},
 		"",
-		mapLister{leafKS: leafKSObj, clusterApps: clusterAppsObj, siblingApp: siblingObj},
+		testutil.MapLister{leafKS: leafKSObj, clusterApps: clusterAppsObj, siblingApp: siblingObj},
 	)
 
 	if !f.ShouldReconcile(leafKS) {
@@ -489,7 +469,7 @@ func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
 	spegelSibling := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "spegel"}
 	reloaderSibling := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kube-system", Name: "descheduler-app"}
 
-	objs := mapLister{
+	objs := testutil.MapLister{
 		clusterApps: &manifest.Kustomization{Name: clusterApps.Name, Namespace: clusterApps.Namespace,
 			KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps"}},
 		kubeSystem: &manifest.Kustomization{Name: kubeSystem.Name, Namespace: kubeSystem.Namespace,
@@ -571,7 +551,7 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 		NewSet([]string{"apps/database/parent.yaml"}),
 		map[manifest.NamedResource]string{parent: "apps/database/parent.yaml"},
 		"",
-		emptyLister{},
+		testutil.EmptyLister(),
 	)
 	if !f.ShouldReconcile(parent) {
 		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
@@ -600,7 +580,7 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 		NewSet([]string{"apps/cluster-infra/external-secrets/ks.yaml"}),
 		map[manifest.NamedResource]string{kept: "apps/cluster-infra/external-secrets/ks.yaml"},
 		"",
-		emptyLister{},
+		testutil.EmptyLister(),
 	)
 	if !f.ShouldReconcile(kept) {
 		t.Fatalf("precondition: cluster-infra/external-secrets must be in keep; keep=%v", f.KeepNames())
@@ -645,7 +625,7 @@ func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 		NewSet([]string{"hr.yaml"}),
 		map[manifest.NamedResource]string{hrID: "hr.yaml"},
 		"",
-		mapLister{hrID: hr, hcID: hc},
+		testutil.MapLister{hrID: hr, hcID: hc},
 	)
 
 	if !f.ShouldReconcile(hcID) {
@@ -719,7 +699,7 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 			rawSettingsID: "kubernetes/components/cluster-settings/cluster-settings.yaml",
 		},
 		"",
-		mapLister{
+		testutil.MapLister{
 			clusterApps:   clusterAppsObj,
 			clusterVars:   clusterVarsObj,
 			ntfy:          ntfyObj,
@@ -784,7 +764,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 			cmID:     "kubernetes/apps/settings/cm.yaml",
 		},
 		"",
-		mapLister{producer: producerObj, child: childObj, cmID: cmObj},
+		testutil.MapLister{producer: producerObj, child: childObj, cmID: cmObj},
 	)
 
 	if !f.ShouldReconcile(parent) {
@@ -845,7 +825,7 @@ func TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer(t *testing.T) {
 			cmID:     "kubernetes/apps/settings/cm.yaml",
 		},
 		"",
-		mapLister{producer: producerObj, child: childObj, cmID: cmObj},
+		testutil.MapLister{producer: producerObj, child: childObj, cmID: cmObj},
 	)
 
 	var added []manifest.NamedResource
@@ -901,7 +881,7 @@ func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
 			cmBID: "kubernetes/c/cm-b.yaml",
 		},
 		"",
-		mapLister{a: aObj, b: bObj, c: cObj, cmAID: cmA, cmBID: cmB},
+		testutil.MapLister{a: aObj, b: bObj, c: cObj, cmAID: cmA, cmBID: cmB},
 	)
 
 	if !f.ShouldReconcile(a) {
@@ -939,7 +919,7 @@ func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
 			cmID: "kubernetes/self/cm.yaml",
 		},
 		"",
-		mapLister{self: selfObj, cmID: cmObj},
+		testutil.MapLister{self: selfObj, cmID: cmObj},
 	)
 
 	if !f.ShouldReconcile(self) {
@@ -992,7 +972,7 @@ func TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 			cmNS2ID: "p2/cm.yaml",
 		},
 		"",
-		mapLister{a: aObj, b: bObj, cmNS1ID: cmNS1, cmNS2ID: cmNS2},
+		testutil.MapLister{a: aObj, b: bObj, cmNS1ID: cmNS1, cmNS2ID: cmNS2},
 	)
 
 	gotNS1 := f.ProducersFor(cmNS1ID)

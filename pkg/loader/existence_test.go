@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -16,7 +17,7 @@ import (
 // the Store and land in Existence instead.
 func TestDiscoveryOnly_SkipsNonDiscoveryKinds(t *testing.T) {
 	dir := t.TempDir()
-	writeExistenceFile(t, dir, "ks.yaml", `
+	testutil.WriteFile(t, dir, "ks.yaml", `
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -88,7 +89,7 @@ data:
 // AddObjects it into the Store so the wait can clear.
 func TestDiscoveryOnly_PromoteMaterializesFromIndex(t *testing.T) {
 	dir := t.TempDir()
-	writeExistenceFile(t, dir, "cm.yaml", `
+	testutil.WriteFile(t, dir, "cm.yaml", `
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -152,7 +153,7 @@ func TestExistenceIndex_PromoteUnknownIDReturnsFalse(t *testing.T) {
 // orchestrator.
 func TestExistenceIndex_PromoteFileRemovedBetweenRecordAndPromote(t *testing.T) {
 	dir := t.TempDir()
-	writeExistenceFile(t, dir, "cm.yaml", `
+	testutil.WriteFile(t, dir, "cm.yaml", `
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -188,7 +189,7 @@ data:
 // same file once per dep in the common multi-doc fixture pattern.
 func TestExistenceIndex_PromoteMultiDocLoadsSiblings(t *testing.T) {
 	dir := t.TempDir()
-	writeExistenceFile(t, dir, "bundle.yaml", `
+	testutil.WriteFile(t, dir, "bundle.yaml", `
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -234,7 +235,7 @@ data:
 // redirecting every KS render to the wrong source root).
 func TestDiscoveryOnly_SourcesStayFileLoaded(t *testing.T) {
 	dir := t.TempDir()
-	writeExistenceFile(t, dir, "src.yaml", `
+	testutil.WriteFile(t, dir, "src.yaml", `
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -276,13 +277,5 @@ spec:
 		if st.GetObject(want) == nil {
 			t.Errorf("source %s must stay in Store under DiscoveryOnly; got nil", want.String())
 		}
-	}
-}
-
-func writeExistenceFile(t *testing.T, dir, name, content string) {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
 	}
 }

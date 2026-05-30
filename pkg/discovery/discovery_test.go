@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -22,7 +23,7 @@ func TestRun_SmallTree(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	mustWrite(t, filepath.Join(dir, "flux", "parent.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "flux", "parent.yaml"), `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -35,7 +36,7 @@ spec:
     name: flux-system
   interval: 10m
 `)
-	mustWrite(t, filepath.Join(dir, "apps", "child.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "child.yaml"), `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -48,7 +49,7 @@ spec:
     name: flux-system
   interval: 10m
 `)
-	mustWrite(t, filepath.Join(dir, "apps", "leaf", "kustomization.yaml"), `resources: []
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "leaf", "kustomization.yaml"), `resources: []
 `)
 
 	st := store.New()
@@ -98,7 +99,7 @@ func TestRun_AliasesNonDefaultNamespaceBootstrap(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	mustWrite(t, filepath.Join(dir, "flux", "cluster.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "flux", "cluster.yaml"), `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -112,7 +113,7 @@ spec:
     namespace: gitops-system
   interval: 1h
 `)
-	mustWrite(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
 	if _, err := discovery.Run(context.Background(), discovery.Config{
@@ -147,7 +148,7 @@ func TestRun_AliasesBootstrapOCIRepository(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	mustWrite(t, filepath.Join(dir, "flux", "cluster.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "flux", "cluster.yaml"), `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -161,7 +162,7 @@ spec:
     namespace: flux-system
   interval: 1h
 `)
-	mustWrite(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
 	if _, err := discovery.Run(context.Background(), discovery.Config{
@@ -199,7 +200,7 @@ func TestRun_ResourceSetReExpandsForLateRSIPs(t *testing.T) {
 
 	// Root: a parent KS that points at apps/, plus an RS at the same
 	// level. The RS selects RSIPs by label in its own namespace.
-	mustWrite(t, filepath.Join(dir, "flux", "parent.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "flux", "parent.yaml"), `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: parent, namespace: flux-system}
@@ -208,7 +209,7 @@ spec:
   sourceRef: {kind: GitRepository, name: flux-system}
   interval: 10m
 `)
-	mustWrite(t, filepath.Join(dir, "flux", "rs.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "flux", "rs.yaml"), `---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: late-rs, namespace: flux-system}
@@ -231,7 +232,7 @@ spec:
 	// that path before the RSIP is in the store. Re-rendering the RS
 	// on a later iter is what makes the child-rsip Kustomization show
 	// up at all.
-	mustWrite(t, filepath.Join(dir, "apps", "rsip.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "rsip.yaml"), `---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSetInputProvider
 metadata:
@@ -299,16 +300,6 @@ func TestFindRepoRoot_NoGitFallsBack(t *testing.T) {
 	}
 }
 
-func mustWrite(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // TestRun_AliasesURLMatchedInTreeGitRepository pins the Zariel/
 // home-ops pattern: a GitRepository CR defined IN the tree
 // whose spec.url points at the same remote the working tree
@@ -327,14 +318,14 @@ func TestRun_AliasesURLMatchedInTreeGitRepository(t *testing.T) {
 
 	// Stand up a minimal .git/config so PlainOpen sees a repo and
 	// readWorkingTreeRemotes returns one remote.
-	mustWrite(t, filepath.Join(dir, ".git", "config"), `[core]
+	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "config"), `[core]
 	repositoryformatversion = 0
 [remote "origin"]
 	url = git@github.com:Example/home-ops.git
 `)
-	mustWrite(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
 
-	mustWrite(t, filepath.Join(dir, "k8s", "flux", "cluster.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "flux", "cluster.yaml"), `---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -359,7 +350,7 @@ spec:
     name: home-kubernetes
   interval: 1h
 `)
-	mustWrite(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
 	if _, err := discovery.Run(context.Background(), discovery.Config{
@@ -398,14 +389,14 @@ spec:
 func TestRun_LeavesUnmatchedInTreeGitRepository(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, ".git", "config"), `[core]
+	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "config"), `[core]
 	repositoryformatversion = 0
 [remote "origin"]
 	url = git@github.com:Example/home-ops.git
 `)
-	mustWrite(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
 
-	mustWrite(t, filepath.Join(dir, "k8s", "flux", "shared-infra.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "flux", "shared-infra.yaml"), `---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -428,7 +419,7 @@ spec:
     name: shared-infra
   interval: 1h
 `)
-	mustWrite(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
 	if _, err := discovery.Run(context.Background(), discovery.Config{
@@ -457,7 +448,7 @@ func TestRun_ComponentGeneratorMaterializesCM(t *testing.T) {
 	dir := t.TempDir()
 
 	// Flux Kustomization in flux-system pointing at ./cluster
-	mustWrite(t, filepath.Join(dir, "flux", "ks.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "flux", "ks.yaml"), `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -469,13 +460,13 @@ spec:
   interval: 10m
 `)
 	// cluster/kustomization.yaml references the Component
-	mustWrite(t, filepath.Join(dir, "cluster", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1
+	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1
 kind: Kustomization
 components:
   - ../components/cluster-settings
 `)
 	// Component declares the configMapGenerator
-	mustWrite(t, filepath.Join(dir, "components", "cluster-settings", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1alpha1
+	testutil.WriteFileAt(t, filepath.Join(dir, "components", "cluster-settings", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 configMapGenerator:
   - name: cluster-settings

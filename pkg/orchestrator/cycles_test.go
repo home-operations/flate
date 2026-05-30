@@ -7,19 +7,16 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 func makeKS(name, ns string, deps ...manifest.NamedResource) *manifest.Kustomization {
-	refs := make([]manifest.DependencyRef, len(deps))
-	for i, d := range deps {
-		refs[i] = manifest.DependencyRef{NamedResource: d}
-	}
 	return &manifest.Kustomization{
 		Name: name, Namespace: ns,
 		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./" + name},
-		DependsOn:         refs,
+		DependsOn:         testutil.DepRefs(deps...),
 	}
 }
 
@@ -233,12 +230,12 @@ func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
 	o := &Orchestrator{store: store.New()}
 	o.store.AddObject(&manifest.HelmRelease{
 		Name: "x", Namespace: "ns",
-		DependsOn: []manifest.DependencyRef{{NamedResource: idY}},
+		DependsOn: testutil.DepRefs(idY),
 	})
 	o.updateDependencyGraphFor(idX)
 	o.store.AddObject(&manifest.HelmRelease{
 		Name: "y", Namespace: "ns",
-		DependsOn: []manifest.DependencyRef{{NamedResource: idX}},
+		DependsOn: testutil.DepRefs(idX),
 	})
 	o.updateDependencyGraphFor(idY)
 

@@ -2,59 +2,38 @@ package loader
 
 import "testing"
 
-// TestResolveDataPath_RelativeUnderBase covers the happy path: a
-// generator file path that stays under the kustomization directory
-// resolves to its absolute equivalent.
-func TestResolveDataPath_RelativeUnderBase(t *testing.T) {
-	abs, ok := resolveDataPath("/tmp/cluster/apps/foo", "data/values.yaml")
-	if !ok {
-		t.Fatalf("expected resolve to succeed for in-tree relative path")
+// TestResolveDataPath covers generator-file path resolution. Rows:
+//   - in-tree relative path resolves to its absolute equivalent;
+//   - traversal-escaping rels are rejected — defense-in-depth from the
+//     round-4 audit: a kustomization.yaml declaring `files:
+//     ["../../../etc/passwd"]` must NOT escape the kustomization dir;
+//   - absolute paths pass through verbatim (after Clean) — kustomize
+//     accepts them and downstream "under --path?" checks still apply;
+//   - empty rel is rejected, matching kustomize.
+func TestResolveDataPath(t *testing.T) {
+	cases := []struct {
+		name    string
+		base    string
+		rel     string
+		wantAbs string
+		wantOK  bool
+	}{
+		{"relative under base", "/tmp/cluster/apps/foo", "data/values.yaml", "/tmp/cluster/apps/foo/data/values.yaml", true},
+		{"traversal parent", "/tmp/cluster/apps/foo", "../escape.yaml", "", false},
+		{"traversal deep", "/tmp/cluster/apps/foo", "../../etc/passwd", "", false},
+		{"traversal mixed", "/tmp/cluster/apps/foo", "sub/../../escape", "", false},
+		{"absolute passes through", "/tmp/cluster/apps", "/etc/values.yaml", "/etc/values.yaml", true},
+		{"empty rejected", "/tmp/cluster/apps", "", "", false},
 	}
-	if abs != "/tmp/cluster/apps/foo/data/values.yaml" {
-		t.Errorf("unexpected resolution: %s", abs)
-	}
-}
-
-// TestResolveDataPath_RejectsTraversal locks the defense-in-depth
-// guard added after the round-4 audit: a kustomization.yaml that
-// declares `files: ["../../../etc/passwd"]` must NOT escape the
-// kustomization directory. The resolved key is consulted against
-// tree-walk paths today (no escape can match a walked path rooted
-// at --path), but a future caller that opens the path would hit a
-// path-traversal surface for free without this guard.
-func TestResolveDataPath_RejectsTraversal(t *testing.T) {
-	cases := []string{
-		"../escape.yaml",
-		"../../etc/passwd",
-		"sub/../../escape",
-	}
-	for _, rel := range cases {
-		if _, ok := resolveDataPath("/tmp/cluster/apps/foo", rel); ok {
-			t.Errorf("rel %q should have been rejected as escaping base", rel)
-		}
-	}
-}
-
-// TestResolveDataPath_AbsolutePathPassesThrough confirms the
-// documented exception: kustomize accepts absolute paths for
-// generator files, so we pass them verbatim (after Clean). The
-// loader's downstream "is this under --path?" check still applies
-// at walk time; resolveDataPath isn't responsible for absolute-path
-// containment.
-func TestResolveDataPath_AbsolutePathPassesThrough(t *testing.T) {
-	abs, ok := resolveDataPath("/tmp/cluster/apps", "/etc/values.yaml")
-	if !ok {
-		t.Fatalf("expected absolute path to resolve")
-	}
-	if abs != "/etc/values.yaml" {
-		t.Errorf("absolute path should pass through verbatim; got %s", abs)
-	}
-}
-
-// TestResolveDataPath_EmptyRejected guards the explicit empty-rel
-// check — kustomize would reject an empty entry too.
-func TestResolveDataPath_EmptyRejected(t *testing.T) {
-	if _, ok := resolveDataPath("/tmp/cluster/apps", ""); ok {
-		t.Errorf("empty rel should be rejected")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			abs, ok := resolveDataPath(tc.base, tc.rel)
+			if ok != tc.wantOK {
+				t.Fatalf("resolveDataPath(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
+			}
+			if ok && abs != tc.wantAbs {
+				t.Errorf("resolveDataPath(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
+			}
+		})
 	}
 }

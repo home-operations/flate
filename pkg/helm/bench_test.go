@@ -155,8 +155,8 @@ func BenchmarkMergeChartValuesFiles(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := mergeChartValuesFiles(ch, names, false); err != nil {
-			b.Fatalf("mergeChartValuesFiles: %v", err)
+		if _, err := mergeChartValuesFilesUncached(ch, names, false); err != nil {
+			b.Fatalf("mergeChartValuesFilesUncached: %v", err)
 		}
 	}
 }

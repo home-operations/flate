@@ -433,7 +433,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 			"first.yaml":  "a: first-only\nb: from-first\n",
 			"second.yaml": "b: from-second\nc: second-only\n",
 		})
-		got, err := mergeChartValuesFiles(c, []string{"first.yaml", "second.yaml"}, false)
+		got, err := mergeChartValuesFilesUncached(c, []string{"first.yaml", "second.yaml"}, false)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}
@@ -444,7 +444,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 
 	t.Run("MissingFileIgnored", func(t *testing.T) {
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		got, err := mergeChartValuesFiles(c, []string{"a.yaml", "missing.yaml"}, true)
+		got, err := mergeChartValuesFilesUncached(c, []string{"a.yaml", "missing.yaml"}, true)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}
@@ -455,7 +455,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 
 	t.Run("MissingFileErrorsWhenStrict", func(t *testing.T) {
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		_, err := mergeChartValuesFiles(c, []string{"missing.yaml"}, false)
+		_, err := mergeChartValuesFilesUncached(c, []string{"missing.yaml"}, false)
 		if err == nil {
 			t.Fatal("expected error for missing file when ignoreMissing=false")
 		}
@@ -466,7 +466,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 
 	t.Run("InvalidYAMLErrors", func(t *testing.T) {
 		c := chartWith(map[string]string{"bad.yaml": "key: : not-yaml\n"})
-		_, err := mergeChartValuesFiles(c, []string{"bad.yaml"}, false)
+		_, err := mergeChartValuesFilesUncached(c, []string{"bad.yaml"}, false)
 		if err == nil {
 			t.Fatal("expected error for invalid YAML")
 		}
@@ -477,7 +477,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 
 	t.Run("EmptyNamesReturnsEmpty", func(t *testing.T) {
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		got, err := mergeChartValuesFiles(c, nil, false)
+		got, err := mergeChartValuesFilesUncached(c, nil, false)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}

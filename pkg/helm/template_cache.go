@@ -23,7 +23,7 @@ import (
 // (template.go's cited ~300 MB on a 200-HR run).
 //
 // The cache is in-memory only; persistence across `flate` invocations
-// is a Phase 3 concern.
+// is handled by the disk-backed layer.
 //
 // Eviction is strict LRU bounded by total `limit` bytes (the sum of
 // every entry's value size). On insert we evict from the back of the
@@ -38,7 +38,7 @@ type templateCache struct {
 	list  *list.List
 	index map[string]*list.Element
 
-	// disk is the persistent cross-process layer (Phase 3.4a). nil
+	// disk is the persistent cross-process layer. nil
 	// when disk caching is disabled (RenderCacheBytes <= 0 or empty
 	// RenderCacheRoot). Get falls through to disk on memory miss and
 	// promotes hits to the in-process LRU; Put writes through to disk
@@ -182,27 +182,6 @@ func (c *templateCache) removeElement(el *list.Element) {
 	c.list.Remove(el)
 	delete(c.index, entry.key)
 	c.size -= entry.cost
-}
-
-// Size reports the running total of cached entry costs (sum of
-// value sizes). Used by tests to verify eviction accounting.
-func (c *templateCache) Size() int64 {
-	if c == nil {
-		return 0
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.size
-}
-
-// Len returns the number of currently-cached entries. Test affordance.
-func (c *templateCache) Len() int {
-	if c == nil {
-		return 0
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.list.Len()
 }
 
 // chartFingerprint returns the hex-encoded sha256 of every input

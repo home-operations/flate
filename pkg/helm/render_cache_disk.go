@@ -180,21 +180,6 @@ func (c *diskRenderCache) Put(key string, payload []byte) {
 	}
 }
 
-// SweepBlocking forces a synchronous eviction pass. Test affordance —
-// production callers use the async trigger inside Put. Useful for
-// asserting eviction ordering without flake.
-func (c *diskRenderCache) SweepBlocking() {
-	if c == nil {
-		return
-	}
-	// Wait for any in-flight async sweep to drain before kicking off
-	// our own so the synchronous call sees a stable view.
-	for !c.sweepBusy.CompareAndSwap(0, 1) {
-		time.Sleep(time.Millisecond)
-	}
-	c.sweep()
-}
-
 // sweep walks the cache root, totals byte usage, and (if over the
 // limit) deletes oldest-by-mtime entries until total ≤ limit. Runs
 // on a single goroutine — sweepBusy gates re-trigger so a sustained

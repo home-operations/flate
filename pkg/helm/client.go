@@ -179,7 +179,7 @@ type ClientOptions struct {
 	TemplateCacheBytes int64
 
 	// RenderCacheBytes caps the persistent on-disk helm template-
-	// output cache (Phase 3.4a). <= 0 disables disk caching. Disk
+	// output cache. <= 0 disables disk caching. Disk
 	// caching is also disabled when RenderCacheRoot is empty even
 	// if RenderCacheBytes > 0 — the wiring requires both.
 	RenderCacheBytes int64

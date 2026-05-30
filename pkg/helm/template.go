@@ -50,82 +50,12 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	}
 	cfg.Capabilities = caps
 
-	inst := action.NewInstall(cfg)
-	inst.DryRunStrategy = action.DryRunClient
-	inst.ReleaseName = hr.ReleaseName()
-	inst.Namespace = hr.ReleaseNamespace()
-	// Match helm-controller: Devel=true so chart references pinned to a
-	// prerelease semver (e.g. `1.0.0-beta`) resolve. Without this, the
-	// HR renders cleanly in flate (which doesn't consult Devel for local
-	// chart resolution) but fails in cluster, or vice versa.
-	inst.Devel = true
-	inst.IncludeCRDs = !opts.SkipCRDs
-	// HR-scoped policy wins: spec.install.crds / spec.upgrade.crds set
-	// to "Skip" suppresses CRDs even when the CLI requests them.
-	// "Create" / "CreateReplace" force them on. An empty policy lets
-	// the CLI flag decide.
-	switch hr.CRDsPolicy {
-	case "Skip":
-		inst.IncludeCRDs = false
-	case "Create", "CreateReplace":
-		inst.IncludeCRDs = true
-	}
-	// HR-scoped install/upgrade.disableHooks OR'd with the CLI flag,
-	// mirroring helm-controller. Either side forces hooks off — and
-	// the same effective flag drives the post-render hook filter at
-	// the bottom of this function so they don't leak into the output.
-	disableHooks := opts.NoHooks ||
-		(hr.Install != nil && hr.Install.DisableHooks) ||
-		(hr.Upgrade != nil && hr.Upgrade.DisableHooks)
-	inst.DisableHooks = disableHooks
-	inst.IsUpgrade = opts.IsUpgrade
-	inst.EnableDNS = opts.EnableDNS
-	// Honor spec.install.replace per helm-controller's
-	// internal/action/install.go: install.Replace = obj.GetInstall().Replace.
-	// Default false (the chart fields' zero value); set true only when
-	// the HR explicitly asks. Mostly a no-op under DryRunClient but
-	// keeps flate's render path matching upstream so any future
-	// validation behavior change in helm.action lands consistently.
-	if hr.Install != nil {
-		inst.Replace = hr.Install.Replace
-	}
-	inst.DisableOpenAPIValidation = hr.DisableOpenAPIValidation
-	// When flate's wipe-secrets has replaced a substituteFrom / valuesFrom
-	// value with the ..PLACEHOLDER_KEY.. token, chart schemas with DNS /
-	// URL / regex patterns reject it (the placeholder isn't a valid
-	// hostname). Disable schema validation when any placeholder reaches
-	// rendering so the user sees the rendered output rather than a
-	// validation error against a value flate fabricated. Real Flux
-	// resolves the secret to the actual value and validates normally —
-	// flate can't, so this short-circuits the failure mode.
-	inst.SkipSchemaValidation = opts.SkipSchemaValidation || hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(hrValues)
-	// spec.postRenderers — pipe rendered output through one or more
-	// kustomize patch+image transforms. helm-controller does this via
-	// the same postrenderer.PostRenderer hook.
-	inst.PostRenderer = newPostRenderer(hr.PostRenderers)
-	// action.Install consults its own KubeVersion field for chart
-	// compatibility checks and ignores cfg.Capabilities for that purpose.
-	if opts.KubeVersion != "" {
-		kv, err := common.ParseKubeVersion(opts.KubeVersion)
-		if err != nil {
-			return "", fmt.Errorf("parse kube-version %q: %w", opts.KubeVersion, err)
-		}
-		inst.KubeVersion = kv
-	}
-	// Same for APIVersions — action.Install under DryRunClient
-	// replaces cfg.Capabilities with a fresh default copy and then
-	// only re-applies inst.APIVersions onto that copy. Setting
-	// cfg.Capabilities alone leaves APIVersions empty at render
-	// time, silently dropping the user's --api-versions flag.
-	if len(caps.APIVersions) > 0 {
-		inst.APIVersions = caps.APIVersions
+	inst, disableHooks, err := newInstallAction(cfg, hr, hrValues, opts, caps)
+	if err != nil {
+		return "", err
 	}
 	if hrValues == nil {
 		hrValues = map[string]any{}
-	}
-
-	if hr.Chart.Version != "" {
-		inst.Version = hr.Chart.Version
 	}
 
 	// Apply chart valuesFiles BEFORE HR.Values so HR overrides win.
@@ -175,6 +105,88 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	return out, nil
 }
 
+// newInstallAction builds the DryRunClient action.Install that Template
+// renders through, mirroring helm-controller's install/upgrade field
+// wiring. Returns the configured install, the effective disableHooks
+// flag (reused by Template's post-render hook filter so hooks don't
+// leak into the output when disabled), and any kube-version parse error.
+func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, hrValues map[string]any, opts Options, caps *common.Capabilities) (*action.Install, bool, error) {
+	inst := action.NewInstall(cfg)
+	inst.DryRunStrategy = action.DryRunClient
+	inst.ReleaseName = hr.ReleaseName()
+	inst.Namespace = hr.ReleaseNamespace()
+	// Match helm-controller: Devel=true so chart references pinned to a
+	// prerelease semver (e.g. `1.0.0-beta`) resolve. Without this, the
+	// HR renders cleanly in flate (which doesn't consult Devel for local
+	// chart resolution) but fails in cluster, or vice versa.
+	inst.Devel = true
+	inst.IncludeCRDs = !opts.SkipCRDs
+	// HR-scoped policy wins: spec.install.crds / spec.upgrade.crds set
+	// to "Skip" suppresses CRDs even when the CLI requests them.
+	// "Create" / "CreateReplace" force them on. An empty policy lets
+	// the CLI flag decide.
+	switch hr.CRDsPolicy {
+	case "Skip":
+		inst.IncludeCRDs = false
+	case "Create", "CreateReplace":
+		inst.IncludeCRDs = true
+	}
+	// HR-scoped install/upgrade.disableHooks OR'd with the CLI flag,
+	// mirroring helm-controller. Either side forces hooks off — and
+	// the same effective flag drives the post-render hook filter at
+	// the bottom of Template so they don't leak into the output.
+	disableHooks := opts.NoHooks ||
+		(hr.Install != nil && hr.Install.DisableHooks) ||
+		(hr.Upgrade != nil && hr.Upgrade.DisableHooks)
+	inst.DisableHooks = disableHooks
+	inst.IsUpgrade = opts.IsUpgrade
+	inst.EnableDNS = opts.EnableDNS
+	// Honor spec.install.replace per helm-controller's
+	// internal/action/install.go: install.Replace = obj.GetInstall().Replace.
+	// Default false (the chart fields' zero value); set true only when
+	// the HR explicitly asks. Mostly a no-op under DryRunClient but
+	// keeps flate's render path matching upstream so any future
+	// validation behavior change in helm.action lands consistently.
+	if hr.Install != nil {
+		inst.Replace = hr.Install.Replace
+	}
+	inst.DisableOpenAPIValidation = hr.DisableOpenAPIValidation
+	// When flate's wipe-secrets has replaced a substituteFrom / valuesFrom
+	// value with the ..PLACEHOLDER_KEY.. token, chart schemas with DNS /
+	// URL / regex patterns reject it (the placeholder isn't a valid
+	// hostname). Disable schema validation when any placeholder reaches
+	// rendering so the user sees the rendered output rather than a
+	// validation error against a value flate fabricated. Real Flux
+	// resolves the secret to the actual value and validates normally —
+	// flate can't, so this short-circuits the failure mode.
+	inst.SkipSchemaValidation = opts.SkipSchemaValidation || hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(hrValues)
+	// spec.postRenderers — pipe rendered output through one or more
+	// kustomize patch+image transforms. helm-controller does this via
+	// the same postrenderer.PostRenderer hook.
+	inst.PostRenderer = newPostRenderer(hr.PostRenderers)
+	// action.Install consults its own KubeVersion field for chart
+	// compatibility checks and ignores cfg.Capabilities for that purpose.
+	if opts.KubeVersion != "" {
+		kv, err := common.ParseKubeVersion(opts.KubeVersion)
+		if err != nil {
+			return nil, false, fmt.Errorf("parse kube-version %q: %w", opts.KubeVersion, err)
+		}
+		inst.KubeVersion = kv
+	}
+	// Same for APIVersions — action.Install under DryRunClient
+	// replaces cfg.Capabilities with a fresh default copy and then
+	// only re-applies inst.APIVersions onto that copy. Setting
+	// cfg.Capabilities alone leaves APIVersions empty at render
+	// time, silently dropping the user's --api-versions flag.
+	if len(caps.APIVersions) > 0 {
+		inst.APIVersions = caps.APIVersions
+	}
+	if hr.Chart.Version != "" {
+		inst.Version = hr.Chart.Version
+	}
+	return inst, disableHooks, nil
+}
+
 // mergeChartValuesFiles is the cache-aware entry point: it consults
 // Client.chartValuesCache before re-parsing and stores the canonical
 // merged map on miss. Callers receive a deep clone (defensive-copy
@@ -197,7 +209,7 @@ func (c *Client) mergeChartValuesFiles(ch *chart.Chart, names []string, ignoreMi
 	if ok {
 		return manifest.DeepCopyMap(cached), nil
 	}
-	merged, err := mergeChartValuesFiles(ch, names, ignoreMissing)
+	merged, err := mergeChartValuesFilesUncached(ch, names, ignoreMissing)
 	if err != nil {
 		return nil, err
 	}
@@ -240,17 +252,17 @@ func chartValuesCacheKey(ch *chart.Chart, names []string, ignoreMissing bool) st
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// mergeChartValuesFiles merges the named values files (relative paths
-// inside the chart archive) in the supplied order. Missing files are
-// skipped when ignoreMissing is true; otherwise the first missing file
-// is an error. Mirrors helm-controller's chartutil layering: each file
-// is merged on top of the previous one.
+// mergeChartValuesFilesUncached merges the named values files (relative
+// paths inside the chart archive) in the supplied order. Missing files
+// are skipped when ignoreMissing is true; otherwise the first missing
+// file is an error. Mirrors helm-controller's chartutil layering: each
+// file is merged on top of the previous one.
 //
 // Pure function — no caching. Client.mergeChartValuesFiles wraps this
 // with the chart-keyed cache layer so production callers never re-parse
 // the same bytes twice. Kept exported-to-package so benchmarks can
 // measure the uncached parse cost in isolation.
-func mergeChartValuesFiles(c *chart.Chart, names []string, ignoreMissing bool) (map[string]any, error) {
+func mergeChartValuesFilesUncached(c *chart.Chart, names []string, ignoreMissing bool) (map[string]any, error) {
 	out := map[string]any{}
 	for _, name := range names {
 		var data []byte

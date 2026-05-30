@@ -56,7 +56,7 @@ type commonFlags struct {
 	// constructor.
 	helmTemplateCacheMB int
 	// helmRenderCacheMB caps the persistent on-disk helm template-
-	// output cache in megabytes (Phase 3.4a). Default 1024; 0
+	// output cache in megabytes. Default 1024; 0
 	// disables. Plumbed through orchestrator.Config.HelmRenderCacheBytes
 	// into the helm.Client constructor. Cross-process: repeat `flate
 	// build` / `flate diff` runs against the same checkout reuse

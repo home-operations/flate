@@ -76,7 +76,7 @@ func TestWaiter_AllReady(t *testing.T) {
 
 	w := &Waiter{Store: s, Timeout: time.Second}
 	sum := WaitAll(w.Watch(context.Background(), refs(dep1, dep2)))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("expected all ready: %+v", sum)
 	}
 }
@@ -105,7 +105,7 @@ func TestWaiter_Exists_NonStatusKind(t *testing.T) {
 
 	w := &Waiter{Store: s, Timeout: time.Second}
 	sum := WaitAll(w.Watch(context.Background(), refs(id)))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("expected ConfigMap to become ready: %+v", sum)
 	}
 }
@@ -173,7 +173,7 @@ func TestWaiter_ResolveMissingLazyPromotes(t *testing.T) {
 	if !resolveCalled {
 		t.Errorf("Existence.Promote was never invoked")
 	}
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("expected dep to clear after lazy promotion: %+v", sum)
 	}
 }
@@ -228,7 +228,7 @@ func TestWaiter_RenderOnlyDepWaitsBeyondGrace(t *testing.T) {
 		Existence: lookupStub{promote: resolve, fileIndexed: isFileIndexed},
 	}
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("render-only dep that arrived after grace should clear, not fail: %+v", sum)
 	}
 }
@@ -447,7 +447,7 @@ func TestWaiter_RenderInflightActiveHoldsTheWait(t *testing.T) {
 	}()
 
 	sum := WaitAll(w.Watch(context.Background(), refs(dep)))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("dep arrived after grace with Renders active; expected Ready: %+v", sum)
 	}
 }
@@ -508,7 +508,7 @@ func TestWaiter_ReadyExprCancelSurfacesCancelled(t *testing.T) {
 func TestWaiter_NoDeps(t *testing.T) {
 	w := &Waiter{Store: store.New()}
 	sum := WaitAll(w.Watch(context.Background(), nil))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("expected vacuous ready: %+v", sum)
 	}
 }
@@ -578,7 +578,7 @@ func TestWaiter_ReadyExprWakesOnObjectAdded(t *testing.T) {
 
 	select {
 	case sum := <-done:
-		if sum.AnyFailed() || !sum.AllReady() {
+		if sum.AnyFailed() {
 			t.Fatalf("expected ready; got %+v", sum)
 		}
 	case <-time.After(2 * time.Second):

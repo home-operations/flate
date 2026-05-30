@@ -28,7 +28,7 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 		// Common Flux readiness idiom.
 		ReadyExpr: `dep.status.observedGeneration == dep.metadata.generation`,
 	}}))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("observedGeneration projection should match metadata.generation: %+v", sum)
 	}
 }
@@ -48,7 +48,7 @@ func TestReadyExpr_NonAdditive_PassesOnTrue(t *testing.T) {
 		NamedResource: dep,
 		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}}))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("non-additive ReadyExpr should override Failed Ready: %+v", sum)
 	}
 }
@@ -75,7 +75,7 @@ func TestReadyExpr_NonAdditive_FlipsOnStatusUpdate(t *testing.T) {
 		NamedResource: dep,
 		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}}))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("expected to satisfy after status update: %+v", sum)
 	}
 }
@@ -93,7 +93,7 @@ func TestReadyExpr_NonAdditive_TimesOutOnFalse(t *testing.T) {
 		NamedResource: dep,
 		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}}))
-	if sum.AllReady() {
+	if !sum.AnyFailed() {
 		t.Fatalf("expected timeout: %+v", sum)
 	}
 	if !strings.Contains(sum.Messages[dep], "readyExpr timeout") {
@@ -116,8 +116,8 @@ func TestReadyExpr_Additive_BothMustPass(t *testing.T) {
 		NamedResource: dep,
 		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}}))
-	if !sum.AllReady() {
-		t.Errorf("expected AllReady when both checks pass: %+v", sum)
+	if sum.AnyFailed() {
+		t.Errorf("expected all ready when both checks pass: %+v", sum)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestReadyExpr_TransientEvalErrorPolls(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		s.SetCondition(dep, store.Condition{Type: "Ready", Status: metav1.ConditionTrue})
 	}()
-	if sum := WaitAll(ch); !sum.AllReady() {
+	if sum := WaitAll(ch); sum.AnyFailed() {
 		t.Errorf("dep should go Ready once conditions[0] populates: %+v", sum)
 	}
 }
@@ -237,7 +237,7 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 			NamedResource: dep,
 			ReadyExpr:     expr,
 		}}))
-		if !sum.AllReady() {
+		if sum.AnyFailed() {
 			t.Errorf("expr %q: not Ready: %+v", expr, sum)
 		}
 	}
@@ -262,7 +262,7 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 		// `object`-only binding.
 		ReadyExpr: `self.metadata.namespace == dep.metadata.namespace`,
 	}}))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("expected self/dep CEL to evaluate true: %+v", sum)
 	}
 }
@@ -276,7 +276,7 @@ func TestReadyExpr_Empty_UsesBuiltin(t *testing.T) {
 
 	w := &Waiter{Store: s, Timeout: time.Second}
 	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{NamedResource: dep}}))
-	if !sum.AllReady() {
+	if sum.AnyFailed() {
 		t.Errorf("plain dep with Ready status should pass: %+v", sum)
 	}
 }

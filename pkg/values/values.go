@@ -368,6 +368,7 @@ func decodeBag(stringData, binaryData map[string]any) (map[string]string, error)
 // (string, []byte after future schema corrections, JSON-numeric
 // scalars) from the "garbage value" case which now returns an error
 // instead of silently rendering "[107 58]"-style Stringer output.
+// Also used by VarsMap for scalar postBuild substitution values.
 func bagValueAsString(v any) (string, error) {
 	switch t := v.(type) {
 	case string:

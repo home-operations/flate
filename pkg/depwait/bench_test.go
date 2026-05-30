@@ -33,7 +33,7 @@ func BenchmarkWatchReady_ManyDeps(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		sum := WaitAll(w.Watch(ctx, deps))
-		if !sum.AllReady() {
+		if sum.AnyFailed() {
 			b.Fatalf("expected all ready: %+v", sum)
 		}
 	}

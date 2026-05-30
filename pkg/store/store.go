@@ -63,7 +63,7 @@ func newShard() *shard {
 
 // Store is the central in-memory state container.
 //
-// # Sharded layout (Phase 3.1)
+// # Sharded layout
 //
 // The Store's hot state is sharded across shardCount shards keyed by
 // the FNV-1a hash of id.Kind. Reads and writes on different Kinds no

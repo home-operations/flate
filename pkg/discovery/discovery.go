@@ -153,13 +153,8 @@ func (d *discoverer) applyNamespaces(repoRoot string) {
 }
 
 // mergeParents combines per-kind parent maps into one. NamedResource
-// keys are kind-segregated by construction (caller passes per-Kind
-// maps from BuildParentIndexForKind), so collisions are structurally
-// impossible. The previous "earlier wins on collision" clause was
-// dead defensive code that silently masked a programmer error if a
-// future caller leaked wrong-kind entries — drop it and let the
-// later-arguments-overwrite default surface the bug at the call
-// site instead.
+// keys are kind-segregated by construction (caller passes per-Kind maps
+// from BuildParentIndexForKind), so collisions are structurally impossible.
 func mergeParents(perKind ...map[manifest.NamedResource]manifest.NamedResource) map[manifest.NamedResource]manifest.NamedResource {
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for _, m := range perKind {

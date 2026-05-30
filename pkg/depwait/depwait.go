@@ -87,9 +87,6 @@ type Summary struct {
 	Messages map[manifest.NamedResource]string
 }
 
-// AllReady reports whether every dependency reached DepReady.
-func (s Summary) AllReady() bool { return len(s.Failed) == 0 }
-
 // AnyFailed reports whether at least one dependency ended in failure.
 func (s Summary) AnyFailed() bool { return len(s.Failed) > 0 }
 

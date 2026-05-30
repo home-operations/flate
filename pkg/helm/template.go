@@ -50,7 +50,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	}
 	cfg.Capabilities = caps
 
-	inst, disableHooks, err := newInstallAction(cfg, hr, hrValues, opts, caps)
+	inst, disableHooks, err := newInstallAction(cfg, hr, opts, caps)
 	if err != nil {
 		return "", err
 	}
@@ -85,6 +85,16 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 	}
 
+	// Validate against the chart's values.schema.json with a cached compile
+	// instead of helm's per-render recompile (inst.SkipSchemaValidation is
+	// true so helm won't redo it). Runs only on a cache miss — matching when
+	// helm previously validated; the cache-hit return above never validated.
+	if !schemaValidationSkipped(opts, hr, hrValues) {
+		if err := c.validateChartSchema(loaded.Chart, finalValues); err != nil {
+			return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
+		}
+	}
+
 	rel, err := inst.RunWithContext(ctx, loaded.Chart, finalValues)
 	if err != nil {
 		return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
@@ -110,7 +120,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 // wiring. Returns the configured install, the effective disableHooks
 // flag (reused by Template's post-render hook filter so hooks don't
 // leak into the output when disabled), and any kube-version parse error.
-func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, hrValues map[string]any, opts Options, caps *common.Capabilities) (*action.Install, bool, error) {
+func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts Options, caps *common.Capabilities) (*action.Install, bool, error) {
 	inst := action.NewInstall(cfg)
 	inst.DryRunStrategy = action.DryRunClient
 	inst.ReleaseName = hr.ReleaseName()
@@ -151,15 +161,13 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, hrVal
 		inst.Replace = hr.Install.Replace
 	}
 	inst.DisableOpenAPIValidation = hr.DisableOpenAPIValidation
-	// When flate's wipe-secrets has replaced a substituteFrom / valuesFrom
-	// value with the ..PLACEHOLDER_KEY.. token, chart schemas with DNS /
-	// URL / regex patterns reject it (the placeholder isn't a valid
-	// hostname). Disable schema validation when any placeholder reaches
-	// rendering so the user sees the rendered output rather than a
-	// validation error against a value flate fabricated. Real Flux
-	// resolves the secret to the actual value and validates normally —
-	// flate can't, so this short-circuits the failure mode.
-	inst.SkipSchemaValidation = opts.SkipSchemaValidation || hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(hrValues)
+	// flate validates values against the chart's values.schema.json itself
+	// (cached compile, see schema.go) and always tells helm to skip its own
+	// per-render recompile. The skip conditions — CLI flag, HR opt-out, or a
+	// wipe placeholder (a DNS/URL/regex schema would reject the fabricated
+	// ..PLACEHOLDER_KEY.. token) — are applied at the validation call site
+	// via schemaValidationSkipped.
+	inst.SkipSchemaValidation = true
 	// spec.postRenderers — pipe rendered output through one or more
 	// kustomize patch+image transforms. helm-controller does this via
 	// the same postrenderer.PostRenderer hook.

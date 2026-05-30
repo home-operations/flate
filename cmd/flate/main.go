@@ -14,7 +14,20 @@ import (
 var version = "dev"
 
 func main() {
+	tuneGC()
 	os.Exit(cli.Execute(resolvedVersion()))
+}
+
+// tuneGC raises the GC target for flate's short-lived, allocation-heavy
+// batch runs. A cold reconcile churns hundreds of GC cycles at the
+// default GOGC=100; a higher target trades transient memory (bounded at
+// ~4x the live set) for fewer collections, measurably cutting cold-start
+// CPU. Skipped when the operator set GOGC or GOMEMLIMIT explicitly so
+// their tuning always wins.
+func tuneGC() {
+	if os.Getenv("GOGC") == "" && os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetGCPercent(400)
+	}
 }
 
 func resolvedVersion() string {

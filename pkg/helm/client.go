@@ -85,6 +85,11 @@ type Client struct {
 	chartCache     map[string]chartCacheEntry
 	chartLoadLocks *keylock.KeyMap[string]
 
+	// schemaCache memoizes compiled values.schema.json validators keyed
+	// by sha256(schema bytes), so a chart's schema is compiled once
+	// rather than per render (helm has no compile cache). See schema.go.
+	schemaCache sync.Map
+
 	// chartValuesCache memoizes mergeChartValuesFiles output keyed by
 	// (chart name + version + joined valuesFiles list). Multiple HRs
 	// sharing a base chart and the same spec.chart.spec.valuesFiles

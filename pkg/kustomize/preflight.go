@@ -203,8 +203,9 @@ func (e *httpStatusError) Error() string {
 }
 
 // httpGetURL is the actual network call cache.FetchRemote dispatches
-// through OnceValues. Lives here (not on the StagingCache) because
-// it's a preflight detail — the cache only owns the dedup discipline.
+// through a per-URL sync.Once + done channel. Lives here (not on the
+// StagingCache) because it's a preflight detail — the cache only owns
+// the dedup discipline.
 func httpGetURL(ctx context.Context, urlStr string) ([]byte, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
 	defer cancel()

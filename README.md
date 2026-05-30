@@ -10,6 +10,26 @@
 
 flate is a Go rewrite of [flux-local](https://github.com/allenporter/flux-local). Helm, kustomize, go-git, and oras-go are linked as native libraries, so a `kind` cluster plus a stack of CLIs (`helm`, `kustomize`, `flux`, `kubectl`) collapse into one binary that runs in CI in seconds, not minutes. Changed-only mode reconciles just the subtree a PR touches, dropping single-file diffs to tens of milliseconds on real home-ops repos.
 
+At a glance:
+
+- **Offline** — one static binary; no cluster, `kubectl`, `helm`/`kustomize`/`flux` CLIs, or shellouts.
+- **Fast** — changed-only mode reconciles just the subtree a PR touches.
+- **CI-native** — seconds not minutes; a GitHub Action ships in the repo.
+- **Embeddable** — `pkg/orchestrator` is a library entry point.
+
+## Contents
+
+- [Install](#install)
+- [Use](#use)
+- [Changed-only mode](#changed-only-mode)
+- [Source kinds and auth](#source-kinds-and-auth)
+- [Behaviors](#behaviors)
+- [Limits](#limits)
+- [Architecture](#architecture)
+- [Library use](#library-use)
+- [Development](#development)
+- [License](#license)
+
 ## Install
 
 ```bash
@@ -43,12 +63,14 @@ Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig
 |---|---|---|
 | `get` | `ks`, `hr`, `images`, `all` | List or summarize. `-o table` / `yaml` / `json` / `name`. |
 | `build` | `ks`, `hr`, `all` | Render Kustomizations and HelmReleases to YAML or JSON. |
-| `diff` | `ks`, `hr`, `images`, `all` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output github` mode. K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
+| `diff` | `ks`, `hr`, `images`, `all` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output markdown` mode (GitHub-flavored). K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
 | `test` | `ks`, `hr`, `all` | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure. |
 
-`get ks` and `get hr` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `app.kubernetes.io/version`, `chart`). Helm template flags are available on every reconcile-running subcommand because flate reconciles the full graph before filtering output. Reconcile-running subcommands accept `--allow-missing-secrets` to soft-skip source auth Secrets and omit generated HR `valuesFrom` refs that only exist in the live cluster — see [Behaviors](#behaviors).
+`get ks` and `get hr` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `checksum/secret`, `app.kubernetes.io/version`, `chart`). Helm template flags are available on every reconcile-running subcommand because flate reconciles the full graph before filtering output. Reconcile-running subcommands accept `--allow-missing-secrets` to soft-skip source auth Secrets and omit generated HR `valuesFrom` refs that only exist in the live cluster — see [Behaviors](#behaviors). `--enable-oci` (default `true`) gates `OCIRepository` reconciliation; set `=false` to skip it.
 
 **Default output filters.** `--skip-secrets` and `--skip-crds` both default to `true` — `build` and `diff` strip rendered `Secret` and `CustomResourceDefinition` objects from manifest output. Pass `--skip-secrets=false` / `--skip-crds=false` to include them; `--skip-kinds <kind>` (repeatable) drops additional kinds. These are output-stream filters, distinct from `--allow-missing-secrets`, which gates source auth and generated HR values Secret readiness.
+
+**Cache.** flate persists source fetches and helm template output under an on-disk cache (honoring Flux intervals). `flate cache gc` prunes stale entries; `flate cache clear-render` drops the persistent helm template-output cache.
 
 ## Changed-only mode
 
@@ -99,6 +121,32 @@ dependsOn:
 
 **Signature verification** — `OCIRepository` uses cosign keyed mode (`spec.verify.secretRef` with PEM keys) verified through stdlib crypto, no sigstore dep tree. `GitRepository` uses PGP via `spec.verify.{mode,secretRef}`. Cosign keyless and `notation` are not supported (see [Limits](#limits)).
 
+**ResourceSet inputs (`inputs` / `inputsFrom`)** — a `ResourceSet` renders its `resources` / `resourcesTemplate` once per input set. Inline `spec.inputs` and `spec.inputsFrom` both contribute sets; each `inputsFrom` entry references a `ResourceSetInputProvider` by `name` or by label `selector` (scoped to the ResourceSet's namespace). The built-in `inputs.provider` block on every set reflects the *sourcing* CR's `apiVersion`/`kind`/`name`/`namespace` — the referenced provider for `inputsFrom`, the ResourceSet itself for inline.
+
+Combination follows `spec.inputStrategy`: **Flatten** (default) concatenates all sets (`<< inputs.foo >>`); **Permute** Cartesian-products across providers, nesting each under its normalized name (`<< inputs.<provider>.foo >>`) plus a synthetic `inputs.id`, capped at 10000 permutations. A ResourceSet that *emits* `ResourceSetInputProvider` objects is resolved by the discovery fixed-point pass, so a later ResourceSet's `inputsFrom.selector` picks them up (the two-stage namespace→deployment pattern). `Static` providers export `spec.defaultValues`; for dynamic providers, pre-bake `status.exportedInputs` to render them offline (see [Limits](#limits)).
+
+## Limits
+
+flate is rendering-only.
+
+- **No SOPS decryption.** Values wiped; pre-decrypt if you need them in the diff.
+- **No cosign keyless.** Keyed verification works end-to-end; keyless logs and renders unverified (no offline trust roots).
+- **No notation.** Fails loud.
+- **No cloud workload identity.** `spec.serviceAccountName` is a no-op; use static creds in a Secret.
+- **No `healthChecks`.** flate tracks resource readiness, not status conditions of rendered objects.
+- **`ResourceSetInputProvider`: `Static` resolves offline** (from `spec.defaultValues`). Dynamic providers (GitHubPullRequest, GitLab, OCIArtifactTag, ExternalService, …) need network access and contribute zero inputs — unless you pre-bake them by setting `status.exportedInputs` on the provider manifest, which flate honors directly (see [Behaviors](#behaviors)).
+- **Diff output isn't a unified-diff patch.** `flate diff` emits dyff path-keyed syntax (`@@ <path> @@`); GitHub's diff lexer renders it natively but it won't apply with `patch` / `git apply` — use the rendered output of `flate build` if you need a literal patch.
+
+## Architecture
+
+```
+discovery → Store ⇄ events ⇄ controllers (source · kustomization · helmrelease)
+```
+
+Pipeline: bootstrap-source seed → loader pre-pass excluding `configMapGenerator`/`secretGenerator` data files → file walk → `spec.path` + ResourceSet fixed-point expansion → bootstrap-source aliasing for unresolved `GitRepository` refs → namespace inheritance → parent index → `dependsOn` cycle preflight → change-filter → controllers fire → render → render-time keep-set extension for emitted children → orphan demotion → output.
+
+The Store is the single source of truth. Every stored manifest is immutable; mutation routes through `Store.Mutate[T]` (clone, mutate, AddObject). Helm chart loads coalesce through a per-path keylock — N parallel reconciles of the same chart issue exactly one parse.
+
 ## Library use
 
 `pkg/orchestrator` is the embed entry point.
@@ -126,30 +174,8 @@ Other entry points worth knowing:
 - `Store.OnObject` / `OnStatus` / `OnArtifact` — typed listeners; payloads are pre-cast.
 - `helm.Prepare(hr, lookup, provider)` then `helmClient.TemplateDocs(...)` — render one HelmRelease without the orchestrator. `lookup` is a `manifest.HelmChartLookup` (`func(ns, name string) *HelmChartSource`). `kustomize.Prepare(ks, provider)` is the symmetric helper for Kustomizations.
 - `discovery.Run(ctx, Config{Path, Store, WipeSecrets})` — load phase as a standalone unit.
-- `change.Filter.Add(id)` — extend the changed-only-mode keep set at runtime when a custom controller emits a child that wasn't visible at filter-build time. Call BEFORE `Store.AddObject(child)` so the synchronous listener sees the extended set.
+- `change.Filter.AddEmitted(emitter, child)` — extend the changed-only-mode keep set at runtime when a custom controller emits a child that wasn't visible at filter-build time; records the emitter→child edge. Call BEFORE `Store.AddObject(child)` so the synchronous listener sees the extended set.
 - `Store.Mutate[T]` — clone-then-AddObject helper encoding the immutability contract. See [`pkg/manifest/doc.go`](pkg/manifest/doc.go) for the full rule.
-
-## Architecture
-
-```
-discovery → Store ⇄ events ⇄ controllers (source · kustomization · helmrelease)
-```
-
-Pipeline: bootstrap-source seed → loader pre-pass excluding `configMapGenerator`/`secretGenerator` data files → file walk → `spec.path` + ResourceSet fixed-point expansion → bootstrap-source aliasing for unresolved `GitRepository` refs → namespace inheritance → parent index → `dependsOn` cycle preflight → change-filter → controllers fire → render → render-time keep-set extension for emitted children → orphan demotion → output.
-
-The Store is the single source of truth. Every stored manifest is immutable; mutation routes through `Store.Mutate[T]` (clone, mutate, AddObject). Helm chart loads coalesce through a per-path keylock — N parallel reconciles of the same chart issue exactly one parse.
-
-## Limits
-
-flate is rendering-only.
-
-- **No SOPS decryption.** Values wiped; pre-decrypt if you need them in the diff.
-- **No cosign keyless.** Keyed verification works end-to-end; keyless logs and renders unverified (no offline trust roots).
-- **No notation.** Fails loud.
-- **No cloud workload identity.** `spec.serviceAccountName` is a no-op; use static creds in a Secret.
-- **No `healthChecks`.** flate tracks resource readiness, not status conditions of rendered objects.
-- **`ResourceSetInputProvider`: `Static` only.** Dynamic providers (GitHub, GitLab, OCIArtifactTag, ExternalService) need network access and contribute zero inputs.
-- **Diff output isn't a unified-diff patch.** `flate diff` emits dyff path-keyed syntax (`@@ <path> @@`); GitHub's diff lexer renders it natively but it won't apply with `patch` / `git apply` — use the rendered output of `flate build` if you need a literal patch.
 
 ## Development
 

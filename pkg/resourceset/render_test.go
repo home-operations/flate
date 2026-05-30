@@ -7,6 +7,7 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 )
@@ -109,11 +110,7 @@ metadata:
 		name, _ := md["name"].(string)
 		gotNames[name] = struct{}{}
 	}
-	for _, want := range []string{"prod-alpha", "stage-alpha"} {
-		if _, ok := gotNames[want]; !ok {
-			t.Errorf("missing permutation %q; got %v", want, gotNames)
-		}
-	}
+	assert.Diff(t, gotNames, map[string]struct{}{"prod-alpha": {}, "stage-alpha": {}})
 }
 
 // TestRender_PermuteSkipsEmptyProviderByDefault matches upstream:
@@ -259,9 +256,7 @@ func TestRender_InputsExpandTemplates(t *testing.T) {
 		md := doc["metadata"].(map[string]any)
 		names[md["name"].(string)] = md["namespace"].(string)
 	}
-	if names["frontend-cm"] != "frontend" || names["backend-cm"] != "backend" {
-		t.Errorf("inputs not substituted: %v", names)
-	}
+	assert.Diff(t, names, map[string]string{"frontend-cm": "frontend", "backend-cm": "backend"})
 }
 
 // TestRender_Deduplication asserts that shared resources (e.g. a single
@@ -734,9 +729,7 @@ data:
 	}
 	// alpha falls back to inputs.defaults.capacity (1Gi); bravo
 	// overrides via its own per-app capacity (5Gi).
-	if caps["alpha"] != "1Gi" || caps["bravo"] != "5Gi" {
-		t.Errorf("expected alpha=1Gi, bravo=5Gi; got %v", caps)
-	}
+	assert.Diff(t, caps, map[string]string{"alpha": "1Gi", "bravo": "5Gi"})
 }
 
 // TestRender_InputsFrom_DynamicProviderEmptySkip verifies that a

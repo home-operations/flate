@@ -5,11 +5,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 // mustYAML decodes a single YAML document literal into a generic map.
@@ -46,8 +47,18 @@ func TestNamedResource(t *testing.T) {
 	}
 }
 
-func TestParseHelmRelease_Suspend(t *testing.T) {
-	doc := mustYAML(t, `
+// TestParse_Suspend covers the spec.suspend passthrough across the
+// three suspendable kinds (HelmRelease, Kustomization, Bucket); each
+// parse fn returns a distinct type sharing a Suspend bool field.
+func TestParse_Suspend(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		get  func(map[string]any) (bool, error)
+	}{
+		{
+			name: "HelmRelease",
+			yaml: `
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: hr, namespace: ns}
@@ -57,29 +68,71 @@ spec:
     spec:
       chart: c
       sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`)
-	hr, err := parseHelmRelease(doc)
-	if err != nil {
-		t.Fatalf("parseHelmRelease: %v", err)
+`,
+			get: func(d map[string]any) (bool, error) {
+				hr, err := parseHelmRelease(d)
+				if err != nil {
+					return false, err
+				}
+				return hr.Suspend, nil
+			},
+		},
+		{
+			name: "Kustomization",
+			yaml: `
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: ks, namespace: ns}
+spec:
+  suspend: true
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: src, namespace: ns}
+  interval: 5m
+`,
+			get: func(d map[string]any) (bool, error) {
+				ks, err := parseKustomization(d)
+				if err != nil {
+					return false, err
+				}
+				return ks.Suspend, nil
+			},
+		},
+		{
+			name: "Bucket",
+			yaml: `
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: Bucket
+metadata: {name: b, namespace: ns}
+spec:
+  suspend: true
+  bucketName: x
+  endpoint: e
+  interval: 5m
+`,
+			get: func(d map[string]any) (bool, error) {
+				b, err := parseBucket(d)
+				if err != nil {
+					return false, err
+				}
+				return b.Suspend, nil
+			},
+		},
 	}
-	if !hr.Suspend {
-		t.Errorf("expected Suspend=true; got false")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			suspend, err := tc.get(mustYAML(t, tc.yaml))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if !suspend {
+				t.Errorf("expected Suspend=true; got false")
+			}
+		})
 	}
 }
 
 func TestParseHelmRelease_ServiceAccountName(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: hr, namespace: ns}
-spec:
-  serviceAccountName: privileged-installer
-  chart:
-    spec:
-      chart: c
-      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`)
-	hr, err := parseHelmRelease(doc)
+	hr, err := parseHelmRelease(helmReleaseDoc(t, "  serviceAccountName: privileged-installer"))
 	if err != nil {
 		t.Fatalf("parseHelmRelease: %v", err)
 	}
@@ -88,76 +141,37 @@ spec:
 	}
 }
 
+// helmReleaseDoc wraps the given spec body (indented under spec:) in the
+// standard HelmRelease envelope used by the parse tests.
+func helmReleaseDoc(t *testing.T, specBody string) map[string]any {
+	t.Helper()
+	return mustYAML(t, `
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: hr, namespace: ns}
+spec:
+`+specBody+`
+  chart:
+    spec:
+      chart: c
+      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
+`)
+}
+
 func TestParseHelmRelease_CRDsPolicy(t *testing.T) {
 	cases := []struct {
-		name string
-		yaml string
-		want string
+		name     string
+		specBody string
+		want     string
 	}{
-		{
-			name: "install only",
-			yaml: `
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: hr, namespace: ns}
-spec:
-  install: {crds: Create}
-  chart:
-    spec:
-      chart: c
-      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`,
-			want: "Create",
-		},
-		{
-			name: "upgrade wins over install",
-			yaml: `
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: hr, namespace: ns}
-spec:
-  install: {crds: Create}
-  upgrade: {crds: CreateReplace}
-  chart:
-    spec:
-      chart: c
-      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`,
-			want: "CreateReplace",
-		},
-		{
-			name: "skip suppresses",
-			yaml: `
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: hr, namespace: ns}
-spec:
-  upgrade: {crds: Skip}
-  chart:
-    spec:
-      chart: c
-      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`,
-			want: "Skip",
-		},
-		{
-			name: "empty when neither set",
-			yaml: `
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: hr, namespace: ns}
-spec:
-  chart:
-    spec:
-      chart: c
-      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`,
-			want: "",
-		},
+		{"install only", "  install: {crds: Create}", "Create"},
+		{"upgrade wins over install", "  install: {crds: Create}\n  upgrade: {crds: CreateReplace}", "CreateReplace"},
+		{"skip suppresses", "  upgrade: {crds: Skip}", "Skip"},
+		{"empty when neither set", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			hr, err := parseHelmRelease(mustYAML(t, tc.yaml))
+			hr, err := parseHelmRelease(helmReleaseDoc(t, tc.specBody))
 			if err != nil {
 				t.Fatalf("parseHelmRelease: %v", err)
 			}
@@ -342,9 +356,7 @@ spec:
 		t.Fatalf("parseGitRepository: %v", err)
 	}
 	wantDirs := []string{"kubernetes/apps/media", "kubernetes/components/shared"}
-	if !slices.Equal(g.SparseCheckout, wantDirs) {
-		t.Errorf("SparseCheckout = %v, want %v", g.SparseCheckout, wantDirs)
-	}
+	assert.Diff(t, g.SparseCheckout, wantDirs)
 }
 
 func TestParseGitRepository_RefNameAndSubmodules(t *testing.T) {
@@ -397,26 +409,6 @@ spec:
 	}
 	if !strings.Contains(err.Error(), "sourceRef.name is empty") {
 		t.Errorf("error should mention sourceRef.name being empty; got %v", err)
-	}
-}
-
-func TestParseKustomization_Suspend(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: ks, namespace: ns}
-spec:
-  suspend: true
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: src, namespace: ns}
-  interval: 5m
-`)
-	ks, err := parseKustomization(doc)
-	if err != nil {
-		t.Fatalf("parseKustomization: %v", err)
-	}
-	if !ks.Suspend {
-		t.Errorf("expected Suspend=true; got false")
 	}
 }
 
@@ -530,26 +522,6 @@ spec:
 				t.Errorf("expected error containing %q, got %q", tc.want, err.Error())
 			}
 		})
-	}
-}
-
-func TestParseBucket_Suspend(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: Bucket
-metadata: {name: b, namespace: ns}
-spec:
-  suspend: true
-  bucketName: x
-  endpoint: e
-  interval: 5m
-`)
-	b, err := parseBucket(doc)
-	if err != nil {
-		t.Fatalf("parseBucket: %v", err)
-	}
-	if !b.Suspend {
-		t.Errorf("expected Suspend=true")
 	}
 }
 
@@ -687,20 +659,9 @@ spec:
 }
 
 func TestParseHelmRelease_DependsOn(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: hr, namespace: ns}
-spec:
-  dependsOn:
+	hr, err := parseHelmRelease(helmReleaseDoc(t, `  dependsOn:
     - name: other
-    - {name: cross, namespace: other-ns}
-  chart:
-    spec:
-      chart: c
-      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`)
-	hr, err := parseHelmRelease(doc)
+    - {name: cross, namespace: other-ns}`))
 	if err != nil {
 		t.Fatalf("parseHelmRelease: %v", err)
 	}
@@ -761,28 +722,17 @@ spec:
 		{"replicaCount", hr.Values["replicaCount"], float64(3)},
 		{"ValuesFrom[0].Optional", hr.ValuesFrom[0].Optional, true},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if c.got != c.want {
-				t.Errorf("got %v, want %v", c.got, c.want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("got %v, want %v", tc.got, tc.want)
 			}
 		})
 	}
 }
 
 func TestParseHelmRelease_ReleaseNameOverride(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: hr, namespace: ns}
-spec:
-  releaseName: my-explicit-release
-  chart:
-    spec:
-      chart: c
-      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`)
-	hr, err := parseHelmRelease(doc)
+	hr, err := parseHelmRelease(helmReleaseDoc(t, "  releaseName: my-explicit-release"))
 	if err != nil {
 		t.Fatalf("parseHelmRelease: %v", err)
 	}
@@ -1030,9 +980,7 @@ func TestKustomization_UpdatePostBuildSubstitutions(t *testing.T) {
 	spec := k.Contents["spec"].(map[string]any)
 	post := spec["postBuild"].(map[string]any)
 	sub := post["substitute"].(map[string]any)
-	if sub["K"] != "v" {
-		t.Errorf("contents not updated: %+v", sub)
-	}
+	assert.Diff(t, sub, map[string]any{"K": "v"})
 }
 
 func TestParseConfigMap(t *testing.T) {
@@ -1049,9 +997,7 @@ data:
 	if err != nil {
 		t.Fatalf("parseConfigMap: %v", err)
 	}
-	if cm.Data["DOMAIN"] != "example.com" {
-		t.Errorf("data = %+v", cm.Data)
-	}
+	assert.Diff(t, cm.Data, map[string]any{"DOMAIN": "example.com"})
 }
 
 func TestParseSecret(t *testing.T) {
@@ -1387,9 +1333,7 @@ metadata: {name: b, namespace: ns}
 		docs[0]["metadata"].(map[string]any)["name"].(string),
 		docs[1]["metadata"].(map[string]any)["name"].(string),
 	}
-	if !slices.Equal(names, []string{"a", "b"}) {
-		t.Errorf("names = %v", names)
-	}
+	assert.Diff(t, names, []string{"a", "b"})
 }
 
 // TestParseDoc_PoolReuseConsistency drives the DecodeDocs sync.Pool

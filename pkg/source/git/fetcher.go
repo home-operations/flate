@@ -15,9 +15,6 @@ package git
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -244,7 +241,8 @@ func gitCacheKey(repo *manifest.GitRepository, refLabel string) string {
 		RecurseSubmodules: repo.RecurseSubmodules,
 		Verify:            gitVerifyCacheKey(repo.Namespace, repo.Verification),
 	}
-	return refLabel + "#opts:" + cacheKeyHash(payload)
+	h, _ := source.CacheKeyHash(payload, 8)
+	return refLabel + "#opts:" + h
 }
 
 func gitVerifyCacheKey(namespace string, v *manifest.GitRepositoryVerify) string {
@@ -252,12 +250,6 @@ func gitVerifyCacheKey(namespace string, v *manifest.GitRepositoryVerify) string
 		return ""
 	}
 	return string(v.GetMode()) + ":" + namespace + "/" + v.SecretRef.Name
-}
-
-func cacheKeyHash(v any) string {
-	b, _ := json.Marshal(v)
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:8])
 }
 
 func canUseCachedGitSlot(ref *manifest.GitRepositoryRef) bool {

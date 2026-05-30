@@ -15,6 +15,9 @@ package source
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -95,6 +98,20 @@ func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*stor
 func ErrUnsupportedProvider(kind, namespace, name, got, want, hint string) error {
 	return fmt.Errorf("%s %s/%s provider %q is not implemented; flate currently supports only %q (%s)",
 		kind, namespace, name, got, want, hint)
+}
+
+// CacheKeyHash marshals v to JSON, sha256-hashes the bytes, and returns
+// the hex of the first n bytes — the shared cache-key fingerprint used
+// by the per-kind fetchers. Exported so subpackages (git, oci) can reuse
+// one implementation; each caller picks its own width (n) and decides how
+// to treat a marshal error.
+func CacheKeyHash(v any, n int) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:n]), nil
 }
 
 // SecretGetter resolves a Secret CR by namespace + name. Fetchers

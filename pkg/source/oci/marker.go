@@ -1,9 +1,6 @@
 package oci
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +9,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/atomic"
 )
 
@@ -94,14 +92,13 @@ func verifyFingerprint(v *manifest.OCIRepositoryVerify) string {
 	if v == nil {
 		return ""
 	}
-	b, err := json.Marshal(v)
+	h, err := source.CacheKeyHash(v, 16)
 	if err != nil {
 		// Marshal-of-typed-struct shouldn't fail; if it does we
 		// fingerprint as empty which forces re-verify (safe default).
 		return ""
 	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:16])
+	return h
 }
 
 // writeVerifyMarker persists the verify-policy fingerprint to the

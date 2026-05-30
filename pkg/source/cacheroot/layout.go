@@ -65,7 +65,7 @@ const (
 	HelmCacheDir  = "helm-cache"
 	StageDir      = "stage"
 	// RenderHelmCacheDir holds the persisted helm template-output
-	// cache (Phase 3.4a). Entries are sharded `<root>/render/helm/<hex[:2]>/<hex>`
+	// cache. Entries are sharded `<root>/render/helm/<hex[:2]>/<hex>`
 	// where <hex> is the full sha256 of the template-cache key. Content
 	// is gzipped rendered manifest bytes. Cross-process safe via atomic
 	// rename; eviction is mtime-LRU bounded by the caller's byte cap.

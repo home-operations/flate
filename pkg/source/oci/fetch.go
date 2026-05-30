@@ -3,10 +3,7 @@ package oci
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -294,13 +291,8 @@ func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, re
 		LayerOperation: effectiveLayerOperation(repo.LayerSelector),
 		Ignore:         ignore,
 	}
-	return payload.Ref + "#opts:" + ociCacheKeyHash(payload)
-}
-
-func ociCacheKeyHash(v any) string {
-	b, _ := json.Marshal(v)
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:8])
+	h, _ := source.CacheKeyHash(payload, 8)
+	return payload.Ref + "#opts:" + h
 }
 
 // checkCacheHit applies the cache-hit gauntlet to a populated slot:

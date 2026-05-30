@@ -291,9 +291,17 @@ func (s *Slot) Stage() error {
 	if err := os.MkdirAll(filepath.Dir(s.final), 0o750); err != nil {
 		return fmt.Errorf("cache slot stage parent: %w", err)
 	}
+	return s.allocStaging("stage")
+}
+
+// allocStaging creates the .tmp.* staging dir under the final slot's
+// parent and points Path at it. label distinguishes the wrapped error
+// between the Stage and refresh-stage callers. Assumes s.staging is
+// empty — callers guard that and the parent-dir creation themselves.
+func (s *Slot) allocStaging(label string) error {
 	staging, err := os.MkdirTemp(filepath.Dir(s.final), filepath.Base(s.final)+".tmp.*")
 	if err != nil {
-		return fmt.Errorf("cache slot stage: %w", err)
+		return fmt.Errorf("cache slot %s: %w", label, err)
 	}
 	s.staging = staging
 	s.Path = staging
@@ -313,13 +321,7 @@ func (s *Slot) StageRefresh() error {
 		s.Path = s.staging
 		return nil
 	}
-	staging, err := os.MkdirTemp(filepath.Dir(s.final), filepath.Base(s.final)+".tmp.*")
-	if err != nil {
-		return fmt.Errorf("cache slot refresh stage: %w", err)
-	}
-	s.staging = staging
-	s.Path = staging
-	return nil
+	return s.allocStaging("refresh stage")
 }
 
 func (s *Slot) lockFile(ctx context.Context) error {

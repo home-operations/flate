@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -93,7 +94,7 @@ func TestScopedNamespaces_PathOrigAutoScopesToKeepSet(t *testing.T) {
 			netHR.Named():   "networking.yaml",
 		},
 		"",
-		emptyLister{},
+		testutil.EmptyLister(),
 	)
 	got := c.scopedNamespaces(f)
 	for _, want := range []string{"media", "networking"} {
@@ -102,13 +103,6 @@ func TestScopedNamespaces_PathOrigAutoScopesToKeepSet(t *testing.T) {
 		}
 	}
 }
-
-// emptyLister satisfies change.ObjectLister with empty results — used
-// for filter resolution tests where transitive deps aren't exercised.
-type emptyLister struct{}
-
-func (emptyLister) GetObject(manifest.NamedResource) manifest.BaseManifest { return nil }
-func (emptyLister) ListObjects(string) []manifest.BaseManifest             { return nil }
 
 func TestScopedNamespaces_NoFilterMeansAll(t *testing.T) {
 	c := &commonFlags{namespace: ""}

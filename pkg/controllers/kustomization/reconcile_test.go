@@ -2,7 +2,6 @@ package kustomization
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,9 +24,9 @@ import (
 func newControllerWithFixture(t *testing.T) (*Controller, *store.Store, string) {
 	t.Helper()
 	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "apps", "kustomization.yaml"),
+	testutil.WriteFileAt(t, filepath.Join(root, "apps", "kustomization.yaml"),
 		"resources:\n- cm.yaml\n")
-	mustWriteFile(t, filepath.Join(root, "apps", "cm.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(root, "apps", "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: hello, namespace: default}
@@ -60,16 +59,6 @@ data: {greeting: hi}
 		tasks.BlockTillDone()
 	})
 	return c, s, root
-}
-
-func mustWriteFile(t *testing.T, p, body string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // TestReconcile_HappyPath drives the full reconcile flow: AddObject

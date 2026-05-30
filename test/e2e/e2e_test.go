@@ -18,6 +18,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/cli"
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 func runCLI(t *testing.T, args ...string) string {
@@ -576,15 +577,7 @@ func initGitFixture(t *testing.T) (clusterPath, repoRoot string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFile := func(rel, body string) {
-		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(body), 0o600); err != nil { //nolint:gosec // dir is t.TempDir()
-			t.Fatal(err)
-		}
-	}
+	writeFile := func(rel, body string) { testutil.WriteFile(t, dir, rel, body) }
 	writeFile("kubernetes/flux/cluster.yaml", `---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository

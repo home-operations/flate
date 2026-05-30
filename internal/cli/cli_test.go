@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 // runCLI drives cli.Run inside the test binary and returns
@@ -32,7 +34,7 @@ func writeFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	k8s := filepath.Join(root, "kubernetes")
-	mustWrite(t, filepath.Join(k8s, "flux", "cluster.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(k8s, "flux", "cluster.yaml"), `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -44,9 +46,9 @@ spec:
   path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
-	mustWrite(t, filepath.Join(k8s, "apps", "kustomization.yaml"),
+	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "kustomization.yaml"),
 		"resources:\n- cm.yaml\n")
-	mustWrite(t, filepath.Join(k8s, "apps", "cm.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: hello, namespace: apps}
@@ -68,7 +70,7 @@ func writeMultiNamespaceFixture(t *testing.T) string {
 		{name: "apps-a", namespace: "alpha", path: "apps-a"},
 		{name: "apps-b", namespace: "beta", path: "apps-b"},
 	} {
-		mustWrite(t, filepath.Join(k8s, "flux", tc.name+".yaml"), `---
+		testutil.WriteFileAt(t, filepath.Join(k8s, "flux", tc.name+".yaml"), `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -79,8 +81,8 @@ spec:
   path: ./`+tc.path+`
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
-		mustWrite(t, filepath.Join(k8s, tc.path, "kustomization.yaml"), "resources:\n- cm.yaml\n")
-		mustWrite(t, filepath.Join(k8s, tc.path, "cm.yaml"), `---
+		testutil.WriteFileAt(t, filepath.Join(k8s, tc.path, "kustomization.yaml"), "resources:\n- cm.yaml\n")
+		testutil.WriteFileAt(t, filepath.Join(k8s, tc.path, "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: `+tc.name+`, namespace: `+tc.namespace+`}
@@ -89,16 +91,6 @@ data:
 `)
 	}
 	return k8s
-}
-
-func mustWrite(t *testing.T, p, body string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // TestRun_VersionFlag covers the --version path that cobra wires onto
@@ -643,7 +635,7 @@ func TestDiff_OutputMarkdown(t *testing.T) {
 	// Mutate the baseline ConfigMap so the diff renders a non-empty
 	// hunk. Without the delta `diff.Render` returns the empty-set
 	// "_No changes._" body and the ```diff fence assertion misses.
-	mustWrite(t, filepath.Join(orig, "kubernetes", "apps", "cm.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(orig, "kubernetes", "apps", "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: hello, namespace: apps}

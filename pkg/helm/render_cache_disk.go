@@ -10,11 +10,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
-	atomicflag "sync/atomic"
 	"time"
 
+	"github.com/home-operations/flate/internal/diskcache"
 	"github.com/home-operations/flate/pkg/source/atomic"
 )
 
@@ -43,7 +42,7 @@ type diskRenderCache struct {
 	root  string
 	limit int64 // total disk bytes; <=0 disables disk caching
 
-	sweepBusy atomicflag.Int32 // 1 = a sweep is in flight; gates re-trigger
+	sweepGate diskcache.Gate // single-flight gate so a burst of Puts triggers one sweep
 
 	// rootOnce ensures the root directory is mkdir'd exactly once
 	// per process. The first Put creates the directory tree lazily;
@@ -170,12 +169,12 @@ func (c *diskRenderCache) Put(key string, payload []byte) {
 		return
 	}
 
-	// Kick a sweep if one isn't already running. CompareAndSwap keeps
-	// the trigger single-flight: a burst of Puts past the limit will
+	// Kick a sweep if one isn't already running. The gate keeps the
+	// trigger single-flight: a burst of Puts past the limit will
 	// schedule exactly one sweep, which sees every entry written
 	// before it starts walking and prunes the oldest until total ≤
 	// limit.
-	if c.sweepBusy.CompareAndSwap(0, 1) {
+	if c.sweepGate.TryAcquire() {
 		go c.sweep()
 	}
 }
@@ -190,15 +189,10 @@ func (c *diskRenderCache) Put(key string, payload []byte) {
 // and a stat / unlink failure on one entry shouldn't stop the rest of
 // the sweep.
 func (c *diskRenderCache) sweep() {
-	defer c.sweepBusy.Store(0)
+	defer c.sweepGate.Release()
 
-	type entry struct {
-		path  string
-		size  int64
-		mtime int64 // unix nanos for stable sort
-	}
 	var (
-		entries []entry
+		entries []diskcache.Entry
 		total   int64
 	)
 	walkErr := filepath.WalkDir(c.root, func(path string, d fs.DirEntry, err error) error {
@@ -215,10 +209,10 @@ func (c *diskRenderCache) sweep() {
 		if ierr != nil {
 			return nil
 		}
-		entries = append(entries, entry{
-			path:  path,
-			size:  info.Size(),
-			mtime: info.ModTime().UnixNano(),
+		entries = append(entries, diskcache.Entry{
+			Path:  path,
+			Size:  info.Size(),
+			MTime: info.ModTime().UnixNano(), // unix nanos for stable sort
 		})
 		total += info.Size()
 		return nil
@@ -226,31 +220,26 @@ func (c *diskRenderCache) sweep() {
 	if walkErr != nil {
 		slog.Debug("helm render cache: sweep walk", "root", c.root, "err", walkErr)
 	}
-	if total <= c.limit {
-		return
-	}
 
 	// Oldest first — those evict before the most recently used. Stable
 	// against ties (sort by mtime then path) so two test entries
 	// written within the same nanosecond don't evict in
 	// platform-dependent order.
-	slices.SortFunc(entries, func(a, b entry) int {
-		if c := cmp.Compare(a.mtime, b.mtime); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.path, b.path)
-	})
-
-	for _, e := range entries {
-		if total <= c.limit {
-			break
-		}
-		if err := os.Remove(e.path); err != nil {
-			slog.Debug("helm render cache: sweep remove", "path", e.path, "err", err)
-			continue
-		}
-		total -= e.size
-	}
+	diskcache.EvictOldest(entries, total, c.limit,
+		func(a, b diskcache.Entry) int {
+			if c := cmp.Compare(a.MTime, b.MTime); c != 0 {
+				return c
+			}
+			return cmp.Compare(a.Path, b.Path)
+		},
+		func(e diskcache.Entry) error {
+			if err := os.Remove(e.Path); err != nil {
+				slog.Debug("helm render cache: sweep remove", "path", e.Path, "err", err)
+				return err
+			}
+			return nil
+		},
+	)
 }
 
 // nowFn is the wall-clock used by Get's mtime bump. Pulled out so

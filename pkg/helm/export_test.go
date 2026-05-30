@@ -32,7 +32,7 @@ func (c *diskRenderCache) SweepBlocking() {
 	}
 	// Wait for any in-flight async sweep to drain before kicking off
 	// our own so the synchronous call sees a stable view.
-	for !c.sweepBusy.CompareAndSwap(0, 1) {
+	for !c.sweepGate.TryAcquire() {
 		time.Sleep(time.Millisecond)
 	}
 	c.sweep()

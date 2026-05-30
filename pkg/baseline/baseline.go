@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
+	"github.com/home-operations/flate/internal/cas"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/gittree"
 )
@@ -119,23 +120,12 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		// finalize is an atomic rename — concurrent diffs against the
 		// same commit will either share the finished slot or fall
 		// through to their own stage (one wins the rename, the rest
-		// see ErrExist and clean up).
-		staging, err := os.MkdirTemp(filepath.Dir(slot), filepath.Base(slot)+".tmp.*")
-		if err != nil {
-			return "", false, fmt.Errorf("baseline staging: %w", err)
-		}
-		if err := materializeAndMark(repo, hash, staging); err != nil {
-			_ = os.RemoveAll(staging)
+		// see ErrExist, discard the temp, and adopt the winner's slot).
+		if _, err := cas.Stage(filepath.Dir(slot), slot, "baseline staging", "baseline finalize",
+			func(staging string) error { return materializeAndMark(repo, hash, staging) },
+			func() bool { info, statErr := os.Stat(slot); return statErr == nil && info.IsDir() },
+		); err != nil {
 			return "", false, err
-		}
-		if err := os.Rename(staging, slot); err != nil {
-			_ = os.RemoveAll(staging)
-			// A racing diff may have finalized first; if the slot now
-			// exists we can adopt it without re-materializing.
-			if info, statErr := os.Stat(slot); statErr == nil && info.IsDir() {
-				return slot, true, nil
-			}
-			return "", false, fmt.Errorf("baseline finalize: %w", err)
 		}
 		return slot, true, nil
 	}

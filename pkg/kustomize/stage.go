@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,12 +9,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/home-operations/flate/internal/cas"
+	"github.com/home-operations/flate/internal/diskcache"
 	"github.com/home-operations/flate/internal/keylock"
 	atomicfile "github.com/home-operations/flate/pkg/source/atomic"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -68,11 +69,11 @@ type StagingCache struct {
 	// the winner's sentinel via the cross-process retry below.
 	fpLocks *keylock.KeyMap[string]
 
-	// sweepInflight is a single-flight gate: when the persistent cache
+	// sweepGate is a single-flight gate: when the persistent cache
 	// trips its size cap, exactly one Stage call kicks the sweep on a
 	// background goroutine and every other concurrent caller observes
 	// the in-flight bit and skips.
-	sweepInflight atomic.Bool
+	sweepGate diskcache.Gate
 
 	// remoteFetches dedupes URL fetches across every preflight pass in
 	// one orchestrator run. A single kustomization.yaml URL may be
@@ -293,34 +294,31 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 	}
 
 	// Stage into a sibling tempdir + atomic rename so concurrent
-	// readers never observe a partial tree.
-	staging, err := os.MkdirTemp(filepath.Dir(dir), filepath.Base(dir)+".tmp.*")
+	// readers never observe a partial tree. On a lost rename race we
+	// adopt the winner only when its sentinel is present — content
+	// addressing guarantees the trees are equivalent.
+	adopted, err := cas.Stage(filepath.Dir(dir), dir, "stage tmp", "stage finalize",
+		func(staging string) error { return c.copyTreeInto(source, staging) },
+		func() bool { _, statErr := os.Stat(sentinel); return statErr == nil },
+	)
 	if err != nil {
-		return "", fmt.Errorf("stage tmp: %w", err)
-	}
-	if err := c.copyTreeInto(source, staging); err != nil {
-		_ = os.RemoveAll(staging)
 		return "", err
 	}
-	// Rename FIRST, sentinel AFTER. If we wrote the sentinel into the
-	// tmp dir and then crashed (or the rename failed mid-flight on a
-	// filesystem that doesn't truly fulfill POSIX atomicity), a
-	// subsequent reader could observe an incomplete tree with a
-	// sentinel inside it and skip the rebuild. By renaming the
-	// sentinel-free tree first and writing the sentinel into the
-	// renamed dir, any crash window leaves the dir without a sentinel,
-	// which the read path correctly treats as "not complete, rebuild."
-	if err := os.Rename(staging, dir); err != nil {
-		_ = os.RemoveAll(staging)
-		// A racing peer process beat us to it. Adopt the winner —
-		// content addressing guarantees the trees are equivalent.
-		if _, statErr := os.Stat(sentinel); statErr == nil {
-			c.cacheStagePromise(fingerprint, dir)
-			c.maybeKickSweep()
-			return dir, nil
-		}
-		return "", fmt.Errorf("stage finalize: %w", err)
+	if adopted {
+		c.cacheStagePromise(fingerprint, dir)
+		c.maybeKickSweep()
+		return dir, nil
 	}
+	// Rename FIRST (inside cas.Stage above), sentinel AFTER. If we
+	// wrote the sentinel into the tmp dir and then crashed (or the
+	// rename failed mid-flight on a filesystem that doesn't truly
+	// fulfill POSIX atomicity), a subsequent reader could observe an
+	// incomplete tree with a sentinel inside it and skip the rebuild.
+	// By renaming the sentinel-free tree first and writing the sentinel
+	// into the renamed dir, any crash window leaves the dir without a
+	// sentinel, which the read path correctly treats as "not complete,
+	// rebuild."
+	//
 	// Sentinel is empty; its presence alone is the signal. Use
 	// atomic.WriteFile so a crash during this write doesn't leave a
 	// partially-named or zero-length sentinel that confuses a later
@@ -385,23 +383,15 @@ func (c *StagingCache) maybeKickSweep() {
 	if c.maxBytes <= 0 || c.root == "" {
 		return
 	}
-	if !c.sweepInflight.CompareAndSwap(false, true) {
+	if !c.sweepGate.TryAcquire() {
 		return
 	}
 	go func() {
-		defer c.sweepInflight.Store(false)
+		defer c.sweepGate.Release()
 		if err := sweepStageBySize(c.root, c.maxBytes); err != nil {
 			slog.Debug("stage cache sweep", "err", err)
 		}
 	}()
-}
-
-// stageEntry summarizes one persistent stage directory under the
-// cache root for the LRU sweep.
-type stageEntry struct {
-	path  string
-	mtime time.Time
-	size  int64
 }
 
 // sweepStageBySize walks root and, when total size exceeds maxBytes,
@@ -418,7 +408,7 @@ func sweepStageBySize(root string, maxBytes int64) error {
 	if err != nil {
 		return err
 	}
-	var entries []stageEntry
+	var entries []diskcache.Entry
 	var total int64
 	for _, p := range prefixes {
 		if !p.IsDir() {
@@ -455,33 +445,27 @@ func sweepStageBySize(root string, maxBytes int64) error {
 				continue
 			}
 			size := dirSize(full)
-			entries = append(entries, stageEntry{path: full, mtime: info.ModTime(), size: size})
+			entries = append(entries, diskcache.Entry{Path: full, MTime: info.ModTime().UnixNano(), Size: size})
 			total += size
 		}
 	}
-	if total <= maxBytes {
-		return nil
-	}
 	// Oldest first; evict until under cap.
-	slices.SortFunc(entries, func(a, b stageEntry) int {
-		return a.mtime.Compare(b.mtime)
-	})
-	for _, e := range entries {
-		if total <= maxBytes {
-			break
-		}
-		if err := os.RemoveAll(e.path); err != nil {
-			slog.Debug("stage cache evict", "path", e.path, "err", err)
-			continue
-		}
-		total -= e.size
-		// Best-effort: drop the prefix dir if it's now empty so
-		// repeated sweeps don't accumulate dead 2-char shells.
-		prefixDir := filepath.Dir(e.path)
-		if rem, err := os.ReadDir(prefixDir); err == nil && len(rem) == 0 {
-			_ = os.Remove(prefixDir)
-		}
-	}
+	diskcache.EvictOldest(entries, total, maxBytes,
+		func(a, b diskcache.Entry) int { return cmp.Compare(a.MTime, b.MTime) },
+		func(e diskcache.Entry) error {
+			if err := os.RemoveAll(e.Path); err != nil {
+				slog.Debug("stage cache evict", "path", e.Path, "err", err)
+				return err
+			}
+			// Best-effort: drop the prefix dir if it's now empty so
+			// repeated sweeps don't accumulate dead 2-char shells.
+			prefixDir := filepath.Dir(e.Path)
+			if rem, err := os.ReadDir(prefixDir); err == nil && len(rem) == 0 {
+				_ = os.Remove(prefixDir)
+			}
+			return nil
+		},
+	)
 	return nil
 }
 

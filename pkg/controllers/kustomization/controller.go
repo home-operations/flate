@@ -359,14 +359,6 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	return deps
 }
 
-// resolveSourceRoot returns the on-disk root the kustomization should
-// be built from — i.e. the source artifact's local path. The Flux
-// renderer then joins ks.Path onto this root.
-func (c *Controller) resolveSourceRoot(ks *manifest.Kustomization) (string, error) {
-	path, _, err := c.resolveSourceRootAndFingerprint(ks)
-	return path, err
-}
-
 // resolveSourceRootAndFingerprint returns the source's on-disk root
 // AND its content-addressed fingerprint. The fingerprint feeds the
 // persistent kustomize staging cache: when non-empty, repeat renders

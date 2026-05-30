@@ -34,11 +34,8 @@ import (
 //
 // MarkRenderedBatch records multiple children under a single lock
 // acquisition — used by the emit loop to avoid N round-trips on the
-// renderedSet mutex when a render emits N source-kind children. The
-// single-child MarkRendered stays for ad-hoc callers and remains
-// semantically equivalent to MarkRenderedBatch(parent, {child}).
+// renderedSet mutex when a render emits N source-kind children.
 type RenderTracker interface {
-	MarkRendered(parent, child manifest.NamedResource)
 	MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource)
 }
 

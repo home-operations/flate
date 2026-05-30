@@ -17,20 +17,20 @@ func TestRenderedSet_RecordsAndQueriesParent(t *testing.T) {
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
 
 	if r.has(child) {
-		t.Fatal("expected child to be absent before MarkRendered")
+		t.Fatal("expected child to be absent before MarkRenderedBatch")
 	}
 	if _, ok := r.ParentOf(child); ok {
 		t.Fatal("ParentOf should return ok=false for unknown id")
 	}
 
-	r.MarkRendered(parent, child)
+	r.MarkRenderedBatch(parent, []manifest.NamedResource{child})
 
 	if !r.has(child) {
-		t.Error("expected child to be present after MarkRendered")
+		t.Error("expected child to be present after MarkRenderedBatch")
 	}
 	got, ok := r.ParentOf(child)
 	if !ok {
-		t.Fatal("ParentOf should return ok=true after MarkRendered")
+		t.Fatal("ParentOf should return ok=true after MarkRenderedBatch")
 	}
 	if got != parent {
 		t.Errorf("ParentOf = %v, want %v", got, parent)
@@ -52,8 +52,8 @@ func TestRenderedSet_FirstWriterWins(t *testing.T) {
 	parentA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "a"}
 	parentB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "b"}
 
-	r.MarkRendered(parentA, child)
-	r.MarkRendered(parentB, child)
+	r.MarkRenderedBatch(parentA, []manifest.NamedResource{child})
+	r.MarkRenderedBatch(parentB, []manifest.NamedResource{child})
 
 	got, _ := r.ParentOf(child)
 	if got != parentA {

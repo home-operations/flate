@@ -23,47 +23,6 @@ func makeKS(name, ns string, deps ...manifest.NamedResource) *manifest.Kustomiza
 	}
 }
 
-// TestDetectDependsOnCycles_Simple locks the headline case: a two-
-// node KS cycle is reported as a closed loop, deterministic across
-// runs (sort + sort = same output every invocation).
-func TestDetectDependsOnCycles_Simple(t *testing.T) {
-	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
-	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
-
-	o := &Orchestrator{store: store.New()}
-	o.store.AddObject(makeKS("a", "ns", idB))
-	o.store.AddObject(makeKS("b", "ns", idA))
-
-	cycles := o.detectDependsOnCycles()
-	if len(cycles) == 0 {
-		t.Fatal("expected at least one cycle; got none")
-	}
-	got := formatCyclePath(cycles[0])
-	if !strings.Contains(got, "a") || !strings.Contains(got, "b") {
-		t.Errorf("cycle path missing nodes: %q", got)
-	}
-	// Closed loop: first id repeats at the end.
-	if cycles[0][0] != cycles[0][len(cycles[0])-1] {
-		t.Errorf("cycle should close on itself; got %v", cycles[0])
-	}
-}
-
-// TestDetectDependsOnCycles_NoCycleNoOutput confirms acyclic graphs
-// produce no false positives.
-func TestDetectDependsOnCycles_NoCycleNoOutput(t *testing.T) {
-	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
-	idC := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "c"}
-
-	o := &Orchestrator{store: store.New()}
-	o.store.AddObject(makeKS("a", "ns", idB, idC)) // a → {b, c}
-	o.store.AddObject(makeKS("b", "ns", idC))      // b → c
-	o.store.AddObject(makeKS("c", "ns"))           // c has no deps
-
-	if cycles := o.detectDependsOnCycles(); len(cycles) != 0 {
-		t.Errorf("expected no cycles on a DAG; got %v", cycles)
-	}
-}
-
 // TestFailDependsOnCycles_RecordsPreflightFailures verifies the runtime
 // behavior the user cares about: cycle members fail before render, while
 // their Flux dependsOn graph remains intact.

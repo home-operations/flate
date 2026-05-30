@@ -18,8 +18,8 @@ import (
 // that parent's render output. Such files exist on disk but Flux
 // would never see them, so flate downgrades the failure to a
 // warning rather than gating the test on stale local files.
-func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]struct{} {
-	out := make(map[manifest.NamedResource]struct{})
+func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]string {
+	out := make(map[manifest.NamedResource]string)
 	// Use repoRoot (not cfg.Path) so KSPathPrefixes' component
 	// lookups read from the actual repo root rather than a
 	// potentially-subdir --path. Same fix as PR #358 applied to
@@ -27,7 +27,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 	// cache populated during Bootstrap so the per-KS component file
 	// reads are served from memory rather than re-stat'd here.
 	prefixes := loader.KSPathPrefixesWithCache(o.store, o.repoRoot, o.componentCache)
-	for id := range failed {
+	for id, info := range failed {
 		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
 			continue
 		}
@@ -41,7 +41,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 			continue
 		}
 		if _, ok := loader.LongestParent(prefixes, file, id); ok {
-			out[id] = struct{}{}
+			out[id] = info.Message
 		}
 	}
 	return out
@@ -142,14 +142,12 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 // tree. Mutates the failed map in place; the demoted ids land in
 // o.orphans for Render() to surface.
 func (o *Orchestrator) demoteOrphans(failed map[manifest.NamedResource]store.StatusInfo) {
-	o.orphans = map[manifest.NamedResource]string{}
-	for id := range o.detectOrphans(failed) {
-		info := failed[id]
-		o.orphans[id] = info.Message
+	o.orphans = o.detectOrphans(failed)
+	for id, msg := range o.orphans {
 		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
 		slog.Warn("resource orphaned", "id", id.String(),
 			"file", o.sourceFiles[id],
-			"reason", info.Message)
+			"reason", msg)
 		delete(failed, id)
 	}
 }

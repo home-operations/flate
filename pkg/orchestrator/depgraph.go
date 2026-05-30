@@ -31,11 +31,6 @@ type dependencyGraph struct {
 	// prior-empty state and can diff against it (distinguishes
 	// "never registered" from "registered with no deps").
 	outEdges map[manifest.NamedResource]map[manifest.NamedResource]struct{}
-	// inEdges[dst] is the set of srcs that depend on dst. Maintained
-	// in lockstep with outEdges. Used by the reverse-reachability
-	// walk in the future; currently kept for symmetric updates so a
-	// later optimization can reuse it without a graph rebuild.
-	inEdges map[manifest.NamedResource]map[manifest.NamedResource]struct{}
 	// failed maps each cycle member to the human-readable message
 	// recorded in the orchestrator's preflightFailures map. Acts as
 	// the source-of-truth snapshot the orchestrator reads after each
@@ -46,7 +41,6 @@ type dependencyGraph struct {
 func newDependencyGraph() *dependencyGraph {
 	return &dependencyGraph{
 		outEdges: map[manifest.NamedResource]map[manifest.NamedResource]struct{}{},
-		inEdges:  map[manifest.NamedResource]map[manifest.NamedResource]struct{}{},
 		failed:   map[manifest.NamedResource]string{},
 	}
 }
@@ -64,7 +58,7 @@ func newDependencyGraph() *dependencyGraph {
 // Algorithm:
 //
 //   - Diff old vs new out-edges for id. If unchanged, no-op.
-//   - Apply the diff to outEdges + inEdges.
+//   - Apply the diff to outEdges.
 //   - For each ADDED edge (id → dst), forward-DFS from dst checking
 //     whether dst can reach id. Each such path is a new cycle; flag
 //     every node on the path as failed.
@@ -106,13 +100,7 @@ func (g *dependencyGraph) ReplaceEdges(id manifest.NamedResource, deps []manifes
 	for d := range oldSet {
 		if _, keep := newSet[d]; !keep {
 			hasRemoved = true
-			// Drop the reverse edge.
-			if in := g.inEdges[d]; in != nil {
-				delete(in, id)
-				if len(in) == 0 {
-					delete(g.inEdges, d)
-				}
-			}
+			break
 		}
 	}
 
@@ -121,15 +109,6 @@ func (g *dependencyGraph) ReplaceEdges(id manifest.NamedResource, deps []manifes
 		delete(g.outEdges, id)
 	} else {
 		g.outEdges[id] = newSet
-	}
-	// Install the new in-edges for added dsts.
-	for _, d := range addedDsts {
-		in := g.inEdges[d]
-		if in == nil {
-			in = map[manifest.NamedResource]struct{}{}
-			g.inEdges[d] = in
-		}
-		in[id] = struct{}{}
 	}
 
 	// New cycles can only appear through ADDED edges. For each one,

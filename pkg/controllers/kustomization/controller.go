@@ -59,10 +59,8 @@ type Controller struct {
 // MarkRenderedBatch records multiple children under a single lock
 // acquisition — used by emitRenderedChildren to avoid N round-trips
 // on the renderedSet mutex when a render emits N reconcilable
-// children. The single-child MarkRendered stays for ad-hoc callers
-// and remains semantically equivalent to MarkRenderedBatch(parent, {child}).
+// children.
 type RenderTracker interface {
-	MarkRendered(parent, child manifest.NamedResource)
 	MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource)
 }
 

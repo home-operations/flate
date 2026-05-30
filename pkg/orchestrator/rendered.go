@@ -33,38 +33,15 @@ func newRenderedSet() *renderedSet {
 	return &renderedSet{parents: make(map[manifest.NamedResource]manifest.NamedResource)}
 }
 
-// MarkRendered satisfies kustomization.RenderTracker and
-// helmrelease.RenderTracker. Called by the KS controller for every
-// reconcilable child it emits, and by the HR controller for every
-// source-kind child it emits, passing the parent's id alongside the
-// child's. The parent linkage replaces the previous file-path
-// prefix-match used by loader.BuildParentIndexForKind —
-// render-emitted children have no source file, but they DO have a
-// known parent.
-//
-// Self-edges are dropped: a KS whose spec.path covers its own
-// definition file (the Zariel/home-ops pattern — cluster KS at
-// ./k8s/flux/config/cluster.yaml with spec.path ./k8s/flux/) emits
-// itself during render. Without this guard, ParentOf(cluster) would
-// return cluster, the parent-gate would depwait on the KS itself,
-// and reconcile would time out. The file-loaded path-prefix index
-// already excludes self in loader.LongestParent; renderedSet mirrors
-// that contract.
-func (r *renderedSet) MarkRendered(parent, child manifest.NamedResource) {
-	if parent == child {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.markLocked(parent, child)
-}
-
 // MarkRenderedBatch records multiple parent→child edges atomically
 // under a single lock acquisition. Used by the KS controller's
 // emitRenderedChildren loop, which would otherwise pay N full Lock
-// acquisitions on r.mu for the N children of a single render. Same
-// semantics as N successive MarkRendered calls (self-edges dropped,
-// first-write-wins on duplicates). No-op for an empty children slice.
+// acquisitions on r.mu for the N children of a single render. Self-
+// edges are dropped (a KS whose spec.path covers its own definition
+// file — the Zariel/home-ops cluster KS pattern — emits itself during
+// render; the file-loaded path-prefix index already excludes self in
+// loader.LongestParent), first-write-wins on duplicates. No-op for an
+// empty children slice.
 func (r *renderedSet) MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
 	if len(children) == 0 {
 		return
@@ -79,14 +56,14 @@ func (r *renderedSet) MarkRenderedBatch(parent manifest.NamedResource, children 
 	}
 }
 
-// markLocked is the lock-held body shared by MarkRendered and
-// MarkRenderedBatch. Caller MUST hold r.mu (write lock). Drops
-// self-edges and applies first-write-wins on duplicate children.
+// markLocked is the lock-held body of MarkRenderedBatch. Caller MUST
+// hold r.mu (write lock). Applies first-write-wins on duplicate
+// children.
 //
 // First-write-wins: a child emitted by multiple parents (rare —
 // kustomize replacements/components patterns) keeps its initial
 // attribution. Without this guard, PR #361's fingerprint-dedup
-// replay re-runs MarkRendered on every reconcile of every parent
+// replay re-runs the emit on every reconcile of every parent
 // and silently swaps attribution to whichever parent reconciled
 // most recently — breaking detectOrphans / ParentOf / RS-extension
 // queries that subsequently read the wrong parent.

@@ -68,49 +68,6 @@ func BenchmarkFailDependsOnCycles_Incremental(b *testing.B) {
 	}
 }
 
-// BenchmarkFailDependsOnCycles_Baseline reproduces the pre-Phase-2.6
-// listener cost: a full per-kind DFS on every store event. Each
-// iteration runs the legacy findDependencyCycles N times — one per
-// simulated EventObjectAdded — to model the old O(N(N+E)) listener
-// fire pattern. The Incremental bench above measures the replacement.
-//
-// findDependencyCycles is retained for detectDependsOnCycles callers
-// (tests, future tooling); using it here lets the baseline live in
-// the same binary as the new code so the delta is measured against
-// an apples-to-apples N+E.
-func BenchmarkFailDependsOnCycles_Baseline(b *testing.B) {
-	const N = 1000
-	o := &Orchestrator{store: store.New()}
-
-	ids := make([]manifest.NamedResource, N)
-	for i := range N {
-		ids[i] = manifest.NamedResource{
-			Kind: manifest.KindKustomization, Namespace: "ns",
-			Name: fmt.Sprintf("ks-%05d", i),
-		}
-	}
-	for i := range N {
-		var deps []manifest.NamedResource
-		if i+1 < N {
-			deps = []manifest.NamedResource{ids[i+1]}
-		}
-		o.store.AddObject(makeKS(ids[i].Name, ids[i].Namespace, deps...))
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		// One full listener replay: N store events, each running
-		// the per-kind full DFS once (the pre-Phase-2.6 listener
-		// body). Both kinds are walked per event because the old
-		// listener fired failDependsOnCycles which walked both.
-		for range N {
-			_ = findDependencyCycles(o.store, manifest.KindKustomization)
-			_ = findDependencyCycles(o.store, manifest.KindHelmRelease)
-		}
-	}
-}
-
 // BenchmarkFailDependsOnCycles_Bootstrap measures the one-shot
 // Bootstrap full-rebuild path (failDependsOnCycles called once at
 // startup). This is the cost of the rebuild that happens BEFORE any

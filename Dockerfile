@@ -1,4 +1,6 @@
 FROM golang:1.26-alpine AS build
+ARG VERSION=dev
+ARG REVISION=dev
 WORKDIR /src
 # ca-certificates so the scratch stage can verify TLS to ghcr.io,
 # helm-chart repos, OCI registries, etc.
@@ -6,7 +8,7 @@ RUN apk add --no-cache ca-certificates upx
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/flate ./cmd/flate
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${REVISION}" -o /out/flate ./cmd/flate
 RUN upx --best --lzma /out/flate
 
 FROM scratch

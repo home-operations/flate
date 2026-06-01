@@ -8,14 +8,32 @@ import (
 	"github.com/home-operations/flate/internal/cli"
 )
 
-// version is set at build time via -ldflags by goreleaser. When the
-// binary is built with plain `go build` / `go install`, version stays
-// "dev" and we fall back to the module BuildInfo for a useful display.
-var version = "dev"
+// version and commit are stamped at build time via -ldflags: goreleaser
+// sets version for release binaries, and the container Dockerfile sets both.
+// With a plain `go build` / `go install` they keep their defaults and we
+// fall back to the module BuildInfo for a useful version display.
+var (
+	version = "dev"
+	commit  = "unknown"
+)
 
 func main() {
 	tuneGC()
-	os.Exit(cli.Execute(resolvedVersion()))
+	os.Exit(cli.Execute(versionString()))
+}
+
+// versionString renders the value behind `flate --version`, appending a
+// short commit when one was stamped in (the container build sets it).
+func versionString() string {
+	v := resolvedVersion()
+	if commit == "unknown" {
+		return v
+	}
+	short := commit
+	if len(short) > 7 {
+		short = short[:7]
+	}
+	return v + " (" + short + ")"
 }
 
 // tuneGC raises the GC target for flate's short-lived, allocation-heavy

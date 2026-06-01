@@ -1,0 +1,13 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: lidarr
+  namespace: downloads
+spec:
+  interval: 10m
+  path: ./apps/downloads/lidarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  targetNamespace: downloads

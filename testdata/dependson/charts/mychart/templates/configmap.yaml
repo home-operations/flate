@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-cm
+  namespace: {{ .Release.Namespace }}
+data:
+  greeting: {{ .Values.greeting | quote }}
+  replicas: "{{ .Values.replicas }}"

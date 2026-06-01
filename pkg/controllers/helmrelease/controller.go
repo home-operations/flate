@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -522,7 +523,22 @@ func (c *Controller) collectHRDeps(hr *manifest.HelmRelease) []manifest.Dependen
 	if len(hr.DependsOn) == 0 {
 		return nil
 	}
-	return append([]manifest.DependencyRef(nil), hr.DependsOn...)
+	deps := append([]manifest.DependencyRef(nil), hr.DependsOn...)
+	// Changed-only mode: a dependsOn target outside the keep-set is
+	// unchanged, so its producing Kustomization is skipped and the target
+	// HR is never render-emitted into the Store — depwait would report
+	// "dependency not found" for a dep that's simply unchanged. Drop it:
+	// an unchanged dep is satisfied for a delta check, mirroring how a
+	// skipped in-Store resource resolves Ready via base.PreGate. dependsOn
+	// is pure reconcile ordering and never affects offline render content
+	// (see change.transitiveDeps). Unlike KS deps, HRs have no file-loaded
+	// Store object to carry that Ready, hence the prune here. See #517.
+	if f := c.Filter(); f != nil && f.Enabled() {
+		deps = slices.DeleteFunc(deps, func(d manifest.DependencyRef) bool {
+			return !f.ShouldReconcile(d.NamedResource)
+		})
+	}
+	return deps
 }
 
 // preparePrereqs collects refs that helm.Prepare reads from the live

@@ -562,3 +562,35 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 		t.Errorf("collectHRDeps did not return a defensive copy")
 	}
 }
+
+func TestController_CollectHRDepsPrunesUnchangedDeps(t *testing.T) {
+	// #517: in changed-only mode a changed HR's dependsOn on an UNCHANGED
+	// dep must be pruned. The unchanged dep's producing Kustomization is
+	// skipped, so the dep HR is never render-emitted into the Store and
+	// depwait would spuriously fail "dependency not found". Build a filter
+	// whose keep-set contains qbittorrent (its file changed) but not
+	// prowlarr (unchanged): only the in-keep dep survives.
+	qbit := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "downloads", Name: "qbittorrent"}
+	prowlarr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "downloads", Name: "prowlarr"}
+	filter := change.NewFilter(
+		change.NewSet([]string{"qbittorrent.yaml"}),
+		map[manifest.NamedResource]string{qbit: "qbittorrent.yaml", prowlarr: "prowlarr.yaml"},
+		"",
+		testutil.MapLister{},
+	)
+	c, _ := newTestController(t, filter)
+	hr := &manifest.HelmRelease{
+		Name: "lidarr", Namespace: "downloads",
+		DependsOn: []manifest.DependencyRef{{NamedResource: qbit}, {NamedResource: prowlarr}},
+	}
+	got := c.collectHRDeps(hr)
+	if len(got) != 1 || got[0].NamedResource != qbit {
+		t.Fatalf("collectHRDeps = %+v; want only the in-keep qbittorrent dep", got)
+	}
+
+	// Sanity: a disabled filter (full mode) prunes nothing.
+	cFull, _ := newTestController(t, nil)
+	if got := cFull.collectHRDeps(hr); len(got) != 2 {
+		t.Errorf("disabled filter must not prune; collectHRDeps = %+v", got)
+	}
+}

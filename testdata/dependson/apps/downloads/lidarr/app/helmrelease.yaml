@@ -1,0 +1,17 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: lidarr
+spec:
+  interval: 10m
+  dependsOn:
+    - name: qbittorrent
+  chart:
+    spec:
+      chart: charts/mychart
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  values:
+    greeting: hello-from-lidarr

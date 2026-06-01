@@ -554,6 +554,50 @@ func TestE2E_SubstituteDisabledAnnotation(t *testing.T) {
 	}
 }
 
+// TestE2E_ChangedOnlyHRDependsOnUnchangedDep is the regression test for
+// issue #517: in changed-only mode a changed HelmRelease whose
+// spec.dependsOn references an UNCHANGED HelmRelease must not fail
+// "dependency not found". The dependency's producing Kustomization is
+// SKIPPED (unchanged), so its HR is never render-emitted into the store
+// — but an unchanged dependency is satisfied by definition for a delta
+// check. The dependson/ fixture mirrors the bjw-s layout that surfaced
+// the bug: per-app Flux Kustomizations with targetNamespace, bare HRs,
+// lidarr dependsOn qbittorrent.
+func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
+	clusterPath, repoRoot := initGitFixtureFrom(t, testdataPath(t, "dependson"))
+
+	// Edit a value in lidarr's HelmRelease so only lidarr is in changed
+	// scope; qbittorrent (its dependsOn target) stays unchanged, so its
+	// Kustomization is skipped and the qbittorrent HR is never emitted.
+	hr := filepath.Join(repoRoot, "apps", "downloads", "lidarr", "app", "helmrelease.yaml")
+	body, err := os.ReadFile(hr) //nolint:gosec // repoRoot is t.TempDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := strings.Replace(string(body), "hello-from-lidarr", "hello-from-lidarr-edited", 1)
+	if mutated == string(body) {
+		t.Fatal("sentinel 'hello-from-lidarr' not found in lidarr helmrelease.yaml")
+	}
+	if err := os.WriteFile(hr, []byte(mutated), 0o600); err != nil { //nolint:gosec // repoRoot is t.TempDir()
+		t.Fatal(err)
+	}
+
+	out := runCLIOutputOnly(t, "test", "all", "--path", clusterPath, "--base", "HEAD")
+
+	if strings.Contains(out, "dependency not found") {
+		t.Errorf("changed-only HR dependsOn on an unchanged dep must not fail:\n%s", out)
+	}
+	if lidarr := mustExtractLine(t, out, "HelmRelease/downloads/lidarr"); !strings.Contains(lidarr, "PASSED") {
+		t.Errorf("lidarr HR should PASS once the unchanged dep is pruned; got: %s", lidarr)
+	}
+	// Confirm the test actually exercises the bug: qbittorrent's KS (the
+	// dep's producer) must be skipped, otherwise the dep would render and
+	// the assertion above would pass trivially.
+	if line := mustExtractSkipLine(t, out, "Kustomization/downloads/qbittorrent"); !strings.Contains(line, "SKIPPED") {
+		t.Errorf("expected qbittorrent KS SKIPPED (unchanged); got: %s", line)
+	}
+}
+
 func mustExtractLine(t *testing.T, haystack, needle string) string {
 	t.Helper()
 	for line := range strings.SplitSeq(haystack, "\n") {
@@ -563,6 +607,67 @@ func mustExtractLine(t *testing.T, haystack, needle string) string {
 	}
 	t.Fatalf("status line for %q not found in:\n%s", needle, haystack)
 	return ""
+}
+
+// mustExtractSkipLine returns the SKIPPED status line containing needle,
+// failing the test if no such line exists. Companion to mustExtractLine
+// for the changed-only path where mustExtractLine's PASSED/FAILED filter
+// wouldn't match a skipped resource.
+func mustExtractSkipLine(t *testing.T, haystack, needle string) string {
+	t.Helper()
+	for line := range strings.SplitSeq(haystack, "\n") {
+		if strings.Contains(line, needle) && strings.Contains(line, "SKIPPED") {
+			return line
+		}
+	}
+	t.Fatalf("SKIPPED line for %q not found in:\n%s", needle, haystack)
+	return ""
+}
+
+// initGitFixtureFrom copies the fixture tree at src into a fresh tempdir,
+// inits a git repo, and commits the whole tree as the baseline. Returns
+// (clusterPath, repoRoot): clusterPath is the repoRoot/flux entrypoint
+// callers pass as --path; repoRoot is the .git ancestor so the test can
+// mutate fixture files after committing. Mirrors initGitFixture but seeds
+// from a testdata fixture rather than inline bytes.
+func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string) {
+	t.Helper()
+	dir := t.TempDir()
+	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		out := filepath.Join(dir, rel)
+		if info.IsDir() {
+			return os.MkdirAll(out, 0o750)
+		}
+		data, err := os.ReadFile(p) //nolint:gosec // p is supplied by filepath.Walk over a known root
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(out, data, 0o600) //nolint:gosec // dir is t.TempDir()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Commit("init", &gogit.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, "flux"), dir
 }
 
 // initGitFixture creates a tempdir with a real git repo, commits a

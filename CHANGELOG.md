@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.36](https://github.com/home-operations/flate/compare/0.1.35...0.1.36) (2026-06-01)
+
+
+### Bug Fixes
+
+* **helmrelease:** prune unchanged dependsOn targets in changed-only mode ([#518](https://github.com/home-operations/flate/issues/518)) ([e51b770](https://github.com/home-operations/flate/commit/e51b7709b1fb438cff90d92492b923d28960680c))
+* **mise:** update tool lefthook (2.1.8 → 2.1.9) ([1c0fcaf](https://github.com/home-operations/flate/commit/1c0fcaf5e7ff4b52aba4a74f1b1d7f46a2f4af8f))
+
+
+### Miscellaneous Chores
+
+* implement oxfmt ([2236e28](https://github.com/home-operations/flate/commit/2236e28705171695c9c9b283852334d5a94c2d39))
+* upgrade deps ([1f8a09f](https://github.com/home-operations/flate/commit/1f8a09fe409d421ebc5308068132c8a690b1f9de))
+
 ## [0.1.35](https://github.com/home-operations/flate/compare/0.1.34...0.1.35) (2026-05-30)
 
 

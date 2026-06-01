@@ -64,6 +64,15 @@ runs:
         | # zizmor: ignore[github-env] FLATE_CACHE_DIR is the action's contract; the value is a runner-provided path joined with a literal
         set -euo pipefail
 
+        # ${{ github.token }} is issued by the forge running the workflow; on
+        # Forgejo/Gitea/GHES it 401s against api.github.com, so drop it off-github.com.
+        API_TOKEN="${INPUT_TOKEN}"
+        if [[ -n "${GITHUB_SERVER_URL:-}" && "${GITHUB_SERVER_URL}" != "https://github.com" ]]; then
+          API_TOKEN=""
+          [[ -n "${INPUT_TOKEN}" ]] && \
+            echo "Ignoring token for github.com calls: workflow runs on ${GITHUB_SERVER_URL}, not github.com"
+        fi
+
         # SemVer pattern — used both to recognize tag-style refs and to filter
         # candidate tags when a SHA-pin is mapped back to a release.
         semver='^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
@@ -86,7 +95,7 @@ runs:
           from="action ref ${ACTION_REF}"
         elif [[ "${ACTION_REF:-}" =~ ^[0-9a-f]{7,40}$ ]] && command -v jq >/dev/null; then
           auth=()
-          [[ -n "${INPUT_TOKEN}" ]] && auth=(-H "Authorization: Bearer ${INPUT_TOKEN}")
+          [[ -n "${API_TOKEN}" ]] && auth=(-H "Authorization: Bearer ${API_TOKEN}")
           tag=$(curl -fsSL --max-time 10 \
                 -H "Accept: application/vnd.github+json" \
                 "${auth[@]}" \
@@ -102,9 +111,9 @@ runs:
 
         # Unresolved (empty or literal "latest") → query the releases endpoint for a concrete tag.
         if [[ -z "${version}" || "${version}" == "latest" ]]; then
-          if [[ -n "${INPUT_TOKEN}" ]] && command -v jq >/dev/null; then
+          if [[ -n "${API_TOKEN}" ]] && command -v jq >/dev/null; then
             version=$(curl -fsSL \
-                -H "Authorization: Bearer ${INPUT_TOKEN}" \
+                -H "Authorization: Bearer ${API_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
                 https://api.github.com/repos/home-operations/flate/releases/latest \
               | jq -r .tag_name)

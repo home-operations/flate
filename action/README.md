@@ -49,6 +49,8 @@ When `version` is not set, the action inspects the ref it was pinned to (`github
 
 The SHA-to-tag lookup uses `inputs.token` (defaulted to `${{ github.token }}`) and degrades to `latest` if the API call fails or `jq` isn't available.
 
+> On non-github.com forges (Forgejo, Gitea, GHES), `${{ github.token }}` is issued by that forge and rejected by `api.github.com`. The action detects this via `GITHUB_SERVER_URL` and drops the token for its github.com calls, so passing `token: ""` is not required.
+
 ## Caching
 
 The action always exports `FLATE_CACHE_DIR=${RUNNER_TEMP}/flate-cache` (auto-bound to flate's `--cache-dir`), so every `flate` invocation in the job writes to that path regardless of OS.

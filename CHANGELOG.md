@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.37](https://github.com/home-operations/flate/compare/0.1.36...0.1.37) (2026-06-01)
+
+
+### Bug Fixes
+
+* **action:** ignore forge token for github.com release lookups ([#520](https://github.com/home-operations/flate/issues/520)) ([21e117b](https://github.com/home-operations/flate/commit/21e117b990f1bb469b568a05b6fe295c17f16a2d))
+
 ## [0.1.36](https://github.com/home-operations/flate/compare/0.1.35...0.1.36) (2026-06-01)
 
 

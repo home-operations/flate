@@ -152,21 +152,35 @@ func readSlotManifest(slot, digestStr string) (*ocispec.Manifest, error) {
 	return &m, nil
 }
 
-// pickLayer returns the first layer matching selector.MediaType,
-// or the first layer overall when selector is nil or MediaType is empty.
+// pickLayer returns the layer matching selector.MediaType, or — with no
+// selector — the first non-provenance layer (falling back to layers[0]).
+//
+// The provenance skip is load-bearing. `helm push` lists a signed
+// chart's detached-signature layer (helmChartProvenanceMediaType) AHEAD
+// of the gzipped content layer, so the old "return layers[0]" handed the
+// signature blob (PGP text, not a tarball) to gzip extraction — "gzip:
+// invalid header" on every signed chart (cert-manager, truecharts,
+// grafana/prometheus community, ...). Skipping only the provenance type
+// keeps the documented default-to-first-layer behavior intact for every
+// other shape, including generic single-layer Flux artifacts.
 func pickLayer(layers []ocispec.Descriptor, selector *manifest.OCILayerSelector) (ocispec.Descriptor, bool) {
 	if len(layers) == 0 {
 		return ocispec.Descriptor{}, false
 	}
-	if selector == nil || selector.MediaType == "" {
-		return layers[0], true
+	if selector != nil && selector.MediaType != "" {
+		for _, l := range layers {
+			if l.MediaType == selector.MediaType {
+				return l, true
+			}
+		}
+		return ocispec.Descriptor{}, false
 	}
 	for _, l := range layers {
-		if l.MediaType == selector.MediaType {
+		if l.MediaType != helmChartProvenanceMediaType {
 			return l, true
 		}
 	}
-	return ocispec.Descriptor{}, false
+	return layers[0], true
 }
 
 // digestPath resolves a digest to its on-disk path inside slot,

@@ -57,6 +57,27 @@ func TestPickLayer(t *testing.T) {
 	}
 }
 
+// TestPickLayer_ProvenanceFirstSkipped pins the signed-chart fix: when
+// no selector is set and the manifest lists the provenance (.prov)
+// signature layer ahead of the gzipped content layer — the shape
+// `helm push` produces for every signed chart — pickLayer must skip the
+// provenance layer and return the content layer, not blindly grab
+// layers[0]. The old layers[0] default fed the signature blob to gzip
+// extraction → "gzip: invalid header".
+func TestPickLayer_ProvenanceFirstSkipped(t *testing.T) {
+	layers := []ocispec.Descriptor{
+		{MediaType: "application/vnd.cncf.helm.chart.provenance.v1.prov"},
+		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"},
+	}
+	got, ok := pickLayer(layers, nil)
+	if !ok {
+		t.Fatal("pickLayer returned ok=false")
+	}
+	if got.MediaType != "application/vnd.cncf.helm.chart.content.v1.tar+gzip" {
+		t.Errorf("mediaType = %q, want the content layer (provenance must be skipped)", got.MediaType)
+	}
+}
+
 func TestApplyLayerSelector_Extract(t *testing.T) {
 	slot := t.TempDir()
 
@@ -178,6 +199,30 @@ func TestApplyLayerSelector_DefaultsToFirstLayer(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(slot, "Chart.yaml")); !os.IsNotExist(err) {
 		t.Errorf("default selection should not extract second layer, stat err=%v", err)
+	}
+}
+
+// TestApplyLayerSelector_ProvenanceFirstDefault is the end-to-end
+// counterpart to TestPickLayer_ProvenanceFirstSkipped: a nil selector
+// against a `[provenance, content]` manifest (the signed-chart shape)
+// must extract the chart from the content layer rather than try to
+// gunzip the provenance signature.
+func TestApplyLayerSelector_ProvenanceFirstDefault(t *testing.T) {
+	slot := t.TempDir()
+	prov := []byte("-----BEGIN PGP SIGNED MESSAGE-----\nnot a tarball\n")
+	chart := mustTarGz(t, map[string]string{"Chart.yaml": "apiVersion: v2\nname: x\nversion: 0.1.0\n"})
+	digProv := writeBlob(t, slot, prov)
+	digChart := writeBlob(t, slot, chart)
+	_, manifestDigest := writeManifest(t, slot, []ocispec.Descriptor{
+		{MediaType: "application/vnd.cncf.helm.chart.provenance.v1.prov", Digest: digProv, Size: int64(len(prov))},
+		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Digest: digChart, Size: int64(len(chart))},
+	})
+
+	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(), nil); err != nil {
+		t.Fatalf("applyLayerSelector: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot, "Chart.yaml")); err != nil {
+		t.Errorf("expected Chart.yaml extracted from the content layer: %v", err)
 	}
 }
 

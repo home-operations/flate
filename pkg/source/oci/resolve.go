@@ -140,6 +140,15 @@ func pickSemverTag(tags []string, expr, filterPattern, mediaType string) (string
 
 const helmChartLayerMediaType = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
 
+// helmChartProvenanceMediaType is the media type helm assigns to the
+// detached PGP signature (`<chart>.prov`) it pushes alongside a signed
+// chart. `helm push` lists this layer AHEAD of the chart content layer
+// in the OCI manifest, and the blob is signature text — not a gzipped
+// tarball. pickLayer must skip it so the default (no-selector) path
+// doesn't hand it to gzip extraction; every signed chart (cert-manager,
+// truecharts, grafana/prometheus community, ...) carries one.
+const helmChartProvenanceMediaType = "application/vnd.cncf.helm.chart.provenance.v1.prov"
+
 func layerMediaType(selector *manifest.OCILayerSelector) string {
 	if selector == nil {
 		return ""

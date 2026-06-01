@@ -55,6 +55,10 @@ func parseConfigMap(doc map[string]any, wipeSecrets bool) (*ConfigMap, error) {
 // Only encrypted scalars are touched, so a partially-encrypted ConfigMap
 // keeps its cleartext entries. Returns data unchanged when nothing
 // matches to avoid a needless copy on the common cleartext path.
+//
+// Scope: this covers ConfigMap data (and Secret data, via parseSecret).
+// SOPS-encrypted inline HelmRelease spec.values — a partially-encrypted
+// HR file via encrypted_regex — bypass this path and are left as-is.
 func wipeSopsCiphertext(data map[string]any) map[string]any {
 	var out map[string]any
 	for k, v := range data {

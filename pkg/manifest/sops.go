@@ -1,5 +1,23 @@
 package manifest
 
+import "strings"
+
+// sopsCiphertextPrefix opens every SOPS-encrypted scalar. SOPS rewrites
+// an encrypted value as `ENC[AES256_GCM,data:…,iv:…,tag:…,type:…]`; the
+// algorithm-qualified prefix plus trailing `]` is specific enough that a
+// real cleartext value never matches it by accident.
+const sopsCiphertextPrefix = "ENC[AES256_GCM,"
+
+// IsSopsCiphertext reports whether s is a SOPS-encrypted scalar that
+// flate (running offline, with no decryption key) cannot decrypt. Used
+// to wipe leftover ciphertext to a placeholder so it doesn't poison
+// downstream rendering — e.g. an encrypted ConfigMap value flowing into
+// postBuild substitution, where the `:` inside the ciphertext breaks
+// chart validation (Ingress hosts, cert-manager dnsNames, ...).
+func IsSopsCiphertext(s string) bool {
+	return strings.HasPrefix(s, sopsCiphertextPrefix) && strings.HasSuffix(s, "]")
+}
+
 // IsEncryptedSecret reports whether doc looks like a SOPS-encrypted
 // Kubernetes resource. SOPS appends a top-level `sops` map containing
 // its metadata (mac, kms/age/pgp blocks, version) after encrypting the

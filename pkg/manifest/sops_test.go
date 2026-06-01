@@ -63,6 +63,29 @@ func TestIsEncryptedSecret(t *testing.T) {
 	}
 }
 
+func TestIsSopsCiphertext(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"encrypted str scalar", "ENC[AES256_GCM,data:abc=,iv:def=,tag:ghi=,type:str]", true},
+		{"encrypted comment scalar", "ENC[AES256_GCM,data:abc=,iv:def=,tag:ghi=,type:comment]", true},
+		{"cleartext value", "example.com", false},
+		{"empty", "", false},
+		{"prefix only, no close bracket", "ENC[AES256_GCM,data:abc", false},
+		{"different algorithm", "ENC[CHACHA20_POLY1305,data:abc]", false},
+		{"substring not at start", "host=ENC[AES256_GCM,data:abc]", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsSopsCiphertext(tc.in); got != tc.want {
+				t.Errorf("IsSopsCiphertext(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHasSubstituteDisabled(t *testing.T) {
 	cases := []struct {
 		name string

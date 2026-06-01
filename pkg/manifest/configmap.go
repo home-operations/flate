@@ -3,6 +3,7 @@ package manifest
 import (
 	"encoding/base64"
 	"fmt"
+	"maps"
 )
 
 // ConfigMap is the core/v1 ConfigMap.
@@ -18,8 +19,11 @@ func (c *ConfigMap) Named() NamedResource {
 	return NamedResource{Kind: KindConfigMap, Namespace: c.Namespace, Name: c.Name}
 }
 
-// parseConfigMap decodes a core/v1 ConfigMap.
-func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
+// parseConfigMap decodes a core/v1 ConfigMap. When wipeSecrets is set
+// (the default, matching parseSecret), SOPS-encrypted data values are
+// replaced with placeholders — flate can't decrypt them and the raw
+// ciphertext otherwise poisons downstream rendering.
+func parseConfigMap(doc map[string]any, wipeSecrets bool) (*ConfigMap, error) {
 	if err := checkAPIVersion(doc, "v1"); err != nil {
 		return nil, err
 	}
@@ -29,12 +33,45 @@ func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
 	}
 	cm := &ConfigMap{Name: name, Namespace: ns}
 	if v, ok := doc["data"].(map[string]any); ok {
+		if wipeSecrets {
+			v = wipeSopsCiphertext(v)
+		}
 		cm.Data = v
 	}
 	if v, ok := doc["binaryData"].(map[string]any); ok {
 		cm.BinaryData = v
 	}
 	return cm, nil
+}
+
+// wipeSopsCiphertext replaces SOPS-encrypted ConfigMap values with the
+// same placeholder parseSecret uses for wiped Secret keys. flate runs
+// offline and cannot decrypt, so a SOPS-encrypted ConfigMap (commonly a
+// postBuild.substituteFrom source) would otherwise feed raw ciphertext
+// into envsubst — and the `:` inside `ENC[AES256_GCM,…]` then trips
+// chart validation (Ingress hosts, cert-manager dnsNames). Gated by the
+// caller's wipeSecrets flag so it tracks Secret wiping: callers that opt
+// to keep cleartext Secrets (WipeSecrets=false) keep the ciphertext too.
+// Only encrypted scalars are touched, so a partially-encrypted ConfigMap
+// keeps its cleartext entries. Returns data unchanged when nothing
+// matches to avoid a needless copy on the common cleartext path.
+func wipeSopsCiphertext(data map[string]any) map[string]any {
+	var out map[string]any
+	for k, v := range data {
+		s, ok := v.(string)
+		if !ok || !IsSopsCiphertext(s) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]any, len(data))
+			maps.Copy(out, data)
+		}
+		out[k] = fmt.Sprintf(ValuePlaceholderTemplate, k)
+	}
+	if out == nil {
+		return data
+	}
+	return out
 }
 
 // Secret is the core/v1 Secret. By default cleartext data is wiped to a

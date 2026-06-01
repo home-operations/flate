@@ -135,7 +135,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
 	case kind == KindResourceSetInputProvider && strings.HasPrefix(apiVersion, FluxOperatorDomain):
 		return parseResourceSetInputProvider(doc)
 	case kind == KindConfigMap:
-		return parseConfigMap(doc)
+		return parseConfigMap(doc, opts.WipeSecrets)
 	case kind == KindSecret:
 		return parseSecret(doc, opts.WipeSecrets)
 	}

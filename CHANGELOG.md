@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/home-operations/flate/compare/0.2.0...0.2.1) (2026-06-02)
+
+
+### Miscellaneous Chores
+
+* **discovery:** demote self-referential alias log to Debug ([#535](https://github.com/home-operations/flate/issues/535)) ([fb9c101](https://github.com/home-operations/flate/commit/fb9c101c28b11ef4f1d8e463e86e1ad2a4af3594))
+
 ## [0.2.0](https://github.com/home-operations/flate/compare/0.1.38...0.2.0) (2026-06-02)
 
 

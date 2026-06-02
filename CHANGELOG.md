@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/home-operations/flate/compare/0.2.1...0.2.2) (2026-06-02)
+
+
+### Features
+
+* **cli:** add -p/-P shorthands for --path/--path-orig ([#537](https://github.com/home-operations/flate/issues/537)) ([b29856b](https://github.com/home-operations/flate/commit/b29856be1e380e9047bb1c9e4c3fe9bb120325f4))
+
 ## [0.2.1](https://github.com/home-operations/flate/compare/0.2.0...0.2.1) (2026-06-02)
 
 

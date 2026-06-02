@@ -140,7 +140,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string) []m
 			URL:  "file://" + repoRoot, LocalPath: repoRoot,
 		})
 		d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias (URL matches working tree)")
-		slog.Info("discovery: aliased in-tree GitRepository to working tree (URL matches working-tree remote)",
+		slog.Debug("discovery: aliased in-tree GitRepository to working tree (URL matches working-tree remote)",
 			"id", id.String(), "url", repo.URL, "normalizedKey", normalized, "localPath", repoRoot)
 		overridden = append(overridden, id)
 	}

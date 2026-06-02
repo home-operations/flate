@@ -180,8 +180,13 @@ func renderPairBody(p pairedResource, style Format) (string, error) {
 // Run rendered the bodies in (see Options.Format).
 func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 	switch format {
-	case "", FormatDiff, FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea:
-		return renderText(diffs), nil
+	case "", FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea:
+		return renderText(diffs, true), nil
+	case FormatDiff:
+		// Unified diff bodies carry their own `--- <res>` / `+++ <res>`
+		// labels, so the flate header would just be a redundant comment
+		// line above each one — emit a clean standard diff instead.
+		return renderText(diffs, false), nil
 	case FormatYAML:
 		return yaml.Marshal(diffs)
 	case FormatJSON:
@@ -192,17 +197,20 @@ func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 	return nil, fmt.Errorf("unknown diff format %q", format)
 }
 
-// renderText concatenates each diff body under a `# <resource>` header.
-// The body identifies the data path that changed (dyff's `@@ <path> @@`,
-// or a unified diff's `@@ -a,b +c,d @@`) but not the owning resource, so
-// the header is load-bearing even for a single diff — a reviewer
-// shouldn't have to infer which Deployment from which HelmRelease the
-// body belongs to. `#`-prefixed lines are dyff's comment convention,
-// which GitHub's diff lexer renders magenta.
-func renderText(diffs []ResourceDiff) []byte {
+// renderText concatenates each diff body, optionally under a
+// `# <resource>` header. The dyff styles' bodies identify the data path
+// that changed (`@@ <path> @@`) but not the owning resource, so the
+// header is load-bearing there — a reviewer shouldn't have to infer
+// which Deployment from which HelmRelease the body belongs to.
+// `#`-prefixed lines are dyff's comment convention, which GitHub's diff
+// lexer renders magenta. The unified diff opts out: its `--- `/`+++ `
+// labels already name the resource.
+func renderText(diffs []ResourceDiff, withHeader bool) []byte {
 	var b bytes.Buffer
 	for _, d := range diffs {
-		fmt.Fprintf(&b, "# %s\n", d.Header())
+		if withHeader {
+			fmt.Fprintf(&b, "# %s\n", d.Header())
+		}
 		b.WriteString(d.Diff)
 		if !strings.HasSuffix(d.Diff, "\n") {
 			b.WriteByte('\n')

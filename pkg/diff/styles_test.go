@@ -58,12 +58,14 @@ func TestBodyStyle(t *testing.T) {
 	}
 }
 
-// TestRender_TextFormatsConcatenate pins that every plain-text format
-// (and the zero value) routes through renderText: a `# <resource>`
-// header followed by the pre-rendered body verbatim.
+// TestRender_TextFormatsConcatenate pins that the dyff text styles (and
+// the zero value) prepend a `# <resource>` header to each body, while
+// the plain unified diff omits it — its own `--- `/`+++ ` labels already
+// name the resource.
 func TestRender_TextFormatsConcatenate(t *testing.T) {
 	d := ResourceDiff{Kind: "ConfigMap", Namespace: "ns", Name: "a", Diff: "BODY-LINE\n"}
-	for _, f := range []Format{"", FormatGitHub, FormatDiff, FormatHuman, FormatBrief, FormatGitLab, FormatGitea} {
+
+	for _, f := range []Format{"", FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea} {
 		out, err := Render([]ResourceDiff{d}, f)
 		if err != nil {
 			t.Fatalf("Render(%q): %v", f, err)
@@ -75,6 +77,19 @@ func TestRender_TextFormatsConcatenate(t *testing.T) {
 		if !strings.Contains(s, "BODY-LINE") {
 			t.Errorf("Render(%q) missing body:\n%s", f, s)
 		}
+	}
+
+	// Unified diff: body only, no flate header line.
+	out, err := Render([]ResourceDiff{d}, FormatDiff)
+	if err != nil {
+		t.Fatalf("Render(diff): %v", err)
+	}
+	s := string(out)
+	if strings.Contains(s, "# ConfigMap") {
+		t.Errorf("Render(diff) should omit the header:\n%s", s)
+	}
+	if !strings.Contains(s, "BODY-LINE") {
+		t.Errorf("Render(diff) missing body:\n%s", s)
 	}
 }
 

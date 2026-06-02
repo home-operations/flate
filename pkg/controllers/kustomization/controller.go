@@ -9,12 +9,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -45,6 +48,13 @@ type Controller struct {
 
 	// renderTracker receives every reconcilable child emitted during render.
 	renderTracker RenderTracker
+
+	// workingTreeFPs memoizes workingTreeFingerprint results per source
+	// LocalPath for the life of the controller. resolveSourceRootAnd-
+	// Fingerprint runs once per Kustomization, and many KSes share the
+	// bootstrap working-tree source — without this, every KS would
+	// re-walk the entire repo to derive the same fingerprint.
+	workingTreeFPs sync.Map // string -> string
 }
 
 // RenderTracker is the tiny seam the controller uses to report
@@ -398,10 +408,10 @@ func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization)
 		// cache.
 		//
 		// The bootstrap source is the working-tree alias — fetchers
-		// don't run for it and Revision/Digest are empty. We compute
-		// a coarse (path + top-level dirent mtime tuple) hash so
+		// don't run for it and Revision/Digest are empty. We walk the
+		// tree and hash (relpath, mtime, size) per regular file so
 		// repeated invocations against an untouched tree still hit
-		// the cache, and any local edit invalidates it. Same
+		// the cache while any nested edit invalidates it. Same
 		// treatment applies to any other artifact that landed
 		// without a fetcher-supplied fingerprint
 		// (`overrideSelfReferentialGitRepositories`) — they too
@@ -411,7 +421,7 @@ func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization)
 			fp = sourceFingerprintFromRevision(sa.Revision)
 		}
 		if fp == "" {
-			fp = workingTreeFingerprint(sa.LocalPath)
+			fp = c.cachedWorkingTreeFingerprint(sa.LocalPath)
 		}
 		return sa.LocalPath, fp, nil
 	}
@@ -436,15 +446,26 @@ func sourceFingerprintFromRevision(rev string) string {
 	return rev
 }
 
-// workingTreeFingerprint computes a coarse fingerprint of the working
-// tree at path: a hash of (absPath, top-level entry names + mtimes).
-// Cheap (one ReadDir, no recursive walk) and good enough to invalidate
-// the persistent stage on the editor-save / git-checkout cases that
-// matter for repeat-render usage. A user who edits a deeply-nested
-// file without touching anything at the root would slip past — that's
-// an accepted limitation; the working tree was never a clean
-// content-addressed surface to begin with. The expensive fix would be
-// a full-tree content hash; not worth it for a soft cache invalidator.
+// cachedWorkingTreeFingerprint memoizes workingTreeFingerprint by
+// LocalPath. resolveSourceRootAndFingerprint runs once per Kustomization
+// and dozens of KSes share the bootstrap source — without this cache,
+// every reconcile re-walks the entire repo to derive the same hash.
+func (c *Controller) cachedWorkingTreeFingerprint(path string) string {
+	if v, ok := c.workingTreeFPs.Load(path); ok {
+		return v.(string)
+	}
+	fp := workingTreeFingerprint(path)
+	c.workingTreeFPs.Store(path, fp)
+	return fp
+}
+
+// workingTreeFingerprint hashes every regular file under path with
+// (relpath, mtime, size). The skip set — `.git`, `node_modules`,
+// dot-prefixed dirs — mirrors copyTreeInto exactly: the fingerprint and
+// the staged tree MUST see the same files, or a cache hit can land a
+// structurally broken stage (e.g. a kustomization.yaml that references
+// a directory the stage omits). Cost is amortized against a cache miss,
+// which would walk the same tree anyway to copy.
 func workingTreeFingerprint(path string) string {
 	if path == "" {
 		return ""
@@ -453,28 +474,56 @@ func workingTreeFingerprint(path string) string {
 	if err != nil {
 		return ""
 	}
-	entries, err := os.ReadDir(abs)
-	if err != nil {
-		return ""
-	}
 	h := sha256.New()
 	_, _ = h.Write([]byte(abs))
-	for _, e := range entries {
-		// Skip dot-prefixed entries (.git, .flate-cache, IDE state)
-		// so the cache survives changes inside those — they're not
-		// inputs to the kustomize build.
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		info, err := e.Info()
+	walkErr := filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			continue
+			return err
 		}
-		_, _ = h.Write([]byte(e.Name()))
+		if d.IsDir() {
+			base := d.Name()
+			if p != abs && (base == "node_modules" || strings.HasPrefix(base, ".")) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		// Mirror copyTreeInto's symlink handling: dereference, then
+		// only hash if the target is a regular file. Broken symlinks
+		// are silently skipped — otherwise a dangling editor lockfile
+		// would error out and empty the fingerprint, routing every
+		// run to per-process scratch staging.
+		var info fs.FileInfo
+		if d.Type()&fs.ModeSymlink != 0 {
+			info, err = os.Stat(p)
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil
+				}
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+		} else {
+			if !d.Type().IsRegular() {
+				return nil
+			}
+			info, err = d.Info()
+			if err != nil {
+				return nil
+			}
+		}
+		rel, relErr := filepath.Rel(abs, p)
+		if relErr != nil {
+			return relErr
+		}
+		_, _ = h.Write([]byte(rel))
 		_, _ = h.Write([]byte(info.ModTime().UTC().Format(time.RFC3339Nano)))
-		if !e.IsDir() {
-			_, _ = h.Write([]byte(strconv.FormatInt(info.Size(), 10)))
-		}
+		_, _ = h.Write([]byte(strconv.FormatInt(info.Size(), 10)))
+		return nil
+	})
+	if walkErr != nil {
+		return ""
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

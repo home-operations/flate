@@ -65,7 +65,13 @@ type commonFlags struct {
 	helmRenderCacheMB int
 }
 
-func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
+// bindCommon wires the flags every reconcile-running subcommand shares.
+// outputs is the subcommand's supported -o values (beyond the always-
+// accepted table default); it drives the -o flag's help text so the
+// advertised formats match what requireOutput enforces — e.g. build /
+// test / diff don't claim `name`, which only get and the image lists
+// honor.
+func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	fs.StringVar(&f.path, "path", ".", "path to the Flux cluster directory")
 	fs.StringVar(&f.pathOrig, "path-orig", "",
 		"baseline path; when set, every command runs in changed-only mode")
@@ -79,7 +85,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 			"that only materialize in the live cluster. "+
 			"Verify/cert/proxy secretRefs still fail loud.")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
-	fs.StringVarP(&f.output, "output", "o", "table", "output format: table, yaml, json, name, markdown")
+	fs.StringVarP(&f.output, "output", "o", "table", outputUsage(outputs))
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.StringVar(&f.cacheDir, "cache-dir", "",
@@ -380,6 +386,24 @@ func (c *commonFlags) outputOrDefault(fallback format.Output) format.Output {
 		return fallback
 	}
 	return format.Output(c.output)
+}
+
+// outputUsage renders the -o flag's help text from a subcommand's
+// supported formats. table always leads the list: it's the flag default
+// and requireOutput treats it as passthrough (subcommands coerce it to
+// their own natural default via outputOrDefault). Keeps the advertised
+// set in step with requireOutput so the help can't claim a format the
+// subcommand rejects.
+func outputUsage(outputs []format.Output) string {
+	names := make([]string, 0, len(outputs)+1)
+	names = append(names, string(format.OutputTable))
+	for _, o := range outputs {
+		if o == format.OutputTable {
+			continue
+		}
+		names = append(names, string(o))
+	}
+	return "output format: " + strings.Join(names, ", ")
 }
 
 // requireOutput rejects an -o value that's outside the subcommand's

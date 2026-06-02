@@ -92,7 +92,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			return runErr
 		},
 	}
-	bindCommon(cmd.Flags(), c)
+	bindCommon(cmd.Flags(), c, format.OutputMarkdown)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }

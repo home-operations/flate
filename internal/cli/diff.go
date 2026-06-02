@@ -84,7 +84,7 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 			return runDiff(cmd, c, h, d, kind, firstArg(args))
 		},
 	}
-	bindCommon(cmd.Flags(), c)
+	bindCommon(cmd.Flags(), c, format.Output(diff.FormatDiff), format.OutputYAML, format.OutputJSON, format.OutputMarkdown)
 	bindHelmFlags(cmd.Flags(), h)
 	bindDiffFlags(cmd, d)
 	return cmd
@@ -101,7 +101,7 @@ func newDiffImagesCmd() *cobra.Command {
 			return runDiffImages(cmd, c, h, includeRemoved)
 		},
 	}
-	bindCommon(cmd.Flags(), c)
+	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputName)
 	bindHelmFlags(cmd.Flags(), h)
 	cmd.Flags().BoolVar(&includeRemoved, "include-removed", false,
 		"also emit images present only in --path-orig (default: only newly added images)")

@@ -93,7 +93,7 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			return errors.Join(emitErr, scopedRunError(o, res, c, runErr))
 		},
 	}
-	bindCommon(cmd.Flags(), c)
+	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputMarkdown)
 	bindHelmFlags(cmd.Flags(), h)
 	bindBuildFlags(cmd.Flags(), b)
 	return cmd

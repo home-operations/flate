@@ -135,7 +135,7 @@ func newGetAllCmd() *cobra.Command {
 			return scopedRunError(o, res, c, runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c)
+	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputMarkdown)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
@@ -168,7 +168,7 @@ func newGetImagesCmd() *cobra.Command {
 			return scopedRunError(o, res, c, runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c)
+	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputName, format.OutputMarkdown)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
@@ -204,7 +204,7 @@ func resourceListCmd[T manifest.BaseManifest](
 			return scopedRunError(o, res, c, runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c)
+	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputName, format.OutputMarkdown)
 	bindSelector(cmd.Flags(), l)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd

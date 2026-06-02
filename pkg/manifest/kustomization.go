@@ -157,6 +157,23 @@ func (k *Kustomization) UpdatePostBuildSubstitutions(subs map[string]any) {
 	maps.Copy(sub, subs)
 }
 
+// SetTargetNamespace sets spec.targetNamespace on both the typed field
+// and the raw Contents doc so RenderFlux (which feeds Contents to
+// kustomize) and the typed readers stay consistent. Mirrors
+// UpdatePostBuildSubstitutions' dual-write contract.
+func (k *Kustomization) SetTargetNamespace(ns string) {
+	k.TargetNamespace = ns
+	if k.Contents == nil {
+		return
+	}
+	spec, _ := k.Contents["spec"].(map[string]any)
+	if spec == nil {
+		spec = make(map[string]any)
+		k.Contents["spec"] = spec
+	}
+	spec["targetNamespace"] = ns
+}
+
 // parseKustomization decodes a Flux Kustomization CR via the
 // kustomize-controller typed schema. The raw doc is retained in
 // Contents because RenderFlux still feeds it to fluxcd/pkg/kustomize

@@ -148,6 +148,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 }
 
 func (d *discoverer) applyNamespaces(repoRoot string) {
+	// Stamp NamespaceTransformer-injected targetNamespace onto Flux KSes
+	// first so ApplyNamespaceInheritance's projection sees a populated
+	// targetNamespace and the leaf KS renders into the right namespace on
+	// its first pass (issue #528).
+	loader.StampTransformerTargetNamespaces(d.cfg.Store, d.sourceFiles, repoRoot)
 	loader.ApplyNamespaceInheritance(d.cfg.Store, d.sourceFiles, repoRoot)
 	loader.ApplyDefaultNamespaces(d.cfg.Store, d.sourceFiles)
 }

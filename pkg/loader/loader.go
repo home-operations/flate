@@ -76,6 +76,16 @@ type Loader struct {
 	// the parsed resource's NamedResource. Nil disables tracking.
 	SourceFiles map[manifest.NamedResource]string
 
+	// SourceRefs maps each loaded consumer (HelmRelease / Kustomization)
+	// to the source resources it references — an HR's chart source, a
+	// KS's spec.sourceRef. Captured at parse time because under
+	// DiscoveryOnly an HR never reaches the Store, yet the change
+	// filter's reverse edge needs to know which HelmReleases a changed
+	// source feeds (so bumping a centralized OCIRepository's tag
+	// re-renders its consumers). Nil disables tracking. Keyed by the
+	// consumer's NamedResource; mirrors SourceFiles' lifecycle.
+	SourceRefs map[manifest.NamedResource][]manifest.NamedResource
+
 	// PreferExisting suppresses overwrites of resources already in
 	// the store (and their SourceFiles entries). Used by the
 	// orchestrator's recursive spec.path discovery so the initial
@@ -523,10 +533,12 @@ func (l *Loader) loadFile(path string) (int, error) {
 			// on demand without deadlocking the producing KS.
 			l.Existence.Record(id, path)
 			l.recordSource(id, path)
+			l.recordSourceRefs(obj)
 			continue
 		}
 		l.Store.AddObject(obj)
 		l.recordSource(id, path)
+		l.recordSourceRefs(obj)
 		count++
 	}
 	return count, nil
@@ -672,6 +684,37 @@ func (l *Loader) recordSource(id manifest.NamedResource, absPath string) {
 	l.SourceFiles[id] = filepath.ToSlash(rel)
 }
 
+// recordSourceRefs captures the source resources obj references — a
+// HelmRelease's chart source, a Kustomization's spec.sourceRef — so the
+// change filter can resolve the reverse edge from a changed source back
+// to its consumers. No-op for non-consumer kinds or when tracking is
+// disabled. The chart ref is read from the parse-time projection
+// (chartFromHelmRelease), which is populated whether or not the HR
+// reaches the Store.
+func (l *Loader) recordSourceRefs(obj manifest.BaseManifest) {
+	if l.SourceRefs == nil {
+		return
+	}
+	var refs []manifest.NamedResource
+	switch o := obj.(type) {
+	case *manifest.HelmRelease:
+		if o.Chart.RepoKind != "" && o.Chart.RepoName != "" {
+			refs = append(refs, manifest.NamedResource{
+				Kind: o.Chart.RepoKind, Namespace: o.Chart.RepoNamespace, Name: o.Chart.RepoName,
+			})
+		}
+	case *manifest.Kustomization:
+		if o.SourceKind != "" && o.SourceName != "" {
+			refs = append(refs, manifest.NamedResource{
+				Kind: o.SourceKind, Namespace: o.SourceNamespace, Name: o.SourceName,
+			})
+		}
+	}
+	if len(refs) > 0 {
+		l.SourceRefs[obj.Named()] = refs
+	}
+}
+
 // isDiscoveryKind reports whether obj belongs to the discovery-meta
 // kind set the loader keeps in the Store under DiscoveryOnly:
 //
@@ -735,4 +778,3 @@ func (w *walker) shouldSkipDir(name, full string) bool {
 	}
 	return w.ignoreMatches(full, true)
 }
-

@@ -145,6 +145,12 @@ type Orchestrator struct {
 	// to construct the immutable change.Filter.
 	sourceFiles map[manifest.NamedResource]string
 
+	// sourceRefs maps each loaded consumer (HelmRelease / Kustomization)
+	// to the source resources it references. Populated during discovery
+	// and consumed once by Bootstrap to give the change.Filter its
+	// reverse edge (changed source -> consuming HelmReleases).
+	sourceRefs map[manifest.NamedResource][]manifest.NamedResource
+
 	// parentOf is the structural-parent index Bootstrap computes after
 	// loadManifests + namespace inheritance — keyed by every
 	// reconcilable id that uses a parent gate (KS and HR). KS lookups
@@ -421,6 +427,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	}
 	o.repoRoot = res.RepoRoot
 	o.sourceFiles = res.SourceFiles
+	o.sourceRefs = res.SourceRefs
 	o.parentOf = res.ParentOf
 	o.existence = res.Existence
 

@@ -12,4 +12,11 @@
 // GitRepository) is also marked needed so the actual chart still gets
 // downloaded. Likewise, a Kustomization's sourceRef and dependsOn
 // ancestors are kept ready so downstream waits succeed.
+//
+// The cascade also runs in reverse: when the changed file IS a source
+// resource, every HelmRelease/Kustomization that references it is kept
+// so its render re-runs against the new source spec. This catches the
+// centralized-source layout where an OCIRepository lives in its own
+// Kustomization tree, separate from the HelmReleases that chartRef it —
+// bumping the OCIRepository's tag must still re-render those consumers.
 package change

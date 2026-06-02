@@ -535,6 +535,50 @@ spec:
 	}
 }
 
+// TestLoader_DiscoveryOnlyRecordsSourceRefs pins the reverse-edge
+// plumbing: under DiscoveryOnly a HelmRelease never reaches the Store,
+// yet its chart source reference must still be captured in SourceRefs
+// so the change filter can re-render the HR when its (centralized)
+// OCIRepository changes. The ref is read from the parse-time chart
+// projection, not the Store.
+func TestLoader_DiscoveryOnlyRecordsSourceRefs(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/envoy/helm-release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: envoy-gateway
+  namespace: envoy-gateway
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: envoy-gateway
+    namespace: flux-system
+`)
+	s := store.New()
+	l := New(s)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	l.SourceFiles = map[manifest.NamedResource]string{}
+	l.SourceRefs = map[manifest.NamedResource][]manifest.NamedResource{}
+	l.SourceRoot = dir
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "envoy-gateway", Name: "envoy-gateway"}
+	if s.GetObject(hrID) != nil {
+		t.Fatalf("HR must NOT be in Store under DiscoveryOnly (existence-only)")
+	}
+	refs, ok := l.SourceRefs[hrID]
+	if !ok {
+		t.Fatalf("HR chart source ref must be captured in SourceRefs; got %v", l.SourceRefs)
+	}
+	want := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}
+	if len(refs) != 1 || refs[0] != want {
+		t.Errorf("SourceRefs[HR] = %v; want [%v]", refs, want)
+	}
+}
+
 // TestLoader_DiscoveryOnlyRecordsNestedComponentData pins the
 // Component-of-Component recursion in walkComponentData: an outer
 // Component that references an inner Component via `components:`

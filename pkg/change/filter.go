@@ -34,6 +34,13 @@ type Filter struct {
 	sourceFiles map[manifest.NamedResource]string
 	repoRoot    string
 
+	// consumerRefs maps each consumer (HelmRelease / Kustomization) to
+	// the source resources it references — supplied by discovery because
+	// HelmReleases are absent from the Store at resolve() time under
+	// render-driven discovery. resolve() inverts it (source -> consumers)
+	// to drive the reverse edge. Nil disables reverse propagation.
+	consumerRefs map[manifest.NamedResource][]manifest.NamedResource
+
 	// objs is captured from NewFilter so runtime AddEmitted can
 	// walk transitiveDeps without the caller re-supplying it. The
 	// pointer is set once at construction and never reassigned —
@@ -115,8 +122,17 @@ type nameKey struct{ kind, name string }
 //     land before the leaf renders. See #58.
 //  4. BFS over chart sources, sourceRef, and valuesFrom to pull in
 //     upstream dependencies. dependsOn is intentionally excluded.
+//  5. Reverse edge: when a changed file IS itself a source resource
+//     (OCIRepository / HelmRepository / GitRepository / Bucket /
+//     ExternalArtifact / HelmChart), every HelmRelease and
+//     Kustomization that references it is kept primary so its render
+//     re-runs against the new source spec — e.g. an OCIRepository
+//     spec.ref.tag bump pulls a different chart version. Only fires
+//     for a source whose OWN file changed (not one merely pulled in as
+//     a forward dep of step 4), so a single HR edit can't reverse-
+//     cascade into every sibling sharing its source.
 func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister) *Filter {
-	return NewFilterWithCache(changes, sourceFiles, repoRoot, objs, nil)
+	return NewFilterWithCache(changes, sourceFiles, repoRoot, objs, nil, nil)
 }
 
 // NewFilterWithCache is NewFilter with a shared
@@ -126,15 +142,22 @@ func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repo
 // kustomization.yaml's `components:` field is read once across the
 // entire Bootstrap (vs. once per consumer: loader's parent index,
 // discovery's orphan promotion, and the Filter's ownership index all
-// previously re-read disk). Pass nil to fall back to a per-resolve
+// previously re-read disk). Pass nil cache to fall back to a per-resolve
 // local cache.
-func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache) *Filter {
+//
+// consumerRefs maps each consumer (HelmRelease / Kustomization) to the
+// source resources it references; discovery supplies it because
+// HelmReleases are absent from the Store at resolve() time. It drives
+// the reverse edge (step 5 above). Pass nil to disable reverse
+// propagation (the default for tests that don't exercise it).
+func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache, consumerRefs map[manifest.NamedResource][]manifest.NamedResource) *Filter {
 	f := &Filter{
 		changes:        changes,
 		sourceFiles:    sourceFiles,
 		repoRoot:       repoRoot,
 		objs:           objs,
 		componentCache: cache,
+		consumerRefs:   consumerRefs,
 	}
 	if changes == nil {
 		return f
@@ -494,6 +517,45 @@ func (f *Filter) resolve(objs ObjectLister) {
 				enqueuePrimary(id)
 				break
 			}
+		}
+	}
+
+	// Reverse edge: when a changed file IS the source a HelmRelease or
+	// Kustomization references, that consumer must re-render — the
+	// forward transitiveDeps walk only goes consumer→source, so a
+	// centralized source (an OCIRepository in its own Kustomization tree,
+	// separate from the HelmReleases that chartRef it) would otherwise
+	// leave its consumers out of the keep set entirely. consumerRefs is
+	// the only view of these edges at resolve() time: HelmReleases are
+	// absent from the Store under render-driven discovery. Iterating it
+	// and testing the referenced source's file directly also gives the
+	// guard for free — a consumer is pulled only when a source it
+	// references actually changed on disk, never when its own edit
+	// merely drags the source in as a forward dep.
+	//
+	// The consumer is primary: its render (an HR's helm template against
+	// the new chart version) differs from baseline, and its namespace
+	// must enter KeepNamespaces for diff scoping. Its owner Kustomization
+	// is ancestor-only — it must render to emit the HR into the Store,
+	// but its own kustomize output is unchanged (the HR manifest is
+	// identical; only the downstream helm render moved), so it must not
+	// cascade unrelated siblings into keep (the #58/#204 rationale).
+	for consumer, sources := range f.consumerRefs {
+		for _, src := range sources {
+			sf, ok := f.sourceFiles[src]
+			if !ok || !f.changes.Contains(sf) {
+				continue
+			}
+			enqueuePrimary(consumer)
+			if cf, ok := f.sourceFiles[consumer]; ok {
+				for _, owner := range owners.ownersOf(cf) {
+					enqueueAncestor(owner)
+				}
+				for _, ancestor := range owners.ancestorsOf(cf) {
+					enqueueAncestor(ancestor)
+				}
+			}
+			break
 		}
 	}
 

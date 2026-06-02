@@ -34,6 +34,13 @@ type Result struct {
 	// SourceFiles maps each loaded resource to the repo-relative path
 	// it was parsed from. Consumed by the change filter.
 	SourceFiles map[manifest.NamedResource]string
+	// SourceRefs maps each loaded consumer (HelmRelease / Kustomization)
+	// to the source resources it references. Consumed by the change
+	// filter's reverse edge so a changed source re-renders the
+	// HelmReleases that chartRef it even when the source lives in a
+	// separate Kustomization tree (and the HR never reached the Store
+	// under DiscoveryOnly).
+	SourceRefs map[manifest.NamedResource][]manifest.NamedResource
 	// ParentOf maps each reconcilable resource (Kustomization or
 	// HelmRelease) to its structural-parent Kustomization — the KS
 	// whose spec.path is the deepest strict ancestor of the child's
@@ -102,6 +109,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		cfg:         cfg,
 		loader:      l,
 		sourceFiles: map[manifest.NamedResource]string{},
+		sourceRefs:  map[manifest.NamedResource][]manifest.NamedResource{},
 	}
 	repoRoot, err := d.seedBootstrapSource()
 	if err != nil {
@@ -141,6 +149,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	return &Result{
 		RepoRoot:    repoRoot,
 		SourceFiles: d.sourceFiles,
+		SourceRefs:  d.sourceRefs,
 		ParentOf:    parentOf,
 		Existence:   l.Existence,
 		WipeSecrets: cfg.WipeSecrets,
@@ -172,6 +181,7 @@ type discoverer struct {
 	cfg         Config
 	loader      *loader.Loader
 	sourceFiles map[manifest.NamedResource]string
+	sourceRefs  map[manifest.NamedResource][]manifest.NamedResource
 	// repoRoot is the resolved .git ancestor of cfg.Path (or cfg.Path
 	// when no .git exists). Stored here because every consumer of
 	// loader.BuildParentIndexForKind / loader.KSPathPrefixes needs the
@@ -190,6 +200,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	l := d.loader
 	l.SourceRoot = repoRoot
 	l.SourceFiles = d.sourceFiles
+	l.SourceRefs = d.sourceRefs
 
 	scanRoot := repoRoot
 	if d.cfg.Path != "" {

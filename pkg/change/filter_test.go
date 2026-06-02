@@ -636,6 +636,115 @@ func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 	}
 }
 
+// TestFilter_ReverseEdgeCentralizedOCIRepository pins the reverse-edge
+// fix: when a centralized OCIRepository (its own Kustomization tree,
+// separate from the consuming HelmReleases) has its spec.ref.tag
+// bumped, the HelmRelease that chartRefs it must re-render even though
+// the HR's own files didn't change. Pre-fix the filter walked only
+// consumer→source edges, so the changed OCIRepository never reached its
+// consumer and `diff hr` printed nothing.
+//
+// Mirrors github.com/Boemeltrein/TalosCluster: OCIRepository under
+// repositories/oci owned by a `repositories` KS, HelmRelease under
+// clusters/.../envoy-gateway/app owned by a different KS. The HR is NOT
+// in the store at resolve() time (render-driven discovery); the reverse
+// edge is driven by the discovery-supplied consumerRefs instead.
+func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
+	const (
+		ociFile = "repositories/oci/envoy-gateway.yaml"
+		hrFile  = "clusters/main/kubernetes/networking/envoy-gateway/app/helm-release.yaml"
+		sibFile = "clusters/main/kubernetes/networking/envoy-gateway/app/other-hr.yaml"
+	)
+	oci := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}
+	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "envoy-gateway", Name: "envoy-gateway"}
+	// Sibling HR under the SAME owner KS that consumes a DIFFERENT source
+	// — it must stay out of keep (the owner KS is ancestor-only, so it
+	// can't cascade unrelated siblings in).
+	sibling := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "envoy-gateway", Name: "other"}
+	otherOCI := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "something-else"}
+	reposKS := &manifest.Kustomization{Name: "repositories", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "repositories"}}
+	appKS := &manifest.Kustomization{Name: "envoy-gateway", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "clusters/main/kubernetes/networking/envoy-gateway/app"}}
+
+	f := NewFilterWithCache(
+		NewSet([]string{ociFile}),
+		map[manifest.NamedResource]string{
+			oci:             ociFile,
+			hr:              hrFile,
+			sibling:         sibFile,
+			reposKS.Named(): "repositories/flux-entry.yaml",
+			appKS.Named():   "clusters/main/kubernetes/networking/envoy-gateway/ks.yaml",
+		},
+		"",
+		testutil.MapLister{reposKS.Named(): reposKS, appKS.Named(): appKS},
+		nil,
+		map[manifest.NamedResource][]manifest.NamedResource{
+			hr:      {oci},
+			sibling: {otherOCI},
+		},
+	)
+
+	if !f.ShouldReconcile(oci) {
+		t.Fatalf("changed OCIRepository must be in keep; keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(hr) {
+		t.Fatalf("reverse edge: HR consuming the changed OCIRepository must be in keep; keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(appKS.Named()) {
+		t.Errorf("HR owner KS must render (ancestor) to emit the HR; keep=%v", f.KeepNames())
+	}
+	if f.ShouldReconcile(sibling) {
+		t.Errorf("sibling HR consuming an unchanged source must NOT be pulled in; keep=%v", f.KeepNames())
+	}
+	// Namespace scoping (scopedNamespaces → KeepNamespaces) gates diff
+	// output: without the HR's namespace the command would scope it out
+	// even if ShouldReconcile passed.
+	if ns := f.KeepNamespaces(); ns != nil {
+		if _, ok := ns["envoy-gateway"]; !ok {
+			t.Errorf("HR namespace must be in keep-namespaces for diff scoping; got %v", ns)
+		}
+	} else {
+		t.Errorf("KeepNamespaces returned nil; expected envoy-gateway in scope")
+	}
+}
+
+// TestFilter_ReverseEdgeNoCascadeFromChangedConsumer pins the guard on
+// the reverse edge: it fires ONLY for a source whose OWN file changed,
+// never for a source merely referenced by a changed consumer. Two
+// HelmReleases share one OCIRepository; editing hrA's file must keep
+// hrA but must NOT drag hrB in via the shared source — otherwise a
+// single app edit would reverse-cascade every sibling sharing a common
+// app-template source.
+func TestFilter_ReverseEdgeNoCascadeFromChangedConsumer(t *testing.T) {
+	shared := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
+	aID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "a"}
+	bID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "b"}
+
+	f := NewFilterWithCache(
+		NewSet([]string{"apps/a/hr.yaml"}),
+		map[manifest.NamedResource]string{
+			aID:    "apps/a/hr.yaml",
+			bID:    "apps/b/hr.yaml",
+			shared: "repositories/oci/app-template.yaml",
+		},
+		"",
+		testutil.EmptyLister(),
+		nil,
+		map[manifest.NamedResource][]manifest.NamedResource{
+			aID: {shared},
+			bID: {shared},
+		},
+	)
+
+	if !f.ShouldReconcile(aID) {
+		t.Fatalf("changed HR a must be in keep; keep=%v", f.KeepNames())
+	}
+	if f.ShouldReconcile(bID) {
+		t.Errorf("unchanged sibling HR b reverse-cascaded via shared source; keep=%v", f.KeepNames())
+	}
+}
+
 // TestFilter_SubstituteFromConfigMapKeepsProducerKustomization pins
 // issue #418: a kept Kustomization with a non-Optional
 // postBuild.substituteFrom ConfigMap must pull the producer KS that

@@ -84,7 +84,7 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 			return runDiff(cmd, c, h, d, kind, firstArg(args))
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.Output(diff.FormatDiff), format.OutputYAML, format.OutputJSON, format.OutputMarkdown)
+	bindCommon(cmd.Flags(), c, diffOutputFormats()...)
 	bindHelmFlags(cmd.Flags(), h)
 	bindDiffFlags(cmd, d)
 	return cmd
@@ -156,13 +156,32 @@ func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []stri
 	return out
 }
 
+// diffOutputFormats lists the -o values `flate diff ks/hr/all` accepts,
+// in help-display order (github default first, then the plain unified
+// diff, the other dyff styles, and the flate aggregations). Shared by
+// the flag help (bindCommon) and the runtime guard (requireOutput) so
+// the advertised set and the enforced set can't drift.
+func diffOutputFormats() []format.Output {
+	return []format.Output{
+		format.Output(diff.FormatGitHub),
+		format.Output(diff.FormatDiff),
+		format.Output(diff.FormatHuman),
+		format.Output(diff.FormatBrief),
+		format.Output(diff.FormatGitLab),
+		format.Output(diff.FormatGitea),
+		format.OutputYAML,
+		format.OutputJSON,
+		format.OutputMarkdown,
+	}
+}
+
 func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kind, name string) error {
-	// diff has no `name` output mode; only diff/yaml/json/markdown are
-	// meaningful. Reject early so the user sees a clear error instead
-	// of "unknown diff format" from pkg/diff. OutputMarkdown's string
-	// value matches diff.FormatMarkdown so the cast below routes it to
-	// the markdown renderer without an extra switch.
-	if err := c.requireOutput(format.Output(diff.FormatDiff), format.OutputYAML, format.OutputJSON, format.OutputMarkdown); err != nil {
+	// diff has no `name` output mode. Reject anything outside the
+	// supported set early so the user sees a clear error instead of
+	// "unknown diff format" from pkg/diff. The format.Output string
+	// values match diff.Format so the casts below route each one to its
+	// renderer without an extra switch.
+	if err := c.requireOutput(diffOutputFormats()...); err != nil {
 		return err
 	}
 	stopProfile, err := startProfile(c.profileMode, c.profileOut)
@@ -181,13 +200,15 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
 	}
 
+	out := diff.Format(c.outputOrDefault(format.Output(diff.FormatGitHub)))
 	diffs, err := diff.Run(origDocs, currentDocs, diff.Options{
 		StripAttrs: d.stripAttrs,
+		Format:     out,
 	})
 	if err != nil {
 		return errors.Join(err, diffRunErr)
 	}
-	formatted, err := diff.Render(diffs, diff.Format(c.outputOrDefault(format.Output(diff.FormatDiff))))
+	formatted, err := diff.Render(diffs, out)
 	if err != nil {
 		return errors.Join(err, diffRunErr)
 	}

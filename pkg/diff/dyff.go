@@ -9,17 +9,18 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// dyffDiff renders a single resource's diff via dyff in `--output
-// github` mode. The output is path-based diff syntax that GitHub
-// renders natively as a colored diff block when wrapped in a ```diff
-// code fence — markers `@@`, `+`, `-`, `!` are exactly what the
-// linguist diff lexer expects.
+// dyffBody renders a single resource's diff via dyff in the given
+// style (github/human/brief/gitlab/gitea). The diff-syntax styles
+// (github/gitlab/gitea) emit path-based markers a forge's diff lexer
+// renders as a colored block inside a ```diff fence; human is dyff's
+// default colored report; brief is a one-line-per-change summary. The
+// style configs mirror dyff's own CLI (internal/cmd/common.go).
 //
 // Either side can be nil to represent an added or removed resource.
 // In that case the nil side becomes an empty YAML document so dyff's
 // CompareInputFiles still sees two valid inputs; the report renders
 // as a wholesale "addition" / "removal" against the empty root.
-func dyffDiff(a, b map[string]any) (string, error) {
+func dyffBody(a, b map[string]any, style Format) (string, error) {
 	from, err := loadDyffInput("from", a)
 	if err != nil {
 		return "", err
@@ -38,10 +39,51 @@ func dyffDiff(a, b map[string]any) (string, error) {
 		// non-empty diff body.
 		return "", nil
 	}
-	writer := &dyff.DiffSyntaxReport{
-		PathPrefix:            "@@",
-		RootDescriptionPrefix: "#",
-		ChangeTypePrefix:      "!",
+	writer, err := dyffWriter(report, style)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteReport(&buf); err != nil {
+		return "", fmt.Errorf("dyff render: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// dyffWriter builds the dyff ReportWriter for a style. The diff-syntax
+// styles differ only in their path/root/change prefixes; human and
+// brief use their own report types. Configs mirror dyff's CLI so flate
+// output matches `dyff between --output <style>`.
+func dyffWriter(report dyff.Report, style Format) (dyff.ReportWriter, error) {
+	switch style {
+	case FormatGitHub:
+		return diffSyntaxReport(report, "@@", "#", "!"), nil
+	case FormatGitLab:
+		return diffSyntaxReport(report, "=", "=", "#"), nil
+	case FormatGitea:
+		return diffSyntaxReport(report, "@@", "=", "!"), nil
+	case FormatHuman:
+		return &dyff.HumanReport{
+			Report:                report,
+			Indent:                2,
+			UseIndentLines:        true,
+			OmitHeader:            true,
+			MultilineContextLines: 4,
+			MinorChangeThreshold:  0.1,
+		}, nil
+	case FormatBrief:
+		return &dyff.BriefReport{Report: report}, nil
+	}
+	return nil, fmt.Errorf("unsupported dyff style %q", style)
+}
+
+// diffSyntaxReport assembles a dyff DiffSyntaxReport with the given
+// marker prefixes — the shape shared by the github/gitlab/gitea styles.
+func diffSyntaxReport(report dyff.Report, pathPrefix, rootPrefix, changePrefix string) *dyff.DiffSyntaxReport {
+	return &dyff.DiffSyntaxReport{
+		PathPrefix:            pathPrefix,
+		RootDescriptionPrefix: rootPrefix,
+		ChangeTypePrefix:      changePrefix,
 		HumanReport: dyff.HumanReport{
 			Report:                report,
 			Indent:                0,
@@ -53,11 +95,6 @@ func dyffDiff(a, b map[string]any) (string, error) {
 			MinorChangeThreshold:  0.1,
 		},
 	}
-	var buf bytes.Buffer
-	if err := writer.WriteReport(&buf); err != nil {
-		return "", fmt.Errorf("dyff render: %w", err)
-	}
-	return buf.String(), nil
 }
 
 // loadDyffInput marshals a manifest map (or nil — representing an

@@ -211,7 +211,7 @@ func TestRender_DiffHeaderAlwaysEmitted(t *testing.T) {
 	}
 
 	t.Run("single resource still gets a header", func(t *testing.T) {
-		out, err := Render([]ResourceDiff{mkDiff("qui")}, FormatDiff)
+		out, err := Render([]ResourceDiff{mkDiff("qui")}, FormatGitHub)
 		if err != nil {
 			t.Fatalf("Render: %v", err)
 		}
@@ -225,7 +225,7 @@ func TestRender_DiffHeaderAlwaysEmitted(t *testing.T) {
 	})
 
 	t.Run("multiple resources each get a header", func(t *testing.T) {
-		out, err := Render([]ResourceDiff{mkDiff("qui"), mkDiff("plex")}, FormatDiff)
+		out, err := Render([]ResourceDiff{mkDiff("qui"), mkDiff("plex")}, FormatGitHub)
 		if err != nil {
 			t.Fatalf("Render: %v", err)
 		}

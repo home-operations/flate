@@ -19,15 +19,32 @@ import (
 // Format selects the diff output flavor.
 type Format string
 
-// Format values understood by Render.
+// Format values understood by Render. The github/human/brief/gitlab/
+// gitea styles map to dyff's own output styles; diff is a plain unified
+// diff; yaml/json/markdown are flate aggregations of the per-resource
+// bodies.
 const (
-	// FormatDiff is dyff's `--output github` mode: path-based diff
+	// FormatGitHub is dyff's `--output github` mode: path-based diff
 	// syntax (`@@`, `+`, `-`, `!`) that GitHub's diff lexer renders
 	// natively as a colored diff block when wrapped in a ```diff
 	// fence. K8s-aware: list entries are matched by identifier
 	// (container name, env-var name, etc.), so reordering a list
-	// produces no diff churn.
-	FormatDiff     Format = "diff"
+	// produces no diff churn. The default style, and the body style
+	// embedded in yaml/json/markdown output.
+	FormatGitHub Format = "github"
+	// FormatDiff is a standard unified diff (`diff -u` / `git diff`
+	// style) of each resource's YAML. Not Kubernetes-aware — it diffs
+	// lines, so a reordered list shows churn — but familiar and
+	// consumable by any unified-diff tooling.
+	FormatDiff Format = "diff"
+	// FormatHuman is dyff's default colored, human-readable report.
+	FormatHuman Format = "human"
+	// FormatBrief is dyff's one-line-per-change summary.
+	FormatBrief Format = "brief"
+	// FormatGitLab is dyff's GitLab diff syntax (`=` path/root prefixes).
+	FormatGitLab Format = "gitlab"
+	// FormatGitea is dyff's Gitea/Forgejo diff syntax.
+	FormatGitea    Format = "gitea"
 	FormatYAML     Format = "yaml"
 	FormatJSON     Format = "json"
 	FormatMarkdown Format = "markdown"
@@ -44,6 +61,26 @@ type Options struct {
 	// reports string-value changes verbatim, so this pre-filter still
 	// pulls its weight after the dyff swap.
 	StripAttrs []string
+	// Format selects the per-resource diff body style Run renders.
+	// yaml/json/markdown (and the zero value) fall back to the github
+	// style — those aggregations embed or fence the github diff-syntax
+	// body — while the plain-text styles (diff/github/human/brief/
+	// gitlab/gitea) render their own body. Render must be called with
+	// the same Format so aggregation matches the body.
+	Format Format
+}
+
+// bodyStyle maps an output format to the per-resource diff body style.
+// yaml/json embed the body verbatim and markdown wraps it in a ```diff
+// fence, so all three (and the zero value) use the canonical github
+// diff-syntax; every other format renders its own body.
+func bodyStyle(f Format) Format {
+	switch f {
+	case FormatYAML, FormatJSON, FormatMarkdown, "":
+		return FormatGitHub
+	default:
+		return f
+	}
 }
 
 // Parent identifies the Flux Kustomization or HelmRelease that
@@ -106,15 +143,16 @@ func joinNS(ns, name string) string {
 func Run(left, right []Doc, opts Options) ([]ResourceDiff, error) {
 	left = normalizeDocs(left, opts.StripAttrs)
 	right = normalizeDocs(right, opts.StripAttrs)
+	style := bodyStyle(opts.Format)
 	pairs := pair(left, right)
 	out := make([]ResourceDiff, 0, len(pairs))
 	for _, p := range pairs {
-		body, err := dyffDiff(p.a, p.b)
+		body, err := renderPairBody(p, style)
 		if err != nil {
 			return nil, err
 		}
 		if body == "" {
-			// Identical resources: dyff yields no diffs. Skip.
+			// Identical resources: no diff. Skip.
 			continue
 		}
 		out = append(out, ResourceDiff{
@@ -125,28 +163,25 @@ func Run(left, right []Doc, opts Options) ([]ResourceDiff, error) {
 	return out, nil
 }
 
-// Render serializes a diff result set into the requested format.
+// renderPairBody renders a single resource pair's diff body in the
+// given style: a plain unified diff for FormatDiff, otherwise the
+// matching dyff report.
+func renderPairBody(p pairedResource, style Format) (string, error) {
+	if style == FormatDiff {
+		return unifiedBody(p.a, p.b, p.kind+" "+joinNS(p.namespace, p.name))
+	}
+	return dyffBody(p.a, p.b, style)
+}
+
+// Render serializes a diff result set into the requested format. The
+// plain-text styles (diff/github/human/brief/gitlab/gitea) concatenate
+// each pre-rendered body under a resource header; yaml/json/markdown
+// aggregate the bodies. Render must be called with the same Format that
+// Run rendered the bodies in (see Options.Format).
 func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 	switch format {
-	case "", FormatDiff:
-		var b bytes.Buffer
-		// Emit a `# <resource>` comment line above every body. dyff's
-		// `@@ <path> @@` identifies the data path that changed but
-		// not the owning resource (`spec.template.spec.containers
-		// .app.image` is which Deployment from which HelmRelease?),
-		// so the header is load-bearing even when there's only one
-		// diff — a reviewer scanning a PR comment shouldn't have to
-		// infer the resource from the body. `#`-prefixed lines are
-		// dyff's own comment convention; GitHub's diff lexer renders
-		// them magenta.
-		for _, d := range diffs {
-			fmt.Fprintf(&b, "# %s\n", d.Header())
-			b.WriteString(d.Diff)
-			if !strings.HasSuffix(d.Diff, "\n") {
-				b.WriteByte('\n')
-			}
-		}
-		return b.Bytes(), nil
+	case "", FormatDiff, FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea:
+		return renderText(diffs), nil
 	case FormatYAML:
 		return yaml.Marshal(diffs)
 	case FormatJSON:
@@ -155,6 +190,25 @@ func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 		return renderMarkdown(diffs), nil
 	}
 	return nil, fmt.Errorf("unknown diff format %q", format)
+}
+
+// renderText concatenates each diff body under a `# <resource>` header.
+// The body identifies the data path that changed (dyff's `@@ <path> @@`,
+// or a unified diff's `@@ -a,b +c,d @@`) but not the owning resource, so
+// the header is load-bearing even for a single diff — a reviewer
+// shouldn't have to infer which Deployment from which HelmRelease the
+// body belongs to. `#`-prefixed lines are dyff's comment convention,
+// which GitHub's diff lexer renders magenta.
+func renderText(diffs []ResourceDiff) []byte {
+	var b bytes.Buffer
+	for _, d := range diffs {
+		fmt.Fprintf(&b, "# %s\n", d.Header())
+		b.WriteString(d.Diff)
+		if !strings.HasSuffix(d.Diff, "\n") {
+			b.WriteByte('\n')
+		}
+	}
+	return b.Bytes()
 }
 
 // renderMarkdown emits a PR-comment-friendly view of the diff set:

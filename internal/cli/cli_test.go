@@ -654,6 +654,45 @@ data:
 	}
 }
 
+// TestDiff_OutputStyles drives a non-trivial diff and asserts each
+// dyff style plus the plain unified diff routes to its renderer when
+// selected via -o. Confirms the CLI wiring (requireOutput accepts the
+// token, Run renders the body, Render aggregates) end-to-end.
+func TestDiff_OutputStyles(t *testing.T) {
+	current := writeFixture(t)
+	orig := t.TempDir()
+	copyTree(t, current, filepath.Join(orig, "kubernetes"))
+	testutil.WriteFileAt(t, filepath.Join(orig, "kubernetes", "apps", "cm.yaml"), `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello, namespace: apps}
+data:
+  greeting: hola
+`)
+	origPath := filepath.Join(orig, "kubernetes")
+
+	cases := []struct{ style, want string }{
+		{"diff", "@@ -"},                  // unified diff hunk header
+		{"github", "@@ data.greeting @@"}, // dyff github diff-syntax
+		{"gitlab", "= data.greeting"},     // gitlab `=` path prefix
+		{"gitea", "@@ data.greeting @@"},  // gitea diff-syntax
+		{"human", "data.greeting"},        // dyff human report
+		{"brief", "change detected"},      // dyff one-line summary
+	}
+	for _, tc := range cases {
+		t.Run(tc.style, func(t *testing.T) {
+			stdout, stderr, code := runCLI(t, "diff", "ks", "-o", tc.style,
+				"--path", current, "--path-orig", origPath)
+			if code != 0 {
+				t.Fatalf("diff ks -o %s exited %d: %s", tc.style, code, stderr)
+			}
+			if !strings.Contains(stdout, tc.want) {
+				t.Errorf("-o %s output missing %q:\n%s", tc.style, tc.want, stdout)
+			}
+		})
+	}
+}
+
 func copyTree(t *testing.T, src, dst string) {
 	t.Helper()
 	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {

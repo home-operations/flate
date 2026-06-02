@@ -62,6 +62,24 @@ func TestUnified_AddedAndRemoved(t *testing.T) {
 	}
 }
 
+// TestUnified_BlankLineBetweenDocs pins that consecutive document bodies
+// are separated by a blank line so the next `--- ` header is easy to
+// spot when scanning multi-resource output.
+func TestUnified_BlankLineBetweenDocs(t *testing.T) {
+	left := []Doc{cm("a", "ns", "owner", "v1"), cm("b", "ns", "owner", "v1")}
+	right := []Doc{cm("a", "ns", "owner", "v2"), cm("b", "ns", "owner", "v2")}
+	s := unified(t, left, right)
+	if !strings.Contains(s, "\n\n--- ConfigMap ns/b") {
+		t.Errorf("second doc header should be preceded by a blank line:\n%s", s)
+	}
+	if strings.HasPrefix(s, "\n") {
+		t.Errorf("output should not start with a blank line:\n%s", s)
+	}
+	if strings.HasSuffix(s, "\n\n") {
+		t.Errorf("output should end with a single newline, not a trailing blank line:\n%s", s)
+	}
+}
+
 // TestUnified_Deletion verifies a wholly-removed resource shows its full
 // content (so reviewers don't have to chase the original separately).
 func TestUnified_Deletion(t *testing.T) {

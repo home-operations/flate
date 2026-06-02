@@ -3,7 +3,6 @@ package diff
 import (
 	"bytes"
 	"fmt"
-	"strings"
 
 	"github.com/pmezard/go-difflib/difflib"
 	"sigs.k8s.io/yaml"
@@ -24,6 +23,7 @@ func renderUnified(left, right []Doc, opts Options) ([]byte, error) {
 	left = normalizeDocs(left, opts.StripAttrs)
 	right = normalizeDocs(right, opts.StripAttrs)
 	var b bytes.Buffer
+	first := true
 	for _, p := range pair(left, right) {
 		body, err := unifiedBody(p.a, p.b, p.kind+" "+joinNS(p.namespace, p.name))
 		if err != nil {
@@ -32,7 +32,11 @@ func renderUnified(left, right []Doc, opts Options) ([]byte, error) {
 		if body == "" {
 			continue // identical resources
 		}
-		writeBody(&b, body)
+		if !first {
+			b.WriteByte('\n')
+		}
+		b.WriteString(body)
+		first = false
 	}
 	return b.Bytes(), nil
 }
@@ -86,11 +90,3 @@ func marshalForUnified(m map[string]any) (string, error) {
 	return string(b), nil
 }
 
-// writeBody appends a diff body to b, guaranteeing a single trailing
-// newline so concatenated bodies stay aligned.
-func writeBody(b *bytes.Buffer, body string) {
-	b.WriteString(body)
-	if !strings.HasSuffix(body, "\n") {
-		b.WriteByte('\n')
-	}
-}

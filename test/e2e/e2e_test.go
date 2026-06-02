@@ -357,7 +357,9 @@ func TestE2E_ComponentChangePropagatesToAllConsumers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig)
+	// -o github explicitly: this test asserts github diff-syntax markers,
+	// independent of the default style.
+	out := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig, "-o", "github")
 
 	// Coverage must propagate to BOTH consumers, so the
 	// original→changed transition should surface at least twice (once

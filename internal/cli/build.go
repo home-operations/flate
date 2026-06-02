@@ -56,11 +56,6 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
 			applyBuildFlags(c, b)
-			// build only emits manifest streams; reject -o values that
-			// don't make sense (e.g. name, which is a get-only concept).
-			if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputMarkdown); err != nil {
-				return err
-			}
 			stopProfile, err := startProfile(c.profileMode, c.profileOut)
 			if err != nil {
 				return err
@@ -82,7 +77,7 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 				docs = append(docs, rendered...)
 			}
 			if emitErr == nil {
-				emitErr = emitDocs(cmd.OutOrStdout(), docs, c.outputOrDefault(format.OutputYAML))
+				emitErr = emitDocs(cmd.OutOrStdout(), docs, format.Output(c.output))
 			}
 			// Per-resource Run failures: emit whatever we rendered, then
 			// flip the exit code so CI pipelines piping `flate build` into
@@ -93,7 +88,7 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			return errors.Join(emitErr, scopedRunError(o, res, c, runErr))
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputMarkdown)
+	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)
 	bindHelmFlags(cmd.Flags(), h)
 	bindBuildFlags(cmd.Flags(), b)
 	return cmd
@@ -170,15 +165,12 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 }
 
 // emitDocs writes a sequence of rendered docs as either multi-doc YAML
-// (the default for `flate build`), a single JSON array, or a
-// GitHub-flavored Markdown stream (H3 header + fenced YAML per doc).
-// Other -o values are rejected earlier by requireOutput.
+// (the default for `flate build`) or a single JSON array. Other -o values
+// are rejected at parse time by the -o flag.
 func emitDocs(w io.Writer, docs []map[string]any, out format.Output) error {
 	switch out {
 	case format.OutputJSON:
 		return format.JSON(w, docs)
-	case format.OutputMarkdown:
-		return format.MarkdownDocs(w, docs)
 	default:
 		return format.YAMLMulti(w, docs)
 	}

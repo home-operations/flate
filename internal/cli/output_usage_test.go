@@ -18,18 +18,13 @@ func TestOutputUsage(t *testing.T) {
 	}{
 		{
 			name:    "build set",
-			outputs: []format.Output{format.OutputYAML, format.OutputJSON, format.OutputMarkdown},
-			want:    "output format: table, yaml, json, markdown",
+			outputs: []format.Output{format.OutputYAML, format.OutputJSON},
+			want:    "output format: yaml, json",
 		},
 		{
-			name:    "table is implicit and not duplicated",
-			outputs: []format.Output{format.OutputTable, format.OutputName},
-			want:    "output format: table, name",
-		},
-		{
-			name:    "no extra formats",
-			outputs: nil,
-			want:    "output format: table",
+			name:    "listed verbatim in order, default first",
+			outputs: []format.Output{format.OutputTable, format.OutputYAML, format.OutputJSON, format.OutputName},
+			want:    "output format: table, yaml, json, name",
 		},
 	}
 	for _, tc := range cases {
@@ -43,10 +38,9 @@ func TestOutputUsage(t *testing.T) {
 
 // TestOutputFlagAdvertisesNameOnlyWhereSupported pins that each
 // subcommand's -o help advertises `name` only where the command honors
-// it (get ks/hr/images and diff images) — and never for build, test, or
-// the diff/get summaries that reject it. Regression guard for the shared
-// help that used to claim `name` everywhere ("--output=name is not a
-// thing").
+// it (get ks/hr/images and diff images) — and never for build or the
+// diff/get summaries that reject it. Regression guard for the shared help
+// that used to claim `name` everywhere ("--output=name is not a thing").
 func TestOutputFlagAdvertisesNameOnlyWhereSupported(t *testing.T) {
 	wantName := map[string]bool{
 		"build ks":    false,
@@ -60,13 +54,10 @@ func TestOutputFlagAdvertisesNameOnlyWhereSupported(t *testing.T) {
 		"get hr":      true,
 		"get images":  true,
 		"get all":     false,
-		"test ks":     false,
-		"test hr":     false,
-		"test all":    false,
 	}
 
 	got := map[string]bool{}
-	for _, root := range []*cobra.Command{newBuildCmd(), newDiffCmd(), newGetCmd(), newTestCmd()} {
+	for _, root := range []*cobra.Command{newBuildCmd(), newDiffCmd(), newGetCmd()} {
 		for _, sub := range root.Commands() {
 			f := sub.Flags().Lookup("output")
 			if f == nil {

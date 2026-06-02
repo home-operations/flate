@@ -7,7 +7,6 @@ import (
 	"io"
 	"maps"
 	"slices"
-	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -119,23 +118,20 @@ func newGetAllCmd() *cobra.Command {
 		Use:   "all",
 		Short: "Summarize every Kustomization and HelmRelease",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// printCluster emits a key/value summary; yaml/json/markdown
-			// shape it. Reject `-o name` (which printCluster used to
-			// silently coerce to yaml) for parity with build/diff.
-			if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputMarkdown); err != nil {
-				return err
-			}
+			// printCluster emits a key/value summary; only yaml/json shape
+			// it. `-o name`/`table` have no cluster-summary form, so the -o
+			// flag accepts only yaml/json (rejected at parse time).
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
-			if err := printCluster(cmd.OutOrStdout(), o, c, string(c.outputOrDefault(format.OutputYAML))); err != nil {
+			if err := printCluster(cmd.OutOrStdout(), o, c, c.output); err != nil {
 				return errors.Join(err, scopedRunError(o, res, c, runErr))
 			}
 			return scopedRunError(o, res, c, runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputMarkdown)
+	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
@@ -151,24 +147,21 @@ func newGetImagesCmd() *cobra.Command {
 		Use:   "images",
 		Short: "List container images across the cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// Mirrors `diff images`: name is the natural default
-			// (one image per line); yaml/json/markdown are the
-			// structured alternatives. Reject anything else loudly.
-			if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputName, format.OutputMarkdown); err != nil {
-				return err
-			}
+			// Mirrors `diff images`: name is the natural default (one image
+			// per line); yaml/json are the structured alternatives. The -o
+			// flag rejects anything else at parse time.
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
 			imgs := slices.Sorted(maps.Keys(collectImages(o, res, c)))
-			if err := emitImageList(cmd.OutOrStdout(), imgs, string(c.outputOrDefault(format.OutputName))); err != nil {
+			if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
 				return errors.Join(err, scopedRunError(o, res, c, runErr))
 			}
 			return scopedRunError(o, res, c, runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputName, format.OutputMarkdown)
+	bindCommon(cmd.Flags(), c, format.OutputName, format.OutputYAML, format.OutputJSON)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
@@ -204,7 +197,7 @@ func resourceListCmd[T manifest.BaseManifest](
 			return scopedRunError(o, res, c, runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputName, format.OutputMarkdown)
+	bindCommon(cmd.Flags(), c, format.OutputTable, format.OutputYAML, format.OutputJSON, format.OutputName)
 	bindSelector(cmd.Flags(), l)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
@@ -267,8 +260,6 @@ func printResources[T manifest.BaseManifest](
 		return format.JSON(w, docs)
 	case format.OutputName:
 		return format.Name(w, rows, "name")
-	case format.OutputMarkdown:
-		return format.MarkdownTable(w, cols, rows)
 	}
 	return format.Table(w, cols, rows)
 }
@@ -295,25 +286,8 @@ func printCluster(w io.Writer, o *orchestrator.Orchestrator, c *commonFlags, out
 		"kustomizations": ksCount,
 		"helmReleases":   hrCount,
 	}
-	switch format.Output(out) {
-	case format.OutputJSON:
+	if format.Output(out) == format.OutputJSON {
 		return format.JSON(w, summary)
-	case format.OutputMarkdown:
-		// Two-row pipe table fronted by an H2 — slots into PR
-		// comments and step summaries without further massaging.
-		if _, err := io.WriteString(w, "## Cluster summary\n\n"); err != nil {
-			return err
-		}
-		return format.MarkdownTable(w,
-			[]format.Column{
-				{Header: "Resource", Key: "resource"},
-				{Header: "Count", Key: "count"},
-			},
-			[]map[string]string{
-				{"resource": "Kustomizations", "count": strconv.Itoa(ksCount)},
-				{"resource": "HelmReleases", "count": strconv.Itoa(hrCount)},
-			},
-		)
 	}
 	return format.YAML(w, summary)
 }

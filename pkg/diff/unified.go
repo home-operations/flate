@@ -1,18 +1,48 @@
 package diff
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/pmezard/go-difflib/difflib"
 	"sigs.k8s.io/yaml"
 )
 
+func joinNS(ns, name string) string {
+	if ns == "" {
+		return name
+	}
+	return ns + "/" + name
+}
+
+// renderUnified produces a plain unified diff (`diff -u`) of the two doc
+// sets: it pairs resources by parent + identity (see pair), diffs each
+// changed pair's YAML, and concatenates the bodies. Identical resources
+// are dropped. Not Kubernetes-aware — see unifiedBody.
+func renderUnified(left, right []Doc, opts Options) ([]byte, error) {
+	left = normalizeDocs(left, opts.StripAttrs)
+	right = normalizeDocs(right, opts.StripAttrs)
+	var b bytes.Buffer
+	for _, p := range pair(left, right) {
+		body, err := unifiedBody(p.a, p.b, p.kind+" "+joinNS(p.namespace, p.name))
+		if err != nil {
+			return nil, err
+		}
+		if body == "" {
+			continue // identical resources
+		}
+		writeBody(&b, body)
+	}
+	return b.Bytes(), nil
+}
+
 // unifiedBody renders a standard unified diff (`diff -u` / `git diff`
 // style) between a resource's two YAML serializations. label names both
-// the `---` and `+++` sides — the resource is the same on both, the
-// flate header already disambiguates which one. A nil side (added or
-// removed resource) serializes to the empty document, so the whole
-// counterpart shows as an add/remove block.
+// the `---` and `+++` sides identically — it's one resource's before and
+// after, so the `-`/`+` line prefixes carry the distinction. A nil side
+// (added or removed resource) serializes to the empty document, so the
+// whole counterpart shows as an add/remove block.
 //
 // Unlike the dyff styles this is not Kubernetes-aware: a reordered list
 // diffs line-by-line. It exists for users who want output any
@@ -54,4 +84,13 @@ func marshalForUnified(m map[string]any) (string, error) {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
 	return string(b), nil
+}
+
+// writeBody appends a diff body to b, guaranteeing a single trailing
+// newline so concatenated bodies stay aligned.
+func writeBody(b *bytes.Buffer, body string) {
+	b.WriteString(body)
+	if !strings.HasSuffix(body, "\n") {
+		b.WriteByte('\n')
+	}
 }

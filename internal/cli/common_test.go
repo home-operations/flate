@@ -255,41 +255,25 @@ func TestScopedRunError_JoinsScopedAndUnattributed(t *testing.T) {
 	}
 }
 
-// TestRequireOutput_AcceptsDefaultTableAndAllowed pins the
-// short-circuit shape: "table" always passes (subcommand coerces via
-// outputOrDefault), and anything in the allowed set passes.
-func TestRequireOutput_AcceptsDefaultTableAndAllowed(t *testing.T) {
-	for _, out := range []string{"table", "yaml", "json"} {
-		c := &commonFlags{output: out}
-		if err := c.requireOutput(format.OutputYAML, format.OutputJSON); err != nil {
-			t.Errorf("output=%q: unexpected error %v", out, err)
-		}
-	}
-}
+// TestOutputValue_Validates pins the -o enum flag: a value in the accepted
+// set updates the target; anything else is rejected (naming the set), which
+// is how pflag/cobra surface the error at parse time.
+func TestOutputValue_Validates(t *testing.T) {
+	var out string
+	v := &outputValue{target: &out, allowed: []format.Output{format.OutputYAML, format.OutputJSON}}
 
-// TestRequireOutput_RejectsUnsupported guards the diff/drift fix:
-// `get all -o name` and `get images -o diff` used to silently coerce
-// into a different format — now they fail loud. Empty allowed-set
-// (test's pattern) must reject every non-default `-o`.
-func TestRequireOutput_RejectsUnsupported(t *testing.T) {
-	cases := []struct {
-		output  string
-		allowed []format.Output
-		wantSub string
-	}{
-		{output: "name", allowed: []format.Output{format.OutputYAML, format.OutputJSON}, wantSub: `"name"`},
-		{output: "yaml", allowed: nil, wantSub: "want one of: table"},
-		{output: "json", allowed: []format.Output{format.OutputName}, wantSub: "table, name"},
+	if err := v.Set("json"); err != nil {
+		t.Fatalf("json should be accepted: %v", err)
 	}
-	for _, tc := range cases {
-		c := &commonFlags{output: tc.output}
-		err := c.requireOutput(tc.allowed...)
-		if err == nil {
-			t.Errorf("output=%q allowed=%v: expected error, got nil", tc.output, tc.allowed)
-			continue
-		}
-		if !strings.Contains(err.Error(), tc.wantSub) {
-			t.Errorf("output=%q: error %q missing substring %q", tc.output, err.Error(), tc.wantSub)
-		}
+	if out != "json" {
+		t.Errorf("Set should update target, got %q", out)
+	}
+
+	err := v.Set("name")
+	if err == nil {
+		t.Fatal("name should be rejected")
+	}
+	if !strings.Contains(err.Error(), "must be one of: yaml, json") {
+		t.Errorf("error should name the accepted set: %q", err)
 	}
 }

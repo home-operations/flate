@@ -203,16 +203,16 @@ func TestRun_BuildAll_JSONSingleDocument(t *testing.T) {
 	}
 }
 
-// TestRun_BuildKS_RejectsBadOutput exercises requireOutput on the
-// build subcommand: build accepts yaml + json, not name.
+// TestRun_BuildKS_RejectsBadOutput exercises the -o enum on the build
+// subcommand: build accepts yaml + json, not name.
 func TestRun_BuildKS_RejectsBadOutput(t *testing.T) {
 	path := writeFixture(t)
 	_, stderr, code := runCLI(t, "build", "ks", "--path", path, "-o", "name")
 	if code == 0 {
 		t.Fatal("expected non-zero exit for -o name on build")
 	}
-	if !strings.Contains(stderr, "not supported") {
-		t.Errorf("error message missing 'not supported': %q", stderr)
+	if !strings.Contains(stderr, "must be one of") {
+		t.Errorf("error message missing 'must be one of': %q", stderr)
 	}
 }
 
@@ -330,15 +330,15 @@ func TestRun_GetKS_YAML(t *testing.T) {
 	}
 }
 
-// TestRun_GetAll_RejectsBadOutput covers the requireOutput fix we
-// just landed: get all must reject -o name.
+// TestRun_GetAll_RejectsBadOutput pins that get all rejects -o name —
+// printCluster only shapes yaml/json.
 func TestRun_GetAll_RejectsBadOutput(t *testing.T) {
 	path := writeFixture(t)
 	_, stderr, code := runCLI(t, "get", "all", "--path", path, "-o", "name")
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
-	if !strings.Contains(stderr, "not supported") {
+	if !strings.Contains(stderr, "must be one of") {
 		t.Errorf("expected validation error, got %q", stderr)
 	}
 }
@@ -389,7 +389,7 @@ func TestRun_GetImages_RejectsBadOutput(t *testing.T) {
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
-	if !strings.Contains(stderr, "not supported") {
+	if !strings.Contains(stderr, "must be one of") {
 		t.Errorf("expected validation error, got %q", stderr)
 	}
 }
@@ -463,16 +463,16 @@ func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 	}
 }
 
-// TestRun_TestAll_RejectsOutput covers test's new -o rejection
-// (test only emits plain-text).
+// TestRun_TestAll_RejectsOutput covers that test has no -o flag at all
+// (it emits one fixed plain-text report), so `-o` is an unknown flag.
 func TestRun_TestAll_RejectsOutput(t *testing.T) {
 	path := writeFixture(t)
 	_, stderr, code := runCLI(t, "test", "all", "--path", path, "-o", "yaml")
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
-	if !strings.Contains(stderr, "not supported") {
-		t.Errorf("expected validation error: %q", stderr)
+	if !strings.Contains(stderr, "unknown") {
+		t.Errorf("expected unknown-flag error: %q", stderr)
 	}
 }
 
@@ -557,107 +557,9 @@ func TestRun_DiffImages_RespectsNamespaceFailures(t *testing.T) {
 	}
 }
 
-// TestBuild_OutputMarkdown pins the build → markdown shape: every
-// rendered doc lands under an `### <kind>/...` heading wrapping a
-// fenced YAML block (the Layer A MarkdownDocs contract).
-func TestBuild_OutputMarkdown(t *testing.T) {
-	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "build", "all", "-o", "markdown", "--path", path)
-	if code != 0 {
-		t.Fatalf("build all -o markdown exited %d: %s", code, stderr)
-	}
-	for _, want := range []string{"```yaml", "### "} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("missing %q in markdown output:\n%s", want, stdout)
-		}
-	}
-}
-
-// TestGet_OutputMarkdown pins the get → markdown shape: a GFM pipe
-// table with the standard header/separator/data rows the format
-// package emits.
-func TestGet_OutputMarkdown(t *testing.T) {
-	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "get", "ks", "-o", "markdown", "--path", path)
-	if code != 0 {
-		t.Fatalf("get ks -o markdown exited %d: %s", code, stderr)
-	}
-	for _, want := range []string{"| ", "| --- "} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("missing %q in markdown table:\n%s", want, stdout)
-		}
-	}
-}
-
-// TestGetAll_OutputMarkdown covers the cluster-summary path:
-// `## Cluster summary` heading + a two-row pipe table.
-func TestGetAll_OutputMarkdown(t *testing.T) {
-	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "get", "all", "-o", "markdown", "--path", path)
-	if code != 0 {
-		t.Fatalf("get all -o markdown exited %d: %s", code, stderr)
-	}
-	for _, want := range []string{"## Cluster summary", "Kustomizations", "HelmReleases", "| --- "} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("missing %q in cluster summary markdown:\n%s", want, stdout)
-		}
-	}
-}
-
-// TestTest_OutputMarkdown pins the test → markdown shape: the
-// pipe-table summary header that testrunner.Report.WriteMarkdown
-// emits, plus the per-outcome H2 section for the only outcome the
-// fixture can produce (Passed).
-func TestTest_OutputMarkdown(t *testing.T) {
-	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "test", "ks", "-o", "markdown", "--path", path)
-	if code != 0 {
-		t.Fatalf("test ks -o markdown exited %d: %s", code, stderr)
-	}
-	if !strings.Contains(stdout, "| Passed | Skipped | Failed | Matched |") {
-		t.Errorf("missing summary header:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "## Passed") &&
-		!strings.Contains(stdout, "## Skipped") &&
-		!strings.Contains(stdout, "## Failed") {
-		t.Errorf("missing at least one outcome section:\n%s", stdout)
-	}
-}
-
-// TestDiff_OutputMarkdown drives a non-trivial diff (baseline tree
-// has a ConfigMap with different data than current) and asserts the
-// Layer B markdown render: the `# Diff` heading, an `### <header>`
-// per resource, and the ```diff fence wrapping the dyff body.
-func TestDiff_OutputMarkdown(t *testing.T) {
-	current := writeFixture(t)
-	orig := t.TempDir()
-	copyTree(t, current, filepath.Join(orig, "kubernetes"))
-	// Mutate the baseline ConfigMap so the diff renders a non-empty
-	// hunk. Without the delta `diff.Render` returns the empty-set
-	// "_No changes._" body and the ```diff fence assertion misses.
-	testutil.WriteFileAt(t, filepath.Join(orig, "kubernetes", "apps", "cm.yaml"), `---
-apiVersion: v1
-kind: ConfigMap
-metadata: {name: hello, namespace: apps}
-data:
-  greeting: hola
-`)
-	stdout, stderr, code := runCLI(t, "diff", "ks", "-o", "markdown",
-		"--path", current, "--path-orig", filepath.Join(orig, "kubernetes"))
-	if code != 0 {
-		t.Fatalf("diff ks -o markdown exited %d: %s", code, stderr)
-	}
-	for _, want := range []string{"# Diff", "### ", "```diff"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("missing %q in diff markdown:\n%s", want, stdout)
-		}
-	}
-}
-
-// TestDiff_OutputStyles drives a non-trivial diff and asserts each
-// dyff style plus the plain unified diff routes to its renderer when
-// selected via -o. Confirms the CLI wiring (requireOutput accepts the
-// token, Run renders the body, Render aggregates) end-to-end.
+// TestDiff_OutputStyles drives a non-trivial diff and asserts each dyff
+// style plus the plain unified diff routes to its renderer when selected
+// via -o, end-to-end.
 func TestDiff_OutputStyles(t *testing.T) {
 	current := writeFixture(t)
 	orig := t.TempDir()
@@ -690,6 +592,17 @@ data:
 				t.Errorf("-o %s output missing %q:\n%s", tc.style, tc.want, stdout)
 			}
 		})
+	}
+
+	// The default (no -o) is human — pins the breaking change away from
+	// github. Compare the no-flag output to an explicit -o human run.
+	def, _, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", origPath)
+	if code != 0 {
+		t.Fatalf("diff ks (default) exited %d", code)
+	}
+	human, _, _ := runCLI(t, "diff", "ks", "-o", "human", "--path", current, "--path-orig", origPath)
+	if def == "" || def != human {
+		t.Errorf("default diff output should equal -o human:\ndefault:\n%s\nhuman:\n%s", def, human)
 	}
 }
 
@@ -757,19 +670,6 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 		if sub.Flags().Lookup("kube-version") == nil {
 			t.Errorf("%v: missing helm flag kube-version", argv)
 		}
-	}
-}
-
-// TestOutputOrDefault_FallsBackOnTable covers the "table is the
-// global default, every verb coerces it to its natural shape" rule.
-func TestOutputOrDefault_FallsBackOnTable(t *testing.T) {
-	c := &commonFlags{output: "table"}
-	if got := c.outputOrDefault("yaml"); got != "yaml" {
-		t.Errorf("table → fallback failed: %q", got)
-	}
-	c.output = "json"
-	if got := c.outputOrDefault("yaml"); got != "json" {
-		t.Errorf("explicit -o json should win: %q", got)
 	}
 }
 

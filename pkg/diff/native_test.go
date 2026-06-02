@@ -33,7 +33,7 @@ func TestRenderDocs_NativeLabels(t *testing.T) {
 		{FormatGitLab, []string{"= data.greeting", "= v1/ConfigMap/apps/hello"}},
 		{FormatHuman, []string{"v1/ConfigMap/apps/hello", "data.greeting"}},
 		{FormatBrief, []string{"detected"}},
-		{"", []string{"@@ data.greeting @@", "# v1/ConfigMap/apps/hello"}}, // default = github
+		{"", []string{"v1/ConfigMap/apps/hello", "data.greeting"}}, // default = human
 	}
 	for _, tc := range cases {
 		name := string(tc.format)
@@ -58,30 +58,6 @@ func TestRenderDocs_NativeLabels(t *testing.T) {
 	}
 }
 
-// TestRenderDocs_StructuredFormats pins that diff/yaml/json/markdown route
-// through the per-resource Run+Render pipeline rather than the native path.
-func TestRenderDocs_StructuredFormats(t *testing.T) {
-	left := []Doc{ncm("hello", "greeting", "hola")}
-	right := []Doc{ncm("hello", "greeting", "hi")}
-
-	out, err := RenderDocs(left, right, Options{Format: FormatJSON})
-	if err != nil {
-		t.Fatalf("RenderDocs json: %v", err)
-	}
-	if !strings.Contains(string(out), `"kind": "ConfigMap"`) {
-		t.Errorf("json should be the structured per-resource list:\n%s", out)
-	}
-
-	out, err = RenderDocs(left, right, Options{Format: FormatDiff})
-	if err != nil {
-		t.Fatalf("RenderDocs diff: %v", err)
-	}
-	s := string(out)
-	if !strings.Contains(s, "--- ") || !strings.Contains(s, "@@ -") {
-		t.Errorf("diff should be a unified diff:\n%s", s)
-	}
-}
-
 func TestRenderDocs_NoChange(t *testing.T) {
 	d := ncm("hello", "k", "v")
 	out, err := RenderDocs([]Doc{d}, []Doc{d}, Options{Format: FormatGitHub})
@@ -90,5 +66,79 @@ func TestRenderDocs_NoChange(t *testing.T) {
 	}
 	if len(out) != 0 {
 		t.Errorf("no-change should render empty, got:\n%s", out)
+	}
+}
+
+func TestRenderDocs_UnsupportedFormat(t *testing.T) {
+	d := ncm("hello", "k", "v")
+	if _, err := RenderDocs([]Doc{d}, nil, Options{Format: "bogus"}); err == nil {
+		t.Error("expected error for unsupported format")
+	}
+}
+
+// ndeploy builds an apiVersion-bearing Deployment whose pod template lists
+// the named containers in order, so dyff's K8s entity detection matches
+// list entries by container name.
+func ndeploy(order ...string) []Doc {
+	img := map[string]string{"nginx": "nginx:1.20", "sidecar": "envoy:1.30", "init": "busybox:1.36"}
+	containers := make([]any, 0, len(order))
+	for _, n := range order {
+		containers = append(containers, map[string]any{"name": n, "image": img[n]})
+	}
+	return []Doc{{Manifest: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": "x", "namespace": "ns"},
+		"spec": map[string]any{
+			"template": map[string]any{"spec": map[string]any{"containers": containers}},
+		},
+	}}}
+}
+
+// TestRenderDocs_ContainerReorder locks the K8s-aware payoff: reordering
+// containers by name yields an `⇆ order changed` marker, NOT a wall of
+// per-line value churn like a text diff would.
+func TestRenderDocs_ContainerReorder(t *testing.T) {
+	out, err := RenderDocs(ndeploy("nginx", "sidecar", "init"), ndeploy("init", "nginx", "sidecar"),
+		Options{Format: FormatGitHub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "order changed") {
+		t.Errorf("expected 'order changed' marker; got:\n%s", s)
+	}
+	// dyff matched by container name and saw the values were identical,
+	// so no image-value churn should appear.
+	if strings.Contains(s, "image:") {
+		t.Errorf("reorder produced spurious image-value churn:\n%s", s)
+	}
+}
+
+// TestRenderDocs_ContainerByNameImageChange complements the reorder test:
+// a named container's image change is reported at the by-name path, not
+// by array index.
+func TestRenderDocs_ContainerByNameImageChange(t *testing.T) {
+	mk := func(image string) []Doc {
+		return []Doc{{Manifest: map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata":   map[string]any{"name": "x", "namespace": "ns"},
+			"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{
+				map[string]any{"name": "nginx", "image": image},
+				map[string]any{"name": "sidecar", "image": "envoy:1.30"},
+			}}}},
+		}}}
+	}
+	out, err := RenderDocs(mk("nginx:1.20"), mk("nginx:1.21"), Options{Format: FormatGitHub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "containers.nginx.image") {
+		t.Errorf("expected by-name path (containers.nginx.image); got:\n%s", s)
+	}
+	if !strings.Contains(s, "- nginx:1.20") || !strings.Contains(s, "+ nginx:1.21") {
+		t.Errorf("expected image value change lines; got:\n%s", s)
 	}
 }

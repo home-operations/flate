@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// BenchmarkDiff_LargeTree measures Run against two 100-resource doc
-// sets where most pairs are identical and a handful differ — the
+// BenchmarkDiff_LargeTree measures RenderDocs against two 100-resource
+// doc sets where most pairs are identical and a handful differ — the
 // shape a real `flate diff` produces on a typical CI run.
 func BenchmarkDiff_LargeTree(b *testing.B) {
 	const n = 100
@@ -15,11 +15,11 @@ func BenchmarkDiff_LargeTree(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		diffs, err := Run(left, right, Options{})
+		out, err := RenderDocs(left, right, Options{Format: FormatGitHub})
 		if err != nil {
-			b.Fatalf("Run: %v", err)
+			b.Fatalf("RenderDocs: %v", err)
 		}
-		if len(diffs) == 0 {
+		if len(out) == 0 {
 			b.Fatalf("expected at least one diff")
 		}
 	}

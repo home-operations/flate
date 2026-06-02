@@ -101,7 +101,7 @@ func newDiffImagesCmd() *cobra.Command {
 			return runDiffImages(cmd, c, h, includeRemoved)
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON, format.OutputName)
+	bindCommon(cmd.Flags(), c, format.OutputName, format.OutputYAML, format.OutputJSON)
 	bindHelmFlags(cmd.Flags(), h)
 	cmd.Flags().BoolVar(&includeRemoved, "include-removed", false,
 		"also emit images present only in --path-orig (default: only newly added images)")
@@ -109,17 +109,9 @@ func newDiffImagesCmd() *cobra.Command {
 }
 
 func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemoved bool) error {
-	// diff images emits a flat list of image refs — json/yaml/name
-	// are the meaningful shapes. The CLI default `-o table` would
-	// otherwise leak through `requireOutput`'s table-passthrough
-	// (common.go:requireOutput) and fall into emitImageList's
-	// newline-per-image branch, producing identical output to
-	// `-o name` with no signposting that the format was effectively
-	// coerced. Allow `-o name` explicitly, then route `table` →
-	// `name` so the default and the explicit form match.
-	if err := c.requireOutput(format.OutputYAML, format.OutputJSON, format.OutputName); err != nil {
-		return err
-	}
+	// diff images emits a flat list of image refs — name (one per line) is
+	// the default; json/yaml are the structured shapes. The -o flag rejects
+	// anything else at parse time.
 	stopProfile, err := startProfile(c.profileMode, c.profileOut)
 	if err != nil {
 		return err
@@ -130,7 +122,7 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 		return runErr
 	}
 	imgs := imageSetDiff(collectImages(orig.O, orig.Res, c), collectImages(current.O, current.Res, c), includeRemoved)
-	if err := emitImageList(cmd.OutOrStdout(), imgs, string(c.outputOrDefault(format.OutputName))); err != nil {
+	if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
 		return errors.Join(err, scopedDiffRunError(orig, current, c, runErr))
 	}
 	return scopedDiffRunError(orig, current, c, runErr)
@@ -157,33 +149,26 @@ func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []stri
 }
 
 // diffOutputFormats lists the -o values `flate diff ks/hr/all` accepts,
-// in help-display order (github default first, then the plain unified
-// diff, the other dyff styles, and the flate aggregations). Shared by
-// the flag help (bindCommon) and the runtime guard (requireOutput) so
-// the advertised set and the enforced set can't drift.
+// in help-display order: human (the default, listed first), then github,
+// the plain unified diff, and the remaining dyff styles. bindCommon
+// registers the set on the -o flag, which drives both the help text and
+// the parse-time rejection, so the advertised and enforced sets can't
+// drift.
 func diffOutputFormats() []format.Output {
 	return []format.Output{
+		format.Output(diff.FormatHuman),
 		format.Output(diff.FormatGitHub),
 		format.Output(diff.FormatDiff),
-		format.Output(diff.FormatHuman),
 		format.Output(diff.FormatBrief),
 		format.Output(diff.FormatGitLab),
 		format.Output(diff.FormatGitea),
-		format.OutputYAML,
-		format.OutputJSON,
-		format.OutputMarkdown,
 	}
 }
 
 func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kind, name string) error {
-	// diff has no `name` output mode. Reject anything outside the
-	// supported set early so the user sees a clear error instead of
-	// "unknown diff format" from pkg/diff. The format.Output string
-	// values match diff.Format so the casts below route each one to its
-	// renderer without an extra switch.
-	if err := c.requireOutput(diffOutputFormats()...); err != nil {
-		return err
-	}
+	// The -o flag (an outputValue enum) already rejects unsupported values
+	// at parse time. The format.Output string values match diff.Format so
+	// the cast below routes each one to its renderer without an extra switch.
 	stopProfile, err := startProfile(c.profileMode, c.profileOut)
 	if err != nil {
 		return err
@@ -200,7 +185,7 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
 	}
 
-	out := diff.Format(c.outputOrDefault(format.Output(diff.FormatGitHub)))
+	out := diff.Format(c.output)
 	formatted, err := diff.RenderDocs(origDocs, currentDocs, diff.Options{
 		StripAttrs: d.stripAttrs,
 		Format:     out,

@@ -66,11 +66,12 @@ type commonFlags struct {
 }
 
 // bindCommon wires the flags every reconcile-running subcommand shares.
-// outputs is the subcommand's supported -o values (beyond the always-
-// accepted table default); it drives the -o flag's help text so the
-// advertised formats match what requireOutput enforces — e.g. build /
-// test / diff don't claim `name`, which only get and the image lists
-// honor.
+// outputs is the subcommand's accepted -o values in help-display order:
+// the first is the default the flag takes when -o is omitted, and the flag
+// (an outputValue enum) rejects any value outside the set at parse time.
+// Each subcommand passes only the formats it honors — e.g. build doesn't
+// claim `name`, and diff doesn't claim `table`. Passing no formats (test,
+// which emits one fixed report) registers no -o flag at all.
 func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	fs.StringVar(&f.path, "path", ".", "path to the Flux cluster directory")
 	fs.StringVar(&f.pathOrig, "path-orig", "",
@@ -85,7 +86,14 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"that only materialize in the live cluster. "+
 			"Verify/cert/proxy secretRefs still fail loud.")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
-	fs.StringVarP(&f.output, "output", "o", "table", outputUsage(outputs))
+	// Commands with no -o variants (test) register no -o flag at all, so
+	// `-o anything` is an unknown flag rather than a rendered alternative.
+	// Otherwise -o is an enum (outputValue): an unsupported value is
+	// rejected at parse time, so cobra reports it before the command runs.
+	if len(outputs) > 0 {
+		f.output = string(outputs[0]) // default; outputValue.String reports it in --help
+		fs.VarP(&outputValue{target: &f.output, allowed: outputs}, "output", "o", outputUsage(outputs))
+	}
 	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.StringVar(&f.cacheDir, "cache-dir", "",
@@ -377,57 +385,39 @@ func validatePathFlag(flag, p string) error {
 	return nil
 }
 
-// outputOrDefault returns the user's -o choice, or fallback when -o
-// is at its CLI default ("table"). Subcommands like build/diff have
-// no table representation, so "table" effectively means "the
-// subcommand-natural default" (yaml for build, diff for diff).
-func (c *commonFlags) outputOrDefault(fallback format.Output) format.Output {
-	if c.output == string(format.OutputTable) {
-		return fallback
-	}
-	return format.Output(c.output)
-}
-
-// outputUsage renders the -o flag's help text from a subcommand's
-// supported formats. table always leads the list: it's the flag default
-// and requireOutput treats it as passthrough (subcommands coerce it to
-// their own natural default via outputOrDefault). Keeps the advertised
-// set in step with requireOutput so the help can't claim a format the
-// subcommand rejects.
+// outputUsage renders the -o flag's help text from a subcommand's accepted
+// formats, listed in the order bindCommon received them (the first is the
+// default).
 func outputUsage(outputs []format.Output) string {
-	names := make([]string, 0, len(outputs)+1)
-	names = append(names, string(format.OutputTable))
-	for _, o := range outputs {
-		if o == format.OutputTable {
-			continue
-		}
-		names = append(names, string(o))
+	names := make([]string, len(outputs))
+	for i, o := range outputs {
+		names[i] = string(o)
 	}
 	return "output format: " + strings.Join(names, ", ")
 }
 
-// requireOutput rejects an -o value that's outside the subcommand's
-// supported set. Use for subcommands that don't honor every global -o
-// value (e.g. build has no concept of "name"; diff has no concept of
-// "name"). Treats "table" as accepted so the global default doesn't
-// trigger this check — callers downstream coerce "table" to their
-// own natural default via outputOrDefault. Pass no `allowed` values to
-// reject every non-default `-o`, which is how `test` (plain-text only)
-// signals "I don't honor -o" loudly instead of silently.
-func (c *commonFlags) requireOutput(allowed ...format.Output) error {
-	if c.output == string(format.OutputTable) {
+// outputValue is the pflag.Value backing -o: a string constrained to a
+// subcommand's accepted formats. Set rejects anything else, so pflag/cobra
+// surface the error (with usage) at parse time, before the command runs —
+// no per-command validation call needed.
+type outputValue struct {
+	target  *string
+	allowed []format.Output
+}
+
+func (o *outputValue) String() string { return *o.target }
+func (o *outputValue) Type() string   { return "string" }
+
+func (o *outputValue) Set(v string) error {
+	if slices.Contains(o.allowed, format.Output(v)) {
+		*o.target = v
 		return nil
 	}
-	if slices.Contains(allowed, format.Output(c.output)) {
-		return nil
+	names := make([]string, len(o.allowed))
+	for i, a := range o.allowed {
+		names[i] = string(a)
 	}
-	names := make([]string, len(allowed)+1)
-	names[0] = string(format.OutputTable)
-	for i, a := range allowed {
-		names[i+1] = string(a)
-	}
-	return fmt.Errorf("--output %q not supported by this subcommand (want one of: %s)",
-		c.output, strings.Join(names, ", "))
+	return fmt.Errorf("must be one of: %s", strings.Join(names, ", "))
 }
 
 // runOrchestratorCfg routes the CLI through the embed-friendly

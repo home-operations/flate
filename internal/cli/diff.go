@@ -201,14 +201,10 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	}
 
 	out := diff.Format(c.outputOrDefault(format.Output(diff.FormatGitHub)))
-	diffs, err := diff.Run(origDocs, currentDocs, diff.Options{
+	formatted, err := diff.RenderDocs(origDocs, currentDocs, diff.Options{
 		StripAttrs: d.stripAttrs,
 		Format:     out,
 	})
-	if err != nil {
-		return errors.Join(err, diffRunErr)
-	}
-	formatted, err := diff.Render(diffs, out)
 	if err != nil {
 		return errors.Join(err, diffRunErr)
 	}

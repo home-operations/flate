@@ -193,9 +193,10 @@ func TestRun_ContainerByNameImageChange(t *testing.T) {
 	}
 }
 
-// TestRun_Styles pins that each output style renders a distinctive
-// per-resource body for the same value change. The dyff styles mirror
-// `dyff between --output <style>`; diff is a plain unified diff.
+// TestRun_Styles pins the two per-resource body styles Run resolves to:
+// the github body (embedded in yaml/json/markdown) and the plain unified
+// diff. The dyff text styles render through renderNative instead — see
+// native_test.go.
 func TestRun_Styles(t *testing.T) {
 	left := []Doc{cm("a", "ns", "owner", "v1")}
 	right := []Doc{cm("a", "ns", "owner", "v2")}
@@ -205,10 +206,6 @@ func TestRun_Styles(t *testing.T) {
 		contains []string
 	}{
 		{FormatGitHub, []string{"@@ data.k @@", "! ± value change", "- v1", "+ v2"}},
-		{FormatGitea, []string{"@@ data.k @@", "- v1", "+ v2"}},
-		{FormatGitLab, []string{"= data.k", "# ± value change", "- v1", "+ v2"}},
-		{FormatHuman, []string{"data.k", "value change", "- v1", "+ v2"}},
-		{FormatBrief, []string{"change detected"}},
 		{FormatDiff, []string{"--- ConfigMap ns/a", "+++ ConfigMap ns/a", "@@ -", "-  k: v1", "+  k: v2"}},
 	}
 	for _, tc := range cases {

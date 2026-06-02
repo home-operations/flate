@@ -75,11 +75,32 @@ type Options struct {
 	Format Format
 }
 
+// RenderDocs is the top-level entry point: it compares the two doc sets
+// and returns the formatted diff for opts.Format. The dyff text styles
+// (github/human/brief/gitlab/gitea, and the zero value) render the whole
+// set through dyff for native per-resource labels; the structured and
+// aggregated formats (diff/yaml/json/markdown) use flate's per-resource
+// Run+Render pipeline, which keeps parent attribution.
+func RenderDocs(left, right []Doc, opts Options) ([]byte, error) {
+	switch opts.Format {
+	case "", FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea:
+		return renderNative(left, right, opts)
+	default:
+		diffs, err := Run(left, right, opts)
+		if err != nil {
+			return nil, err
+		}
+		return Render(diffs, opts.Format)
+	}
+}
+
 // Run compares two manifest sets and returns the resources whose
 // rendered form differs. Resources missing on either side are compared
 // against an empty document, producing a wholesale addition/removal.
 // Each pair's body is rendered in the style Options.Format resolves to
-// (see bodyStyle); identical resources are dropped.
+// (see bodyStyle); identical resources are dropped. Used for the
+// structured/aggregated formats — the dyff text styles go through
+// renderNative (see RenderDocs).
 func Run(left, right []Doc, opts Options) ([]ResourceDiff, error) {
 	left = normalizeDocs(left, opts.StripAttrs)
 	right = normalizeDocs(right, opts.StripAttrs)

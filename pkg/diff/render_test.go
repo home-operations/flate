@@ -5,87 +5,29 @@ import (
 	"testing"
 )
 
-// TestRender_DiffHeaderAlwaysEmitted pins the per-resource header
-// policy for the dyff styles: every body gets a `#`-prefixed identifier,
-// even when there's only one diff. dyff's `@@ <path> @@` identifies the
-// data path but not the owning resource, so a reviewer scanning a PR
-// comment shouldn't have to infer it. Critically: NO flux-local-style
-// `---/+++` twin banner — the single `#` line is the load-bearing
-// identifier.
-func TestRender_DiffHeaderAlwaysEmitted(t *testing.T) {
-	mkDiff := func(name string) ResourceDiff {
-		return ResourceDiff{
-			Parent: Parent{Kind: "HelmRelease", Namespace: "media", Name: name},
-			Kind:   "Deployment", Namespace: "media", Name: name,
-			Diff: "\n@@ spec.replicas @@\n! ± value change\n- 1\n+ 2\n",
-		}
-	}
-
-	t.Run("single resource still gets a header", func(t *testing.T) {
-		out, err := Render([]ResourceDiff{mkDiff("qui")}, FormatGitHub)
-		if err != nil {
-			t.Fatalf("Render: %v", err)
-		}
-		s := string(out)
-		if !strings.Contains(s, "# HelmRelease: media/qui Deployment: media/qui") {
-			t.Errorf("single-resource output must still include the header; got:\n%s", s)
-		}
-		if !strings.Contains(s, "@@ spec.replicas @@") {
-			t.Errorf("body should pass through verbatim; got:\n%s", s)
-		}
-	})
-
-	t.Run("multiple resources each get a header", func(t *testing.T) {
-		out, err := Render([]ResourceDiff{mkDiff("qui"), mkDiff("plex")}, FormatGitHub)
-		if err != nil {
-			t.Fatalf("Render: %v", err)
-		}
-		s := string(out)
-		if !strings.Contains(s, "# HelmRelease: media/qui Deployment: media/qui") {
-			t.Errorf("missing qui header:\n%s", s)
-		}
-		if !strings.Contains(s, "# HelmRelease: media/plex Deployment: media/plex") {
-			t.Errorf("missing plex header:\n%s", s)
-		}
-		// Critically: NO flux-local-style `--- / +++` twin banners.
-		if strings.Contains(s, "--- HelmRelease") || strings.Contains(s, "+++ HelmRelease") {
-			t.Errorf("output reintroduced the --- / +++ twin banner:\n%s", s)
-		}
-	})
-}
-
-// TestRender_TextFormatsConcatenate pins that the dyff text styles (and
-// the zero value) prepend a `# <resource>` header to each body, while
-// the plain unified diff omits it — its own `--- `/`+++ ` labels already
-// name the resource.
-func TestRender_TextFormatsConcatenate(t *testing.T) {
+// TestRender_Unified pins that the unified diff concatenates bodies
+// verbatim with no flate header — its own `--- `/`+++ ` labels name the
+// resource — and that Render rejects the dyff text styles, which are
+// rendered natively (renderNative), not from a []ResourceDiff.
+func TestRender_Unified(t *testing.T) {
 	d := ResourceDiff{Kind: "ConfigMap", Namespace: "ns", Name: "a", Diff: "BODY-LINE\n"}
 
-	for _, f := range []Format{"", FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea} {
-		out, err := Render([]ResourceDiff{d}, f)
-		if err != nil {
-			t.Fatalf("Render(%q): %v", f, err)
-		}
-		s := string(out)
-		if !strings.Contains(s, "# ConfigMap: ns/a") {
-			t.Errorf("Render(%q) missing header:\n%s", f, s)
-		}
-		if !strings.Contains(s, "BODY-LINE") {
-			t.Errorf("Render(%q) missing body:\n%s", f, s)
-		}
-	}
-
-	// Unified diff: body only, no flate header line.
 	out, err := Render([]ResourceDiff{d}, FormatDiff)
 	if err != nil {
 		t.Fatalf("Render(diff): %v", err)
 	}
 	s := string(out)
-	if strings.Contains(s, "# ConfigMap") {
-		t.Errorf("Render(diff) should omit the header:\n%s", s)
+	if strings.Contains(s, "#") {
+		t.Errorf("Render(diff) should not add a header:\n%s", s)
 	}
 	if !strings.Contains(s, "BODY-LINE") {
 		t.Errorf("Render(diff) missing body:\n%s", s)
+	}
+
+	for _, f := range []Format{"", FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea} {
+		if _, err := Render([]ResourceDiff{d}, f); err == nil {
+			t.Errorf("Render(%q) should be rejected (dyff styles render natively)", f)
+		}
 	}
 }
 

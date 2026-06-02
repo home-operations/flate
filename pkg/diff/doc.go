@@ -1,13 +1,16 @@
 // Package diff compares two sets of rendered Kubernetes manifests and
 // reports the resources whose rendered form differs.
 //
-// The pipeline is two stages. [Run] pairs each resource against its
-// counterpart in the other set — keyed by parent KS/HR and resource
-// identity, not just name, so a Deployment from HelmRelease A never
-// diffs against the same-named Deployment from HelmRelease B — and
-// renders a per-resource body. [Render] then aggregates those bodies
-// into the chosen [Format]. Both take the same Format so the body style
-// matches the aggregation (see [Options].Format).
+// [RenderDocs] is the entry point, and it takes one of two paths by
+// [Format]. The dyff text styles (github default, human, brief, gitlab,
+// gitea) render the whole set through dyff at once: dyff pairs documents
+// by their Kubernetes identity and labels each diff natively with
+// apiVersion/kind/namespace/name. The structured and aggregated formats
+// (the unified diff, yaml, json, markdown) take a per-resource path —
+// [Run] pairs each resource against its counterpart, keyed by parent
+// KS/HR and resource identity (not just name, so a Deployment from
+// HelmRelease A never diffs against the same-named Deployment from
+// HelmRelease B), and [Render] aggregates the per-resource bodies.
 //
 // Most styles delegate to [dyff], whose K8s-aware comparison pairs
 // named list entries (containers, env vars) by their identifier, so

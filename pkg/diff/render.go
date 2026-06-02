@@ -9,20 +9,14 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// Render serializes a diff result set into the requested format. The
-// plain-text styles (diff/github/human/brief/gitlab/gitea) concatenate
-// each pre-rendered body, optionally under a resource header;
-// yaml/json/markdown aggregate the bodies. Render must be called with
-// the same Format that Run rendered the bodies in (see Options.Format).
+// Render serializes a per-resource diff result set (from Run) into one
+// of the structured/aggregated formats: the unified diff, yaml, json, or
+// markdown. The dyff text styles (github/human/brief/gitlab/gitea) are
+// not rendered here — they go through renderNative (see RenderDocs).
 func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 	switch format {
-	case "", FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea:
-		return renderText(diffs, true), nil
 	case FormatDiff:
-		// Unified diff bodies carry their own `--- <res>` / `+++ <res>`
-		// labels, so the flate header would just be a redundant comment
-		// line above each one — emit a clean standard diff instead.
-		return renderText(diffs, false), nil
+		return renderUnified(diffs), nil
 	case FormatYAML:
 		return yaml.Marshal(diffs)
 	case FormatJSON:
@@ -30,23 +24,15 @@ func Render(diffs []ResourceDiff, format Format) ([]byte, error) {
 	case FormatMarkdown:
 		return renderMarkdown(diffs), nil
 	}
-	return nil, fmt.Errorf("unknown diff format %q", format)
+	return nil, fmt.Errorf("unsupported structured diff format %q", format)
 }
 
-// renderText concatenates each diff body, optionally under a
-// `# <resource>` header. The dyff styles' bodies identify the data path
-// that changed (`@@ <path> @@`) but not the owning resource, so the
-// header is load-bearing there — a reviewer shouldn't have to infer
-// which Deployment from which HelmRelease the body belongs to.
-// `#`-prefixed lines are dyff's comment convention, which GitHub's diff
-// lexer renders magenta. The unified diff opts out: its `--- `/`+++ `
-// labels already name the resource.
-func renderText(diffs []ResourceDiff, withHeader bool) []byte {
+// renderUnified concatenates each resource's unified-diff body. The
+// bodies carry their own `--- <res>` / `+++ <res>` labels, so no extra
+// header is added — the result is a clean standard diff.
+func renderUnified(diffs []ResourceDiff) []byte {
 	var b bytes.Buffer
 	for _, d := range diffs {
-		if withHeader {
-			fmt.Fprintf(&b, "# %s\n", d.Header())
-		}
 		writeBody(&b, d.Diff)
 	}
 	return b.Bytes()

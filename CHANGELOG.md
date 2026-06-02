@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/home-operations/flate/compare/0.2.2...0.2.3) (2026-06-02)
+
+
+### Bug Fixes
+
+* **diff:** blank line between docs in unified output ([#541](https://github.com/home-operations/flate/issues/541)) ([a2f2d97](https://github.com/home-operations/flate/commit/a2f2d9731f1ae7ae0d7037f15b5b42926f1d5d51))
+
 ## [0.2.2](https://github.com/home-operations/flate/compare/0.2.1...0.2.2) (2026-06-02)
 
 

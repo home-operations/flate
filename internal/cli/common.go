@@ -73,8 +73,8 @@ type commonFlags struct {
 // claim `name`, and diff doesn't claim `table`. Passing no formats (test,
 // which emits one fixed report) registers no -o flag at all.
 func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
-	fs.StringVar(&f.path, "path", ".", "path to the Flux cluster directory")
-	fs.StringVar(&f.pathOrig, "path-orig", "",
+	fs.StringVarP(&f.path, "path", "p", ".", "path to the Flux cluster directory")
+	fs.StringVarP(&f.pathOrig, "path-orig", "P", "",
 		"baseline path; when set, every command runs in changed-only mode")
 	bindBase(fs, f)
 	fs.StringVarP(&f.namespace, "namespace", "n", "",

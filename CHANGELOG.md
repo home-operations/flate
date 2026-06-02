@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.4](https://github.com/home-operations/flate/compare/0.2.3...0.2.4) (2026-06-02)
+
+
+### Bug Fixes
+
+* **change:** re-render consumers when a referenced source changes ([#545](https://github.com/home-operations/flate/issues/545)) ([45a7414](https://github.com/home-operations/flate/commit/45a7414397c3a46d9d769b17a1fcf04f3c19e095))
+* **kustomize:** recursive working-tree fingerprint for stage cache ([#544](https://github.com/home-operations/flate/issues/544)) ([13ad3bf](https://github.com/home-operations/flate/commit/13ad3bfb89e72ed855374f23580e04c151c73b2a))
+* **mise:** update tool go (1.26.3 → 1.26.4) ([0eab7de](https://github.com/home-operations/flate/commit/0eab7deb41043358f1bbaabaaa94d9c140f9f037))
+
 ## [0.2.3](https://github.com/home-operations/flate/compare/0.2.2...0.2.3) (2026-06-02)
 
 

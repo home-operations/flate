@@ -15,6 +15,7 @@ import (
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/cli"
@@ -250,6 +251,84 @@ func TestE2E_DiffAutoBaseline_Base(t *testing.T) {
 	if !strings.Contains(out, "original") {
 		t.Errorf("expected baseline 'original' to surface in diff body:\n%s", out)
 	}
+}
+
+// TestE2E_DiffSelfRefBaselineRenders is the regression guard for the
+// changed-only baseline self-alias bug (TalosCluster PR #5386). The flux
+// source is a GitRepository named "cluster" — not the bootstrap "flux-
+// system" anchor — that is self-referential (its URL matches the repo's own
+// remote) and gated behind a missing deploy-key secret, so it resolves only
+// through the URL-match self-alias. The baseline render must alias it (using
+// the working tree's remotes, even though the materialized baseline tree has
+// none), or the whole tree renders empty and every resource shows as a
+// wholesale addition instead of the one-line changeset.
+func TestE2E_DiffSelfRefBaselineRenders(t *testing.T) {
+	repoRoot := initSelfRefGitFixture(t)
+	testutil.WriteFileAt(t, filepath.Join(repoRoot, "k8s", "apps", "cm.yaml"), `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello, namespace: apps}
+data:
+  value: changed
+`)
+	// Isolated cache so the baseline is freshly materialized (the fixture's
+	// deterministic commit SHA would otherwise reuse a cached baseline tree).
+	out := runCLI(t, "diff", "ks", "--path", repoRoot, "--base", "HEAD",
+		"--allow-missing-secrets", "--cache-dir", t.TempDir())
+	// The baseline must have rendered the old value, so the diff is a value
+	// change. With the bug the baseline is empty and `original` never
+	// appears — the whole ConfigMap shows as a wholesale addition.
+	if !strings.Contains(out, "original") {
+		t.Errorf("baseline rendered empty (whole tree shown as additions, not the changeset):\n%s", out)
+	}
+	if !strings.Contains(out, "changed") {
+		t.Errorf("expected the changed value to surface:\n%s", out)
+	}
+}
+
+// initSelfRefGitFixture builds a git repo with an origin remote and a flux
+// entrypoint sourced from a self-referential GitRepository named "cluster"
+// (gated behind a missing secret). Returns the repo root to use as --path.
+func initSelfRefGitFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateRemote(&config.RemoteConfig{
+		Name: "origin", URLs: []string{"https://github.com/example/cluster.git"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile := func(rel, body string) { testutil.WriteFile(t, dir, rel, body) }
+	writeFile("k8s/flux/entry.yaml", `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: cluster, namespace: flux-system}
+spec:
+  url: ssh://git@github.com/example/cluster.git
+  ref: {branch: main}
+  secretRef: {name: deploy-key}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./k8s/apps
+  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
+`)
+	writeFile("k8s/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+	writeFile("k8s/apps/cm.yaml", `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello, namespace: apps}
+data:
+  value: original
+`)
+	gitCommitAll(t, repo)
+	return dir
 }
 
 // TestE2E_DiffImagesRequiresBaselineWhenNoGit pins the error UX when
@@ -626,6 +705,24 @@ func mustExtractSkipLine(t *testing.T, haystack, needle string) string {
 	return ""
 }
 
+// gitCommitAll stages and commits the whole worktree with a fixed author,
+// so every fixture lands one deterministic "init" commit.
+func gitCommitAll(t *testing.T, repo *gogit.Repository) {
+	t.Helper()
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Commit("init", &gogit.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // initGitFixtureFrom copies the fixture tree at src into a fresh tempdir,
 // inits a git repo, and commits the whole tree as the baseline. Returns
 // (clusterPath, repoRoot): clusterPath is the repoRoot/flux entrypoint
@@ -657,18 +754,7 @@ func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Add("."); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Commit("init", &gogit.CommitOptions{
-		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	gitCommitAll(t, repo)
 	return filepath.Join(dir, "flux"), dir
 }
 
@@ -707,18 +793,7 @@ metadata: {name: hello, namespace: apps}
 data:
   value: original
 `)
-	wt, err := repo.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Add("."); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Commit("init", &gogit.CommitOptions{
-		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	gitCommitAll(t, repo)
 	return filepath.Join(dir, "kubernetes", "flux"), dir
 }
 

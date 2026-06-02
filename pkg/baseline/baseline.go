@@ -141,20 +141,47 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 	return tmp, false, nil
 }
 
-// materializeAndMark extracts the commit tree into root and drops a
-// .git marker directory.
+// materializeAndMark extracts the commit tree into root and writes a
+// minimal, openable .git into it. The .git serves two ends:
 //
-// The .git marker is required so discovery.FindRepoRoot (used by
-// orchestrator.buildChangeFilter's repo-root widening, PR #348) lifts
-// the synthetic --path-orig to root, lining up with the current side's
-// repoRoot. Without it, the per-side .git roots match (both fall back
-// to the passed path) and the widening short-circuits.
+//   - discovery.FindRepoRoot (used by orchestrator.buildChangeFilter's
+//     repo-root widening, PR #348) lifts the synthetic --path-orig to root,
+//     lining up with the current side's repoRoot. Without a .git the
+//     per-side roots match (both fall back to the passed path) and the
+//     widening short-circuits.
+//   - it carries the source repo's git remotes, so the baseline is
+//     self-describing: discovery's self-referential GitRepository alias —
+//     which URL-matches a GitRepository's spec.url against the working
+//     tree's remotes — fires on the baseline side too. A remotes-less
+//     marker leaves a private self-source unresolved, rendering the whole
+//     baseline empty (so every resource shows as a wholesale addition).
+//
+// It's a config + HEAD only — enough for go-git's PlainOpen and
+// repo.Config(); the dangling HEAD ref is never dereferenced.
 func materializeAndMark(repo *git.Repository, hash plumbing.Hash, root string) error {
 	if err := materialize(repo, hash, root); err != nil {
 		return err
 	}
-	if err := os.Mkdir(filepath.Join(root, ".git"), 0o700); err != nil {
+	dir := filepath.Join(root, ".git")
+	if err := os.Mkdir(dir, 0o700); err != nil {
 		return fmt.Errorf("baseline .git marker: %w", err)
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		return fmt.Errorf("baseline git config: %w", err)
+	}
+	var b strings.Builder
+	b.WriteString("[core]\n\trepositoryformatversion = 0\n")
+	for _, remote := range cfg.Remotes {
+		for _, url := range remote.URLs {
+			fmt.Fprintf(&b, "[remote %q]\n\turl = %s\n", remote.Name, url)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(b.String()), 0o600); err != nil {
+		return fmt.Errorf("baseline .git/config: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		return fmt.Errorf("baseline .git/HEAD: %w", err)
 	}
 	return nil
 }

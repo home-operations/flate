@@ -42,6 +42,43 @@ func TestAutoResolve_ExplicitBase(t *testing.T) {
 	_ = commitB
 }
 
+// TestMaterializeAndMark_CarriesRemotes pins that the materialized baseline
+// tree's .git is openable and exposes the source repo's remotes — the
+// property discovery's self-referential GitRepository alias relies on.
+// Without it the baseline's private self-source goes unresolved and the
+// whole tree renders empty (every resource shown as a wholesale addition).
+func TestMaterializeAndMark_CarriesRemotes(t *testing.T) {
+	dir := t.TempDir()
+	commit := initRepoWithFile(t, dir, "a.yaml", "x")
+	repo, err := git.PlainOpen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const url = "ssh://git@github.com/example/cluster.git"
+	if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := AutoResolve(dir, commit.String(), cacheroot.Layout{})
+	if err != nil {
+		t.Fatalf("AutoResolve: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(res.TempDir) }()
+
+	// The same open + Config() that discovery.readWorkingTreeRemotes performs.
+	got, err := git.PlainOpenWithOptions(res.TempDir, &git.PlainOpenOptions{DetectDotGit: true})
+	if err != nil {
+		t.Fatalf("materialized baseline .git not openable: %v", err)
+	}
+	cfg, err := got.Config()
+	if err != nil {
+		t.Fatalf("materialized baseline config: %v", err)
+	}
+	if origin, ok := cfg.Remotes["origin"]; !ok || len(origin.URLs) == 0 || origin.URLs[0] != url {
+		t.Errorf("materialized .git missing origin remote %q; got %+v", url, cfg.Remotes)
+	}
+}
+
 // TestAutoResolve_UpstreamMergeBase exercises the @{u} rung: HEAD is on
 // a branch whose config points at a remote-tracking ref, and the
 // merge-base resolves correctly.

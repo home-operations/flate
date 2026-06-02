@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.38](https://github.com/home-operations/flate/compare/0.1.37...0.1.38) (2026-06-02)
+
+
+### Features
+
+* **diff:** dyff output styles + native rendering, and pkg/diff cleanup ([#530](https://github.com/home-operations/flate/issues/530)) ([fa0ab26](https://github.com/home-operations/flate/commit/fa0ab26a36400b8b2089f46bb433805b37ec0fd9))
+* **mise:** update tool oxfmt (0.52.0 → 0.53.0) ([cf23e71](https://github.com/home-operations/flate/commit/cf23e71afe34f29c15aa33150c6aaccf798b9130))
+* stamp build version into the container image ([#527](https://github.com/home-operations/flate/issues/527)) ([949bd91](https://github.com/home-operations/flate/commit/949bd91a80851675e406e53558b832ad7b651f3f))
+
+
+### Bug Fixes
+
+* **configmap:** wipe SOPS-encrypted values to placeholders ([#523](https://github.com/home-operations/flate/issues/523)) ([84c3337](https://github.com/home-operations/flate/commit/84c333794306c3ba627bd4dbff344ce0494417d5))
+* **loader:** resolve NamespaceTransformer targetNamespace at load time ([#529](https://github.com/home-operations/flate/issues/529)) ([32e9154](https://github.com/home-operations/flate/commit/32e91544d7cd3a3f04b7c12e6706d2591430b26f))
+* **oci:** skip provenance layer when selecting the chart layer ([#522](https://github.com/home-operations/flate/issues/522)) ([996f9d1](https://github.com/home-operations/flate/commit/996f9d17b5c2c58c46105d3c676dde032e5cd088))
+
+
+### Miscellaneous Chores
+
+* add discord badge ([4e5628d](https://github.com/home-operations/flate/commit/4e5628d02af9609e477279432774e5bd452156ad))
+* add discord badge ([00e959d](https://github.com/home-operations/flate/commit/00e959d9fdf6c8da22cbae889cae97696f816701))
+* mise lock ([c0928e7](https://github.com/home-operations/flate/commit/c0928e7941a79c7fbd4fbd96b03ba99947100d6d))
+
 ## [0.1.37](https://github.com/home-operations/flate/compare/0.1.36...0.1.37) (2026-06-01)
 
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/home-operations/flate/compare/0.1.38...0.2.0) (2026-06-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **diff:** simplify output formats, default to human ([#532](https://github.com/home-operations/flate/issues/532))
+
+### Bug Fixes
+
+* **diff:** resolve self-referential GitRepository on the baseline side ([#534](https://github.com/home-operations/flate/issues/534)) ([29ee977](https://github.com/home-operations/flate/commit/29ee9772deecb3b59dcd8a57effe7778b34431db))
+
+
+### Code Refactoring
+
+* **diff:** simplify output formats, default to human ([#532](https://github.com/home-operations/flate/issues/532)) ([ca33395](https://github.com/home-operations/flate/commit/ca3339527f2f79fc8a15df5a3a88d3375a5028bd))
+
 ## [0.1.38](https://github.com/home-operations/flate/compare/0.1.37...0.1.38) (2026-06-02)
 
 

@@ -304,6 +304,7 @@ func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, val
 	if err != nil {
 		return nil, err
 	}
+	docs = manifest.FlattenLists(docs)
 	applyHRCommonMetadata(docs, hr.CommonMetadata)
 	applyHROriginLabels(docs, hr)
 	return manifest.DropKinds(docs, opts.SkipResourceKinds()), nil

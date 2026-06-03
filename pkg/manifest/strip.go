@@ -1,14 +1,13 @@
 package manifest
 
 // StripResourceAttributes removes the listed annotation/label keys
-// from a raw Kubernetes resource's metadata, the pod-template
-// metadata for every workload shape Helm charts decorate, and the
-// items of a List. Used to cut chart-bump noise (helm.sh/chart,
-// checksum/config, …) out of diffs before they reach the diff
-// backend — dyff matches K8s lists by identifier but still flags
-// string-value changes verbatim, so annotations whose values rotate
-// on every chart update would otherwise produce one entry per
-// resource.
+// from a raw Kubernetes resource's metadata and the pod-template
+// metadata for every workload shape Helm charts decorate. Used to cut
+// chart-bump noise (helm.sh/chart, checksum/config, …) out of diffs
+// before they reach the diff backend — dyff matches K8s lists by
+// identifier but still flags string-value changes verbatim, so
+// annotations whose values rotate on every chart update would
+// otherwise produce one entry per resource.
 //
 // Coverage:
 //
@@ -20,7 +19,6 @@ package manifest
 //     JobTemplateSpec and its nested PodTemplateSpec)
 //   - .spec.volumeClaimTemplates[*].metadata (StatefulSet — Helm
 //     charts decorate PVC templates with chart labels too)
-//   - List.items[*].metadata (recursing one level into each item)
 //
 // Without these extra walks, real chart bumps on bitnami/postgresql,
 // kube-prometheus-stack, app-template CronJobs, etc. produce diff
@@ -44,9 +42,6 @@ func StripResourceAttributes(resource map[string]any, attrs []string) {
 		}
 		// StatefulSet PVC templates — Helm puts chart labels here too.
 		stripMetadataInList(spec, "volumeClaimTemplates", attrs)
-	}
-	if kind, _ := resource["kind"].(string); kind == "List" {
-		stripMetadataInList(resource, "items", attrs)
 	}
 }
 

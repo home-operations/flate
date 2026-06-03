@@ -1377,6 +1377,141 @@ metadata: {name: b, namespace: ns}
 	assert.Diff(t, names, []string{"a", "b"})
 }
 
+// docNames returns each doc's metadata.name, for asserting flatten output.
+func docNames(docs []map[string]any) []string {
+	out := make([]string, len(docs))
+	for i, d := range docs {
+		md, _ := d["metadata"].(map[string]any)
+		out[i], _ = md["name"].(string)
+	}
+	return out
+}
+
+// TestFlattenLists_DecodedYAML pins that a Kubernetes List wrapper decoded
+// from a real multi-doc stream is expanded into its items, each a name-able
+// top-level document, with surrounding docs and order preserved. This is
+// the property that keeps an un-named List from forcing dyff off name-based
+// pairing. Exercises the decode → FlattenLists sequence the render paths run.
+func TestFlattenLists_DecodedYAML(t *testing.T) {
+	data := []byte(`
+apiVersion: v1
+kind: ConfigMapList
+metadata:
+  labels: {helm.toolkit.fluxcd.io/name: x}
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: dash-a, namespace: ns}
+    data: {k: v}
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: dash-b, namespace: ns}
+    data: {k: v}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: plain, namespace: ns}
+`)
+	docs, err := SplitDocs(data)
+	if err != nil {
+		t.Fatalf("SplitDocs: %v", err)
+	}
+	docs = FlattenLists(docs)
+	// Names assert non-empty identity on every doc; kinds confirm the
+	// wrapper itself is gone and only ConfigMaps remain.
+	assert.Diff(t, docNames(docs), []string{"dash-a", "dash-b", "plain"})
+	for _, d := range docs {
+		if DocKind(d) != KindConfigMap {
+			t.Errorf("flattened doc has kind %q, want ConfigMap", DocKind(d))
+		}
+	}
+}
+
+func TestFlattenLists(t *testing.T) {
+	cmItem := func(name string) map[string]any {
+		return map[string]any{
+			"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]any{"name": name, "namespace": "ns"},
+		}
+	}
+	list := func(kind string, items ...map[string]any) map[string]any {
+		its := make([]any, len(items))
+		for i, it := range items {
+			its[i] = it
+		}
+		return map[string]any{"apiVersion": "v1", "kind": kind, "items": its}
+	}
+
+	t.Run("promotes items and passes non-list docs through", func(t *testing.T) {
+		in := []map[string]any{list("ConfigMapList", cmItem("a"), cmItem("b")), cmItem("plain")}
+		assert.Diff(t, docNames(FlattenLists(in)), []string{"a", "b", "plain"})
+	})
+
+	t.Run("derives identity for bare items in a typed list", func(t *testing.T) {
+		bare := map[string]any{"metadata": map[string]any{"name": "c"}}
+		out := FlattenLists([]map[string]any{list("ConfigMapList", bare)})
+		if len(out) != 1 {
+			t.Fatalf("want 1 doc, got %d", len(out))
+		}
+		assert.Equal(t, DocKind(out[0]), "ConfigMap")
+		assert.Equal(t, DocAPIVersion(out[0]), "v1")
+		if _, mutated := bare["kind"]; mutated {
+			t.Error("derivation mutated the original item map")
+		}
+	})
+
+	t.Run("generic List keeps self-describing items", func(t *testing.T) {
+		item := map[string]any{
+			"apiVersion": "apps/v1", "kind": "Deployment",
+			"metadata": map[string]any{"name": "d", "namespace": "ns"},
+		}
+		out := FlattenLists([]map[string]any{list("List", item)})
+		if len(out) != 1 {
+			t.Fatalf("want 1 doc, got %d", len(out))
+		}
+		assert.Equal(t, DocKind(out[0]), "Deployment")
+	})
+
+	t.Run("flattens any typed list, not just ConfigMapList", func(t *testing.T) {
+		secret := func(name string) map[string]any {
+			return map[string]any{
+				"apiVersion": "v1", "kind": "Secret",
+				"metadata": map[string]any{"name": name, "namespace": "ns"},
+			}
+		}
+		out := FlattenLists([]map[string]any{list("SecretList", secret("s1"), secret("s2"))})
+		assert.Diff(t, docNames(out), []string{"s1", "s2"})
+		for _, d := range out {
+			assert.Equal(t, DocKind(d), KindSecret)
+		}
+	})
+
+	t.Run("non-collection kinds ending in List are left untouched", func(t *testing.T) {
+		// items are scalars, not resource maps.
+		scalarItems := map[string]any{
+			"apiVersion": "example.com/v1", "kind": "AllowList",
+			"metadata": map[string]any{"name": "acl"},
+			"items":    []any{"1.2.3.4", "5.6.7.8"},
+		}
+		// no top-level items at all.
+		noItems := map[string]any{
+			"apiVersion": "example.com/v1", "kind": "WaitList",
+			"metadata": map[string]any{"name": "wl"},
+			"spec":     map[string]any{"items": []any{}},
+		}
+		out := FlattenLists([]map[string]any{scalarItems, noItems})
+		assert.Diff(t, docNames(out), []string{"acl", "wl"})
+	})
+
+	t.Run("no list returns the input slice unchanged", func(t *testing.T) {
+		in := []map[string]any{cmItem("a"), cmItem("b")}
+		out := FlattenLists(in)
+		if &out[0] != &in[0] {
+			t.Error("expected the original slice (no allocation) when no List is present")
+		}
+	})
+}
+
 // TestParseDoc_PoolReuseConsistency drives the DecodeDocs sync.Pool
 // hard: 1000 parse-and-release iterations on a fixed input must yield
 // byte-identical typed results. Catches any aliasing or stale-state

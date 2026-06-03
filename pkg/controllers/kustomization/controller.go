@@ -259,6 +259,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	if err != nil {
 		return err
 	}
+	docs = manifest.FlattenLists(docs)
 
 	// Per-resource envsubst. Flux's kustomize-controller skips
 	// substitution on any resource carrying the

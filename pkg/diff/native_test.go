@@ -76,6 +76,28 @@ func TestRenderDocs_UnsupportedFormat(t *testing.T) {
 	}
 }
 
+// TestRenderDocs_DifferingDocCount locks the property that the dyff
+// native path renders cleanly when the two sides differ in document
+// count, as long as every document is name-able (the invariant List
+// flattening upstream guarantees). dyff name-pairs by identity and shows
+// the extra resource as an addition rather than erroring with "comparing
+// YAMLs with a different number of documents". This is the dyff-level
+// half of the ConfigMapList regression, independent of where flattening
+// happens.
+func TestRenderDocs_DifferingDocCount(t *testing.T) {
+	left := []Doc{ncm("keep", "k", "v")}
+	right := []Doc{ncm("keep", "k", "v"), ncm("added", "k", "v")}
+
+	out, err := RenderDocs(left, right, Options{Format: FormatGitHub})
+	if err != nil {
+		t.Fatalf("RenderDocs: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "document added") || !strings.Contains(s, "name: added") {
+		t.Errorf("expected the added ConfigMap in the diff; got:\n%s", s)
+	}
+}
+
 // ndeploy builds an apiVersion-bearing Deployment whose pod template lists
 // the named containers in order, so dyff's K8s entity detection matches
 // list entries by container name.

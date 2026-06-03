@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.8](https://github.com/home-operations/flate/compare/0.2.7...0.2.8) (2026-06-03)
+
+
+### Bug Fixes
+
+* **diff:** emit nothing for `-o html` when there is no diff ([#554](https://github.com/home-operations/flate/issues/554)) ([489e214](https://github.com/home-operations/flate/commit/489e2144ae04f20d8d079deda3ed3cbb8fd722af))
+
 ## [0.2.7](https://github.com/home-operations/flate/compare/0.2.6...0.2.7) (2026-06-03)
 
 

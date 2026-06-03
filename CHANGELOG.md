@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.7](https://github.com/home-operations/flate/compare/0.2.6...0.2.7) (2026-06-03)
+
+
+### Bug Fixes
+
+* **helm:** support external $ref in values.schema.json ([#552](https://github.com/home-operations/flate/issues/552)) ([c16c9ad](https://github.com/home-operations/flate/commit/c16c9ad70c0c345581a10797a555d41fd3f85e84))
+
 ## [0.2.6](https://github.com/home-operations/flate/compare/0.2.5...0.2.6) (2026-06-03)
 
 

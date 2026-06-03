@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -70,6 +71,49 @@ func TestRenderHTML_AddedAndRemoved(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("added/removed HTML missing %q", want)
+		}
+	}
+}
+
+func TestRenderHTML_FoldsContext(t *testing.T) {
+	t.Parallel()
+	// A single change surrounded by many unchanged lines: the context beyond 3
+	// lines is collapsed behind expanders, but the dropped lines stay embedded
+	// in the page so the whole file can be revealed in-browser.
+	const base = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web
+  namespace: apps
+data:
+  k00: val00
+  k01: val01
+  k02: val02
+  k03: val03
+  k04: val04
+  k05: val05
+  k06: %s
+  k07: val07
+  k08: val08
+  k09: val09
+  k10: val10
+  k11: val11
+`
+	from := htmlDoc(t, fmt.Sprintf(base, "old06"))
+	to := htmlDoc(t, fmt.Sprintf(base, "new06"))
+	out := renderHTMLString(t, []Doc{from}, []Doc{to})
+
+	for _, want := range []string{
+		`data-fold="r0-g0"`,          // leading-gap expander (context above the change was folded)
+		`class="folded"`,             // collapsed context rows embedded, not dropped
+		"Expand",                     // expander label
+		"val00",                      // a line far above the change — present only if the whole file is embedded
+		"val11",                      // a line far below the change
+		`class="diff-code diff-del"`, // the change still renders
+		`class="diff-code diff-add"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("folded-context HTML missing %q", want)
 		}
 	}
 }

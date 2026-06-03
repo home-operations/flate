@@ -145,7 +145,13 @@ td.diff-code.diff-del .wd, tr.row-del td.diff-code .wd { background: var(--del-w
 td.diff-code.diff-blank, td.diff-lineno.diff-blank {
   background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, var(--hover) 5px, var(--hover) 6px);
 }
-tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; padding: 2px 0; }
+tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; padding: 0; }
+tr.folded { display: none; }
+.expander {
+  font: inherit; font-size: 11px; font-family: var(--mono); color: var(--accent);
+  background: none; border: 0; cursor: pointer; padding: 3px 8px; width: 100%;
+}
+.expander:hover { background: var(--hover); text-decoration: underline; }
 
 {{.ChromaCSS}}
 </style>
@@ -155,6 +161,7 @@ tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; p
   <span class="brand">flate diff</span>
   <span class="counts"><span class="c-changed">{{.Changed}} changed</span><span class="c-added">{{.Added}} added</span><span class="c-removed">{{.Removed}} removed</span></span>
   <span class="spacer"></span>
+  <button class="btn" id="expand-btn" type="button">Expand all</button>
   <button class="btn" id="view-btn" type="button">Unified</button>
   <button class="btn" id="theme-btn" type="button">🌙 Dark</button>
 </header>
@@ -177,14 +184,14 @@ tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; p
   </nav>
   <main class="content">
     <div class="placeholder" id="placeholder">Select a resource from the tree to view its diff.</div>
-    {{range .Resources}}
-    <section class="resource" id="{{.ID}}">
-      <h2 class="rhead"><span class="status status-{{.Status}}">{{.Status}}</span>{{.Title}}</h2>
-      <div class="rparent">{{.Parent}}</div>
+    {{range $res := .Resources}}
+    <section class="resource" id="{{$res.ID}}">
+      <h2 class="rhead"><span class="status status-{{$res.Status}}">{{$res.Status}}</span>{{$res.Title}}</h2>
+      <div class="rparent">{{$res.Parent}}</div>
       <table class="view side"><tbody>
-        {{- range .SRows}}
-        {{- if .Hunk}}<tr class="hunk"><td colspan="4">&#8943;</td></tr>
-        {{- else}}<tr>
+        {{- range $res.SRows}}
+        {{- if .Hunk}}<tr class="hunk" data-fold="{{$res.ID}}-{{.Fold}}"><td colspan="4"><button type="button" class="expander">&#8597; Expand {{.Count}} lines</button></td></tr>
+        {{- else}}<tr{{if .Folded}} class="folded" data-fold="{{$res.ID}}-{{.Fold}}"{{end}}>
           <td class="diff-lineno diff-{{.Left.Kind}}">{{if .Left.No}}{{.Left.No}}{{end}}</td>
           <td class="diff-code diff-{{.Left.Kind}}">{{.Left.HTML}}</td>
           <td class="diff-lineno diff-{{.Right.Kind}}">{{if .Right.No}}{{.Right.No}}{{end}}</td>
@@ -193,9 +200,9 @@ tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; p
         {{- end}}
       </tbody></table>
       <table class="view unified"><tbody>
-        {{- range .URows}}
-        {{- if .Hunk}}<tr class="hunk"><td colspan="3">&#8943;</td></tr>
-        {{- else}}<tr class="row-{{.Kind}}">
+        {{- range $res.URows}}
+        {{- if .Hunk}}<tr class="hunk" data-fold="{{$res.ID}}-{{.Fold}}"><td colspan="3"><button type="button" class="expander">&#8597; Expand {{.Count}} lines</button></td></tr>
+        {{- else}}<tr class="row-{{.Kind}}{{if .Folded}} folded{{end}}"{{if .Folded}} data-fold="{{$res.ID}}-{{.Fold}}"{{end}}>
           <td class="diff-lineno">{{if .OldNo}}{{.OldNo}}{{end}}</td>
           <td class="diff-lineno">{{if .NewNo}}{{.NewNo}}{{end}}</td>
           <td class="diff-code">{{.HTML}}</td>
@@ -252,6 +259,22 @@ tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; p
   const hashId = location.hash.slice(1);
   const initial = hashId && document.getElementById(hashId) ? hashId : sections[0]?.id;
   if (initial) select(initial);
+
+  // Collapsed context: an expander reveals the folded rows sharing its fold id
+  // (present in both the side and unified tables) and then drops itself. The
+  // toolbar "Expand all" does the same for every fold in one go.
+  const revealFold = (id) => {
+    document.querySelectorAll(`tr.folded[data-fold="${id}"]`).forEach((r) => r.classList.remove('folded'));
+    document.querySelectorAll(`tr.hunk[data-fold="${id}"]`).forEach((r) => r.remove());
+  };
+  content?.addEventListener('click', (event) => {
+    const row = event.target.closest('tr.hunk[data-fold]');
+    if (row) revealFold(row.dataset.fold);
+  });
+  document.getElementById('expand-btn')?.addEventListener('click', () => {
+    document.querySelectorAll('tr.folded').forEach((r) => r.classList.remove('folded'));
+    document.querySelectorAll('tr.hunk[data-fold]').forEach((r) => r.remove());
+  });
 
   // Sidebar filter: hide non-matching leaves, then empty kinds/parents; auto-open while filtering.
   const filter = document.getElementById('filter');

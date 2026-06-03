@@ -73,10 +73,14 @@ type htmlResource struct {
 	SRows    []sRow
 }
 
-// uRow is one unified-view row. Hunk marks a fold separator (the rest of
-// the fields are then unused).
+// uRow is one unified-view row. Hunk marks an expander (clickable fold
+// separator) carrying Fold+Count; Folded marks a context row hidden behind
+// the expander with that Fold id. An ordinary visible row sets neither.
 type uRow struct {
-	Hunk         bool
+	Hunk         bool   // expander row: reveals the rows sharing Fold
+	Folded       bool   // hidden context row belonging to gap Fold
+	Fold         string // resource-local gap id, e.g. "g2"
+	Count        int    // hidden line count, for the expander label
 	Kind         string // "ctx" | "add" | "del"
 	OldNo, NewNo int    // 1-based line numbers; 0 renders a blank gutter
 	HTML         template.HTML
@@ -89,9 +93,13 @@ type cell struct {
 	HTML template.HTML
 }
 
-// sRow is one side-by-side row. Hunk marks a fold separator.
+// sRow is one side-by-side row. Hunk marks an expander, Folded a hidden
+// context row behind it — both carry the gap's Fold id (see uRow).
 type sRow struct {
-	Hunk        bool
+	Hunk        bool   // expander row: reveals the rows sharing Fold
+	Folded      bool   // hidden context row belonging to gap Fold
+	Fold        string // resource-local gap id, e.g. "g2"
+	Count       int    // hidden line count, for the expander label
 	Left, Right cell
 }
 
@@ -166,8 +174,10 @@ func buildTree(res []htmlResource) []treeParent {
 }
 
 // buildHTMLResource diffs one resource's from/to YAML and pre-renders the rows
-// for both views. Context is folded to 3 lines per hunk (git-style), with a
-// separator row between hunks — see unifiedRows / sideRows.
+// for both views. Context is folded to 3 lines per hunk (git-style); the lines
+// trimmed before/between/after the hunks are emitted as collapsed rows behind
+// an expander so the whole file can be revealed in place — see unifiedRows /
+// sideRows.
 func buildHTMLResource(p pairedResource, from, to string, hl *highlighter) htmlResource {
 	a, b := difflib.SplitLines(from), difflib.SplitLines(to)
 	ah, bh := hl.lines(a), hl.lines(b)
@@ -195,15 +205,64 @@ func buildHTMLResource(p pairedResource, from, to string, hl *highlighter) htmlR
 	return res
 }
 
+// gap is one collapsed run of unchanged lines — the context GetGroupedOpCodes
+// trims before, between and after the hunks — tagged with a positional fold id
+// that both views share, so a single expand reveals the run in each.
+type gap struct {
+	id                 string
+	oldStart, newStart int
+	count              int
+}
+
+// foldGaps returns the trimmed unchanged runs indexed by the group they
+// precede: index 0 is the run before the first hunk, index gi the run between
+// groups gi-1 and gi, and index len(groups) the run after the last. Each is
+// everything between one group's last opcode and the next group's first — the
+// lines GetGroupedOpCodes drops. Empty runs stay zero-value (count 0) so the
+// row builders can index by position and skip them.
+func foldGaps(groups [][]difflib.OpCode, nOld int) []gap {
+	gaps := make([]gap, len(groups)+1)
+	set := func(pos, oldStart, oldEnd, newStart int) {
+		if oldEnd > oldStart {
+			gaps[pos] = gap{id: fmt.Sprintf("g%d", pos), oldStart: oldStart, newStart: newStart, count: oldEnd - oldStart}
+		}
+	}
+	for gi, group := range groups {
+		if gi == 0 {
+			set(0, 0, group[0].I1, 0)
+			continue
+		}
+		prev := groups[gi-1][len(groups[gi-1])-1]
+		set(gi, prev.I2, group[0].I1, prev.J2)
+	}
+	if n := len(groups); n > 0 {
+		last := groups[n-1][len(groups[n-1])-1]
+		set(n, last.I2, nOld, last.J2)
+	}
+	return gaps
+}
+
 // unifiedRows renders the grouped opcodes as the single-column unified view:
 // context lines carry both line numbers, deletes carry the old, inserts the
-// new, and a replace is all of its deletes followed by all of its inserts.
+// new, and a replace is all of its deletes followed by all of its inserts. The
+// runs foldGaps reports are emitted as collapsed context rows behind an
+// expander, so the rest of the file can be revealed in place.
 func unifiedRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []uRow {
 	var rows []uRow
-	for gi, group := range groups {
-		if gi > 0 {
-			rows = append(rows, uRow{Hunk: true})
+	gaps := foldGaps(groups, len(ah))
+	fold := func(pos int) {
+		g := gaps[pos]
+		if g.count == 0 {
+			return
 		}
+		rows = append(rows, uRow{Hunk: true, Fold: g.id, Count: g.count})
+		for k := range g.count {
+			rows = append(rows, uRow{Folded: true, Fold: g.id, Kind: kindCtx,
+				OldNo: g.oldStart + k + 1, NewNo: g.newStart + k + 1, HTML: ah[g.oldStart+k]})
+		}
+	}
+	for gi, group := range groups {
+		fold(gi)
 		for _, op := range group {
 			if op.Tag == 'e' {
 				for k := range op.I2 - op.I1 {
@@ -223,18 +282,34 @@ func unifiedRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []uRow {
 			}
 		}
 	}
+	fold(len(groups))
 	return rows
 }
 
 // sideRows renders the grouped opcodes as the two-column side-by-side view:
 // context mirrors both sides, a pure delete/insert blanks the opposite cell,
 // and a replace aligns line-for-line, padding the shorter side with blanks.
+// The runs foldGaps reports become collapsed context rows behind an expander,
+// sharing fold ids with unifiedRows so one expand reveals both views.
 func sideRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []sRow {
 	var rows []sRow
-	for gi, group := range groups {
-		if gi > 0 {
-			rows = append(rows, sRow{Hunk: true})
+	gaps := foldGaps(groups, len(ah))
+	fold := func(pos int) {
+		g := gaps[pos]
+		if g.count == 0 {
+			return
 		}
+		rows = append(rows, sRow{Hunk: true, Fold: g.id, Count: g.count})
+		for k := range g.count {
+			rows = append(rows, sRow{
+				Folded: true, Fold: g.id,
+				Left:  cell{Kind: kindCtx, No: g.oldStart + k + 1, HTML: ah[g.oldStart+k]},
+				Right: cell{Kind: kindCtx, No: g.newStart + k + 1, HTML: bh[g.newStart+k]},
+			})
+		}
+	}
+	for gi, group := range groups {
+		fold(gi)
 		for _, op := range group {
 			switch op.Tag {
 			case 'e':
@@ -267,6 +342,7 @@ func sideRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []sRow {
 			}
 		}
 	}
+	fold(len(groups))
 	return rows
 }
 
@@ -323,35 +399,33 @@ func (h *highlighter) emit(s string, lo, hi int) template.HTML {
 	if err != nil {
 		return rawHTML(template.HTMLEscapeString(s))
 	}
+	esc := func(r []rune) string { return template.HTMLEscapeString(string(r)) }
 	var b strings.Builder
 	pos := 0
 	for t := it(); t != chroma.EOF; t = it() {
 		rs := []rune(t.Value)
+		n := len(rs)
 		class := classFor(t.Type)
 		if class != "" {
 			b.WriteString(`<span class="`)
 			b.WriteString(class)
 			b.WriteString(`">`)
 		}
-		if loRel, hiRel := lo-pos, hi-pos; hi <= lo || hiRel <= 0 || loRel >= len(rs) {
-			b.WriteString(template.HTMLEscapeString(string(rs)))
-		} else {
-			if loRel < 0 {
-				loRel = 0
-			}
-			if hiRel > len(rs) {
-				hiRel = len(rs)
-			}
-			b.WriteString(template.HTMLEscapeString(string(rs[:loRel])))
+		// Wrap [lo,hi)'s overlap with this token (clamped to the token's rune
+		// span) in .wd; an empty overlap leaves the token plain.
+		if lo2, hi2 := max(0, min(n, lo-pos)), max(0, min(n, hi-pos)); lo2 < hi2 {
+			b.WriteString(esc(rs[:lo2]))
 			b.WriteString(`<span class="wd">`)
-			b.WriteString(template.HTMLEscapeString(string(rs[loRel:hiRel])))
+			b.WriteString(esc(rs[lo2:hi2]))
 			b.WriteString(`</span>`)
-			b.WriteString(template.HTMLEscapeString(string(rs[hiRel:])))
+			b.WriteString(esc(rs[hi2:]))
+		} else {
+			b.WriteString(esc(rs))
 		}
 		if class != "" {
 			b.WriteString(`</span>`)
 		}
-		pos += len(rs)
+		pos += n
 	}
 	return rawHTML(b.String())
 }

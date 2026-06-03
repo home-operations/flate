@@ -172,6 +172,7 @@ func buildHTMLResource(p pairedResource, from, to string, hl *highlighter) htmlR
 	a, b := difflib.SplitLines(from), difflib.SplitLines(to)
 	ah, bh := hl.lines(a), hl.lines(b)
 	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(3)
+	markIntraline(a, b, groups, hl, ah, bh)
 
 	id := joinNS(p.namespace, p.name)
 	res := htmlResource{
@@ -267,6 +268,108 @@ func sideRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []sRow {
 		}
 	}
 	return rows
+}
+
+// markIntraline rewrites replace-aligned line pairs in ah/bh to add word-level
+// highlight spans around the runes that actually changed, so a one-character
+// edit reads as a one-character highlight instead of a whole-line tint.
+func markIntraline(a, b []string, groups [][]difflib.OpCode, hl *highlighter, ah, bh []template.HTML) {
+	for _, group := range groups {
+		for _, op := range group {
+			if op.Tag != 'r' {
+				continue
+			}
+			for k := range min(op.I2-op.I1, op.J2-op.J1) {
+				ai, bj := op.I1+k, op.J1+k
+				aLo, aHi, bLo, bHi := runeDiffRange(strings.TrimRight(a[ai], "\n"), strings.TrimRight(b[bj], "\n"))
+				if aHi > aLo {
+					ah[ai] = hl.emit(a[ai], aLo, aHi)
+				}
+				if bHi > bLo {
+					bh[bj] = hl.emit(b[bj], bLo, bHi)
+				}
+			}
+		}
+	}
+}
+
+// runeDiffRange returns the per-side changed rune ranges of two differing lines
+// by trimming the common prefix and suffix. It returns empty ranges when the
+// lines share no common affix (a total change — not worth a word highlight).
+func runeDiffRange(a, b string) (aLo, aHi, bLo, bHi int) {
+	ar, br := []rune(a), []rune(b)
+	p := 0
+	for p < len(ar) && p < len(br) && ar[p] == br[p] {
+		p++
+	}
+	s := 0
+	for s < len(ar)-p && s < len(br)-p && ar[len(ar)-1-s] == br[len(br)-1-s] {
+		s++
+	}
+	if p == 0 && s == 0 {
+		return 0, 0, 0, 0
+	}
+	return p, len(ar) - s, p, len(br) - s
+}
+
+// emit renders one YAML line to class-based highlighted HTML, walking chroma's
+// token stream directly (rather than its formatter) so a word-level highlight
+// can be spliced mid-token: when hi > lo, the rune range [lo,hi) is wrapped in
+// <span class="wd">. Token classes mirror chroma's WithClasses output
+// (StandardTypes) so they match the embedded stylesheet.
+func (h *highlighter) emit(s string, lo, hi int) template.HTML {
+	s = strings.TrimRight(s, "\n")
+	it, err := h.lexer.Tokenise(nil, s)
+	if err != nil {
+		return rawHTML(template.HTMLEscapeString(s))
+	}
+	var b strings.Builder
+	pos := 0
+	for t := it(); t != chroma.EOF; t = it() {
+		rs := []rune(t.Value)
+		class := classFor(t.Type)
+		if class != "" {
+			b.WriteString(`<span class="`)
+			b.WriteString(class)
+			b.WriteString(`">`)
+		}
+		if loRel, hiRel := lo-pos, hi-pos; hi <= lo || hiRel <= 0 || loRel >= len(rs) {
+			b.WriteString(template.HTMLEscapeString(string(rs)))
+		} else {
+			if loRel < 0 {
+				loRel = 0
+			}
+			if hiRel > len(rs) {
+				hiRel = len(rs)
+			}
+			b.WriteString(template.HTMLEscapeString(string(rs[:loRel])))
+			b.WriteString(`<span class="wd">`)
+			b.WriteString(template.HTMLEscapeString(string(rs[loRel:hiRel])))
+			b.WriteString(`</span>`)
+			b.WriteString(template.HTMLEscapeString(string(rs[hiRel:])))
+		}
+		if class != "" {
+			b.WriteString(`</span>`)
+		}
+		pos += len(rs)
+	}
+	return rawHTML(b.String())
+}
+
+// classFor maps a chroma token type to its short CSS class, mirroring the
+// formatter's StandardTypes lookup (with category fallback) so our hand-emitted
+// spans align with chroma's generated stylesheet.
+func classFor(tt chroma.TokenType) string {
+	if c, ok := chroma.StandardTypes[tt]; ok {
+		return c
+	}
+	if c, ok := chroma.StandardTypes[tt.SubCategory()]; ok {
+		return c
+	}
+	if c, ok := chroma.StandardTypes[tt.Category()]; ok {
+		return c
+	}
+	return ""
 }
 
 func htmlParent(p Parent) string {

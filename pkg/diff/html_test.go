@@ -38,6 +38,8 @@ func TestRenderHTML_Changed(t *testing.T) {
 		`id="view-btn"`,                // side ⇄ unified toggle
 		`id="theme-btn"`,               // light/dark toggle
 		`class="tree-leaf"`,            // sidebar navigation tree
+		`id="filter"`,                  // sidebar resource filter box
+		`class="wd"`,                   // word-level intra-line highlight (the "2"→"3" change)
 		"body.chroma.dark",             // dark-theme variables present
 		".chroma.dark .nt",             // dark chroma token rule (dual-theme highlighting)
 		`<span class="nt">`,            // chroma YAML key token → highlighting present
@@ -69,6 +71,26 @@ func TestRenderHTML_AddedAndRemoved(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("added/removed HTML missing %q", want)
 		}
+	}
+}
+
+func TestRuneDiffRange(t *testing.T) {
+	t.Parallel()
+	// a value edit in the middle: only the differing run is flagged on each side.
+	if lo, hi, _, _ := runeDiffRange("v1.19.6", "v1.20.0"); string([]rune("v1.19.6")[lo:hi]) != "19.6" {
+		t.Errorf(`middle edit: got %q, want "19.6"`, string([]rune("v1.19.6")[lo:hi]))
+	}
+	// a suffix removed: the left flags the removed run, the right flags nothing.
+	aLo, aHi, bLo, bHi := runeDiffRange("name: ceph-csi-controller-manager", "name: ceph-csi")
+	if got := string([]rune("name: ceph-csi-controller-manager")[aLo:aHi]); got != "-controller-manager" {
+		t.Errorf(`suffix removed (left): got %q, want "-controller-manager"`, got)
+	}
+	if bHi != bLo {
+		t.Errorf("suffix removed (right): want empty range, got [%d,%d)", bLo, bHi)
+	}
+	// no shared prefix or suffix: nothing flagged, so the line is just tinted.
+	if lo, hi, _, _ := runeDiffRange("abc", "xyz"); lo != 0 || hi != 0 {
+		t.Errorf("unrelated lines: want empty range, got [%d,%d)", lo, hi)
 	}
 }
 

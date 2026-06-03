@@ -8,11 +8,15 @@
 /* Theme variables, driven by the body's light/dark class (kept in sync with chroma's). */
 body.chroma.light {
   --bg: #fff; --panel: #f6f8fa; --fg: #1f2328; --muted: #656d76; --border: #d0d7de; --accent: #0969da;
-  --add: #e6ffec; --add-gut: #aceebb; --del: #ffebe9; --del-gut: #ffc9c2; --blank: #f6f8fa; --hunk: #ddf4ff; --hover: rgba(0, 0, 0, .05);
+  --add: #e6ffec; --add-gut: #aceebb; --add-fg: #1a7f37; --add-wd: #a6f0b5;
+  --del: #ffebe9; --del-gut: #ffc9c2; --del-fg: #cf222e; --del-wd: #ffb1b8;
+  --blank: #f6f8fa; --hunk: #ddf4ff; --hover: rgba(0, 0, 0, .05);
 }
 body.chroma.dark {
   --bg: #0d1117; --panel: #161b22; --fg: #e6edf3; --muted: #8b949e; --border: #30363d; --accent: #2f81f7;
-  --add: #12261e; --add-gut: #1b4721; --del: #25171c; --del-gut: #542527; --blank: #161b22; --hunk: #121d2f; --hover: rgba(255, 255, 255, .06);
+  --add: #12261e; --add-gut: #1b4721; --add-fg: #3fb950; --add-wd: rgba(63, 185, 80, .4);
+  --del: #25171c; --del-gut: #542527; --del-fg: #f85149; --del-wd: rgba(248, 81, 73, .4);
+  --blank: #161b22; --hunk: #121d2f; --hover: rgba(255, 255, 255, .06);
 }
 
 * { box-sizing: border-box; }
@@ -22,35 +26,51 @@ body.chroma {
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 }
+::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 
 .topbar {
   display: flex; align-items: center; gap: 14px; height: 48px; padding: 0 16px;
   border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 5;
 }
 .topbar .brand { font-weight: 600; font-size: 14px; }
-.counts { font-size: 12px; color: var(--muted); }
-.counts .c-changed { color: #bf8700; }
-.counts .c-added { color: #2da44e; }
-.counts .c-removed { color: #cf222e; }
+.counts { font-size: 12px; color: var(--muted); display: flex; gap: 6px; }
+.counts span { padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.counts .c-changed { background: #fff3cd; color: #7d4e00; }
+.counts .c-added { background: #dafbe1; color: #1a7f37; }
+.counts .c-removed { background: #ffebe9; color: #cf222e; }
+body.chroma.dark .counts .c-changed { background: #3a2d00; color: #e3b341; }
+body.chroma.dark .counts .c-added { background: #0f2e16; color: #3fb950; }
+body.chroma.dark .counts .c-removed { background: #3a0d12; color: #f85149; }
 .spacer { flex: 1; }
 .btn {
   font: inherit; font-size: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--bg); color: var(--fg); cursor: pointer;
 }
 .btn:hover { border-color: var(--accent); }
+.btn:focus-visible, .tree-leaf:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .layout { display: flex; height: calc(100% - 49px); }
 .sidebar {
   width: 340px; min-width: 220px; max-width: 55%; overflow: auto; resize: horizontal;
-  border-right: 1px solid var(--border); background: var(--panel); padding: 8px 0;
+  border-right: 1px solid var(--border); background: var(--panel); padding: 0 0 8px;
 }
-.content { flex: 1; overflow: auto; padding: 16px 20px 64px; }
+.content { flex: 1; overflow: auto; padding: 0 20px 64px; }
+.sidebar, .content { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+.filter { position: sticky; top: 0; z-index: 1; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.filter input {
+  width: 100%; font: inherit; font-size: 12px; padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); color: var(--fg);
+}
+.filter input:focus { outline: none; border-color: var(--accent); }
+.hidden { display: none !important; }
 
 .sidebar details { font-size: 13px; }
 .sidebar summary { cursor: pointer; padding: 3px 10px; white-space: nowrap; list-style: none; }
 .sidebar summary::-webkit-details-marker { display: none; }
 .sidebar summary::before { content: "\25B8"; display: inline-block; width: 1em; color: var(--muted); }
 .sidebar details[open] > summary::before { content: "\25BE"; }
+.tree-parent { padding-top: 6px; }
 .tree-parent > summary { font-family: var(--mono); font-weight: 600; font-size: 12px; }
 .tree-kind { margin-left: 14px; }
 .tree-kind > summary { color: var(--muted); font-size: 12px; }
@@ -71,7 +91,10 @@ body.chroma {
 .placeholder { color: var(--muted); padding: 24px 4px; font-size: 14px; }
 .resource { display: none; }
 .resource.active { display: block; }
-.rhead { font-family: var(--mono); margin: 0 0 5px; font-size: 15px; }
+.rhead {
+  position: sticky; top: 0; z-index: 2; background: var(--bg);
+  font-family: var(--mono); font-size: 15px; margin: 0; padding: 16px 0 5px;
+}
 .status { font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 1px 7px; border-radius: 10px; margin-right: 8px; }
 .status-changed { background: #fff3cd; color: #7d4e00; }
 .status-added { background: #dafbe1; color: #1a7f37; }
@@ -90,9 +113,18 @@ body.unified table.side { display: none; }
 body.unified table.unified { display: table; }
 .diff-lineno {
   width: 48px; text-align: right; padding: 0 8px; color: var(--muted); user-select: none;
-  white-space: nowrap; border-right: 1px solid var(--border); vertical-align: top;
+  white-space: nowrap; border-right: 1px solid var(--border); vertical-align: top; font-variant-numeric: tabular-nums;
 }
-.diff-code { padding: 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+.diff-code { position: relative; padding: 0 10px 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+
+/* +/- change markers in the code gutter (add/del reads without relying on color) */
+td.diff-code.diff-add::before, tr.row-add td.diff-code::before,
+td.diff-code.diff-del::before, tr.row-del td.diff-code::before {
+  position: absolute; left: 7px; font-weight: 700;
+}
+td.diff-code.diff-add::before, tr.row-add td.diff-code::before { content: "+"; color: var(--add-fg); }
+td.diff-code.diff-del::before, tr.row-del td.diff-code::before { content: "-"; color: var(--del-fg); }
+
 td.diff-code.diff-add { background: var(--add); }
 td.diff-code.diff-del { background: var(--del); }
 td.diff-code.diff-blank { background: var(--blank); }
@@ -103,6 +135,16 @@ tr.row-add td.diff-code { background: var(--add); }
 tr.row-add td.diff-lineno { background: var(--add-gut); }
 tr.row-del td.diff-code { background: var(--del); }
 tr.row-del td.diff-lineno { background: var(--del-gut); }
+
+/* word-level diff: the runes that actually changed within a changed line */
+td.diff-code.diff-add .wd, tr.row-add td.diff-code .wd { background: var(--add-wd); }
+td.diff-code.diff-del .wd, tr.row-del td.diff-code .wd { background: var(--del-wd); }
+.wd { border-radius: 2px; }
+
+/* absent (padding) lines in side-by-side: faint hatch so they read as "no line here" */
+td.diff-code.diff-blank, td.diff-lineno.diff-blank {
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, var(--hover) 5px, var(--hover) 6px);
+}
 tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; padding: 2px 0; }
 
 {{.ChromaCSS}}
@@ -111,13 +153,14 @@ tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; p
 <body class="chroma light">
 <header class="topbar">
   <span class="brand">flate diff</span>
-  <span class="counts"><span class="c-changed">{{.Changed}} changed</span> · <span class="c-added">{{.Added}} added</span> · <span class="c-removed">{{.Removed}} removed</span></span>
+  <span class="counts"><span class="c-changed">{{.Changed}} changed</span><span class="c-added">{{.Added}} added</span><span class="c-removed">{{.Removed}} removed</span></span>
   <span class="spacer"></span>
   <button class="btn" id="view-btn" type="button">Unified</button>
   <button class="btn" id="theme-btn" type="button">🌙 Dark</button>
 </header>
 <div class="layout">
   <nav class="sidebar">
+    <div class="filter"><input id="filter" type="search" placeholder="Filter resources…  ( / )" autocomplete="off" spellcheck="false"></div>
     {{range .Tree}}
     <details class="tree-parent" open>
       <summary>{{.Label}}</summary>
@@ -209,6 +252,52 @@ tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; p
   const hashId = location.hash.slice(1);
   const initial = hashId && document.getElementById(hashId) ? hashId : sections[0]?.id;
   if (initial) select(initial);
+
+  // Sidebar filter: hide non-matching leaves, then empty kinds/parents; auto-open while filtering.
+  const filter = document.getElementById('filter');
+  const kinds = document.querySelectorAll('.tree-kind');
+  const parents = document.querySelectorAll('.tree-parent');
+  filter?.addEventListener('input', () => {
+    const q = filter.value.trim().toLowerCase();
+    leaves.forEach((leaf) => {
+      const name = leaf.querySelector('.leaf-name')?.textContent.toLowerCase() ?? '';
+      leaf.classList.toggle('hidden', q !== '' && !name.includes(q));
+    });
+    kinds.forEach((kind) => {
+      const any = [...kind.querySelectorAll('.tree-leaf')].some((l) => !l.classList.contains('hidden'));
+      kind.classList.toggle('hidden', !any);
+      if (q) kind.open = any;
+    });
+    parents.forEach((parent) => {
+      const any = [...parent.querySelectorAll('.tree-kind')].some((k) => !k.classList.contains('hidden'));
+      parent.classList.toggle('hidden', !any);
+      if (q) parent.open = any;
+    });
+  });
+
+  // Keyboard nav: j/k or arrows move between visible resources, "/" focuses the filter, Esc clears it.
+  const move = (delta) => {
+    const visible = [...leaves].filter((leaf) => leaf.offsetParent !== null);
+    if (!visible.length) return;
+    const currentId = [...leaves].find((leaf) => leaf.classList.contains('current'))?.dataset.id;
+    let idx = visible.findIndex((leaf) => leaf.dataset.id === currentId);
+    idx = idx < 0 ? (delta > 0 ? 0 : visible.length - 1) : Math.min(visible.length - 1, Math.max(0, idx + delta));
+    const target = visible[idx];
+    if (!target) return;
+    select(target.dataset.id);
+    target.scrollIntoView({ block: 'nearest' });
+    history.replaceState?.(null, '', `#${target.dataset.id}`);
+  };
+  document.addEventListener('keydown', (event) => {
+    if (event.target === filter) {
+      if (event.key === 'Escape') { filter.value = ''; filter.dispatchEvent(new Event('input')); filter.blur(); }
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === 'j' || event.key === 'ArrowDown') { event.preventDefault(); move(1); }
+    else if (event.key === 'k' || event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
+    else if (event.key === '/') { event.preventDefault(); filter?.focus(); }
+  });
 })();
 </script>
 </body>

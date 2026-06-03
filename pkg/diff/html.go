@@ -19,6 +19,21 @@ var htmlTmpl string
 
 var diffHTMLTemplate = template.Must(template.New("diff").Parse(htmlTmpl))
 
+// Row/cell kinds and resource statuses. These are not free-form: the
+// template renders them straight into CSS class suffixes — diff-<kind>,
+// status-<status>, and dot <status> — so each value must stay matched to a
+// rule in templates/diff.html.tmpl.
+const (
+	kindCtx   = "ctx"
+	kindAdd   = "add"
+	kindDel   = "del"
+	kindBlank = "blank"
+
+	statusChanged = "changed"
+	statusAdded   = "added"
+	statusRemoved = "removed"
+)
+
 // htmlData is the diff.html.tmpl payload.
 type htmlData struct {
 	Changed, Added, Removed int
@@ -109,10 +124,10 @@ func renderHTML(left, right []Doc, opts Options) ([]byte, error) {
 		r := buildHTMLResource(p, from, to, hl)
 		r.ID = fmt.Sprintf("r%d", len(data.Resources))
 		data.Resources = append(data.Resources, r)
-		switch {
-		case from == "":
+		switch r.Status {
+		case statusAdded:
 			data.Added++
-		case to == "":
+		case statusRemoved:
 			data.Removed++
 		default:
 			data.Changed++
@@ -148,80 +163,106 @@ func buildTree(res []htmlResource) []treeParent {
 
 // buildHTMLResource diffs one resource's from/to YAML and pre-renders the rows
 // for both views. Context is folded to 3 lines per hunk (git-style), with a
-// separator row between hunks.
+// separator row between hunks — see unifiedRows / sideRows.
 func buildHTMLResource(p pairedResource, from, to string, hl *highlighter) htmlResource {
-	a := difflib.SplitLines(from)
-	b := difflib.SplitLines(to)
-	ah := hl.lines(a)
-	bh := hl.lines(b)
+	a, b := difflib.SplitLines(from), difflib.SplitLines(to)
+	ah, bh := hl.lines(a), hl.lines(b)
+	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(3)
 
+	id := joinNS(p.namespace, p.name)
 	res := htmlResource{
-		Title:  p.kind + " " + joinNS(p.namespace, p.name),
+		Title:  p.kind + " " + id,
 		Kind:   p.kind,
-		Name:   joinNS(p.namespace, p.name),
+		Name:   id,
 		Parent: htmlParent(p.parent),
 		Status: htmlStatus(from, to),
-	}
-	for gi, group := range difflib.NewMatcher(a, b).GetGroupedOpCodes(3) {
-		if gi > 0 {
-			res.URows = append(res.URows, uRow{Hunk: true})
-			res.SRows = append(res.SRows, sRow{Hunk: true})
-		}
-		for _, op := range group {
-			switch op.Tag {
-			case 'e': // equal → context on both sides
-				for k := range op.I2 - op.I1 {
-					o, n := op.I1+k+1, op.J1+k+1
-					res.URows = append(res.URows, uRow{Kind: "ctx", OldNo: o, NewNo: n, HTML: ah[op.I1+k]})
-					res.SRows = append(res.SRows, sRow{
-						Left:  cell{Kind: "ctx", No: o, HTML: ah[op.I1+k]},
-						Right: cell{Kind: "ctx", No: n, HTML: bh[op.J1+k]},
-					})
-				}
-			case 'd': // delete (left only)
-				for k := range op.I2 - op.I1 {
-					o := op.I1 + k + 1
-					res.URows = append(res.URows, uRow{Kind: "del", OldNo: o, HTML: ah[op.I1+k]})
-					res.SRows = append(res.SRows, sRow{Left: cell{Kind: "del", No: o, HTML: ah[op.I1+k]}, Right: cell{Kind: "blank"}})
-				}
-			case 'i': // insert (right only)
-				for k := range op.J2 - op.J1 {
-					n := op.J1 + k + 1
-					res.URows = append(res.URows, uRow{Kind: "add", NewNo: n, HTML: bh[op.J1+k]})
-					res.SRows = append(res.SRows, sRow{Left: cell{Kind: "blank"}, Right: cell{Kind: "add", No: n, HTML: bh[op.J1+k]}})
-				}
-			case 'r': // replace
-				// Unified: all deletes, then all inserts.
-				for k := range op.I2 - op.I1 {
-					res.URows = append(res.URows, uRow{Kind: "del", OldNo: op.I1 + k + 1, HTML: ah[op.I1+k]})
-				}
-				for k := range op.J2 - op.J1 {
-					res.URows = append(res.URows, uRow{Kind: "add", NewNo: op.J1 + k + 1, HTML: bh[op.J1+k]})
-				}
-				// Side-by-side: align line-for-line, pad the shorter side.
-				dn, an := op.I2-op.I1, op.J2-op.J1
-				for k := range max(dn, an) {
-					l, r := cell{Kind: "blank"}, cell{Kind: "blank"}
-					if k < dn {
-						l = cell{Kind: "del", No: op.I1 + k + 1, HTML: ah[op.I1+k]}
-					}
-					if k < an {
-						r = cell{Kind: "add", No: op.J1 + k + 1, HTML: bh[op.J1+k]}
-					}
-					res.SRows = append(res.SRows, sRow{Left: l, Right: r})
-				}
-			}
-		}
+		URows:  unifiedRows(ah, bh, groups),
+		SRows:  sideRows(ah, bh, groups),
 	}
 	for _, u := range res.URows {
 		switch u.Kind {
-		case "add":
+		case kindAdd:
 			res.Add++
-		case "del":
+		case kindDel:
 			res.Del++
 		}
 	}
 	return res
+}
+
+// unifiedRows renders the grouped opcodes as the single-column unified view:
+// context lines carry both line numbers, deletes carry the old, inserts the
+// new, and a replace is all of its deletes followed by all of its inserts.
+func unifiedRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []uRow {
+	var rows []uRow
+	for gi, group := range groups {
+		if gi > 0 {
+			rows = append(rows, uRow{Hunk: true})
+		}
+		for _, op := range group {
+			if op.Tag == 'e' {
+				for k := range op.I2 - op.I1 {
+					rows = append(rows, uRow{Kind: kindCtx, OldNo: op.I1 + k + 1, NewNo: op.J1 + k + 1, HTML: ah[op.I1+k]})
+				}
+				continue
+			}
+			if op.Tag == 'd' || op.Tag == 'r' { // old lines removed
+				for k := range op.I2 - op.I1 {
+					rows = append(rows, uRow{Kind: kindDel, OldNo: op.I1 + k + 1, HTML: ah[op.I1+k]})
+				}
+			}
+			if op.Tag == 'i' || op.Tag == 'r' { // new lines added
+				for k := range op.J2 - op.J1 {
+					rows = append(rows, uRow{Kind: kindAdd, NewNo: op.J1 + k + 1, HTML: bh[op.J1+k]})
+				}
+			}
+		}
+	}
+	return rows
+}
+
+// sideRows renders the grouped opcodes as the two-column side-by-side view:
+// context mirrors both sides, a pure delete/insert blanks the opposite cell,
+// and a replace aligns line-for-line, padding the shorter side with blanks.
+func sideRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []sRow {
+	var rows []sRow
+	for gi, group := range groups {
+		if gi > 0 {
+			rows = append(rows, sRow{Hunk: true})
+		}
+		for _, op := range group {
+			switch op.Tag {
+			case 'e':
+				for k := range op.I2 - op.I1 {
+					rows = append(rows, sRow{
+						Left:  cell{Kind: kindCtx, No: op.I1 + k + 1, HTML: ah[op.I1+k]},
+						Right: cell{Kind: kindCtx, No: op.J1 + k + 1, HTML: bh[op.J1+k]},
+					})
+				}
+			case 'd':
+				for k := range op.I2 - op.I1 {
+					rows = append(rows, sRow{Left: cell{Kind: kindDel, No: op.I1 + k + 1, HTML: ah[op.I1+k]}, Right: cell{Kind: kindBlank}})
+				}
+			case 'i':
+				for k := range op.J2 - op.J1 {
+					rows = append(rows, sRow{Left: cell{Kind: kindBlank}, Right: cell{Kind: kindAdd, No: op.J1 + k + 1, HTML: bh[op.J1+k]}})
+				}
+			case 'r':
+				dn, an := op.I2-op.I1, op.J2-op.J1
+				for k := range max(dn, an) {
+					l, r := cell{Kind: kindBlank}, cell{Kind: kindBlank}
+					if k < dn {
+						l = cell{Kind: kindDel, No: op.I1 + k + 1, HTML: ah[op.I1+k]}
+					}
+					if k < an {
+						r = cell{Kind: kindAdd, No: op.J1 + k + 1, HTML: bh[op.J1+k]}
+					}
+					rows = append(rows, sRow{Left: l, Right: r})
+				}
+			}
+		}
+	}
+	return rows
 }
 
 func htmlParent(p Parent) string {
@@ -235,11 +276,11 @@ func htmlParent(p Parent) string {
 func htmlStatus(from, to string) string {
 	switch {
 	case from == "":
-		return "added"
+		return statusAdded
 	case to == "":
-		return "removed"
+		return statusRemoved
 	default:
-		return "changed"
+		return statusChanged
 	}
 }
 

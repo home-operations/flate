@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.11](https://github.com/home-operations/flate/compare/0.2.10...0.2.11) (2026-06-03)
+
+
+### Features
+
+* **diff:** expandable full-file context for `-o html` ([#561](https://github.com/home-operations/flate/issues/561)) ([68664b3](https://github.com/home-operations/flate/commit/68664b3bc1ae410032d0ede94699312b58729e49))
+
+
+### Miscellaneous Chores
+
+* move mise to mise folder ([7a06078](https://github.com/home-operations/flate/commit/7a060786b71ff2f689d3f12a4003f11d8e8098c0))
+
 ## [0.2.10](https://github.com/home-operations/flate/compare/0.2.9...0.2.10) (2026-06-03)
 
 

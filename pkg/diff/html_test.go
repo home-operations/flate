@@ -77,10 +77,7 @@ func TestRenderHTML_Identical(t *testing.T) {
 	d := htmlDoc(t, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  k: v\n")
 	out := renderHTMLString(t, []Doc{d}, []Doc{d})
 
-	if strings.Contains(out, `class="view side"`) {
-		t.Error("identical docs should render no diff tables")
-	}
-	if !strings.Contains(out, "no differences") {
-		t.Errorf("identical docs should report no differences:\n%s", out)
+	if len(out) != 0 {
+		t.Errorf("identical docs should render empty, got:\n%s", out)
 	}
 }

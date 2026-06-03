@@ -69,7 +69,6 @@ body.chroma {
 .tree-leaf.current .leaf-stat { color: #fff; }
 
 .placeholder { color: var(--muted); padding: 24px 4px; font-size: 14px; }
-.empty { color: var(--muted); padding: 32px 20px; font-size: 14px; }
 .resource { display: none; }
 .resource.active { display: block; }
 .rhead { font-family: var(--mono); margin: 0 0 5px; font-size: 15px; }
@@ -112,12 +111,11 @@ tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; p
 <body class="chroma light">
 <header class="topbar">
   <span class="brand">flate diff</span>
-  <span class="counts">{{if .Resources}}<span class="c-changed">{{.Changed}} changed</span> · <span class="c-added">{{.Added}} added</span> · <span class="c-removed">{{.Removed}} removed</span>{{else}}no differences{{end}}</span>
+  <span class="counts"><span class="c-changed">{{.Changed}} changed</span> · <span class="c-added">{{.Added}} added</span> · <span class="c-removed">{{.Removed}} removed</span></span>
   <span class="spacer"></span>
-  {{if .Resources}}<button class="btn" id="view-btn" type="button">Unified</button>{{end}}
+  <button class="btn" id="view-btn" type="button">Unified</button>
   <button class="btn" id="theme-btn" type="button">🌙 Dark</button>
 </header>
-{{if .Resources}}
 <div class="layout">
   <nav class="sidebar">
     {{range .Tree}}
@@ -213,8 +211,5 @@ tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; p
   if (initial) select(initial);
 })();
 </script>
-{{else}}
-<p class="empty">The two revisions render identically.</p>
-{{end}}
 </body>
 </html>

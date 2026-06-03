@@ -98,7 +98,8 @@ type sRow struct {
 // renderHTML produces a self-contained HTML diff document: the same resource
 // pairing and line diff as FormatDiff, rendered with YAML syntax highlighting,
 // a left navigation tree, a side-by-side ⇄ unified toggle, and a light/dark
-// theme. Identical resources are dropped, matching renderUnified.
+// theme. Identical resources are dropped, matching renderUnified; an empty
+// diff produces no output at all, like the other formats.
 func renderHTML(left, right []Doc, opts Options) ([]byte, error) {
 	left = normalizeDocs(left, opts.StripAttrs)
 	right = normalizeDocs(right, opts.StripAttrs)
@@ -132,6 +133,9 @@ func renderHTML(left, right []Doc, opts Options) ([]byte, error) {
 		default:
 			data.Changed++
 		}
+	}
+	if len(data.Resources) == 0 {
+		return nil, nil // no diff — emit nothing, matching the other formats
 	}
 	data.Tree = buildTree(data.Resources)
 

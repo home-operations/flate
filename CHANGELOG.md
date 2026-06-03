@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.5](https://github.com/home-operations/flate/compare/0.2.4...0.2.5) (2026-06-03)
+
+
+### Features
+
+* **diff:** add `-o html` — self-contained HTML diff viewer ([#546](https://github.com/home-operations/flate/issues/546)) ([ca5add0](https://github.com/home-operations/flate/commit/ca5add03328b7cf459af45dfa8ac92c61c85489f))
+
+
+### Bug Fixes
+
+* **loader:** discover bootstrap-style Flux Kustomization siblings ([#547](https://github.com/home-operations/flate/issues/547)) ([a9edc45](https://github.com/home-operations/flate/commit/a9edc45b24b05c091b6851ea48e20e4c13ac8b80))
+
 ## [0.2.4](https://github.com/home-operations/flate/compare/0.2.3...0.2.4) (2026-06-02)
 
 

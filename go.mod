@@ -4,6 +4,7 @@ go 1.26.3
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
+	github.com/alecthomas/chroma/v2 v2.26.1
 	github.com/controlplaneio-fluxcd/flux-operator v0.50.0
 	github.com/distribution/reference v0.6.0
 	github.com/fluxcd/helm-controller/api v1.5.5
@@ -61,6 +62,7 @@ require (
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dlclark/regexp2/v2 v2.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/dylibso/observe-sdk/go v0.0.0-20240828172851-9145d8ad07e1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect

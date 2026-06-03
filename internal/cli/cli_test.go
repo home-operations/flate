@@ -574,12 +574,13 @@ data:
 	origPath := filepath.Join(orig, "kubernetes")
 
 	cases := []struct{ style, want string }{
-		{"diff", "@@ -"},                  // unified diff hunk header
-		{"github", "@@ data.greeting @@"}, // dyff github diff-syntax
-		{"gitlab", "= data.greeting"},     // gitlab `=` path prefix
-		{"gitea", "@@ data.greeting @@"},  // gitea diff-syntax
-		{"human", "data.greeting"},        // dyff human report
-		{"brief", "change detected"},      // dyff one-line summary
+		{"diff", "@@ -"},                      // unified diff hunk header
+		{"html", `<table class="view side">`}, // self-contained HTML diff
+		{"github", "@@ data.greeting @@"},     // dyff github diff-syntax
+		{"gitlab", "= data.greeting"},         // gitlab `=` path prefix
+		{"gitea", "@@ data.greeting @@"},      // gitea diff-syntax
+		{"human", "data.greeting"},            // dyff human report
+		{"brief", "change detected"},          // dyff one-line summary
 	}
 	for _, tc := range cases {
 		t.Run(tc.style, func(t *testing.T) {

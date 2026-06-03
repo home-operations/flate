@@ -28,6 +28,12 @@ const (
 	FormatGitLab Format = "gitlab"
 	// FormatGitea is dyff's Gitea/Forgejo diff syntax.
 	FormatGitea Format = "gitea"
+	// FormatHTML renders a self-contained HTML document: a per-resource,
+	// GitHub-style diff with YAML syntax highlighting (via chroma) and a
+	// side-by-side ⇄ unified toggle. Built on the same line diff as
+	// FormatDiff (not Kubernetes-aware). Meant for browser review or a CI
+	// artifact, not the terminal.
+	FormatHTML Format = "html"
 )
 
 // isDyffText reports whether f renders the whole doc set natively through

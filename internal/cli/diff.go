@@ -150,7 +150,8 @@ func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []stri
 
 // diffOutputFormats lists the -o values `flate diff ks/hr/all` accepts,
 // in help-display order: human (the default, listed first), then github,
-// the plain unified diff, and the remaining dyff styles. bindCommon
+// the plain unified diff and its self-contained HTML rendering, then the
+// remaining dyff styles. bindCommon
 // registers the set on the -o flag, which drives both the help text and
 // the parse-time rejection, so the advertised and enforced sets can't
 // drift.
@@ -159,6 +160,7 @@ func diffOutputFormats() []format.Output {
 		format.Output(diff.FormatHuman),
 		format.Output(diff.FormatGitHub),
 		format.Output(diff.FormatDiff),
+		format.Output(diff.FormatHTML),
 		format.Output(diff.FormatBrief),
 		format.Output(diff.FormatGitLab),
 		format.Output(diff.FormatGitea),

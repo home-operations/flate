@@ -50,6 +50,8 @@ func RenderDocs(left, right []Doc, opts Options) ([]byte, error) {
 		return renderNative(left, right, opts)
 	case opts.Format == FormatDiff:
 		return renderUnified(left, right, opts)
+	case opts.Format == FormatHTML:
+		return renderHTML(left, right, opts)
 	default:
 		return nil, fmt.Errorf("unsupported diff format %q", opts.Format)
 	}

@@ -157,6 +157,25 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, sourceFing
 	return out, nil
 }
 
+// RenderFluxDocs renders a Flux Kustomization (see RenderFlux) and returns
+// its output split into individual documents, with any Kubernetes List
+// wrappers flattened into their items so every document is an individual,
+// name-able resource. This is the doc-producing surface the KS controller
+// consumes — the analogue of helm.TemplateDocs — so the controller never
+// owns splitting. Per-resource envsubst stays in the controller and runs
+// on the flattened docs.
+func RenderFluxDocs(ctx context.Context, cache *StagingCache, sourceRoot, sourceFingerprint, subPath string, rawSpec map[string]any) ([]map[string]any, error) {
+	data, err := RenderFlux(ctx, cache, sourceRoot, sourceFingerprint, subPath, rawSpec)
+	if err != nil {
+		return nil, err
+	}
+	docs, err := manifest.SplitDocs(data)
+	if err != nil {
+		return nil, err
+	}
+	return manifest.FlattenLists(docs), nil
+}
+
 // applyCommonMetadata merges spec.commonMetadata.labels and
 // spec.commonMetadata.annotations into every rendered resource —
 // mirroring kustomize-controller's ssautil.SetCommonMetadata pass,

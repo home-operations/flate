@@ -4,7 +4,8 @@
 //   - Build / RenderFlux: render a kustomization directory to YAML
 //     documents. Build is the plain krusty surface; RenderFlux adds
 //     the Flux generator that handles spec.components and embedded
-//     inline Contents.
+//     inline Contents. RenderFluxDocs wraps RenderFlux to return the
+//     output as split, List-flattened documents.
 //   - Prepare: the standard pre-render dance (Clone + expand
 //     postBuild.substituteFrom) for embedders rendering a single
 //     Kustomization. Mirrors helm.Prepare for HelmReleases.

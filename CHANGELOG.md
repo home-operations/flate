@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6](https://github.com/home-operations/flate/compare/0.2.5...0.2.6) (2026-06-03)
+
+
+### Code Refactoring
+
+* **diff:** tidy `-o html` viewer internals and template ([#549](https://github.com/home-operations/flate/issues/549)) ([638a294](https://github.com/home-operations/flate/commit/638a294c179ee3421a8e4e1a1cbcf3fb750920fc))
+
 ## [0.2.5](https://github.com/home-operations/flate/compare/0.2.4...0.2.5) (2026-06-03)
 
 

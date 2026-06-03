@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.9](https://github.com/home-operations/flate/compare/0.2.8...0.2.9) (2026-06-03)
+
+
+### Bug Fixes
+
+* **manifest:** flatten Kubernetes List wrappers in rendered output ([#556](https://github.com/home-operations/flate/issues/556)) ([f75c617](https://github.com/home-operations/flate/commit/f75c6175c4d83012e94f4d9c22422f73260a9dc5))
+
 ## [0.2.8](https://github.com/home-operations/flate/compare/0.2.7...0.2.8) (2026-06-03)
 
 

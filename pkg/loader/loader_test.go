@@ -700,6 +700,195 @@ data:
 	}
 }
 
+// TestLoader_DiscoveryOnlyPicksUpBootstrapSiblingKS pins the
+// bootstrap-sibling scan: a Flux Kustomization CR authored in a YAML
+// file next to a kustomization.yaml but NOT listed in its `resources:`
+// is a real Flux pattern (the KS is kubectl-applied directly). Without
+// the scan, that KS is invisible and the change filter has no parent
+// to attribute file changes under spec.path to. Only Flux Kustomizations
+// are picked up — a sibling HelmRelease must stay invisible, since
+// extending the scan to every CR would silently relax the
+// "kustomize package = resources only" contract for unrelated kinds.
+func TestLoader_DiscoveryOnlyPicksUpBootstrapSiblingKS(t *testing.T) {
+	dir := t.TempDir()
+	// kustomization.yaml exists but does NOT list bootstrap.yaml.
+	testutil.WriteFile(t, dir, "repositories/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ./source.yaml
+`)
+	testutil.WriteFile(t, dir, "repositories/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: chart
+  namespace: flux-system
+spec:
+  url: oci://example.com/chart
+  ref:
+    tag: 1.0.0
+`)
+	// The bootstrap-style Flux KS, sibling to kustomization.yaml but
+	// outside its resources graph.
+	testutil.WriteFile(t, dir, "repositories/flux-entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-entry-repos
+  namespace: flux-system
+spec:
+  path: ./repositories
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+  interval: 10m
+`)
+	// A sibling HelmRelease should stay invisible — the scan is
+	// scoped to Flux Kustomization CRs only.
+	testutil.WriteFile(t, dir, "repositories/stray-hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: stray
+  namespace: flux-system
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: chart
+    namespace: flux-system
+`)
+
+	s := store.New()
+	l := New(s)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	l.SourceFiles = map[manifest.NamedResource]string{}
+	l.SourceRoot = dir
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "flux-entry-repos"}
+	if s.GetObject(ksID) == nil {
+		t.Errorf("bootstrap-sibling Flux KS must reach the Store under DiscoveryOnly")
+	}
+	if got, want := l.SourceFiles[ksID], "repositories/flux-entry.yaml"; got != want {
+		t.Errorf("SourceFiles[KS] = %q; want %q", got, want)
+	}
+
+	hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "stray"}
+	if s.GetObject(hrID) != nil {
+		t.Errorf("sibling HR must NOT be picked up by the bootstrap scan (scope is Flux KS only)")
+	}
+	if _, ok := l.Existence.Get(hrID); ok {
+		t.Errorf("sibling HR must NOT be recorded in Existence either — it's not in the kustomize graph")
+	}
+}
+
+// TestLoader_BootstrapSiblingScanDedupesWithResources guards the
+// "in BOTH places" edge case: a Flux KS file listed in resources AND
+// sitting beside the kustomization.yaml must load exactly once. The
+// dedup key is the resolved absolute path on each side.
+func TestLoader_BootstrapSiblingScanDedupesWithResources(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ./entry.yaml
+`)
+	testutil.WriteFile(t, dir, "entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: entry
+  namespace: flux-system
+spec:
+  path: ./
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+  interval: 10m
+`)
+	s := store.New()
+	l := New(s)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	l.SourceFiles = map[manifest.NamedResource]string{}
+	l.SourceRoot = dir
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := len(s.ListObjects(manifest.KindKustomization)); got != 1 {
+		t.Errorf("expected exactly 1 Kustomization (no double-load), got %d", got)
+	}
+}
+
+// TestLoader_NonDiscoveryOnlySkipsBootstrapSibling fences the gating
+// rule: without DiscoveryOnly, sibling Flux KS files stay invisible —
+// non-DiscoveryOnly callers (SDK consumers) opted into the strict
+// "kustomize package = resources only" contract and a silent change
+// in that contract would break them.
+func TestLoader_NonDiscoveryOnlySkipsBootstrapSibling(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+`)
+	testutil.WriteFile(t, dir, "flux-entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: bootstrap
+  namespace: flux-system
+spec:
+  path: ./
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+  interval: 10m
+`)
+	s := store.New()
+	l := New(s) // DiscoveryOnly intentionally OFF.
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := len(s.ListObjects(manifest.KindKustomization)); got != 0 {
+		t.Errorf("non-DiscoveryOnly must NOT pick up bootstrap-sibling KS, got %d in Store", got)
+	}
+}
+
+// TestLoader_BootstrapSiblingHonorsKrmignore guards the ignore
+// integration: a Flux KS sibling that matches a .krmignore pattern
+// must NOT be loaded. Otherwise the bootstrap scan would silently
+// override the user's explicit "don't look here" directive — the rest
+// of the loader honors .krmignore for ad-hoc and resource paths.
+func TestLoader_BootstrapSiblingHonorsKrmignore(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, ".krmignore", "flux-entry.yaml\n")
+	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+`)
+	testutil.WriteFile(t, dir, "flux-entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ignored
+  namespace: flux-system
+spec:
+  path: ./
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+  interval: 10m
+`)
+	s := store.New()
+	l := New(s)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	l.SourceRoot = dir
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := len(s.ListObjects(manifest.KindKustomization)); got != 0 {
+		t.Errorf("ignored bootstrap-sibling KS must NOT load, got %d in Store", got)
+	}
+}
+
 // TestLoader_RespectsCanceledContext asserts the walk bails out on
 // context cancellation. Useful when a stuck NFS mount or symlink
 // loop would otherwise block Bootstrap indefinitely.

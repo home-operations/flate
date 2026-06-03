@@ -369,7 +369,68 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		}
 		count += n
 	}
+
+	if w.loader.Options.DiscoveryOnly {
+		count += w.scanBootstrapFluxKS(dir, k, kpath)
+	}
 	return count, nil
+}
+
+// scanBootstrapFluxKS surfaces Flux Kustomization CRs authored as
+// sibling YAML files of dir's kustomization.yaml but not listed in its
+// `resources:`. Real Flux pattern: the entry KS is kubectl-applied
+// outside any kustomize tree while its spec.path points at the
+// kustomize package beside it; without this scan the KS — and the
+// change-attribution it provides for files under spec.path — stay
+// invisible. Scope is intentionally narrow to *Flux Kustomization*
+// kinds; broadening here would silently undo the "kustomize package
+// = resources only" rule the loader otherwise enforces for HRs /
+// sources / data files. Gated on DiscoveryOnly so non-DiscoveryOnly
+// callers keep that strict semantic.
+func (w *walker) scanBootstrapFluxKS(dir string, k *kustomization, kpath string) int {
+	seen := map[string]struct{}{kpath: {}}
+	for _, r := range k.Resources {
+		if abs, ok := resolveDataPath(dir, r); ok {
+			seen[abs] = struct{}{}
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		slog.Warn("loader: bootstrap-sibling readdir failed", "dir", dir, "err", err)
+		return 0
+	}
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		abs := filepath.Join(dir, e.Name())
+		if !isManifestFile(abs) || w.ignoreMatches(abs, false) {
+			continue
+		}
+		if _, ok := seen[abs]; ok {
+			continue
+		}
+		objs, err := parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets})
+		if err != nil {
+			slog.Warn("loader: bootstrap-sibling parse failed", "path", abs, "err", err)
+			continue
+		}
+		for _, obj := range objs {
+			if _, ok := obj.(*manifest.Kustomization); !ok {
+				continue
+			}
+			id := obj.Named()
+			if w.loader.PreferExisting && w.loader.Store.GetObject(id) != nil {
+				continue
+			}
+			w.loader.Store.AddObject(obj)
+			w.loader.recordSource(id, abs)
+			w.loader.recordSourceRefs(obj)
+			count++
+		}
+	}
+	return count
 }
 
 // walkComponentData records direct ConfigMap/Secret resources from

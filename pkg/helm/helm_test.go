@@ -178,7 +178,10 @@ func TestReleaseManifest_HookSeparators(t *testing.T) {
 	}
 }
 
-func TestTemplateDocs_AppliesHRCommonMetadata(t *testing.T) {
+// TestApplyHRCommonMetadata_OnRenderedChart locks that commonMetadata
+// labels/annotations merge onto real rendered chart output — the
+// post-render pass the helmrelease controller runs after TemplateDocs.
+func TestApplyHRCommonMetadata_OnRenderedChart(t *testing.T) {
 	cli := helmChartFixture(t)
 	hr := newHR()
 	hr.CommonMetadata = &helmv2.CommonMetadata{
@@ -193,6 +196,7 @@ func TestTemplateDocs_AppliesHRCommonMetadata(t *testing.T) {
 	if len(docs) == 0 {
 		t.Fatal("expected at least one rendered doc")
 	}
+	ApplyHRCommonMetadata(docs, hr.CommonMetadata)
 	cm := docs[0]
 	md, _ := cm["metadata"].(map[string]any)
 	labels, _ := md["labels"].(map[string]any)
@@ -205,11 +209,11 @@ func TestTemplateDocs_AppliesHRCommonMetadata(t *testing.T) {
 	}
 }
 
-// TestTemplateDocs_StampsOriginLabels locks the helm-controller
+// TestApplyHROriginLabels_OnRenderedChart locks the helm-controller
 // OriginLabels post-renderer behavior: every rendered resource is
 // stamped with helm.toolkit.fluxcd.io/{name,namespace} so a real Flux
 // would identify it as owned by this HelmRelease.
-func TestTemplateDocs_StampsOriginLabels(t *testing.T) {
+func TestApplyHROriginLabels_OnRenderedChart(t *testing.T) {
 	cli := helmChartFixture(t)
 	hr := newHR()
 	docs, err := cli.TemplateDocs(context.Background(), hr, nil, Options{NoHooks: true})
@@ -219,6 +223,7 @@ func TestTemplateDocs_StampsOriginLabels(t *testing.T) {
 	if len(docs) == 0 {
 		t.Fatal("expected at least one rendered doc")
 	}
+	ApplyHROriginLabels(docs, hr)
 	for i, doc := range docs {
 		md, _ := doc["metadata"].(map[string]any)
 		labels, _ := md["labels"].(map[string]any)
@@ -231,11 +236,11 @@ func TestTemplateDocs_StampsOriginLabels(t *testing.T) {
 	}
 }
 
-// TestTemplateDocs_OriginLabelsWinOverCommonMetadata locks the upstream
+// TestApplyHROriginLabels_WinsOverCommonMetadata locks the upstream
 // precedence rule: OriginLabels run AFTER CommonRenderer, so an
 // origin-key collision in CommonMetadata is silently overridden by the
 // origin value. Matches helm-controller/internal/postrender/build.go:46.
-func TestTemplateDocs_OriginLabelsWinOverCommonMetadata(t *testing.T) {
+func TestApplyHROriginLabels_WinsOverCommonMetadata(t *testing.T) {
 	cli := helmChartFixture(t)
 	hr := newHR()
 	hr.CommonMetadata = &helmv2.CommonMetadata{
@@ -248,6 +253,8 @@ func TestTemplateDocs_OriginLabelsWinOverCommonMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TemplateDocs: %v", err)
 	}
+	ApplyHRCommonMetadata(docs, hr.CommonMetadata)
+	ApplyHROriginLabels(docs, hr)
 	md, _ := docs[0]["metadata"].(map[string]any)
 	labels, _ := md["labels"].(map[string]any)
 	if labels["helm.toolkit.fluxcd.io/name"] != hr.Name {
@@ -262,7 +269,7 @@ func TestApplyHRCommonMetadata_LabelsOnly(t *testing.T) {
 	docs := []map[string]any{
 		{"metadata": map[string]any{"name": "x"}},
 	}
-	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
 		Labels: map[string]string{"team": "flate"},
 	})
 	md := docs[0]["metadata"].(map[string]any)
@@ -279,7 +286,7 @@ func TestApplyHRCommonMetadata_AnnotationsOnly(t *testing.T) {
 	docs := []map[string]any{
 		{"metadata": map[string]any{"name": "x"}},
 	}
-	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
 		Annotations: map[string]string{"owner": "platform"},
 	})
 	md := docs[0]["metadata"].(map[string]any)
@@ -297,8 +304,8 @@ func TestApplyHRCommonMetadata_NilOrEmptyIsNoop(t *testing.T) {
 		{"metadata": map[string]any{"name": "x"}},
 	}
 	original := docs[0]["metadata"].(map[string]any)
-	applyHRCommonMetadata(docs, nil)
-	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{})
+	ApplyHRCommonMetadata(docs, nil)
+	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{})
 	if len(original) != 1 || original["name"] != "x" {
 		t.Errorf("metadata mutated by nil/empty CommonMetadata: %v", original)
 	}
@@ -306,7 +313,7 @@ func TestApplyHRCommonMetadata_NilOrEmptyIsNoop(t *testing.T) {
 
 func TestApplyHRCommonMetadata_CreatesMetadataWhenMissing(t *testing.T) {
 	docs := []map[string]any{{}} // no metadata
-	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
 		Labels: map[string]string{"team": "flate"},
 	})
 	md, ok := docs[0]["metadata"].(map[string]any)
@@ -343,7 +350,7 @@ func TestApplyHRCommonMetadata_SkipsHooks(t *testing.T) {
 			},
 		},
 	}
-	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
 		Labels: map[string]string{"team": "platform"},
 	})
 
@@ -377,7 +384,7 @@ func TestApplyHRCommonMetadata_SkipsCRDs(t *testing.T) {
 			"metadata": map[string]any{"name": "things.example.com"},
 		},
 	}
-	applyHRCommonMetadata(docs, &helmv2.CommonMetadata{
+	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
 		Labels: map[string]string{"team": "platform"},
 	})
 
@@ -408,7 +415,7 @@ func TestApplyHROriginLabels_SkipsHooks(t *testing.T) {
 			},
 		},
 	}
-	applyHROriginLabels(docs, &manifest.HelmRelease{Name: "demo", Namespace: "apps"})
+	ApplyHROriginLabels(docs, &manifest.HelmRelease{Name: "demo", Namespace: "apps"})
 
 	if _, ok := docs[0]["metadata"].(map[string]any)["labels"]; !ok {
 		t.Error("workload doc lost its origin labels")

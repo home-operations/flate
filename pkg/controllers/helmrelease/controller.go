@@ -424,6 +424,14 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	if err != nil {
 		return err
 	}
+	// Render-output pipeline: flatten List wrappers first so the
+	// post-render passes stamp the items, then apply commonMetadata and
+	// origin labels (origin last so it wins on key collisions), then drop
+	// skipped kinds — mirroring helm-controller's order.
+	docs = manifest.FlattenLists(docs)
+	helm.ApplyHRCommonMetadata(docs, hr.CommonMetadata)
+	helm.ApplyHROriginLabels(docs, hr)
+	docs = manifest.DropKinds(docs, c.Options.SkipResourceKinds())
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
 	if err := c.PreflightError(id); err != nil {

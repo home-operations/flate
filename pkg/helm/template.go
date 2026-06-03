@@ -294,37 +294,38 @@ func mergeChartValuesFilesUncached(c *chart.Chart, names []string, ignoreMissing
 	return out, nil
 }
 
-// TemplateDocs renders and returns each document parsed as a generic map.
+// TemplateDocs renders a HelmRelease and returns its output split into
+// individual documents (each a generic map).
+//
+// It deliberately stops at split: List flattening, the post-render
+// passes (ApplyHRCommonMetadata then ApplyHROriginLabels), and
+// DropKinds are orchestrated by the caller — the helmrelease controller
+// — so they run in the right order on the flattened docs. (Flattening
+// must precede the label passes, or List-bundled resources would never
+// receive the helm.toolkit.fluxcd.io ownership labels real Flux applies.)
 func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, values map[string]any, opts Options) ([]map[string]any, error) {
 	raw, err := c.Template(ctx, hr, values, opts)
 	if err != nil {
 		return nil, err
 	}
-	docs, err := manifest.SplitDocs([]byte(raw))
-	if err != nil {
-		return nil, err
-	}
-	docs = manifest.FlattenLists(docs)
-	applyHRCommonMetadata(docs, hr.CommonMetadata)
-	applyHROriginLabels(docs, hr)
-	return manifest.DropKinds(docs, opts.SkipResourceKinds()), nil
+	return manifest.SplitDocs([]byte(raw))
 }
 
-// applyHROriginLabels stamps the helm.toolkit.fluxcd.io/{name,namespace}
+// ApplyHROriginLabels stamps the helm.toolkit.fluxcd.io/{name,namespace}
 // ownership labels onto every non-hook rendered doc, mirroring
 // helm-controller's OriginLabels post-renderer fed through
 // PostRenderStrategyNoHooks. Real Flux uses these to track which HR
 // owns each in-cluster resource for pruning + selection
 // (`kubectl get -l helm.toolkit.fluxcd.io/name=...`), and they take
-// precedence over CommonMetadata when keys collide — so we apply this
-// pass AFTER applyHRCommonMetadata, matching the upstream order.
+// precedence over CommonMetadata when keys collide — so the caller runs
+// this pass AFTER ApplyHRCommonMetadata, matching the upstream order.
 //
 // Helm hooks (Job / ConfigMap with helm.sh/hook annotation) are
 // intentionally NOT stamped — upstream's BuildPostRenderers chain is
 // fed only the non-hook stream via PostRenderStrategyNoHooks. Stamping
 // hooks in flate would produce labels real Flux never applies in
 // cluster.
-func applyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
+func ApplyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
 	group := helmv2.GroupVersion.Group
 	origin := map[string]string{
 		group + "/name":      hr.Name,
@@ -338,11 +339,11 @@ func applyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
 	}
 }
 
-// applyHRCommonMetadata merges spec.commonMetadata.labels and .annotations
+// ApplyHRCommonMetadata merges spec.commonMetadata.labels and .annotations
 // onto every workload rendered doc's metadata, mirroring helm-controller's
 // CommonRenderer pass fed through PostRenderStrategyNoHooks. commonMetadata
 // overwrites chart-template defaults but loses to origin labels on
-// collision — applyHROriginLabels runs AFTER this and reasserts the
+// collision — ApplyHROriginLabels runs AFTER this and reasserts the
 // helm.toolkit.fluxcd.io/{name,namespace} keys, matching helm-controller's
 // build.go:46 comment.
 //
@@ -353,7 +354,7 @@ func applyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
 //     applyCRDs path attaches only origin labels via setOriginVisitor,
 //     never commonMetadata. Stamping CRDs in flate produced labels
 //     real Flux never applies in cluster.
-func applyHRCommonMetadata(docs []map[string]any, cm *helmv2.CommonMetadata) {
+func ApplyHRCommonMetadata(docs []map[string]any, cm *helmv2.CommonMetadata) {
 	if cm == nil || (len(cm.Labels) == 0 && len(cm.Annotations) == 0) {
 		return
 	}

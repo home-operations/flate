@@ -12,13 +12,13 @@ import (
 // when a List is applied to a cluster: the wrapper never exists as an
 // object, only its items do.
 //
-// The render paths (helm TemplateDocs, kustomize reconcile) call this on
-// their rendered output so flate's model stays consistent across
-// build/diff: every rendered document is an individual, name-able
-// resource. It also lets each item flow through ParseDoc as its real kind
-// — a List wrapper has no metadata.name, so ParseDoc rejects it today and
-// the resources inside go untracked in the store. The loader's own
-// SplitDocs/DecodeDocs of user CR files is deliberately left un-flattened.
+// The helmrelease and kustomization controllers call this on their
+// rendered output so flate's model stays consistent across build/diff:
+// every rendered document is an individual, name-able resource. It also
+// lets each item flow through ParseDoc as its real kind — a List wrapper
+// has no metadata.name, so ParseDoc rejects it today and the resources
+// inside go untracked in the store. The loader's own SplitDocs/DecodeDocs
+// of user CR files is deliberately left un-flattened.
 //
 // Returns docs unchanged (no allocation) when no List is present;
 // otherwise lazily allocates on the first List, mirroring DropKinds.

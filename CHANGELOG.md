@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.10](https://github.com/home-operations/flate/compare/0.2.9...0.2.10) (2026-06-03)
+
+
+### Features
+
+* **diff:** word-level highlighting, filterable tree, keyboard nav for `-o html` ([#558](https://github.com/home-operations/flate/issues/558)) ([eeff31f](https://github.com/home-operations/flate/commit/eeff31fef4cdc818bdf067a88ba219f3fe8b6759))
+
 ## [0.2.9](https://github.com/home-operations/flate/compare/0.2.8...0.2.9) (2026-06-03)
 
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.12](https://github.com/home-operations/flate/compare/0.2.11...0.2.12) (2026-06-04)
+
+
+### Features
+
+* **deps:** update module github.com/fluxcd/pkg/apis/meta (v1.28.0 → v1.29.0) ([#562](https://github.com/home-operations/flate/issues/562)) ([86e7753](https://github.com/home-operations/flate/commit/86e77532f0fccd99c32737c6a08a23425a5caab6))
+* **diff:** responsive, resizable, filterable -o html viewer ([#563](https://github.com/home-operations/flate/issues/563)) ([7265c80](https://github.com/home-operations/flate/commit/7265c80cdef998a7b1fc7102ad1d8b96d1dc2be9))
+
 ## [0.2.11](https://github.com/home-operations/flate/compare/0.2.10...0.2.11) (2026-06-03)
 
 

@@ -11,12 +11,14 @@ body.chroma.light {
   --add: #e6ffec; --add-gut: #aceebb; --add-fg: #1a7f37; --add-wd: #a6f0b5;
   --del: #ffebe9; --del-gut: #ffc9c2; --del-fg: #cf222e; --del-wd: #ffb1b8;
   --blank: #f6f8fa; --hunk: #ddf4ff; --hover: rgba(0, 0, 0, .05);
+  --changed-bg: #fff3cd; --changed-fg: #7d4e00; --added-bg: #dafbe1; --added-fg: #1a7f37; --removed-bg: #ffebe9; --removed-fg: #cf222e;
 }
 body.chroma.dark {
   --bg: #0d1117; --panel: #161b22; --fg: #e6edf3; --muted: #8b949e; --border: #30363d; --accent: #2f81f7;
   --add: #12261e; --add-gut: #1b4721; --add-fg: #3fb950; --add-wd: rgba(63, 185, 80, .4);
   --del: #25171c; --del-gut: #542527; --del-fg: #f85149; --del-wd: rgba(248, 81, 73, .4);
   --blank: #161b22; --hunk: #121d2f; --hover: rgba(255, 255, 255, .06);
+  --changed-bg: #3a2d00; --changed-fg: #e3b341; --added-bg: #0f2e16; --added-fg: #3fb950; --removed-bg: #3a0d12; --removed-fg: #f85149;
 }
 
 * { box-sizing: border-box; }
@@ -27,44 +29,59 @@ body.chroma {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 }
 ::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.hidden { display: none !important; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* Shared status palette, themed via the variables above: the topbar count chips
+   (.c-*) and the per-resource badge (.status-*) read from the same colors. */
+.c-changed, .status-changed { background: var(--changed-bg); color: var(--changed-fg); }
+.c-added,   .status-added   { background: var(--added-bg);   color: var(--added-fg); }
+.c-removed, .status-removed { background: var(--removed-bg); color: var(--removed-fg); }
+
+/* ── Top bar ───────────────────────────────────────────────────────────── */
 .topbar {
   display: flex; align-items: center; gap: 14px; height: 48px; padding: 0 16px;
   border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 5;
 }
-.topbar .brand { font-weight: 600; font-size: 14px; }
-.counts { font-size: 12px; color: var(--muted); display: flex; gap: 6px; }
-.counts span { padding: 2px 8px; border-radius: 10px; font-weight: 600; }
-.counts .c-changed { background: #fff3cd; color: #7d4e00; }
-.counts .c-added { background: #dafbe1; color: #1a7f37; }
-.counts .c-removed { background: #ffebe9; color: #cf222e; }
-body.chroma.dark .counts .c-changed { background: #3a2d00; color: #e3b341; }
-body.chroma.dark .counts .c-added { background: #0f2e16; color: #3fb950; }
-body.chroma.dark .counts .c-removed { background: #3a0d12; color: #f85149; }
+.brand { font-weight: 600; font-size: 14px; }
 .spacer { flex: 1; }
 .btn {
   font: inherit; font-size: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--bg); color: var(--fg); cursor: pointer;
 }
 .btn:hover { border-color: var(--accent); }
-.btn:focus-visible, .tree-leaf:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.menu-btn { display: inline-flex; align-items: center; }
+/* Count chips double as status filters (the script wires the toggle); .off is
+   the toggled-off state. Their colors come from the shared palette above. */
+.counts { display: flex; gap: 6px; font-size: 12px; }
+.count { font: inherit; font-weight: 600; padding: 2px 8px; border: 0; border-radius: 10px; cursor: pointer; }
+.count:disabled { cursor: default; opacity: .45; }
+.count.off { opacity: .4; text-decoration: line-through; }
 
+/* ── Layout: resizable sidebar + content, a slide-in drawer on mobile ────── */
 .layout { display: flex; height: calc(100% - 49px); }
-.sidebar {
-  width: 340px; min-width: 220px; max-width: 55%; overflow: auto; resize: horizontal;
-  border-right: 1px solid var(--border); background: var(--panel); padding: 0 0 8px;
-}
-.content { flex: 1; overflow: auto; padding: 0 20px 64px; }
+.sidebar { width: var(--sb, 340px); flex: none; overflow: auto; background: var(--panel); padding: 0 0 8px; }
+.content { flex: 1; min-width: 0; overflow: auto; padding: 0 20px 20px; }
 .sidebar, .content { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+/* Drag handle between sidebar and content; the width lives in --sb so a drag (or
+   a window-resize re-clamp) is a single property write. */
+.splitter { flex: none; width: 6px; cursor: col-resize; background: var(--border); touch-action: none; }
+.splitter:hover, body.resizing .splitter { background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
+.backdrop { display: none; }
+/* Desktop: the hamburger collapses the left bar entirely for a full-width diff
+   (narrow screens get the drawer from the mobile block instead). */
+@media (min-width: 769px) {
+  body:not(.nav-open) .sidebar, body:not(.nav-open) .splitter { display: none; }
+}
 
+/* ── Sidebar: filter + resource tree ─────────────────────────────────────── */
 .filter { position: sticky; top: 0; z-index: 1; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .filter input {
   width: 100%; font: inherit; font-size: 12px; padding: 5px 8px; border: 1px solid var(--border);
   border-radius: 6px; background: var(--bg); color: var(--fg);
 }
 .filter input:focus { outline: none; border-color: var(--accent); }
-.hidden { display: none !important; }
-
 .sidebar details { font-size: 13px; }
 .sidebar summary { cursor: pointer; padding: 3px 10px; white-space: nowrap; list-style: none; }
 .sidebar summary::-webkit-details-marker { display: none; }
@@ -88,22 +105,18 @@ body.chroma.dark .counts .c-removed { background: #3a0d12; color: #f85149; }
 .leaf-stat { margin-left: auto; padding-left: 8px; font-size: 10px; color: var(--muted); white-space: nowrap; }
 .tree-leaf.current .leaf-stat { color: #fff; }
 
+/* ── Resource header (sticky) ────────────────────────────────────────────── */
 .placeholder { color: var(--muted); padding: 24px 4px; font-size: 14px; }
 .resource { display: none; }
 .resource.active { display: block; }
-.rhead {
-  position: sticky; top: 0; z-index: 2; background: var(--bg);
-  font-family: var(--mono); font-size: 15px; margin: 0; padding: 16px 0 5px;
-}
+/* Title + parent stick together as one block, above the diff's z-1/2 overlays,
+   with padding below so the text isn't flush against the diff when scrolled. */
+.rtop { position: sticky; top: 0; z-index: 3; background: var(--bg); padding: 16px 0 20px; }
+.rhead { font-family: var(--mono); font-size: 15px; margin: 0; }
 .status { font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 1px 7px; border-radius: 10px; margin-right: 8px; }
-.status-changed { background: #fff3cd; color: #7d4e00; }
-.status-added { background: #dafbe1; color: #1a7f37; }
-.status-removed { background: #ffebe9; color: #cf222e; }
-body.chroma.dark .status-changed { background: #3a2d00; color: #e3b341; }
-body.chroma.dark .status-added { background: #0f2e16; color: #3fb950; }
-body.chroma.dark .status-removed { background: #3a0d12; color: #f85149; }
-.rparent { color: var(--muted); font-size: 12px; font-family: var(--mono); margin-bottom: 12px; }
+.rparent { color: var(--muted); font-size: 12px; font-family: var(--mono); margin: 3px 0 0; }
 
+/* ── Diff table ──────────────────────────────────────────────────────────── */
 table.view {
   width: 100%; border-collapse: collapse; table-layout: fixed; border: 1px solid var(--border); border-radius: 8px;
   font-family: var(--mono); font-size: 12.5px; line-height: 20px;
@@ -111,55 +124,94 @@ table.view {
 table.unified { display: none; }
 body.unified table.side { display: none; }
 body.unified table.unified { display: table; }
+/* Column widths live on <col>, not the cells: table-layout:fixed takes its
+   widths from the first row, which is usually a colspan expander — so a width
+   set on .diff-lineno would be ignored and every column would split evenly. */
+.view col.cn { width: 48px; }
+/* Side-by-side split ratio. Under table-layout:fixed a column percentage is
+   taken of the space the fixed 48px gutters leave behind, so --split (the left
+   side's fraction) and its complement — as plain percentages — divide the code
+   area with no px math (calc mixing % and px is dropped on <col>). */
+.side col.cl { width: calc(var(--split, .5) * 100%); }
+.side col.cr { width: calc((1 - var(--split, .5)) * 100%); }
 .diff-lineno {
-  width: 48px; text-align: right; padding: 0 8px; color: var(--muted); user-select: none;
+  text-align: right; padding: 0 8px; color: var(--muted); user-select: none;
   white-space: nowrap; border-right: 1px solid var(--border); vertical-align: top; font-variant-numeric: tabular-nums;
 }
 .diff-code { position: relative; padding: 0 10px 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
 
-/* +/- change markers in the code gutter (add/del reads without relying on color) */
-td.diff-code.diff-add::before, tr.row-add td.diff-code::before,
-td.diff-code.diff-del::before, tr.row-del td.diff-code::before {
-  position: absolute; left: 7px; font-weight: 700;
+/* Draggable middle divider for the side-by-side view: a thin full-height overlay
+   on the column boundary (positioned purely from --split); dragging rewrites
+   --split. Hidden in the unified view and on mobile. */
+.side-wrap { position: relative; }
+.vsplit {
+  position: absolute; top: 0; bottom: 0; width: 9px; z-index: 1; cursor: col-resize; touch-action: none;
+  left: calc(48px + (100% - 96px) * var(--split, .5)); transform: translateX(-50%);
 }
-td.diff-code.diff-add::before, tr.row-add td.diff-code::before { content: "+"; color: var(--add-fg); }
-td.diff-code.diff-del::before, tr.row-del td.diff-code::before { content: "-"; color: var(--del-fg); }
+.vsplit::before { content: ""; position: absolute; inset: 0 4px; background: var(--accent); opacity: 0; }
+.vsplit:hover::before, body.vsplitting .vsplit::before { opacity: .6; }
+body.vsplitting { cursor: col-resize; user-select: none; }
+body.unified .vsplit { display: none; }
 
-td.diff-code.diff-add { background: var(--add); }
-td.diff-code.diff-del { background: var(--del); }
-td.diff-code.diff-blank { background: var(--blank); }
-td.diff-lineno.diff-add { background: var(--add-gut); }
-td.diff-lineno.diff-del { background: var(--del-gut); }
-td.diff-lineno.diff-blank { background: var(--blank); }
-tr.row-add td.diff-code { background: var(--add); }
-tr.row-add td.diff-lineno { background: var(--add-gut); }
-tr.row-del td.diff-code { background: var(--del); }
-tr.row-del td.diff-lineno { background: var(--del-gut); }
-
-/* word-level diff: the runes that actually changed within a changed line */
-td.diff-code.diff-add .wd, tr.row-add td.diff-code .wd { background: var(--add-wd); }
-td.diff-code.diff-del .wd, tr.row-del td.diff-code .wd { background: var(--del-wd); }
-.wd { border-radius: 2px; }
-
-/* absent (padding) lines in side-by-side: faint hatch so they read as "no line here" */
+/* Line backgrounds: side-by-side keys off the cell's diff-add/del/blank class,
+   unified off the row's row-add/del class. */
+td.diff-code.diff-add,   tr.row-add td.diff-code   { background: var(--add); }
+td.diff-lineno.diff-add, tr.row-add td.diff-lineno { background: var(--add-gut); }
+td.diff-code.diff-del,   tr.row-del td.diff-code   { background: var(--del); }
+td.diff-lineno.diff-del, tr.row-del td.diff-lineno { background: var(--del-gut); }
+td.diff-code.diff-blank, td.diff-lineno.diff-blank { background: var(--blank); }
+/* Absent (padding) cells in side-by-side: a faint hatch reads as "no line here". */
 td.diff-code.diff-blank, td.diff-lineno.diff-blank {
   background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, var(--hover) 5px, var(--hover) 6px);
 }
+/* +/- markers in the code gutter, so add/del reads without relying on color. */
+td.diff-code.diff-add::before, tr.row-add td.diff-code::before,
+td.diff-code.diff-del::before, tr.row-del td.diff-code::before { position: absolute; left: 7px; font-weight: 700; }
+td.diff-code.diff-add::before, tr.row-add td.diff-code::before { content: "+"; color: var(--add-fg); }
+td.diff-code.diff-del::before, tr.row-del td.diff-code::before { content: "-"; color: var(--del-fg); }
+/* Word-level highlight: the runes that actually changed within a line. */
+.wd { border-radius: 2px; }
+td.diff-code.diff-add .wd, tr.row-add td.diff-code .wd { background: var(--add-wd); }
+td.diff-code.diff-del .wd, tr.row-del td.diff-code .wd { background: var(--del-wd); }
+
 tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; padding: 0; }
 tr.folded { display: none; }
 .expander {
   font: inherit; font-size: 11px; font-family: var(--mono); color: var(--accent);
   background: none; border: 0; cursor: pointer; padding: 3px 8px; width: 100%;
+  position: relative; z-index: 2; /* stay clickable above the .vsplit overlay */
 }
 .expander:hover { background: var(--hover); text-decoration: underline; }
+
+/* ── Mobile: drawer sidebar, full-width content, scrollable side-by-side ──── */
+@media (max-width: 768px) {
+  .topbar { gap: 8px; padding: 0 8px; }
+  .btn { padding: 5px 8px; font-size: 11px; }
+  .counts { display: none; }
+  .splitter, .vsplit { display: none; }
+  .sidebar {
+    position: fixed; top: 49px; bottom: 0; left: 0; z-index: 20; width: min(82vw, 320px);
+    transform: translateX(calc(-100% - 1px)); transition: transform .2s ease;
+  }
+  body.nav-open .sidebar { transform: none; box-shadow: 2px 0 14px rgba(0, 0, 0, .35); }
+  body.nav-open .backdrop { display: block; position: fixed; inset: 49px 0 0; z-index: 15; background: rgba(0, 0, 0, .45); }
+  .content { padding: 0 10px 20px; }
+  table.side { min-width: 560px; }
+}
+@media (max-width: 420px) { .brand { display: none; } }
 
 {{.ChromaCSS}}
 </style>
 </head>
 <body class="chroma light">
 <header class="topbar">
+  <button class="btn menu-btn" id="menu-btn" type="button" aria-label="Toggle resource list">&#9776;</button>
   <span class="brand">flate diff</span>
-  <span class="counts"><span class="c-changed">{{.Changed}} changed</span><span class="c-added">{{.Added}} added</span><span class="c-removed">{{.Removed}} removed</span></span>
+  <span class="counts">
+    <button type="button" class="count c-changed" data-status="changed" aria-pressed="true"{{if not .Changed}} disabled{{end}}>{{.Changed}} changed</button>
+    <button type="button" class="count c-added" data-status="added" aria-pressed="true"{{if not .Added}} disabled{{end}}>{{.Added}} added</button>
+    <button type="button" class="count c-removed" data-status="removed" aria-pressed="true"{{if not .Removed}} disabled{{end}}>{{.Removed}} removed</button>
+  </span>
   <span class="spacer"></span>
   <button class="btn" id="expand-btn" type="button">Expand all</button>
   <button class="btn" id="view-btn" type="button">Unified</button>
@@ -175,31 +227,37 @@ tr.folded { display: none; }
       <details class="tree-kind" open>
         <summary>{{.Kind}} <span class="leaf-stat">{{len .Items}}</span></summary>
         {{range .Items}}
-        <a class="tree-leaf" href="#{{.ID}}" data-id="{{.ID}}"><span class="dot {{.Status}}"></span><span class="leaf-name">{{.Name}}</span><span class="leaf-stat">{{if .Add}}+{{.Add}}{{end}} {{if .Del}}-{{.Del}}{{end}}</span></a>
+        <a class="tree-leaf" href="#{{.ID}}" data-id="{{.ID}}" data-status="{{.Status}}"><span class="dot {{.Status}}"></span><span class="leaf-name">{{.Name}}</span><span class="leaf-stat">{{if .Add}}+{{.Add}}{{end}} {{if .Del}}-{{.Del}}{{end}}</span></a>
         {{end}}
       </details>
       {{end}}
     </details>
     {{end}}
   </nav>
+  <div class="splitter" id="splitter"></div>
   <main class="content">
     <div class="placeholder" id="placeholder">Select a resource from the tree to view its diff.</div>
     {{range $res := .Resources}}
     <section class="resource" id="{{$res.ID}}">
-      <h2 class="rhead"><span class="status status-{{$res.Status}}">{{$res.Status}}</span>{{$res.Title}}</h2>
-      <div class="rparent">{{$res.Parent}}</div>
-      <table class="view side"><tbody>
-        {{- range $res.SRows}}
-        {{- if .Hunk}}<tr class="hunk" data-fold="{{$res.ID}}-{{.Fold}}"><td colspan="4"><button type="button" class="expander">&#8597; Expand {{.Count}} lines</button></td></tr>
-        {{- else}}<tr{{if .Folded}} class="folded" data-fold="{{$res.ID}}-{{.Fold}}"{{end}}>
-          <td class="diff-lineno diff-{{.Left.Kind}}">{{if .Left.No}}{{.Left.No}}{{end}}</td>
-          <td class="diff-code diff-{{.Left.Kind}}">{{.Left.HTML}}</td>
-          <td class="diff-lineno diff-{{.Right.Kind}}">{{if .Right.No}}{{.Right.No}}{{end}}</td>
-          <td class="diff-code diff-{{.Right.Kind}}">{{.Right.HTML}}</td>
-        </tr>{{end}}
-        {{- end}}
-      </tbody></table>
-      <table class="view unified"><tbody>
+      <div class="rtop">
+        <h2 class="rhead"><span class="status status-{{$res.Status}}">{{$res.Status}}</span>{{$res.Title}}</h2>
+        <div class="rparent">{{$res.Parent}}</div>
+      </div>
+      <div class="side-wrap">
+        <table class="view side"><colgroup><col class="cn"><col class="cl"><col class="cn"><col class="cr"></colgroup><tbody>
+          {{- range $res.SRows}}
+          {{- if .Hunk}}<tr class="hunk" data-fold="{{$res.ID}}-{{.Fold}}"><td colspan="4"><button type="button" class="expander">&#8597; Expand {{.Count}} lines</button></td></tr>
+          {{- else}}<tr{{if .Folded}} class="folded" data-fold="{{$res.ID}}-{{.Fold}}"{{end}}>
+            <td class="diff-lineno diff-{{.Left.Kind}}">{{if .Left.No}}{{.Left.No}}{{end}}</td>
+            <td class="diff-code diff-{{.Left.Kind}}">{{.Left.HTML}}</td>
+            <td class="diff-lineno diff-{{.Right.Kind}}">{{if .Right.No}}{{.Right.No}}{{end}}</td>
+            <td class="diff-code diff-{{.Right.Kind}}">{{.Right.HTML}}</td>
+          </tr>{{end}}
+          {{- end}}
+        </tbody></table>
+        <div class="vsplit" aria-hidden="true"></div>
+      </div>
+      <table class="view unified"><colgroup><col class="cn"><col class="cn"><col></colgroup><tbody>
         {{- range $res.URows}}
         {{- if .Hunk}}<tr class="hunk" data-fold="{{$res.ID}}-{{.Fold}}"><td colspan="3"><button type="button" class="expander">&#8597; Expand {{.Count}} lines</button></td></tr>
         {{- else}}<tr class="row-{{.Kind}}{{if .Folded}} folded{{end}}"{{if .Folded}} data-fold="{{$res.ID}}-{{.Fold}}"{{end}}>
@@ -212,41 +270,55 @@ tr.folded { display: none; }
     </section>
     {{end}}
   </main>
+  <div class="backdrop" id="backdrop"></div>
 </div>
 <script>
 (() => {
   const body = document.body;
+  const root = document.documentElement;
+  const $ = (id) => document.getElementById(id);
+  const all = (sel, ctx = document) => ctx.querySelectorAll(sel);
+  // localStorage, wrapped so a disabled/blocked store never throws.
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  // Theme — persisted, defaulting to the OS preference.
   const setTheme = (theme) => {
     body.classList.remove('light', 'dark');
     body.classList.add(theme);
-    try { localStorage.setItem('flate-theme', theme); } catch {}
-    const btn = document.getElementById('theme-btn');
+    store.set('flate-theme', theme);
+    const btn = $('theme-btn');
     if (btn) btn.textContent = theme === 'dark' ? '☀ Light' : '🌙 Dark';
   };
-  let saved = null;
-  try { saved = localStorage.getItem('flate-theme'); } catch {}
-  const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
-  setTheme(saved ?? (prefersDark ? 'dark' : 'light'));
+  setTheme(store.get('flate-theme') ?? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  $('theme-btn')?.addEventListener('click', () => setTheme(body.classList.contains('dark') ? 'light' : 'dark'));
 
-  document.getElementById('theme-btn')?.addEventListener('click', () => {
-    setTheme(body.classList.contains('dark') ? 'light' : 'dark');
-  });
-  const viewBtn = document.getElementById('view-btn');
-  viewBtn?.addEventListener('click', () => {
-    viewBtn.textContent = body.classList.toggle('unified') ? 'Side-by-side' : 'Unified';
-  });
+  // View — unified by default on phones, where two columns don't fit.
+  const mq = window.matchMedia('(max-width: 768px)');
+  const viewBtn = $('view-btn');
+  const syncView = () => { if (viewBtn) viewBtn.textContent = body.classList.contains('unified') ? 'Side-by-side' : 'Unified'; };
+  if (mq.matches) body.classList.add('unified');
+  syncView();
+  viewBtn?.addEventListener('click', () => { body.classList.toggle('unified'); syncView(); });
 
-  const sections = document.querySelectorAll('.resource');
-  const leaves = document.querySelectorAll('a.tree-leaf');
-  const placeholder = document.getElementById('placeholder');
+  // Left bar — a drawer on mobile, a collapse on desktop. Open on desktop /
+  // closed on mobile by default, resetting when the breakpoint flips.
+  const setNav = (open) => body.classList.toggle('nav-open', open);
+  setNav(!mq.matches);
+  mq.addEventListener?.('change', () => setNav(!mq.matches));
+  $('menu-btn')?.addEventListener('click', () => setNav(!body.classList.contains('nav-open')));
+  $('backdrop')?.addEventListener('click', () => setNav(false));
+
+  // Resource selection: show one section, mark its tree leaf, reset the scroll.
+  const sections = all('.resource');
+  const leaves = all('a.tree-leaf');
+  const placeholder = $('placeholder');
   const content = document.querySelector('.content');
   const select = (id) => {
     let found = false;
-    sections.forEach((section) => {
-      const on = section.id === id;
-      section.classList.toggle('active', on);
-      if (on) found = true;
-    });
+    sections.forEach((section) => { const on = section.id === id; section.classList.toggle('active', on); found ||= on; });
     leaves.forEach((leaf) => leaf.classList.toggle('current', leaf.dataset.id === id));
     if (placeholder) placeholder.style.display = found ? 'none' : '';
     if (found && content) content.scrollTop = 0;
@@ -254,62 +326,124 @@ tr.folded { display: none; }
   leaves.forEach((leaf) => leaf.addEventListener('click', (event) => {
     event.preventDefault();
     select(leaf.dataset.id);
-    history.replaceState?.(null, '', `#${leaf.dataset.id}`);
+    if (mq.matches) setNav(false); // tapping a result closes the mobile drawer
+    history.replaceState?.(null, '', '#' + leaf.dataset.id);
   }));
-  const hashId = location.hash.slice(1);
-  const initial = hashId && document.getElementById(hashId) ? hashId : sections[0]?.id;
-  if (initial) select(initial);
+  const hash = location.hash.slice(1);
+  select(hash && $(hash) ? hash : sections[0]?.id);
 
-  // Collapsed context: an expander reveals the folded rows sharing its fold id
-  // (present in both the side and unified tables) and then drops itself. The
-  // toolbar "Expand all" does the same for every fold in one go.
-  const revealFold = (id) => {
-    document.querySelectorAll(`tr.folded[data-fold="${id}"]`).forEach((r) => r.classList.remove('folded'));
-    document.querySelectorAll(`tr.hunk[data-fold="${id}"]`).forEach((r) => r.remove());
+  // Collapsed context — reveal the folded rows for one fold id (or every fold,
+  // for the toolbar button) and drop the matching expander(s).
+  const reveal = (sel = '') => {
+    all('tr.folded' + sel).forEach((r) => r.classList.remove('folded'));
+    all('tr.hunk[data-fold]' + sel).forEach((r) => r.remove());
   };
   content?.addEventListener('click', (event) => {
     const row = event.target.closest('tr.hunk[data-fold]');
-    if (row) revealFold(row.dataset.fold);
+    if (row) reveal(`[data-fold="${row.dataset.fold}"]`);
   });
-  document.getElementById('expand-btn')?.addEventListener('click', () => {
-    document.querySelectorAll('tr.folded').forEach((r) => r.classList.remove('folded'));
-    document.querySelectorAll('tr.hunk[data-fold]').forEach((r) => r.remove());
+  $('expand-btn')?.addEventListener('click', () => reveal());
+
+  // Pointer-drag: hit(event) returns the element to capture (or null to ignore
+  // the press), move(event) runs per pointermove, done() persists on release,
+  // and cls flags <body> for the drag cursor/highlight.
+  const drag = (el, { hit, move, done, cls }) => {
+    if (!el) return;
+    let target = null;
+    el.addEventListener('pointerdown', (event) => {
+      target = hit(event);
+      if (!target) return;
+      try { target.setPointerCapture(event.pointerId); } catch {}
+      body.classList.add(cls);
+      event.preventDefault();
+    });
+    el.addEventListener('pointermove', (event) => { if (target) move(event); });
+    const end = (event) => {
+      if (!target) return;
+      try { target.releasePointerCapture(event.pointerId); } catch {}
+      target = null;
+      body.classList.remove(cls);
+      done();
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  };
+
+  // Resizable sidebar (desktop): the width lives in --sb, clamped to at least
+  // 180px and never past 60% / the window minus a 320px content floor, and
+  // re-clamped on window resize.
+  const splitter = $('splitter');
+  const clampSB = (px) => Math.max(180, Math.min(Math.round(px), Math.min(Math.round(window.innerWidth * 0.6), window.innerWidth - 320)));
+  let sb = Number(store.get('flate-sb')) || 340;
+  const applySB = (persist) => { sb = clampSB(sb); root.style.setProperty('--sb', sb + 'px'); if (persist) store.set('flate-sb', sb); };
+  applySB(false);
+  drag(splitter, {
+    hit: () => splitter,
+    move: (event) => { sb = event.clientX - splitter.parentElement.getBoundingClientRect().left; applySB(false); },
+    done: () => applySB(true),
+    cls: 'resizing',
+  });
+  window.addEventListener('resize', () => applySB(false));
+
+  // Draggable middle divider (side-by-side): --split is the left column's
+  // fraction of the code area, clamped so neither side collapses.
+  let split = Number(store.get('flate-split')) || 0.5;
+  const applySplit = (persist) => { split = Math.max(0.15, Math.min(0.85, split)); root.style.setProperty('--split', String(split)); if (persist) store.set('flate-split', split); };
+  applySplit(false);
+  drag(content, {
+    hit: (event) => event.target.closest('.vsplit'),
+    move: (event) => {
+      const tbl = document.querySelector('.resource.active table.side');
+      if (!tbl) return;
+      const r = tbl.getBoundingClientRect();
+      split = (event.clientX - r.left - 48) / (r.width - 96);
+      applySplit(false);
+    },
+    done: () => applySplit(true),
+    cls: 'vsplitting',
   });
 
-  // Sidebar filter: hide non-matching leaves, then empty kinds/parents; auto-open while filtering.
-  const filter = document.getElementById('filter');
-  const kinds = document.querySelectorAll('.tree-kind');
-  const parents = document.querySelectorAll('.tree-parent');
-  filter?.addEventListener('input', () => {
-    const q = filter.value.trim().toLowerCase();
+  // Sidebar filter — text query + the status chips. A leaf shows when its name
+  // matches the query and its status isn't toggled off; empty groups collapse,
+  // and groups that still have matches re-expand (so unhiding a status reopens
+  // its lists).
+  const filter = $('filter');
+  const offStatus = new Set();
+  const prune = (group, childSel) => {
+    const any = [...all(childSel, group)].some((c) => !c.classList.contains('hidden'));
+    group.classList.toggle('hidden', !any);
+    if (any) group.open = true;
+  };
+  const applyFilter = () => {
+    const q = filter?.value.trim().toLowerCase() ?? '';
     leaves.forEach((leaf) => {
       const name = leaf.querySelector('.leaf-name')?.textContent.toLowerCase() ?? '';
-      leaf.classList.toggle('hidden', q !== '' && !name.includes(q));
+      leaf.classList.toggle('hidden', (q !== '' && !name.includes(q)) || offStatus.has(leaf.dataset.status));
     });
-    kinds.forEach((kind) => {
-      const any = [...kind.querySelectorAll('.tree-leaf')].some((l) => !l.classList.contains('hidden'));
-      kind.classList.toggle('hidden', !any);
-      if (q) kind.open = any;
-    });
-    parents.forEach((parent) => {
-      const any = [...parent.querySelectorAll('.tree-kind')].some((k) => !k.classList.contains('hidden'));
-      parent.classList.toggle('hidden', !any);
-      if (q) parent.open = any;
-    });
-  });
+    all('.tree-kind').forEach((k) => prune(k, '.tree-leaf'));
+    all('.tree-parent').forEach((p) => prune(p, '.tree-kind'));
+  };
+  filter?.addEventListener('input', applyFilter);
+  all('.count').forEach((chip) => chip.addEventListener('click', () => {
+    const s = chip.dataset.status;
+    if (offStatus.has(s)) offStatus.delete(s); else offStatus.add(s);
+    chip.classList.toggle('off', offStatus.has(s));
+    chip.setAttribute('aria-pressed', String(!offStatus.has(s)));
+    applyFilter();
+  }));
 
-  // Keyboard nav: j/k or arrows move between visible resources, "/" focuses the filter, Esc clears it.
+  // Keyboard nav: j/k or arrows move between visible resources, "/" focuses the
+  // filter, Esc clears it.
   const move = (delta) => {
     const visible = [...leaves].filter((leaf) => leaf.offsetParent !== null);
     if (!visible.length) return;
     const currentId = [...leaves].find((leaf) => leaf.classList.contains('current'))?.dataset.id;
-    let idx = visible.findIndex((leaf) => leaf.dataset.id === currentId);
-    idx = idx < 0 ? (delta > 0 ? 0 : visible.length - 1) : Math.min(visible.length - 1, Math.max(0, idx + delta));
-    const target = visible[idx];
+    const at = visible.findIndex((leaf) => leaf.dataset.id === currentId);
+    const target = visible[at < 0 ? (delta > 0 ? 0 : visible.length - 1) : Math.min(visible.length - 1, Math.max(0, at + delta))];
     if (!target) return;
     select(target.dataset.id);
     target.scrollIntoView({ block: 'nearest' });
-    history.replaceState?.(null, '', `#${target.dataset.id}`);
+    history.replaceState?.(null, '', '#' + target.dataset.id);
   };
   document.addEventListener('keydown', (event) => {
     if (event.target === filter) {

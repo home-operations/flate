@@ -51,6 +51,30 @@ func TestRenderHTML_Changed(t *testing.T) {
 		"1 changed",                    // summary count
 		"ConfigMap apps/web",           // per-resource title
 		"HelmRelease apps/web",         // parent attribution
+		// Column widths must live on <col>: the tables are table-layout:fixed,
+		// whose column sizing comes from the first row — usually a colspan
+		// expander — so a width on the line-number cells alone collapses every
+		// column to an equal share. The <colgroup> keeps the gutters narrow.
+		`<table class="view side"><colgroup><col class="cn">`,
+		`<table class="view unified"><colgroup><col class="cn">`,
+		"col.cn { width: 48px; }",
+		// Responsive chrome: draggable sidebar splitter, mobile drawer toggle,
+		// and the breakpoint that turns the sidebar into that drawer.
+		`id="splitter"`,
+		`id="menu-btn"`,
+		"@media (max-width: 768px)",
+		// Desktop sidebar collapse + the draggable side-by-side divider.
+		"@media (min-width: 769px)",
+		`class="side-wrap"`,
+		`<div class="vsplit"`,
+		`<col class="cl">`,
+		// Status-filter chips toggle each status in the tree (zero-count
+		// statuses render disabled); leaves carry their status for the filter.
+		`class="count c-changed" data-status="changed" aria-pressed="true">`,
+		`class="count c-added" data-status="added" aria-pressed="true" disabled>`,
+		`data-id="r0" data-status="changed"`,
+		// Title + parent share one sticky header block.
+		`<div class="rtop">`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("changed-diff HTML missing %q", want)

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -19,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -36,6 +38,15 @@ type commonFlags struct {
 	enableOCI           bool
 	registryConfig      string
 	concurrency         int
+	// sourceRetry* tune the bounded retry applied to every source fetch
+	// (Git/OCI/Bucket) on transient network errors. attempts is the total
+	// tries (first + retries); 1 disables. min/max bound the exponential
+	// backoff and jitter spreads it. Plumbed into
+	// orchestrator.Config.SourceRetry → source.WithRetry.
+	sourceRetryAttempts int
+	sourceRetryMinWait  time.Duration
+	sourceRetryMaxWait  time.Duration
+	sourceRetryJitter   float64
 	// stageCacheMB caps the persistent kustomize stage cache. 0
 	// disables LRU eviction so the GC subcommand owns cleanup.
 	stageCacheMB int
@@ -103,6 +114,17 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"(Windows), falling back to $TMPDIR/flate-cache if those error.")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
+	// Retry only kicks in for transient network failures (connection
+	// reset/refused, timeouts); a bad path / auth / not-found still fails
+	// on the first try. --source-retry-attempts=1 disables it entirely.
+	fs.IntVar(&f.sourceRetryAttempts, "source-retry-attempts", 3,
+		"max attempts per source fetch (Git/OCI/Bucket) on transient network errors (1 disables retry)")
+	fs.DurationVar(&f.sourceRetryMinWait, "source-retry-min-wait", 200*time.Millisecond,
+		"minimum backoff between source-fetch retries")
+	fs.DurationVar(&f.sourceRetryMaxWait, "source-retry-max-wait", 3*time.Second,
+		"maximum backoff between source-fetch retries")
+	fs.Float64Var(&f.sourceRetryJitter, "source-retry-jitter", 0.1,
+		"jitter fraction [0,1] applied to source-fetch retry backoff")
 	fs.StringVar(&f.profileMode, "profile", "",
 		"write a runtime profile: cpu, mem, block, mutex, or trace (off by default)")
 	fs.StringVar(&f.profileOut, "profile-out", ".",
@@ -314,13 +336,19 @@ func resolveBaseline(_ context.Context, c *commonFlags, autoFallback bool) (func
 
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
-		Path:                   c.path,
-		PathOrig:               c.pathOrig,
-		HelmOptions:            c.helmOptions(h),
-		WipeSecrets:            true,
-		EnableOCI:              c.enableOCI,
-		RegistryConfig:         c.registryConfig,
-		Concurrency:            c.concurrency,
+		Path:           c.path,
+		PathOrig:       c.pathOrig,
+		HelmOptions:    c.helmOptions(h),
+		WipeSecrets:    true,
+		EnableOCI:      c.enableOCI,
+		RegistryConfig: c.registryConfig,
+		Concurrency:    c.concurrency,
+		SourceRetry: source.RetryConfig{
+			Attempts: c.sourceRetryAttempts,
+			MinWait:  c.sourceRetryMinWait,
+			MaxWait:  c.sourceRetryMaxWait,
+			Jitter:   c.sourceRetryJitter,
+		},
 		AllowMissingSecrets:    c.allowMissingSecrets,
 		CacheDir:               c.resolveCacheRoot(),
 		HelmTemplateCacheBytes: int64(c.helmTemplateCacheMB) << 20,

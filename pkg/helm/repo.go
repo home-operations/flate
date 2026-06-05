@@ -2,6 +2,8 @@ package helm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,7 +15,6 @@ import (
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // ChartLoadResult is the loaded chart plus the on-disk path it came from.
@@ -49,95 +50,76 @@ func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
 	return path, nil
 }
 
-// pullHelmRepoOCI handles the `HelmRepository.type=oci` branch by
-// synthesizing an OCIRepository (carrying the HelmRepository's
-// secret/cert/proxy/insecure fields) and routing it through the
-// OCIPuller — the same source/oci.Fetcher the OCIRepository path
-// uses. This gives HelmRepository(type=oci) parity with
-// OCIRepository for spec.verify / cert / auth / proxy / insecure;
-// previously those fields were silently ignored and SecretRef
-// rejected outright with a "not yet implemented" error.
-//
-// When no puller is wired (EnableOCI=false runs or embedders
-// without an OCI fetcher), fall back to the registry-client pull —
-// preserves the legacy anonymous-pull behavior for backward
-// compatibility.
-func (c *Client) pullHelmRepoOCI(ctx context.Context, r *manifest.HelmRepository, hr *manifest.HelmRelease) (string, error) {
-	chartURL := strings.TrimSuffix(r.URL, "/") + "/" + hr.Chart.Name
-	if puller := c.ociPullerSnapshot(); puller != nil {
-		// Name the synthetic OCIRepository after the source
-		// HelmRepository's identity (NOT the chart name): the puller's
-		// internal slot/dedup/log key uses (Namespace, Name), and
-		// using the chart name would conflate two distinct
-		// HelmRepositories that happen to ship a chart with the same
-		// name. Disambiguate slot identity further by suffixing the
-		// chart name so distinct charts from the same HelmRepository
-		// also get distinct slots.
-		syn := &manifest.OCIRepository{
-			Name:      r.Name + "-" + hr.Chart.Name,
-			Namespace: r.Namespace,
-		}
-		syn.URL = chartURL
-		syn.Provider = r.Provider
-		if hr.Chart.Version != "" {
-			ref := &manifest.OCIRepositoryRef{}
-			if strings.Contains(hr.Chart.Version, ":") {
-				ref.Digest = hr.Chart.Version
-			} else {
-				ref.Tag = hr.Chart.Version
-			}
-			syn.Reference = ref
-		}
-		// Lift HelmRepository's auth / TLS / proxy / insecure into
-		// the synthetic OCIRepository so the puller honors them.
-		syn.SecretRef = r.SecretRef
-		syn.CertSecretRef = r.CertSecretRef
-		syn.Insecure = r.Insecure
-		var (
-			art *store.SourceArtifact
-			err error
-		)
-		c.yieldDuring(func() {
-			art, err = puller.Fetch(ctx, syn)
-		})
-		if err != nil {
-			return "", err
-		}
-		if art != nil && art.LocalPath != "" {
-			path, err := ociChartPathFromArtifact(art.LocalPath)
-			if err != nil {
-				return "", fmt.Errorf("HelmRepository %s/%s (oci): %w", r.Namespace, r.Name, err)
-			}
-			return path, nil
-		}
-	}
-	// Registry-client fallback — anonymous pull, no auth/TLS/verify.
-	// Preserve the previous SecretRef rejection so a user with
-	// credentials configured against this path gets a clear error
-	// rather than a silently-anonymous pull failure.
-	if r.SecretRef != nil {
-		return "", fmt.Errorf(
-			"HelmRepository %s/%s: SecretRef on type=oci requires an OCI puller "+
-				"(typically EnableOCI=true); reference the chart via a sibling "+
-				"OCIRepository CR or enable OCI",
-			r.Namespace, r.Name)
-	}
-	return c.fetchOCIChart(ctx, chartURL, hr.Chart.Version)
+// IsOCIHelmRepo reports whether a HelmRepository serves charts from an OCI
+// registry (spec.type: oci, or an oci:// URL) rather than a classic HTTP
+// index.yaml. Such a repo has no standalone chart source CR — its charts are
+// materialized into synthetic OCIRepositories (see SynthesizeOCIRepository).
+func IsOCIHelmRepo(r *manifest.HelmRepository) bool {
+	return r.Type == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://")
 }
 
-// locateHelmRepoChart resolves a chart from a HelmRepository. For OCI
-// HelmRepositories the URL is `oci://...` and we delegate to the OCI
-// path. Otherwise we download the chart tarball via getter, applying
-// any SecretRef credentials.
+// SynthesizeOCIRepository builds an in-memory OCIRepository for a single
+// chart served by a type=oci HelmRepository (precondition: IsOCIHelmRepo(r)).
+// A HelmRepository(oci) is only a registry base; the chart name and version
+// live on the consuming HelmRelease, so there is no standalone OCIRepository
+// CR. The orchestrator's HelmRelease controller registers this synthetic
+// object with the source controller so the chart is fetched through the
+// single source path (fetch + retry + Store + depwait), exactly like a real
+// OCIRepository — rather than an inline lazy pull.
+//
+// The HelmRepository's auth / TLS / insecure / provider are lifted so the
+// OCI fetcher honors them (HelmRepository carries no proxySecretRef). The
+// resolved version becomes a digest ref when it contains ':' else a tag,
+// matching how the OCIRepository path treats a pinned chart version.
+func SynthesizeOCIRepository(r *manifest.HelmRepository, chartName, version string) *manifest.OCIRepository {
+	chartURL := strings.TrimSuffix(r.URL, "/") + "/" + chartName
+	syn := &manifest.OCIRepository{Namespace: r.Namespace}
+	syn.Name = syntheticOCIName(r.Name, chartName, chartURL, version)
+	syn.URL = chartURL
+	syn.Provider = r.Provider
+	if version != "" {
+		ref := &manifest.OCIRepositoryRef{}
+		if strings.Contains(version, ":") {
+			ref.Digest = version
+		} else {
+			ref.Tag = version
+		}
+		syn.Reference = ref
+	}
+	syn.SecretRef = r.SecretRef
+	syn.CertSecretRef = r.CertSecretRef
+	syn.Insecure = r.Insecure
+	return syn
+}
+
+// syntheticOCIName derives a stable, unique Store identity for a synthetic
+// OCIRepository: <helmrepo>-<chart>-<short hash of url@version>. The hash
+// disambiguates two HelmReleases pulling different versions of the same
+// chart from the same repo (same <helmrepo>-<chart> prefix would otherwise
+// collide on one Store id and clobber each other's artifact) and keeps the
+// name valid when the version is a digest (whose ':' isn't a legal name
+// character).
+func syntheticOCIName(repoName, chartName, chartURL, version string) string {
+	sum := sha256.Sum256([]byte(chartURL + "@" + version))
+	return repoName + "-" + chartName + "-" + hex.EncodeToString(sum[:])[:7]
+}
+
+// locateHelmRepoChart resolves a chart from an HTTP HelmRepository: download
+// index.yaml via getter, pick the version, fetch the tarball — applying any
+// SecretRef credentials.
+//
+// type=oci HelmRepositories never reach here: the orchestrator's HelmRelease
+// controller repoints them to a synthesized OCIRepository before chart
+// resolution (see SynthesizeOCIRepository / materializeOCIChartSource), so
+// LocateChart dispatches them to locateOCIChart instead. A direct embedder
+// that skips that step and hands an oci:// HelmRepository to LocateChart will
+// fall through to the index.yaml fetch below and fail there — call
+// SynthesizeOCIRepository (or use the orchestrator) for type=oci.
 func (c *Client) locateHelmRepoChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
 	r := c.resolveHelmRepo(hr)
 	if r == nil {
 		return "", fmt.Errorf("%w: HelmRepository %s not registered for HelmRelease %s",
 			manifest.ErrObjectNotFound, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
-	}
-
-	if r.Type == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://") {
-		return c.pullHelmRepoOCI(ctx, r, hr)
 	}
 
 	authOpts, err := c.helmRepoAuthOptions(r)

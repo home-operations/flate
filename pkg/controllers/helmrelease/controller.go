@@ -360,32 +360,26 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return err
 	}
 
-	// Wait for chart source (HelmRepository / OCIRepository / GitRepository)
-	// to be ready BEFORE the fingerprint dedup gate. A re-emit that
-	// finds the prior fingerprint cached must not replay stale docs
-	// when the upstream source has since transitioned to Failed or
-	// soft-skipped (--allow-missing-secrets newly applied) — the
-	// dedup-replay path otherwise publishes outputs the fresh path
-	// would have refused with ErrSourceSkipped.
-	srcID := manifest.NamedResource{
-		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
-	}
-	if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout),
-		[]manifest.DependencyRef{{NamedResource: srcID}},
-		"", // status already set above
-		func(sum depwait.Summary) error {
-			return fmt.Errorf("%w: chart source %s not ready: %s",
-				manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
-		}); err != nil {
+	// Wait for the declared chart source to be Ready, BEFORE the fingerprint
+	// dedup gate (a re-emit that finds the prior fingerprint cached must not
+	// replay stale docs over a source that has since failed or soft-skipped
+	// via --allow-missing-secrets).
+	if err := c.awaitChartSource(ctx, id, hr, chartSourceID(hr)); err != nil {
 		return err
 	}
-	// A chart source that soft-skipped (--allow-missing-secrets on its
-	// auth) marks Ready but writes no artifact and almost certainly
-	// can't be pulled anonymously either. Propagate the skip instead
-	// of letting TemplateDocs fail at the registry.
-	if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
-		return fmt.Errorf("%w: chart source %s %s",
-			manifest.ErrSourceSkipped, srcID.String(), info.Message)
+	// A type=oci HelmRepository is just a registry base — its chart has no
+	// standalone source CR. Now that the declared source is Ready (so the
+	// HelmRepository is in the Store and resolvable), repoint the chart to a
+	// synthesized OCIRepository the source controller fetches (retry +
+	// Store), and wait for that fetch too. After this, render always
+	// resolves a type=oci chart through the OCIRepository path, so it never
+	// reaches locateHelmRepoChart. Waiting first makes the repoint
+	// deterministic — no loop, no "absent → retry" dance.
+	hr, repointed := c.materializeOCIChartSource(id, hr)
+	if repointed {
+		if err := c.awaitChartSource(ctx, id, hr, chartSourceID(hr)); err != nil {
+			return err
+		}
 	}
 	if err := c.PreflightError(id); err != nil {
 		return err
@@ -441,6 +435,76 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
 	return nil
+}
+
+// chartSourceID is the resource identity of the HelmRelease's current chart
+// source (the thing its render reads from).
+func chartSourceID(hr *manifest.HelmRelease) manifest.NamedResource {
+	return manifest.NamedResource{
+		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
+	}
+}
+
+// awaitChartSource blocks until srcID reaches Ready, then propagates a
+// soft-skip (--allow-missing-secrets on the source's auth marks it Ready but
+// writes no artifact and can't be pulled anonymously either, so fail here
+// instead of letting TemplateDocs fail at the registry).
+func (c *Controller) awaitChartSource(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease, srcID manifest.NamedResource) error {
+	if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout),
+		[]manifest.DependencyRef{{NamedResource: srcID}},
+		"", // status already set by the caller
+		func(sum depwait.Summary) error {
+			return fmt.Errorf("%w: chart source %s not ready: %s",
+				manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
+		}); err != nil {
+		return err
+	}
+	if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
+		return fmt.Errorf("%w: chart source %s %s",
+			manifest.ErrSourceSkipped, srcID.String(), info.Message)
+	}
+	return nil
+}
+
+// materializeOCIChartSource handles a HelmRelease whose chart source is a
+// type=oci HelmRepository. Such a repo is only a registry base; the chart
+// name+version live on the HelmRelease, so there's no OCIRepository CR for
+// the source controller to have fetched. We synthesize one, register it
+// (so the source controller fetches it — with retry — into the Store), and
+// repoint hr.Chart at it. After this, the chart-source depwait and
+// LocateChart route through the normal OCIRepository path; the chart pull
+// happens once through the single source path rather than inline.
+//
+// Returns (hr, true) when it repointed the chart to a synthetic
+// OCIRepository; (hr, false) with hr unchanged otherwise (the source isn't a
+// type=oci HelmRepository). hr is the post-Prepare clone, so mutating its
+// Chart is local to this reconcile and never touches the Store's object.
+// Re-running on a later reconcile is idempotent: the source controller
+// short-circuits an already-fetched artifact and AddObject of the same
+// synthetic id is a no-op re-emit.
+func (c *Controller) materializeOCIChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool) {
+	// RepoKind "" defaults to HelmRepository (see LocateChart dispatch).
+	if hr.Chart.RepoKind != "" && hr.Chart.RepoKind != manifest.KindHelmRepository {
+		return hr, false
+	}
+	r := c.Helm.Resolver().HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	if r == nil || !helm.IsOCIHelmRepo(r) {
+		return hr, false
+	}
+	syn := helm.SynthesizeOCIRepository(r, hr.Chart.Name, hr.Chart.Version)
+	synID := syn.Named()
+	// keepEmitted BEFORE AddObject so the synchronous source-controller
+	// listener sees the extended changed-only keep set (mirrors
+	// emitRenderedChildren). UpdateStatus seeds a Pending status so the
+	// chart-source depwait below never observes the object as absent in
+	// the window before the source controller's own reconcile sets it.
+	c.keepEmitted(id, synID)
+	c.Store.AddObject(syn)
+	c.Store.UpdateStatus(synID, store.StatusPending, "fetching (oci HelmRepository chart)")
+	hr.Chart.RepoKind = manifest.KindOCIRepository
+	hr.Chart.RepoNamespace = syn.Namespace
+	hr.Chart.RepoName = syn.Name
+	return hr, true
 }
 
 // emitRenderedChildren parses each rendered doc and lands it in the

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -137,44 +136,81 @@ func TestLocateHelmRepoChart_NoDigestDoesNotPersistMutableVersion(t *testing.T) 
 	}
 }
 
-func TestPullHelmRepoOCI_PreservesProvider(t *testing.T) {
-	c, err := NewClient(cacheroot.New(t.TempDir()))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	wantErr := errors.New("stop")
-	var pulledFor *manifest.OCIRepository
-	c.SetOCIPuller(stubPuller{
-		fetch: func(_ context.Context, r *manifest.OCIRepository) (*store.SourceArtifact, error) {
-			pulledFor = r
-			return nil, wantErr
-		},
-	})
-
-	_, err = c.pullHelmRepoOCI(context.Background(), &manifest.HelmRepository{
-		Name:      "repo",
+func TestSynthesizeOCIRepository(t *testing.T) {
+	r := &manifest.HelmRepository{
+		Name:      "truecharts",
 		Namespace: "flux-system",
 		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
-			URL:      "oci://example.com/charts",
-			Type:     manifest.RepoTypeOCI,
-			Provider: sourcev1.AmazonOCIProvider,
+			URL:           "oci://oci.trueforge.org/truecharts/",
+			Type:          manifest.RepoTypeOCI,
+			Provider:      sourcev1.AmazonOCIProvider,
+			SecretRef:     &manifest.LocalObjectReference{Name: "regcred"},
+			CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+			Insecure:      true,
 		},
-	}, &manifest.HelmRelease{
-		Name:      "app",
-		Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name:    "app-template",
-			Version: "1.0.0",
-		},
-	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("pullHelmRepoOCI err = %v, want %v", err, wantErr)
 	}
-	if pulledFor == nil {
-		t.Fatal("puller was not invoked")
+	syn := SynthesizeOCIRepository(r, "kromgo", "3.0.0")
+
+	if got, want := syn.URL, "oci://oci.trueforge.org/truecharts/kromgo"; got != want {
+		t.Errorf("URL = %q, want %q", got, want)
 	}
-	if pulledFor.Provider != sourcev1.AmazonOCIProvider {
-		t.Fatalf("synthetic OCIRepository provider = %q, want %q", pulledFor.Provider, sourcev1.AmazonOCIProvider)
+	if syn.Namespace != "flux-system" {
+		t.Errorf("Namespace = %q, want flux-system", syn.Namespace)
+	}
+	if syn.Provider != sourcev1.AmazonOCIProvider {
+		t.Errorf("Provider = %q, want %q", syn.Provider, sourcev1.AmazonOCIProvider)
+	}
+	if syn.Reference == nil || syn.Reference.Tag != "3.0.0" || syn.Reference.Digest != "" {
+		t.Errorf("Reference = %+v, want tag 3.0.0", syn.Reference)
+	}
+	// HelmRepository auth / TLS / insecure must be lifted so the OCI
+	// fetcher honors them on the source-controller pull.
+	if syn.SecretRef == nil || syn.SecretRef.Name != "regcred" {
+		t.Errorf("SecretRef = %+v, want regcred", syn.SecretRef)
+	}
+	if syn.CertSecretRef == nil || syn.CertSecretRef.Name != "tls" {
+		t.Errorf("CertSecretRef = %+v, want tls", syn.CertSecretRef)
+	}
+	if !syn.Insecure {
+		t.Error("Insecure not lifted")
+	}
+	// Name is deterministic and hash-suffixed off (url, version).
+	sum := sha256.Sum256([]byte("oci://oci.trueforge.org/truecharts/kromgo@3.0.0"))
+	if want := "truecharts-kromgo-" + hex.EncodeToString(sum[:])[:7]; syn.Name != want {
+		t.Errorf("Name = %q, want %q", syn.Name, want)
+	}
+}
+
+// TestSynthesizeOCIRepository_DigestAndVersionIdentity covers the digest-ref
+// branch and the version-disambiguation guarantee: two HelmReleases pulling
+// different versions of the same chart from the same repo must get distinct
+// Store identities so they don't clobber each other's artifact.
+func TestSynthesizeOCIRepository_DigestAndVersionIdentity(t *testing.T) {
+	r := &manifest.HelmRepository{
+		Name: "tc", Namespace: "fs",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "oci://reg/tc", Type: manifest.RepoTypeOCI},
+	}
+	if d := SynthesizeOCIRepository(r, "app", "sha256:abc"); d.Reference == nil ||
+		d.Reference.Digest != "sha256:abc" || d.Reference.Tag != "" {
+		t.Errorf("digest version → Reference = %+v, want digest sha256:abc", d.Reference)
+	}
+	v1 := SynthesizeOCIRepository(r, "app", "1.0.0")
+	v2 := SynthesizeOCIRepository(r, "app", "2.0.0")
+	if v1.Name == v2.Name {
+		t.Errorf("distinct versions collided on Store name %q", v1.Name)
+	}
+	// Empty version (chart version omitted on the HR) → no Reference.
+	if v := SynthesizeOCIRepository(r, "app", ""); v.Reference != nil {
+		t.Errorf("empty version → Reference = %+v, want nil", v.Reference)
+	}
+	// A trailing slash on the repo URL is normalized, so it yields the same
+	// chart URL and Store identity as the slashless form.
+	rSlash := &manifest.HelmRepository{
+		Name: "tc", Namespace: "fs",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "oci://reg/tc/", Type: manifest.RepoTypeOCI},
+	}
+	if a, b := v1, SynthesizeOCIRepository(rSlash, "app", "1.0.0"); a.URL != b.URL || a.Name != b.Name {
+		t.Errorf("trailing-slash mismatch: %q/%q vs %q/%q", a.URL, a.Name, b.URL, b.Name)
 	}
 }
 

@@ -13,27 +13,24 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/atomic"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // locateOCIChart resolves a chart whose source is an OCIRepository.
 //
-// Preferred path: the source.oci.Fetcher has already pulled the
-// artifact (applying spec.verify cosign verification, spec.layerSelector,
-// spec.certSecretRef, spec.proxySecretRef, spec.insecure, spec.ignore,
-// semver tag resolution) into a slot under the shared source cache —
-// the HR depwait blocks render until that source is Ready, so by the
-// time this runs the artifact is on disk. Reading it from the store
-// keeps every Flux OCIRepository feature working uniformly for both
-// Kustomization and HelmRelease consumers.
+// Normal path: the source controller's oci.Fetcher has already pulled the
+// artifact (applying spec.verify cosign verification, layerSelector,
+// certSecretRef, proxySecretRef, insecure, ignore, semver tag resolution)
+// into a slot under the shared source cache — the HR depwait blocks render
+// until that source is Ready, so the artifact is on disk by the time this
+// runs. Reading it from the Store keeps every Flux OCIRepository feature
+// working uniformly for both Kustomization and HelmRelease consumers. This
+// also covers HelmRepository(type=oci) charts, which the HR controller
+// repoints to a synthesized OCIRepository fetched the same way.
 //
-// Fallback path: when no SourceArtifact is present (typically
-// --enable-oci=false, which wires source.ExistenceFetcher for
-// OCIRepository so HR depwait still unblocks but no artifact is
-// written), pull via helm's registry client. This preserves the
-// pre-unification behavior for embedders that don't wire the OCI
-// fetcher — but in that mode none of the OCIRepository spec.*
-// features apply, exactly as before.
+// Fallback path: when no SourceArtifact is present — i.e. --enable-oci=false,
+// which wires source.ExistenceFetcher (HR depwait still unblocks but no
+// artifact is written) — pull anonymously via helm's registry client. None
+// of the OCIRepository spec.* features apply on this path.
 func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
 	r := c.resolveOCIRepo(hr)
 	if r == nil {
@@ -46,36 +43,12 @@ func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (
 		}
 		return path, nil
 	}
-	// No artifact in the store. Try the puller (source/oci.Fetcher)
-	// when wired — produces a slot with full spec.* support, same
-	// as the canonical OCIRepository fetch path. Falls back to the
-	// registry-client pull when no puller was wired (EnableOCI=false
-	// orchestrator runs, embedders without OCI).
-	if puller := c.ociPullerSnapshot(); puller != nil {
-		var (
-			art *store.SourceArtifact
-			err error
-		)
-		c.yieldDuring(func() { art, err = puller.Fetch(ctx, r) })
-		if err != nil {
-			return "", err
-		}
-		if art != nil && art.LocalPath != "" {
-			path, err := ociChartPathFromArtifact(art.LocalPath)
-			if err != nil {
-				return "", fmt.Errorf("OCIRepository %s/%s: %w", r.Namespace, r.Name, err)
-			}
-			return path, nil
-		}
-		// Puller returned (nil, nil) — ExistenceFetcher shape. Fall
-		// through to the registry-client path so the HR can still
-		// render with anonymous pulls.
-	}
-	// Registry-client fallback. Drops every security-relevant spec.*
-	// field (verify / layerSelector / certSecretRef / proxySecretRef
-	// / insecure / ignore) — bootstrap-time warnOnDisabledOCIFeatures
-	// already warns per CR; the per-lookup log here surfaces the
-	// actual moment the fallback runs.
+	// No artifact in the Store — only the --enable-oci=false shape reaches
+	// here (existence-only OCIRepository, no real fetch). Pull anonymously
+	// via the registry client; this drops every security-relevant spec.*
+	// field (verify / layerSelector / certSecretRef / proxySecretRef /
+	// insecure / ignore), which bootstrap-time warnOnDisabledOCIFeatures
+	// already warns about per CR.
 	if r.Reference != nil && r.Reference.SemVer != "" {
 		return "", fmt.Errorf(
 			"OCIRepository %s/%s uses spec.ref.semver but no source.oci.Fetcher is wired "+

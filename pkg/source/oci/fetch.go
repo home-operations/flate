@@ -14,7 +14,6 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
-	"oras.land/oras-go/v2/registry/remote/retry"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -47,25 +46,29 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	if err != nil {
 		return nil, err
 	}
-	// Compose the http.Client transport: oras's retry transport over a
-	// customized http.Transport when TLS or proxy is configured. Without
-	// either, oras's default is used.
+	// Retries are owned by the Fetch-level retry decorator
+	// (source.WithRetry) so they happen once, uniformly, across every
+	// source kind — the OCI client therefore uses a plain, NON-retrying
+	// transport. An explicit *http.Client is always installed (sharing
+	// the runtime default transport when no TLS/proxy customization
+	// applies) so oras never falls back to its retry-enabled
+	// auth.DefaultClient, and the transport stays identical whether or
+	// not credentials load.
 	baseTransport, err := source.NewHTTPTransport(tlsCfg, proxy)
 	if err != nil {
 		return nil, err
 	}
-	var httpClient *http.Client
+	transport := http.DefaultTransport // http.RoundTripper; non-retrying
 	if baseTransport != nil {
-		httpClient = &http.Client{Transport: retry.NewTransport(baseTransport)}
+		transport = baseTransport
 	}
+	httpClient := &http.Client{Transport: transport}
 	if credStore != nil {
-		ac := &auth.Client{Credential: credentials.Credential(credStore)}
-		if httpClient != nil {
-			ac.Client = httpClient
+		repoClient.Client = &auth.Client{
+			Credential: credentials.Credential(credStore),
+			Client:     httpClient,
 		}
-		repoClient.Client = ac
-	} else if httpClient != nil {
-		// No auth needed but TLS still has to be configured.
+	} else {
 		repoClient.Client = &auth.Client{Client: httpClient}
 	}
 

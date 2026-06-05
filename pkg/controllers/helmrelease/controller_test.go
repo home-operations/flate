@@ -54,6 +54,135 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	return c, st
 }
 
+func TestMaterializeOCIChartSource_RepointsAndRegisters(t *testing.T) {
+	c, st := newTestController(t, nil)
+	st.AddObject(&manifest.HelmRepository{
+		Name: "truecharts", Namespace: "flux-system",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			URL:  "oci://oci.trueforge.org/truecharts",
+			Type: manifest.RepoTypeOCI,
+		},
+	})
+	hr := &manifest.HelmRelease{
+		Name: "kromgo", Namespace: "apps",
+		Chart: manifest.HelmChart{
+			RepoKind:      manifest.KindHelmRepository,
+			RepoNamespace: "flux-system",
+			RepoName:      "truecharts",
+			Name:          "kromgo",
+			Version:       "3.0.0",
+		},
+	}
+
+	got, repointed := c.materializeOCIChartSource(hr.Named(), hr)
+	if !repointed {
+		t.Fatal("materialize did not report a repoint for a type=oci HelmRepository")
+	}
+
+	// Chart repointed to a synthetic OCIRepository; name/version kept.
+	if got.Chart.RepoKind != manifest.KindOCIRepository {
+		t.Fatalf("RepoKind = %q, want OCIRepository", got.Chart.RepoKind)
+	}
+	if got.Chart.RepoNamespace != "flux-system" {
+		t.Errorf("RepoNamespace = %q, want flux-system", got.Chart.RepoNamespace)
+	}
+	if got.Chart.Name != "kromgo" || got.Chart.Version != "3.0.0" {
+		t.Errorf("chart name/version = %q/%q, want kromgo/3.0.0", got.Chart.Name, got.Chart.Version)
+	}
+
+	// Synthetic OCIRepository registered for the source controller, seeded
+	// Pending so the chart-source depwait never observes it as absent.
+	synID := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: got.Chart.RepoNamespace, Name: got.Chart.RepoName}
+	obj := st.GetByName(manifest.KindOCIRepository, synID.Namespace, synID.Name)
+	if obj == nil {
+		t.Fatalf("synthetic OCIRepository %s not added to store", synID)
+	}
+	if oci, ok := obj.(*manifest.OCIRepository); !ok {
+		t.Fatalf("stored object is %T, want *manifest.OCIRepository", obj)
+	} else if oci.URL != "oci://oci.trueforge.org/truecharts/kromgo" {
+		t.Errorf("synthetic URL = %q, want .../truecharts/kromgo", oci.URL)
+	}
+	if info, ok := st.GetStatus(synID); !ok || info.Status != store.StatusPending {
+		t.Errorf("synthetic status = %+v (ok=%v), want Pending", info, ok)
+	}
+}
+
+// TestMaterializeOCIChartSource_LateArrival pins the contract reconcile relies
+// on: materialize is a no-op while the HelmRepository is absent from the Store
+// (e.g. render-emitted by a sibling and not yet landed) and repoints only once
+// it's present. reconcile awaits the declared source to Ready before calling
+// materialize, so this present-then-repoint path is the one it always takes —
+// no loop needed.
+func TestMaterializeOCIChartSource_LateArrival(t *testing.T) {
+	c, st := newTestController(t, nil)
+	hr := &manifest.HelmRelease{
+		Name: "kromgo", Namespace: "apps",
+		Chart: manifest.HelmChart{
+			RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "truecharts",
+			Name: "kromgo", Version: "3.0.0",
+		},
+	}
+
+	// Pass 1: HelmRepository not in the Store yet — must not repoint.
+	if _, repointed := c.materializeOCIChartSource(hr.Named(), hr); repointed {
+		t.Fatal("repointed while the HelmRepository was absent (must be a no-op)")
+	}
+
+	// HelmRepository arrives mid-run (render-emitted / lazily promoted).
+	st.AddObject(&manifest.HelmRepository{
+		Name: "truecharts", Namespace: "flux-system",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			URL:  "oci://oci.trueforge.org/truecharts",
+			Type: manifest.RepoTypeOCI,
+		},
+	})
+
+	// Pass 2: now present — must repoint to the synthetic OCIRepository.
+	if _, repointed := c.materializeOCIChartSource(hr.Named(), hr); !repointed {
+		t.Fatal("did not repoint once the HelmRepository was present")
+	}
+}
+
+func TestMaterializeOCIChartSource_NonOCILeftAlone(t *testing.T) {
+	c, st := newTestController(t, nil)
+	// A type=default (HTTP) HelmRepository keeps the existing getter path.
+	st.AddObject(&manifest.HelmRepository{
+		Name: "bitnami", Namespace: "flux-system",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example/bitnami"},
+	})
+	hr := &manifest.HelmRelease{
+		Name: "redis", Namespace: "apps",
+		Chart: manifest.HelmChart{
+			RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
+			Name: "redis", Version: "1.0.0",
+		},
+	}
+	got, repointed := c.materializeOCIChartSource(hr.Named(), hr)
+	if repointed || got.Chart.RepoKind != manifest.KindHelmRepository || got.Chart.RepoName != "bitnami" {
+		t.Errorf("HTTP HelmRepository was repointed: %+v (repointed=%v)", got.Chart, repointed)
+	}
+}
+
+func TestMaterializeOCIChartSource_OCIURLWithoutTypeField(t *testing.T) {
+	c, st := newTestController(t, nil)
+	// An oci:// URL with no spec.type is still an OCI HelmRepository.
+	st.AddObject(&manifest.HelmRepository{
+		Name: "truecharts", Namespace: "flux-system",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "oci://oci.trueforge.org/truecharts"},
+	})
+	hr := &manifest.HelmRelease{
+		Name: "kromgo", Namespace: "apps",
+		Chart: manifest.HelmChart{
+			RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "truecharts",
+			Name: "kromgo", Version: "3.0.0",
+		},
+	}
+	got, repointed := c.materializeOCIChartSource(hr.Named(), hr)
+	if !repointed || got.Chart.RepoKind != manifest.KindOCIRepository {
+		t.Errorf("oci:// URL without type=oci was not repointed: %+v (repointed=%v)", got.Chart, repointed)
+	}
+}
+
 func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 	_, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{

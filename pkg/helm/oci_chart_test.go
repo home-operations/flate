@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"context"
 	"io"
 	"path/filepath"
 	"strings"
@@ -130,82 +129,6 @@ func TestLocateOCIChart_FallsBackWhenNoArtifact(t *testing.T) {
 	if path != cacheTarget {
 		t.Errorf("path = %q, want fallback cache %q", path, cacheTarget)
 	}
-}
-
-// TestLocateOCIChart_RoutesThroughPullerWhenWired pins the
-// unification (4.4): when an OCIPuller is wired, locateOCIChart
-// invokes it with the typed OCIRepository — applying spec.verify /
-// certSecretRef / etc. — rather than falling back to the
-// registry-client pull. We satisfy the puller with a stub that
-// builds a slot containing an extracted chart, mirroring the shape
-// source/oci.Fetcher's applyLayerSelector produces.
-func TestLocateOCIChart_RoutesThroughPullerWhenWired(t *testing.T) {
-	t.Parallel()
-
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	st := store.New()
-	repo := &manifest.OCIRepository{
-		Name: "chart", Namespace: "flux-system",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       "oci://ghcr.io/test/chart",
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "0.1.0"},
-		},
-	}
-	st.AddObject(repo)
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-
-	slot := t.TempDir()
-	chartDir := filepath.Join(slot, "chart")
-	testutil.WriteFileAt(t, filepath.Join(chartDir, "Chart.yaml"),
-		"apiVersion: v2\nname: chart\nversion: 0.1.0\n")
-	var pulledFor *manifest.OCIRepository
-	cli.SetOCIPuller(stubPuller{
-		fetch: func(_ context.Context, r *manifest.OCIRepository) (*store.SourceArtifact, error) {
-			pulledFor = r
-			return &store.SourceArtifact{
-				Kind:      manifest.KindOCIRepository,
-				URL:       r.URL,
-				LocalPath: slot,
-			}, nil
-		},
-	})
-
-	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name:          "chart",
-			RepoName:      "chart",
-			RepoNamespace: "flux-system",
-			RepoKind:      manifest.KindOCIRepository,
-			Version:       "0.1.0",
-		},
-	}
-
-	path, err := cli.locateOCIChart(t.Context(), hr)
-	if err != nil {
-		t.Fatalf("locateOCIChart with puller: %v", err)
-	}
-	if path != chartDir {
-		t.Errorf("path = %q, want chart subdir %q", path, chartDir)
-	}
-	if pulledFor == nil {
-		t.Fatal("puller was not invoked")
-	}
-	if pulledFor.URL != repo.URL {
-		t.Errorf("puller called with URL %q, want %q", pulledFor.URL, repo.URL)
-	}
-}
-
-// stubPuller satisfies OCIPuller for tests.
-type stubPuller struct {
-	fetch func(context.Context, *manifest.OCIRepository) (*store.SourceArtifact, error)
-}
-
-func (s stubPuller) Fetch(ctx context.Context, r *manifest.OCIRepository) (*store.SourceArtifact, error) {
-	return s.fetch(ctx, r)
 }
 
 // TestLocateOCIChart_PrefersSourceArtifactChartnameSubdir covers the

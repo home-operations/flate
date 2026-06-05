@@ -87,6 +87,14 @@ type Config struct {
 	// runtime.NumCPU() * 4.
 	Concurrency int
 
+	// SourceRetry tunes the bounded, classified retry applied to every
+	// source fetch (Git/OCI/Bucket) on transient network failures —
+	// connection resets, refused connections, dial/IO timeouts. Permanent
+	// errors (bad path, missing secret, not-found) fail fast. Attempts
+	// <= 1 disables retry; the CLI defaults it to 3. See
+	// source.RetryConfig / source.WithRetry.
+	SourceRetry source.RetryConfig
+
 	// HelmTemplateCacheBytes caps the in-memory helm template-output
 	// cache. Repeat HRs with identical effective inputs (chart
 	// fingerprint, resolved values, render options) hit the cache and
@@ -326,29 +334,33 @@ func New(cfg Config) (*Orchestrator, error) {
 		manifest.KindExternalArtifact, &external.Fetcher{})
 	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap(
 		manifest.KindBucket, &bucket.Fetcher{Cache: cache, Secrets: secretGet})
-	// HelmRepository: existence-only — flate resolves charts via the
-	// Helm client's registry/repo machinery directly, the controller
-	// just needs the resource to land in Ready so HelmRelease deps
-	// unblock.
+	// HelmRepository: existence-only — the controller just needs the
+	// resource in Ready so HelmRelease deps unblock. type=default (HTTP)
+	// charts are then resolved by the Helm client's index.yaml/getter
+	// machinery; type=oci charts are repointed to a synthesized
+	// OCIRepository (see materializeOCIChartSource) and fetched through
+	// this same source controller.
 	srcCtrl.Fetchers[manifest.KindHelmRepository] = source.ExistenceFetcher{}
 	if cfg.EnableOCI {
-		ociFetcher := &oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet}
 		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap(
-			manifest.KindOCIRepository, ociFetcher)
-		// Share the same fetcher with helm.Client so HelmRepository
-		// (type=oci) and OCIRepository chart resolution both route
-		// through one OCI pull path — spec.verify / certSecretRef /
-		// proxySecretRef / insecure / layerSelector / ignore apply
-		// uniformly. Without this, type=oci would silently drop
-		// those fields (helm-side fallback used the registry client
-		// with no auth/TLS surface).
-		helmClient.SetOCIPuller(ociFetcher)
+			manifest.KindOCIRepository,
+			&oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet})
 	} else {
 		// --enable-oci=false: skip the real fetch but still mark each
 		// OCIRepository Ready so HRs that dependsOn one don't time out.
-		// helm.Client's OCIPuller stays nil, falling back to the
-		// registry-client pull (matches prior EnableOCI=false behavior).
+		// helm.Client then resolves OCI charts anonymously via its
+		// registry client (no spec.verify/auth/TLS surface).
 		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.ExistenceFetcher{}
+	}
+	// Wrap every registered fetcher in the classified retry decorator so
+	// transient network failures (connection resets, refused connections,
+	// timeouts) get a bounded retry the same way across all source kinds,
+	// while permanent errors (bad path, auth, not-found) still fail fast.
+	// A no-op when retry is disabled (cfg.SourceRetry.Attempts <= 1), and
+	// any future kind picks this up automatically. Reassigning existing
+	// map values during range is well-defined (no keys added/removed).
+	for kind, f := range srcCtrl.Fetchers {
+		srcCtrl.Fetchers[kind] = source.WithRetry(f, cfg.SourceRetry)
 	}
 	o := &Orchestrator{
 		cfg:            cfg,

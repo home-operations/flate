@@ -24,49 +24,6 @@ func DedupKey(doc map[string]any) string {
 	return manifest.DocAPIVersion(doc) + "|" + kind + "|" + ns + "|" + name
 }
 
-func defaultNamespace(doc map[string]any, ns string) {
-	if ns == "" {
-		return
-	}
-	// Read existing metadata.namespace without creating one — if the
-	// doc already names a namespace, we're done. A nil-map lookup
-	// returns the zero value, so this is safe pre-ensure.
-	md, _ := doc["metadata"].(map[string]any)
-	if cur, _ := md["namespace"].(string); cur != "" {
-		return
-	}
-	// Don't inject a namespace on cluster-scoped kinds — match the
-	// upstream operator behavior of leaving Namespace, ClusterRole etc.
-	// without a metadata.namespace.
-	if isClusterScoped(doc) {
-		return
-	}
-	manifest.EnsureMetadata(doc)["namespace"] = ns
-}
-
-// clusterScopedKinds is the set of well-known cluster-scoped Kubernetes
-// kinds. Using a map gives O(1) lookup vs the O(n) switch it replaces.
-var clusterScopedKinds = map[string]struct{}{
-	"Namespace":                       {},
-	"ClusterRole":                     {},
-	"ClusterRoleBinding":              {},
-	"CustomResourceDefinition":        {},
-	"PersistentVolume":                {},
-	"StorageClass":                    {},
-	"PriorityClass":                   {},
-	"IngressClass":                    {},
-	"ClusterIssuer":                   {},
-	"MutatingWebhookConfiguration":   {},
-	"ValidatingWebhookConfiguration": {},
-	"APIService":                      {},
-	"Node":                            {},
-}
-
-func isClusterScoped(doc map[string]any) bool {
-	_, ok := clusterScopedKinds[manifest.DocKind(doc)]
-	return ok
-}
-
 func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {
 	if cm == nil || (len(cm.Labels) == 0 && len(cm.Annotations) == 0) {
 		return

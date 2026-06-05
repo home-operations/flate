@@ -111,7 +111,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 	}
 
 	for _, doc := range docs {
-		defaultNamespace(doc, rs.Namespace)
+		manifest.StampNamespace(doc, rs.Namespace)
 		applyOwnerLabels(doc, rs)
 		applyCommonMetadata(doc, rs.CommonMetadata)
 	}

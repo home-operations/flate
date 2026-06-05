@@ -426,6 +426,12 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	docs = manifest.FlattenLists(docs)
 	helm.ApplyHRCommonMetadata(docs, hr.CommonMetadata)
 	helm.ApplyHROriginLabels(docs, hr)
+	// Default namespace-less rendered objects to the release namespace, like
+	// helm-controller does on apply — otherwise a chart that omits
+	// metadata.namespace renders objects with no namespace, and any version
+	// that toggles the explicit field shows up as a spurious delete+add in
+	// diff. Cluster-scoped kinds and explicit namespaces are left untouched.
+	manifest.StampNamespaces(docs, hr.ReleaseNamespace())
 	docs = manifest.DropKinds(docs, c.Options.SkipResourceKinds())
 
 	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))

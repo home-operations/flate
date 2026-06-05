@@ -1672,3 +1672,25 @@ spec:
 		t.Errorf("alias key not resolved to scalar; controllers=%v", controllers)
 	}
 }
+
+func TestIsKustomizeBuildDirective(t *testing.T) {
+	cases := []struct {
+		name string
+		obj  BaseManifest
+		want bool
+	}{
+		{"kustomize-config Kustomization", &RawObject{Kind: "Kustomization", APIVersion: "kustomize.config.k8s.io/v1beta1"}, true},
+		{"kustomize-config Component", &RawObject{Kind: "Component", APIVersion: "kustomize.config.k8s.io/v1alpha1"}, true},
+		{"flux Kustomization (typed)", &Kustomization{}, false},
+		{"unknown resource RawObject", &RawObject{Kind: "Widget", APIVersion: "example.com/v1"}, false},
+		{"helmrelease (typed)", &HelmRelease{}, false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsKustomizeBuildDirective(tc.obj); got != tc.want {
+				t.Errorf("IsKustomizeBuildDirective = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

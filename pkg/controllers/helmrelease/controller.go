@@ -477,6 +477,9 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			slog.Debug("helmrelease: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
+		if manifest.IsKustomizeBuildDirective(obj) {
+			continue // build input, not a cluster resource — never store it
+		}
 		// docs is retained on the HelmReleaseArtifact.Manifests; do
 		// NOT return any entry to the decoded-map pool here.
 		if isFluxSourceKind(obj) {

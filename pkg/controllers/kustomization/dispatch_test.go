@@ -127,6 +127,49 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 	}
 }
 
+// TestEmitRenderedChildren_DropsKustomizeBuildDirective regresses the phantom
+// "Kustomization//" Store entry: a kustomization.yaml self-referenced in its
+// own resources: makes `kustomize build` emit a kustomize.config.k8s.io
+// Kustomization. That's a build input, not a cluster resource — it must never
+// reach the Store (it arrives nameless and surfaces as "FAILED (no status
+// reported)"). A real Flux Kustomization in the same batch is still emitted.
+func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
+	s := store.New()
+	c := &Controller{Controller: base.New(s, task.New())}
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
+
+	var leaked bool
+	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id.Kind == manifest.KindKustomization && id.Name == "" {
+			leaked = true
+		}
+	}, false)
+
+	c.emitRenderedChildren(parent, []map[string]any{
+		kustomizeConfigDoc(),                 // build directive — must be dropped
+		fluxKustomizationDoc("real", "real"), // real child — must be stored
+	})
+
+	if leaked {
+		t.Error("kustomize.config build directive was emitted to the store (phantom Kustomization//)")
+	}
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "real"}) == nil {
+		t.Error("real Flux Kustomization child was not stored")
+	}
+}
+
+// kustomizeConfigDoc is the shape `kustomize build` emits when a
+// kustomization.yaml lists itself in resources: a kustomize.config.k8s.io
+// build directive (here with the helm-repos metadata seen in the wild).
+func kustomizeConfigDoc() map[string]any {
+	return map[string]any{
+		"apiVersion": "kustomize.config.k8s.io/v1beta1",
+		"kind":       "Kustomization",
+		"metadata":   map[string]any{"name": "helm-repos", "namespace": "ns"},
+		"resources":  []any{"a.yaml", "kustomization.yaml"},
+	}
+}
+
 func fluxKustomizationDoc(name, dep string) map[string]any {
 	return map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",

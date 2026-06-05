@@ -142,6 +142,18 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
 	return parseRawObject(doc)
 }
 
+// IsKustomizeBuildDirective reports whether obj is a kustomize.config.k8s.io
+// build directive (a Kustomization or Component). ParseDoc preserves these as
+// metadata-less RawObjects — they're build inputs, not cluster resources, and
+// the loader drops them during discovery. Render paths must drop them too: a
+// kustomization.yaml self-referenced in its own resources: makes `kustomize
+// build` emit one, which would otherwise land in the Store as a phantom,
+// nameless object (id "<kind>//") that no controller ever reconciles.
+func IsKustomizeBuildDirective(obj BaseManifest) bool {
+	raw, ok := obj.(*RawObject)
+	return ok && strings.HasPrefix(raw.APIVersion, KustomizeDomain)
+}
+
 // checkAPIVersion enforces an api group prefix on a raw document.
 func checkAPIVersion(doc map[string]any, want string) error {
 	v := DocAPIVersion(doc)

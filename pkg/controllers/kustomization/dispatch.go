@@ -46,6 +46,9 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			slog.Debug("kustomization: skipped doc", "id", id.String(), "err", err)
 			continue
 		}
+		if manifest.IsKustomizeBuildDirective(obj) {
+			continue // build input, not a cluster resource — never store it
+		}
 		objs = append(objs, parsed{obj: obj, reconcilable: shouldDispatchAsObject(obj)})
 	}
 	// Accumulate every reconcilable child's id across both passes so

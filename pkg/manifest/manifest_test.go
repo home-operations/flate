@@ -158,6 +158,41 @@ spec:
 `)
 }
 
+func TestParseHelmRelease_ValuesFromEnvsubstDefault(t *testing.T) {
+	cases := []struct {
+		name      string
+		valuesKey string
+		refName   string
+		wantKey   string
+		wantName  string
+	}{
+		{"default := resolves", "${CLUSTER_NAME:=biohazard}.yaml", "cm", "biohazard.yaml", "cm"},
+		{"default :- resolves", "${X:-foo}.yaml", "cm", "foo.yaml", "cm"},
+		{"literal key untouched", "biohazard.yaml", "cm", "biohazard.yaml", "cm"},
+		{"bare var left for postBuild", "${CLUSTER_NAME}.yaml", "cm", "${CLUSTER_NAME}.yaml", "cm"},
+		{"templated name default resolves", "values.yaml", "${ENV:=prod}-cm", "values.yaml", "prod-cm"},
+		{"bare var name untouched", "values.yaml", "${ENV}-cm", "values.yaml", "${ENV}-cm"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := "  valuesFrom:\n    - kind: ConfigMap\n      name: \"" + tc.refName + "\"\n      valuesKey: \"" + tc.valuesKey + "\"\n"
+			hr, err := parseHelmRelease(helmReleaseDoc(t, spec))
+			if err != nil {
+				t.Fatalf("parseHelmRelease: %v", err)
+			}
+			if len(hr.ValuesFrom) != 1 {
+				t.Fatalf("expected 1 valuesFrom, got %d", len(hr.ValuesFrom))
+			}
+			if got := hr.ValuesFrom[0].ValuesKey; got != tc.wantKey {
+				t.Errorf("valuesKey = %q, want %q", got, tc.wantKey)
+			}
+			if got := hr.ValuesFrom[0].Name; got != tc.wantName {
+				t.Errorf("name = %q, want %q", got, tc.wantName)
+			}
+		})
+	}
+}
+
 func TestParseHelmRelease_CRDsPolicy(t *testing.T) {
 	cases := []struct {
 		name     string

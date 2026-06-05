@@ -298,6 +298,17 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	if cr.Name == "" {
 		return nil, inputf("HelmRelease missing metadata.name")
 	}
+	// Resolve ${VAR:=default} / ${VAR:-default} on valuesFrom refs,
+	// mirroring the Kustomization spec.path / dependsOn precedent
+	// (kustomization.go). A configMapGenerator emits a literal key
+	// (e.g. biohazard.yaml); a valuesKey "${CLUSTER_NAME:=biohazard}.yaml"
+	// must collapse to it so the lookup matches. Resolved here once so
+	// both the value lookup and its cache key see the same string. Bare
+	// ${VAR} (no default) is left for postBuild substitution.
+	for i := range cr.Spec.ValuesFrom {
+		cr.Spec.ValuesFrom[i].ValuesKey = ResolveEnvsubstDefaults(cr.Spec.ValuesFrom[i].ValuesKey)
+		cr.Spec.ValuesFrom[i].Name = ResolveEnvsubstDefaults(cr.Spec.ValuesFrom[i].Name)
+	}
 	// metadata.namespace is optional — Flux Kustomizations commonly
 	// inject it via spec.targetNamespace. Treat the empty string as
 	// "inherit later".

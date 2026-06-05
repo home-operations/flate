@@ -109,6 +109,7 @@ func SupportsStatus(kind string) bool {
 		manifest.KindHelmRelease,
 		manifest.KindHelmRepository,
 		manifest.KindOCIRepository,
+		manifest.KindHelmChart,
 		manifest.KindExternalArtifact,
 		manifest.KindBucket:
 		return true

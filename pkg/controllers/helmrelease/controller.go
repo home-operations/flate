@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
@@ -367,15 +368,15 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	if err := c.awaitChartSource(ctx, id, hr, chartSourceID(hr)); err != nil {
 		return err
 	}
-	// A type=oci HelmRepository is just a registry base — its chart has no
+	// A HelmRepository is just a registry/index base — its chart has no
 	// standalone source CR. Now that the declared source is Ready (so the
 	// HelmRepository is in the Store and resolvable), repoint the chart to a
-	// synthesized OCIRepository the source controller fetches (retry +
-	// Store), and wait for that fetch too. After this, render always
-	// resolves a type=oci chart through the OCIRepository path, so it never
-	// reaches locateHelmRepoChart. Waiting first makes the repoint
-	// deterministic — no loop, no "absent → retry" dance.
-	hr, repointed := c.materializeOCIChartSource(id, hr)
+	// synthesized HelmChart the source controller fetches (retry + Store),
+	// and wait for that fetch too. After this, render always resolves the
+	// chart from the HelmChart artifact, never fetching inline. Waiting
+	// first makes the repoint deterministic — no loop, no "absent → retry"
+	// dance.
+	hr, repointed := c.materializeHelmChartSource(id, hr)
 	if repointed {
 		if err := c.awaitChartSource(ctx, id, hr, chartSourceID(hr)); err != nil {
 			return err
@@ -466,32 +467,32 @@ func (c *Controller) awaitChartSource(ctx context.Context, id manifest.NamedReso
 	return nil
 }
 
-// materializeOCIChartSource handles a HelmRelease whose chart source is a
-// type=oci HelmRepository. Such a repo is only a registry base; the chart
-// name+version live on the HelmRelease, so there's no OCIRepository CR for
-// the source controller to have fetched. We synthesize one, register it
-// (so the source controller fetches it — with retry — into the Store), and
-// repoint hr.Chart at it. After this, the chart-source depwait and
-// LocateChart route through the normal OCIRepository path; the chart pull
-// happens once through the single source path rather than inline.
+// materializeHelmChartSource handles a HelmRelease whose chart source is a
+// HelmRepository (HTTP or OCI). A HelmRepository is only a registry/index
+// base; the chart name+version live on the HelmRelease, so there's no
+// standalone HelmChart CR for the source controller to have fetched. We
+// synthesize one, register it (so the source controller fetches the chart —
+// with retry — into the Store), and repoint hr.Chart at it. After this, the
+// chart-source depwait and LocateChart route through the HelmChart path; the
+// chart pull happens once through the single source path rather than inline.
 //
-// Returns (hr, true) when it repointed the chart to a synthetic
-// OCIRepository; (hr, false) with hr unchanged otherwise (the source isn't a
-// type=oci HelmRepository). hr is the post-Prepare clone, so mutating its
-// Chart is local to this reconcile and never touches the Store's object.
-// Re-running on a later reconcile is idempotent: the source controller
-// short-circuits an already-fetched artifact and AddObject of the same
-// synthetic id is a no-op re-emit.
-func (c *Controller) materializeOCIChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool) {
+// Returns (hr, true) when it repointed the chart to a synthetic HelmChart;
+// (hr, false) with hr unchanged otherwise (the source isn't a resolvable
+// HelmRepository). hr is the post-Prepare clone, so mutating its Chart is
+// local to this reconcile and never touches the Store's object. Re-running on
+// a later reconcile is idempotent: the source controller short-circuits an
+// already-fetched artifact and AddObject of the same synthetic id is a no-op
+// re-emit.
+func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool) {
 	// RepoKind "" defaults to HelmRepository (see LocateChart dispatch).
 	if hr.Chart.RepoKind != "" && hr.Chart.RepoKind != manifest.KindHelmRepository {
 		return hr, false
 	}
 	r := c.Helm.Resolver().HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
-	if r == nil || !helm.IsOCIHelmRepo(r) {
+	if r == nil {
 		return hr, false
 	}
-	syn := helm.SynthesizeOCIRepository(r, hr.Chart.Name, hr.Chart.Version)
+	syn := helmchart.Synthesize(r, hr.Chart.Name, hr.Chart.Version)
 	synID := syn.Named()
 	// keepEmitted BEFORE AddObject so the synchronous source-controller
 	// listener sees the extended changed-only keep set (mirrors
@@ -500,8 +501,8 @@ func (c *Controller) materializeOCIChartSource(id manifest.NamedResource, hr *ma
 	// the window before the source controller's own reconcile sets it.
 	c.keepEmitted(id, synID)
 	c.Store.AddObject(syn)
-	c.Store.UpdateStatus(synID, store.StatusPending, "fetching (oci HelmRepository chart)")
-	hr.Chart.RepoKind = manifest.KindOCIRepository
+	c.Store.UpdateStatus(synID, store.StatusPending, "fetching chart")
+	hr.Chart.RepoKind = manifest.KindHelmChart
 	hr.Chart.RepoNamespace = syn.Namespace
 	hr.Chart.RepoName = syn.Name
 	return hr, true

@@ -24,6 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/external"
 	"github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/git/mirror"
+	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -307,11 +308,11 @@ func New(cfg Config) (*Orchestrator, error) {
 		s, _ := store.GetByName[*manifest.Secret](st, manifest.KindSecret, ns, name)
 		return s
 	}
-	helmClient.SetSecretGetter(secretGet)
 	// Route helm.Client's source-CR lookups straight through the canonical
 	// Store rather than maintaining a duplicate registry the HR controller
 	// would otherwise have to keep in sync via Add* push-API calls.
-	helmClient.SetSourceResolver(helm.NewStoreSourceResolver(st))
+	resolver := helm.NewStoreSourceResolver(st)
+	helmClient.SetSourceResolver(resolver)
 	// Yield the worker-pool slot during OCI pulls so concurrent helm
 	// renders don't starve. Passes task.Service.YieldSlot through as
 	// a callback so pkg/helm doesn't have to import pkg/task.
@@ -335,23 +336,38 @@ func New(cfg Config) (*Orchestrator, error) {
 	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap(
 		manifest.KindBucket, &bucket.Fetcher{Cache: cache, Secrets: secretGet})
 	// HelmRepository: existence-only — the controller just needs the
-	// resource in Ready so HelmRelease deps unblock. type=default (HTTP)
-	// charts are then resolved by the Helm client's index.yaml/getter
-	// machinery; type=oci charts are repointed to a synthesized
-	// OCIRepository (see materializeOCIChartSource) and fetched through
-	// this same source controller.
+	// resource in Ready so HelmRelease deps unblock. The chart itself is
+	// fetched per (chart, version) through a synthesized HelmChart (see
+	// materializeHelmChartSource), so every chart kind routes through the
+	// source controller uniformly.
 	srcCtrl.Fetchers[manifest.KindHelmRepository] = source.ExistenceFetcher{}
+	// Bare OCI fetcher, used two ways: as the standalone OCIRepository
+	// fetcher (when EnableOCI), and as the HelmChart fetcher's OCI-branch
+	// delegate (always — so OCI-backed HelmRepository charts pull with full
+	// auth/TLS/verify regardless of --enable-oci). Not separately
+	// retry-wrapped: each consuming fetcher's own WithRetry wrapper owns
+	// retries.
+	ociFetcher := &oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet}
 	if cfg.EnableOCI {
 		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap(
-			manifest.KindOCIRepository,
-			&oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet})
+			manifest.KindOCIRepository, ociFetcher)
 	} else {
 		// --enable-oci=false: skip the real fetch but still mark each
-		// OCIRepository Ready so HRs that dependsOn one don't time out.
-		// helm.Client then resolves OCI charts anonymously via its
-		// registry client (no spec.verify/auth/TLS surface).
+		// standalone OCIRepository Ready so HRs that dependsOn one don't
+		// time out. (OCI-backed HelmRepository charts still fetch via the
+		// HelmChart fetcher's OCI branch.)
 		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.ExistenceFetcher{}
 	}
+	// HelmChart: the single authoritative chart fetcher. The HR controller
+	// synthesizes a HelmChart per (chart, version, repo) for every
+	// HelmRepository-sourced chart; this fetcher pulls it — HTTP repos via
+	// helm's getter, OCI repos via the OCI fetcher above.
+	hcFetcher, err := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, layout)
+	if err != nil {
+		return nil, err
+	}
+	srcCtrl.Fetchers[manifest.KindHelmChart] = source.Wrap(
+		manifest.KindHelmChart, hcFetcher)
 	// Wrap every registered fetcher in the classified retry decorator so
 	// transient network failures (connection resets, refused connections,
 	// timeouts) get a bounded retry the same way across all source kinds,

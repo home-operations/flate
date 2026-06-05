@@ -1,4 +1,4 @@
-package helm
+package helmchart
 
 import (
 	"fmt"
@@ -11,32 +11,27 @@ import (
 )
 
 // helmRepoAuthOptions resolves SecretRef credentials for a HelmRepository
-// into helm getter options. Returns nil options when no SecretRef is
-// configured (anonymous). Username/password basic auth + optional
-// PassCredentials forwarding. Insecure flag is OCI-only per Flux's
-// schema so it is intentionally not surfaced here.
-func (c *Client) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Option, error) {
+// into helm getter options. Returns nil options when no SecretRef is set
+// (anonymous). Username/password basic auth + optional PassCredentials.
+func (f *Fetcher) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Option, error) {
 	if r.SecretRef == nil {
 		return nil, nil
 	}
-	getSec := c.secretGetter()
-	if getSec == nil {
-		// Use the same sentinel as the "secret not found" path so
-		// --allow-missing-secrets covers both shapes — from the
-		// caller's perspective the dependency is equally unresolved.
+	if f.Secrets == nil {
+		// Same sentinel as "secret not found" so --allow-missing-secrets
+		// covers both shapes — the dependency is equally unresolved.
 		return nil, fmt.Errorf("%w: HelmRepository %s/%s references secretRef but no SecretGetter is wired",
 			manifest.ErrMissingSecret, r.Namespace, r.Name)
 	}
-	sec := getSec(r.Namespace, r.SecretRef.Name)
+	sec := f.Secrets(r.Namespace, r.SecretRef.Name)
 	if sec == nil {
 		return nil, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "not found")
 	}
 	username := source.StringFromSecret(sec, "username")
 	password := source.StringFromSecret(sec, "password")
 	if username == "" || password == "" {
-		// Empty covers both missing-key and PLACEHOLDER-wiped values
-		// (the ExternalSecret case). Same sentinel so
-		// --allow-missing-secrets covers both shapes.
+		// Empty covers missing-key and PLACEHOLDER-wiped values (the
+		// ExternalSecret case). Same sentinel.
 		return nil, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "missing username/password")
 	}
 	opts := []getter.Option{getter.WithBasicAuth(username, password)}
@@ -46,35 +41,37 @@ func (c *Client) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Optio
 	return opts, nil
 }
 
-// helmRepoTLSOptions resolves spec.certSecretRef into helm getter
-// options. The Secret should carry one or both of (tls.crt, tls.key)
-// for client cert auth, plus optional ca.crt for a custom server CA.
-// Each present file is materialized to a temp file (helm getter v4's
-// WithTLSClientConfig accepts paths, not bytes) and removed by the
-// returned cleanup func — always safe to call.
-func (c *Client) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option, func(), error) {
+// helmRepoTLSOptions resolves spec.certSecretRef into helm getter options.
+// The Secret carries one or both of (tls.crt, tls.key) for client-cert auth
+// plus optional ca.crt. Each present file is materialized to a temp file
+// (helm getter v4's WithTLSClientConfig takes paths) removed by cleanup.
+func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option, func(), error) {
 	noCleanup := func() {}
 	if r.CertSecretRef == nil {
 		return nil, noCleanup, nil
 	}
-	getSec := c.secretGetter()
-	if getSec == nil {
+	if f.Secrets == nil {
 		return nil, noCleanup, fmt.Errorf("%w: HelmRepository %s/%s references certSecretRef but no SecretGetter is wired",
 			manifest.ErrMissingSecret, r.Namespace, r.Name)
 	}
-	sec := getSec(r.Namespace, r.CertSecretRef.Name)
+	sec := f.Secrets(r.Namespace, r.CertSecretRef.Name)
 	if sec == nil {
 		return nil, noCleanup, fmt.Errorf("%w: HelmRepository %s/%s: cert secret %s/%s not found",
 			manifest.ErrMissingSecret, r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
 	}
 
 	var tmpFiles []string
+	cleanup := func() {
+		for _, p := range tmpFiles {
+			_ = os.Remove(p)
+		}
+	}
 	writeKey := func(key string) (string, error) {
 		v := source.StringFromSecret(sec, key)
 		if v == "" {
 			return "", nil
 		}
-		tmp, err := os.CreateTemp(c.tmpDir, "helm-tls-*.pem")
+		tmp, err := os.CreateTemp(f.tmpDir, "helm-tls-*.pem")
 		if err != nil {
 			return "", fmt.Errorf("temp %s: %w", key, err)
 		}
@@ -89,11 +86,6 @@ func (c *Client) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option
 		}
 		tmpFiles = append(tmpFiles, tmp.Name())
 		return tmp.Name(), nil
-	}
-	cleanup := func() {
-		for _, p := range tmpFiles {
-			_ = os.Remove(p)
-		}
 	}
 
 	certPath, err := writeKey("tls.crt")

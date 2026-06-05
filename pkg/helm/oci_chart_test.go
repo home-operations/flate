@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -242,12 +243,30 @@ func TestLocateOCIChart_FallbackSemverRefused(t *testing.T) {
 func TestOCIChartPathFromArtifact_MissingLayer(t *testing.T) {
 	t.Parallel()
 	slot := t.TempDir()
-	_, err := ociChartPathFromArtifact(slot)
+	_, err := chartPathFromArtifact(slot)
 	if err == nil {
 		t.Fatal("expected error for empty slot")
 	}
 	if !strings.Contains(err.Error(), "Chart.yaml") || !strings.Contains(err.Error(), "layerSelector") {
 		t.Errorf("error message should name the missing shapes and hint at layerSelector; got: %v", err)
+	}
+}
+
+// TestChartPathFromArtifact_HTTPTgz covers the HTTP HelmChart fetcher's
+// layout: a chart.tgz at the slot root resolves to that tarball path.
+func TestChartPathFromArtifact_HTTPTgz(t *testing.T) {
+	t.Parallel()
+	slot := t.TempDir()
+	tgz := filepath.Join(slot, "chart.tgz")
+	if err := os.WriteFile(tgz, []byte("chart"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := chartPathFromArtifact(slot)
+	if err != nil {
+		t.Fatalf("chartPathFromArtifact: %v", err)
+	}
+	if got != tgz {
+		t.Errorf("path = %q, want %q", got, tgz)
 	}
 }
 
@@ -301,6 +320,28 @@ func writeChartFiles(t *testing.T, root, name, version string) {
 // buildChartTarGz returns a gzipped tarball of a minimal helm chart
 // — used for the "copy" layout test where source.oci leaves the
 // chart at slot/layer.tar.gz.
+func TestOCIPullRef(t *testing.T) {
+	const repo = "oci://ghcr.io/bjw-s-labs/helm/app-template"
+	for _, tc := range []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{"empty version", "", repo},
+		{"semver tag", "1.2.3", repo + ":1.2.3"},
+		{"named tag", "latest", repo + ":latest"},
+		{"sha256 digest", "sha256:70a7cb6766eb468068c2c1700c8450253070dc671a9fbbd1a6346a66545e2b2b",
+			repo + "@sha256:70a7cb6766eb468068c2c1700c8450253070dc671a9fbbd1a6346a66545e2b2b"},
+		{"sha512 digest", "sha512:deadbeef", repo + "@sha512:deadbeef"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ociPullRef(repo, tc.version); got != tc.want {
+				t.Errorf("ociPullRef(%q, %q) = %q, want %q", repo, tc.version, got, tc.want)
+			}
+		})
+	}
+}
+
 func buildChartTarGz(t *testing.T, name, version string) []byte {
 	t.Helper()
 	var buf bytes.Buffer

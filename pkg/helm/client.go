@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/blob"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -28,7 +27,6 @@ type SecretGetter = source.SecretGetter
 
 // Client renders HelmReleases. Construct with NewClient.
 type Client struct {
-	tmpDir   string
 	cacheDir string
 
 	mu sync.RWMutex
@@ -38,7 +36,6 @@ type Client struct {
 	// construction.
 	resolver SourceResolver
 	registry *registry.Client
-	secrets  SecretGetter
 
 	// taskYield, when set, wraps long-running network I/O (OCI
 	// pulls) so the worker-pool slot is released for the duration.
@@ -71,7 +68,7 @@ type Client struct {
 	// stack (common: bjw-s app-template with a fixed set of layered
 	// values-*.yaml files) re-yaml.Unmarshal'd the same bytes once per
 	// HR. The cache holds the canonical merged map; callers receive
-	// a deep clone (defensive-copy convention matching indexCache)
+	// a deep clone (defensive-copy convention shared with chartCache)
 	// because downstream DeepMerge layering mutates the result.
 	//
 	// Guarded by chartMu — same lock as chartCache. The two caches
@@ -81,26 +78,6 @@ type Client struct {
 	// mutex would just add coordination overhead with no contention
 	// reduction.
 	chartValuesCache map[string]map[string]any
-
-	// indexCache holds parsed HelmRepository index.yaml documents for
-	// the lifetime of this Client. The same Client serves every
-	// HelmRelease in one orchestrator run, so N HRs pointing at the
-	// same HelmRepository now share a single index fetch instead of
-	// re-downloading it N times. Keyed by `<ns>/<name>@<indexURL>`
-	// so two HelmRepository CRs that happen to share a URL still get
-	// distinct entries (their auth contexts may differ, and a private
-	// feed can serve different bytes per credential set).
-	//
-	// In-process only — there is no on-disk index cache yet; cross-
-	// run reuse with etag/If-Modified-Since is a future layer.
-	indexCache sync.Map // map[string]*repo.IndexFile
-	indexLocks *keylock.KeyMap[string]
-
-	// chartBlobs is the content-addressed storage for downloaded helm
-	// chart tarballs. HelmRepository charts hit this cache only when
-	// index.yaml supplies a digest; entries without a digest are
-	// treated as mutable and downloaded on each run.
-	chartBlobs *blob.Store
 
 	// valuesCache memoizes parsed-YAML output of ExpandValueReferences
 	// across HRs in this Client's lifetime. One HR with 10 valuesFrom
@@ -114,7 +91,7 @@ type Client struct {
 	// chart tarball so two reconcilers don't race writing the same
 	// cache file. Keyed by content-address digest (when available) or
 	// a name+version+URL token — matches the pattern of chartLoadLocks
-	// and indexLocks above.
+	// above.
 	chartDownloadLocks *keylock.KeyMap[string]
 
 	// templateCache memoizes Template's rendered manifest output keyed
@@ -230,11 +207,7 @@ func NewClientWithOptions(layout cacheroot.Layout, opts ClientOptions) (*Client,
 		// keeps working.
 		layout.Root = filepath.Join(os.TempDir(), "flate-cache")
 	}
-	tmpDir := layout.HelmTmp()
 	cacheDir := layout.HelmCache()
-	if err := os.MkdirAll(tmpDir, 0o750); err != nil {
-		return nil, err
-	}
 	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
 		return nil, err
 	}
@@ -243,15 +216,12 @@ func NewClientWithOptions(layout cacheroot.Layout, opts ClientOptions) (*Client,
 		return nil, fmt.Errorf("helm registry: %w", err)
 	}
 	return &Client{
-		tmpDir:             tmpDir,
 		cacheDir:           cacheDir,
 		registry:           reg,
 		chartCache:         map[string]chartCacheEntry{},
 		chartValuesCache:   map[string]map[string]any{},
 		chartLoadLocks:     keylock.New[string](),
-		indexLocks:         keylock.New[string](),
 		chartDownloadLocks: keylock.New[string](),
-		chartBlobs:         blob.NewStore(layout),
 		valuesCache:        values.NewCache(),
 		templateCache: newTemplateCache(
 			opts.TemplateCacheBytes,
@@ -265,24 +235,6 @@ func NewClientWithOptions(layout cacheroot.Layout, opts ClientOptions) (*Client,
 // through to values.ExpandValueReferences. Always non-nil for
 // Clients constructed via NewClient.
 func (c *Client) ValuesCache() *values.Cache { return c.valuesCache }
-
-// SetSecretGetter installs a Secret lookup function so HelmRepository
-// SecretRef credentials can be resolved at pull time. Safe to call
-// before any Add* — typically once at orchestrator construction.
-func (c *Client) SetSecretGetter(g SecretGetter) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.secrets = g
-}
-
-// secretGetter returns the configured SecretGetter under a read lock —
-// the snapshot helper helmRepoAuthOptions / helmRepoTLSOptions use so
-// neither has to inline the RLock-copy-RUnlock dance.
-func (c *Client) secretGetter() SecretGetter {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.secrets
-}
 
 // SetSourceResolver installs the canonical lookup surface for
 // HelmRepository / OCIRepository / local-artifact sources. helm.Client
@@ -336,14 +288,6 @@ func (c *Client) Resolver() SourceResolver {
 	return c.resolver
 }
 
-func (c *Client) resolveHelmRepo(hr *manifest.HelmRelease) *manifest.HelmRepository {
-	r := c.Resolver()
-	if r == nil {
-		return nil
-	}
-	return r.HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
-}
-
 func (c *Client) resolveOCIRepo(hr *manifest.HelmRelease) *manifest.OCIRepository {
 	r := c.Resolver()
 	if r == nil {
@@ -372,8 +316,17 @@ func (c *Client) LocateChart(ctx context.Context, hr *manifest.HelmRelease) (str
 		return c.locateLocalChart(hr)
 	case manifest.KindOCIRepository:
 		return c.locateOCIChart(ctx, hr)
+	case manifest.KindHelmChart:
+		return c.locateHelmChart(hr)
 	case manifest.KindHelmRepository, "":
-		return c.locateHelmRepoChart(ctx, hr)
+		// HelmRepository charts are materialized into a synthetic HelmChart
+		// by the orchestrator's HR controller before render (see
+		// materializeHelmChartSource), reaching LocateChart as KindHelmChart
+		// above. Hitting this case means LocateChart ran on an
+		// un-materialized HelmRepository chart — unsupported; embedders must
+		// render through the orchestrator (or pre-synthesize a HelmChart).
+		return "", fmt.Errorf("%w: HelmRepository chart %s reached LocateChart unmaterialized — render via the orchestrator",
+			manifest.ErrInput, hr.Chart.RepoFullName())
 	}
 	return "", fmt.Errorf("%w: unsupported chart repo kind %s", manifest.ErrInput, hr.Chart.RepoKind)
 }

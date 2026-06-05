@@ -53,7 +53,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 	if art, ok := f.chartArtifactByDigest(chartURL, cv.Version, wantDigest); ok {
 		return art, nil
 	}
-	release, err := f.dlLocks.Acquire(ctx, chartDownloadKey(r, chartName, cv, chartURL, wantDigest))
+	release, err := f.downloadLocks.Acquire(ctx, chartDownloadKey(r, chartName, cv, chartURL, wantDigest))
 	if err != nil {
 		return nil, err
 	}

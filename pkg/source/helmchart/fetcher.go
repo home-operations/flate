@@ -43,11 +43,11 @@ type Fetcher struct {
 	Repos   RepoLookup          // resolves the chart's backing HelmRepository
 	OCI     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
 
-	chartBlobs *blob.Store             // content-addressed HTTP chart tarballs
-	indexCache sync.Map                // map[string]*repo.IndexFile (process lifetime)
-	indexLocks *keylock.KeyMap[string] // coalesce one index.yaml fetch per repo
-	dlLocks    *keylock.KeyMap[string] // coalesce one download per chart
-	tmpDir     string                  // index/TLS temp files
+	chartBlobs    *blob.Store             // content-addressed HTTP chart tarballs
+	indexCache    sync.Map                // map[string]*repo.IndexFile (process lifetime)
+	indexLocks    *keylock.KeyMap[string] // coalesce one index.yaml fetch per repo
+	downloadLocks *keylock.KeyMap[string] // coalesce one download per chart
+	tmpDir        string                  // index/TLS temp files
 }
 
 // New constructs a HelmChart fetcher. layout supplies the shared blob
@@ -59,13 +59,13 @@ func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, layout c
 		return nil, fmt.Errorf("helmchart: tmp dir: %w", err)
 	}
 	return &Fetcher{
-		Secrets:    secrets,
-		Repos:      repos,
-		OCI:        oci,
-		chartBlobs: blob.NewStore(layout),
-		indexLocks: keylock.New[string](),
-		dlLocks:    keylock.New[string](),
-		tmpDir:     tmpDir,
+		Secrets:       secrets,
+		Repos:         repos,
+		OCI:           oci,
+		chartBlobs:    blob.NewStore(layout),
+		indexLocks:    keylock.New[string](),
+		downloadLocks: keylock.New[string](),
+		tmpDir:        tmpDir,
 	}, nil
 }
 
@@ -110,13 +110,12 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 // HelmRepository. The HelmRelease controller registers it so the source
 // controller fetches the chart here; the chart name+version live on the
 // consuming HelmRelease, not the HelmRepository, so there's no standalone CR.
-// The name is <repo>-<chart>-<short hash of url@version> so distinct
-// charts/versions from the same repo get distinct Store ids (and the name
-// stays valid when the version is a digest, whose ':' isn't name-legal).
+// The id is syntheticChartName(...): distinct charts/versions from the same
+// repo get distinct Store ids.
 func Synthesize(r *manifest.HelmRepository, chartName, version string) *manifest.HelmChartSource {
-	sum := sha256.Sum256([]byte(r.URL + "/" + chartName + "@" + version))
+	chartURL := strings.TrimSuffix(r.URL, "/") + "/" + chartName
 	hc := &manifest.HelmChartSource{
-		Name:      r.Name + "-" + chartName + "-" + hex.EncodeToString(sum[:])[:7],
+		Name:      syntheticChartName(r.Name, chartName, chartURL, version),
 		Namespace: r.Namespace,
 	}
 	hc.Chart = chartName
@@ -146,7 +145,7 @@ func IsOCIHelmRepo(r *manifest.HelmRepository) bool {
 func SynthesizeOCIRepository(r *manifest.HelmRepository, chartName, version string) *manifest.OCIRepository {
 	chartURL := strings.TrimSuffix(r.URL, "/") + "/" + chartName
 	syn := &manifest.OCIRepository{Namespace: r.Namespace}
-	syn.Name = syntheticOCIName(r.Name, chartName, chartURL, version)
+	syn.Name = syntheticChartName(r.Name, chartName, chartURL, version)
 	syn.URL = chartURL
 	syn.Provider = r.Provider
 	if version != "" {
@@ -164,12 +163,15 @@ func SynthesizeOCIRepository(r *manifest.HelmRepository, chartName, version stri
 	return syn
 }
 
-// syntheticOCIName derives a stable identity for the in-memory synthetic
-// OCIRepository: <helmrepo>-<chart>-<short hash of url@version>. The
-// OCIRepository is never stored (the OCI fetcher caches by URL+ref, not
-// name), so this is mainly for log readability; the hash keeps it valid
-// when the version is a digest (whose ':' isn't a legal name character).
-func syntheticOCIName(repoName, chartName, chartURL, version string) string {
+// syntheticChartName derives the stable <helmrepo>-<chart>-<short hash>
+// identity shared by the synthetic HelmChart (Synthesize) and the synthetic
+// OCIRepository (SynthesizeOCIRepository) for one chart served by a
+// HelmRepository. Hashing the normalized chartURL@version keeps distinct
+// charts/versions from the same repo on distinct ids and stays name-legal
+// when the version is a digest (whose ':' isn't a valid name character). The
+// synthetic OCIRepository is never stored (the OCI fetcher caches by URL+ref,
+// not name), so for it the name is mainly log readability.
+func syntheticChartName(repoName, chartName, chartURL, version string) string {
 	sum := sha256.Sum256([]byte(chartURL + "@" + version))
 	return repoName + "-" + chartName + "-" + hex.EncodeToString(sum[:])[:7]
 }

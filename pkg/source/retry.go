@@ -97,12 +97,10 @@ func (r retryFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*st
 // feels the same as it did when retry lived in the HTTP transport.
 func (r retryFetcher) backoff(attempt int) time.Duration {
 	d := float64(r.cfg.MinWait) * math.Pow(2, float64(attempt))
-	if hi := float64(r.cfg.MaxWait); hi > 0 && d > hi {
-		d = hi
+	if hi := float64(r.cfg.MaxWait); hi > 0 { // MaxWait==0 means no ceiling
+		d = min(d, hi)
 	}
 	if r.cfg.Jitter > 0 {
-		// Jitter is backoff timing noise, not a security-sensitive value;
-		// math/rand/v2 is the right tool here.
 		d = d*(1-r.cfg.Jitter) + rand.Float64()*(2*r.cfg.Jitter*d) //nolint:gosec // non-crypto jitter
 	}
 	return time.Duration(d)

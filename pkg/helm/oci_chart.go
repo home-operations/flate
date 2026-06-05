@@ -145,10 +145,11 @@ func findChartSubdir(slot string) (string, chartSubdirStatus) {
 	return match, chartSubdirFound
 }
 
-// chartYamlFilename / copiedOCILayerFilename mirror, by string value,
-// the on-disk names produced by source/oci.applyLayerSelector. Kept
-// as constants here (and not imported across packages) to avoid a
-// pkg/helm → pkg/source/oci dependency for two static strings.
+// chartYamlFilename / copiedOCILayerFilename / httpChartFilename mirror, by
+// string value, the on-disk names the fetchers write: source/oci.applyLayerSelector
+// (Chart.yaml, layer.tar.gz) and the helmchart HTTP fetcher (chart.tgz, via
+// Cache.PutBytes). Kept as constants here (and not imported across packages) to
+// avoid a pkg/helm → pkg/source dependency for three static strings.
 const (
 	chartYamlFilename      = "Chart.yaml"
 	copiedOCILayerFilename = "layer.tar.gz"

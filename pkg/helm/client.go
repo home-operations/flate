@@ -155,12 +155,11 @@ func DefaultClientOptions() ClientOptions {
 }
 
 // NewClient constructs a Client backed by the supplied Layout with
-// project-wide defaults (DefaultClientOptions). The helm-tmp/ and
-// helm-cache/ directories are taken from the Layout — helm.Client
-// never composes its own paths. The chart-tarball CAS is rooted at
-// the SHARED <root>/blobs/sha256/ blob store so identical chart
-// bytes deduplicate across HelmRepositories and across orchestrator
-// embedders.
+// project-wide defaults (DefaultClientOptions). helm.Client reads
+// already-fetched charts off disk and composes no cache paths of its own —
+// chart bytes live in the shared source.Cache (the content-addressed
+// <root>/blobs/sha256/ store, so identical chart bytes dedup across
+// HelmRepositories and embedders), populated by the source controller.
 //
 // Disk-backed template-output cache defaults to enabled at
 // DefaultRenderCacheBytes, rooted at layout.RenderHelmCache(). When
@@ -277,8 +276,9 @@ func (c *Client) LocateChart(hr *manifest.HelmRelease) (string, error) {
 // reparses the tgz (and recompiles values.schema.json) on every call,
 // which is a significant render-time hot spot when many HelmReleases
 // share a base chart (bjw-s app-template, podinfo, common-library, …).
-// Path is content-addressed by Helm's own cacher (name-version-digest),
-// so this is safe across reconciles.
+// Path comes from the source cache (a content-addressed blob for HTTP
+// tarballs, a ref-keyed slot for OCI) and is stable across reconciles; the
+// per-path (mtime,size) re-check below guards a mutable OCI re-push.
 func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (ChartLoadResult, error) {
 	path, err := c.LocateChart(hr)
 	if err != nil {

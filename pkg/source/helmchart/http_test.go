@@ -32,8 +32,13 @@ func httpRepo(url string) *manifest.HelmRepository {
 
 func newHTTPFetcher(t *testing.T, r *manifest.HelmRepository) *Fetcher {
 	t.Helper()
+	return newHTTPFetcherWithSecrets(t, r, nil)
+}
+
+func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets source.SecretGetter) *Fetcher {
+	t.Helper()
 	layout := cacheroot.New(t.TempDir())
-	f, err := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, source.NewCache(layout), layout)
+	f, err := New(secrets, func(_, _ string) *manifest.HelmRepository { return r }, nil, source.NewCache(layout), layout)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -117,15 +122,7 @@ func TestFetchHTTPChart_CertSecretFailsLoud(t *testing.T) {
 func TestFetchHTTPChart_CertSecretNotFoundSoftSkips(t *testing.T) {
 	r := httpRepo("https://charts.example")
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
-	layout := cacheroot.New(t.TempDir())
-	f, err := New(
-		func(_, _ string) *manifest.Secret { return nil }, // getter wired, secret absent
-		func(_, _ string) *manifest.HelmRepository { return r },
-		nil, source.NewCache(layout), layout,
-	)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return nil }) // getter wired, secret absent
 	if _, ferr := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); !errors.Is(ferr, manifest.ErrMissingSecret) {
 		t.Errorf("certSecretRef not-found should soft-skip (ErrMissingSecret); got: %v", ferr)
 	}

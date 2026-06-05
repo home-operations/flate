@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"maps"
-	"os"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -288,13 +287,9 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 	staging, err := kustomize.NewStagingCacheFromLayout(layout, cfg.StageCacheBytes)
 	if err != nil {
-		// helmClient already created tmpDir + cacheDir under the
-		// cache root. Leaving them would leak a temp directory per
-		// failed orchestrator construction (e.g. retry-on-bad-config
-		// loops in a test harness). The helm client itself has no
-		// Close; the best-effort cleanup is to drop the dirs we own.
-		_ = os.RemoveAll(layout.HelmTmp())
-		_ = os.RemoveAll(layout.HelmCache())
+		// Nothing on disk to clean up: helm.NewClientWithOptions creates no
+		// directories at construction (the disk render cache is lazy), and the
+		// HelmChart fetcher's helm-tmp dir isn't created until later in New.
 		return nil, err
 	}
 

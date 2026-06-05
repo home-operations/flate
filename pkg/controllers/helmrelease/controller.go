@@ -448,8 +448,8 @@ func chartSourceID(hr *manifest.HelmRelease) manifest.NamedResource {
 
 // awaitChartSource blocks until srcID reaches Ready, then propagates a
 // soft-skip (--allow-missing-secrets on the source's auth marks it Ready but
-// writes no artifact and can't be pulled anonymously either, so fail here
-// instead of letting TemplateDocs fail at the registry).
+// writes no artifact, so fail here rather than letting the render fail later
+// with a confusing chart-not-found).
 func (c *Controller) awaitChartSource(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease, srcID manifest.NamedResource) error {
 	if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout),
 		[]manifest.DependencyRef{{NamedResource: srcID}},

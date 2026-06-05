@@ -62,7 +62,6 @@ const (
 	RefsDir       = "refs"
 	GitMirrorsDir = "git-mirrors"
 	HelmTmpDir    = "helm-tmp"
-	HelmCacheDir  = "helm-cache"
 	StageDir      = "stage"
 	// RenderHelmCacheDir holds the persisted helm template-output
 	// cache. Entries are sharded `<root>/render/helm/<hex[:2]>/<hex>`
@@ -160,13 +159,9 @@ func (l Layout) GitMirror(urlHash string) string {
 	return app3(l.Root, GitMirrorsDir, urlHash)
 }
 
-// HelmTmp returns the scratch directory the helm client uses for
+// HelmTmp returns the scratch directory the HelmChart fetcher uses for
 // transient writes (index.yaml downloads, TLS cert materialization).
 func (l Layout) HelmTmp() string { return app2(l.Root, HelmTmpDir) }
-
-// HelmCache returns the helm client's cacheDir — the on-disk root the
-// chart tarball CAS and chart-tarball refs table sit under.
-func (l Layout) HelmCache() string { return app2(l.Root, HelmCacheDir) }
 
 // Stage returns the kustomize staging root. Two consumers share it:
 //   - Per-process scratch stages land as flate-stage-<rand> children (legacy

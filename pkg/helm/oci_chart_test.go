@@ -22,14 +22,12 @@ import (
 // TestLocateOCIChart_PrefersSourceArtifactExtract is the headline of
 // the unification: when the source.oci.Fetcher has materialized an
 // OCIRepository to an EXTRACTED slot (Flux's default
-// layerSelector.operation), locateOCIChart returns that slot directly
-// instead of issuing a duplicate pull via helm's registry client.
+// layerSelector.operation), locateOCIChart returns that slot directly.
 //
 // This is also what makes spec.verify (cosign), spec.layerSelector,
 // spec.certSecretRef, etc. apply to Helm chart pulls — they all fire
-// during the source.Fetcher.Fetch call, and now Helm consumes the
-// already-verified, already-selected artifact instead of re-pulling
-// over a separate code path.
+// during the source.Fetcher.Fetch call, and Helm consumes the
+// already-verified, already-selected artifact.
 func TestLocateOCIChart_PrefersSourceArtifactExtract(t *testing.T) {
 	t.Parallel()
 

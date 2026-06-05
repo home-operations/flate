@@ -132,7 +132,8 @@ func TestMaterializeHelmChartSource_IdempotentReSeed(t *testing.T) {
 	}
 
 	// First HR materializes the synthetic and seeds it Pending.
-	got1, repointed := c.materializeHelmChartSource(manifest.NamedResource{}, mkHR("redis-a"))
+	hrA := mkHR("redis-a")
+	got1, repointed := c.materializeHelmChartSource(hrA.Named(), hrA)
 	if !repointed {
 		t.Fatal("first materialize did not repoint")
 	}
@@ -143,7 +144,8 @@ func TestMaterializeHelmChartSource_IdempotentReSeed(t *testing.T) {
 
 	// A second HR sharing the same (repo, chart, version) synthesizes the SAME
 	// id; re-materialize must leave the Ready status untouched.
-	got2, repointed := c.materializeHelmChartSource(manifest.NamedResource{}, mkHR("redis-b"))
+	hrB := mkHR("redis-b")
+	got2, repointed := c.materializeHelmChartSource(hrB.Named(), hrB)
 	if !repointed {
 		t.Fatal("second materialize did not repoint")
 	}
@@ -154,8 +156,10 @@ func TestMaterializeHelmChartSource_IdempotentReSeed(t *testing.T) {
 		t.Errorf("synthetic status flapped to %+v (ok=%v), want still Ready", info, ok)
 	}
 
-	// Re-emitting the SAME HR is likewise idempotent — no flap.
-	if _, repointed := c.materializeHelmChartSource(manifest.NamedResource{}, mkHR("redis-a")); !repointed {
+	// Re-emitting the SAME HR (a fresh reconcile snapshot, still
+	// HelmRepository-sourced) is likewise idempotent — no flap.
+	reHRA := mkHR("redis-a")
+	if _, repointed := c.materializeHelmChartSource(reHRA.Named(), reHRA); !repointed {
 		t.Fatal("re-materialize of the same HR did not repoint")
 	}
 	if info, ok := st.GetStatus(synID); !ok || info.Status != store.StatusReady {

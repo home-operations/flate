@@ -496,12 +496,23 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 	synID := syn.Named()
 	// keepEmitted BEFORE AddObject so the synchronous source-controller
 	// listener sees the extended changed-only keep set (mirrors
-	// emitRenderedChildren). UpdateStatus seeds a Pending status so the
-	// chart-source depwait below never observes the object as absent in
-	// the window before the source controller's own reconcile sets it.
+	// emitRenderedChildren).
 	c.keepEmitted(id, synID)
 	c.Store.AddObject(syn)
-	c.Store.UpdateStatus(synID, store.StatusPending, "fetching chart")
+	// Seed a Pending status ONLY on first materialization — when no status
+	// exists yet — to close the window between AddObject (which dispatches an
+	// async source reconcile) and that reconcile setting the status, so the
+	// chart-source depwait below never observes the object as absent. On a
+	// re-materialization the status already exists; a byte-identical AddObject
+	// is a no-op that fires no EventObjectAdded, so an unconditional re-seed
+	// would flap an already-Ready synthetic back to Pending with nothing to
+	// re-Ready it (a parent-KS re-emit, or a second HelmRelease that shares the
+	// same synthesized chart id), wedging awaitChartSource until timeout.
+	// Guarding on absence keeps this idempotent and also lets a previously
+	// Failed synthetic surface its real error fast instead of re-Pending.
+	if _, ok := c.Store.GetStatus(synID); !ok {
+		c.Store.UpdateStatus(synID, store.StatusPending, "fetching chart")
+	}
 	hr.Chart.RepoKind = manifest.KindHelmChart
 	hr.Chart.RepoNamespace = syn.Namespace
 	hr.Chart.RepoName = syn.Name

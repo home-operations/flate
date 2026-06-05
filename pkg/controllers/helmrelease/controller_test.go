@@ -108,6 +108,61 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	}
 }
 
+// TestMaterializeHelmChartSource_IdempotentReSeed pins the idempotency fix:
+// once the synthetic HelmChart has been fetched (Ready), re-running materialize
+// — a parent-KS re-emit, or a SECOND HelmRelease that shares the same
+// (repo, chart, version) synthetic id — must NOT flap it back to Pending. A
+// byte-identical AddObject fires no EventObjectAdded, so the source controller
+// would never re-fetch to restore Ready and the chart-source await would wedge
+// until timeout. The Pending seed therefore fires only when status is absent.
+func TestMaterializeHelmChartSource_IdempotentReSeed(t *testing.T) {
+	c, st := newTestController(t, nil)
+	st.AddObject(&manifest.HelmRepository{
+		Name: "bitnami", Namespace: "flux-system",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example/bitnami"},
+	})
+	mkHR := func(name string) *manifest.HelmRelease {
+		return &manifest.HelmRelease{
+			Name: name, Namespace: "apps",
+			Chart: manifest.HelmChart{
+				RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
+				Name: "redis", Version: "1.0.0",
+			},
+		}
+	}
+
+	// First HR materializes the synthetic and seeds it Pending.
+	got1, repointed := c.materializeHelmChartSource(manifest.NamedResource{}, mkHR("redis-a"))
+	if !repointed {
+		t.Fatal("first materialize did not repoint")
+	}
+	synID := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: got1.Chart.RepoNamespace, Name: got1.Chart.RepoName}
+
+	// Source controller fetches it and marks it Ready.
+	st.UpdateStatus(synID, store.StatusReady, "")
+
+	// A second HR sharing the same (repo, chart, version) synthesizes the SAME
+	// id; re-materialize must leave the Ready status untouched.
+	got2, repointed := c.materializeHelmChartSource(manifest.NamedResource{}, mkHR("redis-b"))
+	if !repointed {
+		t.Fatal("second materialize did not repoint")
+	}
+	if got2.Chart.RepoName != synID.Name {
+		t.Fatalf("second HR synthesized id %q, want shared %q", got2.Chart.RepoName, synID.Name)
+	}
+	if info, ok := st.GetStatus(synID); !ok || info.Status != store.StatusReady {
+		t.Errorf("synthetic status flapped to %+v (ok=%v), want still Ready", info, ok)
+	}
+
+	// Re-emitting the SAME HR is likewise idempotent — no flap.
+	if _, repointed := c.materializeHelmChartSource(manifest.NamedResource{}, mkHR("redis-a")); !repointed {
+		t.Fatal("re-materialize of the same HR did not repoint")
+	}
+	if info, ok := st.GetStatus(synID); !ok || info.Status != store.StatusReady {
+		t.Errorf("synthetic status flapped to %+v after re-emit, want still Ready", info)
+	}
+}
+
 // TestMaterializeHelmChartSource_LateArrival pins the contract reconcile relies
 // on: materialize is a no-op while the HelmRepository is absent from the Store
 // (e.g. render-emitted by a sibling and not yet landed) and repoints only once

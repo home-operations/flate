@@ -398,6 +398,18 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 // sources / data files. Gated on DiscoveryOnly so non-DiscoveryOnly
 // callers keep that strict semantic.
 func (w *walker) scanBootstrapFluxKS(dir string, k *kustomization, kpath string) int {
+	// A genuine bootstrap *entry* KS is a root — no other Kustomization's
+	// spec.path covers its directory. A KS commented-out of (excluded from)
+	// a kustomization.yaml lives inside a tree another KS already renders
+	// (e.g. cluster-apps' spec.path covers apps/<cluster>/<ns>/); real Flux
+	// renders that dir solely from its kustomization.yaml `resources:`, so a
+	// sibling KS left out of them is a disabled app, not a bootstrap entry.
+	// Surfacing it here is a false positive. Skip the scan when dir is already
+	// claimed by another loaded KS's spec.path — the same coverage predicate
+	// promoteOrphans applies via LongestParent.
+	if w.loader.dirCoveredByOtherKS(dir) {
+		return 0
+	}
 	seen := map[string]struct{}{kpath: {}}
 	for _, r := range k.Resources {
 		if abs, ok := resolveDataPath(dir, r); ok {
@@ -441,6 +453,37 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomization, kpath string)
 		}
 	}
 	return count
+}
+
+// dirCoveredByOtherKS reports whether dir (an absolute kustomize-package
+// directory) sits under some loaded Flux Kustomization's spec.path — i.e. it
+// is part of a tree another KS renders, where a sibling KS excluded from the
+// local kustomization.yaml is a disabled app rather than a bootstrap entry.
+// No-ops (returns false) when SourceRoot is unset, so SDK / unit-test callers
+// that set DiscoveryOnly without a repo root keep the legacy scan behavior.
+//
+// A KS being surfaced by scanBootstrapFluxKS is not yet in the Store at its
+// own dir's first scan, so a true entry KS reads as uncovered and is still
+// surfaced; only a strictly-enclosing (or equal) prefix from an already-loaded
+// KS marks the dir covered.
+func (l *Loader) dirCoveredByOtherKS(dir string) bool {
+	if l.SourceRoot == "" {
+		return false
+	}
+	rel, err := filepath.Rel(l.SourceRoot, dir)
+	if err != nil {
+		return false
+	}
+	dirRel := filepath.ToSlash(rel) + "/"
+	for _, ks := range store.ListAs[*manifest.Kustomization](l.Store, manifest.KindKustomization) {
+		if ks.Path == "" {
+			continue
+		}
+		if strings.HasPrefix(dirRel, NormalizePrefix(ks.Path)) {
+			return true
+		}
+	}
+	return false
 }
 
 // walkComponentData records direct ConfigMap/Secret resources from

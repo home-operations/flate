@@ -346,6 +346,78 @@ data: {k: v}
 	}
 }
 
+// TestOrchestrator_CommentedOutKSNotReconciled is the e2e fence for the
+// bootstrap-sibling over-discovery: a Flux Kustomization commented out of its
+// namespace's kustomization.yaml (a disabled app) that lives inside
+// cluster-apps' rendered tree must NOT be discovered or reconciled — real Flux
+// never deploys it. The entry is scoped to kubernetes/flux (with a .git marker
+// so spec.paths resolve against the repo root) so cluster-apps is discovered
+// before its subtree is scanned.
+func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, ".git/HEAD", "ref: refs/heads/main\n") // repo-root anchor
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-apps, namespace: flux-system}
+spec:
+  path: ./kubernetes/apps/test
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	// Bare apps/test → its network/ subdir is a kustomize base. echo is listed
+	// and rendered; tunnel is commented out (a disabled app).
+	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: network
+resources:
+  - ./echo.yaml
+  # - ./tunnel.yaml
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/echo.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: echo, namespace: network}
+spec:
+  path: ./kubernetes/apps/base/echo
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/tunnel.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: tunnel, namespace: network}
+spec:
+  path: ./kubernetes/apps/base/tunnel
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/base/echo/kustomization.yaml", "resources:\n  - ./cm.yaml\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/base/echo/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: echo-cm}\ndata: {k: v}\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/base/tunnel/kustomization.yaml", "resources:\n  - ./cm.yaml\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/base/tunnel/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: tunnel-cm}\ndata: {k: v}\n")
+
+	o, err := New(Config{Path: dir + "/kubernetes/flux", WipeSecrets: true, Concurrency: 4})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := o.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// echo is listed → reconciled.
+	echoID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: "echo"}
+	if _, ok := o.Store().GetStatus(echoID); !ok {
+		t.Errorf("listed KS echo should be reconciled")
+	}
+	// tunnel is commented out → never discovered or reconciled.
+	tunnelID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: "tunnel"}
+	if o.Store().GetObject(tunnelID) != nil {
+		t.Errorf("commented-out KS tunnel must not reach the store")
+	}
+	if _, ok := o.Store().GetStatus(tunnelID); ok {
+		t.Errorf("commented-out KS tunnel must not be reconciled")
+	}
+}
+
 // The bjw-s/onedr0p self-substitute deadlock, in FULL mode: cluster-apps'
 // spec.path is a BARE dir whose flux-system group base pulls in a component
 // defining a namespace-less cluster-settings ConfigMap, which cluster-apps

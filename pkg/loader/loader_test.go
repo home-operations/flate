@@ -7,10 +7,75 @@ import (
 	"path/filepath"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+// TestLoader_DiscoveryOnlyBootstrapScanSkipsCoveredDir pins the coverage guard
+// on the bootstrap-sibling scan: a Flux Kustomization authored as a sibling of
+// a kustomization.yaml but excluded from its `resources:` is a bootstrap entry
+// ONLY when its directory isn't already rendered by another KS. Inside a covered
+// tree (here cluster-apps' spec.path apps/test) such a sibling is a
+// disabled/commented-out app — kustomize never includes it, so neither should
+// the scan. Counterpart to TestLoader_DiscoveryOnlyPicksUpBootstrapSiblingKS
+// (uncovered dir → still surfaced).
+func TestLoader_DiscoveryOnlyBootstrapScanSkipsCoveredDir(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/test/network/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: network
+resources:
+  - ./echo.yaml
+  # - ./tunnel.yaml
+`)
+	testutil.WriteFile(t, dir, "apps/test/network/echo.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: echo, namespace: network}
+spec:
+  path: ./apps/base/echo
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	// Commented out of the kustomization above — a disabled app, not a
+	// bootstrap entry. Real kustomize never renders it.
+	testutil.WriteFile(t, dir, "apps/test/network/tunnel.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: tunnel, namespace: network}
+spec:
+  path: ./apps/base/tunnel
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+
+	s := store.New()
+	// The covering parent — cluster-apps renders apps/test (its spec.path
+	// covers apps/test/network/). Pre-seeded so the guard sees it regardless
+	// of walk order.
+	s.AddObject(&manifest.Kustomization{
+		Name:              "cluster-apps",
+		Namespace:         "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/test"},
+	})
+
+	l := New(s)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	l.SourceFiles = map[manifest.NamedResource]string{}
+	l.SourceRoot = dir
+	if _, err := l.Load(context.Background(), filepath.Join(dir, "apps/test")); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	echoID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: "echo"}
+	if s.GetObject(echoID) == nil {
+		t.Errorf("listed KS echo must be loaded via resources")
+	}
+	tunnelID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: "tunnel"}
+	if s.GetObject(tunnelID) != nil {
+		t.Errorf("commented-out sibling KS tunnel must NOT be surfaced inside a covered tree")
+	}
+}
 
 func TestLoader_Load(t *testing.T) {
 	dir := t.TempDir()

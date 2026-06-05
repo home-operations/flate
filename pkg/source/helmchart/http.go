@@ -70,7 +70,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w", chartURL, err)
 	}
-	dir, digest, err := f.chartBlobs.PutBytes(ctx, buf.Bytes(), "chart.tgz")
+	dir, digest, err := f.Cache.PutBytes(ctx, buf.Bytes(), "chart.tgz")
 	if err != nil {
 		return nil, fmt.Errorf("store chart %s: %w", chartURL, err)
 	}
@@ -85,10 +85,11 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 // supplied a digest and the blob is already present (content-addressed
 // dedup across HelmRepositories). A digest-less index is mutable → miss.
 func (f *Fetcher) chartArtifactByDigest(chartURL, version, digest string) (*store.SourceArtifact, bool) {
-	if digest == "" || !f.chartBlobs.Exists(digest) {
+	dir, ok := f.Cache.BlobByDigest(digest)
+	if !ok {
 		return nil, false
 	}
-	return httpChartArtifact(chartURL, f.chartBlobs.Path(digest), version, digest), true
+	return httpChartArtifact(chartURL, dir, version, digest), true
 }
 
 func httpChartArtifact(chartURL, dir, version, digest string) *store.SourceArtifact {

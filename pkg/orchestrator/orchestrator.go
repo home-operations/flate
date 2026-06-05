@@ -349,7 +349,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	// synthesizes a HelmChart per (chart, version, repo) for every
 	// HelmRepository-sourced chart; this fetcher pulls it — HTTP repos via
 	// helm's getter, OCI repos via the OCI fetcher above.
-	hcFetcher, err := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, layout)
+	hcFetcher, err := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, cache, layout)
 	if err != nil {
 		return nil, err
 	}

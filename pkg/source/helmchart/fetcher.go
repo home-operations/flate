@@ -22,7 +22,6 @@ import (
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/blob"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -42,18 +41,19 @@ type Fetcher struct {
 	Secrets source.SecretGetter // HTTP-branch SecretRef/CertSecretRef auth
 	Repos   RepoLookup          // resolves the chart's backing HelmRepository
 	OCI     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
+	Cache   *source.Cache       // content-addressed store for HTTP chart tarballs
 
-	chartBlobs    *blob.Store             // content-addressed HTTP chart tarballs
 	indexCache    sync.Map                // map[string]*repo.IndexFile (process lifetime)
 	indexLocks    *keylock.KeyMap[string] // coalesce one index.yaml fetch per repo
 	downloadLocks *keylock.KeyMap[string] // coalesce one download per chart
 	tmpDir        string                  // index/TLS temp files
 }
 
-// New constructs a HelmChart fetcher. layout supplies the shared blob
-// store (so HTTP chart tarballs dedup with the rest of the cache and the
-// GC sweep sees them) and the helm tmp dir for index/TLS temp files.
-func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, layout cacheroot.Layout) (*Fetcher, error) {
+// New constructs a HelmChart fetcher. cache is the shared content-addressed
+// store HTTP chart tarballs land in (so they dedup with the rest of the cache
+// and the GC sweep sees them); layout supplies the helm tmp dir for index/TLS
+// temp files.
+func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cache *source.Cache, layout cacheroot.Layout) (*Fetcher, error) {
 	tmpDir := layout.HelmTmp()
 	if err := os.MkdirAll(tmpDir, 0o750); err != nil {
 		return nil, fmt.Errorf("helmchart: tmp dir: %w", err)
@@ -62,7 +62,7 @@ func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, layout c
 		Secrets:       secrets,
 		Repos:         repos,
 		OCI:           oci,
-		chartBlobs:    blob.NewStore(layout),
+		Cache:         cache,
 		indexLocks:    keylock.New[string](),
 		downloadLocks: keylock.New[string](),
 		tmpDir:        tmpDir,

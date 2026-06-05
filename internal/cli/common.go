@@ -35,14 +35,12 @@ type commonFlags struct {
 	allowMissingSecrets bool
 	skipKinds           []string
 	output              string
-	enableOCI           bool
 	registryConfig      string
 	concurrency         int
-	// sourceRetry* tune the bounded retry applied to every source fetch
-	// (Git/OCI/Bucket) on transient network errors. attempts is the total
-	// tries (first + retries); 1 disables. min/max bound the exponential
-	// backoff and jitter spreads it. Plumbed into
-	// orchestrator.Config.SourceRetry → source.WithRetry.
+	// sourceRetry* tune the bounded retry applied uniformly to every source
+	// fetch on transient network errors. attempts is the total tries (first +
+	// retries); 1 disables. min/max bound the exponential backoff and jitter
+	// spreads it. Plumbed into orchestrator.Config.SourceRetry → source.WithRetry.
 	sourceRetryAttempts int
 	sourceRetryMinWait  time.Duration
 	sourceRetryMaxWait  time.Duration
@@ -105,7 +103,6 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 		f.output = string(outputs[0]) // default; outputValue.String reports it in --help
 		fs.VarP(&outputValue{target: &f.output, allowed: outputs}, "output", "o", outputUsage(outputs))
 	}
-	fs.BoolVar(&f.enableOCI, "enable-oci", true, "reconcile OCIRepository objects")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.StringVar(&f.cacheDir, "cache-dir", "",
 		"on-disk cache root for source artifacts, helm charts, kustomize stages, "+
@@ -118,7 +115,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	// reset/refused, timeouts); a bad path / auth / not-found still fails
 	// on the first try. --source-retry-attempts=1 disables it entirely.
 	fs.IntVar(&f.sourceRetryAttempts, "source-retry-attempts", 3,
-		"max attempts per source fetch (Git/OCI/Bucket) on transient network errors (1 disables retry)")
+		"max attempts per source fetch on transient network errors (1 disables retry)")
 	fs.DurationVar(&f.sourceRetryMinWait, "source-retry-min-wait", 200*time.Millisecond,
 		"minimum backoff between source-fetch retries")
 	fs.DurationVar(&f.sourceRetryMaxWait, "source-retry-max-wait", 3*time.Second,
@@ -340,7 +337,6 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		PathOrig:       c.pathOrig,
 		HelmOptions:    c.helmOptions(h),
 		WipeSecrets:    true,
-		EnableOCI:      c.enableOCI,
 		RegistryConfig: c.registryConfig,
 		Concurrency:    c.concurrency,
 		SourceRetry: source.RetryConfig{

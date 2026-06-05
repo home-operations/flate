@@ -10,7 +10,6 @@ import (
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
-	"helm.sh/helm/v4/pkg/registry"
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -27,21 +26,12 @@ type SecretGetter = source.SecretGetter
 
 // Client renders HelmReleases. Construct with NewClient.
 type Client struct {
-	cacheDir string
-
 	mu sync.RWMutex
 	// resolver is the canonical (and only) source-lookup surface.
 	// Embedders MUST call SetSourceResolver before any Template call;
 	// the orchestrator wires NewStoreSourceResolver(store) at
 	// construction.
 	resolver SourceResolver
-	registry *registry.Client
-
-	// taskYield, when set, wraps long-running network I/O (OCI
-	// pulls) so the worker-pool slot is released for the duration.
-	// nil = no yield (legacy behavior for embedders without a task
-	// pool). See SetTaskYield.
-	taskYield func(fn func())
 
 	// chartCache memoizes parsed *chart.Chart by on-disk path. Helm's
 	// loader.Load reparses the entire tgz on every call — for repos
@@ -86,13 +76,6 @@ type Client struct {
 	// Lives for the Client lifetime — re-creating per Template call
 	// would defeat the cross-HR sharing that delivers the win.
 	valuesCache *values.Cache
-
-	// chartDownloadLocks serializes concurrent downloads of the same
-	// chart tarball so two reconcilers don't race writing the same
-	// cache file. Keyed by content-address digest (when available) or
-	// a name+version+URL token — matches the pattern of chartLoadLocks
-	// above.
-	chartDownloadLocks *keylock.KeyMap[string]
 
 	// templateCache memoizes Template's rendered manifest output keyed
 	// by computeTemplateKey (chart fingerprint + resolved values +
@@ -207,22 +190,11 @@ func NewClientWithOptions(layout cacheroot.Layout, opts ClientOptions) (*Client,
 		// keeps working.
 		layout.Root = filepath.Join(os.TempDir(), "flate-cache")
 	}
-	cacheDir := layout.HelmCache()
-	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
-		return nil, err
-	}
-	reg, err := registry.NewClient(registry.ClientOptCredentialsFile(""))
-	if err != nil {
-		return nil, fmt.Errorf("helm registry: %w", err)
-	}
 	return &Client{
-		cacheDir:           cacheDir,
-		registry:           reg,
-		chartCache:         map[string]chartCacheEntry{},
-		chartValuesCache:   map[string]map[string]any{},
-		chartLoadLocks:     keylock.New[string](),
-		chartDownloadLocks: keylock.New[string](),
-		valuesCache:        values.NewCache(),
+		chartCache:       map[string]chartCacheEntry{},
+		chartValuesCache: map[string]map[string]any{},
+		chartLoadLocks:   keylock.New[string](),
+		valuesCache:      values.NewCache(),
 		templateCache: newTemplateCache(
 			opts.TemplateCacheBytes,
 			newDiskRenderCache(opts.RenderCacheRoot, opts.RenderCacheBytes),
@@ -245,37 +217,6 @@ func (c *Client) SetSourceResolver(r SourceResolver) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.resolver = r
-}
-
-// SetTaskYield installs a callback that the helm client uses to
-// release its worker-pool slot during long-running network I/O
-// (OCI pulls). The orchestrator wires this to
-// task.Service.YieldSlot so concurrent helm renders don't block
-// the pool while one of them is mid-pull. nil disables the yield
-// (the I/O runs while still holding the slot — the legacy
-// behavior for embedders without a task pool).
-//
-// Kept as a callback rather than a direct task.Service dependency to
-// avoid importing pkg/task into pkg/helm — the orchestrator wires
-// the function reference and helm stays dependency-free.
-func (c *Client) SetTaskYield(yield func(fn func())) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.taskYield = yield
-}
-
-// yieldDuring invokes fn under the configured task-slot yield, or
-// directly when no yield is wired. fn typically wraps a long
-// network round-trip.
-func (c *Client) yieldDuring(fn func()) {
-	c.mu.RLock()
-	y := c.taskYield
-	c.mu.RUnlock()
-	if y == nil {
-		fn()
-		return
-	}
-	y(fn)
 }
 
 // Resolver returns the configured SourceResolver, or nil when none
@@ -307,7 +248,7 @@ func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtif
 // LocateChart returns a filesystem path to the chart referenced by hr.
 // The caller is responsible for cleanup (chart paths inside the cache
 // are reused across calls; paths inside the tmp dir are not).
-func (c *Client) LocateChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
+func (c *Client) LocateChart(hr *manifest.HelmRelease) (string, error) {
 	if hr == nil {
 		return "", errors.New("nil HelmRelease")
 	}
@@ -315,7 +256,7 @@ func (c *Client) LocateChart(ctx context.Context, hr *manifest.HelmRelease) (str
 	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact:
 		return c.locateLocalChart(hr)
 	case manifest.KindOCIRepository:
-		return c.locateOCIChart(ctx, hr)
+		return c.locateOCIChart(hr)
 	case manifest.KindHelmChart:
 		return c.locateHelmChart(hr)
 	case manifest.KindHelmRepository, "":
@@ -339,7 +280,7 @@ func (c *Client) LocateChart(ctx context.Context, hr *manifest.HelmRelease) (str
 // Path is content-addressed by Helm's own cacher (name-version-digest),
 // so this is safe across reconciles.
 func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (ChartLoadResult, error) {
-	path, err := c.LocateChart(ctx, hr)
+	path, err := c.LocateChart(hr)
 	if err != nil {
 		return ChartLoadResult{}, err
 	}

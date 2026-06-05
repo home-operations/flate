@@ -32,8 +32,8 @@ type Controller struct {
 
 	// Fetchers maps source CR kind → Fetcher implementation. Source
 	// kinds with no entry are ignored, which is also how a flate caller
-	// disables a kind (e.g. EnableOCI=false simply omits OCIRepository
-	// from the map). Exposed for Orchestrator.WithFetcher.
+	// disables a kind (omitting it from the map, e.g. via
+	// Orchestrator.WithFetcher(kind, nil)). Exposed for Orchestrator.WithFetcher.
 	Fetchers map[string]src.Fetcher
 
 	// allowMissingSecrets converts ErrMissingSecret fetch errors into a

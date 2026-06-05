@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ func TestLocateOCIChart_PrefersSourceArtifactExtract(t *testing.T) {
 
 	cli, hr := setupOCIChartTest(t, slot, "extracted")
 
-	path, err := cli.locateOCIChart(t.Context(), hr)
+	path, err := cli.locateOCIChart(hr)
 	if err != nil {
 		t.Fatalf("locateOCIChart: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestLocateOCIChart_PrefersSourceArtifactCopy(t *testing.T) {
 
 	cli, hr := setupOCIChartTest(t, slot, "copied")
 
-	path, err := cli.locateOCIChart(t.Context(), hr)
+	path, err := cli.locateOCIChart(hr)
 	if err != nil {
 		t.Fatalf("locateOCIChart: %v", err)
 	}
@@ -76,16 +77,13 @@ func TestLocateOCIChart_PrefersSourceArtifactCopy(t *testing.T) {
 	}
 }
 
-// TestLocateOCIChart_FallsBackWhenNoArtifact covers the
-// --enable-oci=false shape: source.ExistenceFetcher leaves the
-// OCIRepository Ready with no SourceArtifact, so locateOCIChart must
-// fall through to helm's registry client. We don't have a real
-// registry here, but the fallback's first action is to try the
-// helm-side cache file; we pre-populate it so the fallback returns
-// success without a network roundtrip. The point of the test is that
-// when no artifact is present, the fallback path runs (and does NOT
-// error out with the artifact-missing message).
-func TestLocateOCIChart_FallsBackWhenNoArtifact(t *testing.T) {
+// TestLocateOCIChart_NoArtifactErrors covers the no-fetch shape: when an
+// OCIRepository is Ready but carries no SourceArtifact (e.g. an embedder
+// wired source.ExistenceFetcher for the kind), locateOCIChart fails loud with
+// an artifact-not-available error rather than silently falling back to an
+// anonymous, unverified registry pull. Every OCIRepository now real-fetches
+// through the source controller, so a missing artifact is a genuine error.
+func TestLocateOCIChart_NoArtifactErrors(t *testing.T) {
 	t.Parallel()
 
 	cli, err := NewClient(cacheroot.New(t.TempDir()))
@@ -93,16 +91,15 @@ func TestLocateOCIChart_FallsBackWhenNoArtifact(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 	st := store.New()
-	const repoURL = "oci://ghcr.io/test/chart"
 	repo := &manifest.OCIRepository{
 		Name: "chart", Namespace: "flux-system",
 		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       repoURL,
+			URL:       "oci://ghcr.io/test/chart",
 			Reference: &sourcev1.OCIRepositoryRef{Tag: "0.1.0"},
 		},
 	}
 	st.AddObject(repo)
-	// Intentionally NO SetArtifact — this is the --enable-oci=false shape.
+	// Intentionally NO SetArtifact.
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 
 	hr := &manifest.HelmRelease{
@@ -116,19 +113,15 @@ func TestLocateOCIChart_FallsBackWhenNoArtifact(t *testing.T) {
 		},
 	}
 
-	// Pre-populate the helm cache target so fetchOCIChart's cache-hit
-	// branch returns without network. Target naming is
-	// safeName(trimmedRef)+"-"+version+".tgz" — full ref (registry+
-	// path), not just the basename, to avoid cross-registry collisions.
-	cacheTarget := filepath.Join(cli.cacheDir, "ghcr.io-test-chart-0.1.0.tgz")
-	testutil.WriteFileAt(t, cacheTarget, string(buildChartTarGz(t, "chart", "0.1.0")))
-
-	path, err := cli.locateOCIChart(t.Context(), hr)
-	if err != nil {
-		t.Fatalf("locateOCIChart fallback: %v", err)
+	_, err = cli.locateOCIChart(hr)
+	if err == nil {
+		t.Fatal("expected error when OCIRepository has no SourceArtifact")
 	}
-	if path != cacheTarget {
-		t.Errorf("path = %q, want fallback cache %q", path, cacheTarget)
+	if !errors.Is(err, manifest.ErrObjectNotFound) {
+		t.Errorf("error should wrap ErrObjectNotFound; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not available") {
+		t.Errorf("error should mention the artifact is not available; got: %v", err)
 	}
 }
 
@@ -156,7 +149,7 @@ func TestLocateOCIChart_PrefersSourceArtifactChartnameSubdir(t *testing.T) {
 	// pin that the resolver doesn't rely on a name match.
 	hr.Chart.Name = "vector-aggregator"
 
-	path, err := cli.locateOCIChart(t.Context(), hr)
+	path, err := cli.locateOCIChart(hr)
 	if err != nil {
 		t.Fatalf("locateOCIChart: %v", err)
 	}
@@ -184,54 +177,12 @@ func TestLocateOCIChart_AmbiguousSubdirs(t *testing.T) {
 
 	cli, hr := setupOCIChartTest(t, slot, "ambiguous")
 
-	_, err := cli.locateOCIChart(t.Context(), hr)
+	_, err := cli.locateOCIChart(hr)
 	if err == nil {
 		t.Fatal("expected error for ambiguous subdirs")
 	}
 	if !strings.Contains(err.Error(), "multiple") || !strings.Contains(err.Error(), "bundle-of-charts") {
 		t.Errorf("error message should distinguish ambiguous case (mention 'multiple' + 'bundle-of-charts'); got: %v", err)
-	}
-}
-
-// TestLocateOCIChart_FallbackSemverRefused covers the fallback's
-// semver guard: spec.ref.semver requires the source.oci.Fetcher
-// (which lists tags from the registry); the helm-side fallback has
-// no way to resolve it, so we error early with an explicit message
-// rather than letting helm's registry client return a cryptic
-// "invalid tag" deeper down.
-func TestLocateOCIChart_FallbackSemverRefused(t *testing.T) {
-	t.Parallel()
-
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	st := store.New()
-	repo := &manifest.OCIRepository{
-		Name: "semver", Namespace: "flux-system",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       "oci://ghcr.io/test/chart",
-			Reference: &sourcev1.OCIRepositoryRef{SemVer: ">=1.0.0"},
-		},
-	}
-	st.AddObject(repo)
-	// No SetArtifact — forces the fallback.
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-
-	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name: "chart", RepoName: "semver", RepoNamespace: "flux-system",
-			RepoKind: manifest.KindOCIRepository,
-		},
-	}
-
-	_, err = cli.locateOCIChart(t.Context(), hr)
-	if err == nil {
-		t.Fatal("expected error for semver in fallback mode")
-	}
-	if !strings.Contains(err.Error(), "semver") || !strings.Contains(err.Error(), "enable-oci") {
-		t.Errorf("error should name the cause (semver) and the resolution (enable-oci); got: %v", err)
 	}
 }
 
@@ -320,28 +271,6 @@ func writeChartFiles(t *testing.T, root, name, version string) {
 // buildChartTarGz returns a gzipped tarball of a minimal helm chart
 // — used for the "copy" layout test where source.oci leaves the
 // chart at slot/layer.tar.gz.
-func TestOCIPullRef(t *testing.T) {
-	const repo = "oci://ghcr.io/bjw-s-labs/helm/app-template"
-	for _, tc := range []struct {
-		name    string
-		version string
-		want    string
-	}{
-		{"empty version", "", repo},
-		{"semver tag", "1.2.3", repo + ":1.2.3"},
-		{"named tag", "latest", repo + ":latest"},
-		{"sha256 digest", "sha256:70a7cb6766eb468068c2c1700c8450253070dc671a9fbbd1a6346a66545e2b2b",
-			repo + "@sha256:70a7cb6766eb468068c2c1700c8450253070dc671a9fbbd1a6346a66545e2b2b"},
-		{"sha512 digest", "sha512:deadbeef", repo + "@sha512:deadbeef"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := ociPullRef(repo, tc.version); got != tc.want {
-				t.Errorf("ociPullRef(%q, %q) = %q, want %q", repo, tc.version, got, tc.want)
-			}
-		})
-	}
-}
-
 func buildChartTarGz(t *testing.T, name, version string) []byte {
 	t.Helper()
 	var buf bytes.Buffer

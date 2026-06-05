@@ -1,64 +1,40 @@
 package helm
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"helm.sh/helm/v4/pkg/registry"
-
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/atomic"
 )
 
-// locateOCIChart resolves a chart whose source is an OCIRepository.
-//
-// Normal path: the source controller's oci.Fetcher has already pulled the
-// artifact (applying spec.verify cosign verification, layerSelector,
-// certSecretRef, proxySecretRef, insecure, ignore, semver tag resolution)
-// into a slot under the shared source cache — the HR depwait blocks render
-// until that source is Ready, so the artifact is on disk by the time this
-// runs. Reading it from the Store keeps every Flux OCIRepository feature
-// working uniformly for both Kustomization and HelmRelease consumers. This
-// also covers HelmRepository(type=oci) charts, which the HR controller
-// repoints to a synthesized OCIRepository fetched the same way.
-//
-// Fallback path: when no SourceArtifact is present — i.e. --enable-oci=false,
-// which wires source.ExistenceFetcher (HR depwait still unblocks but no
-// artifact is written) — pull anonymously via helm's registry client. None
-// of the OCIRepository spec.* features apply on this path.
-func (c *Client) locateOCIChart(ctx context.Context, hr *manifest.HelmRelease) (string, error) {
+// locateOCIChart resolves a chart whose source is an OCIRepository. The
+// source controller's oci.Fetcher has already pulled the artifact (applying
+// spec.verify cosign verification, layerSelector, certSecretRef,
+// proxySecretRef, insecure, ignore, and semver tag resolution) into a slot
+// under the shared source cache; the HR depwait blocks render until that
+// source is Ready, so the artifact is on disk by the time this runs. Reading
+// it from the Store keeps every Flux OCIRepository feature working uniformly
+// for both Kustomization and HelmRelease consumers — the same artifact-read
+// shape as locateHelmChart / locateLocalChart. This also covers
+// HelmRepository(type=oci) charts, which the HR controller repoints to a
+// synthesized OCIRepository fetched the same way.
+func (c *Client) locateOCIChart(hr *manifest.HelmRelease) (string, error) {
 	r := c.resolveOCIRepo(hr)
 	if r == nil {
 		return "", fmt.Errorf("%w: OCIRepository %s not registered", manifest.ErrObjectNotFound, hr.Chart.RepoFullName())
 	}
-	if art := c.resolveLocalSource(hr); art != nil && art.LocalPath != "" {
-		path, err := chartPathFromArtifact(art.LocalPath)
-		if err != nil {
-			return "", fmt.Errorf("OCIRepository %s/%s: %w", r.Namespace, r.Name, err)
-		}
-		return path, nil
+	art := c.resolveLocalSource(hr)
+	if art == nil || art.LocalPath == "" {
+		return "", fmt.Errorf("%w: OCIRepository %s/%s artifact not available for HelmRelease %s",
+			manifest.ErrObjectNotFound, r.Namespace, r.Name, hr.Named().NamespacedName())
 	}
-	// No artifact in the Store — only the --enable-oci=false shape reaches
-	// here (existence-only OCIRepository, no real fetch). Pull anonymously
-	// via the registry client; this drops every security-relevant spec.*
-	// field (verify / layerSelector / certSecretRef / proxySecretRef /
-	// insecure / ignore), which bootstrap-time warnOnDisabledOCIFeatures
-	// already warns about per CR.
-	if r.Reference != nil && r.Reference.SemVer != "" {
-		return "", fmt.Errorf(
-			"OCIRepository %s/%s uses spec.ref.semver but no source.oci.Fetcher is wired "+
-				"(likely --enable-oci=false); semver resolution requires the OCI fetcher",
-			r.Namespace, r.Name)
+	path, err := chartPathFromArtifact(art.LocalPath)
+	if err != nil {
+		return "", fmt.Errorf("OCIRepository %s/%s: %w", r.Namespace, r.Name, err)
 	}
-	ver := r.Version()
-	slog.Warn("helm: OCIRepository SourceArtifact missing; falling back to helm registry client — spec.verify/layerSelector/etc. NOT applied on this path",
-		"ociRepository", r.Namespace+"/"+r.Name, "url", r.URL, "version", ver)
-	return c.fetchOCIChart(ctx, r.URL, ver)
+	return path, nil
 }
 
 // locateHelmChart resolves a chart whose source is a (synthesized) HelmChart.
@@ -178,81 +154,3 @@ const (
 	copiedOCILayerFilename = "layer.tar.gz"
 	httpChartFilename      = "chart.tgz"
 )
-
-// ociPullRef joins an OCI repo URL and an optional ref into the form
-// the helm registry client expects. A digest ref (`sha256:<hex>` and
-// friends) joins with `@`; a tag joins with `:`. Per OCI tag spec a
-// tag can never contain `:`, so its presence in `version` is an
-// unambiguous digest signal — without this branch, the helm client
-// rejects `repo:sha256:<hex>` as an invalid tag.
-func ociPullRef(ref, version string) string {
-	if version == "" {
-		return ref
-	}
-	sep := ":"
-	if strings.Contains(version, ":") {
-		sep = "@"
-	}
-	return ref + sep + version
-}
-
-// fetchOCIChart pulls an OCI chart via the helm registry client.
-// Used only as the EnableOCI=false fallback path of locateOCIChart;
-// when EnableOCI=true the source.oci.Fetcher's slot is consumed
-// directly via ociChartPathFromArtifact.
-func (c *Client) fetchOCIChart(ctx context.Context, ref, version string) (string, error) {
-	if c.registry == nil {
-		return "", errors.New("helm registry client not initialized")
-	}
-	pullRef := ociPullRef(ref, version)
-	// Key on the FULL pull reference (registry+path PLUS the tag or
-	// `@sha256:…` digest) so a tag-pulled artifact and a digest-pulled
-	// one for the same chart don't collide on a single cache file.
-	// The previous `safeName(ref) + "-" + version` shape collided
-	// `chart:1.2.3` with `chart@sha256:1.2.3-shaped-string` and let
-	// a tag re-push silently serve stale bytes to a digest reference.
-	target := filepath.Join(c.cacheDir, safeName(strings.TrimPrefix(pullRef, "oci://"))+".tgz")
-
-	release, err := c.chartDownloadLocks.Acquire(ctx, target)
-	if err != nil {
-		return "", err
-	}
-	defer release()
-
-	if _, err := os.Stat(target); err == nil {
-		return target, nil
-	}
-
-	_ = ctx // reserved for future per-pull cancellation when helm supports it
-	// Yield the worker-pool slot for the duration of the network
-	// pull so concurrent helm renders don't block the pool. No-op
-	// when SetTaskYield wasn't wired (legacy embedders).
-	var (
-		result  *registry.PullResult
-		pullErr error
-	)
-	c.yieldDuring(func() {
-		result, pullErr = c.registry.Pull(pullRef)
-	})
-	if pullErr != nil {
-		return "", fmt.Errorf("oci pull %s: %w", pullRef, pullErr)
-	}
-	if result == nil || result.Chart == nil {
-		return "", fmt.Errorf("oci pull %s: empty result", pullRef)
-	}
-	if err := atomic.WriteFile(target, result.Chart.Data, 0o600, true); err != nil {
-		return "", err
-	}
-	return target, nil
-}
-
-// safeName sanitizes an OCI ref into a filesystem-safe token for the
-// on-disk cache target. Non-alphanumeric / non-separator runes become '-'.
-func safeName(s string) string {
-	return strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
-			return r
-		}
-		return '-'
-	}, s)
-}

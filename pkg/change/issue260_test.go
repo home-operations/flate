@@ -75,7 +75,6 @@ func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) 
 	o, err := orchestrator.New(orchestrator.Config{
 		Path:        dir,
 		WipeSecrets: true,
-		EnableOCI:   true,
 		ExternalChanges: change.NewSet([]string{
 			"kubernetes/apps/networking/echo.yaml",
 		}),

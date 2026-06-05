@@ -599,7 +599,6 @@ spec:
 
 	o, err := New(Config{
 		Path:                dir,
-		EnableOCI:           true,
 		AllowMissingSecrets: true,
 	})
 	if err != nil {
@@ -667,7 +666,6 @@ spec:
 
 	o, err := New(Config{
 		Path:                dir,
-		EnableOCI:           true,
 		AllowMissingSecrets: true,
 	})
 	if err != nil {

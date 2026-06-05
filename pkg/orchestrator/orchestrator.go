@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"log/slog"
 	"maps"
 	"os"
 	"sync"
@@ -50,8 +49,6 @@ type Config struct {
 	HelmOptions helm.Options
 	// WipeSecrets controls Secret cleartext placeholders.
 	WipeSecrets bool
-	// EnableOCI turns on OCIRepository reconciliation.
-	EnableOCI bool
 	// AllowMissingSecrets converts source auth-secret-not-found errors
 	// into skips and omits HelmRelease valuesFrom Secret/ConfigMap refs
 	// that cannot materialize in the offline tree. Skipped source
@@ -313,10 +310,6 @@ func New(cfg Config) (*Orchestrator, error) {
 	// would otherwise have to keep in sync via Add* push-API calls.
 	resolver := helm.NewStoreSourceResolver(st)
 	helmClient.SetSourceResolver(resolver)
-	// Yield the worker-pool slot during OCI pulls so concurrent helm
-	// renders don't starve. Passes task.Service.YieldSlot through as
-	// a callback so pkg/helm doesn't have to import pkg/task.
-	helmClient.SetTaskYield(ts.YieldSlot)
 	srcCtrl := sourcectrl.New(st, ts)
 	// Every kind-specific fetcher is wired through source.Wrap so the
 	// concrete Fetch signature stays typed (no per-impl type
@@ -342,22 +335,16 @@ func New(cfg Config) (*Orchestrator, error) {
 	// source controller uniformly.
 	srcCtrl.Fetchers[manifest.KindHelmRepository] = source.ExistenceFetcher{}
 	// Bare OCI fetcher, used two ways: as the standalone OCIRepository
-	// fetcher (when EnableOCI), and as the HelmChart fetcher's OCI-branch
-	// delegate (always — so OCI-backed HelmRepository charts pull with full
-	// auth/TLS/verify regardless of --enable-oci). Not separately
-	// retry-wrapped: each consuming fetcher's own WithRetry wrapper owns
-	// retries.
+	// fetcher, and as the HelmChart fetcher's OCI-branch delegate (so
+	// OCI-backed HelmRepository charts pull with the same auth/TLS/verify).
+	// Every OCIRepository real-fetches through the source controller, like
+	// every other source kind — there is no existence-only OCI path.
+	// Embedders that want one can still WithFetcher a source.ExistenceFetcher.
+	// Not separately retry-wrapped: each consuming fetcher's own WithRetry
+	// wrapper owns retries.
 	ociFetcher := &oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet}
-	if cfg.EnableOCI {
-		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap(
-			manifest.KindOCIRepository, ociFetcher)
-	} else {
-		// --enable-oci=false: skip the real fetch but still mark each
-		// standalone OCIRepository Ready so HRs that dependsOn one don't
-		// time out. (OCI-backed HelmRepository charts still fetch via the
-		// HelmChart fetcher's OCI branch.)
-		srcCtrl.Fetchers[manifest.KindOCIRepository] = source.ExistenceFetcher{}
-	}
+	srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap(
+		manifest.KindOCIRepository, ociFetcher)
 	// HelmChart: the single authoritative chart fetcher. The HR controller
 	// synthesizes a HelmChart per (chart, version, repo) for every
 	// HelmRepository-sourced chart; this fetcher pulls it — HTTP repos via
@@ -460,77 +447,11 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.existence = res.Existence
 
 	o.failDependsOnCycles()
-	o.warnOnDisabledOCIFeatures()
-	o.warnOnKSOCISourceRefWithoutOCI()
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err
 	}
 	o.bootstrapped = true
 	return nil
-}
-
-// warnOnDisabledOCIFeatures surfaces the EnableOCI=false footgun: with
-// the source.ExistenceFetcher wired for OCIRepository, spec.verify,
-// spec.layerSelector, spec.certSecretRef, spec.proxySecretRef,
-// spec.insecure, and spec.ignore are all parsed from the manifests but
-// silently discarded — the source is marked Ready without a real
-// fetch. A user who configured spec.verify deserves to SEE that
-// flate skipped verification rather than discover it via "passed in
-// flate, failed in cluster".
-func (o *Orchestrator) warnOnDisabledOCIFeatures() {
-	if o.cfg.EnableOCI {
-		return
-	}
-	for _, repo := range store.ListAs[*manifest.OCIRepository](o.store, manifest.KindOCIRepository) {
-		var fields []string
-		if repo.Verify != nil {
-			fields = append(fields, "spec.verify")
-		}
-		if repo.LayerSelector != nil {
-			fields = append(fields, "spec.layerSelector")
-		}
-		if repo.CertSecretRef != nil {
-			fields = append(fields, "spec.certSecretRef")
-		}
-		if repo.ProxySecretRef != nil {
-			fields = append(fields, "spec.proxySecretRef")
-		}
-		if repo.Insecure {
-			fields = append(fields, "spec.insecure")
-		}
-		if repo.Ignore != nil {
-			fields = append(fields, "spec.ignore")
-		}
-		if len(fields) == 0 {
-			continue
-		}
-		slog.Warn("OCIRepository spec fields ignored — EnableOCI=false wires ExistenceFetcher",
-			"oci_repository", repo.Namespace+"/"+repo.Name,
-			"ignored_fields", fields)
-	}
-}
-
-// warnOnKSOCISourceRefWithoutOCI surfaces the EnableOCI=false +
-// KS-sourceRef=OCIRepository combo at bootstrap. Without OCI
-// reconciliation, source/ExistenceFetcher gives the OCIRepository a
-// Ready status but NO SourceArtifact — a Kustomization that needs
-// the artifact for spec.path resolution then dies at reconcile with
-// the cryptic "artifact not found", far from where the actual
-// configuration error lives. Warn up front so the operator either
-// enables OCI (--enable-oci=true / default) or restructures the KS
-// to use a GitRepository source.
-func (o *Orchestrator) warnOnKSOCISourceRefWithoutOCI() {
-	if o.cfg.EnableOCI {
-		return
-	}
-	for _, ks := range store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization) {
-		if ks.SourceKind != manifest.KindOCIRepository {
-			continue
-		}
-		slog.Warn("Kustomization sourceRef points at OCIRepository but --enable-oci=false; the synthesized existence-only artifact has no LocalPath and spec.path resolution will fail at render time",
-			"kustomization", ks.Namespace+"/"+ks.Name,
-			"source_ref", ks.SourceNamespace+"/"+ks.SourceName)
-	}
 }
 
 // replacePreflightFailures replaces the current preflight-failure map

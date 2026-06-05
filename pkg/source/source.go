@@ -74,12 +74,13 @@ type Suspendable interface {
 
 // ExistenceFetcher is the no-op Fetcher registered for kinds whose
 // existence alone is enough to satisfy downstream waits — used today
-// for HelmRepository (always) and OCIRepository when EnableOCI is
-// false. Returning nil artifact + nil error lands the resource in
-// Ready without recording a SourceArtifact, so a HelmRelease that
-// dependsOn a HelmRepository unblocks instantly without flate having
+// for HelmRepository (a registry/index base whose per-chart pull is a
+// synthesized HelmChart). Returning nil artifact + nil error lands the
+// resource in Ready without recording a SourceArtifact, so a HelmRelease
+// that dependsOn a HelmRepository unblocks instantly without flate having
 // to mirror the controllers' "did fetch succeed?" logic from outside
-// the controller package.
+// the controller package. Embedders can also wire it for any kind they
+// want present-but-not-fetched (e.g. OCIRepository in an offline embed).
 type ExistenceFetcher struct{}
 
 // Fetch implements source.Fetcher as a no-op — see ExistenceFetcher.

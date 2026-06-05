@@ -49,6 +49,12 @@ type Controller struct {
 	// renderTracker receives every reconcilable child emitted during render.
 	renderTracker RenderTracker
 
+	// selfProduces reports whether a Kustomization's own render emits a
+	// given ConfigMap (see Options.SelfProduces). collectDeps consults it
+	// to drop a self-produced substituteFrom CM from the dep set. Nil when
+	// unset (tests / no repoRoot) → edge always added.
+	selfProduces func(cm, consumer manifest.NamedResource) bool
+
 	// workingTreeFPs memoizes workingTreeFingerprint results per source
 	// LocalPath for the life of the controller. resolveSourceRootAnd-
 	// Fingerprint runs once per Kustomization, and many KSes share the
@@ -105,6 +111,13 @@ type Options struct {
 	// orchestrator before reconcile. When set for an id, the controller
 	// marks the resource Failed and does not render it.
 	PreflightFailure func(manifest.NamedResource) (string, bool)
+	// SelfProduces reports whether consumer's OWN render emits cm. When
+	// it does, collectDeps drops cm from the dependency set — a KS can't
+	// hard-wait on a postBuild.substituteFrom ConfigMap that only its own
+	// render produces (the bjw-s/onedr0p self-substitute). Available in
+	// full mode (graph-aware index), unlike the changed-only producer
+	// skip. Nil → the edge is always added (pre-index behavior).
+	SelfProduces func(cm, consumer manifest.NamedResource) bool
 }
 
 // New constructs a Kustomization controller.
@@ -125,6 +138,7 @@ func (c *Controller) Configure(opts Options) {
 	c.SetPreflight(opts.PreflightFailure)
 	c.SetParentOf(opts.ParentOf)
 	c.renderTracker = opts.RenderTracker
+	c.selfProduces = opts.SelfProduces
 }
 
 // markRenderedBatch reports parent→child render emissions to the
@@ -345,7 +359,17 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 			continue
 		}
 		depID := manifest.NamedResource{Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name}
-		deps = append(deps, manifest.DependencyRef{NamedResource: depID})
+		// Drop the hard CM edge ONLY when THIS KS's own render subtree
+		// emits it (the bjw-s/onedr0p self-substitute: cluster-apps' bare-
+		// dir render produces ConfigMap/flux-system/cluster-settings via a
+		// component). Graph-aware and available in full mode, unlike the
+		// changed-only ProducersFor skip below. A CM produced by a
+		// DIFFERENT KS — or genuinely absent — keeps the edge and fails
+		// loudly: a KS waiting on a CM only its own render can emit would
+		// otherwise deadlock against itself.
+		if c.selfProduces == nil || !c.selfProduces(depID, ks.Named()) {
+			deps = append(deps, manifest.DependencyRef{NamedResource: depID})
+		}
 		// In changed-only mode, when the substituteFrom CM is rendered
 		// by another Flux Kustomization (the producer), wait on that
 		// producer too — the CM dep alone doesn't gate ordering when

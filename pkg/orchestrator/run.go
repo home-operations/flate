@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"runtime"
+	"slices"
 
 	"golang.org/x/sync/errgroup"
 
@@ -187,6 +188,14 @@ func (o *Orchestrator) configureControllers() {
 		wipeSecrets: o.cfg.WipeSecrets,
 	}
 	renders := &orchestratorRenderInflight{tasks: o.tasks}
+	// selfProduces reports whether consumer's OWN render emits cm — the
+	// graph-aware self-substitute signal collectDeps uses to drop a
+	// self-produced postBuild.substituteFrom ConfigMap from the dep set.
+	// Nil-safe: a nil index (no repoRoot) yields false, so the edge is
+	// kept (the pre-index always-add behavior).
+	selfProduces := func(cm, consumer manifest.NamedResource) bool {
+		return slices.Contains(o.selfProduce.ProducedBy(cm), consumer)
+	}
 	o.ksc.Configure(kustomization.Options{
 		Filter:           o.filter,
 		ParentOf:         parentResolver,
@@ -194,6 +203,7 @@ func (o *Orchestrator) configureControllers() {
 		Existence:        existence,
 		Renders:          renders,
 		PreflightFailure: o.preflightFailure,
+		SelfProduces:     selfProduces,
 	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
 		Filter:              o.filter,

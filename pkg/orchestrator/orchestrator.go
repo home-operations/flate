@@ -164,6 +164,12 @@ type Orchestrator struct {
 	// wiring symmetric.
 	parentOf map[manifest.NamedResource]manifest.NamedResource
 
+	// selfProduce attributes each ConfigMap to the Kustomization(s) whose
+	// own render emits it (resolved across the bare-dir/component graph).
+	// The KS controller consults it to drop a self-produced
+	// postBuild.substituteFrom ConfigMap from the dependency set.
+	selfProduce *loader.SelfProduceIndex
+
 	// rendered tracks IDs the KS controller emitted from a parent
 	// render (vs. only loaded by the file walker). detectOrphans reads
 	// it to demote stale-on-disk resources to "orphan" rather than
@@ -439,6 +445,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.sourceFiles = res.SourceFiles
 	o.sourceRefs = res.SourceRefs
 	o.parentOf = res.ParentOf
+	o.selfProduce = res.SelfProduce
 	o.existence = res.Existence
 
 	o.failDependsOnCycles()

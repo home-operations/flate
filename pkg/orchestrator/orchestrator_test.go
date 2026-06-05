@@ -346,6 +346,100 @@ data: {k: v}
 	}
 }
 
+// The bjw-s/onedr0p self-substitute deadlock, in FULL mode: cluster-apps'
+// spec.path is a BARE dir whose flux-system group base pulls in a component
+// defining a namespace-less cluster-settings ConfigMap, which cluster-apps
+// then lists in postBuild.substituteFrom. That CM is produced only by
+// cluster-apps' own render, so a hard dependency edge would dead-lock it
+// against itself ("ConfigMap/flux-system/cluster-settings: dependency not
+// found"). The graph-aware self-production index must drop the self-edge so
+// cluster-apps renders and emits the CM.
+func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-apps, namespace: flux-system}
+spec:
+  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\ncomponents:\n  - ../../components/substitutions\n")
+	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - ./cluster-settings.yaml\n")
+	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/cluster-settings.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cluster-settings\ndata:\n  CLUSTER_NAME: home\n")
+
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	// Bounded so a regressed self-deadlock fails fast, not at the full 30s cap.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := o.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	if info, ok := o.Store().GetStatus(ksID); !ok || info.Status != store.StatusReady {
+		t.Fatalf("cluster-apps status = (%+v, %v), want Ready (self-substitute deadlock regressed?)", info, ok)
+	}
+	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
+	if got := o.Store().GetObject(cmID); got == nil {
+		t.Errorf("cluster-apps render did not emit %s", cmID)
+	}
+}
+
+// The guard: a substituteFrom ConfigMap that NO KS self-produces (and no
+// producer emits) must keep its hard dependency edge and fail loudly. The
+// graph-aware self-edge drop must not turn a genuinely-absent CM into a
+// silent pass. Same shape as above but the group base pulls in no
+// cluster-settings, so nothing produces ConfigMap/flux-system/cluster-settings.
+func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-apps, namespace: flux-system}
+spec:
+  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other\ndata:\n  k: v\n")
+
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = o.Run(ctx) // reconcile failure is recorded in status, not returned
+	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	info, ok := o.Store().GetStatus(ksID)
+	if !ok || info.Status != store.StatusFailed {
+		t.Fatalf("cluster-apps status = (%+v, %v), want Failed (absent substituteFrom CM must fail loud)", info, ok)
+	}
+	if !strings.Contains(info.Message, "cluster-settings") {
+		t.Errorf("cluster-apps failure message = %q, want it to mention cluster-settings", info.Message)
+	}
+}
+
 func TestOrchestrator_RunReturnsContextCancellation(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1

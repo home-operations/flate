@@ -212,17 +212,19 @@ func resolveRef(baseDir, ref string) (string, bool) {
 }
 
 // kustomizeDirectives is the subset of a kustomization.yaml that
-// transformer-namespace resolution reads.
+// transformer-namespace resolution and self-production attribution read.
 type kustomizeDirectives struct {
 	Namespace    string   `yaml:"namespace"`
 	Resources    []string `yaml:"resources"`
 	Transformers []string `yaml:"transformers"`
+	Components   []string `yaml:"components"`
 }
 
 // readKustomizeDirectives reads the kustomization file in dir (resolved
-// under repoRoot) and returns its namespace/resources/transformers
-// fields. ok is false when no kustomization file is present or it can't
-// be parsed — pure best-effort, same contract as readKustomizeNamespace.
+// under repoRoot) and returns its namespace/resources/transformers/
+// components fields. ok is false when no kustomization file is present or
+// it can't be parsed — pure best-effort, same contract as
+// readKustomizeNamespace.
 func readKustomizeDirectives(repoRoot, dir string) (kustomizeDirectives, bool) {
 	for _, name := range manifest.KustomizeBuilderFilenames {
 		data, err := os.ReadFile(filepath.Join(repoRoot, dir, name)) //nolint:gosec // path composed from known cluster layout

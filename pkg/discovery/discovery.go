@@ -53,6 +53,14 @@ type Result struct {
 	// file-loaded copy. Keyed by NamedResource so KS and HR entries
 	// never collide. Empty when no parent enforcement applies.
 	ParentOf map[manifest.NamedResource]manifest.NamedResource
+	// SelfProduce attributes each ConfigMap to the Kustomization(s)
+	// whose own render subtree emits it (bare-dir → subdir-base →
+	// component graph, with namespace propagation). collectDeps uses it
+	// to drop a self-produced postBuild.substituteFrom ConfigMap from
+	// the dependency set — a KS can't wait on a CM only its own render
+	// produces. Available in full mode, unlike the changed-only
+	// producer index.
+	SelfProduce *loader.SelfProduceIndex
 	// Existence holds every file-loaded object the DiscoveryOnly
 	// loader kept out of the Store: HRs, sources, CMs, Secrets, and
 	// raw manifests. depwait's missing-dep fallback consults it to
@@ -158,6 +166,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		SourceFiles: d.sourceFiles,
 		SourceRefs:  d.sourceRefs,
 		ParentOf:    parentOf,
+		SelfProduce: loader.BuildSelfProduceIndex(d.cfg.Store, repoRoot),
 		Existence:   l.Existence,
 		WipeSecrets: cfg.WipeSecrets,
 	}, nil

@@ -48,6 +48,70 @@ data:
 	}
 }
 
+// TestLoader_FollowsEscapingDirResource pins the Biohazard healthcheck
+// fix: a directory listed under `resources:` via a parent-escaping
+// path is descended into, so a Flux Kustomization defined there reaches
+// the store even though nothing points spec.path at it and a tree walk
+// would never reach it (it's only a kustomize resources: include).
+func TestLoader_FollowsEscapingDirResource(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../gate/
+`)
+	testutil.WriteFile(t, root, "gate/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ks.yaml
+`)
+	testutil.WriteFile(t, root, "gate/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: crds
+  namespace: flux-system
+spec:
+  path: ./blank
+`)
+
+	s := store.New()
+	if _, err := New(s).Load(t.Context(), filepath.Join(root, "entry")); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "crds"}) == nil {
+		t.Fatal("escaping dir resource not followed: Kustomization flux-system/crds missing from store")
+	}
+}
+
+// TestLoader_EscapingFileResourceStillRejected guards the asymmetry at
+// the heart of the fix: directory resources may escape (descend-only),
+// but a parent-escaping FILE resource gets opened, so resolveDataPath's
+// TOCTOU/path-traversal rejection must still apply.
+func TestLoader_EscapingFileResourceStillRejected(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../escape.yaml
+`)
+	testutil.WriteFile(t, root, "escape.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: escaped
+  namespace: flux-system
+spec:
+  path: ./x
+`)
+
+	s := store.New()
+	if _, err := New(s).Load(t.Context(), filepath.Join(root, "entry")); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "escaped"}) != nil {
+		t.Fatal("escaping FILE resource was loaded; the opened-path escape guard regressed")
+	}
+}
+
 func TestLoader_SkipsTemplatesDir(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "chart", "templates"), 0o750); err != nil {

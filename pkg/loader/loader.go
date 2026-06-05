@@ -306,11 +306,16 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		if cerr := ctx.Err(); cerr != nil {
 			return count, cerr
 		}
-		abs, ok := resolveDataPath(dir, r)
+		// Resolve with the escape-permitting resolver so directory
+		// includes that point outside the package (overlays' ../base,
+		// Flux repos' ../../../deploy/...) are followed — kustomize
+		// follows them too. The file branch below re-imposes
+		// resolveDataPath's stricter opened-path policy.
+		abs, ok := resolveResourcePath(dir, r)
 		if !ok {
-			// URL resources, paths escaping the package, malformed
-			// entries — kustomize handles these at render time;
-			// the loader's job is to ignore them at discovery time.
+			// URLs, absolute paths, malformed entries — kustomize
+			// handles these at render time; the loader's job is to
+			// ignore them at discovery time.
 			continue
 		}
 		info, err := os.Stat(abs)
@@ -326,6 +331,11 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 				return count, err
 			}
 			count += n
+			continue
+		}
+		// File resource: re-impose the in-base constraint, since a
+		// file gets opened (resolveResourcePath only guards descent).
+		if _, ok := resolveDataPath(dir, r); !ok {
 			continue
 		}
 		if !isManifestFile(abs) {

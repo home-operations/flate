@@ -163,14 +163,16 @@ func stripFileEntryKey(s string) string {
 	return s
 }
 
-// resolveDataPath joins rel against base and cleans the result. An
-// empty rel is rejected (kustomize would reject it too). Absolute
-// paths pass through verbatim — kustomize doesn't forbid them and
-// some generated manifests use them. Relative paths that escape
-// base via `..` are rejected: the resolved key is only consulted
-// against tree-walk paths today (no escape can match a walked path
-// rooted at --path), but a future caller that opens the path would
-// otherwise hit a TOCTOU + path-traversal surface for free.
+// resolveDataPath joins rel against base and cleans the result, for
+// references that get *opened and read*: configMapGenerator /
+// secretGenerator data files and file `resources:`. An empty rel is
+// rejected (kustomize would reject it too). Absolute paths pass
+// through verbatim — kustomize doesn't forbid them and some generated
+// manifests use them. Relative paths that escape base via `..` are
+// rejected: a path that gets opened would otherwise hand a TOCTOU +
+// path-traversal surface for free. Directory `resources:` and
+// `components:` are merely descended into, never opened, so they use
+// the escape-permitting resolveResourcePath / resolveComponentPath.
 func resolveDataPath(base, rel string) (string, bool) {
 	if rel == "" {
 		return "", false
@@ -200,3 +202,20 @@ func resolveComponentPath(base, rel string) (string, bool) {
 	return filepath.Clean(filepath.Join(base, rel)), true
 }
 
+// resolveResourcePath is the directory counterpart for `resources:`.
+// A directory listed under `resources:` legitimately escapes the
+// calling kustomization's dir (overlays reference `../base`; Flux
+// repos reference `../../../deploy/...`), and kustomize follows it —
+// so the in-base constraint resolveDataPath enforces for opened data
+// *files* is wrong for a dir we only descend into. Escape is safe
+// here because descend() merely recurses under the visited-set + ctx
+// guard and never opens the path. URLs and absolute paths are still
+// rejected; flate's loader only follows local relative dirs. File
+// resources keep resolveDataPath's stricter policy (re-checked by the
+// caller after stat), so this is the dir-descent path only.
+func resolveResourcePath(base, rel string) (string, bool) {
+	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "://") {
+		return "", false
+	}
+	return filepath.Clean(filepath.Join(base, rel)), true
+}

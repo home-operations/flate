@@ -51,13 +51,20 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 		return nil, noCleanup, nil
 	}
 	if f.Secrets == nil {
-		return nil, noCleanup, fmt.Errorf("%w: HelmRepository %s/%s references certSecretRef but no SecretGetter is wired",
-			manifest.ErrMissingSecret, r.Namespace, r.Name)
+		// certSecretRef carries TLS trust material — an unwired SecretGetter
+		// is a wiring bug, not a missing-in-cluster secret. Fail loud (no
+		// ErrMissingSecret wrap, which --allow-missing-secrets would soft-skip):
+		// silently dropping TLS material is a security downgrade. Mirrors
+		// source.ResolveCertSecret, the canonical cross-kind cert helper.
+		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s references certSecretRef but no SecretGetter is wired",
+			r.Namespace, r.Name)
 	}
 	sec := f.Secrets(r.Namespace, r.CertSecretRef.Name)
 	if sec == nil {
-		return nil, noCleanup, fmt.Errorf("%w: HelmRepository %s/%s: cert secret %s/%s not found",
-			manifest.ErrMissingSecret, r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
+		// A genuinely-absent secret IS the --allow-missing-secrets case
+		// (cert materialized live, not in git) — same sentinel git/oci/bucket
+		// use via source.ResolveCertSecret.
+		return nil, noCleanup, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.CertSecretRef.Name, "not found")
 	}
 
 	var tmpFiles []string
@@ -105,8 +112,10 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 	}
 	if certPath == "" && keyPath == "" && caPath == "" {
 		cleanup()
-		return nil, noCleanup, fmt.Errorf("%w: HelmRepository %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
-			manifest.ErrMissingSecret, r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
+		// A secret present but carrying none of the TLS keys is malformed
+		// config — fail loud (no ErrMissingSecret wrap), like BuildTLSConfig.
+		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
+			r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
 	}
 	return []getter.Option{getter.WithTLSClientConfig(certPath, keyPath, caPath)}, cleanup, nil
 }

@@ -89,6 +89,45 @@ func TestFetchHTTPChart_MissingSecret(t *testing.T) {
 	}
 }
 
+// TestFetchHTTPChart_CertSecretFailsLoud pins the security scope of
+// ErrMissingSecret: certSecretRef carries TLS trust material, so an unwired
+// SecretGetter (a config/wiring bug) must fail LOUD, NOT wrap ErrMissingSecret
+// — otherwise --allow-missing-secrets would silently soft-skip a TLS failure.
+// Mirrors source.ResolveCertSecret. (Contrast TestFetchHTTPChart_MissingSecret,
+// where an auth secretRef legitimately soft-skips.)
+func TestFetchHTTPChart_CertSecretFailsLoud(t *testing.T) {
+	r := httpRepo("https://charts.example")
+	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+	f := newHTTPFetcher(t, r) // Secrets is nil → wiring bug
+	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"))
+	if err == nil {
+		t.Fatal("expected a loud certSecretRef error, got nil")
+	}
+	if errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("certSecretRef nil-getter wrapped ErrMissingSecret (would soft-skip); want loud: %v", err)
+	}
+}
+
+// TestFetchHTTPChart_CertSecretNotFoundSoftSkips covers the other half: a
+// certSecretRef whose Secret is genuinely absent IS the --allow-missing-secrets
+// case (cert materialized live, not in git), so it wraps ErrMissingSecret —
+// same sentinel git/oci/bucket use via source.ResolveCertSecret.
+func TestFetchHTTPChart_CertSecretNotFoundSoftSkips(t *testing.T) {
+	r := httpRepo("https://charts.example")
+	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+	f, err := New(
+		func(_, _ string) *manifest.Secret { return nil }, // getter wired, secret absent
+		func(_, _ string) *manifest.HelmRepository { return r },
+		nil, cacheroot.New(t.TempDir()),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, ferr := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); !errors.Is(ferr, manifest.ErrMissingSecret) {
+		t.Errorf("certSecretRef not-found should soft-skip (ErrMissingSecret); got: %v", ferr)
+	}
+}
+
 // startHelmRepo serves a single-version index.yaml + the chart tarball.
 // Returns the server and a download-hit counter.
 func startHelmRepo(t *testing.T, chartBytes []byte, indexDigest string) (*httptest.Server, *int) {

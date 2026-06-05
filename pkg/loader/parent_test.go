@@ -105,6 +105,68 @@ func TestBuildParentIndex_NoSelfMatch(t *testing.T) {
 	}
 }
 
+func TestBuildParentIndex_PeersSharingSamePathHaveNoParent(t *testing.T) {
+	// Two Kustomizations defined in the same file and pointing at the
+	// SAME spec.path (a dual git-source redundancy pattern) are peers,
+	// not parent/child — neither renders the other. A mutual parent edge
+	// would deadlock the pair through collectDeps (each waits on the
+	// other to reach Ready, then both time out).
+	s := store.New()
+	config := &manifest.Kustomization{
+		Name:              "0-config",
+		Namespace:         "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./clusters/main/flux"},
+	}
+	softServe := &manifest.Kustomization{
+		Name:              "0-soft-serve",
+		Namespace:         "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./clusters/main/flux"},
+	}
+	s.AddObject(config)
+	s.AddObject(softServe)
+	sourceFiles := map[manifest.NamedResource]string{
+		config.Named():    "clusters/main/flux/flux-repo.yaml",
+		softServe.Named(): "clusters/main/flux/flux-repo.yaml",
+	}
+	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
+	if p, ok := parents[config.Named()]; ok {
+		t.Errorf("same-spec.path peer must not be a parent: 0-config.parent = %+v", p)
+	}
+	if p, ok := parents[softServe.Named()]; ok {
+		t.Errorf("same-spec.path peer must not be a parent: 0-soft-serve.parent = %+v", p)
+	}
+}
+
+func TestBuildParentIndex_RendererOfDefinitionFileStillParents(t *testing.T) {
+	// A KS whose definition file lives under another KS's spec.path — but
+	// whose OWN spec.path is a different directory — must still be
+	// attributed to that renderer. The peer-exclusion keys on the child's
+	// own claimed prefix (./apps), not on its source-file directory, so
+	// this strict-ancestor edge must survive.
+	s := store.New()
+	root := &manifest.Kustomization{
+		Name:              "0-config",
+		Namespace:         "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./clusters/main/flux"},
+	}
+	app := &manifest.Kustomization{
+		Name:              "app",
+		Namespace:         "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+	}
+	s.AddObject(root)
+	s.AddObject(app)
+	sourceFiles := map[manifest.NamedResource]string{
+		root.Named(): "clusters/main/flux/flux-repo.yaml",
+		// app is defined in the dir root renders, but claims ./apps.
+		app.Named(): "clusters/main/flux/app-ks.yaml",
+	}
+	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
+	if got, want := parents[app.Named()], root.Named(); got != want {
+		t.Errorf("app.parent = %+v; want %+v (the KS that renders app's definition dir)", got, want)
+	}
+}
+
 func TestBuildParentIndex_NoSourceFileSkipped(t *testing.T) {
 	// A KS without a recorded source file (e.g. lifted purely from a
 	// parent's render output, no annotation propagated to the orchestrator)
@@ -165,7 +227,7 @@ func TestKSPathPrefixes_SortsLongestFirst(t *testing.T) {
 	}
 }
 
-// TestKSPathPrefixes_SkipsEmptyPath confirms the "ks.Path == ''"
+// TestKSPathPrefixes_SkipsEmptyPath confirms the "ks.Path == ”"
 // guard: a Kustomization without a spec.path (chart-of-charts style,
 // or chained-via-sourceRef-only) doesn't contribute a prefix that
 // would silently swallow files at the repo root.

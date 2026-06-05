@@ -142,6 +142,33 @@ func LongestParent(prefixes []KSPathPrefix, file string, self manifest.NamedReso
 	return manifest.NamedResource{}, false
 }
 
+// longestStrictParent is LongestParent restricted to a *strict*
+// ancestor: besides skipping self, it skips any candidate whose prefix
+// the child itself claims (selfPrefixes). Two Kustomizations pointing
+// at the same spec.path directory each claim that directory, so each
+// would otherwise match the other as a parent — a mutual edge that
+// becomes a depwait deadlock in collectDeps (both wait on the other to
+// reach Ready, then both time out). Peers sharing a directory don't
+// render each other, so neither is the other's parent. selfPrefixes is
+// the set of prefixes the child contributes to KSPathPrefixes; nil/empty
+// (e.g. a HelmRelease child, which contributes none) reduces to
+// LongestParent.
+func longestStrictParent(prefixes []KSPathPrefix, file string, self manifest.NamedResource, selfPrefixes map[string]struct{}) (manifest.NamedResource, bool) {
+	slashFile := filepath.ToSlash(file)
+	for _, p := range prefixes {
+		if p.ID == self {
+			continue
+		}
+		if _, claimed := selfPrefixes[p.Prefix]; claimed {
+			continue
+		}
+		if strings.HasPrefix(slashFile, p.Prefix) {
+			return p.ID, true
+		}
+	}
+	return manifest.NamedResource{}, false
+}
+
 // BuildParentIndexForKind maps each childKind resource to its
 // enclosing Flux Kustomization — the KS whose spec.path or component
 // directory is the deepest strict ancestor of the child's source
@@ -184,6 +211,20 @@ func BuildParentIndexForKind(s *store.Store, repoRoot string, sourceFiles map[ma
 // and re-reads every kustomization.yaml's `components:` independently.
 func BuildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string, cache *manifest.ComponentCache) map[manifest.NamedResource]manifest.NamedResource {
 	prefixes := KSPathPrefixesWithCache(s, repoRoot, cache)
+	// Group each id's own claimed prefixes so a peer KS claiming the same
+	// spec.path directory isn't mistaken for an enclosing parent (which
+	// would mutually deadlock the pair through collectDeps). Children
+	// that contribute no prefixes (HelmReleases) get an empty set, so
+	// their attribution is unchanged.
+	ownPrefixes := make(map[manifest.NamedResource]map[string]struct{})
+	for _, p := range prefixes {
+		set := ownPrefixes[p.ID]
+		if set == nil {
+			set = make(map[string]struct{})
+			ownPrefixes[p.ID] = set
+		}
+		set[p.Prefix] = struct{}{}
+	}
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for _, obj := range s.ListObjects(childKind) {
 		id := obj.Named()
@@ -191,7 +232,7 @@ func BuildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFil
 		if !ok {
 			continue
 		}
-		if parent, ok := LongestParent(prefixes, file, id); ok {
+		if parent, ok := longestStrictParent(prefixes, file, id, ownPrefixes[id]); ok {
 			out[id] = parent
 		}
 	}

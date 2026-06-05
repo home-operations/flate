@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -263,6 +264,84 @@ data: {k: v}
 		info, ok := o.Store().GetStatus(id)
 		if !ok || info.Status != store.StatusReady {
 			t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
+		}
+	}
+}
+
+// TestOrchestrator_TwoKSSameSpecPathNoSpuriousTimeout reproduces the
+// dual git-source redundancy pattern: two Kustomizations defined in the
+// same file and pointing at the SAME spec.path. They are peers (neither
+// renders the other), so they must not be wired as each other's
+// structural parent — a mutual parent edge deadlocks the pair in
+// collectDeps until the 30s per-dep timeout, cascading to anything that
+// dependsOn one of them. The run context is bounded so a regression
+// fails fast instead of riding the full DefaultTimeout.
+func TestOrchestrator_TwoKSSameSpecPathNoSpuriousTimeout(t *testing.T) {
+	dir := t.TempDir()
+	// Two KSes, same spec.path ./flux, both defined in flux/repo.yaml so
+	// both source files sit under their shared spec.path prefix — the
+	// file-prefix parent index would otherwise make each the other's
+	// structural parent and deadlock the pair. repo.yaml is intentionally
+	// NOT listed in flux/kustomization.yaml (it's surfaced by the
+	// bootstrap-sibling scan), so rendering ./flux does not re-emit the
+	// peers — isolating the file-index parent edge this fix targets.
+	testutil.WriteFile(t, dir, "flux/repo.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: config-a, namespace: flux-system}
+spec:
+  path: ./flux
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: config-b, namespace: flux-system}
+spec:
+  path: ./flux
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, dir, "flux/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: flux-cm}
+data: {k: v}
+`)
+	// Downstream consumer dependsOn one of the peers — the cascade victim
+	// if config-a deadlocks.
+	testutil.WriteFile(t, dir, "consumer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: consumer, namespace: flux-system}
+spec:
+  path: ./apps
+  dependsOn:
+    - name: config-a
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello}
+data: {k: v}
+`)
+
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	// Bounded so a regressed mutual-parent deadlock fails in seconds, not
+	// the full 30s depwait.DefaultTimeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := o.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, name := range []string{"config-a", "config-b", "consumer"} {
+		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		info, ok := o.Store().GetStatus(id)
+		if !ok || info.Status != store.StatusReady {
+			t.Fatalf("%s status = (%+v, %v), want Ready (mutual-parent deadlock regressed?)", id, info, ok)
 		}
 	}
 }

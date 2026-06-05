@@ -745,6 +745,56 @@ func TestFilter_ReverseEdgeNoCascadeFromChangedConsumer(t *testing.T) {
 	}
 }
 
+// TestFilter_ForwardEdgeChangedHRKeepsChartRefSource is the forward
+// counterpart to the reverse edge: when a HelmRelease's OWN file changes, its
+// chartRef/sourceRef source must enter keep so the source controller fetches
+// the chart. HelmReleases are render-driven (absent from the store at
+// resolve()), so transitiveDeps' store lookup returns nil; the keep walk
+// relies on the discovery-supplied consumerRefs for the forward edge too.
+// Regression: a one-file HR edit left its OCIRepository unfetched and render
+// failed "artifact not available" (surfaced after #566 removed the anonymous
+// helm-registry fallback that had masked it). Mirrors k8s-gitops media/plex.
+func TestFilter_ForwardEdgeChangedHRKeepsChartRefSource(t *testing.T) {
+	const (
+		hrFile  = "kubernetes/apps/media/plex/app/helmrelease.yaml"
+		sibFile = "kubernetes/apps/media/other/app/helmrelease.yaml"
+		ociFile = "kubernetes/flux/repositories/app-template.yaml"
+	)
+	// Render-driven HRs are seeded with an empty namespace (discovery records
+	// them pre-inheritance); the shared chartRef OCIRepository lives elsewhere.
+	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "plex"}
+	sibling := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "other"}
+	oci := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
+
+	f := NewFilterWithCache(
+		NewSet([]string{hrFile}), // only plex's file changed
+		map[manifest.NamedResource]string{
+			hr:      hrFile,
+			sibling: sibFile,
+			oci:     ociFile,
+		},
+		"",
+		testutil.EmptyLister(), // HR + OCIRepository absent from the store at resolve()
+		nil,
+		map[manifest.NamedResource][]manifest.NamedResource{
+			hr:      {oci},
+			sibling: {oci}, // shares the same chart source
+		},
+	)
+
+	if !f.ShouldReconcile(hr) {
+		t.Fatalf("changed HelmRelease must be in keep; keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(oci) {
+		t.Fatalf("forward edge: the changed HR's chartRef OCIRepository must be in keep so its chart is fetched; keep=%v", f.KeepNames())
+	}
+	// Keeping the shared source via plex's forward edge must NOT reverse-
+	// cascade to a sibling HR that merely shares it (its file is unchanged).
+	if f.ShouldReconcile(sibling) {
+		t.Errorf("sibling HR sharing the chart source must NOT be pulled in; keep=%v", f.KeepNames())
+	}
+}
+
 // TestFilter_SubstituteFromConfigMapKeepsProducerKustomization pins
 // issue #418: a kept Kustomization with a non-Optional
 // postBuild.substituteFrom ConfigMap must pull the producer KS that

@@ -162,7 +162,7 @@ func (d *discoverer) applyNamespaces(repoRoot string) {
 	// targetNamespace and the leaf KS renders into the right namespace on
 	// its first pass (issue #528).
 	loader.StampTransformerTargetNamespaces(d.cfg.Store, d.sourceFiles, repoRoot)
-	loader.ApplyNamespaceInheritance(d.cfg.Store, d.sourceFiles, repoRoot)
+	loader.ApplyNamespaceInheritanceWithRefs(d.cfg.Store, d.sourceFiles, d.sourceRefs, repoRoot)
 	loader.ApplyDefaultNamespaces(d.cfg.Store, d.sourceFiles)
 }
 

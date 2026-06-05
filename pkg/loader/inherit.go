@@ -13,16 +13,30 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// ApplyNamespaceInheritance fills empty metadata.namespace fields on
-// loaded resources from the nearest enclosing namespace directive —
-// either a Flux Kustomization's spec.targetNamespace or a
-// kustomization.yaml `namespace:` field. This is the load-time analog
-// of kustomize-controller's apply-time behavior, without which the
-// store ends up with two copies of the same resource (one with the
-// inherited namespace, one with namespace=""). repoRoot anchors the
-// kustomization.yaml lookups; sourceFiles is mutated as ids are
-// rewritten.
+// ApplyNamespaceInheritance is ApplyNamespaceInheritanceWithRefs without a
+// consumer→source ref map (sourceRefs resolution skipped).
 func ApplyNamespaceInheritance(s *store.Store, sourceFiles map[manifest.NamedResource]string, repoRoot string) {
+	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, repoRoot)
+}
+
+// ApplyNamespaceInheritanceWithRefs fills empty metadata.namespace fields on
+// loaded resources from the nearest enclosing namespace directive — either a
+// Flux Kustomization's spec.targetNamespace or a kustomization.yaml
+// `namespace:` field. This is the load-time analog of kustomize-controller's
+// apply-time behavior, without which the store ends up with two copies of the
+// same resource (one with the inherited namespace, one with namespace="").
+// repoRoot anchors the kustomization.yaml lookups; sourceFiles is mutated as
+// ids are rewritten.
+//
+// sourceRefs (the discovery-supplied consumer→source ref map; nil to skip) is
+// resolved in step with each consumer's inherited namespace: recordSourceRefs
+// captures those edges at PARSE time, so a chartRef/sourceRef that omits its
+// namespace carries an empty-namespace target. Render-driven HelmReleases are
+// never in the Store, so the Store-object pass below can't fix them — resolving
+// the target to the consumer's inherited namespace here (Flux semantics: an
+// omitted ref namespace tracks the consumer's namespace) keeps changed-only
+// mode's keep-set walk from missing a changed HelmRelease's chart source.
+func ApplyNamespaceInheritanceWithRefs(s *store.Store, sourceFiles map[manifest.NamedResource]string, sourceRefs map[manifest.NamedResource][]manifest.NamedResource, repoRoot string) {
 	if len(sourceFiles) == 0 {
 		return
 	}
@@ -57,6 +71,18 @@ func ApplyNamespaceInheritance(s *store.Store, sourceFiles map[manifest.NamedRes
 		updates = append(updates, update{old: id, new: next, file: file})
 	}
 	for _, u := range updates {
+		// Resolve the consumer's referenced sources whose namespace was
+		// omitted — they implicitly track the consumer's inherited namespace.
+		// Done before the Store check so it also covers render-driven consumers
+		// (HelmReleases) that are absent from the Store. refs aliases the map's
+		// backing array, so the in-place edit is visible to sourceRefs; a nil
+		// sourceRefs map yields a nil slice and skips the loop.
+		refs := sourceRefs[u.old]
+		for i := range refs {
+			if refs[i].Namespace == "" {
+				refs[i].Namespace = u.new.Namespace
+			}
+		}
 		obj := s.GetObject(u.old)
 		if obj == nil {
 			continue
@@ -79,11 +105,23 @@ func ApplyNamespaceInheritance(s *store.Store, sourceFiles map[manifest.NamedRes
 // inheritance has had a chance to project kustomize/Flux namespaces.
 func ApplyDefaultNamespaces(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
 	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSet](s, manifest.KindResourceSet),
-		func(o *manifest.ResourceSet) *manifest.ResourceSet { c := *o; c.Namespace = manifest.DefaultNamespace; return &c })
+		func(o *manifest.ResourceSet) *manifest.ResourceSet {
+			c := *o
+			c.Namespace = manifest.DefaultNamespace
+			return &c
+		})
 	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSetInputProvider](s, manifest.KindResourceSetInputProvider),
-		func(o *manifest.ResourceSetInputProvider) *manifest.ResourceSetInputProvider { c := *o; c.Namespace = manifest.DefaultNamespace; return &c })
+		func(o *manifest.ResourceSetInputProvider) *manifest.ResourceSetInputProvider {
+			c := *o
+			c.Namespace = manifest.DefaultNamespace
+			return &c
+		})
 	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.HelmChartSource](s, manifest.KindHelmChart),
-		func(o *manifest.HelmChartSource) *manifest.HelmChartSource { c := *o; c.Namespace = manifest.DefaultNamespace; return &c })
+		func(o *manifest.HelmChartSource) *manifest.HelmChartSource {
+			c := *o
+			c.Namespace = manifest.DefaultNamespace
+			return &c
+		})
 }
 
 // applyDefaultNS assigns manifest.DefaultNamespace to every object in objs

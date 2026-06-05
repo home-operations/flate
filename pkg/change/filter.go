@@ -564,7 +564,17 @@ func (f *Filter) resolve(objs ObjectLister) {
 	// (intrange linter must not auto-fix this — see //nolint above).
 	for head := 0; head < len(queue); head++ { //nolint:intrange // queue grows during iteration
 		_, headPrimary := primary[queue[head]]
-		for _, d := range transitiveDeps(objs, queue[head]) {
+		// transitiveDeps reads the consumer from the Store; that covers
+		// Kustomizations but NOT HelmReleases, which are render-driven and
+		// absent from the Store at resolve() time (see the reverse-edge note
+		// above). consumerRefs is the discovery-supplied view of those
+		// consumer→source edges (chartRef / chart.spec.sourceRef / valuesFrom),
+		// keyed identically to the keep seed. Union it so a changed HelmRelease
+		// still pulls its chart source into keep; without it a one-file HR edit
+		// would leave its OCIRepository/HelmRepository unfetched.
+		deps := transitiveDeps(objs, queue[head])
+		deps = append(deps, f.consumerRefs[queue[head]]...)
+		for _, d := range deps {
 			if headPrimary {
 				enqueuePrimary(d)
 			} else {

@@ -210,6 +210,41 @@ func TestApplyNamespaceInheritance_HRChartRepoNamespaceTracksHR(t *testing.T) {
 	}
 }
 
+func TestApplyNamespaceInheritanceWithRefs_ResolvesOmittedChartRefNamespace(t *testing.T) {
+	// A render-driven HelmRelease (absent from the store, so the Store-object
+	// pass is skipped) whose chartRef OMITS its namespace: recordSourceRefs
+	// captured an empty-namespace target at parse time. After inheritance
+	// resolves the HR's namespace, the sourceRefs target must track it (Flux
+	// semantics: an omitted chartRef namespace follows the HR's). An
+	// explicit-namespace target must be left untouched.
+	root := t.TempDir()
+	writeFile(t, root, "apps/plex/kustomization.yaml", "namespace: media\n")
+	writeFile(t, root, "apps/grafana/kustomization.yaml", "namespace: monitoring\n")
+
+	s := store.New() // HRs intentionally NOT added — render-driven (hits the obj==nil path)
+	plex := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "plex"}
+	grafana := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "grafana"}
+	sourceFiles := map[manifest.NamedResource]string{
+		plex:    "apps/plex/helmrelease.yaml",
+		grafana: "apps/grafana/helmrelease.yaml",
+	}
+	omitted := manifest.NamedResource{Kind: manifest.KindOCIRepository, Name: "app-template"}                      // empty ns → tracks HR ns
+	explicit := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "shared"} // explicit → untouched
+	sourceRefs := map[manifest.NamedResource][]manifest.NamedResource{
+		plex:    {omitted},
+		grafana: {explicit},
+	}
+
+	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, sourceRefs, root)
+
+	if got := sourceRefs[plex][0].Namespace; got != "media" {
+		t.Errorf("omitted chartRef namespace = %q, want media (tracks the HR's inherited ns)", got)
+	}
+	if got := sourceRefs[grafana][0].Namespace; got != "flux-system" {
+		t.Errorf("explicit chartRef namespace = %q, want flux-system (must be untouched)", got)
+	}
+}
+
 func TestApplyNamespaceInheritance_FluxOperatorAndHelmChartSource(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "apps/platform/kustomization.yaml", "namespace: platform\n")

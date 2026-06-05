@@ -53,8 +53,8 @@ func TestIsOCIHelmRepo(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := IsOCIHelmRepo(tc.repo); got != tc.want {
-				t.Errorf("IsOCIHelmRepo = %v, want %v", got, tc.want)
+			if got := isOCIHelmRepo(tc.repo); got != tc.want {
+				t.Errorf("isOCIHelmRepo = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -65,7 +65,7 @@ func TestSynthesizeOCIRepository(t *testing.T) {
 		Name: "truecharts", Namespace: "flux-system",
 		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "oci://oci.trueforge.org/truecharts/", Type: manifest.RepoTypeOCI},
 	}
-	syn := SynthesizeOCIRepository(r, "kromgo", "3.0.0")
+	syn := synthesizeOCIRepository(r, "kromgo", "3.0.0")
 	if syn.URL != "oci://oci.trueforge.org/truecharts/kromgo" {
 		t.Errorf("URL = %q (trailing slash should be normalized)", syn.URL)
 	}
@@ -76,15 +76,15 @@ func TestSynthesizeOCIRepository(t *testing.T) {
 		t.Errorf("Reference = %+v, want tag 3.0.0", syn.Reference)
 	}
 	// digest version → digest ref
-	if d := SynthesizeOCIRepository(r, "kromgo", "sha256:abc"); d.Reference == nil || d.Reference.Digest != "sha256:abc" || d.Reference.Tag != "" {
+	if d := synthesizeOCIRepository(r, "kromgo", "sha256:abc"); d.Reference == nil || d.Reference.Digest != "sha256:abc" || d.Reference.Tag != "" {
 		t.Errorf("digest Reference = %+v", d.Reference)
 	}
 	// empty version → no ref
-	if v := SynthesizeOCIRepository(r, "kromgo", ""); v.Reference != nil {
+	if v := synthesizeOCIRepository(r, "kromgo", ""); v.Reference != nil {
 		t.Errorf("empty version → Reference = %+v, want nil", v.Reference)
 	}
 	// distinct versions → distinct stable names
-	if SynthesizeOCIRepository(r, "kromgo", "1.0.0").Name == SynthesizeOCIRepository(r, "kromgo", "2.0.0").Name {
+	if synthesizeOCIRepository(r, "kromgo", "1.0.0").Name == synthesizeOCIRepository(r, "kromgo", "2.0.0").Name {
 		t.Error("distinct versions collided on synthetic name")
 	}
 }
@@ -92,7 +92,7 @@ func TestSynthesizeOCIRepository(t *testing.T) {
 func TestFetch_OCIBranch(t *testing.T) {
 	repo := ociRepo("oci://oci.trueforge.org/truecharts")
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: "/slot"}}
-	f := &Fetcher{Repos: func(_, _ string) *manifest.HelmRepository { return repo }, OCI: stub}
+	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub}
 
 	art, err := f.Fetch(context.Background(), helmChart("truecharts", "kromgo", "3.0.0"))
 	if err != nil {
@@ -113,7 +113,7 @@ func TestFetch_OCIBranch(t *testing.T) {
 }
 
 func TestFetch_RepoNotFound(t *testing.T) {
-	f := &Fetcher{Repos: func(_, _ string) *manifest.HelmRepository { return nil }}
+	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return nil }}
 	_, err := f.Fetch(context.Background(), helmChart("missing", "kromgo", "3.0.0"))
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("err = %v, want ErrObjectNotFound", err)

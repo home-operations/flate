@@ -17,13 +17,13 @@ func (f *Fetcher) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Opti
 	if r.SecretRef == nil {
 		return nil, nil
 	}
-	if f.Secrets == nil {
+	if f.secrets == nil {
 		// Same sentinel as "secret not found" so --allow-missing-secrets
 		// covers both shapes — the dependency is equally unresolved.
 		return nil, fmt.Errorf("%w: HelmRepository %s/%s references secretRef but no SecretGetter is wired",
 			manifest.ErrMissingSecret, r.Namespace, r.Name)
 	}
-	sec := f.Secrets(r.Namespace, r.SecretRef.Name)
+	sec := f.secrets(r.Namespace, r.SecretRef.Name)
 	if sec == nil {
 		return nil, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "not found")
 	}
@@ -50,7 +50,7 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 	if r.CertSecretRef == nil {
 		return nil, noCleanup, nil
 	}
-	if f.Secrets == nil {
+	if f.secrets == nil {
 		// certSecretRef carries TLS trust material — an unwired SecretGetter
 		// is a wiring bug, not a missing-in-cluster secret. Fail loud (no
 		// ErrMissingSecret wrap, which --allow-missing-secrets would soft-skip):
@@ -59,7 +59,7 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s references certSecretRef but no SecretGetter is wired",
 			r.Namespace, r.Name)
 	}
-	sec := f.Secrets(r.Namespace, r.CertSecretRef.Name)
+	sec := f.secrets(r.Namespace, r.CertSecretRef.Name)
 	if sec == nil {
 		// A genuinely-absent secret IS the --allow-missing-secrets case
 		// (cert materialized live, not in git) — same sentinel git/oci/bucket

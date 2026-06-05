@@ -38,10 +38,10 @@ type ociFetcher = source.TypedFetcher[*manifest.OCIRepository]
 
 // Fetcher resolves a HelmChart into an on-disk chart artifact.
 type Fetcher struct {
-	Secrets source.SecretGetter // HTTP-branch SecretRef/CertSecretRef auth
-	Repos   RepoLookup          // resolves the chart's backing HelmRepository
-	OCI     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
-	Cache   *source.Cache       // content-addressed store for HTTP chart tarballs
+	secrets source.SecretGetter // HTTP-branch SecretRef/CertSecretRef auth
+	repos   RepoLookup          // resolves the chart's backing HelmRepository
+	oci     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
+	cache   *source.Cache       // content-addressed store for HTTP chart tarballs
 
 	indexCache    sync.Map                // map[string]*repo.IndexFile (process lifetime)
 	indexLocks    *keylock.KeyMap[string] // coalesce one index.yaml fetch per repo
@@ -59,10 +59,10 @@ func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cache *s
 		return nil, fmt.Errorf("helmchart: tmp dir: %w", err)
 	}
 	return &Fetcher{
-		Secrets:       secrets,
-		Repos:         repos,
-		OCI:           oci,
-		Cache:         cache,
+		secrets:       secrets,
+		repos:         repos,
+		oci:           oci,
+		cache:         cache,
 		indexLocks:    keylock.New[string](),
 		downloadLocks: keylock.New[string](),
 		tmpDir:        tmpDir,
@@ -83,18 +83,18 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 	if k := hc.SourceRef.Kind; k != "" && k != manifest.KindHelmRepository {
 		return nil, nil
 	}
-	r := f.Repos(hc.Namespace, hc.SourceRef.Name)
+	r := f.repos(hc.Namespace, hc.SourceRef.Name)
 	if r == nil {
 		return nil, fmt.Errorf("%w: HelmRepository %s/%s backing HelmChart %s",
 			manifest.ErrObjectNotFound, hc.Namespace, hc.SourceRef.Name, hc.Named().String())
 	}
-	if IsOCIHelmRepo(r) {
+	if isOCIHelmRepo(r) {
 		// Delegate to the OCI fetcher via a synthesized OCIRepository. The
 		// artifact is re-stamped KindHelmChart so the Store entry matches
 		// the synthetic HelmChart's identity. Retry is owned by the
 		// source.WithRetry wrapper around THIS fetcher — the inner OCI
 		// fetcher is bare (not separately wrapped).
-		art, err := f.OCI.Fetch(ctx, SynthesizeOCIRepository(r, hc.Chart, hc.Version))
+		art, err := f.oci.Fetch(ctx, synthesizeOCIRepository(r, hc.Chart, hc.Version))
 		if err != nil {
 			return nil, err
 		}
@@ -124,15 +124,15 @@ func Synthesize(r *manifest.HelmRepository, chartName, version string) *manifest
 	return hc
 }
 
-// IsOCIHelmRepo reports whether a HelmRepository serves charts from an OCI
+// isOCIHelmRepo reports whether a HelmRepository serves charts from an OCI
 // registry (spec.type: oci, or an oci:// URL) rather than a classic HTTP
 // index.yaml.
-func IsOCIHelmRepo(r *manifest.HelmRepository) bool {
+func isOCIHelmRepo(r *manifest.HelmRepository) bool {
 	return r.Type == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://")
 }
 
-// SynthesizeOCIRepository builds an in-memory OCIRepository for a single
-// chart served by a type=oci HelmRepository (precondition: IsOCIHelmRepo(r)).
+// synthesizeOCIRepository builds an in-memory OCIRepository for a single
+// chart served by a type=oci HelmRepository (precondition: isOCIHelmRepo(r)).
 // A HelmRepository(oci) is only a registry base; the chart name and version
 // live on the consuming HelmRelease, so there is no standalone OCIRepository
 // CR. The OCI branch of Fetch builds one on the fly and hands it to the OCI
@@ -142,7 +142,7 @@ func IsOCIHelmRepo(r *manifest.HelmRepository) bool {
 // The HelmRepository's auth / TLS / insecure / provider are lifted (it
 // carries no proxySecretRef). The resolved version becomes a digest ref
 // when it contains ':' else a tag, matching the OCIRepository path.
-func SynthesizeOCIRepository(r *manifest.HelmRepository, chartName, version string) *manifest.OCIRepository {
+func synthesizeOCIRepository(r *manifest.HelmRepository, chartName, version string) *manifest.OCIRepository {
 	chartURL := strings.TrimSuffix(r.URL, "/") + "/" + chartName
 	syn := &manifest.OCIRepository{Namespace: r.Namespace}
 	syn.Name = syntheticChartName(r.Name, chartName, chartURL, version)
@@ -165,7 +165,7 @@ func SynthesizeOCIRepository(r *manifest.HelmRepository, chartName, version stri
 
 // syntheticChartName derives the stable <helmrepo>-<chart>-<short hash>
 // identity shared by the synthetic HelmChart (Synthesize) and the synthetic
-// OCIRepository (SynthesizeOCIRepository) for one chart served by a
+// OCIRepository (synthesizeOCIRepository) for one chart served by a
 // HelmRepository. Hashing the normalized chartURL@version keeps distinct
 // charts/versions from the same repo on distinct ids and stays name-legal
 // when the version is a digest (whose ':' isn't a valid name character). The

@@ -47,7 +47,7 @@ func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets
 
 func TestFetchHTTPChart(t *testing.T) {
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
-	srv, _ := startHelmRepo(t, chartBytes, chartDigest(chartBytes))
+	srv, hits := startHelmRepo(t, chartBytes, chartDigest(chartBytes))
 	f := newHTTPFetcher(t, httpRepo(srv.URL))
 
 	art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"))
@@ -62,6 +62,16 @@ func TestFetchHTTPChart(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(art.LocalPath, "chart.tgz")); err != nil {
 		t.Errorf("chart.tgz not at LocalPath %s: %v", art.LocalPath, err)
+	}
+
+	// A second fetch of the same digest-pinned chart must short-circuit on the
+	// content-addressed blob (chartArtifactByDigest -> Cache.BlobByDigest) and
+	// NOT re-download — the dedup the *hits counter exists to pin.
+	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
+		t.Fatalf("second Fetch: %v", err)
+	}
+	if *hits != 1 {
+		t.Errorf("chart downloaded %d times, want 1 (second fetch should dedup via the blob CAS)", *hits)
 	}
 }
 

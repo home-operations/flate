@@ -121,6 +121,13 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	d.aliasBootstrapSources(repoRoot)
 	d.applyNamespaces(repoRoot)
+	// Resolve bare ${VAR} in Kustomization dependsOn against the
+	// cluster's postBuild substitute values, now that the full KS set is
+	// discovered (so the substitute union is complete and its conflict
+	// check is sound). Without this a child KS's
+	// `dependsOn: 0-${CLUSTER_NAME}-config` never matches the real
+	// 0-biohazard-config the parent's render would have substituted.
+	loader.ResolveDependsOnSubstitutions(d.cfg.Store)
 	// Materialize configMapGenerator / secretGenerator entries the
 	// file walker collected. The effective namespace comes from the
 	// enclosing Flux Kustomization, which is only known now that

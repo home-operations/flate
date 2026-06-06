@@ -41,16 +41,23 @@ func newDiffCmd() *cobra.Command {
 
 // defaultStripAttrs is the default `--strip-attr` list — annotations
 // and labels that Helm + kustomize rotate on every chart bump and
-// which contribute pure noise to PR-time diff review. checksum/*
-// annotations are templated as `sha256sum (include "secret.yaml")`
-// in many charts; the rendered Secret values flate sees are
-// wiped-to-PLACEHOLDER but the chart's helper pipeline still emits
-// non-stable bytes across runs (e.g. random suffix from sprig
-// randAlphaNum), producing churn-only diffs.
+// which contribute pure noise to PR-time diff review. The trailing-
+// slash "checksum/" is a prefix match (see StripResourceAttributes)
+// that covers every suffix charts emit — checksum/config,
+// checksum/secret, checksum/secrets, etc. — in one entry.
+//
+// These annotations are templated as `sha256sum (include "…" .)` over
+// a rendered ConfigMap/Secret. flate cannot make them stable: the
+// underlying value is genuinely per-render random in some charts
+// (e.g. matrix-synapse's `registration_shared_secret | default
+// (randAlphaNum 24)`, which sprig draws from crypto/rand — not
+// seedable, and Helm exposes no funcMap hook to override it). flate
+// faithfully mirrors Helm here, so raw `flate build` output is not
+// byte-stable for such charts; the on-disk render cache only masks it.
+// Stripping the annotation is what keeps `flate diff` churn-free.
 var defaultStripAttrs = []string{
 	"helm.sh/chart",
-	"checksum/config",
-	"checksum/secret",
+	"checksum/",
 	"app.kubernetes.io/version",
 	"chart",
 }

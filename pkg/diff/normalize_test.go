@@ -41,6 +41,38 @@ func TestNormalize_StripAttrsRemovesNoise(t *testing.T) {
 	}
 }
 
+// TestNormalize_StripsChecksumPrefixOnPodTemplate pins the fix for the
+// matrix-synapse churn: a pod-template `checksum/secrets` annotation
+// (sha256 the chart recomputes every render from a randAlphaNum value)
+// must be normalized away by the "checksum/" prefix entry, so a rotated
+// hash yields no diff. The plural key previously slipped past the
+// exact-match list.
+func TestNormalize_StripsChecksumPrefixOnPodTemplate(t *testing.T) {
+	mk := func(sum string) []Doc {
+		return []Doc{{
+			Manifest: map[string]any{
+				"kind":     "Deployment",
+				"metadata": map[string]any{"name": "synapse", "namespace": "matrix"},
+				"spec": map[string]any{
+					"template": map[string]any{
+						"metadata": map[string]any{
+							"annotations": map[string]any{"checksum/secrets": sum},
+						},
+					},
+				},
+			},
+		}}
+	}
+	if s := renderDiff(t, mk("105231a7"), mk("3d60fcd0"),
+		Options{Format: FormatDiff, StripAttrs: []string{"checksum/"}}); s != "" {
+		t.Errorf("rotated checksum/secrets should produce no diff under checksum/ prefix, got:\n%s", s)
+	}
+	// Control: without the strip the same change DOES surface.
+	if s := renderDiff(t, mk("105231a7"), mk("3d60fcd0"), Options{Format: FormatDiff}); s == "" {
+		t.Error("control: unstripped checksum/secrets change should surface as a diff")
+	}
+}
+
 // TestNormalize_RedactsConfigMapBinaryData locks the ConfigMap.binaryData
 // redaction: each value is replaced with a content-derived summary before
 // the diff, so a rotated binary hook payload surfaces as a one-line

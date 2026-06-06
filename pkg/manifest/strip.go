@@ -1,5 +1,10 @@
 package manifest
 
+import (
+	"maps"
+	"strings"
+)
+
 // StripResourceAttributes removes the listed annotation/label keys
 // from a raw Kubernetes resource's metadata and the pod-template
 // metadata for every workload shape Helm charts decorate. Used to cut
@@ -8,6 +13,11 @@ package manifest
 // identifier but still flags string-value changes verbatim, so
 // annotations whose values rotate on every chart update would
 // otherwise produce one entry per resource.
+//
+// An attr ending in "/" is a prefix match (e.g. "checksum/" drops
+// checksum/config, checksum/secret, checksum/secrets, and any other
+// chart-specific suffix in one entry); every other attr is an exact
+// key match.
 //
 // Coverage:
 //
@@ -80,6 +90,14 @@ func stripAttrs(metadata map[string]any, attrs []string) {
 			continue
 		}
 		for _, a := range attrs {
+			// Trailing "/" → prefix match (covers every checksum/<x>
+			// suffix charts emit); otherwise an exact key delete.
+			if strings.HasSuffix(a, "/") {
+				maps.DeleteFunc(val, func(k string, _ any) bool {
+					return strings.HasPrefix(k, a)
+				})
+				continue
+			}
 			delete(val, a)
 		}
 		if len(val) == 0 {

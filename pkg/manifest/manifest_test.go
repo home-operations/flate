@@ -1343,6 +1343,40 @@ func TestStripResourceAttributes_StatefulSetPVCs(t *testing.T) {
 	}
 }
 
+// TestStripResourceAttributes_ChecksumPrefix pins the trailing-slash
+// prefix match: a single "checksum/" entry drops every suffix charts
+// emit (config, secret, secrets, …). The plural "checksum/secrets"
+// (matrix-synapse) used to slip past the exact-match list and churn
+// `flate diff`; non-checksum annotations must survive untouched.
+func TestStripResourceAttributes_ChecksumPrefix(t *testing.T) {
+	r := map[string]any{
+		"kind": "Deployment",
+		"spec": map[string]any{
+			"template": map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"checksum/config":            "a",
+						"checksum/secret":            "b",
+						"checksum/secrets":           "c",
+						"reloader.stakater.com/auto": "true",
+					},
+				},
+			},
+		},
+	}
+	StripResourceAttributes(r, []string{"checksum/"})
+
+	ann := r["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)
+	for _, k := range []string{"checksum/config", "checksum/secret", "checksum/secrets"} {
+		if _, ok := ann[k]; ok {
+			t.Errorf("prefix strip left %q behind", k)
+		}
+	}
+	if ann["reloader.stakater.com/auto"] != "true" {
+		t.Errorf("non-checksum annotation should survive prefix strip; got %v", ann)
+	}
+}
+
 // TestRawObject_DoesNotAliasParsedDoc pins the deep-copy fix: a
 // RawObject.Spec must not alias the loader's parsed YAML map.
 // Previously r.Spec = doc["spec"].(map[string]any) shared the map

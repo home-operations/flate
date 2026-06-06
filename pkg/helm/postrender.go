@@ -9,8 +9,11 @@ import (
 	"github.com/fluxcd/pkg/apis/kustomize"
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"sigs.k8s.io/kustomize/api/krusty"
+	"sigs.k8s.io/kustomize/api/resmap"
 	kustypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
+
+	flatekustomize "github.com/home-operations/flate/pkg/kustomize"
 )
 
 // kustomizePostRenderer pipes helm's rendered output through one or
@@ -83,7 +86,15 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffe
 		LoadRestrictions: kustypes.LoadRestrictionsNone,
 		PluginConfig:     kustypes.DisabledPluginConfig(),
 	}
-	rm, err := krusty.MakeKustomizer(opts).Run(fs, ".")
+	// kustomize's krusty pipeline mutates package-global state that is
+	// not goroutine-safe. Hold the shared build mutex so this HR
+	// post-render never runs concurrently with a Kustomization's
+	// SecureBuild (or another HR's post-render) — see kustomize.BuildMutex.
+	rm, err := func() (resmap.ResMap, error) {
+		flatekustomize.BuildMutex.Lock()
+		defer flatekustomize.BuildMutex.Unlock()
+		return krusty.MakeKustomizer(opts).Run(fs, ".")
+	}()
 	if err != nil {
 		return nil, fmt.Errorf("postRenderer: kustomize build: %w", err)
 	}

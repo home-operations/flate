@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"sync"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -35,6 +36,20 @@ import (
 // that could otherwise have run in parallel are now sequenced.
 // Correctness is the priority — the previous parallelism was incorrect.
 var stageLocks = keylock.New[string]()
+
+// BuildMutex serializes every krusty/kustomize build flate runs in a
+// process. kustomize's krusty pipeline mutates package-global state
+// (the openapi schema registry + builtin-plugin/transformer factories)
+// that is NOT goroutine-safe — fluxcd/pkg/kustomize guards its own
+// SecureBuild with an internal mutex for exactly this reason, but that
+// mutex does not extend to OTHER krusty entrypoints in the same
+// process (flate's helm postRenderer runs krusty.Run directly). Two
+// concurrent builds — one KS SecureBuild, one HR postRender — race on
+// the shared globals and produce nondeterministic corruption: empty /
+// torn rendered output surfacing as "missing metadata.name" decode
+// errors, dropped resources, or cascade failures that flip run-to-run.
+// Every flate-owned krusty invocation MUST hold this lock.
+var BuildMutex sync.Mutex
 
 // RenderFlux renders a Flux kustomize.toolkit.fluxcd.io Kustomization
 // using the same library that Flux's kustomize-controller uses
@@ -135,7 +150,11 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, sourceFing
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rm, err := fluxkustomize.SecureBuild(staged, stagedSub, false)
+	rm, err := func() (resmap.ResMap, error) {
+		BuildMutex.Lock()
+		defer BuildMutex.Unlock()
+		return fluxkustomize.SecureBuild(staged, stagedSub, false)
+	}()
 	if err != nil {
 		return nil, fmt.Errorf("kustomize build %s: %w", subPath, err)
 	}

@@ -54,6 +54,14 @@ type Controller struct {
 	// Key:   manifest.NamedResource — the generated Secret's identity
 	//        (Kind=KindSecret, Namespace, Name)
 	// Value: manifest.NamedResource — the producer's identity
+	//
+	// Coverage is intentionally limited to ExternalSecret and SealedSecret
+	// (see rawProducerTargetID). A future producer kind that generates a
+	// Secret is NOT indexed until added there; generatedValuesProducer then
+	// returns (zero, false) for it and the --allow-missing-secrets omit
+	// path treats the ref as non-generated. That is degraded behavior, not
+	// a correctness bug — but the coverage must be extended in lockstep
+	// with any new producer kind.
 	rawProducerIndex sync.Map
 }
 

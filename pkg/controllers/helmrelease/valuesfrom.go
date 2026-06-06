@@ -79,6 +79,11 @@ func (c *Controller) valuesRefExists(id manifest.NamedResource) bool {
 	return c.Store.GetByName(id.Kind, id.Namespace, id.Name) != nil
 }
 
+// generatedValuesProducer reports the producer that would generate the
+// Secret identified by id, if one is indexed. Coverage is limited to the
+// kinds rawProducerTargetID recognises (ExternalSecret, SealedSecret);
+// any other kind returns (zero, false) and is treated as non-generated —
+// see the rawProducerIndex field comment for why that is safe-but-degraded.
 func (c *Controller) generatedValuesProducer(id manifest.NamedResource) (manifest.NamedResource, bool) {
 	if v, ok := c.rawProducerIndex.Load(id); ok {
 		return v.(manifest.NamedResource), true

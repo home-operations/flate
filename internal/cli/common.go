@@ -45,6 +45,11 @@ type commonFlags struct {
 	sourceRetryMinWait  time.Duration
 	sourceRetryMaxWait  time.Duration
 	sourceRetryJitter   float64
+	// gitDepth caps the shallow-clone history depth for GitRepository
+	// sources. Default 1 (opt-out shallow); 0 = full clone. Refs pinned
+	// to an explicit commit always full-clone. Plumbed into
+	// orchestrator.Config.GitDepth → git.Fetcher.Depth.
+	gitDepth int
 	// stageCacheMB caps the persistent kustomize stage cache. 0
 	// disables LRU eviction so the GC subcommand owns cleanup.
 	stageCacheMB int
@@ -122,6 +127,13 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 		"maximum backoff between source-fetch retries")
 	fs.Float64Var(&f.sourceRetryJitter, "source-retry-jitter", 0.1,
 		"jitter fraction [0,1] applied to source-fetch retry backoff")
+	// Shallow clone is the dominant speedup for GitRepository sources that
+	// pull a subdir out of a deep-history monorepo: depth=1 fetches only
+	// the tip commit, which is all the worktree materialization needs.
+	// Commit-pinned refs always full-clone (the pinned commit may be deep).
+	fs.IntVar(&f.gitDepth, "git-depth", 1,
+		"shallow-clone depth for GitRepository sources; 0 = full clone "+
+			"(refs pinned to an explicit commit always full-clone)")
 	fs.Var(&profileValue{target: &f.profileMode}, "profile",
 		"write a runtime profile: cpu, mem, block, mutex, or trace (off by default)")
 	fs.StringVar(&f.profileOut, "profile-out", ".",
@@ -345,6 +357,7 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 			MaxWait:  c.sourceRetryMaxWait,
 			Jitter:   c.sourceRetryJitter,
 		},
+		GitDepth:               c.gitDepth,
 		AllowMissingSecrets:    c.allowMissingSecrets,
 		CacheDir:               c.resolveCacheRoot(),
 		HelmTemplateCacheBytes: int64(c.helmTemplateCacheMB) << 20,

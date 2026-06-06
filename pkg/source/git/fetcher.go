@@ -50,6 +50,15 @@ type Fetcher struct {
 	Cache   *source.Cache
 	Secrets source.SecretGetter
 	Mirrors *mirror.Cache
+
+	// Depth caps the clone/fetch history depth for both the bare mirror
+	// and the legacy clone path. 0 (the zero value) clones full history,
+	// so library embedders are unaffected; the CLI defaults it to 1
+	// (opt-out via --git-depth=0). Shallow is forced off for commit-pinned
+	// refs (see effectiveDepth) and, in the legacy path, for submodule
+	// recursion. The worktree materialization only needs the resolved
+	// tip's tree, which a shallow clone provides in full.
+	Depth int
 }
 
 // Fetch implements source.TypedFetcher[*manifest.GitRepository].
@@ -168,6 +177,12 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	}
 	if repo.RecurseSubmodules {
 		cloneOpts.RecurseSubmodules = git.DefaultSubmoduleRecursionDepth
+	} else {
+		// Shallow + submodule recursion is finicky in go-git, so only
+		// carry Depth on the non-submodule legacy path. Plain sparse
+		// checkout is fine with shallow; commit-pinned refs fall back to
+		// a full clone inside effectiveDepth.
+		cloneOpts.Depth = effectiveDepth(f.Depth, repo.Reference)
 	}
 	// go-git's PlainCloneContext refuses to clone into a non-empty
 	// directory — but our staging dir IS that empty directory, so
@@ -401,7 +416,7 @@ func (f *Fetcher) Prewarm(ctx context.Context, repo *manifest.GitRepository) err
 		return err
 	}
 	defer restore()
-	_, err = f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, mirrorFetchPlan(repo.Reference))
+	_, err = f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, f.mirrorFetchPlan(repo.Reference))
 	return err
 }
 
@@ -411,7 +426,7 @@ func (f *Fetcher) Prewarm(ctx context.Context, repo *manifest.GitRepository) err
 // runs against the mirror (which has the object store); ApplyIgnore
 // and the revision-marker write delegate to applyIgnoreAndMark.
 func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitRepository, refStr string, slot *source.Slot, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
-	mirrorRepo, err := f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, mirrorFetchPlan(repo.Reference))
+	mirrorRepo, err := f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, f.mirrorFetchPlan(repo.Reference))
 	if err != nil {
 		return nil, err
 	}
@@ -445,17 +460,41 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 	return art, nil
 }
 
-func mirrorFetchPlan(ref *manifest.GitRepositoryRef) mirror.FetchPlan {
-	if ref == nil {
+// mirrorFetchPlan builds the per-GitRepository mirror update plan: the
+// narrow refspecs for ref plus the effective shallow depth. Both
+// fetchViaMirror and Prewarm route through it so the warm clone and the
+// real fetch always agree on depth — otherwise Prewarm would full-clone
+// the mirror and the subsequent Fetch could not shrink it.
+func (f *Fetcher) mirrorFetchPlan(ref *manifest.GitRepositoryRef) mirror.FetchPlan {
+	plan := mirrorRefSpecs(ref)
+	plan.Depth = effectiveDepth(f.Depth, ref)
+	return plan
+}
+
+// effectiveDepth returns the clone/fetch depth to use for ref given the
+// configured depth. It forces a full clone (0) when ref pins an explicit
+// commit: that commit may sit arbitrarily deep behind the tip a shallow
+// fetch brings, and validateCommitBranch walks the parent chain via
+// IsAncestor, which a truncated history cannot satisfy. Every other ref
+// (HEAD, name, semver, tag, branch) resolves to a tip whose tree is
+// complete at any depth, so the configured depth passes through.
+func effectiveDepth(depth int, ref *manifest.GitRepositoryRef) int {
+	if depth > 0 && ref != nil && ref.Commit != "" {
+		return 0
+	}
+	return depth
+}
+
+func mirrorRefSpecs(ref *manifest.GitRepositoryRef) mirror.FetchPlan {
+	// nil/HEAD and any commit-pinned ref take the broad clone path (empty
+	// RefSpecs): HEAD must resolve, and a pinned commit must be findable on
+	// any branch for validateCommitBranch's reachability check — a narrow
+	// fetch of just the named branch would omit a commit that lives
+	// elsewhere and report "not found" instead of "not reachable".
+	if ref == nil || ref.Commit != "" {
 		return mirror.FetchPlan{}
 	}
 	switch {
-	case ref.Commit != "" && ref.Branch != "":
-		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
-			config.RefSpec("+refs/heads/" + ref.Branch + ":refs/heads/" + ref.Branch),
-		}}
-	case ref.Commit != "":
-		return mirror.FetchPlan{}
 	case ref.Name != "":
 		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
 			config.RefSpec("+" + ref.Name + ":" + ref.Name),

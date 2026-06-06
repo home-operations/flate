@@ -39,8 +39,16 @@ type Cache struct {
 // FetchPlan narrows the mirror update to the refs needed by one
 // GitRepository. An empty RefSpecs slice preserves the historical full
 // mirror refresh.
+//
+// Depth caps the clone/fetch history. 0 (the zero value) preserves the
+// historical full clone. A positive depth maps to go-git's shallow
+// CloneOptions.Depth / FetchOptions.Depth — only the tip commit's tree
+// is what the worktree materialization needs, so depth=1 is sufficient
+// for tag/branch/HEAD refs. The fetcher gates this off for commit-pinned
+// refs (see git.effectiveDepth).
 type FetchPlan struct {
 	RefSpecs []config.RefSpec
+	Depth    int
 }
 
 // New constructs a Cache backed by the supplied Layout. The
@@ -92,7 +100,7 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 
 	repo, openErr := git.PlainOpen(path)
 	if openErr == nil {
-		if err := m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs); err != nil {
+		if err := m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs, plan.Depth); err != nil {
 			return nil, err
 		}
 		return repo, nil
@@ -101,22 +109,51 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 		return nil, fmt.Errorf("mirror open %s: %w", path, openErr)
 	}
 
-	repo, err = git.PlainCloneContext(ctx, path, true, &git.CloneOptions{
-		URL:          url,
-		Auth:         auth,
-		ProxyOptions: proxyOptions(proxy),
-	})
+	// Initial population. When the plan names specific refs (branch / tag /
+	// name / semver), fetch ONLY those — go-git's PlainClone otherwise pulls
+	// every branch (+refs/heads/*) and, by default, every tag, which on a
+	// monorepo with thousands of refs dwarfs the one ref we need. The empty-
+	// refspec case (nil/HEAD or a pinned commit) keeps the broad clone so
+	// HEAD resolves and the commit is reachable on any branch.
+	if len(plan.RefSpecs) > 0 {
+		repo, err = m.initAndFetch(ctx, path, url, auth, proxy, plan)
+	} else {
+		repo, err = git.PlainCloneContext(ctx, path, true, &git.CloneOptions{
+			URL:          url,
+			Auth:         auth,
+			ProxyOptions: proxyOptions(proxy),
+			Depth:        plan.Depth,
+		})
+		if err == nil {
+			// Broad clone pulls the server's default refs; the empty plan
+			// refspec falls back to +refs/*:refs/* so non-default refs are
+			// present too. Treat NoErrAlreadyUpToDate as success.
+			err = m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs, plan.Depth)
+		}
+	}
 	if err != nil {
 		// Leave nothing partial behind so the next attempt re-clones
 		// from scratch rather than tripping over a half-written mirror.
 		_ = os.RemoveAll(path)
-		return nil, fmt.Errorf("mirror clone %s: %w", url, err)
+		return nil, fmt.Errorf("mirror init %s: %w", url, err)
 	}
-	// Fetch the plan's narrow refspecs after cloning — clone only pulls the
-	// server's default refs (typically refs/heads/*), so non-default refs
-	// such as refs/pull/* won't be present until an explicit targeted fetch.
-	if err := m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs); err != nil {
-		_ = os.RemoveAll(path)
+	return repo, nil
+}
+
+// initAndFetch creates a fresh bare mirror and populates it with exactly
+// the plan's refspecs (at plan.Depth), instead of go-git's clone which
+// pulls all branches and tags. HEAD is left at PlainInit's default and is
+// intentionally not relied upon — every ref routed here (branch / tag /
+// name / semver) resolves by explicit ref, never via HEAD.
+func (m *Cache) initAndFetch(ctx context.Context, path, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, plan FetchPlan) (*git.Repository, error) {
+	repo, err := git.PlainInit(path, true)
+	if err != nil {
+		return nil, fmt.Errorf("mirror init: %w", err)
+	}
+	if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}}); err != nil {
+		return nil, fmt.Errorf("mirror remote: %w", err)
+	}
+	if err := m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs, plan.Depth); err != nil {
 		return nil, err
 	}
 	return repo, nil
@@ -126,7 +163,7 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 // the mirror refspec — every server ref updates in place, including
 // explicit spec.ref.name targets such as refs/pull/* and refs/merge-*.
 // Treats NoErrAlreadyUpToDate as a clean noop.
-func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig, refSpecs []config.RefSpec) error {
+func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig, refSpecs []config.RefSpec, depth int) error {
 	if len(refSpecs) == 0 {
 		refSpecs = []config.RefSpec{"+refs/*:refs/*"}
 	}
@@ -134,6 +171,11 @@ func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transp
 		Auth:         auth,
 		RefSpecs:     refSpecs,
 		ProxyOptions: proxyOptions(proxy),
+		Depth:        depth,
+		// All refspecs above are explicit (named refs, +refs/tags/*, or the
+		// +refs/*:refs/* fallback), so suppress go-git's default tag auto-
+		// following — it would silently pull every tag back in.
+		Tags: git.NoTags,
 	})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return fmt.Errorf("mirror fetch: %w", err)

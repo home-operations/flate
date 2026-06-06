@@ -92,6 +92,13 @@ type Config struct {
 	// source.RetryConfig / source.WithRetry.
 	SourceRetry source.RetryConfig
 
+	// GitDepth caps the shallow-clone history depth for GitRepository
+	// sources (both the bare mirror and the legacy clone). 0 clones full
+	// history; the CLI defaults it to 1 (opt-out via --git-depth=0).
+	// Commit-pinned refs always full-clone regardless. See
+	// git.Fetcher.Depth.
+	GitDepth int
+
 	// HelmTemplateCacheBytes caps the in-memory helm template-output
 	// cache. Repeat HRs with identical effective inputs (chart
 	// fingerprint, resolved values, render options) hit the cache and
@@ -322,6 +329,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		Cache:   cache,
 		Secrets: secretGet,
 		Mirrors: mirror.New(layout),
+		Depth:   cfg.GitDepth,
 	}
 	srcCtrl.Fetchers[manifest.KindGitRepository] = source.Wrap(
 		manifest.KindGitRepository, gitFetcher)

@@ -2,6 +2,7 @@ package helm
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -57,6 +58,49 @@ data:
 	}
 	if !strings.Contains(out, "greeting: hello") {
 		t.Errorf("values not applied: %s", out)
+	}
+}
+
+// TestTemplate_DoesNotMutateInputValues guards the copy-on-collision
+// optimization's load-bearing assumption. ExpandValueReferences now SHARES
+// cached valuesFrom sub-trees into hr.Values by reference (instead of a full
+// per-HR deep copy), so the render pipeline MUST treat the passed values as
+// immutable — an in-place mutation would corrupt the shared cache canonical
+// across HRs. helm v4 deep-copies the input on entry (CoalesceValues ->
+// copystructure.Copy); this test renders with a nested map + slice values
+// tree and asserts it is byte-identical afterward, catching a future helm
+// bump that mutates the caller's map/sub-maps/slices.
+func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
+		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
+	testutil.WriteFile(t, dir, "mychart/values.yaml", "image:\n  tag: default\n")
+	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  tag: {{ .Values.image.tag }}\n")
+
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+		},
+	}
+	vals := map[string]any{
+		"image": map[string]any{"tag": "v1", "repository": "nginx"},
+		"env":   []any{map[string]any{"name": "A", "value": "1"}},
+	}
+	snapshot := manifest.DeepCopyMap(vals)
+
+	if _, err := cli.Template(context.Background(), hr, vals, Options{}); err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	if !reflect.DeepEqual(vals, snapshot) {
+		t.Errorf("render mutated the input values map (helm no longer copies on entry?)\n before=%#v\n after =%#v", snapshot, vals)
 	}
 }
 

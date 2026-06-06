@@ -237,6 +237,20 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 	if hr == nil || len(hr.ValuesFrom) == 0 {
 		return nil
 	}
+	// A TargetPath ref writes through the accumulator in place (strvals
+	// navigates and mutates existing nodes), which is unsafe once the
+	// accumulator aliases shared cache sub-trees. Decide the merge
+	// strategy once for the whole HR: if NO ref has a TargetPath, share
+	// the cached canonicals by reference (cheap, the common platform-CM
+	// pattern); if ANY ref has one, keep the eager fully-owned copy so the
+	// in-place write can't reach the cache. See updateHelmReleaseValues.
+	share := true
+	for _, ref := range hr.ValuesFrom {
+		if ref.TargetPath != "" {
+			share = false
+			break
+		}
+	}
 	values := map[string]any{}
 	for _, ref := range hr.ValuesFrom {
 		found, err := lookupValueRef(ref, hr.Namespace, provider)
@@ -246,18 +260,24 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 			}
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
-		if err := updateHelmReleaseValues(ref, found, values, hr.Namespace, cache); err != nil {
+		values, err = updateHelmReleaseValues(ref, found, values, hr.Namespace, cache, share)
+		if err != nil {
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 	}
 	if len(hr.Values) > 0 {
-		// hr.Values is the inline-values map decoded from the HR
-		// manifest. The Prepare path clones hr before calling here
-		// (helm.Prepare in pkg/helm), so mutating hr.Values's
-		// sub-tree is safe; reaching values as the dst would
-		// however share sub-references back into hr.Values, so
-		// build the inline layer ON TOP of our owned values map.
-		DeepMergeInto(values, hr.Values)
+		// hr.Values is the inline-values map decoded from the HR manifest.
+		// The Prepare path clones hr before calling here, so its sub-trees
+		// are owned by this reconcile. Build the inline layer ON TOP of
+		// values (inline wins on collision). In the share path values may
+		// alias cache sub-trees, so use functional DeepMerge (no in-place
+		// mutation of a shared node); in the owned path DeepMergeInto is
+		// fine and avoids the extra top-level allocation.
+		if share {
+			values = DeepMerge(values, hr.Values)
+		} else {
+			DeepMergeInto(values, hr.Values)
+		}
 	}
 	hr.Values = values
 	return nil
@@ -409,10 +429,28 @@ func bagValueAsString(v any) (string, error) {
 // path bypasses the cache — strvals parsing already mutates values
 // in place per-call and is comparatively cheap (no map allocation
 // for the parsed tree).
-func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any, namespace string, cache *Cache) error {
+// updateHelmReleaseValues merges one valuesFrom ref into the values
+// accumulator and returns the (possibly new) accumulator.
+//
+// share selects the merge strategy, decided once per HR by the caller:
+//   - share=true (the HR has NO TargetPath ref): functional DeepMerge,
+//     which SHARES the cached canonical's non-colliding sub-trees by
+//     reference instead of deep-copying them. Safe because nothing in
+//     this HR mutates the accumulator in place and the cache canonical
+//     is read-only downstream (helm copies the input on entry). M HRs
+//     referencing the same ConfigMap then share one parsed tree instead
+//     of each deep-copying it.
+//   - share=false (the HR has a TargetPath ref somewhere): eager
+//     DeepMergeInto over a DeepCopyMap of the canonical, so the
+//     accumulator is FULLY OWNED and the in-place strvals write that a
+//     TargetPath ref performs can't reach (and corrupt) the shared cache.
+func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any, namespace string, cache *Cache, share bool) (map[string]any, error) {
 	if ref.TargetPath != "" {
+		// Only reached when share==false (the caller sets share false the
+		// moment any ref carries a TargetPath), so `values` is owned and
+		// the in-place strvals write below is safe.
 		_, err := replaceValueAtPath(values, ref.TargetPath, found)
-		return err
+		return values, err
 	}
 
 	// Wiped Secret values surface here as the literal placeholder
@@ -421,29 +459,29 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 	// `secretGenerator` wrapping a SOPS-encrypted values.yaml) doesn't
 	// block the whole HR render.
 	if manifest.IsValuePlaceholder(found) {
-		return nil
+		return values, nil
 	}
 	key := valuesRefCacheKey(ref.Kind, namespace, ref.Name, ref.GetValuesKey(), found)
-	if parsed, ok := cache.lookup(key); ok {
-		// Cached parse — clone before merge because DeepMergeInto
-		// inserts sub-maps by reference when no key collides; mutating
-		// the dst would corrupt the cached canonical for the next
-		// consumer.
-		DeepMergeInto(values, manifest.DeepCopyMap(parsed))
-		return nil
-	}
-	var parsed map[string]any
-	if err := yaml.Unmarshal([]byte(found), &parsed); err != nil {
-		return fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)
-	}
-	if parsed != nil {
-		// Cache the parsed tree first (canonical, untouched), then
-		// merge a clone into values so the cache entry stays
-		// immutable for later consumers.
+	parsed, ok := cache.lookup(key)
+	if !ok {
+		if err := yaml.Unmarshal([]byte(found), &parsed); err != nil {
+			return values, fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)
+		}
+		if parsed == nil {
+			return values, nil
+		}
+		// Cache the parsed tree (canonical, never mutated) before merging.
 		cache.store(key, parsed)
-		DeepMergeInto(values, manifest.DeepCopyMap(parsed))
 	}
-	return nil
+	if share {
+		// Shares parsed's non-colliding sub-trees by reference; collisions
+		// allocate fresh nodes. Never mutates parsed (the cache canonical).
+		return DeepMerge(values, parsed), nil
+	}
+	// Owned-accumulator path: clone the canonical so the later in-place
+	// TargetPath write can't corrupt the shared cache entry.
+	DeepMergeInto(values, manifest.DeepCopyMap(parsed))
+	return values, nil
 }
 
 // replaceValueAtPath writes value into values at path using Helm's

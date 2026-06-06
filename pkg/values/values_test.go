@@ -2,7 +2,9 @@ package values
 
 import (
 	"errors"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -256,9 +258,12 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 		t.Errorf("second: replicaCount=%v", b.Values["replicaCount"])
 	}
 
-	// Mutate a's result — the cache must hand out a clone so b is
-	// unaffected. (The previous call already returned; we cross-check
-	// a third HR.)
+	// Overwrite a TOP-LEVEL key on a's result. Each HR gets its own
+	// top-level values map (DeepMerge allocates a fresh one), so a
+	// top-level write never reaches the shared cache canonical — a third
+	// HR still sees the parsed value. (Nested sub-trees ARE shared with
+	// the canonical and must not be mutated in place — that contract is
+	// pinned by the TargetPath and concurrency tests below.)
 	a.Values["replicaCount"] = "stomped"
 	c := hr()
 	if err := ExpandValueReferences(c, provider, cache); err != nil {
@@ -474,4 +479,143 @@ func equalish(a, b any) bool {
 		}
 	}
 	return a == b
+}
+
+// TestDeepMergeMatchesDeepMergeInto pins the equivalence the copy-on-collision
+// optimization relies on: functional DeepMerge(base, override) produces the
+// SAME value graph as the eager DeepMergeInto(copy(base), copy(override)) the
+// share path replaced. If these ever diverge, render output would change.
+func TestDeepMergeMatchesDeepMergeInto(t *testing.T) {
+	cases := []struct {
+		name           string
+		base, override map[string]any
+	}{
+		{"disjoint", map[string]any{"a": 1.0}, map[string]any{"b": 2.0}},
+		{"scalar-over-scalar", map[string]any{"a": 1.0}, map[string]any{"a": 2.0}},
+		{"nested-collision", map[string]any{"m": map[string]any{"x": 1.0, "y": 2.0}}, map[string]any{"m": map[string]any{"y": 9.0, "z": 3.0}}},
+		{"list-replace", map[string]any{"l": []any{1.0, 2.0}}, map[string]any{"l": []any{3.0}}},
+		{"scalar-over-map", map[string]any{"k": map[string]any{"x": 1.0}}, map[string]any{"k": "scalar"}},
+		{"map-over-scalar", map[string]any{"k": "scalar"}, map[string]any{"k": map[string]any{"x": 1.0}}},
+		{"nil-override", map[string]any{"k": map[string]any{"x": 1.0}}, map[string]any{"k": nil}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			functional := DeepMerge(tc.base, tc.override)
+			eager := manifest.DeepCopyMap(tc.base)
+			DeepMergeInto(eager, manifest.DeepCopyMap(tc.override))
+			if !reflect.DeepEqual(functional, eager) {
+				t.Errorf("DeepMerge != DeepMergeInto\n functional=%#v\n eager=%#v", functional, eager)
+			}
+		})
+	}
+}
+
+// nestedValuesCM returns a ConfigMap whose values.yaml is a nested map +
+// list document — the shape a platform-wide values CM takes.
+func nestedValuesCM() *manifest.ConfigMap {
+	return &manifest.ConfigMap{
+		Name: "platform", Namespace: "default",
+		Data: map[string]any{"values.yaml": "image:\n  repository: nginx\n  tag: v1\nenv:\n  - name: A\n    value: \"1\"\n"},
+	}
+}
+
+func wholeDocHR() *manifest.HelmRelease {
+	return &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "platform"}},
+		},
+	}
+}
+
+// TestExpandValueReferences_ConcurrentSharedCache pins the concurrency
+// contract: many HRs referencing the same ConfigMap share ONE cached parsed
+// tree by reference (the optimization), and concurrent expansion must be
+// race-free and correct. Run under -race, this fails if any goroutine writes
+// through a shared cache sub-tree.
+func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{nestedValuesCM()}}
+	cache := NewCache()
+	const n = 64
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range n {
+		wg.Go(func() {
+			hr := wholeDocHR()
+			if err := ExpandValueReferences(hr, provider, cache); err != nil {
+				errs[i] = err
+				return
+			}
+			img, ok := hr.Values["image"].(map[string]any)
+			if !ok || img["tag"] != "v1" || img["repository"] != "nginx" {
+				errs[i] = errInvalidResult
+				return
+			}
+			env, ok := hr.Values["env"].([]any)
+			if !ok || len(env) != 1 {
+				errs[i] = errInvalidResult
+			}
+		})
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: %v", i, err)
+		}
+	}
+}
+
+var errInvalidResult = errors.New("unexpected merged values")
+
+// TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache pins HOLE 1/2
+// of the design: an HR with a TargetPath ref takes the eager fully-owned path,
+// so its in-place strvals write into a key that ALSO exists in the cached
+// canonical must NOT leak into the cache (which whole-doc-only HRs share).
+func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T) {
+	secret := &manifest.ConfigMap{
+		Name: "inject", Namespace: "default",
+		Data: map[string]any{"v": "Always"},
+	}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{nestedValuesCM(), secret}}
+	cache := NewCache()
+
+	// Prime the cache with a whole-doc-only HR (shares the canonical).
+	a := wholeDocHR()
+	if err := ExpandValueReferences(a, provider, cache); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+
+	// HR with a TargetPath ref writing image.pullPolicy — image already
+	// exists in the cached canonical, so a sharing+in-place write would
+	// corrupt it. The TargetPath presence must force the eager path.
+	b := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "platform"},
+				{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.pullPolicy"},
+			},
+		},
+	}
+	if err := ExpandValueReferences(b, provider, cache); err != nil {
+		t.Fatalf("targetpath: %v", err)
+	}
+	if img := b.Values["image"].(map[string]any); img["pullPolicy"] != "Always" {
+		t.Fatalf("targetpath write did not land: image=%#v", img)
+	}
+
+	// A third whole-doc-only HR must NOT see the injected pullPolicy — i.e.
+	// b's in-place write never reached the shared cache canonical.
+	c := wholeDocHR()
+	if err := ExpandValueReferences(c, provider, cache); err != nil {
+		t.Fatalf("recheck: %v", err)
+	}
+	img := c.Values["image"].(map[string]any)
+	if _, leaked := img["pullPolicy"]; leaked {
+		t.Errorf("TargetPath write corrupted the shared cache canonical: image=%#v", img)
+	}
+	// And the priming HR's view is likewise uncorrupted.
+	if _, leaked := a.Values["image"].(map[string]any)["pullPolicy"]; leaked {
+		t.Errorf("TargetPath write leaked into a prior HR's shared values: %#v", a.Values["image"])
+	}
 }

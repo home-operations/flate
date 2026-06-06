@@ -2,12 +2,65 @@ package values
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// bigPlatformValuesYAML builds a large nested values document resembling a
+// platform-wide values ConfigMap that many HelmReleases reference via a
+// single whole-doc valuesFrom. Deep maps + lists, ~tens of KB, so the
+// per-HR DeepCopyMap of the cached parse is a measurable cost.
+func bigPlatformValuesYAML() string {
+	var b strings.Builder
+	b.WriteString("global:\n  domain: example.com\n  registry: ghcr.io\n")
+	for app := range 30 {
+		fmt.Fprintf(&b, "app%d:\n", app)
+		fmt.Fprintf(&b, "  image:\n    repository: ghcr.io/org/app%d\n    tag: v1.%d.0\n    pullPolicy: IfNotPresent\n", app, app)
+		fmt.Fprintf(&b, "  resources:\n    requests:\n      cpu: %dm\n      memory: %dMi\n    limits:\n      cpu: %dm\n      memory: %dMi\n", app*10, app*32, app*20, app*64)
+		b.WriteString("  env:\n")
+		for e := range 8 {
+			fmt.Fprintf(&b, "    - name: VAR_%d\n      value: \"value-%d-%d\"\n", e, app, e)
+		}
+		b.WriteString("  ingress:\n    enabled: true\n    hosts:\n")
+		for h := range 3 {
+			fmt.Fprintf(&b, "      - host: app%d-%d.example.com\n        paths: [\"/\"]\n", app, h)
+		}
+	}
+	return b.String()
+}
+
+// BenchmarkExpandValueReferences_SharedLargeCM is the gate for the
+// copy-on-collision optimization: N HelmReleases each reference ONE shared
+// large platform-values ConfigMap (whole-doc, no TargetPath), reusing a
+// single *Cache. After the first iteration the parse is cached, so each
+// subsequent iteration measures the per-HR cost the optimization targets —
+// today a full manifest.DeepCopyMap of the cached tree.
+func BenchmarkExpandValueReferences_SharedLargeCM(b *testing.B) {
+	cm := &manifest.ConfigMap{
+		Name: "platform-values", Namespace: "default",
+		Data: map[string]any{"values.yaml": bigPlatformValuesYAML()},
+	}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "platform-values"}
+	cache := NewCache() // shared across all HRs, as in production (one per helm.Client)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		hr := &manifest.HelmRelease{
+			Name: "app", Namespace: "default",
+			HelmReleaseSpec: helmv2.HelmReleaseSpec{ValuesFrom: []manifest.ValuesReference{ref}},
+			Values:          map[string]any{"replicaCount": 2},
+		}
+		if err := ExpandValueReferences(hr, provider, cache); err != nil {
+			b.Fatalf("ExpandValueReferences: %v", err)
+		}
+	}
+}
 
 // BenchmarkExpandValueReferences_ManyFromRefs measures ExpandValueReferences
 // against an HR with 10 valuesFrom ConfigMap refs — each carrying a

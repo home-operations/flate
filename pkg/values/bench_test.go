@@ -57,6 +57,37 @@ counts:
 	}
 }
 
+// BenchmarkExpandPostBuildSubstituteReference_SharedCM measures the
+// per-KS cost of the kustomize substitute path against a large shared
+// cluster-settings ConfigMap (50 flat vars) — the bjw-s/onedr0p pattern
+// where one CM is referenced by substituteFrom across many KSes. Unlike
+// the helm valuesFrom path, this does NO yaml.Unmarshal: lookupResourceData
+// -> decodeBag is a cheap map[string]any -> map[string]string conversion,
+// and the per-KS \n-strip + varname-regex validation run regardless of any
+// lookup cache. Quantifies whether memoizing the lookup would pay for the
+// threading complexity.
+func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
+	const keys = 50
+	data := make(map[string]any, keys)
+	for i := range keys {
+		data[fmt.Sprintf("VAR_%d", i)] = fmt.Sprintf("value-%d", i)
+	}
+	cm := &manifest.ConfigMap{Name: "cluster-settings", Namespace: "flux-system", Data: data}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		// Fresh KS per iteration mirrors a distinct KS reconcile sharing
+		// the same substituteFrom CM.
+		ks := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
+		ks.PostBuildSubstituteFrom = []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}}
+		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
+			b.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
+		}
+	}
+}
+
 // BenchmarkDeepMerge_DeepTree measures DeepMerge against two 5-level
 // nested maps — the cost the Helm prepare path pays per HR when
 // layering inline values onto resolved valuesFrom output.

@@ -417,7 +417,7 @@ func TestSlugifyRepo(t *testing.T) {
 		// Tag suffix: versionedURL passes URL:tag into slugify
 		// for OCI fetches. Slug should be the chart name, NOT
 		// the tag — otherwise the cache layout collapses
-		// every release of every chart into the same `&lt;tag&gt;/`
+		// every release of every chart into the same `<tag>/`
 		// directory.
 		"oci://ghcr.io/bjw-s-labs/helm/app-template:5.0.1":     "app-template",
 		"oci://ghcr.io/bjw-s-labs/helm/app-template:1.2.3-rc4": "app-template",

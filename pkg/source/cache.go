@@ -402,7 +402,7 @@ const maxSlugLen = 50
 //
 // Without the version strip, the OCI flow always presents
 // versionedURL (URL + ":" + tag) to slugifyRepo, and every OCI
-// slot ends up under `&lt;root&gt;/sources/&lt;tag&gt;/&lt;hash&gt;` — e.g. every
+// slot ends up under `<root>/sources/<tag>/<hash>` — e.g. every
 // app-template release piles under `5.0.1/`, `5.0.2/`, `5.0.3/`,
 // indistinguishable from any other chart pinned to those tags.
 // Functionally safe (hash is the real uniqueness key) but

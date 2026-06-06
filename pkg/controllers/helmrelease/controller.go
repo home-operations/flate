@@ -144,7 +144,7 @@ func (c *Controller) Start(ctx context.Context) {
 // already in the store at Start time and kept current as new objects arrive.
 //
 // The index maps targetID → producer.Named(), mirroring the classification
-// logic in rawProducesValuesRef so generatedValuesProducer can be answered
+// logic in rawProducerTargetID so generatedValuesProducer can be answered
 // in O(1) without a full-store scan.
 func (c *Controller) onRawProducerAdded() store.Listener {
 	return func(_ manifest.NamedResource, payload any) {
@@ -162,7 +162,7 @@ func (c *Controller) onRawProducerAdded() store.Listener {
 
 // rawProducerTargetID returns the NamedResource of the Secret that raw
 // will produce, or (zero, false) when raw is not a recognised producer kind.
-// This mirrors the classification in rawProducesValuesRef but returns the
+// This mirrors the classification in rawProducerTargetID but returns the
 // target identity rather than a boolean, so the index can be keyed by it.
 func rawProducerTargetID(raw *manifest.RawObject) (manifest.NamedResource, bool) {
 	switch raw.Kind {

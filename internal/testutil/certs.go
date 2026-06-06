@@ -57,7 +57,6 @@ func pemKey(t *testing.T, priv *ecdsa.PrivateKey) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
-// SelfSignedCA returns a PEM-encoded CA certificate.
 // makeCertificate builds a self-signed cert (signed by its own
 // ephemeral ECDSA key) with the given subject CN and usage flags,
 // returning the cert and key as PEM. The shared boilerplate — serial,

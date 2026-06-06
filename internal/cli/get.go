@@ -237,9 +237,10 @@ func printResources[T manifest.BaseManifest](
 	if !nameExists {
 		return fmt.Errorf("no %s named %q in --path", kind, sel.Name)
 	}
-	// Store.ListObjects iterates a Go map (random order); sort the
-	// (row, doc) tuple so every output flavor — including yaml/json —
-	// is deterministic across runs.
+	// Sort the (row, doc) tuples by (namespace, name) so every output
+	// flavor — table/yaml/json — is deterministic across runs. (The rows
+	// are derived per-object, so sort them rather than rely on the store's
+	// listing order.)
 	slices.SortFunc(pairs, func(a, b pair) int {
 		return cmp.Or(
 			cmp.Compare(a.row["namespace"], b.row["namespace"]),

@@ -196,6 +196,16 @@ func resolveDataPath(base, rel string) (string, bool) {
 // We still reject URLs and absolute paths — flate's loader only
 // follows local relative components.
 func resolveComponentPath(base, rel string) (string, bool) {
+	return resolvePath(base, rel)
+}
+
+// resolvePath joins rel under base, rejecting empty, absolute, and URL
+// refs (flate's loader only follows local relative paths). It permits
+// parent-directory escaping — both `components:` and directory
+// `resources:` legitimately reference `../...` and kustomize follows
+// them. The two public wrappers carry that intent at the call site;
+// centralizing the shared validation here keeps them from drifting.
+func resolvePath(base, rel string) (string, bool) {
 	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "://") {
 		return "", false
 	}
@@ -214,8 +224,5 @@ func resolveComponentPath(base, rel string) (string, bool) {
 // resources keep resolveDataPath's stricter policy (re-checked by the
 // caller after stat), so this is the dir-descent path only.
 func resolveResourcePath(base, rel string) (string, bool) {
-	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "://") {
-		return "", false
-	}
-	return filepath.Clean(filepath.Join(base, rel)), true
+	return resolvePath(base, rel)
 }

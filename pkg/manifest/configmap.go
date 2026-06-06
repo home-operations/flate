@@ -103,28 +103,32 @@ func parseSecret(doc map[string]any, wipeSecrets bool) (*Secret, error) {
 	}
 	s := &Secret{Name: name, Namespace: ns}
 	if data, ok := doc["data"].(map[string]any); ok {
-		out := make(map[string]any, len(data))
-		for k, v := range data {
-			if wipeSecrets {
-				out[k] = base64.StdEncoding.EncodeToString(
-					fmt.Appendf(nil, ValuePlaceholderTemplate, k),
-				)
-			} else {
-				out[k] = v
-			}
-		}
-		s.Data = out
+		// .data values are base64-encoded per the Kubernetes Secret schema.
+		s.Data = wiperField(data, wipeSecrets, func(k string) any {
+			return base64.StdEncoding.EncodeToString(fmt.Appendf(nil, ValuePlaceholderTemplate, k))
+		})
 	}
 	if sd, ok := doc["stringData"].(map[string]any); ok {
-		out := make(map[string]any, len(sd))
-		for k, v := range sd {
-			if wipeSecrets {
-				out[k] = fmt.Sprintf(ValuePlaceholderTemplate, k)
-			} else {
-				out[k] = v
-			}
-		}
-		s.StringData = out
+		// .stringData stays plaintext per the Kubernetes Secret schema.
+		s.StringData = wiperField(sd, wipeSecrets, func(k string) any {
+			return fmt.Sprintf(ValuePlaceholderTemplate, k)
+		})
 	}
 	return s, nil
+}
+
+// wiperField copies src, replacing each value with a per-key placeholder
+// (produced by encode) when wipeSecrets is set, else passing the original
+// value through. parseSecret calls it for both .data and .stringData —
+// the only difference between those fields is the encoding, via encode.
+func wiperField(src map[string]any, wipeSecrets bool, encode func(key string) any) map[string]any {
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		if wipeSecrets {
+			out[k] = encode(k)
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }

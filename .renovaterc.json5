@@ -4,17 +4,12 @@
   postUpdateOptions: ["gomodTidy", "gomodUpdateImportPaths"],
   packageRules: [
     {
-      // Bump the Go version in .mise/config.toml and go.mod together, in one
-      // reviewed PR, so the two never drift (mise is the source of truth; the
-      // Dockerfile + release workflow read tools.go from it). matchDepNames
-      // ["go"] matches the dep in both the mise and gomod managers.
       description: "Go Toolchain Group",
       matchManagers: ["mise", "gomod"],
       matchDepNames: ["go"],
       matchFileNames: [".mise/config.toml", "go.mod"],
       groupName: "Go toolchain",
       groupSlug: "go-toolchain",
-      automerge: false,
     },
   ],
 }

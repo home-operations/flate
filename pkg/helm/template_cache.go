@@ -232,7 +232,22 @@ func chartFingerprint(ch *chart.Chart) string {
 //     Install.Replace, Upgrade.DisableHooks, Test.Enable,
 //     PostRenderers) — Template reads these straight off hr without
 //     funneling them through opts, so they have to land in the key
-//     independently
+//     independently. PostRenderers in particular DOES change the
+//     rendered bytes (kustomize patches/images run inside Template),
+//     so it stays.
+//
+// Deliberately EXCLUDED — the cache boundary:
+//   - CommonMetadata. The cached value is the pre-stamp render
+//     (releaseManifest); spec.commonMetadata is applied strictly
+//     downstream of TemplateDocs by the controller
+//     (helm.ApplyHRCommonMetadata at controllers/helmrelease/
+//     controller.go), on both the fresh-render and the
+//     fingerprint-dedup replay paths. It never reaches Template's
+//     output (neither newInstallAction nor newPostRenderer reads it),
+//     so folding it in would only force spurious misses for HRs that
+//     set it. Two renders that differ only in CommonMetadata share one
+//     cache entry whose bytes are correct for both; each caller stamps
+//     its own metadata afterward.
 //
 // Cost of computing the key: dominated by JSON-marshaling
 // finalValues when chartFP is precomputed. A 50 KB values map
@@ -279,19 +294,17 @@ func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]
 		ChartValuesFiles         []string              `json:"chart_values_files,omitempty"`
 		IgnoreMissingValuesFiles bool                  `json:"ignore_missing_values_files,omitempty"`
 		PostRenderers            []helmv2.PostRenderer `json:"post_renderers,omitempty"`
-		CommonMetadata           *helmv2.CommonMetadata `json:"common_metadata,omitempty"`
 	}
 	khr := keyHR{
-		ReleaseName:      hr.ReleaseName(),
-		ReleaseNamespace: hr.ReleaseNamespace(),
-		CRDsPolicy:       hr.CRDsPolicy,
+		ReleaseName:              hr.ReleaseName(),
+		ReleaseNamespace:         hr.ReleaseNamespace(),
+		CRDsPolicy:               hr.CRDsPolicy,
 		DisableSchemaValidation:  hr.DisableSchemaValidation,
 		DisableOpenAPIValidation: hr.DisableOpenAPIValidation,
 		ChartVersion:             hr.Chart.Version,
 		ChartValuesFiles:         hr.ChartValuesFiles,
 		IgnoreMissingValuesFiles: hr.IgnoreMissingValuesFiles,
 		PostRenderers:            hr.PostRenderers,
-		CommonMetadata:           hr.CommonMetadata,
 	}
 	if hr.Install != nil {
 		khr.InstallDisableHooks = hr.Install.DisableHooks

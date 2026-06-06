@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
@@ -87,6 +88,58 @@ func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
+		out, err := cli.Template(ctx, hr, values, Options{})
+		if err != nil {
+			b.Fatalf("Template: %v", err)
+		}
+		if !strings.Contains(out, "demo-cm") {
+			b.Fatalf("missing rendered name")
+		}
+	}
+}
+
+// BenchmarkTemplate_CommonMetadataVariants renders the same chart +
+// values + release through one warm cache while varying ONLY
+// hr.CommonMetadata each iteration. CommonMetadata is applied downstream
+// of Template (the controller's ApplyHRCommonMetadata) and never affects
+// the rendered bytes, so every iteration SHOULD be a cache hit. This
+// quantifies dropping CommonMetadata from the template-output key:
+// before, each distinct CommonMetadata forced a full
+// action.Install.RunWithContext (cache miss); after, they all hit.
+// benchstat against main shows the avoided-render win for HRs that set
+// spec.commonMetadata.
+func BenchmarkTemplate_CommonMetadataVariants(b *testing.B) {
+	chartDir := stageBenchChartDir(b)
+	cli, err := NewClient(cacheroot.New(b.TempDir()))
+	if err != nil {
+		b.Fatalf("NewClient: %v", err)
+	}
+	cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", chartDir))
+
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name:          "mychart",
+			RepoName:      "chart-repo",
+			RepoNamespace: "flux-system",
+			RepoKind:      manifest.KindGitRepository,
+		},
+	}
+	values := map[string]any{"greeting": "hello"}
+	ctx := context.Background()
+	// Prime the cache so b.Loop measures the warm path.
+	if _, err := cli.Template(ctx, hr, values, Options{}); err != nil {
+		b.Fatalf("warm Template: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	i := 0
+	for b.Loop() {
+		i++
+		// A distinct CommonMetadata each iteration: a cache MISS on the
+		// pre-fix key (CommonMetadata folded in), a HIT after the fix.
+		hr.CommonMetadata = &helmv2.CommonMetadata{Labels: map[string]string{"rev": fmt.Sprintf("%d", i)}}
 		out, err := cli.Template(ctx, hr, values, Options{})
 		if err != nil {
 			b.Fatalf("Template: %v", err)

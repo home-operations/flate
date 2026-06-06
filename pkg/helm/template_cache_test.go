@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
@@ -293,6 +294,41 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 		alt.CRDsPolicy = "Skip"
 		if got := computeTemplateKey("fp", baseChart, baseValues, baseOpts, &alt); got == baseKey {
 			t.Error("different CRDsPolicy did not change the key")
+		}
+	})
+}
+
+// TestComputeTemplateKey_CommonMetadataExcluded pins the cache boundary:
+// spec.commonMetadata is applied DOWNSTREAM of Template (the controller's
+// helm.ApplyHRCommonMetadata, on both the fresh-render and dedup-replay
+// paths), never reaches the cached render, and so must NOT participate in
+// the key — otherwise every CommonMetadata-only change forces a spurious
+// full re-render. The control subtest asserts PostRenderers (which DOES
+// change the rendered bytes) still diverges the key, so this test cannot
+// pass by accident if a genuinely render-affecting input were dropped.
+func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
+	ch := minimalChart()
+	values := map[string]any{"k": "v"}
+	opts := Options{KubeVersion: "1.33"}
+	base := minimalHR()
+	baseKey := computeTemplateKey("fp", ch, values, opts, base)
+
+	t.Run("CommonMetadata does not change the key", func(t *testing.T) {
+		alt := *base
+		alt.CommonMetadata = &helmv2.CommonMetadata{
+			Labels:      map[string]string{"team": "platform"},
+			Annotations: map[string]string{"note": "x"},
+		}
+		if got := computeTemplateKey("fp", ch, values, opts, &alt); got != baseKey {
+			t.Errorf("CommonMetadata must NOT affect the cache key (applied downstream of Template):\nbase=%s\nalt =%s", baseKey, got)
+		}
+	})
+
+	t.Run("control: PostRenderers still diverges", func(t *testing.T) {
+		alt := *base
+		alt.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}
+		if got := computeTemplateKey("fp", ch, values, opts, &alt); got == baseKey {
+			t.Error("PostRenderers changes rendered output and must still diverge the key (guards against dropping a real input)")
 		}
 	})
 }

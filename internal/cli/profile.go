@@ -29,7 +29,7 @@ func startProfile(mode, outDir string) (stop func(), err error) {
 	path := filepath.Join(outDir, mode+".pprof")
 	switch mode {
 	case "cpu":
-		f, err := os.Create(path) //nolint:gosec // path is composed from the user-supplied --profile-out plus a fixed mode suffix
+		f, err := createProfileFile(path)
 		if err != nil {
 			return nil, err
 		}
@@ -40,7 +40,7 @@ func startProfile(mode, outDir string) (stop func(), err error) {
 		return func() { pprof.StopCPUProfile(); _ = f.Close() }, nil
 	case "mem":
 		return func() {
-			f, err := os.Create(path) //nolint:gosec // path is composed from the user-supplied --profile-out plus a fixed mode suffix
+			f, err := createProfileFile(path)
 			if err != nil {
 				return
 			}
@@ -51,7 +51,7 @@ func startProfile(mode, outDir string) (stop func(), err error) {
 	case "block":
 		runtime.SetBlockProfileRate(1)
 		return func() {
-			f, err := os.Create(path) //nolint:gosec // path is composed from the user-supplied --profile-out plus a fixed mode suffix
+			f, err := createProfileFile(path)
 			if err != nil {
 				return
 			}
@@ -62,7 +62,7 @@ func startProfile(mode, outDir string) (stop func(), err error) {
 	case "mutex":
 		runtime.SetMutexProfileFraction(1)
 		return func() {
-			f, err := os.Create(path) //nolint:gosec // path is composed from the user-supplied --profile-out plus a fixed mode suffix
+			f, err := createProfileFile(path)
 			if err != nil {
 				return
 			}
@@ -71,7 +71,7 @@ func startProfile(mode, outDir string) (stop func(), err error) {
 			_ = f.Close()
 		}, nil
 	case "trace":
-		f, err := os.Create(filepath.Join(outDir, "trace.out")) //nolint:gosec // path is composed from the user-supplied --profile-out plus a fixed filename
+		f, err := createProfileFile(filepath.Join(outDir, "trace.out"))
 		if err != nil {
 			return nil, err
 		}
@@ -82,4 +82,12 @@ func startProfile(mode, outDir string) (stop func(), err error) {
 		return func() { trace.Stop(); _ = f.Close() }, nil
 	}
 	return nil, errors.New("--profile must be one of: cpu, mem, block, mutex, trace")
+}
+
+// createProfileFile opens path for writing a profile. The G304 nolint
+// is centralized here: every caller composes path from the trusted
+// --profile-out directory plus a fixed mode/filename suffix, so it is
+// not an attacker-controlled path.
+func createProfileFile(path string) (*os.File, error) {
+	return os.Create(path) //nolint:gosec // path = trusted --profile-out + fixed suffix
 }

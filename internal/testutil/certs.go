@@ -58,22 +58,36 @@ func pemKey(t *testing.T, priv *ecdsa.PrivateKey) string {
 }
 
 // SelfSignedCA returns a PEM-encoded CA certificate.
-func SelfSignedCA(t *testing.T) string {
+// makeCertificate builds a self-signed cert (signed by its own
+// ephemeral ECDSA key) with the given subject CN and usage flags,
+// returning the cert and key as PEM. The shared boilerplate — serial,
+// validity window, key generation, CreateCertificate, PEM encoding —
+// lives here; the exported helpers pass only the fields that vary.
+func makeCertificate(t *testing.T, cn string, keyUsage x509.KeyUsage, extKeyUsage []x509.ExtKeyUsage, isCA bool) (cert, key string) {
 	t.Helper()
 	priv := ecKey(t)
 	tmpl := &x509.Certificate{
 		SerialNumber: randomSerial(t),
-		Subject:      pkix.Name{CommonName: "flate-test-ca"},
+		Subject:      pkix.Name{CommonName: cn},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(certValidity),
-		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		IsCA:         true,
+		KeyUsage:     keyUsage,
+		ExtKeyUsage:  extKeyUsage,
+		IsCA:         isCA,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
 	if err != nil {
 		t.Fatalf("CreateCertificate: %v", err)
 	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), pemKey(t, priv)
+}
+
+// SelfSignedCA returns a PEM-encoded CA certificate.
+func SelfSignedCA(t *testing.T) string {
+	t.Helper()
+	cert, _ := makeCertificate(t, "flate-test-ca",
+		x509.KeyUsageCertSign|x509.KeyUsageDigitalSignature, nil, true)
+	return cert
 }
 
 // SelfSignedServerCert returns a PEM-encoded server+client cert and
@@ -81,39 +95,16 @@ func SelfSignedCA(t *testing.T) string {
 // CA bundle (IsCA=true).
 func SelfSignedServerCert(t *testing.T) (cert, key string) {
 	t.Helper()
-	priv := ecKey(t)
-	tmpl := &x509.Certificate{
-		SerialNumber: randomSerial(t),
-		Subject:      pkix.Name{CommonName: "flate-test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(certValidity),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		IsCA:         true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	if err != nil {
-		t.Fatalf("CreateCertificate: %v", err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), pemKey(t, priv)
+	return makeCertificate(t, "flate-test",
+		x509.KeyUsageDigitalSignature|x509.KeyUsageCertSign,
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, true)
 }
 
 // SelfSignedClientCert returns a PEM-encoded client cert and matching
 // ECDSA private key — ExtKeyUsage is ClientAuth only.
 func SelfSignedClientCert(t *testing.T) (cert, key string) {
 	t.Helper()
-	priv := ecKey(t)
-	tmpl := &x509.Certificate{
-		SerialNumber: randomSerial(t),
-		Subject:      pkix.Name{CommonName: "flate-test-client"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(certValidity),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	if err != nil {
-		t.Fatalf("CreateCertificate: %v", err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), pemKey(t, priv)
+	return makeCertificate(t, "flate-test-client",
+		x509.KeyUsageDigitalSignature,
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, false)
 }

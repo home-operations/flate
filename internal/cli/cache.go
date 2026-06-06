@@ -43,7 +43,7 @@ dependency upgrade or a flate post-render change makes the on-disk
 entries semantically stale faster than the size cap would prune
 them.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			layout := cacheroot.New(cf.resolveRoot())
+			layout := cacheroot.New(cf.resolveCacheRoot())
 			dir := layout.RenderHelmCache()
 			// os.RemoveAll on a non-existent path returns nil — the
 			// "no cache to clear" idempotency is free. Any other
@@ -68,7 +68,10 @@ type cacheFlags struct {
 	cacheDir string
 }
 
-func (f *cacheFlags) resolveRoot() string {
+// resolveCacheRoot resolves the cache root, mirroring
+// commonFlags.resolveCacheRoot so both flag types expose the same
+// method name over the shared package-level helper.
+func (f *cacheFlags) resolveCacheRoot() string {
 	return resolveCacheRoot(&f.cacheDir)
 }
 
@@ -100,7 +103,7 @@ Set --dry-run to see what would be removed without touching disk.`,
 			if f.maxAge < 0 {
 				return errors.New("--max-age must be non-negative")
 			}
-			layout := cacheroot.New(cf.resolveRoot())
+			layout := cacheroot.New(cf.resolveCacheRoot())
 			res, err := source.Sweep(layout, source.SweepOpts{
 				MaxAge:         f.maxAge,
 				IncludeMirrors: f.includeMirrors,

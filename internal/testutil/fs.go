@@ -16,19 +16,20 @@ import (
 // part of the bench's setup phase, not the measured loop.
 func WriteFile(t testing.TB, root, rel, body string) {
 	t.Helper()
-	p := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(p), err)
-	}
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-		t.Fatalf("write %s: %v", p, err)
-	}
+	writeFileWithParents(t, filepath.Join(root, rel), body)
 }
 
 // WriteFileAt writes body to path (absolute or cwd-relative), creating
 // any missing parent directories. Companion to WriteFile for callers
 // that already hold a full path rather than a root+rel split.
 func WriteFileAt(t testing.TB, path, body string) {
+	t.Helper()
+	writeFileWithParents(t, path, body)
+}
+
+// writeFileWithParents is the shared mkdir-parents + write that both
+// WriteFile and WriteFileAt delegate to once they've computed the path.
+func writeFileWithParents(t testing.TB, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)

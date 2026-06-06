@@ -184,8 +184,6 @@ runs:
           DL_DIR="$(mktemp -dt flate-XXXXXX)"
           trap 'rm -rf "${DL_DIR}"' EXIT
 
-          BASE_URL="https://github.com/home-operations/flate/releases/download/${VERSION}"
-
           max_retries=5
           retry_delay=5
           download() {
@@ -203,8 +201,20 @@ runs:
             return 1
           }
 
-          download "${BASE_URL}/${ARCHIVE}" "${DL_DIR}/${ARCHIVE}"
-          download "${BASE_URL}/${ARCHIVE}.sha256" "${DL_DIR}/${ARCHIVE}.sha256"
+          # Release tags are v-prefixed (release-please include-v-in-tag); older
+          # releases used a bare version. Asset names stay v-less (goreleaser's
+          # .Version) — only the tag segment in the path changes — so try the
+          # v-prefixed tag first and fall back to the bare one.
+          fetch_from() {
+            local base="https://github.com/home-operations/flate/releases/download/$1"
+            download "${base}/${ARCHIVE}" "${DL_DIR}/${ARCHIVE}" \
+              && download "${base}/${ARCHIVE}.sha256" "${DL_DIR}/${ARCHIVE}.sha256"
+          }
+
+          fetch_from "v${VERSION}" || fetch_from "${VERSION}" || {
+            echo "Failed to download flate (tried tags v${VERSION} and ${VERSION})"
+            exit 1
+          }
 
           echo "Verifying checksum"
           if command -v sha256sum > /dev/null; then

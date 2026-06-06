@@ -1,11 +1,3 @@
-# mise is the single source of truth for the Go toolchain (and project tools)
-# across developer shells, CI, and the container build. The `go` version here
-# matches go.mod's `go` directive; Renovate keeps the two in lockstep via the
-# "Go Toolchain Group" rule in .renovaterc.json5. The Dockerfile and release
-# workflow read it with `mise config get tools.go`.
-#
-# `mise tasks` lists tasks; `mise run <task>` runs one.
-
 [tools]
 go = "1.26.4"
 golangci-lint = "2.12.2"

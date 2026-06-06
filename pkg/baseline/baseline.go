@@ -197,7 +197,11 @@ func relToRepo(repoRoot, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	// filepath.Rel returns a relative path on success (it errors
+	// otherwise, handled above), so no IsAbs check is needed — reject
+	// only the repo-escaping ".." and "../…" forms. A dir literally named
+	// "..foo" is in-repo and stays accepted.
+	if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return rel, nil
 	}
 	return "", fmt.Errorf("--path %q is outside the git repo at %q; pass --path-orig explicitly", path, repoRoot)

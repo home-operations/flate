@@ -105,14 +105,10 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 	// that didn't render (failed reconcile, suspended, no docs) still
 	// counts as a match — without this the typo-detection error below
 	// would also fire for failed-but-existing resources.
+	// Store.ListObjects(kind) already returns results sorted by
+	// (namespace, name) (store.go), so single-kind output is deterministic
+	// across runs without a re-sort here.
 	objs := o.Store().ListObjects(kind)
-	// Sort by (namespace, name) so output is deterministic across runs
-	// — Store.ListObjects iterates the byName map and would otherwise
-	// produce a different ordering each invocation, breaking shell-piped
-	// diffs and CI consumers.
-	slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
-		return a.Named().Compare(b.Named())
-	})
 	skipKinds := c.skipResourceKinds()
 	matched := 0
 	var out []map[string]any

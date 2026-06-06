@@ -2,7 +2,6 @@ package helmchart
 
 import (
 	"fmt"
-	"os"
 
 	"helm.sh/helm/v4/pkg/getter"
 
@@ -67,32 +66,13 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 		return nil, noCleanup, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.CertSecretRef.Name, "not found")
 	}
 
-	var tmpFiles []string
-	cleanup := func() {
-		for _, p := range tmpFiles {
-			_ = os.Remove(p)
-		}
-	}
+	// Scope the materialized PEM files under the fetcher's per-fetch
+	// tmpDir; helm's getter only reads them. cleanup removes every file
+	// a successful writeKey registered (see source.TempFiles).
+	tf := source.NewTempFiles(f.tmpDir)
+	cleanup := tf.Cleanup
 	writeKey := func(key string) (string, error) {
-		v := source.StringFromSecret(sec, key)
-		if v == "" {
-			return "", nil
-		}
-		tmp, err := os.CreateTemp(f.tmpDir, "helm-tls-*.pem")
-		if err != nil {
-			return "", fmt.Errorf("temp %s: %w", key, err)
-		}
-		if _, err := tmp.WriteString(v); err != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
-			return "", fmt.Errorf("write %s: %w", key, err)
-		}
-		if err := tmp.Close(); err != nil {
-			_ = os.Remove(tmp.Name())
-			return "", fmt.Errorf("close %s: %w", key, err)
-		}
-		tmpFiles = append(tmpFiles, tmp.Name())
-		return tmp.Name(), nil
+		return tf.Write("helm-tls-*.pem", source.StringFromSecret(sec, key))
 	}
 
 	certPath, err := writeKey("tls.crt")

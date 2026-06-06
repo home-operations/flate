@@ -69,21 +69,14 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 		// path would leave the actual reporter's case still failing.
 		return "", noCleanup, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)")
 	}
-	tmp, err := os.CreateTemp("", "flate-oci-creds-*.json")
+	// System temp (dir ""): the docker credential store only needs the
+	// file to exist for the duration of the pull.
+	tf := source.NewTempFiles("")
+	path, err := tf.Write("flate-oci-creds-*.json", configJSON)
 	if err != nil {
-		return "", noCleanup, fmt.Errorf("temp docker config: %w", err)
+		return "", noCleanup, err
 	}
-	if _, err := tmp.WriteString(configJSON); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-		return "", noCleanup, fmt.Errorf("write temp docker config: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return "", noCleanup, fmt.Errorf("close temp docker config: %w", err)
-	}
-	cleanup := func() { _ = os.Remove(tmp.Name()) }
-	return tmp.Name(), cleanup, nil
+	return path, tf.Cleanup, nil
 }
 
 // loadCredentials returns a credentials.Store backed by the given config

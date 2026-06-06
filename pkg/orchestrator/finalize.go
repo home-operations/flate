@@ -53,9 +53,9 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 // point reads as start → drain → finalize.
 func (o *Orchestrator) finalize() error {
 	failed := o.store.FailedResources()
-	o.cascadeParentFailures(failed)
+	ksCount, hrCount := o.cascadeParentFailures(failed)
 	o.demoteOrphans(failed)
-	o.logSummary(failed)
+	o.logSummary(failed, ksCount, hrCount)
 	o.logResourceFailures(failed)
 
 	// Compose any unattributed panic count with the aggregated
@@ -87,7 +87,7 @@ func (o *Orchestrator) finalize() error {
 // Walks the ParentOf chain per child so a deep render tree (grand-
 // parent → parent → child) propagates failures all the way down in
 // one pass. Cycle-guard via a visited set keeps the walk bounded.
-func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]store.StatusInfo) {
+func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]store.StatusInfo) (ksCount, hrCount int) {
 	ancestorFailure := func(child manifest.NamedResource) (manifest.NamedResource, store.StatusInfo, bool) {
 		visited := map[manifest.NamedResource]struct{}{child: {}}
 		cur := child
@@ -126,11 +126,23 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 			"parent", parent.String(),
 			"reason", parentInfo.Message)
 	}
+	// Count KS/HR while we already hold the listings, so logSummary
+	// doesn't re-scan the store for the same two counts. cascade only
+	// mutates status (never adds/removes objects), so these counts equal
+	// what a later ListObjects would report.
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		for _, obj := range o.store.ListObjects(kind) {
+		objs := o.store.ListObjects(kind)
+		switch kind {
+		case manifest.KindKustomization:
+			ksCount = len(objs)
+		case manifest.KindHelmRelease:
+			hrCount = len(objs)
+		}
+		for _, obj := range objs {
 			cascade(obj.Named())
 		}
 	}
+	return ksCount, hrCount
 }
 
 // demoteOrphans filters out resources whose source files sit under
@@ -152,9 +164,9 @@ func (o *Orchestrator) demoteOrphans(failed map[manifest.NamedResource]store.Sta
 	}
 }
 
-func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo) {
-	ksCount := len(o.store.ListObjects(manifest.KindKustomization))
-	hrCount := len(o.store.ListObjects(manifest.KindHelmRelease))
+func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo, ksCount, hrCount int) {
+	// ksCount/hrCount are passed in from cascadeParentFailures, which
+	// already listed both kinds — no redundant re-scan here.
 	slog.Debug("reconcile complete",
 		"kustomizations", ksCount,
 		"helm_releases", hrCount,

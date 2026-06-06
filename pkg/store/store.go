@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"hash/fnv"
 	"reflect"
 	"slices"
@@ -522,8 +523,20 @@ func (s *Store) ListObjects(kind string) []manifest.BaseManifest {
 		}
 		s.rUnlockAll()
 	}
-	slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
-		return a.Named().Compare(b.Named())
-	})
+	if kind != "" {
+		// All results share the queried Kind (byName[kind] index), so
+		// NamedResource.Compare's leading Kind comparison is always 0 here.
+		// Sort by (Namespace, Name) directly — identical order, one fewer
+		// string compare per element. This path runs per-kind in hot
+		// orchestrator loops (cycles, finalize, render collection).
+		slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
+			an, bn := a.Named(), b.Named()
+			return cmp.Or(cmp.Compare(an.Namespace, bn.Namespace), cmp.Compare(an.Name, bn.Name))
+		})
+	} else {
+		slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
+			return a.Named().Compare(b.Named())
+		})
+	}
 	return out
 }

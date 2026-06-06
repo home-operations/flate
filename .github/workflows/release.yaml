@@ -81,7 +81,7 @@ jobs:
       - name: Setup Mise
         uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
-          cache: false # publishing job — avoid restoring a poisonable cache
+          cache: false
           experimental: true
           install_args: --locked
 

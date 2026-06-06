@@ -122,7 +122,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 		"maximum backoff between source-fetch retries")
 	fs.Float64Var(&f.sourceRetryJitter, "source-retry-jitter", 0.1,
 		"jitter fraction [0,1] applied to source-fetch retry backoff")
-	fs.StringVar(&f.profileMode, "profile", "",
+	fs.Var(&profileValue{target: &f.profileMode}, "profile",
 		"write a runtime profile: cpu, mem, block, mutex, or trace (off by default)")
 	fs.StringVar(&f.profileOut, "profile-out", ".",
 		"directory to write profile files into (used with --profile)")
@@ -442,6 +442,29 @@ func (o *outputValue) Set(v string) error {
 		names[i] = string(a)
 	}
 	return fmt.Errorf("must be one of: %s", strings.Join(names, ", "))
+}
+
+// profileModes are the runtime profiles --profile accepts. The empty
+// string (the default) means no profiling; startProfile treats it as a
+// no-op.
+var profileModes = []string{"cpu", "mem", "block", "mutex", "trace"}
+
+// profileValue is the pflag.Value backing --profile: a string
+// constrained to profileModes (or "" for off). Set rejects anything
+// else, so cobra surfaces the error (with usage) at parse time, before
+// the command runs — instead of deferring to startProfile's runtime
+// default case after all other init has happened. Mirrors outputValue.
+type profileValue struct{ target *string }
+
+func (p *profileValue) String() string { return *p.target }
+func (p *profileValue) Type() string   { return "string" }
+
+func (p *profileValue) Set(v string) error {
+	if v == "" || slices.Contains(profileModes, v) {
+		*p.target = v
+		return nil
+	}
+	return fmt.Errorf("must be one of: %s", strings.Join(profileModes, ", "))
 }
 
 // runOrchestratorCfg routes the CLI through the embed-friendly

@@ -277,3 +277,26 @@ func TestOutputValue_Validates(t *testing.T) {
 		t.Errorf("error should name the accepted set: %q", err)
 	}
 }
+
+func TestProfileValue_Validates(t *testing.T) {
+	var mode string
+	v := &profileValue{target: &mode}
+
+	for _, ok := range []string{"cpu", "mem", "block", "mutex", "trace", ""} {
+		mode = "sentinel"
+		if err := v.Set(ok); err != nil {
+			t.Errorf("%q should be accepted: %v", ok, err)
+		}
+		if mode != ok {
+			t.Errorf("Set(%q) should update target, got %q", ok, mode)
+		}
+	}
+
+	err := v.Set("heap")
+	if err == nil {
+		t.Fatal("invalid mode should be rejected at parse time")
+	}
+	if !strings.Contains(err.Error(), "must be one of: cpu, mem, block, mutex, trace") {
+		t.Errorf("error should name the accepted set: %q", err)
+	}
+}

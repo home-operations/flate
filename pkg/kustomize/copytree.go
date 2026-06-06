@@ -14,6 +14,18 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// SkipStageDir reports whether a directory base name is excluded from
+// the staged copy: `node_modules` and every dot-prefixed dir (which
+// captures `.git`, `.flate-cache`, IDE state, etc.). It is the single
+// source of truth for that set — the working-tree fingerprint that keys
+// the persistent stage cache (kustomization controller) MUST apply the
+// identical rule, or a cache hit can land a stage missing a directory the
+// fingerprint counted (or vice-versa), yielding a structurally broken
+// tree. Apply to non-root directories only; callers own root detection.
+func SkipStageDir(base string) bool {
+	return base == "node_modules" || strings.HasPrefix(base, ".")
+}
+
 // copyTreeInto materializes every regular file from src into dst.
 // Symlinks are dereferenced, dotfiles are skipped to keep stages
 // clean. Caller owns dst — copyTreeInto neither creates nor removes
@@ -47,9 +59,10 @@ func (c *StagingCache) copyTreeInto(src, dst string) error {
 		}
 		base := d.Name()
 		if d.IsDir() {
-			// Skip anything that isn't user content: .git / node_modules
-			// and every dot-prefixed dir (which captures .flate-cache).
-			if base == "node_modules" || strings.HasPrefix(base, ".") {
+			// Skip anything that isn't user content (see SkipStageDir).
+			// The root is already handled by the rel == "." early return
+			// above, so this only fires on subdirectories.
+			if SkipStageDir(base) {
 				return fs.SkipDir
 			}
 			return os.MkdirAll(filepath.Join(dst, rel), 0o750)

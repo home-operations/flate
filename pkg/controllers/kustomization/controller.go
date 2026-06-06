@@ -464,9 +464,9 @@ func (c *Controller) cachedWorkingTreeFingerprint(path string) string {
 }
 
 // workingTreeFingerprint hashes every regular file under path with
-// (relpath, mtime, size). The skip set — `.git`, `node_modules`,
-// dot-prefixed dirs — mirrors copyTreeInto exactly: the fingerprint and
-// the staged tree MUST see the same files, or a cache hit can land a
+// (relpath, mtime, size). The directory skip set is shared with the
+// staged copy via kustomize.SkipStageDir — the fingerprint and the
+// staged tree MUST see the same files, or a cache hit can land a
 // structurally broken stage (e.g. a kustomization.yaml that references
 // a directory the stage omits). Cost is amortized against a cache miss,
 // which would walk the same tree anyway to copy.
@@ -485,8 +485,9 @@ func workingTreeFingerprint(path string) string {
 			return err
 		}
 		if d.IsDir() {
-			base := d.Name()
-			if p != abs && (base == "node_modules" || strings.HasPrefix(base, ".")) {
+			// Share the exclusion set with the staged copy; the root
+			// (abs) is never skipped even if its base is dot-prefixed.
+			if p != abs && kustomize.SkipStageDir(d.Name()) {
 				return fs.SkipDir
 			}
 			return nil

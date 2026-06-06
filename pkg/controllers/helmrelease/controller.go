@@ -25,22 +25,6 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// RenderTracker is the seam the controller uses to report
-// "this child id was emitted by THIS parent HR's render" to the
-// orchestrator. Nil is OK — the controller no-ops.
-//
-// Mirrors kustomization.RenderTracker; the parent linkage feeds
-// detectOrphans, the parent resolver, and ResourceSet extension
-// attribution for charts that render source CRs (tofu-controller's
-// OCIRepository pattern, ESO's HelmRepository fallback).
-//
-// MarkRenderedBatch records multiple children under a single lock
-// acquisition — used by the emit loop to avoid N round-trips on the
-// renderedSet mutex when a render emits N source-kind children.
-type RenderTracker interface {
-	MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource)
-}
-
 // Controller orchestrates HelmRelease reconciliation. Reconcile-shaping
 // state (Filter, ParentOf) flows in via Configure exactly once before Start.
 type Controller struct {
@@ -58,9 +42,6 @@ type Controller struct {
 	// allowMissingSecrets extends the source-controller flag to
 	// HelmRelease valuesFrom refs that cannot be resolved offline.
 	allowMissingSecrets bool
-
-	// renderTracker receives every source-kind child emitted during render.
-	renderTracker RenderTracker
 
 	// rawProducerIndex is an in-memory index populated by the store
 	// listener in Start. It maps the target NamedResource (the Secret
@@ -92,7 +73,7 @@ type ReconcileOptions struct {
 	// render. Mirrors kustomization.Options.RenderTracker; feeds the
 	// orchestrator's parent-provenance index (detectOrphans, parent
 	// resolver, ResourceSet attribution). Nil is OK — no-op.
-	RenderTracker RenderTracker
+	RenderTracker base.RenderTracker
 	// Existence is the file-existence lookup the orchestrator wires
 	// against the loader's ExistenceIndex. depwait uses it to lazy-
 	// promote file-indexed deps (HelmRepository, OCIRepository,
@@ -134,7 +115,7 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetPreflight(opts.PreflightFailure)
 	c.SetParentOf(opts.ParentOf)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
-	c.renderTracker = opts.RenderTracker
+	c.SetRenderTracker(opts.RenderTracker)
 }
 
 // Start registers the listeners. The controller runs until Close.
@@ -500,10 +481,10 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 	}
 	syn := helmchart.Synthesize(r, hr.Chart.Name, hr.Chart.Version)
 	synID := syn.Named()
-	// keepEmitted BEFORE AddObject so the synchronous source-controller
+	// keep-emit BEFORE AddObject so the synchronous source-controller
 	// listener sees the extended changed-only keep set (mirrors
 	// emitRenderedChildren).
-	c.keepEmitted(id, synID)
+	c.KeepEmitted(id, synID)
 	c.Store.AddObject(syn)
 	// Seed a Pending status ONLY on first materialization — when no status
 	// exists yet — to close the window between AddObject (which dispatches an
@@ -570,43 +551,14 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			// keep set when it invokes PreGate. Mirrors the ordering
 			// in kustomization.emitRenderedChildren.
 			childID := obj.Named()
-			c.keepEmitted(id, childID)
+			c.KeepEmitted(id, childID)
 			c.Store.AddObject(obj)
 			rendered = append(rendered, childID)
 		} else {
 			c.Store.AddRendered(obj)
 		}
 	}
-	c.markRenderedBatch(id, rendered)
-}
-
-// keepEmitted extends the change filter's keep set so render-emitted
-// source children pass the changed-only-mode PreGate check. Without
-// this, a chart that renders a source CR (tofu-controller's
-// OCIRepository, ESO's HelmRepository) would silently drop that child
-// from the diff comparison in changed-only mode. Mirrors
-// kustomization.keepEmitted (issue #260/#308).
-//
-// Called BEFORE Store.AddObject so the listener that fires
-// synchronously during AddObject sees the extended keep set.
-func (c *Controller) keepEmitted(parent, child manifest.NamedResource) {
-	if f := c.Filter(); f != nil {
-		f.AddEmitted(parent, child)
-	}
-}
-
-// markRenderedBatch reports parent→child render emissions to the
-// orchestrator's tracker if one is wired; no-op otherwise.
-// Centralizes the nil-check and empty-slice guard so the reconcile
-// body stays readable. The emit loop accumulates every source-kind
-// child it emits and flushes through this helper exactly once,
-// holding the renderedSet lock for one acquisition instead of N.
-// Mirrors kustomization.markRenderedBatch.
-func (c *Controller) markRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
-	if c.renderTracker == nil || len(children) == 0 {
-		return
-	}
-	c.renderTracker.MarkRenderedBatch(parent, children)
+	c.ReportRendered(id, rendered)
 }
 
 // collectHRDeps returns hr's typed dependsOn entries (carrying any

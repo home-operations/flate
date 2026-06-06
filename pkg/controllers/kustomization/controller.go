@@ -46,9 +46,6 @@ type Controller struct {
 	// parsing rendered manifests.
 	WipeSecrets bool
 
-	// renderTracker receives every reconcilable child emitted during render.
-	renderTracker RenderTracker
-
 	// selfProduces reports whether a Kustomization's own render emits a
 	// given ConfigMap (see Options.SelfProduces). collectDeps consults it
 	// to drop a self-produced substituteFrom CM from the dep set. Nil when
@@ -63,23 +60,6 @@ type Controller struct {
 	workingTreeFPs sync.Map // string -> string
 }
 
-// RenderTracker is the tiny seam the controller uses to report
-// "this child id was emitted by THIS parent KS's render" to the
-// orchestrator. Nil is OK — the controller no-ops.
-//
-// The parent linkage is consumed by detectOrphans, the parent
-// resolver (combined with the file-loaded path-prefix index), and
-// ResourceSet extension attribution — every place that needs to
-// query parent provenance for render-emitted resources.
-//
-// MarkRenderedBatch records multiple children under a single lock
-// acquisition — used by emitRenderedChildren to avoid N round-trips
-// on the renderedSet mutex when a render emits N reconcilable
-// children.
-type RenderTracker interface {
-	MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource)
-}
-
 // Options carries the post-bootstrap state the orchestrator wires onto
 // the controller before Start. Filter narrows reconciliation to
 // changed resources in changed-only mode. ParentOf maps each Flux
@@ -92,7 +72,7 @@ type RenderTracker interface {
 type Options struct {
 	Filter        *change.Filter
 	ParentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
-	RenderTracker RenderTracker
+	RenderTracker base.RenderTracker
 	// Existence is the file-existence lookup the orchestrator wires
 	// against the loader's ExistenceIndex. depwait uses it to lazy-
 	// promote file-indexed deps and to distinguish render-only
@@ -137,21 +117,8 @@ func (c *Controller) Configure(opts Options) {
 	c.SetDepwait(opts.Existence, opts.Renders)
 	c.SetPreflight(opts.PreflightFailure)
 	c.SetParentOf(opts.ParentOf)
-	c.renderTracker = opts.RenderTracker
+	c.SetRenderTracker(opts.RenderTracker)
 	c.selfProduces = opts.SelfProduces
-}
-
-// markRenderedBatch reports parent→child render emissions to the
-// orchestrator's tracker if one is wired; no-op otherwise.
-// Centralizes the nil-check and empty-slice guard so the reconcile
-// body stays readable. The emit loop accumulates every reconcilable
-// child it emits and flushes through this helper exactly once,
-// holding the renderedSet lock for one acquisition instead of N.
-func (c *Controller) markRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
-	if c.renderTracker == nil || len(children) == 0 {
-		return
-	}
-	c.renderTracker.MarkRenderedBatch(parent, children)
 }
 
 // Start registers the listener that drives reconciliation.

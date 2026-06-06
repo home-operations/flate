@@ -29,6 +29,20 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
+// RenderTracker is the seam a controller uses to report
+// "this child id was emitted by THIS parent's render" to the
+// orchestrator. Nil is OK — the controller no-ops.
+//
+// The parent linkage feeds detectOrphans, the structural-parent
+// resolver, and ResourceSet extension attribution for render-emitted
+// resources. Both the KS and HR controllers report through it
+// identically; MarkRenderedBatch records multiple children under a
+// single lock acquisition so a render emitting N children pays one
+// tracker round-trip rather than N.
+type RenderTracker interface {
+	MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource)
+}
+
 // Controller is the embeddable lifecycle harness. Construct via New,
 // install reconcile-shaping config via SetFilter (panics if called
 // after Start), then Start to register listeners.
@@ -82,6 +96,11 @@ type Controller struct {
 	renders   depwait.RenderInflight
 	preflight func(manifest.NamedResource) (string, bool)
 	parentOf  func(manifest.NamedResource) (manifest.NamedResource, bool)
+
+	// renderTracker receives every reconcilable/source child a render
+	// emits. Set via SetRenderTracker before Start; read-only after.
+	// nil is fine — markRenderedBatch no-ops.
+	renderTracker RenderTracker
 }
 
 // New constructs a base controller. Concrete controllers call this
@@ -126,6 +145,43 @@ func (c *Controller) SetParentOf(f func(manifest.NamedResource) (manifest.NamedR
 		panic("controller: SetParentOf called after Start")
 	}
 	c.parentOf = f
+}
+
+// SetRenderTracker installs the render-emission tracker. Panics after
+// Start — reconcile-shaping config is frozen once dispatch begins.
+func (c *Controller) SetRenderTracker(rt RenderTracker) {
+	if c.started.Load() {
+		panic("controller: SetRenderTracker called after Start")
+	}
+	c.renderTracker = rt
+}
+
+// KeepEmitted extends the change filter's keep set so render-emitted
+// children pass the changed-only-mode PreGate check. Without this, a
+// parent whose render emits a child that wasn't on disk at filter-build
+// time (kustomize component+replacement KSes, charts that render source
+// CRs) would silently drop that child from the diff comparison. Routed
+// through Filter.AddEmitted so an ancestor-only parent doesn't cascade
+// unrelated file-loaded children into keep (#204/#260/#308).
+//
+// MUST be called BEFORE Store.AddObject so the listener that fires
+// synchronously during AddObject sees the extended keep set.
+func (c *Controller) KeepEmitted(parent, child manifest.NamedResource) {
+	if f := c.Filter(); f != nil {
+		f.AddEmitted(parent, child)
+	}
+}
+
+// ReportRendered reports parent→child render emissions to the
+// configured RenderTracker; no-op when none is wired or there are no
+// children. The emit loop accumulates every child it emits and flushes
+// through this helper exactly once, holding the tracker's lock for one
+// acquisition instead of N.
+func (c *Controller) ReportRendered(parent manifest.NamedResource, children []manifest.NamedResource) {
+	if c.renderTracker == nil || len(children) == 0 {
+		return
+	}
+	c.renderTracker.MarkRenderedBatch(parent, children)
 }
 
 // LookupParent reports the structural parent KS of id via the

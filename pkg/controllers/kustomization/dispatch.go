@@ -64,7 +64,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		}
 		if p.reconcilable {
 			childID := p.obj.Named()
-			c.keepEmitted(id, childID)
+			c.KeepEmitted(id, childID)
 			c.Store.AddObject(p.obj)
 			rendered = append(rendered, childID)
 		} else {
@@ -76,37 +76,13 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			childID := p.obj.Named()
-			c.keepEmitted(id, childID)
+			c.KeepEmitted(id, childID)
 			rendered = append(rendered, childID)
 			leaves = append(leaves, p.obj)
 		}
 	}
-	c.markRenderedBatch(id, rendered)
+	c.ReportRendered(id, rendered)
 	c.Store.AddObjects(leaves)
-}
-
-// keepEmitted extends the change filter's keep set so render-emitted
-// children pass the changed-only-mode PreGate check. Without this,
-// kustomize component+replacement patterns (parent KS emitting a
-// per-app KS via ConfigMap-driven replacements) produce silent gaps
-// in `flate diff`: the leaf KS isn't keep-set'd at filter-build time
-// because it didn't exist on disk, never reconciles, and its render
-// output never reaches the diff comparison. Issue #204.
-//
-// Routed through Filter.AddEmitted so an ancestor-only parent
-// (kept for #58's patch-propagation but with no file change of its
-// own) doesn't cascade unrelated file-loaded children into keep on
-// every render. Primary parents — those whose own file changed or
-// that share an owner with a changed file — still propagate their
-// emissions normally.
-//
-// Called BEFORE Store.AddObject so the listener that fires
-// synchronously during AddObject sees the extended keep set when it
-// invokes PreGate.
-func (c *Controller) keepEmitted(parent, child manifest.NamedResource) {
-	if f := c.Filter(); f != nil {
-		f.AddEmitted(parent, child)
-	}
 }
 
 // shouldDispatchAsObject reports whether a render-emitted Flux

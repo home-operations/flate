@@ -99,6 +99,43 @@ func TestFetcher_ResolveTLS_CAFromCAFileLegacyKey(t *testing.T) {
 	}
 }
 
+func TestFetcher_ResolveTLS_ClientCertMTLS(t *testing.T) {
+	crt, key := testutil.SelfSignedClientCert(t)
+	caPEM := testutil.SelfSignedCA(t)
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{StringData: map[string]any{
+				"tls.crt": crt, "tls.key": key, "ca.crt": caPEM,
+			}}
+		},
+	}
+	repo := gitRepoWithSecret("g", "https://example.com/x.git", "creds")
+	cfg, err := f.resolveTLS(repo)
+	if err != nil {
+		t.Fatalf("resolveTLS: %v", err)
+	}
+	if cfg == nil || len(cfg.Certificates) != 1 {
+		t.Fatalf("expected one client certificate from tls.crt/tls.key: %+v", cfg)
+	}
+	if cfg.RootCAs == nil {
+		t.Errorf("expected RootCAs populated alongside the client cert")
+	}
+}
+
+func TestFetcher_ResolveTLS_ClientCertWithoutKeyErrors(t *testing.T) {
+	crt, _ := testutil.SelfSignedClientCert(t)
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{StringData: map[string]any{"tls.crt": crt}}
+		},
+	}
+	repo := gitRepoWithSecret("g", "https://example.com/x.git", "creds")
+	_, err := f.resolveTLS(repo)
+	if err == nil || !strings.Contains(err.Error(), "tls.crt and tls.key") {
+		t.Errorf("expected paired-cert error; got %v", err)
+	}
+}
+
 func TestFetcher_ResolveTLS_InvalidPEM(t *testing.T) {
 	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {

@@ -27,16 +27,14 @@ import (
 // post-reconcile failure demotion there) and must agree on the
 // same "under a KS path" predicate so an object can't be classified
 // orphan by one and parented by the other.
-func (d *discoverer) promoteOrphans() {
+func (d *discoverer) promoteOrphans(prefixes []loader.KSPathPrefix) {
 	if d.loader.Existence == nil {
 		return
 	}
-	// Same repoRoot argument as BuildParentIndexForKind — passing
-	// cfg.Path would misread component lookups when --path is a
-	// subdir below the actual repo root. Route through the shared
-	// component cache so the kustomization.yaml reads already done
-	// by the parent-index passes are served from memory.
-	prefixes := loader.KSPathPrefixesWithCache(d.cfg.Store, d.repoRoot, d.cfg.ComponentCache)
+	// prefixes is the same KS spec.path list discovery.Run computed for
+	// the parent-index passes (identical repoRoot + shared component
+	// cache). Reusing it keeps this and the parent index in lockstep on
+	// the "under a KS path" predicate and avoids a third rebuild.
 	for id := range d.loader.Existence.All() {
 		if d.cfg.Store.GetObject(id) != nil {
 			continue
@@ -52,4 +50,3 @@ func (d *discoverer) promoteOrphans() {
 		}
 	}
 }
-

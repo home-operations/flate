@@ -210,7 +210,17 @@ func BuildParentIndexForKind(s *store.Store, repoRoot string, sourceFiles map[ma
 // passes — without sharing, each invocation walks the same KS list
 // and re-reads every kustomization.yaml's `components:` independently.
 func BuildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string, cache *manifest.ComponentCache) map[manifest.NamedResource]manifest.NamedResource {
-	prefixes := KSPathPrefixesWithCache(s, repoRoot, cache)
+	return BuildParentIndexFromPrefixes(KSPathPrefixesWithCache(s, repoRoot, cache), s, sourceFiles, childKind)
+}
+
+// BuildParentIndexFromPrefixes is BuildParentIndexForKindWithCache with
+// the KS path-prefix list passed in precomputed. discovery.Run derives
+// the prefixes once (an O(KS) walk + sort + component reads) and reuses
+// them for the KS-parent index, the HR-parent index, AND orphan
+// promotion — three consumers that previously each rebuilt the identical
+// list. Standalone callers use BuildParentIndexForKind(WithCache), which
+// compute the prefixes for a single use.
+func BuildParentIndexFromPrefixes(prefixes []KSPathPrefix, s *store.Store, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
 	// Group each id's own claimed prefixes so a peer KS claiming the same
 	// spec.path directory isn't mistaken for an enclosing parent (which
 	// would mutually deadlock the pair through collectDeps). Children

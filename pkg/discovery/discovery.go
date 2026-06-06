@@ -150,16 +150,22 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// helpers read each KS's spec.path joined under this root to
 	// follow `components:` entries; cfg.Path would misread when the
 	// user pointed --path at a subdir below the actual repo root.
+	// Compute the KS spec.path prefix list ONCE and reuse it across the
+	// KS-parent index, the HR-parent index, and orphan promotion. Each
+	// previously rebuilt the identical list (an O(KS) walk + sort +
+	// component reads); the shared ComponentCache deduped the file reads
+	// but not the iteration/sort/list construction.
+	prefixes := loader.KSPathPrefixesWithCache(d.cfg.Store, repoRoot, cfg.ComponentCache)
 	parentOf := mergeParents(
-		loader.BuildParentIndexForKindWithCache(d.cfg.Store, repoRoot, d.sourceFiles, manifest.KindKustomization, cfg.ComponentCache),
-		loader.BuildParentIndexForKindWithCache(d.cfg.Store, repoRoot, d.sourceFiles, manifest.KindHelmRelease, cfg.ComponentCache),
+		loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindKustomization),
+		loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease),
 	)
 	// Orphan promotion: every Existence entry whose file path is NOT
 	// under any KS spec.path will never reach the Store through KS
 	// render emission. Promote it now so standalone CRs (loose HR
 	// at repo root, sources next to flux-system/kustomization.yaml,
 	// etc.) keep working in DiscoveryOnly mode.
-	d.promoteOrphans()
+	d.promoteOrphans(prefixes)
 
 	return &Result{
 		RepoRoot:    repoRoot,
@@ -234,6 +240,14 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	if err := d.loadAt(ctx, l, scanRoot, scanned, &total); err != nil {
 		return err
 	}
+	// Apply namespaces once over the initially-scanned set so the
+	// bootstrap-source alias and the first expansion pass see populated
+	// namespaces. The fixed-point loop below intentionally does NOT
+	// re-run applyNamespaces per discovered spec.path — that was an
+	// O(N²) full-store rebuild on every newly-loaded KS. Namespace
+	// inheritance is idempotent and order-independent, so the single
+	// post-loop pass in Run (after the complete KS set is discovered)
+	// stamps every loop-discovered object correctly in one walk.
 	d.applyNamespaces(repoRoot)
 
 	// Fixed-point expansion: each pass renders Kustomizations the prior
@@ -287,7 +301,6 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if err := d.loadAt(ctx, l, target, scanned, &total); err != nil {
 				return err
 			}
-			d.applyNamespaces(repoRoot)
 			added++
 		}
 		// Re-evaluate the convergence cache when new RSIPs arrived

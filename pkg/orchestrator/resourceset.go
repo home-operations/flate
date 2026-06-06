@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -83,14 +82,18 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 	// who request serial/deterministic runs (Concurrency: 1) also get
 	// that here; default is rsExpansionDefaultConcurrency (8).
 	const rsExpansionDefaultConcurrency = 8
-	var (
-		mu   sync.Mutex
-		seen = map[string]struct{}{}
-		out  = map[manifest.NamedResource][]map[string]any{}
-	)
+	type emit struct {
+		key string
+		doc map[string]any
+	}
+	type rsResult struct {
+		parentKS manifest.NamedResource
+		pending  []emit
+	}
+	results := make([]rsResult, len(rsList))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(cmp.Or(o.cfg.Concurrency, rsExpansionDefaultConcurrency))
-	for _, rs := range rsList {
+	for i, rs := range rsList {
 		g.Go(func() error {
 			if err := gctx.Err(); err != nil {
 				return err
@@ -117,21 +120,16 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 					return nil
 				}
 				slashFile := filepath.ToSlash(file)
-				i := slices.IndexFunc(owners, func(w owner) bool {
+				idx := slices.IndexFunc(owners, func(w owner) bool {
 					return strings.HasPrefix(slashFile, w.prefix)
 				})
-				if i < 0 {
+				if idx < 0 {
 					return nil
 				}
-				parentKS = owners[i].id
+				parentKS = owners[idx].id
 			}
-			// Filter docs to RawObjects + collect dedup keys
-			// outside the mutex; the mutex only holds for the
-			// commit-to-shared-state step.
-			type emit struct {
-				key string
-				doc map[string]any
-			}
+			// Filter docs to RawObjects + collect dedup keys into this
+			// RS's own slot; the deterministic commit happens below.
 			pending := make([]emit, 0, len(docs))
 			for _, doc := range docs {
 				parsed, perr := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: o.cfg.WipeSecrets})
@@ -147,22 +145,29 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 				}
 				pending = append(pending, emit{key, doc})
 			}
-			if len(pending) == 0 {
-				return nil
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			for _, e := range pending {
-				if _, dup := seen[e.key]; dup {
-					continue
-				}
-				seen[e.key] = struct{}{}
-				out[parentKS] = append(out[parentKS], e.doc)
-			}
+			// Each goroutine writes only its own results[i] slot (distinct
+			// indices — no shared mutable state, no mutex needed).
+			results[i] = rsResult{parentKS: parentKS, pending: pending}
 			return nil
 		})
 	}
 	err := g.Wait()
+	// Commit serially in rsList order (sorted by namespace,name via
+	// store.ListAs) AFTER g.Wait establishes happens-before: the first RS
+	// to claim a DedupKey wins, deterministically, regardless of which
+	// goroutine finished first. A name-grouped RS rendering the same
+	// child from each namespace variant still collapses to one doc.
+	seen := map[string]struct{}{}
+	out := map[manifest.NamedResource][]map[string]any{}
+	for _, r := range results {
+		for _, e := range r.pending {
+			if _, dup := seen[e.key]; dup {
+				continue
+			}
+			seen[e.key] = struct{}{}
+			out[r.parentKS] = append(out[r.parentKS], e.doc)
+		}
+	}
 	o.rsExtensions = out
 	if err != nil {
 		failed := map[manifest.NamedResource]store.StatusInfo{}

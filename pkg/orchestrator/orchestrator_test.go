@@ -597,6 +597,66 @@ func TestExpandResourceSetsPostRun_RespectsCanceledContext(t *testing.T) {
 	}
 }
 
+// TestExpandResourceSetsPostRun_DeterministicCollisionWinner pins that
+// when two distinct ResourceSets emit the SAME object identity
+// (apiVersion|kind|ns|name) with DIFFERENT content, the global first-
+// wins dedup winner is deterministic — the ResourceSet that sorts first
+// in store order wins, independent of goroutine scheduling. Before the
+// serial-commit rework the winner was whichever render goroutine reached
+// the shared map first (an 8-way errgroup), so output could flip
+// run-to-run. A Widget (unmodeled kind) is used so ParseDoc yields a
+// RawObject — the only shape expandResourceSetsPostRun re-emits.
+func TestExpandResourceSetsPostRun_DeterministicCollisionWinner(t *testing.T) {
+	parent := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+	}
+	mkRS := func(name, owner string) *manifest.ResourceSet {
+		return &manifest.ResourceSet{
+			Name: name, Namespace: "flux-system",
+			ResourceSetSpec: fluxopv1.ResourceSetSpec{
+				ResourcesTemplate: "apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: shared\n  namespace: default\nspec:\n  owner: " + owner + "\n",
+			},
+		}
+	}
+	// rs-a sorts before rs-b (same namespace, "rs-a" < "rs-b"), so the
+	// deterministic winner of the shared Widget must always be rs-a's.
+	rsA := mkRS("rs-a", "a-wins")
+	rsB := mkRS("rs-b", "b-loses")
+
+	newOrch := func() *Orchestrator {
+		o := &Orchestrator{
+			store:    store.New(),
+			rendered: newRenderedSet(),
+			sourceFiles: map[manifest.NamedResource]string{
+				rsA.Named(): "apps/rs-a.yaml",
+				rsB.Named(): "apps/rs-b.yaml",
+			},
+		}
+		o.store.AddObject(parent)
+		o.store.AddObject(rsA)
+		o.store.AddObject(rsB)
+		return o
+	}
+
+	// Many iterations (fresh orchestrator each) shake out any scheduling-
+	// dependent winner; the contract is that rs-a always wins.
+	for iter := range 50 {
+		o := newOrch()
+		if err := o.expandResourceSetsPostRun(context.Background()); err != nil {
+			t.Fatalf("iter %d: expandResourceSetsPostRun: %v", iter, err)
+		}
+		docs := o.rsExtensions[parent.Named()]
+		if len(docs) != 1 {
+			t.Fatalf("iter %d: rsExtensions[apps] = %d docs, want 1 (deduped to one winner)", iter, len(docs))
+		}
+		spec, _ := docs[0]["spec"].(map[string]any)
+		if got := spec["owner"]; got != "a-wins" {
+			t.Fatalf("iter %d: collision winner owner = %v, want a-wins (sorted-first RS) — non-deterministic", iter, got)
+		}
+	}
+}
+
 // TestOrchestrator_Render exercises the embed-friendly Render() entry:
 // one call drives Bootstrap + Run + result collection, and returns a
 // structured Result keyed by NamedResource. Embedders previously had

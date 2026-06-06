@@ -106,6 +106,43 @@ func stripAttrs(metadata map[string]any, attrs []string) {
 	}
 }
 
+// StripResourceFields deletes each dotted field path from resource.
+// A path like "spec.restic.unlock" navigates nested maps and deletes
+// the leaf key from its parent map; a segment that is absent or whose
+// value is not a map stops that path (no-op). Only the leaf is removed
+// — parent maps are left in place, so both sides of a diff collapse to
+// the same shape rather than one side losing an emptied parent.
+//
+// Navigation is map-only (no list indexing or wildcards), which covers
+// the case it exists for: chart-emitted volatile scalars whose value
+// rotates every render, e.g. volsync's
+// spec.restic.unlock: {{ now | date "20060102150405" }}. This is the
+// spec-field analogue of StripResourceAttributes (metadata keys); the
+// diff layer applies both before handing docs to the diff backend.
+func StripResourceFields(resource map[string]any, paths []string) {
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		deleteFieldPath(resource, strings.Split(p, "."))
+	}
+}
+
+// deleteFieldPath removes the leaf named by segs from the nested map m,
+// walking map-typed segments only. No-op when a segment is missing or
+// not a map.
+func deleteFieldPath(m map[string]any, segs []string) {
+	if len(segs) == 1 {
+		delete(m, segs[0])
+		return
+	}
+	child, ok := m[segs[0]].(map[string]any)
+	if !ok {
+		return
+	}
+	deleteFieldPath(child, segs[1:])
+}
+
 // EnsureMetadata returns doc["metadata"] as a map[string]any, lazily
 // creating one when absent (or when present as a non-map). Used by
 // writers that mutate metadata.labels / metadata.annotations; readers

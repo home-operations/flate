@@ -62,13 +62,33 @@ var defaultStripAttrs = []string{
 	"chart",
 }
 
+// defaultStripFields is the default `--strip-field` list — dotted spec
+// field-paths whose value a chart templates from the render clock and
+// so rotates on every render. Same unfixable-at-render class as the
+// randAlphaNum annotations above (Helm exposes no funcMap hook): the
+// TrueCharts common library emits
+//
+//	spec.restic.unlock: {{ now | date "20060102150405" }}
+//
+// on every volsync ReplicationSource, so two diff sides rendered a
+// second apart (cold cache, or across machines) would otherwise show a
+// spurious `~ spec.restic.unlock` per backed-up app. Deleting the leaf
+// keeps the diff churn-free; raw `flate build` output still mirrors
+// Helm (the render cache masks it there).
+var defaultStripFields = []string{
+	"spec.restic.unlock",
+}
+
 type diffFlags struct {
-	stripAttrs []string
+	stripAttrs  []string
+	stripFields []string
 }
 
 func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
 	cmd.Flags().StringArrayVar(&d.stripAttrs, "strip-attr", defaultStripAttrs,
 		"metadata annotation/label key to strip before diffing (repeatable; supplying any value replaces the default set)")
+	cmd.Flags().StringArrayVar(&d.stripFields, "strip-field", defaultStripFields,
+		"dotted spec field-path to delete before diffing, e.g. spec.restic.unlock (repeatable; supplying any value replaces the default set)")
 }
 
 func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
@@ -196,8 +216,9 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 
 	out := diff.Format(c.output)
 	formatted, err := diff.RenderDocs(origDocs, currentDocs, diff.Options{
-		StripAttrs: d.stripAttrs,
-		Format:     out,
+		StripAttrs:  d.stripAttrs,
+		StripFields: d.stripFields,
+		Format:      out,
 	})
 	if err != nil {
 		return errors.Join(err, diffRunErr)

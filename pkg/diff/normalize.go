@@ -19,14 +19,15 @@ import (
 // like kube-prometheus-stack's CRD upgrade bundle). Deep-copies so
 // the original tree (shared with other consumers in the same
 // orchestrator run) is untouched.
-func normalizeDocs(docs []Doc, attrs []string) []Doc {
-	if len(attrs) == 0 && !docsContainBinaryData(docs) {
+func normalizeDocs(docs []Doc, attrs, fields []string) []Doc {
+	if len(attrs) == 0 && len(fields) == 0 && !docsContainBinaryData(docs) {
 		return docs
 	}
 	out := make([]Doc, len(docs))
 	for i, d := range docs {
 		copyDoc := manifest.DeepCopyMap(d.Manifest)
 		manifest.StripResourceAttributes(copyDoc, attrs)
+		manifest.StripResourceFields(copyDoc, fields)
 		redactBinaryData(copyDoc)
 		out[i] = Doc{Manifest: copyDoc, Parent: d.Parent}
 	}

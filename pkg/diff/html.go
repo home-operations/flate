@@ -109,8 +109,8 @@ type sRow struct {
 // theme. Identical resources are dropped, matching renderUnified; an empty
 // diff produces no output at all, like the other formats.
 func renderHTML(left, right []Doc, opts Options) ([]byte, error) {
-	left = normalizeDocs(left, opts.StripAttrs)
-	right = normalizeDocs(right, opts.StripAttrs)
+	left = normalizeDocs(left, opts.StripAttrs, opts.StripFields)
+	right = normalizeDocs(right, opts.StripAttrs, opts.StripFields)
 
 	hl, css, err := newHighlighter()
 	if err != nil {

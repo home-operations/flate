@@ -73,6 +73,47 @@ func TestNormalize_StripsChecksumPrefixOnPodTemplate(t *testing.T) {
 	}
 }
 
+// TestNormalize_StripsSpecFieldPath pins Options.StripFields: a volatile
+// spec field a chart stamps from the render clock — volsync's
+// spec.restic.unlock = {{ now }} — is deleted before the diff, so a
+// rotated timestamp yields no diff, while a genuinely-changed sibling
+// spec field still surfaces.
+func TestNormalize_StripsSpecFieldPath(t *testing.T) {
+	mk := func(unlock, repo string) []Doc {
+		return []Doc{{
+			Manifest: map[string]any{
+				"apiVersion": "volsync.backube/v1alpha1",
+				"kind":       "ReplicationSource",
+				"metadata":   map[string]any{"name": "app-config", "namespace": "app"},
+				"spec": map[string]any{
+					"sourcePVC": "app-config",
+					"restic": map[string]any{
+						"unlock":     unlock,
+						"repository": repo,
+					},
+				},
+			},
+		}}
+	}
+	fields := []string{"spec.restic.unlock"}
+
+	// Only the {{ now }}-derived unlock rotated → stripped → no diff.
+	if s := renderDiff(t, mk("20260606112230", "app-restic"), mk("20260606112233", "app-restic"),
+		Options{Format: FormatDiff, StripFields: fields}); s != "" {
+		t.Errorf("rotated spec.restic.unlock should produce no diff under StripFields, got:\n%s", s)
+	}
+	// Control: without the strip, the rotated unlock DOES surface.
+	if s := renderDiff(t, mk("20260606112230", "app-restic"), mk("20260606112233", "app-restic"),
+		Options{Format: FormatDiff}); s == "" {
+		t.Error("control: unstripped spec.restic.unlock change should surface as a diff")
+	}
+	// A genuinely-changed sibling field still surfaces even with unlock stripped.
+	if s := renderDiff(t, mk("20260606112230", "app-restic"), mk("20260606112233", "other-restic"),
+		Options{Format: FormatDiff, StripFields: fields}); s == "" {
+		t.Error("a real spec.restic.repository change must still surface under StripFields")
+	}
+}
+
 // TestNormalize_RedactsConfigMapBinaryData locks the ConfigMap.binaryData
 // redaction: each value is replaced with a content-derived summary before
 // the diff, so a rotated binary hook payload surfaces as a one-line

@@ -34,6 +34,14 @@ type Options struct {
 	// reports string-value changes verbatim, so this pre-filter still
 	// earns its keep.
 	StripAttrs []string
+	// StripFields lists dotted spec field-paths (e.g.
+	// "spec.restic.unlock") deleted from each manifest before the diff
+	// is computed. Same rationale as StripAttrs but for volatile values
+	// charts template into the spec rather than metadata — notably
+	// volsync's `unlock: {{ now }}`, which rotates every render and
+	// cannot be stabilized at render time (Helm exposes no funcMap
+	// hook). See manifest.StripResourceFields.
+	StripFields []string
 	// Format selects the output style (see the Format constants). The
 	// zero value renders the human default.
 	Format Format

@@ -73,9 +73,11 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 		entry object.TreeEntry
 	}
 	entries := make(chan item, opts.Workers*4)
-	// go-git's filesystem object storage reuses packfile scanners and
-	// caches internally, so keep repository reads single-threaded while
-	// preserving concurrent filesystem writes.
+	// go-git's packfile scanner and object cache are not safe for
+	// concurrent decodes, so each blob READ serializes on
+	// serializedObjectReader. The decode returns an independent
+	// in-memory reader (see blobBytes), so the per-blob disk WRITE runs
+	// OUTSIDE the lock and workers write in parallel.
 	objects := &serializedObjectReader{repo: repo}
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -142,32 +144,34 @@ func (r *serializedObjectReader) nextTreeEntry(walker *object.TreeWalker) (strin
 	return walker.Next()
 }
 
-func (r *serializedObjectReader) readBlobBytes(hash plumbing.Hash) ([]byte, error) {
+// blobBytes returns a blob's full contents. The go-git read (BlobObject
+// + decode + Reader) is serialized on r.mu because the packfile scanner
+// and object cache are not concurrency-safe; the returned slice is an
+// independent copy, so callers write it to disk after the lock is
+// released and concurrent workers write in parallel. Both regular files
+// and symlink targets route through here.
+//
+// The buffer is sized exactly from blob.Size and filled with
+// io.ReadFull rather than io.ReadAll, which would re-grow (and so
+// roughly double the bytes allocated for) every blob over its initial
+// capacity.
+func (r *serializedObjectReader) blobBytes(hash plumbing.Hash, name string) ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	blob, err := r.repo.BlobObject(hash)
 	if err != nil {
-		return nil, fmt.Errorf("load symlink blob %s: %w", hash, err)
-	}
-	return readBlobBytes(blob)
-}
-
-func (r *serializedObjectReader) copyBlobTo(hash plumbing.Hash, name string, w io.Writer) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	blob, err := r.repo.BlobObject(hash)
-	if err != nil {
-		return fmt.Errorf("load blob %s for %q: %w", hash, name, err)
+		return nil, fmt.Errorf("load blob %s for %q: %w", hash, name, err)
 	}
 	reader, err := blob.Reader()
 	if err != nil {
-		return fmt.Errorf("blob reader %q: %w", name, err)
+		return nil, fmt.Errorf("blob reader %q: %w", name, err)
 	}
 	defer func() { _ = reader.Close() }()
-	if _, err := io.Copy(w, reader); err != nil {
-		return fmt.Errorf("copy blob %q: %w", name, err)
+	buf := make([]byte, blob.Size)
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		return nil, fmt.Errorf("read blob %q: %w", name, err)
 	}
-	return nil
+	return buf, nil
 }
 
 // writeEntry materializes one tree entry — a symlink or a blob — at
@@ -176,7 +180,7 @@ func (r *serializedObjectReader) copyBlobTo(hash plumbing.Hash, name string, w i
 func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, name string) error {
 	dst := filepath.Join(root, filepath.FromSlash(name))
 	if entry.Mode == filemode.Symlink {
-		target, err := objects.readBlobBytes(entry.Hash)
+		target, err := objects.blobBytes(entry.Hash, name)
 		if err != nil {
 			return fmt.Errorf("read symlink target for %q: %w", name, err)
 		}
@@ -188,29 +192,22 @@ func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, n
 	return writeBlobTo(dst, objects, entry.Hash, entry.Mode, name)
 }
 
-// readBlobBytes returns the full contents of a blob. Used for symlink
-// targets which are bounded by PATH_MAX.
-func readBlobBytes(blob *object.Blob) ([]byte, error) {
-	r, err := blob.Reader()
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = r.Close() }()
-	return io.ReadAll(r)
-}
-
-// writeBlobTo streams blob's content to dst with mode-derived
+// writeBlobTo writes blob's content to dst with mode-derived
 // permissions (executable bit preserved from filemode.Executable).
-// Caller (Materialize's walker) has already created the parent dir.
+// Caller (Materialize's walker) has already created the parent dir. The
+// blob is read under the object-read lock (blobBytes) and written here
+// outside it, so concurrent workers write to disk in parallel.
 func writeBlobTo(dst string, objects *serializedObjectReader, hash plumbing.Hash, mode filemode.FileMode, name string) error {
 	perm := os.FileMode(0o600)
 	if mode == filemode.Executable {
 		perm = 0o700
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm) //nolint:gosec // dst is built from the tree's commit object under the caller's root
+	data, err := objects.blobBytes(hash, name)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", dst, err)
+		return err
 	}
-	defer func() { _ = out.Close() }()
-	return objects.copyBlobTo(hash, name, out)
+	if err := os.WriteFile(dst, data, perm); err != nil { //nolint:gosec // dst is built from the tree's commit object under the caller's root
+		return fmt.Errorf("write %s: %w", dst, err)
+	}
+	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/home-operations/flate/internal/cas"
@@ -82,6 +83,24 @@ type StagingCache struct {
 	// the same nested kustomization). Without this, every reconcile
 	// re-fetches the same URL and re-emits the same WARN line.
 	remoteFetches sync.Map // url string -> *remoteFetch
+
+	// sizes memoizes each completed stage's byte size by directory path
+	// for the LRU sweep, which needs the per-stage size to enforce the
+	// cap. A completed stage is content-addressed and effectively
+	// immutable (only its per-render kustomization.yaml is rewritten, a
+	// few bytes against a soft cap), so its size is computed once per run
+	// and reused across the sweeps a cold/multi-miss run triggers —
+	// instead of re-walking (filepath.WalkDir) every file of every staged
+	// tree on every sweep. Entries are dropped on eviction; a re-staged
+	// fingerprint repopulates on the next miss. (Warm runs sweep zero
+	// times — see maybeKickSweep — so this only matters on the cold path.)
+	sizes sync.Map // stage dir path string -> int64
+
+	// sweepKicks counts calls to maybeKickSweep (sweep launches attempted,
+	// gate or not). Cache hits must not bump it — a hit doesn't grow the
+	// cache — so a warm run's count stays flat. Lightweight observability;
+	// asserted by TestStagePersistent_HitDoesNotKickSweep.
+	sweepKicks atomic.Int64
 }
 
 // stage holds the per-source materialization promise. The OnceValues
@@ -239,7 +258,6 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 	if ok && s.persistent {
 		c.mu.Unlock()
 		if dir, err := s.once(); err == nil {
-			c.maybeKickSweep()
 			return dir, nil
 		}
 		// Fall through to a fresh attempt if the cached promise
@@ -256,7 +274,6 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 		c.cacheStagePromise(fingerprint, dir)
 		now := time.Now()
 		_ = os.Chtimes(dir, now, now)
-		c.maybeKickSweep()
 		return dir, nil
 	}
 
@@ -273,7 +290,6 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 		c.cacheStagePromise(fingerprint, dir)
 		now := time.Now()
 		_ = os.Chtimes(dir, now, now)
-		c.maybeKickSweep()
 		return dir, nil
 	}
 
@@ -377,9 +393,18 @@ func (c *StagingCache) Close() error {
 }
 
 // maybeKickSweep starts an asynchronous LRU sweep when the persistent
-// cache exceeds maxBytes. The sweepInflight flag single-flights the
-// check so concurrent Stage calls don't each launch a sweep.
+// cache exceeds maxBytes. sweepGate single-flights the check so
+// concurrent Stage calls don't each launch a sweep.
+//
+// Only called after a stage is newly materialized (cache MISS — adopt
+// or build), never on a cache hit: a hit doesn't grow the cache, so a
+// cap that held before the hit still holds. A fully warm run (all hits)
+// therefore performs zero sweeps. The cap is soft — the GC subcommand
+// is the authority — so deferring eviction to the next growth (or GC)
+// is fine, and it keeps the async sweep off the warm hot path (where it
+// otherwise contended for cores; ~30% wall-time on a 2-core runner).
 func (c *StagingCache) maybeKickSweep() {
+	c.sweepKicks.Add(1)
 	if c.maxBytes <= 0 || c.root == "" {
 		return
 	}
@@ -388,19 +413,34 @@ func (c *StagingCache) maybeKickSweep() {
 	}
 	go func() {
 		defer c.sweepGate.Release()
-		if err := sweepStageBySize(c.root, c.maxBytes); err != nil {
+		if err := c.sweepBySize(); err != nil {
 			slog.Debug("stage cache sweep", "err", err)
 		}
 	}()
 }
 
-// sweepStageBySize walks root and, when total size exceeds maxBytes,
-// removes the oldest entries (by mtime) until size is at or below the
-// cap. Entries currently being staged into (`.tmp.*` siblings) are
-// ignored — they don't carry sentinels yet and would be wasteful to
-// reap mid-build. The per-process scratch tempdirs (flate-stage-*)
-// are likewise skipped here; their lifecycle is Close-bound.
-func sweepStageBySize(root string, maxBytes int64) error {
+// stageSize returns the byte size of a completed (immutable) stage dir,
+// memoized by path. A content-addressed stage's files don't change after
+// its sentinel lands, so the cumulative size is computed once per run and
+// reused across the many per-Stage sweeps. See the sizes field.
+func (c *StagingCache) stageSize(dir string) int64 {
+	if v, ok := c.sizes.Load(dir); ok {
+		return v.(int64)
+	}
+	sz := dirSize(dir)
+	c.sizes.Store(dir, sz)
+	return sz
+}
+
+// sweepBySize walks root and, when total size exceeds maxBytes, removes
+// the oldest entries (by mtime) until size is at or below the cap.
+// Entries currently being staged into (`.tmp.*` siblings) are ignored —
+// they don't carry sentinels yet and would be wasteful to reap
+// mid-build. The per-process scratch tempdirs (flate-stage-*) are
+// likewise skipped here; their lifecycle is Close-bound. Per-stage sizes
+// are memoized (stageSize) so repeat sweeps don't re-walk unchanged trees.
+func (c *StagingCache) sweepBySize() error {
+	root, maxBytes := c.root, c.maxBytes
 	// Walk the two-char prefix layer and collect every fingerprint
 	// dir's mtime + size. Stage entries don't recurse — they cap at
 	// one fingerprint deep.
@@ -444,7 +484,7 @@ func sweepStageBySize(root string, maxBytes int64) error {
 			if err != nil {
 				continue
 			}
-			size := dirSize(full)
+			size := c.stageSize(full)
 			entries = append(entries, diskcache.Entry{Path: full, MTime: info.ModTime().UnixNano(), Size: size})
 			total += size
 		}
@@ -457,6 +497,8 @@ func sweepStageBySize(root string, maxBytes int64) error {
 				slog.Debug("stage cache evict", "path", e.Path, "err", err)
 				return err
 			}
+			c.sizes.Delete(e.Path) // forget the memo for the reaped stage
+
 			// Best-effort: drop the prefix dir if it's now empty so
 			// repeated sweeps don't accumulate dead 2-char shells.
 			prefixDir := filepath.Dir(e.Path)

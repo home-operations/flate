@@ -674,7 +674,8 @@ func TestSweepStageBySize_EvictsOldestUnderLimit(t *testing.T) {
 		}
 	}
 
-	if err := sweepStageBySize(root, 2*1024); err != nil {
+	c := &StagingCache{root: root, maxBytes: 2 * 1024}
+	if err := c.sweepBySize(); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	// Oldest (fps[0]) MUST be gone; the two newer ones MUST survive.
@@ -684,6 +685,42 @@ func TestSweepStageBySize_EvictsOldestUnderLimit(t *testing.T) {
 	for _, fp := range fps[1:] {
 		if _, err := os.Stat(filepath.Join(root, fp[:2], fp)); err != nil {
 			t.Errorf("newer stage %s reaped: %v", fp[:8], err)
+		}
+	}
+}
+
+// BenchmarkStagingSweep_RepeatedLargeCache measures the periodic LRU
+// sweep over a populated persistent stage cache — the path maybeKickSweep
+// drives on every Stage call. One large staged tree (the shared bootstrap
+// source, ~800 files) dominates: today the sweep re-walks every file on
+// every call. Pins that cost so the per-stage size-memo is benchmark-gated.
+func BenchmarkStagingSweep_RepeatedLargeCache(b *testing.B) {
+	root := b.TempDir()
+	mkStage := func(fp string, files int) {
+		dir := filepath.Join(root, fp[:2], fp)
+		for i := range files {
+			sub := filepath.Join(dir, fmt.Sprintf("d%02d", i%20))
+			if err := os.MkdirAll(sub, 0o750); err != nil {
+				b.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(sub, fmt.Sprintf("f%04d.yaml", i)), make([]byte, 512), 0o600); err != nil {
+				b.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(dir, stageCompleteSentinel), nil, 0o600); err != nil {
+			b.Fatal(err)
+		}
+	}
+	mkStage(strings.Repeat("a", 64), 800)
+	mkStage(strings.Repeat("b", 64), 50)
+	mkStage(strings.Repeat("c", 64), 50)
+
+	c := &StagingCache{root: root, maxBytes: 1 << 30} // cap above total → no eviction, measure pure sizing
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := c.sweepBySize(); err != nil {
+			b.Fatal(err)
 		}
 	}
 }
@@ -727,5 +764,57 @@ func BenchmarkStagingCache_PersistentRerun(b *testing.B) {
 		if _, err := cache.Stage(context.Background(), src, fp); err != nil {
 			b.Fatalf("Stage: %v", err)
 		}
+	}
+}
+
+// TestStagePersistent_HitDoesNotKickSweep pins that the LRU sweep is
+// kicked only when a stage is newly materialized (cache MISS), never on
+// a cache HIT. A hit doesn't grow the cache, so a warm run (all hits)
+// sweeps zero times and the async sweep stays off the render hot path
+// — the fix that cut warm `build all` wall-time ~25% on a 2-core runner.
+func TestStagePersistent_HitDoesNotKickSweep(t *testing.T) {
+	src := t.TempDir()
+	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), "kind: Kustomization\n")
+	root := t.TempDir()
+	fp := strings.Repeat("a", 64)
+
+	cache, err := NewStagingCache(root, 1<<30) // cap>0 so maybeKickSweep is live
+	if err != nil {
+		t.Fatalf("NewStagingCache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	base := cache.sweepKicks.Load()
+	if _, err := cache.Stage(context.Background(), src, fp); err != nil {
+		t.Fatalf("first Stage (miss): %v", err)
+	}
+	if cache.sweepKicks.Load() <= base {
+		t.Fatalf("cache miss must kick the sweep; kicks stayed at %d", base)
+	}
+	afterMiss := cache.sweepKicks.Load()
+
+	// In-memory promise hit: must not kick.
+	for range 5 {
+		if _, err := cache.Stage(context.Background(), src, fp); err != nil {
+			t.Fatalf("re-Stage (in-memory hit): %v", err)
+		}
+	}
+	if got := cache.sweepKicks.Load(); got != afterMiss {
+		t.Errorf("in-memory cache hit kicked the sweep: %d -> %d", afterMiss, got)
+	}
+
+	// Sentinel fast-path hit via a fresh cache over the same root (empty
+	// in-process stages map → exercises the on-disk sentinel branch).
+	cache2, err := NewStagingCache(root, 1<<30)
+	if err != nil {
+		t.Fatalf("NewStagingCache 2: %v", err)
+	}
+	t.Cleanup(func() { _ = cache2.Close() })
+	base2 := cache2.sweepKicks.Load()
+	if _, err := cache2.Stage(context.Background(), src, fp); err != nil {
+		t.Fatalf("Stage (sentinel hit): %v", err)
+	}
+	if got := cache2.sweepKicks.Load(); got != base2 {
+		t.Errorf("sentinel fast-path hit kicked the sweep: %d -> %d", base2, got)
 	}
 }

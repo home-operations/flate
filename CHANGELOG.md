@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.3.0](https://github.com/home-operations/flate/compare/0.2.12...v0.3.0) (2026-06-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* **source:** the --enable-oci flag is removed. OCIRepository charts now always real-fetch through the source controller (with auth/TLS/verify); the old --enable-oci=false anonymous-registry fallback is gone. Embedders that want existence-only OCI can wire source.ExistenceFetcher{} via Orchestrator.WithFetcher.
+
+### Features
+
+* **diff:** strip volatile spec field-paths (default volsync restic unlock) ([#596](https://github.com/home-operations/flate/issues/596)) ([f6efc07](https://github.com/home-operations/flate/commit/f6efc07474862e521881081dce84d849b5b1472e))
+* **git:** shallow clone + narrow the initial mirror fetch for GitRepository sources ([#601](https://github.com/home-operations/flate/issues/601)) ([3f8d105](https://github.com/home-operations/flate/commit/3f8d1056f4b89f8054b624c8accd20dbc4f9081d))
+* **source:** retry source fetches + one fetch path for all sources (HelmChart + OCI unification) ([#566](https://github.com/home-operations/flate/issues/566)) ([b65fac2](https://github.com/home-operations/flate/commit/b65fac21597865aed107b9f1c0761f8190ee013a))
+
+
+### Bug Fixes
+
+* **change:** keep a changed HelmRelease's chart source in changed-only mode ([#568](https://github.com/home-operations/flate/issues/568)) ([7a506c2](https://github.com/home-operations/flate/commit/7a506c26e0123bbe8401c9e6d6f5e2bd2ba29df2))
+* **cli:** validate --profile at flag-parse time ([#587](https://github.com/home-operations/flate/issues/587)) ([c17dc21](https://github.com/home-operations/flate/commit/c17dc21a72713d7748adc4970a06e3314eeab666))
+* **diff:** strip checksum/ prefix so randAlphaNum churn stays out of diffs ([#593](https://github.com/home-operations/flate/issues/593)) ([113c0e1](https://github.com/home-operations/flate/commit/113c0e112edb196eb236fdc2488cf4d1c52922cc))
+* drop kustomize.config build directives from rendered output ([#565](https://github.com/home-operations/flate/issues/565)) ([256e488](https://github.com/home-operations/flate/commit/256e48861b51aadb866ce7332ce71ab440567cba))
+* **helm:** default rendered objects to the HelmRelease release namespace ([#569](https://github.com/home-operations/flate/issues/569)) ([48b96ad](https://github.com/home-operations/flate/commit/48b96ad84891aad3e8a1ced9097d673827f71590))
+* **helm:** resolve envsubst defaults in HelmRelease valuesFrom keys ([#571](https://github.com/home-operations/flate/issues/571)) ([f6f779a](https://github.com/home-operations/flate/commit/f6f779ad67eba6e8da360ae9b8718c631316dee4))
+* **kustomize:** serialize all krusty builds behind a process-wide mutex ([#578](https://github.com/home-operations/flate/issues/578)) ([30a53e1](https://github.com/home-operations/flate/commit/30a53e1deb3f3776d59a30af31c237ff37f4b1aa))
+* **loader:** attribute self-produced substituteFrom ConfigMaps across the bare-dir/component graph ([#574](https://github.com/home-operations/flate/issues/574)) ([31bb0eb](https://github.com/home-operations/flate/commit/31bb0eb18074a3a9da4cc56ac86e14e18ade7cc3))
+* **loader:** don't surface path-less Kustomization patch fragments as Flux KSes ([#577](https://github.com/home-operations/flate/issues/577)) ([8ef1760](https://github.com/home-operations/flate/commit/8ef1760119e47b98d35a5fa77dfc615105c3ee30))
+* **loader:** follow ..-escaping directory resources includes ([#570](https://github.com/home-operations/flate/issues/570)) ([68cd634](https://github.com/home-operations/flate/commit/68cd63490da41067a4d9e16eba04386464906099))
+* **loader:** require a strict ancestor for the structural-parent index ([#573](https://github.com/home-operations/flate/issues/573)) ([e360f8e](https://github.com/home-operations/flate/commit/e360f8ed4ac85da12cfb7fb3b0facab8fb1cb14d))
+* **loader:** resolve postBuild substitute vars in Kustomization dependsOn ([#572](https://github.com/home-operations/flate/issues/572)) ([8e5b2e0](https://github.com/home-operations/flate/commit/8e5b2e0a2e013a746603278c5e61c860dfeafea3))
+* **loader:** skip the bootstrap-sibling scan inside an already-rendered tree ([#575](https://github.com/home-operations/flate/issues/575)) ([c1f45a4](https://github.com/home-operations/flate/commit/c1f45a45f1fae02cc5e50b6903ea8a5d6be2c177))
+* **orchestrator:** make ResourceSet collision winner deterministic ([#598](https://github.com/home-operations/flate/issues/598)) ([7749dbb](https://github.com/home-operations/flate/commit/7749dbbadb52550dfe1c27a2368aaef3776e1dd0))
+* **source/git:** support HTTPS client certificates (mTLS) in secretRef ([#586](https://github.com/home-operations/flate/issues/586)) ([927ea7c](https://github.com/home-operations/flate/commit/927ea7c945660191ada5ee5bb7d2f924de6a7848))
+
+
+### Performance Improvements
+
+* **discovery:** compute KS path prefixes once; defer namespace pass ([#583](https://github.com/home-operations/flate/issues/583)) ([d99ba7f](https://github.com/home-operations/flate/commit/d99ba7fc8bc2c2a3ff1340a124996700ef543a85))
+* **gittree:** write blobs outside the object-read lock ([#595](https://github.com/home-operations/flate/issues/595)) ([d9a0f87](https://github.com/home-operations/flate/commit/d9a0f8715f3b7cb4306a94fbb4db3b50accc597c))
+* **helm:** drop CommonMetadata from the template-cache key (applied downstream) ([#597](https://github.com/home-operations/flate/issues/597)) ([f8a6ec6](https://github.com/home-operations/flate/commit/f8a6ec6956e9d5151e3baac44ff055c9ba0a7619))
+* **kustomization:** single-flight working-tree fingerprint ([#606](https://github.com/home-operations/flate/issues/606)) ([c8a7798](https://github.com/home-operations/flate/commit/c8a779800b2a581a71b2e15703f451c8b5e861dc))
+* **kustomize:** only kick the stage-cache sweep on cache growth ([#603](https://github.com/home-operations/flate/issues/603)) ([f90e434](https://github.com/home-operations/flate/commit/f90e4342b63d43458db9cfc3ae8440148d457285))
+* **store,orchestrator:** drop redundant work in ListObjects + finalize ([#584](https://github.com/home-operations/flate/issues/584)) ([6be6f36](https://github.com/home-operations/flate/commit/6be6f367553418a899421e09772bb82b5d9fc95d))
+* **values:** share cached valuesFrom trees via copy-on-collision merge ([#592](https://github.com/home-operations/flate/issues/592)) ([be064c1](https://github.com/home-operations/flate/commit/be064c1c8a2a4564dadbc2e53d2aaf1c2474df6c))
+
+
+### Documentation
+
+* fix stale/inaccurate comments ([#605](https://github.com/home-operations/flate/issues/605)) ([7afe4f8](https://github.com/home-operations/flate/commit/7afe4f8835a34a1811d529bdbeb8aad166c39e96))
+* **kustomize:** explain why Prepare takes no values.Cache (with benchmark) ([#581](https://github.com/home-operations/flate/issues/581)) ([2fe86ae](https://github.com/home-operations/flate/commit/2fe86aeb10547ce0ff66a162e4eb0975482ed4c7))
+* **manifest:** document that retained pooled docs are intentional (with benchmark) ([#585](https://github.com/home-operations/flate/issues/585)) ([3baa691](https://github.com/home-operations/flate/commit/3baa6917cfc087ab7aebebaa46df9955be3cebd0))
+* pin BuildMutex, kustomize-caching, and rawProducerIndex contracts ([#591](https://github.com/home-operations/flate/issues/591)) ([41803c4](https://github.com/home-operations/flate/commit/41803c41b873f933451bdc406a7454c863eb3a4d))
+
+
+### Miscellaneous Chores
+
+* gitignore Go test + profiling artifacts ([#600](https://github.com/home-operations/flate/issues/600)) ([da556a5](https://github.com/home-operations/flate/commit/da556a54bd7d832f797aefe0d627e518e2f33f01))
+* **testutil,cli:** dedup cert/file fixtures + profile file-open boilerplate ([#590](https://github.com/home-operations/flate/issues/590)) ([b5507e8](https://github.com/home-operations/flate/commit/b5507e8d79b466775c3cf7dbd43e532dd42be5b4))
+
+
+### Code Refactoring
+
+* adopt Go 1.21+ stdlib idioms (clear, slices.Concat/Clone) ([#588](https://github.com/home-operations/flate/issues/588)) ([2040927](https://github.com/home-operations/flate/commit/2040927e1f43f0351c3759abcf1c7e42631080d3))
+* **controllers:** lift shared render helpers into base.Controller ([#579](https://github.com/home-operations/flate/issues/579)) ([fdf06b4](https://github.com/home-operations/flate/commit/fdf06b48e5915fe1c538625856cbf13f5754471e))
+* drop dead/redundant code in build + baseline ([#604](https://github.com/home-operations/flate/issues/604)) ([50e2cf8](https://github.com/home-operations/flate/commit/50e2cf86951174bc6ceaac261cf568225276a63d))
+* **kustomize:** single-source the staging skip-set ([#607](https://github.com/home-operations/flate/issues/607)) ([108f4ce](https://github.com/home-operations/flate/commit/108f4cee63eb8f0cfc891f24bfadc80dad4f390c))
+* **manifest,loader:** dedup parseSecret field loops and path resolution ([#589](https://github.com/home-operations/flate/issues/589)) ([0afefb6](https://github.com/home-operations/flate/commit/0afefb68e6466251b4358ef2c7f2d35001488a08))
+* **manifest:** extract SHA256Hex for render-input fingerprints ([#580](https://github.com/home-operations/flate/issues/580)) ([18c017b](https://github.com/home-operations/flate/commit/18c017b20df86a0705e0d6a74b47fddd419d5656))
+* **source:** share secret temp-file write helper across oci + helmchart ([#594](https://github.com/home-operations/flate/issues/594)) ([756911b](https://github.com/home-operations/flate/commit/756911bb93f1f962cd4c80bd805e1d748d2284ef))
+
 ## [0.2.12](https://github.com/home-operations/flate/compare/0.2.11...0.2.12) (2026-06-04)
 
 

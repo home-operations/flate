@@ -88,6 +88,16 @@ func ReleaseIfNotRetained(doc map[string]any, obj BaseManifest) {
 // pipeline returns them via ReleaseIfNotRetained after ParseDoc;
 // external callers that mutate / retain the returned slice should
 // NOT release (the entries are still owned by them).
+//
+// Retained-and-never-released is the CORRECT lifecycle, not a leak: a
+// controller that stores SplitDocs output on a render artifact owns
+// those maps for the run, so they legitimately never return to the
+// pool. Drawing from the pool still pays off — it skips the initial
+// 16-bucket allocation on every Get, retained or not. Deep-copying a
+// retained doc just to recycle the pooled original is net-negative: the
+// copy allocates the whole nested tree, far more than the single map
+// alloc it would recover (see BenchmarkArtifactRetain_Current vs
+// _DeepCopyRelease — the copy path costs more time, memory, and allocs).
 func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 	dec := yaml.NewDecoder(r)
 	var out []map[string]any

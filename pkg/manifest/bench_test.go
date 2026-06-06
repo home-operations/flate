@@ -47,6 +47,85 @@ data:
 	}
 }
 
+// renderDocsBlob builds a 50-doc multi-document YAML stream resembling
+// a chart render that a controller retains on its artifact.
+func renderDocsBlob() []byte {
+	var buf bytes.Buffer
+	for i := range 50 {
+		if i > 0 {
+			buf.WriteString("---\n")
+		}
+		fmt.Fprintf(&buf, `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-%d
+  namespace: ns
+  labels:
+    app.kubernetes.io/name: app-%d
+spec:
+  replicas: %d
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app-%d
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: app-%d
+    spec:
+      containers:
+        - name: main
+          image: registry.example.com/app:%d
+          env:
+            - name: FOO
+              value: bar-%d
+`, i, i, i, i, i, i, i)
+	}
+	return buf.Bytes()
+}
+
+// BenchmarkArtifactRetain_Current models the production controller path:
+// SplitDocs then retain the slice on the artifact WITHOUT releasing the
+// pooled maps (they are owned by the artifact for the run's lifetime).
+//
+// BenchmarkArtifactRetain_DeepCopyRelease models the audit's proposed
+// "fix" — deep-copy each retained doc into a fresh non-pooled map, then
+// release the pooled originals so the pool can reuse them. The pair
+// proves the fix is net-NEGATIVE: returning the pooled map for reuse
+// can at best save one 16-bucket alloc per doc, while the deep copy
+// allocates the entire nested tree per doc. So flate keeps the docs
+// straight off the pool (drawing from it still skips the initial map
+// alloc; retaining them is correct, not a leak). See io.go.
+func BenchmarkArtifactRetain_Current(b *testing.B) {
+	data := renderDocsBlob()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		docs, err := SplitDocs(data)
+		if err != nil {
+			b.Fatalf("SplitDocs: %v", err)
+		}
+		_ = docs // retained on the artifact; not released
+	}
+}
+
+func BenchmarkArtifactRetain_DeepCopyRelease(b *testing.B) {
+	data := renderDocsBlob()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		docs, err := SplitDocs(data)
+		if err != nil {
+			b.Fatalf("SplitDocs: %v", err)
+		}
+		retained := make([]map[string]any, len(docs))
+		for i, d := range docs {
+			retained[i] = DeepCopyMap(d) // break the pool alias
+			ReleaseDoc(d)                // return the original for reuse
+		}
+		_ = retained
+	}
+}
+
 // BenchmarkParseDoc_Kustomization measures ParseDoc dispatch + the
 // kustomize-controller typed decode for a Flux Kustomization document.
 func BenchmarkParseDoc_Kustomization(b *testing.B) {

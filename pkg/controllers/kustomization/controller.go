@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -52,12 +53,20 @@ type Controller struct {
 	// unset (tests / no repoRoot) → edge always added.
 	selfProduces func(cm, consumer manifest.NamedResource) bool
 
-	// workingTreeFPs memoizes workingTreeFingerprint results per source
+	// workingTreeFPs single-flights workingTreeFingerprint per source
 	// LocalPath for the life of the controller. resolveSourceRootAnd-
-	// Fingerprint runs once per Kustomization, and many KSes share the
-	// bootstrap working-tree source — without this, every KS would
-	// re-walk the entire repo to derive the same fingerprint.
-	workingTreeFPs sync.Map // string -> string
+	// Fingerprint runs once per Kustomization, and dozens of KSes share
+	// the bootstrap working-tree source — they all reconcile at once
+	// under --concurrency, so a plain Load/Store memo lets them all miss
+	// before any Store lands and re-walk the entire repo in parallel.
+	// Storing a sync.OnceValue closure collapses that herd to one walk.
+	workingTreeFPs sync.Map // path string -> func() string (sync.OnceValue)
+
+	// walks counts actual workingTreeFingerprint executions (one per
+	// unique LocalPath, regardless of concurrent callers). Single-flight
+	// observability — asserted by TestCachedWorkingTreeFingerprint_SingleFlight;
+	// mirrors StagingCache.sweepKicks.
+	walks atomic.Int64
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto
@@ -438,17 +447,20 @@ func sourceFingerprintFromRevision(rev string) string {
 	return rev
 }
 
-// cachedWorkingTreeFingerprint memoizes workingTreeFingerprint by
+// cachedWorkingTreeFingerprint single-flights workingTreeFingerprint by
 // LocalPath. resolveSourceRootAndFingerprint runs once per Kustomization
-// and dozens of KSes share the bootstrap source — without this cache,
-// every reconcile re-walks the entire repo to derive the same hash.
+// and dozens of KSes share the bootstrap source, all reconciling
+// concurrently — a plain Load/miss/Store memo lets them all miss before
+// any value is stored and re-walk the entire repo in parallel (a
+// thundering herd that dominates warm-run CPU). LoadOrStore keeps exactly
+// one sync.OnceValue closure per path, so every concurrent caller invokes
+// the same closure and the walk runs once. Mirrors StagingCache's copyOnce.
 func (c *Controller) cachedWorkingTreeFingerprint(path string) string {
-	if v, ok := c.workingTreeFPs.Load(path); ok {
-		return v.(string)
-	}
-	fp := workingTreeFingerprint(path)
-	c.workingTreeFPs.Store(path, fp)
-	return fp
+	once, _ := c.workingTreeFPs.LoadOrStore(path, sync.OnceValue(func() string {
+		c.walks.Add(1)
+		return workingTreeFingerprint(path)
+	}))
+	return once.(func() string)()
 }
 
 // workingTreeFingerprint hashes every regular file under path with

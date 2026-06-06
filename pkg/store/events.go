@@ -357,9 +357,7 @@ func releaseListenerSnapshot(snap []Listener) {
 	}
 	// Clear listener references so the pool doesn't pin payload
 	// closures (each Listener may close over arbitrary state).
-	for i := range snap {
-		snap[i] = nil
-	}
+	clear(snap)
 	bucket := poolBucket(cap(snap))
 	snap = snap[:0]
 	listenerSnapshotPools[bucket].Put(&snap)

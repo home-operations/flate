@@ -94,7 +94,7 @@ func walkAndDelete(root string, domain []string, matcher gitignore.Matcher) erro
 		if err != nil {
 			return err
 		}
-		segments := append(append([]string{}, domain...), strings.Split(rel, string(filepath.Separator))...)
+		segments := slices.Concat(domain, strings.Split(rel, string(filepath.Separator)))
 		if matcher.Match(segments, false) {
 			toRemove = append(toRemove, p)
 		}

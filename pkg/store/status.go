@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -268,9 +269,7 @@ func (s *Store) GetConditions(id manifest.NamedResource) []Condition {
 	if len(conds) == 0 {
 		return nil
 	}
-	out := make([]Condition, len(conds))
-	copy(out, conds)
-	return out
+	return slices.Clone(conds)
 }
 
 // conditionEqual reports whether two conditions carry the same

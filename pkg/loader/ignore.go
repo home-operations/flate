@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/fluxcd/pkg/sourceignore/gitignore"
@@ -73,6 +74,6 @@ func (i *ignoreSet) matches(path, root string, isDir bool) bool {
 	rootSlash := filepath.ToSlash(root)
 	domain := strings.Split(rootSlash, "/")
 	relParts := strings.Split(relSlash, "/")
-	segments := append(append([]string(nil), domain...), relParts...)
+	segments := slices.Concat(domain, relParts)
 	return i.matcher.Match(segments, isDir)
 }

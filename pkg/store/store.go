@@ -452,9 +452,7 @@ func (s *Store) Snapshot(id manifest.NamedResource) (manifest.BaseManifest, []Co
 	if len(conds) == 0 {
 		return obj, nil
 	}
-	out := make([]Condition, len(conds))
-	copy(out, conds)
-	return obj, out
+	return obj, slices.Clone(conds)
 }
 
 // DeleteObject removes the object stored under id. Returns whether

@@ -1,8 +1,6 @@
 package helmrelease
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -22,8 +20,7 @@ func helmReleaseFingerprint(hr *manifest.HelmRelease) string {
 	if err != nil {
 		return ""
 	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
+	return manifest.SHA256Hex(raw)
 }
 
 func helmReleaseFingerprintPayload(hr *manifest.HelmRelease) any {

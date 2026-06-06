@@ -1,8 +1,6 @@
 package kustomization
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -37,6 +35,5 @@ func kustomizationFingerprint(ks *manifest.Kustomization, sourceRoot string) str
 	if err != nil {
 		return ""
 	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
+	return manifest.SHA256Hex(raw)
 }

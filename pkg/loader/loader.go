@@ -439,7 +439,18 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomization, kpath string)
 			continue
 		}
 		for _, obj := range objs {
-			if _, ok := obj.(*manifest.Kustomization); !ok {
+			ks, ok := obj.(*manifest.Kustomization)
+			if !ok {
+				continue
+			}
+			// A genuine bootstrap entry KS always carries a spec.path (and a
+			// sourceRef). A kind: Kustomization with neither is a kustomize
+			// patch fragment — a patch.yaml referenced via `patches:` whose
+			// body happens to use the Flux Kustomization GVK as the patch
+			// target — never a reconcilable Flux Kustomization. Skipping it
+			// is order-independent (it reads only the parsed object), unlike
+			// the dir-coverage guard above.
+			if ks.Path == "" && ks.SourceKind == "" && ks.SourceName == "" {
 				continue
 			}
 			id := obj.Named()

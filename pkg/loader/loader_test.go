@@ -77,6 +77,62 @@ spec:
 	}
 }
 
+// TestLoader_DiscoveryOnlyBootstrapScanSkipsPatchFragment pins the no-path
+// guard: a sibling YAML that is a kind: Kustomization with only spec.patches
+// (no spec.path, no spec.sourceRef) is a kustomize patch fragment — referenced
+// via `patches:`, never a reconcilable Flux KS — and must NOT be surfaced by
+// the bootstrap-sibling scan, even though a real entry KS sibling is. No
+// covering KS is pre-seeded, so this pins the order-independence (the guard
+// reads only the parsed object, unlike the dir-coverage guard).
+func TestLoader_DiscoveryOnlyBootstrapScanSkipsPatchFragment(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ./cm.yaml
+patches:
+  - path: ./patch.yaml
+`)
+	testutil.WriteFile(t, dir, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm, namespace: apps}\n")
+	// Real bootstrap-entry sibling KS (has spec.path) — must still surface.
+	testutil.WriteFile(t, dir, "apps/entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: entry, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+	// Patch fragment: kind: Kustomization, only spec.patches, no path/source.
+	testutil.WriteFile(t, dir, "apps/patch.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: patch}
+spec:
+  patches:
+    - patch: |-
+        apiVersion: helm.toolkit.fluxcd.io/v2
+        kind: HelmRelease
+        metadata: {name: not-used}
+      target: {kind: HelmRelease}
+`)
+
+	s := store.New()
+	l := New(s)
+	l.Options.DiscoveryOnly = true
+	l.Existence = NewExistenceIndex()
+	l.SourceFiles = map[manifest.NamedResource]string{}
+	l.SourceRoot = dir
+	if _, err := l.Load(context.Background(), dir); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "entry"}) == nil {
+		t.Errorf("real bootstrap-entry KS (has spec.path) must surface")
+	}
+	if got := s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "", Name: "patch"}); got != nil {
+		t.Errorf("path-less/source-less patch-fragment Kustomization must NOT be surfaced; got %v", got)
+	}
+}
+
 func TestLoader_Load(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1

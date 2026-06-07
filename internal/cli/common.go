@@ -60,9 +60,6 @@ type commonFlags struct {
 	// to an explicit commit always full-clone. Plumbed into
 	// orchestrator.Config.GitDepth → git.Fetcher.Depth.
 	gitDepth int
-	// stageCacheMB caps the persistent kustomize stage cache. 0
-	// disables LRU eviction so the GC subcommand owns cleanup.
-	stageCacheMB int
 	// cacheDir is resolved lazily via resolveCacheRoot and memoized so
 	// multiple lookups within one invocation return the same value.
 	cacheDir string
@@ -160,9 +157,6 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	// CI runners where disk cost outweighs the rerun savings).
 	fs.IntVar(&f.helmRenderCacheMB, "helm-render-cache-mb", 1024,
 		"size of the persistent on-disk helm template-output cache in megabytes (0 disables)")
-	fs.IntVar(&f.stageCacheMB, "stage-cache-mb", 2048,
-		"cap (MiB) for the persistent kustomize stage cache; 0 disables LRU eviction "+
-			"(the cache subcommand still age-prunes)")
 }
 
 // skipResourceKinds delegates to helm.Options.SkipResourceKinds so
@@ -409,7 +403,6 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		CacheDir:               c.resolveCacheRoot(),
 		HelmTemplateCacheBytes: int64(c.helmTemplateCacheMB) << 20,
 		HelmRenderCacheBytes:   int64(c.helmRenderCacheMB) << 20,
-		StageCacheBytes:        int64(c.stageCacheMB) << 20,
 	}
 }
 

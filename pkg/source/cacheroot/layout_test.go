@@ -27,7 +27,6 @@ func TestLayout_Paths(t *testing.T) {
 		{"GitMirrors", l.GitMirrors(), "/cache/git-mirrors"},
 		{"GitMirror", l.GitMirror("0123"), "/cache/git-mirrors/0123"},
 		{"HelmTmp", l.HelmTmp(), "/cache/helm-tmp"},
-		{"Stage", l.Stage(), "/cache/stage"},
 		{"RenderHelmCache", l.RenderHelmCache(), "/cache/render/helm"},
 	}
 	for _, c := range cases {

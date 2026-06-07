@@ -30,12 +30,6 @@ import (
 
 // Config carries everything the orchestrator needs.
 type Config struct {
-	// StageCacheBytes caps the persistent kustomize stage cache. 0
-	// disables eviction (unbounded growth — the GC subcommand still
-	// handles age-based cleanup). The flag's expected unit is mebibytes
-	// at the CLI layer; this field is bytes.
-	StageCacheBytes int64
-
 	// Path is the directory to scan for Flux objects (the scan entry
 	// point — a cluster's Flux entry, which may be a subdir of RepoRoot).
 	Path string

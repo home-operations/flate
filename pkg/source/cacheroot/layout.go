@@ -62,7 +62,6 @@ const (
 	RefsDir       = "refs"
 	GitMirrorsDir = "git-mirrors"
 	HelmTmpDir    = "helm-tmp"
-	StageDir      = "stage"
 	// RenderHelmCacheDir holds the persisted helm template-output
 	// cache. Entries are sharded `<root>/render/helm/<hex[:2]>/<hex>`
 	// where <hex> is the full sha256 of the template-cache key. Content
@@ -162,16 +161,6 @@ func (l Layout) GitMirror(urlHash string) string {
 // HelmTmp returns the scratch directory the HelmChart fetcher uses for
 // transient writes (index.yaml downloads, TLS cert materialization).
 func (l Layout) HelmTmp() string { return app2(l.Root, HelmTmpDir) }
-
-// Stage returns the kustomize staging root. Two consumers share it:
-//   - Per-process scratch stages land as flate-stage-<rand> children (legacy
-//     fallback for sources without a content-addressable fingerprint).
-//   - Persistent content-addressed stages land at <stage>/<digest[:2]>/<digest>/
-//     keyed by the source artifact's fingerprint (git SHA, OCI digest…).
-//
-// The two-char fan-out prefix keeps any one subdir below typical FS dirent
-// limits and never collides with the `flate-stage-` legacy prefix.
-func (l Layout) Stage() string { return app2(l.Root, StageDir) }
 
 // RenderHelmCache returns the parent directory of the persisted helm
 // template-output cache. Entries live under sharded subdirs keyed by

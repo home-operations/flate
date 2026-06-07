@@ -7,10 +7,75 @@ package helmrelease
 // mirroring the kustomization package's dispatch.go / substitute.go split.
 
 import (
+	"context"
 	"log/slog"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
+
+// resolvePreRenderValuesFrom reduces hr's valuesFrom to the set helm.Prepare
+// can resolve offline, isolating the one non-linear stretch of reconcile (a
+// retry loop + a load-bearing store re-read) so reconcile itself reads as a
+// linear gate/resolve/render sequence.
+//
+// Two phases. (1) When allowMissingSecrets, proactively omit refs whose
+// producer can't materialize offline so they don't become pre-render waits.
+// (2) Wait for the remaining pre-render references — helm.Prepare reads the
+// live Store synchronously and hard-fails on a missing chartRef HelmChart or
+// non-optional valuesFrom CM/Secret, so a legitimate load order (HR observed
+// before its HelmChart CR, or before a sibling KS emits its valuesFrom CM)
+// must wait rather than fail. On a wait failure under allowMissingSecrets the
+// failed refs are dropped and the wait retried; otherwise the reconcile fails.
+//
+// On success the canonical HR is re-read from the store (a structural parent
+// may have re-emitted it with the full valuesFrom list while we waited), then
+// the accumulated failed-ref drops and the proactive omission are re-applied —
+// the re-applied proactive pass re-evaluates against the now-current store, so
+// a ref that materialized during the wait is correctly kept.
+func (c *Controller) resolvePreRenderValuesFrom(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, error) {
+	if c.allowMissingSecrets {
+		hr = c.omitValuesFrom(hr, nil, true)
+	}
+	omittedValuesRefs := map[manifest.NamedResource]struct{}{}
+	for {
+		preDeps := preparePrereqs(hr)
+		if len(preDeps) == 0 {
+			break
+		}
+		var preSum depwait.Summary
+		if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout), preDeps,
+			"awaiting pre-render references",
+			func(sum depwait.Summary) error {
+				preSum = sum
+				return base.DepFailed(id)(sum)
+			}); err != nil {
+			if c.allowMissingSecrets {
+				if next, ok := c.omitFailedValuesFrom(hr, preSum.Failed); ok {
+					for _, omitted := range omittedValuesRefIDs(hr, next) {
+						omittedValuesRefs[omitted] = struct{}{}
+					}
+					hr = next
+					continue
+				}
+			}
+			return nil, err
+		}
+		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
+			hr = obj
+		}
+		if len(omittedValuesRefs) > 0 {
+			hr = removeValuesRefs(hr, omittedValuesRefs)
+		}
+		if c.allowMissingSecrets {
+			hr = c.omitValuesFrom(hr, nil, true)
+		}
+		break
+	}
+	return hr, nil
+}
 
 func (c *Controller) omitFailedValuesFrom(hr *manifest.HelmRelease, failed []manifest.NamedResource) (*manifest.HelmRelease, bool) {
 	failedSet := make(map[manifest.NamedResource]struct{}, len(failed))

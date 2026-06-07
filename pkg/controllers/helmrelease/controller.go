@@ -281,52 +281,9 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return err
 	}
 
-	if c.allowMissingSecrets {
-		hr = c.omitValuesFrom(hr, nil, true)
-	}
-
-	// Pre-Prepare existence waits: helm.Prepare reads from the live
-	// Store synchronously, returning ErrObjectNotFound for missing
-	// chartRef-HelmChart CRDs and non-optional valuesFrom refs. A
-	// legitimate load order — HR observed before the HelmChart CR
-	// it references, or before a sibling KS emits its valuesFrom CM —
-	// would hard-fail here without waiting. Collect the existence-
-	// only deps (no Ready semantics needed; they just have to be in
-	// the store before Prepare reads through them) and Await them.
-	omittedValuesRefs := map[manifest.NamedResource]struct{}{}
-	for {
-		preDeps := preparePrereqs(hr)
-		if len(preDeps) == 0 {
-			break
-		}
-		var preSum depwait.Summary
-		if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout), preDeps,
-			"awaiting pre-render references",
-			func(sum depwait.Summary) error {
-				preSum = sum
-				return base.DepFailed(id)(sum)
-			}); err != nil {
-			if c.allowMissingSecrets {
-				if next, ok := c.omitFailedValuesFrom(hr, preSum.Failed); ok {
-					for _, omitted := range omittedValuesRefIDs(hr, next) {
-						omittedValuesRefs[omitted] = struct{}{}
-					}
-					hr = next
-					continue
-				}
-			}
-			return err
-		}
-		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
-			hr = obj
-		}
-		if len(omittedValuesRefs) > 0 {
-			hr = removeValuesRefs(hr, omittedValuesRefs)
-		}
-		if c.allowMissingSecrets {
-			hr = c.omitValuesFrom(hr, nil, true)
-		}
-		break
+	hr, err := c.resolvePreRenderValuesFrom(ctx, id, hr)
+	if err != nil {
+		return err
 	}
 	if err := c.PreflightError(id); err != nil {
 		return err
@@ -337,7 +294,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// the same pre-render dance an embedder calling TemplateDocs
 	// directly performs. Keeping one canonical implementation here
 	// means changes to the contract only land in one place.
-	hr, err := helm.Prepare(hr, c.Helm.Resolver().HelmChart, values.NewStoreProvider(c.Store), c.Helm.ValuesCache())
+	hr, err = helm.Prepare(hr, c.Helm.Resolver().HelmChart, values.NewStoreProvider(c.Store), c.Helm.ValuesCache())
 	if err != nil {
 		return err
 	}

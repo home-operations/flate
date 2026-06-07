@@ -47,12 +47,12 @@ func Table(w io.Writer, cols []Column, rows []map[string]string) error {
 		}
 	}
 	var b bytes.Buffer
-	// +1 newline per row (header + data rows); each cell padded to width+gutter
-	totalCols := 0
+	// Each cell is padded to width+gutter; +1 for the per-row newline.
+	rowWidth := 0
 	for _, width := range widths {
-		totalCols += width + 4
+		rowWidth += width + 4
 	}
-	b.Grow((1 + len(rows)) * (totalCols + 1))
+	b.Grow((1 + len(rows)) * (rowWidth + 1))
 	last := len(cols) - 1
 	for i, c := range cols {
 		writeCol(&b, c.Header, widths[i], i == last)

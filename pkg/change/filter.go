@@ -105,6 +105,12 @@ type Filter struct {
 
 type nameKey struct{ kind, name string }
 
+// keyOf is the (Kind, Name) namespace-agnostic key for id, used by the
+// empty-namespace fallback indexes (keepByName, producersByName).
+func keyOf(id manifest.NamedResource) nameKey {
+	return nameKey{id.Kind, id.Name}
+}
+
 // NewFilter constructs a fully-resolved Filter in one shot. It walks
 // the file-level Changes set, attributes each change to the most
 // specific Flux Kustomization that owns it, then expands transitive
@@ -192,10 +198,8 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	if _, ok := f.keep[id]; ok {
 		return true
 	}
-	if _, ok := f.keepByName[nameKey{id.Kind, id.Name}]; ok {
-		return true
-	}
-	return false
+	_, ok := f.keepByName[keyOf(id)]
+	return ok
 }
 
 // ProducersFor returns Flux Kustomizations that render the file-backed
@@ -232,7 +236,7 @@ func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResourc
 	}
 	out := f.producersByID[id]
 	if id.Namespace != "" {
-		out = appendUniqueProducers(out, f.producersByName[nameKey{id.Kind, id.Name}])
+		out = appendUniqueProducers(out, f.producersByName[keyOf(id)])
 	}
 	return out
 }
@@ -370,7 +374,7 @@ func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResourc
 func (f *Filter) markKept(id manifest.NamedResource) {
 	f.keep[id] = struct{}{}
 	if id.Namespace == "" {
-		f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
+		f.keepByName[keyOf(id)] = struct{}{}
 	}
 }
 
@@ -592,7 +596,7 @@ func (f *Filter) resolve() {
 
 	// NOTE: queue grows inside the loop via enqueuePrimary/enqueueAncestor.
 	// Re-evaluate len(queue) each iteration; do NOT convert to `range queue`
-	// (intrange linter must not auto-fix this — see //nolint above).
+	// (intrange linter must not auto-fix this — see //nolint below).
 	for head := 0; head < len(queue); head++ { //nolint:intrange // queue grows during iteration
 		_, headPrimary := primary[queue[head]]
 		// transitiveDeps reads the consumer from the Store; that covers
@@ -670,7 +674,7 @@ func (f *Filter) resolve() {
 	f.keepByName = make(map[nameKey]struct{})
 	for id := range keep {
 		if id.Namespace == "" {
-			f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
+			f.keepByName[keyOf(id)] = struct{}{}
 		}
 	}
 }
@@ -758,7 +762,7 @@ func buildProducerIndex(sourceFiles map[manifest.NamedResource]string, owners ow
 		}
 		byID[id] = appendUniqueProducers(byID[id], producers)
 		if id.Namespace == "" {
-			key := nameKey{id.Kind, id.Name}
+			key := keyOf(id)
 			byName[key] = appendUniqueProducers(byName[key], producers)
 		}
 	}

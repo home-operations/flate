@@ -96,7 +96,7 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 	go func() {
 		started := time.Now()
 		defer s.wgActive.Done()
-		defer s.taskDone()
+		defer s.decrActive()
 		defer func() {
 			if d := time.Since(started); d > time.Second {
 				slog.Debug("task complete", "name", name, "duration", d)
@@ -120,15 +120,16 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 	}()
 }
 
-// taskDone is deferred in Go so both clean returns and panics fire
-// the decrement and quiescence notification.
-func (s *Service) taskDone() {
-	now := s.active.Add(-1)
-	s.notifyQuiescence(now)
+// decrActive drops the active count by one and notifies any quiescence
+// waiters the new count has satisfied. Deferred in Go so both clean
+// returns and panics fire the decrement, and reused by YieldQuiescent's
+// depwait hop.
+func (s *Service) decrActive() {
+	s.notifyQuiescence(s.active.Add(-1))
 }
 
 // notifyQuiescence is called on every active-count decrement —
-// goroutine exit (taskDone) AND YieldQuiescent entry — so
+// goroutine exit AND YieldQuiescent entry (both via decrActive) — so
 // depwait-blocked tasks don't prevent the pool from reaching
 // quiescence on their own absence of productive work.
 func (s *Service) notifyQuiescence(now int64) {
@@ -163,7 +164,7 @@ func (s *Service) QuiescenceCh(threshold int64) <-chan struct{} {
 	s.quiesceMu.Lock()
 	defer s.quiesceMu.Unlock()
 	// Re-read active under quiesceMu so we don't race a concurrent
-	// taskDone that already closed waiters at the current threshold.
+	// decrActive that already closed waiters at the current threshold.
 	if s.active.Load() <= threshold {
 		close(ch)
 		return ch
@@ -231,14 +232,13 @@ func (s *Service) releaseSlot() func() {
 //
 // Both the active increment and the slot re-acquire are deferred so
 // a panic inside fn still restores both counters; without that,
-// Service.Go's outer `defer s.taskDone()` would over-decrement on
+// Service.Go's outer `defer s.decrActive()` would over-decrement on
 // unwind.
 func (s *Service) YieldQuiescent(fn func()) {
 	if s.sem != nil {
 		defer s.releaseSlot()()
 	}
-	now := s.active.Add(-1)
-	s.notifyQuiescence(now)
+	s.decrActive()
 	defer s.active.Add(1)
 	fn()
 }

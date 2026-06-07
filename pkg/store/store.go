@@ -139,7 +139,7 @@ func New() *Store {
 // shardFor returns the shard owning id's Kind. The hash is FNV-1a
 // over id.Kind — short, well-distributed, stdlib (`hash/fnv`).
 func (s *Store) shardFor(id manifest.NamedResource) *shard {
-	return s.shards[kindShardIndex(id.Kind)]
+	return s.shardForKind(id.Kind)
 }
 
 // shardForKind is the kind-only sibling of shardFor for entrypoints

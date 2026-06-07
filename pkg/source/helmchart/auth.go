@@ -83,7 +83,6 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 		}
 		paths[i] = p
 	}
-	certPath, keyPath, caPath := paths[0], paths[1], paths[2]
 	if paths == [3]string{} {
 		cleanup()
 		// A secret present but carrying none of the TLS keys is malformed
@@ -91,5 +90,5 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
 			r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
 	}
-	return []getter.Option{getter.WithTLSClientConfig(certPath, keyPath, caPath)}, cleanup, nil
+	return []getter.Option{getter.WithTLSClientConfig(paths[0], paths[1], paths[2])}, cleanup, nil
 }

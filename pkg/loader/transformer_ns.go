@@ -38,17 +38,17 @@ const transformerScanMaxDepth = 6
 // Resolving the namespace here, at load time, lets the leaf KS render
 // into the right namespace on its first pass — the load-time analog of
 // the same NamespaceTransformer kustomize would apply, mirroring how
-// ApplyNamespaceInheritance front-runs kustomize-controller's
+// ApplyNamespaceInheritanceWithRefs front-runs kustomize-controller's
 // apply-time namespace defaulting.
 //
 // Only spec.targetNamespace is set (never metadata.namespace), so the
 // KS's store id stays stable. The value reaches rendered children via
 // ks.Contents (RenderFlux feeds it to kustomize) and reaches
 // store-resident namespace-less resources under spec.path via
-// ApplyNamespaceInheritance's existing projection, which now sees a
-// populated targetNamespace.
+// ApplyNamespaceInheritanceWithRefs's existing projection, which now sees
+// a populated targetNamespace.
 //
-// Runs before ApplyNamespaceInheritance (see discovery.applyNamespaces).
+// Runs before ApplyNamespaceInheritanceWithRefs (see discovery.applyNamespaces).
 func StampTransformerTargetNamespaces(s *store.Store, sourceFiles map[manifest.NamedResource]string, repoRoot string) {
 	if len(sourceFiles) == 0 {
 		return

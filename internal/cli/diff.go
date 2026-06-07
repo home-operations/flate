@@ -39,55 +39,15 @@ func newDiffCmd() *cobra.Command {
 	return cmd
 }
 
-// defaultStripAttrs is the default `--strip-attr` list — annotations
-// and labels that Helm + kustomize rotate on every chart bump and
-// which contribute pure noise to PR-time diff review. The trailing-
-// slash "checksum/" is a prefix match (see StripResourceAttributes)
-// that covers every suffix charts emit — checksum/config,
-// checksum/secret, checksum/secrets, etc. — in one entry.
-//
-// These annotations are templated as `sha256sum (include "…" .)` over
-// a rendered ConfigMap/Secret. flate cannot make them stable: the
-// underlying value is genuinely per-render random in some charts
-// (e.g. matrix-synapse's `registration_shared_secret | default
-// (randAlphaNum 24)`, which sprig draws from crypto/rand — not
-// seedable, and Helm exposes no funcMap hook to override it). flate
-// faithfully mirrors Helm here, so raw `flate build` output is not
-// byte-stable for such charts; the on-disk render cache only masks it.
-// Stripping the annotation is what keeps `flate diff` churn-free.
-var defaultStripAttrs = []string{
-	"helm.sh/chart",
-	"checksum/",
-	"app.kubernetes.io/version",
-	"chart",
-}
-
-// defaultStripFields is the default `--strip-field` list — dotted spec
-// field-paths whose value a chart templates from the render clock and
-// so rotates on every render. Same unfixable-at-render class as the
-// randAlphaNum annotations above (Helm exposes no funcMap hook): the
-// TrueCharts common library emits
-//
-//	spec.restic.unlock: {{ now | date "20060102150405" }}
-//
-// on every volsync ReplicationSource, so two diff sides rendered a
-// second apart (cold cache, or across machines) would otherwise show a
-// spurious `~ spec.restic.unlock` per backed-up app. Deleting the leaf
-// keeps the diff churn-free; raw `flate build` output still mirrors
-// Helm (the render cache masks it there).
-var defaultStripFields = []string{
-	"spec.restic.unlock",
-}
-
 type diffFlags struct {
 	stripAttrs  []string
 	stripFields []string
 }
 
 func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
-	cmd.Flags().StringArrayVar(&d.stripAttrs, "strip-attr", defaultStripAttrs,
+	cmd.Flags().StringArrayVar(&d.stripAttrs, "strip-attr", diff.DefaultStripAttrs,
 		"metadata annotation/label key to strip before diffing (repeatable; supplying any value replaces the default set)")
-	cmd.Flags().StringArrayVar(&d.stripFields, "strip-field", defaultStripFields,
+	cmd.Flags().StringArrayVar(&d.stripFields, "strip-field", diff.DefaultStripFields,
 		"dotted spec field-path to delete before diffing, e.g. spec.restic.unlock (repeatable; supplying any value replaces the default set)")
 }
 
@@ -356,7 +316,6 @@ func gatherAllArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, 
 // only to recover the producing object's spec.path (the diff header
 // shows it for KS parents).
 func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) ([]diff.Doc, int) {
-	var out []diff.Doc
 	// Defensive re-drop of --skip-secrets / --skip-crds / --skip-kinds.
 	// Orchestrator.Render already applies the same set to Result.Manifests
 	// at the embed boundary; this still pulls weight for SDK consumers who
@@ -365,12 +324,13 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 	if c != nil {
 		skip = c.skipResourceKinds()
 	}
-	objs := o.Store().ListObjects(kind)
-	slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
-		return a.Named().Compare(b.Named())
-	})
+	// Filter the rendered manifests down to the in-scope parents
+	// (name + namespace), then hand the submap to diff.DocsFromManifests
+	// — the shared, store-free flattener SDK consumers use too — passing a
+	// store-backed pathOf so KS parents carry their spec.path.
+	sub := make(map[manifest.NamedResource][]map[string]any)
 	matched := 0
-	for _, obj := range objs {
+	for _, obj := range o.Store().ListObjects(kind) {
 		id := obj.Named()
 		if name != "" && id.Name != name {
 			continue
@@ -379,17 +339,15 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 			continue
 		}
 		matched++
-		docs, ok := res.Manifests[id]
-		if !ok {
-			continue
-		}
-		parent := diff.Parent{Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
-		if ks, ok := store.Get[*manifest.Kustomization](o.Store(), id); ok {
-			parent.Path = strings.TrimPrefix(ks.Path, "./")
-		}
-		for _, m := range manifest.DropKinds(docs, skip) {
-			out = append(out, diff.Doc{Manifest: m, Parent: parent})
+		if docs, ok := res.Manifests[id]; ok {
+			sub[id] = manifest.DropKinds(docs, skip)
 		}
 	}
-	return out, matched
+	docs := diff.DocsFromManifests(sub, func(id manifest.NamedResource) string {
+		if ks, ok := store.Get[*manifest.Kustomization](o.Store(), id); ok {
+			return strings.TrimPrefix(ks.Path, "./")
+		}
+		return ""
+	})
+	return docs, matched
 }

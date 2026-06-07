@@ -29,7 +29,33 @@
 // comparison runs — used to drop chart-bump noise (`helm.sh/chart`,
 // `checksum/config`, …) that rotates on every Helm upgrade but carries
 // no review-relevant signal. ConfigMap binaryData is summarized to a
-// content hash for the same reason.
+// content hash for the same reason. [DefaultStripAttrs] and
+// [DefaultStripFields] are the lists `flate diff` uses out of the box.
+//
+// # SDK usage
+//
+// [RenderDocs] returns formatted bytes. A consumer that needs the diff as
+// *data* — to build its own API payload, web UI, or image report —
+// instead calls [Changes], which returns the same paired, normalized,
+// noise-filtered set as a [][Change] (added / changed / removed, with the
+// per-side manifests and the captured helm.sh/chart label). The wiring
+// from two [orchestrator.Result]s is:
+//
+//	left  := diff.DocsFromManifests(baseRes.Manifests, nil)
+//	right := diff.DocsFromManifests(headRes.Manifests, nil)
+//	changes := diff.Changes(left, right, diff.Options{
+//		StripAttrs:  diff.DefaultStripAttrs,
+//		StripFields: diff.DefaultStripFields,
+//		Normalize:   redact, // optional extra per-manifest scrub
+//	})
+//
+// [DocsFromManifests] is the store-free adapter from a render Result's
+// per-parent manifests to the flat []Doc both [Changes] and [RenderDocs]
+// take. [Options].Normalize is an optional per-manifest hook (applied
+// after the built-in strips) for noise the defaults don't cover — e.g.
+// redacting Secret values or chart-minted TLS certs. See the package
+// Example.
 //
 // [dyff]: https://github.com/homeport/dyff
+// [orchestrator.Result]: https://pkg.go.dev/github.com/home-operations/flate/pkg/orchestrator#Result
 package diff

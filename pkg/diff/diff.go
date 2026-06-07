@@ -42,6 +42,14 @@ type Options struct {
 	// cannot be stabilized at render time (Helm exposes no funcMap
 	// hook). See manifest.StripResourceFields.
 	StripFields []string
+	// Normalize, when non-nil, is an extra per-manifest scrub applied to
+	// each (cloned) document AFTER StripAttrs/StripFields and binaryData
+	// redaction, before resources are paired and compared. Use it to
+	// suppress render-time noise the built-in strips don't cover —
+	// e.g. an SDK consumer redacting Secret values or chart-minted TLS
+	// certs so a per-render-random value doesn't read as a change.
+	// nil = no extra scrub (the CLI default).
+	Normalize func(map[string]any)
 	// Format selects the output style (see the Format constants). The
 	// zero value renders the human default.
 	Format Format

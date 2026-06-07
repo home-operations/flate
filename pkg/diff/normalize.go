@@ -19,19 +19,34 @@ import (
 // like kube-prometheus-stack's CRD upgrade bundle). Deep-copies so
 // the original tree (shared with other consumers in the same
 // orchestrator run) is untouched.
-func normalizeDocs(docs []Doc, attrs, fields []string) []Doc {
-	if len(attrs) == 0 && len(fields) == 0 && !docsContainBinaryData(docs) {
+func normalizeDocs(docs []Doc, attrs, fields []string, hook func(map[string]any)) []Doc {
+	if len(attrs) == 0 && len(fields) == 0 && hook == nil && !docsContainBinaryData(docs) {
 		return docs
 	}
 	out := make([]Doc, len(docs))
 	for i, d := range docs {
-		copyDoc := manifest.DeepCopyMap(d.Manifest)
-		manifest.StripResourceAttributes(copyDoc, attrs)
-		manifest.StripResourceFields(copyDoc, fields)
-		redactBinaryData(copyDoc)
-		out[i] = Doc{Manifest: copyDoc, Parent: d.Parent}
+		out[i] = Doc{Manifest: normalizeManifest(d.Manifest, attrs, fields, hook), Parent: d.Parent}
 	}
 	return out
+}
+
+// normalizeManifest returns a normalized deep copy of m: strip the listed
+// annotation/label keys and spec field-paths, redact ConfigMap binaryData,
+// then apply the optional consumer hook. Returns nil for a nil input (an
+// added/removed side of a pair has no manifest). The original is never
+// mutated — it's shared with other consumers in the same orchestrator run.
+func normalizeManifest(m map[string]any, attrs, fields []string, hook func(map[string]any)) map[string]any {
+	if m == nil {
+		return nil
+	}
+	c := manifest.DeepCopyMap(m)
+	manifest.StripResourceAttributes(c, attrs)
+	manifest.StripResourceFields(c, fields)
+	redactBinaryData(c)
+	if hook != nil {
+		hook(c)
+	}
+	return c
 }
 
 // docsContainBinaryData reports whether any doc is a ConfigMap

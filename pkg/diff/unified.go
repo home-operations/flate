@@ -20,8 +20,8 @@ func joinNS(ns, name string) string {
 // changed pair's YAML, and concatenates the bodies. Identical resources
 // are dropped. Not Kubernetes-aware — see unifiedBody.
 func renderUnified(left, right []Doc, opts Options) ([]byte, error) {
-	left = normalizeDocs(left, opts.StripAttrs, opts.StripFields)
-	right = normalizeDocs(right, opts.StripAttrs, opts.StripFields)
+	left = normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize)
+	right = normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize)
 	var b bytes.Buffer
 	first := true
 	for _, p := range pair(left, right) {

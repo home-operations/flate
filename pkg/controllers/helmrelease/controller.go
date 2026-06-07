@@ -166,32 +166,24 @@ func (c *Controller) onRawProducerAdded() store.Listener {
 // coverage to a new kind means adding a case here (see the rawProducerIndex
 // field comment).
 func rawProducerTargetID(raw *manifest.RawObject) (manifest.NamedResource, bool) {
+	secretID := func(name string) manifest.NamedResource {
+		if name == "" {
+			name = raw.Name
+		}
+		return manifest.NamedResource{Kind: manifest.KindSecret, Namespace: raw.Namespace, Name: name}
+	}
 	switch raw.Kind {
 	case "ExternalSecret":
 		target, _ := raw.Spec["target"].(map[string]any)
-		targetName, _ := target["name"].(string)
-		if targetName == "" {
-			targetName = raw.Name
-		}
-		return manifest.NamedResource{
-			Kind:      manifest.KindSecret,
-			Namespace: raw.Namespace,
-			Name:      targetName,
-		}, true
+		name, _ := target["name"].(string)
+		return secretID(name), true
 	case "SealedSecret":
-		targetName := raw.Name
-		if tmpl, _ := raw.Spec["template"].(map[string]any); tmpl != nil {
-			if metadata, _ := tmpl["metadata"].(map[string]any); metadata != nil {
-				if name, _ := metadata["name"].(string); name != "" {
-					targetName = name
-				}
-			}
-		}
-		return manifest.NamedResource{
-			Kind:      manifest.KindSecret,
-			Namespace: raw.Namespace,
-			Name:      targetName,
-		}, true
+		// Indexing a nil map yields the zero value, so the failed
+		// intermediate asserts flow through without explicit nil checks.
+		tmpl, _ := raw.Spec["template"].(map[string]any)
+		metadata, _ := tmpl["metadata"].(map[string]any)
+		name, _ := metadata["name"].(string)
+		return secretID(name), true
 	default:
 		return manifest.NamedResource{}, false
 	}

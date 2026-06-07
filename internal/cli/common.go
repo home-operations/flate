@@ -575,6 +575,14 @@ func scopedRunError(o *orchestrator.Orchestrator, res *orchestrator.Result, c *c
 	return errors.Join(aggregateScopedFailures(failed), errors.Join(extras...))
 }
 
+// emitResult joins an emit-time error with the scoped run error so a
+// partial render still surfaces both the IO/format failure and any
+// per-resource reconcile failures. A nil emitErr collapses to just the run
+// error (and both nil to nil) via errors.Join's nil handling.
+func emitResult(emitErr error, o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, runErr error) error {
+	return errors.Join(emitErr, scopedRunError(o, res, c, runErr))
+}
+
 // resourceAggregatePrefix is the leading text of the error
 // aggregateScopedFailures produces. nonResourceRunErrors uses it to tell
 // the per-resource failure aggregate apart from incidental run errors, so

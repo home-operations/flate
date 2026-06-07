@@ -75,7 +75,8 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	if repo.Reference != nil {
 		ref = *repo.Reference
 	}
-	resolveSlot, resolvedDigest, err := cachedOCIResolve(ctx, cache, repo, ref, authIdentity(repo))
+	authID := authIdentity(repo)
+	resolveSlot, resolvedDigest, err := cachedOCIResolve(ctx, cache, repo, ref, authID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +109,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	if resolvedDigest == "" {
 		slotRef = source.MutableCacheKey(slotRef)
 	}
-	slot, err := cache.Slot(ctx, repo.URL, slotRef, authIdentity(repo))
+	slot, err := cache.Slot(ctx, repo.URL, slotRef, authID)
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
 	}

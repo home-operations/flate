@@ -39,8 +39,7 @@ func (d *discoverer) promoteOrphans(prefixes []loader.KSPathPrefix) {
 		if d.cfg.Store.GetObject(id) != nil {
 			continue
 		}
-		file, hasFile := d.sourceFiles[id]
-		if hasFile {
+		if file, ok := d.sourceFiles[id]; ok {
 			if _, covered := loader.LongestParent(prefixes, file, id); covered {
 				continue
 			}

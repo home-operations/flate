@@ -137,7 +137,7 @@ func longestStrictParent(prefixes []KSPathPrefix, file string, self manifest.Nam
 //
 // childKind=KindKustomization for the KS→KS parent map; pass
 // KindHelmRelease for the HR→KS map. The orchestrator builds both
-// (see discovery.Run → mergeParents).
+// and merges them (see discovery.Run).
 //
 // repoRoot is the filesystem root used to read each KS's
 // kustomization.yaml when folding `components:` into the prefix set;

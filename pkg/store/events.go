@@ -13,7 +13,7 @@ type EventKind int
 
 const (
 	// EventObjectAdded fires when a new manifest is added (or when a
-	// listener is registered with Flush=true, to replay existing state).
+	// listener is registered with flush=true, to replay existing state).
 	EventObjectAdded EventKind = iota + 1
 	// EventStatusUpdated fires when status transitions.
 	EventStatusUpdated

@@ -6,7 +6,7 @@
 //	remotebase.go — FetchRemoteBase: anonymous kustomize remote git base
 //	auth.go       — SecretRef → transport.AuthMethod resolution
 //	tls.go        — spec.secretRef.ca.crt → *tls.Config
-//	ssh.go        — SSH URL / user extraction
+//	ssh.go        — SSH host-key callbacks (known_hosts / insecure)
 //	checkout.go   — checkoutRef + updateSubmodules
 //	resolve.go    — ref → commit hash (mirror path)
 //	marker.go     — slot revision sidecar (.flate-meta.json) + worktree HEAD lookup

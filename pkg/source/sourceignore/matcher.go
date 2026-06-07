@@ -39,7 +39,7 @@ func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sourceignore abs: %w", err)
 	}
-	domain := strings.Split(abs, string(filepath.Separator))
+	domain := splitPath(abs)
 
 	patterns, err := flux.LoadIgnorePatterns(abs, domain)
 	if err != nil {
@@ -58,6 +58,11 @@ func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 // Match reports whether rel (a path relative to the matcher's root, using the
 // OS separator) is excluded. isDir distinguishes directory-only patterns.
 func (m *Matcher) Match(rel string, isDir bool) bool {
-	segments := slices.Concat(m.domain, strings.Split(rel, string(filepath.Separator)))
+	segments := slices.Concat(m.domain, splitPath(rel))
 	return m.matcher.Match(segments, isDir)
+}
+
+// splitPath breaks p into its components using the OS path separator.
+func splitPath(p string) []string {
+	return strings.Split(p, string(filepath.Separator))
 }

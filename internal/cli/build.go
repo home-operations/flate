@@ -2,7 +2,6 @@ package cli
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -82,10 +81,10 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			// Per-resource Run failures: emit whatever we rendered, then
 			// flip the exit code so CI pipelines piping `flate build` into
 			// kubectl apply don't silently apply a half-rendered tree.
-			// errors.Join surfaces both an emit-time IO failure AND the
+			// emitResult surfaces both an emit-time IO failure AND the
 			// partial-failure list — previously the emit error masked
 			// the run failures, so CI fixed the wrong thing.
-			return errors.Join(emitErr, scopedRunError(o, res, c, runErr))
+			return emitResult(emitErr, o, res, c, runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)

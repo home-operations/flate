@@ -2,7 +2,6 @@ package cli
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -125,10 +124,7 @@ func newGetAllCmd() *cobra.Command {
 			if o == nil {
 				return runErr
 			}
-			if err := printCluster(cmd.OutOrStdout(), o, c, c.output); err != nil {
-				return errors.Join(err, scopedRunError(o, res, c, runErr))
-			}
-			return scopedRunError(o, res, c, runErr)
+			return emitResult(printCluster(cmd.OutOrStdout(), o, c, c.output), o, res, c, runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)
@@ -155,10 +151,7 @@ func newGetImagesCmd() *cobra.Command {
 				return runErr
 			}
 			imgs := slices.Sorted(maps.Keys(collectImages(o, res, c)))
-			if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
-				return errors.Join(err, scopedRunError(o, res, c, runErr))
-			}
-			return scopedRunError(o, res, c, runErr)
+			return emitResult(emitImageList(cmd.OutOrStdout(), imgs, c.output), o, res, c, runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputName, format.OutputYAML, format.OutputJSON)
@@ -191,10 +184,7 @@ func resourceListCmd[T manifest.BaseManifest](
 				Name:   firstArg(args),
 				Labels: l.labels,
 			}
-			if err := printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper); err != nil {
-				return errors.Join(err, scopedRunError(o, res, c, runErr))
-			}
-			return scopedRunError(o, res, c, runErr)
+			return emitResult(printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper), o, res, c, runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputTable, format.OutputYAML, format.OutputJSON, format.OutputName)

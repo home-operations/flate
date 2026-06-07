@@ -62,15 +62,11 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	if baseTransport != nil {
 		transport = baseTransport
 	}
-	httpClient := &http.Client{Transport: transport}
+	authClient := &auth.Client{Client: &http.Client{Transport: transport}}
 	if credStore != nil {
-		repoClient.Client = &auth.Client{
-			Credential: credentials.Credential(credStore),
-			Client:     httpClient,
-		}
-	} else {
-		repoClient.Client = &auth.Client{Client: httpClient}
+		authClient.Credential = credentials.Credential(credStore)
 	}
+	repoClient.Client = authClient
 
 	// Resolve spec.ref into a concrete (tag-or-digest) BEFORE choosing
 	// the cache slot, so different semver matches don't share a slot.

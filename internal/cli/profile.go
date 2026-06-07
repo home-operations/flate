@@ -50,26 +50,10 @@ func startProfile(mode, outDir string) (stop func(), err error) {
 		}, nil
 	case "block":
 		runtime.SetBlockProfileRate(1)
-		return func() {
-			f, err := createProfileFile(path)
-			if err != nil {
-				return
-			}
-			_ = pprof.Lookup("block").WriteTo(f, 0)
-			runtime.SetBlockProfileRate(0)
-			_ = f.Close()
-		}, nil
+		return dumpProfileAt(path, "block", func() { runtime.SetBlockProfileRate(0) }), nil
 	case "mutex":
 		runtime.SetMutexProfileFraction(1)
-		return func() {
-			f, err := createProfileFile(path)
-			if err != nil {
-				return
-			}
-			_ = pprof.Lookup("mutex").WriteTo(f, 0)
-			runtime.SetMutexProfileFraction(0)
-			_ = f.Close()
-		}, nil
+		return dumpProfileAt(path, "mutex", func() { runtime.SetMutexProfileFraction(0) }), nil
 	case "trace":
 		f, err := createProfileFile(filepath.Join(outDir, "trace.out"))
 		if err != nil {
@@ -82,6 +66,22 @@ func startProfile(mode, outDir string) (stop func(), err error) {
 		return func() { trace.Stop(); _ = f.Close() }, nil
 	}
 	return nil, errors.New("--profile must be one of: cpu, mem, block, mutex, trace")
+}
+
+// dumpProfileAt returns a stop func that writes the named pprof profile
+// to path, then runs disable to turn sampling back off. Shared by the
+// block and mutex modes, which differ only in profile name and the
+// sampling toggle.
+func dumpProfileAt(path, name string, disable func()) func() {
+	return func() {
+		f, err := createProfileFile(path)
+		if err != nil {
+			return
+		}
+		_ = pprof.Lookup(name).WriteTo(f, 0)
+		disable()
+		_ = f.Close()
+	}
 }
 
 // createProfileFile opens path for writing a profile. The G304 nolint

@@ -215,6 +215,9 @@ func printResources[T manifest.BaseManifest](
 	}
 	pairs := make([]pair, 0, len(objs))
 	nameExists := sel.Name == ""
+	// Match on labels only; the name was already filtered above, so a
+	// label-only selector keeps the two passes from double-counting.
+	labelSel := selector.Metadata{Labels: sel.Labels}
 	for _, obj := range objs {
 		id := obj.Named()
 		if sel.Name != "" && id.Name != sel.Name {
@@ -224,7 +227,7 @@ func printResources[T manifest.BaseManifest](
 			continue
 		}
 		nameExists = true
-		if !(selector.Metadata{Labels: sel.Labels}).Matches(obj) {
+		if !labelSel.Matches(obj) {
 			continue
 		}
 		t, ok := obj.(T)

@@ -32,9 +32,10 @@ const numEventKinds = 3
 const shardCount = 16
 
 // shard owns the per-Kind state for the Kinds that hash to its
-// index. The four maps are keyed by manifest.NamedResource, which
-// includes Kind — so within a shard each map is keyed by the same
-// set of ids, and a Snapshot for one id touches only this shard.
+// index. The objects/conditions/artifacts maps are keyed by
+// manifest.NamedResource, which includes Kind — so within a shard
+// each is keyed by the same set of ids, and a Snapshot for one id
+// touches only this shard.
 //
 // byName is the secondary index: kind → namespace/name → object.
 // Sharding by Kind means each shard's byName only sees the Kinds

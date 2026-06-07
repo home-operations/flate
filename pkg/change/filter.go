@@ -503,6 +503,23 @@ func (f *Filter) resolve(objs ObjectLister) {
 	}
 
 	owners := buildOwnership(objs, f.repoRoot, f.componentCache)
+	// enqueueAncestorChain marks the structural parent that owns file
+	// (longest-prefix spec.path match) plus its meta-Kustomization
+	// ancestors as ancestor-only — they must render to inject patches /
+	// emit namespace-scoped sources, but their unrelated children must
+	// not cascade into keep (#58/#103). self is skipped so a KS walking
+	// its own source file doesn't re-enqueue itself; pass the zero id
+	// when there is nothing to exclude.
+	enqueueAncestorChain := func(file string, self manifest.NamedResource) {
+		for _, owner := range owners.ownersOf(file) {
+			if owner != self {
+				enqueueAncestor(owner)
+			}
+		}
+		for _, ancestor := range owners.ancestorsOf(file) {
+			enqueueAncestor(ancestor)
+		}
+	}
 	f.producersByID, f.producersByName = buildProducerIndex(f.sourceFiles, owners)
 	ownersHit := make(map[manifest.NamedResource]struct{})
 
@@ -566,12 +583,7 @@ func (f *Filter) resolve(objs ObjectLister) {
 			}
 			enqueuePrimary(consumer)
 			if cf, ok := f.sourceFiles[consumer]; ok {
-				for _, owner := range owners.ownersOf(cf) {
-					enqueueAncestor(owner)
-				}
-				for _, ancestor := range owners.ancestorsOf(cf) {
-					enqueueAncestor(ancestor)
-				}
+				enqueueAncestorChain(cf, manifest.NamedResource{})
 			}
 			break
 		}
@@ -644,15 +656,7 @@ func (f *Filter) resolve(objs ObjectLister) {
 		// file, so the parent never collides with the KS we're walking.
 		// Structural parents are ancestor-only (their unrelated children
 		// shouldn't cascade into keep — same rationale as ancestorsOf).
-		for _, owner := range owners.ownersOf(src) {
-			if owner == queue[head] {
-				continue
-			}
-			enqueueAncestor(owner)
-		}
-		for _, ancestor := range owners.ancestorsOf(src) {
-			enqueueAncestor(ancestor)
-		}
+		enqueueAncestorChain(src, queue[head])
 	}
 	f.keep = keep
 	f.primary = primary

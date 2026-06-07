@@ -99,7 +99,7 @@ type Controller struct {
 
 	// renderTracker receives every reconcilable/source child a render
 	// emits. Set via SetRenderTracker before Start; read-only after.
-	// nil is fine — markRenderedBatch no-ops.
+	// nil is fine — ReportRendered no-ops.
 	renderTracker RenderTracker
 }
 

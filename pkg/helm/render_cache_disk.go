@@ -227,10 +227,10 @@ func (c *diskRenderCache) sweep() {
 	// platform-dependent order.
 	diskcache.EvictOldest(entries, total, c.limit,
 		func(a, b diskcache.Entry) int {
-			if c := cmp.Compare(a.MTime, b.MTime); c != 0 {
-				return c
-			}
-			return cmp.Compare(a.Path, b.Path)
+			return cmp.Or(
+				cmp.Compare(a.MTime, b.MTime),
+				cmp.Compare(a.Path, b.Path),
+			)
 		},
 		func(e diskcache.Entry) error {
 			if err := os.Remove(e.Path); err != nil {

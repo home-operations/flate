@@ -82,7 +82,5 @@ func (i *ExistenceIndex) All() map[manifest.NamedResource]string {
 	}
 	i.mu.RLock()
 	defer i.mu.RUnlock()
-	out := make(map[manifest.NamedResource]string, len(i.entries))
-	maps.Copy(out, i.entries)
-	return out
+	return maps.Clone(i.entries)
 }

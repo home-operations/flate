@@ -101,22 +101,8 @@ func (c *Controller) omitValuesFrom(
 			filtered = append(filtered, ref)
 			continue
 		}
-		if failed != nil {
-			if _, wasFailed := failed[id]; !wasFailed {
-				filtered = append(filtered, ref)
-				continue
-			}
-		}
-		if c.valuesRefExists(id) {
-			filtered = append(filtered, ref)
-			continue
-		}
-		if c.IsFileIndexed(id) {
-			filtered = append(filtered, ref)
-			continue
-		}
-		producer, hasProducer := c.generatedValuesProducer(id)
-		if requireProducer && !hasProducer {
+		producer, hasProducer, omit := c.shouldOmitValuesRef(id, failed, requireProducer)
+		if !omit {
 			filtered = append(filtered, ref)
 			continue
 		}
@@ -127,6 +113,31 @@ func (c *Controller) omitValuesFrom(
 		slog.Debug("helmrelease: omitted unavailable valuesFrom ref", args...)
 	}
 	return cloneWithValuesFrom(hr, filtered)
+}
+
+// shouldOmitValuesRef decides whether the valuesFrom ref identified by id
+// should be dropped from the offline render. It also surfaces the indexed
+// producer (if any) for logging. A ref is kept (omit=false) when it is not in
+// the failed set, when it exists in the store, when it is file-indexed, or —
+// under requireProducer — when no generating producer is known for it.
+func (c *Controller) shouldOmitValuesRef(
+	id manifest.NamedResource,
+	failed map[manifest.NamedResource]struct{},
+	requireProducer bool,
+) (producer manifest.NamedResource, hasProducer, omit bool) {
+	if failed != nil {
+		if _, wasFailed := failed[id]; !wasFailed {
+			return manifest.NamedResource{}, false, false
+		}
+	}
+	if c.valuesRefExists(id) || c.IsFileIndexed(id) {
+		return manifest.NamedResource{}, false, false
+	}
+	producer, hasProducer = c.generatedValuesProducer(id)
+	if requireProducer && !hasProducer {
+		return producer, hasProducer, false
+	}
+	return producer, hasProducer, true
 }
 
 // cloneWithValuesFrom returns hr unchanged when filtered keeps every ref

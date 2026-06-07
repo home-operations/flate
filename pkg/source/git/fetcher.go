@@ -119,7 +119,6 @@ func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (transport.Auth
 // Supported transports: HTTPS (anonymous, basic, bearer), SSH (key
 // from SecretRef or ssh-agent), and file:// URLs.
 func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
-	cache := f.Cache
 	if repo == nil {
 		return nil, errors.New("git repository is nil")
 	}
@@ -135,7 +134,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	mutableRef := !canUseCachedGitSlot(repo.Reference)
 
 	authID := authIdentity(repo)
-	slot, err := cache.Slot(ctx, repo.URL, slotRef, authID)
+	slot, err := f.Cache.Slot(ctx, repo.URL, slotRef, authID)
 	if err != nil {
 		return nil, fmt.Errorf("cache slot for %s: %w", repo.URL, err)
 	}

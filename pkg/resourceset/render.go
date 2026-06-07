@@ -199,18 +199,13 @@ func splitMultiDoc(pt *parsedTemplate, inputSet map[string]any) ([]map[string]an
 	}
 	var out []map[string]any
 	for chunk := range bytes.SplitSeq(rendered, []byte("\n---")) {
-		chunk = bytes.TrimSpace(chunk)
-		if len(chunk) == 0 {
-			continue
+		doc, err := unmarshalDoc(bytes.TrimSpace(chunk))
+		if err != nil {
+			return nil, err
 		}
-		var doc map[string]any
-		if err := yaml.Unmarshal(chunk, &doc); err != nil {
-			return nil, fmt.Errorf("unmarshal rendered doc: %w", err)
+		if doc != nil {
+			out = append(out, doc)
 		}
-		if len(doc) == 0 {
-			continue
-		}
-		out = append(out, doc)
 	}
 	return out, nil
 }
@@ -220,8 +215,18 @@ func renderSingle(pt *parsedTemplate, inputSet map[string]any) (map[string]any, 
 	if err != nil {
 		return nil, err
 	}
+	return unmarshalDoc(rendered)
+}
+
+// unmarshalDoc decodes a single rendered YAML document, returning a nil
+// map (no error) when the chunk is empty or decodes to an empty object —
+// the caller treats that as "nothing to emit".
+func unmarshalDoc(chunk []byte) (map[string]any, error) {
+	if len(chunk) == 0 {
+		return nil, nil
+	}
 	var doc map[string]any
-	if err := yaml.Unmarshal(rendered, &doc); err != nil {
+	if err := yaml.Unmarshal(chunk, &doc); err != nil {
 		return nil, fmt.Errorf("unmarshal rendered doc: %w", err)
 	}
 	if len(doc) == 0 {

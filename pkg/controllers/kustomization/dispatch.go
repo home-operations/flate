@@ -57,16 +57,18 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 	// (the prior per-child markRendered loop was the contention hot
 	// spot on KS-heavy fixtures).
 	rendered := make([]manifest.NamedResource, 0, len(objs))
+	keep := func(obj manifest.BaseManifest) {
+		c.KeepEmitted(id, obj)
+		rendered = append(rendered, obj.Named())
+	}
 	// Pass 1 — data first.
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			continue
 		}
 		if p.reconcilable {
-			childID := p.obj.Named()
-			c.KeepEmitted(id, p.obj)
+			keep(p.obj)
 			c.Store.AddObject(p.obj)
-			rendered = append(rendered, childID)
 		} else {
 			c.Store.AddRendered(p.obj)
 		}
@@ -75,9 +77,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 	var leaves []manifest.BaseManifest
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
-			childID := p.obj.Named()
-			c.KeepEmitted(id, p.obj)
-			rendered = append(rendered, childID)
+			keep(p.obj)
 			leaves = append(leaves, p.obj)
 		}
 	}

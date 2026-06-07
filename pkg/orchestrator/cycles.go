@@ -94,15 +94,14 @@ func logNewCycleMessages(prev, next map[manifest.NamedResource]string) {
 	if len(next) == 0 {
 		return
 	}
-	prevMsgs := make(map[string]struct{}, len(prev))
+	// Seed the seen-set with prev's messages so a cycle carried over
+	// from the previous snapshot is suppressed, then let it double as
+	// the within-next dedup so a multi-member cycle logs once.
+	seen := make(map[string]struct{}, len(prev)+len(next))
 	for _, msg := range prev {
-		prevMsgs[msg] = struct{}{}
+		seen[msg] = struct{}{}
 	}
-	seen := make(map[string]struct{}, len(next))
 	for _, msg := range next {
-		if _, old := prevMsgs[msg]; old {
-			continue
-		}
 		if _, dup := seen[msg]; dup {
 			continue
 		}

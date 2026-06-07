@@ -575,14 +575,21 @@ func scopedRunError(o *orchestrator.Orchestrator, res *orchestrator.Result, c *c
 	return errors.Join(aggregateScopedFailures(failed), errors.Join(extras...))
 }
 
+// resourceAggregatePrefix is the leading text of the error
+// aggregateScopedFailures produces. nonResourceRunErrors uses it to tell
+// the per-resource failure aggregate apart from incidental run errors, so
+// both must reference this one constant or the classification silently
+// drifts.
+const resourceAggregatePrefix = "reconcile completed with "
+
 func aggregateScopedFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))
 	for id, info := range failed {
 		msgs = append(msgs, fmt.Sprintf("%s: %s", id, info.Message))
 	}
 	slices.Sort(msgs)
-	return fmt.Errorf("reconcile completed with %d failure(s):\n  %s",
-		len(msgs), strings.Join(msgs, "\n  "))
+	return fmt.Errorf("%s%d failure(s):\n  %s",
+		resourceAggregatePrefix, len(msgs), strings.Join(msgs, "\n  "))
 }
 
 func nonResourceRunErrors(err error) []error {
@@ -614,7 +621,7 @@ func flattenErrors(err error) []error {
 }
 
 func isResourceAggregateError(err error) bool {
-	return strings.HasPrefix(err.Error(), "reconcile completed with ")
+	return strings.HasPrefix(err.Error(), resourceAggregatePrefix)
 }
 
 func cmdContext(cmd *cobra.Command) context.Context {

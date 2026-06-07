@@ -209,17 +209,13 @@ func (s *Slot) Commit() error {
 			// coordinates goroutines in this process, so adopt the
 			// existing non-empty slot instead of deleting it.
 			_ = os.RemoveAll(s.staging)
-			s.committed = true
-			s.staging = ""
-			s.Path = s.final
+			s.markCommitted()
 			s.Exists = true
 			return nil
 		}
 		return fmt.Errorf("cache commit: %w", err)
 	}
-	s.committed = true
-	s.staging = ""
-	s.Path = s.final
+	s.markCommitted()
 	return nil
 }
 
@@ -234,10 +230,16 @@ func (s *Slot) commitRefresh() error {
 		return fmt.Errorf("cache refresh commit: %w", err)
 	}
 	_ = os.RemoveAll(backup)
+	s.markCommitted()
+	return nil
+}
+
+// markCommitted records a finalized slot: the staging dir is gone and
+// Path now points at the populated final slot.
+func (s *Slot) markCommitted() {
 	s.committed = true
 	s.staging = ""
 	s.Path = s.final
-	return nil
 }
 
 // randomHex returns n random bytes encoded as a lowercase hex string (2n chars).
@@ -350,20 +352,19 @@ func (s *Slot) StageRefresh() error {
 func (s *Slot) lockFile(ctx context.Context) error {
 	s.fileLock = flock.New(s.final+".lock", flock.SetPermissions(0o600))
 	locked, err := s.fileLock.TryLockContext(ctx, 100*time.Millisecond)
-	if err != nil {
-		_ = s.fileLock.Close()
-		s.fileLock = nil
-		return fmt.Errorf("cache slot lock: %w", err)
+	if err == nil && locked {
+		return nil
 	}
-	if !locked {
-		_ = s.fileLock.Close()
-		s.fileLock = nil
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("cache slot lock: %w", err)
-		}
+	_ = s.fileLock.Close()
+	s.fileLock = nil
+	switch {
+	case err != nil:
+		return fmt.Errorf("cache slot lock: %w", err)
+	case ctx.Err() != nil:
+		return fmt.Errorf("cache slot lock: %w", ctx.Err())
+	default:
 		return errors.New("cache slot lock: not acquired")
 	}
-	return nil
 }
 
 func (s *Slot) unlock() {

@@ -26,7 +26,7 @@ func DocsFromManifests(manifests map[manifest.NamedResource][]map[string]any, pa
 	for id := range manifests {
 		parents = append(parents, id)
 	}
-	slices.SortFunc(parents, func(a, b manifest.NamedResource) int { return a.Compare(b) })
+	slices.SortFunc(parents, manifest.NamedResource.Compare)
 
 	out := make([]Doc, 0, len(manifests))
 	for _, id := range parents {

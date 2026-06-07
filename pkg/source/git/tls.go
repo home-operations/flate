@@ -9,10 +9,6 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// The shared HTTPS-transport install lock moved to
-// internal/gittransport so the bare-mirror subpackage can use the
-// same gate without a circular import.
-
 // resolveTLS builds a *tls.Config from spec.secretRef for HTTPS
 // GitRepositories. It reads both a custom CA ("ca.crt" preferred,
 // "caFile" legacy alias) AND a client certificate ("tls.crt" +

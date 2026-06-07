@@ -406,8 +406,5 @@ func isShallow(repo *git.Repository) bool {
 // log lines.
 func shortRev(h plumbing.Hash) string {
 	s := h.String()
-	if len(s) <= 7 {
-		return s
-	}
-	return s[:7]
+	return s[:min(len(s), 7)]
 }

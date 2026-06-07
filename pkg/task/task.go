@@ -195,11 +195,9 @@ func (s *Service) QuiescenceCh(threshold int64) <-chan struct{} {
 //
 // On an unbounded Service (New or NewBounded(<=0)), fn runs unchanged.
 func (s *Service) YieldSlot(fn func()) {
-	if s.sem == nil {
-		fn()
-		return
+	if s.sem != nil {
+		defer s.releaseSlot()()
 	}
-	defer s.releaseSlot()()
 	fn()
 }
 

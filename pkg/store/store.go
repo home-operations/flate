@@ -126,9 +126,12 @@ func New() *Store {
 	for i := range s.shards {
 		s.shards[i] = newShard()
 	}
-	s.listeners[EventObjectAdded] = newListenerSet()
-	s.listeners[EventStatusUpdated] = newListenerSet()
-	s.listeners[EventArtifactUpdated] = newListenerSet()
+	// Index 0 is the reserved unused slot (EventKind is 1-based); init
+	// one listener set per real event kind so adding a kind can't drift
+	// out of sync with a forgotten assignment here.
+	for ev := EventObjectAdded; int(ev) <= numEventKinds; ev++ {
+		s.listeners[ev] = newListenerSet()
+	}
 	return s
 }
 
@@ -512,12 +515,12 @@ func (s *Store) ListObjects(kind string) []manifest.BaseManifest {
 
 	s.rLockAll()
 	total := 0
-	for i := range s.shards {
-		total += len(s.shards[i].objects)
+	for _, sh := range s.shards {
+		total += len(sh.objects)
 	}
 	out := make([]manifest.BaseManifest, 0, total)
-	for i := range s.shards {
-		for _, obj := range s.shards[i].objects {
+	for _, sh := range s.shards {
+		for _, obj := range sh.objects {
 			out = append(out, obj)
 		}
 	}

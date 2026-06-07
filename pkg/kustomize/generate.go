@@ -14,11 +14,12 @@ package kustomize
 // here. A golden byte-equivalence test (generate_test.go) pins this to flux's
 // real Generator across the full field matrix.
 //
-// Scope: flate constructs the Generator via NewGenerator (no ignore, no filter),
-// so only the filter==false path is reproduced. Source-controller's file
-// exclusion (.sops.yaml, binaries, …) is applied earlier, when the tree is
-// materialized into the fs (see tree.go) — uniformly for every source — so the
-// Generator never sees an ignored file and needs no ignore logic of its own.
+// Scope: this mirrors flux's auto-generate (path: ./) case. When the caller
+// passes a non-nil ignore matcher — for working-tree / self-referential sources
+// that never passed through a fetcher — source-controller's file exclusion
+// (.sops.yaml, binaries, …) is applied here while scanning for resources,
+// reproducing flux's NewGeneratorWithIgnore behavior; fetched artifacts were
+// already filtered and pass nil.
 
 import (
 	"encoding/json"
@@ -201,16 +202,27 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 	return manifest, kfile, nil
 }
 
+// kustomizationFileIn returns the path of the first recognized kustomization
+// file directly inside dir (a regular file, not a directory), or ok=false when
+// none is present. Mirrors the lookup flux performs in both findOrGenerate and
+// its manifest scan.
+func kustomizationFileIn(fsys filesys.FileSystem, dir string) (path string, ok bool) {
+	for _, name := range konfig.RecognizedKustomizationFileNames() {
+		kpath := filepath.Join(dir, name)
+		if fsys.Exists(kpath) && !fsys.IsDir(kpath) {
+			return kpath, true
+		}
+	}
+	return "", false
+}
+
 // findOrGenerateKustomization returns the existing kustomization file's bytes
 // (foundExisting=true) or, when none is present, synthesizes one from the YAML
 // manifests in dirPath via scanManifests. Mirrors the like-named flux function.
 func findOrGenerateKustomization(fsys filesys.FileSystem, dirPath string, ignore *sourceignore.Matcher) (data []byte, kfile string, foundExisting bool, err error) {
-	for _, name := range konfig.RecognizedKustomizationFileNames() {
-		kpath := filepath.Join(dirPath, name)
-		if fsys.Exists(kpath) && !fsys.IsDir(kpath) {
-			b, rerr := fsys.ReadFile(kpath)
-			return b, kpath, true, rerr
-		}
+	if kpath, ok := kustomizationFileIn(fsys, dirPath); ok {
+		b, rerr := fsys.ReadFile(kpath)
+		return b, kpath, true, rerr
 	}
 
 	// flux uses filepath.Abs(dirPath); under the memory-over-disk overlay
@@ -273,11 +285,9 @@ func scanManifests(fsys filesys.FileSystem, base string, ignore *sourceignore.Ma
 			return nil
 		}
 		if info.IsDir() {
-			for _, name := range konfig.RecognizedKustomizationFileNames() {
-				if kpath := filepath.Join(path, name); fsys.Exists(kpath) && !fsys.IsDir(kpath) {
-					paths = append(paths, path)
-					return filepath.SkipDir
-				}
+			if _, ok := kustomizationFileIn(fsys, path); ok {
+				paths = append(paths, path)
+				return filepath.SkipDir
 			}
 			return nil
 		}

@@ -1,6 +1,9 @@
 package manifest
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // envsubstDefaultRE matches POSIX-style parameter expansion patterns
 // that carry an explicit default: `${VAR:=default}` and
@@ -33,14 +36,10 @@ func ResolveEnvsubstDefaults(s string) string {
 }
 
 // maybeHasEnvsubst is a cheap precheck — most strings have no `${`
-// at all, and ReplaceAllString allocates even when nothing matches.
+// at all, and ReplaceAllString / MatchString allocate even when nothing
+// matches.
 func maybeHasEnvsubst(s string) bool {
-	for i := range len(s) - 1 {
-		if s[i] == '$' && s[i+1] == '{' {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(s, "${")
 }
 
 // envsubstReferenceRE matches any unresolved envsubst reference —

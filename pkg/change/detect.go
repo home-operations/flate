@@ -337,9 +337,9 @@ type fileMeta struct {
 	symlink bool
 }
 
-// scanTree walks root collecting per-file metadata. Mirrors the
-// directory pruning that hashTree previously did, and records symlinks
-// alongside regular files so the diff matches git's --no-index view.
+// scanTree walks root collecting per-file metadata. Prunes skip-dirs
+// (via shouldSkipDir) and records symlinks alongside regular files so
+// the diff matches git's --no-index view.
 func scanTree(root string) (map[string]fileMeta, error) {
 	out := map[string]fileMeta{}
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {

@@ -61,8 +61,7 @@ func (p *SliceProvider) Secret(namespace, name string) *manifest.Secret {
 	return nil
 }
 
-// NewStoreProvider returns a Provider backed by the central Store. It
-// replaces the per-controller storeProvider types.
+// NewStoreProvider returns a Provider backed by the central Store.
 func NewStoreProvider(s *store.Store) Provider { return &storeProvider{s: s} }
 
 type storeProvider struct{ s *store.Store }

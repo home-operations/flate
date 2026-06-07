@@ -215,7 +215,7 @@ func (w *Waiter) Watch(ctx context.Context, deps []manifest.DependencyRef) <-cha
 			// the send never blocks. The previous select-on-ctx silently
 			// dropped events on cancellation, leaving the consumer with
 			// a Pending dep that would time out at the full budget.
-			out <- safeWatchOne(ctx, w, dep, timeout)
+			out <- w.safeWatchOne(ctx, dep, timeout)
 		})
 	}
 
@@ -271,7 +271,7 @@ func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
 // site (CEL projection panicking against a malformed Snapshot, a
 // nil-typed assertion in labelsAndAnnotations, etc.). Without the
 // stack the panic message alone is often opaque.
-func safeWatchOne(ctx context.Context, w *Waiter, dep manifest.DependencyRef, timeout time.Duration) (ev Event) {
+func (w *Waiter) safeWatchOne(ctx context.Context, dep manifest.DependencyRef, timeout time.Duration) (ev Event) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("depwait: panic in watchOne",
@@ -366,7 +366,7 @@ func (w *Waiter) resolveMissing(ctx context.Context, id manifest.NamedResource) 
 		_, err := w.Store.WatchExists(graceCtx, id)
 		graceCancel()
 		if err != nil && !w.depExists(id) {
-			return &Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+			return notFound(id)
 		}
 		return nil
 	}
@@ -380,7 +380,7 @@ func (w *Waiter) resolveMissing(ctx context.Context, id manifest.NamedResource) 
 		// File was indexed at scan time but Promote failed — parse
 		// error, file mutated since record, etc. No amount of waiting
 		// will materialize this dep.
-		return &Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+		return notFound(id)
 	}
 
 	// No file record: dep can only arrive via a parent render's
@@ -401,11 +401,18 @@ func (w *Waiter) resolveMissing(ctx context.Context, id manifest.NamedResource) 
 		if errors.Is(err, errRenderCapExceeded) ||
 			errors.Is(err, context.DeadlineExceeded) ||
 			errors.Is(err, errRenderDrained) {
-			return &Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
+			return notFound(id)
 		}
 		return &Event{Dep: id, Status: DepFailed, Reason: err.Error()}
 	}
 	return nil
+}
+
+// notFound is the canonical terminal Event for a dependency that
+// never materialized — the same "dependency not found" reason callers
+// and tests grep for, single-sourced so the message can't drift.
+func notFound(id manifest.NamedResource) *Event {
+	return &Event{Dep: id, Status: DepFailed, Reason: "dependency not found"}
 }
 
 // watchReadyExpr evaluates expr against id's projected state and
@@ -433,16 +440,7 @@ func (w *Waiter) watchReadyExpr(ctx context.Context, id manifest.NamedResource, 
 	// One channel, two listeners — every wake re-evaluates against
 	// the latest store state. Coalesced via buffer-1 + default-send
 	// so a burst of events doesn't queue redundant evaluations.
-	ch := make(chan struct{}, 1)
-	wake := func(other manifest.NamedResource, _ any) {
-		if other != id {
-			return
-		}
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
-	}
+	ch, wake := coalescingWake(id)
 	unsubStatus := w.Store.AddListener(store.EventStatusUpdated, wake, false)
 	defer unsubStatus()
 	unsubObject := w.Store.AddListener(store.EventObjectAdded, wake, false)
@@ -513,6 +511,24 @@ func (w *Waiter) depExists(dep manifest.NamedResource) bool {
 	return ok
 }
 
+// coalescingWake returns a buffer-1 signal channel and a store.Listener
+// that pulses it whenever an event fires for id. The buffer-1 +
+// non-blocking send coalesces a burst of events into a single wake, so
+// the waiter re-checks store state at most once per drain rather than
+// once per event.
+func coalescingWake(id manifest.NamedResource) (<-chan struct{}, store.Listener) {
+	ch := make(chan struct{}, 1)
+	return ch, func(other manifest.NamedResource, _ any) {
+		if other != id {
+			return
+		}
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // errRenderCapExceeded is returned by waitRenderEmission when the
 // inner RenderProducingTimeout fires (with or without parent ctx
 // also dying). Distinguishes "cap-fired no-show" from a genuine
@@ -546,16 +562,8 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 
 	// Subscribe FIRST, then re-check the store, to close the race
 	// between subscribe and a concurrent AddObject.
-	arrived := make(chan struct{}, 1)
-	unsub := w.Store.AddListener(store.EventObjectAdded, func(other manifest.NamedResource, _ any) {
-		if other != id {
-			return
-		}
-		select {
-		case arrived <- struct{}{}:
-		default:
-		}
-	}, false)
+	arrived, wake := coalescingWake(id)
+	unsub := w.Store.AddListener(store.EventObjectAdded, wake, false)
 	defer unsub()
 	if w.depExists(id) {
 		return nil

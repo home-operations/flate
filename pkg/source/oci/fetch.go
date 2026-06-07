@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"oras.land/oras-go/v2"
 	orasoci "oras.land/oras-go/v2/content/oci"
@@ -34,7 +33,8 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 		return nil, fmt.Errorf("%w: OCIRepository %s missing url", manifest.ErrInput, repo.RepoName())
 	}
 
-	reference, err := parseOCIRef("oci://" + strings.TrimPrefix(repo.URL, "oci://"))
+	// parseOCIRef strips any oci:// prefix itself, so pass repo.URL as-is.
+	reference, err := parseOCIRef(repo.URL)
 	if err != nil {
 		return nil, err
 	}

@@ -137,22 +137,23 @@ func (k *Kustomization) UpdatePostBuildSubstitutions(subs map[string]any) {
 	if k.Contents == nil {
 		return
 	}
-	spec, _ := k.Contents["spec"].(map[string]any)
-	if spec == nil {
-		spec = make(map[string]any)
-		k.Contents["spec"] = spec
-	}
-	post, _ := spec["postBuild"].(map[string]any)
-	if post == nil {
-		post = make(map[string]any)
-		spec["postBuild"] = post
-	}
-	sub, _ := post["substitute"].(map[string]any)
-	if sub == nil {
-		sub = make(map[string]any)
-		post["substitute"] = sub
-	}
+	spec := childMap(k.Contents, "spec")
+	post := childMap(spec, "postBuild")
+	sub := childMap(post, "substitute")
 	maps.Copy(sub, subs)
+}
+
+// childMap returns parent[key] as a map[string]any, lazily creating one
+// when absent (or present as a non-map). Used by the Contents dual-write
+// helpers to walk into spec.postBuild.substitute without re-spelling the
+// type-assert-and-create dance at each level.
+func childMap(parent map[string]any, key string) map[string]any {
+	child, _ := parent[key].(map[string]any)
+	if child == nil {
+		child = make(map[string]any)
+		parent[key] = child
+	}
+	return child
 }
 
 // SetTargetNamespace sets spec.targetNamespace on both the typed field
@@ -164,12 +165,7 @@ func (k *Kustomization) SetTargetNamespace(ns string) {
 	if k.Contents == nil {
 		return
 	}
-	spec, _ := k.Contents["spec"].(map[string]any)
-	if spec == nil {
-		spec = make(map[string]any)
-		k.Contents["spec"] = spec
-	}
-	spec["targetNamespace"] = ns
+	childMap(k.Contents, "spec")["targetNamespace"] = ns
 }
 
 // parseKustomization decodes a Flux Kustomization CR via the

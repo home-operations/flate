@@ -60,7 +60,7 @@ func parseTemplate(tmplStr string) (*parsedTemplate, error) {
 }
 
 // executeTemplate runs pt with the given input set, reusing a pooled
-// buffer to reduce GC pressure. pt.cell is updated atomically before
+// buffer to reduce GC pressure. pt.cell is overwritten before each
 // execution; callers must not share a parsedTemplate across goroutines.
 func executeTemplate(pt *parsedTemplate, inputSet map[string]any) ([]byte, error) {
 	*pt.cell = inputSet

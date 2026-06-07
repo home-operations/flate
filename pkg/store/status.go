@@ -307,8 +307,7 @@ func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 	s.rLockAll()
 	defer s.rUnlockAll()
 	out := make(map[manifest.NamedResource]StatusInfo)
-	for i := range s.shards {
-		sh := s.shards[i]
+	for _, sh := range s.shards {
 		for id, conds := range sh.conditions {
 			if _, inStore := sh.objects[id]; !inStore {
 				continue

@@ -241,7 +241,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	}
 	scanned := map[string]struct{}{}
 	total := 0
-	if err := d.loadAt(ctx, l, scanRoot, scanned, &total); err != nil {
+	if err := d.loadAt(ctx, scanRoot, scanned, &total); err != nil {
 		return err
 	}
 	// Apply namespaces once over the initially-scanned set so the
@@ -302,7 +302,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if !pathUnderRoot(target, repoRoot) {
 				continue
 			}
-			if err := d.loadAt(ctx, l, target, scanned, &total); err != nil {
+			if err := d.loadAt(ctx, target, scanned, &total); err != nil {
 				return err
 			}
 			added++
@@ -342,7 +342,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 
 // loadAt scans dir if not already scanned, marks it, and accumulates
 // the loaded object count.
-func (d *discoverer) loadAt(ctx context.Context, l *loader.Loader, dir string, scanned map[string]struct{}, total *int) error {
+func (d *discoverer) loadAt(ctx context.Context, dir string, scanned map[string]struct{}, total *int) error {
 	if _, seen := scanned[dir]; seen {
 		return nil
 	}
@@ -350,7 +350,7 @@ func (d *discoverer) loadAt(ctx context.Context, l *loader.Loader, dir string, s
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return nil
 	}
-	n, err := l.Load(ctx, dir)
+	n, err := d.loader.Load(ctx, dir)
 	if err != nil {
 		return err
 	}

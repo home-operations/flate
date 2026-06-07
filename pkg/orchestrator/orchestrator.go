@@ -317,6 +317,14 @@ func New(cfg Config) (*Orchestrator, error) {
 		// HelmChart fetcher's helm-tmp dir isn't created until later in New.
 		return nil, err
 	}
+	// Working-tree / self-referential sources (the bootstrap alias, in-tree
+	// GitRepository overrides) are staged directly from the user's checkout
+	// without a Fetcher's ApplyIgnore. Filter their staged copy the same way
+	// Flux's source-controller filters an artifact, so default-ignored files
+	// (.sops.yaml, .flux.yaml, binaries, …) don't leak into the kustomize build.
+	staging.SetSourceIgnoreFilter(func(stagedRoot string) error {
+		return source.ApplyIgnore(stagedRoot, nil)
+	})
 
 	st := store.New()
 	ts := task.NewBounded(cfg.Concurrency)

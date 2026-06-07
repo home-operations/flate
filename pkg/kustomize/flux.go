@@ -78,7 +78,7 @@ var BuildMutex sync.Mutex
 // back to per-process scratch staging (the right behavior for
 // local-path sources whose mtimes shift faster than a fingerprint
 // can keep up).
-func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, sourceFingerprint, subPath string, rawSpec map[string]any) ([]byte, error) {
+func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, sourceFingerprint, subPath string, rawSpec map[string]any, opts ...Option) ([]byte, error) {
 	if cache == nil {
 		return nil, errors.New("kustomize: nil staging cache")
 	}
@@ -99,7 +99,7 @@ func RenderFlux(ctx context.Context, cache *StagingCache, sourceRoot, sourceFing
 		return nil, err
 	}
 
-	staged, err := cache.Stage(ctx, sourceRoot, sourceFingerprint)
+	staged, err := cache.Stage(ctx, sourceRoot, sourceFingerprint, opts...)
 	if err != nil {
 		return nil, err
 	}

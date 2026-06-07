@@ -40,12 +40,12 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 			// render's `patches:` block.
 		},
 	}
-	got, _, err := c.resolveSourceRootAndFingerprint(ks)
+	src, err := c.resolveSourceRootAndFingerprint(ks)
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
-	if got != "/repo" {
-		t.Errorf("resolveSourceRoot=%q, want %q (bootstrap LocalPath)", got, "/repo")
+	if src.root != "/repo" {
+		t.Errorf("resolveSourceRoot=%q, want %q (bootstrap LocalPath)", src.root, "/repo")
 	}
 }
 
@@ -79,12 +79,12 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 		SourceName:        "external",
 		SourceNamespace:   "flux-system",
 	}
-	got, _, err := c.resolveSourceRootAndFingerprint(ks)
+	src, err := c.resolveSourceRootAndFingerprint(ks)
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
-	if got != "/external" {
-		t.Errorf("resolveSourceRoot=%q, want %q (explicit ref)", got, "/external")
+	if src.root != "/external" {
+		t.Errorf("resolveSourceRoot=%q, want %q (explicit ref)", src.root, "/external")
 	}
 }
 
@@ -97,7 +97,7 @@ func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
 		Name: "foo", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./app"},
 	}
-	_, _, err := c.resolveSourceRootAndFingerprint(ks)
+	_, err := c.resolveSourceRootAndFingerprint(ks)
 	if err == nil {
 		t.Fatalf("expected error when bootstrap source is absent")
 	}

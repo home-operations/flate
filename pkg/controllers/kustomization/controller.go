@@ -6,6 +6,7 @@
 package kustomization
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -189,7 +190,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving source artifact")
-	sourceRoot, sourceFingerprint, err := c.resolveSourceRootAndFingerprint(ks)
+	src, err := c.resolveSourceRootAndFingerprint(ks)
 	if err != nil {
 		return err
 	}
@@ -213,7 +214,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	// kustomize.toolkit.fluxcd.io ownership labels). kustomize.RenderFlux
 	// is the hot path; skip it and reuse the prior artifact when the
 	// post-Prepare inputs are byte-identical. Same pattern as HR (#219).
-	fp := kustomizationFingerprint(ks, sourceRoot)
+	fp := kustomizationFingerprint(ks, src.root)
 	if existing, ok := c.Store.GetArtifact(id).(*store.KustomizationArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
 		if err := c.PreflightError(id); err != nil {
 			return err
@@ -236,7 +237,16 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	data, err := kustomize.RenderFlux(ctx, c.Staging, sourceRoot, sourceFingerprint, ks.Path, ks.Contents)
+	// A working-tree / self-referential source (src.local) is staged straight
+	// from the user's checkout, bypassing a Fetcher's ApplyIgnore — so filter
+	// its staged copy like Flux's source-controller artifact, else a
+	// default-ignored file (e.g. a root .sops.yaml) breaks the auto-generated
+	// kustomization for a `path: ./` Kustomization (the bo0tzz report).
+	var opts []kustomize.Option
+	if src.local {
+		opts = append(opts, kustomize.WithSourceIgnore())
+	}
+	data, err := kustomize.RenderFlux(ctx, c.Staging, src.root, src.fingerprint, ks.Path, ks.Contents, opts...)
 	if err != nil {
 		return err
 	}
@@ -274,7 +284,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	c.emitRenderedChildren(id, docs)
 
 	c.Store.SetArtifact(id, &store.KustomizationArtifact{
-		Path:        filepath.Join(sourceRoot, ks.Path),
+		Path:        filepath.Join(src.root, ks.Path),
 		Manifests:   docs,
 		Fingerprint: fp,
 	})
@@ -367,7 +377,7 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 // GitRepository overrides, sources soft-skipped via
 // --allow-missing-secrets) — the caller falls back to per-process
 // scratch staging and rebuilds from scratch each run.
-func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization) (string, string, error) {
+func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization) (resolvedSource, error) {
 	srcID := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 	if ks.SourceKind == "" || ks.SourceName == "" {
 		// Child Kustomizations that inherit sourceRef from a parent's
@@ -376,7 +386,7 @@ func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization)
 		// working tree) so the first reconcile resolves to the repo
 		// root instead of doubling ks.Path against itself (#105).
 		if ks.Path == "" {
-			return "", "", fmt.Errorf("%w: kustomization %s has no path and no source",
+			return resolvedSource{}, fmt.Errorf("%w: kustomization %s has no path and no source",
 				manifest.ErrInput, ks.Named().NamespacedName())
 		}
 		srcID = manifest.BootstrapSourceID
@@ -388,36 +398,43 @@ func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization)
 		// that as a typed skip so the caller can mark the KS skipped too
 		// rather than reporting a generic "artifact not found" failure.
 		if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
-			return "", "", fmt.Errorf("%w: source %s %s", manifest.ErrSourceSkipped, srcID.String(), info.Message)
+			return resolvedSource{}, fmt.Errorf("%w: source %s %s", manifest.ErrSourceSkipped, srcID.String(), info.Message)
 		}
-		return "", "", fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
+		return resolvedSource{}, fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
 	}
-	if sa, ok := art.(*store.SourceArtifact); ok {
-		// Prefer the content-addressed Digest when the fetcher
-		// supplied one (OCI); fall back to Revision (the git commit
-		// SHA) so git-backed sources also key the persistent stage
-		// cache.
-		//
-		// The bootstrap source is the working-tree alias — fetchers
-		// don't run for it and Revision/Digest are empty. We walk the
-		// tree and hash (relpath, mtime, size) per regular file so
-		// repeated invocations against an untouched tree still hit
-		// the cache while any nested edit invalidates it. Same
-		// treatment applies to any other artifact that landed
-		// without a fetcher-supplied fingerprint
-		// (`overrideSelfReferentialGitRepositories`) — they too
-		// resolve to the user's working tree.
-		fp := sa.Digest
-		if fp == "" {
-			fp = sourceFingerprintFromRevision(sa.Revision)
-		}
-		if fp == "" {
-			fp = c.cachedWorkingTreeFingerprint(sa.LocalPath)
-		}
-		return sa.LocalPath, fp, nil
+	sa, ok := art.(*store.SourceArtifact)
+	if !ok {
+		return resolvedSource{}, fmt.Errorf("%w: unsupported source artifact type %T for %s",
+			manifest.ErrFlux, art, srcID.String())
 	}
-	return "", "", fmt.Errorf("%w: unsupported source artifact type %T for %s",
-		manifest.ErrFlux, art, srcID.String())
+	// Prefer the content-addressed Digest when the fetcher supplied one
+	// (OCI); fall back to Revision (the git commit SHA) so git-backed
+	// sources also key the persistent stage cache. Both imply a fetched
+	// artifact — already sourceignore-filtered by its Fetcher.
+	if fp := cmp.Or(sa.Digest, sourceFingerprintFromRevision(sa.Revision)); fp != "" {
+		return resolvedSource{root: sa.LocalPath, fingerprint: fp}, nil
+	}
+	// No fetcher-supplied identity ⇒ a working-tree alias (the bootstrap
+	// source or a self-referential / local GitRepository override): it
+	// resolves to the user's checkout, which no Fetcher filtered, so mark it
+	// local. We hash (relpath, mtime, size) per regular file so an untouched
+	// tree hits the cache while any nested edit invalidates it.
+	return resolvedSource{
+		root:        sa.LocalPath,
+		fingerprint: c.cachedWorkingTreeFingerprint(sa.LocalPath),
+		local:       true,
+	}, nil
+}
+
+// resolvedSource is where a Kustomization's render stages from.
+type resolvedSource struct {
+	root        string // on-disk source root the build stages from
+	fingerprint string // persistent stage-cache key ("" ⇒ per-process scratch)
+	// local marks a working-tree / self-referential source: one resolved to
+	// the user's checkout without a Fetcher, so its staged copy still needs
+	// the Flux default sourceignore filtering a fetched artifact gets. See
+	// kustomize.WithSourceIgnore.
+	local bool
 }
 
 // sourceFingerprintFromRevision normalizes a git-style Revision

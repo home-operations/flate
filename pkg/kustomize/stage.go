@@ -27,6 +27,12 @@ import (
 // the next Stage call rebuilds from scratch.
 const stageCompleteSentinel = ".flate-stage-complete"
 
+// filteredStageSuffix namespaces a sourceignore-filtered stage's directory
+// (and in-process key) so it stays distinct from the unfiltered stage of the
+// same source fingerprint — see WithSourceIgnore. Bump it if the filter's
+// effect ever changes, to invalidate stale filtered stages.
+const filteredStageSuffix = ".si"
+
 // StagingCache materializes one-or-more source roots into a stage
 // directory so Flux's kustomize Generator can safely write into the
 // staged copy without touching the user's working tree.
@@ -108,7 +114,31 @@ type StagingCache struct {
 	// library/test contexts; a git-base resource then fails with a clear
 	// error rather than silently HTTP-GETting its URL. See gitbase.go.
 	gitBase GitBaseFetcher
+
+	// sourceIgnore strips the files Flux's source-controller excludes from
+	// a GitRepository/OCIRepository artifact (default sourceignore
+	// patterns) from a staged working-tree copy. Injected via
+	// SetSourceIgnoreFilter — this package cannot import pkg/source (import
+	// cycle). Applied (when a Stage caller opts in) once per stage
+	// materialization, so working-tree-sourced stages mirror what Flux
+	// ships in an artifact tarball. Nil ⇒ no filtering; fetched sources are
+	// already filtered by their Fetcher.
+	sourceIgnore SourceIgnoreFilter
 }
+
+// SourceIgnoreFilter deletes the files Flux's source-controller would exclude
+// from an artifact (its default sourceignore patterns: .sops.yaml, .flux.yaml,
+// .goreleaser.yml, binary extensions, CI dirs, in-tree .sourceignore) from the
+// flate-owned staged copy at stagedRoot. The orchestrator supplies a closure
+// over source.ApplyIgnore; this package only sees the function value, keeping
+// it free of the pkg/source → pkg/kustomize import cycle.
+type SourceIgnoreFilter func(stagedRoot string) error
+
+// SetSourceIgnoreFilter wires the sourceignore filter applied to working-tree /
+// self-referential source stages (which don't pass through a source Fetcher's
+// ApplyIgnore). The orchestrator calls this once at construction; library/test
+// embedders may leave it unset (then Stage's applyIgnore opt-in is a no-op).
+func (c *StagingCache) SetSourceIgnoreFilter(fn SourceIgnoreFilter) { c.sourceIgnore = fn }
 
 // GitBaseFetcher materializes a remote kustomize git base — a repo URL at a
 // bare, undifferentiated ref (tag, branch, commit, or "" for the default
@@ -215,21 +245,62 @@ func sweepStaleStageDirs(parent string) {
 // per-process behavior: a `flate-stage-*` tempdir under root,
 // memoized by source path for the life of the cache, removed on
 // Close.
-func (c *StagingCache) Stage(ctx context.Context, source, fingerprint string) (string, error) {
+//
+// opts request optional materialization behavior — see WithSourceIgnore.
+func (c *StagingCache) Stage(ctx context.Context, source, fingerprint string, opts ...Option) (string, error) {
+	var cfg stageConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	resolved, err := filepath.EvalSymlinks(source)
 	if err == nil {
 		source = resolved
 	}
 	if fingerprint == "" {
-		return c.stagePerProcess(source)
+		return c.stagePerProcess(source, cfg.applySourceIgnore)
 	}
-	return c.stagePersistent(ctx, source, fingerprint)
+	return c.stagePersistent(ctx, source, fingerprint, cfg.applySourceIgnore)
+}
+
+// Option tunes a Stage (or RenderFlux, which forwards them) call.
+type Option func(*stageConfig)
+
+type stageConfig struct {
+	// applySourceIgnore runs the injected SourceIgnoreFilter over the staged
+	// copy, so a working-tree / self-referential source's stage mirrors what
+	// Flux's source-controller ships in an artifact.
+	applySourceIgnore bool
+}
+
+// WithSourceIgnore strips the files Flux's source-controller excludes from an
+// artifact (.sops.yaml, .flux.yaml, .goreleaser.yml, binary files, CI dirs,
+// in-tree .sourceignore) from the staged copy before it is read. Use it for
+// working-tree / self-referential GitRepository sources, which flate stages
+// directly without a Fetcher's ApplyIgnore — otherwise e.g. a root .sops.yaml
+// breaks the auto-generated kustomization for a `path: ./` Kustomization. The
+// filtered stage is cached under a distinct key, so it never collides with (or
+// adopts) an unfiltered stage of the same tree. No-op when the cache has no
+// SourceIgnoreFilter wired.
+func WithSourceIgnore() Option { return func(c *stageConfig) { c.applySourceIgnore = true } }
+
+// materialize copies source into dst and, when applyIgnore is set and a filter
+// is wired, strips the source-controller-excluded files. Shared by both stage
+// modes so the sourceignore filtering happens inside the once/CAS build — once
+// per materialization, before any consumer reads the tree.
+func (c *StagingCache) materialize(source, dst string, applyIgnore bool) error {
+	if err := c.copyTreeInto(source, dst); err != nil {
+		return err
+	}
+	if applyIgnore && c.sourceIgnore != nil {
+		return c.sourceIgnore(dst)
+	}
+	return nil
 }
 
 // stagePerProcess implements the legacy fallback for sources that
 // don't carry a stable fingerprint: one tempdir per source, memoized
 // for the life of the cache via sync.OnceValues, removed on Close.
-func (c *StagingCache) stagePerProcess(source string) (string, error) {
+func (c *StagingCache) stagePerProcess(source string, applyIgnore bool) (string, error) {
 	c.mu.Lock()
 	s, ok := c.stages[source]
 	if !ok {
@@ -238,7 +309,7 @@ func (c *StagingCache) stagePerProcess(source string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			if err := c.copyTreeInto(source, dst); err != nil {
+			if err := c.materialize(source, dst, applyIgnore); err != nil {
 				_ = os.RemoveAll(dst)
 				return "", err
 			}
@@ -261,22 +332,31 @@ func (c *StagingCache) stagePerProcess(source string) (string, error) {
 // same fingerprint simultaneously) are tolerated: each writes into
 // its own tempdir; the loser's rename returns ENOTEMPTY and we
 // retry against the winner's sentinel.
-func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint string) (string, error) {
+func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint string, applyIgnore bool) (string, error) {
+	// key identifies the stage on disk and in the in-process record. A
+	// sourceignore-filtered stage gets a distinct key from the unfiltered
+	// stage of the same tree (its content differs), so the two never collide
+	// and a pre-fix unfiltered stage is never adopted for a filtered request.
+	key := fingerprint
+	if applyIgnore {
+		key += filteredStageSuffix
+	}
 	// Compose the on-disk slot. We reproduce the layout's prefix math
 	// here to keep this package free of an explicit Layout dep — the
 	// Stage constructor is given a parent dir, not a typed Layout, so
-	// downstream tests stay simple.
+	// downstream tests stay simple. The fan-out prefix is sliced from the
+	// bare fingerprint, so filtered and unfiltered variants share it.
 	prefix := fingerprint
 	if len(prefix) > 2 {
 		prefix = prefix[:2]
 	}
-	dir := filepath.Join(c.root, prefix, fingerprint)
+	dir := filepath.Join(c.root, prefix, key)
 	sentinel := filepath.Join(dir, stageCompleteSentinel)
 
 	// Cache an in-memory record so repeated lookups for the same
-	// fingerprint within one process skip even the sentinel stat.
+	// key within one process skip even the sentinel stat.
 	c.mu.Lock()
-	s, ok := c.stages[fingerprint]
+	s, ok := c.stages[key]
 	if ok && s.persistent {
 		c.mu.Unlock()
 		if dir, err := s.once(); err == nil {
@@ -293,11 +373,11 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 	// concurrent peer) run. Touch the dir's mtime so LRU eviction
 	// keeps recently-used stages alive.
 	if _, err := os.Stat(sentinel); err == nil {
-		return c.adoptCompletedStage(fingerprint, dir), nil
+		return c.adoptCompletedStage(key, dir), nil
 	}
 
 	// Slow path: serialize concurrent builds within the process.
-	release, err := c.fpLocks.Acquire(ctx, fingerprint)
+	release, err := c.fpLocks.Acquire(ctx, key)
 	if err != nil {
 		return "", err
 	}
@@ -306,7 +386,7 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 	// Recheck under the lock — another goroutine may have populated
 	// the sentinel while we were blocked.
 	if _, err := os.Stat(sentinel); err == nil {
-		return c.adoptCompletedStage(fingerprint, dir), nil
+		return c.adoptCompletedStage(key, dir), nil
 	}
 
 	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
@@ -330,14 +410,14 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 	// adopt the winner only when its sentinel is present — content
 	// addressing guarantees the trees are equivalent.
 	adopted, err := cas.Stage(filepath.Dir(dir), dir, "stage tmp", "stage finalize",
-		func(staging string) error { return c.copyTreeInto(source, staging) },
+		func(staging string) error { return c.materialize(source, staging, applyIgnore) },
 		func() bool { _, statErr := os.Stat(sentinel); return statErr == nil },
 	)
 	if err != nil {
 		return "", err
 	}
 	if adopted {
-		c.cacheStagePromise(fingerprint, dir)
+		c.cacheStagePromise(key, dir)
 		c.maybeKickSweep()
 		return dir, nil
 	}

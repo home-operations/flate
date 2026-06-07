@@ -439,10 +439,10 @@ func TestFetcher_CacheMarkerSurvivesIgnore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	marker := filepath.Join(art.LocalPath, cachedRevisionFile)
+	marker := filepath.Join(art.LocalPath, source.SlotMetaFile)
 	b, err := os.ReadFile(marker) //nolint:gosec // test path
 	if err != nil {
-		t.Fatalf("expected marker %s to exist after Fetch with restrictive ignore: %v", cachedRevisionFile, err)
+		t.Fatalf("expected marker %s to exist after Fetch with restrictive ignore: %v", source.SlotMetaFile, err)
 	}
 	if string(b) == "" {
 		t.Errorf("marker exists but is empty")
@@ -456,8 +456,8 @@ func TestFetcher_CacheMarkerSurvivesIgnore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch second: %v", err)
 	}
-	if art2.Revision != string(b) {
-		t.Errorf("warm Fetch returned a different revision: %q vs %q", art2.Revision, string(b))
+	if art2.Revision != art.Revision {
+		t.Errorf("warm Fetch returned a different revision: %q vs %q", art2.Revision, art.Revision)
 	}
 }
 

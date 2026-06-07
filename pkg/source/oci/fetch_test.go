@@ -121,7 +121,7 @@ func TestFetcher_PartialSlotInvalidated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Fetch: %v", err)
 	}
-	digestPath := filepath.Join(art.LocalPath, ".flate-digest")
+	digestPath := filepath.Join(art.LocalPath, source.SlotMetaFile)
 	if _, err := os.Stat(digestPath); err != nil {
 		t.Fatalf("first fetch did not produce .flate-digest: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestFetcher_PartialSlotInvalidated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Fetch (after partial-slot reset): %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(art2.LocalPath, ".flate-digest")); err != nil {
+	if _, err := os.Stat(filepath.Join(art2.LocalPath, source.SlotMetaFile)); err != nil {
 		t.Errorf("second fetch did not re-populate .flate-digest after partial-slot reset: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(art2.LocalPath, "Chart.yaml")); err != nil {

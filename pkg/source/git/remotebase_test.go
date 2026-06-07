@@ -112,7 +112,7 @@ func TestFetchRemoteBase_CacheHit(t *testing.T) {
 		t.Fatalf("first FetchRemoteBase: %v", err)
 	}
 	// The committed slot carries the revision marker.
-	if _, err := os.Stat(filepath.Join(art1.LocalPath, cachedRevisionFile)); err != nil {
+	if _, err := os.Stat(filepath.Join(art1.LocalPath, source.SlotMetaFile)); err != nil {
 		t.Errorf("committed slot missing revision marker: %v", err)
 	}
 	art2, err := f.FetchRemoteBase(context.Background(), "file://"+src, "v1.0.0")

@@ -1,61 +1,42 @@
 package git
 
 import (
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-git/go-git/v5"
 
-	"github.com/home-operations/flate/pkg/source/atomic"
+	"github.com/home-operations/flate/pkg/source"
 )
 
-// cachedRevisionFile holds the resolved commit SHA of a fetched slot.
-// Written post-clone, BEFORE the caller's ApplyIgnore wipes .git/, so
-// future cache-hit checks can validate the slot without re-running
-// git.PlainOpen.
-const cachedRevisionFile = ".flate-git-revision"
+// The resolved commit SHA of a fetched slot is recorded in the slot's
+// source.SlotMeta sidecar (one .flate-meta.json per slot). It is written AFTER
+// the caller's ApplyIgnore wipes .git/, so a cache-hit check can validate the
+// slot without re-running git.PlainOpen on a tree whose .git/ is gone.
 
-// writeCachedRevision persists rev atomically — matches the OCI
-// marker's durability shape (atomic.WriteFile with syncDir). A crash
-// mid-write would otherwise leave a partial SHA that the next
-// reconcile reads back via TrimSpace, surfacing as a torn-but-non-
-// empty marker that the cache-hit gate treats as live.
+// writeCachedRevision records rev in the slot's meta sidecar (atomic).
 func writeCachedRevision(slot, rev string) error {
-	return atomic.WriteFile(filepath.Join(slot, cachedRevisionFile), []byte(rev), 0o600, true)
+	return source.WriteSlotMeta(slot, source.SlotMeta{Revision: rev})
 }
 
+// readCachedRevision returns the slot's recorded commit SHA, or "" when the
+// sidecar is absent/unreadable (a pre-meta.json slot — rebuilt on miss).
 func readCachedRevision(slot string) string {
-	b, err := os.ReadFile(filepath.Join(slot, cachedRevisionFile)) //nolint:gosec // slot is fetcher-owned cache path
-	if err != nil {
+	m, ok := source.ReadSlotMeta(slot)
+	if !ok {
 		return ""
 	}
-	return strings.TrimSpace(string(b))
+	return m.Revision
 }
 
+// cachedRevisionFresh returns the recorded SHA only when the sidecar was
+// written within maxAge — the freshness gate a mutable ref uses to skip a
+// network refetch within its reconcile interval.
 func cachedRevisionFresh(slot string, maxAge time.Duration) (string, bool) {
-	if maxAge <= 0 {
+	m, ok := source.ReadSlotMetaFresh(slot, maxAge)
+	if !ok || m.Revision == "" {
 		return "", false
 	}
-	// Single open: fstat for mtime, then read — avoids the TOCTOU window
-	// between a separate os.Stat and os.ReadFile on a fetcher-written file.
-	f, err := os.Open(filepath.Join(slot, cachedRevisionFile)) //nolint:gosec // slot is fetcher-owned cache path
-	if err != nil {
-		return "", false
-	}
-	defer f.Close() //nolint:errcheck
-	info, err := f.Stat()
-	if err != nil || time.Since(info.ModTime()) > maxAge {
-		return "", false
-	}
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return "", false
-	}
-	rev := strings.TrimSpace(string(b))
-	return rev, rev != ""
+	return m.Revision, true
 }
 
 // readResolvedRevision returns the current commit SHA at the worktree.

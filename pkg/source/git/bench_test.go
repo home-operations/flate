@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/pkg/source"
 )
 
 // BenchmarkCachedRevision_HitMiss measures readCachedRevision against
@@ -56,7 +58,7 @@ func BenchmarkCachedRevision_HitMiss(b *testing.B) {
 	b.Run("FreshMiss_Stale", func(b *testing.B) {
 		// Backdate the marker so cachedRevisionFresh treats it as stale.
 		past := time.Now().Add(-2 * time.Hour)
-		if err := os.Chtimes(filepath.Join(hitSlot, cachedRevisionFile), past, past); err != nil {
+		if err := os.Chtimes(filepath.Join(hitSlot, source.SlotMetaFile), past, past); err != nil {
 			b.Fatalf("chtimes: %v", err)
 		}
 		b.ReportAllocs()
@@ -69,6 +71,6 @@ func BenchmarkCachedRevision_HitMiss(b *testing.B) {
 		}
 		// Restore for any later sub-benchmark; keep the slot useful.
 		now := time.Now()
-		_ = os.Chtimes(filepath.Join(hitSlot, cachedRevisionFile), now, now)
+		_ = os.Chtimes(filepath.Join(hitSlot, source.SlotMetaFile), now, now)
 	})
 }

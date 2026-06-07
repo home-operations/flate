@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 )
 
 // fullDigest is a sha256-shaped digest used across the cached-
@@ -38,24 +39,11 @@ func TestReadCachedDigest_MissingReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestReadCachedDigest_TrimsTrailingNewline covers the trim path —
-// an editor adding a trailing newline shouldn't break cache matching.
-func TestReadCachedDigest_TrimsTrailingNewline(t *testing.T) {
-	slot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(slot, cachedDigestFile), []byte(fullDigest+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := readCachedDigest(slot); got != fullDigest {
-		t.Errorf("got %q, want trimmed digest", got)
-	}
-}
-
 // TestReadCachedDigest_MalformedTreatedAsMissing pins the
-// format-validation contract: a torn write (partial digest, garbage,
-// or an old-shorter-than-spec value) must read as "" so the
-// fetcher's cache-hit path resets the slot instead of passing the
-// partial digest to cosign (which would produce a misleading
-// "signature not found" failure).
+// format-validation contract: a malformed digest in the sidecar (partial,
+// garbage, or shorter than the OCI spec minimum) must read as "" so the
+// fetcher's cache-hit path resets the slot instead of passing the bad digest
+// to cosign (which would produce a misleading "signature not found" failure).
 func TestReadCachedDigest_MalformedTreatedAsMissing(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -71,7 +59,7 @@ func TestReadCachedDigest_MalformedTreatedAsMissing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			slot := t.TempDir()
-			if err := os.WriteFile(filepath.Join(slot, cachedDigestFile), []byte(tc.content), 0o600); err != nil {
+			if err := source.WriteSlotMeta(slot, source.SlotMeta{Digest: tc.content}); err != nil {
 				t.Fatal(err)
 			}
 			if got := readCachedDigest(slot); got != "" {
@@ -97,7 +85,7 @@ func TestWriteCachedDigest_AtomicNoPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if e.Name() == cachedDigestFile {
+		if e.Name() == source.SlotMetaFile {
 			continue
 		}
 		t.Errorf("unexpected leftover entry in slot after writeCachedDigest: %q (atomic write should have cleaned up the temp)", e.Name())
@@ -198,7 +186,7 @@ func TestVerifyMarker_AtomicRoundtrip(t *testing.T) {
 	// No temp leftover.
 	entries, _ := os.ReadDir(slot)
 	for _, e := range entries {
-		if e.Name() == verifyMarkerFile {
+		if e.Name() == source.SlotMetaFile {
 			continue
 		}
 		t.Errorf("unexpected leftover entry %q in slot after writeVerifyMarker", e.Name())
@@ -218,5 +206,34 @@ func TestSignatureManifestRoundtrip(t *testing.T) {
 	}
 	if m.Layers[0].Annotations["dev.cosignproject.cosign/signature"] == "" {
 		t.Error("annotation roundtrip lost the signature key")
+	}
+}
+
+// TestSlotMeta_DigestAndVerifyCoexist pins the read-modify-write contract of
+// the unified sidecar: writing the digest, then the verify fingerprint (the
+// real fetch order), must leave BOTH readable — a writer must never clobber the
+// sibling field. A regression here surfaces as a cache hit re-verifying every
+// run (digest lost) or, worse, the digest rewrite dropping the fingerprint, so
+// it is the load-bearing invariant of the marker unification.
+func TestSlotMeta_DigestAndVerifyCoexist(t *testing.T) {
+	slot := t.TempDir()
+	if err := writeCachedDigest(slot, fullDigest); err != nil {
+		t.Fatalf("writeCachedDigest: %v", err)
+	}
+	if err := writeVerifyMarker(slot, "fp99"); err != nil {
+		t.Fatalf("writeVerifyMarker: %v", err)
+	}
+	if got := readCachedDigest(slot); got != fullDigest {
+		t.Errorf("digest lost after verify write: %q", got)
+	}
+	if got := readVerifyMarker(slot); got != "fp99" {
+		t.Errorf("verify lost: %q", got)
+	}
+	// A re-pull (digest rewrite) must preserve the verify fingerprint.
+	if err := writeCachedDigest(slot, fullDigest); err != nil {
+		t.Fatalf("rewrite digest: %v", err)
+	}
+	if got := readVerifyMarker(slot); got != "fp99" {
+		t.Errorf("verify clobbered by digest rewrite: %q", got)
 	}
 }

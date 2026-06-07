@@ -173,8 +173,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// component reads); the shared ComponentCache deduped the file reads
 	// but not the iteration/sort/list construction.
 	prefixes := loader.KSPathPrefixesWithCache(d.cfg.Store, repoRoot, cfg.ComponentCache)
-	parentOf := map[manifest.NamedResource]manifest.NamedResource{}
-	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindKustomization))
+	parentOf := loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindKustomization)
 	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease))
 	// Orphan promotion: every Existence entry whose file path is NOT
 	// under any KS spec.path will never reach the Store through KS
@@ -313,7 +312,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		// returned zero inputs.
 		currentRSIPCount := len(store.ListAs[*manifest.ResourceSetInputProvider](d.cfg.Store, manifest.KindResourceSetInputProvider))
 		if currentRSIPCount != prevRSIPCount {
-			rsConverged = map[manifest.NamedResource]struct{}{}
+			clear(rsConverged)
 			prevRSIPCount = currentRSIPCount
 		}
 		for _, rs := range store.ListAs[*manifest.ResourceSet](d.cfg.Store, manifest.KindResourceSet) {

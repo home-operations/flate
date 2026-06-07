@@ -82,7 +82,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	// the ordering the controller goroutine could start waiting on a peer
 	// that's also waiting on it.
 	unsubCycles := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
+		if !isReconcilableKind(id.Kind) {
 			return
 		}
 		o.updateDependencyGraphFor(id)
@@ -357,7 +357,7 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 	// patched the CLI emit paths; this closes the same gap one layer
 	// down for SDK consumers.
 	skip := o.cfg.HelmOptions.SkipResourceKinds()
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+	for _, kind := range reconcilableKinds {
 		for _, obj := range o.store.ListObjects(kind) {
 			id := obj.Named()
 			var mans []map[string]any

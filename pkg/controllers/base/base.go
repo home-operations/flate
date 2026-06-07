@@ -468,7 +468,7 @@ func RunWithStatus[T manifest.BaseManifest](
 	fn func(context.Context, T) error,
 ) {
 	defer Recover(s, id, logKind)
-	obj, ok := s.GetObject(id).(T)
+	obj, ok := store.Get[T](s, id)
 	if !ok {
 		// Object deleted (or wrong type) between coalescer enqueue and
 		// run. A Refire-driven re-run that previously wrote

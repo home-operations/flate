@@ -30,11 +30,9 @@ func permute(groups []providerInputs, includeEmpty bool) ([]map[string]any, erro
 	//
 	// Empty providers short-circuit the entire product: when
 	// includeEmpty=true and any provider has zero inputs, the
-	// Cartesian product is zero — return early so the size cap
-	// check stays meaningful (the previous second-pass at the end
-	// caught this but the size accumulator went through 0 in the
-	// process, making the cap check vacuous for any single empty
-	// provider). Mirrors upstream
+	// Cartesian product is zero — return early so the running size
+	// accumulator never passes through 0 and the cap check below
+	// stays meaningful. Mirrors upstream
 	// computePermutationsWithBacktracking's early-return.
 	scoped := make([]scopedProvider, 0, len(groups))
 	expected := uint64(1)

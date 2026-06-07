@@ -14,6 +14,24 @@ func MissingSecretErr(kind, ns, name, secretRef, reason string) error {
 		manifest.ErrMissingSecret, kind, ns, name, ns, secretRef, reason)
 }
 
+// resolveSecretRef fetches the Secret a set *SecretRef points at, shared
+// by ResolveProxy and ResolveCertSecret. field names the spec field
+// (e.g. "proxySecretRef") for diagnostics. Callers handle the nil-ref
+// "not configured" case before calling; once ref is set, an unwired
+// SecretGetter or a missing Secret is a loud error matching
+// source-controller's fail-loud behavior.
+func resolveSecretRef(secrets SecretGetter, ns, ownerKind, ownerID, field string, ref *manifest.LocalObjectReference) (*manifest.Secret, error) {
+	if secrets == nil {
+		return nil, fmt.Errorf("%s %s references %s but no source.SecretGetter is wired",
+			ownerKind, ownerID, field)
+	}
+	sec := secrets(ns, ref.Name)
+	if sec == nil {
+		return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "not found")
+	}
+	return sec, nil
+}
+
 // StringFromSecret reads a key from a Secret, preferring StringData
 // over Data. Data values are base64-decoded (per k8s Secret semantics)
 // before being returned, so the same string surface holds regardless

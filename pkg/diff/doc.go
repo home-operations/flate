@@ -64,6 +64,4 @@
 //
 // [dyff]: https://github.com/homeport/dyff
 // [orchestrator.RenderTrees]: https://pkg.go.dev/github.com/home-operations/flate/pkg/orchestrator#RenderTrees
-//
-// [orchestrator.Result]: https://pkg.go.dev/github.com/home-operations/flate/pkg/orchestrator#Result
 package diff

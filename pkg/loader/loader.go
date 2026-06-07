@@ -450,7 +450,7 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomization, kpath string)
 				continue
 			}
 			id := obj.Named()
-			if w.loader.PreferExisting && w.loader.Store.GetObject(id) != nil {
+			if w.loader.skipExisting(id) {
 				continue
 			}
 			w.loader.Store.AddObject(obj)
@@ -632,6 +632,14 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 	return count, err
 }
 
+// skipExisting reports whether id should be left untouched because
+// PreferExisting is set and the Store already holds it — the
+// orchestrator's recursive spec.path discovery wants the initial scan's
+// data to win over downstream paths that may point into a different tree.
+func (l *Loader) skipExisting(id manifest.NamedResource) bool {
+	return l.PreferExisting && l.Store.GetObject(id) != nil
+}
+
 func (l *Loader) loadFile(path string) (int, error) {
 	objs, err := parseFile(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
 	if err != nil {
@@ -640,7 +648,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 	count := 0
 	for _, obj := range objs {
 		id := obj.Named()
-		if l.PreferExisting && l.Store.GetObject(id) != nil {
+		if l.skipExisting(id) {
 			continue
 		}
 		if l.Options.DiscoveryOnly && !isDiscoveryKind(obj) {
@@ -685,7 +693,7 @@ func (l *Loader) recordDataFile(absPath string) error {
 			// producer-index use case is data-only.
 			continue
 		}
-		if l.PreferExisting && l.Store.GetObject(id) != nil {
+		if l.skipExisting(id) {
 			continue
 		}
 		if l.Existence != nil {

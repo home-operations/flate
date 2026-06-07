@@ -477,20 +477,9 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 // "null" → nil). Strvals also handles list indices (foo.bar[0]) and
 // escaped dot keys (foo\\.bar).
 func replaceValueAtPath(values map[string]any, path, value string) (map[string]any, error) {
-	const (
-		singleQuote = "'"
-		doubleQuote = `"`
-	)
-	// The len >= 2 guard is load-bearing: a single-char "'" or `"`
-	// has prefix == suffix == the same byte, which would pass the
-	// boolean test below and then trip a `value[1:0]` slice — runtime
-	// panic. Untrusted Secret data shouldn't be able to crash the
-	// renderer, so reject the degenerate case explicitly.
 	var err error
-	if len(value) >= 2 &&
-		((strings.HasPrefix(value, singleQuote) && strings.HasSuffix(value, singleQuote)) ||
-			(strings.HasPrefix(value, doubleQuote) && strings.HasSuffix(value, doubleQuote))) {
-		err = strvals.ParseIntoString(path+"="+value[1:len(value)-1], values)
+	if unquoted, ok := stripMatchingQuotes(value); ok {
+		err = strvals.ParseIntoString(path+"="+unquoted, values)
 	} else {
 		err = strvals.ParseInto(path+"="+value, values)
 	}
@@ -498,6 +487,20 @@ func replaceValueAtPath(values map[string]any, path, value string) (map[string]a
 		return nil, fmt.Errorf("targetPath %q: %w", path, err)
 	}
 	return values, nil
+}
+
+// stripMatchingQuotes reports whether value is wrapped in a matching pair
+// of single or double quotes and, if so, returns the inner contents. The
+// len >= 2 guard is load-bearing: a single-char "'" or `"` has its first
+// byte equal to its last, which would otherwise pass the match and then
+// trip a value[1:0] slice — a runtime panic on untrusted Secret data.
+func stripMatchingQuotes(value string) (string, bool) {
+	if len(value) >= 2 {
+		if q := value[0]; (q == '\'' || q == '"') && value[len(value)-1] == q {
+			return value[1 : len(value)-1], true
+		}
+	}
+	return value, false
 }
 
 // ExpandPostBuildSubstituteReference resolves substituteFrom references

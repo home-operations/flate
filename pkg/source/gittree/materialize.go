@@ -35,7 +35,7 @@ type Options struct {
 	// fetcher and baseline contexts (the submodule's state rarely
 	// matches what flate is rendering); the callback exists so the
 	// caller can log at the right level / structured shape. Nil
-	// substitutes a slog.Warn with key "gittree.submodule".
+	// substitutes a slog.Warn carrying the submodule path.
 	OnSubmodule func(path string)
 }
 

@@ -272,8 +272,8 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 	// 1. @{u} via the branch config (go-git's ResolveRevision doesn't
 	//    accept @{u}; read branch.<name>.remote/.merge directly).
 	if up, ok := upstreamHash(repo, head); ok {
-		if base, err := mergeBase(repo, headCommit, up); err == nil {
-			return &resolution{Hash: base, Source: "merge-base with @{u}"}, nil
+		if mb, err := mergeBase(repo, headCommit, up); err == nil {
+			return &resolution{Hash: mb, Source: "merge-base with @{u}"}, nil
 		}
 	}
 
@@ -281,8 +281,8 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 	//    pointing at e.g. refs/remotes/origin/main. Resolve through
 	//    the symref to the underlying branch tip.
 	if h, ok := resolveRef(repo, plumbing.NewRemoteHEADReferenceName("origin")); ok {
-		if base, err := mergeBase(repo, headCommit, h); err == nil {
-			return &resolution{Hash: base, Source: "merge-base with origin/HEAD"}, nil
+		if mb, err := mergeBase(repo, headCommit, h); err == nil {
+			return &resolution{Hash: mb, Source: "merge-base with origin/HEAD"}, nil
 		}
 	}
 
@@ -291,8 +291,8 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 	for _, name := range []string{"main", "master"} {
 		ref := plumbing.NewRemoteReferenceName("origin", name)
 		if h, ok := resolveRef(repo, ref); ok {
-			if base, err := mergeBase(repo, headCommit, h); err == nil {
-				return &resolution{Hash: base, Source: "merge-base with origin/" + name}, nil
+			if mb, err := mergeBase(repo, headCommit, h); err == nil {
+				return &resolution{Hash: mb, Source: "merge-base with origin/" + name}, nil
 			}
 		}
 	}

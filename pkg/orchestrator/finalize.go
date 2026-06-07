@@ -28,7 +28,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 	// reads are served from memory rather than re-stat'd here.
 	prefixes := loader.KSPathPrefixesWithCache(o.store, o.repoRoot, o.componentCache)
 	for id, info := range failed {
-		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
+		if !isReconcilableKind(id.Kind) {
 			continue
 		}
 		// A resource that any parent's render also emitted is by
@@ -130,7 +130,7 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 	// doesn't re-scan the store for the same two counts. cascade only
 	// mutates status (never adds/removes objects), so these counts equal
 	// what a later ListObjects would report.
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+	for _, kind := range reconcilableKinds {
 		objs := o.store.ListObjects(kind)
 		switch kind {
 		case manifest.KindKustomization:

@@ -64,11 +64,12 @@ func pemKey(t *testing.T, priv *ecdsa.PrivateKey) string {
 func makeCertificate(t *testing.T, cn string, keyUsage x509.KeyUsage, extKeyUsage []x509.ExtKeyUsage, isCA bool) (cert, key string) {
 	t.Helper()
 	priv := ecKey(t)
+	now := time.Now()
 	tmpl := &x509.Certificate{
 		SerialNumber: randomSerial(t),
 		Subject:      pkix.Name{CommonName: cn},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(certValidity),
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(certValidity),
 		KeyUsage:     keyUsage,
 		ExtKeyUsage:  extKeyUsage,
 		IsCA:         isCA,

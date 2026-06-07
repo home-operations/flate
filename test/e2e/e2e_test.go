@@ -773,16 +773,16 @@ func mutateFile(t *testing.T, path, oldStr, newStr string) {
 func copyTree(t *testing.T, src string) string {
 	t.Helper()
 	dst := t.TempDir()
-	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(src, p)
 		out := filepath.Join(dst, rel)
-		if info.IsDir() {
+		if d.IsDir() {
 			return os.MkdirAll(out, 0o750)
 		}
-		data, err := os.ReadFile(p) //nolint:gosec // p is supplied by filepath.Walk over a known root
+		data, err := os.ReadFile(p) //nolint:gosec // p is supplied by filepath.WalkDir over a known root
 		if err != nil {
 			return err
 		}

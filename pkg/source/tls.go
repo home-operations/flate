@@ -20,13 +20,9 @@ func ResolveCertSecret(secrets SecretGetter, ns, ownerKind, ownerID string, ref 
 	if ref == nil {
 		return nil, nil
 	}
-	if secrets == nil {
-		return nil, fmt.Errorf("%s %s references certSecretRef but no source.SecretGetter is wired",
-			ownerKind, ownerID)
-	}
-	sec := secrets(ns, ref.Name)
-	if sec == nil {
-		return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "not found")
+	sec, err := resolveSecretRef(secrets, ns, ownerKind, ownerID, "certSecretRef", ref)
+	if err != nil {
+		return nil, err
 	}
 	cfg, err := BuildTLSConfig(
 		StringFromSecret(sec, "tls.crt"),

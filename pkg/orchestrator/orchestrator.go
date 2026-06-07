@@ -28,6 +28,19 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
+// reconcilableKinds are the workload kinds the orchestrator drives
+// through the parent gate and dependsOn graph (Flux's spec.dependsOn is
+// kind-homogeneous to these two). Ranged over wherever a pass must visit
+// every Kustomization and HelmRelease in the store.
+var reconcilableKinds = []string{manifest.KindKustomization, manifest.KindHelmRelease}
+
+// isReconcilableKind reports whether kind is a Kustomization or
+// HelmRelease — the kinds that carry preflight failures, parent gates,
+// and dependsOn edges.
+func isReconcilableKind(kind string) bool {
+	return kind == manifest.KindKustomization || kind == manifest.KindHelmRelease
+}
+
 // Config carries everything the orchestrator needs.
 type Config struct {
 	// Path is the directory to scan for Flux objects (the scan entry

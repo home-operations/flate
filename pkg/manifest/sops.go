@@ -35,13 +35,9 @@ func IsEncryptedSecret(doc map[string]any) bool {
 	if !ok {
 		return false
 	}
-	if _, ok := sops["mac"]; ok {
-		return true
-	}
-	if _, ok := sops["version"]; ok {
-		return true
-	}
-	return false
+	_, hasMac := sops["mac"]
+	_, hasVersion := sops["version"]
+	return hasMac || hasVersion
 }
 
 // SubstituteAnnotationKey is Flux kustomize-controller's per-resource

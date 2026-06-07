@@ -68,28 +68,22 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 
 	// Scope the materialized PEM files under the fetcher's per-fetch
 	// tmpDir; helm's getter only reads them. cleanup removes every file
-	// a successful writeKey registered (see source.TempFiles).
+	// a successful write registered (see source.TempFiles).
 	tf := source.NewTempFiles(f.tmpDir)
 	cleanup := tf.Cleanup
-	writeKey := func(key string) (string, error) {
-		return tf.Write("helm-tls-*.pem", source.StringFromSecret(sec, key))
-	}
 
-	certPath, err := writeKey("tls.crt")
-	if err != nil {
-		cleanup()
-		return nil, noCleanup, err
+	// Materialize tls.crt / tls.key / ca.crt in the order WithTLSClientConfig
+	// takes them; a missing/empty key yields no file (path stays "").
+	var paths [3]string
+	for i, key := range [3]string{"tls.crt", "tls.key", "ca.crt"} {
+		p, err := tf.Write("helm-tls-*.pem", source.StringFromSecret(sec, key))
+		if err != nil {
+			cleanup()
+			return nil, noCleanup, err
+		}
+		paths[i] = p
 	}
-	keyPath, err := writeKey("tls.key")
-	if err != nil {
-		cleanup()
-		return nil, noCleanup, err
-	}
-	caPath, err := writeKey("ca.crt")
-	if err != nil {
-		cleanup()
-		return nil, noCleanup, err
-	}
+	certPath, keyPath, caPath := paths[0], paths[1], paths[2]
 	if certPath == "" && keyPath == "" && caPath == "" {
 		cleanup()
 		// A secret present but carrying none of the TLS keys is malformed

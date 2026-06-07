@@ -578,7 +578,7 @@ func scopedRunError(o *orchestrator.Orchestrator, res *orchestrator.Result, c *c
 func aggregateScopedFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))
 	for id, info := range failed {
-		msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), info.Message))
+		msgs = append(msgs, fmt.Sprintf("%s: %s", id, info.Message))
 	}
 	slices.Sort(msgs)
 	return fmt.Errorf("reconcile completed with %d failure(s):\n  %s",

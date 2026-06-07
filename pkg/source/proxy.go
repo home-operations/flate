@@ -41,13 +41,9 @@ func ResolveProxy(secrets SecretGetter, ns, ownerKind, ownerID string, ref *mani
 	if ref == nil {
 		return nil, nil
 	}
-	if secrets == nil {
-		return nil, fmt.Errorf("%s %s references proxySecretRef but no source.SecretGetter is wired",
-			ownerKind, ownerID)
-	}
-	sec := secrets(ns, ref.Name)
-	if sec == nil {
-		return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "not found")
+	sec, err := resolveSecretRef(secrets, ns, ownerKind, ownerID, "proxySecretRef", ref)
+	if err != nil {
+		return nil, err
 	}
 	addr := StringFromSecret(sec, "address")
 	if addr == "" {

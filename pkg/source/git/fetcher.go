@@ -3,6 +3,7 @@
 // File map:
 //
 //	fetcher.go    — Fetcher type, Fetch entry, fetch + fetchViaMirror, authIdentity
+//	remotebase.go — FetchRemoteBase: anonymous kustomize remote git base
 //	auth.go       — SecretRef → transport.AuthMethod resolution
 //	tls.go        — spec.secretRef.ca.crt → *tls.Config
 //	ssh.go        — SSH URL / user extraction
@@ -23,6 +24,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -311,11 +313,7 @@ func (f *Fetcher) finalize(repo *manifest.GitRepository, art *store.SourceArtifa
 		if herr != nil {
 			return fmt.Errorf("verify: resolve HEAD: %w", herr)
 		}
-		tagName := ""
-		if repo.Reference != nil {
-			tagName = repo.Reference.Tag
-		}
-		if err := verify.Signatures(f.Secrets, repo.Namespace, repo.Name, repo.Verification.SecretRef.Name, repo.Verification.GetMode(), tagName, cloned, head.Hash()); err != nil {
+		if err := f.verifySignatures(repo, cloned, head.Hash()); err != nil {
 			return err
 		}
 	}
@@ -340,6 +338,22 @@ func applyIgnoreAndMark(repo *manifest.GitRepository, art *store.SourceArtifact)
 		_ = writeCachedRevision(art.LocalPath, art.Revision)
 	}
 	return nil
+}
+
+// verifySignatures runs PGP verification of the object at hash within
+// gitRepo (a local worktree or a bare mirror — both carry the object
+// store verify.Signatures walks). A no-op when repo.Verification is
+// unset, so callers can invoke it unconditionally.
+func (f *Fetcher) verifySignatures(repo *manifest.GitRepository, gitRepo *git.Repository, hash plumbing.Hash) error {
+	if repo.Verification == nil {
+		return nil
+	}
+	tagName := ""
+	if repo.Reference != nil {
+		tagName = repo.Reference.Tag
+	}
+	return verify.Signatures(f.Secrets, repo.Namespace, repo.Name,
+		repo.Verification.SecretRef.Name, repo.Verification.GetMode(), tagName, gitRepo, hash)
 }
 
 // canUseMirror reports whether this Fetcher can take the bare-mirror
@@ -434,14 +448,8 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 	}); err != nil {
 		return nil, fmt.Errorf("materialize %s at %s: %w", hash, refStr, err)
 	}
-	if repo.Verification != nil {
-		tagName := ""
-		if repo.Reference != nil {
-			tagName = repo.Reference.Tag
-		}
-		if err := verify.Signatures(f.Secrets, repo.Namespace, repo.Name, repo.Verification.SecretRef.Name, repo.Verification.GetMode(), tagName, mirrorRepo, hash); err != nil {
-			return nil, err
-		}
+	if err := f.verifySignatures(repo, mirrorRepo, hash); err != nil {
+		return nil, err
 	}
 	art := gitArtifact(repo.URL, slot.Path, hash.String())
 	if err := applyIgnoreAndMark(repo, art); err != nil {

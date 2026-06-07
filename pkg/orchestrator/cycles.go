@@ -119,7 +119,7 @@ func logNewCycleMessages(prev, next map[manifest.NamedResource]string) {
 // code that calls failDependsOnCycles after a direct store mutation
 // still observes the latest cycle state.
 func (o *Orchestrator) rebuildDependencyGraphFromStore() {
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+	for _, kind := range reconcilableKinds {
 		for _, obj := range o.store.ListObjects(kind) {
 			id := obj.Named()
 			deps := sameKindDepTargets(obj, kind)
@@ -159,7 +159,7 @@ func sameKindDepTargets(obj manifest.BaseManifest, kind string) []manifest.Named
 func (o *Orchestrator) refireClearedPreflightFailures(ids []manifest.NamedResource) {
 	slices.SortFunc(ids, manifest.NamedResource.Compare)
 	for _, id := range ids {
-		if id.Kind == manifest.KindKustomization || id.Kind == manifest.KindHelmRelease {
+		if isReconcilableKind(id.Kind) {
 			o.store.Refire(id)
 		}
 	}

@@ -1,6 +1,7 @@
 package depwait
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -63,7 +64,7 @@ func mustCELEnv() *cel.Env {
 //
 // Errors are split: a compile/program error is wrapped in *celCompileErr
 // (terminal — the expression itself is broken); an eval error against
-// the projected object is wrapped in *celEvalErr (transient — the dep's
+// the projected object is returned unwrapped (transient — the dep's
 // status may not yet be populated, so callers polling on store events
 // should keep waiting).
 func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedResource) (bool, error) {
@@ -76,7 +77,7 @@ func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedReso
 		"dep":  projectObject(s, dep),
 	})
 	if err != nil {
-		return false, &celEvalErr{fmt.Errorf("eval: %w", err)}
+		return false, fmt.Errorf("eval: %w", err)
 	}
 	// asBool errors are type-shape problems with the expression itself
 	// (e.g. `dep.metadata.name` returns a string). The user's expr is
@@ -95,15 +96,6 @@ type celCompileErr struct{ err error }
 
 func (e *celCompileErr) Error() string { return e.err.Error() }
 func (e *celCompileErr) Unwrap() error { return e.err }
-
-// celEvalErr signals a runtime evaluation failure against the current
-// projection — typically a "no such attribute" because the dep's
-// status hasn't landed yet. Polling callers should treat this as
-// transient and re-evaluate on the next store event.
-type celEvalErr struct{ err error }
-
-func (e *celEvalErr) Error() string { return e.err.Error() }
-func (e *celEvalErr) Unwrap() error { return e.err }
 
 func compileReadyExpr(expr string) (cel.Program, error) {
 	if v, ok := celCache.Load(expr); ok {
@@ -254,7 +246,7 @@ var kindAPIVersion = map[string]string{
 
 func asBool(v ref.Val) (bool, error) {
 	if v == nil {
-		return false, fmt.Errorf("readyExpr returned nil")
+		return false, errors.New("readyExpr returned nil")
 	}
 	if b, ok := v.Value().(bool); ok {
 		return b, nil

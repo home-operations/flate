@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/source/blob"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
@@ -107,13 +106,6 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 			sweepDirByAge(ar.dir, ar.depth, cutoff, ar.gate, opts.DryRun, &res)
 		}
 
-		// Persistent kustomize stage cache: <root>/stage/<fp[:2]>/<fp>/.
-		// The per-process scratch tempdirs (`flate-stage-*`) and
-		// in-progress staging tempdirs (`.tmp.*`) share the same
-		// parent and must be skipped by name so the GC doesn't reap
-		// a peer process's live stage.
-		sweepStageCacheByAge(layout.Stage(), cutoff, opts.DryRun, &res)
-
 		sweepDanglingRefs(layout, opts.DryRun, &res)
 		return nil
 	}); err != nil {
@@ -201,52 +193,6 @@ func sweepDirByAge(dir string, depth int, cutoff time.Time, gate func(string) bo
 		}
 		if err := os.RemoveAll(path); err != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("remove %s: %w", path, err))
-		}
-	}
-}
-
-// sweepStageCacheByAge walks the persistent kustomize stage cache at
-// stageRoot and removes fingerprint entries whose mtime is older than
-// cutoff. The on-disk traversal + skip contract (flate-stage-* scratch
-// dirs and .tmp.* in-flight staging dirs at both levels, so a concurrent
-// flate process's live staging tree is preserved) is single-sourced in
-// kustomize.EachStageDir, shared with the runtime LRU sweep. This sweep
-// passes requireSentinel=false: an old entry WITHOUT the stage-complete
-// sentinel is abandoned crash debris and SHOULD be age-reaped here.
-func sweepStageCacheByAge(stageRoot string, cutoff time.Time, dryRun bool, res *SweepResult) {
-	if cutoff.IsZero() {
-		return
-	}
-	reaped := map[string]struct{}{} // prefix dirs that lost an entry
-	err := kustomize.EachStageDir(stageRoot, false, func(prefixDir, full string) error {
-		info, err := os.Stat(full)
-		if err != nil {
-			res.Errors = append(res.Errors, fmt.Errorf("stat %s: %w", full, err))
-			return nil
-		}
-		if info.ModTime().After(cutoff) {
-			return nil
-		}
-		res.Bytes += entrySize(full)
-		res.Removed = append(res.Removed, full)
-		if dryRun {
-			return nil
-		}
-		if err := os.RemoveAll(full); err != nil {
-			res.Errors = append(res.Errors, fmt.Errorf("remove %s: %w", full, err))
-			return nil
-		}
-		reaped[prefixDir] = struct{}{}
-		return nil
-	})
-	if err != nil && !os.IsNotExist(err) {
-		res.Errors = append(res.Errors, fmt.Errorf("read %s: %w", stageRoot, err))
-	}
-	// Best-effort empty-shell cleanup so repeated sweeps don't accumulate
-	// dead 2-char prefix dirs. (Only populated on the non-dry-run path.)
-	for prefixDir := range reaped {
-		if rem, err := os.ReadDir(prefixDir); err == nil && len(rem) == 0 {
-			_ = os.Remove(prefixDir)
 		}
 	}
 }

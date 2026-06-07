@@ -388,23 +388,17 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 	return res, errors.Join(runErr, rsErr)
 }
 
-// Stop shuts the controllers down in reverse-construction order and
-// releases the staging cache. Safe to call multiple times: each
-// controller's Close is idempotent (drains the unsub slice once and
-// nils it), and StagingCache.Close zeroes its stages map after the
-// first cleanup. Wrapped in sync.Once so the bookkeeping reads
-// cleanly even if a caller's defer runs after Run's defer.
+// Stop shuts the controllers down in reverse-construction order. Safe to call
+// multiple times: each controller's Close is idempotent (drains the unsub slice
+// once and nils it). Wrapped in sync.Once so the bookkeeping reads cleanly even
+// if a caller's defer runs after Run's defer.
 //
-// Embedders who call only New + Bootstrap (without Run) MUST call
-// Stop themselves — the staging cache holds a tempdir that would
-// otherwise leak until process exit.
+// The kustomize render cache is in-memory and holds no OS resources, so there
+// is nothing to release here — it is freed with the Orchestrator.
 func (o *Orchestrator) Stop() {
 	o.stopOnce.Do(func() {
 		o.hrc.Close()
 		o.ksc.Close()
 		o.src.Close()
-		if o.staging != nil {
-			_ = o.staging.Close()
-		}
 	})
 }

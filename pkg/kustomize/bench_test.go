@@ -3,7 +3,6 @@ package kustomize
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -25,11 +24,7 @@ data:
   k: v
 `)
 
-	cache, err := NewStagingCache(b.TempDir(), 0)
-	if err != nil {
-		b.Fatalf("NewStagingCache: %v", err)
-	}
-	b.Cleanup(func() { _ = cache.Close() })
+	cache := NewTreeCache()
 
 	rawSpec := map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -42,7 +37,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, src, ".", "", rawSpec)
+		out, err := RenderFlux(ctx, cache, src, false, ".", rawSpec)
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -90,11 +85,7 @@ data:
 `, i))
 	}
 
-	cache, err := NewStagingCache(b.TempDir(), 0)
-	if err != nil {
-		b.Fatalf("NewStagingCache: %v", err)
-	}
-	b.Cleanup(func() { _ = cache.Close() })
+	cache := NewTreeCache()
 
 	rawSpec := map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -107,7 +98,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, src, ".", "", rawSpec)
+		out, err := RenderFlux(ctx, cache, src, false, ".", rawSpec)
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -117,34 +108,27 @@ data:
 	}
 }
 
-// BenchmarkStagingCache_MultiKSPerRoot measures concurrent Stage calls
-// for different subPaths under the SAME source root. The first call
-// pays the copy; every subsequent call should be a sync.OnceValues
-// hit. Uses b.RunParallel because the operation is genuinely
-// concurrent — multiple KSes rooted at the same source race here.
-func BenchmarkStagingCache_MultiKSPerRoot(b *testing.B) {
+// BenchmarkRenderFlux_MultiKSPerRoot measures concurrent renders of distinct
+// subPaths under the SAME source root — the bulk of a single-cluster repo,
+// where the memory-over-disk overlay lets every render run in parallel against
+// the shared read-only source with no staging lock.
+func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 	src := b.TempDir()
-	// Synthesize a tree wide enough that the initial copy is non-trivial,
-	// so the first-call cost on a single iteration doesn't dominate the
-	// rest of the parallel workload.
-	for i := range 40 {
+	const apps = 40
+	for i := range apps {
 		testutil.WriteFile(b, src, fmt.Sprintf("apps/app-%d/kustomization.yaml", i),
 			"resources:\n- cm.yaml\n")
 		testutil.WriteFile(b, src, fmt.Sprintf("apps/app-%d/cm.yaml", i), fmt.Sprintf(
 			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-%d\n  namespace: ns\ndata:\n  k: v\n", i))
 	}
 
-	cache, err := NewStagingCache(b.TempDir(), 0)
-	if err != nil {
-		b.Fatalf("NewStagingCache: %v", err)
-	}
-	b.Cleanup(func() { _ = cache.Close() })
-
-	// Warm the cache so the bench measures the warm-stage hit, not the
-	// one-shot initial copy.
+	cache := NewTreeCache()
 	ctx := context.Background()
-	if _, err := cache.Stage(ctx, src, ""); err != nil {
-		b.Fatalf("warm Stage: %v", err)
+	rawSpec := map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   map[string]any{"name": "multi", "namespace": "ns"},
+		"spec":       map[string]any{},
 	}
 
 	b.ReportAllocs()
@@ -152,17 +136,13 @@ func BenchmarkStagingCache_MultiKSPerRoot(b *testing.B) {
 	var ctr atomic.Int64
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			// All workers share the same source root; subPath
-			// distinction is what RenderFlux would pass through
-			// downstream — here we measure the stage-lookup cost
-			// alone since that's the synchronization point.
-			ctr.Add(1)
-			path, err := cache.Stage(ctx, src, "")
+			sub := fmt.Sprintf("apps/app-%d", int(ctr.Add(1))%apps)
+			out, err := RenderFlux(ctx, cache, src, false, sub, rawSpec)
 			if err != nil {
-				b.Fatalf("Stage: %v", err)
+				b.Fatalf("RenderFlux: %v", err)
 			}
-			if !strings.HasPrefix(path, "/") {
-				b.Fatalf("unexpected stage path: %q", path)
+			if len(out) == 0 {
+				b.Fatalf("empty render")
 			}
 		}
 	})

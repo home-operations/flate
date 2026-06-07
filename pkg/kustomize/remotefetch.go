@@ -37,7 +37,7 @@ type remoteFetch struct {
 // cancellation on the first caller doesn't propagate into the
 // cached error. Each caller still honors its own ctx via the
 // select below.
-func (c *StagingCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, error) {
+func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, error) {
 	loaded, _ := c.remoteFetches.LoadOrStore(urlStr, &remoteFetch{done: make(chan struct{})})
 	rf := loaded.(*remoteFetch)
 	rf.start.Do(func() {

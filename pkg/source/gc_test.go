@@ -78,55 +78,6 @@ func TestSweep_IgnoresSourceSlotLockFiles(t *testing.T) {
 // fingerprint dirs regardless of the stage-complete sentinel — including
 // abandoned crash debris with no sentinel — while skipping the per-process
 // flate-stage-* scratch dirs and .tmp.* in-flight staging dirs at both levels.
-func TestSweepStageCacheByAge(t *testing.T) {
-	stageRoot := t.TempDir()
-	old := time.Now().Add(-7 * 24 * time.Hour)
-	mk := func(rel string, age time.Time, sentinel bool) string {
-		d := filepath.Join(stageRoot, rel)
-		if err := os.MkdirAll(d, 0o750); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(d, "marker"), []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if sentinel {
-			if err := os.WriteFile(filepath.Join(d, ".flate-stage-complete"), nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := os.Chtimes(d, age, age); err != nil { // mtime set last
-			t.Fatal(err)
-		}
-		return d
-	}
-	// <stageRoot>/<2-char prefix>/<fingerprint>/ layout.
-	debris := mk("ab/oldnosentinel", old, false)   // old, NO sentinel -> reaped (key: requireSentinel=false)
-	complete := mk("ab/oldcomplete", old, true)    // old, WITH sentinel -> reaped (age-based)
-	fresh := mk("cd/freshfp", time.Now(), true)    // fresh -> kept
-	inflight := mk("ab/.tmp.staging", old, false)  // .tmp.* fp -> skipped
-	scratch := mk("flate-stage-xyz/fp", old, true) // per-process scratch prefix -> skipped
-
-	res := &SweepResult{}
-	sweepStageCacheByAge(stageRoot, time.Now().Add(-24*time.Hour), false, res)
-
-	for _, d := range []string{debris, complete} {
-		if !slices.Contains(res.Removed, d) {
-			t.Errorf("expected %q reaped; Removed=%v", d, res.Removed)
-		}
-		if _, err := os.Stat(d); !os.IsNotExist(err) {
-			t.Errorf("%q still on disk: %v", d, err)
-		}
-	}
-	for _, d := range []string{fresh, inflight, scratch} {
-		if slices.Contains(res.Removed, d) {
-			t.Errorf("%q should NOT be reaped; Removed=%v", d, res.Removed)
-		}
-		if _, err := os.Stat(d); err != nil {
-			t.Errorf("%q wrongly removed: %v", d, err)
-		}
-	}
-}
-
 // TestSweep_BaselinesAndBlobs: age applies to baselines/<sha>/ and
 // blobs/sha256/<digest>/ exactly the same way as sources.
 func TestSweep_BaselinesAndBlobs(t *testing.T) {

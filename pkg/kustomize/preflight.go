@@ -4,16 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	yaml "go.yaml.in/yaml/v4"
 
@@ -37,89 +37,72 @@ const remoteFetchMaxBytes = 64 << 20 // 64 MiB
 // fetch latency stays observable.
 var remoteFetchClient = &http.Client{Timeout: remoteFetchTimeout}
 
-// remoteResourcePrefix names the staged artifacts preflight writes beside a
+// remoteResourcePrefix names the in-memory entries preflight writes beside a
 // kustomization for a pre-fetched remote resource: a `<prefix><hash>.yaml`
 // file for an HTTP single-file resource, or a `<prefix><hash>/` directory for
-// a cloned git base. The walk below skips these so a cloned base's own nested
-// kustomizations aren't re-rewritten.
+// a cloned git base. These live only in the render's private in-memory fs (see
+// tree.go) — never on disk — so they are an implementation detail, not an
+// on-disk marker. The walk skips the directory form so a cloned base's own
+// nested kustomizations aren't re-rewritten.
 const remoteResourcePrefix = ".flate-remote-"
 
-// preflightRemoteResources walks every kustomization file under root
-// and pre-resolves remote `resources:` entries so kustomize.Build sees
-// only local files — never invoking its built-in
-// `exec.Command("git", "fetch", ...)` fallback (which silently adds a
-// git-binary dependency and a 10s+ timeout on broken URLs). HTTP/HTTPS
-// single-file entries are fetched via flate's own HTTP client; git
-// bases (URLs carrying kustomize's git markers / ?ref=) are cloned via
-// the injected GitBaseFetcher and materialized locally. See gitbase.go.
+// preflightRemoteResources walks every kustomization file under subPath in the
+// render's private in-memory fs and pre-resolves remote `resources:` entries so
+// kustomize.Build sees only local (in-fs) files — never invoking its built-in
+// `exec.Command("git", "fetch", ...)` / HTTP fallback (which would reach the
+// real network/disk, outside the fs sandbox, on a 10s+ timeout for a broken
+// URL). HTTP/HTTPS single-file entries are fetched via flate's own HTTP client;
+// git bases (URLs carrying kustomize's git markers / ?ref=) are cloned via the
+// injected GitBaseFetcher and materialized into the fs. See gitbase.go.
 //
-// root is the **subPath dir**, not the whole stage. Scoping the walk
-// makes URL-fetch failures localized: a broken URL in one
-// Kustomization's tree fails only that Kustomization's reconcile
-// without poisoning unrelated ones. Components that reference `../`
-// paths outside subPath are an acknowledged blind spot — uncommon
-// in practice and easy to extend later if needed.
+// Scoped to subPath (not the whole fs) so a broken URL in one Kustomization's
+// tree fails only that Kustomization's reconcile. Components reaching `../`
+// paths outside subPath are an acknowledged blind spot.
 //
-// On a URL fetch failure (timeout, 4xx, 5xx, DNS, connection refused)
-// preflight returns the error immediately. The KS controller's
-// reconcile propagates it through RunWithStatus, which surfaces it
-// in `flate test` as a real reconcile failure — no silent tombstone
-// that lets the build pass with a missing resource.
-//
-// Walks all three valid kustomization filenames (kustomization.yaml,
-// kustomization.yml, Kustomization). Only mutates the staged copy
-// the caller owns; the user's source tree is never touched.
-func preflightRemoteResources(ctx context.Context, cache *StagingCache, root string) error {
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+// On a fetch failure (timeout, 4xx, 5xx, DNS, connection refused) preflight
+// returns the error immediately, so the KS controller surfaces it as a real
+// reconcile failure rather than a silent missing resource.
+func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) error {
+	return memFS.Walk(subPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
+		if info.IsDir() {
 			// Skip a git base materialized by a prior resources: entry — its
-			// own nested kustomization.yaml files must NOT be re-rewritten
-			// here (depth-1 limit, like the ../-outside-subPath blind spot
-			// noted above). The kustomize build of that base resolves its URLs.
-			if strings.HasPrefix(d.Name(), remoteResourcePrefix) {
-				return fs.SkipDir
+			// own nested kustomization.yaml files must NOT be re-rewritten here
+			// (depth-1 limit). The kustomize build of that base resolves its URLs.
+			if strings.HasPrefix(filepath.Base(path), remoteResourcePrefix) {
+				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !slices.Contains(manifest.KustomizeBuilderFilenames, d.Name()) {
+		if !slices.Contains(manifest.KustomizeBuilderFilenames, filepath.Base(path)) {
 			return nil
 		}
-		return rewriteURLResources(ctx, cache, path)
+		return rewriteURLResources(ctx, cache, memFS, path)
 	})
 }
 
-// rewriteURLResources rewrites URL entries in one kustomization file
-// via yaml.Node node-level editing. Previous implementations decoded
-// to map[string]any and re-marshaled, which round-tripped destroyed
-// YAML comments, key ordering, anchors/aliases, and block-vs-flow
-// distinctions — any downstream diff against the staged tree saw
-// noise unrelated to a user's edit, and re-marshal of map-decoded
-// values changed scalar quoting in ways kustomize can interpret
-// differently.
+// rewriteURLResources rewrites URL entries in one kustomization file via
+// yaml.Node node-level editing. Node-level editing modifies ONLY the resources
+// sequence entries that match HTTP/HTTPS URLs (or git bases); every other byte
+// in the file (comments, key ordering, anchors, block-vs-flow style) survives
+// the round-trip intact, which a decode-to-map-and-remarshal pass would destroy.
 //
-// Node-level editing modifies ONLY the resources sequence entries
-// that match HTTP/HTTPS URLs; every other byte in the file (comments,
-// other-key ordering, anchors) survives the round-trip intact.
-//
-// Returns the first URL fetch failure encountered so the caller can
-// fail the Kustomization's reconcile rather than silently dropping
-// the missing resource.
-func rewriteURLResources(ctx context.Context, cache *StagingCache, ksFile string) error {
-	body, err := os.ReadFile(ksFile) //nolint:gosec // ksFile is a tree-walk result under our staged copy
+// Returns the first fetch failure encountered so the caller can fail the
+// Kustomization's reconcile rather than silently dropping the missing resource.
+func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, ksFile string) error {
+	body, err := memFS.ReadFile(ksFile)
 	if err != nil {
 		return err
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil {
 		// Some kustomization files use unusual shapes (YAML anchors,
-		// strict-mode fields) that decode can't handle. Skip silently
-		// — kustomize will load them via its own parser, and if any
-		// carry URL resources we fall back to kustomize's
-		// HTTP-then-git path. Better to render imperfectly than fail
-		// loud on a doc kustomize itself handles.
+		// strict-mode fields) that decode can't handle. Skip silently —
+		// kustomize will load them via its own parser, and if any carry URL
+		// resources we fall back to kustomize's own fetch path. Better to
+		// render imperfectly than fail loud on a doc kustomize itself handles.
 		return nil
 	}
 	resourcesNode := findMappingValue(&doc, "resources")
@@ -137,7 +120,7 @@ func rewriteURLResources(ctx context.Context, cache *StagingCache, ksFile string
 		// single file. GETting a git URL returns the host's HTML page, which
 		// then fails to parse as YAML (#616) — so it must take the git path.
 		if spec, ok := isGitRemoteBase(entry.Value); ok {
-			localDir, fetchErr := fetchGitBase(ctx, cache, dir, spec)
+			localDir, fetchErr := fetchGitBase(ctx, cache, memFS, dir, spec)
 			if fetchErr != nil {
 				return fmt.Errorf("remote git base %s: %w", entry.Value, fetchErr)
 			}
@@ -150,7 +133,7 @@ func rewriteURLResources(ctx context.Context, cache *StagingCache, ksFile string
 		if !isHTTPURL(entry.Value) {
 			continue
 		}
-		localFile, fetchErr := fetchRemoteResource(ctx, cache, dir, entry.Value)
+		localFile, fetchErr := fetchRemoteResource(ctx, cache, memFS, dir, entry.Value)
 		if fetchErr != nil {
 			return fmt.Errorf("remote resource %s: %w", entry.Value, fetchErr)
 		}
@@ -166,14 +149,12 @@ func rewriteURLResources(ctx context.Context, cache *StagingCache, ksFile string
 	if err != nil {
 		return err
 	}
-	return writeStagedFile(ksFile, out, 0o600)
+	return memFS.WriteFile(ksFile, out)
 }
 
-// findMappingValue returns the value node for the first mapping
-// entry with the given key inside the document. Returns nil when
-// the document is not a single-mapping document or the key is
-// absent. Used by rewriteURLResources to locate the "resources:"
-// sequence without round-tripping the whole document.
+// findMappingValue returns the value node for the first mapping entry with the
+// given key inside the document, or nil when the document is not a single-
+// mapping document or the key is absent.
 func findMappingValue(doc *yaml.Node, key string) *yaml.Node {
 	if doc == nil || doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return nil
@@ -195,36 +176,25 @@ func isHTTPURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
-// fetchRemoteResource fetches the URL into a .flate-remote-<hash>.yaml
-// file next to the kustomization that referenced it. The actual HTTP
-// fetch is deduped via cache.FetchRemote — multiple kustomization
-// files referencing the same URL share one network call and one
-// cached result. The local filename is deterministic per URL so
-// re-runs reuse the same on-disk file (kustomize sees a stable input).
-func fetchRemoteResource(ctx context.Context, cache *StagingCache, dir, urlStr string) (string, error) {
+// fetchRemoteResource fetches urlStr into a <prefix><hash>.yaml file beside the
+// kustomization that referenced it (in the render's private in-memory fs),
+// returning the local filename. The HTTP fetch is deduped via cache.FetchRemote
+// so multiple kustomizations referencing the same URL share one network call.
+func fetchRemoteResource(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, dir, urlStr string) (string, error) {
 	body, err := cache.FetchRemote(ctx, urlStr)
 	if err != nil {
 		return "", err
 	}
 	name := remoteResourcePrefix + urlHash(urlStr) + ".yaml"
-	if err := os.WriteFile(filepath.Join(dir, name), body, 0o600); err != nil {
+	if err := memFS.WriteFile(filepath.Join(dir, name), body); err != nil {
 		return "", err
 	}
 	return name, nil
 }
 
-func writeStagedFile(path string, data []byte, mode fs.FileMode) error {
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return os.WriteFile(path, data, mode) //nolint:gosec // path is inside flate's staged copy
-}
-
-// httpStatusError is a typed sentinel returned by httpGetURL when the
-// server responds with a non-2xx status code. Using a named type
-// (rather than a formatted string) lets isHTTPClientError classify
-// errors via errors.As so the check is robust against wrapping —
-// fmt.Errorf("preflight: %w", err) still matches.
+// httpStatusError is a typed sentinel returned by httpGetURL when the server
+// responds with a non-2xx status code. The named type lets isHTTPClientError
+// classify errors via errors.As so the check is robust against wrapping.
 type httpStatusError struct {
 	Code int
 }
@@ -233,10 +203,8 @@ func (e *httpStatusError) Error() string {
 	return fmt.Sprintf("HTTP %d", e.Code)
 }
 
-// httpGetURL is the actual network call cache.FetchRemote dispatches
-// through a per-URL sync.Once + done channel. Lives here (not on the
-// StagingCache) because it's a preflight detail — the cache only owns
-// the dedup discipline.
+// httpGetURL is the actual network call cache.FetchRemote dispatches through a
+// per-URL sync.Once + done channel.
 func httpGetURL(ctx context.Context, urlStr string) ([]byte, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
 	defer cancel()
@@ -252,10 +220,9 @@ func httpGetURL(ctx context.Context, urlStr string) ([]byte, error) {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, &httpStatusError{Code: resp.StatusCode}
 	}
-	// Cap with LimitReader +1 so we can detect overflow precisely:
-	// read up to remoteFetchMaxBytes+1, and if we actually got
-	// MaxBytes+1 bytes the body is larger than the cap and we fail
-	// fast instead of OOMing on an attacker-controlled endpoint.
+	// Cap with LimitReader +1 so we can detect overflow precisely: read up to
+	// remoteFetchMaxBytes+1, and if we actually got MaxBytes+1 bytes the body
+	// is larger than the cap and we fail fast instead of OOMing.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, remoteFetchMaxBytes+1))
 	if err != nil {
 		return nil, err

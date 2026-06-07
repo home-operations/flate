@@ -10,46 +10,78 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/home-operations/flate/internal/testutil"
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
-// TestPreflightRemoteResources_RewritesSuccessfulFetch confirms the
-// happy path: a kustomization listing an HTTP resource → flate fetches
-// it via Go's http client → kustomization.yaml gets the URL replaced
-// with the local file → the fetched body lives on disk next to the
-// kustomization. The point is to make kustomize.Build see local files
-// only so it never invokes the git fallback.
+// memFSWith builds an in-memory filesystem from a map of path -> contents,
+// the shape preflight now operates on (a render's private fs).
+func memFSWith(t *testing.T, files map[string]string) filesys.FileSystem {
+	t.Helper()
+	fsys := filesys.MakeFsInMemory()
+	for p, body := range files {
+		if err := fsys.WriteFile(p, []byte(body)); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	return fsys
+}
+
+// remoteFiles lists the pre-fetched remote-resource files preflight wrote into
+// dir (the .flate-remote-*.yaml form), so a test can assert one landed.
+func remoteFiles(t *testing.T, fsys filesys.FileSystem, dir string) []string {
+	t.Helper()
+	names, err := fsys.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, n := range names {
+		if strings.HasPrefix(n, remoteResourcePrefix) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// newPreflightCache returns a fresh TreeCache so each test gets its own
+// remote-fetch dedup table (no cross-test cache hits).
+func newPreflightCache(t *testing.T) *TreeCache {
+	t.Helper()
+	return NewTreeCache()
+}
+
+// TestPreflightRemoteResources_RewritesSuccessfulFetch confirms the happy
+// path: a kustomization listing an HTTP resource → flate fetches it → the
+// kustomization gets the URL replaced with the local file → the fetched body
+// lives next to the kustomization in the fs. The point is to make
+// kustomize.Build see local files only so it never invokes the git fallback.
 func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote}\n"))
 	}))
 	t.Cleanup(srv.Close)
 
-	stage := t.TempDir()
-	ks := filepath.Join(stage, "kustomization.yaml")
-	testutil.WriteFileAt(t, ks, "resources:\n  - "+srv.URL+"/foo.yaml\n")
-
-	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
+	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/foo.yaml\n"})
+	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
-	body, err := os.ReadFile(ks) //nolint:gosec // ks is inside t.TempDir
+	body, err := fsys.ReadFile("kustomization.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(body), srv.URL) {
 		t.Errorf("URL still present after preflight:\n%s", body)
 	}
-	if !strings.Contains(string(body), ".flate-remote-") {
-		t.Errorf("expected rewritten path with .flate-remote prefix:\n%s", body)
+	if !strings.Contains(string(body), remoteResourcePrefix) {
+		t.Errorf("expected rewritten path with %s prefix:\n%s", remoteResourcePrefix, body)
 	}
 
-	// Verify the fetched body landed on disk.
-	matches, _ := filepath.Glob(filepath.Join(stage, ".flate-remote-*.yaml"))
-	if len(matches) != 1 {
-		t.Fatalf("expected one fetched file, got %v", matches)
+	fetched := remoteFiles(t, fsys, ".")
+	if len(fetched) != 1 {
+		t.Fatalf("expected one fetched file, got %v", fetched)
 	}
-	cached, err := os.ReadFile(matches[0]) //nolint:gosec // matches[0] is t.TempDir
+	cached, err := fsys.ReadFile(fetched[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,24 +90,19 @@ func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 	}
 }
 
-// TestPreflightRemoteResources_PropagatesFailure locks the contract:
-// a URL fetch failure returns an error to the caller — the KS
-// controller surfaces it as a real reconcile failure rather than
-// silently tombstoning and letting the build pass with a missing
-// resource. The error wraps the URL and the underlying status/IO
-// error so `flate test` shows the user what's actually broken in
-// their repo.
+// TestPreflightRemoteResources_PropagatesFailure locks the contract: a URL
+// fetch failure returns an error to the caller — the KS controller surfaces it
+// as a real reconcile failure rather than silently tombstoning. The error
+// wraps the URL and the underlying status so `flate test` shows the user what's
+// actually broken in their repo.
 func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
 
-	stage := t.TempDir()
-	ks := filepath.Join(stage, "kustomization.yaml")
-	testutil.WriteFileAt(t, ks, "resources:\n  - "+srv.URL+"/missing.yaml\n")
-
-	err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage)
+	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/missing.yaml\n"})
+	err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, ".")
 	if err == nil {
 		t.Fatal("expected error on 404; got nil (preflight would silently swallow the failure)")
 	}
@@ -87,77 +114,63 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 	}
 }
 
-// TestPreflightRemoteResources_IgnoresLocalEntries guards the no-op
-// path: a kustomization with only local resources must be untouched.
+// TestPreflightRemoteResources_IgnoresLocalEntries guards the no-op path: a
+// kustomization with only local resources must be untouched.
 func TestPreflightRemoteResources_IgnoresLocalEntries(t *testing.T) {
-	stage := t.TempDir()
-	ks := filepath.Join(stage, "kustomization.yaml")
 	body := "resources:\n  - ./local.yaml\n  - ../shared/cm.yaml\n"
-	testutil.WriteFileAt(t, ks, body)
-
-	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
+	fsys := memFSWith(t, map[string]string{"kustomization.yaml": body})
+	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
-
-	got, _ := os.ReadFile(ks) //nolint:gosec // ks is t.TempDir
+	got, _ := fsys.ReadFile("kustomization.yaml")
 	if string(got) != body {
 		t.Errorf("local-only kustomization was modified:\nwant %q\ngot  %q", body, got)
 	}
 }
 
-// TestPreflightRemoteResources_WalksNestedKustomizations covers the
-// recursive case: a Components / overlay layout where the URL
-// resource hides inside a subdir's kustomization.yaml.
+// TestPreflightRemoteResources_WalksNestedKustomizations covers the recursive
+// case: a Components / overlay layout where the URL resource hides inside a
+// subdir's kustomization.yaml.
 func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: nested}\n"))
 	}))
 	t.Cleanup(srv.Close)
 
-	stage := t.TempDir()
-	nested := filepath.Join(stage, "components", "x")
-	if err := os.MkdirAll(nested, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	testutil.WriteFileAt(t, filepath.Join(stage, "kustomization.yaml"),
-		"resources:\n  - ./components/x\n")
-	testutil.WriteFileAt(t, filepath.Join(nested, "kustomization.yaml"),
-		"resources:\n  - "+srv.URL+"/nested.yaml\n")
-
-	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
+	fsys := memFSWith(t, map[string]string{
+		"kustomization.yaml":              "resources:\n  - ./components/x\n",
+		"components/x/kustomization.yaml": "resources:\n  - " + srv.URL + "/nested.yaml\n",
+	})
+	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
-	body, _ := os.ReadFile(filepath.Join(nested, "kustomization.yaml")) //nolint:gosec // t.TempDir
+	body, _ := fsys.ReadFile("components/x/kustomization.yaml")
 	if strings.Contains(string(body), srv.URL) {
 		t.Errorf("nested URL not rewritten:\n%s", body)
 	}
 }
 
-func TestRenderFlux_RemotePreflightDoesNotMutateSourceNestedKustomization(t *testing.T) {
+// TestRenderFlux_RemotePreflightDoesNotMutateSource proves the in-memory render
+// never touches the user's working tree: after a render that pre-fetches a
+// remote resource, the on-disk source kustomization is byte-for-byte unchanged
+// and no fetched files were written to disk.
+func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote}\n"))
 	}))
 	t.Cleanup(srv.Close)
 
-	src := t.TempDir()
-	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), "resources:\n  - ./child\n")
 	child := "resources:\n  - " + srv.URL + "/remote.yaml\n"
-	testutil.WriteFileAt(t, filepath.Join(src, "child", "kustomization.yaml"), child)
+	src := writeTree(t, map[string]string{
+		"kustomization.yaml":       "resources:\n  - ./child\n",
+		"child/kustomization.yaml": child,
+	})
 
-	cache, err := NewStagingCache(t.TempDir(), 0)
-	if err != nil {
-		t.Fatalf("NewStagingCache: %v", err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
-
-	_, err = RenderFlux(context.Background(), cache, src, "", ".", map[string]any{
+	_, err := RenderFlux(context.Background(), NewTreeCache(), src, false, ".", map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
-		"metadata": map[string]any{
-			"name":      "apps",
-			"namespace": "flux-system",
-		},
-		"spec": map[string]any{"path": "."},
+		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
+		"spec":       map[string]any{"path": "."},
 	})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
@@ -170,15 +183,15 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSourceNestedKustomization(t *tes
 	if string(got) != child {
 		t.Fatalf("source nested kustomization was mutated:\nwant %q\ngot  %q", child, got)
 	}
-	matches, _ := filepath.Glob(filepath.Join(src, "child", ".flate-remote-*.yaml"))
+	matches, _ := filepath.Glob(filepath.Join(src, "child", remoteResourcePrefix+"*.yaml"))
 	if len(matches) != 0 {
 		t.Fatalf("remote preflight wrote fetched files into source tree: %v", matches)
 	}
 }
 
-// TestPreflightRemoteResources_HonorsAlternateFilenames sanity-
-// checks the filename matcher: kustomize accepts kustomization.yml
-// and Kustomization in addition to kustomization.yaml.
+// TestPreflightRemoteResources_HonorsAlternateFilenames sanity-checks the
+// filename matcher: kustomize accepts kustomization.yml and Kustomization in
+// addition to kustomization.yaml.
 func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\n"))
@@ -187,13 +200,11 @@ func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 
 	for _, name := range []string{"kustomization.yml", "Kustomization"} {
 		t.Run(name, func(t *testing.T) {
-			stage := t.TempDir()
-			testutil.WriteFileAt(t, filepath.Join(stage, name),
-				"resources:\n  - "+srv.URL+"/x.yaml\n")
-			if err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage); err != nil {
+			fsys := memFSWith(t, map[string]string{name: "resources:\n  - " + srv.URL + "/x.yaml\n"})
+			if err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
 				t.Fatalf("preflight: %v", err)
 			}
-			body, _ := os.ReadFile(filepath.Join(stage, name)) //nolint:gosec // t.TempDir
+			body, _ := fsys.ReadFile(name)
 			if strings.Contains(string(body), srv.URL) {
 				t.Errorf("%s URL not rewritten:\n%s", name, body)
 			}
@@ -201,11 +212,11 @@ func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 	}
 }
 
-// TestPreflightRemoteResources_FetchesEachURLOnce pins the dedup
-// contract: a URL referenced from N kustomization files (parent +
-// nested child + sibling overlay …) must hit the network exactly
-// once per orchestrator run. The fix for the m00nwtchr report
-// where the same broken URL emitted 6 WARNs per `flate test all`.
+// TestPreflightRemoteResources_FetchesEachURLOnce pins the dedup contract: a
+// URL referenced from N kustomization files (parent + nested child + sibling
+// overlay …) must hit the network exactly once per run — the fix for the
+// m00nwtchr report where the same broken URL emitted 6 WARNs per `flate test
+// all`.
 func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 	var hits int32
 	mu := &sync.Mutex{}
@@ -217,41 +228,29 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	stage := t.TempDir()
-	// Three kustomization files, all referencing the same URL.
-	for _, sub := range []string{"a", "b", "c"} {
-		dir := filepath.Join(stage, sub)
-		if err := os.MkdirAll(dir, 0o750); err != nil {
-			t.Fatal(err)
-		}
-		testutil.WriteFileAt(t, filepath.Join(dir, "kustomization.yaml"),
-			"resources:\n  - "+srv.URL+"/shared.yaml\n")
-	}
+	fsys := memFSWith(t, map[string]string{
+		"a/kustomization.yaml": "resources:\n  - " + srv.URL + "/shared.yaml\n",
+		"b/kustomization.yaml": "resources:\n  - " + srv.URL + "/shared.yaml\n",
+		"c/kustomization.yaml": "resources:\n  - " + srv.URL + "/shared.yaml\n",
+	})
 
 	cache := newPreflightCache(t)
-	if err := preflightRemoteResources(context.Background(), cache, stage); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 	if hits != 1 {
 		t.Errorf("expected 1 network call, got %d", hits)
 	}
-
-	// Each kustomization still got its own local copy written.
 	for _, sub := range []string{"a", "b", "c"} {
-		matches, _ := filepath.Glob(filepath.Join(stage, sub, ".flate-remote-*.yaml"))
-		if len(matches) != 1 {
-			t.Errorf("%s: expected one local copy, got %v", sub, matches)
+		if got := remoteFiles(t, fsys, sub); len(got) != 1 {
+			t.Errorf("%s: expected one local copy, got %v", sub, got)
 		}
 	}
 
-	// Running preflight again on the same cache must NOT re-fetch.
-	// (Tests the dedup spans across multiple preflight calls, which
-	// is the actual production pattern — one preflight per
-	// RenderFlux invocation.)
-	stage2 := t.TempDir()
-	testutil.WriteFileAt(t, filepath.Join(stage2, "kustomization.yaml"),
-		"resources:\n  - "+srv.URL+"/shared.yaml\n")
-	if err := preflightRemoteResources(context.Background(), cache, stage2); err != nil {
+	// A second preflight against the same cache (production runs one preflight
+	// per RenderFlux) must NOT re-fetch.
+	fsys2 := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/shared.yaml\n"})
+	if err := preflightRemoteResources(context.Background(), cache, fsys2, "."); err != nil {
 		t.Fatalf("second preflight: %v", err)
 	}
 	if hits != 1 {
@@ -259,23 +258,9 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 	}
 }
 
-// newPreflightCache returns a fresh StagingCache so each test gets
-// its own remote-fetch dedup table (no cross-test cache hits).
-func newPreflightCache(t *testing.T) *StagingCache {
-	t.Helper()
-	c, err := NewStagingCache(t.TempDir(), 0)
-	if err != nil {
-		t.Fatalf("NewStagingCache: %v", err)
-	}
-	t.Cleanup(func() { _ = c.Close() })
-	return c
-}
-
-// TestHttpGetURL_RejectsOversizedBody pins the round-4 OOM
-// guard: a malicious or accidentally-huge endpoint returning more
-// than remoteFetchMaxBytes must fail fast rather than reading the
-// whole body into memory. Reads MaxBytes+1 via LimitReader and
-// errors on overflow.
+// TestHttpGetURL_RejectsOversizedBody pins the OOM guard: an endpoint returning
+// more than remoteFetchMaxBytes must fail fast rather than reading the whole
+// body into memory.
 func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
 	huge := strings.Repeat("a", remoteFetchMaxBytes+1024)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -292,11 +277,9 @@ func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
 	}
 }
 
-// TestRewriteURLResources_PreservesCommentsAndOrder pins the
-// yaml.Node node-level edit fix: only the rewritten resource entry
-// changes, every other byte (comments, other-key ordering, trailing
-// content) survives intact. The previous map-decode + re-marshal
-// round-trip silently destroyed all of that.
+// TestRewriteURLResources_PreservesCommentsAndOrder pins the yaml.Node
+// node-level edit: only the rewritten resource entry changes; every other byte
+// (comments, key ordering, trailing content) survives intact.
 func TestRewriteURLResources_PreservesCommentsAndOrder(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("kind: ConfigMap\n"))
@@ -313,15 +296,12 @@ resources:
   - ./local.yaml  # keep this comment
 namespace: my-app
 `
-	dir := t.TempDir()
-	ks := filepath.Join(dir, "kustomization.yaml")
-	testutil.WriteFileAt(t, ks, original)
-
-	if err := rewriteURLResources(context.Background(), newPreflightCache(t), ks); err != nil {
+	fsys := memFSWith(t, map[string]string{"kustomization.yaml": original})
+	if err := rewriteURLResources(context.Background(), newPreflightCache(t), fsys, "kustomization.yaml"); err != nil {
 		t.Fatalf("rewriteURLResources: %v", err)
 	}
 
-	got, err := os.ReadFile(ks) //nolint:gosec // ks under t.TempDir
+	got, err := fsys.ReadFile("kustomization.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +320,7 @@ namespace: my-app
 	if !strings.Contains(out, "- ./local.yaml") {
 		t.Errorf("local resource path mangled:\n%s", out)
 	}
-	if !strings.Contains(out, ".flate-remote-") {
+	if !strings.Contains(out, remoteResourcePrefix) {
 		t.Errorf("URL entry not rewritten to local file:\n%s", out)
 	}
 	if strings.Contains(out, srv.URL) {
@@ -351,9 +331,9 @@ namespace: my-app
 	}
 }
 
-// TestHttpGetURL_AcceptsBodyAtCap is the boundary check: a body
-// exactly at the cap must succeed. Guards against off-by-one in the
-// LimitReader+overflow-detection pattern.
+// TestHttpGetURL_AcceptsBodyAtCap is the boundary check: a body exactly at the
+// cap must succeed. Guards against off-by-one in the LimitReader+overflow
+// pattern.
 func TestHttpGetURL_AcceptsBodyAtCap(t *testing.T) {
 	atCap := strings.Repeat("b", remoteFetchMaxBytes)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

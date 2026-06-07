@@ -134,15 +134,15 @@ type Config struct {
 
 // Orchestrator wires controllers and drives reconciliation.
 type Orchestrator struct {
-	cfg     Config
-	store   *store.Store
-	tasks   *task.Service
-	src     *sourcectrl.Controller
-	ksc     *kustomization.Controller
-	hrc     *helmrelease.Controller
-	helm    *helm.Client
-	staging *kustomize.StagingCache
-	filter  *change.Filter
+	cfg       Config
+	store     *store.Store
+	tasks     *task.Service
+	src       *sourcectrl.Controller
+	ksc       *kustomization.Controller
+	hrc       *helmrelease.Controller
+	helm      *helm.Client
+	treeCache *kustomize.TreeCache
+	filter    *change.Filter
 
 	// gitFetcher holds the typed *git.Fetcher constructed in New so
 	// Run can drive Prewarm against every discovered GitRepository in
@@ -310,13 +310,11 @@ func New(cfg Config) (*Orchestrator, error) {
 	if err != nil {
 		return nil, err
 	}
-	staging, err := kustomize.NewStagingCacheFromLayout(layout, cfg.StageCacheBytes)
-	if err != nil {
-		// Nothing on disk to clean up: helm.NewClientWithOptions creates no
-		// directories at construction (the disk render cache is lazy), and the
-		// HelmChart fetcher's helm-tmp dir isn't created until later in New.
-		return nil, err
-	}
+	// The kustomize render cache is now purely in-memory: each source tree is
+	// captured once per run into an immutable byte snapshot, from which every
+	// render derives a private in-memory filesystem (no disk staging). Nothing
+	// to clean up on Stop.
+	treeCache := kustomize.NewTreeCache()
 
 	st := store.New()
 	ts := task.NewBounded(cfg.Concurrency)
@@ -347,7 +345,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	// git marker) through the same clone/mirror/ref-resolution machinery as
 	// Flux GitRepository sources. The seam is a function value because
 	// pkg/kustomize cannot import pkg/source/git (import cycle via pkg/source).
-	staging.SetGitBaseFetcher(func(ctx context.Context, repoURL, ref string) (string, string, error) {
+	treeCache.SetGitBaseFetcher(func(ctx context.Context, repoURL, ref string) (string, string, error) {
 		art, err := gitFetcher.FetchRemoteBase(ctx, repoURL, ref)
 		if err != nil {
 			return "", "", err
@@ -402,11 +400,11 @@ func New(cfg Config) (*Orchestrator, error) {
 		store:          st,
 		tasks:          ts,
 		src:            srcCtrl,
-		ksc:            kustomization.New(st, ts, staging, cfg.WipeSecrets),
+		ksc:            kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
 		hrc:            helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
 		rendered:       newRenderedSet(),
 		helm:           helmClient,
-		staging:        staging,
+		treeCache:      treeCache,
 		componentCache: manifest.NewComponentCache(),
 		depGraph:       newDependencyGraph(),
 		gitFetcher:     gitFetcher,

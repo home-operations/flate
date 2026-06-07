@@ -16,16 +16,12 @@ import (
 // and SecureBuild don't take ctx themselves, so flate checks at
 // coarse boundaries — this guards that those checks fire.
 func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
-	cache, err := NewStagingCache(t.TempDir(), 0)
-	if err != nil {
-		t.Fatalf("NewStagingCache: %v", err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := NewTreeCache()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = RenderFlux(ctx, cache, t.TempDir(), "", ".", map[string]any{
+	_, err := RenderFlux(ctx, cache, t.TempDir(), false, ".", map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
@@ -131,13 +127,9 @@ func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\n  labels:\n    app: x\n  annotations:\n    note: y\ndata:\n  k: v\n")
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 
-	cache, err := NewStagingCache(t.TempDir(), 0)
-	if err != nil {
-		t.Fatalf("NewStagingCache: %v", err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := NewTreeCache()
 
-	out, err := RenderFlux(context.Background(), cache, src, "", ".", map[string]any{
+	out, err := RenderFlux(context.Background(), cache, src, false, ".", map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
@@ -195,13 +187,9 @@ func TestRenderFlux_CommonMetadataOverridesOwnerLabels(t *testing.T) {
 	testutil.WriteFile(t, src, "cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n")
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
-	cache, err := NewStagingCache(t.TempDir(), 0)
-	if err != nil {
-		t.Fatalf("NewStagingCache: %v", err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := NewTreeCache()
 
-	out, err := RenderFlux(context.Background(), cache, src, "", ".", map[string]any{
+	out, err := RenderFlux(context.Background(), cache, src, false, ".", map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "owner-name", "namespace": "owner-ns"},
@@ -243,13 +231,9 @@ func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
 	testutil.WriteFile(t, src, "cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n")
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
-	cache, err := NewStagingCache(t.TempDir(), 0)
-	if err != nil {
-		t.Fatalf("NewStagingCache: %v", err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := NewTreeCache()
 
-	out, err := RenderFlux(context.Background(), cache, src, "", ".", map[string]any{
+	out, err := RenderFlux(context.Background(), cache, src, false, ".", map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "infra", "namespace": "flux-system"},

@@ -7,19 +7,9 @@ package kustomization
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -38,10 +28,10 @@ import (
 type Controller struct {
 	*base.Controller
 
-	// Staging is a process-wide cache that materializes source roots
-	// into writable copies so Flux's Generator can write the merged
-	// kustomization.yaml without touching the user's working tree.
-	Staging *kustomize.StagingCache
+	// Trees is the per-run in-memory render cache: it captures each source
+	// root once into an immutable byte snapshot from which every render
+	// derives a private in-memory filesystem (see kustomize.RenderFlux).
+	Trees *kustomize.TreeCache
 
 	// WipeSecrets controls whether Secret cleartext is wiped when
 	// parsing rendered manifests.
@@ -52,21 +42,6 @@ type Controller struct {
 	// to drop a self-produced substituteFrom CM from the dep set. Nil when
 	// unset (tests / no repoRoot) → edge always added.
 	selfProduces func(cm, consumer manifest.NamedResource) bool
-
-	// workingTreeFPs single-flights workingTreeFingerprint per source
-	// LocalPath for the life of the controller. resolveSourceRootAnd-
-	// Fingerprint runs once per Kustomization, and dozens of KSes share
-	// the bootstrap working-tree source — they all reconcile at once
-	// under --concurrency, so a plain Load/Store memo lets them all miss
-	// before any Store lands and re-walk the entire repo in parallel.
-	// Storing a sync.OnceValue closure collapses that herd to one walk.
-	workingTreeFPs sync.Map // path string -> func() string (sync.OnceValue)
-
-	// walks counts actual workingTreeFingerprint executions (one per
-	// unique LocalPath, regardless of concurrent callers). Single-flight
-	// observability — asserted by TestCachedWorkingTreeFingerprint_SingleFlight;
-	// mirrors StagingCache.sweepKicks.
-	walks atomic.Int64
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto
@@ -110,10 +85,10 @@ type Options struct {
 }
 
 // New constructs a Kustomization controller.
-func New(s *store.Store, t *task.Service, staging *kustomize.StagingCache, wipeSecrets bool) *Controller {
+func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecrets bool) *Controller {
 	return &Controller{
 		Controller:  base.New(s, t),
-		Staging:     staging,
+		Trees:       trees,
 		WipeSecrets: wipeSecrets,
 	}
 }
@@ -189,7 +164,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "resolving source artifact")
-	sourceRoot, sourceFingerprint, err := c.resolveSourceRootAndFingerprint(ks)
+	sourceRoot, applyIgnore, err := c.resolveSource(ks)
 	if err != nil {
 		return err
 	}
@@ -236,7 +211,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	data, err := kustomize.RenderFlux(ctx, c.Staging, sourceRoot, sourceFingerprint, ks.Path, ks.Contents)
+	data, err := kustomize.RenderFlux(ctx, c.Trees, sourceRoot, applyIgnore, ks.Path, ks.Contents)
 	if err != nil {
 		return err
 	}
@@ -358,16 +333,20 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	return deps
 }
 
-// resolveSourceRootAndFingerprint returns the source's on-disk root
-// AND its content-addressed fingerprint. The fingerprint feeds the
-// persistent kustomize staging cache: when non-empty, repeat renders
-// against the same artifact skip the copyTree pass entirely. Empty
-// is the right answer when the source has no stable content
-// identifier (the bootstrap working-tree alias, local-path
-// GitRepository overrides, sources soft-skipped via
-// --allow-missing-secrets) — the caller falls back to per-process
-// scratch staging and rebuilds from scratch each run.
-func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization) (string, string, error) {
+// resolveSource returns the source's on-disk root and whether
+// source-controller's default file exclusions must be applied when the tree is
+// materialized for the build.
+//
+// applyIgnore is true exactly for working-tree / self-referential sources — the
+// bootstrap GitRepository alias and overrideSelfReferentialGitRepositories —
+// which expose the user's raw working tree and never passed through a fetcher's
+// artifact filtering. Every real fetcher (git, OCI, bucket) already ran
+// source.ApplyIgnore on the LocalPath it publishes and records a Revision or
+// Digest, so those are materialized as-is (applyIgnore=false); re-filtering them
+// would be redundant and, for buckets, wrong (defaults vs no-defaults). The
+// working-tree aliases are the only artifacts that set neither Revision nor
+// Digest, which is precisely the signal.
+func (c *Controller) resolveSource(ks *manifest.Kustomization) (sourceRoot string, applyIgnore bool, err error) {
 	srcID := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 	if ks.SourceKind == "" || ks.SourceName == "" {
 		// Child Kustomizations that inherit sourceRef from a parent's
@@ -376,7 +355,7 @@ func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization)
 		// working tree) so the first reconcile resolves to the repo
 		// root instead of doubling ks.Path against itself (#105).
 		if ks.Path == "" {
-			return "", "", fmt.Errorf("%w: kustomization %s has no path and no source",
+			return "", false, fmt.Errorf("%w: kustomization %s has no path and no source",
 				manifest.ErrInput, ks.Named().NamespacedName())
 		}
 		srcID = manifest.BootstrapSourceID
@@ -388,137 +367,14 @@ func (c *Controller) resolveSourceRootAndFingerprint(ks *manifest.Kustomization)
 		// that as a typed skip so the caller can mark the KS skipped too
 		// rather than reporting a generic "artifact not found" failure.
 		if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
-			return "", "", fmt.Errorf("%w: source %s %s", manifest.ErrSourceSkipped, srcID.String(), info.Message)
+			return "", false, fmt.Errorf("%w: source %s %s", manifest.ErrSourceSkipped, srcID.String(), info.Message)
 		}
-		return "", "", fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
+		return "", false, fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
 	}
 	if sa, ok := art.(*store.SourceArtifact); ok {
-		// Prefer the content-addressed Digest when the fetcher
-		// supplied one (OCI); fall back to Revision (the git commit
-		// SHA) so git-backed sources also key the persistent stage
-		// cache.
-		//
-		// The bootstrap source is the working-tree alias — fetchers
-		// don't run for it and Revision/Digest are empty. We walk the
-		// tree and hash (relpath, mtime, size) per regular file so
-		// repeated invocations against an untouched tree still hit
-		// the cache while any nested edit invalidates it. Same
-		// treatment applies to any other artifact that landed
-		// without a fetcher-supplied fingerprint
-		// (`overrideSelfReferentialGitRepositories`) — they too
-		// resolve to the user's working tree.
-		fp := sa.Digest
-		if fp == "" {
-			fp = sourceFingerprintFromRevision(sa.Revision)
-		}
-		if fp == "" {
-			fp = c.cachedWorkingTreeFingerprint(sa.LocalPath)
-		}
-		return sa.LocalPath, fp, nil
+		applyIgnore := sa.Digest == "" && sa.Revision == ""
+		return sa.LocalPath, applyIgnore, nil
 	}
-	return "", "", fmt.Errorf("%w: unsupported source artifact type %T for %s",
+	return "", false, fmt.Errorf("%w: unsupported source artifact type %T for %s",
 		manifest.ErrFlux, art, srcID.String())
-}
-
-// sourceFingerprintFromRevision normalizes a git-style Revision
-// string into a stage-cache key. The git fetcher records the raw
-// commit SHA, which is already a valid fingerprint. Future fetchers
-// may follow Flux's `<branch>@sha1:<sha>` convention — strip the
-// prefix so the cache key stays content-only.
-func sourceFingerprintFromRevision(rev string) string {
-	if rev == "" {
-		return ""
-	}
-	// "main@sha1:abcd..." or "sha256:abcd..." — keep only the trailing
-	// content-addressed token. Plain SHAs pass through unchanged.
-	if i := strings.LastIndexAny(rev, ":@"); i >= 0 && i+1 < len(rev) {
-		return rev[i+1:]
-	}
-	return rev
-}
-
-// cachedWorkingTreeFingerprint single-flights workingTreeFingerprint by
-// LocalPath. resolveSourceRootAndFingerprint runs once per Kustomization
-// and dozens of KSes share the bootstrap source, all reconciling
-// concurrently — a plain Load/miss/Store memo lets them all miss before
-// any value is stored and re-walk the entire repo in parallel (a
-// thundering herd that dominates warm-run CPU). LoadOrStore keeps exactly
-// one sync.OnceValue closure per path, so every concurrent caller invokes
-// the same closure and the walk runs once. Mirrors StagingCache's copyOnce.
-func (c *Controller) cachedWorkingTreeFingerprint(path string) string {
-	once, _ := c.workingTreeFPs.LoadOrStore(path, sync.OnceValue(func() string {
-		c.walks.Add(1)
-		return workingTreeFingerprint(path)
-	}))
-	return once.(func() string)()
-}
-
-// workingTreeFingerprint hashes every regular file under path with
-// (relpath, mtime, size). The directory skip set is shared with the
-// staged copy via kustomize.SkipStageDir — the fingerprint and the
-// staged tree MUST see the same files, or a cache hit can land a
-// structurally broken stage (e.g. a kustomization.yaml that references
-// a directory the stage omits). Cost is amortized against a cache miss,
-// which would walk the same tree anyway to copy.
-func workingTreeFingerprint(path string) string {
-	if path == "" {
-		return ""
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return ""
-	}
-	h := sha256.New()
-	_, _ = h.Write([]byte(abs))
-	walkErr := filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			// Share the exclusion set with the staged copy; the root
-			// (abs) is never skipped even if its base is dot-prefixed.
-			if p != abs && kustomize.SkipStageDir(d.Name()) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		// Mirror copyTreeInto's symlink handling: dereference, then
-		// only hash if the target is a regular file. Broken symlinks
-		// are silently skipped — otherwise a dangling editor lockfile
-		// would error out and empty the fingerprint, routing every
-		// run to per-process scratch staging.
-		var info fs.FileInfo
-		if d.Type()&fs.ModeSymlink != 0 {
-			info, err = os.Stat(p)
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					return nil
-				}
-				return err
-			}
-			if !info.Mode().IsRegular() {
-				return nil
-			}
-		} else {
-			if !d.Type().IsRegular() {
-				return nil
-			}
-			info, err = d.Info()
-			if err != nil {
-				return nil
-			}
-		}
-		rel, relErr := filepath.Rel(abs, p)
-		if relErr != nil {
-			return relErr
-		}
-		_, _ = h.Write([]byte(rel))
-		_, _ = h.Write([]byte(info.ModTime().UTC().Format(time.RFC3339Nano)))
-		_, _ = h.Write([]byte(strconv.FormatInt(info.Size(), 10)))
-		return nil
-	})
-	if walkErr != nil {
-		return ""
-	}
-	return hex.EncodeToString(h.Sum(nil))
 }

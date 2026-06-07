@@ -1,151 +1,62 @@
 package kustomize
 
 import (
-	"context"
 	"errors"
-	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-
-	"golang.org/x/sync/errgroup"
 )
 
-// SkipStageDir reports whether a directory base name is excluded from
-// the staged copy: `node_modules` and every dot-prefixed dir (which
-// captures `.git`, `.flate-cache`, IDE state, etc.). It is the single
-// source of truth for that set — the working-tree fingerprint that keys
-// the persistent stage cache (kustomization controller) MUST apply the
-// identical rule, or a cache hit can land a stage missing a directory the
-// fingerprint counted (or vice-versa), yielding a structurally broken
-// tree. Apply to non-root directories only; callers own root detection.
+// SkipStageDir reports whether a directory base name is excluded when a source
+// tree is walked: `node_modules` and every dot-prefixed dir (which captures
+// `.git`, `.flate-cache`, IDE state, etc.). Apply to non-root directories only;
+// callers own root detection.
 func SkipStageDir(base string) bool {
 	return base == "node_modules" || strings.HasPrefix(base, ".")
 }
 
-// copyTreeInto materializes every regular file from src into dst.
-// Symlinks are dereferenced, dotfiles are skipped to keep stages
-// clean. Caller owns dst — copyTreeInto neither creates nor removes
-// it on failure (so the persistent path can stage into a sibling
-// tempdir and atomically rename).
-//
-// The walk collects file-copy tasks serially (cheap, also creates
-// the destination directory skeleton) and then fans them out across
-// a worker pool. Each task is independent — hardlinks are atomic;
-// byte copies operate on distinct dst paths — so concurrency is
-// safe. The pool is capped at runtime.NumCPU because the cost per
-// task is I/O, not CPU, and over-fanning would just thrash the page
-// cache.
-func (c *StagingCache) copyTreeInto(src, dst string) error {
-	type task struct {
-		srcPath, dstPath string
-		mode             os.FileMode
-	}
-	var tasks []task
-
-	walkErr := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+// walkSourceFiles walks root and invokes visit(rel, body) for every regular
+// file (symlinks dereferenced; dangling and irregular entries skipped silently),
+// descending all directories except those SkipStageDir excludes. rel is
+// relative to root, using the OS separator. Used to copy a cloned git base into
+// a render's in-memory fs (see copyDirIntoFS).
+func walkSourceFiles(root string, visit func(rel string, body []byte) error) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(src, path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
 		if rel == "." {
 			return nil
 		}
-		base := d.Name()
 		if d.IsDir() {
-			// Skip anything that isn't user content (see SkipStageDir).
-			// The root is already handled by the rel == "." early return
-			// above, so this only fires on subdirectories.
-			if SkipStageDir(base) {
+			if SkipStageDir(d.Name()) {
 				return fs.SkipDir
 			}
-			return os.MkdirAll(filepath.Join(dst, rel), 0o750)
-		}
-		// Only stat when we need to follow a symlink — DirEntry already
-		// carries the file-type bits for regular entries. Skipping the
-		// stat on 50k regular files in a monorepo eliminates the same
-		// number of syscalls; hardlinks inherit mode from source so the
-		// fallback-copy's mode field is only consulted on cross-FS
-		// stages (EXDEV), where 0o600 is acceptable for kustomize input.
-		if d.Type()&fs.ModeSymlink == 0 {
-			if !d.Type().IsRegular() {
-				return nil
-			}
-			tasks = append(tasks, task{path, filepath.Join(dst, rel), 0o600})
 			return nil
 		}
-		info, err := os.Stat(path)
-		if err != nil {
-			// A dangling symlink in the user's working tree (a common
-			// local-only state for editor lockfiles, gitignored
-			// .pre-commit-config.yaml, IDE caches) used to abort the
-			// entire stage. flate doesn't need the link target — Flux's
-			// reconcile wouldn't either — so skip silently when the
-			// target is missing. Other Stat errors (permissions, I/O)
-			// still surface.
-			if errors.Is(err, fs.ErrNotExist) {
+		if d.Type()&fs.ModeSymlink != 0 {
+			info, serr := os.Stat(path)
+			if serr != nil {
+				if errors.Is(serr, fs.ErrNotExist) {
+					return nil
+				}
+				return serr
+			}
+			if !info.Mode().IsRegular() {
 				return nil
 			}
-			return err
-		}
-		if !info.Mode().IsRegular() {
+		} else if !d.Type().IsRegular() {
 			return nil
 		}
-		tasks = append(tasks, task{path, filepath.Join(dst, rel), info.Mode()})
-		return nil
+		body, rerr := os.ReadFile(path) //nolint:gosec // path is a walk result under root
+		if rerr != nil {
+			return rerr
+		}
+		return visit(rel, body)
 	})
-	if walkErr != nil {
-		return fmt.Errorf("stage %s: %w", src, walkErr)
-	}
-
-	g, _ := errgroup.WithContext(context.Background())
-	g.SetLimit(runtime.NumCPU())
-	for _, t := range tasks {
-		g.Go(func() error { return copyFile(t.srcPath, t.dstPath, t.mode) })
-	}
-	if err := g.Wait(); err != nil {
-		return fmt.Errorf("stage %s: %w", src, err)
-	}
-	return nil
-}
-
-// copyFile materializes srcPath at dstPath. Hardlinks when source and
-// destination sit on the same filesystem — a stage of a monorepo would
-// otherwise duplicate gigabytes of bytes on every render. Falls back to
-// a stream copy on cross-device (EXDEV) failures so the cache continues
-// to work when a user points --cache-dir at a different volume than
-// their working tree.
-//
-// Callers that mutate the staged file MUST first os.Remove it so the
-// hardlink is broken before write — otherwise an O_TRUNC|O_WRONLY open
-// on the staged path would modify the source's underlying inode.
-// flux.go's restoreKustomizationFile follows that protocol; new write
-// sites must too.
-func copyFile(srcPath, dstPath string, mode os.FileMode) error {
-	// Hardlink fast path. Any Link failure (cross-device EXDEV,
-	// permissions, source missing) falls through to the copy path so
-	// unusual filesystems still work.
-	if os.Link(srcPath, dstPath) == nil {
-		return nil
-	}
-	src, err := os.Open(srcPath) //nolint:gosec // srcPath is a tree-walk result under our source root
-	if err != nil {
-		return err
-	}
-	defer func() { _ = src.Close() }()
-	dst, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode.Perm()) //nolint:gosec // dstPath is inside our staging tempdir
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(dst, src); err != nil {
-		_ = dst.Close()
-		return err
-	}
-	return dst.Close()
 }

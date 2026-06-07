@@ -90,7 +90,7 @@ func fakeWorktree(t *testing.T, files map[string]string) string {
 
 // withFakeGitBase installs a GitBaseFetcher returning worktree for every
 // call and counting invocations.
-func withFakeGitBase(c *StagingCache, worktree string, calls *atomic.Int32) {
+func withFakeGitBase(c *TreeCache, worktree string, calls *atomic.Int32) {
 	c.SetGitBaseFetcher(func(_ context.Context, _, _ string) (string, string, error) {
 		if calls != nil {
 			calls.Add(1)
@@ -106,18 +106,16 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 		"overlays/prod/kustomization.yaml": "resources:\n  - ../../\n",
 	})
 
-	stage := t.TempDir()
-	ks := filepath.Join(stage, "kustomization.yaml")
 	const gitURL = "https://github.com/o/r//overlays/prod?ref=v1"
-	testutil.WriteFileAt(t, ks, "resources:\n  - "+gitURL+"\n")
+	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + gitURL + "\n"})
 
 	cache := newPreflightCache(t)
 	withFakeGitBase(cache, worktree, nil)
-	if err := preflightRemoteResources(context.Background(), cache, stage); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
-	body, err := os.ReadFile(ks) //nolint:gosec // ks is t.TempDir
+	body, err := fsys.ReadFile("kustomization.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,13 +127,14 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 	if strings.Contains(string(body), gitURL) {
 		t.Errorf("git URL still present after preflight:\n%s", body)
 	}
-	// The whole repo is materialized as a DIRECTORY, not a single .yaml file.
-	if matches, _ := filepath.Glob(filepath.Join(stage, remoteResourcePrefix+"*.yaml")); len(matches) != 0 {
-		t.Fatalf("git base must not write a .yaml file (that's the #616 bug): %v", matches)
+	// The whole repo is materialized as a DIRECTORY, not a single .yaml file
+	// (that was the #616 bug).
+	if !fsys.IsDir(wantDir) {
+		t.Fatalf("git base must materialize as a directory, not a single file")
 	}
 	for _, rel := range []string{"kustomization.yaml", "cm.yaml", "overlays/prod/kustomization.yaml"} {
-		if _, err := os.Stat(filepath.Join(stage, wantDir, rel)); err != nil {
-			t.Errorf("whole repo not copied, missing %s: %v", rel, err)
+		if !fsys.Exists(filepath.Join(wantDir, rel)) {
+			t.Errorf("whole repo not copied, missing %s", rel)
 		}
 	}
 }
@@ -156,22 +155,21 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
 	})
 
-	stage := t.TempDir()
-	ks := filepath.Join(stage, "kustomization.yaml")
 	// A git URL (carries ?ref=) pointing at the HTML server.
-	testutil.WriteFileAt(t, ks, "resources:\n  - "+srv.URL+"/o/r?ref=v1\n")
+	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/o/r?ref=v1\n"})
 
 	cache := newPreflightCache(t)
 	withFakeGitBase(cache, worktree, nil)
-	if err := preflightRemoteResources(context.Background(), cache, stage); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
 	if n := hits.Load(); n != 0 {
 		t.Errorf("git URL was HTTP-GETted %d time(s); it must be cloned instead (#616)", n)
 	}
-	if matches, _ := filepath.Glob(filepath.Join(stage, remoteResourcePrefix+"*.yaml")); len(matches) != 0 {
-		t.Fatalf("HTML was written as a .yaml resource (#616): %v", matches)
+	wantDir := remoteResourcePrefix + urlHash(srv.URL+"/o/r"+"@"+"v1")
+	if !fsys.IsDir(wantDir) {
+		t.Fatalf("git URL not materialized as a base directory (#616)")
 	}
 }
 
@@ -185,18 +183,14 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 		"shared/cm.yaml":              "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: from-parent-ref\n",
 	})
 
-	src := t.TempDir()
-	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"),
-		"resources:\n  - https://example.com/o/r//apps/foo?ref=v1\n")
+	src := writeTree(t, map[string]string{
+		"kustomization.yaml": "resources:\n  - https://example.com/o/r//apps/foo?ref=v1\n",
+	})
 
-	cache, err := NewStagingCache(t.TempDir(), 0)
-	if err != nil {
-		t.Fatalf("NewStagingCache: %v", err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := NewTreeCache()
 	withFakeGitBase(cache, worktree, nil)
 
-	out, err := RenderFlux(context.Background(), cache, src, "", ".", map[string]any{
+	out, err := RenderFlux(context.Background(), cache, src, false, ".", map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -210,26 +204,22 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	}
 }
 
-// TestPreflightGitBase_SourceTreeImmutable confirms a git base referenced
-// from a SOURCE kustomization mutates only the staged copy.
+// TestPreflightGitBase_SourceTreeImmutable confirms a git base referenced from
+// a SOURCE kustomization never mutates the on-disk source tree (the in-memory
+// render writes everything to a private fs).
 func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	worktree := fakeWorktree(t, map[string]string{
 		"kustomization.yaml": "resources:\n  - ./cm.yaml\n",
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
 	})
 
-	src := t.TempDir()
 	original := "resources:\n  - https://example.com/o/r?ref=v1\n"
-	testutil.WriteFileAt(t, filepath.Join(src, "kustomization.yaml"), original)
+	src := writeTree(t, map[string]string{"kustomization.yaml": original})
 
-	cache, err := NewStagingCache(t.TempDir(), 0)
-	if err != nil {
-		t.Fatalf("NewStagingCache: %v", err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := NewTreeCache()
 	withFakeGitBase(cache, worktree, nil)
 
-	if _, err := RenderFlux(context.Background(), cache, src, "", ".", map[string]any{
+	if _, err := RenderFlux(context.Background(), cache, src, false, ".", map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -253,11 +243,8 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 // TestPreflightGitBase_NilFetcherErrors: with no GitBaseFetcher wired, a git
 // base surfaces a clear error rather than silently HTTP-GETting the URL.
 func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
-	stage := t.TempDir()
-	testutil.WriteFileAt(t, filepath.Join(stage, "kustomization.yaml"),
-		"resources:\n  - https://github.com/o/r?ref=v1\n")
-
-	err := preflightRemoteResources(context.Background(), newPreflightCache(t), stage)
+	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://github.com/o/r?ref=v1\n"})
+	err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, ".")
 	if err == nil {
 		t.Fatal("expected error when no git fetcher is wired")
 	}
@@ -274,27 +261,23 @@ func TestPreflightGitBase_EachKSGetsOwnCopy(t *testing.T) {
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
 	})
 
-	stage := t.TempDir()
-	for _, sub := range []string{"a", "b", "c"} {
-		dir := filepath.Join(stage, sub)
-		if err := os.MkdirAll(dir, 0o750); err != nil {
-			t.Fatal(err)
-		}
-		testutil.WriteFileAt(t, filepath.Join(dir, "kustomization.yaml"),
-			"resources:\n  - https://example.com/o/r?ref=v1\n")
-	}
+	fsys := memFSWith(t, map[string]string{
+		"a/kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n",
+		"b/kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n",
+		"c/kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n",
+	})
 
 	var calls atomic.Int32
 	cache := newPreflightCache(t)
 	withFakeGitBase(cache, worktree, &calls)
-	if err := preflightRemoteResources(context.Background(), cache, stage); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
 	wantDir := remoteResourcePrefix + urlHash("https://example.com/o/r@v1")
 	for _, sub := range []string{"a", "b", "c"} {
-		if _, err := os.Stat(filepath.Join(stage, sub, wantDir, "cm.yaml")); err != nil {
-			t.Errorf("%s: base not copied into its own dir: %v", sub, err)
+		if !fsys.Exists(filepath.Join(sub, wantDir, "cm.yaml")) {
+			t.Errorf("%s: base not copied into its own dir", sub)
 		}
 	}
 }

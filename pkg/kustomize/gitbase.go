@@ -13,10 +13,11 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
 // gitBaseSpec is a resources: entry classified as a remote git base,
@@ -194,17 +195,18 @@ func trimPrefixFold(s, prefix string) (string, bool) {
 }
 
 // fetchGitBase resolves a classified git base via the injected GitBaseFetcher,
-// materializes the WHOLE repo worktree into a .flate-remote-<hash>/ directory
-// beside the referencing kustomization, and returns the relative resource path
-// (the directory joined with the in-repo subPath).
+// materializes the WHOLE repo worktree into a <prefix><hash>/ directory beside
+// the referencing kustomization in the render's private in-memory fs, and
+// returns the relative resource path (the directory joined with the in-repo
+// subPath).
 //
 // Copying the whole repo — not just subPath — keeps any in-repo ../ references
-// the base itself relies on resolvable; the per-KS copy keeps each staged tree
-// self-contained (the expensive clone/materialize happens once in the cached
-// fetcher, this is a cheap same-filesystem hardlink fan-out via copyTreeInto).
-// The directory name keys on (repoURL, ref) only, so multiple subpaths of one
-// repo+ref share a single materialized copy.
-func fetchGitBase(ctx context.Context, cache *StagingCache, dir string, spec gitBaseSpec) (string, error) {
+// the base itself relies on resolvable. The expensive clone/materialize happens
+// once in the cached fetcher; this is a cheap in-RAM file copy. The directory
+// name keys on (repoURL, ref) only, so multiple subpaths of one repo+ref share
+// a single materialized copy. No cleanup is needed: each render derives a fresh
+// fs from the immutable snapshot, so there is never stale state to clear.
+func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, dir string, spec gitBaseSpec) (string, error) {
 	if cache.gitBase == nil {
 		return "", fmt.Errorf("kustomization references remote git base %q but no git fetcher is wired", spec.repoURL)
 	}
@@ -212,18 +214,20 @@ func fetchGitBase(ctx context.Context, cache *StagingCache, dir string, spec git
 	if err != nil {
 		return "", err
 	}
-	name := ".flate-remote-" + urlHash(spec.repoURL+"@"+spec.ref)
-	dst := filepath.Join(dir, name)
-	// Idempotent across repeat reconciles: clear any prior materialization
-	// before re-copying so a changed upstream can't leave stale files behind.
-	if err := os.RemoveAll(dst); err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(dst, 0o750); err != nil {
-		return "", err
-	}
-	if err := cache.copyTreeInto(worktree, dst); err != nil {
+	name := remoteResourcePrefix + urlHash(spec.repoURL+"@"+spec.ref)
+	destPrefix := filepath.Join(dir, name)
+	if err := copyDirIntoFS(memFS, worktree, destPrefix); err != nil {
 		return "", err
 	}
 	return "./" + path.Join(name, spec.subPath), nil
+}
+
+// copyDirIntoFS materializes every regular file under srcRoot into memFS at
+// destPrefix/<rel>, applying the same SkipStageDir / symlink-deref rules as
+// source-tree materialization. Used to drop a cloned git base into a render's
+// private fs.
+func copyDirIntoFS(memFS filesys.FileSystem, srcRoot, destPrefix string) error {
+	return walkSourceFiles(srcRoot, func(rel string, body []byte) error {
+		return memFS.WriteFile(filepath.Join(destPrefix, rel), body)
+	})
 }

@@ -44,11 +44,7 @@ data: {greeting: hi}
 	})
 	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "ready")
 
-	cache, err := kustomize.NewStagingCache(t.TempDir(), 0)
-	if err != nil {
-		t.Fatalf("NewStagingCache: %v", err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := kustomize.NewTreeCache()
 
 	tasks := task.New()
 	c := New(s, tasks, cache, true)

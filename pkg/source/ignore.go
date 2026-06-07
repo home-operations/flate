@@ -6,10 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
-	"github.com/fluxcd/pkg/sourceignore"
-	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 )
 
 // ApplyIgnore deletes every file under root that matches the source-
@@ -48,25 +46,14 @@ func applyIgnore(root string, ignore *string, withDefaults bool) error {
 	if err != nil {
 		return fmt.Errorf("sourceignore abs: %w", err)
 	}
-	domain := strings.Split(abs, string(filepath.Separator))
-
-	patterns, err := sourceignore.LoadIgnorePatterns(abs, domain)
+	matcher, err := sourceignore.New(abs, ignore, withDefaults)
 	if err != nil {
-		return fmt.Errorf("sourceignore load: %w", err)
+		return err
 	}
-	if ignore != nil && strings.TrimSpace(*ignore) != "" {
-		patterns = append(patterns, sourceignore.ReadPatterns(strings.NewReader(*ignore), domain)...)
-	}
-	var matcher gitignore.Matcher
-	if withDefaults {
-		matcher = sourceignore.NewDefaultMatcher(patterns, domain)
-	} else {
-		matcher = sourceignore.NewMatcher(patterns)
-	}
-	return walkAndDelete(abs, domain, matcher)
+	return walkAndDelete(abs, matcher)
 }
 
-func walkAndDelete(root string, domain []string, matcher gitignore.Matcher) error {
+func walkAndDelete(root string, matcher *sourceignore.Matcher) error {
 	// Decide per-file: walk every file, ask the matcher whether it
 	// belongs in the artifact. Don't SkipDir on excluded directories —
 	// that would prevent a deeper `!` re-include pattern from being
@@ -94,8 +81,7 @@ func walkAndDelete(root string, domain []string, matcher gitignore.Matcher) erro
 		if err != nil {
 			return err
 		}
-		segments := slices.Concat(domain, strings.Split(rel, string(filepath.Separator)))
-		if matcher.Match(segments, false) {
+		if matcher.Match(rel, false) {
 			toRemove = append(toRemove, p)
 		}
 		return nil

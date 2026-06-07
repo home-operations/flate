@@ -203,7 +203,7 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 	// is set, auto-detect via the merge-base ladder. Cleanup is
 	// deferred (not bound to ctx) so the tempdir survives SIGINT
 	// until both orchestrators' read paths have actually unwound.
-	cleanup, err := resolveBaseline(ctx, c, true)
+	cleanup, err := resolveBaseline(c, true)
 	if err != nil {
 		return diffSide{}, diffSide{}, err
 	}

@@ -83,20 +83,21 @@ func proxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
 // subsequent calls incrementally Fetch. Holds the per-URL lock across
 // the network operation so two concurrent callers serialize.
 func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, plan FetchPlan) (*git.Repository, error) {
-	release, err := m.locks.Acquire(ctx, urlHash(url))
+	hash := urlHash(url)
+	release, err := m.locks.Acquire(ctx, hash)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
 
-	path := m.layout.GitMirror(urlHash(url))
+	path := m.layout.GitMirror(hash)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("mirror parent: %w", err)
 	}
 
 	repo, openErr := git.PlainOpen(path)
 	if openErr == nil {
-		if err := m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs, plan.Depth); err != nil {
+		if err := m.fetchInto(ctx, repo, auth, proxy, plan); err != nil {
 			return nil, err
 		}
 		return repo, nil
@@ -124,7 +125,7 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 			// Broad clone pulls the server's default refs; the empty plan
 			// refspec falls back to +refs/*:refs/* so non-default refs are
 			// present too. Treat NoErrAlreadyUpToDate as success.
-			err = m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs, plan.Depth)
+			err = m.fetchInto(ctx, repo, auth, proxy, plan)
 		}
 	}
 	if err != nil {
@@ -149,7 +150,7 @@ func (m *Cache) initAndFetch(ctx context.Context, path, url string, auth transpo
 	if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}}); err != nil {
 		return nil, fmt.Errorf("mirror remote: %w", err)
 	}
-	if err := m.fetchInto(ctx, repo, auth, proxy, plan.RefSpecs, plan.Depth); err != nil {
+	if err := m.fetchInto(ctx, repo, auth, proxy, plan); err != nil {
 		return nil, err
 	}
 	return repo, nil
@@ -159,7 +160,8 @@ func (m *Cache) initAndFetch(ctx context.Context, path, url string, auth transpo
 // the mirror refspec — every server ref updates in place, including
 // explicit spec.ref.name targets such as refs/pull/* and refs/merge-*.
 // Treats NoErrAlreadyUpToDate as a clean noop.
-func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig, refSpecs []config.RefSpec, depth int) error {
+func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, proxy *source.ProxyConfig, plan FetchPlan) error {
+	refSpecs := plan.RefSpecs
 	if len(refSpecs) == 0 {
 		refSpecs = []config.RefSpec{"+refs/*:refs/*"}
 	}
@@ -167,7 +169,7 @@ func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transp
 		Auth:         auth,
 		RefSpecs:     refSpecs,
 		ProxyOptions: proxyOptions(proxy),
-		Depth:        depth,
+		Depth:        plan.Depth,
 		// All refspecs above are explicit (named refs, +refs/tags/*, or the
 		// +refs/*:refs/* fallback), so suppress go-git's default tag auto-
 		// following — it would silently pull every tag back in.

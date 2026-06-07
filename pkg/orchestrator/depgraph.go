@@ -85,7 +85,7 @@ func (g *dependencyGraph) ReplaceEdges(id manifest.NamedResource, deps []manifes
 	}
 
 	oldSet := g.outEdges[id]
-	if edgesEqual(oldSet, newSet) {
+	if maps.Equal(oldSet, newSet) {
 		return
 	}
 
@@ -141,19 +141,6 @@ func (g *dependencyGraph) ReplaceEdges(id manifest.NamedResource, deps []manifes
 	if hasRemoved {
 		g.revalidateFailedLocked()
 	}
-}
-
-// edgesEqual reports whether two edge sets are identical.
-func edgesEqual(a, b map[manifest.NamedResource]struct{}) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k := range a {
-		if _, ok := b[k]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // findPathLocked runs an iterative forward DFS from start looking for

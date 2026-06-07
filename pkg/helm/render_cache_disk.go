@@ -36,7 +36,7 @@ import (
 // Concurrency: Get is unsynchronized — the filesystem already
 // serialises atomic-rename writes against partial reads. Put is
 // likewise unsynchronized; the only coordination is the single-flight
-// background sweep gated by sweepBusy so a burst of Puts triggers one
+// background sweep gated by sweepGate so a burst of Puts triggers one
 // eviction pass instead of N.
 type diskRenderCache struct {
 	root  string
@@ -121,7 +121,7 @@ func (c *diskRenderCache) Get(key string) ([]byte, bool) {
 // Put gzip-encodes payload and atomically writes it to the sharded
 // path. Subsequent reads either observe the previous complete file or
 // the new one — never a partial. After the write we kick a background
-// sweep (single-flight via sweepBusy) so the fast path doesn't block
+// sweep (single-flight via sweepGate) so the fast path doesn't block
 // on directory walks.
 //
 // nil-receiver no-ops so call sites can unconditionally Put without
@@ -181,7 +181,7 @@ func (c *diskRenderCache) Put(key string, payload []byte) {
 
 // sweep walks the cache root, totals byte usage, and (if over the
 // limit) deletes oldest-by-mtime entries until total ≤ limit. Runs
-// on a single goroutine — sweepBusy gates re-trigger so a sustained
+// on a single goroutine — sweepGate gates re-trigger so a sustained
 // write storm doesn't fork ~one sweep per Put. The flag clears at the
 // end so the *next* over-limit Put can re-trigger.
 //

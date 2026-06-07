@@ -3,6 +3,7 @@ package loader
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"sigs.k8s.io/yaml"
@@ -140,11 +141,7 @@ func dataFilesFor(dir string, k *kustomization) map[string]struct{} {
 			data[abs] = struct{}{}
 		}
 	}
-	for _, g := range k.ConfigMapGenerator {
-		addEntries(g.Files, true)
-		addEntries(g.Envs, false)
-	}
-	for _, g := range k.SecretGenerator {
+	for _, g := range slices.Concat(k.ConfigMapGenerator, k.SecretGenerator) {
 		addEntries(g.Files, true)
 		addEntries(g.Envs, false)
 	}

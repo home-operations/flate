@@ -22,15 +22,30 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-func runCLI(t *testing.T, args ...string) string {
+// runCLIBuffers runs the CLI in-process and returns its captured stdout,
+// stderr, and exit code. All the runCLI* helpers build on it.
+func runCLIBuffers(args ...string) (stdout, stderr string, code int) {
+	var out, err bytes.Buffer
+	code = cli.Run(args, &out, &err)
+	return out.String(), err.String(), code
+}
+
+// requireCLIOK runs the CLI and fails the test on a non-zero exit code,
+// returning the captured stdout and stderr separately.
+func requireCLIOK(t *testing.T, args ...string) (stdout, stderr string) {
 	t.Helper()
-	var stdout, stderr bytes.Buffer
-	code := cli.Run(args, &stdout, &stderr)
+	stdout, stderr, code := runCLIBuffers(args...)
 	if code != 0 {
 		t.Fatalf("flate %s exited %d\nstdout:\n%s\nstderr:\n%s",
-			strings.Join(args, " "), code, stdout.String(), stderr.String())
+			strings.Join(args, " "), code, stdout, stderr)
 	}
-	return stdout.String() + stderr.String()
+	return stdout, stderr
+}
+
+func runCLI(t *testing.T, args ...string) string {
+	t.Helper()
+	stdout, stderr := requireCLIOK(t, args...)
+	return stdout + stderr
 }
 
 // runCLIOutputOnly captures stdout+stderr regardless of exit code.
@@ -42,37 +57,29 @@ func runCLI(t *testing.T, args ...string) string {
 // reconcile should keep using runCLI.
 func runCLIOutputOnly(t *testing.T, args ...string) string {
 	t.Helper()
-	var stdout, stderr bytes.Buffer
-	cli.Run(args, &stdout, &stderr)
-	return stdout.String() + stderr.String()
+	stdout, stderr, _ := runCLIBuffers(args...)
+	return stdout + stderr
 }
 
 // runCLIStdoutOnly is the stdout variant of runCLIOutputOnly.
 func runCLIStdoutOnly(t *testing.T, args ...string) string {
 	t.Helper()
-	var stdout, stderr bytes.Buffer
-	cli.Run(args, &stdout, &stderr)
-	return stdout.String()
+	stdout, _, _ := runCLIBuffers(args...)
+	return stdout
 }
 
 // runCLIStdout returns stdout only — log lines on stderr would
 // otherwise pollute payloads that tests parse.
 func runCLIStdout(t *testing.T, args ...string) string {
 	t.Helper()
-	var stdout, stderr bytes.Buffer
-	code := cli.Run(args, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("flate %s exited %d\nstdout:\n%s\nstderr:\n%s",
-			strings.Join(args, " "), code, stdout.String(), stderr.String())
-	}
-	return stdout.String()
+	stdout, _ := requireCLIOK(t, args...)
+	return stdout
 }
 
 func runCLIExpectErr(t *testing.T, args ...string) (string, int) {
 	t.Helper()
-	var stdout, stderr bytes.Buffer
-	code := cli.Run(args, &stdout, &stderr)
-	return stdout.String() + stderr.String(), code
+	stdout, stderr, code := runCLIBuffers(args...)
+	return stdout + stderr, code
 }
 
 func testdataPath(t *testing.T, sub string) string {
@@ -681,13 +688,9 @@ func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
 
 func mustExtractLine(t *testing.T, haystack, needle string) string {
 	t.Helper()
-	for line := range strings.SplitSeq(haystack, "\n") {
-		if strings.Contains(line, needle) && (strings.Contains(line, "PASSED") || strings.Contains(line, "FAILED")) {
-			return line
-		}
-	}
-	t.Fatalf("status line for %q not found in:\n%s", needle, haystack)
-	return ""
+	return mustFindLine(t, haystack, needle, "status", func(line string) bool {
+		return strings.Contains(line, "PASSED") || strings.Contains(line, "FAILED")
+	})
 }
 
 // mustExtractSkipLine returns the SKIPPED status line containing needle,
@@ -696,12 +699,21 @@ func mustExtractLine(t *testing.T, haystack, needle string) string {
 // wouldn't match a skipped resource.
 func mustExtractSkipLine(t *testing.T, haystack, needle string) string {
 	t.Helper()
+	return mustFindLine(t, haystack, needle, "SKIPPED", func(line string) bool {
+		return strings.Contains(line, "SKIPPED")
+	})
+}
+
+// mustFindLine returns the first line containing needle that also
+// satisfies match, failing the test with a kind-tagged message otherwise.
+func mustFindLine(t *testing.T, haystack, needle, kind string, match func(string) bool) string {
+	t.Helper()
 	for line := range strings.SplitSeq(haystack, "\n") {
-		if strings.Contains(line, needle) && strings.Contains(line, "SKIPPED") {
+		if strings.Contains(line, needle) && match(line) {
 			return line
 		}
 	}
-	t.Fatalf("SKIPPED line for %q not found in:\n%s", needle, haystack)
+	t.Fatalf("%s line for %q not found in:\n%s", kind, needle, haystack)
 	return ""
 }
 
@@ -731,25 +743,7 @@ func gitCommitAll(t *testing.T, repo *gogit.Repository) {
 // from a testdata fixture rather than inline bytes.
 func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string) {
 	t.Helper()
-	dir := t.TempDir()
-	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, p)
-		out := filepath.Join(dir, rel)
-		if info.IsDir() {
-			return os.MkdirAll(out, 0o750)
-		}
-		data, err := os.ReadFile(p) //nolint:gosec // p is supplied by filepath.Walk over a known root
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(out, data, 0o600) //nolint:gosec // dir is t.TempDir()
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := copyTree(t, src)
 	repo, err := gogit.PlainInit(dir, false)
 	if err != nil {
 		t.Fatal(err)

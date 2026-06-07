@@ -86,21 +86,18 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 		// <root>/sources/<slug>/<hash>/ so age comparison is two levels
 		// in; blobs sit one level below the algo segment and are gated
 		// by mark.
-		ageRoots := []struct {
+		type ageRoot struct {
 			dir   string
 			depth int
 			gate  func(name string) bool // skip when gate returns true
-		}{
+		}
+		ageRoots := []ageRoot{
 			{layout.Sources(), 2, nil},
 			{layout.Baselines(), 1, nil},
 			{layout.Blobs(), 1, func(name string) bool { return live[name] }},
 		}
 		if opts.IncludeMirrors {
-			ageRoots = append(ageRoots, struct {
-				dir   string
-				depth int
-				gate  func(name string) bool
-			}{layout.GitMirrors(), 1, nil})
+			ageRoots = append(ageRoots, ageRoot{layout.GitMirrors(), 1, nil})
 		}
 		for _, ar := range ageRoots {
 			sweepDirByAge(ar.dir, ar.depth, cutoff, ar.gate, opts.DryRun, &res)

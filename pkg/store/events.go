@@ -138,45 +138,42 @@ type idPayload struct {
 func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 	switch event {
 	case EventObjectAdded:
-		total := 0
-		for i := range s.shards {
-			total += len(s.shards[i].objects)
-		}
-		out := make([]idPayload, 0, total)
-		for i := range s.shards {
-			for id, obj := range s.shards[i].objects {
-				out = append(out, idPayload{id, obj})
-			}
-		}
-		return out
+		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]manifest.BaseManifest {
+			return sh.objects
+		}, func(obj manifest.BaseManifest) (any, bool) { return obj, true })
 	case EventStatusUpdated:
-		total := 0
-		for i := range s.shards {
-			total += len(s.shards[i].conditions)
-		}
-		out := make([]idPayload, 0, total)
-		for i := range s.shards {
-			for id, conds := range s.shards[i].conditions {
-				if info, ok := statusInfoFromConditions(conds); ok {
-					out = append(out, idPayload{id, info})
-				}
-			}
-		}
-		return out
+		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource][]Condition {
+			return sh.conditions
+		}, func(conds []Condition) (any, bool) { return statusInfoFromConditions(conds) })
 	case EventArtifactUpdated:
-		total := 0
-		for i := range s.shards {
-			total += len(s.shards[i].artifacts)
-		}
-		out := make([]idPayload, 0, total)
-		for i := range s.shards {
-			for id, art := range s.shards[i].artifacts {
-				out = append(out, idPayload{id, art})
-			}
-		}
-		return out
+		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]Artifact {
+			return sh.artifacts
+		}, func(art Artifact) (any, bool) { return art, true })
 	}
 	return nil
+}
+
+// collectReplay flattens one per-shard map (selected by pick) into a
+// replay slice, applying conv to each value. conv returns (payload, ok)
+// — entries for which ok is false are skipped (the EventStatusUpdated
+// case drops ids whose conditions carry no Ready rollup). The result is
+// pre-sized to the summed map lengths so the common all-keep case never
+// re-grows. Caller MUST hold every shard's write lock (see
+// snapshotForReplay).
+func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedResource]V, conv func(V) (any, bool)) []idPayload {
+	total := 0
+	for _, sh := range shards {
+		total += len(pick(sh))
+	}
+	out := make([]idPayload, 0, total)
+	for _, sh := range shards {
+		for id, v := range pick(sh) {
+			if payload, ok := conv(v); ok {
+				out = append(out, idPayload{id, payload})
+			}
+		}
+	}
+	return out
 }
 
 // fireUnderLock is the race-safe dispatcher writers MUST use: it

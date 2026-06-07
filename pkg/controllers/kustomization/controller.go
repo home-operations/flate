@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -280,7 +281,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 // continues); adding a hard edge here would regress every offline
 // render against a Flux repo that uses secret-substitute patterns.
 func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
-	deps := append([]manifest.DependencyRef(nil), ks.DependsOn...)
+	deps := slices.Clone(ks.DependsOn)
 	if ks.SourceKind != "" && ks.SourceName != "" {
 		deps = append(deps, manifest.DependencyRef{
 			NamedResource: manifest.NamedResource{

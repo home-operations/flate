@@ -8,7 +8,7 @@
 //	ssh.go        — SSH URL / user extraction
 //	checkout.go   — checkoutRef + updateSubmodules
 //	resolve.go    — ref → commit hash (mirror path)
-//	marker.go     — .flate-git-revision slot marker + worktree HEAD lookup
+//	marker.go     — slot revision sidecar (.flate-meta.json) + worktree HEAD lookup
 package git
 
 import (
@@ -134,16 +134,10 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		// version or a hand-modified cache.
 		if rev := readCachedRevision(slot.Path); rev != "" {
 			if !mutableRef {
-				return &store.SourceArtifact{
-					Kind: manifest.KindGitRepository,
-					URL:  repo.URL, LocalPath: slot.Path, Revision: rev,
-				}, nil
+				return gitArtifact(repo.URL, slot.Path, rev), nil
 			}
 			if rev, ok := cachedRevisionFresh(slot.Path, repo.Interval.Duration); ok {
-				return &store.SourceArtifact{
-					Kind: manifest.KindGitRepository,
-					URL:  repo.URL, LocalPath: slot.Path, Revision: rev,
-				}, nil
+				return gitArtifact(repo.URL, slot.Path, rev), nil
 			}
 		}
 		if mutableRef {
@@ -170,11 +164,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 
 	cloneOpts := &git.CloneOptions{URL: url, NoCheckout: true, Auth: auth}
 	if proxy != nil {
-		cloneOpts.ProxyOptions = transport.ProxyOptions{
-			URL:      proxy.Address,
-			Username: proxy.Username,
-			Password: proxy.Password,
-		}
+		cloneOpts.ProxyOptions = proxyOptions(proxy)
 	}
 	if repo.RecurseSubmodules {
 		cloneOpts.RecurseSubmodules = git.DefaultSubmoduleRecursionDepth
@@ -211,10 +201,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	}
 
 	rev, _ := readResolvedRevision(slot.Path)
-	art := &store.SourceArtifact{
-		Kind: manifest.KindGitRepository,
-		URL:  repo.URL, LocalPath: slot.Path, Revision: rev,
-	}
+	art := gitArtifact(repo.URL, slot.Path, rev)
 	if err := f.finalize(repo, art); err != nil {
 		return nil, err
 	}
@@ -290,9 +277,7 @@ func fetchExplicitNamedRef(ctx context.Context, repo *git.Repository, auth trans
 		RefSpecs: []config.RefSpec{config.RefSpec("+" + name + ":" + name)},
 	}
 	if proxy != nil {
-		opts.ProxyOptions = transport.ProxyOptions{
-			URL: proxy.Address, Username: proxy.Username, Password: proxy.Password,
-		}
+		opts.ProxyOptions = proxyOptions(proxy)
 	}
 	if err := remote.FetchContext(ctx, opts); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return fmt.Errorf("fetch ref.name %s: %w", name, err)
@@ -463,10 +448,7 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 			return nil, err
 		}
 	}
-	art := &store.SourceArtifact{
-		Kind: manifest.KindGitRepository,
-		URL:  repo.URL, LocalPath: slot.Path, Revision: hash.String(),
-	}
+	art := gitArtifact(repo.URL, slot.Path, hash.String())
 	if err := applyIgnoreAndMark(repo, art); err != nil {
 		return nil, err
 	}
@@ -540,4 +522,25 @@ func mirrorRefSpecs(ref *manifest.GitRepositoryRef) mirror.FetchPlan {
 func authIdentity(repo *manifest.GitRepository) string {
 	return source.AuthIdentityFromRefs(repo.Namespace,
 		repo.SecretRef, repo.ProxySecretRef)
+}
+
+// proxyOptions maps a resolved ProxyConfig into go-git transport options,
+// shared by the clone and explicit-ref fetch paths.
+func proxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
+	return transport.ProxyOptions{
+		URL:      proxy.Address,
+		Username: proxy.Username,
+		Password: proxy.Password,
+	}
+}
+
+// gitArtifact builds the SourceArtifact every git fetch path returns: a
+// KindGitRepository pointing at the materialized slot directory.
+func gitArtifact(url, localPath, rev string) *store.SourceArtifact {
+	return &store.SourceArtifact{
+		Kind:      manifest.KindGitRepository,
+		URL:       url,
+		LocalPath: localPath,
+		Revision:  rev,
+	}
 }

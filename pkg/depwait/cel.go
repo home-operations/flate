@@ -242,13 +242,13 @@ func conditionToMap(c metav1.Condition) map[string]any {
 // behave sensibly. Kinds absent from the map return "" — most ReadyExpr
 // formulations don't read it, so the empty value is a safe default.
 var kindAPIVersion = map[string]string{
-	manifest.KindKustomization:   manifest.FluxKustomizeDomain + "/v1",
-	manifest.KindHelmRelease:     manifest.HelmReleaseDomain + "/v2",
-	manifest.KindGitRepository:   manifest.SourceDomain + "/v1",
-	manifest.KindOCIRepository:   manifest.SourceDomain + "/v1",
-	manifest.KindHelmRepository:  manifest.SourceDomain + "/v1",
-	manifest.KindHelmChart:       manifest.SourceDomain + "/v1",
-	manifest.KindBucket:          manifest.SourceDomain + "/v1",
+	manifest.KindKustomization:    manifest.FluxKustomizeDomain + "/v1",
+	manifest.KindHelmRelease:      manifest.HelmReleaseDomain + "/v2",
+	manifest.KindGitRepository:    manifest.SourceDomain + "/v1",
+	manifest.KindOCIRepository:    manifest.SourceDomain + "/v1",
+	manifest.KindHelmRepository:   manifest.SourceDomain + "/v1",
+	manifest.KindHelmChart:        manifest.SourceDomain + "/v1",
+	manifest.KindBucket:           manifest.SourceDomain + "/v1",
 	manifest.KindExternalArtifact: manifest.SourceDomain + "/v1",
 }
 

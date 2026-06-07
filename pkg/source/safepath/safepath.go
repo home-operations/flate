@@ -53,10 +53,10 @@ func SafeJoin(base, rel string, rejectAbsolute bool) (string, error) {
 	}
 
 	// rejectAbsolute = false: let filepath.Join handle leading slashes by
-	// treating them as component boundaries (not re-rooting at /).
+	// treating them as component boundaries (not re-rooting at /). filepath.Rel
+	// cleans its base argument internally, so base needs no pre-cleaning.
 	target := filepath.Join(base, rel)
-	cleanBase := filepath.Clean(base)
-	relInside, err := filepath.Rel(cleanBase, target)
+	relInside, err := filepath.Rel(base, target)
 	if err != nil {
 		return "", fmt.Errorf("path resolution: %w", err)
 	}

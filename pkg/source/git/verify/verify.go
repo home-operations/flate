@@ -35,38 +35,36 @@ func Signatures(secrets source.SecretGetter, ns, name, secretRefName string, mod
 	if !matchesHEAD(mode) && !matchesTag(mode) {
 		return nil
 	}
+	// fail prefixes every error with the owning GitRepository for context.
+	fail := func(format string, args ...any) error {
+		return fmt.Errorf("GitRepository %s/%s: "+format, append([]any{ns, name}, args...)...)
+	}
 	if secretRefName == "" {
-		return fmt.Errorf("GitRepository %s/%s: spec.verify.secretRef is required",
-			ns, name)
+		return fail("spec.verify.secretRef is required")
 	}
 	if secrets == nil {
-		return fmt.Errorf("GitRepository %s/%s: spec.verify set but no source.SecretGetter is wired",
-			ns, name)
+		return fail("spec.verify set but no source.SecretGetter is wired")
 	}
 	sec := secrets(ns, secretRefName)
 	if sec == nil {
-		return fmt.Errorf("GitRepository %s/%s: verify secret %s/%s not found",
-			ns, name, ns, secretRefName)
+		return fail("verify secret %s/%s not found", ns, secretRefName)
 	}
 	keyring, err := buildPGPKeyring(sec)
 	if err != nil {
-		return fmt.Errorf("GitRepository %s/%s: %w", ns, name, err)
+		return fail("%w", err)
 	}
 
 	if matchesHEAD(mode) {
 		if err := verifyCommit(cloned, resolvedRef, keyring); err != nil {
-			return fmt.Errorf("GitRepository %s/%s: HEAD verify: %w",
-				ns, name, err)
+			return fail("HEAD verify: %w", err)
 		}
 	}
 	if matchesTag(mode) {
 		if tagName == "" {
-			return fmt.Errorf("GitRepository %s/%s: verify mode %q requires spec.ref.tag",
-				ns, name, mode)
+			return fail("verify mode %q requires spec.ref.tag", mode)
 		}
 		if err := verifyTagObject(cloned, tagName, keyring); err != nil {
-			return fmt.Errorf("GitRepository %s/%s: tag verify: %w",
-				ns, name, err)
+			return fail("tag verify: %w", err)
 		}
 	}
 	return nil

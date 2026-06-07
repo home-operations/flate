@@ -279,7 +279,7 @@ func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]
 	writeOptionsBlob(h, opts)
 
 	// HR-level fields that drive action.Install but bypass opts. A
-	// dedicated tagged blob — same rationale as keyOpts above.
+	// dedicated tagged blob — same rationale as writeOptionsBlob above.
 	type keyHR struct {
 		ReleaseName              string                `json:"release_name"`
 		ReleaseNamespace         string                `json:"release_namespace"`

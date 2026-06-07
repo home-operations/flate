@@ -49,11 +49,9 @@ func permute(groups []providerInputs, includeEmpty bool) ([]map[string]any, erro
 		if norm == "" {
 			return nil, fmt.Errorf("permute: provider name %q normalizes to empty", g.name)
 		}
-		if len(scoped) == 0 {
-			expected = uint64(len(g.inputs))
-		} else {
-			expected *= uint64(len(g.inputs))
-		}
+		// expected starts at 1, so multiplying for the first non-empty
+		// provider yields its input count — no special-case needed.
+		expected *= uint64(len(g.inputs))
 		if expected > maxPermutations {
 			return nil, fmt.Errorf("permute: would exceed %d permutations (provider %q contributes %d inputs)",
 				maxPermutations, g.name, len(g.inputs))

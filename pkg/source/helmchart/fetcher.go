@@ -114,14 +114,15 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 // repo get distinct Store ids.
 func Synthesize(r *manifest.HelmRepository, chartName, version string) *manifest.HelmChartSource {
 	chartURL := normalizeChartURL(r.URL, chartName)
-	hc := &manifest.HelmChartSource{
+	return &manifest.HelmChartSource{
 		Name:      syntheticChartName(r.Name, chartName, chartURL, version),
 		Namespace: r.Namespace,
+		HelmChartSpec: sourcev1.HelmChartSpec{
+			Chart:     chartName,
+			Version:   version,
+			SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: r.Name},
+		},
 	}
-	hc.Chart = chartName
-	hc.Version = version
-	hc.SourceRef = sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: r.Name}
-	return hc
 }
 
 // normalizeChartURL joins a HelmRepository base URL and a chart name into the

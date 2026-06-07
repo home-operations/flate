@@ -1,6 +1,11 @@
 package source
 
-import "github.com/home-operations/flate/pkg/manifest"
+import (
+	"slices"
+	"strings"
+
+	"github.com/home-operations/flate/pkg/manifest"
+)
 
 // AuthIdentity returns a deterministic, opaque tag identifying the
 // auth context bound to a source fetch. It is appended to the cache
@@ -20,17 +25,8 @@ import "github.com/home-operations/flate/pkg/manifest"
 // lower-level entry point only when a non-secret-ref dimension (e.g.
 // a hashed cert thumbprint) needs to participate in the key.
 func AuthIdentity(parts ...string) string {
-	out := ""
-	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-		if out != "" {
-			out += "\x00"
-		}
-		out += p
-	}
-	return out
+	nonEmpty := slices.DeleteFunc(slices.Clone(parts), func(p string) bool { return p == "" })
+	return strings.Join(nonEmpty, "\x00")
 }
 
 // AuthIdentityFromRefs is the typed entry point fetchers use to build

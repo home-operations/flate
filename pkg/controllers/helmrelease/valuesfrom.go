@@ -95,7 +95,6 @@ func (c *Controller) omitValuesFrom(
 		return hr
 	}
 	filtered := make([]manifest.ValuesReference, 0, len(hr.ValuesFrom))
-	omitted := false
 	for _, ref := range hr.ValuesFrom {
 		id, ok := valuesRefID(hr, ref)
 		if !ok {
@@ -121,14 +120,21 @@ func (c *Controller) omitValuesFrom(
 			filtered = append(filtered, ref)
 			continue
 		}
-		omitted = true
 		args := []any{"id", hr.Named().String(), "ref", id.String()}
 		if hasProducer {
 			args = append(args, "producer", producer.String())
 		}
 		slog.Debug("helmrelease: omitted unavailable valuesFrom ref", args...)
 	}
-	if !omitted {
+	return cloneWithValuesFrom(hr, filtered)
+}
+
+// cloneWithValuesFrom returns hr unchanged when filtered keeps every ref
+// (the callers only ever drop, never add or reorder, so an equal length
+// means nothing was omitted), otherwise a clone carrying filtered. Keeping
+// the copy-on-write in one place lets the filtering loops stay declarative.
+func cloneWithValuesFrom(hr *manifest.HelmRelease, filtered []manifest.ValuesReference) *manifest.HelmRelease {
+	if len(filtered) == len(hr.ValuesFrom) {
 		return hr
 	}
 	out := hr.Clone()
@@ -192,21 +198,13 @@ func removeValuesRefs(hr *manifest.HelmRelease, ids map[manifest.NamedResource]s
 		return hr
 	}
 	filtered := make([]manifest.ValuesReference, 0, len(hr.ValuesFrom))
-	omitted := false
 	for _, ref := range hr.ValuesFrom {
-		id, ok := valuesRefID(hr, ref)
-		if ok {
+		if id, ok := valuesRefID(hr, ref); ok {
 			if _, drop := ids[id]; drop {
-				omitted = true
 				continue
 			}
 		}
 		filtered = append(filtered, ref)
 	}
-	if !omitted {
-		return hr
-	}
-	out := hr.Clone()
-	out.ValuesFrom = filtered
-	return out
+	return cloneWithValuesFrom(hr, filtered)
 }

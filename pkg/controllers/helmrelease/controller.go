@@ -162,8 +162,9 @@ func (c *Controller) onRawProducerAdded() store.Listener {
 
 // rawProducerTargetID returns the NamedResource of the Secret that raw
 // will produce, or (zero, false) when raw is not a recognised producer kind.
-// This mirrors the classification in rawProducerTargetID but returns the
-// target identity rather than a boolean, so the index can be keyed by it.
+// It is the single source of truth for producer classification; extending
+// coverage to a new kind means adding a case here (see the rawProducerIndex
+// field comment).
 func rawProducerTargetID(raw *manifest.RawObject) (manifest.NamedResource, bool) {
 	switch raw.Kind {
 	case "ExternalSecret":

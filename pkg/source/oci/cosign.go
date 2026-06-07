@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -157,7 +158,7 @@ func (f *Fetcher) verifyCosignSignature(
 		}
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("no signature layer matched any trusted key")
+		lastErr = errors.New("no signature layer matched any trusted key")
 	}
 	return fmt.Errorf("OCIRepository %s/%s: cosign verify failed: %w",
 		repo.Namespace, repo.Name, lastErr)
@@ -297,7 +298,7 @@ func verifyCosignSignatureBytes(key crypto.PublicKey, payload, sig []byte) error
 	case *ecdsa.PublicKey:
 		h := sha256.Sum256(payload)
 		if !ecdsa.VerifyASN1(k, h[:], sig) {
-			return fmt.Errorf("ecdsa verify failed")
+			return errors.New("ecdsa verify failed")
 		}
 		return nil
 	case *rsa.PublicKey:
@@ -305,7 +306,7 @@ func verifyCosignSignatureBytes(key crypto.PublicKey, payload, sig []byte) error
 		return rsa.VerifyPKCS1v15(k, crypto.SHA256, h[:], sig)
 	case ed25519.PublicKey:
 		if !ed25519.Verify(k, payload, sig) {
-			return fmt.Errorf("ed25519 verify failed")
+			return errors.New("ed25519 verify failed")
 		}
 		return nil
 	default:

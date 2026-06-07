@@ -403,29 +403,23 @@ func bagValueAsString(v any) (string, error) {
 	}
 }
 
-// updateHelmReleaseValues writes found into values using ref.TargetPath
-// when set; otherwise the found YAML is parsed and deep-merged.
+// updateHelmReleaseValues merges one valuesFrom ref into the values
+// accumulator and returns the (possibly new) accumulator.
 //
-// When targetPath is set, write through Helm's strvals parser
+// When ref.TargetPath is set, write through Helm's strvals parser
 // (path=value form). This matches upstream Flux's
 // chartutil.ChartValuesFromReferences (which calls strvals.ParseInto)
 // and gives the correct type coercion: "3" → int 3, "true" → bool,
 // "null" → nil. Single/double-quoted values force string-coercion
 // (strvals.ParseIntoString). A naive `inner[k] = found` left every
 // targetPath value as a literal string, which broke chart-schema
-// validation against `replicaCount: integer` and similar.
+// validation against `replicaCount: integer` and similar. The targetPath
+// path bypasses the cache — strvals parsing already mutates values in
+// place per-call and is comparatively cheap (no map allocation for the
+// parsed tree).
 //
-// Mutates values in place — ExpandValueReferences owns the accumulator
-// map; using DeepMergeInto avoids the O(N²) full-tree clone DeepMerge
-// would pay across N valuesFrom refs.
-//
-// The cache, when non-nil, memoizes parsed-YAML output by
-// (kind, namespace, name, valuesKey, content-hash). The targetPath
-// path bypasses the cache — strvals parsing already mutates values
-// in place per-call and is comparatively cheap (no map allocation
-// for the parsed tree).
-// updateHelmReleaseValues merges one valuesFrom ref into the values
-// accumulator and returns the (possibly new) accumulator.
+// Otherwise the found YAML is parsed (memoized in cache when non-nil, keyed
+// by kind, namespace, name, valuesKey, content-hash) and deep-merged.
 //
 // share selects the merge strategy, decided once per HR by the caller:
 //   - share=true (the HR has NO TargetPath ref): functional DeepMerge,

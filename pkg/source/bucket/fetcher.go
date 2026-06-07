@@ -5,6 +5,7 @@ package bucket
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
@@ -102,7 +103,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 		LocalPath: slot.Path,
 		Revision:  revHash,
 		Metadata: map[string]string{
-			"objectCount": fmt.Sprintf("%d", len(keys)),
+			"objectCount": strconv.Itoa(len(keys)),
 		},
 	}, nil
 }

@@ -297,7 +297,7 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 
 // resolveBaseline runs baseline.AutoResolve when the user opted into
 // changed-only mode via --base, mutates c.pathOrig to the synthetic
-// materialized path, and schedules tempdir cleanup against ctx.
+// materialized path, and returns a tempdir-cleanup func.
 //
 // autoFallback toggles the "fire even when both flags are empty" case
 // — true for `flate diff` (which always needs a baseline; bare
@@ -320,7 +320,7 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 //
 // Callers receive a no-op when no materialization happened (no
 // --base / no autoFallback / explicit --path-orig).
-func resolveBaseline(_ context.Context, c *commonFlags, autoFallback bool) (func(), error) {
+func resolveBaseline(c *commonFlags, autoFallback bool) (func(), error) {
 	noop := func() {}
 	if c.pathOrig != "" && c.base != "" {
 		return noop, errors.New("--path-orig and --base are mutually exclusive")
@@ -435,7 +435,7 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 	// Cleanup is deferred (not bound to ctx) so the tempdir survives
 	// SIGINT until the orchestrator's read paths have actually
 	// unwound.
-	cleanup, err := resolveBaseline(ctx, &c, false)
+	cleanup, err := resolveBaseline(&c, false)
 	if err != nil {
 		return nil, nil, err
 	}

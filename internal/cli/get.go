@@ -216,10 +216,10 @@ func printResources[T manifest.BaseManifest](
 	pairs := make([]pair, 0, len(objs))
 	nameExists := sel.Name == ""
 	for _, obj := range objs {
-		if sel.Name != "" && obj.Named().Name != sel.Name {
+		id := obj.Named()
+		if sel.Name != "" && id.Name != sel.Name {
 			continue
 		}
-		id := obj.Named()
 		if !c.includeNamespace(o.Filter(), id.Namespace) {
 			continue
 		}

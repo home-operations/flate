@@ -364,6 +364,16 @@ func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResourc
 	return f.addRecursiveLocked(id)
 }
 
+// markKept records id in the keep set, mirroring it into keepByName
+// only for empty-namespace ids (see ShouldReconcile for the asymmetry
+// rationale). Caller MUST hold f.mu.Lock().
+func (f *Filter) markKept(id manifest.NamedResource) {
+	f.keep[id] = struct{}{}
+	if id.Namespace == "" {
+		f.keepByName[nameKey{id.Kind, id.Name}] = struct{}{}
+	}
+}
+
 // addRecursiveLocked is the lock-free body of addRecursive — the
 // caller MUST hold f.mu.Lock(). Pulled out so AddEmitted can do its
 // gate-and-recurse atomically under a single lock acquisition.
@@ -379,10 +389,7 @@ func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedR
 			continue
 		}
 		if !alreadyKeep {
-			f.keep[cur] = struct{}{}
-			if cur.Namespace == "" {
-				f.keepByName[nameKey{cur.Kind, cur.Name}] = struct{}{}
-			}
+			f.markKept(cur)
 			added = append(added, cur)
 		}
 		// Promote ancestor-only entries to primary when a runtime
@@ -439,10 +446,7 @@ func (f *Filter) addDependencyOnlyRecursiveLocked(ids ...manifest.NamedResource)
 		if _, alreadyKeep := f.keep[cur]; alreadyKeep {
 			continue
 		}
-		f.keep[cur] = struct{}{}
-		if cur.Namespace == "" {
-			f.keepByName[nameKey{cur.Kind, cur.Name}] = struct{}{}
-		}
+		f.markKept(cur)
 		added = append(added, cur)
 		if f.objs == nil {
 			continue
@@ -473,9 +477,7 @@ func (f *Filter) resolve(objs ObjectLister) {
 			return
 		}
 		primary[id] = struct{}{}
-		if _, seen := keep[id]; !seen {
-			keep[id] = struct{}{}
-		}
+		keep[id] = struct{}{}
 		// Always re-queue when promoting an ancestor-only entry
 		// to primary: the BFS body uses the head's primacy at
 		// dequeue time to decide whether transitiveDeps propagate

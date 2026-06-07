@@ -103,10 +103,8 @@ func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
 func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) error {
 	id := obj.Named()
 	// The listener already filtered by registered Kind (see
-	// onObjectAdded), so this Fetchers lookup can't miss; lookup is
-	// cheap and lets us hold a typed reference for the rest of the
-	// function. Note: the second-redundant `c.Fetchers[id.Kind]`
-	// check that lived here was dropped — it was unreachable.
+	// onObjectAdded), so this Fetchers lookup can't miss; it's cheap and
+	// gives us a typed reference for the rest of the function.
 	fetcher := c.Fetchers[id.Kind]
 	// Existence short-circuit: a source we already fetched in this run
 	// stays fetched. Idempotent re-AddObject (e.g. a parent KS

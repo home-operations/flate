@@ -81,23 +81,26 @@ func (r generatorRecord) materialize(parentNS string) manifest.BaseManifest {
 	// kustomize precedence: entry.namespace > kustomization.namespace > parent namespace.
 	ns := cmp.Or(r.entryNS, r.kustomizationNS, parentNS)
 	if r.isConfigMap {
-		data := make(map[string]any, len(r.literals))
-		for _, lit := range r.literals {
-			k, v, ok := strings.Cut(lit, "=")
-			if !ok {
-				continue
-			}
-			data[k] = v
-		}
-		return &manifest.ConfigMap{Name: r.name, Namespace: ns, Data: data}
+		// ConfigMap data keeps the literal value as-is.
+		return &manifest.ConfigMap{Name: r.name, Namespace: ns, Data: r.literalData(func(v string) any { return v })}
 	}
+	// Secret data is base64-encoded to match what a real k8s Secret carries.
+	return &manifest.Secret{Name: r.name, Namespace: ns, Data: r.literalData(func(v string) any {
+		return base64.StdEncoding.EncodeToString([]byte(v))
+	})}
+}
+
+// literalData splits each `key=value` literal into a data map, passing every
+// value through encode before it lands in the map. Literals without an `=`
+// are skipped, per kustomize's KvSources conventions.
+func (r generatorRecord) literalData(encode func(string) any) map[string]any {
 	data := make(map[string]any, len(r.literals))
 	for _, lit := range r.literals {
 		k, v, ok := strings.Cut(lit, "=")
 		if !ok {
 			continue
 		}
-		data[k] = base64.StdEncoding.EncodeToString([]byte(v))
+		data[k] = encode(v)
 	}
-	return &manifest.Secret{Name: r.name, Namespace: ns, Data: data}
+	return data
 }

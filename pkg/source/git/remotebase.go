@@ -34,8 +34,8 @@ import (
 // a real GitRepository CR. Requires Mirrors and Cache. The materialized
 // worktree is cached per (repoURL, ref) in a slot whose ref label is
 // namespaced so it never collides with a real GitRepository CR's slot for
-// the same URL, and is reused on warm runs via the .flate-git-revision
-// marker.
+// the same URL, and is reused on warm runs via the revision recorded in
+// the slot's .flate-meta.json sidecar.
 func (f *Fetcher) FetchRemoteBase(ctx context.Context, repoURL, ref string) (*store.SourceArtifact, error) {
 	if f.Mirrors == nil || f.Cache == nil {
 		return nil, fmt.Errorf("%w: remote git base fetch requires mirror+cache", manifest.ErrInput)
@@ -61,10 +61,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, repoURL, ref string) (*st
 	// so treat any marked slot as a hit and leave the mirror untouched.
 	if slot.Exists {
 		if rev := readCachedRevision(slot.Path); rev != "" {
-			return &store.SourceArtifact{
-				Kind: manifest.KindGitRepository,
-				URL:  repoURL, LocalPath: slot.Path, Revision: rev,
-			}, nil
+			return gitArtifact(repoURL, slot.Path, rev), nil
 		}
 		// Marker-less slot (legacy / hand-edited) — re-materialize cleanly.
 		if err := slot.Refresh(); err != nil {
@@ -110,8 +107,5 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, repoURL, ref string) (*st
 	if err := slot.Commit(); err != nil {
 		return nil, fmt.Errorf("remote git base %s: commit slot: %w", repoURL, err)
 	}
-	return &store.SourceArtifact{
-		Kind: manifest.KindGitRepository,
-		URL:  repoURL, LocalPath: slot.Path, Revision: rev,
-	}, nil
+	return gitArtifact(repoURL, slot.Path, rev), nil
 }

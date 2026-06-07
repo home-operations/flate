@@ -145,13 +145,7 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		// through to their own stage (one wins the rename, the rest
 		// see ErrExist, discard the temp, and adopt the winner's slot).
 		if _, err := cas.Stage(filepath.Dir(slot), slot, "baseline staging", "baseline finalize",
-			func(staging string) error {
-				return gittree.Materialize(context.Background(), repo, hash, staging, gittree.Options{
-					OnSubmodule: func(path string) {
-						slog.Warn("baseline: skipping submodule", "path", path)
-					},
-				})
-			},
+			func(staging string) error { return materialize(repo, hash, staging) },
 			func() bool { info, statErr := os.Stat(slot); return statErr == nil && info.IsDir() },
 		); err != nil {
 			return "", false, err
@@ -163,15 +157,21 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 	if err != nil {
 		return "", false, fmt.Errorf("baseline tempdir: %w", err)
 	}
-	if err := gittree.Materialize(context.Background(), repo, hash, tmp, gittree.Options{
-		OnSubmodule: func(path string) {
-			slog.Warn("baseline: skipping submodule", "path", path)
-		},
-	}); err != nil {
+	if err := materialize(repo, hash, tmp); err != nil {
 		_ = os.RemoveAll(tmp)
 		return "", false, err
 	}
 	return tmp, false, nil
+}
+
+// materialize extracts hash's tree into root, skipping (and warning on)
+// any submodules.
+func materialize(repo *git.Repository, hash plumbing.Hash, root string) error {
+	return gittree.Materialize(context.Background(), repo, hash, root, gittree.Options{
+		OnSubmodule: func(path string) {
+			slog.Warn("baseline: skipping submodule", "path", path)
+		},
+	})
 }
 
 // relToRepo returns path's location relative to repoRoot. Returns "."

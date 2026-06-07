@@ -12,7 +12,7 @@
 //     ExternalArtifact lookups read straight from the canonical
 //     object store. Embedders rendering a single HR without an
 //     orchestrator can implement SourceResolver directly.
-//   - Prepare(hr, charts, provider) performs the pre-render dance
+//   - Prepare(hr, lookup, provider, cache) performs the pre-render dance
 //     (Clone → ResolveChartRef → ExpandValueReferences) — call this
 //     before TemplateDocs when rendering a HelmRelease in isolation.
 //   - Options exposes the helm CLI flags flate understands

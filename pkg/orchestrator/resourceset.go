@@ -61,11 +61,13 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 	}
 
 	// Render each RS in parallel — they only read shared state (the
-	// store + owners index) which is safe under concurrent reads. The
-	// dedup + accumulation step runs under a mutex so the cross-RS
-	// "first-wins" invariant is preserved (a name-grouped RS may
-	// legitimately render the same child from each namespace variant
-	// and we don't want to double-emit it under the parent KS).
+	// store + owners index) which is safe under concurrent reads. Each
+	// goroutine writes only its own results[i] slot; the dedup +
+	// accumulation step runs serially after g.Wait (in rsList order) so
+	// the cross-RS "first-wins" invariant is preserved deterministically
+	// (a name-grouped RS may legitimately render the same child from each
+	// namespace variant and we don't want to double-emit it under the
+	// parent KS).
 	//
 	// Concurrency cap respects Config.Concurrency when set so operators
 	// who request serial/deterministic runs (Concurrency: 1) also get

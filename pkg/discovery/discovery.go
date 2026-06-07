@@ -211,9 +211,9 @@ type discoverer struct {
 	sourceRefs  map[manifest.NamedResource][]manifest.NamedResource
 	// repoRoot is the resolved .git ancestor of cfg.Path (or cfg.Path
 	// when no .git exists). Stored here because every consumer of
-	// loader.BuildParentIndexForKind / loader.KSPathPrefixes needs the
-	// repo-relative root used to resolve KS spec.path entries, and
-	// passing cfg.Path silently misreads `components:` lookups when
+	// loader.BuildParentIndexFromPrefixes / loader.KSPathPrefixesWithCache
+	// needs the repo-relative root used to resolve KS spec.path entries,
+	// and passing cfg.Path silently misreads `components:` lookups when
 	// the user pointed --path at a subdir.
 	repoRoot string
 }

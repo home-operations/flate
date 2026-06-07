@@ -29,11 +29,7 @@ func versionString() string {
 	if commit == "unknown" {
 		return v
 	}
-	short := commit
-	if len(short) > 7 {
-		short = short[:7]
-	}
-	return v + " (" + short + ")"
+	return v + " (" + commit[:min(len(commit), 7)] + ")"
 }
 
 // tuneGC raises the GC target for flate's short-lived, allocation-heavy

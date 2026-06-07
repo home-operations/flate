@@ -22,7 +22,7 @@ import (
 // substituteFrom edge fires before the producing KS reconciles).
 //
 // Shares the parent-path-prefix predicate with the orchestrator's
-// detectOrphans via loader.KSPathPrefixes — the two run in
+// detectOrphans via loader.LongestParent — the two run in
 // complementary phases (pre-reconcile materialization here,
 // post-reconcile failure demotion there) and must agree on the
 // same "under a KS path" predicate so an object can't be classified

@@ -27,8 +27,8 @@ import (
 //     adopt it (no error); otherwise the rename error is wrapped with
 //     finalizePrefix ("<finalizePrefix>: %w").
 //
-// The two prefixes keep each call site's existing error strings intact
-// ("baseline staging"/"baseline finalize", "stage tmp"/"stage finalize").
+// The two prefixes let the caller keep its own error strings intact
+// (baseline passes "baseline staging"/"baseline finalize").
 //
 // adopted reports whether the returned slot came from adopting a peer's
 // finalized directory (false on the normal rename-wins path); callers

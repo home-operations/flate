@@ -251,9 +251,11 @@ func detectViaWalker(before, after string) (*Set, error) {
 
 	paths := make(map[string]struct{}, len(afterFS)/8)
 	type hashJob struct {
-		rel                         string
-		beforeAbs, afterAbs         string
-		beforeSymlink, afterSymlink bool
+		rel                 string
+		beforeAbs, afterAbs string
+		// symlink applies to both sides: a job is only queued when the
+		// before/after entry kinds agree (a type swap is handled above).
+		symlink bool
 	}
 	var hashJobs []hashJob
 
@@ -278,7 +280,7 @@ func detectViaWalker(before, after string) (*Set, error) {
 		// on coarse-mtime filesystems; correctness over speed here.
 		hashJobs = append(hashJobs, hashJob{
 			rel: rel, beforeAbs: bef.abs, afterAbs: after.abs,
-			beforeSymlink: bef.symlink, afterSymlink: after.symlink,
+			symlink: after.symlink,
 		})
 	}
 	for rel := range beforeFS {
@@ -295,11 +297,11 @@ func detectViaWalker(before, after string) (*Set, error) {
 		for range hashWorkers {
 			hg.Go(func() error {
 				for j := range jobs {
-					b, err := hashEntry(j.beforeAbs, j.beforeSymlink)
+					b, err := hashEntry(j.beforeAbs, j.symlink)
 					if err != nil {
 						return err
 					}
-					a, err := hashEntry(j.afterAbs, j.afterSymlink)
+					a, err := hashEntry(j.afterAbs, j.symlink)
 					if err != nil {
 						return err
 					}

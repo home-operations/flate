@@ -175,8 +175,11 @@ func (r *serializedObjectReader) blobBytes(hash plumbing.Hash, name string) ([]b
 }
 
 // writeEntry materializes one tree entry — a symlink or a blob — at
-// root/name. The walker pre-created the parent dir, so we don't
-// MkdirAll here.
+// root/name. Both kinds read their content under the object-read lock
+// (blobBytes) and write outside it, so concurrent workers write to disk
+// in parallel. The walker pre-created the parent dir, so we don't
+// MkdirAll here. The executable bit is preserved from
+// filemode.Executable.
 func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, name string) error {
 	dst := filepath.Join(root, filepath.FromSlash(name))
 	if entry.Mode == filemode.Symlink {
@@ -189,20 +192,12 @@ func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, n
 		}
 		return nil
 	}
-	return writeBlobTo(dst, objects, entry.Hash, entry.Mode, name)
-}
 
-// writeBlobTo writes blob's content to dst with mode-derived
-// permissions (executable bit preserved from filemode.Executable).
-// Caller (Materialize's walker) has already created the parent dir. The
-// blob is read under the object-read lock (blobBytes) and written here
-// outside it, so concurrent workers write to disk in parallel.
-func writeBlobTo(dst string, objects *serializedObjectReader, hash plumbing.Hash, mode filemode.FileMode, name string) error {
 	perm := os.FileMode(0o600)
-	if mode == filemode.Executable {
+	if entry.Mode == filemode.Executable {
 		perm = 0o700
 	}
-	data, err := objects.blobBytes(hash, name)
+	data, err := objects.blobBytes(entry.Hash, name)
 	if err != nil {
 		return fmt.Errorf("read blob %q: %w", name, err)
 	}

@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"cmp"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -235,13 +234,14 @@ func (h *HelmRelease) ReleaseName() string {
 // Inlined to keep pkg/manifest free of a helm-controller import (the
 // canonical impl lives in an internal/ tree we cannot reference).
 func shortenReleaseName(name string) string {
-	if len(name) <= 53 {
+	const (
+		maxLength       = 53
+		shortHashLength = 12
+	)
+	if len(name) <= maxLength {
 		return name
 	}
-	const maxLength = 53
-	const shortHashLength = 12
-	sum := fmt.Sprintf("%x", sha256.Sum256([]byte(name)))
-	return name[:maxLength-(shortHashLength+1)] + "-" + sum[:shortHashLength]
+	return name[:maxLength-(shortHashLength+1)] + "-" + SHA256Hex([]byte(name))[:shortHashLength]
 }
 
 // ReleaseNamespace returns TargetNamespace when set, otherwise Namespace.

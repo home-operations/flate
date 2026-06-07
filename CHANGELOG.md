@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/home-operations/flate/compare/v0.3.2...v0.3.3) (2026-06-07)
+
+
+### Code Refactoring
+
+* redo flate's path model with an explicit source root ([#614](https://github.com/home-operations/flate/issues/614)) ([d932330](https://github.com/home-operations/flate/commit/d9323309c254cd2aadb9f137ab9b89cfd336a65f))
+
 ## [0.3.2](https://github.com/home-operations/flate/compare/v0.3.1...v0.3.2) (2026-06-07)
 
 

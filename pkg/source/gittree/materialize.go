@@ -204,7 +204,7 @@ func writeBlobTo(dst string, objects *serializedObjectReader, hash plumbing.Hash
 	}
 	data, err := objects.blobBytes(hash, name)
 	if err != nil {
-		return err
+		return fmt.Errorf("read blob %q: %w", name, err)
 	}
 	if err := os.WriteFile(dst, data, perm); err != nil { //nolint:gosec // dst is built from the tree's commit object under the caller's root
 		return fmt.Errorf("write %s: %w", dst, err)

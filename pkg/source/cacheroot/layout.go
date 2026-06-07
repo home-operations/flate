@@ -178,15 +178,3 @@ func (l Layout) Stage() string { return app2(l.Root, StageDir) }
 // the first two hex chars of the cache key; the disk layer in
 // pkg/helm owns the layout below this root.
 func (l Layout) RenderHelmCache() string { return app2(l.Root, RenderHelmCacheDir) }
-
-// StageEntry returns the on-disk persistent stage directory for the
-// given source fingerprint. The fingerprint must be a non-empty
-// printable token (commit SHA, OCI digest, content hash); callers
-// fall back to per-process staging when no fingerprint is available.
-func (l Layout) StageEntry(fingerprint string) string {
-	prefix := fingerprint
-	if len(prefix) > 2 {
-		prefix = prefix[:2]
-	}
-	return app4(l.Root, StageDir, prefix, fingerprint)
-}

@@ -49,8 +49,8 @@ func Table(w io.Writer, cols []Column, rows []map[string]string) error {
 	var b bytes.Buffer
 	// +1 newline per row (header + data rows); each cell padded to width+gutter
 	totalCols := 0
-	for _, w := range widths {
-		totalCols += w + 4
+	for _, width := range widths {
+		totalCols += width + 4
 	}
 	b.Grow((1 + len(rows)) * (totalCols + 1))
 	last := len(cols) - 1

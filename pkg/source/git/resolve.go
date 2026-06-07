@@ -24,56 +24,39 @@ import (
 // Returns a wrapped error if no match exists; the caller surfaces it
 // to the user with the originating CR's identity.
 func resolveRefHash(repo *git.Repository, ref *manifest.GitRepositoryRef) (plumbing.Hash, error) {
-	if ref == nil {
-		return resolveHEAD(repo)
-	}
-	switch {
-	case ref.Commit != "":
-		hash := plumbing.NewHash(ref.Commit)
-		if err := validateCommitBranch(repo, hash, ref.Branch); err != nil {
-			return plumbing.ZeroHash, err
+	if ref != nil {
+		switch {
+		case ref.Commit != "":
+			hash := plumbing.NewHash(ref.Commit)
+			if err := validateCommitBranch(repo, hash, ref.Branch); err != nil {
+				return plumbing.ZeroHash, err
+			}
+			return hash, nil
+		case ref.Name != "":
+			h, err := repo.ResolveRevision(plumbing.Revision(ref.Name))
+			if err == nil {
+				return *h, nil
+			}
+			return plumbing.ZeroHash, fmt.Errorf("ref %q not found in mirror", ref.Name)
+		case ref.SemVer != "":
+			return resolveSemver(repo, ref.SemVer)
+		case ref.Tag != "":
+			if h, ok := lookupTag(repo, ref.Tag); ok {
+				return h, nil
+			}
+			return plumbing.ZeroHash, fmt.Errorf("tag %q not found in mirror", ref.Tag)
+		case ref.Branch != "":
+			if h, ok := lookupBranch(repo, ref.Branch); ok {
+				return h, nil
+			}
+			return plumbing.ZeroHash, fmt.Errorf("branch %q not found in mirror", ref.Branch)
 		}
-		return hash, nil
-	case ref.Name != "":
-		return resolveNamedRef(repo, ref.Name)
-	case ref.SemVer != "":
-		return resolveSemver(repo, ref.SemVer)
-	case ref.Tag != "":
-		return resolveTag(repo, ref.Tag)
-	case ref.Branch != "":
-		return resolveBranch(repo, ref.Branch)
 	}
-	return resolveHEAD(repo)
-}
-
-func resolveNamedRef(repo *git.Repository, name string) (plumbing.Hash, error) {
-	h, err := repo.ResolveRevision(plumbing.Revision(name))
-	if err == nil {
-		return *h, nil
-	}
-	return plumbing.ZeroHash, fmt.Errorf("ref %q not found in mirror", name)
-}
-
-func resolveHEAD(repo *git.Repository) (plumbing.Hash, error) {
 	head, err := repo.Head()
 	if err != nil {
 		return plumbing.ZeroHash, fmt.Errorf("resolve HEAD: %w", err)
 	}
 	return head.Hash(), nil
-}
-
-func resolveTag(repo *git.Repository, name string) (plumbing.Hash, error) {
-	if h, ok := lookupTag(repo, name); ok {
-		return h, nil
-	}
-	return plumbing.ZeroHash, fmt.Errorf("tag %q not found in mirror", name)
-}
-
-func resolveBranch(repo *git.Repository, name string) (plumbing.Hash, error) {
-	if h, ok := lookupBranch(repo, name); ok {
-		return h, nil
-	}
-	return plumbing.ZeroHash, fmt.Errorf("branch %q not found in mirror", name)
 }
 
 func validateCommitBranch(repo *git.Repository, commit plumbing.Hash, branch string) error {

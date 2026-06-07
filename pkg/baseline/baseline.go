@@ -145,7 +145,13 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		// through to their own stage (one wins the rename, the rest
 		// see ErrExist, discard the temp, and adopt the winner's slot).
 		if _, err := cas.Stage(filepath.Dir(slot), slot, "baseline staging", "baseline finalize",
-			func(staging string) error { return materialize(repo, hash, staging) },
+			func(staging string) error {
+				return gittree.Materialize(context.Background(), repo, hash, staging, gittree.Options{
+					OnSubmodule: func(path string) {
+						slog.Warn("baseline: skipping submodule", "path", path)
+					},
+				})
+			},
 			func() bool { info, statErr := os.Stat(slot); return statErr == nil && info.IsDir() },
 		); err != nil {
 			return "", false, err
@@ -157,7 +163,11 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 	if err != nil {
 		return "", false, fmt.Errorf("baseline tempdir: %w", err)
 	}
-	if err := materialize(repo, hash, tmp); err != nil {
+	if err := gittree.Materialize(context.Background(), repo, hash, tmp, gittree.Options{
+		OnSubmodule: func(path string) {
+			slog.Warn("baseline: skipping submodule", "path", path)
+		},
+	}); err != nil {
 		_ = os.RemoveAll(tmp)
 		return "", false, err
 	}
@@ -395,18 +405,6 @@ func isShallow(repo *git.Repository) bool {
 	}
 	_, err = os.Stat(filepath.Join(wt.Filesystem.Root(), ".git", "shallow"))
 	return err == nil
-}
-
-// materialize extracts every blob in commit's tree to root via the
-// shared gittree.Materialize helper. The materialization runs in
-// parallel; submodules log at slog.Warn and are skipped (the
-// submodule's state rarely matches what flate is rendering).
-func materialize(repo *git.Repository, hash plumbing.Hash, root string) error {
-	return gittree.Materialize(context.Background(), repo, hash, root, gittree.Options{
-		OnSubmodule: func(path string) {
-			slog.Warn("baseline: skipping submodule", "path", path)
-		},
-	})
 }
 
 // shortRev formats a hash as the conventional 7-char prefix used in

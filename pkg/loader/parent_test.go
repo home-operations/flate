@@ -37,7 +37,7 @@ func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
 		clusterApps.Named(): "kubernetes/clusters/main/apps.yaml",
 		karma.Named():       "kubernetes/apps/main/observability/karma.yaml",
 	}
-	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 
 	if got, want := parents[karma.Named()], clusterApps.Named(); got != want {
 		t.Errorf("karma.parent = %+v; want %+v", got, want)
@@ -76,7 +76,7 @@ func TestBuildParentIndex_DeepestPrefixWins(t *testing.T) {
 		inner.Named():      "apps/media/kustomization.yaml",
 		grandchild.Named(): "apps/media/plex/ks.yaml",
 	}
-	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 
 	if got, want := parents[grandchild.Named()], inner.Named(); got != want {
 		t.Errorf("grandchild.parent = %+v; want %+v (deepest prefix)", got, want)
@@ -99,7 +99,7 @@ func TestBuildParentIndex_NoSelfMatch(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		ks.Named(): "apps/self/ks.yaml",
 	}
-	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 	if _, ok := parents[ks.Named()]; ok {
 		t.Errorf("KS must not be its own parent: %v", parents)
 	}
@@ -128,7 +128,7 @@ func TestBuildParentIndex_PeersSharingSamePathHaveNoParent(t *testing.T) {
 		config.Named():    "clusters/main/flux/flux-repo.yaml",
 		softServe.Named(): "clusters/main/flux/flux-repo.yaml",
 	}
-	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 	if p, ok := parents[config.Named()]; ok {
 		t.Errorf("same-spec.path peer must not be a parent: 0-config.parent = %+v", p)
 	}
@@ -161,7 +161,7 @@ func TestBuildParentIndex_RendererOfDefinitionFileStillParents(t *testing.T) {
 		// app is defined in the dir root renders, but claims ./apps.
 		app.Named(): "clusters/main/flux/app-ks.yaml",
 	}
-	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 	if got, want := parents[app.Named()], root.Named(); got != want {
 		t.Errorf("app.parent = %+v; want %+v (the KS that renders app's definition dir)", got, want)
 	}
@@ -188,14 +188,14 @@ func TestBuildParentIndex_NoSourceFileSkipped(t *testing.T) {
 		parent.Named(): "clusters/main/apps.yaml",
 		// orphan deliberately absent.
 	}
-	parents := BuildParentIndexForKind(s, "", sourceFiles, manifest.KindKustomization)
+	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 	if _, ok := parents[orphan.Named()]; ok {
 		t.Errorf("KS without source file must not appear in parent index: %v", parents)
 	}
 }
 
 // TestKSPathPrefixes_SortsLongestFirst pins the contract documented
-// on KSPathPrefixes: prefixes come back sorted by length descending
+// on KSPathPrefixesWithCache: prefixes come back sorted by length descending
 // so the first HasPrefix match on a given file is the deepest
 // (most-specific) structural parent. Both BuildParentIndex and the
 // orchestrator's detectOrphans rely on this for correctness.
@@ -217,7 +217,7 @@ func TestKSPathPrefixes_SortsLongestFirst(t *testing.T) {
 	s.AddObject(mid)
 	s.AddObject(leaf)
 
-	prefixes := KSPathPrefixes(s, "")
+	prefixes := KSPathPrefixesWithCache(s, "", nil)
 	if len(prefixes) != 3 {
 		t.Fatalf("expected 3 prefixes, got %d", len(prefixes))
 	}
@@ -241,7 +241,7 @@ func TestKSPathPrefixes_SkipsEmptyPath(t *testing.T) {
 	s.AddObject(with)
 	s.AddObject(without)
 
-	prefixes := KSPathPrefixes(s, "")
+	prefixes := KSPathPrefixesWithCache(s, "", nil)
 	if len(prefixes) != 1 || prefixes[0].ID.Name != "with" {
 		t.Errorf("expected only 'with' in prefixes; got %+v", prefixes)
 	}
@@ -279,7 +279,7 @@ func TestKSPathPrefixes_IncludesSpecComponents(t *testing.T) {
 	}
 	s.AddObject(parent)
 
-	prefixes := KSPathPrefixes(s, "")
+	prefixes := KSPathPrefixesWithCache(s, "", nil)
 	// Expect TWO entries for the parent: its spec.path and the
 	// resolved component dir.
 	var sawPath, sawComponent bool
@@ -315,7 +315,7 @@ func TestKSPathPrefixes_IncludesSpecComponents(t *testing.T) {
 // TestLongestParent_DeepestMatchWins exercises the typical case:
 // a file under apps/team-a/web/ should attribute to the deepest
 // covering KS, not the shallower one — which is what
-// KSPathPrefixes's descending-length sort enables. Pins the
+// KSPathPrefixesWithCache's descending-length sort enables. Pins the
 // integration of the two helpers.
 func TestLongestParent_DeepestMatchWins(t *testing.T) {
 	s := store.New()
@@ -329,7 +329,7 @@ func TestLongestParent_DeepestMatchWins(t *testing.T) {
 	}
 	s.AddObject(root)
 	s.AddObject(leaf)
-	prefixes := KSPathPrefixes(s, "")
+	prefixes := KSPathPrefixesWithCache(s, "", nil)
 	got, ok := LongestParent(prefixes, "apps/team-a/web/deploy.yaml", manifest.NamedResource{})
 	if !ok {
 		t.Fatalf("expected a parent match")

@@ -67,10 +67,6 @@ func urlHash(url string) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 
-func (m *Cache) pathFor(url string) string {
-	return m.layout.GitMirror(urlHash(url))
-}
-
 // proxyOptions converts a nullable ProxyConfig into go-git's inline
 // struct so every call site doesn't repeat the nil guard.
 func proxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
@@ -93,7 +89,7 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 	}
 	defer release()
 
-	path := m.pathFor(url)
+	path := m.layout.GitMirror(urlHash(url))
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("mirror parent: %w", err)
 	}

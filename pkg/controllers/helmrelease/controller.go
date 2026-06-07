@@ -91,9 +91,9 @@ type ReconcileOptions struct {
 	// to every Waiter built during reconcile.
 	Existence depwait.ExistenceLookup
 	// Renders is the quiescence signal the orchestrator wires
-	// against task.Service.ActiveCount. depwait's step-2 long wait
-	// short-circuits to "dependency not found" once Renders reports
-	// no other reconcile is in flight.
+	// against the task pool's active-render count. depwait's step-2
+	// long wait short-circuits to "dependency not found" once Renders
+	// reports no other reconcile is in flight.
 	Renders depwait.RenderInflight
 	// PreflightFailure reports dependency-graph errors discovered by the
 	// orchestrator before reconcile. When set for an id, the controller
@@ -288,7 +288,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 
 	if c.allowMissingSecrets {
-		hr = c.omitGeneratedValuesFrom(hr)
+		hr = c.omitValuesFrom(hr, nil, true)
 	}
 
 	// Pre-Prepare existence waits: helm.Prepare reads from the live
@@ -332,7 +332,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			hr = removeValuesRefs(hr, omittedValuesRefs)
 		}
 		if c.allowMissingSecrets {
-			hr = c.omitGeneratedValuesFrom(hr)
+			hr = c.omitValuesFrom(hr, nil, true)
 		}
 		break
 	}

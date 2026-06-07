@@ -90,9 +90,9 @@ type Options struct {
 	// to every Waiter built during reconcile.
 	Existence depwait.ExistenceLookup
 	// Renders is the quiescence signal the orchestrator wires
-	// against task.Service.ActiveCount. depwait's step-2 long wait
-	// short-circuits to "dependency not found" once Renders reports
-	// no other reconcile is in flight — so a typo'd dependsOn
+	// against the task service's active-task count. depwait's step-2
+	// long wait short-circuits to "dependency not found" once Renders
+	// reports no other reconcile is in flight — so a typo'd dependsOn
 	// fails as soon as the orchestrator drains instead of burning
 	// the full RenderProducingTimeout cap.
 	Renders depwait.RenderInflight

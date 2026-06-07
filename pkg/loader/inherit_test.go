@@ -37,7 +37,7 @@ func TestApplyNamespaceInheritance_FluxTargetNamespaceWins(t *testing.T) {
 		parent.Named(): "apps/plex/ks.yaml",
 		hr.Named():     "apps/plex/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritance(s, sourceFiles, root)
+	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
 
 	// HR's namespace should now reflect the Flux KS targetNamespace,
 	// not the kustomize-level "should-be-overridden" directive.
@@ -66,7 +66,7 @@ func TestApplyNamespaceInheritance_KustomizeDirectiveFallback(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		hr.Named(): "apps/atuin/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritance(s, sourceFiles, root)
+	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
 
 	if got := s.GetObject(manifest.NamedResource{
 		Kind: manifest.KindHelmRelease, Namespace: "default", Name: "atuin",
@@ -88,7 +88,7 @@ func TestApplyNamespaceInheritance_DeepestPrefixWins(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		hr.Named(): "apps/media/plex/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritance(s, sourceFiles, root)
+	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
 
 	if got := s.GetObject(manifest.NamedResource{
 		Kind: manifest.KindHelmRelease, Namespace: "inner", Name: "plex",
@@ -102,7 +102,7 @@ func TestApplyNamespaceInheritance_NoSourceFilesNoop(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "x", Namespace: ""}
 	s.AddObject(hr)
 	// Empty sourceFiles must not crash and must not rewrite anything.
-	ApplyNamespaceInheritance(s, map[manifest.NamedResource]string{}, "")
+	ApplyNamespaceInheritanceWithRefs(s, map[manifest.NamedResource]string{}, nil, "")
 
 	if got := s.GetObject(manifest.NamedResource{
 		Kind: manifest.KindHelmRelease, Name: "x",
@@ -166,7 +166,7 @@ func TestApplyNamespaceInheritance_CrossTreeBasePattern(t *testing.T) {
 		ks.Named(): "apps/main/games/romm.yaml",
 		hr.Named(): "apps/base/games/romm/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritance(s, sourceFiles, root)
+	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
 
 	// Both the KS and the HR should now be namespace=games — the KS
 	// from the local kustomize.yaml directive, the HR from the KS's
@@ -200,7 +200,7 @@ func TestApplyNamespaceInheritance_HRChartRepoNamespaceTracksHR(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		hr.Named(): "apps/plex/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritance(s, sourceFiles, root)
+	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
 
 	updated := s.GetObject(manifest.NamedResource{
 		Kind: manifest.KindHelmRelease, Namespace: "media", Name: "plex",
@@ -291,7 +291,7 @@ func TestApplyNamespaceInheritance_FluxOperatorAndHelmChartSource(t *testing.T) 
 		rsip.Named(): "apps/platform/rsip.yaml",
 		hc.Named():   "apps/platform/chart.yaml",
 	}
-	ApplyNamespaceInheritance(s, sourceFiles, root)
+	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
 
 	for _, id := range []manifest.NamedResource{
 		{Kind: manifest.KindKustomization, Namespace: "platform", Name: "workload"},

@@ -11,7 +11,7 @@ import (
 
 // Kustomization is the Flux Kustomization CR. It bundles the path of a
 // local kustomize tree together with the in-cluster materials it produces
-// (HelmReleases, HelmRepositories, ConfigMaps, Secrets, ...).
+// (HelmReleases, HelmRepositories, ConfigMaps, ...).
 //
 // The embedded kustomizev1.KustomizationSpec promotes Path, Suspend,
 // TargetNamespace, Components, SourceRef, PostBuild, Patches, Images,
@@ -24,8 +24,6 @@ type Kustomization struct {
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 
 	kustomizev1.KustomizationSpec `json:",inline" yaml:",inline"`
-
-	Secrets []*Secret `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 
 	// SourcePath is the location on disk this Kustomization was loaded
 	// from (config.kubernetes.io/path annotation).

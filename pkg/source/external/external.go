@@ -20,7 +20,7 @@ type Fetcher struct{}
 
 // Fetch implements source.TypedFetcher[*manifest.ExternalArtifact].
 // Wrapped via source.Wrap at orchestrator registration.
-func (f *Fetcher) Fetch(_ context.Context, ea *manifest.ExternalArtifact) (*store.SourceArtifact, error) {
+func (*Fetcher) Fetch(_ context.Context, ea *manifest.ExternalArtifact) (*store.SourceArtifact, error) {
 	if ea.ArtifactURL == "" {
 		return nil, fmt.Errorf(
 			"ExternalArtifact %s/%s requires status.artifact to be populated for offline use — "+

@@ -55,10 +55,10 @@ type Filter struct {
 	// and other Bootstrap consumers (loader.KSPathPrefixes, discovery's
 	// parent-index passes). The orchestrator wires one cache per
 	// Bootstrap so the kustomization.yaml at each spec.path is read
-	// once. Set via SetComponentCache BEFORE the resolve() call (i.e.
-	// before NewFilter returns); the resolve()-time buildOwnership
-	// reads it once and stops using it after. nil is fine — buildOwnership
-	// falls back to a per-call cache. See manifest.ComponentCache.
+	// once. Supplied via the cache argument of NewFilterWithCache; the
+	// resolve()-time buildOwnership reads it once and stops using it
+	// after. nil is fine — buildOwnership falls back to a per-call
+	// cache. See manifest.ComponentCache.
 	componentCache *manifest.ComponentCache
 
 	// OnAdd, when non-nil, fires for every id newly added to the

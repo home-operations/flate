@@ -148,10 +148,11 @@ func (s *Service) notifyQuiescence(now int64) {
 	s.quiesceWaiters = kept
 }
 
-// QuiescenceCh returns a channel closed when ActiveCount drops to
-// <= threshold. The channel is fresh per call; callers waiting on
-// distinct thresholds work independently. When ActiveCount is
-// already <= threshold at call time, the channel is returned closed.
+// QuiescenceCh returns a channel closed when the active-task count
+// drops to <= threshold. The channel is fresh per call; callers
+// waiting on distinct thresholds work independently. When the
+// active-task count is already <= threshold at call time, the
+// channel is returned closed.
 //
 // Used by depwait's render-emission wait to fire the moment no other
 // reconcile is in flight, instead of polling every 100ms. The
@@ -213,9 +214,9 @@ func (s *Service) YieldSlot(fn func()) {
 //
 // Without this hop, two reconciles both blocked in depwait (e.g. a
 // parent KS waiting on a typo'd dependsOn and its child HR waiting
-// on the parent's status) hold ActiveCount at 2 indefinitely —
-// QuiescenceCh(1) never fires and both waiters ride the full
-// RenderProducingTimeout cap.
+// on the parent's status) hold the active-task count at 2
+// indefinitely — QuiescenceCh(1) never fires and both waiters ride
+// the full RenderProducingTimeout cap.
 //
 // MUST be called only from inside a body launched by Service.Go —
 // calling from outside corrupts the active counter.
@@ -237,16 +238,6 @@ func (s *Service) YieldQuiescent(fn func()) {
 
 // Failures returns the number of panicked tasks observed.
 func (s *Service) Failures() int64 { return s.failures.Load() }
-
-// ActiveCount returns the number of in-flight tasks. Includes
-// tasks that have been Go'd but are still parked on the worker
-// semaphore (NewBounded). Useful as a quiescence signal — when
-// every reconcile has finished, ActiveCount returns 0.
-//
-// Callers asking from inside a Go'd body should remember their
-// own goroutine is counted: a "no other work" check needs
-// ActiveCount() > 1, not > 0.
-func (s *Service) ActiveCount() int64 { return s.active.Load() }
 
 // BlockTillDone waits until every active task has finished. Safe to
 // call concurrently with Go.

@@ -46,7 +46,7 @@ func SafeJoin(base, rel string, rejectAbsolute bool) (string, error) {
 		}
 		target := filepath.Join(base, clean)
 		relInside, err := filepath.Rel(base, target)
-		if err != nil || relInside == ".." || strings.HasPrefix(relInside, ".."+string(filepath.Separator)) {
+		if err != nil || isEscaped(relInside) {
 			return "", fmt.Errorf("path escapes target directory: %q", rel)
 		}
 		return target, nil
@@ -60,8 +60,12 @@ func SafeJoin(base, rel string, rejectAbsolute bool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("path resolution: %w", err)
 	}
-	if relInside == ".." || strings.HasPrefix(relInside, ".."+string(filepath.Separator)) {
+	if isEscaped(relInside) {
 		return "", fmt.Errorf("path traversal: %q escapes target directory", rel)
 	}
 	return target, nil
+}
+
+func isEscaped(rel string) bool {
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

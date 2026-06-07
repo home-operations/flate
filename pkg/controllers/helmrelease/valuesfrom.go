@@ -12,10 +12,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func (c *Controller) omitGeneratedValuesFrom(hr *manifest.HelmRelease) *manifest.HelmRelease {
-	return c.omitValuesFrom(hr, nil, true)
-}
-
 func (c *Controller) omitFailedValuesFrom(hr *manifest.HelmRelease, failed []manifest.NamedResource) (*manifest.HelmRelease, bool) {
 	failedSet := make(map[manifest.NamedResource]struct{}, len(failed))
 	for _, id := range failed {

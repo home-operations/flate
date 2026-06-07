@@ -8,7 +8,6 @@
 //	ssh.go        — SSH URL / user extraction
 //	checkout.go   — checkoutRef + updateSubmodules
 //	resolve.go    — ref → commit hash (mirror path)
-//	materialize.go — gittree.Materialize bridge
 //	marker.go     — .flate-git-revision slot marker + worktree HEAD lookup
 package git
 
@@ -17,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -30,6 +30,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 	"github.com/home-operations/flate/pkg/source/git/mirror"
 	"github.com/home-operations/flate/pkg/source/git/verify"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -434,7 +435,23 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 	if err != nil {
 		return nil, fmt.Errorf("GitRepository %s/%s ref %q: %w", repo.Namespace, repo.Name, refStr, err)
 	}
-	if err := materializeTree(ctx, mirrorRepo, hash, slot.Path); err != nil {
+	// Walk the tree at hash and write every blob into the slot's staging
+	// dir via the shared gittree.Materialize helper. Submodule entries
+	// are warn-and-skipped: the bare mirror has no nested object stores,
+	// so resolving them would require a separate fetch that defeats the
+	// point of the mirror cache. Callers that need submodule support fall
+	// back to the legacy PlainClone path (Fetcher.fetch decides on
+	// Spec.RecurseSubmodules).
+	//
+	// Symlinks materialize as real OS symlinks rather than being collapsed
+	// to text files, so the rendered tree matches what a `git checkout`
+	// would produce — important for kustomize bases that follow symlinked
+	// component directories.
+	if err := gittree.Materialize(ctx, mirrorRepo, hash, slot.Path, gittree.Options{
+		OnSubmodule: func(path string) {
+			slog.Warn("git mirror: skipping submodule (mirror path does not recurse)", "path", path)
+		},
+	}); err != nil {
 		return nil, fmt.Errorf("materialize %s at %s: %w", hash, refStr, err)
 	}
 	if repo.Verification != nil {

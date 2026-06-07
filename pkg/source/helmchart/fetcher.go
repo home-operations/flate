@@ -113,7 +113,7 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 // The id is syntheticChartName(...): distinct charts/versions from the same
 // repo get distinct Store ids.
 func Synthesize(r *manifest.HelmRepository, chartName, version string) *manifest.HelmChartSource {
-	chartURL := strings.TrimSuffix(r.URL, "/") + "/" + chartName
+	chartURL := normalizeChartURL(r.URL, chartName)
 	hc := &manifest.HelmChartSource{
 		Name:      syntheticChartName(r.Name, chartName, chartURL, version),
 		Namespace: r.Namespace,
@@ -122,6 +122,12 @@ func Synthesize(r *manifest.HelmRepository, chartName, version string) *manifest
 	hc.Version = version
 	hc.SourceRef = sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: r.Name}
 	return hc
+}
+
+// normalizeChartURL joins a HelmRepository base URL and a chart name into the
+// chart's URL, tolerating a trailing slash on the base.
+func normalizeChartURL(url, chartName string) string {
+	return strings.TrimSuffix(url, "/") + "/" + chartName
 }
 
 // isOCIHelmRepo reports whether a HelmRepository serves charts from an OCI
@@ -143,7 +149,7 @@ func isOCIHelmRepo(r *manifest.HelmRepository) bool {
 // carries no proxySecretRef). The resolved version becomes a digest ref
 // when it contains ':' else a tag, matching the OCIRepository path.
 func synthesizeOCIRepository(r *manifest.HelmRepository, chartName, version string) *manifest.OCIRepository {
-	chartURL := strings.TrimSuffix(r.URL, "/") + "/" + chartName
+	chartURL := normalizeChartURL(r.URL, chartName)
 	syn := &manifest.OCIRepository{Namespace: r.Namespace}
 	syn.Name = syntheticChartName(r.Name, chartName, chartURL, version)
 	syn.URL = chartURL

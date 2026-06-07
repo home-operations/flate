@@ -361,10 +361,9 @@ func (c *StagingCache) cacheStagePromise(fingerprint, dir string) {
 	if existing, ok := c.stages[fingerprint]; ok && existing.persistent {
 		return
 	}
-	d := dir
 	c.stages[fingerprint] = &stage{
 		persistent: true,
-		once:       func() (string, error) { return d, nil },
+		once:       func() (string, error) { return dir, nil },
 	}
 }
 

@@ -3,7 +3,6 @@ package oci
 import (
 	"archive/tar"
 	"compress/gzip"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,7 +74,6 @@ func effectiveLayerOperation(selector *manifest.OCILayerSelector) string {
 //     <copiedLayerFilename>.
 //   - Wipes the OCI Image Layout artifacts.
 func applyLayerSelector(
-	_ context.Context,
 	slot string,
 	manifestDigest string,
 	selector *manifest.OCILayerSelector,
@@ -327,4 +325,3 @@ func extractTarGz(src, dst string) error {
 	}
 	return nil
 }
-

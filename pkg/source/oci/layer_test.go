@@ -98,7 +98,7 @@ func TestApplyLayerSelector_Extract(t *testing.T) {
 	})
 	_ = manifestBytes
 
-	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
+	if err := applyLayerSelector(slot, manifestDigest.String(),
 		&manifest.OCILayerSelector{
 			MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
 			Operation: manifest.OCILayerOperationExtract,
@@ -140,7 +140,7 @@ func TestApplyLayerSelector_Copy(t *testing.T) {
 		},
 	})
 
-	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
+	if err := applyLayerSelector(slot, manifestDigest.String(),
 		&manifest.OCILayerSelector{
 			MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
 			Operation: manifest.OCILayerOperationCopy,
@@ -169,7 +169,7 @@ func TestApplyLayerSelector_MediaTypeUnmatched(t *testing.T) {
 		},
 	})
 
-	err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
+	err := applyLayerSelector(slot, manifestDigest.String(),
 		&manifest.OCILayerSelector{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"})
 	if err == nil {
 		t.Fatalf("expected error for unmatched mediaType")
@@ -191,7 +191,7 @@ func TestApplyLayerSelector_DefaultsToFirstLayer(t *testing.T) {
 		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Digest: digSecond, Size: int64(len(second))},
 	})
 
-	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(), nil); err != nil {
+	if err := applyLayerSelector(slot, manifestDigest.String(), nil); err != nil {
 		t.Fatalf("applyLayerSelector: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(slot, "first.yaml")); err != nil {
@@ -218,7 +218,7 @@ func TestApplyLayerSelector_ProvenanceFirstDefault(t *testing.T) {
 		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Digest: digChart, Size: int64(len(chart))},
 	})
 
-	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(), nil); err != nil {
+	if err := applyLayerSelector(slot, manifestDigest.String(), nil); err != nil {
 		t.Fatalf("applyLayerSelector: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(slot, "Chart.yaml")); err != nil {
@@ -239,7 +239,7 @@ func TestApplyLayerSelector_MultiLayerWithSelector(t *testing.T) {
 		{MediaType: "application/vnd.cncf.helm.chart.provenance.v1.prov", Digest: digProv, Size: int64(len(prov))},
 		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Digest: digChart, Size: int64(len(chart))},
 	})
-	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
+	if err := applyLayerSelector(slot, manifestDigest.String(),
 		&manifest.OCILayerSelector{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"}); err != nil {
 		t.Fatalf("applyLayerSelector: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestApplyLayerSelector_ZeroLayerCleansLayoutArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyLayerSelector(t.Context(), slot, manifestDigest.String(), nil); err != nil {
+	if err := applyLayerSelector(slot, manifestDigest.String(), nil); err != nil {
 		t.Fatalf("zero-layer applyLayerSelector should not error: %v", err)
 	}
 
@@ -359,7 +359,7 @@ func TestApplyLayerSelector_TraversalRejected(t *testing.T) {
 		},
 	})
 
-	err := applyLayerSelector(t.Context(), slot, manifestDigest.String(),
+	err := applyLayerSelector(slot, manifestDigest.String(),
 		&manifest.OCILayerSelector{
 			MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
 			Operation: manifest.OCILayerOperationExtract,

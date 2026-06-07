@@ -13,12 +13,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// ApplyNamespaceInheritance is ApplyNamespaceInheritanceWithRefs without a
-// consumer→source ref map (sourceRefs resolution skipped).
-func ApplyNamespaceInheritance(s *store.Store, sourceFiles map[manifest.NamedResource]string, repoRoot string) {
-	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, repoRoot)
-}
-
 // ApplyNamespaceInheritanceWithRefs fills empty metadata.namespace fields on
 // loaded resources from the nearest enclosing namespace directive — either a
 // Flux Kustomization's spec.targetNamespace or a kustomization.yaml

@@ -173,10 +173,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// component reads); the shared ComponentCache deduped the file reads
 	// but not the iteration/sort/list construction.
 	prefixes := loader.KSPathPrefixesWithCache(d.cfg.Store, repoRoot, cfg.ComponentCache)
-	parentOf := mergeParents(
-		loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindKustomization),
-		loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease),
-	)
+	parentOf := map[manifest.NamedResource]manifest.NamedResource{}
+	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindKustomization))
+	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease))
 	// Orphan promotion: every Existence entry whose file path is NOT
 	// under any KS spec.path will never reach the Store through KS
 	// render emission. Promote it now so standalone CRs (loose HR
@@ -203,17 +202,6 @@ func (d *discoverer) applyNamespaces(repoRoot string) {
 	loader.StampTransformerTargetNamespaces(d.cfg.Store, d.sourceFiles, repoRoot)
 	loader.ApplyNamespaceInheritanceWithRefs(d.cfg.Store, d.sourceFiles, d.sourceRefs, repoRoot)
 	loader.ApplyDefaultNamespaces(d.cfg.Store, d.sourceFiles)
-}
-
-// mergeParents combines per-kind parent maps into one. NamedResource
-// keys are kind-segregated by construction (caller passes per-Kind maps
-// from BuildParentIndexForKind), so collisions are structurally impossible.
-func mergeParents(perKind ...map[manifest.NamedResource]manifest.NamedResource) map[manifest.NamedResource]manifest.NamedResource {
-	out := map[manifest.NamedResource]manifest.NamedResource{}
-	for _, m := range perKind {
-		maps.Copy(out, m)
-	}
-	return out
 }
 
 type discoverer struct {

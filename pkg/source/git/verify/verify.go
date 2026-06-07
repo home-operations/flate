@@ -104,7 +104,7 @@ func buildPGPKeyring(sec *manifest.Secret) (string, error) {
 			b.WriteByte('\n')
 		}
 		b.WriteString(v)
-		needsNL = len(v) > 0 && v[len(v)-1] != '\n'
+		needsNL = v[len(v)-1] != '\n'
 	}
 	for k := range sec.StringData {
 		add(k)

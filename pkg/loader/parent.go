@@ -36,8 +36,8 @@ type KSPathPrefix struct {
 	Prefix string
 }
 
-// KSPathPrefixes returns one or more entries per loaded Kustomization
-// with a non-empty spec.path. Each KS contributes:
+// KSPathPrefixesWithCache returns one or more entries per loaded
+// Kustomization with a non-empty spec.path. Each KS contributes:
 //
 //  1. Its spec.path (always).
 //  2. Each spec.components entry (when present, resolved against
@@ -59,21 +59,14 @@ type KSPathPrefix struct {
 // resolve relative to. Pass "" to skip on-disk component lookup
 // entirely (only spec.path + spec.components are recorded).
 //
-// On-disk component reads route through a local cache so a single
-// call doesn't re-read the same kustomization.yaml across KSes that
-// share a spec.path. Cross-call sharing is the orchestrator's job —
-// see KSPathPrefixesWithCache.
-func KSPathPrefixes(s *store.Store, repoRoot string) []KSPathPrefix {
-	return KSPathPrefixesWithCache(s, repoRoot, nil)
-}
-
-// KSPathPrefixesWithCache is KSPathPrefixes with a shared component
-// cache threaded in. The orchestrator instantiates one cache per
-// Bootstrap and passes it to every consumer (discovery's orphan
-// promotion, BuildParentIndexForKind, the orchestrator's finalize
-// detectOrphans, change.buildOwnership) so the kustomization.yaml at
-// each spec.path is read once per Bootstrap instead of once per
-// consumer. Pass nil to fall back to the per-call cache.
+// A shared component cache is threaded in via cache. The orchestrator
+// instantiates one cache per Bootstrap and passes it to every consumer
+// (discovery's orphan promotion, BuildParentIndexForKindWithCache, the
+// orchestrator's finalize detectOrphans, change.buildOwnership) so the
+// kustomization.yaml at each spec.path is read once per Bootstrap
+// instead of once per consumer. Pass nil to fall back to a per-call
+// cache so a single call doesn't re-read the same kustomization.yaml
+// across KSes that share a spec.path.
 func KSPathPrefixesWithCache(s *store.Store, repoRoot string, cache *manifest.ComponentCache) []KSPathPrefix {
 	var out []KSPathPrefix
 	// Local cache backs the nil-shared-cache path so multi-KS calls
@@ -128,7 +121,7 @@ func KSPathPrefixesWithCache(s *store.Store, repoRoot string, cache *manifest.Co
 // LongestParent returns the deepest KS whose spec.path covers file
 // (slash-normalized repo-relative path), excluding self. The second
 // return reports whether a parent was found. prefixes is expected to
-// be the sorted output of KSPathPrefixes.
+// be the sorted output of KSPathPrefixesWithCache.
 func LongestParent(prefixes []KSPathPrefix, file string, self manifest.NamedResource) (manifest.NamedResource, bool) {
 	slashFile := filepath.ToSlash(file)
 	for _, p := range prefixes {
@@ -150,7 +143,7 @@ func LongestParent(prefixes []KSPathPrefix, file string, self manifest.NamedReso
 // becomes a depwait deadlock in collectDeps (both wait on the other to
 // reach Ready, then both time out). Peers sharing a directory don't
 // render each other, so neither is the other's parent. selfPrefixes is
-// the set of prefixes the child contributes to KSPathPrefixes; nil/empty
+// the set of prefixes the child contributes to KSPathPrefixesWithCache; nil/empty
 // (e.g. a HelmRelease child, which contributes none) reduces to
 // LongestParent.
 func longestStrictParent(prefixes []KSPathPrefix, file string, self manifest.NamedResource, selfPrefixes map[string]struct{}) (manifest.NamedResource, bool) {
@@ -169,7 +162,7 @@ func longestStrictParent(prefixes []KSPathPrefix, file string, self manifest.Nam
 	return manifest.NamedResource{}, false
 }
 
-// BuildParentIndexForKind maps each childKind resource to its
+// BuildParentIndexForKindWithCache maps each childKind resource to its
 // enclosing Flux Kustomization — the KS whose spec.path or component
 // directory is the deepest strict ancestor of the child's source
 // file. Excludes self-matches.
@@ -199,16 +192,14 @@ func longestStrictParent(prefixes []KSPathPrefix, file string, self manifest.Nam
 // pass the orchestrator's --path. An empty repoRoot means "no on-disk
 // component lookup", which still gives a correct (just slightly
 // less-precise) index built from spec.path + spec.components alone.
-func BuildParentIndexForKind(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
-	return BuildParentIndexForKindWithCache(s, repoRoot, sourceFiles, childKind, nil)
-}
-
-// BuildParentIndexForKindWithCache is BuildParentIndexForKind with a
-// shared *manifest.ComponentCache threaded into the KSPathPrefixes
-// call. Used by discovery so the KS-parent-map build and the
-// HR-parent-map build share component-file reads across the two
-// passes — without sharing, each invocation walks the same KS list
-// and re-reads every kustomization.yaml's `components:` independently.
+//
+// A shared *manifest.ComponentCache is threaded into the
+// KSPathPrefixesWithCache call via cache. Used by discovery so the
+// KS-parent-map build and the HR-parent-map build share component-file
+// reads across the two passes — without sharing, each invocation walks
+// the same KS list and re-reads every kustomization.yaml's
+// `components:` independently. Pass nil to fall back to a per-call
+// cache.
 func BuildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string, cache *manifest.ComponentCache) map[manifest.NamedResource]manifest.NamedResource {
 	return BuildParentIndexFromPrefixes(KSPathPrefixesWithCache(s, repoRoot, cache), s, sourceFiles, childKind)
 }
@@ -218,8 +209,8 @@ func BuildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFil
 // the prefixes once (an O(KS) walk + sort + component reads) and reuses
 // them for the KS-parent index, the HR-parent index, AND orphan
 // promotion — three consumers that previously each rebuilt the identical
-// list. Standalone callers use BuildParentIndexForKind(WithCache), which
-// compute the prefixes for a single use.
+// list. Standalone callers use BuildParentIndexForKindWithCache, which
+// computes the prefixes for a single use.
 func BuildParentIndexFromPrefixes(prefixes []KSPathPrefix, s *store.Store, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
 	// Group each id's own claimed prefixes so a peer KS claiming the same
 	// spec.path directory isn't mistaken for an enclosing parent (which

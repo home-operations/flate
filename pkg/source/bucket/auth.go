@@ -25,15 +25,16 @@ import (
 // rather than the TLS layer, mirroring Flux's source-controller
 // behavior.
 func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) {
+	ownerID := b.Namespace + "/" + b.Name
 	proxy, err := source.ResolveProxy(f.Secrets, b.Namespace, "Bucket",
-		b.Namespace+"/"+b.Name, b.ProxySecretRef)
+		ownerID, b.ProxySecretRef)
 	if err != nil {
 		return nil, err
 	}
 	var tlsCfg *tls.Config
 	if b.CertSecretRef != nil {
 		tlsCfg, err = source.ResolveCertSecret(f.Secrets, b.Namespace, "Bucket",
-			b.Namespace+"/"+b.Name, b.CertSecretRef)
+			ownerID, b.CertSecretRef)
 		if err != nil {
 			return nil, err
 		}

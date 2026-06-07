@@ -180,9 +180,7 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource, quies
 				return info, ctx.Err()
 			}
 			if currentFailed != nil {
-				return *currentFailed, &manifest.ResourceFailedError{
-					Resource: id.String(), Reason: currentFailed.Message,
-				}
+				return failNow()
 			}
 			return StatusInfo{}, ctx.Err()
 		}
@@ -269,4 +267,3 @@ func (s *Store) subscribeWithStatus(fn Listener, id manifest.NamedResource) (Sta
 	s.rUnlockAll()
 	return info, ok, func() { set.remove(handle) }
 }
-

@@ -46,12 +46,12 @@ type storeResolver struct {
 }
 
 func (r *storeResolver) HelmRepository(namespace, name string) *manifest.HelmRepository {
-	obj, _ := r.store.GetByName(manifest.KindHelmRepository, namespace, name).(*manifest.HelmRepository)
+	obj, _ := store.GetByName[*manifest.HelmRepository](r.store, manifest.KindHelmRepository, namespace, name)
 	return obj
 }
 
 func (r *storeResolver) OCIRepository(namespace, name string) *manifest.OCIRepository {
-	obj, _ := r.store.GetByName(manifest.KindOCIRepository, namespace, name).(*manifest.OCIRepository)
+	obj, _ := store.GetByName[*manifest.OCIRepository](r.store, manifest.KindOCIRepository, namespace, name)
 	return obj
 }
 
@@ -62,6 +62,6 @@ func (r *storeResolver) LocalSourceArtifact(kind, namespace, name string) *store
 }
 
 func (r *storeResolver) HelmChart(namespace, name string) *manifest.HelmChartSource {
-	obj, _ := r.store.GetByName(manifest.KindHelmChart, namespace, name).(*manifest.HelmChartSource)
+	obj, _ := store.GetByName[*manifest.HelmChartSource](r.store, manifest.KindHelmChart, namespace, name)
 	return obj
 }

@@ -3,9 +3,6 @@ package orchestrator
 import (
 	"cmp"
 	"context"
-	"path/filepath"
-	"slices"
-	"strings"
 
 	"golang.org/x/sync/errgroup"
 
@@ -36,24 +33,16 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Owner index keyed by deepest spec.path prefix wins, mirroring
-	// loader.BuildParentIndex. The RS's source-file path lives below
-	// some KS's spec.path — that KS becomes its visibility parent.
-	type owner struct {
-		prefix string
-		id     manifest.NamedResource
-	}
-	ksList := store.ListAs[*manifest.Kustomization](o.store, manifest.KindKustomization)
-	owners := make([]owner, 0, len(ksList))
-	for _, ks := range ksList {
-		if ks.Path == "" {
-			continue
-		}
-		owners = append(owners, owner{prefix: loader.NormalizePrefix(ks.Path), id: ks.Named()})
-	}
-	slices.SortFunc(owners, func(a, b owner) int {
-		return cmp.Compare(len(b.prefix), len(a.prefix))
-	})
+	// Parent attribution: a RS's source-file path lives below some KS's
+	// claimed prefix — that KS is its visibility parent. Use the canonical
+	// claim index (spec.path + spec.components + on-disk components:, via
+	// the shared ComponentCache) and LongestParent — the SAME pair
+	// discovery's orphan promotion and the orchestrator's detectOrphans
+	// already use, so a RS inside a parent's component subtree attributes
+	// to the deeper component-owning KS instead of being dropped or pinned
+	// to a shallower one. (The previous inline index was a degraded third
+	// copy keyed on spec.path only.)
+	prefixes := loader.KSPathPrefixesWithCache(o.store, o.repoRoot, o.componentCache)
 
 	// A RS that arrived through file discovery has a sourceFile; a RS
 	// that arrived through KS-controller emission (kustomize bakes the
@@ -119,14 +108,12 @@ func (o *Orchestrator) expandResourceSetsPostRun(ctx context.Context) error {
 				if file == "" {
 					return nil
 				}
-				slashFile := filepath.ToSlash(file)
-				idx := slices.IndexFunc(owners, func(w owner) bool {
-					return strings.HasPrefix(slashFile, w.prefix)
-				})
-				if idx < 0 {
+				// RS is never a KS, so LongestParent's self-exclusion is a no-op.
+				parent, ok := loader.LongestParent(prefixes, file, rs.Named())
+				if !ok {
 					return nil
 				}
-				parentKS = owners[idx].id
+				parentKS = parent
 			}
 			// Filter docs to RawObjects + collect dedup keys into this
 			// RS's own slot; the deterministic commit happens below.

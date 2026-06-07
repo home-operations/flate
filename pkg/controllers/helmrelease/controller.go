@@ -260,27 +260,21 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
 	if deps := c.collectHRDeps(hr); len(deps) > 0 {
-		err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout), deps,
-			"resolving dependencies",
-			func(sum depwait.Summary) error {
-				return &manifest.DependencyFailedError{
-					Parent:  id,
-					Failed:  sum.Failed,
-					Reasons: sum.Messages,
-				}
-			})
+		// AwaitRefresh fuses the dependsOn wait with the load-bearing
+		// re-read: the parent KS may have re-rendered (e.g. its own
+		// dependsOn cleared in the meantime, freeing up parent-render-time
+		// substitutions that mutate our spec). Without that refresh, an HR
+		// with explicit spec.dependsOn but no structural parent — or one
+		// whose parent re-emitted us after the parent-gate cleared — keeps
+		// the pre-mutation snapshot through chart resolution.
+		fresh, ok, err := base.AwaitRefresh[*manifest.HelmRelease](
+			ctx, c.Controller, id, c.NewWaiter(id, hr.Timeout), deps,
+			"resolving dependencies", base.DepFailed(id))
 		if err != nil {
 			return err
 		}
-		// Re-read the HR after the dependsOn wait: the parent KS may
-		// have re-rendered (e.g. its own dependsOn cleared in the
-		// meantime, freeing up parent-render-time substitutions that
-		// mutate our spec). Without this refresh, an HR with explicit
-		// spec.dependsOn but no structural parent — or one whose
-		// parent re-emitted us after the parent-gate cleared — keeps
-		// the pre-mutation snapshot through chart resolution.
-		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
-			hr = obj
+		if ok {
+			hr = fresh
 		}
 	}
 	if err := c.PreflightError(id); err != nil {
@@ -310,9 +304,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			"awaiting pre-render references",
 			func(sum depwait.Summary) error {
 				preSum = sum
-				return &manifest.DependencyFailedError{
-					Parent: id, Failed: sum.Failed, Reasons: sum.Messages,
-				}
+				return base.DepFailed(id)(sum)
 			}); err != nil {
 			if c.allowMissingSecrets {
 				if next, ok := c.omitFailedValuesFrom(hr, preSum.Failed); ok {

@@ -167,25 +167,20 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 
 	deps := c.collectDeps(ks)
 	if len(deps) > 0 {
-		err := c.Await(ctx, id, c.NewWaiter(id, ks.Timeout), deps,
-			"", // status set above
-			func(sum depwait.Summary) error {
-				return &manifest.DependencyFailedError{
-					Parent:  id,
-					Failed:  sum.Failed,
-					Reasons: sum.Messages,
-				}
-			})
+		// AwaitRefresh fuses the wait with the load-bearing re-read: our
+		// structural parent may have re-emitted us with mutated spec (e.g.
+		// `replacements:` injecting spec.targetNamespace) while we were
+		// waiting. Without the refresh the first render would use the
+		// stale-spec snapshot captured by RunWithStatus, producing
+		// duplicate renders that linger in the store with the wrong
+		// namespace. See #102.
+		fresh, ok, err := base.AwaitRefresh[*manifest.Kustomization](
+			ctx, c.Controller, id, c.NewWaiter(id, ks.Timeout), deps,
+			"", base.DepFailed(id)) // status set above
 		if err != nil {
 			return err
 		}
-		// Refresh the KS — our structural parent may have re-emitted
-		// us with mutated spec (e.g. `replacements:` injecting
-		// spec.targetNamespace) while we were waiting. Without this
-		// re-read the first render would use the stale-spec snapshot
-		// captured by RunWithStatus, producing duplicate renders that
-		// linger in the store with the wrong namespace. See #102.
-		if fresh, ok := store.Get[*manifest.Kustomization](c.Store, id); ok {
+		if ok {
 			ks = fresh
 		}
 	}

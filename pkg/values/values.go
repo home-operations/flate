@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // varsubRegex matches the upstream kustomize-controller var-name
@@ -60,25 +61,19 @@ func (p *SliceProvider) Secret(namespace, name string) *manifest.Secret {
 	return nil
 }
 
-// ObjectLister is the minimal Store surface needed for value lookups.
-// It is satisfied by *store.Store and by any test-only fake.
-type ObjectLister interface {
-	GetByName(kind, namespace, name string) manifest.BaseManifest
-}
+// NewStoreProvider returns a Provider backed by the central Store. It
+// replaces the per-controller storeProvider types.
+func NewStoreProvider(s *store.Store) Provider { return &storeProvider{s: s} }
 
-// NewStoreProvider returns a Provider backed by an ObjectLister (the
-// central Store). It replaces the per-controller storeProvider types.
-func NewStoreProvider(l ObjectLister) Provider { return &storeProvider{l: l} }
-
-type storeProvider struct{ l ObjectLister }
+type storeProvider struct{ s *store.Store }
 
 func (p *storeProvider) ConfigMap(namespace, name string) *manifest.ConfigMap {
-	c, _ := p.l.GetByName(manifest.KindConfigMap, namespace, name).(*manifest.ConfigMap)
+	c, _ := store.GetByName[*manifest.ConfigMap](p.s, manifest.KindConfigMap, namespace, name)
 	return c
 }
 
 func (p *storeProvider) Secret(namespace, name string) *manifest.Secret {
-	s, _ := p.l.GetByName(manifest.KindSecret, namespace, name).(*manifest.Secret)
+	s, _ := store.GetByName[*manifest.Secret](p.s, manifest.KindSecret, namespace, name)
 	return s
 }
 

@@ -379,6 +379,51 @@ func (c *Controller) Await(
 	return nil
 }
 
+// AwaitRefresh fuses Await with the load-bearing store re-read every
+// dependency wait performs on success. A structural parent may have
+// re-emitted this object with a mutated spec while it was parked, so the
+// caller MUST reconcile against the refreshed object, not the stale
+// snapshot it was dispatched with (see #102 and the dependsOn re-read
+// comments at the call sites). Wait and re-read were two statements joined
+// only by convention; fusing them means a future await site can't call
+// Await and silently forget the re-read.
+//
+// On a wait failure it returns (zero, false, err) — the caller returns the
+// error. On success it returns (fresh, true, nil) when the object is still
+// in the store, or (zero, false, nil) if it vanished, mirroring the prior
+// `if obj, ok := store.Get[T](...); ok { x = obj }` guard (the caller keeps
+// the object it already held).
+func AwaitRefresh[T manifest.BaseManifest](
+	ctx context.Context,
+	c *Controller,
+	id manifest.NamedResource,
+	w *depwait.Waiter,
+	deps []manifest.DependencyRef,
+	pendingMsg string,
+	onFail func(depwait.Summary) error,
+) (T, bool, error) {
+	if err := c.Await(ctx, id, w, deps, pendingMsg, onFail); err != nil {
+		var zero T
+		return zero, false, err
+	}
+	obj, ok := store.Get[T](c.Store, id)
+	return obj, ok, nil
+}
+
+// DepFailed returns the canonical onFail closure that reports a
+// dependency-wait failure as a *manifest.DependencyFailedError for id.
+// The identical literal was rebuilt at every dependsOn/pre-render wait;
+// single-sourcing it keeps the failure shape consistent across controllers.
+func DepFailed(id manifest.NamedResource) func(depwait.Summary) error {
+	return func(sum depwait.Summary) error {
+		return &manifest.DependencyFailedError{
+			Parent:  id,
+			Failed:  sum.Failed,
+			Reasons: sum.Messages,
+		}
+	}
+}
+
 // Recover catches a panic from the current goroutine and marks id
 // StatusFailed with a "panic: <r>" message so the orchestrator
 // surfaces it. Intended for use as `defer base.Recover(store, id, "kind")`

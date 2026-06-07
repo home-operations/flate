@@ -65,10 +65,13 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	base, head, err := orchestrator.RenderTrees(ctx, baseDir, headDir, orchestrator.Config{
-		WipeSecrets: true,
-		Concurrency: 4,
-	})
+	base, head, err := orchestrator.RenderTrees(ctx,
+		orchestrator.Tree{RepoRoot: baseDir},
+		orchestrator.Tree{RepoRoot: headDir},
+		orchestrator.Config{
+			WipeSecrets: true,
+			Concurrency: 4,
+		})
 	if err != nil {
 		t.Fatalf("RenderTrees: %v", err)
 	}
@@ -114,7 +117,10 @@ func TestRenderTrees_StopsButStoreReadable(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	base, head, err := orchestrator.RenderTrees(ctx, baseDir, headDir, orchestrator.Config{WipeSecrets: true, Concurrency: 4})
+	base, head, err := orchestrator.RenderTrees(ctx,
+		orchestrator.Tree{RepoRoot: baseDir},
+		orchestrator.Tree{RepoRoot: headDir},
+		orchestrator.Config{WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("RenderTrees: %v", err)
 	}
@@ -125,5 +131,62 @@ func TestRenderTrees_StopsButStoreReadable(t *testing.T) {
 	}
 	if head.Store().GetObject(id) == nil {
 		t.Errorf("head Store unreadable after RenderTrees Stop: %s missing", id)
+	}
+}
+
+// writeHomeOpsCluster lays out a cluster-template-style tree under dir
+// with NO .git: the Flux entry point is kubernetes/flux/cluster/ks.yaml
+// (cluster-apps → ./kubernetes/apps, repo-ROOT-relative), and the app's
+// ConfigMap carries val. This is konflate's extracted-tree shape — the
+// caller renders it via Tree{RepoRoot: dir, Path: dir/kubernetes/flux/cluster}.
+func writeHomeOpsCluster(t *testing.T, dir, val string) {
+	t.Helper()
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster/ks.yaml",
+		"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n"+
+			"metadata: {name: cluster-apps, namespace: flux-system}\n"+
+			"spec:\n  path: ./kubernetes/apps\n"+
+			"  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, namespace: default}\ndata: {k: "+val+"}\n")
+}
+
+// TestRenderTrees_RepoRootRelativeNoGit is the konflate clusterPath
+// regression at the SDK level: two extracted trees with NO .git, the Flux
+// entry point a subdir (kubernetes/flux/cluster), and repo-root-relative
+// spec.path (./kubernetes/apps). With per-side Tree{RepoRoot, Path} the
+// change in kubernetes/apps/cm.yaml — outside the scanned entry-point dir —
+// is detected and rendered, and diff.Changes reports exactly it. (Before
+// the explicit-root model, the .git-less subdir collapsed the anchor and
+// the change detection both failed: empty diff / "no changes detected".)
+func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
+	baseDir := t.TempDir()
+	headDir := t.TempDir()
+	writeHomeOpsCluster(t, baseDir, "v1")
+	writeHomeOpsCluster(t, headDir, "v2") // only the ConfigMap data differs
+
+	entry := func(root string) string { return root + "/kubernetes/flux/cluster" }
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	base, head, err := orchestrator.RenderTrees(ctx,
+		orchestrator.Tree{RepoRoot: baseDir, Path: entry(baseDir)},
+		orchestrator.Tree{RepoRoot: headDir, Path: entry(headDir)},
+		orchestrator.Config{WipeSecrets: true, Concurrency: 4})
+	if err != nil {
+		t.Fatalf("RenderTrees: %v", err)
+	}
+	if base.Result == nil || head.Result == nil {
+		t.Fatalf("both sides must render: base=%v head=%v", base.Result, head.Result)
+	}
+	changes := diff.Changes(
+		diff.DocsFromManifests(base.Result.Manifests, nil),
+		diff.DocsFromManifests(head.Result.Manifests, nil),
+		diff.Options{},
+	)
+	if len(changes) != 1 {
+		t.Fatalf("want exactly 1 change (demo ConfigMap), got %d: %+v", len(changes), changes)
+	}
+	if c := changes[0]; c.Name != "demo" || c.Kind != "ConfigMap" || c.Status != diff.StatusChanged {
+		t.Errorf("change = %+v; want ConfigMap demo changed", c)
 	}
 }

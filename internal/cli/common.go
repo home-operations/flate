@@ -17,6 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -343,10 +344,32 @@ func resolveBaseline(_ context.Context, c *commonFlags, autoFallback bool) (func
 	return func() { _ = os.RemoveAll(res.TempDir) }, nil
 }
 
+// repoRootOf resolves path to its source root the way discovery defaults
+// RepoRoot: the .git ancestor of the resolved path, or the path itself
+// when there's no .git. Empty in → empty out. This is the CLI's
+// .git-based default for the explicit RepoRoot / baseline PathOrig the
+// core now consumes — the changed-only core no longer infers a root or
+// "widens" to a .git ancestor itself; the CLI resolves it here and passes
+// it in.
+func repoRootOf(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := discovery.ResolveScanPath(path)
+	if err != nil {
+		return path
+	}
+	return discovery.FindRepoRoot(abs)
+}
+
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
-		Path:           c.path,
-		PathOrig:       c.pathOrig,
+		Path: c.path,
+		// PathOrig carries the baseline's REPO ROOT for change detection
+		// (change.Detect diffs root-to-root). A subdir --path-orig / a
+		// materialized --base tree is lifted to its root here, replacing
+		// the core's old .git "widen" heuristic.
+		PathOrig:       repoRootOf(c.pathOrig),
 		HelmOptions:    c.helmOptions(h),
 		WipeSecrets:    true,
 		RegistryConfig: c.registryConfig,

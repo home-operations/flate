@@ -299,11 +299,16 @@ data:
 	// targets. The flux/cluster directory is byte-identical between
 	// the two checkouts; only kubernetes/apps/foo/cm.yaml differs.
 	currCluster := filepath.Join(currRoot, "kubernetes/flux")
-	origCluster := filepath.Join(origRoot, "kubernetes/flux")
 
+	// The CLI lifts a subdir --path / --path-orig to its repo root before
+	// reaching the orchestrator (repoRootOf); here we pass the explicit
+	// roots directly. change.Detect runs root-to-root, so an edit in
+	// kubernetes/apps/foo — outside the scanned flux/ subdir — still
+	// enters the keep set, without any .git-ancestor "widen" heuristic.
 	o, err := orchestrator.New(orchestrator.Config{
 		Path:        currCluster,
-		PathOrig:    origCluster,
+		RepoRoot:    currRoot,
+		PathOrig:    origRoot,
 		WipeSecrets: true,
 	})
 	if err != nil {

@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"fmt"
 	"log/slog"
-	"path/filepath"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -67,63 +66,39 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	return nil
 }
 
-// computeChangeSet resolves --path / --path-orig, runs change.Detect,
-// and reroots the result into repoRoot's coordinate system. Returns
-// (nil, nil) when both paths resolve to the same directory (changed-
-// only mode would diff a tree against itself); the caller skips the
-// filter build in that case. Only reached when cfg.PathOrig != "".
+// computeChangeSet diffs the baseline source root (cfg.PathOrig) against
+// this side's source root (repoRoot) and returns the file-level change
+// set. Both are repo roots — the SAME coordinate system as repoRoot, so
+// the emitted paths line up with SourceFiles keys directly (no rerooting).
+// Returns (nil, nil) when the two roots resolve to the same directory
+// (changed-only mode would diff a tree against itself); the caller skips
+// the filter build then. Only reached when cfg.PathOrig != "".
+//
+// PathOrig carries the baseline's REPO ROOT (not a scan subdir): the CLI
+// resolves --base into a materialized tree root, and a subdir --path-orig
+// is lifted to its repo root before reaching here. That replaces the old
+// .git-ancestor "widen" heuristic — the policy of picking each side's root
+// now lives in the caller (internal/cli / RenderTrees), and this stays a
+// straight root-to-root diff.
 func (o *Orchestrator) computeChangeSet(repoRoot string) (*change.Set, error) {
-	origAbs, err := discovery.ResolveScanPath(o.cfg.PathOrig)
+	origRoot, err := discovery.ResolveScanPath(o.cfg.PathOrig)
 	if err != nil {
 		return nil, fmt.Errorf("--path-orig: %w", err)
 	}
-	currAbs, err := discovery.ResolveScanPath(o.cfg.Path)
-	if err != nil {
-		return nil, fmt.Errorf("--path: %w", err)
-	}
-	// Both paths resolved to the same directory (e.g. a symlink and
-	// its target, or literally the same arg twice). Changed-only mode
-	// would diff a tree against itself producing an empty change set.
-	// Skip filter build so the user's `--path-orig` typo doesn't
-	// silently render zero output.
-	if origAbs == currAbs {
-		slog.Warn("--path and --path-orig resolve to the same directory; ignoring --path-orig",
-			"resolved_path", currAbs)
+	// Both roots resolved to the same directory (e.g. a symlink and its
+	// target, or the same arg twice). Changed-only mode would diff a tree
+	// against itself producing an empty change set. Skip filter build so
+	// the user's `--path-orig` typo doesn't silently render zero output.
+	if origRoot == repoRoot {
+		slog.Warn("--path and --path-orig resolve to the same root; ignoring --path-orig",
+			"resolved_path", repoRoot)
 		return nil, nil
 	}
-	// Widen the diff scope to each side's .git root when the user
-	// pointed at sibling subdirs of separate checkouts — the
-	// canonical PR-vs-base-branch flow `flate diff ks --path
-	// pr/cluster --path-orig base/cluster` where the actual edits
-	// live in `apps/`, outside the cluster subdir. Diffing the
-	// literal subdirs would report zero changes even though the
-	// rendered output differs. We only widen when both sides resolve
-	// to .git roots that are (a) not the same root (one checkout,
-	// two subdirs is the deliberate subdir-vs-subdir case) and
-	// (b) actually distinct from the path the user passed (no .git
-	// ancestor → FindRepoRoot returns the path unchanged).
-	diffOrig, diffCurr := origAbs, currAbs
-	origRoot := discovery.FindRepoRoot(origAbs)
-	currRoot := discovery.FindRepoRoot(currAbs)
-	widened := origRoot != origAbs && currRoot != currAbs && origRoot != currRoot
-	if widened {
-		diffOrig, diffCurr = origRoot, currRoot
-	}
-	cs, err := change.Detect(diffOrig, diffCurr)
+	cs, err := change.Detect(origRoot, repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("change detect: %w", err)
 	}
-	// Detect emits paths relative to diffCurr. When we widened, that
-	// already equals repoRoot and SourceFiles keys line up. When we
-	// didn't, lift the subdir-relative paths into repoRoot's
-	// coordinate system so they match SourceFiles keys.
-	if !widened {
-		if rel, err := filepath.Rel(repoRoot, currAbs); err == nil && rel != "." {
-			cs = cs.Reroot(rel)
-		}
-	}
-	slog.Debug("changed-only mode",
-		"baseline", diffOrig, "current", diffCurr, "changed_files", cs.Len(), "widened_to_repo_root", widened)
+	slog.Debug("changed-only mode", "baseline", origRoot, "current", repoRoot, "changed_files", cs.Len())
 	if cs.Len() == 0 {
 		slog.Warn("no changes detected between --path and --path-orig — output will be empty; verify both paths reference distinct snapshots")
 	}

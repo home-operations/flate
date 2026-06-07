@@ -85,7 +85,15 @@ type Config struct {
 	// .git; the CLI defaults it to the .git ancestor of Path. Empty ⇒
 	// fall back to the .git walk (FindRepoRoot), preserving local
 	// behavior. Path must sit at or under RepoRoot.
-	RepoRoot    string
+	RepoRoot string
+	// SelfURLs are the remote URL(s) this tree represents. A user-authored
+	// GitRepository whose spec.url matches one of these is the cluster
+	// pulling itself; its artifact is aliased to the local tree
+	// (overrideSelfReferentialGitRepositories) so the offline render
+	// resolves it. Supplied explicitly by SDK consumers rendering
+	// extracted trees (no .git/config to read); empty ⇒ fall back to the
+	// working tree's .git remotes, preserving local behavior.
+	SelfURLs    []string
 	Store       *store.Store
 	WipeSecrets bool
 	// ComponentCache, when non-nil, memoizes

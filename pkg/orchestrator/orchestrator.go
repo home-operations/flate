@@ -45,6 +45,11 @@ type Config struct {
 	// ancestor of Path. Empty ⇒ the .git walk (FindRepoRoot) runs,
 	// preserving local behavior.
 	RepoRoot string
+	// SelfURLs are the remote URL(s) this tree represents, for
+	// self-referential GitRepository aliasing (a cluster pulling itself).
+	// Supplied explicitly by SDK consumers rendering extracted trees with
+	// no .git/config; empty ⇒ the working tree's .git remotes are read.
+	SelfURLs []string
 	// PathOrig, when non-empty, switches every command into
 	// changed-only mode: only resources whose source files differ
 	// (plus the sources they reference) get reconciled.
@@ -450,7 +455,8 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		return nil
 	}
 	res, err := discovery.Run(ctx, discovery.Config{
-		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
+		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
+		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
 		ComponentCache: o.componentCache,
 	})
 	if err != nil {

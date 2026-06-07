@@ -2,6 +2,36 @@ package discovery
 
 import "testing"
 
+// TestSelfRemotes_ExplicitURLsOverrideGitConfig confirms an SDK consumer
+// rendering an extracted tree (no .git/config) can supply the repo's
+// remote URLs via Config.SelfURLs — they are normalized the same way the
+// .git fallback would be, so self-referential GitRepository aliasing fires
+// without a working tree.
+func TestSelfRemotes_ExplicitURLsOverrideGitConfig(t *testing.T) {
+	d := &discoverer{cfg: Config{SelfURLs: []string{
+		"git@github.com:Owner/Repo.git", // canonicalizes to github.com/owner/repo
+		"not-a-remote",                  // rejected by normalizeGitURL → dropped
+	}}}
+	// repoRoot points nowhere real; with SelfURLs set it must NOT be read.
+	got := d.selfRemotes("/nonexistent")
+	if _, ok := got["github.com/owner/repo"]; !ok {
+		t.Errorf("explicit SelfURL not normalized into the set: %v", got)
+	}
+	if len(got) != 1 {
+		t.Errorf("expected exactly the one valid remote; got %v", got)
+	}
+}
+
+// TestSelfRemotes_EmptyFallsBackToGitConfig confirms the empty-SelfURLs
+// path is byte-identical to reading the working tree (here: a non-repo
+// path yields nil, the same as readWorkingTreeRemotes).
+func TestSelfRemotes_EmptyFallsBackToGitConfig(t *testing.T) {
+	d := &discoverer{cfg: Config{}}
+	if got := d.selfRemotes(t.TempDir()); got != nil {
+		t.Errorf("no SelfURLs + non-repo path should yield nil (git fallback); got %v", got)
+	}
+}
+
 // TestNormalizeGitURL_CanonicalForms exercises every URL shape the
 // bootstrap-alias URL-match heuristic needs to recognize as the same
 // remote. All four inputs below describe the same GitHub repository

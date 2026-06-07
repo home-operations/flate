@@ -10,6 +10,25 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 )
 
+// selfRemotes returns the normalized remote-URL set used to recognize a
+// self-referential GitRepository. When the caller supplied Config.SelfURLs
+// explicitly (an SDK consumer rendering an extracted tree with no
+// .git/config), those are used; otherwise it falls back to the working
+// tree's .git remotes — byte-identical to prior behavior when SelfURLs is
+// empty.
+func (d *discoverer) selfRemotes(repoRoot string) map[string]struct{} {
+	if len(d.cfg.SelfURLs) == 0 {
+		return readWorkingTreeRemotes(repoRoot)
+	}
+	out := make(map[string]struct{}, len(d.cfg.SelfURLs))
+	for _, u := range d.cfg.SelfURLs {
+		if n := normalizeGitURL(u); n != "" {
+			out[n] = struct{}{}
+		}
+	}
+	return out
+}
+
 // readWorkingTreeRemotes returns the set of remote URLs configured on
 // the git repository at repoRoot, normalized for comparison against
 // Flux GitRepository.spec.url. Returns nil if repoRoot is not a git

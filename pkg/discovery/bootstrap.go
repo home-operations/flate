@@ -130,7 +130,7 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 // always rejects. A pass-1 alias can never URL-match a working-tree
 // remote, so the URL-match filter below is the natural guard.
 func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string) []manifest.NamedResource {
-	remotes := readWorkingTreeRemotes(repoRoot)
+	remotes := d.selfRemotes(repoRoot)
 	debugLogRemotes(remotes)
 	if len(remotes) == 0 {
 		return nil

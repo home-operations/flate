@@ -27,15 +27,9 @@ func (h *HelmRepository) RepoName() string { return h.Named().FluxResourceName()
 // parseHelmRepository decodes a HelmRepository CR via the
 // source-controller typed schema.
 func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {
-	if err := checkAPIVersion(doc, SourceDomain); err != nil {
-		return nil, err
-	}
 	var cr sourcev1.HelmRepository
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("HelmRepository decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("HelmRepository missing metadata.name")
+	if err := decodeCR(doc, &cr, "HelmRepository", SourceDomain); err != nil {
+		return nil, err
 	}
 	if cr.Spec.URL == "" {
 		return nil, inputf("HelmRepository missing spec.url")

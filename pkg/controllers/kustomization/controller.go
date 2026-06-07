@@ -322,16 +322,11 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 		deps = append(deps, manifest.DependencyRef{NamedResource: parent})
 	}
 	for _, ref := range ks.PostBuildSubstituteFrom {
-		if ref.Optional {
-			// Optional refs are best-effort — their absence shouldn't
-			// gate reconcile. Matches Flux's own substituteFrom
-			// semantics for Optional=true.
-			continue
-		}
-		if ref.Kind != manifest.KindConfigMap {
-			continue
-		}
-		if ref.Name == "" {
+		// Shared with change.transitiveDepsOf via manifest.IsHardConfigMapEdge:
+		// only a non-Optional, named ConfigMap is a hard offline edge (Optional
+		// is best-effort, Secrets are SOPS/ExternalSecret-managed). Keep-set and
+		// reconcile ordering MUST agree on this — see the predicate's doc + #418.
+		if !manifest.IsHardConfigMapEdge(ref) {
 			continue
 		}
 		depID := manifest.NamedResource{Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name}

@@ -2,7 +2,10 @@ package manifest
 
 import (
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 
 	yaml "go.yaml.in/yaml/v4"
@@ -108,4 +111,71 @@ func (c *ComponentCache) Get(repoRoot, base string) []string {
 	c.cache[key] = v
 	c.mu.Unlock()
 	return v
+}
+
+// KSClaim pairs a Flux Kustomization id with one of its slash-terminated,
+// repo-relative claimed-path prefixes. A KS claims its spec.path plus one
+// prefix per spec.components entry and per on-disk `components:` entry; the
+// same ID across multiple prefixes is intentional (the deepest claim wins
+// in a longest-prefix lookup).
+type KSClaim struct {
+	ID     NamedResource
+	Prefix string
+}
+
+// BuildKSClaims constructs the canonical longest-prefix-first KS claim
+// index shared by loader's parent index (loader.KSPathPrefixesWithCache)
+// and change's ownership index (change.buildOwnership). Both previously
+// hand-rolled this identical construction — spec.path + spec.components +
+// on-disk `components:` (via ReadKustomizeComponents/ComponentCache), with
+// the same reject/clean resolver — guarded only by "must agree" comments,
+// and had drifted (ToSlash vs not; SortFunc vs SortStableFunc). This is the
+// one source of truth; callers map KSClaim onto their own claim type and
+// keep their divergent LOOKUP semantics (loader's single-strict-parent vs
+// change's multi-owner+ancestors).
+//
+// repoRoot is the filesystem root on-disk component reads resolve against;
+// "" skips them (spec.path + spec.components only) — preserving loader's
+// guard against cwd-relative reads. cache may be nil (Get falls through to
+// an uncached read). Output sorted by prefix length descending, stably.
+func BuildKSClaims(kss []*Kustomization, repoRoot string, cache *ComponentCache) []KSClaim {
+	claims := make([]KSClaim, 0, len(kss))
+	add := func(id NamedResource, base, ref string) {
+		if ref == "" || strings.Contains(ref, "://") || filepath.IsAbs(ref) {
+			return
+		}
+		resolved := path.Clean(path.Join(base, ref))
+		if resolved == "." || strings.HasPrefix(resolved, "..") {
+			return
+		}
+		claims = append(claims, KSClaim{ID: id, Prefix: resolved + "/"})
+	}
+	for _, ks := range kss {
+		if ks.Path == "" {
+			continue
+		}
+		id := ks.Named()
+		base := normalizeClaimBase(ks.Path)
+		claims = append(claims, KSClaim{ID: id, Prefix: base + "/"})
+		for _, comp := range ks.Components {
+			add(id, base, comp)
+		}
+		if repoRoot != "" {
+			for _, comp := range cache.Get(repoRoot, base) {
+				add(id, base, comp)
+			}
+		}
+	}
+	slices.SortStableFunc(claims, func(a, b KSClaim) int { return len(b.Prefix) - len(a.Prefix) })
+	return claims
+}
+
+// normalizeClaimBase turns a Kustomization spec.path into a clean,
+// slash-separated, repo-relative base with no trailing slash. ToSlash is
+// applied so Windows-style spec.path values (rare, but unconstrained by the
+// Flux CRD) normalize to the same shape as SourceFiles keys.
+func normalizeClaimBase(p string) string {
+	p = filepath.ToSlash(p)
+	p = strings.TrimPrefix(p, "./")
+	return strings.TrimSuffix(p, "/")
 }

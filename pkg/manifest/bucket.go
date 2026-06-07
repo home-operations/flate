@@ -35,15 +35,9 @@ func (b *Bucket) Suspended() bool { return b.Suspend }
 // parseBucket decodes a Bucket CR via the source-controller typed
 // schema.
 func parseBucket(doc map[string]any) (*Bucket, error) {
-	if err := checkAPIVersion(doc, SourceDomain); err != nil {
-		return nil, err
-	}
 	var cr sourcev1.Bucket
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("Bucket decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("Bucket missing metadata.name")
+	if err := decodeCR(doc, &cr, "Bucket", SourceDomain); err != nil {
+		return nil, err
 	}
 	if cr.Spec.BucketName == "" {
 		return nil, inputf("Bucket %s/%s missing spec.bucketName", cr.Namespace, cr.Name)

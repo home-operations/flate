@@ -177,15 +177,9 @@ func (k *Kustomization) SetTargetNamespace(ns string) {
 // Contents because RenderFlux still feeds it to fluxcd/pkg/kustomize
 // as an unstructured.Unstructured.
 func parseKustomization(doc map[string]any) (*Kustomization, error) {
-	if err := checkAPIVersion(doc, FluxKustomizeDomain); err != nil {
-		return nil, err
-	}
 	var cr kustomizev1.Kustomization
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("Kustomization decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("Kustomization missing metadata.name")
+	if err := decodeCR(doc, &cr, "Kustomization", FluxKustomizeDomain); err != nil {
+		return nil, err
 	}
 	// Pre-resolve envsubst defaults so flate's path / dep resolution
 	// matches what real Flux's postBuild.substitute would produce.

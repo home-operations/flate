@@ -1,9 +1,6 @@
 package change
 
 import (
-	"path"
-	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -46,52 +43,23 @@ type ownershipIndex struct {
 // here. nil cache falls back to a per-call local map; behavior is
 // identical, just without cross-call sharing.
 func buildOwnership(objs ObjectLister, repoRoot string, cache *manifest.ComponentCache) ownershipIndex {
-	ksList := objs.ListObjects(manifest.KindKustomization)
-	// Each KS contributes at least one claim (its own spec.path) plus a
-	// variable number of component paths. Pre-allocate for the base case
-	// to avoid repeated backing-array copies during the append loop.
-	claims := make([]ksClaim, 0, len(ksList))
-	add := func(id manifest.NamedResource, base, ref string) {
-		if ref == "" || strings.Contains(ref, "://") || filepath.IsAbs(ref) {
-			return
-		}
-		resolved := path.Clean(path.Join(base, ref))
-		if resolved == "." || strings.HasPrefix(resolved, "..") {
-			return
-		}
-		claims = append(claims, ksClaim{id: id, path: resolved + "/"})
-	}
-	// Local cache backs the nil-shared-cache path so multi-KS calls
-	// that share a spec.path still dedup. When the caller supplies a
-	// shared cache, ComponentCache.Get already handles dedup.
-	localCache := make(map[string][]string)
-	for _, obj := range ksList {
-		ks, ok := obj.(*manifest.Kustomization)
-		if !ok || ks.Path == "" {
-			continue
-		}
-		id := ks.Named()
-		base := normalizeKSPath(ks.Path)
-		claims = append(claims, ksClaim{id: id, path: base + "/"})
-		for _, comp := range ks.Components {
-			add(id, base, comp)
-		}
-		var comps []string
-		if cache != nil {
-			comps = cache.Get(repoRoot, base)
-		} else {
-			var ok bool
-			comps, ok = localCache[base]
-			if !ok {
-				comps = manifest.ReadKustomizeComponents(repoRoot, base)
-				localCache[base] = comps
-			}
-		}
-		for _, comp := range comps {
-			add(id, base, comp)
+	objList := objs.ListObjects(manifest.KindKustomization)
+	kss := make([]*manifest.Kustomization, 0, len(objList))
+	for _, obj := range objList {
+		if ks, ok := obj.(*manifest.Kustomization); ok {
+			kss = append(kss, ks)
 		}
 	}
-	slices.SortStableFunc(claims, func(a, b ksClaim) int { return len(b.path) - len(a.path) })
+	// Construction is single-sourced in manifest.BuildKSClaims so it can't
+	// drift from loader's parent index (the two are documented must-agree
+	// invariants). This side keeps only the multi-owner ownersOf/ancestorsOf
+	// lookup semantics below. (BuildKSClaims gates on-disk component reads on
+	// repoRoot != "" — a no-op here since resolve always passes a real root.)
+	mclaims := manifest.BuildKSClaims(kss, repoRoot, cache)
+	claims := make([]ksClaim, len(mclaims))
+	for i, c := range mclaims {
+		claims[i] = ksClaim{id: c.ID, path: c.Prefix}
+	}
 	return ownershipIndex{
 		claims:         claims,
 		ownersCache:    make(map[string][]manifest.NamedResource),
@@ -161,11 +129,4 @@ func (idx ownershipIndex) ancestorsOf(file string) []manifest.NamedResource {
 	}
 	idx.ancestorsCache[file] = ancestors
 	return ancestors
-}
-
-// normalizeKSPath strips the conventional `./` prefix and any trailing
-// slash so KS paths can be compared as plain string prefixes.
-func normalizeKSPath(p string) string {
-	p = strings.TrimPrefix(p, "./")
-	return strings.TrimSuffix(p, "/")
 }

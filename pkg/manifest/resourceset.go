@@ -43,15 +43,9 @@ func (r *ResourceSet) GetLabels() map[string]string { return r.Labels }
 // parseResourceSet decodes a ResourceSet CR via the flux-operator
 // typed schema (controlplane.io/v1).
 func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
-	if err := checkAPIVersion(doc, FluxOperatorDomain); err != nil {
-		return nil, err
-	}
 	var cr fluxopv1.ResourceSet
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("ResourceSet decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("ResourceSet missing metadata.name")
+	if err := decodeCR(doc, &cr, "ResourceSet", FluxOperatorDomain); err != nil {
+		return nil, err
 	}
 	return &ResourceSet{
 		Name:            cr.Name,
@@ -91,15 +85,9 @@ func (p *ResourceSetInputProvider) GetLabels() map[string]string { return p.Labe
 
 // parseResourceSetInputProvider decodes a ResourceSetInputProvider CR.
 func parseResourceSetInputProvider(doc map[string]any) (*ResourceSetInputProvider, error) {
-	if err := checkAPIVersion(doc, FluxOperatorDomain); err != nil {
-		return nil, err
-	}
 	var cr fluxopv1.ResourceSetInputProvider
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("ResourceSetInputProvider decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("ResourceSetInputProvider missing metadata.name")
+	if err := decodeCR(doc, &cr, "ResourceSetInputProvider", FluxOperatorDomain); err != nil {
+		return nil, err
 	}
 	return &ResourceSetInputProvider{
 		Name:                         cr.Name,

@@ -3,9 +3,11 @@ package manifest
 import (
 	"encoding/json"
 	"strings"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// decodeTyped re-marshals a parsed YAML document into a typed Flux CR
+// decodeInto re-marshals a parsed YAML document into a typed Flux CR
 // via a JSON round-trip. The Flux API types use the same JSON tags
 // k8s uses to serialize their CRDs, so this matches `kubectl apply`'s
 // decoding fidelity without keeping the raw YAML bytes around.
@@ -13,12 +15,30 @@ import (
 // Per-document cost is ~one marshal + one unmarshal; documents are
 // small (a single CR) and this only runs during the load phase, not on
 // the render hot path.
-func decodeTyped[T any](doc map[string]any, out *T) error {
+func decodeInto(doc map[string]any, out any) error {
 	raw, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}
 	return json.Unmarshal(raw, out)
+}
+
+// decodeCR runs the shared typed-CR decode preamble: API-version
+// check, JSON round-trip into cr, and a non-empty metadata.name
+// check. cr must be a pointer to a Flux CR type (all embed
+// metav1.ObjectMeta, so GetName() is available). Centralizes the
+// identical opening previously hand-copied across the typed parsers.
+func decodeCR(doc map[string]any, cr metav1.Object, kind, domain string) error {
+	if err := checkAPIVersion(doc, domain); err != nil {
+		return err
+	}
+	if err := decodeInto(doc, cr); err != nil {
+		return inputf("%s decode: %w", kind, err)
+	}
+	if cr.GetName() == "" {
+		return inputf("%s missing metadata.name", kind)
+	}
+	return nil
 }
 
 // DocKind returns the "kind" field of a manifest document, or "" if absent.

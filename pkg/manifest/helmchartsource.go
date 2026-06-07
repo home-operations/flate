@@ -25,15 +25,9 @@ func (h *HelmChartSource) Named() NamedResource {
 // parseHelmChartSource decodes a standalone HelmChart CRD via the
 // source-controller typed schema.
 func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
-	if err := checkAPIVersion(doc, SourceDomain); err != nil {
-		return nil, err
-	}
 	var cr sourcev1.HelmChart
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("HelmChart decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("HelmChart missing metadata.name")
+	if err := decodeCR(doc, &cr, "HelmChart", SourceDomain); err != nil {
+		return nil, err
 	}
 	if cr.Spec.Chart == "" {
 		return nil, inputf("HelmChart missing spec.chart")

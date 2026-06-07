@@ -812,11 +812,11 @@ func transitiveDepsOf(obj manifest.BaseManifest) []manifest.NamedResource {
 			})
 		}
 		for _, ref := range o.PostBuildSubstituteFrom {
-			// Mirrors collectDeps in pkg/controllers/kustomization:
-			// Optional refs are best-effort; Secrets are SOPS/ExternalSecret-
-			// managed and can't be materialized offline; empty Name is
-			// malformed. See #418.
-			if ref.Optional || ref.Kind != manifest.KindConfigMap || ref.Name == "" {
+			// Shared with collectDeps in pkg/controllers/kustomization via
+			// manifest.IsHardConfigMapEdge — keep-set membership and reconcile
+			// ordering MUST agree on which substituteFrom refs are hard edges
+			// (see the predicate's doc + #418).
+			if !manifest.IsHardConfigMapEdge(ref) {
 				continue
 			}
 			out = append(out, manifest.NamedResource{

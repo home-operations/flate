@@ -288,15 +288,9 @@ func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
 // typed schema (helm-controller/api/v2). The chart vs chartRef
 // normalization is preserved by chartFromHelmRelease.
 func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
-	if err := checkAPIVersion(doc, HelmReleaseDomain); err != nil {
-		return nil, err
-	}
 	var cr helmv2.HelmRelease
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("HelmRelease decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("HelmRelease missing metadata.name")
+	if err := decodeCR(doc, &cr, "HelmRelease", HelmReleaseDomain); err != nil {
+		return nil, err
 	}
 	// Resolve ${VAR:=default} / ${VAR:-default} on valuesFrom refs,
 	// mirroring the Kustomization spec.path / dependsOn precedent

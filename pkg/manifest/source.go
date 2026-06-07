@@ -110,15 +110,9 @@ func validateOptionalRefs(kind, owner string, checks ...secretRefCheck) error {
 // schema (source-controller/api/v1), then projects the fields flate
 // uses into the local struct.
 func parseGitRepository(doc map[string]any) (*GitRepository, error) {
-	if err := checkAPIVersion(doc, SourceDomain); err != nil {
-		return nil, err
-	}
 	var cr sourcev1.GitRepository
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("GitRepository decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("GitRepository missing metadata.name")
+	if err := decodeCR(doc, &cr, "GitRepository", SourceDomain); err != nil {
+		return nil, err
 	}
 	if cr.Spec.URL == "" {
 		return nil, inputf("GitRepository missing spec.url")
@@ -213,15 +207,9 @@ func (o *OCIRepository) Version() string {
 
 // ParseOCIRepository decodes an OCIRepository CR.
 func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
-	if err := checkAPIVersion(doc, SourceDomain); err != nil {
-		return nil, err
-	}
 	var cr sourcev1.OCIRepository
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("OCIRepository decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("OCIRepository missing metadata.name")
+	if err := decodeCR(doc, &cr, "OCIRepository", SourceDomain); err != nil {
+		return nil, err
 	}
 	if cr.Spec.URL == "" {
 		return nil, inputf("OCIRepository missing spec.url")
@@ -296,15 +284,9 @@ func (e *ExternalArtifact) Suspended() bool { return false }
 // parseExternalArtifact decodes an ExternalArtifact CR via the
 // source-controller typed schema.
 func parseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
-	if err := checkAPIVersion(doc, SourceDomain); err != nil {
-		return nil, err
-	}
 	var cr sourcev1.ExternalArtifact
-	if err := decodeTyped(doc, &cr); err != nil {
-		return nil, inputf("ExternalArtifact decode: %w", err)
-	}
-	if cr.Name == "" {
-		return nil, inputf("ExternalArtifact missing metadata.name")
+	if err := decodeCR(doc, &cr, "ExternalArtifact", SourceDomain); err != nil {
+		return nil, err
 	}
 	out := &ExternalArtifact{
 		Name:                 cr.Name,

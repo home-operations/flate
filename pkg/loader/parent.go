@@ -1,10 +1,7 @@
 package loader
 
 import (
-	"cmp"
-	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -68,53 +65,16 @@ type KSPathPrefix struct {
 // cache so a single call doesn't re-read the same kustomization.yaml
 // across KSes that share a spec.path.
 func KSPathPrefixesWithCache(s *store.Store, repoRoot string, cache *manifest.ComponentCache) []KSPathPrefix {
-	var out []KSPathPrefix
-	// Local cache backs the nil-shared-cache path so multi-KS calls
-	// that share a spec.path still dedup. When the caller supplies a
-	// shared cache, ComponentCache.Get already handles dedup and the
-	// local map is unused.
-	localCache := make(map[string][]string)
-	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
-		if ks.Path == "" {
-			continue
-		}
-		id := ks.Named()
-		base := NormalizePrefix(ks.Path)
-		out = append(out, KSPathPrefix{ID: id, Prefix: base})
-		addComponent := func(ref string) {
-			if ref == "" || strings.Contains(ref, "://") || filepath.IsAbs(ref) {
-				return
-			}
-			resolved := path.Clean(path.Join(strings.TrimSuffix(base, "/"), ref))
-			if resolved == "." || strings.HasPrefix(resolved, "..") {
-				return
-			}
-			out = append(out, KSPathPrefix{ID: id, Prefix: resolved + "/"})
-		}
-		for _, comp := range ks.Components {
-			addComponent(comp)
-		}
-		if repoRoot != "" {
-			baseTrimmed := strings.TrimSuffix(base, "/")
-			var comps []string
-			if cache != nil {
-				comps = cache.Get(repoRoot, baseTrimmed)
-			} else {
-				var ok bool
-				comps, ok = localCache[baseTrimmed]
-				if !ok {
-					comps = manifest.ReadKustomizeComponents(repoRoot, baseTrimmed)
-					localCache[baseTrimmed] = comps
-				}
-			}
-			for _, comp := range comps {
-				addComponent(comp)
-			}
-		}
+	// Thin adapter over the canonical builder in pkg/manifest — the claim
+	// construction (spec.path + spec.components + on-disk components:, the
+	// reject/clean resolver, longest-first sort) is single-sourced there so
+	// it can't drift from change.buildOwnership. This side keeps only the
+	// KSPathPrefix shape and the LongestParent lookup semantics.
+	claims := manifest.BuildKSClaims(store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization), repoRoot, cache)
+	out := make([]KSPathPrefix, len(claims))
+	for i, c := range claims {
+		out[i] = KSPathPrefix{ID: c.ID, Prefix: c.Prefix}
 	}
-	slices.SortFunc(out, func(a, b KSPathPrefix) int {
-		return cmp.Compare(len(b.Prefix), len(a.Prefix))
-	})
 	return out
 }
 

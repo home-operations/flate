@@ -129,14 +129,13 @@ func parseGitURL(raw string) (host, path string, ok bool) {
 	// when no `@`) separates host from path. Anything that doesn't
 	// match this shape is treated as a local path and rejected.
 	rest := raw
-	if at := strings.Index(rest, "@"); at >= 0 {
-		rest = rest[at+1:]
+	if _, after, ok := strings.Cut(rest, "@"); ok {
+		rest = after
 	}
-	colon := strings.Index(rest, ":")
-	if colon <= 0 {
+	host, path, ok = strings.Cut(rest, ":")
+	if !ok || host == "" {
 		return "", "", false
 	}
-	host, path = rest[:colon], rest[colon+1:]
 	if strings.ContainsAny(host, "/\\") {
 		// Looks like a relative path containing a colon, not
 		// host:path. Reject.

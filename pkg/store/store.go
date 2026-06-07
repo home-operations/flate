@@ -489,31 +489,15 @@ func (s *Store) GetByName(kind, namespace, name string) manifest.BaseManifest {
 // so without sorting the same file can be attributed to different
 // KS owners on different runs.
 func (s *Store) ListObjects(kind string) []manifest.BaseManifest {
-	var out []manifest.BaseManifest
 	if kind != "" {
 		sh := s.shardForKind(kind)
 		sh.mu.RLock()
 		inner := sh.byName[kind]
-		out = make([]manifest.BaseManifest, 0, len(inner))
+		out := make([]manifest.BaseManifest, 0, len(inner))
 		for _, obj := range inner {
 			out = append(out, obj)
 		}
 		sh.mu.RUnlock()
-	} else {
-		s.rLockAll()
-		total := 0
-		for i := range s.shards {
-			total += len(s.shards[i].objects)
-		}
-		out = make([]manifest.BaseManifest, 0, total)
-		for i := range s.shards {
-			for _, obj := range s.shards[i].objects {
-				out = append(out, obj)
-			}
-		}
-		s.rUnlockAll()
-	}
-	if kind != "" {
 		// All results share the queried Kind (byName[kind] index), so
 		// NamedResource.Compare's leading Kind comparison is always 0 here.
 		// Sort by (Namespace, Name) directly — identical order, one fewer
@@ -523,10 +507,23 @@ func (s *Store) ListObjects(kind string) []manifest.BaseManifest {
 			an, bn := a.Named(), b.Named()
 			return cmp.Or(cmp.Compare(an.Namespace, bn.Namespace), cmp.Compare(an.Name, bn.Name))
 		})
-	} else {
-		slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
-			return a.Named().Compare(b.Named())
-		})
+		return out
 	}
+
+	s.rLockAll()
+	total := 0
+	for i := range s.shards {
+		total += len(s.shards[i].objects)
+	}
+	out := make([]manifest.BaseManifest, 0, total)
+	for i := range s.shards {
+		for _, obj := range s.shards[i].objects {
+			out = append(out, obj)
+		}
+	}
+	s.rUnlockAll()
+	slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
+		return a.Named().Compare(b.Named())
+	})
 	return out
 }

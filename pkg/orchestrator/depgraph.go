@@ -203,18 +203,10 @@ func (g *dependencyGraph) findPathLocked(
 }
 
 // sortedNeighbors returns the keys of edges in deterministic order
-// (NamedResource.Compare). Empty input returns nil so callers can
-// range over the result safely.
+// (NamedResource.Compare). Callers range over the result, so an empty
+// edge set yielding an empty slice is safe.
 func sortedNeighbors(edges map[manifest.NamedResource]struct{}) []manifest.NamedResource {
-	if len(edges) == 0 {
-		return nil
-	}
-	out := make([]manifest.NamedResource, 0, len(edges))
-	for k := range edges {
-		out = append(out, k)
-	}
-	slices.SortFunc(out, manifest.NamedResource.Compare)
-	return out
+	return slices.SortedFunc(maps.Keys(edges), manifest.NamedResource.Compare)
 }
 
 // revalidateFailedLocked walks every currently-failed node and checks
@@ -230,11 +222,7 @@ func (g *dependencyGraph) revalidateFailedLocked() {
 		return
 	}
 	// Snapshot keys so we can delete while iterating.
-	ids := make([]manifest.NamedResource, 0, len(g.failed))
-	for id := range g.failed {
-		ids = append(ids, id)
-	}
-	for _, id := range ids {
+	for _, id := range slices.Collect(maps.Keys(g.failed)) {
 		if _, ok := g.findPathLocked(id, id); !ok {
 			delete(g.failed, id)
 		}

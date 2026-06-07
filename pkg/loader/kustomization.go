@@ -81,11 +81,7 @@ var kustomizationFileNames = [3]string{
 // the real error later with better context than the loader can.
 //
 // The caller hands the returned path forward to walkKustomize /
-// walkComponentData so they don't open the same file again. Before
-// the dedup, descend opened the kustomization.yaml once here, then
-// kustomizationFilePath stat'd it for the generator harvest, then
-// walkKustomize re-stat'd it to load the file itself — three opens
-// of the same path per package directory.
+// walkComponentData so they don't open the same file again.
 func readKustomizationAt(dir string) (*kustomization, string) {
 	for _, name := range kustomizationFileNames {
 		path := filepath.Join(dir, name)

@@ -137,17 +137,14 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 		slices.SortStableFunc(docs, compareDocs)
 		if b.onlyCRDs {
 			docs = filterCRDsOnly(docs)
-			if len(docs) == 0 {
-				continue
-			}
 		} else {
 			// Defensive re-drop. Orchestrator.Render already filters
 			// Result.Manifests at the embed boundary using the same
 			// kind set, so this is a no-op for the normal CLI path.
 			docs = manifest.DropKinds(docs, skipKinds)
-			if len(docs) == 0 {
-				continue
-			}
+		}
+		if len(docs) == 0 {
+			continue
 		}
 		out = append(out, docs...)
 	}

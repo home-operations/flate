@@ -168,7 +168,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 			return nil, err
 		}
 	}
-	if err := applyLayerSelector(slot.Path, desc.Digest.String(), repo.LayerSelector); err != nil {
+	if err := applyLayerSelector(slot.Path, digest, repo.LayerSelector); err != nil {
 		return nil, fmt.Errorf("OCIRepository %s/%s: layer select: %w", repo.Namespace, repo.Name, err)
 	}
 	// Source-controller's default ignore set includes `*.tar.gz`. For

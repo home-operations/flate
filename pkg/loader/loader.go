@@ -105,7 +105,7 @@ type Loader struct {
 	// finalize detectOrphans, and change.buildOwnership all read each
 	// kustomization.yaml's `components:` field at most once per
 	// Bootstrap. nil falls back to per-call caches with no cross-call
-	// sharing (the pre-1.A behavior).
+	// sharing.
 	ComponentCache *manifest.ComponentCache
 
 	// generators accumulates configMapGenerator/secretGenerator
@@ -233,11 +233,7 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 
 	// readKustomizationAt returns the resolved file path alongside the
 	// parsed body so descend can hand both forward to walkKustomize /
-	// walkComponentData without a second kustomizationFilePath stat.
-	// Before this dedup, every package directory cost three opens of
-	// the same kustomization.yaml: readKustomization here,
-	// kustomizationFilePath for the generator harvest, then
-	// kustomizationFilePath again inside walkKustomize.
+	// walkComponentData without re-opening the same kustomization.yaml.
 	k, kpath := readKustomizationAt(dir)
 	if k != nil {
 		// Harvest configMapGenerator/secretGenerator entries

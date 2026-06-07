@@ -46,24 +46,19 @@ func collectGeneratorRecords(k *kustomization, file string) []generatorRecord {
 		return nil
 	}
 	out := make([]generatorRecord, 0, len(k.ConfigMapGenerator)+len(k.SecretGenerator))
-	for _, g := range k.ConfigMapGenerator {
-		if g.Name == "" {
-			continue
+	collect := func(entries []kvPairGenerator, isConfigMap bool) {
+		for _, g := range entries {
+			if g.Name == "" {
+				continue
+			}
+			out = append(out, generatorRecord{
+				file: file, kustomizationNS: k.Namespace, entryNS: g.Namespace,
+				isConfigMap: isConfigMap, name: g.Name, literals: g.Literals,
+			})
 		}
-		out = append(out, generatorRecord{
-			file: file, kustomizationNS: k.Namespace, entryNS: g.Namespace,
-			isConfigMap: true, name: g.Name, literals: g.Literals,
-		})
 	}
-	for _, g := range k.SecretGenerator {
-		if g.Name == "" {
-			continue
-		}
-		out = append(out, generatorRecord{
-			file: file, kustomizationNS: k.Namespace, entryNS: g.Namespace,
-			isConfigMap: false, name: g.Name, literals: g.Literals,
-		})
-	}
+	collect(k.ConfigMapGenerator, true)
+	collect(k.SecretGenerator, false)
 	return out
 }
 

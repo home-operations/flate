@@ -91,8 +91,5 @@ func toYaml(v any) string {
 // this when the template is willing to fail loudly on malformed inputs.
 func mustToYaml(v any) (string, error) {
 	out, err := yaml.Marshal(v)
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
+	return string(out), err
 }

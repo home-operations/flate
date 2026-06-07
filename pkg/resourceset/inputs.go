@@ -75,12 +75,7 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 	groups := make([]providerInputs, 0, 1+len(rs.InputsFrom))
 
 	// Provider 0: the ResourceSet itself with its inline spec.inputs.
-	inlineProv := map[string]any{
-		"apiVersion": fluxopv1.GroupVersion.String(),
-		"kind":       manifest.KindResourceSet,
-		"name":       rs.Name,
-		"namespace":  rs.Namespace,
-	}
+	inlineProv := providerBlock(manifest.KindResourceSet, rs.Name, rs.Namespace)
 	inline := make([]map[string]any, 0, len(rs.Inputs))
 	for _, in := range rs.Inputs {
 		decoded := decodeInputSet(in)
@@ -131,12 +126,7 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 				"provider", p.Named().NamespacedName(),
 				"type", p.Type)
 		}
-		provBlock := map[string]any{
-			"apiVersion": fluxopv1.GroupVersion.String(),
-			"kind":       manifest.KindResourceSetInputProvider,
-			"name":       p.Name,
-			"namespace":  p.Namespace,
-		}
+		provBlock := providerBlock(manifest.KindResourceSetInputProvider, p.Name, p.Namespace)
 		pInputs := make([]map[string]any, 0, len(exported))
 		for _, set := range exported {
 			set["provider"] = provBlock
@@ -145,6 +135,17 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 		groups = append(groups, providerInputs{name: p.Name, inputs: pInputs})
 	}
 	return groups, nil
+}
+
+// providerBlock builds the `provider` block stamped onto each input set
+// so templates can recover which CR sourced the values.
+func providerBlock(kind, name, namespace string) map[string]any {
+	return map[string]any{
+		"apiVersion": fluxopv1.GroupVersion.String(),
+		"kind":       kind,
+		"name":       name,
+		"namespace":  namespace,
+	}
 }
 
 func decodeInputSet(in fluxopv1.ResourceSetInput) map[string]any {

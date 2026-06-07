@@ -37,7 +37,7 @@ func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
 			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
 	}
 	path := filepath.Join(art.LocalPath, hr.Chart.Name)
-	if _, err := os.Stat(filepath.Join(path, "Chart.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(path, chartYamlFilename)); err != nil {
 		return "", fmt.Errorf("chart not found at %s: %w", path, err)
 	}
 	return path, nil

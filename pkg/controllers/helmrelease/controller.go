@@ -304,7 +304,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// dedup gate (a re-emit that finds the prior fingerprint cached must not
 	// replay stale docs over a source that has since failed or soft-skipped
 	// via --allow-missing-secrets).
-	if err := c.awaitChartSource(ctx, id, hr, chartSourceID(hr)); err != nil {
+	if err := c.awaitChartSource(ctx, id, hr); err != nil {
 		return err
 	}
 	// A HelmRepository is just a registry/index base — its chart has no
@@ -317,7 +317,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// dance.
 	hr, repointed := c.materializeHelmChartSource(id, hr)
 	if repointed {
-		if err := c.awaitChartSource(ctx, id, hr, chartSourceID(hr)); err != nil {
+		if err := c.awaitChartSource(ctx, id, hr); err != nil {
 			return err
 		}
 	}
@@ -391,11 +391,12 @@ func chartSourceID(hr *manifest.HelmRelease) manifest.NamedResource {
 	}
 }
 
-// awaitChartSource blocks until srcID reaches Ready, then propagates a
-// soft-skip (--allow-missing-secrets on the source's auth marks it Ready but
-// writes no artifact, so fail here rather than letting the render fail later
-// with a confusing chart-not-found).
-func (c *Controller) awaitChartSource(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease, srcID manifest.NamedResource) error {
+// awaitChartSource blocks until hr's current chart source reaches Ready, then
+// propagates a soft-skip (--allow-missing-secrets on the source's auth marks it
+// Ready but writes no artifact, so fail here rather than letting the render fail
+// later with a confusing chart-not-found).
+func (c *Controller) awaitChartSource(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease) error {
+	srcID := chartSourceID(hr)
 	if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout),
 		[]manifest.DependencyRef{{NamedResource: srcID}},
 		"", // status already set by the caller

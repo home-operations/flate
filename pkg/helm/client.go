@@ -433,7 +433,7 @@ func chartCacheFingerprint(path string) (mtime, size int64, ok bool) {
 	if !info.IsDir() {
 		return info.ModTime().UnixNano(), info.Size(), true
 	}
-	cy, err := os.Stat(filepath.Join(path, "Chart.yaml"))
+	cy, err := os.Stat(filepath.Join(path, chartYamlFilename))
 	if err != nil {
 		return 0, 0, false
 	}

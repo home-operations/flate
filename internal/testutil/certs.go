@@ -13,10 +13,9 @@ import (
 )
 
 // certValidity is the lifetime stamped on every test cert. 24h
-// generously covers any test run while still bounding the practical
+// generously covers any test run (including long-running integration
+// tests against frozen clocks) while still bounding the practical
 // window for a leaked fixture if someone pastes the cert somewhere.
-// Previously 1h, which flaked on slow CI runners — long-running
-// integration tests against frozen clocks could expire mid-run.
 const certValidity = 24 * time.Hour
 
 // randomSerial returns a 128-bit random serial — different on every

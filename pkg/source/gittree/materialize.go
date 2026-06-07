@@ -199,7 +199,7 @@ func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, n
 	}
 	data, err := objects.blobBytes(entry.Hash, name)
 	if err != nil {
-		return fmt.Errorf("read blob %q: %w", name, err)
+		return err
 	}
 	if err := os.WriteFile(dst, data, perm); err != nil { //nolint:gosec // dst is built from the tree's commit object under the caller's root
 		return fmt.Errorf("write %s: %w", dst, err)

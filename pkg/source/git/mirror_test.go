@@ -82,22 +82,22 @@ func TestMirror_FallsBackForSubmodules(t *testing.T) {
 			URL: "https://example.com/x", RecurseSubmodules: true,
 		},
 	}
-	if f.canUseMirror(repo, "https://example.com/x") {
+	if f.canUseMirror(repo) {
 		t.Error("RecurseSubmodules should disable the mirror path")
 	}
 	repo.RecurseSubmodules = false
 	repo.SparseCheckout = []string{"sub/"}
-	if f.canUseMirror(repo, "https://example.com/x") {
+	if f.canUseMirror(repo) {
 		t.Error("SparseCheckout should disable the mirror path")
 	}
 	repo.SparseCheckout = nil
-	if !f.canUseMirror(repo, "https://example.com/x") {
+	if !f.canUseMirror(repo) {
 		t.Error("vanilla fetch should be mirror-eligible")
 	}
 
 	// Nil Mirrors → legacy.
 	f2 := &Fetcher{}
-	if f2.canUseMirror(repo, "https://example.com/x") {
+	if f2.canUseMirror(repo) {
 		t.Error("nil Mirrors should disable the mirror path")
 	}
 }

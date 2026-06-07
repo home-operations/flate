@@ -193,14 +193,16 @@ func valuesRefCacheKey(kind, namespace, name, valuesKey, content string) uint64 
 	// _, _ = drains the (int, error) tuple so gosec G104 doesn't flag
 	// every byte fed into the digest.
 	h := fnv.New64a()
-	_, _ = h.Write([]byte(kind))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(namespace))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(name))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(valuesKey))
-	_, _ = h.Write([]byte{0})
+	// Each field is followed by a NUL so adjacent fields can't run
+	// together (e.g. name="ab"+key="c" vs name="a"+key="bc").
+	writeField := func(s string) {
+		_, _ = h.Write([]byte(s))
+		_, _ = h.Write([]byte{0})
+	}
+	writeField(kind)
+	writeField(namespace)
+	writeField(name)
+	writeField(valuesKey)
 	// Mix the content length into the hash explicitly so two refs that
 	// happen to FNV-collide on the same prefix don't end up sharing
 	// a cache entry; binary.LittleEndian.PutUint64 produces 8 stable

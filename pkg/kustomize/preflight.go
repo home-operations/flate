@@ -124,9 +124,7 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 			if fetchErr != nil {
 				return fmt.Errorf("remote git base %s: %w", entry.Value, fetchErr)
 			}
-			entry.Value = localDir
-			entry.Tag = "!!str"
-			entry.Style = 0
+			setPlainScalar(entry, localDir)
 			changed = true
 			continue
 		}
@@ -137,9 +135,7 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		if fetchErr != nil {
 			return fmt.Errorf("remote resource %s: %w", entry.Value, fetchErr)
 		}
-		entry.Value = "./" + localFile
-		entry.Tag = "!!str"
-		entry.Style = 0 // plain scalar; preserve other entries' styles
+		setPlainScalar(entry, "./"+localFile)
 		changed = true
 	}
 	if !changed {
@@ -150,6 +146,14 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		return err
 	}
 	return memFS.WriteFile(ksFile, out)
+}
+
+// setPlainScalar rewrites node to a plain (unquoted, untagged) string scalar
+// holding value, leaving sibling sequence entries' styles untouched.
+func setPlainScalar(node *yaml.Node, value string) {
+	node.Value = value
+	node.Tag = "!!str"
+	node.Style = 0
 }
 
 // findMappingValue returns the value node for the first mapping entry with the

@@ -64,7 +64,7 @@ func New(layout cacheroot.Layout) *Cache {
 // via the cache slot's authID (see source.Cache.Slot).
 func urlHash(url string) string {
 	h := sha256.Sum256([]byte(url))
-	return hex.EncodeToString(h[:])[:16]
+	return hex.EncodeToString(h[:8])
 }
 
 // proxyOptions converts a nullable ProxyConfig into go-git's inline

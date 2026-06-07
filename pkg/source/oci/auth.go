@@ -82,7 +82,6 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 // loadCredentials returns a credentials.Store backed by the given config
 // path. An empty configPath uses the docker default lookup.
 func loadCredentials(configPath string) (credentials.Store, error) {
-	opts := credentials.StoreOptions{AllowPlaintextPut: false}
 	if configPath != "" {
 		s, err := credentials.NewFileStore(configPath)
 		if err != nil {
@@ -90,7 +89,7 @@ func loadCredentials(configPath string) (credentials.Store, error) {
 		}
 		return s, nil
 	}
-	s, err := credentials.NewStoreFromDocker(opts)
+	s, err := credentials.NewStoreFromDocker(credentials.StoreOptions{AllowPlaintextPut: false})
 	if err != nil {
 		// Missing docker config is not fatal — anonymous pulls work.
 		// Distinguish os.ErrNotExist (the common case: no docker login

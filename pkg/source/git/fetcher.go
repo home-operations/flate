@@ -171,7 +171,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		url = rest
 	}
 
-	if f.canUseMirror(repo, url) {
+	if f.canUseMirror(repo) {
 		return f.fetchViaMirror(ctx, repo, refLabel, slot, auth, proxy)
 	}
 
@@ -346,7 +346,7 @@ func applyIgnoreAndMark(repo *manifest.GitRepository, art *store.SourceArtifact)
 // path for repo. The mirror path doesn't support submodule recursion
 // or sparse checkout — both require a real worktree go-git can act on.
 // Everything else (https, ssh, file://) is mirror-eligible.
-func (f *Fetcher) canUseMirror(repo *manifest.GitRepository, _ string) bool {
+func (f *Fetcher) canUseMirror(repo *manifest.GitRepository) bool {
 	if f.Mirrors == nil {
 		return false
 	}
@@ -389,11 +389,7 @@ func (f *Fetcher) Prewarm(ctx context.Context, repo *manifest.GitRepository) err
 		// the source controller's reconcile is the canonical reporter.
 		return nil
 	}
-	url := repo.URL
-	if rest, ok := strings.CutPrefix(url, "file://"); ok {
-		url = rest
-	}
-	if !f.canUseMirror(repo, url) {
+	if !f.canUseMirror(repo) {
 		return nil
 	}
 	auth, proxy, restore, err := f.resolveTransport(repo)

@@ -2,12 +2,9 @@ package loader
 
 import (
 	"cmp"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
-
-	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -232,21 +229,8 @@ func indexKustomizeNamespaces(sourceFiles map[manifest.NamedResource]string, rep
 // a kustomization.yaml in dir (resolved relative to repoRoot), or ""
 // if no kustomize file exists or the namespace key is absent.
 func readKustomizeNamespace(repoRoot, dir string) string {
-	for _, name := range manifest.KustomizeBuilderFilenames {
-		path := filepath.Join(repoRoot, dir, name)
-		data, err := os.ReadFile(path) //nolint:gosec // path composed from known cluster layout
-		if err != nil {
-			continue
-		}
-		var doc struct {
-			Namespace string `yaml:"namespace"`
-		}
-		if err := yaml.Unmarshal(data, &doc); err != nil {
-			continue
-		}
-		return doc.Namespace
-	}
-	return ""
+	d, _ := readKustomizeDirectives(repoRoot, dir)
+	return d.Namespace
 }
 
 // cloneWithNamespace returns a shallow copy of obj with metadata.namespace

@@ -1,8 +1,6 @@
 package testutil
 
-import (
-	"github.com/home-operations/flate/pkg/manifest"
-)
+import "github.com/home-operations/flate/pkg/manifest"
 
 // DepRefs wraps NamedResources as bare DependencyRefs (no ReadyExpr),
 // the shape dependency-ordering tests use to express dependsOn edges.

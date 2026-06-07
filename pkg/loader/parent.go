@@ -47,9 +47,8 @@ type KSPathPrefix struct {
 // Entries are sorted by prefix length descending so the first
 // HasPrefix match on a given file is the deepest claimant — a child
 // file under a parent's component dir wins over the parent's
-// spec.path. Previously this function only emitted (1); the new
-// (2)+(3) bring loader's parent index in line with change/ownership's
-// already-richer attribution, eliminating the false-orphan class
+// spec.path. Emitting (2)+(3) keeps loader's parent index in line with
+// change/ownership's attribution, eliminating the false-orphan class
 // where a child KS lives inside a parent's component subtree.
 //
 // repoRoot is the filesystem root the kustomization-file reads

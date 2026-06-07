@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -384,7 +385,7 @@ func mergeBase(repo *git.Repository, headCommit *object.Commit, other plumbing.H
 	// hash so two `flate diff` runs against the same repo pick the
 	// same baseline — reproducibility is a stated guarantee.
 	best := slices.MinFunc(bases, func(a, b *object.Commit) int {
-		return strings.Compare(a.Hash.String(), b.Hash.String())
+		return bytes.Compare(a.Hash[:], b.Hash[:])
 	})
 	return best.Hash, nil
 }

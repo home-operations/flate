@@ -373,8 +373,7 @@ func (c *Controller) resolveSource(ks *manifest.Kustomization) (sourceRoot strin
 		return "", false, fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
 	}
 	if sa, ok := art.(*store.SourceArtifact); ok {
-		applyIgnore := sa.Digest == "" && sa.Revision == ""
-		return sa.LocalPath, applyIgnore, nil
+		return sa.LocalPath, sa.Digest == "" && sa.Revision == "", nil
 	}
 	return "", false, fmt.Errorf("%w: unsupported source artifact type %T for %s",
 		manifest.ErrFlux, art, srcID.String())

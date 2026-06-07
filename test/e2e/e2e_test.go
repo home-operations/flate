@@ -288,10 +288,7 @@ data:
 func initSelfRefGitFixture(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	repo, err := gogit.PlainInit(dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := gitInit(t, dir)
 	if _, err := repo.CreateRemote(&config.RemoteConfig{
 		Name: "origin", URLs: []string{"https://github.com/example/cluster.git"},
 	}); err != nil {
@@ -674,6 +671,16 @@ func mustFindLine(t *testing.T, haystack, needle, kind string, match func(string
 	return ""
 }
 
+// gitInit inits a git repo at dir, failing the test on error.
+func gitInit(t *testing.T, dir string) *gogit.Repository {
+	t.Helper()
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
 // gitCommitAll stages and commits the whole worktree with a fixed author,
 // so every fixture lands one deterministic "init" commit.
 func gitCommitAll(t *testing.T, repo *gogit.Repository) {
@@ -701,10 +708,7 @@ func gitCommitAll(t *testing.T, repo *gogit.Repository) {
 func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string) {
 	t.Helper()
 	dir := copyTree(t, src)
-	repo, err := gogit.PlainInit(dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := gitInit(t, dir)
 	gitCommitAll(t, repo)
 	return filepath.Join(dir, "flux"), dir
 }
@@ -717,10 +721,7 @@ func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string)
 func initGitFixture(t *testing.T) (clusterPath, repoRoot string) {
 	t.Helper()
 	dir := t.TempDir()
-	repo, err := gogit.PlainInit(dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := gitInit(t, dir)
 	writeFile := func(rel, body string) { testutil.WriteFile(t, dir, rel, body) }
 	writeFile("kubernetes/flux/cluster.yaml", `---
 apiVersion: source.toolkit.fluxcd.io/v1

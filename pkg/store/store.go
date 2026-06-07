@@ -302,9 +302,8 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 	delete(sh.objects, id)
 	delete(sh.conditions, id)
 	delete(sh.artifacts, id)
-	if inner := sh.byName[id.Kind]; inner != nil {
-		delete(inner, nameKey(id.Namespace, id.Name))
-	}
+	// delete is a no-op on a nil map, so byName[id.Kind] needs no guard.
+	delete(sh.byName[id.Kind], nameKey(id.Namespace, id.Name))
 	return true
 }
 
@@ -468,10 +467,8 @@ func (s *Store) GetByName(kind, namespace, name string) manifest.BaseManifest {
 	sh := s.shardForKind(kind)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	if inner := sh.byName[kind]; inner != nil {
-		return inner[nameKey(namespace, name)]
-	}
-	return nil
+	// Indexing a nil map (unseen kind) yields nil — no guard needed.
+	return sh.byName[kind][nameKey(namespace, name)]
 }
 
 // ListObjects returns every stored manifest, optionally filtered by kind,

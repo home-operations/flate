@@ -82,16 +82,9 @@ func KSPathPrefixesWithCache(s *store.Store, repoRoot string, cache *manifest.Co
 // return reports whether a parent was found. prefixes is expected to
 // be the sorted output of KSPathPrefixesWithCache.
 func LongestParent(prefixes []KSPathPrefix, file string, self manifest.NamedResource) (manifest.NamedResource, bool) {
-	slashFile := filepath.ToSlash(file)
-	for _, p := range prefixes {
-		if p.ID == self {
-			continue
-		}
-		if strings.HasPrefix(slashFile, p.Prefix) {
-			return p.ID, true
-		}
-	}
-	return manifest.NamedResource{}, false
+	// A nil selfPrefixes set skips no candidate as a peer, which is exactly
+	// "deepest ancestor excluding self" — see longestStrictParent.
+	return longestStrictParent(prefixes, file, self, nil)
 }
 
 // longestStrictParent is LongestParent restricted to a *strict*

@@ -86,7 +86,7 @@ type Controller struct {
 	unsub   []store.Unsubscribe
 
 	// kindLabel prefixes coalescer keys ("source/", "kustomization/",
-	// "helmrelease/") and labels panic logs. Set by Start.
+	// "helmrelease/"). Set by StartLifecycle.
 	kindLabel string
 
 	// Shared KS/HR depwait and preflight state. Set via SetDepwait,

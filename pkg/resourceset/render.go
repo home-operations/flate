@@ -78,16 +78,18 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 
 	seen := make(map[string]struct{})
 	var docs []map[string]any
-	appendUnique := func(doc map[string]any) {
-		key := DedupKey(doc)
-		if key == "" {
-			return
+	appendUnique := func(rendered []map[string]any) {
+		for _, doc := range rendered {
+			key := DedupKey(doc)
+			if key == "" {
+				continue
+			}
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			docs = append(docs, doc)
 		}
-		if _, dup := seen[key]; dup {
-			return
-		}
-		seen[key] = struct{}{}
-		docs = append(docs, doc)
 	}
 
 	for i, raw := range rs.Resources {
@@ -95,9 +97,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 		if err != nil {
 			return nil, fmt.Errorf("ResourceSet %s: spec.resources[%d]: %w", rs.Named().NamespacedName(), i, err)
 		}
-		for _, doc := range rendered {
-			appendUnique(doc)
-		}
+		appendUnique(rendered)
 	}
 
 	if rs.ResourcesTemplate != "" {
@@ -105,9 +105,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 		if err != nil {
 			return nil, fmt.Errorf("ResourceSet %s: spec.resourcesTemplate: %w", rs.Named().NamespacedName(), err)
 		}
-		for _, doc := range rendered {
-			appendUnique(doc)
-		}
+		appendUnique(rendered)
 	}
 
 	for _, doc := range docs {

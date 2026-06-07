@@ -67,34 +67,44 @@ func buildOwnership(objs ObjectLister, repoRoot string, cache *manifest.Componen
 	}
 }
 
+// memoize returns cache[file], computing and storing it via compute on
+// a miss. The empty-file short-circuit is shared by both lookups: an
+// empty path has no owner or ancestor.
+func memoize(cache map[string][]manifest.NamedResource, file string, compute func() []manifest.NamedResource) []manifest.NamedResource {
+	if file == "" {
+		return nil
+	}
+	if cached, ok := cache[file]; ok {
+		return cached
+	}
+	result := compute()
+	cache[file] = result
+	return result
+}
+
 // ownersOf returns every KS that claims the longest-matching prefix
 // of file. Multiple KSes are possible when a shared component is in
 // play. Results are memoized — see ownershipIndex doc.
 func (idx ownershipIndex) ownersOf(file string) []manifest.NamedResource {
-	if file == "" {
-		return nil
-	}
-	if cached, ok := idx.ownersCache[file]; ok {
-		return cached
-	}
-	prefixed := file + "/" // so prefix matching catches whole-segment boundaries
-	var bestLen int
-	var owners []manifest.NamedResource
-	for _, c := range idx.claims {
-		if len(c.path) < bestLen {
-			break // sorted longest-first; nothing shorter can beat
+	return memoize(idx.ownersCache, file, func() []manifest.NamedResource {
+		prefixed := file + "/" // so prefix matching catches whole-segment boundaries
+		var bestLen int
+		var owners []manifest.NamedResource
+		for _, c := range idx.claims {
+			if len(c.path) < bestLen {
+				break // sorted longest-first; nothing shorter can beat
+			}
+			if !strings.HasPrefix(prefixed, c.path) {
+				continue
+			}
+			if len(c.path) > bestLen {
+				bestLen = len(c.path)
+				owners = owners[:0]
+			}
+			owners = append(owners, c.id)
 		}
-		if !strings.HasPrefix(prefixed, c.path) {
-			continue
-		}
-		if len(c.path) > bestLen {
-			bestLen = len(c.path)
-			owners = owners[:0]
-		}
-		owners = append(owners, c.id)
-	}
-	idx.ownersCache[file] = owners
-	return owners
+		return owners
+	})
 }
 
 // ancestorsOf returns every Kustomization whose claim is a strict
@@ -106,27 +116,22 @@ func (idx ownershipIndex) ownersOf(file string) []manifest.NamedResource {
 // failures when the leaf renders. See #58. Results are memoized —
 // see ownershipIndex doc.
 func (idx ownershipIndex) ancestorsOf(file string) []manifest.NamedResource {
-	if file == "" {
-		return nil
-	}
-	if cached, ok := idx.ancestorsCache[file]; ok {
-		return cached
-	}
-	prefixed := file + "/"
-	var bestLen int
-	var ancestors []manifest.NamedResource
-	for _, c := range idx.claims {
-		if !strings.HasPrefix(prefixed, c.path) {
-			continue
+	return memoize(idx.ancestorsCache, file, func() []manifest.NamedResource {
+		prefixed := file + "/"
+		var bestLen int
+		var ancestors []manifest.NamedResource
+		for _, c := range idx.claims {
+			if !strings.HasPrefix(prefixed, c.path) {
+				continue
+			}
+			if bestLen == 0 {
+				bestLen = len(c.path) // first (longest) match — skip
+				continue
+			}
+			if len(c.path) < bestLen {
+				ancestors = append(ancestors, c.id)
+			}
 		}
-		if bestLen == 0 {
-			bestLen = len(c.path) // first (longest) match — skip
-			continue
-		}
-		if len(c.path) < bestLen {
-			ancestors = append(ancestors, c.id)
-		}
-	}
-	idx.ancestorsCache[file] = ancestors
-	return ancestors
+		return ancestors
+	})
 }

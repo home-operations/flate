@@ -128,7 +128,7 @@ func repoRemoteURLs(repo *git.Repository) []string {
 func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.Layout) (string, bool, error) {
 	if layout.Root != "" {
 		slot := layout.Baseline(hash.String())
-		if info, err := os.Stat(slot); err == nil && info.IsDir() {
+		if isDir(slot) {
 			return slot, true, nil
 		}
 		if err := os.MkdirAll(filepath.Dir(slot), 0o750); err != nil {
@@ -141,7 +141,7 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		// see ErrExist, discard the temp, and adopt the winner's slot).
 		if _, err := cas.Stage(filepath.Dir(slot), slot, "baseline staging", "baseline finalize",
 			func(staging string) error { return materialize(repo, hash, staging) },
-			func() bool { info, statErr := os.Stat(slot); return statErr == nil && info.IsDir() },
+			func() bool { return isDir(slot) },
 		); err != nil {
 			return "", false, err
 		}
@@ -412,6 +412,14 @@ func isShallow(repo *git.Repository) bool {
 	}
 	_, err = os.Stat(filepath.Join(wt.Filesystem.Root(), ".git", "shallow"))
 	return err == nil
+}
+
+// isDir reports whether path exists and is a directory. Used to detect
+// a finished baseline cache slot, both before staging and as the adopt
+// predicate after losing the finalize race.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // shortRev formats a hash as the conventional 7-char prefix used in

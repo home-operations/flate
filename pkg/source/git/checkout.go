@@ -28,28 +28,40 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 		set(opts)
 		return wt.Checkout(opts)
 	}
+	checkoutHash := func(h plumbing.Hash) error {
+		return checkout(func(o *git.CheckoutOptions) { o.Hash = h })
+	}
+	// tryCheckoutRevision resolves rev and, on success, checks out the
+	// resolved hash. The bool reports whether rev resolved so callers can
+	// fall through to an alternate lookup when it didn't.
+	tryCheckoutRevision := func(rev plumbing.Revision) (bool, error) {
+		h, err := repo.ResolveRevision(rev)
+		if err != nil {
+			return false, nil
+		}
+		return true, checkoutHash(*h)
+	}
 	switch {
 	case ref.Commit != "":
 		hash := plumbing.NewHash(ref.Commit)
 		if err := validateCommitBranch(repo, hash, ref.Branch); err != nil {
 			return err
 		}
-		return checkout(func(o *git.CheckoutOptions) { o.Hash = hash })
+		return checkoutHash(hash)
 	case ref.Name != "":
 		// Full ref name takes precedence (e.g. "refs/pull/420/head",
 		// "refs/tags/v1.2.3"). Resolve against the cloned repo so the
 		// explicitly fetched ref wins; branch refs may still exist only
 		// under refs/remotes/origin from the default clone refspec.
-		rev := plumbing.Revision(ref.Name)
-		if h, err := repo.ResolveRevision(rev); err == nil {
-			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
+		if done, err := tryCheckoutRevision(plumbing.Revision(ref.Name)); done {
+			return err
 		}
 		// Fall through: try resolving as a remote-tracking ref. This
 		// handles refs/heads/<branch> by mapping to refs/remotes/origin/<branch>.
 		if rest, ok := strings.CutPrefix(ref.Name, "refs/heads/"); ok {
 			remote := plumbing.NewRemoteReferenceName("origin", rest)
-			if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
-				return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
+			if done, err := tryCheckoutRevision(plumbing.Revision(remote)); done {
+				return err
 			}
 		}
 		return fmt.Errorf("%w: unable to resolve git ref %q", manifest.ErrInput, ref.Name)
@@ -58,16 +70,16 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 		if err != nil {
 			return err
 		}
-		return checkout(func(o *git.CheckoutOptions) { o.Hash = h })
+		return checkoutHash(h)
 	case ref.Tag != "":
-		if h, err := repo.ResolveRevision(plumbing.Revision("refs/tags/" + ref.Tag)); err == nil {
-			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
+		if done, err := tryCheckoutRevision(plumbing.Revision("refs/tags/" + ref.Tag)); done {
+			return err
 		}
 		return checkout(func(o *git.CheckoutOptions) { o.Branch = plumbing.NewTagReferenceName(ref.Tag) })
 	case ref.Branch != "":
 		remoteRef := plumbing.NewRemoteReferenceName("origin", ref.Branch)
-		if h, err := repo.ResolveRevision(plumbing.Revision(remoteRef)); err == nil {
-			return checkout(func(o *git.CheckoutOptions) { o.Hash = *h })
+		if done, err := tryCheckoutRevision(plumbing.Revision(remoteRef)); done {
+			return err
 		}
 		return checkout(func(o *git.CheckoutOptions) { o.Branch = plumbing.NewBranchReferenceName(ref.Branch) })
 	}

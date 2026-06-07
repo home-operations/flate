@@ -43,6 +43,12 @@ type Result struct {
 	// picked (e.g. "merge-base with origin/HEAD", "explicit
 	// --base=main"), surfaced in the startup log line.
 	Source string
+	// SelfURLs are the working tree's git remote URLs (raw, unnormalized).
+	// The materialized baseline tree carries no .git, so the caller passes
+	// these to the baseline render as Config.SelfURLs — the source root
+	// represents the same repo, so a self-referential GitRepository aliases
+	// to the local tree on the baseline side too.
+	SelfURLs []string
 }
 
 // resolution carries the result of picking a baseline rev.
@@ -100,7 +106,24 @@ func AutoResolve(path, base string, layout cacheroot.Layout) (*Result, error) {
 		Persistent: persistent,
 		Rev:        shortRev(r.Hash),
 		Source:     r.Source,
+		SelfURLs:   repoRemoteURLs(repo),
 	}, nil
+}
+
+// repoRemoteURLs returns the working tree's configured remote URLs (raw).
+// Used to populate Result.SelfURLs so the caller can hand the baseline
+// render the same self-referential-source identity the live tree has —
+// the materialized baseline carries no .git to read them back from.
+func repoRemoteURLs(repo *git.Repository) []string {
+	cfg, err := repo.Config()
+	if err != nil {
+		return nil
+	}
+	var urls []string
+	for _, remote := range cfg.Remotes {
+		urls = append(urls, remote.URLs...)
+	}
+	return urls
 }
 
 // materializeAt produces the baseline tree on disk for hash and
@@ -122,7 +145,7 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		// through to their own stage (one wins the rename, the rest
 		// see ErrExist, discard the temp, and adopt the winner's slot).
 		if _, err := cas.Stage(filepath.Dir(slot), slot, "baseline staging", "baseline finalize",
-			func(staging string) error { return materializeAndMark(repo, hash, staging) },
+			func(staging string) error { return materialize(repo, hash, staging) },
 			func() bool { info, statErr := os.Stat(slot); return statErr == nil && info.IsDir() },
 		); err != nil {
 			return "", false, err
@@ -134,56 +157,11 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 	if err != nil {
 		return "", false, fmt.Errorf("baseline tempdir: %w", err)
 	}
-	if err := materializeAndMark(repo, hash, tmp); err != nil {
+	if err := materialize(repo, hash, tmp); err != nil {
 		_ = os.RemoveAll(tmp)
 		return "", false, err
 	}
 	return tmp, false, nil
-}
-
-// materializeAndMark extracts the commit tree into root and writes a
-// minimal, openable .git into it. The .git serves two ends:
-//
-//   - discovery.FindRepoRoot (used by orchestrator.buildChangeFilter's
-//     repo-root widening, PR #348) lifts the synthetic --path-orig to root,
-//     lining up with the current side's repoRoot. Without a .git the
-//     per-side roots match (both fall back to the passed path) and the
-//     widening short-circuits.
-//   - it carries the source repo's git remotes, so the baseline is
-//     self-describing: discovery's self-referential GitRepository alias —
-//     which URL-matches a GitRepository's spec.url against the working
-//     tree's remotes — fires on the baseline side too. A remotes-less
-//     marker leaves a private self-source unresolved, rendering the whole
-//     baseline empty (so every resource shows as a wholesale addition).
-//
-// It's a config + HEAD only — enough for go-git's PlainOpen and
-// repo.Config(); the dangling HEAD ref is never dereferenced.
-func materializeAndMark(repo *git.Repository, hash plumbing.Hash, root string) error {
-	if err := materialize(repo, hash, root); err != nil {
-		return err
-	}
-	dir := filepath.Join(root, ".git")
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		return fmt.Errorf("baseline .git marker: %w", err)
-	}
-	cfg, err := repo.Config()
-	if err != nil {
-		return fmt.Errorf("baseline git config: %w", err)
-	}
-	var b strings.Builder
-	b.WriteString("[core]\n\trepositoryformatversion = 0\n")
-	for _, remote := range cfg.Remotes {
-		for _, url := range remote.URLs {
-			fmt.Fprintf(&b, "[remote %q]\n\turl = %s\n", remote.Name, url)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(b.String()), 0o600); err != nil {
-		return fmt.Errorf("baseline .git/config: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
-		return fmt.Errorf("baseline .git/HEAD: %w", err)
-	}
-	return nil
 }
 
 // relToRepo returns path's location relative to repoRoot. Returns "."

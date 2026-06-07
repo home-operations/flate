@@ -213,7 +213,7 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 	// resolves each root via the .git default (repoRootOf); RenderTrees
 	// reconciles each side changed-only against the other tree's root.
 	base, head, runErr := orchestrator.RenderTrees(ctx,
-		orchestrator.Tree{RepoRoot: repoRootOf(c.pathOrig), Path: c.pathOrig},
+		orchestrator.Tree{RepoRoot: c.baselineRoot(), Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
 		orchestrator.Tree{RepoRoot: repoRootOf(c.path), Path: c.path},
 		buildOrchCfg(*c, *h))
 	orig := diffSide{O: base.Orchestrator, Res: base.Result, Err: base.Err}

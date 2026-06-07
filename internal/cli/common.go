@@ -27,8 +27,17 @@ import (
 )
 
 type commonFlags struct {
-	path                string
-	pathOrig            string
+	path     string
+	pathOrig string
+	// pathOrigRoot / pathOrigSelfURLs are resolved by resolveBaseline for
+	// the --base flow: the materialized baseline tree carries no .git, so
+	// its repo root (the spec.path anchor + change-detect root) and the
+	// live tree's remote URLs (for self-referential aliasing on the
+	// baseline side) are threaded explicitly rather than re-derived from a
+	// .git. Empty for an explicit --path-orig (the CLI defaults the root
+	// via repoRootOf and lets the side read its own .git remotes).
+	pathOrigRoot        string
+	pathOrigSelfURLs    []string
 	base                string
 	namespace           string
 	skipCRDs            bool
@@ -337,11 +346,26 @@ func resolveBaseline(_ context.Context, c *commonFlags, autoFallback bool) (func
 		return noop, err
 	}
 	c.pathOrig = res.PathOrig
+	// The materialized baseline has no .git: pass its repo root + the live
+	// tree's remotes explicitly so the baseline side anchors spec.path and
+	// aliases self-referential sources without a synthetic marker.
+	c.pathOrigRoot = res.TempDir
+	c.pathOrigSelfURLs = res.SelfURLs
 	slog.Debug("baseline", "source", res.Source, "rev", res.Rev, "path_orig", res.PathOrig, "persistent", res.Persistent)
 	if res.Persistent {
 		return noop, nil
 	}
 	return func() { _ = os.RemoveAll(res.TempDir) }, nil
+}
+
+// baselineRoot is the baseline side's source root: the materialized
+// --base tree root when resolveBaseline set it, else the .git default of
+// an explicit --path-orig. Empty when there's no baseline (full-tree mode).
+func (c *commonFlags) baselineRoot() string {
+	if c.pathOrigRoot != "" {
+		return c.pathOrigRoot
+	}
+	return repoRootOf(c.pathOrig)
 }
 
 // repoRootOf resolves path to its source root the way discovery defaults
@@ -366,10 +390,10 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
 		Path: c.path,
 		// PathOrig carries the baseline's REPO ROOT for change detection
-		// (change.Detect diffs root-to-root). A subdir --path-orig / a
-		// materialized --base tree is lifted to its root here, replacing
+		// (change.Detect diffs root-to-root): the materialized --base tree
+		// root, or the .git default of an explicit --path-orig. Replaces
 		// the core's old .git "widen" heuristic.
-		PathOrig:       repoRootOf(c.pathOrig),
+		PathOrig:       c.baselineRoot(),
 		HelmOptions:    c.helmOptions(h),
 		WipeSecrets:    true,
 		RegistryConfig: c.registryConfig,

@@ -3,6 +3,7 @@ package baseline
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,12 +43,14 @@ func TestAutoResolve_ExplicitBase(t *testing.T) {
 	_ = commitB
 }
 
-// TestMaterializeAndMark_CarriesRemotes pins that the materialized baseline
-// tree's .git is openable and exposes the source repo's remotes — the
-// property discovery's self-referential GitRepository alias relies on.
-// Without it the baseline's private self-source goes unresolved and the
-// whole tree renders empty (every resource shown as a wholesale addition).
-func TestMaterializeAndMark_CarriesRemotes(t *testing.T) {
+// TestAutoResolve_SelfURLsCarryRemotes pins that Result.SelfURLs carries the
+// working tree's remote URLs — the property the self-referential
+// GitRepository alias relies on on the baseline side. The materialized tree
+// has no .git of its own, so the caller hands these to the baseline render
+// as Config.SelfURLs; without them the baseline's private self-source goes
+// unresolved and the whole tree renders empty (every resource a wholesale
+// addition).
+func TestAutoResolve_SelfURLsCarryRemotes(t *testing.T) {
 	dir := t.TempDir()
 	commit := initRepoWithFile(t, dir, "a.yaml", "x")
 	repo, err := git.PlainOpen(dir)
@@ -65,17 +68,12 @@ func TestMaterializeAndMark_CarriesRemotes(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(res.TempDir) }()
 
-	// The same open + Config() that discovery.readWorkingTreeRemotes performs.
-	got, err := git.PlainOpenWithOptions(res.TempDir, &git.PlainOpenOptions{DetectDotGit: true})
-	if err != nil {
-		t.Fatalf("materialized baseline .git not openable: %v", err)
+	if !slices.Contains(res.SelfURLs, url) {
+		t.Errorf("Result.SelfURLs = %v; want it to contain %q", res.SelfURLs, url)
 	}
-	cfg, err := got.Config()
-	if err != nil {
-		t.Fatalf("materialized baseline config: %v", err)
-	}
-	if origin, ok := cfg.Remotes["origin"]; !ok || len(origin.URLs) == 0 || origin.URLs[0] != url {
-		t.Errorf("materialized .git missing origin remote %q; got %+v", url, cfg.Remotes)
+	// The materialized tree must NOT carry a synthetic .git anymore.
+	if _, err := os.Stat(filepath.Join(res.TempDir, ".git")); !os.IsNotExist(err) {
+		t.Errorf("materialized baseline must have no .git marker; stat err = %v", err)
 	}
 }
 
@@ -339,10 +337,11 @@ func TestAutoResolve_PathOrigMappedToSubdir(t *testing.T) {
 	}
 }
 
-// TestAutoResolve_DropsGitMarker confirms the .git marker is present
-// in TempDir so discovery.FindRepoRoot (used by PR #348's repo-root
-// widening) lifts up correctly when --path-orig is a subdir.
-func TestAutoResolve_DropsGitMarker(t *testing.T) {
+// TestAutoResolve_NoGitMarker confirms the materialized baseline is pure
+// files — no synthetic .git. The repo root + remotes are surfaced via
+// Result (TempDir / SelfURLs) and threaded explicitly, so the marker the
+// old repo-root "widen" heuristic needed is gone.
+func TestAutoResolve_NoGitMarker(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	commit := writeAndCommit(t, dir, "a.yaml", "y")
@@ -351,12 +350,13 @@ func TestAutoResolve_DropsGitMarker(t *testing.T) {
 		t.Fatalf("AutoResolve: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(res.TempDir) }()
-	info, err := os.Stat(filepath.Join(res.TempDir, ".git"))
-	if err != nil {
-		t.Fatalf("expected .git marker in TempDir: %v", err)
+	// The materialized file is present...
+	if _, err := os.Stat(filepath.Join(res.TempDir, "a.yaml")); err != nil {
+		t.Errorf("expected materialized file in TempDir: %v", err)
 	}
-	if !info.IsDir() {
-		t.Errorf(".git marker should be a directory")
+	// ...but no synthetic .git marker.
+	if _, err := os.Stat(filepath.Join(res.TempDir, ".git")); !os.IsNotExist(err) {
+		t.Errorf("materialized baseline must have no .git marker; stat err = %v", err)
 	}
 }
 

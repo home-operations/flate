@@ -109,13 +109,20 @@ func New(s *store.Store, t *task.Service) *Controller {
 	return &Controller{Store: s, Tasks: t}
 }
 
+// requireNotStarted panics if the started gate is set, enforcing the
+// invariant that reconcile-shaping config is frozen once dispatch
+// begins. method is the calling setter's name for the panic message.
+func (c *Controller) requireNotStarted(method string) {
+	if c.started.Load() {
+		panic("controller: " + method + " called after Start")
+	}
+}
+
 // SetFilter installs the change filter that gates reconciliation in
 // changed-only mode. Panics if called after Start — the invariant is
 // that reconcile-shaping config is frozen once dispatch begins.
 func (c *Controller) SetFilter(f *change.Filter) {
-	if c.started.Load() {
-		panic("controller: SetFilter called after Start")
-	}
+	c.requireNotStarted("SetFilter")
 	c.filter = f
 }
 
@@ -124,35 +131,27 @@ func (c *Controller) Filter() *change.Filter { return c.filter }
 
 // SetDepwait installs the depwait resolution wires. Panics after Start.
 func (c *Controller) SetDepwait(existence depwait.ExistenceLookup, renders depwait.RenderInflight) {
-	if c.started.Load() {
-		panic("controller: SetDepwait called after Start")
-	}
+	c.requireNotStarted("SetDepwait")
 	c.existence = existence
 	c.renders = renders
 }
 
 // SetPreflight installs the pre-reconcile failure reporter. Panics after Start.
 func (c *Controller) SetPreflight(f func(manifest.NamedResource) (string, bool)) {
-	if c.started.Load() {
-		panic("controller: SetPreflight called after Start")
-	}
+	c.requireNotStarted("SetPreflight")
 	c.preflight = f
 }
 
 // SetParentOf installs the structural parent resolver. Panics after Start.
 func (c *Controller) SetParentOf(f func(manifest.NamedResource) (manifest.NamedResource, bool)) {
-	if c.started.Load() {
-		panic("controller: SetParentOf called after Start")
-	}
+	c.requireNotStarted("SetParentOf")
 	c.parentOf = f
 }
 
 // SetRenderTracker installs the render-emission tracker. Panics after
 // Start — reconcile-shaping config is frozen once dispatch begins.
 func (c *Controller) SetRenderTracker(rt RenderTracker) {
-	if c.started.Load() {
-		panic("controller: SetRenderTracker called after Start")
-	}
+	c.requireNotStarted("SetRenderTracker")
 	c.renderTracker = rt
 }
 

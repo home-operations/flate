@@ -466,11 +466,17 @@ func validatePathFlag(flag, p string) error {
 // formats, listed in the order bindCommon received them (the first is the
 // default).
 func outputUsage(outputs []format.Output) string {
+	return "output format: " + joinOutputs(outputs)
+}
+
+// joinOutputs renders accepted -o formats as a comma-separated list, shared
+// by the help text and the parse-time rejection so the two can't drift.
+func joinOutputs(outputs []format.Output) string {
 	names := make([]string, len(outputs))
 	for i, o := range outputs {
 		names[i] = string(o)
 	}
-	return "output format: " + strings.Join(names, ", ")
+	return strings.Join(names, ", ")
 }
 
 // outputValue is the pflag.Value backing -o: a string constrained to a
@@ -490,11 +496,7 @@ func (o *outputValue) Set(v string) error {
 		*o.target = v
 		return nil
 	}
-	names := make([]string, len(o.allowed))
-	for i, a := range o.allowed {
-		names[i] = string(a)
-	}
-	return fmt.Errorf("must be one of: %s", strings.Join(names, ", "))
+	return fmt.Errorf("must be one of: %s", joinOutputs(o.allowed))
 }
 
 // profileModes are the runtime profiles --profile accepts. The empty

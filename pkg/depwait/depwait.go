@@ -324,11 +324,7 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 	// reconcile is in flight — a typo'd dependsOn won't be saved by a
 	// future re-emit, and burning the full grace adds visible wall time
 	// to errored runs (worst case: 3s × depth of chained parent gates).
-	var quiesce <-chan struct{}
-	if w.Renders != nil {
-		quiesce = w.Renders.QuiescenceCh()
-	}
-	info, err := w.Store.WatchReady(ctx, id, quiesce)
+	info, err := w.Store.WatchReady(ctx, id, w.quiesceCh())
 	if err != nil {
 		return classify(id, err, info.Message)
 	}
@@ -496,6 +492,17 @@ func (w *Waiter) tryReadyExpr(expr string, id manifest.NamedResource) (Event, bo
 	return Event{}, false
 }
 
+// quiesceCh returns the orchestrator's one-shot quiescence channel when
+// a Renders signal is wired, or nil otherwise. A nil channel selects
+// never, so legacy embedders without a task pool fall back to the
+// timeout-cap behavior.
+func (w *Waiter) quiesceCh() <-chan struct{} {
+	if w.Renders == nil {
+		return nil
+	}
+	return w.Renders.QuiescenceCh()
+}
+
 // depExists reports whether a dep is known to the store via either an
 // added object or a recorded status entry.
 func (w *Waiter) depExists(dep manifest.NamedResource) bool {
@@ -557,10 +564,7 @@ func (w *Waiter) waitRenderEmission(ctx context.Context, id manifest.NamedResour
 	// quiesce is a one-shot signal channel. A nil channel selects
 	// never, so embedders without a Renders wired (legacy callers)
 	// fall back to "wait for arrived or ctx" exactly as before.
-	var quiesce <-chan struct{}
-	if w.Renders != nil {
-		quiesce = w.Renders.QuiescenceCh()
-	}
+	quiesce := w.quiesceCh()
 
 	for {
 		select {

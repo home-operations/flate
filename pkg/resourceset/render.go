@@ -135,18 +135,8 @@ func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any,
 		return nil, err
 	}
 
-	if len(inputs) == 0 {
-		doc, err := renderSingle(pt, nil)
-		if err != nil {
-			return nil, err
-		}
-		if doc == nil || disabledByReconcileAnnotation(doc) {
-			return nil, nil
-		}
-		return []map[string]any{doc}, nil
-	}
 	out := make([]map[string]any, 0, len(inputs))
-	for _, in := range inputs {
+	for _, in := range defaultNilInput(inputs) {
 		doc, err := renderSingle(pt, in)
 		if err != nil {
 			return nil, err
@@ -168,15 +158,8 @@ func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[str
 	if err != nil {
 		return nil, err
 	}
-	if len(inputs) == 0 {
-		docs, err := splitMultiDoc(pt, nil)
-		if err != nil {
-			return nil, err
-		}
-		return filterDisabled(docs), nil
-	}
 	var out []map[string]any
-	for _, in := range inputs {
+	for _, in := range defaultNilInput(inputs) {
 		docs, err := splitMultiDoc(pt, in)
 		if err != nil {
 			return nil, err
@@ -184,6 +167,17 @@ func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[str
 		out = append(out, filterDisabled(docs)...)
 	}
 	return out, nil
+}
+
+// defaultNilInput yields the input sets to template against: the given
+// slice, or a single nil set when it is empty. An empty matrix means
+// "render once with no inputs" (static resources), so both callers
+// would otherwise carry an identical len==0 special case.
+func defaultNilInput(inputs []map[string]any) []map[string]any {
+	if len(inputs) == 0 {
+		return []map[string]any{nil}
+	}
+	return inputs
 }
 
 // filterDisabled removes docs carrying the reconcile-disabled annotation

@@ -23,8 +23,7 @@ func collectImages(o *orchestrator.Orchestrator, res *orchestrator.Result, c *co
 			continue
 		}
 		for _, doc := range docs {
-			imgs := image.Extract(doc)
-			for _, img := range imgs {
+			for _, img := range image.Extract(doc) {
 				set[img] = struct{}{}
 			}
 		}

@@ -320,7 +320,7 @@ func extractTarGz(src, dst string) error {
 			// for these and Flux's source-controller does the same.
 		}
 	}
-	if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(src); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

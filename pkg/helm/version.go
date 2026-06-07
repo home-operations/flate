@@ -1,7 +1,6 @@
 package helm
 
 import (
-	"fmt"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -38,7 +37,7 @@ func detectBundledKubeVersion() string {
 		if i := strings.Index(v, "-"); i > 0 {
 			v = v[:i]
 		}
-		return fmt.Sprintf("1.%s", v)
+		return "1." + v
 	}
 	return fallbackKubeVersion
 }

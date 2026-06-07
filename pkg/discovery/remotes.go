@@ -56,8 +56,8 @@ func readWorkingTreeRemotes(repoRoot string) map[string]struct{} {
 	}
 	out := map[string]struct{}{}
 	for _, remote := range cfg.Remotes {
-		for _, url := range remote.URLs {
-			if n := normalizeGitURL(url); n != "" {
+		for _, u := range remote.URLs {
+			if n := normalizeGitURL(u); n != "" {
 				out[n] = struct{}{}
 			}
 		}

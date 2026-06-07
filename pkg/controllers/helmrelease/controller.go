@@ -526,7 +526,7 @@ func (c *Controller) collectHRDeps(hr *manifest.HelmRelease) []manifest.Dependen
 	if len(hr.DependsOn) == 0 {
 		return nil
 	}
-	deps := append([]manifest.DependencyRef(nil), hr.DependsOn...)
+	deps := slices.Clone(hr.DependsOn)
 	// Changed-only mode: a dependsOn target outside the keep-set is
 	// unchanged, so its producing Kustomization is skipped and the target
 	// HR is never render-emitted into the Store — depwait would report

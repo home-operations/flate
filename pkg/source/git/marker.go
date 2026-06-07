@@ -43,14 +43,14 @@ func cachedRevisionFresh(slot string, maxAge time.Duration) (string, bool) {
 // Best-effort: returns empty string on any failure. Used post-clone
 // (before .git/ is wiped by ApplyIgnore) to capture the resolved SHA
 // for the artifact + the cached-revision marker.
-func readResolvedRevision(slot string) (string, error) {
+func readResolvedRevision(slot string) string {
 	repo, err := git.PlainOpen(slot)
 	if err != nil {
-		return "", err
+		return ""
 	}
 	h, err := repo.Head()
 	if err != nil {
-		return "", err
+		return ""
 	}
-	return h.Hash().String(), nil
+	return h.Hash().String()
 }

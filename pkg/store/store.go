@@ -243,10 +243,6 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 	if len(objs) == 0 {
 		return
 	}
-	type event struct {
-		id  manifest.NamedResource
-		obj manifest.BaseManifest
-	}
 	// Bucket inputs by shard index so each shard locks at most once.
 	var buckets [shardCount][]manifest.BaseManifest
 	for _, obj := range objs {
@@ -260,17 +256,13 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 		}
 		sh := s.shards[i]
 		sh.mu.Lock()
-		events := make([]event, 0, len(buckets[i]))
 		for _, obj := range buckets[i] {
 			id := obj.Named()
 			if cur, ok := sh.objects[id]; ok && reflect.DeepEqual(cur, obj) {
 				continue
 			}
 			sh.setLocked(id, obj)
-			events = append(events, event{id: id, obj: obj})
-		}
-		for _, e := range events {
-			dispatches = append(dispatches, s.fireUnderLock(EventObjectAdded, e.id, e.obj))
+			dispatches = append(dispatches, s.fireUnderLock(EventObjectAdded, id, obj))
 		}
 		sh.mu.Unlock()
 	}

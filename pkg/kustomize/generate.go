@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	fluxapis "github.com/fluxcd/pkg/apis/kustomize"
@@ -174,8 +175,12 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 			NewTag:  image.NewTag,
 			Digest:  image.Digest,
 		}
-		if exists, index := findImage(kus.Images, image.Name); exists {
-			kus.Images[index] = newImage
+		// Dedup spec.images by name, last write winning — flux's
+		// checkKustomizeImageExists.
+		if i := slices.IndexFunc(kus.Images, func(img kustypes.Image) bool {
+			return img.Name == image.Name
+		}); i >= 0 {
+			kus.Images[i] = newImage
 		} else {
 			kus.Images = append(kus.Images, newImage)
 		}
@@ -353,16 +358,4 @@ func adaptSelector(selector *fluxapis.Selector) *kustypes.Selector {
 	out.LabelSelector = selector.LabelSelector
 	out.AnnotationSelector = selector.AnnotationSelector
 	return out
-}
-
-// findImage returns whether an image with the given name is already present in
-// images, and its index. Mirrors flux's checkKustomizeImageExists (used to
-// dedup spec.images by name, last write winning).
-func findImage(images []kustypes.Image, name string) (bool, int) {
-	for i, image := range images {
-		if name == image.Name {
-			return true, i
-		}
-	}
-	return false, -1
 }

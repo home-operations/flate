@@ -212,4 +212,3 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 		t.Errorf("filtered-out source must not fetch; calls=%d", f.calls)
 	}
 }
-

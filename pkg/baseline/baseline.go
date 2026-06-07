@@ -77,7 +77,8 @@ func AutoResolve(path, base string, layout cacheroot.Layout) (*Result, error) {
 		return nil, err
 	}
 	// Validate path is inside the repo early, before any expensive work.
-	if _, err := relToRepo(repoRoot, path); err != nil {
+	rel, err := relToRepo(repoRoot, path)
+	if err != nil {
 		return nil, err
 	}
 	r, err := resolve(repo, base)
@@ -87,13 +88,6 @@ func AutoResolve(path, base string, layout cacheroot.Layout) (*Result, error) {
 
 	dir, persistent, err := materializeAt(repo, r.Hash, layout)
 	if err != nil {
-		return nil, err
-	}
-	rel, err := relToRepo(repoRoot, path)
-	if err != nil {
-		if !persistent {
-			_ = os.RemoveAll(dir)
-		}
 		return nil, err
 	}
 	pathOrig := dir

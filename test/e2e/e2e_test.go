@@ -239,18 +239,7 @@ func TestE2E_DiffImagesNoChange(t *testing.T) {
 func TestE2E_DiffAutoBaseline_Base(t *testing.T) {
 	clusterPath, repoRoot := initGitFixture(t)
 	// Edit cm.yaml in the working tree; HEAD still has the original.
-	cm := filepath.Join(repoRoot, "kubernetes", "apps", "cm.yaml")
-	body, err := os.ReadFile(cm) //nolint:gosec // dir is t.TempDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mutated := strings.Replace(string(body), "value: original", "value: changed", 1)
-	if mutated == string(body) {
-		t.Fatal("sentinel 'value: original' not found in fixture")
-	}
-	if err := os.WriteFile(cm, []byte(mutated), 0o600); err != nil { //nolint:gosec // dir is t.TempDir()
-		t.Fatal(err)
-	}
+	mutateFile(t, filepath.Join(repoRoot, "kubernetes", "apps", "cm.yaml"), "value: original", "value: changed")
 	out := runCLI(t, "diff", "ks", "--path", clusterPath, "--base", "HEAD")
 	if !strings.Contains(out, "changed") {
 		t.Errorf("expected 'changed' to surface in diff body:\n%s", out)
@@ -430,18 +419,7 @@ func TestE2E_ComponentChangePropagatesToAllConsumers(t *testing.T) {
 	current := copyTree(t, src)
 
 	// Mutate the shared component in only the "current" tree.
-	target := filepath.Join(current, "components", "shared", "shared-cm.yaml")
-	data, err := os.ReadFile(target) //nolint:gosec // target is inside a t.TempDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mutated := strings.Replace(string(data), "value: original", "value: changed", 1)
-	if mutated == string(data) {
-		t.Fatal("fixture sentinel not found; check shared-cm.yaml")
-	}
-	if err := os.WriteFile(target, []byte(mutated), 0o600); err != nil { //nolint:gosec // target is inside a t.TempDir()
-		t.Fatal(err)
-	}
+	mutateFile(t, filepath.Join(current, "components", "shared", "shared-cm.yaml"), "value: original", "value: changed")
 
 	// -o github explicitly: this test asserts github diff-syntax markers,
 	// independent of the default style.
@@ -465,18 +443,7 @@ func TestE2E_NonSharedChangeDoesNotPropagate(t *testing.T) {
 	orig := copyTree(t, src)
 	current := copyTree(t, src)
 
-	target := filepath.Join(current, "apps", "app-a", "cm.yaml")
-	data, err := os.ReadFile(target) //nolint:gosec // target is inside a t.TempDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mutated := strings.Replace(string(data), "app: app-a", "app: app-a-edited", 1)
-	if mutated == string(data) {
-		t.Fatal("fixture sentinel not found")
-	}
-	if err := os.WriteFile(target, []byte(mutated), 0o600); err != nil { //nolint:gosec // target is inside a t.TempDir()
-		t.Fatal(err)
-	}
+	mutateFile(t, filepath.Join(current, "apps", "app-a", "cm.yaml"), "app: app-a", "app: app-a-edited")
 
 	out := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig)
 
@@ -658,17 +625,7 @@ func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
 	// scope; qbittorrent (its dependsOn target) stays unchanged, so its
 	// Kustomization is skipped and the qbittorrent HR is never emitted.
 	hr := filepath.Join(repoRoot, "apps", "downloads", "lidarr", "app", "helmrelease.yaml")
-	body, err := os.ReadFile(hr) //nolint:gosec // repoRoot is t.TempDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mutated := strings.Replace(string(body), "hello-from-lidarr", "hello-from-lidarr-edited", 1)
-	if mutated == string(body) {
-		t.Fatal("sentinel 'hello-from-lidarr' not found in lidarr helmrelease.yaml")
-	}
-	if err := os.WriteFile(hr, []byte(mutated), 0o600); err != nil { //nolint:gosec // repoRoot is t.TempDir()
-		t.Fatal(err)
-	}
+	mutateFile(t, hr, "hello-from-lidarr", "hello-from-lidarr-edited")
 
 	out := runCLIOutputOnly(t, "test", "all", "--path", clusterPath, "--base", "HEAD")
 
@@ -789,6 +746,25 @@ data:
 `)
 	gitCommitAll(t, repo)
 	return filepath.Join(dir, "kubernetes", "flux"), dir
+}
+
+// mutateFile rewrites the file at path, replacing the first occurrence of
+// oldStr with newStr. It fails the test if oldStr is absent (a stale fixture
+// sentinel would otherwise let the test pass without exercising the change it
+// asserts). path is always inside a t.TempDir() in callers.
+func mutateFile(t *testing.T, path, oldStr, newStr string) {
+	t.Helper()
+	body, err := os.ReadFile(path) //nolint:gosec // path is inside a t.TempDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := strings.Replace(string(body), oldStr, newStr, 1)
+	if mutated == string(body) {
+		t.Fatalf("sentinel %q not found in %s", oldStr, path)
+	}
+	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil { //nolint:gosec // path is inside a t.TempDir()
+		t.Fatal(err)
+	}
 }
 
 // copyTree shallow-copies src into a fresh tempdir, preserving the

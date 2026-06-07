@@ -379,7 +379,7 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 			}
 		}
 	}
-	// Same projection logRecourceFailures + aggregateFailures use —
+	// Same projection logResourceFailures + aggregateFailures use —
 	// see sanitizeFailed for the contract. Centralizing in one
 	// helper keeps the three readers in sync if the strip rule
 	// changes.

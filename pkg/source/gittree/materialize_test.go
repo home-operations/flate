@@ -81,8 +81,7 @@ func TestMaterialize_SubmoduleCallbackWiredCorrectly(t *testing.T) {
 func TestMaterialize_RespectsCtxCancel(t *testing.T) {
 	src := t.TempDir()
 	repo := mustInit(t, src)
-	for i := range 50 {
-		_ = i
+	for range 50 {
 		_ = os.WriteFile(filepath.Join(src, "f"+filepath.Base(t.TempDir())), []byte("x"), 0o600)
 	}
 	hash := mustCommit(t, repo, src)

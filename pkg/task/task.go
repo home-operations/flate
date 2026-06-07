@@ -199,9 +199,19 @@ func (s *Service) YieldSlot(fn func()) {
 		fn()
 		return
 	}
-	<-s.sem
-	defer func() { s.sem <- struct{}{} }()
+	defer s.releaseSlot()()
 	fn()
+}
+
+// releaseSlot drops the calling goroutine's worker slot and returns a
+// closure that re-acquires one. Callers defer the returned closure so a
+// panic in the released gap still restores the slot count; otherwise
+// Service.Go's outer `defer <-s.sem` drains a phantom slot on unwind,
+// eventually hanging a goroutine that legitimately owns a slot. Only
+// valid on a bounded Service (s.sem != nil).
+func (s *Service) releaseSlot() func() {
+	<-s.sem
+	return func() { s.sem <- struct{}{} }
 }
 
 // YieldQuiescent releases the worker slot AND decrements the active
@@ -227,8 +237,7 @@ func (s *Service) YieldSlot(fn func()) {
 // unwind.
 func (s *Service) YieldQuiescent(fn func()) {
 	if s.sem != nil {
-		<-s.sem
-		defer func() { s.sem <- struct{}{} }()
+		defer s.releaseSlot()()
 	}
 	now := s.active.Add(-1)
 	s.notifyQuiescence(now)

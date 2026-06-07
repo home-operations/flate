@@ -72,25 +72,38 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*sto
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GitProviderGeneric,
 			"SecretRef-based credentials")
 	}
-	auth, err := f.resolveAuth(repo)
-	if err != nil {
-		return nil, err
-	}
-	tlsCfg, err := f.resolveTLS(repo)
-	if err != nil {
-		return nil, err
-	}
-	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "GitRepository",
-		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
-	if err != nil {
-		return nil, err
-	}
-	restore, err := gittransport.InstallHTTPS(tlsCfg, proxy)
+	auth, proxy, restore, err := f.resolveTransport(repo)
 	if err != nil {
 		return nil, err
 	}
 	defer restore()
 	return f.fetch(ctx, repo, auth, proxy)
+}
+
+// resolveTransport resolves the auth, TLS, and proxy material for repo
+// and installs the process-wide HTTPS transport for the fetch. It
+// returns the auth method and proxy config the go-git call needs plus a
+// restore closure the caller MUST defer to tear the transport back down.
+// Shared by Fetch and Prewarm so both agree on credential resolution.
+func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (transport.AuthMethod, *source.ProxyConfig, func(), error) {
+	auth, err := f.resolveAuth(repo)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	tlsCfg, err := f.resolveTLS(repo)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "GitRepository",
+		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	restore, err := gittransport.InstallHTTPS(tlsCfg, proxy)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return auth, proxy, restore, nil
 }
 
 // fetch clones the GitRepository, then runs verification, ignore, and
@@ -200,8 +213,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		}
 	}
 
-	rev, _ := readResolvedRevision(slot.Path)
-	art := gitArtifact(repo.URL, slot.Path, rev)
+	art := gitArtifact(repo.URL, slot.Path, readResolvedRevision(slot.Path))
 	if err := f.finalize(repo, art); err != nil {
 		return nil, err
 	}
@@ -384,20 +396,7 @@ func (f *Fetcher) Prewarm(ctx context.Context, repo *manifest.GitRepository) err
 	if !f.canUseMirror(repo, url) {
 		return nil
 	}
-	auth, err := f.resolveAuth(repo)
-	if err != nil {
-		return err
-	}
-	tlsCfg, err := f.resolveTLS(repo)
-	if err != nil {
-		return err
-	}
-	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "GitRepository",
-		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
-	if err != nil {
-		return err
-	}
-	restore, err := gittransport.InstallHTTPS(tlsCfg, proxy)
+	auth, proxy, restore, err := f.resolveTransport(repo)
 	if err != nil {
 		return err
 	}

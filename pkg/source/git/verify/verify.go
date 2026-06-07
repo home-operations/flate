@@ -4,6 +4,7 @@
 package verify
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -111,7 +112,7 @@ func buildPGPKeyring(sec *manifest.Secret) (string, error) {
 		add(k)
 	}
 	if b.Len() == 0 {
-		return "", fmt.Errorf("verify secret carries no PGP public keys")
+		return "", errors.New("verify secret carries no PGP public keys")
 	}
 	return b.String(), nil
 }

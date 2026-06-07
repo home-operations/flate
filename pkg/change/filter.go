@@ -765,7 +765,7 @@ func buildProducerIndex(sourceFiles map[manifest.NamedResource]string, owners ow
 // at producersFor merge time; the slices are short (typically a
 // single owner KS per data file) so the linear scan is cheaper than
 // a map intermediary.
-func appendUniqueProducers(dst []manifest.NamedResource, src []manifest.NamedResource) []manifest.NamedResource {
+func appendUniqueProducers(dst, src []manifest.NamedResource) []manifest.NamedResource {
 	for _, id := range src {
 		if !slices.Contains(dst, id) {
 			dst = append(dst, id)

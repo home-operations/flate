@@ -1,8 +1,6 @@
 package manifest
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -150,6 +148,7 @@ func decodeResourceSetInputs(inputs []fluxopv1.ResourceSetInput) ([]map[string]a
 // derivedID is the placeholder for upstream's UID-derived id field —
 // stable across flate runs because flate has no UIDs.
 func (p *ResourceSetInputProvider) derivedID() string {
-	sum := sha256.Sum256([]byte(p.Namespace + "/" + p.Name))
-	return hex.EncodeToString(sum[:8])
+	// First 8 bytes (16 hex chars) of the full digest — enough to
+	// uniquely identify the input set within a render.
+	return SHA256Hex([]byte(p.Namespace + "/" + p.Name))[:16]
 }

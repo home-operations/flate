@@ -157,13 +157,10 @@ func (c *Cache) Slot(ctx context.Context, url, ref, authID string) (*Slot, error
 	case os.IsNotExist(statErr):
 		// Allocate a sibling staging dir on the same filesystem so
 		// the eventual rename is atomic.
-		staging, err := os.MkdirTemp(filepath.Dir(final), filepath.Base(final)+".tmp.*")
-		if err != nil {
+		if err := s.allocStaging("staging"); err != nil {
 			s.unlock()
-			return nil, fmt.Errorf("cache slot staging: %w", err)
+			return nil, err
 		}
-		s.Path = staging
-		s.staging = staging
 		return s, nil
 	default:
 		s.unlock()

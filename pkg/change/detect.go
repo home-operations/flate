@@ -236,13 +236,13 @@ func detectViaWalker(before, after string) (*Set, error) {
 		afterFS  map[string]fileMeta
 	)
 	eg.Go(func() error {
-		fs, err := scanTree(before)
-		beforeFS = fs
+		tree, err := scanTree(before)
+		beforeFS = tree
 		return err
 	})
 	eg.Go(func() error {
-		fs, err := scanTree(after)
-		afterFS = fs
+		tree, err := scanTree(after)
+		afterFS = tree
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -259,7 +259,7 @@ func detectViaWalker(before, after string) (*Set, error) {
 	}
 	var hashJobs []hashJob
 
-	for rel, after := range afterFS {
+	for rel, aft := range afterFS {
 		bef, ok := beforeFS[rel]
 		if !ok {
 			paths[rel] = struct{}{}
@@ -267,11 +267,11 @@ func detectViaWalker(before, after string) (*Set, error) {
 		}
 		// A type swap (regular ↔ symlink) is a content change in git's
 		// --no-index view; flag it without bothering to hash.
-		if bef.symlink != after.symlink {
+		if bef.symlink != aft.symlink {
 			paths[rel] = struct{}{}
 			continue
 		}
-		if bef.size != after.size {
+		if bef.size != aft.size {
 			paths[rel] = struct{}{}
 			continue
 		}
@@ -279,8 +279,8 @@ func detectViaWalker(before, after string) (*Set, error) {
 		// The pre-removal mtime fast-path silently dropped real edits
 		// on coarse-mtime filesystems; correctness over speed here.
 		hashJobs = append(hashJobs, hashJob{
-			rel: rel, beforeAbs: bef.abs, afterAbs: after.abs,
-			symlink: after.symlink,
+			rel: rel, beforeAbs: bef.abs, afterAbs: aft.abs,
+			symlink: aft.symlink,
 		})
 	}
 	for rel := range beforeFS {

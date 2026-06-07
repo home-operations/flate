@@ -239,13 +239,9 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 	// the cached canonicals by reference (cheap, the common platform-CM
 	// pattern); if ANY ref has one, keep the eager fully-owned copy so the
 	// in-place write can't reach the cache. See updateHelmReleaseValues.
-	share := true
-	for _, ref := range hr.ValuesFrom {
-		if ref.TargetPath != "" {
-			share = false
-			break
-		}
-	}
+	share := !slices.ContainsFunc(hr.ValuesFrom, func(ref manifest.ValuesReference) bool {
+		return ref.TargetPath != ""
+	})
 	values := map[string]any{}
 	for _, ref := range hr.ValuesFrom {
 		found, err := lookupValueRef(ref, hr.Namespace, provider)
@@ -255,8 +251,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 			}
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
-		values, err = updateHelmReleaseValues(ref, found, values, hr.Namespace, cache, share)
-		if err != nil {
+		if values, err = updateHelmReleaseValues(ref, found, values, hr.Namespace, cache, share); err != nil {
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 	}

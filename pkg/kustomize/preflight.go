@@ -37,12 +37,21 @@ const remoteFetchMaxBytes = 64 << 20 // 64 MiB
 // fetch latency stays observable.
 var remoteFetchClient = &http.Client{Timeout: remoteFetchTimeout}
 
+// remoteResourcePrefix names the staged artifacts preflight writes beside a
+// kustomization for a pre-fetched remote resource: a `<prefix><hash>.yaml`
+// file for an HTTP single-file resource, or a `<prefix><hash>/` directory for
+// a cloned git base. The walk below skips these so a cloned base's own nested
+// kustomizations aren't re-rewritten.
+const remoteResourcePrefix = ".flate-remote-"
+
 // preflightRemoteResources walks every kustomization file under root
-// and pre-fetches HTTP/HTTPS `resources:` entries via flate's own
-// HTTP client so kustomize.Build sees only local files — never
-// invoking its built-in `exec.Command("git", "fetch", ...)` fallback
-// (which silently adds a git-binary dependency and a 10s+ timeout
-// on broken URLs).
+// and pre-resolves remote `resources:` entries so kustomize.Build sees
+// only local files — never invoking its built-in
+// `exec.Command("git", "fetch", ...)` fallback (which silently adds a
+// git-binary dependency and a 10s+ timeout on broken URLs). HTTP/HTTPS
+// single-file entries are fetched via flate's own HTTP client; git
+// bases (URLs carrying kustomize's git markers / ?ref=) are cloned via
+// the injected GitBaseFetcher and materialized locally. See gitbase.go.
 //
 // root is the **subPath dir**, not the whole stage. Scoping the walk
 // makes URL-fetch failures localized: a broken URL in one
@@ -66,6 +75,13 @@ func preflightRemoteResources(ctx context.Context, cache *StagingCache, root str
 			return err
 		}
 		if d.IsDir() {
+			// Skip a git base materialized by a prior resources: entry — its
+			// own nested kustomization.yaml files must NOT be re-rewritten
+			// here (depth-1 limit, like the ../-outside-subPath blind spot
+			// noted above). The kustomize build of that base resolves its URLs.
+			if strings.HasPrefix(d.Name(), remoteResourcePrefix) {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if !slices.Contains(manifest.KustomizeBuilderFilenames, d.Name()) {
@@ -114,6 +130,21 @@ func rewriteURLResources(ctx context.Context, cache *StagingCache, ksFile string
 	dir := filepath.Dir(ksFile)
 	for _, entry := range resourcesNode.Content {
 		if entry.Kind != yaml.ScalarNode {
+			continue
+		}
+		// Classify git bases BEFORE the HTTP-file check: a git base is also an
+		// https:// URL, but kustomize resolves it by cloning, not by GETting a
+		// single file. GETting a git URL returns the host's HTML page, which
+		// then fails to parse as YAML (#616) — so it must take the git path.
+		if spec, ok := isGitRemoteBase(entry.Value); ok {
+			localDir, fetchErr := fetchGitBase(ctx, cache, dir, spec)
+			if fetchErr != nil {
+				return fmt.Errorf("remote git base %s: %w", entry.Value, fetchErr)
+			}
+			entry.Value = localDir
+			entry.Tag = "!!str"
+			entry.Style = 0
+			changed = true
 			continue
 		}
 		if !isHTTPURL(entry.Value) {
@@ -175,7 +206,7 @@ func fetchRemoteResource(ctx context.Context, cache *StagingCache, dir, urlStr s
 	if err != nil {
 		return "", err
 	}
-	name := ".flate-remote-" + urlHash(urlStr) + ".yaml"
+	name := remoteResourcePrefix + urlHash(urlStr) + ".yaml"
 	if err := os.WriteFile(filepath.Join(dir, name), body, 0o600); err != nil {
 		return "", err
 	}

@@ -343,6 +343,17 @@ func New(cfg Config) (*Orchestrator, error) {
 		Mirrors: mirror.New(layout),
 		Depth:   cfg.GitDepth,
 	}
+	// Resolve kustomize remote git bases (resources: URLs carrying ?ref= or a
+	// git marker) through the same clone/mirror/ref-resolution machinery as
+	// Flux GitRepository sources. The seam is a function value because
+	// pkg/kustomize cannot import pkg/source/git (import cycle via pkg/source).
+	staging.SetGitBaseFetcher(func(ctx context.Context, repoURL, ref string) (string, string, error) {
+		art, err := gitFetcher.FetchRemoteBase(ctx, repoURL, ref)
+		if err != nil {
+			return "", "", err
+		}
+		return art.LocalPath, art.Revision, nil
+	})
 	srcCtrl.Fetchers[manifest.KindGitRepository] = source.Wrap(
 		manifest.KindGitRepository, gitFetcher)
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap(

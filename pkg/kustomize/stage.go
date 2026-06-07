@@ -101,7 +101,29 @@ type StagingCache struct {
 	// cache — so a warm run's count stays flat. Lightweight observability;
 	// asserted by TestStagePersistent_HitDoesNotKickSweep.
 	sweepKicks atomic.Int64
+
+	// gitBase resolves a remote kustomize git base (a repo URL at a bare
+	// ref) to an on-disk worktree. Injected via SetGitBaseFetcher because
+	// this package cannot import pkg/source/git (import cycle). Nil in
+	// library/test contexts; a git-base resource then fails with a clear
+	// error rather than silently HTTP-GETting its URL. See gitbase.go.
+	gitBase GitBaseFetcher
 }
+
+// GitBaseFetcher materializes a remote kustomize git base — a repo URL at a
+// bare, undifferentiated ref (tag, branch, commit, or "" for the default
+// branch) — into an on-disk worktree, returning its absolute path and the
+// resolved revision. The orchestrator supplies a closure over its
+// *git.Fetcher (which owns the clone/mirror/ref-resolution machinery); this
+// package only ever sees the function value, keeping it free of the
+// pkg/source → pkg/kustomize import cycle.
+type GitBaseFetcher func(ctx context.Context, repoURL, ref string) (localPath, revision string, err error)
+
+// SetGitBaseFetcher wires the git-clone capability used to resolve remote git
+// bases referenced from a kustomization's resources:. The orchestrator calls
+// this once at construction; library/test embedders may leave it unset, in
+// which case a git-base resource surfaces a clear "not wired" error.
+func (c *StagingCache) SetGitBaseFetcher(fn GitBaseFetcher) { c.gitBase = fn }
 
 // stage holds the per-source materialization promise. The OnceValues
 // pattern keeps copyTree work to one execution per key within the

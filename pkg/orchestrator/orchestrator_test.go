@@ -418,6 +418,75 @@ spec:
 	}
 }
 
+// TestOrchestrator_ExplicitRepoRootNoGit proves Config.RepoRoot replaces the
+// .git-ancestor walk: an extracted tree with NO .git, the scan entry point at a
+// subdir (kubernetes/flux/cluster), and a repo-root-relative KS spec.path
+// (./kubernetes/apps) renders correctly when RepoRoot is set — the spec.path
+// resolves against RepoRoot, not the collapsed entry-point subdir. Without
+// RepoRoot and no .git, FindRepoRoot falls back to the subdir, ./kubernetes/apps
+// doubles into a nonexistent path, and nothing renders. This is konflate's
+// clusterPath bug; the explicit anchor is what fixes it.
+func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
+	writeCluster := func(t *testing.T, dir string) {
+		testutil.WriteFile(t, dir, "kubernetes/flux/cluster/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-apps, namespace: flux-system}
+spec:
+  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+		testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
+		testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, namespace: default}\ndata: {k: v}\n")
+	}
+	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	rendersDemo := func(t *testing.T, cfg Config) bool {
+		t.Helper()
+		o, err := New(cfg)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		// A per-resource render failure (e.g. the doubled-path case below)
+		// is advisory — Result stays non-nil. Gate on the rendered docs, not
+		// on err.
+		res, err := o.Render(context.Background())
+		if res == nil {
+			t.Fatalf("Render returned nil Result: %v", err)
+		}
+		for _, m := range res.Manifests[clusterApps] {
+			if m["kind"] != "ConfigMap" {
+				continue
+			}
+			if meta, _ := m["metadata"].(map[string]any); meta != nil && meta["name"] == "demo" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Explicit RepoRoot: spec.path ./kubernetes/apps resolves against the root,
+	// so the ConfigMap renders even though we scanned only the entry-point subdir
+	// and there is no .git to walk up to.
+	t.Run("explicit RepoRoot renders", func(t *testing.T) {
+		dir := t.TempDir()
+		writeCluster(t, dir)
+		if !rendersDemo(t, Config{Path: dir + "/kubernetes/flux/cluster", RepoRoot: dir, WipeSecrets: true, Concurrency: 4}) {
+			t.Error("explicit RepoRoot: ConfigMap demo must render (spec.path resolves against RepoRoot)")
+		}
+	})
+
+	// No anchor (no RepoRoot, no .git): documents the failure mode the explicit
+	// anchor fixes — ./kubernetes/apps doubles under the entry-point subdir, so
+	// cluster-apps renders nothing.
+	t.Run("no anchor renders nothing", func(t *testing.T) {
+		dir := t.TempDir()
+		writeCluster(t, dir)
+		if rendersDemo(t, Config{Path: dir + "/kubernetes/flux/cluster", WipeSecrets: true, Concurrency: 4}) {
+			t.Error("no RepoRoot + no .git: spec.path doubles; cluster-apps should render nothing")
+		}
+	})
+}
+
 // The bjw-s/onedr0p self-substitute deadlock, in FULL mode: cluster-apps'
 // spec.path is a BARE dir whose flux-system group base pulls in a component
 // defining a namespace-less cluster-settings ConfigMap, which cluster-apps

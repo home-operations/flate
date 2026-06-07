@@ -17,7 +17,17 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// RepoRoot is the spec.path anchor. When the caller supplies it
+	// explicitly (an SDK consumer rendering an extracted tree with no
+	// .git), use it verbatim; otherwise fall back to the .git-ancestor
+	// walk for a local working tree — byte-identical to prior behavior
+	// when RepoRoot is empty.
 	root := FindRepoRoot(abs)
+	if d.cfg.RepoRoot != "" {
+		if r, err := ResolveScanPath(d.cfg.RepoRoot); err == nil {
+			root = r
+		}
+	}
 	id := manifest.BootstrapSourceID
 	// Always seed the artifact + status: even if the user authored a
 	// GitRepository at this id (the `flux bootstrap` pattern), the

@@ -76,7 +76,16 @@ type Result struct {
 
 // Config is the input contract for Run. Store is mandatory.
 type Config struct {
-	Path        string
+	// Path is the scan entry point — the directory the file walker
+	// starts at (a Flux cluster's entry, e.g. kubernetes/flux/cluster).
+	Path string
+	// RepoRoot is the source root that Kustomization spec.path values
+	// resolve against (the GitRepository artifact root). Supplied
+	// explicitly by SDK consumers rendering extracted trees that have no
+	// .git; the CLI defaults it to the .git ancestor of Path. Empty ⇒
+	// fall back to the .git walk (FindRepoRoot), preserving local
+	// behavior. Path must sit at or under RepoRoot.
+	RepoRoot    string
 	Store       *store.Store
 	WipeSecrets bool
 	// ComponentCache, when non-nil, memoizes

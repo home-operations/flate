@@ -36,8 +36,15 @@ type Config struct {
 	// at the CLI layer; this field is bytes.
 	StageCacheBytes int64
 
-	// Path is the directory to scan for Flux objects.
+	// Path is the directory to scan for Flux objects (the scan entry
+	// point — a cluster's Flux entry, which may be a subdir of RepoRoot).
 	Path string
+	// RepoRoot is the source root that Kustomization spec.path values
+	// resolve against. Supplied explicitly by SDK consumers rendering
+	// extracted trees that have no .git; the CLI defaults it to the .git
+	// ancestor of Path. Empty ⇒ the .git walk (FindRepoRoot) runs,
+	// preserving local behavior.
+	RepoRoot string
 	// PathOrig, when non-empty, switches every command into
 	// changed-only mode: only resources whose source files differ
 	// (plus the sources they reference) get reconciled.
@@ -443,7 +450,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		return nil
 	}
 	res, err := discovery.Run(ctx, discovery.Config{
-		Path: o.cfg.Path, Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
+		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
 		ComponentCache: o.componentCache,
 	})
 	if err != nil {

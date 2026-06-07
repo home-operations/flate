@@ -38,16 +38,21 @@
 // *data* — to build its own API payload, web UI, or image report —
 // instead calls [Changes], which returns the same paired, normalized,
 // noise-filtered set as a [][Change] (added / changed / removed, with the
-// per-side manifests and the captured helm.sh/chart label). The wiring
-// from two [orchestrator.Result]s is:
+// per-side manifests and the captured helm.sh/chart label). Render two
+// cluster directories with [orchestrator.RenderTrees] (it owns the
+// two-orchestrator, shared-cache, changed-only dance), then feed the
+// Results to [Changes]:
 //
-//	left  := diff.DocsFromManifests(baseRes.Manifests, nil)
-//	right := diff.DocsFromManifests(headRes.Manifests, nil)
-//	changes := diff.Changes(left, right, diff.Options{
-//		StripAttrs:  diff.DefaultStripAttrs,
-//		StripFields: diff.DefaultStripFields,
-//		Normalize:   redact, // optional extra per-manifest scrub
-//	})
+//	base, head, _ := orchestrator.RenderTrees(ctx, baseDir, headDir, cfg)
+//	changes := diff.Changes(
+//		diff.DocsFromManifests(base.Result.Manifests, nil),
+//		diff.DocsFromManifests(head.Result.Manifests, nil),
+//		diff.Options{
+//			StripAttrs:  diff.DefaultStripAttrs,
+//			StripFields: diff.DefaultStripFields,
+//			Normalize:   redact, // optional extra per-manifest scrub
+//		},
+//	)
 //
 // [DocsFromManifests] is the store-free adapter from a render Result's
 // per-parent manifests to the flat []Doc both [Changes] and [RenderDocs]
@@ -57,5 +62,7 @@
 // Example.
 //
 // [dyff]: https://github.com/homeport/dyff
+// [orchestrator.RenderTrees]: https://pkg.go.dev/github.com/home-operations/flate/pkg/orchestrator#RenderTrees
+//
 // [orchestrator.Result]: https://pkg.go.dev/github.com/home-operations/flate/pkg/orchestrator#Result
 package diff

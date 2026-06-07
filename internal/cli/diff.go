@@ -1,24 +1,18 @@
 package cli
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
-	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -198,12 +192,12 @@ type diffSide struct {
 	Err error
 }
 
-// runDiffOrchestrators boots two orchestrators with each side's
-// --path-orig pointing at the other, so both resolve the same symmetric
-// change set and only render resources that differ between paths. Both
-// sides are independent (separate task service, helm client, staging
-// cache, store), so they run concurrently — wall time roughly halves
-// on changed-only diffs.
+// runDiffOrchestrators resolves the baseline, then hands the
+// two-orchestrator render to orchestrator.RenderTrees (swapped PathOrig
+// so each side renders changed-only against the other, one shared source
+// cache, concurrent) and maps its two sides into the diffSide pair the
+// diff/diff-images commands consume. base = --path-orig (left/old),
+// head = --path (right/new).
 func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (diffSide, diffSide, error) {
 	// diff REQUIRES a baseline — when neither --path-orig nor --base
 	// is set, auto-detect via the merge-base ladder. Cleanup is
@@ -214,54 +208,10 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 		return diffSide{}, diffSide{}, err
 	}
 	defer cleanup()
-	currentCfg := buildOrchCfg(*c, *h)
-	origCfg := currentCfg
-	origCfg.Path, origCfg.PathOrig = c.pathOrig, c.path
-
-	// One source.Cache shared across both orchestrators. They write into
-	// the same on-disk cache root; without a shared *Cache each side has
-	// its own mutex, and concurrent first-time clones of the same
-	// (url, ref) slot can race past the mkdir/Readdirnames check and
-	// step on each other.
-	cacheRoot := cmp.Or(currentCfg.CacheDir, filepath.Join(os.TempDir(), "flate-cache"))
-	shared := source.NewCache(cacheroot.New(cacheRoot))
-	currentCfg.SourceCache = shared
-	origCfg.SourceCache = shared
-
-	var (
-		orig, current    diffSide
-		origErr, currErr error
-	)
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		o, res, err := runOrchestratorCfg(gctx, currentCfg)
-		current = diffSide{O: o, Res: res, Err: err}
-		currErr = err
-		// Fatal Bootstrap errors return nil orchestrator — propagate
-		// those so the errgroup cancels its sibling. Per-resource Run
-		// failures keep the orchestrator non-nil; defer them so we
-		// still produce a diff before the caller flips the exit code.
-		if o == nil {
-			return err
-		}
-		return nil
-	})
-	g.Go(func() error {
-		o, res, err := runOrchestratorCfg(gctx, origCfg)
-		orig = diffSide{O: o, Res: res, Err: err}
-		origErr = err
-		if o == nil {
-			return err
-		}
-		return nil
-	})
-	if err := g.Wait(); err != nil {
-		return diffSide{}, diffSide{}, err
-	}
-	// Either side may have reconcile failures — return the combined
-	// run-error alongside the orchestrators so the diff caller can
-	// write its output, then flip the exit code.
-	return orig, current, joinRunErrors(origErr, currErr)
+	base, head, runErr := orchestrator.RenderTrees(ctx, c.pathOrig, c.path, buildOrchCfg(*c, *h))
+	orig := diffSide{O: base.Orchestrator, Res: base.Result, Err: base.Err}
+	current := diffSide{O: head.Orchestrator, Res: head.Result, Err: head.Err}
+	return orig, current, runErr
 }
 
 // joinRunErrors composes the orig/current Run errors into a single

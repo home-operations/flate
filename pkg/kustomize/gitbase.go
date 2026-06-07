@@ -6,8 +6,8 @@ package kustomize
 // pre-resolves both so `kustomize build` only ever sees local files. The HTTP
 // half lives in preflight.go; this file owns the git half: recognize a git
 // base, fetch it via the injected GitBaseFetcher (which wraps the existing
-// pkg/source/git machinery), copy the worktree into the staged tree, and hand
-// back a local directory path for the resources: entry.
+// pkg/source/git machinery), copy the worktree into the render's in-memory fs,
+// and hand back a local directory path for the resources: entry.
 
 import (
 	"context"

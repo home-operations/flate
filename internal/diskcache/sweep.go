@@ -1,8 +1,6 @@
 // Package diskcache holds the pieces of the single-flight, mtime-LRU
-// disk-cache sweep shared by the helm render cache and the kustomize
-// stage cache. The two consumers collect their entries very
-// differently (a recursive file walk vs. a two-level, sentinel-filtered
-// directory scan), so collection stays in each package; what's shared
+// disk-cache sweep used by the helm render cache (pkg/helm). Entry
+// collection (a recursive file walk) stays in the caller; what's shared
 // here is the single-flight gate that keeps a burst of writes from
 // forking one sweep per write, and the oldest-first eviction loop that
 // deletes entries until total bytes fall under a cap.
@@ -42,11 +40,10 @@ type Entry struct {
 // EvictOldest removes entries oldest-first until the running total is at
 // or below limit. total is the caller's pre-summed byte usage of
 // entries; when it's already within limit nothing is removed. less
-// defines the eviction order (callers pin their own tie-break — helm
-// sorts by mtime then path, the stage cache by mtime alone). remove
-// deletes one entry's path and returns an error on failure; a failed
-// remove is skipped (its bytes stay counted) and the sweep continues,
-// matching both call sites' best-effort semantics.
+// defines the eviction order (the helm render cache pins mtime then
+// path). remove deletes one entry's path and returns an error on
+// failure; a failed remove is skipped (its bytes stay counted) and the
+// sweep continues, matching the caller's best-effort semantics.
 func EvictOldest(entries []Entry, total, limit int64, less func(a, b Entry) int, remove func(e Entry) error) {
 	if total <= limit {
 		return

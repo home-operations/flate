@@ -117,7 +117,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	}
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.StringVar(&f.cacheDir, "cache-dir", "",
-		"on-disk cache root for source artifacts, helm charts, kustomize stages, "+
+		"on-disk cache root for source artifacts, helm charts, "+
 			"and persistent render output. Defaults to $XDG_CACHE_HOME/flate "+
 			"(Linux), ~/Library/Caches/flate (macOS), %LocalAppData%/flate "+
 			"(Windows), falling back to $TMPDIR/flate-cache if those error.")

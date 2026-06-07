@@ -23,7 +23,7 @@ type remoteFetch struct {
 
 // FetchRemote returns the body of urlStr, fetched at most once per
 // (url, success) cache entry. Successful bodies are cached for the
-// StagingCache lifetime; transient errors (DNS, connection reset,
+// TreeCache lifetime; transient errors (DNS, connection reset,
 // timeout, 5xx) are NOT cached — the next caller retries. Only
 // definitive HTTP 4xx responses are cached as negative entries
 // (they won't change between retries within a run).

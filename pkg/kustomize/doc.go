@@ -1,10 +1,13 @@
 // Package kustomize wraps sigs.k8s.io/kustomize/api so the rest of
 // flate never invokes the `kustomize` CLI. It provides:
 //
-//   - Build / RenderFlux: render a kustomization directory to YAML
-//     documents. Build is the plain krusty surface; RenderFlux adds
-//     the Flux generator that handles spec.components and embedded
-//     inline Contents.
+//   - RenderFlux: render a Flux Kustomization to YAML documents entirely
+//     in memory. It reproduces the kustomize-controller's spec merge
+//     (generate.go) and builds against a memory-over-disk overlay
+//     (overlayfs.go) rooted at the source — source files are read from a
+//     secure on-disk FS, the merged kustomization.yaml + any pre-fetched
+//     remote resources are written to an in-memory layer, and the source
+//     tree is never copied or mutated.
 //   - Prepare: the standard pre-render dance (Clone + expand
 //     postBuild.substituteFrom) for embedders rendering a single
 //     Kustomization. Symmetric to helm.Prepare for HelmReleases, minus
@@ -13,24 +16,19 @@
 //   - Substitute: envsubst-style "${VAR}" / "${VAR:=default}" used
 //     for Flux post-build substitutions.
 //
-// Concurrency. Two locks guard krusty's non-thread-safety:
+// Concurrency. Each RenderFlux call builds against its own private overlay,
+// so no two renders share mutable state and there is no per-tree build lock.
+// krusty's package-global state (the openapi schema registry, builtin
+// plugin/transformer factories) is still not goroutine-safe, so the
+// process-wide BuildMutex (flux.go) serializes EVERY krusty invocation flate
+// runs — including the helm post-renderer's krusty.Run in pkg/helm.
+// fluxcd/pkg/kustomize guards its own Build for the same reason; every
+// flate-owned krusty entrypoint MUST hold BuildMutex.
 //
-//   - A per-path lock (stageLocks) serializes builds against the SAME
-//     staged directory, which krusty mutates in place.
-//   - The process-wide BuildMutex (flux.go) serializes EVERY krusty
-//     invocation flate runs — including the helm post-renderer's
-//     krusty.Run in pkg/helm — because kustomize's package-global state
-//     (the openapi schema registry, builtin plugin/transformer
-//     factories) is not goroutine-safe. fluxcd/pkg/kustomize guards its
-//     own SecureBuild for the same reason; every flate-owned krusty
-//     entrypoint MUST hold BuildMutex.
-//
-// Caching boundary. kustomize output caching is deferred to the
-// controller layer (the Kustomization controller's spec+source
-// fingerprint dedup), NOT memoized inside this package the way
-// helm.Client caches template output. RenderFlux mutates the staged
-// workspace and krusty plugins/generators are not guaranteed
-// deterministic, so the stable point to memoize is the coarse
-// spec+source hash the controller already computes — not the render
-// engine's fluid internals.
+// Caching boundary. kustomize output caching is deferred to the controller
+// layer (the Kustomization controller's spec+source fingerprint dedup), NOT
+// memoized inside this package the way helm.Client caches template output.
+// krusty plugins/generators are not guaranteed deterministic, so the stable
+// point to memoize is the coarse spec+source hash the controller already
+// computes — not the render engine's fluid internals.
 package kustomize

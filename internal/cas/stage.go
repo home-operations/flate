@@ -1,14 +1,11 @@
-// Package cas holds the atomic content-addressed staging dance shared
-// by baseline materialization and the kustomize stage cache: build into
-// a sibling temp dir, atomically rename it into the final slot, and —
-// when the rename loses a cross-process race — discard the temp and
-// adopt the winner's already-finalized directory.
+// Package cas holds the atomic content-addressed staging dance used by
+// baseline materialization: build into a sibling temp dir, atomically rename
+// it into the final slot, and — when the rename loses a cross-process race —
+// discard the temp and adopt the winner's already-finalized directory.
 //
-// What "build" does and how a race is detected differ between callers
-// (baseline writes a git tree + .git marker and adopts on a finalized
-// directory; the stage cache copies a file tree and adopts on a sentinel
-// file), so both are callbacks. The temp-dir lifecycle, the rename, and
-// the discard-on-failure cleanup are identical and live here.
+// What "build" does and how a race is detected are caller-supplied callbacks
+// (baseline writes a git tree and adopts on a finalized directory). The
+// temp-dir lifecycle, the rename, and the discard-on-failure cleanup live here.
 package cas
 
 import (

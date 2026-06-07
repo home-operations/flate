@@ -89,7 +89,7 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffe
 	// kustomize's krusty pipeline mutates package-global state that is
 	// not goroutine-safe. Hold the shared build mutex so this HR
 	// post-render never runs concurrently with a Kustomization's
-	// SecureBuild (or another HR's post-render) — see kustomize.BuildMutex.
+	// build (or another HR's post-render) — see kustomize.BuildMutex.
 	rm, err := func() (resmap.ResMap, error) {
 		flatekustomize.BuildMutex.Lock()
 		defer flatekustomize.BuildMutex.Unlock()

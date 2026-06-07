@@ -9,12 +9,19 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"oras.land/oras-go/v2/registry/remote"
+	"oras.land/oras-go/v2/registry/remote/auth"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -285,4 +292,186 @@ func mustPEMPublicKey(t *testing.T, pub crypto.PublicKey) []byte {
 		t.Fatalf("MarshalPKIXPublicKey: %v", err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+}
+
+// blobRepoClient builds a *remote.Repository whose Blobs().Fetch serves
+// the given payload blobs keyed by their sha256 digest. This drives the
+// real oras blob-fetch path used by verifyLayerAgainstKeys without a live
+// registry, so the per-layer engine (digest binding, key trials) becomes
+// unit-testable. httptest.NewTLSServer's self-signed cert pairs with an
+// InsecureSkipVerify client, matching how spec.insecure works in fetch.go.
+func blobRepoClient(t *testing.T, blobs map[string][]byte) *remote.Repository {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v2/"):
+			return
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			d := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			body, ok := blobs[d]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Docker-Content-Digest", d)
+			_, _ = w.Write(body)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	repoClient, err := remote.NewRepository(mustURL(t, srv.URL).Host + "/test/repo")
+	if err != nil {
+		t.Fatalf("NewRepository: %v", err)
+	}
+	repoClient.Client = &auth.Client{
+		Client: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed test cert
+			},
+		},
+	}
+	return repoClient
+}
+
+// payloadLayer builds a signature layer whose annotation carries the
+// base64 of sig and whose blob digest addresses payload. The returned
+// blobs map is suitable for blobRepoClient.
+func payloadLayer(payload, sig []byte) (signatureLayer, map[string][]byte) {
+	dig := sha256Digest(payload)
+	layer := signatureLayer{
+		MediaType:   "application/vnd.dev.cosign.simplesigning.v1+json",
+		Digest:      dig,
+		Size:        int64(len(payload)),
+		Annotations: map[string]string{cosignSignatureAnnotation: base64.StdEncoding.EncodeToString(sig)},
+	}
+	return layer, map[string][]byte{dig: payload}
+}
+
+// mustPayload builds the cosign "simple signing" JSON envelope binding the
+// given digest, and an ECDSA signature over it under priv.
+func mustPayload(t *testing.T, dig string, priv *ecdsa.PrivateKey) (payload, sig []byte) {
+	t.Helper()
+	var p cosignPayload
+	p.Critical.Image.DockerManifestDigest = dig
+	payload, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	h := sha256.Sum256(payload)
+	sig, err = ecdsa.SignASN1(rand.Reader, priv, h[:])
+	if err != nil {
+		t.Fatalf("SignASN1: %v", err)
+	}
+	return payload, sig
+}
+
+// TestVerifyLayerAgainstKeys exercises the per-layer verification engine
+// directly — paths that are otherwise only reachable through a live
+// registry. Each case asserts the (matched, err) contract that the caller
+// in verifyCosignSignature depends on for its lastErr precedence.
+func TestVerifyLayerAgainstKeys(t *testing.T) {
+	const pulled = "sha256:deadbeef"
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+
+	// Happy path: payload binds the pulled digest and a trusted key
+	// verifies — matched, no error.
+	t.Run("match", func(t *testing.T) {
+		payload, sig := mustPayload(t, pulled, priv)
+		layer, blobs := payloadLayer(payload, sig)
+		rc := blobRepoClient(t, blobs)
+		matched, err := verifyLayerAgainstKeys(context.Background(), rc, layer,
+			[]crypto.PublicKey{&priv.PublicKey}, pulled)
+		if !matched || err != nil {
+			t.Fatalf("got (matched=%v, err=%v), want (true, nil)", matched, err)
+		}
+	})
+
+	// No cosign signature annotation → silently skipped as (false, nil)
+	// so the caller's lastErr is left untouched. Touches no registry.
+	t.Run("no annotation skips", func(t *testing.T) {
+		layer := signatureLayer{Annotations: map[string]string{"other": "x"}}
+		matched, err := verifyLayerAgainstKeys(context.Background(), nil, layer,
+			[]crypto.PublicKey{&priv.PublicKey}, pulled)
+		if matched || err != nil {
+			t.Fatalf("got (matched=%v, err=%v), want (false, nil)", matched, err)
+		}
+	})
+
+	// Empty annotation value is treated identically to a missing one.
+	t.Run("empty annotation skips", func(t *testing.T) {
+		layer := signatureLayer{Annotations: map[string]string{cosignSignatureAnnotation: ""}}
+		matched, err := verifyLayerAgainstKeys(context.Background(), nil, layer,
+			[]crypto.PublicKey{&priv.PublicKey}, pulled)
+		if matched || err != nil {
+			t.Fatalf("got (matched=%v, err=%v), want (false, nil)", matched, err)
+		}
+	})
+
+	// Malformed base64 in the signature annotation → decode error,
+	// before any registry call.
+	t.Run("bad base64 signature", func(t *testing.T) {
+		layer := signatureLayer{
+			Annotations: map[string]string{cosignSignatureAnnotation: "!!!not base64!!!"},
+		}
+		matched, err := verifyLayerAgainstKeys(context.Background(), nil, layer,
+			[]crypto.PublicKey{&priv.PublicKey}, pulled)
+		if matched {
+			t.Fatalf("matched on bad base64")
+		}
+		if err == nil || !strings.Contains(err.Error(), "decode signature") {
+			t.Fatalf("err = %v, want decode signature", err)
+		}
+	})
+
+	// Payload commits to a different digest than pulled → digest-mismatch
+	// error, no key trial.
+	t.Run("digest mismatch", func(t *testing.T) {
+		payload, sig := mustPayload(t, "sha256:0ther", priv)
+		layer, blobs := payloadLayer(payload, sig)
+		rc := blobRepoClient(t, blobs)
+		matched, err := verifyLayerAgainstKeys(context.Background(), rc, layer,
+			[]crypto.PublicKey{&priv.PublicKey}, pulled)
+		if matched {
+			t.Fatalf("matched on digest mismatch")
+		}
+		if err == nil || !strings.Contains(err.Error(), "payload binds digest sha256:0ther, pulled "+pulled) {
+			t.Fatalf("err = %v, want payload-binds-digest", err)
+		}
+	})
+
+	// Payload parses and binds the right digest, but no provided key
+	// verifies → key-trial fallthrough returns the last verify error.
+	t.Run("no key matches", func(t *testing.T) {
+		payload, sig := mustPayload(t, pulled, priv)
+		layer, blobs := payloadLayer(payload, sig)
+		rc := blobRepoClient(t, blobs)
+		matched, err := verifyLayerAgainstKeys(context.Background(), rc, layer,
+			[]crypto.PublicKey{&other.PublicKey}, pulled)
+		if matched {
+			t.Fatalf("matched under wrong key")
+		}
+		if err == nil || !strings.Contains(err.Error(), "ecdsa verify failed") {
+			t.Fatalf("err = %v, want ecdsa verify failed", err)
+		}
+	})
+
+	// Payload is not valid JSON → parse-payload error.
+	t.Run("bad payload json", func(t *testing.T) {
+		payload := []byte("not json")
+		layer, blobs := payloadLayer(payload, []byte("sig"))
+		rc := blobRepoClient(t, blobs)
+		matched, err := verifyLayerAgainstKeys(context.Background(), rc, layer,
+			[]crypto.PublicKey{&priv.PublicKey}, pulled)
+		if matched {
+			t.Fatalf("matched on bad payload json")
+		}
+		if err == nil || !strings.Contains(err.Error(), "parse payload JSON") {
+			t.Fatalf("err = %v, want parse payload JSON", err)
+		}
+	})
 }

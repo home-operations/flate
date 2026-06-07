@@ -146,45 +146,14 @@ func (f *Fetcher) verifyCosignSignature(
 
 	var lastErr error
 	for _, layer := range sigMan.Layers {
-		sigB64, ok := layer.Annotations[cosignSignatureAnnotation]
-		if !ok || sigB64 == "" {
-			continue
+		matched, err := verifyLayerAgainstKeys(ctx, repoClient, layer, keys, pulledDigest)
+		if matched {
+			return nil
 		}
-		sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
+		// A no-signature layer returns (false, nil) and is silently
+		// skipped — it must not clobber a real error from a prior layer.
 		if err != nil {
-			lastErr = fmt.Errorf("decode signature: %w", err)
-			continue
-		}
-		// Fetch the payload blob (the signed bytes).
-		payloadReader, err := repoClient.Blobs().Fetch(ctx, descriptorFromLayer(layer))
-		if err != nil {
-			lastErr = fmt.Errorf("fetch payload blob: %w", err)
-			continue
-		}
-		payload, err := io.ReadAll(payloadReader)
-		_ = payloadReader.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("read payload blob: %w", err)
-			continue
-		}
-		// The payload must commit to the digest we pulled.
-		var p cosignPayload
-		if err := json.Unmarshal(payload, &p); err != nil {
-			lastErr = fmt.Errorf("parse payload JSON: %w", err)
-			continue
-		}
-		if p.Critical.Image.DockerManifestDigest != pulledDigest {
-			lastErr = fmt.Errorf("payload binds digest %s, pulled %s",
-				p.Critical.Image.DockerManifestDigest, pulledDigest)
-			continue
-		}
-		// Try every trusted key — first success wins.
-		for _, k := range keys {
-			verr := verifyCosignSignatureBytes(k, payload, sigBytes)
-			if verr == nil {
-				return nil
-			}
-			lastErr = verr
+			lastErr = err
 		}
 	}
 	if lastErr == nil {
@@ -192,6 +161,61 @@ func (f *Fetcher) verifyCosignSignature(
 	}
 	return fmt.Errorf("OCIRepository %s/%s: cosign verify failed: %w",
 		repo.Namespace, repo.Name, lastErr)
+}
+
+// verifyLayerAgainstKeys verifies a single cosign signature layer against
+// the trusted public keys. It returns (true, nil) on the first key that
+// verifies; (false, err) when the layer is processed but a step errors or
+// no key matches; and (false, nil) for a layer carrying no cosign
+// signature annotation, which the caller silently skips.
+//
+// Iteration short-circuits on the first matching key — first key wins —
+// exactly as the inline loop did, so error precedence is unchanged: the
+// returned err is the last failure encountered while processing the layer.
+func verifyLayerAgainstKeys(
+	ctx context.Context,
+	repoClient *remote.Repository,
+	layer signatureLayer,
+	keys []crypto.PublicKey,
+	pulledDigest string,
+) (matched bool, err error) {
+	sigB64, ok := layer.Annotations[cosignSignatureAnnotation]
+	if !ok || sigB64 == "" {
+		return false, nil
+	}
+	sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		return false, fmt.Errorf("decode signature: %w", err)
+	}
+	// Fetch the payload blob (the signed bytes).
+	payloadReader, err := repoClient.Blobs().Fetch(ctx, descriptorFromLayer(layer))
+	if err != nil {
+		return false, fmt.Errorf("fetch payload blob: %w", err)
+	}
+	payload, err := io.ReadAll(payloadReader)
+	_ = payloadReader.Close()
+	if err != nil {
+		return false, fmt.Errorf("read payload blob: %w", err)
+	}
+	// The payload must commit to the digest we pulled.
+	var p cosignPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return false, fmt.Errorf("parse payload JSON: %w", err)
+	}
+	if p.Critical.Image.DockerManifestDigest != pulledDigest {
+		return false, fmt.Errorf("payload binds digest %s, pulled %s",
+			p.Critical.Image.DockerManifestDigest, pulledDigest)
+	}
+	// Try every trusted key — first success wins.
+	var lastErr error
+	for _, k := range keys {
+		verr := verifyCosignSignatureBytes(k, payload, sigBytes)
+		if verr == nil {
+			return true, nil
+		}
+		lastErr = verr
+	}
+	return false, lastErr
 }
 
 // loadCosignPublicKeys resolves spec.verify.secretRef and parses every

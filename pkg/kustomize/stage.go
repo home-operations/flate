@@ -271,10 +271,7 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 	// concurrent peer) run. Touch the dir's mtime so LRU eviction
 	// keeps recently-used stages alive.
 	if _, err := os.Stat(sentinel); err == nil {
-		c.cacheStagePromise(fingerprint, dir)
-		now := time.Now()
-		_ = os.Chtimes(dir, now, now)
-		return dir, nil
+		return c.adoptCompletedStage(fingerprint, dir), nil
 	}
 
 	// Slow path: serialize concurrent builds within the process.
@@ -287,10 +284,7 @@ func (c *StagingCache) stagePersistent(ctx context.Context, source, fingerprint 
 	// Recheck under the lock — another goroutine may have populated
 	// the sentinel while we were blocked.
 	if _, err := os.Stat(sentinel); err == nil {
-		c.cacheStagePromise(fingerprint, dir)
-		now := time.Now()
-		_ = os.Chtimes(dir, now, now)
-		return dir, nil
+		return c.adoptCompletedStage(fingerprint, dir), nil
 	}
 
 	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
@@ -431,30 +425,46 @@ func (c *StagingCache) stageSize(dir string) int64 {
 	return sz
 }
 
-// sweepBySize walks root and, when total size exceeds maxBytes, removes
-// the oldest entries (by mtime) until size is at or below the cap.
-// Entries currently being staged into (`.tmp.*` siblings) are ignored —
-// they don't carry sentinels yet and would be wasteful to reap
-// mid-build. The per-process scratch tempdirs (flate-stage-*) are
-// likewise skipped here; their lifecycle is Close-bound. Per-stage sizes
-// are memoized (stageSize) so repeat sweeps don't re-walk unchanged trees.
-func (c *StagingCache) sweepBySize() error {
-	root, maxBytes := c.root, c.maxBytes
-	// Walk the two-char prefix layer and collect every fingerprint
-	// dir's mtime + size. Stage entries don't recurse — they cap at
-	// one fingerprint deep.
+// adoptCompletedStage records a hit on an already-complete stage dir: it
+// caches the in-process promise and touches the dir's mtime so LRU eviction
+// keeps recently-used stages alive. Shared by stagePersistent's pre-lock
+// fast path and post-lock recheck. The build/adopt-rename exits deliberately
+// do NOT call this — a freshly built stage starts cold (pinned by
+// TestStagingCache_PersistentSameFingerprintSkipsRebuild, which asserts the
+// fresh-build path does not touch mtime).
+func (c *StagingCache) adoptCompletedStage(fingerprint, dir string) string {
+	c.cacheStagePromise(fingerprint, dir)
+	now := time.Now()
+	_ = os.Chtimes(dir, now, now)
+	return dir
+}
+
+// EachStageDir walks the two-level <root>/<prefix[:2]>/<fingerprint>
+// persistent stage-cache layout and invokes fn for every fingerprint dir
+// that is a real cache entry. It single-sources the on-disk skip contract
+// shared by the runtime LRU sweep (sweepBySize) and the GC age sweep
+// (source.sweepStageCacheByAge): the per-process flate-stage-* scratch dirs
+// and .tmp.* in-flight staging dirs are skipped at BOTH levels so a sweep
+// can't reap a peer process's live stage. Stage entries don't recurse —
+// they cap one fingerprint deep.
+//
+// When requireSentinel is true, only dirs carrying stageCompleteSentinel
+// are yielded: the LRU sweep must not evict a partial build still being
+// raced on. The age sweep passes false so it CAN reap abandoned crash
+// debris (incomplete stages whose owning process died). fn receives the
+// prefix dir and the fingerprint dir's full path; a non-nil fn error
+// aborts the walk. Only the top-level ReadDir error propagates (a
+// per-prefix ReadDir error skips that prefix), matching both sweeps.
+func EachStageDir(root string, requireSentinel bool, fn func(prefixDir, full string) error) error {
 	prefixes, err := os.ReadDir(root)
 	if err != nil {
 		return err
 	}
-	var entries []diskcache.Entry
-	var total int64
 	for _, p := range prefixes {
 		if !p.IsDir() {
 			continue
 		}
 		name := p.Name()
-		// Skip per-process scratch + transient tempdirs.
 		if strings.HasPrefix(name, "flate-stage-") || strings.HasPrefix(name, ".tmp.") {
 			continue
 		}
@@ -464,29 +474,43 @@ func (c *StagingCache) sweepBySize() error {
 			continue
 		}
 		for _, fp := range fps {
-			if !fp.IsDir() {
+			if !fp.IsDir() || strings.HasPrefix(fp.Name(), ".tmp.") {
 				continue
 			}
-			fpName := fp.Name()
-			if strings.Contains(fpName, ".tmp.") {
-				continue
+			full := filepath.Join(prefixDir, fp.Name())
+			if requireSentinel {
+				if _, err := os.Stat(filepath.Join(full, stageCompleteSentinel)); err != nil {
+					continue
+				}
 			}
-			full := filepath.Join(prefixDir, fpName)
-			// Reject anything missing the sentinel — likely an
-			// abandoned partial build that some other process is
-			// still racing on. The legacy crash sweep cleans those
-			// up; LRU shouldn't.
-			if _, err := os.Stat(filepath.Join(full, stageCompleteSentinel)); err != nil {
-				continue
+			if err := fn(prefixDir, full); err != nil {
+				return err
 			}
-			info, err := os.Stat(full)
-			if err != nil {
-				continue
-			}
-			size := c.stageSize(full)
-			entries = append(entries, diskcache.Entry{Path: full, MTime: info.ModTime().UnixNano(), Size: size})
-			total += size
 		}
+	}
+	return nil
+}
+
+// sweepBySize walks root and, when total size exceeds maxBytes, removes
+// the oldest entries (by mtime) until size is at or below the cap. Uses
+// EachStageDir with requireSentinel=true so an in-progress build (no
+// sentinel yet) is never evicted mid-flight. Per-stage sizes are memoized
+// (stageSize) so repeat sweeps don't re-walk unchanged trees.
+func (c *StagingCache) sweepBySize() error {
+	root, maxBytes := c.root, c.maxBytes
+	var entries []diskcache.Entry
+	var total int64
+	if err := EachStageDir(root, true, func(_, full string) error {
+		info, err := os.Stat(full)
+		if err != nil {
+			return nil // vanished mid-sweep; skip
+		}
+		size := c.stageSize(full)
+		entries = append(entries, diskcache.Entry{Path: full, MTime: info.ModTime().UnixNano(), Size: size})
+		total += size
+		return nil
+	}); err != nil {
+		return err
 	}
 	// Oldest first; evict until under cap.
 	diskcache.EvictOldest(entries, total, maxBytes,

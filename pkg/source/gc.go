@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/source/blob"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
@@ -206,68 +207,46 @@ func sweepDirByAge(dir string, depth int, cutoff time.Time, gate func(string) bo
 
 // sweepStageCacheByAge walks the persistent kustomize stage cache at
 // stageRoot and removes fingerprint entries whose mtime is older than
-// cutoff. Skips the per-process `flate-stage-*` scratch dirs and any
-// `.tmp.*` in-flight staging dirs at both levels so a concurrent
-// flate process's live staging tree is preserved.
+// cutoff. The on-disk traversal + skip contract (flate-stage-* scratch
+// dirs and .tmp.* in-flight staging dirs at both levels, so a concurrent
+// flate process's live staging tree is preserved) is single-sourced in
+// kustomize.EachStageDir, shared with the runtime LRU sweep. This sweep
+// passes requireSentinel=false: an old entry WITHOUT the stage-complete
+// sentinel is abandoned crash debris and SHOULD be age-reaped here.
 func sweepStageCacheByAge(stageRoot string, cutoff time.Time, dryRun bool, res *SweepResult) {
 	if cutoff.IsZero() {
 		return
 	}
-	prefixes, err := os.ReadDir(stageRoot)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			res.Errors = append(res.Errors, fmt.Errorf("read %s: %w", stageRoot, err))
-		}
-		return
-	}
-	for _, p := range prefixes {
-		if !p.IsDir() {
-			continue
-		}
-		name := p.Name()
-		if strings.HasPrefix(name, "flate-stage-") || strings.Contains(name, ".tmp.") {
-			continue
-		}
-		prefixDir := filepath.Join(stageRoot, name)
-		entries, err := os.ReadDir(prefixDir)
+	reaped := map[string]struct{}{} // prefix dirs that lost an entry
+	err := kustomize.EachStageDir(stageRoot, false, func(prefixDir, full string) error {
+		info, err := os.Stat(full)
 		if err != nil {
-			continue
+			res.Errors = append(res.Errors, fmt.Errorf("stat %s: %w", full, err))
+			return nil
 		}
-		removedAny := false
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			leaf := e.Name()
-			if strings.Contains(leaf, ".tmp.") {
-				continue
-			}
-			full := filepath.Join(prefixDir, leaf)
-			info, err := e.Info()
-			if err != nil {
-				res.Errors = append(res.Errors, fmt.Errorf("stat %s: %w", full, err))
-				continue
-			}
-			if info.ModTime().After(cutoff) {
-				continue
-			}
-			res.Bytes += entrySize(full)
-			res.Removed = append(res.Removed, full)
-			if dryRun {
-				continue
-			}
-			if err := os.RemoveAll(full); err != nil {
-				res.Errors = append(res.Errors, fmt.Errorf("remove %s: %w", full, err))
-				continue
-			}
-			removedAny = true
+		if info.ModTime().After(cutoff) {
+			return nil
 		}
-		// Best-effort empty-shell cleanup so repeated sweeps don't
-		// accumulate dead 2-char prefix dirs.
-		if removedAny && !dryRun {
-			if rem, err := os.ReadDir(prefixDir); err == nil && len(rem) == 0 {
-				_ = os.Remove(prefixDir)
-			}
+		res.Bytes += entrySize(full)
+		res.Removed = append(res.Removed, full)
+		if dryRun {
+			return nil
+		}
+		if err := os.RemoveAll(full); err != nil {
+			res.Errors = append(res.Errors, fmt.Errorf("remove %s: %w", full, err))
+			return nil
+		}
+		reaped[prefixDir] = struct{}{}
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		res.Errors = append(res.Errors, fmt.Errorf("read %s: %w", stageRoot, err))
+	}
+	// Best-effort empty-shell cleanup so repeated sweeps don't accumulate
+	// dead 2-char prefix dirs. (Only populated on the non-dry-run path.)
+	for prefixDir := range reaped {
+		if rem, err := os.ReadDir(prefixDir); err == nil && len(rem) == 0 {
+			_ = os.Remove(prefixDir)
 		}
 	}
 }

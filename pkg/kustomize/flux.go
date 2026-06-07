@@ -269,47 +269,41 @@ func stringMap(v any) map[string]string {
 // the expected miss and is filtered.
 func restoreKustomizationFile(sourceRoot, stagedSub, subPath string) error {
 	srcDir := filepath.Join(sourceRoot, subPath)
+	// Locate the source variant to restore (the first that exists as a
+	// regular file) and read its bytes. restoreName == "" => the source
+	// has none, so Generator writes one from scratch.
+	var restoreName string
+	var data []byte
+	var mode fs.FileMode
 	for _, name := range kustomizationFilenames {
 		srcPath := filepath.Join(srcDir, name)
 		info, err := os.Stat(srcPath)
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		data, err := os.ReadFile(srcPath) //nolint:gosec // srcPath inside our cluster source root
+		b, err := os.ReadFile(srcPath) //nolint:gosec // srcPath inside our cluster source root
 		if err != nil {
 			return fmt.Errorf("restore kustomization.yaml: %w", err)
 		}
-		// Remove every other variant from the stage so Generator
-		// writes to the canonical filename.
-		var rmErrs []error
-		for _, other := range kustomizationFilenames {
-			if other == name {
-				continue
-			}
-			if err := os.Remove(filepath.Join(stagedSub, other)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				rmErrs = append(rmErrs, fmt.Errorf("remove staged %s: %w", other, err))
-			}
-		}
-		// Break any hardlink to source before writing — copyFile may
-		// have linked the staged path to the source inode (so renders
-		// that don't mutate the file share storage), but an O_TRUNC
-		// write would clobber the source's bytes. os.Remove drops just
-		// the staged directory entry; the source's link survives.
-		stagedPath := filepath.Join(stagedSub, name)
-		if err := os.Remove(stagedPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			rmErrs = append(rmErrs, fmt.Errorf("unlink staged %s: %w", name, err))
-		}
-		if err := os.WriteFile(stagedPath, data, info.Mode().Perm()); err != nil { //nolint:gosec // stagedSub is our own tempdir
-			rmErrs = append(rmErrs, fmt.Errorf("write staged %s: %w", name, err))
-		}
-		return errors.Join(rmErrs...)
+		restoreName, data, mode = name, b, info.Mode().Perm()
+		break
 	}
-	// No source kustomization.yaml — remove any stale staged copy
-	// so Generator starts cleanly.
+	// Clear EVERY staged variant up front: this makes SecureBuild's
+	// readdir-order-dependent precedence deterministic (no stale variant
+	// survives), and it breaks any hardlink copyFile made to the source
+	// inode — so the WriteFile below can't clobber the source's bytes
+	// (os.Remove drops only the staged directory entry; the source's link
+	// survives). Then write the source variant back, if there was one.
 	var rmErrs []error
 	for _, name := range kustomizationFilenames {
 		if err := os.Remove(filepath.Join(stagedSub, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			rmErrs = append(rmErrs, fmt.Errorf("remove staged %s: %w", name, err))
+		}
+	}
+	if restoreName != "" {
+		stagedPath := filepath.Join(stagedSub, restoreName)
+		if err := os.WriteFile(stagedPath, data, mode); err != nil { //nolint:gosec // stagedSub is our own tempdir
+			rmErrs = append(rmErrs, fmt.Errorf("write staged %s: %w", restoreName, err))
 		}
 	}
 	return errors.Join(rmErrs...)

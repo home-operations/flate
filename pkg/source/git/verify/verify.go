@@ -71,11 +71,11 @@ func Signatures(secrets source.SecretGetter, ns, name, secretRefName string, mod
 	return nil
 }
 
-func matchesHEAD(mode sourcev1.GitVerificationMode) bool {
+func matchesHEAD(mode GitVerificationMode) bool {
 	return mode == sourcev1.ModeGitHEAD || mode == sourcev1.ModeGitTagAndHEAD
 }
 
-func matchesTag(mode sourcev1.GitVerificationMode) bool {
+func matchesTag(mode GitVerificationMode) bool {
 	return mode == sourcev1.ModeGitTag || mode == sourcev1.ModeGitTagAndHEAD
 }
 

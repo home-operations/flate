@@ -218,11 +218,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	if err := f.finalize(repo, art); err != nil {
 		return nil, err
 	}
-	if err := slot.Commit(); err != nil {
-		return nil, fmt.Errorf("GitRepository %s/%s: commit slot: %w", repo.Namespace, repo.Name, err)
-	}
-	art.LocalPath = slot.Path
-	return art, nil
+	return commitArtifact(repo, slot, art)
 }
 
 func effectiveNamedRef(ref manifest.GitRepositoryRef) string {
@@ -454,11 +450,7 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 	if err := applyIgnoreAndMark(repo, art); err != nil {
 		return nil, err
 	}
-	if err := slot.Commit(); err != nil {
-		return nil, fmt.Errorf("GitRepository %s/%s: commit slot: %w", repo.Namespace, repo.Name, err)
-	}
-	art.LocalPath = slot.Path
-	return art, nil
+	return commitArtifact(repo, slot, art)
 }
 
 // mirrorFetchPlan builds the per-GitRepository mirror update plan: the
@@ -534,6 +526,18 @@ func proxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
 		Username: proxy.Username,
 		Password: proxy.Password,
 	}
+}
+
+// commitArtifact atomically commits the staged slot and stamps the
+// artifact's LocalPath with the committed slot path. Shared by the
+// legacy clone path (fetch) and the bare-mirror path (fetchViaMirror),
+// which finalize the slot identically once materialization is done.
+func commitArtifact(repo *manifest.GitRepository, slot *source.Slot, art *store.SourceArtifact) (*store.SourceArtifact, error) {
+	if err := slot.Commit(); err != nil {
+		return nil, fmt.Errorf("GitRepository %s/%s: commit slot: %w", repo.Namespace, repo.Name, err)
+	}
+	art.LocalPath = slot.Path
+	return art, nil
 }
 
 // gitArtifact builds the SourceArtifact every git fetch path returns: a

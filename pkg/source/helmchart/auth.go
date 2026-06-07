@@ -84,7 +84,7 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 		paths[i] = p
 	}
 	certPath, keyPath, caPath := paths[0], paths[1], paths[2]
-	if certPath == "" && keyPath == "" && caPath == "" {
+	if paths == [3]string{} {
 		cleanup()
 		// A secret present but carrying none of the TLS keys is malformed
 		// config — fail loud (no ErrMissingSecret wrap), like BuildTLSConfig.

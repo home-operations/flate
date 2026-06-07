@@ -308,15 +308,15 @@ func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, re
 func (f *Fetcher) checkCacheHit(ctx context.Context, repoClient *remote.Repository, repo *manifest.OCIRepository, slotPath string, ref manifest.OCIRepositoryRef, versioned, expectedDigest string) (*store.SourceArtifact, bool, error) {
 	cachedDigest := readCachedDigest(slotPath)
 	if cachedDigest == "" {
-		// `.flate-digest` is written as the FINAL step of a successful
-		// fetch (and the slot is committed via atomic rename only after
-		// that write), so its absence on a final slot means the slot
-		// was committed from a pre-marker flate version or someone
-		// hand-modified the cache.
+		// The cached digest is recorded in the meta sidecar as the FINAL
+		// step of a successful fetch (and the slot is committed via atomic
+		// rename only after that write), so its absence on a final slot
+		// means the slot was committed from a pre-marker flate version or
+		// someone hand-modified the cache.
 		return nil, false, nil
 	}
 	if hasUnfinishedOCILayout(slotPath) {
-		// Defensive: a valid `.flate-digest` should imply
+		// Defensive: a valid cached digest should imply
 		// applyLayerSelector ran to completion and wiped the OCI
 		// Image Layout artifacts. Atomic-rename makes this much less
 		// likely (a crashed run never publishes a final slot), but

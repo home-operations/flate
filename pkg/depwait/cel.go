@@ -102,25 +102,26 @@ func compileReadyExpr(expr string) (cel.Program, error) {
 		e := v.(celCacheEntry)
 		return e.prog, e.err
 	}
-	entry := celCacheEntry{}
-	ast, issues := celEnv.Compile(expr)
-	if issues != nil && issues.Err() != nil {
-		entry.err = fmt.Errorf("compile: %w", issues.Err())
-	} else {
-		prog, err := celEnv.Program(ast)
-		if err != nil {
-			entry.err = fmt.Errorf("program: %w", err)
-		} else {
-			entry.prog = prog
-		}
-	}
-	// LoadOrStore: a concurrent compile of the same expr both lose
-	// races; the loser's prog/err is discarded and we return the
-	// winner's. cel-go's compilation is deterministic so the two
-	// results are equivalent.
-	actual, _ := celCache.LoadOrStore(expr, entry)
+	// LoadOrStore: concurrent compiles of the same expr both race; the
+	// loser's entry is discarded and we return the winner's. cel-go's
+	// compilation is deterministic so the two results are equivalent.
+	actual, _ := celCache.LoadOrStore(expr, buildCacheEntry(expr))
 	e := actual.(celCacheEntry)
 	return e.prog, e.err
+}
+
+// buildCacheEntry compiles expr into the program (or terminal error)
+// that compileReadyExpr memoizes.
+func buildCacheEntry(expr string) celCacheEntry {
+	ast, issues := celEnv.Compile(expr)
+	if issues != nil && issues.Err() != nil {
+		return celCacheEntry{err: fmt.Errorf("compile: %w", issues.Err())}
+	}
+	prog, err := celEnv.Program(ast)
+	if err != nil {
+		return celCacheEntry{err: fmt.Errorf("program: %w", err)}
+	}
+	return celCacheEntry{prog: prog}
 }
 
 // projectObject builds the unstructured-shaped value the CEL

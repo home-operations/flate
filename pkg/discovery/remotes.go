@@ -21,12 +21,18 @@ func (d *discoverer) selfRemotes(repoRoot string) map[string]struct{} {
 		return readWorkingTreeRemotes(repoRoot)
 	}
 	out := make(map[string]struct{}, len(d.cfg.SelfURLs))
-	for _, u := range d.cfg.SelfURLs {
+	addNormalizedRemotes(out, d.cfg.SelfURLs...)
+	return out
+}
+
+// addNormalizedRemotes normalizes each URL and inserts the non-empty
+// results into out, skipping URLs that don't describe a remote.
+func addNormalizedRemotes(out map[string]struct{}, urls ...string) {
+	for _, u := range urls {
 		if n := normalizeGitURL(u); n != "" {
 			out[n] = struct{}{}
 		}
 	}
-	return out
 }
 
 // readWorkingTreeRemotes returns the set of remote URLs configured on
@@ -56,11 +62,7 @@ func readWorkingTreeRemotes(repoRoot string) map[string]struct{} {
 	}
 	out := map[string]struct{}{}
 	for _, remote := range cfg.Remotes {
-		for _, u := range remote.URLs {
-			if n := normalizeGitURL(u); n != "" {
-				out[n] = struct{}{}
-			}
-		}
+		addNormalizedRemotes(out, remote.URLs...)
 	}
 	return out
 }

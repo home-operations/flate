@@ -18,8 +18,8 @@ import (
 )
 
 // diskRenderCache persists helm template-output across `flate`
-// invocations. It sits behind the in-process templateCache (Phase 2.2):
-// the in-process LRU has zero hit rate across processes, and profile
+// invocations. It sits behind the in-process templateCache: the
+// in-process LRU has zero hit rate across processes, and profile
 // evidence from `buroa/k8s-gitops` puts helm.TemplateDocs at ~64% of
 // warm allocations and ~13% of warm CPU — most of that re-runs across
 // CLI invocations.

@@ -162,7 +162,7 @@ func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]str
 	if changes == nil {
 		return f
 	}
-	f.resolve(objs)
+	f.resolve()
 	return f
 }
 
@@ -464,7 +464,8 @@ func (f *Filter) addDependencyOnlyRecursiveLocked(ids ...manifest.NamedResource)
 	return added
 }
 
-func (f *Filter) resolve(objs ObjectLister) {
+func (f *Filter) resolve() {
+	objs := f.objs
 	// Capacity hint: the final keep set is roughly proportional to the
 	// source-files map; prime both maps and the BFS queue at that size
 	// to avoid repeated rehash/realloc on the initial resolve scan.

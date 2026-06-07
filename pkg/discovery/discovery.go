@@ -273,7 +273,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
 	rsConverged := map[manifest.NamedResource]struct{}{}
-	prevRSIPCount := len(store.ListAs[*manifest.ResourceSetInputProvider](d.cfg.Store, manifest.KindResourceSetInputProvider))
+	prevRSIPCount := d.rsipCount()
 	for {
 		added := 0
 		for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
@@ -310,7 +310,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		// Re-evaluate the convergence cache when new RSIPs arrived
 		// between passes — they may match selectors that previously
 		// returned zero inputs.
-		currentRSIPCount := len(store.ListAs[*manifest.ResourceSetInputProvider](d.cfg.Store, manifest.KindResourceSetInputProvider))
+		currentRSIPCount := d.rsipCount()
 		if currentRSIPCount != prevRSIPCount {
 			clear(rsConverged)
 			prevRSIPCount = currentRSIPCount
@@ -356,4 +356,11 @@ func (d *discoverer) loadAt(ctx context.Context, dir string, scanned map[string]
 	}
 	*total += n
 	return nil
+}
+
+// rsipCount reports how many ResourceSetInputProviders are currently in
+// the store. The expansion loop compares this between passes to decide
+// when to invalidate the ResourceSet convergence cache.
+func (d *discoverer) rsipCount() int {
+	return len(store.ListAs[*manifest.ResourceSetInputProvider](d.cfg.Store, manifest.KindResourceSetInputProvider))
 }

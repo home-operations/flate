@@ -8,7 +8,7 @@
 //	fetch.go    — fetch workhorse, cache-hit gate, artifact composer
 //	auth.go     — TLS, registry-config, credential-store resolution
 //	resolve.go  — OCI ref parsing, semver tag picking, revision shape
-//	marker.go   — .flate-digest / .flate-verified slot markers
+//	marker.go   — cached-digest / verify-policy slot meta sidecar
 //	cosign.go   — cosign signature verification
 //	layer.go    — spec.layerSelector copy/extract
 package oci

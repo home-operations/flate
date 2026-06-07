@@ -184,10 +184,10 @@ func relToRepo(repoRoot, path string) (string, error) {
 	// otherwise, handled above), so no IsAbs check is needed — reject
 	// only the repo-escaping ".." and "../…" forms. A dir literally named
 	// "..foo" is in-repo and stays accepted.
-	if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return rel, nil
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("--path %q is outside the git repo at %q; pass --path-orig explicitly", path, repoRoot)
 	}
-	return "", fmt.Errorf("--path %q is outside the git repo at %q; pass --path-orig explicitly", path, repoRoot)
+	return rel, nil
 }
 
 // GitRepoRoot returns the .git ancestor of path, or "" when none
@@ -269,11 +269,20 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s", base, base)
 	}
 
+	// Each rung names a candidate ref tip and tries the merge-base
+	// against HEAD; the first that resolves wins.
+	mergeBaseWith := func(candidate plumbing.Hash, source string) (*resolution, bool) {
+		if mb, err := mergeBase(repo, headCommit, candidate); err == nil {
+			return &resolution{Hash: mb, Source: source}, true
+		}
+		return nil, false
+	}
+
 	// 1. @{u} via the branch config (go-git's ResolveRevision doesn't
 	//    accept @{u}; read branch.<name>.remote/.merge directly).
 	if up, ok := upstreamHash(repo, head); ok {
-		if mb, err := mergeBase(repo, headCommit, up); err == nil {
-			return &resolution{Hash: mb, Source: "merge-base with @{u}"}, nil
+		if r, ok := mergeBaseWith(up, "merge-base with @{u}"); ok {
+			return r, nil
 		}
 	}
 
@@ -281,18 +290,17 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 	//    pointing at e.g. refs/remotes/origin/main. Resolve through
 	//    the symref to the underlying branch tip.
 	if h, ok := resolveRef(repo, plumbing.NewRemoteHEADReferenceName("origin")); ok {
-		if mb, err := mergeBase(repo, headCommit, h); err == nil {
-			return &resolution{Hash: mb, Source: "merge-base with origin/HEAD"}, nil
+		if r, ok := mergeBaseWith(h, "merge-base with origin/HEAD"); ok {
+			return r, nil
 		}
 	}
 
 	// 3. Common defaults when origin/HEAD isn't set (older clones,
 	//    some self-hosted setups).
 	for _, name := range []string{"main", "master"} {
-		ref := plumbing.NewRemoteReferenceName("origin", name)
-		if h, ok := resolveRef(repo, ref); ok {
-			if mb, err := mergeBase(repo, headCommit, h); err == nil {
-				return &resolution{Hash: mb, Source: "merge-base with origin/" + name}, nil
+		if h, ok := resolveRef(repo, plumbing.NewRemoteReferenceName("origin", name)); ok {
+			if r, ok := mergeBaseWith(h, "merge-base with origin/"+name); ok {
+				return r, nil
 			}
 		}
 	}

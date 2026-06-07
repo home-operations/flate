@@ -196,9 +196,9 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 
 // mergeChartValuesFiles is the cache-aware entry point: it consults
 // Client.chartValuesCache before re-parsing and stores the canonical
-// merged map on miss. Callers receive a deep clone (defensive-copy
-// convention matching indexCache) — downstream layering DeepMerges
-// the result, which may mutate intermediate sub-maps.
+// merged map on miss. Callers receive a deep clone — downstream
+// layering DeepMerges the result, which may mutate intermediate
+// sub-maps.
 //
 // Cache key = sha256(chart.Name || chart.Version || joined valuesFiles
 // list || ignoreMissing bit). Distinct chart identities (different

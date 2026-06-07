@@ -64,7 +64,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		}
 		if p.reconcilable {
 			childID := p.obj.Named()
-			c.KeepEmitted(id, childID)
+			c.KeepEmitted(id, p.obj)
 			c.Store.AddObject(p.obj)
 			rendered = append(rendered, childID)
 		} else {
@@ -76,7 +76,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 	for _, p := range objs {
 		if p.reconcilable && isLeafReconcilable(p.obj) {
 			childID := p.obj.Named()
-			c.KeepEmitted(id, childID)
+			c.KeepEmitted(id, p.obj)
 			rendered = append(rendered, childID)
 			leaves = append(leaves, p.obj)
 		}

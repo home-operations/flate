@@ -492,7 +492,7 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 	// keep-emit BEFORE AddObject so the synchronous source-controller
 	// listener sees the extended changed-only keep set (mirrors
 	// emitRenderedChildren).
-	c.KeepEmitted(id, synID)
+	c.KeepEmitted(id, syn)
 	c.Store.AddObject(syn)
 	// Seed a Pending status ONLY on first materialization — when no status
 	// exists yet — to close the window between AddObject (which dispatches an
@@ -559,7 +559,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			// keep set when it invokes PreGate. Mirrors the ordering
 			// in kustomization.emitRenderedChildren.
 			childID := obj.Named()
-			c.KeepEmitted(id, childID)
+			c.KeepEmitted(id, obj)
 			c.Store.AddObject(obj)
 			rendered = append(rendered, childID)
 		} else {

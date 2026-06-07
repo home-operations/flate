@@ -166,7 +166,7 @@ func (c *Controller) SetRenderTracker(rt RenderTracker) {
 //
 // MUST be called BEFORE Store.AddObject so the listener that fires
 // synchronously during AddObject sees the extended keep set.
-func (c *Controller) KeepEmitted(parent, child manifest.NamedResource) {
+func (c *Controller) KeepEmitted(parent manifest.NamedResource, child manifest.BaseManifest) {
 	if f := c.Filter(); f != nil {
 		f.AddEmitted(parent, child)
 	}

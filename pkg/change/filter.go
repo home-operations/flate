@@ -248,10 +248,15 @@ func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResourc
 // cascading those siblings through the keep set turns a one-file
 // change into a full-tree reconcile.
 //
-// child inherits the emitter's primacy: AddEmitted walks
-// transitiveDeps recursively for sourceRef / chartRef / valuesFrom
-// (issue #260) and marks every newly-added entry primary so their
-// own future emissions cascade correctly.
+// child inherits the emitter's primacy: AddEmitted walks the child's
+// sourceRef / chartRef / valuesFrom edges recursively (issue #260) and
+// marks every newly-added entry primary so their own future emissions
+// cascade correctly. Those edges are read straight off the child
+// manifest (transitiveDepsOf), NOT via a Store lookup — a render-emitted
+// child is kept here BEFORE its Store.AddObject (the ordering contract
+// below), so it isn't yet visible to the Store, and its namespace-
+// stamped chart source (e.g. a shared OCIRepository) would otherwise go
+// unkept and unfetched.
 //
 // Used by the KS controller when a parent KS in the keep set
 // renders and emits id as a child. Covers the kustomize
@@ -273,7 +278,7 @@ func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResourc
 // keep set and short-circuits to Ready/"unchanged".
 //
 // No-op when the filter is disabled. Safe for concurrent use.
-func (f *Filter) AddEmitted(emitter, child manifest.NamedResource) {
+func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseManifest) {
 	if !f.Enabled() {
 		return
 	}
@@ -296,13 +301,24 @@ func (f *Filter) AddEmitted(emitter, child manifest.NamedResource) {
 // primary[emitter] and the recurse for child without dropping the
 // lock between them. Returns the slice of newly-keep'd ids so the
 // caller can fire OnAdd outside the lock.
-func (f *Filter) addEmittedLocked(emitter, child manifest.NamedResource) []manifest.NamedResource {
+func (f *Filter) addEmittedLocked(emitter manifest.NamedResource, child manifest.BaseManifest) []manifest.NamedResource {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, primaryEmitter := f.primary[emitter]; !primaryEmitter {
 		return nil
 	}
-	return f.addRecursiveLocked(child)
+	added := f.addRecursiveLocked(child.Named())
+	// addRecursiveLocked resolves deps via the Store, but a render-emitted
+	// child is kept here BEFORE its Store.AddObject (the ordering contract
+	// above), so the Store can't see it yet. Walk the child's own
+	// chartRef / sourceRef / valuesFrom straight off the manifest so a
+	// shared, namespace-stamped source (e.g. an OCIRepository every
+	// HelmRelease chartRefs) still joins keep — and OnAdd refires the
+	// fetch its listener PreGate-skipped before the consumer joined keep.
+	for _, dep := range transitiveDepsOf(child) {
+		added = append(added, f.addRecursiveLocked(dep)...)
+	}
+	return added
 }
 
 // addUngated unconditionally extends the keep set with id (and its
@@ -756,42 +772,46 @@ func appendUniqueProducers(dst []manifest.NamedResource, src []manifest.NamedRes
 	return dst
 }
 
-// transitiveDeps returns the references id needs to render — chart
+// transitiveDeps returns the references the resource id needs to render,
+// resolved from the Store. Thin wrapper over transitiveDepsOf — see it
+// for the edge set. Returns nil when id isn't in the Store (a render-
+// emitted child not yet AddObject'd); callers that hold the manifest
+// should use transitiveDepsOf directly so those deps aren't missed.
+func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.NamedResource {
+	return transitiveDepsOf(objs.GetObject(id))
+}
+
+// transitiveDepsOf returns the references obj needs to render — chart
 // sources, KS sourceRef, valuesFrom, and non-Optional
-// postBuild.substituteFrom ConfigMaps. dependsOn is intentionally
-// excluded: it's a reconcile-ordering signal in real Flux, not a
-// content dependency, so it adds nothing to an offline render.
+// postBuild.substituteFrom ConfigMaps. Reading straight off the manifest
+// (rather than a Store id lookup) lets the runtime keep-extension resolve
+// a render-emitted child's deps BEFORE it lands in the Store, where the
+// child's namespace-stamped chart source is the authority. dependsOn is
+// intentionally excluded: it's a reconcile-ordering signal in real Flux,
+// not a content dependency, so it adds nothing to an offline render.
 // Skipped resources still get marked Ready by their controllers, so
 // downstream depwait completes naturally.
-func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.NamedResource {
-	switch id.Kind {
-	case manifest.KindHelmRelease:
-		hr, _ := objs.GetObject(id).(*manifest.HelmRelease)
-		if hr == nil {
-			return nil
-		}
+func transitiveDepsOf(obj manifest.BaseManifest) []manifest.NamedResource {
+	switch o := obj.(type) {
+	case *manifest.HelmRelease:
 		out := []manifest.NamedResource{{
-			Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
+			Kind: o.Chart.RepoKind, Namespace: o.Chart.RepoNamespace, Name: o.Chart.RepoName,
 		}}
-		for _, ref := range hr.ValuesFrom {
+		for _, ref := range o.ValuesFrom {
 			out = append(out, manifest.NamedResource{
-				Kind: ref.Kind, Namespace: hr.Namespace, Name: ref.Name,
+				Kind: ref.Kind, Namespace: o.Namespace, Name: ref.Name,
 			})
 		}
 		return out
 
-	case manifest.KindKustomization:
-		ks, _ := objs.GetObject(id).(*manifest.Kustomization)
-		if ks == nil {
-			return nil
-		}
+	case *manifest.Kustomization:
 		var out []manifest.NamedResource
-		if ks.SourceKind != "" && ks.SourceName != "" {
+		if o.SourceKind != "" && o.SourceName != "" {
 			out = append(out, manifest.NamedResource{
-				Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
+				Kind: o.SourceKind, Namespace: o.SourceNamespace, Name: o.SourceName,
 			})
 		}
-		for _, ref := range ks.PostBuildSubstituteFrom {
+		for _, ref := range o.PostBuildSubstituteFrom {
 			// Mirrors collectDeps in pkg/controllers/kustomization:
 			// Optional refs are best-effort; Secrets are SOPS/ExternalSecret-
 			// managed and can't be materialized offline; empty Name is
@@ -800,12 +820,12 @@ func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.Nam
 				continue
 			}
 			out = append(out, manifest.NamedResource{
-				Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name,
+				Kind: ref.Kind, Namespace: o.Namespace, Name: ref.Name,
 			})
 		}
 		return out
 
-	case manifest.KindHelmChart:
+	case *manifest.HelmChartSource:
 		// A HelmRelease chartRef pointing at a HelmChart CRD lands the
 		// HelmChart in the BFS via the HR's RepoKind=KindHelmChart edge
 		// above. The chart's actual bytes come from the HelmChart's own
@@ -814,15 +834,11 @@ func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.Nam
 		// source alive. Without this, the HelmChart sits in keep but
 		// the source artifact is PreGate-skipped and render fails
 		// "artifact not found."
-		hc, _ := objs.GetObject(id).(*manifest.HelmChartSource)
-		if hc == nil {
-			return nil
-		}
-		if hc.SourceRef.Name == "" {
+		if o.SourceRef.Name == "" {
 			return nil
 		}
 		return []manifest.NamedResource{{
-			Kind: hc.SourceRef.Kind, Namespace: hc.Namespace, Name: hc.SourceRef.Name,
+			Kind: o.SourceRef.Kind, Namespace: o.Namespace, Name: o.SourceRef.Name,
 		}}
 	}
 	return nil

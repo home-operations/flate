@@ -12,6 +12,16 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// refObj wraps a NamedResource as a minimal BaseManifest for AddEmitted
+// call sites that exercise only keep-set membership — the emitted child's
+// own chartRef/sourceRef is resolved from the Store-backed ObjectLister
+// these tests construct, not off the manifest. Tests covering a render-
+// driven child whose deps must come from the manifest build a real typed
+// object instead (see TestAddEmitted_StampedHelmReleasePullsChartSource).
+func refObj(id manifest.NamedResource) manifest.BaseManifest {
+	return &manifest.RawObject{Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
+}
+
 func TestFilter_DisabledKeepsEverything(t *testing.T) {
 	var f Filter
 	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "x"}
@@ -430,7 +440,7 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 
 	// Simulate cluster-apps rendering and emitting the file-loaded
 	// sibling. AddEmitted must NOT keep-add it.
-	f.AddEmitted(clusterApps, siblingApp)
+	f.AddEmitted(clusterApps, refObj(siblingApp))
 	if f.ShouldReconcile(siblingApp) {
 		t.Errorf("AddEmitted(ancestor, sibling) over-extended keep set; sibling should remain SKIPPED; keep=%v", f.KeepNames())
 	}
@@ -439,7 +449,7 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 	// still rejected because the emitter (ancestor) is not primary
 	// and an unchanged emitter wouldn't produce a different child.
 	renderOnly := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "rendered", Name: "from-replacement"}
-	f.AddEmitted(clusterApps, renderOnly)
+	f.AddEmitted(clusterApps, refObj(renderOnly))
 	if f.ShouldReconcile(renderOnly) {
 		t.Errorf("AddEmitted(ancestor, render-only) should reject when ancestor is not primary; keep=%v", f.KeepNames())
 	}
@@ -515,12 +525,12 @@ func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
 	// its children — including the unrelated siblings. Walking
 	// the chain top-down so we cover the worst case where a
 	// primary could theoretically leak through an upper ancestor.
-	f.AddEmitted(clusterApps, kubeSystem)
-	f.AddEmitted(clusterApps, mediaSibling)
-	f.AddEmitted(kubeSystem, reloader)
-	f.AddEmitted(kubeSystem, spegelSibling)
-	f.AddEmitted(reloader, reloaderApp)
-	f.AddEmitted(reloader, reloaderSibling)
+	f.AddEmitted(clusterApps, refObj(kubeSystem))
+	f.AddEmitted(clusterApps, refObj(mediaSibling))
+	f.AddEmitted(kubeSystem, refObj(reloader))
+	f.AddEmitted(kubeSystem, refObj(spegelSibling))
+	f.AddEmitted(reloader, refObj(reloaderApp))
+	f.AddEmitted(reloader, refObj(reloaderSibling))
 
 	// Each ancestor (clusterApps, kubeSystem, reloader) is in
 	// keep only as ancestor-only — none of their AddEmitted calls
@@ -557,9 +567,59 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
 	}
 
-	f.AddEmitted(parent, child)
+	f.AddEmitted(parent, refObj(child))
 	if !f.ShouldReconcile(child) {
 		t.Errorf("AddEmitted(primary parent, child) should keep-add child; keep=%v", f.KeepNames())
+	}
+}
+
+// TestAddEmitted_StampedHelmReleasePullsChartSource is the regression
+// fence for the k8s-gitops "OCIRepository <ns>/app-template artifact not
+// available" failures under `flate diff/test --base main`. A primary
+// parent KS emits a HelmRelease at render time: the HR carries no
+// metadata.namespace in source but is stamped to its parent KS's
+// targetNamespace on emit, so its emitted id differs from any discovery-
+// recorded one — AND it is not yet in the Store when AddEmitted runs (the
+// ordering contract). Its chartRef points at a SHARED OCIRepository
+// produced by a separate, unchanged Kustomization, so that source was
+// PreGate-skipped at startup. AddEmitted MUST read the chart source
+// straight off the emitted manifest (not the Store, which lacks the HR,
+// nor consumerRefs, keyed by the un-stamped id) so the source joins keep
+// and OnAdd refires its fetch. The ObjectLister is intentionally empty
+// and no consumerRefs are wired — proving the fix relies on the manifest.
+func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	hr := &manifest.HelmRelease{
+		Name: "sonarr", Namespace: "media", // stamped from the parent KS's targetNamespace
+		Chart: manifest.HelmChart{
+			RepoKind: manifest.KindOCIRepository, RepoName: "app-template", RepoNamespace: "flux-system",
+		},
+	}
+	chartSrc := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
+
+	f := NewFilter(
+		NewSet([]string{"apps/media/kustomization.yaml"}),
+		map[manifest.NamedResource]string{parent: "apps/media/kustomization.yaml"},
+		"",
+		testutil.EmptyLister(),
+	)
+	if !f.ShouldReconcile(parent) {
+		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
+	}
+	if f.ShouldReconcile(chartSrc) {
+		t.Fatalf("precondition: shared chart source must NOT be in keep before emission; keep=%v", f.KeepNames())
+	}
+
+	var refired []manifest.NamedResource
+	f.OnAdd = func(id manifest.NamedResource) { refired = append(refired, id) }
+
+	f.AddEmitted(parent, hr)
+
+	if !f.ShouldReconcile(chartSrc) {
+		t.Errorf("emitted HR's chart source not kept — it stays PreGate-skipped and render fails 'artifact not available'; keep=%v", f.KeepNames())
+	}
+	if !slices.Contains(refired, chartSrc) {
+		t.Errorf("OnAdd did not fire for chart source %s, so Store.Refire never re-fetches it; fired=%v", chartSrc, refired)
 	}
 }
 
@@ -879,7 +939,7 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 	// The producer is ancestor-only: AddEmitted from cluster-vars
 	// to a sentinel child must reject (producer is NOT primary).
 	sentinel := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "unrelated", Name: "sentinel"}
-	f.AddEmitted(clusterVars, sentinel)
+	f.AddEmitted(clusterVars, refObj(sentinel))
 	if f.ShouldReconcile(sentinel) {
 		t.Errorf("producer cluster-vars must be ancestor-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v", f.KeepNames())
 	}
@@ -936,7 +996,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	// Primary parent emits child at render time. AddEmitted walks
 	// child's transitiveDeps, hits the substituteFrom CM, and pulls
 	// the producer in dependency-only.
-	f.AddEmitted(parent, child)
+	f.AddEmitted(parent, refObj(child))
 
 	if !f.ShouldReconcile(child) {
 		t.Errorf("child must be in keep after AddEmitted from primary parent; keep=%v", f.KeepNames())
@@ -947,7 +1007,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	// Producer is dependency-only: AddEmitted from producer to a
 	// sentinel child must reject because producer is not primary.
 	sentinel := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "unrelated", Name: "sentinel"}
-	f.AddEmitted(producer, sentinel)
+	f.AddEmitted(producer, refObj(sentinel))
 	if f.ShouldReconcile(sentinel) {
 		t.Errorf("producer must be dependency-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v", f.KeepNames())
 	}
@@ -992,7 +1052,7 @@ func TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer(t *testing.T) {
 		added = append(added, id)
 	}
 
-	f.AddEmitted(parent, child)
+	f.AddEmitted(parent, refObj(child))
 
 	if !slices.Contains(added, producer) {
 		t.Errorf("OnAdd must fire for the runtime-added producer KS; added=%v", added)

@@ -22,6 +22,11 @@ type providerInputs struct {
 	inputs []map[string]any // each set already carries its `provider` block
 }
 
+// isPermute reports whether rs selects the Permute input strategy.
+func isPermute(rs *manifest.ResourceSet) bool {
+	return rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute
+}
+
 // buildInputSets gathers per-provider input lists then dispatches on
 // spec.inputStrategy. The ResourceSet's own inline spec.inputs are
 // treated as "provider 0", followed by each referenced
@@ -48,7 +53,7 @@ func buildInputSets(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[s
 		return nil, err
 	}
 
-	if rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute {
+	if isPermute(rs) {
 		return permute(groups, rs.InputStrategy.IncludeEmptyProviders)
 	}
 	// Default: Flatten — pre-size out to total input count across all

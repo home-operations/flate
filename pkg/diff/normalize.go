@@ -56,10 +56,7 @@ func normalizeManifest(m map[string]any, attrs, fields []string, hook func(map[s
 // binary payloads are present.
 func docsContainBinaryData(docs []Doc) bool {
 	for _, d := range docs {
-		if manifest.DocKind(d.Manifest) != manifest.KindConfigMap {
-			continue
-		}
-		if _, ok := d.Manifest["binaryData"].(map[string]any); ok {
+		if _, ok := configMapBinaryData(d.Manifest); ok {
 			return true
 		}
 	}
@@ -72,16 +69,23 @@ func docsContainBinaryData(docs []Doc) bool {
 // not "which base64 character flipped." Hash-prefix summaries
 // preserve that signal while keeping the diff legible.
 func redactBinaryData(doc map[string]any) {
-	if manifest.DocKind(doc) != manifest.KindConfigMap {
-		return
-	}
-	binaryData, ok := doc["binaryData"].(map[string]any)
+	binaryData, ok := configMapBinaryData(doc)
 	if !ok {
 		return
 	}
 	for k, v := range binaryData {
 		binaryData[k] = binaryDataSummary(v)
 	}
+}
+
+// configMapBinaryData returns a manifest's binaryData map when it is a
+// ConfigMap carrying one — the only shape redactBinaryData rewrites.
+func configMapBinaryData(m map[string]any) (map[string]any, bool) {
+	if manifest.DocKind(m) != manifest.KindConfigMap {
+		return nil, false
+	}
+	bd, ok := m["binaryData"].(map[string]any)
+	return bd, ok
 }
 
 // binaryDataSummary returns a stable, content-derived placeholder for

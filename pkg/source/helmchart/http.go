@@ -108,16 +108,16 @@ func httpChartArtifact(chartURL, dir, version, digest string) *store.SourceArtif
 // N concurrent chart fetches against the same repo coalesce on indexLocks so
 // exactly one HTTP fetch runs.
 func (f *Fetcher) fetchIndex(ctx context.Context, cacheKey, indexURL string, opts []getter.Option) (*repo.IndexFile, error) {
-	if v, ok := f.indexCache.Load(cacheKey); ok {
-		return v.(*repo.IndexFile), nil
+	if idx, ok := f.cachedIndex(cacheKey); ok {
+		return idx, nil
 	}
 	release, err := f.indexLocks.Acquire(ctx, cacheKey)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	if v, ok := f.indexCache.Load(cacheKey); ok {
-		return v.(*repo.IndexFile), nil
+	if idx, ok := f.cachedIndex(cacheKey); ok {
+		return idx, nil
 	}
 	g, err := getter.NewHTTPGetter()
 	if err != nil {
@@ -146,6 +146,15 @@ func (f *Fetcher) fetchIndex(ctx context.Context, cacheKey, indexURL string, opt
 	}
 	f.indexCache.Store(cacheKey, idx)
 	return idx, nil
+}
+
+// cachedIndex returns the memoized index.yaml for cacheKey, if present.
+func (f *Fetcher) cachedIndex(cacheKey string) (*repo.IndexFile, bool) {
+	v, ok := f.indexCache.Load(cacheKey)
+	if !ok {
+		return nil, false
+	}
+	return v.(*repo.IndexFile), true
 }
 
 func chartDownloadKey(r *manifest.HelmRepository, chartName string, cv *repo.ChartVersion, chartURL, digest string) string {

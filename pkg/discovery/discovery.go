@@ -140,7 +140,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.repoRoot = repoRoot
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
@@ -208,13 +207,6 @@ type discoverer struct {
 	loader      *loader.Loader
 	sourceFiles map[manifest.NamedResource]string
 	sourceRefs  map[manifest.NamedResource][]manifest.NamedResource
-	// repoRoot is the resolved .git ancestor of cfg.Path (or cfg.Path
-	// when no .git exists). Stored here because every consumer of
-	// loader.BuildParentIndexFromPrefixes / loader.KSPathPrefixesWithCache
-	// needs the repo-relative root used to resolve KS spec.path entries,
-	// and passing cfg.Path silently misreads `components:` lookups when
-	// the user pointed --path at a subdir.
-	repoRoot string
 }
 
 // loadManifests scans cfg.Path, then iteratively follows each loaded

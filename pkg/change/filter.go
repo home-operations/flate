@@ -292,8 +292,15 @@ func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseM
 	// the recurse can't cause `child` to be silently dropped.
 	// addEmittedLocked reads primary and (when gated through) does
 	// the addRecursive walk under the same WLock.
-	added := f.addEmittedLocked(emitter, child)
-	if f.OnAdd == nil || len(added) == 0 {
+	f.fireOnAdd(f.addEmittedLocked(emitter, child))
+}
+
+// fireOnAdd dispatches OnAdd for every newly-keep'd id. Always called
+// OUTSIDE f.mu: callbacks may take other locks (e.g. the Store's mu via
+// Refire), and holding f.mu here would invert lock order against
+// concurrent ShouldReconcile readers. No-op when OnAdd is unset.
+func (f *Filter) fireOnAdd(added []manifest.NamedResource) {
+	if f.OnAdd == nil {
 		return
 	}
 	for _, newID := range added {
@@ -339,16 +346,7 @@ func (f *Filter) addUngated(id manifest.NamedResource) {
 	if !f.Enabled() {
 		return
 	}
-	added := f.addRecursive(id)
-	if f.OnAdd == nil || len(added) == 0 {
-		return
-	}
-	// Call OnAdd outside the lock — callbacks may take other locks
-	// (e.g. the Store's mu via Refire) and we don't want to invert
-	// lock order with concurrent ShouldReconcile readers.
-	for _, newID := range added {
-		f.OnAdd(newID)
-	}
+	f.fireOnAdd(f.addRecursive(id))
 }
 
 // addRecursive adds id (and transitive deps) to keep AND primary,

@@ -346,9 +346,8 @@ func scanTree(root string) (map[string]fileMeta, error) {
 		if err != nil {
 			return err
 		}
-		base := d.Name()
 		if d.IsDir() {
-			if p != root && shouldSkipDir(base) {
+			if p != root && shouldSkipDir(d.Name()) {
 				return fs.SkipDir
 			}
 			return nil
@@ -414,12 +413,5 @@ func hashFile(path string) (string, error) {
 }
 
 func shouldSkipDir(name string) bool {
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
-	switch name {
-	case "node_modules", "vendor":
-		return true
-	}
-	return false
+	return strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor"
 }

@@ -277,6 +277,14 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 		}
 		return nil, false
 	}
+	// tryRef resolves a ref name to its tip, then attempts the
+	// merge-base; ok=false when the ref is missing or has no merge-base.
+	tryRef := func(name plumbing.ReferenceName, source string) (*resolution, bool) {
+		if h, ok := resolveRef(repo, name); ok {
+			return mergeBaseWith(h, source)
+		}
+		return nil, false
+	}
 
 	// 1. @{u} via the branch config (go-git's ResolveRevision doesn't
 	//    accept @{u}; read branch.<name>.remote/.merge directly).
@@ -289,19 +297,15 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 	// 2. origin/HEAD: a symbolic ref under refs/remotes/origin/HEAD
 	//    pointing at e.g. refs/remotes/origin/main. Resolve through
 	//    the symref to the underlying branch tip.
-	if h, ok := resolveRef(repo, plumbing.NewRemoteHEADReferenceName("origin")); ok {
-		if r, ok := mergeBaseWith(h, "merge-base with origin/HEAD"); ok {
-			return r, nil
-		}
+	if r, ok := tryRef(plumbing.NewRemoteHEADReferenceName("origin"), "merge-base with origin/HEAD"); ok {
+		return r, nil
 	}
 
 	// 3. Common defaults when origin/HEAD isn't set (older clones,
 	//    some self-hosted setups).
 	for _, name := range []string{"main", "master"} {
-		if h, ok := resolveRef(repo, plumbing.NewRemoteReferenceName("origin", name)); ok {
-			if r, ok := mergeBaseWith(h, "merge-base with origin/"+name); ok {
-				return r, nil
-			}
+		if r, ok := tryRef(plumbing.NewRemoteReferenceName("origin", name), "merge-base with origin/"+name); ok {
+			return r, nil
 		}
 	}
 

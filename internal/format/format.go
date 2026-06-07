@@ -28,6 +28,9 @@ type Column struct {
 	Key    string
 }
 
+// gutter is the fixed-width padding appended after each column except the last.
+const gutter = 4
+
 // Table renders rows of map[string]string into a fixed-width table.
 // Columns are sized to the widest cell + a 4-char gutter. Widths
 // are measured in runes (not bytes) so cells with multi-byte UTF-8
@@ -50,7 +53,7 @@ func Table(w io.Writer, cols []Column, rows []map[string]string) error {
 	// Each cell is padded to width+gutter; +1 for the per-row newline.
 	rowWidth := 0
 	for _, width := range widths {
-		rowWidth += width + 4
+		rowWidth += width + gutter
 	}
 	b.Grow((1 + len(rows)) * (rowWidth + 1))
 	last := len(cols) - 1
@@ -74,7 +77,7 @@ func writeCol(b *bytes.Buffer, value string, width int, last bool) {
 		return
 	}
 	// Write padding directly to avoid the temporary string that strings.Repeat allocates.
-	pad := max(width-utf8.RuneCountInString(value)+4, 1)
+	pad := max(width-utf8.RuneCountInString(value)+gutter, 1)
 	for range pad {
 		b.WriteByte(' ')
 	}

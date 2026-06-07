@@ -95,35 +95,23 @@ func ApplyNamespaceInheritanceWithRefs(s *store.Store, sourceFiles map[manifest.
 // top-level Flux Operator and HelmChart source objects after namespace
 // inheritance has had a chance to project kustomize/Flux namespaces.
 func ApplyDefaultNamespaces(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
-	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSet](s, manifest.KindResourceSet),
-		func(o *manifest.ResourceSet) *manifest.ResourceSet {
-			c := *o
-			c.Namespace = manifest.DefaultNamespace
-			return &c
-		})
-	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSetInputProvider](s, manifest.KindResourceSetInputProvider),
-		func(o *manifest.ResourceSetInputProvider) *manifest.ResourceSetInputProvider {
-			c := *o
-			c.Namespace = manifest.DefaultNamespace
-			return &c
-		})
-	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.HelmChartSource](s, manifest.KindHelmChart),
-		func(o *manifest.HelmChartSource) *manifest.HelmChartSource {
-			c := *o
-			c.Namespace = manifest.DefaultNamespace
-			return &c
-		})
+	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSet](s, manifest.KindResourceSet))
+	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSetInputProvider](s, manifest.KindResourceSetInputProvider))
+	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.HelmChartSource](s, manifest.KindHelmChart))
 }
 
 // applyDefaultNS assigns manifest.DefaultNamespace to every object in objs
-// whose current namespace is empty, then reindexes it in the store.
-// withNS must return a new object (shallow copy) with the namespace set.
-func applyDefaultNS[T manifest.BaseManifest](s *store.Store, sourceFiles map[manifest.NamedResource]string, objs []T, withNS func(T) T) {
+// whose current namespace is empty, then reindexes it in the store. The
+// shallow copy is produced by cloneWithNamespace, which already rewrites
+// the namespace for these kinds — so the per-type copy lives in one place.
+func applyDefaultNS[T manifest.BaseManifest](s *store.Store, sourceFiles map[manifest.NamedResource]string, objs []T) {
 	for _, obj := range objs {
 		if obj.Named().Namespace != "" {
 			continue
 		}
-		reindexObject(s, sourceFiles, obj.Named(), withNS(obj))
+		if updated := cloneWithNamespace(obj, manifest.DefaultNamespace); updated != nil {
+			reindexObject(s, sourceFiles, obj.Named(), updated)
+		}
 	}
 }
 

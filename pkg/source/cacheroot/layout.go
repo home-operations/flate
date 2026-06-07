@@ -72,7 +72,7 @@ const (
 
 // pathSep is the platform separator as a string, used by join so it can
 // stay allocation-free for the separator itself.
-var pathSep = string(filepath.Separator)
+const pathSep = string(filepath.Separator)
 
 // join appends segs to a clean base separated by pathSep, without a
 // filepath.Clean pass. New guarantees Root is clean; all callers pass

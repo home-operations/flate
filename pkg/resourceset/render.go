@@ -72,7 +72,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 	// falling through to renderResources' "no matrix → render once
 	// with nil" fallback, which only applies under Flatten where an
 	// empty matrix legitimately means "static resources, no inputs".
-	if len(inputs) == 0 && rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute {
+	if len(inputs) == 0 && isPermute(rs) {
 		return nil, nil
 	}
 

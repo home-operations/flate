@@ -114,15 +114,11 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
 	prev, exists := sh.artifacts[id]
-	// Trivial fast path: the same pointer is being re-set. Identical
-	// content by construction; skip reflection entirely. This is the
-	// hot path when a fetcher caches its own SourceArtifact and
-	// re-publishes it on every refresh tick.
-	if exists && prev == artifact {
-		sh.mu.Unlock()
-		return
-	}
-	if exists && reflect.DeepEqual(prev, artifact) {
+	// Dedup cheapest-first: pointer identity (the hot path when a
+	// fetcher caches its own SourceArtifact and re-publishes the same
+	// pointer every refresh tick, skipping reflection entirely) before
+	// the reflect.DeepEqual fallback for distinct-pointer equal content.
+	if exists && (prev == artifact || reflect.DeepEqual(prev, artifact)) {
 		sh.mu.Unlock()
 		return
 	}

@@ -170,3 +170,51 @@ func Test_isImageRef(t *testing.T) {
 func sha256() string {
 	return "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 }
+
+func TestSplit(t *testing.T) {
+	digest := "sha256:" + sha256()
+	cases := []struct {
+		ref          string
+		name, verstr string
+	}{
+		{"ghcr.io/home-operations/sonarr:v4.1.0", "ghcr.io/home-operations/sonarr", "v4.1.0"},
+		{"ghcr.io/foo/bar@" + digest, "ghcr.io/foo/bar", digest},
+		// tag + digest → digest wins (more specific).
+		{"ghcr.io/foo/bar:v1@" + digest, "ghcr.io/foo/bar", digest},
+		// a registry port must not be mistaken for the version.
+		{"localhost:5000/foo/bar:v1", "localhost:5000/foo/bar", "v1"},
+		// no tag or digest → empty version, name verbatim.
+		{"ghcr.io/foo/bar", "ghcr.io/foo/bar", ""},
+		// not normalized: a bare name keeps its verbatim form.
+		{"nginx:1.27", "nginx", "1.27"},
+		// unparseable → returned verbatim with no version.
+		{"not a ref", "not a ref", ""},
+	}
+	for _, c := range cases {
+		name, version := Split(c.ref)
+		if name != c.name || version != c.verstr {
+			t.Errorf("Split(%q) = (%q, %q); want (%q, %q)", c.ref, name, version, c.name, c.verstr)
+		}
+	}
+}
+
+// TestSplit_RoundTripsExtract confirms every ref Extract surfaces splits
+// into a non-empty (name, version) — the two are designed to compose for
+// per-repository version diffing.
+func TestSplit_RoundTripsExtract(t *testing.T) {
+	doc := map[string]any{
+		"kind": "Deployment",
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+			"containers": []any{
+				map[string]any{"image": "ghcr.io/owner/app:v1.2.3"},
+				map[string]any{"image": "docker.io/library/redis@sha256:" + sha256()},
+			},
+		}}},
+	}
+	for _, ref := range Extract(doc) {
+		name, version := Split(ref)
+		if name == "" || version == "" {
+			t.Errorf("Split(%q) = (%q, %q); both should be non-empty for an Extract'd ref", ref, name, version)
+		}
+	}
+}

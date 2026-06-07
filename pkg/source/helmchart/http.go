@@ -53,7 +53,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 	if art, ok := f.chartArtifactByDigest(chartURL, cv.Version, wantDigest); ok {
 		return art, nil
 	}
-	release, err := f.downloadLocks.Acquire(ctx, chartDownloadKey(r, chartName, cv, chartURL, wantDigest))
+	release, err := f.downloadLocks.Acquire(ctx, chartDownloadKey(r, chartName, cv.Version, chartURL, wantDigest))
 	if err != nil {
 		return nil, err
 	}
@@ -157,11 +157,11 @@ func (f *Fetcher) cachedIndex(cacheKey string) (*repo.IndexFile, bool) {
 	return v.(*repo.IndexFile), true
 }
 
-func chartDownloadKey(r *manifest.HelmRepository, chartName string, cv *repo.ChartVersion, chartURL, digest string) string {
+func chartDownloadKey(r *manifest.HelmRepository, chartName, version, chartURL, digest string) string {
 	if digest != "" {
 		return "sha256:" + digest
 	}
-	return safeName(r.Namespace+"-"+r.Name+"-"+chartName) + "-" + cv.Version + "@" + chartURL
+	return safeName(r.Namespace+"-"+r.Name+"-"+chartName) + "-" + version + "@" + chartURL
 }
 
 func normalizeChartDigest(digest string) string {

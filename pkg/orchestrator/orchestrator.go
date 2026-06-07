@@ -141,15 +141,13 @@ type Config struct {
 
 // Orchestrator wires controllers and drives reconciliation.
 type Orchestrator struct {
-	cfg       Config
-	store     *store.Store
-	tasks     *task.Service
-	src       *sourcectrl.Controller
-	ksc       *kustomization.Controller
-	hrc       *helmrelease.Controller
-	helm      *helm.Client
-	treeCache *kustomize.TreeCache
-	filter    *change.Filter
+	cfg    Config
+	store  *store.Store
+	tasks  *task.Service
+	src    *sourcectrl.Controller
+	ksc    *kustomization.Controller
+	hrc    *helmrelease.Controller
+	filter *change.Filter
 
 	// gitFetcher holds the typed *git.Fetcher constructed in New so
 	// Run can drive Prewarm against every discovered GitRepository in
@@ -410,8 +408,6 @@ func New(cfg Config) (*Orchestrator, error) {
 		ksc:            kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
 		hrc:            helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
 		rendered:       newRenderedSet(),
-		helm:           helmClient,
-		treeCache:      treeCache,
 		componentCache: manifest.NewComponentCache(),
 		depGraph:       newDependencyGraph(),
 		gitFetcher:     gitFetcher,

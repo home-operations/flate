@@ -367,17 +367,15 @@ func TestE2E_BootstrapErrorSurfacesNotMasked(t *testing.T) {
 	// returns it; Render nils the Result; the CLI must surface the
 	// underlying error rather than running the testrunner on partial
 	// state.
-	if err := os.WriteFile(filepath.Join(dir, "ks.yaml"), []byte(`---
+	testutil.WriteFile(t, dir, "ks.yaml", `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: apps, namespace: flux-system}
 spec:
   path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "rs.yaml"), []byte(`---
+`)
+	testutil.WriteFile(t, dir, "rs.yaml", `---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: broken-rs, namespace: flux-system}
@@ -386,9 +384,7 @@ spec:
     apiVersion: v1
     kind: ConfigMap
     metadata: {name: << nope >>, namespace: ns}
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	out, code := runCLIExpectErr(t, "test", "all", "--path", dir)
 	if code == 0 {

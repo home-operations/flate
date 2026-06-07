@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/home-operations/flate/compare/v0.3.0...v0.3.1) (2026-06-07)
+
+
+### Bug Fixes
+
+* **change:** resolve an emitted child's chart source off its manifest ([#608](https://github.com/home-operations/flate/issues/608)) ([c08ae72](https://github.com/home-operations/flate/commit/c08ae723925e909b097b30de903290a9deff9807))
+
 ## [0.3.0](https://github.com/home-operations/flate/compare/0.2.12...v0.3.0) (2026-06-06)
 
 

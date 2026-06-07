@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.2](https://github.com/home-operations/flate/compare/v0.3.1...v0.3.2) (2026-06-07)
+
+
+### Features
+
+* **diff:** public structured Changes API for SDK consumers ([#610](https://github.com/home-operations/flate/issues/610)) ([310c1b4](https://github.com/home-operations/flate/commit/310c1b4f86c750d8000c10420ee6bb6d0ace6410))
+* **image:** add Split for repo/version, the companion to Extract ([#612](https://github.com/home-operations/flate/issues/612)) ([3c28f5d](https://github.com/home-operations/flate/commit/3c28f5d8b07ef1f17f17737c157b16bb7101f24e))
+* **orchestrator:** RenderTrees — render two cluster dirs for comparison ([#613](https://github.com/home-operations/flate/issues/613)) ([c639cb8](https://github.com/home-operations/flate/commit/c639cb85dfa0ebf6ff086068e6057eba01512a8f))
+
 ## [0.3.1](https://github.com/home-operations/flate/compare/v0.3.0...v0.3.1) (2026-06-07)
 
 

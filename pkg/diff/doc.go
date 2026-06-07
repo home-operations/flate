@@ -43,7 +43,8 @@
 // two-orchestrator, shared-cache, changed-only dance), then feed the
 // Results to [Changes]:
 //
-//	base, head, _ := orchestrator.RenderTrees(ctx, baseDir, headDir, cfg)
+//	base, head, _ := orchestrator.RenderTrees(ctx,
+//		orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir}, cfg)
 //	changes := diff.Changes(
 //		diff.DocsFromManifests(base.Result.Manifests, nil),
 //		diff.DocsFromManifests(head.Result.Manifests, nil),

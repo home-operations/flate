@@ -47,12 +47,16 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		return "", fmt.Errorf("helm init: %w", err)
 	}
 	cfg.Capabilities = caps
-	// Override sprig's nondeterministic template functions (now → a fixed
-	// clock, and in later tiers seeded random/cert funcs) so the render is
-	// byte-reproducible. Helm v4 applies CustomTemplateFuncs last when
-	// building the engine FuncMap, so these win over sprig. Build a fresh
-	// map per render — never share it across goroutines.
-	cfg.CustomTemplateFuncs = deterministic.Funcs()
+	// Override sprig's nondeterministic template functions (a fixed clock
+	// plus seeded random/uuid funcs, and in the cert tier seeded keys/certs)
+	// so the render is byte-reproducible. Helm v4 applies CustomTemplateFuncs
+	// last when building the engine FuncMap, so these win over sprig. The seed
+	// derives only from release name+namespace (both in the render-cache key),
+	// so a cache hit matches a cache miss. Build a fresh map per render — the
+	// random stream is stateful and must not be shared across goroutines.
+	cfg.CustomTemplateFuncs = deterministic.Funcs(
+		deterministic.SeedFor(hr.ReleaseName(), hr.ReleaseNamespace()),
+	)
 
 	inst, disableHooks, err := newInstallAction(cfg, hr, opts, caps)
 	if err != nil {

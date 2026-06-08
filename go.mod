@@ -21,6 +21,7 @@ require (
 	github.com/gonvenience/ytbx v1.5.0
 	github.com/google/cel-go v0.28.1
 	github.com/google/go-cmp v0.7.0
+	github.com/google/uuid v1.6.0
 	github.com/gosimple/slug v1.15.0
 	github.com/homeport/dyff v1.12.0
 	github.com/minio/minio-go/v7 v7.2.0
@@ -101,7 +102,6 @@ require (
 	github.com/gonvenience/text v1.0.10 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gosimple/unidecode v1.0.1 // indirect
 	github.com/gosuri/uitable v0.0.4 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect

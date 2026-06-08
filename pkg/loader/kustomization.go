@@ -173,9 +173,9 @@ func resolveDataPath(base, rel string) (string, bool) {
 	if filepath.IsAbs(rel) {
 		return filepath.Clean(rel), true
 	}
+	cleanBase := filepath.Clean(base)
 	abs := filepath.Clean(filepath.Join(base, rel))
-	cleanBase := filepath.Clean(base) + string(filepath.Separator)
-	if abs != filepath.Clean(base) && !strings.HasPrefix(abs+string(filepath.Separator), cleanBase) {
+	if abs != cleanBase && !strings.HasPrefix(abs+string(filepath.Separator), cleanBase+string(filepath.Separator)) {
 		return "", false
 	}
 	return abs, true

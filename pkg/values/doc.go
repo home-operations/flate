@@ -10,6 +10,8 @@
 //   - Deep merge follows Helm semantics: nested maps are merged, but
 //     lists are REPLACED entirely (not concatenated).
 //   - When a valuesFrom reference is optional and the target ConfigMap /
-//     Secret is missing, a placeholder string is substituted so the
-//     downstream YAML still parses and diffs are meaningful.
+//     Secret (or values key) is missing, it is skipped silently so the
+//     render proceeds; a wiped Secret value (a placeholder token the
+//     manifest parser injects for SOPS-encrypted data) is treated as
+//     empty rather than failing the whole HelmRelease.
 package values

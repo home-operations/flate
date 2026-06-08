@@ -1587,7 +1587,7 @@ func TestFlattenLists(t *testing.T) {
 // bug introduced by reusing a cleared map[string]any across decodes.
 //
 // Covers the three retention shapes:
-//   - HelmRelease (decodeTyped JSON round-trip, no doc retention)
+//   - HelmRelease (decodeInto JSON round-trip, no doc retention)
 //   - Kustomization (retains the TOP-LEVEL doc as Contents — must not
 //     be returned to the pool)
 //   - ConfigMap (aliases the inner data submap; clear(top) leaves the

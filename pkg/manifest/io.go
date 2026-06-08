@@ -63,7 +63,7 @@ func ReleaseDoc(m map[string]any) {
 // ReleaseIfNotRetained returns doc to the pool unless obj retains a
 // reference to the top-level map. Currently only *Kustomization
 // retains (via its Contents field) — every other ParseDoc result
-// either round-trips through JSON (decodeTyped) or aliases an inner
+// either round-trips through JSON (decodeInto) or aliases an inner
 // submap that clear(top) doesn't touch.
 //
 // Callers should invoke this after every successful ParseDoc whose

@@ -399,3 +399,46 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 		t.Fatal("expected generate/scan to fail on the unfiltered .sops.yaml, got nil")
 	}
 }
+
+// TestFindOrGenerate_MemoryPopulatedSubdirNotDescended is the zariel cnpg-system
+// regression. An auto-generated parent (no kustomization.yaml) over a subdir
+// that DOES carry a kustomization.yaml must list the subdir (./cnpg) as a
+// resource and never the subdir's kustomization.yaml file — even when preflight
+// has rewritten a remote resource under that subdir into the memory layer. That
+// memory write makes the subdir exist in both overlay layers; before the
+// overlayFS.Walk SkipDir fix, the disk walk re-descended the SkipDir'd subdir
+// and added ./cnpg/kustomization.yaml as a stray resource (which kustomize then
+// failed to decode: "missing metadata.name").
+func TestFindOrGenerate_MemoryPopulatedSubdirNotDescended(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		// Parent dir intentionally has NO kustomization.yaml -> auto-generate.
+		"cnpg/kustomization.yaml":  existingKustomization("./app/cm.yaml"),
+		"cnpg/app/cm.yaml":         cmYAML("cnpg-cm"),
+		"other/kustomization.yaml": existingKustomization("./cm.yaml"),
+		"other/cm.yaml":            cmYAML("other-cm"),
+	})
+	fsys := testOverlayFS(t, root)
+	// Simulate preflightRemoteResources rewriting a remote resource under cnpg/
+	// into memory, so cnpg/ exists in BOTH the memory and disk layers.
+	seed := filepath.Join(root, "cnpg", "app", remoteResourcePrefix+"deadbeef.yaml")
+	if err := fsys.WriteFile(seed, []byte(cmYAML("remote"))); err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+
+	data, _, foundExisting, err := findOrGenerateKustomization(fsys, root, nil)
+	if err != nil {
+		t.Fatalf("findOrGenerateKustomization: %v", err)
+	}
+	if foundExisting {
+		t.Fatal("expected auto-generate (root has no kustomization.yaml)")
+	}
+	got := string(data)
+	if strings.Contains(got, "kustomization.yaml") {
+		t.Errorf("auto-generated kustomization lists a kustomization.yaml file as a resource:\n%s", got)
+	}
+	for _, want := range []string{"./cnpg", "./other"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("auto-generated kustomization missing %q resource:\n%s", want, got)
+		}
+	}
+}

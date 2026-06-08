@@ -80,15 +80,28 @@ func (fs overlayFS) Glob(pattern string) ([]string, error) {
 
 func (fs overlayFS) Walk(path string, walkFn filepath.WalkFunc) error {
 	visited := make(map[string]struct{})
+	// skipped records directories whose memory-layer visit returned SkipDir.
+	// The disk walk must honor that too: a dir the caller asked to skip in
+	// memory must not have its disk subtree descended into — otherwise a
+	// SkipDir'd kustomize package (added once by scanManifests) is re-walked
+	// on disk and its kustomization.yaml is picked up as a stray resource.
+	skipped := make(map[string]struct{})
 	if fs.memory.Exists(path) {
 		if err := fs.memory.Walk(path, func(p string, info os.FileInfo, err error) error {
 			visited[p] = struct{}{}
-			return walkFn(p, info, err)
+			ret := walkFn(p, info, err)
+			if ret == filepath.SkipDir && info != nil && info.IsDir() {
+				skipped[p] = struct{}{}
+			}
+			return ret
 		}); err != nil {
 			return err
 		}
 	}
 	return fs.disk.Walk(path, func(p string, info os.FileInfo, err error) error {
+		if _, ok := skipped[p]; ok {
+			return filepath.SkipDir
+		}
 		if _, ok := visited[p]; ok {
 			return nil
 		}

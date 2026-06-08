@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -96,6 +97,16 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 	if err != nil {
 		return err
 	}
+	// Fast path: a resource is rewritten only when its scalar carries an
+	// http://|https:// scheme — every trigger (isHTTPURL, and isGitRemoteBase
+	// via cutHTTPScheme) gates on that scheme, the git path case-insensitively.
+	// So if the raw bytes contain no case-insensitive "http" substring at all,
+	// no entry can match and the full YAML parse + node walk + re-marshal below
+	// is provably a no-op. Skipping it for the common (local-only) kustomization
+	// avoids a yaml.Unmarshal of every kustomization file on every render.
+	if !containsHTTPFold(body) {
+		return nil
+	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil {
 		// Some kustomization files use unusual shapes (YAML anchors,
@@ -178,6 +189,35 @@ func findMappingValue(doc *yaml.Node, key string) *yaml.Node {
 
 func isHTTPURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+// containsHTTPFold reports whether b contains the ASCII substring "http"
+// case-insensitively. It is the cheap necessary precondition for any URL/git
+// rewrite: both rewrite triggers require an http(s):// scheme, so a file
+// lacking "http" entirely can be skipped without parsing. Allocation-free
+// (bytes.Contains over a 4-byte literal, two case variants of each letter).
+func containsHTTPFold(b []byte) bool {
+	// "http" has 2^4 = 16 case permutations; in practice scalars are lower- or
+	// upper-case. Check the two common spellings cheaply, then fall back to a
+	// single case-folding scan only when neither plain form is present.
+	if bytes.Contains(b, []byte("http")) || bytes.Contains(b, []byte("HTTP")) {
+		return true
+	}
+	for i := 0; i+4 <= len(b); i++ {
+		if lowerASCII(b[i]) == 'h' && lowerASCII(b[i+1]) == 't' &&
+			lowerASCII(b[i+2]) == 't' && lowerASCII(b[i+3]) == 'p' {
+			return true
+		}
+	}
+	return false
+}
+
+// lowerASCII folds a single ASCII byte to lower case.
+func lowerASCII(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + ('a' - 'A')
+	}
+	return c
 }
 
 // fetchRemoteResource fetches urlStr into a <prefix><hash>.yaml file beside the

@@ -127,6 +127,49 @@ func DeepMergeInto(dst, override map[string]any) map[string]any {
 	return dst
 }
 
+// deepMergeShared merges override's keys into dst IN PLACE, treating
+// override (and every map reachable from it) as read-only. dst's
+// top-level map is owned by the caller and mutated directly; its
+// sub-maps may be BORROWED by reference from a previous override (e.g.
+// a shared cache canonical). To preserve that read-only borrow, a
+// map/map key collision shallow-clones the existing dst node into a
+// fresh owned map BEFORE recursing — copy-on-write — so the recursion
+// never writes through a borrowed (shared) sub-tree. Non-colliding
+// override sub-maps are inserted by reference, exactly like DeepMerge.
+//
+// The resulting value graph is identical to a DeepMerge(dst, override)
+// chain, but without re-copying the whole top-level accumulator on each
+// call: ExpandValueReferences's share path folds N valuesFrom refs into
+// one accumulator with N in-place merges instead of N functional
+// DeepMerges that each clone the growing top level. Returns dst.
+//
+// Safety invariant: override is never mutated (only read), and any dst
+// sub-map that aliases a shared canonical is cloned before it is
+// written to. The cache canonical therefore stays pristine, matching
+// the contract DeepMerge upheld in the old share path.
+func deepMergeShared(dst, override map[string]any) map[string]any {
+	for k, v := range override {
+		existing, ok := dst[k]
+		if !ok {
+			dst[k] = v
+			continue
+		}
+		ebm, eok := existing.(map[string]any)
+		vbm, vok := v.(map[string]any)
+		if eok && vok {
+			// existing may be borrowed from a shared canonical: shallow-
+			// clone it into an owned map before merging override's sub-map
+			// in, so we never mutate the borrowed (read-only) node.
+			owned := make(map[string]any, len(ebm)+len(vbm))
+			maps.Copy(owned, ebm)
+			dst[k] = deepMergeShared(owned, vbm)
+			continue
+		}
+		dst[k] = v
+	}
+	return dst
+}
+
 // Cache memoizes parsed-YAML output of valuesFrom refs across HRs.
 // One HR with N valuesFrom refs hits each entry once; M HRs sharing
 // the same ConfigMap/Secret/key tuple (a common pattern when a
@@ -265,7 +308,10 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 		// mutation of a shared node); in the owned path DeepMergeInto is
 		// fine and avoids the extra top-level allocation.
 		if share {
-			values = DeepMerge(values, hr.Values)
+			// Owned accumulator, read-only hr.Values: merge in place with
+			// copy-on-write so sub-maps still aliasing the cache canonical
+			// are cloned before the inline layer writes into them.
+			deepMergeShared(values, hr.Values)
 		} else {
 			DeepMergeInto(values, hr.Values)
 		}
@@ -459,9 +505,12 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 		cache.store(key, parsed)
 	}
 	if share {
-		// Shares parsed's non-colliding sub-trees by reference; collisions
-		// allocate fresh nodes. Never mutates parsed (the cache canonical).
-		return DeepMerge(values, parsed), nil
+		// Folds parsed into the owned accumulator in place: non-colliding
+		// sub-trees are shared by reference; map collisions copy-on-write
+		// so the cache canonical (parsed) is never mutated. Avoids the
+		// per-ref full clone of the growing top-level map that a functional
+		// DeepMerge chain pays across N valuesFrom refs.
+		return deepMergeShared(values, parsed), nil
 	}
 	// Owned-accumulator path: clone the canonical so the later in-place
 	// TargetPath write can't corrupt the shared cache entry.

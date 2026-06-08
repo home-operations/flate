@@ -72,9 +72,17 @@ func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedReso
 	if err != nil {
 		return false, &celCompileErr{err}
 	}
+	// Bind self/dep as lazy thunks (cel-go's `func() any` activation
+	// form). The interpreter resolves a name at most once per eval, and
+	// only when the program actually references it — so projectObject
+	// (a store-locked Snapshot plus several map allocations) runs only
+	// for the variables the expression reads. The dominant Flux idiom
+	// touches `dep` alone, leaving `self` unprojected. The produced
+	// value and the adapter path are identical to passing the map
+	// directly, so eval semantics are byte-for-byte unchanged.
 	val, _, err := prog.Eval(map[string]any{
-		"self": projectObject(s, self),
-		"dep":  projectObject(s, dep),
+		"self": func() any { return projectObject(s, self) },
+		"dep":  func() any { return projectObject(s, dep) },
 	})
 	if err != nil {
 		return false, fmt.Errorf("eval: %w", err)

@@ -6,29 +6,29 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// ksClaim records a single (Flux Kustomization, path) tuple. A KS may
-// claim multiple paths — its own spec.path plus every spec.components
-// entry — and several KSes may claim the same path (a shared
-// component).
-type ksClaim struct {
-	id   manifest.NamedResource
-	path string // repo-relative, slash-separated, with trailing "/"
-}
-
 // ownershipIndex maps changed files to the Flux Kustomizations that
 // would re-render in response. Built once per filter resolution.
 //
-// Lookups memoize their (ownersOf, ancestorsOf) results per file —
-// the Filter.resolve BFS calls these functions O(keep) times over
-// O(distinct-files) input strings, so without caching the BFS walks
-// the full claims slice once per visit and runs at O(K²). The cache
-// drops it to O(distinct-files × claims) once + O(1) per BFS step.
+// byPrefix groups every claim ID under its slash-terminated prefix
+// string. A file is owned/anchored by exactly the claims whose prefix
+// is a whole-segment prefix of file+"/", so a lookup enumerates the
+// O(depth) directory prefixes of the file and probes byPrefix for each
+// — O(depth) map hits instead of an O(claims) linear HasPrefix scan
+// (the resolve BFS does this once per distinct file, so the linear
+// scan dominated CPU on large repos). Within a group the IDs keep
+// claims-slice order (longest-prefix-first build order), so results
+// match the previous full-scan order exactly.
+//
+// Lookups still memoize their (ownersOf, ancestorsOf) results per file
+// — the Filter.resolve BFS calls these O(keep) times over
+// O(distinct-files) inputs, and the cache turns repeat visits into an
+// O(1) map hit.
 //
 // Caches are unsynchronized: Filter.resolve is serial within one
 // orchestrator construction and the index is never shared across
 // resolutions. Each resolve builds a fresh index.
 type ownershipIndex struct {
-	claims         []ksClaim
+	byPrefix       map[string][]manifest.NamedResource
 	ownersCache    map[string][]manifest.NamedResource
 	ancestorsCache map[string][]manifest.NamedResource
 }
@@ -56,12 +56,17 @@ func buildOwnership(objs ObjectLister, repoRoot string, cache *manifest.Componen
 	// lookup semantics below. (BuildKSClaims gates on-disk component reads on
 	// repoRoot != "" — a no-op here since resolve always passes a real root.)
 	mclaims := manifest.BuildKSClaims(kss, repoRoot, cache)
-	claims := make([]ksClaim, len(mclaims))
-	for i, c := range mclaims {
-		claims[i] = ksClaim{id: c.ID, path: c.Prefix}
+	// Group IDs by their slash-terminated prefix. mclaims is sorted
+	// longest-prefix-first, so iterating in order keeps each group's IDs
+	// in the same relative order the old full-claims scan produced. The
+	// index is bounded by the claim count (one map entry per distinct
+	// prefix) and lives only for the duration of one resolve.
+	byPrefix := make(map[string][]manifest.NamedResource, len(mclaims))
+	for _, c := range mclaims {
+		byPrefix[c.Prefix] = append(byPrefix[c.Prefix], c.ID)
 	}
 	return ownershipIndex{
-		claims:         claims,
+		byPrefix:       byPrefix,
 		ownersCache:    make(map[string][]manifest.NamedResource),
 		ancestorsCache: make(map[string][]manifest.NamedResource),
 	}
@@ -82,27 +87,44 @@ func memoize(cache map[string][]manifest.NamedResource, file string, compute fun
 	return result
 }
 
+// matchingPrefixes invokes yield with each slash-terminated, whole-segment
+// prefix of file+"/" that has at least one claim, from longest to shortest.
+// These are exactly the c.path values strings.HasPrefix(file+"/", c.path)
+// would have matched in the old full scan: c.path ends in "/", so a match
+// means c.path is file+"/" truncated at some "/" boundary. Probing each
+// directory prefix in byPrefix replaces the O(claims) HasPrefix loop with
+// O(depth) map hits. Prefix substrings share file's backing array, so no
+// per-probe allocation. Yield returns false to stop early.
+func (idx ownershipIndex) matchingPrefixes(file string, yield func(ids []manifest.NamedResource) bool) {
+	prefixed := file + "/"
+	// Candidate prefixes are prefixed[:k] for every k where prefixed[k-1]
+	// is '/', longest first. The full prefixed (k==len, a claim on file's
+	// own directory) is the first candidate; each earlier "/" truncation
+	// follows.
+	for end := len(prefixed); end > 0; {
+		if ids, ok := idx.byPrefix[prefixed[:end]]; ok {
+			if !yield(ids) {
+				return
+			}
+		}
+		i := strings.LastIndexByte(prefixed[:end-1], '/')
+		if i < 0 {
+			break
+		}
+		end = i + 1
+	}
+}
+
 // ownersOf returns every KS that claims the longest-matching prefix
 // of file. Multiple KSes are possible when a shared component is in
 // play. Results are memoized — see ownershipIndex doc.
 func (idx ownershipIndex) ownersOf(file string) []manifest.NamedResource {
 	return memoize(idx.ownersCache, file, func() []manifest.NamedResource {
-		prefixed := file + "/" // so prefix matching catches whole-segment boundaries
-		var bestLen int
 		var owners []manifest.NamedResource
-		for _, c := range idx.claims {
-			if len(c.path) < bestLen {
-				break // sorted longest-first; nothing shorter can beat
-			}
-			if !strings.HasPrefix(prefixed, c.path) {
-				continue
-			}
-			if len(c.path) > bestLen {
-				bestLen = len(c.path)
-				owners = owners[:0]
-			}
-			owners = append(owners, c.id)
-		}
+		idx.matchingPrefixes(file, func(ids []manifest.NamedResource) bool {
+			owners = ids // longest match first — take it and stop
+			return false
+		})
 		return owners
 	})
 }
@@ -117,21 +139,16 @@ func (idx ownershipIndex) ownersOf(file string) []manifest.NamedResource {
 // see ownershipIndex doc.
 func (idx ownershipIndex) ancestorsOf(file string) []manifest.NamedResource {
 	return memoize(idx.ancestorsCache, file, func() []manifest.NamedResource {
-		prefixed := file + "/"
-		var bestLen int
 		var ancestors []manifest.NamedResource
-		for _, c := range idx.claims {
-			if !strings.HasPrefix(prefixed, c.path) {
-				continue
+		first := true
+		idx.matchingPrefixes(file, func(ids []manifest.NamedResource) bool {
+			if first {
+				first = false // longest match — skip (it's what ownersOf returns)
+				return true
 			}
-			if bestLen == 0 {
-				bestLen = len(c.path) // first (longest) match — skip
-				continue
-			}
-			if len(c.path) < bestLen {
-				ancestors = append(ancestors, c.id)
-			}
-		}
+			ancestors = append(ancestors, ids...)
+			return true
+		})
 		return ancestors
 	})
 }

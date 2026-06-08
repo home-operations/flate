@@ -289,7 +289,15 @@ func mergeChartValuesFilesUncached(c *chart.Chart, names []string, ignoreMissing
 		if err := yaml.Unmarshal(data, &m); err != nil {
 			return nil, fmt.Errorf("parse values file %q: %w", name, err)
 		}
-		out = values.DeepMerge(out, m)
+		// out is freshly built and wholly owned by this call (each m is
+		// unmarshaled here and discarded after merge), so merge in place
+		// rather than reallocating a new top-level map per file. Same
+		// merge semantics as DeepMerge — override sub-maps are inserted
+		// by reference, collisions recurse — but without the growing
+		// maps.Copy of the accumulator on every iteration. The caller
+		// (mergeChartValuesFiles) hands out a DeepCopyMap clone, so the
+		// in-place mutation never escapes.
+		out = values.DeepMergeInto(out, m)
 	}
 	return out, nil
 }

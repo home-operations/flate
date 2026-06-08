@@ -19,11 +19,11 @@ import (
 // document-level "order changed" note. Both are rare in practice for
 // content diffs.
 func renderNative(left, right []Doc, opts Options) ([]byte, error) {
-	from, err := multiDocInput("from", normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize))
+	from, err := multiDocInput("from", opts.normalize(left))
 	if err != nil {
 		return nil, err
 	}
-	to, err := multiDocInput("to", normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize))
+	to, err := multiDocInput("to", opts.normalize(right))
 	if err != nil {
 		return nil, err
 	}

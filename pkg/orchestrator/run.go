@@ -230,7 +230,6 @@ func (o *Orchestrator) awaitDrain(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
-		return errors.Join(o.finalize(), ctx.Err())
 	case <-ctx.Done():
 		// Wait for in-flight tasks to wind down before finalizing so
 		// the store snapshot is internally consistent, then preserve
@@ -238,8 +237,10 @@ func (o *Orchestrator) awaitDrain(ctx context.Context) error {
 		// may never acquire a worker slot once ctx is canceled; a clean
 		// partial snapshot must not look like a successful full run.
 		<-done
-		return errors.Join(o.finalize(), ctx.Err())
 	}
+	// Either path finalizes the same way: the store is fully drained and
+	// any cancellation is folded into the returned error.
+	return errors.Join(o.finalize(), ctx.Err())
 }
 
 // prewarmGitMirrors fires Prewarm against every discovered

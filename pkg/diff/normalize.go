@@ -10,6 +10,12 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// normalize applies o's strip/normalize config to a doc set — the
+// shared pre-diff scrub every render path runs on both its inputs.
+func (o Options) normalize(docs []Doc) []Doc {
+	return normalizeDocs(docs, o.StripAttrs, o.StripFields, o.Normalize)
+}
+
 // normalizeDocs clones each Doc's manifest and rewrites fields that
 // should not participate verbatim in human-facing diffs: the listed
 // annotation/label keys (chart-bump noise like helm.sh/chart,

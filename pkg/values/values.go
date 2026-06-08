@@ -80,21 +80,15 @@ func (p *storeProvider) Secret(namespace, name string) *manifest.Secret {
 // Nested maps recurse; lists and scalars from override fully replace
 // values from base — matching Helm's merge semantics. Both inputs
 // are read-only.
+//
+// Implemented as deepMergeShared over a fresh shallow copy of base:
+// the copy makes the top-level map owned, and deepMergeShared's
+// copy-on-collision recursion keeps every borrowed (base) sub-tree
+// read-only, so neither input is mutated.
 func DeepMerge(base, override map[string]any) map[string]any {
 	out := make(map[string]any, len(base)+len(override))
 	maps.Copy(out, base)
-	for k, v := range override {
-		if existing, ok := out[k]; ok {
-			ebm, eok := existing.(map[string]any)
-			vbm, vok := v.(map[string]any)
-			if eok && vok {
-				out[k] = DeepMerge(ebm, vbm)
-				continue
-			}
-		}
-		out[k] = v
-	}
-	return out
+	return deepMergeShared(out, override)
 }
 
 // DeepMergeInto merges override's keys into dst in place. Same merge

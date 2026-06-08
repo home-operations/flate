@@ -188,8 +188,8 @@ func checkAPIVersion(doc map[string]any, want string) error {
 
 // requireMetadata pulls name + namespace from a non-nil metadata block.
 func requireMetadata(kind string, doc map[string]any) (name, ns string, err error) {
-	md, ok := doc["metadata"].(map[string]any)
-	if !ok || md == nil {
+	md, _ := doc["metadata"].(map[string]any)
+	if md == nil {
 		return "", "", inputf("%s missing metadata", kind)
 	}
 	name, _ = md["name"].(string)

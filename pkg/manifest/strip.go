@@ -70,7 +70,7 @@ func stripObjectMetadata(parent map[string]any, attrs []string) {
 
 // stripMetadataInList walks parent[listKey] as a []any of
 // map[string]any objects and strips attrs from each item's metadata.
-// Covers StatefulSet volumeClaimTemplates and List items uniformly.
+// Used for StatefulSet volumeClaimTemplates.
 func stripMetadataInList(parent map[string]any, listKey string, attrs []string) {
 	items, ok := parent[listKey].([]any)
 	if !ok {

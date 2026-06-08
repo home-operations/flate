@@ -119,11 +119,8 @@ func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (transport.Auth
 // Supported transports: HTTPS (anonymous, basic, bearer), SSH (key
 // from SecretRef or ssh-agent), and file:// URLs.
 func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
-	if repo == nil {
-		return nil, errors.New("git repository is nil")
-	}
-	if repo.URL == "" {
-		return nil, fmt.Errorf("%w: GitRepository %s missing url", manifest.ErrInput, repo.RepoName())
+	if err := validateRepo(repo); err != nil {
+		return nil, err
 	}
 
 	refLabel := "HEAD"
@@ -219,6 +216,18 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		return nil, err
 	}
 	return commitArtifact(repo, slot, art)
+}
+
+// validateRepo guards the shared preconditions Fetch and Prewarm both
+// require before touching the network: a non-nil CR with a URL.
+func validateRepo(repo *manifest.GitRepository) error {
+	if repo == nil {
+		return errors.New("git repository is nil")
+	}
+	if repo.URL == "" {
+		return fmt.Errorf("%w: GitRepository %s missing url", manifest.ErrInput, repo.RepoName())
+	}
+	return nil
 }
 
 func effectiveNamedRef(ref manifest.GitRepositoryRef) string {
@@ -387,11 +396,8 @@ func (f *Fetcher) canUseMirror(repo *manifest.GitRepository) bool {
 // returned to the user — the real Fetch path will hit the same
 // error and produce the canonical status update.
 func (f *Fetcher) Prewarm(ctx context.Context, repo *manifest.GitRepository) error {
-	if repo == nil {
-		return errors.New("git repository is nil")
-	}
-	if repo.URL == "" {
-		return fmt.Errorf("%w: GitRepository %s missing url", manifest.ErrInput, repo.RepoName())
+	if err := validateRepo(repo); err != nil {
+		return err
 	}
 	if repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
 		// The real Fetch path would reject this too; skip silently so

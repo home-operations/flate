@@ -9,6 +9,7 @@ import (
 	"context"
 	"log/slog"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -138,15 +139,13 @@ func (s *Service) notifyQuiescence(now int64) {
 	if len(s.quiesceWaiters) == 0 {
 		return
 	}
-	kept := s.quiesceWaiters[:0]
-	for _, w := range s.quiesceWaiters {
+	s.quiesceWaiters = slices.DeleteFunc(s.quiesceWaiters, func(w quiesceWaiter) bool {
 		if now <= w.threshold {
 			close(w.ch)
-			continue
+			return true
 		}
-		kept = append(kept, w)
-	}
-	s.quiesceWaiters = kept
+		return false
+	})
 }
 
 // QuiescenceCh returns a channel closed when the active-task count

@@ -191,13 +191,11 @@ func detectViaGit(before, after string) (*Set, error) {
 			continue
 		}
 		p := filepath.ToSlash(string(rawPath))
-		var rel string
-		switch {
-		case strings.HasPrefix(p, beforePrefix):
-			rel = p[len(beforePrefix):]
-		case strings.HasPrefix(p, afterPrefix):
-			rel = p[len(afterPrefix):]
-		default:
+		rel, ok := strings.CutPrefix(p, beforePrefix)
+		if !ok {
+			rel, ok = strings.CutPrefix(p, afterPrefix)
+		}
+		if !ok {
 			// Unexpected path shape — skip rather than mis-attribute.
 			// Defensive only: git always reports paths under the input
 			// directories we passed.

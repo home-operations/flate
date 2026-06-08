@@ -10,10 +10,11 @@
 // subcharts. pkg/helm assigns Funcs() to cfg.CustomTemplateFuncs once per
 // render.
 //
-// The replacements preserve Helm's output SHAPE (a real timestamp string,
-// a valid-length random string, a valid PEM certificate) while making the
-// VALUE reproducible. flate renders for offline review and diff and never
-// applies its output to a cluster, so a fixed clock — and, in later tiers,
-// a seeded randomness stream — is a safe deterministic stand-in for the
-// material the live controller draws freshly at apply time.
+// The replacements preserve Helm's output SHAPE (a real timestamp string, a
+// valid-length random string, a valid PEM certificate) while making the VALUE
+// reproducible: a fixed clock, a seeded ChaCha8 stream for the random funcs,
+// and seed-derived ed25519 keys/certs (ed25519 is the only key type Go's crypto
+// generates deterministically from a custom reader). flate renders for offline
+// review and diff and never applies its output, so these are safe deterministic
+// stand-ins for the material the live controller mints at apply time.
 package deterministic

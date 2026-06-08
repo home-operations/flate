@@ -22,5 +22,6 @@ func Funcs(seed []byte) template.FuncMap {
 	fm := template.FuncMap{}
 	maps.Copy(fm, clockFuncs())
 	maps.Copy(fm, randFuncs(s))
+	maps.Copy(fm, certFuncs(s))
 	return fm
 }

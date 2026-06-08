@@ -1,119 +1,89 @@
 package deterministic
 
 import (
-	"crypto/rand"
 	"encoding/base64"
 	"io"
-	"math"
-	"math/big"
+	"math/rand/v2"
 	"text/template"
-	"unicode"
 
 	"github.com/google/uuid"
 )
 
+const (
+	charsAlphaNum = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	charsAlpha    = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	charsNumeric  = "0123456789"
+)
+
+// charsASCII is the printable ASCII range (bytes 32..126) — sprig's randAscii
+// character set.
+var charsASCII = func() string {
+	b := make([]byte, 0, 95)
+	for c := byte(32); c <= 126; c++ {
+		b = append(b, c)
+	}
+	return string(b)
+}()
+
 // randFuncs returns deterministic overrides for sprig's crypto/rand- and
 // math/rand-backed string/byte/int/uuid functions, all drawing from the
-// per-render stream instead of the process entropy source.
-//
-// The string generators are a faithful port of Masterminds/goutils
-// CryptoRandom (the consumer behind sprig's randAlpha* helpers) with its sole
-// randomness draw — getCryptoRandomInt = crypto/rand.Int(rand.Reader, …) —
-// swapped to read from the stream. Because crypto/rand.Int's reduction is
-// unchanged, output is byte-identical to goutils given the same stream bytes;
-// only the bytes' source is deterministic.
+// per-render stream. Output is not byte-identical to sprig — it only needs to be
+// deterministic and structurally valid (right length, right character class).
 func randFuncs(s *stream) template.FuncMap {
 	return template.FuncMap{
-		"randAlphaNum": func(n int) string { return cryptoRandom(s, n, 0, 0, true, true) },
-		"randAlpha":    func(n int) string { return cryptoRandom(s, n, 0, 0, true, false) },
-		"randNumeric":  func(n int) string { return cryptoRandom(s, n, 0, 0, false, true) },
-		"randAscii":    func(n int) string { return cryptoRandom(s, n, 32, 127, false, false) },
+		"randAlphaNum": func(n int) string { return randString(s, n, charsAlphaNum) },
+		"randAlpha":    func(n int) string { return randString(s, n, charsAlpha) },
+		"randNumeric":  func(n int) string { return randString(s, n, charsNumeric) },
+		"randAscii":    func(n int) string { return randString(s, n, charsASCII) },
 		"randBytes":    func(n int) (string, error) { return randBytes(s, n) },
-		"randInt":      func(minN, maxN int) int { return int(randomInt(s, maxN-minN)) + minN },
+		"randInt":      func(minN, maxN int) int { return randInt(s, minN, maxN) },
 		"uuidv4":       func() string { return uuidv4(s) },
 	}
 }
 
-// randomInt mirrors goutils.getCryptoRandomInt but reads from the stream.
-func randomInt(s *stream, n int) int64 {
-	v, err := rand.Int(s, big.NewInt(int64(n)))
-	if err != nil {
-		// crypto/rand.Int only errors on a non-positive bound; sprig's
-		// randInt(min,max) with max<=min and randAscii/etc. with count>0
-		// never reach it. Match math/rand.Intn's panic on a bad bound.
-		panic(err)
-	}
-	return v.Int64()
-}
-
-// cryptoRandom is a faithful port of Masterminds/goutils CryptoRandom (chars
-// always nil in sprig's usage) with its randomness draw replaced by the
-// stream. count<=0 yields "" — matching sprig, which swallows goutils' error.
-func cryptoRandom(s *stream, count, start, end int, letters, numbers bool) string {
-	if count <= 0 {
+// randString returns n characters, each one stream byte mapped into charset by
+// modulo. The bias from a charset length that doesn't divide 256 is irrelevant
+// for a render placeholder. n<=0 yields "".
+func randString(s *stream, n int, charset string) string {
+	if n <= 0 {
 		return ""
 	}
-	if start == 0 && end == 0 {
-		if !letters && !numbers {
-			end = math.MaxInt32
-		} else {
-			end = 'z' + 1
-			start = ' '
-		}
+	buf := make([]byte, n)
+	_, _ = io.ReadFull(s, buf)
+	for i, b := range buf {
+		buf[i] = charset[int(b)%len(charset)]
 	}
-	buffer := make([]rune, count)
-	gap := end - start
-	for count != 0 {
-		count--
-		//nolint:gosec // G115: randomInt(s,gap) ∈ [0,gap) so the sum is ≤ end ≤ MaxInt32 — always a valid rune.
-		ch := rune(randomInt(s, gap) + int64(start))
-		if letters && unicode.IsLetter(ch) || numbers && unicode.IsDigit(ch) || !letters && !numbers {
-			switch {
-			case ch >= 56320 && ch <= 57343: // low surrogate range
-				if count == 0 {
-					count++
-				} else {
-					buffer[count] = ch
-					count--
-					//nolint:gosec // G115: 55296+[0,128) is a valid surrogate-range rune.
-					buffer[count] = rune(55296 + randomInt(s, 128))
-				}
-			case ch >= 55296 && ch <= 56191: // high surrogate range (partial)
-				if count == 0 {
-					count++
-				} else {
-					//nolint:gosec // G115: 56320+[0,128) is a valid surrogate-range rune.
-					buffer[count] = rune(56320 + randomInt(s, 128))
-					count--
-					buffer[count] = ch
-				}
-			case ch >= 56192 && ch <= 56319: // private high surrogate, skip
-				count++
-			default:
-				buffer[count] = ch
-			}
-		} else {
-			count++
-		}
-	}
-	return string(buffer)
+	return string(buf)
 }
 
-// randBytes mirrors sprig.randBytes (base64 of count random bytes), reading
-// from the stream instead of crypto/rand.
-func randBytes(s *stream, count int) (string, error) {
-	buf := make([]byte, count)
+func randBytes(s *stream, n int) (string, error) {
+	if n < 0 {
+		return "", nil
+	}
+	buf := make([]byte, n)
 	if _, err := io.ReadFull(s, buf); err != nil {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(buf), nil
 }
 
-// uuidv4 mirrors sprig.uuidv4 (a v4 UUID) but draws its 16 bytes from the
-// stream, so the same seed yields the same UUID.
+// randInt mirrors sprig's randInt(min,max): an int in [min,max). A non-positive
+// span yields min (sprig would panic via math/rand.Intn; a renderer prefers a
+// benign value). The draw comes from the same ChaCha8 the stream wraps.
+func randInt(s *stream, minN, maxN int) int {
+	span := maxN - minN
+	if span <= 0 {
+		return minN
+	}
+	//nolint:gosec // G404: deterministic rendering deliberately draws from the seeded ChaCha8, not crypto/rand.
+	return minN + rand.New(s.c).IntN(span)
+}
+
 func uuidv4(s *stream) string {
 	u, err := uuid.NewRandomFromReader(s)
 	if err != nil {
+		// NewRandomFromReader only fails on a short read, which the stream
+		// (ChaCha8) never produces.
 		panic(err)
 	}
 	return u.String()

@@ -95,3 +95,41 @@ func TestTemplate_DeterministicRandom(t *testing.T) {
 		t.Errorf("uncached renders differ — random funcs not deterministic:\n first=%q\nsecond=%q", first, second)
 	}
 }
+
+// TestTemplate_DeterministicCerts is the Tier 3 integration guard: a chart
+// that generates a CA and a leaf signed by it (the caBundle/tls.crt shape)
+// must render byte-identically across two UNCACHED renders. sprig draws cert
+// keys/serials from crypto/rand and validity from time.Now; the overrides seed
+// both, so the rendered cert material is reproducible.
+func TestTemplate_DeterministicCerts(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
+		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
+	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-ca\ndata:\n  {{- $ca := genCA \"my-ca\" 3650 }}\n  {{- $cert := genSignedCert \"svc\" nil (list \"svc.default.svc\") 365 $ca }}\n  ca.crt: {{ $ca.Cert | b64enc | quote }}\n  tls.crt: {{ $cert.Cert | b64enc | quote }}\n  tls.key: {{ $cert.Key | b64enc | quote }}\n")
+
+	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	if err != nil {
+		t.Fatalf("NewClientWithOptions: %v", err)
+	}
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart", RepoName: "chart-repo",
+			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+		},
+	}
+
+	first, err := cli.Template(context.Background(), hr, nil, Options{})
+	if err != nil {
+		t.Fatalf("first render: %v", err)
+	}
+	second, err := cli.Template(context.Background(), hr, nil, Options{})
+	if err != nil {
+		t.Fatalf("second render: %v", err)
+	}
+	if first != second {
+		t.Errorf("uncached renders differ — cert funcs not deterministic:\n first=%q\nsecond=%q", first, second)
+	}
+}

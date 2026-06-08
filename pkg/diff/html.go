@@ -186,7 +186,7 @@ func buildHTMLResource(p pairedResource, from, to string, hl *highlighter) htmlR
 
 	id := joinNS(p.namespace, p.name)
 	res := htmlResource{
-		Title:  p.kind + " " + id,
+		Title:  p.label(),
 		Kind:   p.kind,
 		Name:   id,
 		Parent: htmlParent(p.parent),

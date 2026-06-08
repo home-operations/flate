@@ -232,8 +232,8 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 	w.visited[dir] = struct{}{}
 
 	// readKustomizationAt returns the resolved file path alongside the
-	// parsed body so descend can hand both forward to walkKustomize /
-	// walkComponentData without re-opening the same kustomization.yaml.
+	// parsed body so descend can hand both to recordGenerators and
+	// walkKustomize without re-opening the same kustomization.yaml.
 	k, kpath := readKustomizationAt(dir)
 	if k != nil {
 		// Harvest configMapGenerator/secretGenerator entries
@@ -449,13 +449,10 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomization, kpath string)
 			if ks.Path == "" && ks.SourceKind == "" && ks.SourceName == "" {
 				continue
 			}
-			id := obj.Named()
-			if w.loader.skipExisting(id) {
+			if w.loader.skipExisting(obj.Named()) {
 				continue
 			}
-			w.loader.Store.AddObject(obj)
-			w.loader.recordSource(id, abs)
-			w.loader.recordSourceRefs(obj)
+			w.loader.addObject(obj, abs)
 			count++
 		}
 	}
@@ -665,12 +662,19 @@ func (l *Loader) loadFile(path string) (int, error) {
 			l.recordSourceRefs(obj)
 			continue
 		}
-		l.Store.AddObject(obj)
-		l.recordSource(id, path)
-		l.recordSourceRefs(obj)
+		l.addObject(obj, path)
 		count++
 	}
 	return count, nil
+}
+
+// addObject commits obj to the Store and records its source-file and
+// source-ref bookkeeping. Keeps the AddObject/recordSource/recordSourceRefs
+// triplet in one place — shared by the file-load and bootstrap-sibling paths.
+func (l *Loader) addObject(obj manifest.BaseManifest, path string) {
+	l.Store.AddObject(obj)
+	l.recordSource(obj.Named(), path)
+	l.recordSourceRefs(obj)
 }
 
 // recordDataFile parses absPath and records any ConfigMap/Secret

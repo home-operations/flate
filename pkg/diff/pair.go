@@ -16,6 +16,12 @@ type pairedResource struct {
 	a, b                  map[string]any
 }
 
+// label is the resource's human-facing title, e.g. "Deployment apps/web" —
+// the heading the unified and HTML paths put above each resource's diff.
+func (p pairedResource) label() string {
+	return p.kind + " " + joinNS(p.namespace, p.name)
+}
+
 // pairKey identifies a resource for cross-set matching.
 type pairKey struct {
 	// pPath disambiguates two KS parents with the same (kind, ns, name)

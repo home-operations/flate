@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 
 	"helm.sh/helm/v4/pkg/getter"
@@ -29,7 +30,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 		return nil, err
 	}
 	defer cleanup()
-	allOpts := append(authOpts, tlsOpts...)
+	allOpts := slices.Concat(authOpts, tlsOpts)
 
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
 	idx, err := f.fetchIndex(ctx, r.Namespace+"/"+r.Name+"@"+indexURL, indexURL, allOpts)

@@ -31,8 +31,9 @@ func WriteFileAt(t testing.TB, path, body string) {
 // WriteFile and WriteFileAt delegate to once they've computed the path.
 func writeFileWithParents(t testing.TB, path, body string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
 	}
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)

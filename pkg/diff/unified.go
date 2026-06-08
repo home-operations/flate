@@ -25,7 +25,7 @@ func renderUnified(left, right []Doc, opts Options) ([]byte, error) {
 	var b bytes.Buffer
 	first := true
 	for _, p := range pair(left, right) {
-		body, err := unifiedBody(p.a, p.b, p.kind+" "+joinNS(p.namespace, p.name))
+		body, err := unifiedBody(p.a, p.b, p.label())
 		if err != nil {
 			return nil, err
 		}

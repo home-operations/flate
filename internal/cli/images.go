@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/home-operations/flate/internal/format"
@@ -41,7 +42,7 @@ func emitImageList(w io.Writer, imgs []string, out string) error {
 		return format.YAML(w, imgs)
 	}
 	for _, img := range imgs {
-		if _, err := io.WriteString(w, img+"\n"); err != nil {
+		if _, err := fmt.Fprintln(w, img); err != nil {
 			return err
 		}
 	}

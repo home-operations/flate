@@ -15,6 +15,7 @@ import (
 	release "helm.sh/helm/v4/pkg/release/v1"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/pkg/helm/deterministic"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/values"
 )
@@ -46,6 +47,12 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		return "", fmt.Errorf("helm init: %w", err)
 	}
 	cfg.Capabilities = caps
+	// Override sprig's nondeterministic template functions (now → a fixed
+	// clock, and in later tiers seeded random/cert funcs) so the render is
+	// byte-reproducible. Helm v4 applies CustomTemplateFuncs last when
+	// building the engine FuncMap, so these win over sprig. Build a fresh
+	// map per render — never share it across goroutines.
+	cfg.CustomTemplateFuncs = deterministic.Funcs()
 
 	inst, disableHooks, err := newInstallAction(cfg, hr, opts, caps)
 	if err != nil {

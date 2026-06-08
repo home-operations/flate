@@ -139,20 +139,15 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	// wasReady: this is a re-reconcile of an already-Ready KS (re-emitted by
-	// its structural parent / coalesced re-submit). Suppress the pre-render
-	// progress-message Pending writes below so we don't transiently downgrade
-	// Ready→Pending: a re-run that turns out to be a no-op (fingerprint
-	// unchanged) must stay Ready throughout, or a dependent's quiescence-bound
-	// depwait can re-read the transient Pending at a transient pool drain and
-	// give up ("parent Kustomization not ready"). A genuine re-render (changed
-	// fingerprint) still downgrades at the "rendering" write below, after the
-	// dedup check, so dependents correctly re-gate.
-	cur, hasStatus := c.Store.GetStatus(id)
-	wasReady := hasStatus && cur.Status == store.StatusReady
-	if !wasReady {
-		c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
-	}
+	// SetPendingUnlessReady (not a raw UpdateStatus) on every pre-render
+	// progress write: a no-op re-reconcile of an already-Ready KS (re-emitted
+	// by its structural parent / coalesced re-run) must not transiently
+	// downgrade Ready→Pending, or a dependent's quiescence-bound depwait can
+	// re-read it at a transient pool drain and give up ("parent Kustomization
+	// not ready"). The genuine-render downgrade at "rendering" below (after the
+	// fingerprint dedup) stays unconditional so a changed re-render re-gates
+	// dependents. See base.SetPendingUnlessReady (#657).
+	c.SetPendingUnlessReady(id, "resolving dependencies")
 
 	deps := c.collectDeps(ks)
 	if len(deps) > 0 {
@@ -165,7 +160,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		// namespace. See #102.
 		fresh, ok, err := base.AwaitRefresh[*manifest.Kustomization](
 			ctx, c.Controller, id, c.NewWaiter(id, ks.Timeout), deps,
-			"", base.DepFailed(id)) // empty pendingMsg: status set above (or kept Ready on a re-run)
+			"", base.DepFailed(id)) // empty pendingMsg: status set above (kept Ready on a no-op re-run)
 		if err != nil {
 			return err
 		}
@@ -177,17 +172,13 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		return err
 	}
 
-	if !wasReady {
-		c.Store.UpdateStatus(id, store.StatusPending, "resolving source artifact")
-	}
+	c.SetPendingUnlessReady(id, "resolving source artifact")
 	sourceRoot, applyIgnore, err := c.resolveSource(ks)
 	if err != nil {
 		return err
 	}
 
-	if !wasReady {
-		c.Store.UpdateStatus(id, store.StatusPending, "expanding substitutions")
-	}
+	c.SetPendingUnlessReady(id, "expanding substitutions")
 	// kustomize.Prepare clones ks and expands postBuild.substituteFrom —
 	// the same pre-render dance an embedder calling RenderFlux directly
 	// would perform. Keeping one canonical implementation here means

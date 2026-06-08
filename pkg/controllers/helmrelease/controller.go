@@ -282,7 +282,15 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return err
 	}
 
-	c.Store.UpdateStatus(id, store.StatusPending, "resolving chart")
+	// SetPendingUnlessReady, not a raw UpdateStatus: this pre-dedup progress
+	// write must not transiently downgrade an already-Ready HR on a no-op
+	// re-run (re-emitted by its parent KS render — HR retains labels, so a
+	// stamped re-emit re-runs). An HR that dependsOn this one has a
+	// quiescence-bound wait that could re-read the transient Pending at a
+	// transient pool drain and drop. The genuine-render downgrade at "rendering
+	// chart" below (after the fingerprint dedup) stays unconditional. See
+	// base.SetPendingUnlessReady (#657/#658).
+	c.SetPendingUnlessReady(id, "resolving chart")
 	// helm.Prepare clones hr, resolves chartRef, and expands values —
 	// the same pre-render dance an embedder calling TemplateDocs
 	// directly performs. Keeping one canonical implementation here

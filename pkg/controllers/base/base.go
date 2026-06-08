@@ -214,6 +214,26 @@ func (c *Controller) PreflightError(id manifest.NamedResource) error {
 	return nil
 }
 
+// SetPendingUnlessReady writes a StatusPending progress message for id,
+// UNLESS id is already StatusReady. A no-op re-reconcile (a parent render
+// re-emitting the object with stamped ownership labels, a coalesced re-run)
+// must not transiently downgrade Ready→Pending: a dependent's quiescence-bound
+// depwait can re-read that transient Pending at a transient task-pool drain and
+// give up ("not ready"), dropping the dependent nondeterministically.
+//
+// Use for the progress writes that PRECEDE a reconcile's no-op (fingerprint /
+// artifact) short-circuit. The genuine-work downgrade AFTER that check should
+// stay an unconditional UpdateStatus so a real re-render re-gates dependents.
+// Re-reading status per call is equivalent to capturing it once at reconcile
+// entry: the coalescer serializes per-id, so nothing mutates an id's own status
+// mid-reconcile. See #657 (kustomization) / #658 (source).
+func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string) {
+	if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusReady {
+		return
+	}
+	c.Store.UpdateStatus(id, store.StatusPending, msg)
+}
+
 // NewWaiter constructs a depwait.Waiter pre-wired with the
 // controller's Store, Existence lookup, and Renders quiescence signal,
 // parented to id and budgeted from timeout. HR and KS controllers call

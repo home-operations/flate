@@ -2,6 +2,7 @@ package helmrelease
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -790,5 +791,77 @@ func TestController_CollectHRDepsPrunesUnchangedDeps(t *testing.T) {
 	cFull, _ := newTestController(t, nil)
 	if got := cFull.collectHRDeps(hr); len(got) != 2 {
 		t.Errorf("disabled filter must not prune; collectHRDeps = %+v", got)
+	}
+}
+
+// TestController_AlreadyReady_NoTransientPending pins the base
+// SetPendingUnlessReady guard at the HelmRelease level (the #657/#658 dedup
+// closing the analogous HR gap): a no-op re-reconcile of an already-Ready HR
+// (re-emitted by its parent KS render with stamped ownership labels — HR
+// retains labels, so a stamped re-emit re-runs and the label-insensitive
+// fingerprint dedup-skips) must NOT transiently flip Ready→Pending at the
+// pre-dedup "resolving chart" write. An HR that dependsOn this one waits
+// quiescence-bound and could re-read that transient Pending at a transient pool
+// drain and drop. The genuine-render downgrade after the dedup check is
+// unaffected.
+func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  k: v\n")
+
+	_, st := newTestController(t, nil)
+	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
+	st.AddObject(src)
+	st.SetArtifact(src.Named(), &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+	})
+	st.UpdateStatus(src.Named(), store.StatusReady, "")
+
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Interval: metav1Duration(time.Hour),
+			Timeout:  ptrDuration(100 * time.Millisecond),
+		},
+		Chart: manifest.HelmChart{
+			Name: "mychart", RepoName: "charts", RepoNamespace: "flux-system",
+			RepoKind: manifest.KindGitRepository,
+		},
+	}
+	st.AddObject(hr)
+	testutil.WaitForStatus(t, st, hr.Named(), store.StatusReady)
+
+	var mu sync.Mutex
+	var sawPending bool
+	st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		if id != hr.Named() {
+			return
+		}
+		if info, ok := payload.(store.StatusInfo); ok && info.Status == store.StatusPending {
+			mu.Lock()
+			sawPending = true
+			mu.Unlock()
+		}
+	}, false)
+
+	// Re-emit with stamped ownership labels: HR retains labels so AddObject's
+	// DeepEqual gate fails and the listener re-fires a coalesced re-run, but the
+	// label-insensitive fingerprint matches → dedup-skip no-op.
+	stamped := hr.Clone()
+	stamped.Labels = map[string]string{
+		"kustomize.toolkit.fluxcd.io/name":      "parent",
+		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
+	}
+	st.AddObject(stamped)
+	time.Sleep(50 * time.Millisecond) // let the coalesced re-run land
+
+	mu.Lock()
+	defer mu.Unlock()
+	if sawPending {
+		t.Error("no-op re-reconcile of an already-Ready HelmRelease transiently downgraded it to Pending (the quiescence-race window)")
+	}
+	if info, _ := st.GetStatus(hr.Named()); info.Status != store.StatusReady {
+		t.Errorf("HR not Ready after no-op re-run: %+v", info)
 	}
 }

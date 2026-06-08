@@ -69,6 +69,83 @@ func TestSubstituteDoc_NoSubstitutionShortCircuits(t *testing.T) {
 	}
 }
 
+// substituteDoc substitutes a `${VAR}` in MAP KEY position, matching
+// Flux (which runs envsubst over the serialized YAML text). This is the
+// ClusterSecretStore `vaults: { ${OP_VAULT}: 1 }` shape: the only `${`
+// in the doc sits in a key and the value is a non-string, so the old
+// values-only gate skipped the doc and left the key literal.
+func TestSubstituteDoc_SubstitutesMapKey(t *testing.T) {
+	doc := map[string]any{
+		"apiVersion": "external-secrets.io/v1",
+		"kind":       "ClusterSecretStore",
+		"spec": map[string]any{
+			"provider": map[string]any{
+				"onepassword": map[string]any{
+					"vaults": map[string]any{"${OP_VAULT}": 1},
+				},
+			},
+		},
+	}
+	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"})
+	if err != nil {
+		t.Fatalf("substituteDoc: %v", err)
+	}
+	vaults := out["spec"].(map[string]any)["provider"].(map[string]any)["onepassword"].(map[string]any)["vaults"].(map[string]any)
+	if _, stale := vaults["${OP_VAULT}"]; stale {
+		t.Errorf("key left unsubstituted; got keys %v", vaults)
+	}
+	v, ok := vaults["homelab"]
+	if !ok {
+		t.Fatalf("substituted key missing; got keys %v", vaults)
+	}
+	// The marshal/unmarshal round-trip still coerces the value even when
+	// the trigger was a key — `1` stays an int, not a string.
+	if iv, _ := v.(int); iv != 1 {
+		t.Errorf("value = %v (%T), want int 1", v, v)
+	}
+}
+
+// An escaped `$${VAR}` key unescapes to a literal `${VAR}` key — it must
+// not be excluded from the round-trip (the gate has to pass so envsubst
+// can do the unescaping) and must not be expanded. Matches Flux.
+func TestSubstituteDoc_EscapedDollarKey(t *testing.T) {
+	doc := map[string]any{
+		"data": map[string]any{"$${OP_VAULT}": 1},
+	}
+	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"})
+	if err != nil {
+		t.Fatalf("substituteDoc: %v", err)
+	}
+	data := out["data"].(map[string]any)
+	if _, ok := data["${OP_VAULT}"]; !ok {
+		t.Errorf("escaped key should unescape to literal ${OP_VAULT}; got %v", data)
+	}
+	if _, expanded := data["homelab"]; expanded {
+		t.Errorf("escaped key must not expand; got %v", data)
+	}
+}
+
+// When a key-position substitution makes two sibling keys collide, the
+// re-decode hits a duplicate key. go.yaml.in/yaml/v4 fails loudly on
+// that rather than silently last-wins, so substituteDoc surfaces it as
+// a render error (the reconcile fails) instead of dropping data —
+// documenting the behavior for this pathological misconfiguration.
+func TestSubstituteDoc_KeyCollisionErrors(t *testing.T) {
+	doc := map[string]any{
+		"data": map[string]any{"${OP_VAULT}": 1, "homelab": 2},
+	}
+	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"})
+	if err == nil {
+		t.Fatalf("expected a duplicate-key error on collision; got out=%#v", out)
+	}
+	if out != nil {
+		t.Errorf("expected nil doc on error; got %#v", out)
+	}
+	if !strings.Contains(err.Error(), "homelab") || !strings.Contains(err.Error(), "already defined") {
+		t.Errorf("error should name the colliding key; got %v", err)
+	}
+}
+
 // substituteDoc round-trips through YAML for type-coercion when `${`
 // is present — `replicas: ${N}` ends up as int after substitution.
 func TestSubstituteDoc_PreservesYAMLTypeCoercion(t *testing.T) {

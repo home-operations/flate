@@ -3,10 +3,13 @@ package manifest
 import "strings"
 
 // AnyStringLeaf reports whether any string leaf of v satisfies pred.
-// Walks nested maps and slices once. Used to detect features in
-// decoded YAML trees (`${VAR}` references for substitution gating,
-// wipe-placeholders for schema-skip, etc.) without paying for a
-// marshal round-trip.
+// Walks nested maps and slices once, inspecting only map values (not
+// keys). Used to detect features in decoded YAML trees (wipe-
+// placeholders for schema-skip, etc.) without paying for a marshal
+// round-trip. For substitution gating, use AnyStringNode — Flux
+// applies postBuild substitution to the serialized YAML text, where a
+// map key is just another token, so a key-only `${VAR}` must not be
+// missed.
 func AnyStringLeaf(v any, pred func(string) bool) bool {
 	switch t := v.(type) {
 	case string:
@@ -20,6 +23,34 @@ func AnyStringLeaf(v any, pred func(string) bool) bool {
 	case []any:
 		for _, vv := range t {
 			if AnyStringLeaf(vv, pred) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AnyStringNode reports whether any string node of v satisfies pred —
+// like AnyStringLeaf, but the map case also tests the KEY, not just the
+// value. This is the correct gate for postBuild substitution: Flux runs
+// drone/envsubst over the rendered YAML *text*, so a `${VAR}` in key
+// position (e.g. `${OP_VAULT}: 1`) is substituted exactly like one in
+// value position. A values-only walk would skip a doc whose only
+// reference sits in a key (with a non-string value), leaving the var
+// literal and diverging from Flux.
+func AnyStringNode(v any, pred func(string) bool) bool {
+	switch t := v.(type) {
+	case string:
+		return pred(t)
+	case map[string]any:
+		for k, vv := range t {
+			if pred(k) || AnyStringNode(vv, pred) {
+				return true
+			}
+		}
+	case []any:
+		for _, vv := range t {
+			if AnyStringNode(vv, pred) {
 				return true
 			}
 		}

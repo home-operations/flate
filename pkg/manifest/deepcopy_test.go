@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"strings"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -47,6 +48,70 @@ func TestDeepCopyMap_Isolation(t *testing.T) {
 func TestDeepCopyMap_Nil(t *testing.T) {
 	if DeepCopyMap(nil) != nil {
 		t.Errorf("nil source should produce nil")
+	}
+}
+
+// AnyStringNode gates the postBuild substitution round-trip. Unlike
+// AnyStringLeaf it must also see `${VAR}` in MAP KEY position — Flux
+// runs envsubst over the serialized YAML text, where a key is just
+// another token, so a key-only reference (e.g. `${OP_VAULT}: 1`) has to
+// trigger the round-trip or the var is left literal. The value-only and
+// no-match cases must stay identical to AnyStringLeaf (the parity sweep
+// below) so the change is inert for docs that were already handled.
+func TestAnyStringNode(t *testing.T) {
+	hasDollar := func(s string) bool { return strings.Contains(s, "${") }
+	cases := []struct {
+		name string
+		in   any
+		want bool
+	}{
+		// Cases shared with AnyStringLeaf — must match it exactly.
+		{"nil", nil, false},
+		{"empty map", map[string]any{}, false},
+		{"plain scalars only", map[string]any{"a": "literal", "b": 3, "c": true}, false},
+		{"top-level value with ${", map[string]any{"a": "${VAR}"}, true},
+		{"value nested in list", map[string]any{"data": []any{"first", "${VAR}", "third"}}, true},
+		{"value deeply nested", map[string]any{
+			"spec": map[string]any{"containers": []any{map[string]any{"image": "ghcr.io/x:${TAG}"}}},
+		}, true},
+		{"dollar but no brace", map[string]any{"a": "price$5"}, false},
+		// Key-position cases — these are where AnyStringNode diverges
+		// from (improves on) AnyStringLeaf.
+		{"key with ${, non-string value", map[string]any{"${OP_VAULT}": 1}, true},
+		{"key with ${ nested under a list", map[string]any{
+			"vaults": []any{map[string]any{"${OP_VAULT}": 1}},
+		}, true},
+		{"escaped $${ key still triggers", map[string]any{"$${OP_VAULT}": 1}, true},
+		{"plain key, no ${ anywhere", map[string]any{"vaults": map[string]any{"homelab": 1}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AnyStringNode(tc.in, hasDollar); got != tc.want {
+				t.Errorf("AnyStringNode(${) = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAnyStringNode_ParityWithLeafOnValues pins that AnyStringNode and
+// AnyStringLeaf agree whenever no `${` sits in a key — i.e. the new
+// behavior is strictly additive (it only ever flips false→true for a
+// key-position match, never changes a value-driven result).
+func TestAnyStringNode_ParityWithLeafOnValues(t *testing.T) {
+	hasDollar := func(s string) bool { return strings.Contains(s, "${") }
+	valueOnly := []any{
+		nil,
+		map[string]any{},
+		map[string]any{"a": "literal", "b": 3},
+		map[string]any{"a": "${VAR}"},
+		map[string]any{"data": []any{"x", "${VAR}", "y"}},
+		map[string]any{"spec": map[string]any{"replicas": "${N}"}},
+		map[string]any{"a": "price$5"},
+	}
+	for i, v := range valueOnly {
+		if AnyStringNode(v, hasDollar) != AnyStringLeaf(v, hasDollar) {
+			t.Errorf("case %d: AnyStringNode and AnyStringLeaf disagree on a key-free tree", i)
+		}
 	}
 }
 
@@ -111,11 +176,11 @@ func TestHelmRelease_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 	src := &HelmRelease{
 		Name: "plex", Namespace: "media",
 		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Install: &helmv2.Install{DisableHooks: false},
-			Upgrade: &helmv2.Upgrade{DisableHooks: false},
-			Rollback: &helmv2.Rollback{DisableHooks: false},
+			Install:   &helmv2.Install{DisableHooks: false},
+			Upgrade:   &helmv2.Upgrade{DisableHooks: false},
+			Rollback:  &helmv2.Rollback{DisableHooks: false},
 			Uninstall: &helmv2.Uninstall{DisableHooks: false},
-			Test: &helmv2.Test{Enable: false},
+			Test:      &helmv2.Test{Enable: false},
 			DriftDetection: &helmv2.DriftDetection{
 				Mode: helmv2.DriftDetectionWarn,
 			},

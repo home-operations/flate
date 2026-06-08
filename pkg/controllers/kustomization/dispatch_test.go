@@ -121,7 +121,7 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 	c.emitRenderedChildren(parent, []map[string]any{
 		fluxKustomizationDoc("a", "b"),
 		fluxKustomizationDoc("b", "a"),
-	})
+	}, true)
 	if !sawBOnA {
 		t.Fatal("first leaf dispatch did not see later emitted sibling")
 	}
@@ -148,13 +148,73 @@ func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 	c.emitRenderedChildren(parent, []map[string]any{
 		kustomizeConfigDoc(),                 // build directive — must be dropped
 		fluxKustomizationDoc("real", "real"), // real child — must be stored
-	})
+	}, true)
 
 	if leaked {
 		t.Error("kustomize.config build directive was emitted to the store (phantom Kustomization//)")
 	}
 	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "real"}) == nil {
 		t.Error("real Flux Kustomization child was not stored")
+	}
+}
+
+// recordingTracker is a minimal base.RenderTracker that records the
+// parent→children provenance MarkRenderedBatch is handed, so a test can
+// assert the dedup-skip replay still reports provenance even when it no
+// longer re-publishes the children to the store.
+type recordingTracker struct {
+	children map[manifest.NamedResource][]manifest.NamedResource
+}
+
+func (r *recordingTracker) MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
+	if r.children == nil {
+		r.children = map[manifest.NamedResource][]manifest.NamedResource{}
+	}
+	r.children[parent] = append(r.children[parent], children...)
+}
+
+// TestEmitRenderedChildren_DedupSkip_NoStoreWrites pins Part B of the
+// re-emission-churn fix: the fingerprint-dedup replay (publish=false)
+// must NOT re-AddObject the children — re-firing EventObjectAdded
+// re-submits already-settled children, the churn that transiently
+// un-Ready-s a parent KS and races quiescence ("parent ... not ready").
+// The idempotent provenance side-effect (MarkRenderedBatch) MUST still
+// fire so the parent index stays correct on every pass (#102). The
+// fresh-render path (publish=true) still publishes.
+func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
+	s := store.New()
+	c := &Controller{Controller: base.New(s, task.New())}
+	rt := &recordingTracker{}
+	c.SetRenderTracker(rt)
+
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
+	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "real"}
+	docs := []map[string]any{fluxKustomizationDoc("real", "real")}
+
+	var events int
+	s.AddListener(store.EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+		events++
+	}, false)
+
+	// Dedup-skip replay: no events, store untouched, provenance recorded.
+	c.emitRenderedChildren(parent, docs, false)
+	if events != 0 {
+		t.Errorf("publish=false fired %d EventObjectAdded; want 0 (no republish churn)", events)
+	}
+	if s.GetObject(child) != nil {
+		t.Error("publish=false AddObject'd a leaf child; want the store left untouched")
+	}
+	if got := rt.children[parent]; len(got) != 1 || got[0] != child {
+		t.Errorf("publish=false provenance = %v; want [%v] (MarkRenderedBatch must still fire)", got, child)
+	}
+
+	// Fresh render: events fire and the child lands in the store.
+	c.emitRenderedChildren(parent, docs, true)
+	if events != 1 {
+		t.Errorf("publish=true fired %d EventObjectAdded; want 1 (the leaf published)", events)
+	}
+	if s.GetObject(child) == nil {
+		t.Error("publish=true did not store the leaf child")
 	}
 }
 

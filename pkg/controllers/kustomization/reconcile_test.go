@@ -3,6 +3,7 @@ package kustomization
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,6 +133,131 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	secondFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
 	if firstFP != secondFP {
 		t.Errorf("fingerprint changed across label-only re-AddObject: %q vs %q", firstFP, secondFP)
+	}
+}
+
+// TestReconcile_AlreadyReady_NoTransientPending pins Part A of the
+// re-emission-churn fix: a re-reconcile of an already-Ready KS that
+// turns out to be a no-op (fingerprint unchanged, dedup-skip) must NOT
+// transiently flip the status Ready→Pending. That transient window is
+// exactly what a dependent's quiescence-bound depwait can re-read at a
+// transient pool drain and give up on ("parent Kustomization not
+// ready"). Pre-fix the unconditional UpdateStatus(Pending) at the top
+// of reconcile fired on every re-run; post-fix it is suppressed when
+// the object is already Ready.
+func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
+	_, s, _ := newControllerWithFixture(t)
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path: "./apps",
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{
+				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
+			},
+		},
+		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
+		Contents: map[string]any{},
+	}
+	s.AddObject(ks)
+	testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
+
+	var mu sync.Mutex
+	var sawPending bool
+	s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		if id != ks.Named() {
+			return
+		}
+		if info, ok := payload.(store.StatusInfo); ok && info.Status == store.StatusPending {
+			mu.Lock()
+			sawPending = true
+			mu.Unlock()
+		}
+	}, false)
+
+	// Re-emit with kustomize ownership labels stamped: AddObject's
+	// DeepEqual gate fails (labels differ) so the listener re-fires a
+	// coalesced re-run, but the fingerprint matches → dedup-skip no-op.
+	stamped := ks.Clone()
+	stamped.Labels = map[string]string{
+		"kustomize.toolkit.fluxcd.io/name":      "parent",
+		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
+	}
+	s.AddObject(stamped)
+	time.Sleep(50 * time.Millisecond) // let the coalesced re-run land
+
+	mu.Lock()
+	defer mu.Unlock()
+	if sawPending {
+		t.Error("no-op re-reconcile of an already-Ready KS transiently downgraded it to Pending (the quiescence-race window)")
+	}
+	if info, _ := s.GetStatus(ks.Named()); info.Status != store.StatusReady {
+		t.Errorf("KS not Ready after no-op re-run: %+v", info)
+	}
+}
+
+// TestReconcile_GenuineReRender_DoesDowngrade is the byte-determinism
+// guard for Part A: a re-reconcile whose effective spec CHANGED
+// (fingerprint differs, e.g. #102 structural-parent-injected
+// targetNamespace) MUST still downgrade to Pending before re-rendering,
+// so a dependent re-gates on the new output rather than reading a
+// stale-Ready parent. Proves the wasReady guard suppresses only the
+// pre-fingerprint progress writes, not the genuine "rendering"
+// downgrade.
+func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
+	_, s, _ := newControllerWithFixture(t)
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{
+			Path: "./apps",
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{
+				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
+			},
+		},
+		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
+		Contents: map[string]any{},
+	}
+	s.AddObject(ks)
+	testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
+	firstFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
+
+	var mu sync.Mutex
+	var sawPending bool
+	s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		if id != ks.Named() {
+			return
+		}
+		if info, ok := payload.(store.StatusInfo); ok && info.Status == store.StatusPending {
+			mu.Lock()
+			sawPending = true
+			mu.Unlock()
+		}
+	}, false)
+
+	// Re-emit with a genuine spec change (targetNamespace) → fingerprint
+	// differs → real re-render, not a dedup-skip.
+	changed := ks.Clone()
+	changed.TargetNamespace = "elsewhere"
+	s.AddObject(changed)
+
+	// Poll for the artifact to re-render under the new fingerprint.
+	var secondFP string
+	for range 200 {
+		if art, ok := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact); ok {
+			if art.Fingerprint != firstFP {
+				secondFP = art.Fingerprint
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !sawPending {
+		t.Error("genuine re-render did not downgrade to Pending; dependents would read a stale-Ready parent")
+	}
+	if secondFP == "" || secondFP == firstFP {
+		t.Errorf("fingerprint did not change after spec mutation (%q → %q); not a genuine re-render", firstFP, secondFP)
 	}
 }
 

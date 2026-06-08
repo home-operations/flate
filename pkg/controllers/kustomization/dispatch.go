@@ -28,7 +28,20 @@ import (
 // may be raw Kubernetes manifests flate doesn't track. SOPS-encrypted
 // secrets are debug-noted; ParseSecret wipes their values to the
 // PLACEHOLDER token the same way --wipe-secrets does for cleartext.
-func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any) {
+//
+// publish gates the two event-firing store writes (AddObject for pass-1
+// reconcilables, AddObjects for pass-2 leaves). The fresh-render path
+// passes true. The fingerprint-dedup replay passes FALSE: the children
+// were already published byte-identically by the render that set the
+// cached artifact, so re-AddObject-ing them would only re-fire
+// EventObjectAdded and re-submit a coalesced re-reconcile of an already-
+// settled child — churn that transiently flips a Ready parent back to
+// Pending (controller.go:142) and, if a transient quiescence drain lands
+// in that window, makes a dependent's depwait give up ("parent ... not
+// ready"). The provenance (ReportRendered) and keep-set (KeepEmitted)
+// side-effects the replay exists for are idempotent and event-free, so
+// they still run on both paths; only the redundant republish is skipped.
+func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any, publish bool) {
 	type parsed struct {
 		obj          manifest.BaseManifest
 		reconcilable bool
@@ -74,7 +87,9 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			continue // held for pass 2
 		case p.reconcilable:
 			keep(p.obj)
-			c.Store.AddObject(p.obj)
+			if publish {
+				c.Store.AddObject(p.obj)
+			}
 		default:
 			c.Store.AddRendered(p.obj)
 		}
@@ -88,7 +103,9 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		}
 	}
 	c.ReportRendered(id, rendered)
-	c.Store.AddObjects(leaves)
+	if publish {
+		c.Store.AddObjects(leaves)
+	}
 }
 
 // shouldDispatchAsObject reports whether a render-emitted Flux

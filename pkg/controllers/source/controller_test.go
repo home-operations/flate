@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -201,5 +204,64 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 	}
 	if f.calls != 0 {
 		t.Errorf("filtered-out source must not fetch; calls=%d", f.calls)
+	}
+}
+
+// TestController_ExistenceFetcher_NoTransientPendingOnReemit hardens the
+// source path against the #657-class race. HelmRepository is the lone
+// ExistenceFetcher (Fetch returns (nil,nil)), so it never sets an artifact
+// and the reconcile's artifact short-circuit never catches its re-runs.
+// Without the wasReady guard, a re-emitted HelmRepository flips
+// Ready→Pending→Ready, and a consumer's quiescence-bound chart-source wait
+// (helmrelease.awaitChartSource, which waits on the DECLARED HelmRepository
+// before materializing a synthetic HelmChart) could re-read that transient
+// Pending at a transient pool drain and drop the release. The source must
+// stay Ready across a no-op re-run.
+func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
+	_, st := newController(t, map[string]src.Fetcher{
+		manifest.KindHelmRepository: src.ExistenceFetcher{},
+	})
+	repo := &manifest.HelmRepository{
+		Name: "charts", Namespace: "flux-system",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example", Type: "default"},
+	}
+	st.AddObject(repo)
+	testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
+
+	var mu sync.Mutex
+	var sawPending bool
+	st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		if id != repo.Named() {
+			return
+		}
+		if info, ok := payload.(store.StatusInfo); ok && info.Status == store.StatusPending {
+			mu.Lock()
+			sawPending = true
+			mu.Unlock()
+		}
+	}, false)
+
+	// Re-emit with a benign spec diff (Interval) so AddObject's DeepEqual gate
+	// fails and the listener re-fires a coalesced re-run. (flate's
+	// HelmRepository drops metadata.labels, so a label-only stamp would
+	// DeepEqual-match and NOT re-run — a spec field is required.)
+	// ExistenceFetcher ignores the spec, so this re-run is a no-op fetch.
+	reemit := &manifest.HelmRepository{
+		Name: "charts", Namespace: "flux-system",
+		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
+			URL: "https://charts.example", Type: "default",
+			Interval: metav1.Duration{Duration: time.Hour},
+		},
+	}
+	st.AddObject(reemit)
+	time.Sleep(50 * time.Millisecond) // let the coalesced re-run land
+
+	mu.Lock()
+	defer mu.Unlock()
+	if sawPending {
+		t.Error("ExistenceFetcher source transiently downgraded Ready→Pending on a no-op re-run (the quiescence-race window)")
+	}
+	if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady {
+		t.Errorf("source not Ready after no-op re-run: %+v", info)
 	}
 }

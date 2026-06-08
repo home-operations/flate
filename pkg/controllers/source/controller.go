@@ -115,7 +115,21 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) e
 		return nil
 	}
 
-	c.Store.UpdateStatus(id, store.StatusPending, "fetching")
+	// Mirror the artifact-gate protection above for no-artifact
+	// (ExistenceFetcher) kinds: a HelmRepository never sets an artifact, so
+	// the gate never short-circuits its re-runs. Without this, a re-emitted
+	// HelmRepository flips Ready→Pending→Ready, and a consumer's
+	// quiescence-bound chart-source wait (helmrelease.awaitChartSource) could
+	// re-read the transient Pending at a transient pool drain and drop the
+	// release. A re-fetch of an already-Ready source is idempotent (the fetch
+	// still runs below), so keeping Ready across it is correct — we only
+	// suppress the cosmetic Pending write. Mirrors the Kustomization wasReady
+	// guard (#657).
+	cur, hasStatus := c.Store.GetStatus(id)
+	wasReady := hasStatus && cur.Status == store.StatusReady
+	if !wasReady {
+		c.Store.UpdateStatus(id, store.StatusPending, "fetching")
+	}
 	started := time.Now()
 
 	// Release the worker slot during the fetch so consumers of this

@@ -340,13 +340,18 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 			return err
 		}
 		slog.Debug("helmrelease: skipped re-render (fingerprint unchanged)", "id", id.String())
-		// Skip helm.TemplateDocs (the expensive bit), but replay the
-		// cached docs through the dispatch loop so any source CRs
-		// rendered by the chart (tofu-controller's OCIRepository,
-		// crossplane's Provider) re-fire EventObjectAdded for any
-		// listener that joined after the original render. Matches the
-		// KS-side dedup-replay pattern.
-		c.emitRenderedChildren(id, existing.Manifests)
+		// Skip helm.TemplateDocs (the expensive bit) but replay the cached
+		// docs so the idempotent per-emission side-effects (KeepEmitted
+		// keep-set + ReportRendered provenance) fire on every reconcile pass.
+		// publish=false: do NOT re-AddObject the chart-emitted source CRs.
+		// Unlike a KS's children, an HR-emitted source has a single emitter
+		// and the source controller never mutates the stored object, so the
+		// replay re-emits a byte-identical object — Store.AddObject's DeepEqual
+		// gate already no-ops it (no event). Gating it makes that explicit and
+		// mirrors the KS dedup-replay; #658/#659 (SetPendingUnlessReady) keep a
+		// re-emitted source Ready regardless, so the skipped re-emit can't drop
+		// a consumer.
+		c.emitRenderedChildren(id, existing.Manifests, false)
 		return nil
 	}
 
@@ -377,7 +382,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	c.emitRenderedChildren(id, docs)
+	c.emitRenderedChildren(id, docs, true)
 
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
 	return nil
@@ -478,6 +483,16 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 // fresh-render path and the fingerprint-dedup replay path so the
 // per-doc side-effects fire on every reconcile pass.
 //
+// publish gates the event-firing Store.AddObject of source CRs. The
+// fresh-render path passes true. The fingerprint-dedup replay passes
+// FALSE: the sources were already published byte-identically by the
+// render that set the cached artifact (the source controller writes only
+// artifact + status, never the stored object), so re-AddObject-ing them
+// is a Store.AddObject DeepEqual no-op anyway. The idempotent side-effects
+// the replay exists for — KeepEmitted (keep-set) + ReportRendered
+// (provenance) — are event-free and still run on both paths. Mirrors the
+// KS dedup-replay publish gate (#657).
+//
 // A single-pass loop is safe here because isFluxSourceKind restricts
 // AddObject dispatch to pure source kinds (HelmRepository,
 // OCIRepository, GitRepository, Bucket, HelmChartSource,
@@ -486,7 +501,7 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 // which guards leaf KS/HR controllers that read ConfigMap/Secret
 // substituteFrom data emitted in the same batch. HR-emitting-HR or
 // HR-emitting-KS is deliberately excluded from this controller.
-func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any) {
+func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any, publish bool) {
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
 	// Accumulate every source-kind child id so the renderedSet write
 	// flushes through MarkRenderedBatch in a single lock acquisition.
@@ -517,7 +532,9 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			// in kustomization.emitRenderedChildren.
 			childID := obj.Named()
 			c.KeepEmitted(id, obj)
-			c.Store.AddObject(obj)
+			if publish {
+				c.Store.AddObject(obj)
+			}
 			rendered = append(rendered, childID)
 		} else {
 			c.Store.AddRendered(obj)

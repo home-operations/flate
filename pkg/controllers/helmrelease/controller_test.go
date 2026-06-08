@@ -526,7 +526,7 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 		"data":       map[string]any{"key": "value"},
 	}
 
-	c.emitRenderedChildren(parent, []map[string]any{ociDoc, cmDoc})
+	c.emitRenderedChildren(parent, []map[string]any{ociDoc, cmDoc}, true)
 
 	// markRendered must have been called exactly once, for the OCIRepository.
 	if got := len(tracker.calls); got != 1 {
@@ -564,6 +564,72 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 	}
 }
 
+// TestEmitRenderedChildren_DedupReplay_NoStoreWrites pins the publish gate
+// (mirrors the KS TestEmitRenderedChildren_DedupSkip_NoStoreWrites): the
+// fingerprint-dedup replay (publish=false) must NOT re-AddObject the
+// chart-emitted source CRs — re-emit is a DeepEqual no-op anyway, and gating it
+// makes that explicit. The idempotent side-effects the replay exists for —
+// KeepEmitted (keep-set) + ReportRendered (provenance) — MUST still fire.
+func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
+	st := store.New()
+	ts := task.New()
+	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
+	if err != nil {
+		t.Fatalf("helm.NewClient: %v", err)
+	}
+	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
+
+	tracker := &spyTracker{}
+	parent := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "tofu"}
+	filter := change.NewFilter(
+		change.NewSet([]string{"apps/tofu/helmrelease.yaml"}),
+		map[manifest.NamedResource]string{parent: "apps/tofu/helmrelease.yaml"},
+		"",
+		testutil.MapLister{},
+	)
+	c := New(st, ts, hc, helm.Options{}, false)
+	c.Configure(ReconcileOptions{Filter: filter, RenderTracker: tracker})
+	c.Start(context.Background())
+	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
+
+	ociDoc := map[string]any{
+		"apiVersion": "source.toolkit.fluxcd.io/v1beta2",
+		"kind":       "OCIRepository",
+		"metadata":   map[string]any{"name": "tofu-oci", "namespace": "flux-system"},
+		"spec":       map[string]any{"url": "oci://ghcr.io/tofu/tofu"},
+	}
+	ociID := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
+
+	var events int
+	st.AddListener(store.EventObjectAdded, func(_ manifest.NamedResource, _ any) { events++ }, false)
+
+	// Dedup replay: no AddObject, no event, store untouched — but the keep-set
+	// and provenance side-effects still fire.
+	c.emitRenderedChildren(parent, []map[string]any{ociDoc}, false)
+
+	if events != 0 {
+		t.Errorf("publish=false fired %d EventObjectAdded; want 0 (no source re-emit)", events)
+	}
+	if obj := st.GetObject(ociID); obj != nil {
+		t.Error("publish=false AddObject'd a source CR; want the store left untouched")
+	}
+	if len(tracker.calls) != 1 || tracker.calls[0].child != ociID {
+		t.Errorf("publish=false provenance = %v; want one MarkRendered for %v", tracker.calls, ociID)
+	}
+	if !filter.ShouldReconcile(ociID) {
+		t.Error("publish=false did not extend the keep set (KeepEmitted must still run)")
+	}
+
+	// Fresh render publishes: event fires and the source lands in the store.
+	c.emitRenderedChildren(parent, []map[string]any{ociDoc}, true)
+	if events != 1 {
+		t.Errorf("publish=true fired %d EventObjectAdded; want 1", events)
+	}
+	if obj := st.GetObject(ociID); obj == nil {
+		t.Error("publish=true did not store the source CR")
+	}
+}
+
 func TestEmitRenderedChildren_NilTrackerAndNilFilterAreNoops(t *testing.T) {
 	st := store.New()
 	ts := task.New()
@@ -589,7 +655,7 @@ func TestEmitRenderedChildren_NilTrackerAndNilFilterAreNoops(t *testing.T) {
 		"spec":       map[string]any{"url": "oci://ghcr.io/example"},
 	}
 	// Must not panic when tracker and filter are nil.
-	c.emitRenderedChildren(parent, []map[string]any{ociDoc})
+	c.emitRenderedChildren(parent, []map[string]any{ociDoc}, true)
 
 	// OCIRepository is still added to the store even without tracker/filter.
 	ociID := manifest.NamedResource{

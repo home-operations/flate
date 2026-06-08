@@ -32,6 +32,7 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 	type parsed struct {
 		obj          manifest.BaseManifest
 		reconcilable bool
+		leaf         bool // held for pass 2 (Kustomization / HelmRelease)
 	}
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
 	objs := make([]parsed, 0, len(docs))
@@ -49,7 +50,12 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		if manifest.IsKustomizeBuildDirective(obj) {
 			continue // build input, not a cluster resource — never store it
 		}
-		objs = append(objs, parsed{obj: obj, reconcilable: shouldDispatchAsObject(obj)})
+		reconcilable := shouldDispatchAsObject(obj)
+		objs = append(objs, parsed{
+			obj:          obj,
+			reconcilable: reconcilable,
+			leaf:         reconcilable && isLeafReconcilable(obj),
+		})
 	}
 	// Accumulate every reconcilable child's id across both passes so
 	// the renderedSet write can flush through MarkRenderedBatch in a
@@ -63,20 +69,20 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 	}
 	// Pass 1 — data first.
 	for _, p := range objs {
-		if p.reconcilable && isLeafReconcilable(p.obj) {
-			continue
-		}
-		if p.reconcilable {
+		switch {
+		case p.leaf:
+			continue // held for pass 2
+		case p.reconcilable:
 			keep(p.obj)
 			c.Store.AddObject(p.obj)
-		} else {
+		default:
 			c.Store.AddRendered(p.obj)
 		}
 	}
 	// Pass 2 — leaf reconcilables.
 	var leaves []manifest.BaseManifest
 	for _, p := range objs {
-		if p.reconcilable && isLeafReconcilable(p.obj) {
+		if p.leaf {
 			keep(p.obj)
 			leaves = append(leaves, p.obj)
 		}

@@ -298,9 +298,9 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 		// The Prepare path clones hr before calling here, so its sub-trees
 		// are owned by this reconcile. Build the inline layer ON TOP of
 		// values (inline wins on collision). In the share path values may
-		// alias cache sub-trees, so use functional DeepMerge (no in-place
-		// mutation of a shared node); in the owned path DeepMergeInto is
-		// fine and avoids the extra top-level allocation.
+		// alias cache sub-trees, so use deepMergeShared (copy-on-write, so a
+		// shared node is cloned before it is written through); in the owned
+		// path DeepMergeInto is fine and avoids that clone.
 		if share {
 			// Owned accumulator, read-only hr.Values: merge in place with
 			// copy-on-write so sub-maps still aliasing the cache canonical
@@ -458,13 +458,14 @@ func bagValueAsString(v any) (string, error) {
 // by kind, namespace, name, valuesKey, content-hash) and deep-merged.
 //
 // share selects the merge strategy, decided once per HR by the caller:
-//   - share=true (the HR has NO TargetPath ref): functional DeepMerge,
-//     which SHARES the cached canonical's non-colliding sub-trees by
-//     reference instead of deep-copying them. Safe because nothing in
-//     this HR mutates the accumulator in place and the cache canonical
-//     is read-only downstream (helm copies the input on entry). M HRs
-//     referencing the same ConfigMap then share one parsed tree instead
-//     of each deep-copying it.
+//   - share=true (the HR has NO TargetPath ref): deepMergeShared, which
+//     folds the canonical into the owned accumulator in place and SHARES
+//     its non-colliding sub-trees by reference instead of deep-copying
+//     them (map collisions copy-on-write so the canonical is never
+//     mutated). Safe because nothing in this HR mutates a shared node and
+//     the cache canonical is read-only downstream (helm copies the input
+//     on entry). M HRs referencing the same ConfigMap then share one
+//     parsed tree instead of each deep-copying it.
 //   - share=false (the HR has a TargetPath ref somewhere): eager
 //     DeepMergeInto over a DeepCopyMap of the canonical, so the
 //     accumulator is FULLY OWNED and the in-place strvals write that a

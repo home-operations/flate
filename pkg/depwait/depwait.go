@@ -244,18 +244,24 @@ func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
 		return true
 	}
 	if dep.ReadyExpr != "" && !w.AdditiveReadyExpr {
-		ev, done := w.tryReadyExpr(dep.ReadyExpr, id)
-		return done && ev.Status == DepReady
+		return w.readyExprSatisfied(dep.ReadyExpr, id)
 	}
 	info, ok := w.Store.GetStatus(id)
 	if !ok || info.Status != store.StatusReady {
 		return false
 	}
 	if dep.ReadyExpr != "" {
-		ev, done := w.tryReadyExpr(dep.ReadyExpr, id)
-		return done && ev.Status == DepReady
+		return w.readyExprSatisfied(dep.ReadyExpr, id)
 	}
 	return true
+}
+
+// readyExprSatisfied reports whether expr produced a definitive Ready
+// result for id right now (no waiting). A clean false, a transient eval
+// error, or a compile failure all read as "not ready".
+func (w *Waiter) readyExprSatisfied(expr string, id manifest.NamedResource) bool {
+	ev, done := w.tryReadyExpr(expr, id)
+	return done && ev.Status == DepReady
 }
 
 // safeWatchOne wraps watchOne with panic recovery — a malformed CEL

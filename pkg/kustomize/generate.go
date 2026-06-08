@@ -98,20 +98,14 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		kus.BuildMetadata = []string{"originAnnotations"}
 	}
 
-	if v, ok, err := unstructured.NestedString(obj, specField, targetNSField); err != nil {
+	if err := setNestedString(&kus.Namespace, obj, specField, targetNSField); err != nil {
 		return nil, "", err
-	} else if ok {
-		kus.Namespace = v
 	}
-	if v, ok, err := unstructured.NestedString(obj, specField, namePrefixField); err != nil {
+	if err := setNestedString(&kus.NamePrefix, obj, specField, namePrefixField); err != nil {
 		return nil, "", err
-	} else if ok {
-		kus.NamePrefix = v
 	}
-	if v, ok, err := unstructured.NestedString(obj, specField, nameSuffixField); err != nil {
+	if err := setNestedString(&kus.NameSuffix, obj, specField, nameSuffixField); err != nil {
 		return nil, "", err
-	} else if ok {
-		kus.NameSuffix = v
 	}
 
 	patches, err := decodeTypedSlice[fluxapis.Patch](obj, specField, patchesField)
@@ -200,6 +194,20 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		return nil, "", err
 	}
 	return manifest, kfile, nil
+}
+
+// setNestedString assigns the nested string at fields to *dst when present,
+// leaving *dst untouched when the field is absent — mirroring flux's
+// "set only when ok" handling of targetNamespace/namePrefix/nameSuffix.
+func setNestedString(dst *string, obj map[string]any, fields ...string) error {
+	v, ok, err := unstructured.NestedString(obj, fields...)
+	if err != nil {
+		return err
+	}
+	if ok {
+		*dst = v
+	}
+	return nil
 }
 
 // kustomizationFileIn returns the path of the first recognized kustomization

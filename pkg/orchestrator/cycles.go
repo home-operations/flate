@@ -130,8 +130,7 @@ func (o *Orchestrator) rebuildDependencyGraphFromStore() {
 // sameKindDepTargets pulls the dependsOn list from a Kustomization /
 // HelmRelease and filters it down to entries of the same kind. Flux's
 // spec.dependsOn is kind-homogeneous (KS deps on KS, HR deps on HR);
-// stripping cross-kind entries here matches the legacy buildDepGraph
-// behavior and keeps the graph's invariant intact.
+// stripping cross-kind entries here keeps the graph's invariant intact.
 func sameKindDepTargets(obj manifest.BaseManifest, kind string) []manifest.NamedResource {
 	var deps []manifest.DependencyRef
 	switch v := obj.(type) {

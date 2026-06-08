@@ -106,15 +106,14 @@ func (e *celCompileErr) Error() string { return e.err.Error() }
 func (e *celCompileErr) Unwrap() error { return e.err }
 
 func compileReadyExpr(expr string) (cel.Program, error) {
-	if v, ok := celCache.Load(expr); ok {
-		e := v.(celCacheEntry)
-		return e.prog, e.err
+	v, ok := celCache.Load(expr)
+	if !ok {
+		// LoadOrStore: concurrent compiles of the same expr both race; the
+		// loser's entry is discarded and we return the winner's. cel-go's
+		// compilation is deterministic so the two results are equivalent.
+		v, _ = celCache.LoadOrStore(expr, buildCacheEntry(expr))
 	}
-	// LoadOrStore: concurrent compiles of the same expr both race; the
-	// loser's entry is discarded and we return the winner's. cel-go's
-	// compilation is deterministic so the two results are equivalent.
-	actual, _ := celCache.LoadOrStore(expr, buildCacheEntry(expr))
-	e := actual.(celCacheEntry)
+	e := v.(celCacheEntry)
 	return e.prog, e.err
 }
 

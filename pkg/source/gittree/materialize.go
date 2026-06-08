@@ -110,7 +110,9 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 				}
 				continue
 			}
-			if entry.Mode != filemode.Symlink && !entry.Mode.IsFile() {
+			// IsFile is true for regular, executable, and symlink modes;
+			// every other mode (e.g. the Empty placeholder) is skipped.
+			if !entry.Mode.IsFile() {
 				continue
 			}
 			select {

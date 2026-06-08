@@ -16,8 +16,7 @@ import (
 // Edges are partitioned by kind: a Kustomization's dependsOn refers
 // only to other Kustomizations (Flux spec), and the same for
 // HelmReleases. Cross-kind edges are dropped by callers before they
-// reach ReplaceEdges so cycle detection stays kind-homogeneous (matches
-// the buildDepGraph behavior preserved on the slow path).
+// reach ReplaceEdges so cycle detection stays kind-homogeneous.
 //
 // All operations are safe for concurrent use; the mutex guards the
 // in/out edge maps and the failure-membership cache. ReplaceEdges

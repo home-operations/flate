@@ -397,8 +397,10 @@ func Mutate[T interface {
 		}
 		cloned := obj.Clone()
 		mutate(cloned)
-		// Dedup parallel to AddObject — equal mutations no-op.
-		if reflect.DeepEqual(sh.objects[id], cloned) {
+		// Dedup parallel to AddObject — equal mutations no-op. obj is
+		// the value already read from sh.objects[id] under this lock, so
+		// compare against it directly rather than re-indexing the map.
+		if reflect.DeepEqual(obj, cloned) {
 			return true
 		}
 		sh.setLocked(id, cloned)

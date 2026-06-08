@@ -489,24 +489,22 @@ func mirrorRefSpecs(ref *manifest.GitRepositoryRef) mirror.FetchPlan {
 	}
 	switch {
 	case ref.Name != "":
-		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
-			config.RefSpec("+" + ref.Name + ":" + ref.Name),
-		}}
+		return singleMirrorRefSpec(ref.Name)
 	case ref.SemVer != "":
-		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
-			config.RefSpec("+refs/tags/*:refs/tags/*"),
-		}}
+		return singleMirrorRefSpec("refs/tags/*")
 	case ref.Tag != "":
-		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
-			config.RefSpec("+refs/tags/" + ref.Tag + ":refs/tags/" + ref.Tag),
-		}}
+		return singleMirrorRefSpec("refs/tags/" + ref.Tag)
 	case ref.Branch != "":
-		return mirror.FetchPlan{RefSpecs: []config.RefSpec{
-			config.RefSpec("+refs/heads/" + ref.Branch + ":refs/heads/" + ref.Branch),
-		}}
+		return singleMirrorRefSpec("refs/heads/" + ref.Branch)
 	default:
 		return mirror.FetchPlan{}
 	}
+}
+
+// singleMirrorRefSpec builds a FetchPlan carrying one force-update mirror
+// refspec (+src:src) — the shape every narrow per-ref fetch above uses.
+func singleMirrorRefSpec(src string) mirror.FetchPlan {
+	return mirror.FetchPlan{RefSpecs: []config.RefSpec{config.RefSpec("+" + src + ":" + src)}}
 }
 
 // authIdentity returns the cache-key auth tag for a GitRepository.

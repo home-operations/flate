@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"helm.sh/helm/v4/pkg/getter"
 	repo "helm.sh/helm/v4/pkg/repo/v1"
@@ -179,6 +180,19 @@ func absChartURL(base, urlStr string) (string, error) {
 	return baseURL.ResolveReference(u).String(), nil
 }
 
+// helmHTTPTimeout bounds a single helm HTTP request (an index.yaml or a
+// chart .tgz). A liveness backstop, not a determinism knob: the chart-source
+// wait is now bound to fetch-task completion rather than a per-dep wall
+// clock, and helm's getter builds an http.Client{Timeout: 0} (unbounded)
+// that ignores ctx, so a socket that connects but never delivers bytes would
+// keep the task pool's active count above zero and wedge the whole run.
+// Sized per-request (not per-retry-budget) and large enough that a slow-but-
+// live repo still completes — l7mp.io routinely takes tens of seconds, with
+// an occasional retried EOF — while a dead socket always terminates. A var so
+// tests can shrink it; mutate only before a run starts (same discipline as
+// store.FailedGrace) to stay race-clean.
+var helmHTTPTimeout = 120 * time.Second
+
 // httpGet fetches url with helm's HTTP getter and the given options. Callers
 // wrap the error with their own context (index fetch vs chart download).
 func httpGet(url string, opts []getter.Option) (*bytes.Buffer, error) {
@@ -186,6 +200,10 @@ func httpGet(url string, opts []getter.Option) (*bytes.Buffer, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Prepend the liveness timeout so a caller-supplied WithTimeout (none
+	// today) still overrides it — getter applies options in order, last
+	// write wins. source.WithRetry layers attempts on top.
+	opts = append([]getter.Option{getter.WithTimeout(helmHTTPTimeout)}, opts...)
 	return g.Get(url, opts...)
 }
 

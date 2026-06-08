@@ -25,6 +25,13 @@ import (
 // down.
 var FailedGrace = 3 * time.Second
 
+// ErrQuiesced is returned by WatchReady when the embedder's quiesce signal
+// fires while the watched resource is still not terminal (not Ready/Failed):
+// the task pool drained, so no in-flight producer can make it Ready, and the
+// wait gives up. Quiescence-bound callers (depwait with a wired RenderInflight)
+// treat this as "dependency not ready" — see depwait.classify.
+var ErrQuiesced = errors.New("dependency not ready before quiescence")
+
 // WatchReady blocks until the resource reaches Ready status — or
 // stays Failed for FailedGrace without flipping to Ready, in which
 // case it returns the Failed StatusInfo and a *ResourceFailedError.
@@ -93,14 +100,8 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource, quies
 	// timer per call on the depwait hot path.
 	var graceTimer *time.Timer
 	var graceCh <-chan time.Time
-	// quiesced flips true the first time the embedder's quiesce
-	// channel fires — see the quiesce case below. Once set, any
-	// later Failed observation short-circuits the grace; armGrace
-	// also checks it so a Failed already pending when quiesce
-	// arrives doesn't re-arm a useless grace.
-	quiesced := false
 	armGrace := func() {
-		if quiesced || graceTimer != nil {
+		if graceTimer != nil {
 			return
 		}
 		graceTimer = time.NewTimer(FailedGrace)
@@ -134,35 +135,34 @@ func (s *Store) WatchReady(ctx context.Context, id manifest.NamedResource, quies
 			case StatusFailed:
 				f := info
 				currentFailed = &f
-				// If the embedder already signalled quiescence, no
-				// re-emit is coming — return the Failed immediately
-				// instead of arming a wasted grace window. This is
-				// the dominant termination path for typo'd dependsOn:
-				// quiesce fires when the orchestrator's task pool
-				// drains, then the parent KS's status flips to
-				// Failed, and we land here.
-				if quiesced {
-					return failNow()
-				}
 				armGrace()
 			}
 		case <-graceCh:
 			return failNow()
 		case <-quiesce:
-			// Embedder signalled "no future reconcile can re-emit
-			// this dep". Two cases:
-			//   - Failed already observed: short-circuit the grace
-			//     immediately (no point waiting for a re-emit that
-			//     can't happen).
-			//   - Failed not yet observed: record the quiesced state
-			//     so the next Failed transition skips the grace, and
-			//     nil out the channel so the closed receive doesn't
-			//     busy-spin.
+			// The embedder's task pool drained: no in-flight producer can still
+			// re-emit or make this dep Ready (a source fetch, a parent render).
+			// RunWithStatus writes the terminal Ready/Failed BEFORE the
+			// producing task's decrActive — which is what closes this channel —
+			// so any terminal status is durably committed by now. Re-read once,
+			// then give up if the dep is still not terminal (no producer left).
+			// This is the primary terminator for quiescence-bound callers
+			// (depwait passes the parent ctx, not a wall-clock budget) and it
+			// short-circuits the post-Failed grace for an already-Failed dep.
+			if info, ok := s.GetStatus(id); ok {
+				switch info.Status {
+				case StatusReady:
+					return info, nil
+				case StatusFailed:
+					f := info
+					currentFailed = &f
+					return failNow()
+				}
+			}
 			if currentFailed != nil {
 				return failNow()
 			}
-			quiesced = true
-			quiesce = nil
+			return StatusInfo{}, ErrQuiesced
 		case <-ctx.Done():
 			// Propagate ctx.Err() ONLY when the caller explicitly
 			// cancelled (context.Canceled) — otherwise (per-dep

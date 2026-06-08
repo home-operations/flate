@@ -291,10 +291,15 @@ func (w *Waiter) safeWatchOne(ctx context.Context, dep manifest.DependencyRef, t
 }
 
 func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeout time.Duration) Event {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	id := dep.NamedResource
+
+	// boundCtx applies the per-dep wall-clock budget to the paths that wait on a
+	// dep which is NOT a present, status-bearing object: an absent dep (typo'd
+	// or not-yet-produced — resolveMissing also consults RenderInflight for
+	// render-only deps), a status-less kind (WatchExists), or a CEL ReadyExpr.
+	// A genuinely-missing dep must still fast-fail near DefaultTimeout.
+	boundCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	// Fail fast on deps that never made it into the store: branch on
 	// the Existence index (when wired) before burning MissingGrace.
@@ -302,13 +307,13 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 	// — the latter covers controllers that update status before
 	// AddObject (and unit tests that set status only).
 	if !w.depExists(id) {
-		if err := w.resolveMissing(ctx, id); err != nil {
+		if err := w.resolveMissing(boundCtx, id); err != nil {
 			return *err
 		}
 	}
 
 	if !store.SupportsStatus(id.Kind) {
-		_, err := w.Store.WatchExists(ctx, id)
+		_, err := w.Store.WatchExists(boundCtx, id)
 		return classify(id, err, "")
 	}
 
@@ -318,15 +323,26 @@ func (w *Waiter) watchOne(ctx context.Context, dep manifest.DependencyRef, timeo
 	// expires). Matches Flux's default semantics — the CEL is the
 	// authoritative readiness signal.
 	if dep.ReadyExpr != "" && !w.AdditiveReadyExpr {
-		return w.watchReadyExpr(ctx, id, dep.ReadyExpr)
+		return w.watchReadyExpr(boundCtx, id, dep.ReadyExpr)
 	}
 
-	// Pass the orchestrator's quiescence channel (when wired) so the
-	// store's post-Failed grace can short-circuit the moment no other
-	// reconcile is in flight — a typo'd dependsOn won't be saved by a
-	// future re-emit, and burning the full grace adds visible wall time
-	// to errored runs (worst case: 3s × depth of chained parent gates).
-	info, err := w.Store.WatchReady(ctx, id, w.quiesceCh())
+	// Present, status-bearing dependency. A present-but-not-Ready dep may still
+	// be made Ready by an in-flight producer — a source fetch, a parent KS
+	// render — that can legitimately outrun DefaultTimeout. Abandoning it at the
+	// per-dep wall clock races that producer and drops resources
+	// nondeterministically (the chart-source / dependsOn determinism bug). When
+	// a quiescence signal is wired, bind the wait to orchestrator quiescence on
+	// the PARENT ctx instead: WatchReady returns on Ready (a producer finished)
+	// and gives up only once the pool drains with the dep still not Ready (no
+	// producer left, after a final re-read). Fetches are bounded, so quiescence
+	// always arrives. Without a quiescence signal (legacy embedders / tests)
+	// keep the wall-clock budget. The same channel also short-circuits the
+	// post-Failed grace the moment no other reconcile is in flight.
+	waitCtx, quiesce := boundCtx, w.quiesceCh()
+	if quiesce != nil {
+		waitCtx = ctx
+	}
+	info, err := w.Store.WatchReady(waitCtx, id, quiesce)
 	if err != nil {
 		return classify(id, err, info.Message)
 	}
@@ -612,6 +628,10 @@ func classify(dep manifest.NamedResource, err error, fallback string) Event {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return Event{Dep: dep, Status: DepTimeout, Reason: "timeout"}
+	case errors.Is(err, store.ErrQuiesced):
+		// The pool drained with the dep still not Ready — no producer left to
+		// satisfy it. Same outcome as a timeout (dependency unavailable).
+		return Event{Dep: dep, Status: DepTimeout, Reason: "not ready"}
 	case errors.Is(err, context.Canceled):
 		return Event{Dep: dep, Status: DepCancelled, Reason: "cancelled"}
 	}

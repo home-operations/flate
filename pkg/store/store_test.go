@@ -358,6 +358,67 @@ func TestStore_WatchReady_TransitionsToReady(t *testing.T) {
 	}
 }
 
+// TestStore_WatchReady_QuiesceStillPendingGivesUp: when the embedder's quiesce
+// signal fires while the resource is still not terminal, WatchReady gives up
+// with ErrQuiesced (the pool drained — no producer left to make it Ready).
+func TestStore_WatchReady_QuiesceStillPendingGivesUp(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}
+	s.UpdateStatus(id, StatusPending, "fetching")
+
+	quiesce := make(chan struct{})
+	close(quiesce) // already quiescent
+
+	_, err := s.WatchReady(context.Background(), id, quiesce)
+	if !errors.Is(err, ErrQuiesced) {
+		t.Fatalf("err = %v; want ErrQuiesced", err)
+	}
+}
+
+// TestStore_WatchReady_QuiesceRereadsReady: a Ready committed before the quiesce
+// signal closes (RunWithStatus writes Ready before the producing task's
+// decrActive) is observed by the quiesce arm's re-read, even if select picks
+// quiesce over the pending wake.
+func TestStore_WatchReady_QuiesceRereadsReady(t *testing.T) {
+	for range 200 { // stress the wake/quiesce select ordering
+		s := New()
+		id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}
+		s.UpdateStatus(id, StatusPending, "fetching")
+		quiesce := make(chan struct{})
+		go func() {
+			s.UpdateStatus(id, StatusReady, "") // terminal BEFORE quiesce closes
+			close(quiesce)
+		}()
+		info, err := s.WatchReady(context.Background(), id, quiesce)
+		if err != nil {
+			t.Fatalf("err = %v; want Ready (quiesce arm must re-read the committed Ready)", err)
+		}
+		if info.Status != StatusReady {
+			t.Fatalf("status = %v; want Ready", info.Status)
+		}
+	}
+}
+
+// TestStore_WatchReady_QuiesceRereadsFailed: a Failed committed before quiesce
+// fast-fails via the quiesce re-read (no wasted grace window).
+func TestStore_WatchReady_QuiesceRereadsFailed(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}
+	s.UpdateStatus(id, StatusFailed, "boom")
+
+	quiesce := make(chan struct{})
+	close(quiesce)
+
+	_, err := s.WatchReady(context.Background(), id, quiesce)
+	var rfe *manifest.ResourceFailedError
+	if !errors.As(err, &rfe) {
+		t.Fatalf("err = %v; want *ResourceFailedError", err)
+	}
+	if rfe.Reason != "boom" {
+		t.Errorf("reason = %q; want boom", rfe.Reason)
+	}
+}
+
 func TestStore_WatchReady_FailedYieldsError(t *testing.T) {
 	withFailedGrace(t, 50*time.Millisecond)
 	s := New()

@@ -387,6 +387,12 @@ func chartSourceID(hr *manifest.HelmRelease) manifest.NamedResource {
 // propagates a soft-skip (--allow-missing-secrets on the source's auth marks it
 // Ready but writes no artifact, so fail here rather than letting the render fail
 // later with a confusing chart-not-found).
+//
+// The chart source is a status-bearing dependency that flate itself fetches
+// (synthetic HelmChart, declared OCIRepository/GitRepository/HelmChart), so the
+// depwait this drives binds the wait to the fetch's completion (orchestrator
+// quiescence) rather than the per-dep wall clock — a slow fetch is waited for by
+// OUTCOME instead of dropped nondeterministically. See depwait.Waiter.watchOne.
 func (c *Controller) awaitChartSource(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease) error {
 	srcID := chartSourceID(hr)
 	if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout),

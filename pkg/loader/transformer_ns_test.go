@@ -213,3 +213,195 @@ resources:
 		t.Errorf("TargetNamespace=%q want inner (deepest overlay)", got.TargetNamespace)
 	}
 }
+
+// nsReplacementRule is the home-operations replacement that copies a
+// Namespace's name into every Flux Kustomization's spec.targetNamespace
+// (kubernetes/components/replacements/ks.yaml). The file is a YAML list.
+const nsReplacementRule = `- source:
+    kind: Namespace
+    fieldPath: metadata.name
+  targets:
+    - select:
+        kind: Kustomization
+        group: kustomize.toolkit.fluxcd.io
+      fieldPaths:
+        - spec.targetNamespace
+      options:
+        create: true
+`
+
+// stampReplacementsKS is the shared harness for the replacements-pattern
+// tests: store a leaf KS under overlayDir/app, run the stamp, return the
+// resolved TargetNamespace.
+func stampReplacementsKS(t *testing.T, root, overlayDir, overlayKustomization string) *manifest.Kustomization {
+	t.Helper()
+	writeFile(t, root, overlayDir+"/kustomization.yaml", overlayKustomization)
+	s := store.New()
+	ks := leafKS("app", "./"+overlayDir+"/app/workload")
+	s.AddObject(ks)
+	sourceFiles := map[manifest.NamedResource]string{
+		ks.Named(): overlayDir + "/app/ks.yaml",
+	}
+	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	return got
+}
+
+// home-operations injects targetNamespace via `namespace:` + a
+// `replacements:` file ref (not a NamespaceTransformer). The leaf KS must
+// pick up the overlay's namespace as its targetNamespace.
+func TestStampTransformerTargetNamespaces_ReplacementsFileRef(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "components/replacements/ks.yaml", nsReplacementRule)
+	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
+replacements:
+  - path: ../../components/replacements/ks.yaml
+resources:
+  - ./app/ks.yaml
+`)
+	if got.TargetNamespace != "storage" {
+		t.Errorf("TargetNamespace=%q want storage", got.TargetNamespace)
+	}
+	// RenderFlux feeds Contents to kustomize, so the raw doc must carry it.
+	spec, _ := got.Contents["spec"].(map[string]any)
+	if spec["targetNamespace"] != "storage" {
+		t.Errorf("Contents spec.targetNamespace=%v want storage", spec["targetNamespace"])
+	}
+}
+
+// The replacement rule inlined directly under `replacements:` (no path ref).
+func TestStampTransformerTargetNamespaces_ReplacementsInline(t *testing.T) {
+	root := t.TempDir()
+	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
+replacements:
+  - source:
+      kind: Namespace
+      fieldPath: metadata.name
+    targets:
+      - select:
+          kind: Kustomization
+          group: kustomize.toolkit.fluxcd.io
+        fieldPaths:
+          - spec.targetNamespace
+resources:
+  - ./app/ks.yaml
+`)
+	if got.TargetNamespace != "storage" {
+		t.Errorf("TargetNamespace=%q want storage", got.TargetNamespace)
+	}
+}
+
+// A replacement that writes a DIFFERENT field (spec.path) must not be
+// mistaken for a targetNamespace injection — no stamp.
+func TestStampTransformerTargetNamespaces_ReplacementsNotTargetingTargetNamespace(t *testing.T) {
+	root := t.TempDir()
+	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
+replacements:
+  - source:
+      kind: Namespace
+      fieldPath: metadata.name
+    targets:
+      - select:
+          kind: Kustomization
+          group: kustomize.toolkit.fluxcd.io
+        fieldPaths:
+          - spec.path
+resources:
+  - ./app/ks.yaml
+`)
+	if got.TargetNamespace != "" {
+		t.Errorf("TargetNamespace=%q want empty (replacement not targeting targetNamespace)", got.TargetNamespace)
+	}
+}
+
+// The targetNamespace value is derived from the overlay's `namespace:`
+// directive (the Namespace the replacement reads is renamed to it). With no
+// directive present, the value is unknown — skip rather than guess.
+func TestStampTransformerTargetNamespaces_ReplacementsNoNamespaceDirective(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "components/replacements/ks.yaml", nsReplacementRule)
+	got := stampReplacementsKS(t, root, "apps/storage", `replacements:
+  - path: ../../components/replacements/ks.yaml
+resources:
+  - ./app/ks.yaml
+`)
+	if got.TargetNamespace != "" {
+		t.Errorf("TargetNamespace=%q want empty (no namespace directive)", got.TargetNamespace)
+	}
+}
+
+// Wrong source kind (ConfigMap, not Namespace) must not match.
+func TestStampTransformerTargetNamespaces_ReplacementsWrongSourceKind(t *testing.T) {
+	root := t.TempDir()
+	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
+replacements:
+  - source:
+      kind: ConfigMap
+      name: settings
+      fieldPath: data.namespace
+    targets:
+      - select:
+          kind: Kustomization
+          group: kustomize.toolkit.fluxcd.io
+        fieldPaths:
+          - spec.targetNamespace
+resources:
+  - ./app/ks.yaml
+`)
+	if got.TargetNamespace != "" {
+		t.Errorf("TargetNamespace=%q want empty (source not a Namespace)", got.TargetNamespace)
+	}
+}
+
+// The replacement source may spell the path as `fieldPaths: [metadata.name]`
+// (plural) rather than `fieldPath:` — accept both.
+func TestStampTransformerTargetNamespaces_ReplacementsSourceFieldPathsPlural(t *testing.T) {
+	root := t.TempDir()
+	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
+replacements:
+  - source:
+      kind: Namespace
+      fieldPaths:
+        - metadata.name
+    targets:
+      - select:
+          kind: Kustomization
+          group: kustomize.toolkit.fluxcd.io
+        fieldPaths:
+          - spec.targetNamespace
+resources:
+  - ./app/ks.yaml
+`)
+	if got.TargetNamespace != "storage" {
+		t.Errorf("TargetNamespace=%q want storage (plural source fieldPaths)", got.TargetNamespace)
+	}
+}
+
+// Deepest enclosing overlay wins for the replacements pattern too.
+func TestStampTransformerTargetNamespaces_ReplacementsDeepestOverlayWins(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "components/replacements/ks.yaml", nsReplacementRule)
+	writeFile(t, root, "apps/outer/kustomization.yaml", `namespace: outer
+replacements:
+  - path: ../../components/replacements/ks.yaml
+resources:
+  - ./inner
+`)
+	writeFile(t, root, "apps/outer/inner/kustomization.yaml", `namespace: inner
+replacements:
+  - path: ../../../components/replacements/ks.yaml
+resources:
+  - ./app/ks.yaml
+`)
+	s := store.New()
+	ks := leafKS("app", "./apps/outer/inner/app/workload")
+	s.AddObject(ks)
+	sourceFiles := map[manifest.NamedResource]string{
+		ks.Named(): "apps/outer/inner/app/ks.yaml",
+	}
+	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	if got.TargetNamespace != "inner" {
+		t.Errorf("TargetNamespace=%q want inner (deepest overlay)", got.TargetNamespace)
+	}
+}

@@ -21,12 +21,17 @@ import (
 const transformerScanMaxDepth = 6
 
 // StampTransformerTargetNamespaces fills empty spec.targetNamespace on
-// file-loaded Flux Kustomizations from a builtin NamespaceTransformer
-// that an enclosing kustomize overlay applies.
+// file-loaded Flux Kustomizations from the namespace an enclosing kustomize
+// overlay injects — via EITHER a builtin NamespaceTransformer (flatops) or a
+// `replacements:` rule copying a Namespace's name into spec.targetNamespace
+// (home-operations). (Name kept for git-history continuity though it now
+// covers both patterns; see resolveInjectedTargetNamespace.)
 //
 // flatops-style repos keep resources namespace-less "for DRYness" and
 // inject the namespace via a shared NamespaceTransformer that sets
-// spec.targetNamespace on every Kustomization (issue #528). That
+// spec.targetNamespace on every Kustomization (issue #528). home-operations
+// repos do the same with an overlay `namespace:` directive plus a
+// `replacements:` rule (kubernetes/components/replacements/ks.yaml). That
 // injection only happens when the overlay is kustomize-built — and when
 // the overlay is rendered by a further-up, itself render-emitted parent,
 // the injection lands *after* flate has already fired the leaf KS's
@@ -65,7 +70,7 @@ func StampTransformerTargetNamespaces(s *store.Store, sourceFiles map[manifest.N
 		if !ok {
 			continue
 		}
-		ns := resolveOverlayTransformerNamespace(repoRoot, file, cache)
+		ns := resolveOverlayInjectedNamespace(repoRoot, file, cache)
 		if ns == "" {
 			continue
 		}
@@ -84,17 +89,18 @@ type nsResolution struct {
 	ok bool
 }
 
-// resolveOverlayTransformerNamespace walks up the ancestor directories
-// of a Flux KS's source file and returns the namespace injected by the
-// nearest enclosing overlay's NamespaceTransformer. Deepest enclosing
-// overlay wins (first hit walking up), matching kustomize's "closest
-// overlay" semantics.
-func resolveOverlayTransformerNamespace(repoRoot, file string, cache map[string]nsResolution) string {
+// resolveOverlayInjectedNamespace walks up the ancestor directories of a
+// Flux KS's source file and returns the namespace injected by the nearest
+// enclosing overlay — via either a NamespaceTransformer or a
+// targetNamespace-injecting `replacements:` rule. Deepest enclosing overlay
+// wins (first hit walking up), matching kustomize's "closest overlay"
+// semantics.
+func resolveOverlayInjectedNamespace(repoRoot, file string, cache map[string]nsResolution) string {
 	dir := path.Dir(filepath.ToSlash(file))
 	for dir != "." && dir != "/" && dir != "" {
 		res, ok := cache[dir]
 		if !ok {
-			res = resolveTransformerTargetNamespace(repoRoot, dir)
+			res = resolveInjectedTargetNamespace(repoRoot, dir)
 			cache[dir] = res
 		}
 		if res.ok {
@@ -130,6 +136,118 @@ func resolveTransformerTargetNamespace(repoRoot, overlayDir string) nsResolution
 		return nsResolution{ns: td.Namespace, ok: true}
 	}
 	return nsResolution{}
+}
+
+// resolveInjectedTargetNamespace resolves the namespace an enclosing
+// overlay injects onto Flux Kustomizations via EITHER supported pattern: a
+// builtin NamespaceTransformer (flatops) or a `replacements:` rule copying a
+// Namespace's name into spec.targetNamespace (home-operations). Transformer
+// first, then replacement; both key on the same overlay dir, so the caller's
+// per-dir cache and deepest-overlay-wins walk are unaffected.
+func resolveInjectedTargetNamespace(repoRoot, overlayDir string) nsResolution {
+	if r := resolveTransformerTargetNamespace(repoRoot, overlayDir); r.ok {
+		return r
+	}
+	return resolveReplacementTargetNamespace(repoRoot, overlayDir)
+}
+
+// resolveReplacementTargetNamespace inspects the kustomization.yaml at
+// overlayDir. When it carries BOTH a `namespace:` directive AND a
+// `replacements:` rule that copies a Namespace's metadata.name into
+// Kustomization spec.targetNamespace, the directive value is the namespace
+// that replacement injects — because the same `namespace:` directive renames
+// the source Namespace to that value before the copy runs. Requiring the
+// directive is conservative: an overlay with the rule but no directive (the
+// Namespace would keep a literal component name) is left unstamped rather
+// than guessed, and a bare `namespace:` directive with no targetNamespace
+// rule is owned by metadata.namespace inheritance, not us.
+func resolveReplacementTargetNamespace(repoRoot, overlayDir string) nsResolution {
+	d, ok := readKustomizeDirectives(repoRoot, overlayDir)
+	if !ok || d.Namespace == "" || len(d.Replacements) == 0 {
+		return nsResolution{}
+	}
+	for _, r := range d.Replacements {
+		if replacementInjectsKustomizationTargetNamespace(repoRoot, overlayDir, r) {
+			return nsResolution{ns: d.Namespace, ok: true}
+		}
+	}
+	return nsResolution{}
+}
+
+// replacementInjectsKustomizationTargetNamespace reports whether r is a
+// Namespace-name → Kustomization.spec.targetNamespace replacement, handling
+// both the inline (`{source, targets}`) and external (`{path: <file>}`)
+// forms. The path file is a YAML list of replacement objects.
+func replacementInjectsKustomizationTargetNamespace(repoRoot, overlayDir string, r replacementDirective) bool {
+	if r.Source != nil {
+		return docIsNamespaceNameReplacementForKustomization(r.Source, r.Targets)
+	}
+	if r.Path == "" {
+		return false
+	}
+	ref, ok := resolveRef(overlayDir, r.Path)
+	if !ok {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot, ref)) //nolint:gosec // path composed from known cluster layout
+	if err != nil {
+		return false
+	}
+	var rules []replacementDirective
+	if err := yaml.Unmarshal(data, &rules); err != nil {
+		return false
+	}
+	return slices.ContainsFunc(rules, func(rr replacementDirective) bool {
+		return docIsNamespaceNameReplacementForKustomization(rr.Source, rr.Targets)
+	})
+}
+
+// docIsNamespaceNameReplacementForKustomization reports whether a kustomize
+// replacement (source + targets) copies a Namespace's metadata.name into the
+// spec.targetNamespace of Flux Kustomizations — the precise shape
+// kubernetes/components/replacements/ks.yaml uses.
+func docIsNamespaceNameReplacementForKustomization(source map[string]any, targets []any) bool {
+	if source == nil {
+		return false
+	}
+	if kind, _ := source["kind"].(string); kind != "Namespace" {
+		return false
+	}
+	if !replacementFieldMatches(source, "metadata.name") {
+		return false
+	}
+	return slices.ContainsFunc(targets, func(raw any) bool {
+		t, ok := raw.(map[string]any)
+		if !ok {
+			return false
+		}
+		sel, _ := t["select"].(map[string]any)
+		if sel == nil {
+			return false
+		}
+		if kind, _ := sel["kind"].(string); kind != manifest.KindKustomization {
+			return false
+		}
+		if group, _ := sel["group"].(string); group != manifest.FluxKustomizeDomain {
+			return false
+		}
+		return replacementFieldMatches(t, "spec.targetNamespace")
+	})
+}
+
+// replacementFieldMatches reports whether m references the dotted path want
+// via either `fieldPath` (string — the canonical replacement-source form) or
+// `fieldPaths` (list — the target form). Accepting both on either side costs
+// nothing and tolerates hand-written variants.
+func replacementFieldMatches(m map[string]any, want string) bool {
+	if fp, ok := m["fieldPath"].(string); ok && fp == want {
+		return true
+	}
+	fps, _ := m["fieldPaths"].([]any)
+	return slices.ContainsFunc(fps, func(v any) bool {
+		s, _ := v.(string)
+		return s == want
+	})
 }
 
 // subtreeHasNamespaceTransformer reports whether the kustomize subtree
@@ -214,10 +332,23 @@ func resolveRef(baseDir, ref string) (string, bool) {
 // kustomizeDirectives is the subset of a kustomization.yaml that
 // transformer-namespace resolution and self-production attribution read.
 type kustomizeDirectives struct {
-	Namespace    string   `yaml:"namespace"`
-	Resources    []string `yaml:"resources"`
-	Transformers []string `yaml:"transformers"`
-	Components   []string `yaml:"components"`
+	Namespace    string                 `yaml:"namespace"`
+	Resources    []string               `yaml:"resources"`
+	Transformers []string               `yaml:"transformers"`
+	Components   []string               `yaml:"components"`
+	Replacements []replacementDirective `yaml:"replacements"`
+}
+
+// replacementDirective captures a single `replacements:` entry. kustomize
+// allows two shapes: an external file ref (`{path: <file>}`, where the file
+// is a YAML list of replacement objects) or an inline replacement object
+// (`{source, targets}`). Both decode into this one struct via plain
+// yaml.Unmarshal — the file form leaves Source/Targets nil, the inline form
+// leaves Path empty.
+type replacementDirective struct {
+	Path    string         `yaml:"path"`
+	Source  map[string]any `yaml:"source"`
+	Targets []any          `yaml:"targets"`
 }
 
 // readKustomizeDirectives reads the kustomization file in dir (resolved

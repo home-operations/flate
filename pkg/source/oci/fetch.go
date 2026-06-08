@@ -49,18 +49,14 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	// Retries are owned by the Fetch-level retry decorator
 	// (source.WithRetry) so they happen once, uniformly, across every
 	// source kind — the OCI client therefore uses a plain, NON-retrying
-	// transport. An explicit *http.Client is always installed (sharing
-	// the runtime default transport when no TLS/proxy customization
-	// applies) so oras never falls back to its retry-enabled
-	// auth.DefaultClient, and the transport stays identical whether or
-	// not credentials load.
-	baseTransport, err := source.NewHTTPTransport(tlsCfg, proxy)
+	// transport. NewHTTPTransport always returns a bounded transport (a
+	// http.DefaultTransport clone carrying ResponseHeaderTimeout as a
+	// liveness backstop, plus any TLS/proxy), so oras never falls back to
+	// its retry-enabled auth.DefaultClient and a black-holed registry can't
+	// hang the fetch waiting on response headers.
+	transport, err := source.NewHTTPTransport(tlsCfg, proxy)
 	if err != nil {
 		return nil, err
-	}
-	transport := http.DefaultTransport // http.RoundTripper; non-retrying
-	if baseTransport != nil {
-		transport = baseTransport
 	}
 	authClient := &auth.Client{Client: &http.Client{Transport: transport}}
 	if credStore != nil {

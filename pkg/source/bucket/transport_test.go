@@ -8,17 +8,23 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 )
 
-func TestFetcher_ResolveTransport_NoCertSecretIsNil(t *testing.T) {
+func TestFetcher_ResolveTransport_NoCertSecretStaysBounded(t *testing.T) {
 	f := &Fetcher{}
 	b := &manifest.Bucket{Name: "b", Namespace: "ns"}
 	tr, err := f.resolveTransport(b)
 	if err != nil {
 		t.Fatalf("resolveTransport: %v", err)
 	}
-	if tr != nil {
-		t.Errorf("expected nil transport when no CertSecretRef")
+	// NewHTTPTransport now always returns a bounded transport (never nil), so
+	// even an anonymous bucket inherits the ResponseHeaderTimeout backstop.
+	if tr == nil {
+		t.Fatal("expected a bounded transport, got nil")
+	}
+	if tr.ResponseHeaderTimeout != source.ResponseHeaderTimeout {
+		t.Errorf("ResponseHeaderTimeout = %v; want %v", tr.ResponseHeaderTimeout, source.ResponseHeaderTimeout)
 	}
 }
 

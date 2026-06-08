@@ -6,6 +6,14 @@
 // restore the default afterward. The lock is package-global because the
 // install itself is — a per-Fetcher mutex would race when two Fetchers ran
 // concurrently and clobbered each other's transport.
+//
+// At init flate installs a *bounded* HTTPS client as go-git's process default
+// (source.NewHTTPTransport carries ResponseHeaderTimeout) so an anonymous git
+// fetch against a host that black-holes after dial can't hang the run — the
+// consumer's dependency wait is now bound to fetch completion, not a wall
+// clock. Anonymous fetches use this default concurrently with no per-fetch
+// lock; custom-CA fetches swap in their own bounded transport under mu and
+// restore to this bounded default (not go-git's unbounded githttp.DefaultClient).
 package gittransport
 
 import (
@@ -20,6 +28,22 @@ import (
 )
 
 var mu sync.Mutex
+
+// boundedHTTPSTransport is the ResponseHeaderTimeout-bounded transport behind
+// the go-git default HTTPS client; kept as a package var for test introspection.
+var boundedHTTPSTransport = func() *http.Transport {
+	tr, _ := source.NewHTTPTransport(nil, nil) // nil/nil never errors
+	return tr
+}()
+
+var boundedHTTPSClient = githttp.NewClient(&http.Client{Transport: boundedHTTPSTransport})
+
+func init() {
+	// Replace go-git's unbounded default HTTPS client with the bounded one so
+	// every anonymous fetch (Fetcher + bare-mirror cache) inherits the
+	// liveness backstop. Single-threaded at import — no race with fetches.
+	client.InstallProtocol("https", boundedHTTPSClient)
+}
 
 // InstallHTTPS acquires the process-global mutex, installs a custom HTTPS
 // transport on go-git's protocol map, and returns a restore func the caller

@@ -163,14 +163,14 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 		}
 	}
 
+	if f.canUseMirror(repo) {
+		return f.fetchViaMirror(ctx, repo, refLabel, slot, auth, proxy)
+	}
+
 	url := repo.URL
 	// file:// URLs are accepted by go-git as bare filesystem paths.
 	if rest, ok := strings.CutPrefix(url, "file://"); ok {
 		url = rest
-	}
-
-	if f.canUseMirror(repo) {
-		return f.fetchViaMirror(ctx, repo, refLabel, slot, auth, proxy)
 	}
 
 	cloneOpts := &git.CloneOptions{URL: url, NoCheckout: true, Auth: auth}

@@ -19,7 +19,7 @@ import (
 //	oci://ghcr.io/owner/chart:tag  → ghcr.io/owner/chart
 //	oci://ghcr.io/owner/chart@sha  → ghcr.io/owner/chart
 //
-// The tag/digest is dropped here and re-supplied to oras.Copy below.
+// The tag/digest is dropped here and re-supplied to oras.Copy separately.
 func parseOCIRef(versioned string) (string, error) {
 	versioned = strings.TrimPrefix(versioned, "oci://")
 	// Strip ":<tag>" or "@<digest>" portion for the reference; oras

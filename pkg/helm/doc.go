@@ -18,7 +18,7 @@
 //   - Options exposes the helm CLI flags flate understands
 //     (--kube-version, --api-versions, --no-hooks, etc.).
 //
-// The client is safe for concurrent use; chart downloads are cached
-// on disk keyed by chart name + version, and parallel first-loads
+// The client is safe for concurrent use; fetched chart bytes live in
+// the shared content-addressed source cache, and parallel first-loads
 // of the same chart coalesce through a per-path keylock.
 package helm

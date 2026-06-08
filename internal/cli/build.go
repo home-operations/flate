@@ -2,7 +2,6 @@ package cli
 
 import (
 	"cmp"
-	"fmt"
 	"io"
 	"slices"
 
@@ -151,7 +150,7 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 	// should error rather than silently emit an empty render — a typo
 	// shouldn't look like a successful build of a nonexistent resource.
 	if name != "" && matched == 0 {
-		return nil, fmt.Errorf("no %s named %q in --path", kind, name)
+		return nil, noNamedError(kind, name)
 	}
 	return out, nil
 }

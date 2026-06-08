@@ -78,8 +78,7 @@ func (s *Store) PutBytes(ctx context.Context, content []byte, filename string) (
 	dir := s.Path(digest)
 	parent := filepath.Dir(dir)
 
-	unlockGC := rLockGC()
-	defer unlockGC()
+	defer rLockGC()()
 
 	release, err := s.locks.Acquire(ctx, digest)
 	if err != nil {

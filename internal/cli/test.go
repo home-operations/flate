@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -73,7 +72,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			})
 			runErr = scopedRunError(o, res, c, runErr)
 			if name != "" && report.Matched == 0 {
-				return errors.Join(fmt.Errorf("no %s named %q in --path", testKindName(kinds), name), runErr)
+				return errors.Join(noNamedError(testKindName(kinds), name), runErr)
 			}
 			if err := report.Write(cmd.OutOrStdout()); err != nil {
 				return errors.Join(err, runErr)

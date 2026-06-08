@@ -1,6 +1,7 @@
 package helmchart
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -62,11 +63,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 		return art, nil
 	}
 
-	g, err := getter.NewHTTPGetter()
-	if err != nil {
-		return nil, err
-	}
-	buf, err := g.Get(chartURL, allOpts...)
+	buf, err := httpGet(chartURL, allOpts)
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w", chartURL, err)
 	}
@@ -119,11 +116,7 @@ func (f *Fetcher) fetchIndex(ctx context.Context, cacheKey, indexURL string, opt
 	if idx, ok := f.cachedIndex(cacheKey); ok {
 		return idx, nil
 	}
-	g, err := getter.NewHTTPGetter()
-	if err != nil {
-		return nil, err
-	}
-	buf, err := g.Get(indexURL, opts...)
+	buf, err := httpGet(indexURL, opts)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", indexURL, err)
 	}
@@ -183,6 +176,16 @@ func absChartURL(base, urlStr string) (string, error) {
 		return "", err
 	}
 	return baseURL.ResolveReference(u).String(), nil
+}
+
+// httpGet fetches url with helm's HTTP getter and the given options. Callers
+// wrap the error with their own context (index fetch vs chart download).
+func httpGet(url string, opts []getter.Option) (*bytes.Buffer, error) {
+	g, err := getter.NewHTTPGetter()
+	if err != nil {
+		return nil, err
+	}
+	return g.Get(url, opts...)
 }
 
 func safeName(s string) string {

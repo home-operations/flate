@@ -2,7 +2,6 @@ package cli
 
 import (
 	"cmp"
-	"fmt"
 	"io"
 	"maps"
 	"slices"
@@ -228,7 +227,7 @@ func printResources[T manifest.BaseManifest](
 		pairs = append(pairs, pair{row, doc})
 	}
 	if !nameExists {
-		return fmt.Errorf("no %s named %q in --path", kind, sel.Name)
+		return noNamedError(kind, sel.Name)
 	}
 	// Sort the (row, doc) tuples by (namespace, name) so every output
 	// flavor — table/yaml/json — is deterministic across runs. (The rows

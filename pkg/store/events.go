@@ -34,33 +34,35 @@ type Listener func(id manifest.NamedResource, payload any)
 // listener.
 type Unsubscribe func()
 
+// onTyped registers fn for event, asserting each dispatched payload to
+// T before invoking fn. A miss yields T's zero value (the assertion
+// never panics) — the payload type is fixed per event kind, so the
+// assertion always succeeds in practice. Backs the typed On* wrappers.
+func onTyped[T any](s *Store, event EventKind, fn func(manifest.NamedResource, T), replay bool) Unsubscribe {
+	return s.AddListener(event, func(id manifest.NamedResource, p any) {
+		v, _ := p.(T)
+		fn(id, v)
+	}, replay)
+}
+
 // OnObject registers fn for every EventObjectAdded with a typed
 // payload. When replay is true, fn fires synchronously for every
 // object already in the store before returning — useful when wiring
 // a UI mid-render. Listeners MUST NOT block the dispatching goroutine.
 func (s *Store) OnObject(fn func(manifest.NamedResource, manifest.BaseManifest), replay bool) Unsubscribe {
-	return s.AddListener(EventObjectAdded, func(id manifest.NamedResource, p any) {
-		obj, _ := p.(manifest.BaseManifest)
-		fn(id, obj)
-	}, replay)
+	return onTyped(s, EventObjectAdded, fn, replay)
 }
 
 // OnStatus registers fn for every EventStatusUpdated with the typed
 // StatusInfo payload. Same blocking / replay semantics as OnObject.
 func (s *Store) OnStatus(fn func(manifest.NamedResource, StatusInfo), replay bool) Unsubscribe {
-	return s.AddListener(EventStatusUpdated, func(id manifest.NamedResource, p any) {
-		info, _ := p.(StatusInfo)
-		fn(id, info)
-	}, replay)
+	return onTyped(s, EventStatusUpdated, fn, replay)
 }
 
 // OnArtifact registers fn for every EventArtifactUpdated with the
 // typed Artifact payload.
 func (s *Store) OnArtifact(fn func(manifest.NamedResource, Artifact), replay bool) Unsubscribe {
-	return s.AddListener(EventArtifactUpdated, func(id manifest.NamedResource, p any) {
-		art, _ := p.(Artifact)
-		fn(id, art)
-	}, replay)
+	return onTyped(s, EventArtifactUpdated, fn, replay)
 }
 
 // --- Listener bus implementation ---

@@ -102,8 +102,7 @@ func (r *Refs) Put(key, digest string) error {
 	if err != nil {
 		return err
 	}
-	unlockGC := rLockGC()
-	defer unlockGC()
+	defer rLockGC()()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := atomic.WriteFile(final, []byte(digest), 0o600, false); err != nil {

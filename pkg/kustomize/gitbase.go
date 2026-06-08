@@ -205,7 +205,8 @@ func trimPrefixFold(s, prefix string) (string, bool) {
 // once in the cached fetcher; this is a cheap in-RAM file copy. The directory
 // name keys on (repoURL, ref) only, so multiple subpaths of one repo+ref share
 // a single materialized copy. No cleanup is needed: each render derives a fresh
-// fs from the immutable snapshot, so there is never stale state to clear.
+// private in-memory overlay, so the copy lives only for that render and there is
+// never stale state to clear.
 func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, dir string, spec gitBaseSpec) (string, error) {
 	if cache.gitBase == nil {
 		return "", fmt.Errorf("kustomization references remote git base %q but no git fetcher is wired", spec.repoURL)

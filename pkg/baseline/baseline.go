@@ -131,7 +131,8 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		if isDir(slot) {
 			return slot, true, nil
 		}
-		if err := os.MkdirAll(filepath.Dir(slot), 0o750); err != nil {
+		parent := filepath.Dir(slot)
+		if err := os.MkdirAll(parent, 0o750); err != nil {
 			return "", false, fmt.Errorf("baseline cache parent: %w", err)
 		}
 		// Stage in a sibling temp dir on the same filesystem so the
@@ -139,7 +140,7 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		// same commit will either share the finished slot or fall
 		// through to their own stage (one wins the rename, the rest
 		// see ErrExist, discard the temp, and adopt the winner's slot).
-		if _, err := cas.Stage(filepath.Dir(slot), slot, "baseline staging", "baseline finalize",
+		if _, err := cas.Stage(parent, slot, "baseline staging", "baseline finalize",
 			func(staging string) error { return materialize(repo, hash, staging) },
 			func() bool { return isDir(slot) },
 		); err != nil {

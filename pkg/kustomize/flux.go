@@ -36,21 +36,23 @@ var BuildMutex sync.Mutex
 // entirely in memory, using the same merge + build the kustomize-controller
 // performs.
 //
-// The source tree at sourceRoot is materialized once per run into an immutable
-// byte snapshot (cache.snapshot); each render derives its own private in-memory
-// filesystem from it, writes the merged kustomization.yaml + any pre-fetched
-// remote resources into that private fs, and builds with fluxkustomize.Build.
-// Nothing touches disk and no two renders share mutable state, so renders run
-// fully parallel with no staging lock. The in-memory fs is inherently sandboxed
-// (no real-FS reach; a path escaping the root simply does not exist), giving
+// sourceRoot is resolved and wrapped in a secure on-disk FS once per root
+// (memoized in cache.diskRootFor); each render derives its own private
+// memory-over-disk overlay from that shared disk FS, writes the merged
+// kustomization.yaml + any pre-fetched remote resources into the overlay's
+// in-memory layer, and builds with fluxkustomize.Build. The source tree is
+// never copied or mutated and no two renders share mutable state, so renders
+// run fully parallel with no staging lock. The secure disk layer confines reads
+// to the root (a path escaping it simply does not resolve), giving
 // SecureBuild's security posture for free.
 //
 // applyIgnore selects whether source-controller's default file exclusions
 // (.sops.yaml, binaries, CI dirs, in-tree .sourceignore) are applied while
-// materializing — true for working-tree / self-referential sources that never
-// passed through a fetcher's artifact filtering, false for already-filtered
-// fetched artifacts. spec.commonMetadata is applied post-build (the Generator
-// does not handle it, mirroring kustomize-controller's apply-time pass).
+// auto-generating a kustomization — true for working-tree / self-referential
+// sources that never passed through a fetcher's artifact filtering, false for
+// already-filtered fetched artifacts. spec.commonMetadata is applied post-build
+// (the Generator does not handle it, mirroring kustomize-controller's
+// apply-time pass).
 //
 // ctx is honored at coarse boundaries (entry, before build) because
 // fluxkustomize.Build does not itself accept a ctx.

@@ -235,6 +235,42 @@ func (w *Waiter) ReadyNow(deps []manifest.DependencyRef) bool {
 	return true
 }
 
+// AllPresentReconcilable reports whether every dep is a present, CEL-free
+// Kustomization or HelmRelease — a *reconcilable* resource whose own reconcile
+// is multi-hop (it parks on its own deps / chart source before rendering).
+// base.Await parks a wait on such deps with YieldSlot (stay active, release
+// only the worker slot) rather than YieldQuiescent (decrement active).
+//
+// Why only reconcilable deps. The transient-drain false-drop hits a waiter
+// whose dep is produced by a MULTI-HOP producer: e.g. an HR (snapshot-
+// controller) parked on its OCIRepository chart source. When that source's
+// fetch task exits, decrActive can drop the pool to 0 in the window BEFORE the
+// HR re-activates and writes its own terminal status — firing a false
+// quiescence that drops the waiter (volsync) even though its dep is mid-resume.
+// Holding the waiter's own `active` (YieldSlot) keeps the pool non-zero across
+// that handoff. It's safe because a present reconcilable dep ALWAYS terminalizes
+// (Ready on success/suspend/filter-skip; Failed on error/panic; Failed-via-
+// preflight on a dependsOn cycle — caught before it could park), so the wait is
+// guaranteed to end on a terminal wake. `active` feeds only QuiescenceCh, so
+// holding it has no other effect.
+//
+// Source-kind deps (the chart-source / sourceRef waits) are deliberately
+// EXCLUDED: a source's producer is single-hop (the fetch writes the terminal
+// status BEFORE its own decrActive), so the quiescence give-up both stays safe
+// and keeps the fast-fail short-circuit of the post-Failed grace. ReadyExpr
+// deps are excluded too (the CEL may never satisfy even once the dep is
+// terminal). Both keep YieldQuiescent.
+func (w *Waiter) AllPresentReconcilable(deps []manifest.DependencyRef) bool {
+	for _, dep := range deps {
+		id := dep.NamedResource
+		reconcilable := id.Kind == manifest.KindKustomization || id.Kind == manifest.KindHelmRelease
+		if dep.ReadyExpr != "" || !reconcilable || !w.depExists(id) {
+			return false
+		}
+	}
+	return len(deps) > 0
+}
+
 func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
 	id := dep.NamedResource
 	if !w.depExists(id) {

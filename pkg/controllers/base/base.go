@@ -409,15 +409,33 @@ func (c *Controller) Await(
 	runWait := func() {
 		sum = depwait.WaitAll(w.Watch(ctx, deps))
 	}
-	if w.ReadyNow(deps) {
+	switch {
+	case w.ReadyNow(deps):
+		// Every dep already Ready — resolve immediately, no park.
 		runWait()
-	} else {
-		// YieldQuiescent (not YieldSlot): the wait is on OTHER tasks'
-		// work, so this task isn't producing anything while parked.
-		// Decrementing active lets QuiescenceCh fire on a render-only
-		// dep the moment no productive task remains. The ReadyNow fast
-		// path above keeps an immediately-unblocked producer counted as
-		// active so consumers do not observe a false drained pool.
+	case w.AllPresentReconcilable(deps):
+		// Every dep is a present, CEL-free Kustomization/HelmRelease — a
+		// reconcilable resource whose producer is MULTI-HOP (it parks on its
+		// own deps/chart source before writing its terminal status). A wait on
+		// such a dep is the transient-drain victim: a far-off source fetch
+		// exiting can drop the pool to 0 in the window before the dep's HR
+		// re-activates and goes Ready, firing a FALSE quiescence that drops
+		// this waiter. YieldSlot (release the worker slot but STAY active)
+		// keeps the pool non-zero across that handoff. Safe because a present
+		// reconcilable dep always terminalizes (so we resolve on its terminal
+		// wake); dependsOn cycles can't hang here — the orchestrator's preflight
+		// cycle detector fails their members before they reach this park; and
+		// `active` feeds only QuiescenceCh, so holding it has no other effect.
+		// Source-kind / ReadyExpr deps stay on the give-up path below.
+		c.Tasks.YieldSlot(runWait)
+	default:
+		// At least one dep is absent / render-only (may never be produced) or
+		// carries a ReadyExpr (may never satisfy): keep the quiescence-bound
+		// give-up. YieldQuiescent decrements active so QuiescenceCh fires the
+		// moment no productive task remains and the wait fast-fails instead of
+		// hanging. The ReadyNow fast path above keeps an immediately-unblocked
+		// producer counted as active so consumers do not observe a false
+		// drained pool.
 		c.Tasks.YieldQuiescent(runWait)
 	}
 	if sum.AnyFailed() {

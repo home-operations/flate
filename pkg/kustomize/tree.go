@@ -26,6 +26,16 @@ type TreeCache struct {
 	// Kustomizations is fetched once. See remotefetch.go.
 	remoteFetches sync.Map // url string -> *remoteFetch
 
+	// diskRoots memoizes the per-sourceRoot invariants RenderFlux derives
+	// before every build: the symlink-resolved root and its secure on-disk
+	// FS (see flux.go). Both are pure functions of the input sourceRoot, and
+	// the secure FS (fsSecure) is an immutable value over a stateless
+	// MakeFsOnDisk — safe to share read-only across the many Kustomizations
+	// that target the same root, sparing each render a redundant EvalSymlinks
+	// + CleanedAbs syscall pair. Bounded by the run's distinct source roots
+	// (typically one). See diskRoot. Keyed by the raw input sourceRoot.
+	diskRoots sync.Map // sourceRoot string -> *diskRoot
+
 	// gitBase resolves a remote kustomize git base (a repo URL at a bare ref)
 	// to an on-disk worktree. The one injected seam: pkg/kustomize cannot import
 	// pkg/source/git (import cycle). nil ⇒ a git-base resource fails with a

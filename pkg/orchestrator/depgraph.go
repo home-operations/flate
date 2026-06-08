@@ -76,17 +76,28 @@ func (g *dependencyGraph) ReplaceEdges(id manifest.NamedResource, deps []manifes
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	oldSet := g.outEdges[id]
+
+	// No-change fast path. The post-Bootstrap listener replays a
+	// ReplaceEdges per id on every reconcile, and in a stable graph
+	// almost every call passes deps identical to what's already
+	// installed. Detect that against the existing oldSet WITHOUT
+	// allocating the newSet map (the dominant per-reconcile allocation
+	// on the warm path). The set built from deps equals oldSet iff every
+	// dep is already in oldSet and every oldSet member appears in deps
+	// — the second scan over the (tiny) deps slice makes this correct
+	// even when deps carries duplicates, matching the map-dedup the
+	// slow path below performs.
+	if edgeSetEqual(oldSet, deps) {
+		return
+	}
+
 	newSet := make(map[manifest.NamedResource]struct{}, len(deps))
 	for _, d := range deps {
 		// Self-edges produce a trivial 1-node cycle. Keep them so
 		// the cycle-detection step records the failure; callers
 		// don't filter them.
 		newSet[d] = struct{}{}
-	}
-
-	oldSet := g.outEdges[id]
-	if maps.Equal(oldSet, newSet) {
-		return
 	}
 
 	// Diff so we can take the fast paths below.
@@ -200,6 +211,30 @@ func (g *dependencyGraph) findPathLocked(
 		stack = append(stack, frame{node: next, children: sortedNeighbors(g.outEdges[next])})
 	}
 	return nil, false
+}
+
+// edgeSetEqual reports whether the set of distinct entries in deps
+// equals the key set of oldSet, without allocating. Used by ReplaceEdges
+// to skip the newSet map build on the no-change fast path (the common
+// case on every post-Bootstrap reconcile replay).
+//
+// Correct even when deps contains duplicates: the first loop rejects any
+// dep missing from oldSet, and the second loop rejects any oldSet member
+// missing from deps. Both passing implies dedup(deps) == keys(oldSet)
+// regardless of repeats. deps lists are tiny (Flux dependsOn is a
+// handful of entries), so the inner linear scan over deps is cheap.
+func edgeSetEqual(oldSet map[manifest.NamedResource]struct{}, deps []manifest.NamedResource) bool {
+	for _, d := range deps {
+		if _, ok := oldSet[d]; !ok {
+			return false
+		}
+	}
+	for k := range oldSet {
+		if !slices.Contains(deps, k) {
+			return false
+		}
+	}
+	return true
 }
 
 // sortedNeighbors returns the keys of edges in deterministic order

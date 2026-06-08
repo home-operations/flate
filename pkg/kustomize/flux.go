@@ -12,6 +12,7 @@ import (
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 	"sigs.k8s.io/kustomize/api/resmap"
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
@@ -67,22 +68,26 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 		return nil, err
 	}
 
-	if r, err := filepath.EvalSymlinks(sourceRoot); err == nil {
-		sourceRoot = r
-	}
-
-	// Memory-over-disk overlay: source files are read from a secure on-disk FS
-	// rooted at sourceRoot (no real-FS reach beyond root; symlinks evaluated),
-	// while the merged kustomization.yaml + any pre-fetched remote resources are
-	// written to an in-memory layer that shadows disk. The source tree is never
-	// copied or mutated, and renders stay fully parallel (each gets its own
-	// overlay). Reading source from disk also sidesteps the in-memory fs's
-	// filename restriction, so trees with exotic names (spaces, etc.) render.
-	diskFS, err := fluxfilesys.MakeFsOnDiskSecure(sourceRoot)
+	// Resolve the source root and build its secure on-disk FS once per root.
+	// Both are pure functions of sourceRoot and the secure FS is an immutable,
+	// goroutine-safe value, so cache.diskRootFor memoizes them across every KS
+	// that shares this root — sparing each render a duplicate EvalSymlinks +
+	// CleanedAbs syscall pair.
+	dr, err := cache.diskRootFor(sourceRoot)
 	if err != nil {
-		return nil, fmt.Errorf("kustomize: secure fs %s: %w", sourceRoot, err)
+		return nil, err
 	}
-	memFS := newOverlayFS(diskFS)
+	sourceRoot = dr.root
+
+	// Memory-over-disk overlay: source files are read from the secure on-disk
+	// FS rooted at sourceRoot (no real-FS reach beyond root; symlinks
+	// evaluated), while the merged kustomization.yaml + any pre-fetched remote
+	// resources are written to an in-memory layer that shadows disk. The source
+	// tree is never copied or mutated, and renders stay fully parallel (each
+	// gets its own overlay). Reading source from disk also sidesteps the
+	// in-memory fs's filename restriction, so trees with exotic names (spaces,
+	// etc.) render.
+	memFS := newOverlayFS(dr.diskFS)
 
 	subDir := filepath.Join(sourceRoot, subPath)
 	if info, statErr := os.Stat(subDir); statErr != nil || !info.IsDir() {
@@ -146,6 +151,38 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
 	return out, nil
+}
+
+// diskRoot holds the per-sourceRoot invariants RenderFlux reuses across every
+// Kustomization that targets the same root: the symlink-resolved absolute root
+// and its secure on-disk FS. diskFS is an immutable fsSecure value over a
+// stateless MakeFsOnDisk, so it is safe to share read-only across goroutines.
+type diskRoot struct {
+	root   string
+	diskFS filesys.FileSystem
+}
+
+// diskRootFor returns the cached diskRoot for sourceRoot, computing and
+// memoizing it on first use. The (EvalSymlinks, MakeFsOnDiskSecure) pair it
+// performs is a pure function of sourceRoot, so the result is shared across the
+// run's renders of that root. Errors are not cached — they are rare and the
+// caller wants each to surface — and carry the same wrapping the inline path
+// used. Keyed by the raw input sourceRoot (already validated non-empty).
+func (c *TreeCache) diskRootFor(sourceRoot string) (*diskRoot, error) {
+	if v, ok := c.diskRoots.Load(sourceRoot); ok {
+		return v.(*diskRoot), nil
+	}
+	resolved := sourceRoot
+	if r, err := filepath.EvalSymlinks(sourceRoot); err == nil {
+		resolved = r
+	}
+	diskFS, err := fluxfilesys.MakeFsOnDiskSecure(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("kustomize: secure fs %s: %w", resolved, err)
+	}
+	dr := &diskRoot{root: resolved, diskFS: diskFS}
+	actual, _ := c.diskRoots.LoadOrStore(sourceRoot, dr)
+	return actual.(*diskRoot), nil
 }
 
 // applyCommonMetadata merges spec.commonMetadata.labels and

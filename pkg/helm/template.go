@@ -12,7 +12,6 @@ import (
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
-	"helm.sh/helm/v4/pkg/cli"
 	release "helm.sh/helm/v4/pkg/release/v1"
 	"sigs.k8s.io/yaml"
 
@@ -42,10 +41,8 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		return "", err
 	}
 
-	settings := cli.New()
-
 	cfg := new(action.Configuration)
-	if err := cfg.Init(settings.RESTClientGetter(), hr.ReleaseNamespace(), ""); err != nil {
+	if err := cfg.Init(c.envSettings().RESTClientGetter(), hr.ReleaseNamespace(), ""); err != nil {
 		return "", fmt.Errorf("helm init: %w", err)
 	}
 	cfg.Capabilities = caps

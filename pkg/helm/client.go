@@ -10,6 +10,7 @@ import (
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	"helm.sh/helm/v4/pkg/cli"
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -88,6 +89,34 @@ type Client struct {
 	// TemplateCacheBytes<=0). Both Get and Put handle nil receivers
 	// cleanly so the render path doesn't need extra wiring guards.
 	templateCache *templateCache
+
+	// settings is the helm CLI environment built once per Client and
+	// shared across every Template call. cli.New() reads ~20 env vars
+	// and allocates an EnvSettings + a *genericclioptions.ConfigFlags
+	// (~15 allocs / 1.1 KB) — work that is identical for every HR in a
+	// run, so building it per Template was pure waste on the uncached
+	// render path. Only RESTClientGetter() (the embedded *ConfigFlags)
+	// is consumed downstream, and that type guards its lazy-init caches
+	// with internal mutexes, so the shared getter is safe under the
+	// concurrent renders the orchestrator drives. Built lazily under
+	// settingsOnce so construction stays allocation-free for callers
+	// that never render (e.g. LocateChart-only embedders).
+	settingsOnce sync.Once
+	settings     *cli.EnvSettings
+}
+
+// envSettings returns the per-Client helm CLI environment, building it
+// exactly once. cli.New() is HR-invariant (env-var driven) so every
+// Template call reuses the same EnvSettings instead of re-reading the
+// environment and re-allocating the ConfigFlags. The returned getter
+// (*genericclioptions.ConfigFlags) is concurrency-safe: its lazy REST
+// caches are mutex-guarded, and flate's DryRunClient render path never
+// touches them.
+func (c *Client) envSettings() *cli.EnvSettings {
+	c.settingsOnce.Do(func() {
+		c.settings = cli.New()
+	})
+	return c.settings
 }
 
 // chartCacheEntry pairs the parsed chart with the (mtime, size) of

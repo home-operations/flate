@@ -33,7 +33,7 @@ import (
 //     SourceFiles map regardless of whether the object reached the
 //     store. The index doesn't duplicate that bookkeeping.
 //
-// Thread-safe: the loader walks files concurrently from one goroutine
+// Thread-safe: the loader walks files serially from one goroutine
 // today, but lazy-promotion from depwait can be invoked from
 // reconcile-worker goroutines. Cheap RW mutex keeps the contract
 // clear if either side grows concurrency later.

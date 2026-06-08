@@ -1,6 +1,7 @@
 package change
 
 import (
+	"iter"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -87,31 +88,33 @@ func memoize(cache map[string][]manifest.NamedResource, file string, compute fun
 	return result
 }
 
-// matchingPrefixes invokes yield with each slash-terminated, whole-segment
-// prefix of file+"/" that has at least one claim, from longest to shortest.
-// These are exactly the c.path values strings.HasPrefix(file+"/", c.path)
-// would have matched in the old full scan: c.path ends in "/", so a match
-// means c.path is file+"/" truncated at some "/" boundary. Probing each
-// directory prefix in byPrefix replaces the O(claims) HasPrefix loop with
-// O(depth) map hits. Prefix substrings share file's backing array, so no
-// per-probe allocation. Yield returns false to stop early.
-func (idx ownershipIndex) matchingPrefixes(file string, yield func(ids []manifest.NamedResource) bool) {
-	prefixed := file + "/"
-	// Candidate prefixes are prefixed[:k] for every k where prefixed[k-1]
-	// is '/', longest first. The full prefixed (k==len, a claim on file's
-	// own directory) is the first candidate; each earlier "/" truncation
-	// follows.
-	for end := len(prefixed); end > 0; {
-		if ids, ok := idx.byPrefix[prefixed[:end]]; ok {
-			if !yield(ids) {
-				return
+// matchingPrefixes yields the claim group at each slash-terminated,
+// whole-segment prefix of file+"/" that has at least one claim, from
+// longest to shortest. These are exactly the c.path values
+// strings.HasPrefix(file+"/", c.path) would have matched in the old full
+// scan: c.path ends in "/", so a match means c.path is file+"/" truncated
+// at some "/" boundary. Probing each directory prefix in byPrefix replaces
+// the O(claims) HasPrefix loop with O(depth) map hits. Prefix substrings
+// share file's backing array, so no per-probe allocation.
+func (idx ownershipIndex) matchingPrefixes(file string) iter.Seq[[]manifest.NamedResource] {
+	return func(yield func(ids []manifest.NamedResource) bool) {
+		prefixed := file + "/"
+		// Candidate prefixes are prefixed[:k] for every k where prefixed[k-1]
+		// is '/', longest first. The full prefixed (k==len, a claim on file's
+		// own directory) is the first candidate; each earlier "/" truncation
+		// follows.
+		for end := len(prefixed); end > 0; {
+			if ids, ok := idx.byPrefix[prefixed[:end]]; ok {
+				if !yield(ids) {
+					return
+				}
 			}
+			i := strings.LastIndexByte(prefixed[:end-1], '/')
+			if i < 0 {
+				break
+			}
+			end = i + 1
 		}
-		i := strings.LastIndexByte(prefixed[:end-1], '/')
-		if i < 0 {
-			break
-		}
-		end = i + 1
 	}
 }
 
@@ -120,12 +123,10 @@ func (idx ownershipIndex) matchingPrefixes(file string, yield func(ids []manifes
 // play. Results are memoized — see ownershipIndex doc.
 func (idx ownershipIndex) ownersOf(file string) []manifest.NamedResource {
 	return memoize(idx.ownersCache, file, func() []manifest.NamedResource {
-		var owners []manifest.NamedResource
-		idx.matchingPrefixes(file, func(ids []manifest.NamedResource) bool {
-			owners = ids // longest match first — take it and stop
-			return false
-		})
-		return owners
+		for ids := range idx.matchingPrefixes(file) {
+			return ids // longest match first — take it and stop
+		}
+		return nil
 	})
 }
 
@@ -141,14 +142,13 @@ func (idx ownershipIndex) ancestorsOf(file string) []manifest.NamedResource {
 	return memoize(idx.ancestorsCache, file, func() []manifest.NamedResource {
 		var ancestors []manifest.NamedResource
 		first := true
-		idx.matchingPrefixes(file, func(ids []manifest.NamedResource) bool {
+		for ids := range idx.matchingPrefixes(file) {
 			if first {
 				first = false // longest match — skip (it's what ownersOf returns)
-				return true
+				continue
 			}
 			ancestors = append(ancestors, ids...)
-			return true
-		})
+		}
 		return ancestors
 	})
 }

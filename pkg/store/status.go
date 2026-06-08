@@ -121,8 +121,8 @@ func SupportsStatus(kind string) bool {
 // readyCondition builds the Ready condition that corresponds to the
 // (status, message) pair UpdateStatus accepts. Reason is derived from
 // Status; Message is passed through verbatim.
-func readyCondition(status Status, message string) metav1.Condition {
-	c := metav1.Condition{
+func readyCondition(status Status, message string) Condition {
+	c := Condition{
 		Type:    ConditionReady,
 		Message: message,
 	}
@@ -143,7 +143,7 @@ func readyCondition(status Status, message string) metav1.Condition {
 // statusInfoFromConditions projects the rollup StatusInfo from the
 // Ready condition. Returns (zero, false) when no Ready condition is
 // present.
-func statusInfoFromConditions(conds []metav1.Condition) (StatusInfo, bool) {
+func statusInfoFromConditions(conds []Condition) (StatusInfo, bool) {
 	for _, c := range conds {
 		if c.Type != ConditionReady {
 			continue

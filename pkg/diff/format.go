@@ -38,8 +38,8 @@ const (
 
 // isDyffText reports whether f renders the whole doc set natively through
 // dyff (see renderNative) rather than through the per-resource unified-diff
-// path (FormatDiff). The zero value defaults to the github style at the
-// call site (see RenderDocs), so it is handled there rather than here.
+// path (FormatDiff). The zero value defaults to the human style in
+// renderNative, so it is handled there rather than here.
 func (f Format) isDyffText() bool {
 	switch f {
 	case FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea:

@@ -234,6 +234,34 @@ func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string
 	c.Store.UpdateStatus(id, store.StatusPending, msg)
 }
 
+// FingerprintDedup short-circuits a reconcile when id's cached rendered
+// artifact carries a non-empty fingerprint equal to fp — the effective inputs
+// are byte-identical, so the expensive render (kustomize/helm) is skipped. It
+// still replays the cached docs through emit so the idempotent per-emission
+// side-effects (keep-set extension + parent provenance) fire on every reconcile
+// pass; emit is the controller's emitRenderedChildren(id, docs, publish=false)
+// closure. The replay deliberately does NOT re-publish the children: they were
+// already published byte-identically by the render that set this artifact, so
+// re-AddObject-ing them would only re-fire listeners and re-submit already-
+// settled resources — churn that can transiently un-Ready a parent and race
+// quiescence (the "not ready" non-determinism, see #657–#660).
+//
+// Returns (handled=true, err): the caller returns err. err is non-nil only when
+// a preflight error was discovered mid-flight. Returns (false, nil) to render
+// normally. Centralizes the byte-identical KS/HR dedup short-circuit.
+func (c *Controller) FingerprintDedup(id manifest.NamedResource, fp, logKind string, emit func(docs []map[string]any)) (bool, error) {
+	existing, ok := c.Store.GetArtifact(id).(store.RenderedArtifact)
+	if !ok || existing.RenderedFingerprint() == "" || existing.RenderedFingerprint() != fp {
+		return false, nil
+	}
+	if err := c.PreflightError(id); err != nil {
+		return true, err
+	}
+	slog.Debug(logKind+": skipped re-render (fingerprint unchanged)", "id", id.String())
+	emit(existing.RenderedManifests())
+	return true, nil
+}
+
 // NewWaiter constructs a depwait.Waiter pre-wired with the
 // controller's Store, Existence lookup, and Renders quiescence signal,
 // parented to id and budgeted from timeout. HR and KS controllers call
@@ -528,4 +556,45 @@ func RunWithStatus[T manifest.BaseManifest](
 		}
 	}
 	s.UpdateStatus(id, store.StatusReady, "")
+}
+
+// OnReconcile builds the EventObjectAdded listener every controller registers
+// in Start. It collapses the previously-duplicated onObjectAdded shape across
+// the source/kustomization/helmrelease controllers into one generic: match the
+// id, type-assert the payload to T, PreGate on suspension, fail-fast on a
+// preflight error, then Submit the reconcile wrapped in RunWithStatus.
+//
+// The per-controller bits are the parameters: match (a single-kind check for
+// KS/HR, a fetcher-registered check for source), suspended (the Suspend field
+// for KS/HR, the Suspendable interface for source), the logKind label, and the
+// typed reconcile fn. PreflightFailure is safe to call for every controller —
+// it returns ("", false) when no preflight reporter is wired (source), so the
+// shared check is a no-op there.
+func OnReconcile[T manifest.BaseManifest](
+	ctx context.Context,
+	c *Controller,
+	match func(manifest.NamedResource) bool,
+	suspended func(T) bool,
+	logKind string,
+	reconcile func(context.Context, T) error,
+) store.Listener {
+	return func(id manifest.NamedResource, payload any) {
+		if !match(id) {
+			return
+		}
+		obj, ok := payload.(T)
+		if !ok {
+			return
+		}
+		if c.PreGate(id, suspended(obj)) {
+			return
+		}
+		if msg, failed := c.PreflightFailure(id); failed {
+			c.Store.UpdateStatus(id, store.StatusFailed, msg)
+			return
+		}
+		c.Submit(ctx, id, func(ctx context.Context) {
+			RunWithStatus(ctx, c.Store, id, logKind, reconcile)
+		})
+	}
 }

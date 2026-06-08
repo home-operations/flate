@@ -3,6 +3,7 @@ package manifest
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 )
 
 // SHA256Hex returns the hex-encoded SHA-256 digest of data. It is the
@@ -16,4 +17,18 @@ import (
 func SHA256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// Fingerprint returns a stable content hash of payload — json.Marshal
+// followed by SHA256Hex. It returns "" when marshaling fails: an empty
+// fingerprint never matches a dedup comparison, so callers degrade safely
+// into a re-render rather than a false cache hit. Used by the controllers'
+// render-input fingerprints (kustomizationFingerprint / helmReleaseFingerprint),
+// which differ only in their payload struct.
+func Fingerprint(payload any) string {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return SHA256Hex(raw)
 }

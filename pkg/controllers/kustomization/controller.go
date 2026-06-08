@@ -8,7 +8,6 @@ package kustomization
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"slices"
 
@@ -109,29 +108,10 @@ func (c *Controller) Configure(opts Options) {
 // Start registers the listener that drives reconciliation.
 func (c *Controller) Start(ctx context.Context) {
 	c.StartLifecycle("kustomization")
-	c.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx))
-}
-
-func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
-	return func(id manifest.NamedResource, payload any) {
-		if id.Kind != manifest.KindKustomization {
-			return
-		}
-		ks, ok := payload.(*manifest.Kustomization)
-		if !ok {
-			return
-		}
-		if c.PreGate(id, ks.Suspend) {
-			return
-		}
-		if msg, failed := c.PreflightFailure(id); failed {
-			c.Store.UpdateStatus(id, store.StatusFailed, msg)
-			return
-		}
-		c.Submit(ctx, id, func(ctx context.Context) {
-			base.RunWithStatus(ctx, c.Store, id, "kustomization", c.reconcile)
-		})
-	}
+	c.AddListener(store.EventObjectAdded, base.OnReconcile(ctx, c.Controller,
+		func(id manifest.NamedResource) bool { return id.Kind == manifest.KindKustomization },
+		func(ks *manifest.Kustomization) bool { return ks.Suspend },
+		"kustomization", c.reconcile))
 }
 
 func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) error {
@@ -191,37 +171,16 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		return err
 	}
 
-	// Fingerprint dedup: the same id may receive multiple AddObject
-	// events with the same effective spec (e.g. when the structural
-	// parent re-emits this KS after running its own render, stamping
-	// kustomize.toolkit.fluxcd.io ownership labels). kustomize.RenderFlux
-	// is the hot path; skip it and reuse the prior artifact when the
-	// post-Prepare inputs are byte-identical. Same pattern as HR (#219).
+	// Fingerprint dedup (kustomize.RenderFlux is the hot path): skip the
+	// re-render and replay the cached artifact's side-effects when the
+	// post-Prepare inputs are byte-identical to the cached artifact. The
+	// shared helper publishes nothing (publish=false) — see its doc for the
+	// churn/quiescence rationale (#657–#660). fp is reused for SetArtifact below.
 	fp := kustomizationFingerprint(ks, sourceRoot)
-	if existing, ok := c.Store.GetArtifact(id).(*store.KustomizationArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
-		if err := c.PreflightError(id); err != nil {
-			return err
-		}
-		slog.Debug("kustomization: skipped re-render (fingerprint unchanged)", "id", id.String())
-		// Skip kustomize.RenderFlux (the expensive bit), but still
-		// replay the cached artifact through emitRenderedChildren so
-		// the per-emission side-effects (markRendered for parent
-		// provenance + Filter.AddEmitted for runtime keep-set
-		// extension, see #260/#308) fire on every reconcile pass.
-		// Without this, a re-emit that hits dedup drops the child
-		// from the parent index and the keep-set chain — a subsequent
-		// changed-only run silently mis-attributes children to a
-		// stale parent.
-		//
-		// publish=false: do NOT re-AddObject the children. They were
-		// already published byte-identically by the render that set this
-		// cached artifact, so re-publishing only re-fires their listeners
-		// and re-submits already-settled children — churn that
-		// transiently un-Ready-s a parent and races quiescence (the
-		// "parent Kustomization not ready" non-determinism). Only the
-		// idempotent provenance + keep-set side-effects need to re-run.
-		c.emitRenderedChildren(id, existing.Manifests, false)
-		return nil
+	if handled, err := c.FingerprintDedup(id, fp, "kustomization", func(docs []map[string]any) {
+		c.emitRenderedChildren(id, docs, false)
+	}); handled {
+		return err
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering")

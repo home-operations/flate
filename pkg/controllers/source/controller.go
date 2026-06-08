@@ -70,29 +70,16 @@ func (c *Controller) Configure(opts FetchOptions) {
 // Close is called.
 func (c *Controller) Start(ctx context.Context) {
 	c.StartLifecycle("source")
-	c.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx))
-}
-
-func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
-	return func(id manifest.NamedResource, payload any) {
-		if _, registered := c.Fetchers[id.Kind]; !registered {
-			return
-		}
-		obj, ok := payload.(manifest.BaseManifest)
-		if !ok {
-			return
-		}
-		sus, _ := obj.(src.Suspendable)
-		if c.PreGate(id, sus != nil && sus.Suspended()) {
-			return
-		}
-		// Coalesce per-id so a duplicate AddObject for the same source
-		// (e.g. a parent KS re-emits a child source on re-render)
-		// doesn't race two concurrent fetches into the same cache slot.
-		c.Submit(ctx, id, func(ctx context.Context) {
-			base.RunWithStatus(ctx, c.Store, id, "source", c.reconcile)
-		})
-	}
+	// Match any kind with a registered fetcher (not a single kind like KS/HR),
+	// and read Suspend via the Suspendable interface. Coalescing in Submit
+	// means a duplicate AddObject for the same source (e.g. a parent KS
+	// re-emitting a child source on re-render) doesn't race two concurrent
+	// fetches into the same cache slot. Source wires no preflight reporter, so
+	// OnReconcile's PreflightFailure check is a no-op here.
+	c.AddListener(store.EventObjectAdded, base.OnReconcile(ctx, c.Controller,
+		func(id manifest.NamedResource) bool { _, ok := c.Fetchers[id.Kind]; return ok },
+		func(obj manifest.BaseManifest) bool { s, _ := obj.(src.Suspendable); return s != nil && s.Suspended() },
+		"source", c.reconcile))
 }
 
 // reconcile fetches the source artifact via the registered Fetcher and

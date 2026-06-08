@@ -135,7 +135,10 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 func (c *Controller) Start(ctx context.Context) {
 	c.StartLifecycle("helmrelease")
 	c.AddListener(store.EventObjectAdded, c.onRawProducerAdded())
-	c.AddListener(store.EventObjectAdded, c.onObjectAdded(ctx))
+	c.AddListener(store.EventObjectAdded, base.OnReconcile(ctx, c.Controller,
+		func(id manifest.NamedResource) bool { return id.Kind == manifest.KindHelmRelease },
+		func(hr *manifest.HelmRelease) bool { return hr.Suspend },
+		"helmrelease", c.reconcile))
 }
 
 // onRawProducerAdded returns a listener that indexes RawObject producers
@@ -186,28 +189,6 @@ func rawProducerTargetID(raw *manifest.RawObject) (manifest.NamedResource, bool)
 		return secretID(name), true
 	default:
 		return manifest.NamedResource{}, false
-	}
-}
-
-func (c *Controller) onObjectAdded(ctx context.Context) store.Listener {
-	return func(id manifest.NamedResource, payload any) {
-		if id.Kind != manifest.KindHelmRelease {
-			return
-		}
-		hr, ok := payload.(*manifest.HelmRelease)
-		if !ok {
-			return
-		}
-		if c.PreGate(id, hr.Suspend) {
-			return
-		}
-		if msg, failed := c.PreflightFailure(id); failed {
-			c.Store.UpdateStatus(id, store.StatusFailed, msg)
-			return
-		}
-		c.Submit(ctx, id, func(ctx context.Context) {
-			base.RunWithStatus(ctx, c.Store, id, "helmrelease", c.reconcile)
-		})
 	}
 }
 
@@ -325,34 +306,18 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return err
 	}
 
-	// Fingerprint dedup: when the same HR id gets re-AddObject'd with
-	// the same effective spec (e.g. the parent KS render stamps
-	// kustomize.toolkit.fluxcd.io/{name,namespace} labels onto a
-	// previously-loaded HR and re-emits it via Store.AddObject), skip
-	// the helm render — its output would be byte-identical. Without
-	// this, flate runs helm.Template twice for every HR a parent KS
-	// owns, which surfaces as duplicate "warning: cannot overwrite
-	// table..." log lines from helm's coalescer and roughly doubles
-	// the HR-render time on real-world trees.
+	// Fingerprint dedup (helm.TemplateDocs is the hot path): skip the
+	// re-render and replay the cached artifact's side-effects when the
+	// effective spec is byte-identical to the cached artifact — the common
+	// trigger is a parent KS re-emitting this HR with stamped ownership
+	// labels. The shared helper publishes nothing (publish=false; an
+	// HR-emitted source CR re-emit is a DeepEqual no-op anyway) — see its doc
+	// for the rationale (#657–#660). fp is reused for SetArtifact below.
 	fp := helmReleaseFingerprint(hr)
-	if existing, ok := c.Store.GetArtifact(id).(*store.HelmReleaseArtifact); ok && existing.Fingerprint != "" && existing.Fingerprint == fp {
-		if err := c.PreflightError(id); err != nil {
-			return err
-		}
-		slog.Debug("helmrelease: skipped re-render (fingerprint unchanged)", "id", id.String())
-		// Skip helm.TemplateDocs (the expensive bit) but replay the cached
-		// docs so the idempotent per-emission side-effects (KeepEmitted
-		// keep-set + ReportRendered provenance) fire on every reconcile pass.
-		// publish=false: do NOT re-AddObject the chart-emitted source CRs.
-		// Unlike a KS's children, an HR-emitted source has a single emitter
-		// and the source controller never mutates the stored object, so the
-		// replay re-emits a byte-identical object — Store.AddObject's DeepEqual
-		// gate already no-ops it (no event). Gating it makes that explicit and
-		// mirrors the KS dedup-replay; #658/#659 (SetPendingUnlessReady) keep a
-		// re-emitted source Ready regardless, so the skipped re-emit can't drop
-		// a consumer.
-		c.emitRenderedChildren(id, existing.Manifests, false)
-		return nil
+	if handled, err := c.FingerprintDedup(id, fp, "helmrelease", func(docs []map[string]any) {
+		c.emitRenderedChildren(id, docs, false)
+	}); handled {
+		return err
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "rendering chart")

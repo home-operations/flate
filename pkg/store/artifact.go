@@ -19,6 +19,11 @@ type Artifact interface {
 type RenderedArtifact interface {
 	Artifact
 	RenderedManifests() []map[string]any
+	// RenderedFingerprint is the stable hash of the inputs that produced
+	// RenderedManifests (named distinctly from the Fingerprint field). The
+	// controllers' shared dedup short-circuit (base.Controller.FingerprintDedup)
+	// compares it to skip a re-render whose inputs are byte-identical.
+	RenderedFingerprint() string
 }
 
 // SourceArtifact is the unified working-tree artifact produced by
@@ -63,6 +68,9 @@ func (*KustomizationArtifact) artifact() {}
 // RenderedManifests implements RenderedArtifact.
 func (a *KustomizationArtifact) RenderedManifests() []map[string]any { return a.Manifests }
 
+// RenderedFingerprint implements RenderedArtifact.
+func (a *KustomizationArtifact) RenderedFingerprint() string { return a.Fingerprint }
+
 // HelmReleaseArtifact is the rendered output of a HelmRelease template.
 //
 // Fingerprint is a stable hash of the inputs that determine the
@@ -83,6 +91,9 @@ func (*HelmReleaseArtifact) artifact() {}
 
 // RenderedManifests implements RenderedArtifact.
 func (a *HelmReleaseArtifact) RenderedManifests() []map[string]any { return a.Manifests }
+
+// RenderedFingerprint implements RenderedArtifact.
+func (a *HelmReleaseArtifact) RenderedFingerprint() string { return a.Fingerprint }
 
 // --- Store operations on artifacts ---
 

@@ -8,9 +8,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestRunWithStatus_Success(t *testing.T) {
@@ -275,5 +277,117 @@ func TestController_DoubleCloseIsSafe(t *testing.T) {
 
 	if got := fired.Load(); got != 0 {
 		t.Fatalf("listener fired %d times after double Close; want 0", got)
+	}
+}
+
+// TestOnReconcile pins the shared dispatch-listener builder that replaced the
+// three controllers' near-identical onObjectAdded: it must ignore ids the match
+// predicate rejects, bail (via PreGate) on suspended objects without running
+// the reconcile, mark a preflight-failed id Failed without running it, and run
+// the reconcile only for a matching, non-suspended, preflight-clean object.
+func TestOnReconcile(t *testing.T) {
+	s := store.New()
+	ts := task.New()
+	c := base.New(s, ts)
+	c.SetPreflight(func(id manifest.NamedResource) (string, bool) {
+		return "synthetic cycle", id.Name == "preflightfail"
+	})
+	c.StartLifecycle("test")
+	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
+
+	var ran atomic.Int64
+	c.AddListener(store.EventObjectAdded, base.OnReconcile(t.Context(), c,
+		func(id manifest.NamedResource) bool { return id.Kind == manifest.KindHelmRelease },
+		func(hr *manifest.HelmRelease) bool { return hr.Name == "suspended" },
+		"helmrelease",
+		func(_ context.Context, _ *manifest.HelmRelease) error { ran.Add(1); return nil },
+	))
+
+	// Non-matching kind → ignored entirely (no status written).
+	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
+	s.AddObject(ks)
+	// Matching but suspended → PreGate bails to Ready/"suspended", no reconcile.
+	susHR := &manifest.HelmRelease{Name: "suspended", Namespace: "ns"}
+	s.AddObject(susHR)
+	// Matching but preflight-failed → Failed, no reconcile.
+	pfHR := &manifest.HelmRelease{Name: "preflightfail", Namespace: "ns"}
+	s.AddObject(pfHR)
+	// Matching, clean → reconcile runs → Ready.
+	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+	s.AddObject(hr)
+
+	testutil.WaitForStatus(t, s, hr.Named(), store.StatusReady)
+
+	if got := ran.Load(); got != 1 {
+		t.Errorf("reconcile ran %d times; want 1 (only the matching, non-suspended, preflight-clean HR)", got)
+	}
+	if _, ok := s.GetStatus(ks.Named()); ok {
+		t.Error("non-matching kind got a status; OnReconcile must ignore it")
+	}
+	if info, _ := s.GetStatus(susHR.Named()); info.Message != "suspended" {
+		t.Errorf("suspended HR status = %+v; want Ready/suspended via PreGate", info)
+	}
+	if info, _ := s.GetStatus(pfHR.Named()); info.Status != store.StatusFailed {
+		t.Errorf("preflight-failed HR status = %+v; want Failed", info)
+	}
+}
+
+// TestFingerprintDedup pins the shared dedup short-circuit: it skips (returns
+// handled=true) and replays the cached docs through emit only when a rendered
+// artifact with a matching non-empty fingerprint exists; otherwise it returns
+// handled=false so the caller renders. A preflight error surfaces as
+// (handled=true, err) without emitting.
+func TestFingerprintDedup(t *testing.T) {
+	s := store.New()
+	c := base.New(s, nil)
+	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
+	s.AddObject(ks)
+	id := ks.Named()
+	docs := []map[string]any{{"kind": "ConfigMap"}}
+	s.SetArtifact(id, &store.KustomizationArtifact{Manifests: docs, Fingerprint: "fp1"})
+
+	var emitted int
+	emit := func([]map[string]any) { emitted++ }
+
+	// Fingerprint mismatch → render (not handled), no emit.
+	if handled, err := c.FingerprintDedup(id, "other", "kustomization", emit); handled || err != nil {
+		t.Errorf("mismatch: handled=%v err=%v; want false,nil", handled, err)
+	}
+	// Match → handled, emit replays the cached docs.
+	if handled, err := c.FingerprintDedup(id, "fp1", "kustomization", emit); !handled || err != nil {
+		t.Errorf("match: handled=%v err=%v; want true,nil", handled, err)
+	}
+	// No artifact for the id → render (not handled).
+	none := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "none"}
+	if handled, _ := c.FingerprintDedup(none, "fp1", "kustomization", emit); handled {
+		t.Error("no-artifact id: handled=true; want false")
+	}
+	if emitted != 1 {
+		t.Errorf("emit called %d times; want 1 (only on the match)", emitted)
+	}
+
+	// Empty fingerprint never matches (safe re-render), even fp==""==stored.
+	s.SetArtifact(id, &store.KustomizationArtifact{Manifests: docs, Fingerprint: ""})
+	if handled, _ := c.FingerprintDedup(id, "", "kustomization", emit); handled {
+		t.Error("empty fingerprint matched; want never-match (false)")
+	}
+}
+
+// TestFingerprintDedup_PreflightError: a match that coincides with a
+// mid-flight preflight failure returns (handled=true, err) and does not emit.
+func TestFingerprintDedup_PreflightError(t *testing.T) {
+	s := store.New()
+	c := base.New(s, nil)
+	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
+	s.AddObject(ks)
+	id := ks.Named()
+	s.SetArtifact(id, &store.KustomizationArtifact{Fingerprint: "fp1"})
+	c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle detected", true })
+
+	handled, err := c.FingerprintDedup(id, "fp1", "kustomization", func([]map[string]any) {
+		t.Error("emit must not run when a preflight error is surfaced")
+	})
+	if !handled || err == nil {
+		t.Errorf("preflight error: handled=%v err=%v; want true, non-nil", handled, err)
 	}
 }

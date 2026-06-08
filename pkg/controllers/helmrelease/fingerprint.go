@@ -1,8 +1,6 @@
 package helmrelease
 
 import (
-	"encoding/json"
-
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -13,14 +11,11 @@ import (
 // and metadata.annotations on purpose — kustomize-controller-emitted
 // HRs differ from their file-loaded sources only in label stamping,
 // and re-rendering on a label diff is pure waste. Returns "" when
-// json.Marshal fails (degrades safely: an empty fingerprint never
-// matches, so the dedup short-circuit is skipped and we re-render).
+// the payload can't be hashed (degrades safely: manifest.Fingerprint
+// returns "", which never matches, so the dedup short-circuit is
+// skipped and we re-render).
 func helmReleaseFingerprint(hr *manifest.HelmRelease) string {
-	raw, err := json.Marshal(helmReleaseFingerprintPayload(hr))
-	if err != nil {
-		return ""
-	}
-	return manifest.SHA256Hex(raw)
+	return manifest.Fingerprint(helmReleaseFingerprintPayload(hr))
 }
 
 func helmReleaseFingerprintPayload(hr *manifest.HelmRelease) any {

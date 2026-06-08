@@ -1,8 +1,6 @@
 package kustomization
 
 import (
-	"encoding/json"
-
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -15,10 +13,10 @@ import (
 // annotations are excluded on purpose: kustomize-controller-emitted
 // children carry stamped ownership labels that don't affect the
 // rendered manifests, and re-rendering on that delta is pure waste.
-// Returns "" when json.Marshal fails — empty fingerprints never
-// match, so the dedup short-circuit degrades safely into re-render.
+// Degrades safely into a re-render when the payload can't be hashed
+// (manifest.Fingerprint returns "", which never matches the dedup check).
 func kustomizationFingerprint(ks *manifest.Kustomization, sourceRoot string) string {
-	payload := struct {
+	return manifest.Fingerprint(struct {
 		Path                string
 		SourceRoot          string
 		Contents            map[string]any
@@ -30,10 +28,5 @@ func kustomizationFingerprint(ks *manifest.Kustomization, sourceRoot string) str
 		Contents:            ks.Contents,
 		PostBuildSubstitute: ks.PostBuildSubstitute,
 		Spec:                ks.KustomizationSpec,
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	return manifest.SHA256Hex(raw)
+	})
 }

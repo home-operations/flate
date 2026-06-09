@@ -46,7 +46,7 @@ func (c *Controller) resolvePreRenderValuesFrom(ctx context.Context, id manifest
 			break
 		}
 		var preSum depwait.Summary
-		if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout), preDeps,
+		if err := c.Require(ctx, id, hr.Timeout, preDeps,
 			"awaiting pre-render references",
 			func(sum depwait.Summary) error {
 				preSum = sum

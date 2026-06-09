@@ -138,8 +138,8 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		// stale-spec snapshot captured by RunWithStatus, producing
 		// duplicate renders that linger in the store with the wrong
 		// namespace. See #102.
-		fresh, ok, err := base.AwaitRefresh[*manifest.Kustomization](
-			ctx, c.Controller, id, c.NewWaiter(id, ks.Timeout), deps,
+		fresh, ok, err := base.RequireRefresh[*manifest.Kustomization](
+			ctx, c.Controller, id, ks.Timeout, deps,
 			"", base.DepFailed(id)) // empty pendingMsg: status set above (kept Ready on a no-op re-run)
 		if err != nil {
 			return err

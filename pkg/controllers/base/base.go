@@ -475,6 +475,55 @@ func AwaitRefresh[T manifest.BaseManifest](
 	return obj, ok, nil
 }
 
+// Require is the engine-agnostic dependency gate the reconcile bodies
+// call. It owns Waiter construction (built from id + timeout) so call
+// sites no longer thread a *depwait.Waiter, and is the single seam where
+// the two engines diverge:
+//
+//   - event engine (current default): blocks via Await — identical
+//     behavior to the pre-seam call sites.
+//   - dag engine (Phase 1): performs a NON-blocking check and returns an
+//     ErrBlocked sentinel when a dep is absent / not-yet-Ready, so the
+//     scheduler can park the node and re-run the body once the dep
+//     advances — no goroutine or active-count is held across the wait.
+//
+// Both engines return a *manifest.DependencyFailedError (via onFail) when
+// a dep is terminally Failed, and nil when every dep is satisfied. Phase 0
+// wires only the event branch; the result is byte-identical to Await.
+func (c *Controller) Require(
+	ctx context.Context,
+	id manifest.NamedResource,
+	timeout *metav1.Duration,
+	deps []manifest.DependencyRef,
+	pendingMsg string,
+	onFail func(depwait.Summary) error,
+) error {
+	return c.Await(ctx, id, c.NewWaiter(id, timeout), deps, pendingMsg, onFail)
+}
+
+// RequireRefresh fuses Require with the load-bearing store re-read every
+// dependency gate performs on success — the Require counterpart of
+// AwaitRefresh (see its doc for the #102 re-read rationale). Call sites use
+// this instead of AwaitRefresh so the engine seam (Require) is the only
+// thing they depend on; the dag engine re-reads identically after a
+// satisfied gate.
+func RequireRefresh[T manifest.BaseManifest](
+	ctx context.Context,
+	c *Controller,
+	id manifest.NamedResource,
+	timeout *metav1.Duration,
+	deps []manifest.DependencyRef,
+	pendingMsg string,
+	onFail func(depwait.Summary) error,
+) (T, bool, error) {
+	if err := c.Require(ctx, id, timeout, deps, pendingMsg, onFail); err != nil {
+		var zero T
+		return zero, false, err
+	}
+	obj, ok := store.Get[T](c.Store, id)
+	return obj, ok, nil
+}
+
 // DepFailed returns the canonical onFail closure that reports a
 // dependency-wait failure as a *manifest.DependencyFailedError for id.
 // The identical literal was rebuilt at every dependsOn/pre-render wait;

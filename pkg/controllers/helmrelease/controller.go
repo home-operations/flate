@@ -209,7 +209,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// driftDetection / install.crds / upgrade strategy / rollback to
 	// every HR, so all of them were hit by this).
 	if parent, ok := c.LookupParent(id); ok {
-		err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout),
+		err := c.Require(ctx, id, hr.Timeout,
 			[]manifest.DependencyRef{{NamedResource: parent}},
 			"waiting for parent KS",
 			func(sum depwait.Summary) error {
@@ -241,8 +241,8 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		// with explicit spec.dependsOn but no structural parent — or one
 		// whose parent re-emitted us after the parent-gate cleared — keeps
 		// the pre-mutation snapshot through chart resolution.
-		fresh, ok, err := base.AwaitRefresh[*manifest.HelmRelease](
-			ctx, c.Controller, id, c.NewWaiter(id, hr.Timeout), deps,
+		fresh, ok, err := base.RequireRefresh[*manifest.HelmRelease](
+			ctx, c.Controller, id, hr.Timeout, deps,
 			"resolving dependencies", base.DepFailed(id))
 		if err != nil {
 			return err
@@ -373,7 +373,7 @@ func chartSourceID(hr *manifest.HelmRelease) manifest.NamedResource {
 // OUTCOME instead of dropped nondeterministically. See depwait.Waiter.watchOne.
 func (c *Controller) awaitChartSource(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease) error {
 	srcID := chartSourceID(hr)
-	if err := c.Await(ctx, id, c.NewWaiter(id, hr.Timeout),
+	if err := c.Require(ctx, id, hr.Timeout,
 		[]manifest.DependencyRef{{NamedResource: srcID}},
 		"", // status already set by the caller
 		func(sum depwait.Summary) error {

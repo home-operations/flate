@@ -110,6 +110,39 @@ counts:
 	}
 }
 
+// BenchmarkExpandValueReferences_ManyKeyCM is the gate for the single-key
+// valuesFrom lookup. An HR references ONE key of a ConfigMap whose data bag
+// carries many keys (the shared-settings / shared-secret shape). The values
+// Cache memoizes the yaml.Unmarshal of the referenced key after the first
+// iteration, but it is keyed on the *extracted* string, so the bag access in
+// lookupValueRef runs every iteration: the old path normalized (and, for a
+// Secret, base64-decoded) all 30 keys to return one; the single-key path reads
+// only the referenced key. The per-iteration delta is that wasted full-bag
+// decode.
+func BenchmarkExpandValueReferences_ManyKeyCM(b *testing.B) {
+	data := make(map[string]any, 30)
+	data["values.yaml"] = "replicaCount: 3\n"
+	for i := range 29 {
+		data[fmt.Sprintf("sibling-%d.yaml", i)] = fmt.Sprintf("key%d: value-%d\n", i, i)
+	}
+	cm := &manifest.ConfigMap{Name: "shared", Namespace: "default", Data: data}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "shared", ValuesKey: "values.yaml"}
+	cache := NewCache()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		hr := &manifest.HelmRelease{
+			Name: "app", Namespace: "default",
+			HelmReleaseSpec: helmv2.HelmReleaseSpec{ValuesFrom: []manifest.ValuesReference{ref}},
+		}
+		if err := ExpandValueReferences(hr, provider, cache); err != nil {
+			b.Fatalf("ExpandValueReferences: %v", err)
+		}
+	}
+}
+
 // BenchmarkExpandPostBuildSubstituteReference_SharedCM measures the
 // per-KS cost of the kustomize substitute path against a large shared
 // cluster-settings ConfigMap (50 flat vars) — the bjw-s/onedr0p pattern

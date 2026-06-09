@@ -314,21 +314,93 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 	return nil
 }
 
-// lookupValueRef returns the raw string value referenced by ref.
+// lookupValueRef returns the raw string value referenced by ref. It reads
+// only the single key the ref names (ref.GetValuesKey()), mirroring upstream
+// Flux's chartutil.ChartValuesFromReferences, which indexes
+// typedRes.Data[valuesKey] directly. This is the steady-state per-HelmRelease
+// path; reading one key avoids decodeBag's full-bag normalization, which
+// base64-decodes and coerces every sibling entry only to discard all but one
+// (decodeBag was ~25% of alloc_space in BenchmarkExpandValueReferences_*).
+//
+// Consequence — a deliberate, Flux-aligning narrowing of the error surface:
+// the old full-bag decode failed the ref if ANY sibling key was malformed,
+// whereas this validates only the requested key (as Flux does). Output for
+// every input that renders today is unchanged; only pathological inputs with a
+// valid requested key beside a malformed sibling stop erroring. The
+// substituteFrom/postBuild path (which legitimately consumes the whole bag)
+// keeps using lookupResourceData/decodeBag.
 func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) (string, error) {
-	data, err := lookupResourceData(ref.Kind, namespace, ref.Name, p)
+	stringData, binaryData, found, err := resourceBag(ref.Kind, namespace, ref.Name, p)
 	if err != nil {
 		return "", err
 	}
-	if data == nil {
+	// An absent resource and a present-but-empty bag both surface as
+	// "resource not found": decodeBag returned nil for an empty bag, which the
+	// previous data==nil branch mapped to ErrObjectNotFound. Preserve that so
+	// error identity (and Optional handling) is unchanged.
+	if !found || (len(stringData) == 0 && len(binaryData) == 0) {
 		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name}
 	}
 	key := ref.GetValuesKey()
-	val, ok := data[key]
+	val, ok, err := lookupBagKey(stringData, binaryData, key)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name, key: key}
 	}
 	return val, nil
+}
+
+// resourceBag returns the raw (stringData, binaryData) maps backing a
+// ConfigMap or Secret values reference, without decoding the whole bag. found
+// is false when the resource is absent (no error). ConfigMap binaryData is
+// intentionally nil: valuesFrom reads only ConfigMap.data, matching upstream
+// fluxcd ChartValuesFromReferences (see lookupResourceData).
+func resourceBag(kind, namespace, name string, p Provider) (stringData, binaryData map[string]any, found bool, err error) {
+	switch kind {
+	case manifest.KindSecret:
+		if s := p.Secret(namespace, name); s != nil {
+			return s.StringData, s.Data, true, nil
+		}
+		return nil, nil, false, nil
+	case manifest.KindConfigMap:
+		if c := p.ConfigMap(namespace, name); c != nil {
+			return c.Data, nil, true, nil
+		}
+		return nil, nil, false, nil
+	default:
+		return nil, nil, false, fmt.Errorf("%w: unsupported kind %s", manifest.ErrInvalidValuesReference, kind)
+	}
+}
+
+// lookupBagKey returns the value at key from a ConfigMap/Secret data bag,
+// applying decodeBag's coercion and precedence — binaryData wins over
+// stringData on collision (decodeBag writes stringData first, then binaryData
+// overwrites) — but reading ONLY key and leaving sibling entries untouched. ok
+// is false when key is absent. An error surfaces only when the requested key
+// itself is malformed; the error strings match decodeBag's so a malformed
+// requested key reports identically.
+func lookupBagKey(stringData, binaryData map[string]any, key string) (string, bool, error) {
+	if v, ok := binaryData[key]; ok {
+		s, err := bagValueAsString(v)
+		if err != nil {
+			return "", false, fmt.Errorf("binaryData[%s]: %w", key, err)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return "", false, fmt.Errorf("decode binaryData[%s]: %w", key, err)
+		}
+		return string(decoded), true, nil
+	}
+	if v, ok := stringData[key]; ok {
+		s, err := bagValueAsString(v)
+		if err != nil {
+			return "", false, fmt.Errorf("stringData[%s]: %w", key, err)
+		}
+		return s, true, nil
+	}
+	return "", false, nil
 }
 
 // lookupResourceData fetches and decodes the data bag for a ConfigMap or

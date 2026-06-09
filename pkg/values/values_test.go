@@ -2,6 +2,7 @@ package values
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -127,6 +128,61 @@ func TestExpandValueReferences_IgnoresConfigMapBinaryData(t *testing.T) {
 	}
 	if _, leaked := hr.Values["fromBinary"]; leaked {
 		t.Errorf("binaryData key leaked into hr.Values: %+v", hr.Values)
+	}
+}
+
+// TestExpandValueReferences_MalformedSiblingTolerated documents the
+// deliberate, Flux-aligning narrowing of the valuesFrom error surface in
+// lookupValueRef: it decodes only the referenced key, so a malformed SIBLING
+// key no longer fails the ref. Upstream Flux (chartutil.ChartValuesFromReferences)
+// likewise indexes typedRes.Data[valuesKey] and never validates siblings. The
+// old full-bag decode (still used by substituteFrom, which legitimately
+// consumes every key) errored the whole ref on the broken sibling here.
+func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
+	cm := &manifest.ConfigMap{
+		Name: "extra", Namespace: "default",
+		Data: map[string]any{
+			"values.yaml": "replicaCount: 3\n",
+			// A non-scalar value bagValueAsString cannot coerce. decodeBag
+			// would error on this sibling regardless of map iteration order;
+			// the single-key path never reads it.
+			"broken": map[string]any{"nested": true},
+		},
+	}
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
+		},
+	}
+	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
+		t.Fatalf("malformed sibling must not fail the ref (Flux reads only the named key): %v", err)
+	}
+	if got := hr.Values["replicaCount"]; fmt.Sprint(got) != "3" {
+		t.Errorf("replicaCount = %v, want 3 (values.yaml read despite broken sibling)", got)
+	}
+}
+
+// TestExpandValueReferences_MalformedRequestedKeyStillFails pins that the
+// error surface narrows ONLY for siblings: a malformed value at the REQUESTED
+// key still fails the ref, with decodeBag's original "stringData[key]" wording.
+func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
+	cm := &manifest.ConfigMap{
+		Name: "extra", Namespace: "default",
+		Data: map[string]any{"values.yaml": []any{"not", "a", "scalar"}},
+	}
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
+		},
+	}
+	err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+	if err == nil {
+		t.Fatal("malformed requested key must still fail the ref")
+	}
+	if !strings.Contains(err.Error(), "stringData[values.yaml]") {
+		t.Errorf("error should name the requested key as decodeBag did: %v", err)
 	}
 }
 

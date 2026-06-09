@@ -420,7 +420,7 @@ func (c *commonFlags) resolveCacheRoot() string {
 	return resolveCacheRoot(&c.cacheDir)
 }
 
-func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
+func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags, pre ...func(*orchestrator.Orchestrator) store.Unsubscribe) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
 	if c.path == "" {
 		return nil, nil, errors.New("path is required")
 	}
@@ -440,7 +440,7 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 		return nil, nil, err
 	}
 	defer cleanup()
-	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
+	return runOrchestratorCfg(ctx, buildOrchCfg(c, h), pre...)
 }
 
 // validatePathFlag rejects a flag value that doesn't point at a real
@@ -530,7 +530,11 @@ func (p *profileValue) Set(v string) error {
 // resource failures: the partial output is still usable. A nil
 // orchestrator indicates a fatal init/bootstrap error and callers
 // should bail.
-func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
+// pre hooks (optional, variadic so existing call sites are unchanged) run
+// after New and before Render — the seam for attaching store listeners that
+// must observe the run live (the --stream emitter). Each returns its
+// unsubscribe, released once Render finishes.
+func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...func(*orchestrator.Orchestrator) store.Unsubscribe) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
 	o, err := orchestrator.New(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -540,6 +544,9 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestr
 	// reconcile runs; stdout (the rendered output) is untouched.
 	if progressWriter != nil {
 		defer newProgressReporter(progressWriter).attach(o.Store())()
+	}
+	for _, hook := range pre {
+		defer hook(o)()
 	}
 	res, err := o.Render(ctx)
 	// Render nils the result only when Bootstrap fails (Run-time

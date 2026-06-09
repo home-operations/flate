@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"errors"
 	"io"
 	"slices"
 
@@ -11,17 +12,22 @@ import (
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // buildFlags holds flags shared across `build ks`, `build hr`, and
 // `build all` that aren't part of commonFlags.
 type buildFlags struct {
 	onlyCRDs bool
+	stream   bool
 }
 
 func bindBuildFlags(fs *pflag.FlagSet, b *buildFlags) {
 	fs.BoolVar(&b.onlyCRDs, "only-crds", false,
 		"emit only CustomResourceDefinition resources (implies --skip-crds=false)")
+	fs.BoolVar(&b.stream, "stream", false,
+		"emit each resource's YAML the moment it finishes reconciling (completion order, "+
+			"same doc set as the default buffered output; YAML only)")
 }
 
 func newBuildCmd() *cobra.Command {
@@ -54,28 +60,45 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
 			applyBuildFlags(c, b)
+			if b.stream && format.Output(c.output) == format.OutputJSON {
+				return errors.New("--stream requires YAML output (a JSON array cannot stream)")
+			}
 			stopProfile, err := startProfile(c.profileMode, c.profileOut)
 			if err != nil {
 				return err
 			}
 			defer stopProfile()
-			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			name := firstArg(argv)
+			// --stream: attach the live emitter before Render so each
+			// resource's docs hit stdout the moment it is known-done.
+			var se *streamEmitter
+			var pre []func(*orchestrator.Orchestrator) store.Unsubscribe
+			if b.stream {
+				pre = append(pre, func(o *orchestrator.Orchestrator) store.Unsubscribe {
+					se = newStreamEmitter(cmd.OutOrStdout(), cmd.ErrOrStderr(), o, kinds, name, c, b)
+					return se.attach(o.Store())
+				})
+			}
+			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h, pre...)
 			if o == nil {
 				return runErr
 			}
-			name := firstArg(argv)
-			docs := []map[string]any{}
 			var emitErr error
-			for _, kind := range kinds {
-				rendered, err := collectRendered(o, res, kind, name, c, b)
-				if err != nil {
-					emitErr = err
-					break
+			if se != nil {
+				emitErr = se.finish(res)
+			} else {
+				docs := []map[string]any{}
+				for _, kind := range kinds {
+					rendered, err := collectRendered(o, res, kind, name, c, b)
+					if err != nil {
+						emitErr = err
+						break
+					}
+					docs = append(docs, rendered...)
 				}
-				docs = append(docs, rendered...)
-			}
-			if emitErr == nil {
-				emitErr = emitDocs(cmd.OutOrStdout(), docs, format.Output(c.output))
+				if emitErr == nil {
+					emitErr = emitDocs(cmd.OutOrStdout(), docs, format.Output(c.output))
+				}
 			}
 			// Per-resource Run failures: emit whatever we rendered, then
 			// flip the exit code so CI pipelines piping `flate build` into
@@ -122,25 +145,10 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 		// A missing entry means the resource didn't render
 		// (failed, suspended, or produced zero docs).
 		mans, ok := res.Manifests[id]
-		if !ok || len(mans) == 0 {
+		if !ok {
 			continue
 		}
-		// Clone-and-sort per-artifact so output is byte-stable across
-		// runs even when a Helm chart uses `range $name, $svc := .Values`
-		// (Go map iteration is randomized — the chart still emits the
-		// same set but in arbitrary order). Sort by (kind, ns, name).
-		// SSA-applied output doesn't care about order; CI / diff
-		// consumers do.
-		docs := slices.Clone(mans)
-		slices.SortStableFunc(docs, compareDocs)
-		if b.onlyCRDs {
-			docs = filterCRDsOnly(docs)
-		} else {
-			// Defensive re-drop. Orchestrator.Render already filters
-			// Result.Manifests at the embed boundary using the same
-			// kind set, so this is a no-op for the normal CLI path.
-			docs = manifest.DropKinds(docs, skipKinds)
-		}
+		docs := emissionDocs(mans, b, skipKinds)
 		if len(docs) == 0 {
 			continue
 		}
@@ -153,6 +161,28 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 		return nil, noNamedError(kind, name)
 	}
 	return out, nil
+}
+
+// emissionDocs turns one resource's rendered manifests into its
+// emission-ready doc batch: clone-and-sort so output is byte-stable across
+// runs even when a Helm chart uses `range $name, $svc := .Values` (Go map
+// iteration is randomized — the chart still emits the same set but in
+// arbitrary order; sort by kind/ns/name), then apply --only-crds or the
+// skip-kinds drop. Shared by the buffered collect and the --stream emitter
+// so the two paths cannot drift. May return an empty slice.
+func emissionDocs(mans []map[string]any, b *buildFlags, skipKinds []string) []map[string]any {
+	if len(mans) == 0 {
+		return nil
+	}
+	docs := slices.Clone(mans)
+	slices.SortStableFunc(docs, compareDocs)
+	if b.onlyCRDs {
+		return filterCRDsOnly(docs)
+	}
+	// Defensive re-drop. Orchestrator.Render already filters
+	// Result.Manifests at the embed boundary using the same kind set, so
+	// this is a no-op for the normal CLI path.
+	return manifest.DropKinds(docs, skipKinds)
 }
 
 // emitDocs writes a sequence of rendered docs as either multi-doc YAML

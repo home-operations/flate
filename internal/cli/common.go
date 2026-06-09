@@ -535,6 +535,12 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestr
 	if err != nil {
 		return nil, nil, err
 	}
+	// Live per-resource progress on stderr (TTY-gated via progressWriter).
+	// Registered before Render so terminal-status lines stream while the
+	// reconcile runs; stdout (the rendered output) is untouched.
+	if progressWriter != nil {
+		defer newProgressReporter(progressWriter).attach(o.Store())()
+	}
 	res, err := o.Render(ctx)
 	// Render nils the result only when Bootstrap fails (Run-time
 	// per-resource failures still produce a non-nil Result). Drop

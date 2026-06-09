@@ -37,12 +37,21 @@ func New(version string) *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
+	root.PersistentFlags().Bool("no-progress", false, "disable the live per-resource progress lines on stderr")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		// Env binding runs first so FLATE_LOG_LEVEL is honored by the
 		// validation below, and downstream RunE bodies see flags that
 		// reflect the merged (CLI > env > default) view.
 		if err := applyEnvVars(cmd); err != nil {
 			return err
+		}
+		// Live progress goes to stderr only when it is an interactive
+		// terminal (pipes/CI/e2e buffers stay clean) and --no-progress is
+		// unset. Mirrors setLogLevel's package-global install below.
+		noProgress, _ := cmd.Flags().GetBool("no-progress")
+		progressWriter = nil
+		if errW := cmd.ErrOrStderr(); !noProgress && writerIsTTY(errW) {
+			progressWriter = errW
 		}
 		lvl, _ := cmd.Flags().GetString("log-level")
 		return setLogLevel(lvl, cmd.ErrOrStderr())

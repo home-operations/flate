@@ -9,6 +9,14 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 )
 
+// helmRepoAuthIdentity is the cache auth tag for a HelmRepository's
+// resolve/blob slots: it folds the SecretRef (basic auth) and CertSecretRef
+// (TLS material) so a public-index resolution can't leak across a different-
+// auth repo that shares the URL. Mirrors oci.authIdentity.
+func helmRepoAuthIdentity(r *manifest.HelmRepository) string {
+	return source.AuthIdentityFromRefs(r.Namespace, r.SecretRef, r.CertSecretRef)
+}
+
 // helmRepoAuthOptions resolves SecretRef credentials for a HelmRepository
 // into helm getter options. Returns nil options when no SecretRef is set
 // (anonymous). Username/password basic auth + optional PassCredentials.

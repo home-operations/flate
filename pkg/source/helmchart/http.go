@@ -17,10 +17,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// fetchHTTPChart pulls a chart from a classic HTTP HelmRepository: download
-// index.yaml (cached per repo), pick the version, fetch the .tgz via helm's
-// getter, store it content-addressed, and return an artifact whose
-// LocalPath is the blob dir containing chart.tgz.
+// fetchHTTPChart pulls a chart from a classic HTTP HelmRepository: resolve the
+// chart name+version to a concrete (version, digest, URL), then fetch the .tgz
+// via helm's getter, store it content-addressed, and return an artifact whose
+// LocalPath is the blob dir containing chart.tgz. A warm run with a fresh
+// on-disk resolution and the blob already cached opens zero sockets.
 func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository, chartName, version string) (*store.SourceArtifact, error) {
 	authOpts, err := f.helmRepoAuthOptions(r)
 	if err != nil {
@@ -33,51 +34,86 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 	defer cleanup()
 	allOpts := slices.Concat(authOpts, tlsOpts)
 
-	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	idx, err := f.fetchIndex(ctx, r.Namespace+"/"+r.Name+"@"+indexURL, indexURL, allOpts)
-	if err != nil {
-		return nil, err
-	}
-	cv, err := idx.Get(chartName, version)
-	if err != nil {
-		return nil, fmt.Errorf("%w: chart %s@%s not found in %s: %v",
-			manifest.ErrObjectNotFound, chartName, version, r.URL, err)
-	}
-	if len(cv.URLs) == 0 {
-		return nil, fmt.Errorf("%w: chart %s@%s in %s has no URLs",
-			manifest.ErrObjectNotFound, chartName, version, r.URL)
-	}
-	chartURL, err := absChartURL(r.URL, cv.URLs[0])
+	res, err := f.resolveChart(ctx, r, chartName, version, allOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	wantDigest := normalizeChartDigest(cv.Digest)
-	if art, ok := f.chartArtifactByDigest(chartURL, cv.Version, wantDigest); ok {
+	if art, ok := f.chartArtifactByDigest(res.ChartURL, res.Version, res.Digest); ok {
 		return art, nil
 	}
-	release, err := f.downloadLocks.Acquire(ctx, chartDownloadKey(r, chartName, cv.Version, chartURL, wantDigest))
+	release, err := f.downloadLocks.Acquire(ctx, chartDownloadKey(r, chartName, res.Version, res.ChartURL, res.Digest))
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	if art, ok := f.chartArtifactByDigest(chartURL, cv.Version, wantDigest); ok {
+	if art, ok := f.chartArtifactByDigest(res.ChartURL, res.Version, res.Digest); ok {
 		return art, nil
 	}
 
-	buf, err := httpGet(chartURL, allOpts)
+	buf, err := httpGet(res.ChartURL, allOpts)
 	if err != nil {
-		return nil, fmt.Errorf("download %s: %w", chartURL, err)
+		return nil, fmt.Errorf("download %s: %w", res.ChartURL, err)
 	}
 	dir, digest, err := f.cache.PutBytes(ctx, buf.Bytes(), "chart.tgz")
 	if err != nil {
-		return nil, fmt.Errorf("store chart %s: %w", chartURL, err)
+		return nil, fmt.Errorf("store chart %s: %w", res.ChartURL, err)
 	}
-	if wantDigest != "" && digest != wantDigest {
+	if res.Digest != "" && digest != res.Digest {
 		return nil, fmt.Errorf("chart %s@%s digest mismatch: index has %s, downloaded %s",
-			chartName, cv.Version, wantDigest, digest)
+			chartName, res.Version, res.Digest, digest)
 	}
-	return httpChartArtifact(chartURL, dir, cv.Version, digest), nil
+	return httpChartArtifact(res.ChartURL, dir, res.Version, digest), nil
+}
+
+// resolveChart maps (chartName, requested version) to a concrete
+// (version, digest, URL) for an HTTP HelmRepository. Three tiers, cheapest
+// first: fetchIndex's in-process index memo (Tier 1), an on-disk resolve slot
+// fresh within spec.interval that skips the network entirely (Tier 2), then a
+// live index.yaml fetch whose result is persisted back to the slot (Tier 3).
+//
+// The slot key uses the RAW requested version, so a semver range and a pin
+// never share a slot — within one spec.interval window the cache deliberately
+// serves the same resolution a live fetch would have at populate time (the OCI
+// mutable-ref / resolve-marker contract, now applied to helm ranges). A pinned
+// exact version resolves identically regardless, so freshness only matters for
+// ranges. The chart .tgz stays content-addressed by digest, so this changes no
+// rendered output — only whether the index is fetched.
+func (f *Fetcher) resolveChart(ctx context.Context, r *manifest.HelmRepository, chartName, version string, opts []getter.Option) (chartResolution, error) {
+	slot, err := f.cache.Slot(ctx, r.URL, "helm-resolve:"+chartName+"@"+version, helmRepoAuthIdentity(r))
+	if err != nil {
+		return chartResolution{}, fmt.Errorf("helm resolve slot for %s: %w", r.URL, err)
+	}
+	defer slot.Release()
+	if slot.Exists {
+		if res, ok := readResolveFresh(slot.Path, r.Interval.Duration); ok {
+			return res, nil
+		}
+	}
+
+	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
+	idx, err := f.fetchIndex(ctx, r.Namespace+"/"+r.Name+"@"+indexURL, indexURL, opts)
+	if err != nil {
+		return chartResolution{}, err
+	}
+	cv, err := idx.Get(chartName, version)
+	if err != nil {
+		return chartResolution{}, fmt.Errorf("%w: chart %s@%s not found in %s: %v",
+			manifest.ErrObjectNotFound, chartName, version, r.URL, err)
+	}
+	if len(cv.URLs) == 0 {
+		return chartResolution{}, fmt.Errorf("%w: chart %s@%s in %s has no URLs",
+			manifest.ErrObjectNotFound, chartName, version, r.URL)
+	}
+	chartURL, err := absChartURL(r.URL, cv.URLs[0])
+	if err != nil {
+		return chartResolution{}, err
+	}
+	res := chartResolution{Version: cv.Version, Digest: normalizeChartDigest(cv.Digest), ChartURL: chartURL}
+	if err := persistResolve(slot, res); err != nil {
+		return chartResolution{}, err
+	}
+	return res, nil
 }
 
 // chartArtifactByDigest returns the cached chart artifact when the index

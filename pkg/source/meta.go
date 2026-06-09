@@ -30,6 +30,17 @@ type SlotMeta struct {
 	// validated against; empty when verify is unconfigured. A mismatch on the
 	// next reconcile forces re-verify.
 	Verified string `json:"verified,omitempty"`
+
+	// ChartVersion, ChartDigest, ChartURL record a HelmRepository HTTP chart
+	// resolution (the concrete version, bare-hex tarball sha256, and absolute
+	// .tgz URL the repo's index.yaml resolved a chart name+version to). They
+	// live on a dedicated "helm-resolve:" slot so a warm run skips the live
+	// index.yaml fetch within spec.interval. Named distinctly from the OCI
+	// Digest so a slot never aliases the two. ChartDigest may be empty for a
+	// digest-less (mutable) index entry.
+	ChartVersion string `json:"chartVersion,omitempty"`
+	ChartDigest  string `json:"chartDigest,omitempty"`
+	ChartURL     string `json:"chartURL,omitempty"`
 }
 
 // WriteSlotMeta persists meta into slotDir atomically (temp file + fsync +

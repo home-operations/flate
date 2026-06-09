@@ -48,8 +48,7 @@ func (o *Orchestrator) dagSchedulable(id manifest.NamedResource) bool {
 }
 
 // seedNodes returns every file-loaded reconcilable + source object currently in
-// the store — the scheduler's initial frontier, replacing the event engine's
-// flush=true listener replay.
+// the store — the scheduler's initial frontier.
 func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 	var ids []manifest.NamedResource
 	for _, kind := range reconcilableKinds {

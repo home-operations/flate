@@ -22,7 +22,7 @@ const (
 	// ClassReady means the dependency is satisfied; the consumer may proceed.
 	ClassReady ClassKind = iota
 	// ClassFailed means the dependency is terminally unsatisfiable; Message
-	// carries the byte-exact reason the event engine would record.
+	// carries the canonical terminal reason for the failure.
 	ClassFailed
 	// ClassBlocked means the dependency is not yet satisfied but possibly
 	// producible; the scheduler parks the consumer keyed on it.
@@ -35,14 +35,13 @@ type Classification struct {
 	Message string // populated only for ClassFailed
 }
 
-// Classify resolves dep for the dag engine WITHOUT blocking, reusing the same
-// readiness predicates as the blocking Watch path (readyNow, depExists, the
-// ReadyExpr evaluator, Existence.Promote) so dag gate semantics are
-// byte-identical to the event engine's. drainLevel escalates how an unsatisfied
-// dependency is treated at the structural fixpoint and selects the canonical
-// terminal message — matching what the event engine produces at quiescence:
-// notFound ("dependency not found"), the raw stored Failed message, ErrQuiesced
-// ("not ready"), and the readyExpr strings.
+// Classify resolves dep for the dag engine WITHOUT blocking, reusing the shared
+// readiness predicates (readyNow, depExists, the ReadyExpr evaluator,
+// Existence.Promote). drainLevel escalates how an unsatisfied dependency is
+// treated at the structural fixpoint and selects the canonical terminal
+// message: notFound ("dependency not found"), the raw stored Failed message,
+// "not ready" (a present-Pending dep at the force level), and the readyExpr
+// strings.
 //
 // MUST run on a worker goroutine (it reads the store) — never under the
 // scheduler's mutex.
@@ -86,9 +85,8 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel int) Classifica
 		return Classification{Kind: ClassReady}
 	}
 
-	// 5. Present and Failed: cascade immediately with the raw stored message
-	//    (no FailedGrace under dag) — base.DepFailed wraps it into the same
-	//    DependencyFailedError the event engine builds.
+	// 5. Present and Failed: cascade immediately with the raw stored message —
+	//    base.DepFailed wraps it into a DependencyFailedError.
 	if info, ok := w.Store.GetStatus(id); ok && info.Status == store.StatusFailed {
 		return Classification{Kind: ClassFailed, Message: info.Message}
 	}
@@ -119,7 +117,7 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel int) Classifica
 			return Classification{Kind: ClassBlocked}
 		}
 		// Replace mode (the default): the CEL IS the readiness check, so at the
-		// fixpoint a never-true CEL is the event engine's "readyExpr timeout".
+		// fixpoint a never-true CEL fails with the canonical "readyExpr timeout".
 		if drainLevel >= drainCascade {
 			return Classification{Kind: ClassFailed, Message: "readyExpr timeout: context deadline exceeded"}
 		}
@@ -128,7 +126,7 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel int) Classifica
 
 	// 7. Present and Pending: block. A parked producer will terminalize and the
 	//    cascade carries its real message upward; only a cross-kind cycle
-	//    reaches drainForce, where it fails "not ready" (matches ErrQuiesced).
+	//    reaches drainForce, where it fails "not ready".
 	if drainLevel >= drainForce {
 		return Classification{Kind: ClassFailed, Message: "not ready"}
 	}

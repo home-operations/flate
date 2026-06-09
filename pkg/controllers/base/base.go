@@ -455,13 +455,9 @@ func RequireRefresh[T manifest.BaseManifest](
 // single-sourcing it keeps the failure shape consistent across controllers.
 func DepFailed(id manifest.NamedResource) func(depwait.Summary) error {
 	return func(sum depwait.Summary) error {
-		// Sort the failed-dep list so the rendered DependencyFailedError
-		// message is deterministic across runs AND identical between the two
-		// engines: the event engine's WaitAll collects failures in
-		// nondeterministic channel-receive order, while the dag engine collects
-		// them in dep-slice order. Sorting here normalizes both (and fixes a
-		// latent event-engine nondeterminism for multi-failed-dependency
-		// resources).
+		// Sort the failed-dep list so the rendered DependencyFailedError message
+		// lists dependencies in a canonical order — independent of dependsOn
+		// declaration order, and deterministic across runs.
 		slices.SortFunc(sum.Failed, func(a, b manifest.NamedResource) int { return a.Compare(b) })
 		return &manifest.DependencyFailedError{
 			Parent:  id,
@@ -523,9 +519,7 @@ func RunWithStatus[T manifest.BaseManifest](
 // terminalized (Ready / Skipped / Failed). It intercepts a *depwait.ErrBlocked
 // returned by the body BEFORE the generic Failed-status write, leaving the
 // Pending status the body's Require wrote — so a blocked node stays non-Ready
-// and re-runnable. Under the event engine the body never returns ErrBlocked, so
-// the returned slice is always nil and behavior is byte-identical to the prior
-// RunWithStatus.
+// and re-runnable.
 func RunWithStatusOutcome[T manifest.BaseManifest](
 	ctx context.Context,
 	s *store.Store,
@@ -546,11 +540,9 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 		return nil
 	}
 	if err := fn(ctx, obj); err != nil {
-		// dag-only: a dependency gate is unsatisfied. Surface the blocked deps
-		// WITHOUT writing Failed — the node keeps the Pending status Require
-		// wrote and stays parkable + re-runnable. Provably unreachable under the
-		// event engine (Await blocks instead of returning ErrBlocked), so the
-		// event path is byte-identical.
+		// A dependency gate is unsatisfied. Surface the blocked deps WITHOUT
+		// writing Failed — the node keeps the Pending status Require wrote and
+		// stays parkable + re-runnable.
 		var blocked *depwait.ErrBlocked
 		if errors.As(err, &blocked) {
 			return blocked.Deps

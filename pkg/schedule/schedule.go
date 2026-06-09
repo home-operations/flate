@@ -9,9 +9,9 @@
 // returns and before the scheduler decrements its in-flight count. Therefore
 // when no body is in flight and the runnable frontier is empty, no new object
 // can ever appear — so any still-parked node's dependencies are provably
-// unproducible. A draining sweep then terminalizes those nodes with the same
-// "dependency not found" / cascade / "not ready" statuses the event engine
-// produces at quiescence. There is no per-dependency timeout and no shared
+// unproducible. A draining sweep then terminalizes those nodes with the
+// canonical "dependency not found" / cascade / "not ready" statuses. There is
+// no per-dependency timeout and no shared
 // quiescence counter, so the #666 transient-drain false-drop cannot occur: a
 // parked node is never counted in flight, and nothing drops it except the
 // fixpoint, which only fires when nothing is running.
@@ -57,12 +57,12 @@ const (
 	// DrainCascade: an absent dependency (and a never-true ReadyExpr)
 	// terminalizes as a failure; a present-but-Pending dependency still
 	// parks, so a dangling chain fails leaf-first and each level cascades
-	// the child's real terminal message upward (matching the event engine).
+	// the child's real terminal message upward.
 	DrainCascade = 1
 	// DrainForce: a present-but-Pending dependency ALSO terminalizes ("not
 	// ready"). Reached only when a DrainCascade pass made no progress — i.e.
 	// a cross-kind structural cycle the same-kind preflight detector cannot
-	// represent. Breaks the cycle the way the event engine's quiescence does.
+	// represent; forcing the failure breaks it.
 	DrainForce = 2
 )
 

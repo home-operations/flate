@@ -22,8 +22,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 		return nil, nil
 	}
 	if f.Secrets == nil {
-		return nil, fmt.Errorf("GitRepository %s/%s references secretRef but no SecretGetter is wired",
-			repo.Namespace, repo.Name)
+		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", gitID(repo))
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
@@ -41,8 +40,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 		user := sshUserFromURL(repo.URL)
 		auth, err := gitssh.NewPublicKeys(user, []byte(identity), password)
 		if err != nil {
-			return nil, fmt.Errorf("GitRepository %s/%s: parse SSH identity: %w",
-				repo.Namespace, repo.Name, err)
+			return nil, fmt.Errorf("%s: parse SSH identity: %w", gitID(repo), err)
 		}
 		// Flate has no central known_hosts. If the secret carries one,
 		// enforce strict host-key checking; otherwise skip (offline
@@ -51,8 +49,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 		if kh := source.StringFromSecret(sec, "known_hosts"); kh != "" {
 			cb, herr := knownHostsCallback([]byte(kh))
 			if herr != nil {
-				return nil, fmt.Errorf("GitRepository %s/%s: parse known_hosts: %w",
-					repo.Namespace, repo.Name, herr)
+				return nil, fmt.Errorf("%s: parse known_hosts: %w", gitID(repo), herr)
 			}
 			auth.HostKeyCallback = cb
 		} else {

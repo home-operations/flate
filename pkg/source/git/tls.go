@@ -50,8 +50,8 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (*tls.Config, error) 
 	}
 	cfg, err := source.BuildTLSConfig(crt, key, ca)
 	if err != nil {
-		return nil, fmt.Errorf("GitRepository %s/%s: secretRef %s/%s: %w",
-			repo.Namespace, repo.Name, repo.Namespace, repo.SecretRef.Name, err)
+		return nil, fmt.Errorf("%s: secretRef %s/%s: %w",
+			gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
 	}
 	return cfg, nil
 }

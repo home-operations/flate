@@ -23,20 +23,10 @@ import (
 // cosign.
 var digestRE = regexp.MustCompile(`^[a-z0-9]+:[a-fA-F0-9]{32,}$`)
 
-// updateSlotMeta read-modify-writes the slot's meta sidecar: read the current
-// SlotMeta (preserving fields the caller leaves alone), apply mutate, write it
-// back. Both marker writers run under the slot lock (cache.Slot serializes per
-// key), so the RMW has a single writer.
-func updateSlotMeta(slot string, mutate func(*source.SlotMeta)) error {
-	m, _ := source.ReadSlotMeta(slot)
-	mutate(&m)
-	return source.WriteSlotMeta(slot, m)
-}
-
 // writeCachedDigest records digest in the slot's meta sidecar, preserving any
 // existing verify fingerprint.
 func writeCachedDigest(slot, digest string) error {
-	return updateSlotMeta(slot, func(m *source.SlotMeta) { m.Digest = digest })
+	return source.UpdateSlotMeta(slot, func(m *source.SlotMeta) { m.Digest = digest })
 }
 
 // readCachedDigest returns the slot's recorded digest only when it is
@@ -79,7 +69,7 @@ func verifyFingerprint(v *manifest.OCIRepositoryVerify) string {
 // writeVerifyMarker records the verify-policy fingerprint in the slot's meta
 // sidecar, preserving the digest. Called only after a successful verification.
 func writeVerifyMarker(slot, fingerprint string) error {
-	return updateSlotMeta(slot, func(m *source.SlotMeta) { m.Verified = fingerprint })
+	return source.UpdateSlotMeta(slot, func(m *source.SlotMeta) { m.Verified = fingerprint })
 }
 
 // readVerifyMarker returns the slot's recorded verify fingerprint, or "" when

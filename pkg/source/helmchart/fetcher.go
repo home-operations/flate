@@ -85,8 +85,8 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 	}
 	r := f.repos(hc.Namespace, hc.SourceRef.Name)
 	if r == nil {
-		return nil, fmt.Errorf("%w: HelmRepository %s/%s backing HelmChart %s",
-			manifest.ErrObjectNotFound, hc.Namespace, hc.SourceRef.Name, hc.Named().String())
+		return nil, fmt.Errorf("%w: %s backing HelmChart %s", manifest.ErrObjectNotFound,
+			source.QualifiedName("HelmRepository", hc.Namespace, hc.SourceRef.Name), hc.Named().String())
 	}
 	if isOCIHelmRepo(r) {
 		// Delegate to the OCI fetcher via a synthesized OCIRepository. The
@@ -104,6 +104,12 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 		return art, nil
 	}
 	return f.fetchHTTPChart(ctx, r, hc.Chart, hc.Version)
+}
+
+// helmID is the "HelmRepository <namespace>/<name>" error prefix, via the
+// shared source.QualifiedName so every fetcher formats kind/ns/name identically.
+func helmID(r *manifest.HelmRepository) string {
+	return source.QualifiedName("HelmRepository", r.Namespace, r.Name)
 }
 
 // Synthesize builds an in-memory HelmChart for a single chart served by a

@@ -27,8 +27,8 @@ func (f *Fetcher) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Opti
 	if f.secrets == nil {
 		// Same sentinel as "secret not found" so --allow-missing-secrets
 		// covers both shapes — the dependency is equally unresolved.
-		return nil, fmt.Errorf("%w: HelmRepository %s/%s references secretRef but no SecretGetter is wired",
-			manifest.ErrMissingSecret, r.Namespace, r.Name)
+		return nil, fmt.Errorf("%w: %s references secretRef but no SecretGetter is wired",
+			manifest.ErrMissingSecret, helmID(r))
 	}
 	sec := f.secrets(r.Namespace, r.SecretRef.Name)
 	if sec == nil {
@@ -63,8 +63,7 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 		// ErrMissingSecret wrap, which --allow-missing-secrets would soft-skip):
 		// silently dropping TLS material is a security downgrade. Mirrors
 		// source.ResolveCertSecret, the canonical cross-kind cert helper.
-		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s references certSecretRef but no SecretGetter is wired",
-			r.Namespace, r.Name)
+		return nil, noCleanup, fmt.Errorf("%s references certSecretRef but no SecretGetter is wired", helmID(r))
 	}
 	sec := f.secrets(r.Namespace, r.CertSecretRef.Name)
 	if sec == nil {
@@ -95,8 +94,8 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 		cleanup()
 		// A secret present but carrying none of the TLS keys is malformed
 		// config — fail loud (no ErrMissingSecret wrap), like BuildTLSConfig.
-		return nil, noCleanup, fmt.Errorf("HelmRepository %s/%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
-			r.Namespace, r.Name, r.Namespace, r.CertSecretRef.Name)
+		return nil, noCleanup, fmt.Errorf("%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
+			helmID(r), r.Namespace, r.CertSecretRef.Name)
 	}
 	return []getter.Option{getter.WithTLSClientConfig(paths[0], paths[1], paths[2])}, cleanup, nil
 }

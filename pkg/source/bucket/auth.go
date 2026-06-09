@@ -49,12 +49,11 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 		return credentials.NewStaticV4("", "", ""), nil
 	}
 	if f.Secrets == nil {
-		return nil, fmt.Errorf("bucket %s/%s references secretRef but no SecretGetter is wired",
-			b.Namespace, b.Name)
+		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", bucketID(b))
 	}
 	sec := f.Secrets(b.Namespace, b.SecretRef.Name)
 	if sec == nil {
-		return nil, source.MissingSecretErr("bucket", b.Namespace, b.Name, b.SecretRef.Name, "not found")
+		return nil, source.MissingSecretErr("Bucket", b.Namespace, b.Name, b.SecretRef.Name, "not found")
 	}
 	access := source.StringFromSecret(sec, "accesskey")
 	secret := source.StringFromSecret(sec, "secretkey")
@@ -62,7 +61,7 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 		// Empty covers both missing-key and PLACEHOLDER-wiped values
 		// (the ExternalSecret case). Same sentinel so
 		// --allow-missing-secrets covers both shapes.
-		return nil, source.MissingSecretErr("bucket", b.Namespace, b.Name, b.SecretRef.Name, "missing accesskey/secretkey")
+		return nil, source.MissingSecretErr("Bucket", b.Namespace, b.Name, b.SecretRef.Name, "missing accesskey/secretkey")
 	}
 	return credentials.NewStaticV4(access, secret, ""), nil
 }

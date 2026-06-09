@@ -13,9 +13,10 @@ import (
 // the caller's ApplyIgnore wipes .git/, so a cache-hit check can validate the
 // slot without re-running git.PlainOpen on a tree whose .git/ is gone.
 
-// writeCachedRevision records rev in the slot's meta sidecar (atomic).
+// writeCachedRevision records rev in the slot's meta sidecar (atomic),
+// preserving any other fields.
 func writeCachedRevision(slot, rev string) error {
-	return source.WriteSlotMeta(slot, source.SlotMeta{Revision: rev})
+	return source.UpdateSlotMeta(slot, func(m *source.SlotMeta) { m.Revision = rev })
 }
 
 // readCachedRevision returns the slot's recorded commit SHA, or "" when the

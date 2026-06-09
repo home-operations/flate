@@ -58,11 +58,11 @@ func readResolveFresh(slotDir string, maxAge time.Duration) (chartResolution, bo
 // writeResolve records r in the slot's meta sidecar, preserving any other
 // fields (none today on a resolve slot — it carries only the Chart* triple).
 func writeResolve(slotDir string, r chartResolution) error {
-	m, _ := source.ReadSlotMeta(slotDir)
-	m.ChartVersion = r.Version
-	m.ChartDigest = r.Digest
-	m.ChartURL = r.ChartURL
-	return source.WriteSlotMeta(slotDir, m)
+	return source.UpdateSlotMeta(slotDir, func(m *source.SlotMeta) {
+		m.ChartVersion = r.Version
+		m.ChartDigest = r.Digest
+		m.ChartURL = r.ChartURL
+	})
 }
 
 // persistResolve writes r into the resolve slot atomically (stage on a cache

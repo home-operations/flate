@@ -97,8 +97,18 @@ func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*stor
 // hint is a short parenthetical that names what the supported provider
 // expects (e.g. "SecretRef-based credentials" or "S3-compatible").
 func ErrUnsupportedProvider(kind, namespace, name, got, want, hint string) error {
-	return fmt.Errorf("%s %s/%s provider %q is not implemented; flate currently supports only %q (%s)",
-		kind, namespace, name, got, want, hint)
+	return fmt.Errorf("%s provider %q is not implemented; flate currently supports only %q (%s)",
+		QualifiedName(kind, namespace, name), got, want, hint)
+}
+
+// QualifiedName is the canonical "<Kind> <namespace>/<name>" identifier the
+// per-kind fetchers prefix their error messages with — one helper so the
+// "Kind ns/name" shape can't drift across fetchers (git, oci, bucket, and
+// helmchart each wrap it as gitID/ociID/…). This is the slash form for
+// human-readable errors, distinct from RepoName()'s "ns-name" Flux resource
+// identifier used for cache slots and auth scopes.
+func QualifiedName(kind, namespace, name string) string {
+	return kind + " " + namespace + "/" + name
 }
 
 // CacheKeyHash marshals v to JSON, sha256-hashes the bytes, and returns

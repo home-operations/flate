@@ -69,10 +69,10 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*sto
 }
 
 // ociID is the "OCIRepository <namespace>/<name>" prefix shared by this
-// package's error messages — one helper so the prefix can't drift across the
-// ~dozen wrap sites. RepoName already yields "<namespace>/<name>".
+// package's error messages — wraps source.QualifiedName so every fetcher
+// formats its kind/ns/name identically.
 func ociID(repo *manifest.OCIRepository) string {
-	return "OCIRepository " + repo.RepoName()
+	return source.QualifiedName("OCIRepository", repo.Namespace, repo.Name)
 }
 
 // authIdentity returns the cache-key auth tag for an OCIRepository.

@@ -54,6 +54,18 @@ func WriteSlotMeta(slotDir string, meta SlotMeta) error {
 	return atomic.WriteFile(filepath.Join(slotDir, SlotMetaFile), b, 0o600, true)
 }
 
+// UpdateSlotMeta read-modify-writes the slot's sidecar: read the current
+// SlotMeta (preserving fields the caller leaves alone), apply mutate, write it
+// back. Marker writers run under the slot lock (cache.Slot serializes per key),
+// so the RMW has a single writer. Shared by the per-kind fetchers (oci digest +
+// verify fingerprint, helmchart chart resolution, git revision) so each records
+// its facts without clobbering the others.
+func UpdateSlotMeta(slotDir string, mutate func(*SlotMeta)) error {
+	m, _ := ReadSlotMeta(slotDir)
+	mutate(&m)
+	return WriteSlotMeta(slotDir, m)
+}
+
 // ReadSlotMeta returns the slot's sidecar. A missing, unreadable, or unparseable
 // sidecar yields ok=false — all three mean "no usable marker", so the caller
 // rebuilds. Atomic writes guarantee the file is either absent or complete, so a

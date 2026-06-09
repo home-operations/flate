@@ -34,29 +34,9 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 			"S3-compatible")
 	}
 
-	creds, err := f.resolveCredentials(b)
+	client, endpoint, secure, err := f.newMinioClient(b)
 	if err != nil {
 		return nil, err
-	}
-
-	endpoint, secure, err := normalizeEndpoint(b.Endpoint, b.Insecure)
-	if err != nil {
-		return nil, err
-	}
-
-	transport, err := f.resolveTransport(b)
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := minio.New(endpoint, &minio.Options{
-		Creds:     creds,
-		Secure:    secure,
-		Region:    b.Region,
-		Transport: transport,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("bucket %s/%s: minio client: %w", b.Namespace, b.Name, err)
 	}
 
 	// Cache key: bucket+prefix. Unlike OCI / Git, the bucket fetcher
@@ -70,20 +50,20 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 	// slot on success.
 	slot, err := f.Cache.Slot(ctx, endpoint+"/"+b.BucketName, b.Prefix, authIdentity(b))
 	if err != nil {
-		return nil, fmt.Errorf("bucket %s/%s cache slot: %w", b.Namespace, b.Name, err)
+		return nil, fmt.Errorf("%s cache slot: %w", bucketID(b), err)
 	}
 	defer slot.Release()
 	if slot.Exists {
 		// Drop the prior committed slot and re-stage so the upcoming
 		// walk writes into an empty staging dir.
 		if err := slot.Refresh(); err != nil {
-			return nil, fmt.Errorf("bucket %s/%s refresh: %w", b.Namespace, b.Name, err)
+			return nil, fmt.Errorf("%s refresh: %w", bucketID(b), err)
 		}
 	}
 
 	keys, revHash, err := walkBucket(ctx, client, b.BucketName, b.Prefix, slot.Path)
 	if err != nil {
-		return nil, fmt.Errorf("bucket %s/%s walk: %w", b.Namespace, b.Name, err)
+		return nil, fmt.Errorf("%s walk: %w", bucketID(b), err)
 	}
 	// Bucket uses the no-defaults ignore variant — matches upstream
 	// source-controller's bucket_controller.go, which constructs an
@@ -91,10 +71,10 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 	// object stores with no VCS semantics; .jpg / .flux.yaml / etc.
 	// are legitimate content and must reach the artifact.
 	if err := source.ApplyIgnoreNoDefaults(slot.Path, b.Ignore); err != nil {
-		return nil, fmt.Errorf("bucket %s/%s: %w", b.Namespace, b.Name, err)
+		return nil, fmt.Errorf("%s: %w", bucketID(b), err)
 	}
 	if err := slot.Commit(); err != nil {
-		return nil, fmt.Errorf("bucket %s/%s: commit slot: %w", b.Namespace, b.Name, err)
+		return nil, fmt.Errorf("%s: commit slot: %w", bucketID(b), err)
 	}
 
 	return &store.SourceArtifact{
@@ -106,6 +86,40 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 			"objectCount": strconv.Itoa(len(keys)),
 		},
 	}, nil
+}
+
+// newMinioClient resolves credentials, endpoint, and TLS/proxy transport for b
+// and constructs the minio client. Returns the resolved endpoint + secure flag
+// too, since the slot key and artifact URL both need them.
+func (f *Fetcher) newMinioClient(b *manifest.Bucket) (client *minio.Client, endpoint string, secure bool, err error) {
+	creds, err := f.resolveCredentials(b)
+	if err != nil {
+		return nil, "", false, err
+	}
+	endpoint, secure, err = normalizeEndpoint(b.Endpoint, b.Insecure)
+	if err != nil {
+		return nil, "", false, err
+	}
+	transport, err := f.resolveTransport(b)
+	if err != nil {
+		return nil, "", false, err
+	}
+	client, err = minio.New(endpoint, &minio.Options{
+		Creds:     creds,
+		Secure:    secure,
+		Region:    b.Region,
+		Transport: transport,
+	})
+	if err != nil {
+		return nil, "", false, fmt.Errorf("%s: minio client: %w", bucketID(b), err)
+	}
+	return client, endpoint, secure, nil
+}
+
+// bucketID is the "Bucket <namespace>/<name>" error prefix, via the shared
+// source.QualifiedName so every fetcher formats kind/ns/name identically.
+func bucketID(b *manifest.Bucket) string {
+	return source.QualifiedName("Bucket", b.Namespace, b.Name)
 }
 
 // authIdentity returns the cache-key auth tag for a Bucket. Combines

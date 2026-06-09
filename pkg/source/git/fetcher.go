@@ -166,7 +166,15 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	if f.canUseMirror(repo) {
 		return f.fetchViaMirror(ctx, repo, refLabel, slot, auth, proxy)
 	}
+	return f.cloneIntoSlot(ctx, repo, refLabel, slot, auth, proxy)
+}
 
+// cloneIntoSlot runs the legacy full-clone path into the slot's staging dir:
+// PlainClone (with optional shallow/submodule), fetch any explicit named ref,
+// checkout the requested ref (honoring sparse paths), recurse submodules, then
+// finalize (verify + ignore + marker) and commit. The mirror-path counterpart
+// is fetchViaMirror; fetch() picks between them via canUseMirror.
+func (f *Fetcher) cloneIntoSlot(ctx context.Context, repo *manifest.GitRepository, refLabel string, slot *source.Slot, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
 	url := repo.URL
 	// file:// URLs are accepted by go-git as bare filesystem paths.
 	if rest, ok := strings.CutPrefix(url, "file://"); ok {
@@ -225,7 +233,7 @@ func validateRepo(repo *manifest.GitRepository) error {
 		return errors.New("git repository is nil")
 	}
 	if repo.URL == "" {
-		return fmt.Errorf("%w: GitRepository %s missing url", manifest.ErrInput, repo.RepoName())
+		return fmt.Errorf("%w: %s missing url", manifest.ErrInput, gitID(repo))
 	}
 	return nil
 }
@@ -336,7 +344,7 @@ func (f *Fetcher) finalize(repo *manifest.GitRepository, art *store.SourceArtifa
 // .git/ was wiped by the ignore step.
 func applyIgnoreAndMark(repo *manifest.GitRepository, art *store.SourceArtifact) error {
 	if err := source.ApplyIgnore(art.LocalPath, repo.Ignore); err != nil {
-		return fmt.Errorf("GitRepository %s/%s: %w", repo.Namespace, repo.Name, err)
+		return fmt.Errorf("%s: %w", gitID(repo), err)
 	}
 	if art.Revision != "" {
 		_ = writeCachedRevision(art.LocalPath, art.Revision)
@@ -389,7 +397,7 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 	}
 	hash, err := resolveRefHash(mirrorRepo, repo.Reference)
 	if err != nil {
-		return nil, fmt.Errorf("GitRepository %s/%s ref %q: %w", repo.Namespace, repo.Name, refStr, err)
+		return nil, fmt.Errorf("%s ref %q: %w", gitID(repo), refStr, err)
 	}
 	// Walk the tree at hash and write every blob into the slot's staging
 	// dir via the shared gittree.Materialize helper. Submodule entries
@@ -472,6 +480,12 @@ func singleMirrorRefSpec(src string) mirror.FetchPlan {
 	return mirror.FetchPlan{RefSpecs: []config.RefSpec{config.RefSpec("+" + src + ":" + src)}}
 }
 
+// gitID is the "GitRepository <namespace>/<name>" error prefix, via the shared
+// source.QualifiedName so every fetcher formats kind/ns/name identically.
+func gitID(repo *manifest.GitRepository) string {
+	return source.QualifiedName("GitRepository", repo.Namespace, repo.Name)
+}
+
 // authIdentity returns the cache-key auth tag for a GitRepository.
 // Combines the SecretRef (HTTPS / SSH creds) and ProxySecretRef the
 // fetcher binds. Returns "" for anonymous clones so they share slots
@@ -497,7 +511,7 @@ func proxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
 // which finalize the slot identically once materialization is done.
 func commitArtifact(repo *manifest.GitRepository, slot *source.Slot, art *store.SourceArtifact) (*store.SourceArtifact, error) {
 	if err := slot.Commit(); err != nil {
-		return nil, fmt.Errorf("GitRepository %s/%s: commit slot: %w", repo.Namespace, repo.Name, err)
+		return nil, fmt.Errorf("%s: commit slot: %w", gitID(repo), err)
 	}
 	art.LocalPath = slot.Path
 	return art, nil

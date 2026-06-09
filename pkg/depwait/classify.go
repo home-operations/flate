@@ -57,12 +57,11 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel int) Classifica
 	}
 
 	// 2. A ReadyExpr that COMPILE-fails is permanently unsatisfiable regardless
-	//    of dependency state or drain level (matches watchReadyExpr's immediate
-	//    compile-error return). A transient eval error (missing attribute)
-	//    returns done=false and falls through.
+	//    of dependency state or drain level. A transient eval error (missing
+	//    attribute) returns no failMsg and falls through.
 	if dep.ReadyExpr != "" {
-		if ev, done := w.tryReadyExpr(dep.ReadyExpr, id); done && ev.Status == DepFailed {
-			return Classification{Kind: ClassFailed, Message: ev.Reason}
+		if _, failMsg := w.tryReadyExpr(dep.ReadyExpr, id); failMsg != "" {
+			return Classification{Kind: ClassFailed, Message: failMsg}
 		}
 	}
 
@@ -97,10 +96,9 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel int) Classifica
 	// 6. Present with a ReadyExpr that readyNow rejected.
 	if dep.ReadyExpr != "" {
 		// Additive mode (Flux AdditiveCELDependencyCheck=true): the built-in
-		// Ready check AND the CEL must both hold — mirroring watchOne's
-		// post-WatchReady additive evaluation. When the built-in status is
+		// Ready check AND the CEL must both hold. When the built-in status is
 		// already Ready, the CEL is the blocker, so evaluate it now and return
-		// the byte-exact event-engine result rather than blocking/timing out.
+		// the byte-exact Flux result rather than blocking forever.
 		// (Unreachable today: NewWaiter never sets AdditiveReadyExpr; kept so
 		// the dag engine stays byte-equivalent if that feature gate is wired.)
 		if w.AdditiveReadyExpr {

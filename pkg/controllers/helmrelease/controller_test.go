@@ -55,6 +55,22 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	return c, st
 }
 
+// dispatchToFixpoint drives id through ReconcileNode with escalating drain
+// levels (none→cascade→force), mirroring the scheduler's structural fixpoint,
+// until the node terminalizes (no blocked deps) or drain is exhausted, then
+// returns the final store status. Synchronous — replaces the event engine's
+// AddObject→listener→WaitForStatus dispatch in unit tests.
+func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
+	t.Helper()
+	for _, drain := range []int{0, 1, 2} {
+		if blocked, _ := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
+			break
+		}
+	}
+	info, _ := st.GetStatus(id)
+	return info
+}
+
 func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	c, st := newTestController(t, nil)
 	st.AddObject(&manifest.HelmRepository{
@@ -254,14 +270,17 @@ func TestMaterializeHelmChartSource_EmptyVersion(t *testing.T) {
 }
 
 func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
-	_, st := newTestController(t, nil)
+	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		HelmReleaseSpec: helmv2.HelmReleaseSpec{Suspend: true},
 	}
 	st.AddObject(hr)
 
-	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusReady)
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	if info.Message != "suspended" {
 		t.Errorf("expected suspended; got %q", info.Message)
 	}
@@ -274,11 +293,14 @@ func TestController_FilterUnchangedShortCircuitsToReady(t *testing.T) {
 		"",
 		testutil.MapLister{},
 	)
-	_, st := newTestController(t, filter)
+	c, st := newTestController(t, filter)
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default"}
 	st.AddObject(hr)
 
-	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusReady)
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	if info.Message != "unchanged" {
 		t.Errorf("expected unchanged short-circuit; got %q", info.Message)
 	}
@@ -299,7 +321,7 @@ data:
   fallback: {{ .Values.missing | default "fallback" | quote }}
 `)
 
-	_, st := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -340,7 +362,10 @@ data:
 	}
 	st.AddObject(hr)
 
-	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusReady)
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	if store.IsSkipped(info) {
 		t.Fatalf("generated valuesFrom refs should be omitted, not skip the HelmRelease: %+v", info)
 	}
@@ -876,7 +901,7 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  k: v\n")
 
-	_, st := newTestController(t, nil)
+	c, st := newTestController(t, nil)
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -896,7 +921,9 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
-	testutil.WaitForStatus(t, st, hr.Named(), store.StatusReady)
+	if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 
 	var mu sync.Mutex
 	var sawPending bool
@@ -911,16 +938,16 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 		}
 	}, false)
 
-	// Re-emit with stamped ownership labels: HR retains labels so AddObject's
-	// DeepEqual gate fails and the listener re-fires a coalesced re-run, but the
-	// label-insensitive fingerprint matches → dedup-skip no-op.
+	// Re-emit with stamped ownership labels: HR retains labels so the re-read
+	// body re-runs, but the label-insensitive fingerprint matches → dedup-skip
+	// no-op. The second ReconcileNode drives that no-op re-run synchronously.
 	stamped := hr.Clone()
 	stamped.Labels = map[string]string{
 		"kustomize.toolkit.fluxcd.io/name":      "parent",
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	st.AddObject(stamped)
-	time.Sleep(50 * time.Millisecond) // let the coalesced re-run land
+	c.ReconcileNode(context.Background(), hr.Named(), 0)
 
 	mu.Lock()
 	defer mu.Unlock()

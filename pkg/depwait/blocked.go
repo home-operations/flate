@@ -18,10 +18,9 @@ import "github.com/home-operations/flate/pkg/manifest"
 //
 // Deps carries only the dependency identities, not a per-dep reason: the
 // terminal failure message for a dependency that never becomes producible is
-// re-derived structurally at the draining sweep (classifyDep re-reads the final
-// store state), exactly as the event engine's WatchReady / waitRenderEmission
-// re-check their dep at quiescence — so a stale park-time reason would be both
-// redundant and, if the dep's state changed, wrong.
+// re-derived structurally at the draining sweep (Classify re-reads the final
+// store state) — so a stale park-time reason would be both redundant and, if
+// the dep's state changed, wrong.
 type ErrBlocked struct {
 	Deps []manifest.NamedResource
 }

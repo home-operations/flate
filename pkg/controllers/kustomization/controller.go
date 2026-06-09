@@ -54,26 +54,15 @@ type Controller struct {
 // parent-enforcement, matching pre-#102 behavior. RenderTracker
 // receives every reconcilable child this KS emits during render.
 type Options struct {
-	// Engine selects the dependency-gating engine (event vs dag); forwarded to
-	// base.Controller via SetEngine in Configure.
-	Engine        base.EngineMode
 	Filter        *change.Filter
 	ParentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
 	RenderTracker base.RenderTracker
 	// Existence is the file-existence lookup the orchestrator wires
-	// against the loader's ExistenceIndex. depwait uses it to lazy-
+	// against the loader's ExistenceIndex. Classify uses it to lazy-
 	// promote file-indexed deps and to distinguish render-only
-	// deps from typo'd ones at the missing-dep grace boundary. See
-	// depwait.ExistenceLookup for the decision matrix. Forwarded
-	// to every Waiter built during reconcile.
+	// deps from typo'd ones. See depwait.ExistenceLookup for the
+	// decision matrix. Forwarded to every Waiter built during reconcile.
 	Existence depwait.ExistenceLookup
-	// Renders is the quiescence signal the orchestrator wires
-	// against the task service's active-task count. depwait's step-2
-	// long wait short-circuits to "dependency not found" once Renders
-	// reports no other reconcile is in flight — so a typo'd dependsOn
-	// fails as soon as the orchestrator drains instead of burning
-	// the full RenderProducingTimeout cap.
-	Renders depwait.RenderInflight
 	// PreflightFailure reports dependency-graph errors discovered by the
 	// orchestrator before reconcile. When set for an id, the controller
 	// marks the resource Failed and does not render it.
@@ -100,28 +89,19 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 // Start — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
 func (c *Controller) Configure(opts Options) {
-	c.SetEngine(opts.Engine)
 	c.SetFilter(opts.Filter)
-	c.SetDepwait(opts.Existence, opts.Renders)
+	c.SetDepwait(opts.Existence)
 	c.SetPreflight(opts.PreflightFailure)
 	c.SetParentOf(opts.ParentOf)
 	c.SetRenderTracker(opts.RenderTracker)
 	c.selfProduces = opts.SelfProduces
 }
 
-// Start registers the listener that drives reconciliation. Under the dag
-// engine the scheduler owns dispatch (via ReconcileNode), so the event-driven
-// OnReconcile dispatch listener is NOT registered — the orchestrator's dagrun
-// wires its own discovery/wake listeners instead.
-func (c *Controller) Start(ctx context.Context) {
-	c.StartLifecycle("kustomization")
-	if c.DAGEngine() {
-		return
-	}
-	c.AddListener(store.EventObjectAdded, base.OnReconcile(ctx, c.Controller,
-		func(id manifest.NamedResource) bool { return id.Kind == manifest.KindKustomization },
-		func(ks *manifest.Kustomization) bool { return ks.Suspend },
-		"kustomization", c.reconcile))
+// Start wires lifecycle state. The scheduler owns dispatch (via ReconcileNode)
+// and the orchestrator's dagrun wires its own discovery/wake listeners, so
+// Start registers no dispatch listener of its own.
+func (c *Controller) Start(_ context.Context) {
+	c.StartLifecycle()
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
@@ -150,7 +130,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 
 	deps := c.collectDeps(ks)
 	if len(deps) > 0 {
-		// AwaitRefresh fuses the wait with the load-bearing re-read: our
+		// RequireRefresh fuses the gate with the load-bearing re-read: our
 		// structural parent may have re-emitted us with mutated spec (e.g.
 		// `replacements:` injecting spec.targetNamespace) while we were
 		// waiting. Without the refresh the first render would use the

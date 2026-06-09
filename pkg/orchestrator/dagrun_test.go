@@ -49,7 +49,7 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	testutil.WriteFile(t, dir, "produced/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "produced/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: produced}\ndata: {k: v}\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4, Engine: "dag"})
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	testutil.WriteFile(t, dir, "mid/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "mid/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mid}\ndata: {k: v}\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4, Engine: "dag"})
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -103,72 +103,4 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	if !ok || !strings.Contains(midInfo.Message, "leaf") {
 		t.Fatalf("mid: want FAILED cascading leaf's failure, got %+v (ok=%v)", midInfo, ok)
 	}
-}
-
-// TestDAG_StatusParityWithEvent runs the same multi-resource fixture under both
-// engines and asserts an identical Ready set and identical Failed id→message
-// map — the end-to-end byte-equivalence contract, in miniature.
-func TestDAG_StatusParityWithEvent(t *testing.T) {
-	build := func() string {
-		dir := t.TempDir()
-		// A clean root KS, a dependsOn chain (b -> a), and a dangling one.
-		testutil.WriteFile(t, dir, "flux/a.yaml", ksYAML("a", "a", ""))
-		testutil.WriteFile(t, dir, "flux/b.yaml", ksYAML("b", "b", "a"))
-		testutil.WriteFile(t, dir, "flux/c.yaml", ksYAML("c", "c", "nonexistent"))
-		for _, n := range []string{"a", "b", "c"} {
-			testutil.WriteFile(t, dir, n+"/kustomization.yaml", "resources:\n- cm.yaml\n")
-			testutil.WriteFile(t, dir, n+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+n+"}\ndata: {k: v}\n")
-		}
-		return dir
-	}
-	statuses := func(engine string) (ready []string, failed map[string]string) {
-		dir := build()
-		o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4, Engine: engine})
-		if err != nil {
-			t.Fatalf("New(%s): %v", engine, err)
-		}
-		res, _ := o.Render(context.Background())
-		if res == nil {
-			t.Fatalf("Render(%s) returned nil", engine)
-		}
-		failed = map[string]string{}
-		for id, info := range res.Failed {
-			failed[id.String()] = info.Message
-		}
-		for _, kind := range reconcilableKinds {
-			for _, obj := range o.Store().ListObjects(kind) {
-				id := obj.Named()
-				if info, ok := o.Store().GetStatus(id); ok && info.Status == store.StatusReady {
-					ready = append(ready, id.String())
-				}
-			}
-		}
-		return ready, failed
-	}
-	evReady, evFailed := statuses("event")
-	dagReady, dagFailed := statuses("dag")
-
-	if strings.Join(sortedCopy(evReady), ",") != strings.Join(sortedCopy(dagReady), ",") {
-		t.Fatalf("Ready set differs:\n event=%v\n dag=%v", sortedCopy(evReady), sortedCopy(dagReady))
-	}
-	if len(evFailed) != len(dagFailed) {
-		t.Fatalf("Failed count differs: event=%d dag=%d (%v vs %v)", len(evFailed), len(dagFailed), evFailed, dagFailed)
-	}
-	for id, evMsg := range evFailed {
-		if dagMsg, ok := dagFailed[id]; !ok || dagMsg != evMsg {
-			t.Fatalf("Failed[%s] differs:\n event=%q\n dag=%q (ok=%v)", id, evMsg, dagMsg, ok)
-		}
-	}
-}
-
-func sortedCopy(s []string) []string {
-	c := append([]string(nil), s...)
-	for i := range c {
-		for j := i + 1; j < len(c); j++ {
-			if c[j] < c[i] {
-				c[i], c[j] = c[j], c[i]
-			}
-		}
-	}
-	return c
 }

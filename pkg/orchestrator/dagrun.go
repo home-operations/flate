@@ -73,10 +73,10 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	defer o.Stop()
 	sched := schedule.New(o.tasks, dagDispatcher{o})
 
-	// Start the controllers. Under dag this registers lifecycle state + the HR
-	// producer index (flush=true replay), but NOT the OnReconcile dispatch
-	// listeners (the scheduler owns dispatch). No render runs here, so no
-	// children are emitted before the wake adapters below are registered.
+	// Start the controllers. This registers lifecycle state + the HR producer
+	// index (flush=true replay), but no dispatch listeners — the scheduler owns
+	// dispatch. No render runs here, so no children are emitted before the wake
+	// adapters below are registered.
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)
 	o.hrc.Start(ctx)

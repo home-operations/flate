@@ -55,9 +55,45 @@ func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts
 	return c, st
 }
 
+// dispatchToFixpoint drives id through ReconcileNode with escalating drain
+// levels (none→cascade→force), mirroring the scheduler's structural fixpoint,
+// until the node terminalizes (no blocked deps) or drain is exhausted, then
+// returns the final store status. Synchronous — replaces the event engine's
+// AddObject→listener→WaitForStatus dispatch in unit tests.
+//
+// The source reconcile yields its worker slot around the fetch
+// (Tasks.YieldSlot), which corrupts semaphore accounting unless it runs inside
+// a Service.Go body that owns a slot. So each ReconcileNode call is dispatched
+// through c.Tasks.Go exactly as the production scheduler does (schedule.go),
+// and we block on its completion to keep the drive synchronous.
+func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
+	t.Helper()
+	for _, drain := range []int{0, 1, 2} {
+		if reconcileNode(c, id, drain) {
+			break
+		}
+	}
+	info, _ := st.GetStatus(id)
+	return info
+}
+
+// reconcileNode runs one ReconcileNode pass for id inside a Tasks.Go worker
+// (so the body's YieldSlot has a slot to release) and reports whether the node
+// terminalized (no blocked deps).
+func reconcileNode(c *Controller, id manifest.NamedResource, drain int) (terminal bool) {
+	done := make(chan struct{})
+	c.Tasks.Go(context.Background(), "test/"+id.String(), func(ctx context.Context) {
+		blocked, _ := c.ReconcileNode(ctx, id, drain)
+		terminal = len(blocked) == 0
+		close(done)
+	})
+	<-done
+	return terminal
+}
+
 func TestController_FetchesAndStoresArtifact(t *testing.T) {
 	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "u", LocalPath: "/tmp"}}
-	_, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
+	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
 
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
@@ -65,7 +101,10 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
+	info := dispatchToFixpoint(t, c, st, repo.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	if f.calls != 1 {
 		t.Errorf("expected 1 fetch call, got %d", f.calls)
 	}
@@ -76,7 +115,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 
 func TestController_FetchErrorMarksFailed(t *testing.T) {
 	f := &fakeFetcher{err: errors.New("boom")}
-	_, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
+	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
 
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
@@ -84,7 +123,10 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := testutil.WaitForStatus(t, st, repo.Named(), store.StatusFailed)
+	info := dispatchToFixpoint(t, c, st, repo.Named())
+	if info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed", info)
+	}
 	if info.Message != "boom" {
 		t.Errorf("Failed reason = %q, want %q", info.Message, "boom")
 	}
@@ -92,7 +134,7 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 
 func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 	f := &fakeFetcher{}
-	_, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
+	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
 
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
@@ -100,7 +142,10 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
+	info := dispatchToFixpoint(t, c, st, repo.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	if info.Message != "suspended" {
 		t.Errorf("expected suspended message; got %q", info.Message)
 	}
@@ -110,37 +155,41 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 }
 
 func TestController_UnregisteredKindIgnored(t *testing.T) {
-	// Register an OCIRepository fetcher so the controller is alive but
-	// has no entry for KindGitRepository. The AddObject path dispatches
-	// listeners synchronously, so checking status immediately after
-	// AddObject proves the unregistered branch returned without writing
-	// any status — no sleep needed.
+	// Register an OCIRepository fetcher so the controller is alive but has no
+	// entry for KindGitRepository. Under the dag scheduler the source controller
+	// only exposes ReconcileNode for registered kinds (HasFetcher), so the
+	// scheduler never dispatches the GitRepository — it must therefore carry no
+	// status once the registered kind has been reconciled.
 	registered := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindOCIRepository}}
-	_, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: registered})
+	c, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: registered})
 
 	unregistered := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
 		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "https://example/r.git"},
 	}
 	st.AddObject(unregistered)
-	if _, ok := st.GetStatus(unregistered.Named()); ok {
-		t.Errorf("expected no status update for unregistered kind")
-	}
 
-	// Positive control: a registered kind reaches Ready, proving the
-	// dispatcher is alive and the unregistered skip is targeted.
+	// Positive control: a registered kind reaches Ready, proving the controller
+	// is alive and the unregistered skip is targeted.
 	oci := &manifest.OCIRepository{
 		Name: "o", Namespace: "ns",
 		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
 	}
 	st.AddObject(oci)
-	testutil.WaitForStatus(t, st, oci.Named(), store.StatusReady)
+	if info := dispatchToFixpoint(t, c, st, oci.Named()); info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
+
+	// The unregistered kind was never dispatched, so it must have no status.
+	if _, ok := st.GetStatus(unregistered.Named()); ok {
+		t.Errorf("expected no status update for unregistered kind")
+	}
 }
 
 func TestController_AllowMissingSecretsConvertsFailureToSkip(t *testing.T) {
 	f := &fakeFetcher{err: fmt.Errorf("%w: OCIRepository ns/r: secret ns/ghcr-creds not found",
 		manifest.ErrMissingSecret)}
-	_, st := newConfiguredController(t,
+	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f},
 		FetchOptions{AllowMissingSecrets: true})
 
@@ -150,7 +199,10 @@ func TestController_AllowMissingSecretsConvertsFailureToSkip(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
+	info := dispatchToFixpoint(t, c, st, repo.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	if !store.IsSkipped(info) {
 		t.Errorf("expected skipped status, got %+v", info)
 	}
@@ -166,7 +218,7 @@ func TestController_AllowMissingSecretsOffStillFails(t *testing.T) {
 	// Same error, but flag is off — should fail.
 	f := &fakeFetcher{err: fmt.Errorf("%w: OCIRepository ns/r: secret ns/ghcr-creds not found",
 		manifest.ErrMissingSecret)}
-	_, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
+	c, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
 
 	repo := &manifest.OCIRepository{
 		Name: "r", Namespace: "ns",
@@ -174,7 +226,9 @@ func TestController_AllowMissingSecretsOffStillFails(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	testutil.WaitForStatus(t, st, repo.Named(), store.StatusFailed)
+	if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed", info)
+	}
 }
 
 func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
@@ -188,7 +242,7 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 		"",
 		testutil.MapLister{},
 	)
-	_, st := newConfiguredController(t,
+	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindGitRepository: f},
 		FetchOptions{Filter: filter})
 
@@ -198,7 +252,10 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
+	info := dispatchToFixpoint(t, c, st, repo.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	if info.Message != "unchanged" {
 		t.Errorf("expected unchanged short-circuit; got %q", info.Message)
 	}
@@ -218,7 +275,7 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 // Pending at a transient pool drain and drop the release. The source must
 // stay Ready across a no-op re-run.
 func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
-	_, st := newController(t, map[string]src.Fetcher{
+	c, st := newController(t, map[string]src.Fetcher{
 		manifest.KindHelmRepository: src.ExistenceFetcher{},
 	})
 	repo := &manifest.HelmRepository{
@@ -226,7 +283,9 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example", Type: "default"},
 	}
 	st.AddObject(repo)
-	testutil.WaitForStatus(t, st, repo.Named(), store.StatusReady)
+	if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 
 	var mu sync.Mutex
 	var sawPending bool
@@ -241,11 +300,9 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 		}
 	}, false)
 
-	// Re-emit with a benign spec diff (Interval) so AddObject's DeepEqual gate
-	// fails and the listener re-fires a coalesced re-run. (flate's
-	// HelmRepository drops metadata.labels, so a label-only stamp would
-	// DeepEqual-match and NOT re-run — a spec field is required.)
-	// ExistenceFetcher ignores the spec, so this re-run is a no-op fetch.
+	// Re-emit with a benign spec diff (Interval) and drive a second reconcile.
+	// ExistenceFetcher ignores the spec, so this re-run is a no-op fetch that
+	// must keep the source Ready without a transient Pending write.
 	reemit := &manifest.HelmRepository{
 		Name: "charts", Namespace: "flux-system",
 		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
@@ -254,7 +311,7 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 		},
 	}
 	st.AddObject(reemit)
-	time.Sleep(50 * time.Millisecond) // let the coalesced re-run land
+	reconcileNode(c, repo.Named(), 0)
 
 	mu.Lock()
 	defer mu.Unlock()

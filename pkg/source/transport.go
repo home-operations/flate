@@ -17,7 +17,7 @@ import (
 // live link still completes; sized large enough never to trip a live repo.
 // Mirrors helm's helmHTTPTimeout (helm's getter ignores ctx; this covers the
 // ctx-aware git/OCI/bucket transports' header wait). A var so tests can shrink
-// it — mutate only before a run starts (same discipline as store.FailedGrace).
+// it — mutate only before a run starts to stay race-clean.
 var ResponseHeaderTimeout = 120 * time.Second
 
 // NewHTTPTransport composes an *http.Transport for HTTP source fetches: a clone

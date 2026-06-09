@@ -225,8 +225,7 @@ func absChartURL(base, urlStr string) (string, error) {
 // Sized per-request (not per-retry-budget) and large enough that a slow-but-
 // live repo still completes — l7mp.io routinely takes tens of seconds, with
 // an occasional retried EOF — while a dead socket always terminates. A var so
-// tests can shrink it; mutate only before a run starts (same discipline as
-// store.FailedGrace) to stay race-clean.
+// tests can shrink it; mutate only before a run starts to stay race-clean.
 var helmHTTPTimeout = 120 * time.Second
 
 // httpGet fetches url with helm's HTTP getter and the given options. Callers

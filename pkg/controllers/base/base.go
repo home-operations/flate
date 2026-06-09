@@ -50,7 +50,6 @@ type RenderTracker interface {
 //
 // All three concrete controllers carry the same lifecycle shape:
 //   - a started gate so Configure-after-Start is a hard error
-//   - a coalescer so duplicate AddObject events don't double-reconcile
 //   - a filter for changed-only mode
 //   - an unsubscriber list cleared by Close
 //
@@ -58,7 +57,7 @@ type RenderTracker interface {
 // retries, debug-mode toggle) drop into one place and propagate.
 //
 // The KS and HR controllers additionally share depwait configuration
-// (Existence, Renders) and a pre-reconcile preflight check (Preflight,
+// (Existence) and a pre-reconcile preflight check (Preflight,
 // ParentOf). Configure these via SetDepwait / SetPreflight / SetParentOf
 // before Start so reconcile bodies can call NewWaiter, PreflightError,
 // and LookupParent without each controller duplicating the nil-check
@@ -68,7 +67,6 @@ type Controller struct {
 	Tasks *task.Service
 
 	started atomic.Bool
-	coal    *task.Coalescer[manifest.NamedResource]
 	filter  *change.Filter
 
 	// closed is set by Close so any later AddListener short-circuits
@@ -86,22 +84,12 @@ type Controller struct {
 	unsubMu sync.Mutex
 	unsub   []store.Unsubscribe
 
-	// kindLabel prefixes coalescer keys ("source/", "kustomization/",
-	// "helmrelease/"). Set by StartLifecycle.
-	kindLabel string
-
 	// Shared KS/HR depwait and preflight state. Set via SetDepwait,
 	// SetPreflight, SetParentOf. The source controller leaves these nil;
 	// KS and HR configure them before Start via their Configure methods.
 	existence depwait.ExistenceLookup
-	renders   depwait.RenderInflight
 	preflight func(manifest.NamedResource) (string, bool)
 	parentOf  func(manifest.NamedResource) (manifest.NamedResource, bool)
-
-	// engine selects the dependency-gating strategy Require uses. The zero
-	// value (EngineEvent) is the blocking event engine — today's default; the
-	// orchestrator flips it to EngineDAG via SetEngine when --engine=dag.
-	engine EngineMode
 
 	// renderTracker receives every reconcilable/source child a render
 	// emits. Set via SetRenderTracker before Start; read-only after.
@@ -136,10 +124,9 @@ func (c *Controller) SetFilter(f *change.Filter) {
 func (c *Controller) Filter() *change.Filter { return c.filter }
 
 // SetDepwait installs the depwait resolution wires. Panics after Start.
-func (c *Controller) SetDepwait(existence depwait.ExistenceLookup, renders depwait.RenderInflight) {
+func (c *Controller) SetDepwait(existence depwait.ExistenceLookup) {
 	c.requireNotStarted("SetDepwait")
 	c.existence = existence
-	c.renders = renders
 }
 
 // SetPreflight installs the pre-reconcile failure reporter. Panics after Start.
@@ -269,18 +256,16 @@ func (c *Controller) FingerprintDedup(id manifest.NamedResource, fp, logKind str
 }
 
 // NewWaiter constructs a depwait.Waiter pre-wired with the
-// controller's Store, Existence lookup, and Renders quiescence signal,
-// parented to id and budgeted from timeout. HR and KS controllers call
-// this rather than constructing their own Waiter literals so the
-// Existence/Renders wiring is set once in Configure and flows through
-// automatically.
+// controller's Store and Existence lookup, parented to id and budgeted
+// from timeout. HR and KS controllers call this rather than constructing
+// their own Waiter literals so the Existence wiring is set once in
+// Configure and flows through automatically.
 func (c *Controller) NewWaiter(id manifest.NamedResource, timeout *metav1.Duration) *depwait.Waiter {
 	return &depwait.Waiter{
 		Store:     c.Store,
 		Parent:    id,
 		Timeout:   depwait.TimeoutFromSpec(timeout),
 		Existence: c.existence,
-		Renders:   c.renders,
 	}
 }
 
@@ -292,13 +277,11 @@ func (c *Controller) IsFileIndexed(id manifest.NamedResource) bool {
 	return c.existence != nil && c.existence.IsFileIndexed(id)
 }
 
-// StartLifecycle flips the started gate and allocates the coalescer.
-// Concrete controllers call this from their Start(ctx) before
-// installing listeners via AddListener.
-func (c *Controller) StartLifecycle(kindLabel string) {
-	c.kindLabel = kindLabel
+// StartLifecycle flips the started gate, freezing reconcile-shaping
+// config. Concrete controllers call this from their Start(ctx) before
+// installing any listeners via AddListener.
+func (c *Controller) StartLifecycle() {
 	c.started.Store(true)
-	c.coal = task.NewCoalescer[manifest.NamedResource](c.Tasks)
 }
 
 // AddListener registers a store listener and records it so Close can
@@ -348,13 +331,6 @@ func (c *Controller) Close() {
 	}
 }
 
-// Submit enqueues a reconcile body keyed by id. Duplicate submits with
-// the same id coalesce so a re-emit by a parent KS doesn't double the
-// work. Caller-supplied fn runs with panic-recover already installed.
-func (c *Controller) Submit(ctx context.Context, id manifest.NamedResource, fn func(context.Context)) {
-	c.coal.Submit(ctx, c.kindLabel+"/"+id.String(), id, fn)
-}
-
 // PreGate is the canonical Suspend/Filter pre-reconcile check.
 // Returns true when the resource is gated out — caller MUST bail.
 //
@@ -383,130 +359,6 @@ func (c *Controller) filterActive() bool {
 	return c.filter != nil && c.filter.Enabled()
 }
 
-// Await blocks until each dep in deps reaches Ready, yielding the
-// caller's worker-pool slot during the wait so children depended on
-// can themselves acquire a slot and make progress. Centralizes the
-// "set pending → yield → WaitAll → check failed" dance the three
-// concrete controllers each implemented inline; the per-call-site
-// difference (which error sentinel wraps a failed summary) is
-// expressed via onFail.
-//
-// pendingMsg is the StatusPending message written before the wait —
-// surfaces in `flate test` reporting and the orchestrator's failure
-// rollup. Pass an empty string to skip the status write (e.g. when
-// the caller already set its own).
-//
-// onFail receives the depwait Summary on any AnyFailed and returns
-// the error the caller propagates. Use it to pick between
-// manifest.DependencyFailedError, ErrObjectNotFound, etc. — the
-// concrete controllers each have their own conventions.
-func (c *Controller) Await(
-	ctx context.Context,
-	id manifest.NamedResource,
-	w *depwait.Waiter,
-	deps []manifest.DependencyRef,
-	pendingMsg string,
-	onFail func(depwait.Summary) error,
-) error {
-	if pendingMsg != "" {
-		c.Store.UpdateStatus(id, store.StatusPending, pendingMsg)
-	}
-	var sum depwait.Summary
-	runWait := func() {
-		sum = depwait.WaitAll(w.Watch(ctx, deps))
-	}
-	switch {
-	case w.ReadyNow(deps):
-		// Every dep already Ready — resolve immediately, no park.
-		runWait()
-	case w.AllPresentReconcilable(deps):
-		// Every dep is a present, CEL-free Kustomization/HelmRelease — a
-		// reconcilable resource whose producer is MULTI-HOP (it parks on its
-		// own deps/chart source before writing its terminal status). A wait on
-		// such a dep is the transient-drain victim: a far-off source fetch
-		// exiting can drop the pool to 0 in the window before the dep's HR
-		// re-activates and goes Ready, firing a FALSE quiescence that drops
-		// this waiter. YieldSlot (release the worker slot but STAY active)
-		// keeps the pool non-zero across that handoff. Safe because a present
-		// reconcilable dep always terminalizes (so we resolve on its terminal
-		// wake); dependsOn cycles can't hang here — the orchestrator's preflight
-		// cycle detector fails their members before they reach this park; and
-		// `active` feeds only QuiescenceCh, so holding it has no other effect.
-		// Source-kind / ReadyExpr deps stay on the give-up path below.
-		c.Tasks.YieldSlot(runWait)
-	default:
-		// At least one dep is absent / render-only (may never be produced) or
-		// carries a ReadyExpr (may never satisfy): keep the quiescence-bound
-		// give-up. YieldQuiescent decrements active so QuiescenceCh fires the
-		// moment no productive task remains and the wait fast-fails instead of
-		// hanging. The ReadyNow fast path above keeps an immediately-unblocked
-		// producer counted as active so consumers do not observe a false
-		// drained pool.
-		c.Tasks.YieldQuiescent(runWait)
-	}
-	if sum.AnyFailed() {
-		return onFail(sum)
-	}
-	return nil
-}
-
-// AwaitRefresh fuses Await with the load-bearing store re-read every
-// dependency wait performs on success. A structural parent may have
-// re-emitted this object with a mutated spec while it was parked, so the
-// caller MUST reconcile against the refreshed object, not the stale
-// snapshot it was dispatched with (see #102 and the dependsOn re-read
-// comments at the call sites). Wait and re-read were two statements joined
-// only by convention; fusing them means a future await site can't call
-// Await and silently forget the re-read.
-//
-// On a wait failure it returns (zero, false, err) — the caller returns the
-// error. On success it returns (fresh, true, nil) when the object is still
-// in the store, or (zero, false, nil) if it vanished, mirroring the prior
-// `if obj, ok := store.Get[T](...); ok { x = obj }` guard (the caller keeps
-// the object it already held).
-func AwaitRefresh[T manifest.BaseManifest](
-	ctx context.Context,
-	c *Controller,
-	id manifest.NamedResource,
-	w *depwait.Waiter,
-	deps []manifest.DependencyRef,
-	pendingMsg string,
-	onFail func(depwait.Summary) error,
-) (T, bool, error) {
-	if err := c.Await(ctx, id, w, deps, pendingMsg, onFail); err != nil {
-		var zero T
-		return zero, false, err
-	}
-	obj, ok := store.Get[T](c.Store, id)
-	return obj, ok, nil
-}
-
-// EngineMode selects how Require gates on dependencies.
-type EngineMode uint8
-
-const (
-	// EngineEvent is the blocking event engine (depwait + task quiescence) —
-	// the zero value and current default.
-	EngineEvent EngineMode = iota
-	// EngineDAG is the re-entrant fixpoint scheduler: Require returns a
-	// *depwait.ErrBlocked sentinel instead of blocking, so the scheduler parks
-	// the node and re-runs it when a dependency advances.
-	EngineDAG
-)
-
-// SetEngine selects the dependency-gating engine. Panics after Start —
-// reconcile-shaping config is frozen once dispatch begins.
-func (c *Controller) SetEngine(m EngineMode) {
-	c.requireNotStarted("SetEngine")
-	c.engine = m
-}
-
-// DAGEngine reports whether the dag scheduler owns dispatch. Concrete
-// controllers use it to skip registering their event-driven OnReconcile
-// dispatch listener in Start — under dag the scheduler invokes ReconcileNode
-// directly. Other listeners (HR's producer index) stay registered.
-func (c *Controller) DAGEngine() bool { return c.engine == EngineDAG }
-
 type drainLevelKey struct{}
 
 // WithDrainLevel stamps the dag scheduler's current drain level onto ctx so
@@ -521,25 +373,23 @@ func drainLevel(ctx context.Context) int {
 	return v
 }
 
-// Require gates the caller on deps. Under the event engine it blocks (Await);
-// under the dag engine it classifies each dep WITHOUT blocking and returns
-// one of:
+// Require gates the caller on deps WITHOUT blocking: it classifies each dep
+// and returns one of:
 //   - nil — every dep satisfied; the body proceeds.
 //   - onFail(sum) (a *manifest.DependencyFailedError) — a dep is terminally
-//     Failed and none is still blockable; instant cascade, no FailedGrace.
+//     Failed and none is still blockable; instant cascade, no grace.
 //   - *depwait.ErrBlocked — at least one dep is absent/Pending/ReadyExpr-pending;
 //     the body returns and the scheduler parks the node on those deps.
 //
 // Blocked WINS over failed: if any dep is still producible (ClassBlocked) we
 // park even when another dep already failed, discarding sum — the re-run
-// re-derives the failure on a later pass once nothing is blocked. This matches
-// the event engine, where a producible dep keeps the wait alive while a
+// re-derives the failure on a later pass once nothing is blocked. A
 // failed-omittable ref is handled by the caller's onFail only once it is the
 // sole remaining signal (see resolvePreRenderValuesFrom).
 //
-// The pendingMsg status write mirrors Await exactly (unconditional Pending when
-// non-empty, nothing when empty) so a dependent observing this node mid-gate
-// sees the identical status under both engines.
+// pendingMsg is written as an unconditional Pending status when non-empty
+// (nothing when empty) so a dependent observing this node mid-gate sees a
+// non-terminal status while it parks.
 func (c *Controller) Require(
 	ctx context.Context,
 	id manifest.NamedResource,
@@ -548,9 +398,6 @@ func (c *Controller) Require(
 	pendingMsg string,
 	onFail func(depwait.Summary) error,
 ) error {
-	if c.engine != EngineDAG {
-		return c.Await(ctx, id, c.NewWaiter(id, timeout), deps, pendingMsg, onFail)
-	}
 	if pendingMsg != "" {
 		c.Store.UpdateStatus(id, store.StatusPending, pendingMsg)
 	}
@@ -578,11 +425,13 @@ func (c *Controller) Require(
 }
 
 // RequireRefresh fuses Require with the load-bearing store re-read every
-// dependency gate performs on success — the Require counterpart of
-// AwaitRefresh (see its doc for the #102 re-read rationale). Call sites use
-// this instead of AwaitRefresh so the engine seam (Require) is the only
-// thing they depend on; the dag engine re-reads identically after a
-// satisfied gate.
+// dependency gate performs on success. A structural parent may have re-emitted
+// this object with a mutated spec while it was parked, so the caller MUST
+// reconcile against the refreshed object, not the stale snapshot it was
+// dispatched with (see #102 and the dependsOn re-read comments at the call
+// sites). Wait and re-read were two statements joined only by convention;
+// fusing them means a future gate site can't call Require and silently forget
+// the re-read.
 func RequireRefresh[T manifest.BaseManifest](
 	ctx context.Context,
 	c *Controller,
@@ -741,9 +590,9 @@ func (c *Controller) statusReady(id manifest.NamedResource) bool {
 
 // DispatchNode runs id's reconcile body under the dag engine and reports what
 // the scheduler needs: the blocked dependency set (nil = terminalized) and
-// whether id's final store status is Ready. It performs the same PreGate /
-// preflight pre-checks the event listener (OnReconcile) does, then
-// RunWithStatusOutcome. drainLevel threads the scheduler's fixpoint level into
+// whether id's final store status is Ready. It performs the PreGate /
+// preflight pre-checks, then RunWithStatusOutcome. drainLevel threads the
+// scheduler's fixpoint level into
 // Require via ctx. The orchestrator's Dispatcher calls this, routing by Kind, so
 // no per-kind match check is needed here.
 func DispatchNode[T manifest.BaseManifest](
@@ -772,45 +621,4 @@ func DispatchNode[T manifest.BaseManifest](
 	}
 	blocked = RunWithStatusOutcome[T](ctx, c.Store, id, logKind, reconcile)
 	return blocked, c.statusReady(id)
-}
-
-// OnReconcile builds the EventObjectAdded listener every controller registers
-// in Start. It collapses the previously-duplicated onObjectAdded shape across
-// the source/kustomization/helmrelease controllers into one generic: match the
-// id, type-assert the payload to T, PreGate on suspension, fail-fast on a
-// preflight error, then Submit the reconcile wrapped in RunWithStatus.
-//
-// The per-controller bits are the parameters: match (a single-kind check for
-// KS/HR, a fetcher-registered check for source), suspended (the Suspend field
-// for KS/HR, the Suspendable interface for source), the logKind label, and the
-// typed reconcile fn. PreflightFailure is safe to call for every controller —
-// it returns ("", false) when no preflight reporter is wired (source), so the
-// shared check is a no-op there.
-func OnReconcile[T manifest.BaseManifest](
-	ctx context.Context,
-	c *Controller,
-	match func(manifest.NamedResource) bool,
-	suspended func(T) bool,
-	logKind string,
-	reconcile func(context.Context, T) error,
-) store.Listener {
-	return func(id manifest.NamedResource, payload any) {
-		if !match(id) {
-			return
-		}
-		obj, ok := payload.(T)
-		if !ok {
-			return
-		}
-		if c.PreGate(id, suspended(obj)) {
-			return
-		}
-		if msg, failed := c.PreflightFailure(id); failed {
-			c.Store.UpdateStatus(id, store.StatusFailed, msg)
-			return
-		}
-		c.Submit(ctx, id, func(ctx context.Context) {
-			RunWithStatus(ctx, c.Store, id, logKind, reconcile)
-		})
-	}
 }

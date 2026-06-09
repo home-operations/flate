@@ -58,12 +58,28 @@ data: {greeting: hi}
 	return c, s, root
 }
 
+// dispatchToFixpoint drives id through ReconcileNode with escalating drain
+// levels (none→cascade→force), mirroring the scheduler's structural fixpoint,
+// until the node terminalizes (no blocked deps) or drain is exhausted, then
+// returns the final store status. Synchronous — replaces the event engine's
+// AddObject→listener→WaitForStatus dispatch in unit tests.
+func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
+	t.Helper()
+	for _, drain := range []int{0, 1, 2} {
+		if blocked, _ := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
+			break
+		}
+	}
+	info, _ := st.GetStatus(id)
+	return info
+}
+
 // TestReconcile_HappyPath drives the full reconcile flow: AddObject
 // fires the listener, depwait clears (no deps), kustomize renders,
 // emitRenderedChildren lands the ConfigMap as a rendered artifact,
 // status flips Ready, artifact carries a fingerprint.
 func TestReconcile_HappyPath(t *testing.T) {
-	_, s, root := newControllerWithFixture(t)
+	c, s, root := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{
@@ -76,7 +92,10 @@ func TestReconcile_HappyPath(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	info := testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
+	info := dispatchToFixpoint(t, c, s, ks.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	if info.Message != "" {
 		t.Errorf("unexpected Ready message: %q", info.Message)
 	}
@@ -102,7 +121,6 @@ func TestReconcile_HappyPath(t *testing.T) {
 // artifact's identity persists (SetArtifact dedupes via DeepEqual).
 func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
-	_ = c
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{
@@ -115,21 +133,22 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
+	if info := dispatchToFixpoint(t, c, s, ks.Named()); info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	firstFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
 
-	// Re-AddObject a copy with kustomize ownership labels stamped.
-	// AddObject's DeepEqual gate fails (labels differ), the listener
-	// re-fires, but the fingerprint matches → second render skipped,
-	// artifact fingerprint unchanged.
+	// Re-AddObject a copy with kustomize ownership labels stamped, then drive a
+	// second reconcile: the labels differ so the body re-runs, but the
+	// fingerprint matches → second render skipped, artifact fingerprint
+	// unchanged.
 	stamped := ks.Clone()
 	stamped.Labels = map[string]string{
 		"kustomize.toolkit.fluxcd.io/name":      "parent",
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	s.AddObject(stamped)
-	// Give the coalescer's pending-re-run a moment to fire.
-	time.Sleep(50 * time.Millisecond)
+	c.ReconcileNode(context.Background(), ks.Named(), 0)
 	secondFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
 	if firstFP != secondFP {
 		t.Errorf("fingerprint changed across label-only re-AddObject: %q vs %q", firstFP, secondFP)
@@ -146,7 +165,7 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 // of reconcile fired on every re-run; post-fix it is suppressed when
 // the object is already Ready.
 func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
-	_, s, _ := newControllerWithFixture(t)
+	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{
@@ -159,7 +178,9 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
+	if info := dispatchToFixpoint(t, c, s, ks.Named()); info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 
 	var mu sync.Mutex
 	var sawPending bool
@@ -174,16 +195,16 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 		}
 	}, false)
 
-	// Re-emit with kustomize ownership labels stamped: AddObject's
-	// DeepEqual gate fails (labels differ) so the listener re-fires a
-	// coalesced re-run, but the fingerprint matches → dedup-skip no-op.
+	// Re-emit with kustomize ownership labels stamped, then drive a second
+	// reconcile: the labels differ so the body re-runs, but the fingerprint
+	// matches → dedup-skip no-op.
 	stamped := ks.Clone()
 	stamped.Labels = map[string]string{
 		"kustomize.toolkit.fluxcd.io/name":      "parent",
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	s.AddObject(stamped)
-	time.Sleep(50 * time.Millisecond) // let the coalesced re-run land
+	c.ReconcileNode(context.Background(), ks.Named(), 0)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -204,7 +225,7 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 // pre-fingerprint progress writes, not the genuine "rendering"
 // downgrade.
 func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
-	_, s, _ := newControllerWithFixture(t)
+	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{
@@ -217,7 +238,9 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
+	if info := dispatchToFixpoint(t, c, s, ks.Named()); info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	firstFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
 
 	var mu sync.Mutex
@@ -234,21 +257,16 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	}, false)
 
 	// Re-emit with a genuine spec change (targetNamespace) → fingerprint
-	// differs → real re-render, not a dedup-skip.
+	// differs → real re-render, not a dedup-skip. ReconcileNode runs the
+	// re-render synchronously, so the new artifact has landed on return.
 	changed := ks.Clone()
 	changed.TargetNamespace = "elsewhere"
 	s.AddObject(changed)
+	c.ReconcileNode(context.Background(), ks.Named(), 0)
 
-	// Poll for the artifact to re-render under the new fingerprint.
 	var secondFP string
-	for range 200 {
-		if art, ok := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact); ok {
-			if art.Fingerprint != firstFP {
-				secondFP = art.Fingerprint
-				break
-			}
-		}
-		time.Sleep(5 * time.Millisecond)
+	if art, ok := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact); ok && art.Fingerprint != firstFP {
+		secondFP = art.Fingerprint
 	}
 
 	mu.Lock()
@@ -266,7 +284,6 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 // without an artifact write.
 func TestReconcile_SuspendShortCircuits(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
-	_ = c
 	ks := &manifest.Kustomization{
 		Name: "suspended", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{
@@ -278,7 +295,10 @@ func TestReconcile_SuspendShortCircuits(t *testing.T) {
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 	}
 	s.AddObject(ks)
-	info := testutil.WaitForStatus(t, s, ks.Named(), store.StatusReady)
+	info := dispatchToFixpoint(t, c, s, ks.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want StatusReady", info)
+	}
 	if info.Message != "suspended" {
 		t.Errorf("expected Ready/suspended, got %+v", info)
 	}
@@ -292,7 +312,6 @@ func TestReconcile_SuspendShortCircuits(t *testing.T) {
 // errors → reconcile returns it → status flips Failed.
 func TestReconcile_MissingPathFails(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
-	_ = c
 	ks := &manifest.Kustomization{
 		Name: "broken", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{
@@ -305,7 +324,10 @@ func TestReconcile_MissingPathFails(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	info := testutil.WaitForStatus(t, s, ks.Named(), store.StatusFailed)
+	info := dispatchToFixpoint(t, c, s, ks.Named())
+	if info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed", info)
+	}
 	if info.Message == "" {
 		t.Error("expected non-empty failure message")
 	}
@@ -316,7 +338,6 @@ func TestReconcile_MissingPathFails(t *testing.T) {
 // DependencyFailedError without rendering.
 func TestReconcile_DependsOnFailed(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
-	_ = c
 	dep := &manifest.Kustomization{Name: "dep", Namespace: "flux-system"}
 	s.AddObject(dep)
 	s.UpdateStatus(dep.Named(), store.StatusFailed, "synthetic dep failure")
@@ -337,7 +358,10 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	info := testutil.WaitForStatus(t, s, ks.Named(), store.StatusFailed)
+	info := dispatchToFixpoint(t, c, s, ks.Named())
+	if info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed", info)
+	}
 	if info.Message == "" {
 		t.Error("expected failure message from dep cascade")
 	}

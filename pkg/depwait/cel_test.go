@@ -1,7 +1,6 @@
 package depwait
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -12,214 +11,104 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// TestReadyExpr_NonAdditive_PassesOnTrue: in the default (Flux)
-// mode, ReadyExpr replaces the built-in check. When the CEL is true
-// against current state, the dep is Ready regardless of the built-in
-// Ready condition. The store carries Ready=False here to prove the
-// replacement.
+// These tests pin the CEL ReadyExpr machinery (evaluateReadyExpr + projectObject)
+// that the dag engine's Classify reuses. They drive the kept non-blocking surface
+// — evaluateReadyExpr directly for projection/binding correctness, and Classify
+// for the readiness-gate semantics — rather than the deleted blocking Watch loop.
+
+func celDep(name string) manifest.NamedResource {
+	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
+}
+
+// TestReadyExpr_ProjectsObservedGeneration: the common Flux readiness idiom
+// `status.observedGeneration == metadata.generation` projects and compares.
 func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}
+	dep := celDep("infra")
 	s.UpdateStatus(dep, store.StatusReady, "")
 
-	w := &Waiter{Store: s, Timeout: time.Second}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
-		NamedResource: dep,
-		// Common Flux readiness idiom.
-		ReadyExpr: `dep.status.observedGeneration == dep.metadata.generation`,
-	}}))
-	if sum.AnyFailed() {
-		t.Errorf("observedGeneration projection should match metadata.generation: %+v", sum)
+	ok, err := evaluateReadyExpr(`dep.status.observedGeneration == dep.metadata.generation`, s, manifest.NamedResource{}, dep)
+	if err != nil || !ok {
+		t.Errorf("observedGeneration projection: ok=%v err=%v, want true/nil", ok, err)
 	}
 }
 
-func TestReadyExpr_NonAdditive_PassesOnTrue(t *testing.T) {
+// TestReadyExpr_ReplaceOverridesBuiltin: in the default (replace) mode a
+// satisfied ReadyExpr makes the dep Ready even when the built-in status is
+// Failed — Classify must return ClassReady (readyNow short-circuits on the CEL).
+func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}
+	dep := celDep("infra")
 	s.UpdateStatus(dep, store.StatusFailed, "still rolling out") // built-in says Failed
-	s.SetCondition(dep, store.Condition{
-		Type:   "Healthy",
-		Status: metav1.ConditionTrue,
-		Reason: "MyCustomCheck",
-	})
+	s.SetCondition(dep, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"})
 
-	w := &Waiter{Store: s, Timeout: time.Second}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
+	w := &Waiter{Store: s} // AdditiveReadyExpr=false (default replace mode)
+	ref := manifest.DependencyRef{
 		NamedResource: dep,
 		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
-	}}))
-	if sum.AnyFailed() {
-		t.Errorf("non-additive ReadyExpr should override Failed Ready: %+v", sum)
+	}
+	if got := w.Classify(ref, drainNone); got.Kind != ClassReady {
+		t.Errorf("replace ReadyExpr true over Failed built-in: got %+v, want ClassReady", got)
 	}
 }
 
-// TestReadyExpr_NonAdditive_FlipsOnStatusUpdate: when initial state
-// doesn't satisfy the CEL, the Waiter subscribes to status updates
-// and re-evaluates. A later SetCondition that makes the CEL true
-// closes the wait.
-func TestReadyExpr_NonAdditive_FlipsOnStatusUpdate(t *testing.T) {
-	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}
-	// Initial state: no Healthy condition.
-	s.UpdateStatus(dep, store.StatusPending, "reconciling")
-
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		s.SetCondition(dep, store.Condition{
-			Type: "Healthy", Status: metav1.ConditionTrue, Reason: "AllGood",
-		})
-	}()
-
-	w := &Waiter{Store: s, Timeout: 2 * time.Second}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
-		NamedResource: dep,
-		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
-	}}))
-	if sum.AnyFailed() {
-		t.Errorf("expected to satisfy after status update: %+v", sum)
-	}
-}
-
-// TestReadyExpr_NonAdditive_TimesOutOnFalse: when the CEL never
-// returns true and no status update flips it, the wait times out
-// with a DepTimeout event (not DepFailed).
-func TestReadyExpr_NonAdditive_TimesOutOnFalse(t *testing.T) {
-	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}
-	s.UpdateStatus(dep, store.StatusReady, "ok") // built-in says Ready, but CEL needs Healthy
-
-	w := &Waiter{Store: s, Timeout: 100 * time.Millisecond}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
-		NamedResource: dep,
-		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
-	}}))
-	if !sum.AnyFailed() {
-		t.Fatalf("expected timeout: %+v", sum)
-	}
-	if !strings.Contains(sum.Messages[dep], "readyExpr timeout") {
-		t.Errorf("expected readyExpr-prefixed timeout; got %q", sum.Messages[dep])
-	}
-}
-
-// TestReadyExpr_Additive_BothMustPass: with AdditiveReadyExpr=true,
-// Ready=True AND CEL=true → DepReady.
-func TestReadyExpr_Additive_BothMustPass(t *testing.T) {
-	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}
-	s.UpdateStatus(dep, store.StatusReady, "ok")
-	s.SetCondition(dep, store.Condition{
-		Type: "Healthy", Status: metav1.ConditionTrue, Reason: "AllGood",
-	})
-
-	w := &Waiter{Store: s, Timeout: time.Second, AdditiveReadyExpr: true}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
-		NamedResource: dep,
-		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
-	}}))
-	if sum.AnyFailed() {
-		t.Errorf("expected all ready when both checks pass: %+v", sum)
-	}
-}
-
-// TestReadyExpr_Additive_FalseFails: with AdditiveReadyExpr=true,
-// Ready=True but CEL=false → DepFailed immediately (no waiting on
-// status updates — both must agree on the current state).
-func TestReadyExpr_Additive_FalseFails(t *testing.T) {
-	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}
-	s.UpdateStatus(dep, store.StatusReady, "ok")
-	// No Healthy condition.
-
-	w := &Waiter{Store: s, Timeout: time.Second, AdditiveReadyExpr: true}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
-		NamedResource: dep,
-		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy")`,
-	}}))
-	if !sum.AnyFailed() {
-		t.Fatalf("expected failure: %+v", sum)
-	}
-	if !strings.Contains(sum.Messages[dep], "readyExpr returned false") {
-		t.Errorf("reason: %q", sum.Messages[dep])
-	}
-}
-
-// TestReadyExpr_CompileError: malformed CEL produces a clear
-// readyExpr-prefixed error in both modes.
+// TestReadyExpr_CompileError: malformed CEL is a terminal compile error —
+// Classify fails it immediately (any drain level) with a "readyExpr:"-prefixed
+// message, and evaluateReadyExpr wraps it as *celCompileErr.
 func TestReadyExpr_CompileError(t *testing.T) {
 	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "x"}
+	dep := celDep("x")
 	s.UpdateStatus(dep, store.StatusReady, "ok")
 
-	w := &Waiter{Store: s, Timeout: 100 * time.Millisecond}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
-		NamedResource: dep,
-		ReadyExpr:     `this isn't valid CEL`,
-	}}))
-	if !sum.AnyFailed() {
-		t.Fatalf("expected failure for invalid CEL: %+v", sum)
+	if _, err := evaluateReadyExpr(`this isn't valid CEL`, s, manifest.NamedResource{}, dep); err == nil {
+		t.Fatal("expected compile error")
 	}
-	if !strings.HasPrefix(sum.Messages[dep], "readyExpr:") {
-		t.Errorf("message should be prefixed 'readyExpr:', got %q", sum.Messages[dep])
+	w := &Waiter{Store: s}
+	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: `this isn't valid CEL`}
+	got := w.Classify(ref, drainNone)
+	if got.Kind != ClassFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
+		t.Errorf("compile error: got %+v, want ClassFailed with 'readyExpr:' prefix", got)
 	}
 }
 
-// TestReadyExpr_NonBoolResult: a non-bool result surfaces a clear
-// type error rather than treating it as truthy.
+// TestReadyExpr_NonBoolResult: an expr that returns a non-bool (a string) is a
+// terminal type-shape problem, surfaced as a compile-class error.
 func TestReadyExpr_NonBoolResult(t *testing.T) {
 	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "x"}
+	dep := celDep("x")
 	s.UpdateStatus(dep, store.StatusReady, "ok")
 
-	w := &Waiter{Store: s, Timeout: 100 * time.Millisecond}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
-		NamedResource: dep,
-		ReadyExpr:     `dep.metadata.name`, // string, not bool
-	}}))
-	if !sum.AnyFailed() {
-		t.Fatalf("expected failure for non-bool result: %+v", sum)
-	}
-	if !strings.Contains(sum.Messages[dep], "must return bool") {
-		t.Errorf("expected non-bool error; got %q", sum.Messages[dep])
+	_, err := evaluateReadyExpr(`dep.metadata.name`, s, manifest.NamedResource{}, dep) // string, not bool
+	if err == nil || !strings.Contains(err.Error(), "must return bool") {
+		t.Errorf("non-bool result: err=%v, want a 'must return bool' error", err)
 	}
 }
 
-// TestReadyExpr_TransientEvalErrorPolls covers the "eval error against
-// the projection is transient" contract: cel-go's runtime can fail
-// when the expression touches a field that isn't yet present
-// (e.g. an empty conditions slice). The waiter must re-poll on the
-// next store event instead of failing terminally, so a dep that
-// becomes ready a moment later still goes Ready.
-func TestReadyExpr_TransientEvalErrorPolls(t *testing.T) {
+// TestReadyExpr_TransientEvalErrorNotTerminal: a runtime eval error (indexing
+// past the conditions slice) is transient, NOT terminal. tryReadyExpr reports
+// it as not-ready with no failMsg (distinct from a compile error), and Classify
+// blocks the dep — it may still become ready — rather than failing it.
+func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "infra"}
-	// Status is set but conditions is empty — `conditions[0]` triggers
-	// a runtime eval error inside cel-go.
+	dep := celDep("infra")
 	s.UpdateStatus(dep, store.StatusReady, "")
 
-	w := &Waiter{Store: s, Timeout: time.Second}
-	ch := w.Watch(context.Background(), []manifest.DependencyRef{{
-		NamedResource: dep,
-		ReadyExpr:     `dep.status.conditions[0].type == "Ready"`,
-	}})
-	// Now land the condition the expr is looking for — this should
-	// wake the polling loop.
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		s.SetCondition(dep, store.Condition{Type: "Ready", Status: metav1.ConditionTrue})
-	}()
-	if sum := WaitAll(ch); sum.AnyFailed() {
-		t.Errorf("dep should go Ready once conditions[0] populates: %+v", sum)
+	w := &Waiter{Store: s}
+	const expr = `dep.status.conditions[100].type == "Ready"` // index out of range → runtime eval error
+	if ready, failMsg := w.tryReadyExpr(expr, dep); ready || failMsg != "" {
+		t.Fatalf("transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
+	}
+	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}
+	if got := w.Classify(ref, drainNone); got.Kind != ClassBlocked {
+		t.Errorf("transient eval error@none: got %+v, want ClassBlocked (re-runnable, not failed)", got)
 	}
 }
 
-// TestReadyExpr_ReadsLabelsAndAnnotations locks the upstream Flux
-// contract that readyExpr can read dep.metadata.{labels,annotations}.
-// The HR/KS manifest types now carry these maps and the CEL projection
-// surfaces them under metadata.labels / metadata.annotations.
+// TestReadyExpr_ReadsLabelsAndAnnotations locks the upstream Flux contract that
+// readyExpr can read dep.metadata.{labels,annotations} via the CEL projection.
 func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 	s := store.New()
 	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
-	// AddObject the typed manifest so projectObject can read labels.
 	s.AddObject(&manifest.Kustomization{
 		Name: "child", Namespace: "ns",
 		Labels:      map[string]string{"tier": "data"},
@@ -227,27 +116,19 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 	})
 	s.UpdateStatus(dep, store.StatusReady, "")
 
-	w := &Waiter{Store: s, Timeout: time.Second}
-	cases := []string{
+	for _, expr := range []string{
 		`dep.metadata.labels["tier"] == "data"`,
 		`dep.metadata.annotations["app.kubernetes.io/version"] == "1.2.3"`,
-	}
-	for _, expr := range cases {
-		sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
-			NamedResource: dep,
-			ReadyExpr:     expr,
-		}}))
-		if sum.AnyFailed() {
-			t.Errorf("expr %q: not Ready: %+v", expr, sum)
+	} {
+		ok, err := evaluateReadyExpr(expr, s, manifest.NamedResource{}, dep)
+		if err != nil || !ok {
+			t.Errorf("expr %q: ok=%v err=%v, want true/nil", expr, ok, err)
 		}
 	}
 }
 
-// TestReadyExpr_BindsSelfAndDep locks the upstream Flux contract:
-// readyExpr sees both `self` (the consumer / Waiter.Parent) and `dep`
-// (the current dependency). The kustomize/helm controller idiom
-// `dep.status.lastAppliedRevision == self.spec.sourceRef.revision`
-// must compile and have access to both names.
+// TestReadyExpr_BindsSelfAndDep locks the upstream Flux contract: readyExpr sees
+// both `self` (the consumer / Waiter.Parent) and `dep` (the dependency).
 func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	s := store.New()
 	self := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
@@ -255,28 +136,38 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	s.UpdateStatus(self, store.StatusReady, "")
 	s.UpdateStatus(dep, store.StatusReady, "")
 
-	w := &Waiter{Store: s, Parent: self, Timeout: time.Second}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{
-		NamedResource: dep,
-		// Reads both self and dep — would fail to compile under the old
-		// `object`-only binding.
-		ReadyExpr: `self.metadata.namespace == dep.metadata.namespace`,
-	}}))
-	if sum.AnyFailed() {
-		t.Errorf("expected self/dep CEL to evaluate true: %+v", sum)
+	ok, err := evaluateReadyExpr(`self.metadata.namespace == dep.metadata.namespace`, s, self, dep)
+	if err != nil || !ok {
+		t.Errorf("self/dep binding: ok=%v err=%v, want true/nil", ok, err)
 	}
 }
 
-// TestReadyExpr_Empty_UsesBuiltin: when ReadyExpr is empty the
-// built-in Ready check is used unchanged (no CEL involvement).
-func TestReadyExpr_Empty_UsesBuiltin(t *testing.T) {
-	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "x"}
-	s.UpdateStatus(dep, store.StatusReady, "ok")
+// TestCompileReadyExpr_MemoizesErrors pins the compile-error cache: a known-bad
+// expression should not recompile (and re-error) on every fire. Two compiles
+// return the same error instance — sync.Map.LoadOrStore guarantees pointer
+// identity for the cached entry.
+func TestCompileReadyExpr_MemoizesErrors(t *testing.T) {
+	const bad = `this is not valid CEL ((` // unclosed paren = compile error
+	_, err1 := compileReadyExpr(bad)
+	_, err2 := compileReadyExpr(bad)
+	if err1 == nil || err2 == nil {
+		t.Fatal("expected compile error on both calls")
+	}
+	if err1 != err2 {
+		t.Errorf("compile error not memoized: %p vs %p", err1, err2)
+	}
+}
 
-	w := &Waiter{Store: s, Timeout: time.Second}
-	sum := WaitAll(w.Watch(context.Background(), []manifest.DependencyRef{{NamedResource: dep}}))
-	if sum.AnyFailed() {
-		t.Errorf("plain dep with Ready status should pass: %+v", sum)
+// TestTimeoutFromSpec mirrors Flux KS/HR's `*metav1.Duration` shape: nil and
+// zero fall back to DefaultTimeout; user-supplied values win.
+func TestTimeoutFromSpec(t *testing.T) {
+	if got := TimeoutFromSpec(nil); got != DefaultTimeout {
+		t.Errorf("nil → %v, want DefaultTimeout (%v)", got, DefaultTimeout)
+	}
+	if got := TimeoutFromSpec(&metav1.Duration{Duration: 0}); got != DefaultTimeout {
+		t.Errorf("zero → %v, want DefaultTimeout", got)
+	}
+	if got := TimeoutFromSpec(&metav1.Duration{Duration: 5 * time.Minute}); got != 5*time.Minute {
+		t.Errorf("5m → %v", got)
 	}
 }

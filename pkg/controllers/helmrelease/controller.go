@@ -75,9 +75,6 @@ type Controller struct {
 // cluster KS level, post-build substitutions, kustomize replacements)
 // land before the first helm.Template call.
 type ReconcileOptions struct {
-	// Engine selects the dependency-gating engine (event vs dag); forwarded to
-	// base.Controller via SetEngine in Configure.
-	Engine   base.EngineMode
 	Filter   *change.Filter
 	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
 	// RenderTracker receives every source-kind child emitted during HR
@@ -86,18 +83,12 @@ type ReconcileOptions struct {
 	// resolver, ResourceSet attribution). Nil is OK — no-op.
 	RenderTracker base.RenderTracker
 	// Existence is the file-existence lookup the orchestrator wires
-	// against the loader's ExistenceIndex. depwait uses it to lazy-
+	// against the loader's ExistenceIndex. Classify uses it to lazy-
 	// promote file-indexed deps (HelmRepository, OCIRepository,
 	// HelmChart, …) and to distinguish render-only deps from typo'd
-	// ones at the missing-dep grace boundary. See
-	// depwait.ExistenceLookup for the decision matrix. Forwarded
-	// to every Waiter built during reconcile.
+	// ones. See depwait.ExistenceLookup for the decision matrix.
+	// Forwarded to every Waiter built during reconcile.
 	Existence depwait.ExistenceLookup
-	// Renders is the quiescence signal the orchestrator wires
-	// against the task pool's active-render count. depwait's step-2
-	// long wait short-circuits to "dependency not found" once Renders
-	// reports no other reconcile is in flight.
-	Renders depwait.RenderInflight
 	// PreflightFailure reports dependency-graph errors discovered by the
 	// orchestrator before reconcile. When set for an id, the controller
 	// marks the resource Failed and does not render it.
@@ -121,9 +112,8 @@ func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wip
 // Start — encodes the invariant that reconcile-shaping config is
 // read-only once dispatch begins.
 func (c *Controller) Configure(opts ReconcileOptions) {
-	c.SetEngine(opts.Engine)
 	c.SetFilter(opts.Filter)
-	c.SetDepwait(opts.Existence, opts.Renders)
+	c.SetDepwait(opts.Existence)
 	c.SetPreflight(opts.PreflightFailure)
 	c.SetParentOf(opts.ParentOf)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
@@ -136,20 +126,13 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 // OCIRepository, GitRepository, Bucket, ExternalArtifact) are now
 // consumed lazily by helm.Client through its SourceResolver against
 // the canonical Store. One fewer push-registry to keep in sync.
-func (c *Controller) Start(ctx context.Context) {
-	c.StartLifecycle("helmrelease")
-	// The producer index stays wired under BOTH engines — it is read by the
-	// reconcile body (generatedValuesProducer), not a dispatch trigger.
+func (c *Controller) Start(_ context.Context) {
+	c.StartLifecycle()
+	// The producer index is read by the reconcile body
+	// (generatedValuesProducer), not a dispatch trigger, so it stays wired.
+	// The scheduler owns dispatch (via ReconcileNode), so no dispatch listener
+	// is registered here.
 	c.AddListener(store.EventObjectAdded, c.onRawProducerAdded())
-	// Under the dag engine the scheduler owns dispatch (via ReconcileNode), so
-	// the event-driven OnReconcile dispatch listener is not registered.
-	if c.DAGEngine() {
-		return
-	}
-	c.AddListener(store.EventObjectAdded, base.OnReconcile(ctx, c.Controller,
-		func(id manifest.NamedResource) bool { return id.Kind == manifest.KindHelmRelease },
-		func(hr *manifest.HelmRelease) bool { return hr.Suspend },
-		"helmrelease", c.reconcile))
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
@@ -254,7 +237,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
 	if deps := c.collectHRDeps(hr); len(deps) > 0 {
-		// AwaitRefresh fuses the dependsOn wait with the load-bearing
+		// RequireRefresh fuses the dependsOn gate with the load-bearing
 		// re-read: the parent KS may have re-rendered (e.g. its own
 		// dependsOn cleared in the meantime, freeing up parent-render-time
 		// substitutions that mutate our spec). Without that refresh, an HR
@@ -381,16 +364,16 @@ func chartSourceID(hr *manifest.HelmRelease) manifest.NamedResource {
 	}
 }
 
-// awaitChartSource blocks until hr's current chart source reaches Ready, then
+// awaitChartSource gates hr on its current chart source reaching Ready, then
 // propagates a soft-skip (--allow-missing-secrets on the source's auth marks it
 // Ready but writes no artifact, so fail here rather than letting the render fail
 // later with a confusing chart-not-found).
 //
 // The chart source is a status-bearing dependency that flate itself fetches
-// (synthetic HelmChart, declared OCIRepository/GitRepository/HelmChart), so the
-// depwait this drives binds the wait to the fetch's completion (orchestrator
-// quiescence) rather than the per-dep wall clock — a slow fetch is waited for by
-// OUTCOME instead of dropped nondeterministically. See depwait.Waiter.watchOne.
+// (synthetic HelmChart, declared OCIRepository/GitRepository/HelmChart). It is
+// gated via Require: an unready source classifies as blocked, so the scheduler
+// parks this node and re-runs it when the fetch completes — a slow fetch is
+// waited for by OUTCOME instead of dropped.
 func (c *Controller) awaitChartSource(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease) error {
 	srcID := chartSourceID(hr)
 	if err := c.Require(ctx, id, hr.Timeout,

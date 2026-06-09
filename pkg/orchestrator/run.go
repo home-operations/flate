@@ -10,14 +10,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 // orchestratorExistence adapts the orchestrator's
@@ -40,21 +38,6 @@ func (e *orchestratorExistence) Promote(id manifest.NamedResource) bool {
 func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	_, ok := e.idx.Get(id)
 	return ok
-}
-
-// orchestratorRenderInflight adapts task.Service into
-// depwait.RenderInflight.
-type orchestratorRenderInflight struct{ tasks *task.Service }
-
-// QuiescenceCh delegates to task.Service.QuiescenceCh(0). The
-// threshold is 0 because depwait callers reach this method while
-// inside YieldQuiescent, which has already decremented the caller's
-// own active slot — drain-to-zero means no productive task remains
-// in the pool. Without YieldQuiescent's hop, two reconciles each
-// blocked in depwait would pin the count at 2 and miss this signal
-// entirely.
-func (r *orchestratorRenderInflight) QuiescenceCh() <-chan struct{} {
-	return r.tasks.QuiescenceCh(0)
 }
 
 // Run starts every controller, blocks until the task service drains,
@@ -90,74 +73,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}, false)
 	defer unsubCycles()
 
-	// The re-entrant fixpoint scheduler is the DEFAULT engine and owns dispatch;
-	// only an explicit --engine=event takes the legacy event path. The
-	// cycle-detect listener above stays registered in BOTH paths so preflight
-	// failures are recorded before any node runs.
-	if o.cfg.Engine != "event" {
-		return o.runDAG(ctx)
-	}
-
-	// Keep depwait's render-quiescence signal open while listener
-	// flushes submit the bootstrap objects. Without this marker, a
-	// Kustomization can start waiting on a render-emitted dependency
-	// before the producer's replay event has been submitted and
-	// incorrectly conclude that the render pool is drained.
-	startupDone := make(chan struct{})
-	o.tasks.Go(ctx, "orchestrator/startup", func(ctx context.Context) {
-		select {
-		case <-startupDone:
-		case <-ctx.Done():
-		}
-	})
-	// Start all three controllers in parallel + pre-warm every
-	// GitRepository's bare mirror at the same time. Three benefits:
-	//   1. Each Controller.Start runs AddListener(flush=true), which
-	//      replays every bootstrap object through the listener under
-	//      the store's write lock. The replays themselves still
-	//      serialize on s.mu, but launching them concurrently removes
-	//      goroutine-startup overhead and stays forward-compatible
-	//      with sharded-store work (Phase 3.1).
-	//   2. The three controllers have mutually exclusive Kind filters
-	//      (source → GitRepository/OCIRepository/Bucket/External,
-	//      ksc → Kustomization, hrc → HelmRelease), so the order in
-	//      which their listeners land in the listener-set slice
-	//      doesn't affect correctness — each filter ignores
-	//      everything outside its own Kind.
-	//   3. The cycle-detection listener registered above runs at
-	//      slice position 0 and stays there: errgroup launches the
-	//      controllers AFTER unsubCycles is in place, so future
-	//      EventObjectAdded fires still hit cycle detection before
-	//      KS/HR controllers' listeners — the precondition for the
-	//      preflight-failure routing comment above.
-	//
-	// Mirror pre-warm runs as a fourth sibling: every GitRepository's
-	// per-URL bare mirror is opened/fetched in a bounded errgroup so
-	// the heavy network I/O overlaps with the lightweight controller
-	// startup. The source controller's reconcile then sees a warm
-	// mirror and OpenOrFetch returns instantly. Pre-warm errors are
-	// logged here, not propagated — the source controller will retry
-	// the same path during reconcile and produce the canonical
-	// per-source status update.
-	//
-	// IMPORTANT: pass the unwrapped ctx, not the errgroup's gctx, into
-	// every controller and the pre-warm. Controller listeners submit
-	// reconcile bodies via task.Coalescer.Submit that propagate ctx
-	// into long-running render goroutines; if those captured the
-	// errgroup's gctx, they'd inherit cancellation the moment g.Wait
-	// returns and abort with "context canceled" before any KS/HR could
-	// finish. The errgroup here is a pure barrier, not a cancellation
-	// scope.
-	var g errgroup.Group
-	g.Go(func() error { o.src.Start(ctx); return nil })
-	g.Go(func() error { o.ksc.Start(ctx); return nil })
-	g.Go(func() error { o.hrc.Start(ctx); return nil })
-	g.Go(func() error { o.prewarmGitMirrors(ctx); return nil })
-	_ = g.Wait()
-	close(startupDone)
-	defer o.Stop()
-
-	return o.awaitDrain(ctx)
+	return o.runDAG(ctx)
 }
 
 // configureControllers wires reconcile-shaping config (filter, parent
@@ -166,14 +82,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 // controller Start, since Configure panics if invoked after dispatch
 // begins.
 func (o *Orchestrator) configureControllers() {
-	// dag is the default; only an explicit --engine=event opts into the
-	// legacy blocking engine.
-	engineMode := base.EngineDAG
-	if o.cfg.Engine == "event" {
-		engineMode = base.EngineEvent
-	}
 	o.src.Configure(sourcectrl.FetchOptions{
-		Engine:              engineMode,
 		Filter:              o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	})
@@ -203,7 +112,6 @@ func (o *Orchestrator) configureControllers() {
 		store:       o.store,
 		wipeSecrets: o.cfg.WipeSecrets,
 	}
-	renders := &orchestratorRenderInflight{tasks: o.tasks}
 	// selfProduces reports whether consumer's OWN render emits cm — the
 	// graph-aware self-substitute signal collectDeps uses to drop a
 	// self-produced postBuild.substituteFrom ConfigMap from the dep set.
@@ -213,52 +121,21 @@ func (o *Orchestrator) configureControllers() {
 		return slices.Contains(o.selfProduce.ProducedBy(cm), consumer)
 	}
 	o.ksc.Configure(kustomization.Options{
-		Engine:           engineMode,
 		Filter:           o.filter,
 		ParentOf:         parentResolver,
 		RenderTracker:    o.rendered,
 		Existence:        existence,
-		Renders:          renders,
 		PreflightFailure: o.preflightFailure,
 		SelfProduces:     selfProduces,
 	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
-		Engine:              engineMode,
 		Filter:              o.filter,
 		ParentOf:            parentResolver,
 		RenderTracker:       o.rendered,
 		Existence:           existence,
-		Renders:             renders,
 		PreflightFailure:    o.preflightFailure,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	})
-}
-
-// awaitDrain races ctx.Done() against task drain so a Ctrl-C during a
-// stuck fetch / render is observable within one task's natural
-// cancellation latency rather than blocking forever on wgActive.Wait.
-// Reconcile bodies still need to honor their own ctx to actually return
-// promptly, but at minimum Run no longer hides the cancellation signal
-// from finalize.
-func (o *Orchestrator) awaitDrain(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		o.tasks.BlockTillDone()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-ctx.Done():
-		// Wait for in-flight tasks to wind down before finalizing so
-		// the store snapshot is internally consistent, then preserve
-		// the cancellation in the returned error. Queued bounded tasks
-		// may never acquire a worker slot once ctx is canceled; a clean
-		// partial snapshot must not look like a successful full run.
-		<-done
-	}
-	// Either path finalizes the same way: the store is fully drained and
-	// any cancellation is folded into the returned error.
-	return errors.Join(o.finalize(), ctx.Err())
 }
 
 // prewarmGitMirrors fires Prewarm against every discovered

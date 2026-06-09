@@ -46,9 +46,6 @@ type Controller struct {
 // onto the controller. Filter narrows fetches to sources referenced by
 // changed resources in changed-only mode.
 type FetchOptions struct {
-	// Engine selects the dependency-gating engine (event vs dag); forwarded to
-	// base.Controller via SetEngine in Configure.
-	Engine              base.EngineMode
 	Filter              *change.Filter
 	AllowMissingSecrets bool
 }
@@ -65,30 +62,15 @@ func New(s *store.Store, t *task.Service) *Controller {
 // Configure installs the post-bootstrap state. Panics if called after
 // Start.
 func (c *Controller) Configure(opts FetchOptions) {
-	c.SetEngine(opts.Engine)
 	c.SetFilter(opts.Filter)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
 }
 
 // Start registers listeners on the Store. The controller runs until
-// Close is called.
-func (c *Controller) Start(ctx context.Context) {
-	c.StartLifecycle("source")
-	// Under the dag engine the scheduler owns dispatch (via ReconcileNode), so
-	// the event-driven OnReconcile dispatch listener is not registered.
-	if c.DAGEngine() {
-		return
-	}
-	// Match any kind with a registered fetcher (not a single kind like KS/HR),
-	// and read Suspend via the Suspendable interface. Coalescing in Submit
-	// means a duplicate AddObject for the same source (e.g. a parent KS
-	// re-emitting a child source on re-render) doesn't race two concurrent
-	// fetches into the same cache slot. Source wires no preflight reporter, so
-	// OnReconcile's PreflightFailure check is a no-op here.
-	c.AddListener(store.EventObjectAdded, base.OnReconcile(ctx, c.Controller,
-		func(id manifest.NamedResource) bool { _, ok := c.Fetchers[id.Kind]; return ok },
-		suspendedSource,
-		"source", c.reconcile))
+// Close is called. The scheduler owns dispatch (via ReconcileNode), so
+// Start only wires lifecycle state — no dispatch listener.
+func (c *Controller) Start(_ context.Context) {
+	c.StartLifecycle()
 }
 
 // suspendedSource reports whether a source object is suspended, via the

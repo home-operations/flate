@@ -9,7 +9,6 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -23,7 +22,7 @@ func ptrDuration(d time.Duration) *metav1.Duration {
 // whose chartRef points at an OCIRepository that never reaches Ready
 // must surface "chart source ... not ready" via the depwait timeout.
 func TestReconcile_ChartSourceNotReady(t *testing.T) {
-	_, st := newTestController(t, nil)
+	c, st := newTestController(t, nil)
 	// Source CR exists but no SetArtifact + no Ready status → depwait
 	// hangs until timeout, then fails.
 	src := &manifest.OCIRepository{
@@ -43,7 +42,10 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
-	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusFailed)
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed", info)
+	}
 	if !strings.Contains(info.Message, "not ready") && !strings.Contains(info.Message, "object not found") {
 		t.Errorf("expected chart-source-not-ready failure, got %q", info.Message)
 	}
@@ -52,7 +54,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 // TestReconcile_DependsOnFailed cascades a dep failure to a non-rendering
 // HR — DependencyFailedError surfaces via RunWithStatus → Failed status.
 func TestReconcile_DependsOnFailed(t *testing.T) {
-	_, st := newTestController(t, nil)
+	c, st := newTestController(t, nil)
 	dep := &manifest.HelmRelease{Name: "dep", Namespace: "flux-system"}
 	st.AddObject(dep)
 	st.UpdateStatus(dep.Named(), store.StatusFailed, "synthetic dep failure")
@@ -65,7 +67,10 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		DependsOn: []manifest.DependencyRef{{NamedResource: dep.Named()}},
 	}
 	st.AddObject(hr)
-	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusFailed)
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed", info)
+	}
 	if info.Message == "" {
 		t.Error("expected non-empty failure on dep cascade")
 	}
@@ -85,10 +90,12 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 	c, st := newTestControllerWithParentOf(t, map[manifest.NamedResource]manifest.NamedResource{
 		hr.Named(): parent.Named(),
 	})
-	_ = c
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
-	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusFailed)
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed", info)
+	}
 	if !strings.Contains(info.Message, "parent") {
 		t.Errorf("expected parent-not-ready error, got %q", info.Message)
 	}
@@ -117,10 +124,13 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 		}
 		return manifest.NamedResource{}, false
 	}
-	_, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
-	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusFailed)
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed", info)
+	}
 	if !strings.Contains(info.Message, "parent") {
 		t.Errorf("expected parent-not-ready error via resolver, got %q", info.Message)
 	}
@@ -165,7 +175,7 @@ func TestIsFluxSourceKind(t *testing.T) {
 // "missing spec.chart" via helm.Prepare, surfacing as Failed without
 // ever entering depwait.
 func TestReconcile_MissingChartFails(t *testing.T) {
-	_, st := newTestController(t, nil)
+	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
 		Name: "broken", Namespace: "flux-system",
 		HelmReleaseSpec: helmv2.HelmReleaseSpec{
@@ -174,7 +184,10 @@ func TestReconcile_MissingChartFails(t *testing.T) {
 		// Chart left empty — depwait on an unset source ref times out.
 	}
 	st.AddObject(hr)
-	info := testutil.WaitForStatus(t, st, hr.Named(), store.StatusFailed)
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed", info)
+	}
 	if info.Message == "" {
 		t.Error("expected non-empty failure for missing chart")
 	}

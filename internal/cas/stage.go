@@ -29,19 +29,14 @@ import (
 //
 // The two prefixes let the caller keep its own error strings intact
 // (baseline passes "baseline staging"/"baseline finalize").
-//
-// adopted reports whether the returned slot came from adopting a peer's
-// finalized directory (false on the normal rename-wins path); callers
-// that distinguish "we built it" from "we adopted it" use it, others
-// ignore it.
-func Stage(parent, final, tmpPrefix, finalizePrefix string, build func(staging string) error, adopt func() bool) (adopted bool, err error) {
+func Stage(parent, final, tmpPrefix, finalizePrefix string, build func(staging string) error, adopt func() bool) error {
 	staging, err := os.MkdirTemp(parent, filepath.Base(final)+".tmp.*")
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", tmpPrefix, err)
+		return fmt.Errorf("%s: %w", tmpPrefix, err)
 	}
 	if err := build(staging); err != nil {
 		_ = os.RemoveAll(staging)
-		return false, err
+		return err
 	}
 	if err := os.Rename(staging, final); err != nil {
 		_ = os.RemoveAll(staging)
@@ -50,9 +45,9 @@ func Stage(parent, final, tmpPrefix, finalizePrefix string, build func(staging s
 		// caller confirms the winner finalized, adopt it instead of
 		// re-materializing or surfacing the lost-race error.
 		if adopt() {
-			return true, nil
+			return nil
 		}
-		return false, fmt.Errorf("%s: %w", finalizePrefix, err)
+		return fmt.Errorf("%s: %w", finalizePrefix, err)
 	}
-	return false, nil
+	return nil
 }

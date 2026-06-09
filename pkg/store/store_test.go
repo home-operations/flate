@@ -215,46 +215,6 @@ func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
 	assert.Equal(t, statusEvents, 1) // identical SetCondition is a no-op
 }
 
-// Mutate encodes the clone-then-AddObject pattern. Verify it clones
-// (mutating the supplied pointer doesn't touch the canonical store),
-// fires EventObjectAdded (so dependent controllers re-reconcile), and
-// no-ops when the id isn't present.
-func TestStore_Mutate(t *testing.T) {
-	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
-	orig := &manifest.Kustomization{
-		Name: "a", Namespace: "ns",
-		DependsOn: []manifest.DependencyRef{
-			{NamedResource: manifest.NamedResource{Kind: manifest.KindKustomization, Name: "x"}},
-		},
-	}
-	s.AddObject(orig)
-
-	fired := 0
-	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) { fired++ }, false)
-
-	ok := Mutate(s, id, func(k *manifest.Kustomization) { k.DependsOn = nil })
-	if !ok {
-		t.Fatalf("Mutate returned false on a present id")
-	}
-	assert.Equal(t, fired, 1) // EventObjectAdded fires once on Mutate
-	// Original pointer unchanged (clone semantics).
-	if len(orig.DependsOn) != 1 {
-		t.Errorf("original pointer was mutated; clone failed: %v", orig.DependsOn)
-	}
-	// Store now holds the mutated clone.
-	got, _ := s.GetObject(id).(*manifest.Kustomization)
-	if got == nil || len(got.DependsOn) != 0 {
-		t.Errorf("stored object not mutated: %v", got)
-	}
-
-	// Missing id is a no-op.
-	if Mutate(s, manifest.NamedResource{Kind: manifest.KindKustomization, Name: "absent"},
-		func(*manifest.Kustomization) {}) {
-		t.Errorf("Mutate returned true for absent id")
-	}
-}
-
 func TestStore_FailedResources(t *testing.T) {
 	s := New()
 	assert.Equal(t, len(s.FailedResources()), 0) // empty store

@@ -14,8 +14,8 @@ import "github.com/home-operations/flate/pkg/manifest"
 //	// after
 //	ks, ok := store.Get[*manifest.Kustomization](s, id)
 //
-// The constraint on T is the same shape Mutate already uses, so
-// callers see a uniform interface for the two type-safe Store APIs.
+// The constraint on T is manifest.BaseManifest — any stored manifest
+// type — so Get and GetByName share one uniform, type-safe lookup.
 func Get[T manifest.BaseManifest](s *Store, id manifest.NamedResource) (T, bool) {
 	if s == nil {
 		var zero T

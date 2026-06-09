@@ -29,8 +29,7 @@
 // Every concrete manifest type in this package is treated as
 // immutable once stored. Controllers and embedders that need to amend
 // a resource must Clone() it, mutate the clone, and AddObject the
-// result; the store helper pkg/store.Mutate[T] encodes that contract.
-// Mutating a *HelmRelease / *Kustomization / etc. in place after it
-// has been added to the store corrupts the canonical state that
-// other concurrent readers depend on.
+// result. Mutating a *HelmRelease / *Kustomization / etc. in place
+// after it has been added to the store corrupts the canonical state
+// that other concurrent readers depend on.
 package manifest

@@ -360,59 +360,6 @@ func (s *Store) Refire(id manifest.NamedResource) {
 	dispatchObj()
 }
 
-// Cloneable is satisfied by manifest types that can be shallowly
-// duplicated for safe mutation under the Store's immutability
-// contract. Kustomization, HelmRelease implement this; new types that
-// need post-load mutation should follow.
-type Cloneable[T any] interface {
-	Clone() T
-}
-
-// Mutate atomically replaces the store-owned object under id with the
-// result of mutating a fresh clone. Encodes the documented
-// immutability contract in one place: callers can't forget
-// clone-then-AddObject. Returns false when no object of type T is
-// stored under id (no-op).
-//
-// Use this for any post-load mutation such as namespace-inheritance
-// rewrites or alias seeding. Listeners fire as they would on a fresh
-// AddObject (intentionally — downstream controllers re-reconcile
-// against the mutated spec).
-func Mutate[T interface {
-	manifest.BaseManifest
-	Cloneable[T]
-}](s *Store, id manifest.NamedResource, mutate func(T)) bool {
-	// Hold sh.mu across the whole clone-mutate-write so a concurrent
-	// DeleteObject(id) or AddObject(newer) between Get and Add can't
-	// resurrect deleted state or clobber a newer write with the
-	// mutation of the previously-observed object.
-	sh := s.shardFor(id)
-	var dispatch func()
-	ok := func() bool {
-		sh.mu.Lock()
-		defer sh.mu.Unlock()
-		obj, isT := sh.objects[id].(T)
-		if !isT {
-			return false
-		}
-		cloned := obj.Clone()
-		mutate(cloned)
-		// Dedup parallel to AddObject — equal mutations no-op. obj is
-		// the value already read from sh.objects[id] under this lock, so
-		// compare against it directly rather than re-indexing the map.
-		if reflect.DeepEqual(obj, cloned) {
-			return true
-		}
-		sh.setLocked(id, cloned)
-		dispatch = s.fireUnderLock(EventObjectAdded, id, cloned)
-		return true
-	}()
-	if dispatch != nil {
-		dispatch()
-	}
-	return ok
-}
-
 // AddRendered records a manifest produced by helm/kustomize rendering.
 // Compared to AddObject it skips the reflect.DeepEqual dedup check —
 // rendered docs change on every render and the dedup would never hit.

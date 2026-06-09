@@ -140,7 +140,7 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		// same commit will either share the finished slot or fall
 		// through to their own stage (one wins the rename, the rest
 		// see ErrExist, discard the temp, and adopt the winner's slot).
-		if _, err := cas.Stage(parent, slot, "baseline staging", "baseline finalize",
+		if err := cas.Stage(parent, slot, "baseline staging", "baseline finalize",
 			func(staging string) error { return materialize(repo, hash, staging) },
 			func() bool { return isDir(slot) },
 		); err != nil {

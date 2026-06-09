@@ -23,9 +23,9 @@ const downloadBufSize = 256 << 10
 
 // walkBucket lists the bucket under prefix, downloads each object
 // into slot preserving the prefix-relative path, and returns the
-// sorted key list + a content-addressed revision (sha256 of
-// "<key> <etag>\n" pairs, sorted).
-func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot string) ([]string, string, error) {
+// number of objects downloaded + a content-addressed revision (sha256
+// of "<key> <etag>\n" pairs, sorted).
+func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot string) (int, string, error) {
 	type entry struct{ key, etag string }
 	var entries []entry
 
@@ -33,7 +33,7 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 		Prefix: prefix, Recursive: true,
 	}) {
 		if obj.Err != nil {
-			return nil, "", obj.Err
+			return 0, "", obj.Err
 		}
 		if strings.HasSuffix(obj.Key, "/") {
 			continue // S3 directory-placeholder objects
@@ -68,7 +68,7 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return nil, "", err
+		return 0, "", err
 	}
 
 	// Format matches source-controller's internal/index/digest.go:
@@ -77,12 +77,10 @@ func walkBucket(ctx context.Context, client *minio.Client, bucket, prefix, slot 
 	// for identical contents — change detection across runs and any
 	// readyExpr keyed off status.artifact.revision would never align.
 	h := sha256.New()
-	keys := make([]string, len(entries))
-	for i, e := range entries {
+	for _, e := range entries {
 		_, _ = fmt.Fprintf(h, "%s %s\n", e.key, e.etag)
-		keys[i] = e.key
 	}
-	return keys, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return len(entries), "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func downloadObject(ctx context.Context, client *minio.Client, bucket, key, dst string) error {

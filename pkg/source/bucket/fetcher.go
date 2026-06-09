@@ -61,7 +61,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 		}
 	}
 
-	keys, revHash, err := walkBucket(ctx, client, b.BucketName, b.Prefix, slot.Path)
+	objectCount, revHash, err := walkBucket(ctx, client, b.BucketName, b.Prefix, slot.Path)
 	if err != nil {
 		return nil, fmt.Errorf("%s walk: %w", bucketID(b), err)
 	}
@@ -83,7 +83,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 		LocalPath: slot.Path,
 		Revision:  revHash,
 		Metadata: map[string]string{
-			"objectCount": strconv.Itoa(len(keys)),
+			"objectCount": strconv.Itoa(objectCount),
 		},
 	}, nil
 }

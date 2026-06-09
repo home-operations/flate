@@ -349,6 +349,31 @@ func (s *Slot) StageRefresh() error {
 	return s.allocStaging("refresh stage")
 }
 
+// PersistMeta atomically records meta-only sidecar fields on the slot: the
+// resolve-cache write path (OCI digest, helm chart resolution) whose only
+// on-disk product is the .flate-meta.json sidecar, never a materialized tree.
+// On a cache hit it stages a refresh (keeping the old slot readable until
+// commit), applies mutate to the SlotMeta via the read-modify-write
+// UpdateSlotMeta, then commits under the held slot lock. It is the meta-only
+// sibling of Commit and folds the previously-duplicated stage→write→commit
+// dance the OCI and helmchart resolve writers each carried. Callers keep their
+// own no-op guard (a nil slot or an incomplete resolution) since the predicate
+// differs per source kind.
+func (s *Slot) PersistMeta(mutate func(*SlotMeta)) error {
+	if s.Exists {
+		if err := s.StageRefresh(); err != nil {
+			return fmt.Errorf("slot meta stage: %w", err)
+		}
+	}
+	if err := UpdateSlotMeta(s.Path, mutate); err != nil {
+		return fmt.Errorf("slot meta write: %w", err)
+	}
+	if err := s.Commit(); err != nil {
+		return fmt.Errorf("slot meta commit: %w", err)
+	}
+	return nil
+}
+
 func (s *Slot) lockFile(ctx context.Context) error {
 	s.fileLock = flock.New(s.final+".lock", flock.SetPermissions(0o600))
 	locked, err := s.fileLock.TryLockContext(ctx, 100*time.Millisecond)

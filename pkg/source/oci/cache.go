@@ -92,18 +92,7 @@ func writeResolveCache(slot *source.Slot, digest string) error {
 	if slot == nil || digest == "" {
 		return nil
 	}
-	if slot.Exists {
-		if err := slot.StageRefresh(); err != nil {
-			return fmt.Errorf("cache resolve stage: %w", err)
-		}
-	}
-	if err := writeCachedDigest(slot.Path, digest); err != nil {
-		return fmt.Errorf("cache resolve digest: %w", err)
-	}
-	if err := slot.Commit(); err != nil {
-		return fmt.Errorf("cache resolve commit: %w", err)
-	}
-	return nil
+	return slot.PersistMeta(func(m *source.SlotMeta) { m.Digest = digest })
 }
 
 // checkCacheHit applies the cache-hit gauntlet to a populated slot:

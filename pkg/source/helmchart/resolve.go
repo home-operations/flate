@@ -1,7 +1,6 @@
 package helmchart
 
 import (
-	"fmt"
 	"regexp"
 	"time"
 
@@ -55,33 +54,16 @@ func readResolveFresh(slotDir string, maxAge time.Duration) (chartResolution, bo
 	return r, true
 }
 
-// writeResolve records r in the slot's meta sidecar, preserving any other
-// fields (none today on a resolve slot — it carries only the Chart* triple).
-func writeResolve(slotDir string, r chartResolution) error {
-	return source.UpdateSlotMeta(slotDir, func(m *source.SlotMeta) {
-		m.ChartVersion = r.Version
-		m.ChartDigest = r.Digest
-		m.ChartURL = r.ChartURL
-	})
-}
-
 // persistResolve writes r into the resolve slot atomically (stage on a cache
-// hit, write, commit), mirroring oci.persistOCIResolve. A no-op when the
+// hit, write the Chart* triple, commit), via Slot.PersistMeta. A no-op when the
 // resolution is incomplete, so a failed resolve never poisons the slot.
 func persistResolve(slot *source.Slot, r chartResolution) error {
 	if slot == nil || !r.valid() {
 		return nil
 	}
-	if slot.Exists {
-		if err := slot.StageRefresh(); err != nil {
-			return fmt.Errorf("helm resolve stage: %w", err)
-		}
-	}
-	if err := writeResolve(slot.Path, r); err != nil {
-		return fmt.Errorf("helm resolve write: %w", err)
-	}
-	if err := slot.Commit(); err != nil {
-		return fmt.Errorf("helm resolve commit: %w", err)
-	}
-	return nil
+	return slot.PersistMeta(func(m *source.SlotMeta) {
+		m.ChartVersion = r.Version
+		m.ChartDigest = r.Digest
+		m.ChartURL = r.ChartURL
+	})
 }

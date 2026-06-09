@@ -3,7 +3,6 @@ package source
 import (
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -290,14 +289,4 @@ func entrySize(path string) int64 {
 		return nil
 	})
 	return total
-}
-
-// Log emits a structured summary of res at slog.LevelInfo. Convenience
-// for CLI / orchestrator callers that don't want to format the result
-// inline.
-func (res *SweepResult) Log() {
-	slog.Info("cache sweep",
-		"removed", len(res.Removed),
-		"bytes", res.Bytes,
-		"errors", len(res.Errors))
 }

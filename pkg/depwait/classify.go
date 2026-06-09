@@ -94,10 +94,34 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel int) Classifica
 		return Classification{Kind: ClassFailed, Message: info.Message}
 	}
 
-	// 6. Present, Ready (or Pending) but a ReadyExpr that is not yet true. At
-	//    the fixpoint the dependency is as ready as it will get and the CEL
-	//    still fails → the event engine's "readyExpr timeout".
+	// 6. Present with a ReadyExpr that readyNow rejected.
 	if dep.ReadyExpr != "" {
+		// Additive mode (Flux AdditiveCELDependencyCheck=true): the built-in
+		// Ready check AND the CEL must both hold — mirroring watchOne's
+		// post-WatchReady additive evaluation. When the built-in status is
+		// already Ready, the CEL is the blocker, so evaluate it now and return
+		// the byte-exact event-engine result rather than blocking/timing out.
+		// (Unreachable today: NewWaiter never sets AdditiveReadyExpr; kept so
+		// the dag engine stays byte-equivalent if that feature gate is wired.)
+		if w.AdditiveReadyExpr {
+			if info, ok := w.Store.GetStatus(id); ok && info.Status == store.StatusReady {
+				okExpr, evalErr := evaluateReadyExpr(dep.ReadyExpr, w.Store, w.Parent, id)
+				if evalErr != nil {
+					return Classification{Kind: ClassFailed, Message: "readyExpr: " + evalErr.Error()}
+				}
+				if !okExpr {
+					return Classification{Kind: ClassFailed, Message: "readyExpr returned false"}
+				}
+				return Classification{Kind: ClassReady}
+			}
+			// Built-in not yet Ready: treat like a plain present-Pending dep.
+			if drainLevel >= drainForce {
+				return Classification{Kind: ClassFailed, Message: "not ready"}
+			}
+			return Classification{Kind: ClassBlocked}
+		}
+		// Replace mode (the default): the CEL IS the readiness check, so at the
+		// fixpoint a never-true CEL is the event engine's "readyExpr timeout".
 		if drainLevel >= drainCascade {
 			return Classification{Kind: ClassFailed, Message: "readyExpr timeout: context deadline exceeded"}
 		}

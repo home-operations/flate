@@ -196,6 +196,28 @@ func TestLoadCosignPublicKeys_ParsesPEM(t *testing.T) {
 	}
 }
 
+// TestLoadCosignPublicKeys_ParsesPEMFromData is the towonel repro at the
+// loader level: the public key lives base64-encoded under data.cosign.pub
+// (the common Secret shape). Since parseSecret no longer wipes non-SOPS
+// values, the key survives and StringFromSecret base64-decodes it back to
+// the PEM that parsePEMPublicKeys parses.
+func TestLoadCosignPublicKeys_ParsesPEMFromData(t *testing.T) {
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	pemB64 := base64.StdEncoding.EncodeToString(mustPEMPublicKey(t, &priv.PublicKey))
+	f := &Fetcher{
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{Data: map[string]any{"cosign.pub": pemB64}}
+		},
+	}
+	keys, err := f.loadCosignPublicKeys(cosignVerifyRepo())
+	if err != nil {
+		t.Fatalf("loadCosignPublicKeys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key from data.cosign.pub, got %d", len(keys))
+	}
+}
+
 // Keyless cosign (matchOIDCIdentity, no secretRef) cannot be enforced
 // offline. Verify that verifyCosignSignature returns nil — the chart
 // still renders for diff purposes — without touching the registry.
@@ -214,8 +236,96 @@ func TestVerifyCosignSignature_KeylessSkipsAndReturnsNil(t *testing.T) {
 		},
 	}
 	// repoClient nil is fine: keyless path returns before any registry call.
-	if err := f.verifyCosignSignature(context.Background(), nil, repo, "sha256:deadbeef"); err != nil {
-		t.Errorf("keyless cosign should be skipped silently; got %v", err)
+	verified, err := f.verifyCosignSignature(context.Background(), nil, repo, "sha256:deadbeef")
+	if err != nil || verified {
+		t.Errorf("keyless cosign should skip: got (verified=%v, err=%v), want (false, nil)", verified, err)
+	}
+}
+
+// pubKeySecretFetcher returns a Fetcher whose verify secret carries pub as a
+// PEM public key under data.cosign.pub (base64) — the towonel shape.
+func pubKeySecretFetcher(t *testing.T, pub crypto.PublicKey) *Fetcher {
+	t.Helper()
+	pemB64 := base64.StdEncoding.EncodeToString(mustPEMPublicKey(t, pub))
+	return &Fetcher{Secrets: func(_, _ string) *manifest.Secret {
+		return &manifest.Secret{Data: map[string]any{"cosign.pub": pemB64}}
+	}}
+}
+
+func cosignVerifyRepo() *manifest.OCIRepository {
+	return &manifest.OCIRepository{
+		Name: "towonel-agent", Namespace: "network",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			Verify: &manifest.OCIRepositoryVerify{
+				Provider:  "cosign",
+				SecretRef: &manifest.LocalObjectReference{Name: "towonel-cosign-pub"},
+			},
+		},
+	}
+}
+
+// TestVerifyCosignSignature_NoKeysSkips: a verify secret that yields no usable
+// public key (here: junk, no PEM) can't complete the check, so it WARNs and
+// skips — (false, nil) — without touching the registry (repoClient is nil).
+func TestVerifyCosignSignature_NoKeysSkips(t *testing.T) {
+	f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret {
+		return &manifest.Secret{StringData: map[string]any{"cosign.pub": "not a key"}}
+	}}
+	verified, err := f.verifyCosignSignature(context.Background(), nil, cosignVerifyRepo(), "sha256:deadbeef")
+	if err != nil || verified {
+		t.Errorf("no-keys should skip: got (verified=%v, err=%v), want (false, nil)", verified, err)
+	}
+}
+
+// TestVerifyCosignSignature_SignatureUnreachableSkips: the key is present but
+// the cosign signature isn't in the registry (Resolve 404s) — flate can't
+// complete the check, so it skips rather than hard-failing the render.
+func TestVerifyCosignSignature_SignatureUnreachableSkips(t *testing.T) {
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	f := pubKeySecretFetcher(t, &priv.PublicKey)
+	// blobRepoClient serves /blobs/ only; any /manifests/ lookup 404s, so
+	// Resolve(sigTag) fails → unreachable → skip.
+	rc := blobRepoClient(t, map[string][]byte{})
+	verified, err := f.verifyCosignSignature(context.Background(), rc, cosignVerifyRepo(), "sha256:deadbeef")
+	if err != nil || verified {
+		t.Errorf("unreachable signature should skip: got (verified=%v, err=%v), want (false, nil)", verified, err)
+	}
+}
+
+// TestVerifyCosignSignature_Verifies: a reachable, matching signature →
+// (true, nil). Exercises the full Resolve → Fetch manifest → per-layer verify
+// path through a fake registry serving the signature manifest + payload blob.
+func TestVerifyCosignSignature_Verifies(t *testing.T) {
+	const pulled = "sha256:deadbeef"
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	payload, sig := mustPayload(t, pulled, priv)
+	layer, blobs := payloadLayer(payload, sig)
+	manBytes, err := json.Marshal(signatureManifest{Layers: []signatureLayer{layer}})
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	rc := cosignSigRepoClient(t, cosignSigTag(pulled), manBytes, blobs)
+	f := pubKeySecretFetcher(t, &priv.PublicKey)
+	verified, err := f.verifyCosignSignature(context.Background(), rc, cosignVerifyRepo(), pulled)
+	if err != nil || !verified {
+		t.Errorf("matching signature should verify: got (verified=%v, err=%v), want (true, nil)", verified, err)
+	}
+}
+
+// TestVerifyCosignSignature_DigestMismatchHardFails: a reachable signature
+// that binds a DIFFERENT digest is a genuine integrity failure — past the
+// transport boundary, so it hard-fails (false, err) rather than skipping.
+func TestVerifyCosignSignature_DigestMismatchHardFails(t *testing.T) {
+	const pulled = "sha256:deadbeef"
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	payload, sig := mustPayload(t, "sha256:0ther", priv) // binds a different digest
+	layer, blobs := payloadLayer(payload, sig)
+	manBytes, _ := json.Marshal(signatureManifest{Layers: []signatureLayer{layer}})
+	rc := cosignSigRepoClient(t, cosignSigTag(pulled), manBytes, blobs)
+	f := pubKeySecretFetcher(t, &priv.PublicKey)
+	verified, err := f.verifyCosignSignature(context.Background(), rc, cosignVerifyRepo(), pulled)
+	if verified || err == nil || !strings.Contains(err.Error(), "cosign verify failed") {
+		t.Errorf("digest mismatch should hard-fail: got (verified=%v, err=%v)", verified, err)
 	}
 }
 
@@ -315,6 +425,57 @@ func blobRepoClient(t *testing.T, blobs map[string][]byte) *remote.Repository {
 				return
 			}
 			w.Header().Set("Docker-Content-Digest", d)
+			_, _ = w.Write(body)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	repoClient, err := remote.NewRepository(mustURL(t, srv.URL).Host + "/test/repo")
+	if err != nil {
+		t.Fatalf("NewRepository: %v", err)
+	}
+	repoClient.Client = &auth.Client{
+		Client: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed test cert
+			},
+		},
+	}
+	return repoClient
+}
+
+// cosignSigRepoClient builds a *remote.Repository that serves a cosign
+// signature manifest (by tag and by digest) plus its payload blobs, so the
+// full verifyCosignSignature path — Resolve(sigTag) → Fetch(manifest) →
+// per-layer blob fetch — is exercised without a live registry. Modeled on
+// startFakeRegistry in fetch_test.go.
+func cosignSigRepoClient(t *testing.T, sigTag string, manifestBytes []byte, blobs map[string][]byte) *remote.Repository {
+	t.Helper()
+	manifestDigest := sha256Digest(manifestBytes)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		ref := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v2/"):
+			return
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			if ref != sigTag && ref != manifestDigest {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			w.Header().Set("Docker-Content-Digest", manifestDigest)
+			_, _ = w.Write(manifestBytes)
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			body, ok := blobs[ref]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Docker-Content-Digest", ref)
 			_, _ = w.Write(body)
 		default:
 			http.NotFound(w, r)

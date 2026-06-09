@@ -55,16 +55,22 @@ var (
 	ErrCommand                    = fmt.Errorf("%w: command error", ErrFlux)
 	// ErrMissingSecret signals that a source's auth SecretRef couldn't
 	// be resolved — either the referenced Secret isn't in the offline
-	// tree, or it's present but its values were wiped to PLACEHOLDER
-	// strings by --wipe-secrets (the typical ExternalSecret case: the
-	// Secret manifest exists but its data is materialized live, not in
+	// tree, or its value is SOPS-encrypted (flate can't decrypt, so it's
+	// wiped to a PLACEHOLDER string) or materialized live by an
+	// ExternalSecret (the Secret manifest exists but its data isn't in
 	// git). The orchestrator's --allow-missing-secrets flag turns this
 	// into a skip rather than a failure.
 	//
-	// Scope: auth secretRef ONLY. Verify (cosign/PGP), certSecretRef,
-	// and proxySecretRef sites intentionally still fail loud — silently
-	// dropping verification or proxy/TLS material is a security
-	// downgrade flate refuses to make implicit.
+	// Scope: auth secretRef ONLY. certSecretRef and proxySecretRef sites
+	// intentionally still fail loud — silently dropping proxy/TLS material
+	// is a security downgrade flate refuses to make implicit. Cosign verify
+	// is the one nuance: a MISSING verify secret still fails loud here, but
+	// an unusable public key (no PEM key material) or an unreachable
+	// signature now WARNs and renders unverified rather than hard-failing —
+	// flate is an offline renderer, not an admission gate (see
+	// oci.verifyCosignSignature). Note parseSecret no longer blanket-wipes
+	// Secret values: only SOPS ciphertext is neutralized, so a plaintext
+	// public key passes through and keyed verification works.
 	ErrMissingSecret = fmt.Errorf("%w: missing secret", ErrFlux)
 	// ErrSourceSkipped signals that a downstream consumer (KS sourceRef,
 	// HR chartRef) cannot proceed because its source was skipped —

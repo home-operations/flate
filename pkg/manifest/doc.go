@@ -8,10 +8,13 @@
 // ParseDoc-equivalent constructor, and re-encoded to a canonical YAML
 // representation for export.
 //
-// Secrets are stripped of their values by default during parsing: the
-// data/stringData fields are rewritten with placeholder tokens of the form
-// "..PLACEHOLDER_<key>..". This matches flux-local's behavior — flate never
-// needs the cleartext values to verify cluster shape.
+// flate renders the user's own repo offline, not a live cluster, so Secret
+// values pass through verbatim — plaintext, public keys, certs, binary data.
+// The one exception (when wipeSecrets is set, the default) is SOPS ciphertext:
+// flate can't decrypt it, and a raw "ENC[AES256_GCM,...]" value poisons
+// downstream rendering (the ':'/commas break envsubst, Ingress hosts,
+// cert-manager dnsNames), so SOPS-encrypted data/stringData scalars are
+// rewritten with placeholder tokens of the form "..PLACEHOLDER_<key>..".
 //
 // # Shadow fields
 //

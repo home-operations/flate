@@ -98,11 +98,11 @@ flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
 | `Bucket`           | `generic` only | `accesskey` + `secretkey`. `aws`/`gcp`/`azure` fail loud — use static creds.                             |
 | `ExternalArtifact` | `file://` only | `status.artifact.url` must be a local path.                                                              |
 
-PLACEHOLDER-wiped values (the always-on wipe of cleartext Secret data) are treated as missing — auth fails with a clear "missing username/password" instead of attempting auth with the placeholder string. See [Behaviors](#behaviors) for `--allow-missing-secrets`, which soft-skips affected sources end-to-end.
+flate renders your own repo offline, so Secret values pass through verbatim — only SOPS ciphertext is wiped to `..PLACEHOLDER_<key>..` (flate can't decrypt it, and raw `ENC[…]` poisons rendering). A wiped (or genuinely missing) auth value is treated as missing — auth fails with a clear "missing username/password" instead of attempting auth with the placeholder. See [Behaviors](#behaviors) for `--allow-missing-secrets`, which soft-skips affected sources end-to-end.
 
 ## Behaviors
 
-**SOPS** — `spec.decryption` is not implemented. Encrypted Secret values get wiped to `..PLACEHOLDER_<key>..`, same as cleartext values under the always-on wipe. Downstream `postBuild.substituteFrom` lookups resolve to the placeholder string rather than failing.
+**SOPS** — `spec.decryption` is not implemented. Encrypted Secret/ConfigMap values get wiped to `..PLACEHOLDER_<key>..` (flate can't decrypt offline, and raw `ENC[…]` ciphertext poisons downstream rendering). Cleartext Secret values are NOT wiped — flate renders your own repo, not a live cluster. Downstream `postBuild.substituteFrom` lookups resolve a SOPS value to the placeholder rather than failing.
 
 **`spec.suspend`** — honored on every reconcilable CR. Suspended resources mark `Ready / "suspended"` and produce no rendered output.
 
@@ -129,7 +129,7 @@ Combination follows `spec.inputStrategy`: **Flatten** (default) concatenates all
 
 flate is rendering-only.
 
-- **No SOPS decryption.** Values wiped; pre-decrypt if you need them in the diff.
+- **No SOPS decryption.** SOPS-encrypted values are wiped to a placeholder; pre-decrypt if you need them in the diff. (Cleartext Secret values render as-is.)
 - **No cosign keyless.** Keyed verification works end-to-end; keyless logs and renders unverified (no offline trust roots).
 - **No notation.** Fails loud.
 - **No cloud workload identity.** `spec.serviceAccountName` is a no-op; use static creds in a Secret.

@@ -82,66 +82,87 @@ type signatureManifest struct {
 // pulls — so the chart is fetched and rendered, with a warn-level log
 // making the unverified state visible to the user.
 // Notation is also out of scope.
+// verifyCosignSignature reports whether the pulled artifact's cosign
+// signature was successfully verified against a trusted key (verified=true),
+// and returns a non-nil error only for a GENUINE verification failure.
+//
+// flate is an offline renderer, not an admission gate, so it distinguishes
+// "couldn't complete the check" from "the check failed":
+//
+//   - Cannot complete (keyless, no usable public key, signature not
+//     reachable in the registry) → warn + return (false, nil). The artifact
+//     still renders, unverified, and the WARN makes the skip visible.
+//   - Genuine failure (signature present but its manifest is broken, or no
+//     layer matches any trusted key, or the payload binds the wrong digest)
+//     → return (false, err) and fail loud.
+//
+// The boundary is the transport: Resolve + Fetch + ReadAll of the signature
+// manifest are "can't reach it" → skip; everything past that point operates
+// on bytes flate already holds, so a failure is a real integrity/trust
+// problem → hard error.
 func (f *Fetcher) verifyCosignSignature(
 	ctx context.Context,
 	repoClient *remote.Repository,
 	repo *manifest.OCIRepository,
 	pulledDigest string,
-) error {
+) (verified bool, err error) {
 	if repo.Verify == nil {
-		return nil
+		return false, nil
 	}
 	provider := cmp.Or(repo.Verify.Provider, "cosign")
 	if provider != "cosign" {
-		return fmt.Errorf("OCIRepository %s/%s: verify provider %q is not implemented; flate currently supports only %q",
+		return false, fmt.Errorf("OCIRepository %s/%s: verify provider %q is not implemented; flate currently supports only %q",
 			repo.Namespace, repo.Name, provider, "cosign")
 	}
 	if repo.Verify.SecretRef == nil {
 		// Keyless (OIDC) — flate can't reach Fulcio/Rekor offline and
-		// doesn't carry the sigstore trust roots. Log and proceed so
-		// the chart still renders for diff purposes. WARN (not Debug)
-		// so an operator who deliberately opted into spec.verify can
-		// SEE that flate skipped the verification — silent skip on a
-		// security-gating spec field is the worst-of-both-worlds
-		// outcome.
-		slog.Warn("cosign keyless verification skipped; rendering unverified artifact",
-			"ociRepository", repo.Namespace+"/"+repo.Name,
-			"digest", pulledDigest)
-		return nil
+		// doesn't carry the sigstore trust roots.
+		f.warnSkipVerify(repo, pulledDigest, "keyless verification requires Fulcio/Rekor")
+		return false, nil
 	}
 	keys, err := f.loadCosignPublicKeys(repo)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(keys) == 0 {
-		return fmt.Errorf("OCIRepository %s/%s: secret %s/%s contains no PEM-encoded public keys",
-			repo.Namespace, repo.Name, repo.Namespace, repo.Verify.SecretRef.Name)
+		// The verify secret resolved but yielded no usable public key —
+		// wiped by --wipe-secrets, or it carries no PEM public-key material.
+		// flate has nothing to verify against, so skip rather than block the
+		// render (a public key is not secret; see manifest.parseSecret).
+		f.warnSkipVerify(repo, pulledDigest,
+			"no public keys in verify secret "+repo.Namespace+"/"+repo.Verify.SecretRef.Name)
+		return false, nil
 	}
 
+	// Transport boundary — a failure to REACH the signature means flate
+	// can't complete the check, so it warns and skips (like keyless).
 	sigTag := cosignSigTag(pulledDigest)
 	manDesc, err := repoClient.Resolve(ctx, sigTag)
 	if err != nil {
-		return fmt.Errorf("OCIRepository %s/%s: locate cosign signature %s: %w",
-			repo.Namespace, repo.Name, sigTag, err)
+		f.warnSkipVerify(repo, pulledDigest, "signature not found in registry ("+sigTag+"): "+err.Error())
+		return false, nil
 	}
 	manReader, err := repoClient.Fetch(ctx, manDesc)
 	if err != nil {
-		return fmt.Errorf("OCIRepository %s/%s: fetch signature manifest: %w",
-			repo.Namespace, repo.Name, err)
+		f.warnSkipVerify(repo, pulledDigest, "fetch signature manifest: "+err.Error())
+		return false, nil
 	}
 	manBytes, err := io.ReadAll(manReader)
 	_ = manReader.Close()
 	if err != nil {
-		return fmt.Errorf("OCIRepository %s/%s: read signature manifest: %w",
-			repo.Namespace, repo.Name, err)
+		f.warnSkipVerify(repo, pulledDigest, "read signature manifest: "+err.Error())
+		return false, nil
 	}
+
+	// Past the transport boundary: flate holds the signature bytes, so any
+	// failure from here on is a genuine integrity/trust problem → hard error.
 	var sigMan signatureManifest
 	if err := json.Unmarshal(manBytes, &sigMan); err != nil {
-		return fmt.Errorf("OCIRepository %s/%s: parse signature manifest: %w",
+		return false, fmt.Errorf("OCIRepository %s/%s: parse signature manifest: %w",
 			repo.Namespace, repo.Name, err)
 	}
 	if len(sigMan.Layers) == 0 {
-		return fmt.Errorf("OCIRepository %s/%s: signature manifest has no layers",
+		return false, fmt.Errorf("OCIRepository %s/%s: signature manifest has no layers",
 			repo.Namespace, repo.Name)
 	}
 
@@ -149,7 +170,7 @@ func (f *Fetcher) verifyCosignSignature(
 	for _, layer := range sigMan.Layers {
 		matched, err := verifyLayerAgainstKeys(ctx, repoClient, layer, keys, pulledDigest)
 		if matched {
-			return nil
+			return true, nil
 		}
 		// A no-signature layer returns (false, nil) and is silently
 		// skipped — it must not clobber a real error from a prior layer.
@@ -160,8 +181,19 @@ func (f *Fetcher) verifyCosignSignature(
 	if lastErr == nil {
 		lastErr = errors.New("no signature layer matched any trusted key")
 	}
-	return fmt.Errorf("OCIRepository %s/%s: cosign verify failed: %w",
+	return false, fmt.Errorf("OCIRepository %s/%s: cosign verify failed: %w",
 		repo.Namespace, repo.Name, lastErr)
+}
+
+// warnSkipVerify logs that cosign verification was skipped because flate
+// couldn't complete it, and that the artifact renders unverified. WARN (not
+// Debug) so an operator who opted into spec.verify SEES the skip — a silent
+// skip on a security-gating field is the worst outcome.
+func (f *Fetcher) warnSkipVerify(repo *manifest.OCIRepository, digest, reason string) {
+	slog.Warn("cosign verification skipped; rendering unverified artifact",
+		"ociRepository", repo.Namespace+"/"+repo.Name,
+		"digest", digest,
+		"reason", reason)
 }
 
 // verifyLayerAgainstKeys verifies a single cosign signature layer against
@@ -259,7 +291,7 @@ func (f *Fetcher) loadCosignPublicKeys(repo *manifest.OCIRepository) ([]crypto.P
 // parsePEMPublicKeys decodes every PUBLIC KEY block in the buffer.
 // Accepts both PKIX (SubjectPublicKeyInfo) and bare RSA PUBLIC KEY blocks.
 // Returns an empty slice when nothing parses; callers treat that as
-// "no trusted keys" and fail loud upstream.
+// "no trusted keys".
 func parsePEMPublicKeys(b []byte) []crypto.PublicKey {
 	var keys []crypto.PublicKey
 	for {
@@ -269,13 +301,11 @@ func parsePEMPublicKeys(b []byte) []crypto.PublicKey {
 		}
 		switch block.Type {
 		case "PUBLIC KEY":
-			k, err := x509.ParsePKIXPublicKey(block.Bytes)
-			if err == nil {
+			if k, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
 				keys = append(keys, k)
 			}
 		case "RSA PUBLIC KEY":
-			k, err := x509.ParsePKCS1PublicKey(block.Bytes)
-			if err == nil {
+			if k, err := x509.ParsePKCS1PublicKey(block.Bytes); err == nil {
 				keys = append(keys, k)
 			}
 		}

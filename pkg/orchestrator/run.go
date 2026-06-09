@@ -90,10 +90,11 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}, false)
 	defer unsubCycles()
 
-	// Dag engine: the re-entrant fixpoint scheduler owns dispatch. The
+	// The re-entrant fixpoint scheduler is the DEFAULT engine and owns dispatch;
+	// only an explicit --engine=event takes the legacy event path. The
 	// cycle-detect listener above stays registered in BOTH paths so preflight
 	// failures are recorded before any node runs.
-	if o.cfg.Engine == "dag" {
+	if o.cfg.Engine != "event" {
 		return o.runDAG(ctx)
 	}
 
@@ -165,9 +166,11 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 // controller Start, since Configure panics if invoked after dispatch
 // begins.
 func (o *Orchestrator) configureControllers() {
-	engineMode := base.EngineEvent
-	if o.cfg.Engine == "dag" {
-		engineMode = base.EngineDAG
+	// dag is the default; only an explicit --engine=event opts into the
+	// legacy blocking engine.
+	engineMode := base.EngineDAG
+	if o.cfg.Engine == "event" {
+		engineMode = base.EngineEvent
 	}
 	o.src.Configure(sourcectrl.FetchOptions{
 		Engine:              engineMode,

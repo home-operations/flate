@@ -47,9 +47,9 @@ type commonFlags struct {
 	output              string
 	registryConfig      string
 	concurrency         int
-	// engine selects the reconcile engine: "event" (default — the blocking
-	// depwait + task-quiescence engine) or "dag" (the re-entrant fixpoint
-	// scheduler, pkg/schedule). Both produce byte-identical output.
+	// engine selects the reconcile engine: "dag" (default — the re-entrant
+	// fixpoint scheduler, pkg/schedule) or "event" (the legacy blocking
+	// depwait + task-quiescence engine). Both produce byte-identical output.
 	engine string
 	// sourceRetry* tune the bounded retry applied uniformly to every source
 	// fetch on transient network errors. attempts is the total tries (first +
@@ -127,8 +127,8 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"(Windows), falling back to $TMPDIR/flate-cache if those error.")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
-	fs.StringVar(&f.engine, "engine", "event",
-		"reconcile engine: event (blocking depwait + quiescence) or dag (re-entrant fixpoint scheduler)")
+	fs.StringVar(&f.engine, "engine", "dag",
+		"reconcile engine: dag (default — re-entrant fixpoint scheduler) or event (legacy blocking depwait + quiescence)")
 	// Retry only kicks in for transient network failures (connection
 	// reset/refused, timeouts); a bad path / auth / not-found still fails
 	// on the first try. --source-retry-attempts=1 disables it entirely.

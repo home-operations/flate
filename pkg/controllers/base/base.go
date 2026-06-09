@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -96,6 +97,11 @@ type Controller struct {
 	renders   depwait.RenderInflight
 	preflight func(manifest.NamedResource) (string, bool)
 	parentOf  func(manifest.NamedResource) (manifest.NamedResource, bool)
+
+	// engine selects the dependency-gating strategy Require uses. The zero
+	// value (EngineEvent) is the blocking event engine — today's default; the
+	// orchestrator flips it to EngineDAG via SetEngine when --engine=dag.
+	engine EngineMode
 
 	// renderTracker receives every reconcilable/source child a render
 	// emits. Set via SetRenderTracker before Start; read-only after.
@@ -475,21 +481,65 @@ func AwaitRefresh[T manifest.BaseManifest](
 	return obj, ok, nil
 }
 
-// Require is the engine-agnostic dependency gate the reconcile bodies
-// call. It owns Waiter construction (built from id + timeout) so call
-// sites no longer thread a *depwait.Waiter, and is the single seam where
-// the two engines diverge:
+// EngineMode selects how Require gates on dependencies.
+type EngineMode uint8
+
+const (
+	// EngineEvent is the blocking event engine (depwait + task quiescence) —
+	// the zero value and current default.
+	EngineEvent EngineMode = iota
+	// EngineDAG is the re-entrant fixpoint scheduler: Require returns a
+	// *depwait.ErrBlocked sentinel instead of blocking, so the scheduler parks
+	// the node and re-runs it when a dependency advances.
+	EngineDAG
+)
+
+// SetEngine selects the dependency-gating engine. Panics after Start —
+// reconcile-shaping config is frozen once dispatch begins.
+func (c *Controller) SetEngine(m EngineMode) {
+	c.requireNotStarted("SetEngine")
+	c.engine = m
+}
+
+// DAGEngine reports whether the dag scheduler owns dispatch. Concrete
+// controllers use it to skip registering their event-driven OnReconcile
+// dispatch listener in Start — under dag the scheduler invokes ReconcileNode
+// directly. Other listeners (HR's producer index) stay registered.
+func (c *Controller) DAGEngine() bool { return c.engine == EngineDAG }
+
+type drainLevelKey struct{}
+
+// WithDrainLevel stamps the dag scheduler's current drain level onto ctx so
+// the body's Require calls reach Classify with it. The orchestrator's
+// Dispatcher sets it per-dispatch; absent ⇒ DrainNone (0).
+func WithDrainLevel(ctx context.Context, level int) context.Context {
+	return context.WithValue(ctx, drainLevelKey{}, level)
+}
+
+func drainLevel(ctx context.Context) int {
+	v, _ := ctx.Value(drainLevelKey{}).(int)
+	return v
+}
+
+// Require gates the caller on deps. Under the event engine it blocks (Await);
+// under the dag engine it classifies each dep WITHOUT blocking and returns
+// one of:
+//   - nil — every dep satisfied; the body proceeds.
+//   - onFail(sum) (a *manifest.DependencyFailedError) — a dep is terminally
+//     Failed and none is still blockable; instant cascade, no FailedGrace.
+//   - *depwait.ErrBlocked — at least one dep is absent/Pending/ReadyExpr-pending;
+//     the body returns and the scheduler parks the node on those deps.
 //
-//   - event engine (current default): blocks via Await — identical
-//     behavior to the pre-seam call sites.
-//   - dag engine (Phase 1): performs a NON-blocking check and returns an
-//     ErrBlocked sentinel when a dep is absent / not-yet-Ready, so the
-//     scheduler can park the node and re-run the body once the dep
-//     advances — no goroutine or active-count is held across the wait.
+// Blocked WINS over failed: if any dep is still producible (ClassBlocked) we
+// park even when another dep already failed, discarding sum — the re-run
+// re-derives the failure on a later pass once nothing is blocked. This matches
+// the event engine, where a producible dep keeps the wait alive while a
+// failed-omittable ref is handled by the caller's onFail only once it is the
+// sole remaining signal (see resolvePreRenderValuesFrom).
 //
-// Both engines return a *manifest.DependencyFailedError (via onFail) when
-// a dep is terminally Failed, and nil when every dep is satisfied. Phase 0
-// wires only the event branch; the result is byte-identical to Await.
+// The pendingMsg status write mirrors Await exactly (unconditional Pending when
+// non-empty, nothing when empty) so a dependent observing this node mid-gate
+// sees the identical status under both engines.
 func (c *Controller) Require(
 	ctx context.Context,
 	id manifest.NamedResource,
@@ -498,7 +548,33 @@ func (c *Controller) Require(
 	pendingMsg string,
 	onFail func(depwait.Summary) error,
 ) error {
-	return c.Await(ctx, id, c.NewWaiter(id, timeout), deps, pendingMsg, onFail)
+	if c.engine != EngineDAG {
+		return c.Await(ctx, id, c.NewWaiter(id, timeout), deps, pendingMsg, onFail)
+	}
+	if pendingMsg != "" {
+		c.Store.UpdateStatus(id, store.StatusPending, pendingMsg)
+	}
+	level := drainLevel(ctx)
+	w := c.NewWaiter(id, timeout)
+	var blocked []manifest.NamedResource
+	sum := depwait.Summary{Messages: map[manifest.NamedResource]string{}}
+	for _, dep := range deps {
+		switch cl := w.Classify(dep, level); cl.Kind {
+		case depwait.ClassReady:
+		case depwait.ClassFailed:
+			sum.Failed = append(sum.Failed, dep.NamedResource)
+			sum.Messages[dep.NamedResource] = cl.Message
+		case depwait.ClassBlocked:
+			blocked = append(blocked, dep.NamedResource)
+		}
+	}
+	if len(blocked) > 0 {
+		return &depwait.ErrBlocked{Deps: blocked}
+	}
+	if sum.AnyFailed() {
+		return onFail(sum)
+	}
+	return nil
 }
 
 // RequireRefresh fuses Require with the load-bearing store re-read every
@@ -530,6 +606,14 @@ func RequireRefresh[T manifest.BaseManifest](
 // single-sourcing it keeps the failure shape consistent across controllers.
 func DepFailed(id manifest.NamedResource) func(depwait.Summary) error {
 	return func(sum depwait.Summary) error {
+		// Sort the failed-dep list so the rendered DependencyFailedError
+		// message is deterministic across runs AND identical between the two
+		// engines: the event engine's WaitAll collects failures in
+		// nondeterministic channel-receive order, while the dag engine collects
+		// them in dep-slice order. Sorting here normalizes both (and fixes a
+		// latent event-engine nondeterminism for multi-failed-dependency
+		// resources).
+		slices.SortFunc(sum.Failed, func(a, b manifest.NamedResource) int { return a.Compare(b) })
 		return &manifest.DependencyFailedError{
 			Parent:  id,
 			Failed:  sum.Failed,
@@ -582,47 +666,112 @@ func RunWithStatus[T manifest.BaseManifest](
 	logKind string,
 	fn func(context.Context, T) error,
 ) {
+	_ = RunWithStatusOutcome[T](ctx, s, id, logKind, fn)
+}
+
+// RunWithStatusOutcome is RunWithStatus that additionally reports the dag
+// scheduler's outcome: the blocked dependency set, or nil when the body
+// terminalized (Ready / Skipped / Failed). It intercepts a *depwait.ErrBlocked
+// returned by the body BEFORE the generic Failed-status write, leaving the
+// Pending status the body's Require wrote — so a blocked node stays non-Ready
+// and re-runnable. Under the event engine the body never returns ErrBlocked, so
+// the returned slice is always nil and behavior is byte-identical to the prior
+// RunWithStatus.
+func RunWithStatusOutcome[T manifest.BaseManifest](
+	ctx context.Context,
+	s *store.Store,
+	id manifest.NamedResource,
+	logKind string,
+	fn func(context.Context, T) error,
+) []manifest.NamedResource {
 	defer Recover(s, id, logKind)
 	obj, ok := store.Get[T](s, id)
 	if !ok {
-		// Object deleted (or wrong type) between coalescer enqueue and
-		// run. A Refire-driven re-run that previously wrote
-		// StatusPending/MsgRefetching would otherwise stick at Pending
-		// forever — every depwait blocking on this id rides its full
-		// per-dep timeout. Write a terminal Ready with a brief reason
-		// so dep checks unblock and the testrunner reports cleanly.
-		// Use Ready (not Failed) because a vanished resource is the
-		// same outcome real Flux would see when the CR is deleted.
+		// Object deleted (or wrong type) between discovery/enqueue and run.
+		// Write a terminal Ready with a brief reason so dependents unblock and
+		// the testrunner reports cleanly — a vanished resource is the same
+		// outcome real Flux sees when the CR is deleted.
 		if info, has := s.GetStatus(id); has && info.Status != store.StatusReady {
 			s.UpdateStatus(id, store.StatusReady, "skipped: object not in store at reconcile time")
 		}
-		return
+		return nil
 	}
 	if err := fn(ctx, obj); err != nil {
-		// ErrSourceSkipped propagates a soft-skip from a referenced
-		// source (e.g. --allow-missing-secrets on its auth secret) up
-		// to this consumer. Mark Ready with a "skipped:" message
-		// rather than Failed so depwait treats us as ready and the
-		// test runner reports SKIPPED, matching the source's outcome.
+		// dag-only: a dependency gate is unsatisfied. Surface the blocked deps
+		// WITHOUT writing Failed — the node keeps the Pending status Require
+		// wrote and stays parkable + re-runnable. Provably unreachable under the
+		// event engine (Await blocks instead of returning ErrBlocked), so the
+		// event path is byte-identical.
+		var blocked *depwait.ErrBlocked
+		if errors.As(err, &blocked) {
+			return blocked.Deps
+		}
+		// ErrSourceSkipped propagates a soft-skip from a referenced source
+		// (--allow-missing-secrets on its auth secret). Mark Ready+"skipped:"
+		// rather than Failed so dependents treat us as ready and the runner
+		// reports SKIPPED, matching the source's outcome.
 		if errors.Is(err, manifest.ErrSourceSkipped) {
 			s.UpdateStatus(id, store.StatusReady,
 				store.SkippedPrefix+" "+manifest.TrimSentinelPrefix(err.Error()))
-			return
+			return nil
 		}
 		s.UpdateStatus(id, store.StatusFailed, err.Error())
-		return
+		return nil
 	}
 	if existing, ok := s.GetStatus(id); ok {
 		if existing.Status == store.StatusFailed {
-			return
+			return nil
 		}
 		if existing.Status == store.StatusReady && existing.Message != "" {
-			// Existing Ready message is informative (skipped:, unchanged,
-			// suspended, or any future Ready sub-state) — don't clobber.
-			return
+			// Informative Ready message (skipped:, unchanged, suspended) —
+			// don't clobber.
+			return nil
 		}
 	}
 	s.UpdateStatus(id, store.StatusReady, "")
+	return nil
+}
+
+// statusReady reports whether id's current store status is Ready — the dag
+// scheduler's "this terminal node satisfies a dependency" signal.
+func (c *Controller) statusReady(id manifest.NamedResource) bool {
+	info, ok := c.Store.GetStatus(id)
+	return ok && info.Status == store.StatusReady
+}
+
+// DispatchNode runs id's reconcile body under the dag engine and reports what
+// the scheduler needs: the blocked dependency set (nil = terminalized) and
+// whether id's final store status is Ready. It performs the same PreGate /
+// preflight pre-checks the event listener (OnReconcile) does, then
+// RunWithStatusOutcome. drainLevel threads the scheduler's fixpoint level into
+// Require via ctx. The orchestrator's Dispatcher calls this, routing by Kind, so
+// no per-kind match check is needed here.
+func DispatchNode[T manifest.BaseManifest](
+	ctx context.Context,
+	c *Controller,
+	id manifest.NamedResource,
+	drainLevel int,
+	suspended func(T) bool,
+	logKind string,
+	reconcile func(context.Context, T) error,
+) (blocked []manifest.NamedResource, ready bool) {
+	ctx = WithDrainLevel(ctx, drainLevel)
+	obj, ok := store.Get[T](c.Store, id)
+	if !ok {
+		// Vanished — RunWithStatusOutcome's vanished branch records a terminal
+		// status; report it.
+		blocked = RunWithStatusOutcome[T](ctx, c.Store, id, logKind, reconcile)
+		return blocked, c.statusReady(id)
+	}
+	if c.PreGate(id, suspended(obj)) {
+		return nil, c.statusReady(id) // gated out: Ready (suspended/unchanged)
+	}
+	if msg, failed := c.PreflightFailure(id); failed {
+		c.Store.UpdateStatus(id, store.StatusFailed, msg)
+		return nil, false
+	}
+	blocked = RunWithStatusOutcome[T](ctx, c.Store, id, logKind, reconcile)
+	return blocked, c.statusReady(id)
 }
 
 // OnReconcile builds the EventObjectAdded listener every controller registers

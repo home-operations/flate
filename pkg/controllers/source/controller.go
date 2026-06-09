@@ -46,6 +46,9 @@ type Controller struct {
 // onto the controller. Filter narrows fetches to sources referenced by
 // changed resources in changed-only mode.
 type FetchOptions struct {
+	// Engine selects the dependency-gating engine (event vs dag); forwarded to
+	// base.Controller via SetEngine in Configure.
+	Engine              base.EngineMode
 	Filter              *change.Filter
 	AllowMissingSecrets bool
 }
@@ -62,6 +65,7 @@ func New(s *store.Store, t *task.Service) *Controller {
 // Configure installs the post-bootstrap state. Panics if called after
 // Start.
 func (c *Controller) Configure(opts FetchOptions) {
+	c.SetEngine(opts.Engine)
 	c.SetFilter(opts.Filter)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
 }
@@ -70,6 +74,11 @@ func (c *Controller) Configure(opts FetchOptions) {
 // Close is called.
 func (c *Controller) Start(ctx context.Context) {
 	c.StartLifecycle("source")
+	// Under the dag engine the scheduler owns dispatch (via ReconcileNode), so
+	// the event-driven OnReconcile dispatch listener is not registered.
+	if c.DAGEngine() {
+		return
+	}
 	// Match any kind with a registered fetcher (not a single kind like KS/HR),
 	// and read Suspend via the Suspendable interface. Coalescing in Submit
 	// means a duplicate AddObject for the same source (e.g. a parent KS
@@ -78,8 +87,31 @@ func (c *Controller) Start(ctx context.Context) {
 	// OnReconcile's PreflightFailure check is a no-op here.
 	c.AddListener(store.EventObjectAdded, base.OnReconcile(ctx, c.Controller,
 		func(id manifest.NamedResource) bool { _, ok := c.Fetchers[id.Kind]; return ok },
-		func(obj manifest.BaseManifest) bool { s, _ := obj.(src.Suspendable); return s != nil && s.Suspended() },
+		suspendedSource,
 		"source", c.reconcile))
+}
+
+// suspendedSource reports whether a source object is suspended, via the
+// optional Suspendable interface.
+func suspendedSource(obj manifest.BaseManifest) bool {
+	s, _ := obj.(src.Suspendable)
+	return s != nil && s.Suspended()
+}
+
+// HasFetcher reports whether a fetcher is registered for kind — the dag
+// Dispatcher uses it to route source-kind nodes to ReconcileNode.
+func (c *Controller) HasFetcher(kind string) bool {
+	_, ok := c.Fetchers[kind]
+	return ok
+}
+
+// ReconcileNode runs id's source fetch under the dag engine, returning the
+// blocked dependency set (always nil — sources have no depwait gates) and
+// whether id ended Ready. The orchestrator's scheduler Dispatcher calls this
+// for source-kind nodes.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
+	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
+		suspendedSource, "source", c.reconcile)
 }
 
 // reconcile fetches the source artifact via the registered Fetcher and

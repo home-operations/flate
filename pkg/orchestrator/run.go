@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
@@ -89,6 +90,13 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}, false)
 	defer unsubCycles()
 
+	// Dag engine: the re-entrant fixpoint scheduler owns dispatch. The
+	// cycle-detect listener above stays registered in BOTH paths so preflight
+	// failures are recorded before any node runs.
+	if o.cfg.Engine == "dag" {
+		return o.runDAG(ctx)
+	}
+
 	// Keep depwait's render-quiescence signal open while listener
 	// flushes submit the bootstrap objects. Without this marker, a
 	// Kustomization can start waiting on a render-emitted dependency
@@ -157,7 +165,12 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 // controller Start, since Configure panics if invoked after dispatch
 // begins.
 func (o *Orchestrator) configureControllers() {
+	engineMode := base.EngineEvent
+	if o.cfg.Engine == "dag" {
+		engineMode = base.EngineDAG
+	}
 	o.src.Configure(sourcectrl.FetchOptions{
+		Engine:              engineMode,
 		Filter:              o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	})
@@ -197,6 +210,7 @@ func (o *Orchestrator) configureControllers() {
 		return slices.Contains(o.selfProduce.ProducedBy(cm), consumer)
 	}
 	o.ksc.Configure(kustomization.Options{
+		Engine:           engineMode,
 		Filter:           o.filter,
 		ParentOf:         parentResolver,
 		RenderTracker:    o.rendered,
@@ -206,6 +220,7 @@ func (o *Orchestrator) configureControllers() {
 		SelfProduces:     selfProduces,
 	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
+		Engine:              engineMode,
 		Filter:              o.filter,
 		ParentOf:            parentResolver,
 		RenderTracker:       o.rendered,

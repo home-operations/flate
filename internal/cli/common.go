@@ -47,6 +47,10 @@ type commonFlags struct {
 	output              string
 	registryConfig      string
 	concurrency         int
+	// engine selects the reconcile engine: "event" (default — the blocking
+	// depwait + task-quiescence engine) or "dag" (the re-entrant fixpoint
+	// scheduler, pkg/schedule). Both produce byte-identical output.
+	engine string
 	// sourceRetry* tune the bounded retry applied uniformly to every source
 	// fetch on transient network errors. attempts is the total tries (first +
 	// retries); 1 disables. min/max bound the exponential backoff and jitter
@@ -123,6 +127,8 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"(Windows), falling back to $TMPDIR/flate-cache if those error.")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
+	fs.StringVar(&f.engine, "engine", "event",
+		"reconcile engine: event (blocking depwait + quiescence) or dag (re-entrant fixpoint scheduler)")
 	// Retry only kicks in for transient network failures (connection
 	// reset/refused, timeouts); a bad path / auth / not-found still fails
 	// on the first try. --source-retry-attempts=1 disables it entirely.
@@ -403,7 +409,18 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		CacheDir:               c.resolveCacheRoot(),
 		HelmTemplateCacheBytes: int64(c.helmTemplateCacheMB) << 20,
 		HelmRenderCacheBytes:   int64(c.helmRenderCacheMB) << 20,
+		Engine:                 c.engine,
 	}
+}
+
+// validateEngine fails fast on an unknown --engine value so a typo surfaces
+// immediately rather than silently falling back to the event engine.
+func validateEngine(engine string) error {
+	switch engine {
+	case "", "event", "dag":
+		return nil
+	}
+	return fmt.Errorf("--engine %q: must be one of: event, dag", engine)
 }
 
 // resolveCacheRoot returns dir if non-empty, or the platform default.
@@ -423,6 +440,9 @@ func (c *commonFlags) resolveCacheRoot() string {
 func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
 	if c.path == "" {
 		return nil, nil, errors.New("path is required")
+	}
+	if err := validateEngine(c.engine); err != nil {
+		return nil, nil, err
 	}
 	if err := validatePathFlag("--path", c.path); err != nil {
 		return nil, nil, err

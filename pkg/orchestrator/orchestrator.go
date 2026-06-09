@@ -137,6 +137,12 @@ type Config struct {
 	// The CLI flag `--helm-render-cache-mb` exposes this in MB
 	// units; embedders pass bytes directly.
 	HelmRenderCacheBytes int64
+
+	// Engine selects the reconcile engine: "" / "event" is the blocking
+	// event engine (depwait + task quiescence — the default); "dag" is the
+	// re-entrant fixpoint scheduler (pkg/schedule). Exposed via the CLI
+	// `--engine` flag; both produce byte-identical output.
+	Engine string
 }
 
 // Orchestrator wires controllers and drives reconciliation.

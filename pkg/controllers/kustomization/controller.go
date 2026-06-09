@@ -54,6 +54,9 @@ type Controller struct {
 // parent-enforcement, matching pre-#102 behavior. RenderTracker
 // receives every reconcilable child this KS emits during render.
 type Options struct {
+	// Engine selects the dependency-gating engine (event vs dag); forwarded to
+	// base.Controller via SetEngine in Configure.
+	Engine        base.EngineMode
 	Filter        *change.Filter
 	ParentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
 	RenderTracker base.RenderTracker
@@ -97,6 +100,7 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 // Start — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
 func (c *Controller) Configure(opts Options) {
+	c.SetEngine(opts.Engine)
 	c.SetFilter(opts.Filter)
 	c.SetDepwait(opts.Existence, opts.Renders)
 	c.SetPreflight(opts.PreflightFailure)
@@ -105,13 +109,28 @@ func (c *Controller) Configure(opts Options) {
 	c.selfProduces = opts.SelfProduces
 }
 
-// Start registers the listener that drives reconciliation.
+// Start registers the listener that drives reconciliation. Under the dag
+// engine the scheduler owns dispatch (via ReconcileNode), so the event-driven
+// OnReconcile dispatch listener is NOT registered — the orchestrator's dagrun
+// wires its own discovery/wake listeners instead.
 func (c *Controller) Start(ctx context.Context) {
 	c.StartLifecycle("kustomization")
+	if c.DAGEngine() {
+		return
+	}
 	c.AddListener(store.EventObjectAdded, base.OnReconcile(ctx, c.Controller,
 		func(id manifest.NamedResource) bool { return id.Kind == manifest.KindKustomization },
 		func(ks *manifest.Kustomization) bool { return ks.Suspend },
 		"kustomization", c.reconcile))
+}
+
+// ReconcileNode runs id's reconcile under the dag engine, returning the blocked
+// dependency set (nil = terminalized) and whether id ended Ready. The
+// orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
+	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
+		func(ks *manifest.Kustomization) bool { return ks.Suspend },
+		"kustomization", c.reconcile)
 }
 
 func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) error {

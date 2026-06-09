@@ -75,6 +75,9 @@ type Controller struct {
 // cluster KS level, post-build substitutions, kustomize replacements)
 // land before the first helm.Template call.
 type ReconcileOptions struct {
+	// Engine selects the dependency-gating engine (event vs dag); forwarded to
+	// base.Controller via SetEngine in Configure.
+	Engine   base.EngineMode
 	Filter   *change.Filter
 	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
 	// RenderTracker receives every source-kind child emitted during HR
@@ -118,6 +121,7 @@ func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wip
 // Start — encodes the invariant that reconcile-shaping config is
 // read-only once dispatch begins.
 func (c *Controller) Configure(opts ReconcileOptions) {
+	c.SetEngine(opts.Engine)
 	c.SetFilter(opts.Filter)
 	c.SetDepwait(opts.Existence, opts.Renders)
 	c.SetPreflight(opts.PreflightFailure)
@@ -134,11 +138,27 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 // the canonical Store. One fewer push-registry to keep in sync.
 func (c *Controller) Start(ctx context.Context) {
 	c.StartLifecycle("helmrelease")
+	// The producer index stays wired under BOTH engines — it is read by the
+	// reconcile body (generatedValuesProducer), not a dispatch trigger.
 	c.AddListener(store.EventObjectAdded, c.onRawProducerAdded())
+	// Under the dag engine the scheduler owns dispatch (via ReconcileNode), so
+	// the event-driven OnReconcile dispatch listener is not registered.
+	if c.DAGEngine() {
+		return
+	}
 	c.AddListener(store.EventObjectAdded, base.OnReconcile(ctx, c.Controller,
 		func(id manifest.NamedResource) bool { return id.Kind == manifest.KindHelmRelease },
 		func(hr *manifest.HelmRelease) bool { return hr.Suspend },
 		"helmrelease", c.reconcile))
+}
+
+// ReconcileNode runs id's reconcile under the dag engine, returning the blocked
+// dependency set (nil = terminalized) and whether id ended Ready. The
+// orchestrator's scheduler Dispatcher calls this for HelmRelease nodes.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
+	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
+		func(hr *manifest.HelmRelease) bool { return hr.Suspend },
+		"helmrelease", c.reconcile)
 }
 
 // onRawProducerAdded returns a listener that indexes RawObject producers

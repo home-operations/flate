@@ -539,11 +539,15 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...fun
 	if err != nil {
 		return nil, nil, err
 	}
-	// Live per-resource progress on stderr (TTY-gated via progressWriter).
-	// Registered before Render so terminal-status lines stream while the
-	// reconcile runs; stdout (the rendered output) is untouched.
-	if progressWriter != nil {
-		defer newProgressReporter(progressWriter).attach(o.Store())()
+	// Live status bar on stderr (TTY-gated via stderrSink). Attached before
+	// Render so its counters and spinner track the reconcile as it runs;
+	// stdout (the rendered output) is untouched. Defers run LIFO, so the
+	// unsubscribe fires before finish() draws the summary.
+	if stderrSink != nil {
+		bar := newStatusBar(stderrSink)
+		defer bar.finish()
+		defer bar.attach(o.Store())()
+		bar.start()
 	}
 	for _, hook := range pre {
 		defer hook(o)()

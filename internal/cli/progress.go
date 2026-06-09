@@ -1,27 +1,23 @@
 package cli
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"strings"
 	"sync"
-	"time"
-
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
-// progressWriter is the stderr sink live progress lines go to. Set by the
-// root command's PersistentPreRunE when stderr is a terminal and
-// --no-progress is unset; nil disables progress entirely (pipes, CI, the
-// in-process e2e harness). stdout is never written to — the rendered
-// output stays byte-deterministic.
-var progressWriter io.Writer
+// stderrSink is the terminal router live progress is painted through. Set by
+// the root command's PersistentPreRunE when stderr is an interactive terminal
+// and --no-progress is unset; nil disables the status bar entirely (pipes, CI,
+// the in-process e2e harness). When set, slog is also routed through it so log
+// lines interleave cleanly above the bar. stdout is never touched — the
+// rendered output stays byte-deterministic.
+var stderrSink *stderrRouter
 
 // writerIsTTY reports whether w is a character device (an interactive
 // terminal). Buffers and pipes — CI, redirections, the e2e harness's
-// bytes.Buffer — are not, so progress stays off there without a flag.
+// bytes.Buffer — are not, so the bar stays off there without a flag.
 func writerIsTTY(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {
@@ -31,78 +27,72 @@ func writerIsTTY(w io.Writer) bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
-// progressReporter prints one line per resource to stderr the moment it
-// reaches a terminal status, so a long first run (cold source fetches, big
-// renders) reads as live work instead of silence until the buffered render
-// is emitted. Lines look like:
+// stderrRouter multiplexes a sticky single-line status bar with the ordinary
+// scroll-back stream (slog records, failure lines, the final summary) on one
+// terminal. It is the single point that knows whether a bar frame is currently
+// painted, so every permanent write can erase the bar, print, and repaint it
+// beneath — keeping the bar pinned to the bottom line without ever tangling
+// with log output.
 //
-//	[12/86] ✓ Kustomization/flux-system/apps (1.2s)
-//	[13/86] ✗ HelmRelease/media/plex (30s) — dependency not found
-//	[14/86] – Kustomization/games/factorio (0s) (suspended)
-//
-// done counts resources that reached a terminal status; the denominator is
-// every resource seen so far (including still-Pending ones), so it grows as
-// renders emit children — a live lower bound, not a fixed plan.
-type progressReporter struct {
-	w io.Writer
-
+//	Paint(frame) — repaint the sticky bar in place (the spinner ticker).
+//	Write(p)     — emit permanent output above the bar (slog + bar lines).
+//	Stop()       — erase the bar for good (run teardown).
+type stderrRouter struct {
+	w  io.Writer
 	mu sync.Mutex
-	// first records each id's first status event (its Pending arrival) so
-	// the terminal line can show a per-resource elapsed time.
-	first map[manifest.NamedResource]time.Time
-	// printed records the last terminal status printed per id: idempotent
-	// terminal re-writes are suppressed, while a genuine flip (a Refire
-	// resurrection ending differently) prints a fresh line.
-	printed map[manifest.NamedResource]store.Status
+	// bar is the frame currently painted on the bottom line ("" = none).
+	bar string
 }
 
-func newProgressReporter(w io.Writer) *progressReporter {
-	return &progressReporter{
-		w:       w,
-		first:   map[manifest.NamedResource]time.Time{},
-		printed: map[manifest.NamedResource]store.Status{},
+func newStderrRouter(w io.Writer) *stderrRouter { return &stderrRouter{w: w} }
+
+// Write emits p as permanent scroll-back, repainting the sticky bar beneath it
+// so the bar never scrolls away. slog, the bar's own failure lines, and the
+// final summary all flow through here. n counts bytes of p (the erase/repaint
+// control bytes are bookkeeping, not the caller's payload).
+func (r *stderrRouter) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.bar != "" {
+		_, _ = io.WriteString(r.w, eraseLine)
+	}
+	n, err := r.w.Write(p)
+	if r.bar != "" {
+		_, _ = io.WriteString(r.w, r.bar)
+	}
+	return n, err
+}
+
+// Paint repaints the sticky bar in place (carriage-return + clear-to-EOL, then
+// the frame, no trailing newline so the line stays sticky).
+func (r *stderrRouter) Paint(frame string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, _ = io.WriteString(r.w, eraseLine+frame)
+	r.bar = frame
+}
+
+// Stop erases the bar and forgets it, leaving the cursor at column 0 of a
+// clean line for the caller's final output.
+func (r *stderrRouter) Stop() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.bar != "" {
+		_, _ = io.WriteString(r.w, eraseLine)
+		r.bar = ""
 	}
 }
 
-// attach subscribes the reporter to s's status events. Call before the
-// orchestrator runs (the store may still be empty); the returned
-// unsubscribe must be called once the run ends.
-func (p *progressReporter) attach(s *store.Store) store.Unsubscribe {
-	return s.OnStatus(p.onStatus, false)
-}
+// width reports the terminal's column count for frame truncation, falling back
+// to 80 when the underlying writer isn't a sized terminal.
+func (r *stderrRouter) width() int { return terminalWidth(r.w) }
 
-func (p *progressReporter) onStatus(id manifest.NamedResource, info store.StatusInfo) {
-	now := time.Now()
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	started, seen := p.first[id]
-	if !seen {
-		p.first[id] = now
-		started = now
-	}
-	if info.Status != store.StatusReady && info.Status != store.StatusFailed {
-		return
-	}
-	if p.printed[id] == info.Status {
-		return
-	}
-	p.printed[id] = info.Status
-	mark, detail := "✓", ""
-	switch {
-	case info.Status == store.StatusFailed:
-		mark, detail = "✗", " — "+progressDetail(info.Message)
-	case store.IsSkipped(info), store.IsSuspended(info), store.IsUnchanged(info):
-		mark, detail = "–", " ("+progressDetail(info.Message)+")"
-	}
-	// A stderr write failure is unactionable mid-run; progress is best-effort.
-	_, _ = fmt.Fprintf(p.w, "[%d/%d] %s %s (%s)%s\n",
-		len(p.printed), len(p.first), mark, id,
-		now.Sub(started).Round(10*time.Millisecond), detail)
-}
+// eraseLine returns the cursor to column 0 and clears to end of line.
+const eraseLine = "\r\x1b[K"
 
-// progressDetail reduces a status message to a one-line hint: first line
-// only, capped at 120 runes. Full failure detail belongs to the final
-// report, not the live ticker.
+// progressDetail reduces a status message to a one-line hint: first line only,
+// capped at 120 runes. Full failure detail belongs to the final report, not
+// the live ticker.
 func progressDetail(msg string) string {
 	if i := strings.IndexByte(msg, '\n'); i >= 0 {
 		msg = msg[:i]

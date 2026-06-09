@@ -45,16 +45,20 @@ func New(version string) *cobra.Command {
 		if err := applyEnvVars(cmd); err != nil {
 			return err
 		}
-		// Live progress goes to stderr only when it is an interactive
-		// terminal (pipes/CI/e2e buffers stay clean) and --no-progress is
-		// unset. Mirrors setLogLevel's package-global install below.
+		// The live status bar paints to stderr only when it is an
+		// interactive terminal (pipes/CI/e2e buffers stay clean) and
+		// --no-progress is unset. When active, slog is routed through the
+		// same stderrRouter so log records interleave above the bar instead
+		// of corrupting it; otherwise slog writes straight to stderr.
 		noProgress, _ := cmd.Flags().GetBool("no-progress")
-		progressWriter = nil
+		stderrSink = nil
+		logSink := cmd.ErrOrStderr()
 		if errW := cmd.ErrOrStderr(); !noProgress && writerIsTTY(errW) {
-			progressWriter = errW
+			stderrSink = newStderrRouter(errW)
+			logSink = stderrSink
 		}
 		lvl, _ := cmd.Flags().GetString("log-level")
-		return setLogLevel(lvl, cmd.ErrOrStderr())
+		return setLogLevel(lvl, logSink)
 	}
 
 	root.AddCommand(

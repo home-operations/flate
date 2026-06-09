@@ -46,6 +46,29 @@ var ociLayoutArtifacts = []string{
 	ocispec.ImageIndexFile,  // "index.json"
 }
 
+// helmChartLayerMediaType is the media type helm assigns to a packaged chart's
+// content layer. Helm-chart OCI tags also normalize semver build-metadata `+`
+// to `_` (registries forbid `+` in tags), so the resolve-side tag conversion
+// keys on this media type.
+const helmChartLayerMediaType = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+
+// helmChartProvenanceMediaType is the media type helm assigns to the detached
+// PGP signature (`<chart>.prov`) it pushes alongside a signed chart. `helm
+// push` lists this layer AHEAD of the chart content layer in the OCI manifest,
+// and the blob is signature text — not a gzipped tarball. pickLayer must skip
+// it so the default (no-selector) path doesn't hand it to gzip extraction;
+// every signed chart (cert-manager, truecharts, grafana/prometheus community,
+// ...) carries one.
+const helmChartProvenanceMediaType = "application/vnd.cncf.helm.chart.provenance.v1.prov"
+
+// layerMediaType unwraps the selector's target media type, "" when unset.
+func layerMediaType(selector *manifest.OCILayerSelector) string {
+	if selector == nil {
+		return ""
+	}
+	return selector.MediaType
+}
+
 // effectiveLayerOperation returns the operation applyLayerSelector
 // will run for a given selector — Extract by default, honoring an
 // explicit override otherwise. Exposed so callers (the OCI fetcher)

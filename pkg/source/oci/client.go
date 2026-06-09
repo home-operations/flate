@@ -5,17 +5,61 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
+	"oras.land/oras-go/v2/registry/remote"
+	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
 
+// dockerConfigJSONKey is the Secret data key a kubernetes.io/dockerconfigjson
+// Secret stores its credentials under.
+const dockerConfigJSONKey = ".dockerconfigjson"
+
+// newRepoClient builds the oras registry client for repo: it parses the ref,
+// loads credentials from registryConfig, and wires a bounded HTTP transport
+// (TLS + proxy) plus docker-style auth.
+//
+// Retries are owned by the Fetch-level retry decorator (source.WithRetry) so
+// they happen once, uniformly, across every source kind — this client uses a
+// plain, NON-retrying transport. source.NewHTTPTransport always returns a
+// bounded transport (a http.DefaultTransport clone carrying
+// ResponseHeaderTimeout as a liveness backstop, plus any TLS/proxy), so oras
+// never falls back to its retry-enabled auth.DefaultClient and a black-holed
+// registry can't hang the fetch waiting on response headers.
+func newRepoClient(repo *manifest.OCIRepository, registryConfig string, tlsCfg *tls.Config, proxy *source.ProxyConfig) (*remote.Repository, error) {
+	// parseOCIRef strips any oci:// prefix itself, so pass repo.URL as-is.
+	reference, err := parseOCIRef(repo.URL)
+	if err != nil {
+		return nil, err
+	}
+	repoClient, err := remote.NewRepository(reference)
+	if err != nil {
+		return nil, fmt.Errorf("oras: %w", err)
+	}
+	credStore, err := loadCredentials(registryConfig)
+	if err != nil {
+		return nil, err
+	}
+	transport, err := source.NewHTTPTransport(tlsCfg, proxy)
+	if err != nil {
+		return nil, err
+	}
+	authClient := &auth.Client{Client: &http.Client{Transport: transport}}
+	if credStore != nil {
+		authClient.Credential = credentials.Credential(credStore)
+	}
+	repoClient.Client = authClient
+	return repoClient, nil
+}
+
 // resolveTLS builds a *tls.Config from spec.certSecretRef (PEM-encoded
-// tls.crt + tls.key + ca.crt — any subset acceptable) and/or
-// spec.insecure. Returns nil when no TLS customization is needed.
+// tls.crt + tls.key + ca.crt — any subset acceptable) and/or spec.insecure.
+// Returns nil when no TLS customization is needed.
 func (f *Fetcher) resolveTLS(repo *manifest.OCIRepository) (*tls.Config, error) {
 	if repo.CertSecretRef == nil && !repo.Insecure {
 		return nil, nil
@@ -50,14 +94,13 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 		return f.RegistryConfig, noCleanup, nil
 	}
 	if f.Secrets == nil {
-		return "", noCleanup, fmt.Errorf("OCIRepository %s/%s references secretRef but no source.SecretGetter is wired",
-			repo.Namespace, repo.Name)
+		return "", noCleanup, fmt.Errorf("%s references secretRef but no source.SecretGetter is wired", ociID(repo))
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
 		return "", noCleanup, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found")
 	}
-	configJSON := source.StringFromSecret(sec, ".dockerconfigjson")
+	configJSON := source.StringFromSecret(sec, dockerConfigJSONKey)
 	if configJSON == "" {
 		// Empty here covers both (a) the Secret has no .dockerconfigjson
 		// key at all and (b) the key exists but `--wipe-secrets` (always

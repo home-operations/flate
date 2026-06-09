@@ -4,13 +4,14 @@
 //
 // File map:
 //
-//	fetcher.go  — Fetcher type, Fetch entry, authIdentity
-//	fetch.go    — fetch workhorse, cache-hit gate, artifact composer
-//	auth.go     — TLS, registry-config, credential-store resolution
+//	fetcher.go  — Fetcher type, Fetch entry, authIdentity, ociID
+//	fetch.go    — fetch pipeline (resolve → slot → copy → publish)
+//	client.go   — registry client: TLS, registry-config, credentials
+//	cache.go    — cache keys, resolve-cache, cache-hit gate, artifact
 //	resolve.go  — OCI ref parsing, semver tag picking, revision shape
 //	marker.go   — cached-digest / verify-policy slot meta sidecar
 //	cosign.go   — cosign signature verification
-//	layer.go    — spec.layerSelector copy/extract
+//	layer.go    — media types, spec.layerSelector copy/extract
 package oci
 
 import (
@@ -65,6 +66,13 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*sto
 		return nil, err
 	}
 	return fetch(ctx, f, repo, configPath, tlsCfg, proxy)
+}
+
+// ociID is the "OCIRepository <namespace>/<name>" prefix shared by this
+// package's error messages — one helper so the prefix can't drift across the
+// ~dozen wrap sites. RepoName already yields "<namespace>/<name>".
+func ociID(repo *manifest.OCIRepository) string {
+	return "OCIRepository " + repo.RepoName()
 }
 
 // authIdentity returns the cache-key auth tag for an OCIRepository.

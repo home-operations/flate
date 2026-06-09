@@ -14,6 +14,10 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// latestTag is the implicit registry tag used when a ref names neither a tag
+// nor a digest — the same default oras.Copy targets.
+const latestTag = "latest"
+
 // parseOCIRef converts a Flux versioned URL into the form oras-go expects:
 //
 //	oci://ghcr.io/owner/chart:tag  → ghcr.io/owner/chart
@@ -77,7 +81,7 @@ func shouldResolveOCISemver(ref manifest.OCIRepositoryRef) bool {
 func ociRevision(ref manifest.OCIRepositoryRef, digest string) string {
 	tag := ref.Tag
 	if tag == "" && ref.Digest == "" {
-		tag = "latest"
+		tag = latestTag
 	}
 	switch {
 	case tag != "" && digest != "":
@@ -100,6 +104,19 @@ func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, expr, 
 		return "", fmt.Errorf("list tags: %w", err)
 	}
 	return pickSemverTag(collected, expr, filterPattern, mediaType)
+}
+
+// resolveOCIRefDigest returns the concrete digest for a ref: the explicit
+// digest when set, otherwise the registry's resolution of tag.
+func resolveOCIRefDigest(ctx context.Context, repoClient *remote.Repository, ref manifest.OCIRepositoryRef, tag string) (string, error) {
+	if ref.Digest != "" {
+		return ref.Digest, nil
+	}
+	desc, err := repoClient.Resolve(ctx, tag)
+	if err != nil {
+		return "", err
+	}
+	return desc.Digest.String(), nil
 }
 
 // pickSemverTag picks the highest semver-matching tag from a list,
@@ -136,24 +153,6 @@ func pickSemverTag(tags []string, expr, filterPattern, mediaType string) (string
 	}
 	best := slices.MaxFunc(matching, (*semver.Version).Compare)
 	return convertSemVerToOCITag(best.Original(), mediaType), nil
-}
-
-const helmChartLayerMediaType = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
-
-// helmChartProvenanceMediaType is the media type helm assigns to the
-// detached PGP signature (`<chart>.prov`) it pushes alongside a signed
-// chart. `helm push` lists this layer AHEAD of the chart content layer
-// in the OCI manifest, and the blob is signature text — not a gzipped
-// tarball. pickLayer must skip it so the default (no-selector) path
-// doesn't hand it to gzip extraction; every signed chart (cert-manager,
-// truecharts, grafana/prometheus community, ...) carries one.
-const helmChartProvenanceMediaType = "application/vnd.cncf.helm.chart.provenance.v1.prov"
-
-func layerMediaType(selector *manifest.OCILayerSelector) string {
-	if selector == nil {
-		return ""
-	}
-	return selector.MediaType
 }
 
 func convertSemVerToOCITag(semVer, mediaType string) string {

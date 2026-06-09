@@ -111,8 +111,8 @@ func (f *Fetcher) verifyCosignSignature(
 	}
 	provider := cmp.Or(repo.Verify.Provider, "cosign")
 	if provider != "cosign" {
-		return false, fmt.Errorf("OCIRepository %s/%s: verify provider %q is not implemented; flate currently supports only %q",
-			repo.Namespace, repo.Name, provider, "cosign")
+		return false, fmt.Errorf("%s: verify provider %q is not implemented; flate currently supports only %q",
+			ociID(repo), provider, "cosign")
 	}
 	if repo.Verify.SecretRef == nil {
 		// Keyless (OIDC) — flate can't reach Fulcio/Rekor offline and
@@ -158,12 +158,10 @@ func (f *Fetcher) verifyCosignSignature(
 	// failure from here on is a genuine integrity/trust problem → hard error.
 	var sigMan signatureManifest
 	if err := json.Unmarshal(manBytes, &sigMan); err != nil {
-		return false, fmt.Errorf("OCIRepository %s/%s: parse signature manifest: %w",
-			repo.Namespace, repo.Name, err)
+		return false, fmt.Errorf("%s: parse signature manifest: %w", ociID(repo), err)
 	}
 	if len(sigMan.Layers) == 0 {
-		return false, fmt.Errorf("OCIRepository %s/%s: signature manifest has no layers",
-			repo.Namespace, repo.Name)
+		return false, fmt.Errorf("%s: signature manifest has no layers", ociID(repo))
 	}
 
 	var lastErr error
@@ -181,8 +179,7 @@ func (f *Fetcher) verifyCosignSignature(
 	if lastErr == nil {
 		lastErr = errors.New("no signature layer matched any trusted key")
 	}
-	return false, fmt.Errorf("OCIRepository %s/%s: cosign verify failed: %w",
-		repo.Namespace, repo.Name, lastErr)
+	return false, fmt.Errorf("%s: cosign verify failed: %w", ociID(repo), lastErr)
 }
 
 // warnSkipVerify logs that cosign verification was skipped because flate

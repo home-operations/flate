@@ -97,39 +97,30 @@ func TestFmtElapsed(t *testing.T) {
 }
 
 // TestStatusBar_CountsAndFailureLine drives onStatus through realistic events:
-// counters track unique terminal ids, only the failure scrolls a permanent
-// line, and the summary reflects rendered/failed/skipped.
-func TestStatusBar_CountsAndFailureLine(t *testing.T) {
+// counters track unique terminal ids, but the bar writes nothing permanent —
+// it is a pure loading indicator.
+func TestStatusBar_CountsNoPermanentOutput(t *testing.T) {
 	var buf bytes.Buffer
 	bar := newStatusBar(newStderrRouter(&buf))
-	bar.color = false // deterministic assertions
+	bar.color = false
 
 	a, b, s := barID("a"), barID("b"), barID("suspended")
 	bar.onStatus(a, store.StatusInfo{Status: store.StatusPending})
 	bar.onStatus(b, store.StatusInfo{Status: store.StatusPending})
-	if buf.Len() != 0 {
-		t.Fatalf("pending events scrolled output: %q", buf.String())
-	}
 	bar.onStatus(a, store.StatusInfo{Status: store.StatusReady})
-	bar.onStatus(b, store.StatusInfo{Status: store.StatusFailed, Message: "boom: chart not found\ndetail"})
+	bar.onStatus(b, store.StatusInfo{Status: store.StatusFailed, Message: "boom: chart not found"})
 	bar.onStatus(s, store.StatusInfo{Status: store.StatusReady, Message: store.MsgSuspended})
 
-	// Only the failure leaves a permanent line.
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "✗ Kustomization/ns/b") {
-		t.Fatalf("scroll-back = %v, want a single ✗ line for b", lines)
+	// Ready, Failed, and skipped all count as "done loading" — and none of
+	// them write a permanent line.
+	if buf.Len() != 0 {
+		t.Fatalf("bar wrote permanent output (it must stay silent): %q", buf.String())
 	}
-	if !strings.Contains(lines[0], "boom: chart not found") || strings.Contains(lines[0], "detail") {
-		t.Errorf("failure line should carry only the first message line: %q", lines[0])
+	if bar.done != 3 || bar.total != 3 {
+		t.Errorf("counts: done=%d total=%d; want 3/3", bar.done, bar.total)
 	}
-
-	if bar.done != 3 || bar.failed != 1 || bar.skipped != 1 || bar.total != 3 {
-		t.Errorf("counts: done=%d failed=%d skipped=%d total=%d; want 3/1/1/3",
-			bar.done, bar.failed, bar.skipped, bar.total)
-	}
-	if got := bar.summary(time.Second); !strings.Contains(got, "1 rendered") ||
-		!strings.Contains(got, "1 failed") || !strings.Contains(got, "1 skipped") {
-		t.Errorf("summary = %q, want 1 rendered / 1 failed / 1 skipped", got)
+	if got := bar.inflightLabels(); len(got) != 0 {
+		t.Errorf("all resources terminal but still in-flight: %v", got)
 	}
 }
 
@@ -156,8 +147,8 @@ func TestStatusBar_DedupAndInflight(t *testing.T) {
 }
 
 // TestStatusBar_StartFinish: the live lifecycle paints at least one frame and
-// leaves a clean summary line behind (exercises the ticker + router under the
-// race detector).
+// then vanishes completely — finish erases the bar and leaves no trace
+// (exercises the ticker + router under the race detector).
 func TestStatusBar_StartFinish(t *testing.T) {
 	var buf bytes.Buffer
 	bar := newStatusBar(newStderrRouter(&buf))
@@ -173,11 +164,12 @@ func TestStatusBar_StartFinish(t *testing.T) {
 	if !strings.Contains(out, eraseLine) {
 		t.Errorf("no in-place repaint observed: %q", out)
 	}
-	// The summary is the final, bar-free output and ends the stream.
-	if !strings.Contains(out, "flate: ✓ 1 rendered in ") {
-		t.Errorf("missing final summary line: %q", out)
+	// Pure loading indicator: nothing permanent survives the run.
+	if strings.Contains(out, "flate:") {
+		t.Errorf("bar left a summary/trace behind; it must vanish: %q", out)
 	}
-	if !strings.HasSuffix(out, "\n") {
-		t.Errorf("output should end on a clean newline (bar erased): %q", out)
+	// finish ends with a bare erase, leaving the cursor on a clean empty line.
+	if !strings.HasSuffix(out, eraseLine) {
+		t.Errorf("bar not erased on finish; want trailing erase: %q", out)
 	}
 }

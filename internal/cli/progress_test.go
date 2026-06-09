@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 )
 
@@ -58,19 +57,6 @@ func TestStderrRouter_Stop(t *testing.T) {
 	_, _ = r.Write([]byte("after\n"))
 	if got := buf.String(); got != "after\n" {
 		t.Fatalf("post-Stop Write = %q, want bare line (bar forgotten)", got)
-	}
-}
-
-func TestProgressDetail_Truncation(t *testing.T) {
-	if got := progressDetail("short"); got != "short" {
-		t.Errorf("short passthrough = %q", got)
-	}
-	if got := progressDetail("first line\nsecond"); got != "first line" {
-		t.Errorf("multi-line not reduced to first line: %q", got)
-	}
-	long := strings.Repeat("x", 200)
-	if got := progressDetail(long); len([]rune(got)) != 120 || !strings.HasSuffix(got, "…") {
-		t.Errorf("long message not capped at 120 runes with ellipsis: len=%d", len([]rune(got)))
 	}
 }
 

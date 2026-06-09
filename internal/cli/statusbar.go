@@ -16,36 +16,32 @@ import (
 )
 
 // statusBar is the live, single-line progress indicator flate paints to
-// stderr during a run, replacing a wall of per-resource lines with one sticky
-// frame that repaints in place:
+// stderr during a run — one sticky frame that repaints in place:
 //
 //	⠹ [42/86] plex, factorio +3  12.3s
 //
 // A background ticker advances a braille spinner ~10×/s; the store's status
-// events drive the counters and the in-flight set. Only failures scroll into
-// permanent history (red ✗ lines above the bar) — successes and skips stay in
-// the counts, so the terminal reads as steady forward motion instead of spam.
-// A final summary replaces the bar when the run ends.
+// events drive the counters and the in-flight set. The bar is purely a
+// loading indicator: it prints nothing permanent and is erased without a
+// trace when the run ends (finish). Failures aren't surfaced here — flate's
+// own end-of-run report prints them once the bar is gone.
 //
 // The bar paints exclusively through a stderrRouter, which also carries slog
-// output, so log records and failure lines slot in cleanly above the bar
-// without ever corrupting it. stdout is untouched.
+// output, so log records slot in cleanly above the bar without ever
+// corrupting it. stdout is untouched.
 type statusBar struct {
 	r         *stderrRouter
 	color     bool
 	startedAt time.Time
 
 	mu sync.Mutex
-	// first records each id's first-seen time — drives in-flight ordering
-	// and per-resource elapsed on failure lines.
+	// first records each id's first-seen time — drives in-flight ordering.
 	first    map[manifest.NamedResource]time.Time
 	inflight map[manifest.NamedResource]struct{}
 	// printed records the last terminal status counted per id, so an
 	// idempotent re-write doesn't double-count and a genuine flip recounts.
 	printed map[manifest.NamedResource]store.Status
 	done    int // resources that reached a terminal status
-	failed  int
-	skipped int
 	total   int // every id seen so far (a live lower bound, grows with renders)
 
 	stop chan struct{}
@@ -72,6 +68,7 @@ func (b *statusBar) attach(s *store.Store) store.Unsubscribe {
 func (b *statusBar) onStatus(id manifest.NamedResource, info store.StatusInfo) {
 	now := time.Now()
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if _, seen := b.first[id]; !seen {
 		b.first[id] = now
 		b.total++
@@ -80,33 +77,19 @@ func (b *statusBar) onStatus(id manifest.NamedResource, info store.StatusInfo) {
 		}
 	}
 	if info.Status != store.StatusReady && info.Status != store.StatusFailed {
-		b.mu.Unlock()
 		return
 	}
 	if b.printed[id] == info.Status {
-		b.mu.Unlock()
 		return
 	}
+	// Any terminal status (Ready, Failed, or a skipped/suspended/unchanged
+	// Ready) means the resource is done loading: count it and drop it from the
+	// in-flight set. The bar emits nothing here — it's a pure loading
+	// indicator; failures surface via flate's end-of-run report after the bar
+	// is erased.
 	b.printed[id] = info.Status
 	delete(b.inflight, id)
 	b.done++
-	var failLine string
-	switch {
-	case info.Status == store.StatusFailed:
-		b.failed++
-		failLine = fmt.Sprintf("%s %s (%s) — %s",
-			b.paint("✗", ansiRed), id, fmtElapsed(now.Sub(b.first[id])),
-			progressDetail(info.Message))
-	case store.IsSkipped(info), store.IsSuspended(info), store.IsUnchanged(info):
-		b.skipped++
-	}
-	b.mu.Unlock()
-	// Failures are the one terminal event worth keeping in scroll-back; the
-	// router slots the line above the bar. Best-effort: a stderr write error
-	// mid-run is unactionable.
-	if failLine != "" {
-		_, _ = io.WriteString(b.r, failLine+"\n")
-	}
 }
 
 // start launches the spinner ticker. It paints ~10×/s until stop is closed.
@@ -126,18 +109,15 @@ func (b *statusBar) start() {
 	})
 }
 
-// finish stops the ticker, erases the bar, and prints the run summary in its
-// place. Safe to call once after the attach unsubscribe has fired.
+// finish stops the ticker and erases the bar, leaving no trace — the bar
+// exists only during the loading phase. Safe to call once after the attach
+// unsubscribe has fired.
 func (b *statusBar) finish() {
 	if b.stop != nil {
 		close(b.stop)
 		b.wg.Wait()
 	}
 	b.r.Stop()
-	b.mu.Lock()
-	summary := b.summary(time.Since(b.startedAt))
-	b.mu.Unlock()
-	_, _ = io.WriteString(b.r, summary+"\n")
 }
 
 // repaint snapshots the live counts under the lock and paints one frame.
@@ -174,26 +154,6 @@ func (b *statusBar) inflightLabels() []string {
 	return names
 }
 
-// summary is the one-line report the bar leaves behind. Caller holds b.mu.
-func (b *statusBar) summary(elapsed time.Duration) string {
-	parts := []string{fmt.Sprintf("%s %d rendered", b.paint("✓", ansiGreen), b.done-b.failed-b.skipped)}
-	if b.failed > 0 {
-		parts = append(parts, fmt.Sprintf("%s %d failed", b.paint("✗", ansiRed), b.failed))
-	}
-	if b.skipped > 0 {
-		parts = append(parts, fmt.Sprintf("%s %d skipped", b.paint("–", ansiDim), b.skipped))
-	}
-	return fmt.Sprintf("flate: %s in %s", strings.Join(parts, ", "), fmtElapsed(elapsed))
-}
-
-// paint wraps s in an ANSI color when color is enabled, else returns it bare.
-func (b *statusBar) paint(s, code string) string {
-	if b.color {
-		return code + s + ansiReset
-	}
-	return s
-}
-
 // maxInflightNames caps how many in-flight resource names the bar lists before
 // collapsing the rest into a "+N" tail.
 const maxInflightNames = 2
@@ -206,8 +166,6 @@ const (
 	ansiReset = "\x1b[0m"
 	ansiBold  = "\x1b[1m"
 	ansiDim   = "\x1b[2m"
-	ansiRed   = "\x1b[31m"
-	ansiGreen = "\x1b[32m"
 	ansiCyan  = "\x1b[36m"
 )
 

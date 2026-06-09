@@ -3,7 +3,6 @@ package cli
 import (
 	"io"
 	"os"
-	"strings"
 	"sync"
 )
 
@@ -89,16 +88,3 @@ func (r *stderrRouter) width() int { return terminalWidth(r.w) }
 
 // eraseLine returns the cursor to column 0 and clears to end of line.
 const eraseLine = "\r\x1b[K"
-
-// progressDetail reduces a status message to a one-line hint: first line only,
-// capped at 120 runes. Full failure detail belongs to the final report, not
-// the live ticker.
-func progressDetail(msg string) string {
-	if i := strings.IndexByte(msg, '\n'); i >= 0 {
-		msg = msg[:i]
-	}
-	if r := []rune(msg); len(r) > 120 {
-		return string(r[:119]) + "…"
-	}
-	return msg
-}

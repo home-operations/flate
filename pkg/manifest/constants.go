@@ -78,4 +78,3 @@ var KustomizeBuilderFilenames = []string{
 	"kustomization.yml",
 	"Kustomization",
 }
-

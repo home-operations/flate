@@ -33,4 +33,3 @@ func Substitute(data []byte, vars map[string]string) ([]byte, error) {
 	}
 	return []byte(out), nil
 }
-

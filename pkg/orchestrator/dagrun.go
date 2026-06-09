@@ -105,10 +105,6 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	}, false)
 	defer unsubStatus()
 
-	// Pre-warm git mirrors so the scheduler's source fetches see warm mirrors
-	// (the per-URL mirror lock serializes against the fetches themselves).
-	o.prewarmGitMirrors(ctx)
-
 	sched.Seed(o.seedNodes())
 	sched.Run(ctx)
 

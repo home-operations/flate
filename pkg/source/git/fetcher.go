@@ -86,7 +86,7 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*sto
 // and installs the process-wide HTTPS transport for the fetch. It
 // returns the auth method and proxy config the go-git call needs plus a
 // restore closure the caller MUST defer to tear the transport back down.
-// Shared by Fetch and Prewarm so both agree on credential resolution.
+// Shared by Fetch and FetchRemoteBase so both agree on credential resolution.
 func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (transport.AuthMethod, *source.ProxyConfig, func(), error) {
 	auth, err := f.resolveAuth(repo)
 	if err != nil {
@@ -218,8 +218,8 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	return commitArtifact(repo, slot, art)
 }
 
-// validateRepo guards the shared preconditions Fetch and Prewarm both
-// require before touching the network: a non-nil CR with a URL.
+// validateRepo guards the preconditions Fetch requires before touching
+// the network: a non-nil CR with a URL.
 func validateRepo(repo *manifest.GitRepository) error {
 	if repo == nil {
 		return errors.New("git repository is nil")
@@ -377,45 +377,6 @@ func (f *Fetcher) canUseMirror(repo *manifest.GitRepository) bool {
 	return true
 }
 
-// Prewarm runs the mirror update (OpenOrFetch) for repo without
-// allocating a cache slot or materializing a worktree. Intended to be
-// called in parallel with controller startup so the network I/O for
-// bulky repos overlaps with the orchestrator's cheap listener-replay
-// work — by the time the source controller's reconcile lands on this
-// GitRepository, the per-URL mirror lock is uncontested and
-// OpenOrFetch returns instantly (incremental Fetch sees
-// NoErrAlreadyUpToDate).
-//
-// Returns nil when the Fetcher has no Mirrors configured or when repo
-// cannot use the mirror path (submodules / sparse checkout) — the
-// normal Fetch path will run unchanged. Resolves auth, TLS, and proxy
-// the same way Fetch does so a misconfigured GitRepository surfaces
-// the same error here as it would during reconcile.
-//
-// Pre-warm errors are intended to be logged by the caller, not
-// returned to the user — the real Fetch path will hit the same
-// error and produce the canonical status update.
-func (f *Fetcher) Prewarm(ctx context.Context, repo *manifest.GitRepository) error {
-	if err := validateRepo(repo); err != nil {
-		return err
-	}
-	if repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
-		// The real Fetch path would reject this too; skip silently so
-		// the source controller's reconcile is the canonical reporter.
-		return nil
-	}
-	if !f.canUseMirror(repo) {
-		return nil
-	}
-	auth, proxy, restore, err := f.resolveTransport(repo)
-	if err != nil {
-		return err
-	}
-	defer restore()
-	_, err = f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, f.mirrorFetchPlan(repo.Reference))
-	return err
-}
-
 // fetchViaMirror runs the bare-mirror path: open-or-update the
 // per-URL mirror, resolve the requested ref to a commit hash, then
 // materialize the tree into the slot's staging dir. PGP verification
@@ -460,10 +421,8 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 }
 
 // mirrorFetchPlan builds the per-GitRepository mirror update plan: the
-// narrow refspecs for ref plus the effective shallow depth. Both
-// fetchViaMirror and Prewarm route through it so the warm clone and the
-// real fetch always agree on depth — otherwise Prewarm would full-clone
-// the mirror and the subsequent Fetch could not shrink it.
+// narrow refspecs for ref plus the effective shallow depth, so every
+// mirror update for the same CR agrees on depth.
 func (f *Fetcher) mirrorFetchPlan(ref *manifest.GitRepositoryRef) mirror.FetchPlan {
 	plan := mirrorRefSpecs(ref)
 	plan.Depth = effectiveDepth(f.Depth, ref)

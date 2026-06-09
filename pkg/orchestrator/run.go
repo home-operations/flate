@@ -3,12 +3,8 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"maps"
-	"runtime"
 	"slices"
-
-	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
@@ -136,58 +132,6 @@ func (o *Orchestrator) configureControllers() {
 		PreflightFailure:    o.preflightFailure,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	})
-}
-
-// prewarmGitMirrors fires Prewarm against every discovered
-// GitRepository in parallel. Called from Run inside the same errgroup
-// that launches the controller Start calls, so the network I/O
-// overlaps with controller startup. The per-URL mirror lock inside
-// mirror.Cache.OpenOrFetch already serializes duplicate-URL pre-warms,
-// so a bounded errgroup is sufficient — no per-URL coalescing needed
-// here.
-//
-// Pre-warm failures are logged at debug level only. The source
-// controller's reconcile of the same GitRepository will retry the
-// fetch path immediately after Start returns and is the canonical
-// reporter for per-source errors (auth, TLS, missing-secret). Logging
-// at error level here would double-report transient network failures
-// users see in the per-resource status output.
-//
-// No-op when:
-//   - The orchestrator was built without a git fetcher (test path
-//     that strips the default via WithFetcher(KindGitRepository, nil)).
-//   - The git fetcher has no Mirrors configured.
-//   - There are no GitRepository objects in the store.
-func (o *Orchestrator) prewarmGitMirrors(ctx context.Context) {
-	if o.gitFetcher == nil || o.gitFetcher.Mirrors == nil {
-		return
-	}
-	repos := store.ListAs[*manifest.GitRepository](o.store, manifest.KindGitRepository)
-	if len(repos) == 0 {
-		return
-	}
-	limit := o.cfg.Concurrency
-	if limit <= 0 {
-		// Mirror the task.NewBounded default — I/O-bound work, cap at
-		// 4x NumCPU so a tiny machine with many GitRepositories still
-		// makes progress, and a huge fleet doesn't fork-bomb the file
-		// descriptors / git transport pool.
-		limit = runtime.NumCPU() * 4
-	}
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(limit)
-	for _, repo := range repos {
-		g.Go(func() error {
-			if err := o.gitFetcher.Prewarm(gctx, repo); err != nil {
-				slog.Debug("git: mirror prewarm failed (source controller will retry)",
-					"git_repository", repo.Namespace+"/"+repo.Name,
-					"url", repo.URL,
-					"err", err)
-			}
-			return nil
-		})
-	}
-	_ = g.Wait()
 }
 
 // Render is the structured embed-friendly entry point: Bootstrap +

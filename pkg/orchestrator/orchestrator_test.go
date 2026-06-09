@@ -1071,61 +1071,6 @@ func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 	return out
 }
 
-// TestOrchestrator_DefaultGitFetcherUsesMirror confirms Phase 2.4's
-// wiring: New constructs a *git.Fetcher with Mirrors populated, so
-// every GitRepository takes the bare-mirror path on Fetch. Callers
-// who want legacy clone behavior must explicitly swap via WithFetcher.
-func TestOrchestrator_DefaultGitFetcherUsesMirror(t *testing.T) {
-	o, err := New(Config{Path: t.TempDir()})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer o.Stop()
-
-	if o.gitFetcher == nil {
-		t.Fatal("New did not wire a default git fetcher")
-	}
-	if o.gitFetcher.Mirrors == nil {
-		t.Fatal("default git fetcher has nil Mirrors; Phase 2.4 expects mirror as default")
-	}
-}
-
-// TestOrchestrator_PrewarmGitMirrorsNoOpWhenNoRepos confirms the pre-warm
-// pass returns cleanly when Bootstrap has not discovered any
-// GitRepository (the common --path-orig test case). The errgroup-driven
-// pre-warm in Run must not block, panic, or write into the cache root.
-func TestOrchestrator_PrewarmGitMirrorsNoOpWhenNoRepos(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: []\n")
-
-	o, err := New(Config{Path: dir, WipeSecrets: true, CacheDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if err := o.Bootstrap(context.Background()); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
-	// Direct call so the assertion is independent of Run's other
-	// startup work. prewarmGitMirrors must be a true no-op when the
-	// store has no GitRepository objects (the YAML above defines a KS
-	// that *references* a GitRepository but does not declare one — the
-	// canonical CI scaffold that flate's CLI users hit when running
-	// `flate build` from inside an already-checked-out repo).
-	o.prewarmGitMirrors(context.Background())
-}
-
 // TestOrchestrator_TypedListener verifies Store.OnStatus delivers a
 // typed StatusInfo payload (no `any` type-switching needed by the
 // embedder).

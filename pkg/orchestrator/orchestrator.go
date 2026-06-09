@@ -149,16 +149,6 @@ type Orchestrator struct {
 	hrc    *helmrelease.Controller
 	filter *change.Filter
 
-	// gitFetcher holds the typed *git.Fetcher constructed in New so
-	// Run can drive Prewarm against every discovered GitRepository in
-	// parallel with controller startup. The source controller already
-	// holds the same fetcher wrapped behind source.Wrap; we keep a
-	// direct reference because Prewarm is a typed call (one URL per
-	// GitRepository) the wrapper doesn't expose. nil when the orchestrator
-	// is built without a git fetcher (tests that strip the default via
-	// WithFetcher(KindGitRepository, nil)) — Run's pre-warm pass skips.
-	gitFetcher *git.Fetcher
-
 	// repoRoot is the resolved .git ancestor of cfg.Path (or
 	// cfg.Path when no .git exists). Populated during Bootstrap from
 	// discovery.Result.RepoRoot. Consumed by finalize.detectOrphans
@@ -410,7 +400,6 @@ func New(cfg Config) (*Orchestrator, error) {
 		rendered:       newRenderedSet(),
 		componentCache: manifest.NewComponentCache(),
 		depGraph:       newDependencyGraph(),
-		gitFetcher:     gitFetcher,
 	}
 	return o, nil
 }

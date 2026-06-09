@@ -41,8 +41,12 @@ type statusBar struct {
 	// printed records the last terminal status counted per id, so an
 	// idempotent re-write doesn't double-count and a genuine flip recounts.
 	printed map[manifest.NamedResource]store.Status
-	done    int // resources that reached a terminal status
-	total   int // every id seen so far (a live lower bound, grows with renders)
+	done    int // declared resources that reached a terminal status
+	// total counts every declared id seen so far — a live lower bound that grows
+	// as discovery and renders surface more resources. Synthetic/internal ids
+	// (the bootstrap source, synthesized HelmCharts) are excluded via barExcluded
+	// so the denominator matches flate's own report rather than overshooting it.
+	total int
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -65,7 +69,23 @@ func (b *statusBar) attach(s *store.Store) store.Unsubscribe {
 	return s.OnStatus(b.onStatus, false)
 }
 
+// barExcluded reports ids the bar must neither count nor name: the synthetic
+// bootstrap GitRepository and any HelmChart (always internally synthesized for a
+// HelmRepository-backed HelmRelease — see helmrelease.materializeHelmChartSource).
+// Neither is a resource the user declared, and neither appears in flate's own
+// report: `flate test` skips the bootstrap id and its kind set omits HelmChart.
+// Counting them made the bar's [done/total] overshoot every report (e.g. 175 vs
+// 174 when only the bootstrap leaks; +1 per HelmRepository-backed HelmRelease on
+// top). Excluding the same two id-classes aligns the bar's population exactly
+// with `flate test all`'s "collected N".
+func barExcluded(id manifest.NamedResource) bool {
+	return id == manifest.BootstrapSourceID || id.Kind == manifest.KindHelmChart
+}
+
 func (b *statusBar) onStatus(id manifest.NamedResource, info store.StatusInfo) {
+	if barExcluded(id) {
+		return
+	}
 	now := time.Now()
 	b.mu.Lock()
 	defer b.mu.Unlock()

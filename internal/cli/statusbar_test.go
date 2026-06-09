@@ -146,6 +146,42 @@ func TestStatusBar_DedupAndInflight(t *testing.T) {
 	}
 }
 
+// TestStatusBar_ExcludesSyntheticIDs: the synthetic bootstrap GitRepository and
+// internally-synthesized HelmCharts are reconciled internally but appear in no
+// `flate test`/`build` report, so the bar must neither count them nor list them
+// in-flight — otherwise its [done/total] overshoots every report (the 175-vs-174
+// gap). A normal declared resource alongside them still counts and names.
+func TestStatusBar_ExcludesSyntheticIDs(t *testing.T) {
+	bar := newStatusBar(newStderrRouter(&bytes.Buffer{}))
+	bar.color = false
+
+	boot := manifest.BootstrapSourceID
+	chart := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "ns", Name: "repo-app-abc1234"}
+	declared := barID("declared")
+
+	// Drive each excluded id through a full Pending→terminal lifecycle, and the
+	// declared one too.
+	for _, id := range []manifest.NamedResource{boot, chart, declared} {
+		bar.onStatus(id, store.StatusInfo{Status: store.StatusPending})
+	}
+	for _, id := range []manifest.NamedResource{boot, chart, declared} {
+		bar.onStatus(id, store.StatusInfo{Status: store.StatusReady})
+	}
+
+	// Only the declared resource is counted, in either column.
+	if bar.done != 1 || bar.total != 1 {
+		t.Errorf("synthetic ids leaked into counts: done=%d total=%d; want 1/1", bar.done, bar.total)
+	}
+	// Excluded ids never enter the in-flight set, even while Pending.
+	bar2 := newStatusBar(newStderrRouter(&bytes.Buffer{}))
+	bar2.color = false
+	bar2.onStatus(boot, store.StatusInfo{Status: store.StatusPending})
+	bar2.onStatus(chart, store.StatusInfo{Status: store.StatusPending})
+	if got := bar2.inflightLabels(); len(got) != 0 {
+		t.Errorf("synthetic ids listed in-flight: %v", got)
+	}
+}
+
 // TestStatusBar_StartFinish: the live lifecycle paints at least one frame and
 // then vanishes completely — finish erases the bar and leaves no trace
 // (exercises the ticker + router under the race detector).

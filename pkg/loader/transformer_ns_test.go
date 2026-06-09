@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"fmt"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -374,6 +375,117 @@ resources:
 `)
 	if got.TargetNamespace != "storage" {
 		t.Errorf("TargetNamespace=%q want storage (plural source fieldPaths)", got.TargetNamespace)
+	}
+}
+
+// A target spelling the path singular (`fieldPath: spec.targetNamespace`)
+// rather than plural (`fieldPaths:`) must still match.
+func TestStampTransformerTargetNamespaces_ReplacementsTargetFieldPathSingular(t *testing.T) {
+	root := t.TempDir()
+	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
+replacements:
+  - source:
+      kind: Namespace
+      fieldPath: metadata.name
+    targets:
+      - select:
+          kind: Kustomization
+          group: kustomize.toolkit.fluxcd.io
+        fieldPath: spec.targetNamespace
+resources:
+  - ./app/ks.yaml
+`)
+	if got.TargetNamespace != "storage" {
+		t.Errorf("TargetNamespace=%q want storage (singular target fieldPath)", got.TargetNamespace)
+	}
+}
+
+// A malformed overlay kustomization.yaml (namespace must be a scalar, not a
+// map) parses to ok=false and yields no stamp — best-effort, never a panic.
+func TestStampTransformerTargetNamespaces_MalformedOverlayIgnored(t *testing.T) {
+	root := t.TempDir()
+	got := stampReplacementsKS(t, root, "apps/storage", "namespace:\n  unexpected: map\nresources:\n  - ./app/ks.yaml\n")
+	if got.TargetNamespace != "" {
+		t.Errorf("TargetNamespace=%q want empty (malformed overlay)", got.TargetNamespace)
+	}
+}
+
+// A `replacements: {path:}` whose external file is malformed (a map where a
+// list of rules is expected) yields no stamp rather than a panic.
+func TestStampTransformerTargetNamespaces_MalformedReplacementsFileIgnored(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "components/replacements/ks.yaml", "this: is not a list\n")
+	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
+replacements:
+  - path: ../../components/replacements/ks.yaml
+resources:
+  - ./app/ks.yaml
+`)
+	if got.TargetNamespace != "" {
+		t.Errorf("TargetNamespace=%q want empty (malformed replacements file)", got.TargetNamespace)
+	}
+}
+
+// A KS whose ancestor dirs carry no kustomization.yaml at all resolves to no
+// injected namespace (the walk terminates cleanly at the repo root).
+func TestStampTransformerTargetNamespaces_NoEnclosingOverlay(t *testing.T) {
+	root := t.TempDir()
+	s := store.New()
+	ks := leafKS("bare", "./apps/bare/app/workload")
+	s.AddObject(ks)
+	sourceFiles := map[manifest.NamedResource]string{ks.Named(): "apps/bare/app/ks.yaml"}
+	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	if got.TargetNamespace != "" {
+		t.Errorf("TargetNamespace=%q want empty (no enclosing overlay)", got.TargetNamespace)
+	}
+}
+
+// TestResolveRef_Rejections locks the strict in-repo guard: remote, absolute,
+// repo-escaping, and empty refs are rejected; a normal relative ref resolves.
+func TestResolveRef_Rejections(t *testing.T) {
+	for _, tc := range []struct{ name, base, ref string }{
+		{"empty", "apps/x", ""},
+		{"remote scheme", "apps/x", "https://example.com/repo//base?ref=v1"},
+		{"absolute", "apps/x", "/etc/passwd"},
+		{"escapes repo root", "apps/x", "../../../../../../etc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, ok := resolveRef(tc.base, tc.ref); ok {
+				t.Errorf("resolveRef(%q,%q)=(%q,true), want rejected", tc.base, tc.ref, got)
+			}
+		})
+	}
+	if got, ok := resolveRef("apps/x", "../shared"); !ok || got != "apps/shared" {
+		t.Errorf("resolveRef(apps/x,../shared)=(%q,%v), want (apps/shared,true)", got, ok)
+	}
+}
+
+// TestSubtreeHasNamespaceTransformer_DepthCapAndCycle proves the recursive walk
+// is bounded: a NamespaceTransformer reachable only PAST transformerScanMaxDepth
+// is not found (the cap stops the descent), and a reference cycle terminates via
+// the visited set instead of looping.
+func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
+	root := t.TempDir()
+	// A linear chain d0 → d1 → … each via `resources: - ../d{i+1}`, with the
+	// NamespaceTransformer only at the deepest dir — reached at a depth beyond
+	// the cap, so detection returns false.
+	const depth = transformerScanMaxDepth + 1
+	for i := range depth {
+		writeFile(t, root, fmt.Sprintf("d%d/kustomization.yaml", i),
+			fmt.Sprintf("resources:\n  - ../d%d\n", i+1))
+	}
+	writeFile(t, root, fmt.Sprintf("d%d/kustomization.yaml", depth), "resources:\n  - ./transformer.yaml\n")
+	writeFile(t, root, fmt.Sprintf("d%d/transformer.yaml", depth), namespaceTransformer)
+	if subtreeHasNamespaceTransformer(root, "d0", map[string]struct{}{}, 0) {
+		t.Error("want false: NamespaceTransformer sits past transformerScanMaxDepth")
+	}
+
+	// A reference cycle a → b → a must terminate (visited set) and return false.
+	writeFile(t, root, "cyc/a/kustomization.yaml", "resources:\n  - ../b\n")
+	writeFile(t, root, "cyc/b/kustomization.yaml", "resources:\n  - ../a\n")
+	if subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}, 0) {
+		t.Error("want false on a reference cycle (must not loop)")
 	}
 }
 

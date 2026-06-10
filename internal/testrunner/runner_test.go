@@ -22,7 +22,7 @@ func TestRun_AllPass(t *testing.T) {
 		t.Errorf("expected 2 passed, got %+v", rep)
 	}
 	var b bytes.Buffer
-	if err := rep.Write(&b); err != nil {
+	if err := rep.Write(&b, false); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if !strings.Contains(b.String(), "2 passed") {
@@ -105,7 +105,7 @@ func TestWrite_ShowsSkippedByDefault(t *testing.T) {
 	rep := Run(Job{Store: s})
 
 	var b bytes.Buffer
-	if err := rep.Write(&b); err != nil {
+	if err := rep.Write(&b, false); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	out := b.String()
@@ -114,16 +114,13 @@ func TestWrite_ShowsSkippedByDefault(t *testing.T) {
 		t.Errorf("PASSED row must appear: %s", out)
 	}
 	if !strings.Contains(out, "untouched") {
-		t.Errorf("SKIPPED row must appear by default: %s", out)
+		t.Errorf("skipped row must appear by default: %s", out)
 	}
-	if !strings.Contains(out, "SKIPPED (unchanged)") {
-		t.Errorf("SKIPPED row should carry its reason: %s", out)
+	if !strings.Contains(out, "‒") || !strings.Contains(out, "unchanged") {
+		t.Errorf("skipped row should carry its glyph and reason: %s", out)
 	}
 	if !strings.Contains(out, "1 skipped") {
-		t.Errorf("summary must report SKIPPED count: %s", out)
-	}
-	if !strings.Contains(out, "collected 2 items") {
-		t.Errorf("collected-count must include SKIPPED rows: %s", out)
+		t.Errorf("summary must report the skipped count: %s", out)
 	}
 }
 
@@ -135,11 +132,38 @@ func TestWrite_FailedNeverHidden(t *testing.T) {
 
 	rep := Run(Job{Store: s})
 	var b bytes.Buffer
-	if err := rep.Write(&b); err != nil {
+	if err := rep.Write(&b, false); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	if !strings.Contains(b.String(), "FAILED") {
-		t.Errorf("FAILED row must appear by default: %s", b.String())
+	if out := b.String(); !strings.Contains(out, "✗") || !strings.Contains(out, "broken") {
+		t.Errorf("failed row must appear by default: %s", out)
+	}
+}
+
+// TestWrite_Color: color=true emits ANSI codes (green pass, red fail); color=
+// false renders none, so piped / NO_COLOR output stays plain.
+func TestWrite_Color(t *testing.T) {
+	s := store.New()
+	pass := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
+	fail := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "bad"}
+	s.AddObject(&manifest.Kustomization{Name: pass.Name, Namespace: pass.Namespace})
+	s.AddObject(&manifest.HelmRelease{Name: fail.Name, Namespace: fail.Namespace})
+	s.UpdateStatus(pass, store.StatusReady, "")
+	s.UpdateStatus(fail, store.StatusFailed, "boom")
+	rep := Run(Job{Store: s})
+
+	var colored, plain bytes.Buffer
+	if err := rep.Write(&colored, true); err != nil {
+		t.Fatalf("Write(color): %v", err)
+	}
+	if err := rep.Write(&plain, false); err != nil {
+		t.Fatalf("Write(plain): %v", err)
+	}
+	if !strings.Contains(colored.String(), "\x1b") {
+		t.Errorf("colored output emitted no ANSI: %q", colored.String())
+	}
+	if strings.Contains(plain.String(), "\x1b") {
+		t.Errorf("plain output leaked an escape code: %q", plain.String())
 	}
 }
 
@@ -176,7 +200,7 @@ func TestWrite_ReturnsWriterError(t *testing.T) {
 	want := errors.New("write failed")
 	rep := Report{Cases: []Case{{ID: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "apps"}}}}
 
-	if err := rep.Write(errWriter{err: want}); !errors.Is(err, want) {
+	if err := rep.Write(errWriter{err: want}, false); !errors.Is(err, want) {
 		t.Fatalf("Write error = %v, want %v", err, want)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -61,28 +62,54 @@ type Report struct {
 // AnyFailed reports whether any case failed.
 func (r Report) AnyFailed() bool { return r.Failed > 0 }
 
-// Write renders the report in a pytest-like format to w.
-func (r Report) Write(w io.Writer) error {
-	var b strings.Builder
-	fmt.Fprintln(&b, "============================================= test session starts =============================================")
-	fmt.Fprintf(&b, "collected %d items\n\n", len(r.Cases))
+// decorate maps an outcome to its leading glyph and the style renderer that
+// colors it. Glyphs render in both modes (any UTF-8 sink); only color is gated.
+func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
+	switch o {
+	case OutcomePassed:
+		return "✓", style.Pass
+	case OutcomeFailed:
+		return "✗", style.Fail
+	default: // OutcomeSkipped
+		return "‒", style.Skip
+	}
+}
+
+// Write renders the report: one row per case (status glyph, dimmed kind column,
+// namespace/name, dimmed reason) followed by a colored count summary. color
+// gates the ANSI codes — the caller decides based on the sink (see cli.test).
+func (r Report) Write(w io.Writer, color bool) error {
+	kindW := 0
 	for _, c := range r.Cases {
-		var status string
-		switch c.Outcome {
-		case OutcomePassed:
-			status = "PASSED"
-		case OutcomeSkipped:
-			status = "SKIPPED"
-		case OutcomeFailed:
-			status = "FAILED"
-		}
-		fmt.Fprintf(&b, "%-60s %s", c.ID.String(), status)
+		kindW = max(kindW, len(c.ID.Kind))
+	}
+
+	var b strings.Builder
+	b.WriteByte('\n')
+	for _, c := range r.Cases {
+		glyph, paint := c.Outcome.decorate()
+		fmt.Fprintf(&b, "  %s  %s  %s",
+			paint(glyph, color),
+			style.Dim(fmt.Sprintf("%-*s", kindW, c.ID.Kind), color),
+			c.ID.NamespacedName())
 		if c.Reason != "" {
-			fmt.Fprintf(&b, " (%s)", c.Reason)
+			fmt.Fprintf(&b, "  %s", style.Dim(c.Reason, color))
 		}
 		b.WriteByte('\n')
 	}
-	fmt.Fprintf(&b, "\n%d passed, %d skipped, %d failed\n", r.Passed, r.Skipped, r.Failed)
+
+	// Summary: always the passed count; skipped/failed only when non-zero, so
+	// an all-green run reads "N passed" and an empty run still prints something.
+	b.WriteString("\n  ")
+	b.WriteString(style.Pass(fmt.Sprintf("%d passed", r.Passed), color))
+	if r.Skipped > 0 {
+		b.WriteString(" · " + style.Dim(fmt.Sprintf("%d skipped", r.Skipped), color))
+	}
+	if r.Failed > 0 {
+		b.WriteString(" · " + style.Fail(fmt.Sprintf("%d failed", r.Failed), color))
+	}
+	b.WriteByte('\n')
+
 	_, err := io.WriteString(w, b.String())
 	return err
 }

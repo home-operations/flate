@@ -395,15 +395,18 @@ func TestRun_GetImages_RejectsBadOutput(t *testing.T) {
 }
 
 // TestRun_TestAll exercises the report path on the fixture — every
-// resource should be PASSED.
+// resource should pass (✓ rows, no failures in the summary).
 func TestRun_TestAll(t *testing.T) {
 	path := writeFixture(t)
 	stdout, stderr, code := runCLI(t, "test", "all", "--path", path)
 	if code != 0 {
 		t.Fatalf("test all exited %d: %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "PASSED") {
-		t.Errorf("expected PASSED in test report:\n%s", stdout)
+	if !strings.Contains(stdout, "✓") || !strings.Contains(stdout, "passed") {
+		t.Errorf("expected passing rows in test report:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "failed") {
+		t.Errorf("clean fixture should report no failures:\n%s", stdout)
 	}
 }
 
@@ -413,10 +416,10 @@ func TestRun_TestAll_RespectsNamespace(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("test all -n alpha exited %d: %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "Kustomization/alpha/apps-a") {
+	if !strings.Contains(stdout, "alpha/apps-a") {
 		t.Errorf("namespace-scoped test output missing alpha KS:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "Kustomization/beta/apps-b") {
+	if strings.Contains(stdout, "beta/apps-b") {
 		t.Errorf("namespace-scoped test output included beta KS:\n%s", stdout)
 	}
 }
@@ -455,7 +458,7 @@ func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 	if code == 0 {
 		t.Fatal("expected non-zero for failed reconcile")
 	}
-	if !strings.Contains(stdout, "FAILED") {
+	if !strings.Contains(stdout, "✗") {
 		t.Errorf("stdout should still include failed test row:\n%s", stdout)
 	}
 	if !strings.Contains(stderr, "reconcile completed") {

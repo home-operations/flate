@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -74,7 +75,11 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if name != "" && report.Matched == 0 {
 				return errors.Join(noNamedError(testKindName(kinds), name), runErr)
 			}
-			if err := report.Write(cmd.OutOrStdout()); err != nil {
+			// Colorize only when stdout can show it — style.ColorEnabled
+			// (colorprofile) honors NO_COLOR / CLICOLOR / TTY-ness; piped or
+			// redirected output stays plain.
+			color := style.ColorEnabled(cmd.OutOrStdout())
+			if err := report.Write(cmd.OutOrStdout(), color); err != nil {
 				return errors.Join(err, runErr)
 			}
 			if report.AnyFailed() {

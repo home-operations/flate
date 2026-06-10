@@ -206,8 +206,8 @@ func TestE2E_BadPath(t *testing.T) {
 
 func TestE2E_TestCommand(t *testing.T) {
 	out := runCLI(t, "test", "all", "--path", copyTree(t, testdataPath(t, "simple")))
-	if !strings.Contains(out, "PASSED") {
-		t.Errorf("expected PASSED in test output:\n%s", out)
+	if !strings.Contains(out, "✓") {
+		t.Errorf("expected a passing row in test output:\n%s", out)
 	}
 }
 
@@ -468,12 +468,12 @@ func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
 
 	out := runCLI(t, "test", "ks", "--path", root)
 
-	leafLine := mustExtractLine(t, out, "Kustomization/flux-system/leaf")
-	if !strings.Contains(leafLine, "PASSED") {
+	leafLine := mustExtractLine(t, out, "flux-system/leaf")
+	if !strings.Contains(leafLine, "✓") {
 		t.Errorf("leaf should pass once parent patches inject substituteFrom; got: %s", leafLine)
 	}
-	clusterLine := mustExtractLine(t, out, "Kustomization/flux-system/cluster-apps")
-	if !strings.Contains(clusterLine, "PASSED") {
+	clusterLine := mustExtractLine(t, out, "flux-system/cluster-apps")
+	if !strings.Contains(clusterLine, "✓") {
 		t.Errorf("cluster-apps should pass; SOPS values are wiped to placeholder, not fail-loud; got: %s", clusterLine)
 	}
 	if strings.Contains(out, `is undefined and has no default`) {
@@ -569,8 +569,8 @@ func TestE2E_OrphanedKustomizationNotDiscovered(t *testing.T) {
 	out := runCLI(t, "test", "ks", "--path", root)
 
 	// "wired" is referenced and should pass.
-	wiredLine := mustExtractLine(t, out, "Kustomization/flux-system/wired")
-	if !strings.Contains(wiredLine, "PASSED") {
+	wiredLine := mustExtractLine(t, out, "flux-system/wired")
+	if !strings.Contains(wiredLine, "✓") {
 		t.Errorf("wired should pass: %s", wiredLine)
 	}
 	// "orphan" must not appear anywhere in the test output — it was
@@ -593,8 +593,8 @@ func TestE2E_SubstituteDisabledAnnotation(t *testing.T) {
 
 	out := runCLI(t, "test", "ks", "--path", root)
 
-	leafLine := mustExtractLine(t, out, "Kustomization/flux-system/leaf")
-	if !strings.Contains(leafLine, "PASSED") {
+	leafLine := mustExtractLine(t, out, "flux-system/leaf")
+	if !strings.Contains(leafLine, "✓") {
 		t.Errorf("leaf should pass — the script ConfigMap opts out of substitution; got: %s", leafLine)
 	}
 	if strings.Contains(out, "missing closing brace") {
@@ -625,21 +625,21 @@ func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
 	if strings.Contains(out, "dependency not found") {
 		t.Errorf("changed-only HR dependsOn on an unchanged dep must not fail:\n%s", out)
 	}
-	if lidarr := mustExtractLine(t, out, "HelmRelease/downloads/lidarr"); !strings.Contains(lidarr, "PASSED") {
+	if lidarr := mustExtractLine(t, out, "downloads/lidarr"); !strings.Contains(lidarr, "✓") {
 		t.Errorf("lidarr HR should PASS once the unchanged dep is pruned; got: %s", lidarr)
 	}
 	// Confirm the test actually exercises the bug: qbittorrent's KS (the
 	// dep's producer) must be skipped, otherwise the dep would render and
 	// the assertion above would pass trivially.
-	if line := mustExtractSkipLine(t, out, "Kustomization/downloads/qbittorrent"); !strings.Contains(line, "SKIPPED") {
-		t.Errorf("expected qbittorrent KS SKIPPED (unchanged); got: %s", line)
+	if line := mustExtractSkipLine(t, out, "downloads/qbittorrent"); !strings.Contains(line, "‒") {
+		t.Errorf("expected qbittorrent KS skipped (unchanged); got: %s", line)
 	}
 }
 
 func mustExtractLine(t *testing.T, haystack, needle string) string {
 	t.Helper()
 	return mustFindLine(t, haystack, needle, "status", func(line string) bool {
-		return strings.Contains(line, "PASSED") || strings.Contains(line, "FAILED")
+		return strings.Contains(line, "✓") || strings.Contains(line, "✗")
 	})
 }
 
@@ -649,8 +649,8 @@ func mustExtractLine(t *testing.T, haystack, needle string) string {
 // wouldn't match a skipped resource.
 func mustExtractSkipLine(t *testing.T, haystack, needle string) string {
 	t.Helper()
-	return mustFindLine(t, haystack, needle, "SKIPPED", func(line string) bool {
-		return strings.Contains(line, "SKIPPED")
+	return mustFindLine(t, haystack, needle, "skipped", func(line string) bool {
+		return strings.Contains(line, "‒")
 	})
 }
 

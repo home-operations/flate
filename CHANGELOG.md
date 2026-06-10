@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.4.0](https://github.com/home-operations/flate/compare/v0.3.4...v0.4.0) (2026-06-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **source:** remove all signature verification ([#716](https://github.com/home-operations/flate/issues/716))
+
+### Features
+
+* **deps:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.51.0 → v0.52.0) ([#712](https://github.com/home-operations/flate/issues/712)) ([d2a8b2d](https://github.com/home-operations/flate/commit/d2a8b2d2a0a02f5366560eb881ffc1db45fd1787))
+* **oci:** enforce keyless cosign verification ([#713](https://github.com/home-operations/flate/issues/713)) ([d2fd1bb](https://github.com/home-operations/flate/commit/d2fd1bbd31702fd7c5c8f6d01430544793860b76))
+* **source:** remove all signature verification ([#716](https://github.com/home-operations/flate/issues/716)) ([6d9442b](https://github.com/home-operations/flate/commit/6d9442b562a9049f3fe4f2386fa7beac4451efab))
+
+
+### Bug Fixes
+
+* **cli:** keep kustomize's stderr chatter from shredding the status bar ([#710](https://github.com/home-operations/flate/issues/710)) ([7a31dc6](https://github.com/home-operations/flate/commit/7a31dc606735acb312ef844c9c43cc13aca66f37))
+
+
+### Code Refactoring
+
+* **source:** share BasicAuthFromSecret + enforce helmchart TLS pair ([#714](https://github.com/home-operations/flate/issues/714)) ([c39e47b](https://github.com/home-operations/flate/commit/c39e47be76648d8d14402fc6675ead051e929c89))
+
 ## [0.3.4](https://github.com/home-operations/flate/compare/v0.3.3...v0.3.4) (2026-06-10)
 
 

@@ -45,6 +45,12 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	// resolves source CRs (HelmRepository, OCIRepository, HelmChart)
 	// through the Store via the helm client's SourceResolver.
 	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
+	// Mirror the orchestrator, which always injects a producer index; an
+	// absent one is nil-safe but would silently record nothing, so the
+	// producer-index tests need a live instance.
+	if opts.Producers == nil {
+		opts.Producers = &manifest.ProducerIndex{}
+	}
 	c := New(st, ts, hc, helm.Options{}, false)
 	c.Configure(opts)
 	c.Start(context.Background())
@@ -381,6 +387,110 @@ data:
 	}
 }
 
+// Without --allow-missing-secrets, a valuesFrom Secret whose only declaration
+// is an in-repo ExternalSecret (a producer) is omitted so the render proceeds —
+// the producer is positive evidence the Secret materializes live. This is the
+// flag-decoupled path: producer-backed refs are dropped regardless of the flag.
+func TestController_ProducerBackedValuesFromOmittedWithoutFlag(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-cm
+data:
+  kept: {{ .Values.kept | quote }}
+  fallback: {{ .Values.missing | default "fallback" | quote }}
+`)
+
+	// No flag — the producer index is the only reason the ref is dropped.
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
+	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
+	st.AddObject(src)
+	st.SetArtifact(src.Named(), &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+	})
+	st.UpdateStatus(src.Named(), store.StatusReady, "")
+	st.AddObject(&manifest.ConfigMap{
+		Name: "present-values", Namespace: "default",
+		Data: map[string]any{"values.yaml": "kept: kept-value\n"},
+	})
+	// The in-repo ExternalSecret declaring the (absent) app-values Secret —
+	// AddObject fires the producer listener, seeding the shared index.
+	st.AddObject(&manifest.RawObject{
+		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
+		Name: "app-creds", Namespace: "default",
+		Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
+	})
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Interval: metav1Duration(time.Hour),
+			Timeout:  ptrDuration(100 * time.Millisecond),
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: manifest.KindConfigMap, Name: "present-values"},
+				{Kind: manifest.KindSecret, Name: "app-values"},
+			},
+		},
+		Chart: manifest.HelmChart{
+			Name: "mychart", RepoName: "charts",
+			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+		},
+	}
+	st.AddObject(hr)
+
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status != store.StatusReady || store.IsSkipped(info) {
+		t.Fatalf("status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)", info)
+	}
+	art, ok := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+	if !ok {
+		t.Fatal("HelmRelease artifact was not written")
+	}
+	if got := renderedConfigMapValue(art.Manifests, "kept"); got != "kept-value" {
+		t.Fatalf("rendered kept = %q, want kept-value", got)
+	}
+	if got := renderedConfigMapValue(art.Manifests, "fallback"); got != "fallback" {
+		t.Fatalf("rendered fallback = %q, want fallback", got)
+	}
+}
+
+// Fail-loud safety: without the flag, a missing valuesFrom Secret that has NO
+// declared producer is kept, waited on, and ultimately fails — producer
+// inference must not silently swallow a genuine typo / misconfiguration.
+func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\n")
+
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
+	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
+	st.AddObject(src)
+	st.SetArtifact(src.Named(), &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+	})
+	st.UpdateStatus(src.Named(), store.StatusReady, "")
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Interval:   metav1Duration(time.Hour),
+			Timeout:    ptrDuration(100 * time.Millisecond),
+			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "no-producer"}},
+		},
+		Chart: manifest.HelmChart{
+			Name: "mychart", RepoName: "charts",
+			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+		},
+	}
+	st.AddObject(hr)
+
+	info := dispatchToFixpoint(t, c, st, hr.Named())
+	if info.Status == store.StatusReady {
+		t.Fatalf("status = %+v, want failure (missing no-producer Secret must not be silently omitted)", info)
+	}
+}
+
 // TestController_HelmChartSourceResolvedViaResolver locks the iter-16
 // contract: the HR controller no longer maintains a chartSources
 // push-registry; HelmChartSource lookups go through
@@ -695,7 +805,7 @@ func TestEmitRenderedChildren_NilTrackerAndNilFilterAreNoops(t *testing.T) {
 
 // TestRawProducerIndex_ExternalSecretWithExplicitTarget verifies that an
 // ExternalSecret with spec.target.name set is indexed under that explicit
-// target name, and that generatedValuesProducer returns the producer identity
+// target name, and that Producer returns the producer identity
 // for a matching Secret ref.
 func TestRawProducerIndex_ExternalSecretWithExplicitTarget(t *testing.T) {
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
@@ -716,12 +826,12 @@ func TestRawProducerIndex_ExternalSecretWithExplicitTarget(t *testing.T) {
 		Namespace: "default",
 		Name:      "app-values",
 	}
-	got, ok := c.generatedValuesProducer(target)
+	got, ok := c.producers.Producer(target)
 	if !ok {
-		t.Fatal("generatedValuesProducer returned false; expected producer to be indexed")
+		t.Fatal("Producer returned false; expected producer to be indexed")
 	}
 	if got.Kind != "ExternalSecret" || got.Namespace != "default" || got.Name != "app-creds" {
-		t.Errorf("generatedValuesProducer returned %v; want ExternalSecret/default/app-creds", got)
+		t.Errorf("Producer returned %v; want ExternalSecret/default/app-creds", got)
 	}
 }
 
@@ -744,12 +854,12 @@ func TestRawProducerIndex_ExternalSecretFallsBackToOwnName(t *testing.T) {
 		Namespace: "staging",
 		Name:      "my-secret",
 	}
-	got, ok := c.generatedValuesProducer(target)
+	got, ok := c.producers.Producer(target)
 	if !ok {
-		t.Fatal("generatedValuesProducer returned false; expected producer to be indexed via own name")
+		t.Fatal("Producer returned false; expected producer to be indexed via own name")
 	}
 	if got.Name != "my-secret" || got.Namespace != "staging" {
-		t.Errorf("generatedValuesProducer returned %v; want ExternalSecret/staging/my-secret", got)
+		t.Errorf("Producer returned %v; want ExternalSecret/staging/my-secret", got)
 	}
 }
 
@@ -776,16 +886,16 @@ func TestRawProducerIndex_SealedSecretWithTemplateMetadataName(t *testing.T) {
 		Namespace: "prod",
 		Name:      "db-password",
 	}
-	got, ok := c.generatedValuesProducer(target)
+	got, ok := c.producers.Producer(target)
 	if !ok {
-		t.Fatal("generatedValuesProducer returned false for SealedSecret with template.metadata.name")
+		t.Fatal("Producer returned false for SealedSecret with template.metadata.name")
 	}
 	if got.Name != "sealed-db" || got.Namespace != "prod" {
-		t.Errorf("generatedValuesProducer returned %v; want SealedSecret/prod/sealed-db", got)
+		t.Errorf("Producer returned %v; want SealedSecret/prod/sealed-db", got)
 	}
 }
 
-// TestRawProducerIndex_Missing verifies that generatedValuesProducer returns
+// TestRawProducerIndex_Missing verifies that Producer returns
 // false for a Secret that has no matching producer in the index.
 func TestRawProducerIndex_Missing(t *testing.T) {
 	c, _ := newTestControllerWithOptions(t, ReconcileOptions{})
@@ -795,8 +905,8 @@ func TestRawProducerIndex_Missing(t *testing.T) {
 		Namespace: "default",
 		Name:      "no-such-secret",
 	}
-	if _, ok := c.generatedValuesProducer(target); ok {
-		t.Error("generatedValuesProducer returned true for a non-existent producer; want false")
+	if _, ok := c.producers.Producer(target); ok {
+		t.Error("Producer returned true for a non-existent producer; want false")
 	}
 }
 
@@ -819,8 +929,8 @@ func TestRawProducerIndex_NamespaceIsolation(t *testing.T) {
 		Namespace: "team-b",
 		Name:      "svc-creds",
 	}
-	if _, ok := c.generatedValuesProducer(crossNS); ok {
-		t.Error("generatedValuesProducer matched a producer from a different namespace; want false")
+	if _, ok := c.producers.Producer(crossNS); ok {
+		t.Error("Producer matched a producer from a different namespace; want false")
 	}
 
 	// Same namespace — must match.
@@ -829,8 +939,8 @@ func TestRawProducerIndex_NamespaceIsolation(t *testing.T) {
 		Namespace: "team-a",
 		Name:      "svc-creds",
 	}
-	if _, ok := c.generatedValuesProducer(sameNS); !ok {
-		t.Error("generatedValuesProducer did not match producer in same namespace; want true")
+	if _, ok := c.producers.Producer(sameNS); !ok {
+		t.Error("Producer did not match producer in same namespace; want true")
 	}
 }
 

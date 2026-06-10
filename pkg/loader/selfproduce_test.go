@@ -41,7 +41,7 @@ func TestBuildSelfProduceIndex_BareDirComponentNamespace(t *testing.T) {
 	}
 	s.AddObject(clusterApps)
 
-	idx := BuildSelfProduceIndex(s, dir)
+	idx := BuildSelfProduceIndex(s, dir, nil)
 
 	// Produced in EVERY group's namespace (the namespace transformer stamps
 	// the component's namespace-less ConfigMap per base) — not just the first.
@@ -74,7 +74,7 @@ func TestBuildSelfProduceIndex_NonProducerNotAttributed(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	idx := BuildSelfProduceIndex(s, dir)
+	idx := BuildSelfProduceIndex(s, dir, nil)
 	if got := idx.ProducedBy(cmID("flux-system")); len(got) != 0 {
 		t.Errorf("ProducedBy = %v, want empty (KS produces no cluster-settings)", got)
 	}
@@ -86,5 +86,85 @@ func TestSelfProduceIndex_NilSafe(t *testing.T) {
 	var idx *SelfProduceIndex
 	if got := idx.ProducedBy(cmID("flux-system")); got != nil {
 		t.Errorf("nil index ProducedBy = %v, want nil", got)
+	}
+}
+
+func secretID(ns, name string) manifest.NamedResource {
+	return manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: name}
+}
+
+// The discovery-time producer scan rides the same self-produce walk: an in-repo
+// ExternalSecret / SealedSecret under a KS spec.path is recorded as
+// target-Secret → producer, with the SAME effective-namespace resolution the
+// ConfigMap path uses — an enclosing `namespace:` wins over the file's own.
+func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./es.yaml\n  - ./sealed.yaml\n  - ./explicit.yaml\n")
+	// ExternalSecret, no namespace in file → inherits `secure`; explicit target.
+	testutil.WriteFile(t, dir, "apps/es.yaml",
+		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: app-creds\nspec:\n  target:\n    name: app-values\n")
+	// SealedSecret with spec.template.metadata.name.
+	testutil.WriteFile(t, dir, "apps/sealed.yaml",
+		"apiVersion: bitnami.com/v1alpha1\nkind: SealedSecret\nmetadata:\n  name: db\nspec:\n  template:\n    metadata:\n      name: db-secret\n")
+	// ExternalSecret carrying its own namespace — the transformer (secure)
+	// overrides it, exactly as kustomize does.
+	testutil.WriteFile(t, dir, "apps/explicit.yaml",
+		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: own\n  namespace: ignored\nspec:\n  target:\n    name: own-values\n")
+
+	s := store.New()
+	s.AddObject(&manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+	})
+
+	producers := &manifest.ProducerIndex{}
+	BuildSelfProduceIndex(s, dir, producers)
+
+	want := map[manifest.NamedResource]string{ // target Secret → producer name
+		secretID("secure", "app-values"): "app-creds",
+		secretID("secure", "db-secret"):  "db",
+		secretID("secure", "own-values"): "own",
+	}
+	for target, prodName := range want {
+		got, ok := producers.Producer(target)
+		if !ok {
+			t.Errorf("Producer(%v) missing; want %q", target, prodName)
+			continue
+		}
+		if got.Name != prodName {
+			t.Errorf("Producer(%v).Name = %q, want %q", target, got.Name, prodName)
+		}
+	}
+}
+
+// Caveat-as-test: the scan reads the producer's RAW target name; it does not
+// apply a kustomize namePrefix/nameSuffix (the walker ignores those
+// directives), so a prefixed target is recorded — and would be looked up —
+// under the un-prefixed name. Producer-inference then misses the real
+// (prefixed) Secret and the consumer falls back to fail-loud / the flag.
+func TestBuildSelfProduceIndex_NamePrefixNotFollowed(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nnamePrefix: prod-\nresources:\n  - ./es.yaml\n")
+	testutil.WriteFile(t, dir, "apps/es.yaml",
+		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: app-creds\nspec:\n  target:\n    name: app-values\n")
+
+	s := store.New()
+	s.AddObject(&manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+	})
+
+	producers := &manifest.ProducerIndex{}
+	BuildSelfProduceIndex(s, dir, producers)
+
+	if _, ok := producers.Producer(secretID("secure", "app-values")); !ok {
+		t.Error("producer not recorded under its raw target name")
+	}
+	// The materialized Secret would be prod-app-values; the scan does NOT
+	// record that — pinning the documented namePrefix coverage gap.
+	if _, ok := producers.Producer(secretID("secure", "prod-app-values")); ok {
+		t.Error("scan unexpectedly followed namePrefix; the caveat test is stale")
 	}
 }

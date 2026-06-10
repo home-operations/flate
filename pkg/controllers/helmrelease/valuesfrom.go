@@ -21,14 +21,18 @@ import (
 // retry loop + a load-bearing store re-read) so reconcile itself reads as a
 // linear gate/resolve/render sequence.
 //
-// Two phases. (1) When allowMissingSecrets, proactively omit refs whose
-// producer can't materialize offline so they don't become pre-render waits.
-// (2) Wait for the remaining pre-render references — helm.Prepare reads the
-// live Store synchronously and hard-fails on a missing chartRef HelmChart or
-// non-optional valuesFrom CM/Secret, so a legitimate load order (HR observed
-// before its HelmChart CR, or before a sibling KS emits its valuesFrom CM)
-// must wait rather than fail. On a wait failure under allowMissingSecrets the
-// failed refs are dropped and the wait retried; otherwise the reconcile fails.
+// Two phases. (1) Proactively omit refs that have a declared in-repo producer
+// (an ExternalSecret/SealedSecret targeting the Secret): their value only
+// materializes live, so flate has positive evidence to skip them rather than
+// wait — this runs UNCONDITIONALLY, the producer is the signal, no flag
+// required. A ref with no known producer is kept. (2) Wait for the remaining
+// pre-render references — helm.Prepare reads the live Store synchronously and
+// hard-fails on a missing chartRef HelmChart or non-optional valuesFrom
+// CM/Secret, so a legitimate load order (HR observed before its HelmChart CR,
+// or before a sibling KS emits its valuesFrom CM) must wait rather than fail.
+// On a wait failure, ONLY under allowMissingSecrets, the failed refs are
+// dropped (the blanket "skip anything that won't materialize" behavior) and
+// the wait retried; otherwise the reconcile fails.
 //
 // On success the canonical HR is re-read from the store (a structural parent
 // may have re-emitted it with the full valuesFrom list while we waited), then
@@ -36,9 +40,10 @@ import (
 // the re-applied proactive pass re-evaluates against the now-current store, so
 // a ref that materialized during the wait is correctly kept.
 func (c *Controller) resolvePreRenderValuesFrom(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, error) {
-	if c.allowMissingSecrets {
-		hr = c.omitValuesFrom(hr, nil, true)
-	}
+	// Producer-backed omission runs regardless of the flag: a ref with a
+	// declared producer is dropped, a ref without one is kept (and waited
+	// on below). requireProducer=true is what enforces that asymmetry.
+	hr = c.omitValuesFrom(hr, nil, true)
 	omittedValuesRefs := map[manifest.NamedResource]struct{}{}
 	for {
 		preDeps := preparePrereqs(hr)
@@ -69,9 +74,10 @@ func (c *Controller) resolvePreRenderValuesFrom(ctx context.Context, id manifest
 		if len(omittedValuesRefs) > 0 {
 			hr = removeValuesRefs(hr, omittedValuesRefs)
 		}
-		if c.allowMissingSecrets {
-			hr = c.omitValuesFrom(hr, nil, true)
-		}
+		// Re-apply producer-backed omission against the now-current store: a
+		// ref that materialized during the wait is kept (valuesRefExists
+		// wins), one still backed only by a producer is dropped.
+		hr = c.omitValuesFrom(hr, nil, true)
 		break
 	}
 	return hr, nil
@@ -133,7 +139,7 @@ func (c *Controller) shouldOmitValuesRef(
 	if c.valuesRefExists(id) || c.IsFileIndexed(id) {
 		return manifest.NamedResource{}, false, false
 	}
-	producer, hasProducer = c.generatedValuesProducer(id)
+	producer, hasProducer = c.producers.Producer(id)
 	if requireProducer && !hasProducer {
 		return producer, hasProducer, false
 	}
@@ -155,18 +161,6 @@ func cloneWithValuesFrom(hr *manifest.HelmRelease, filtered []manifest.ValuesRef
 
 func (c *Controller) valuesRefExists(id manifest.NamedResource) bool {
 	return c.Store.GetByName(id.Kind, id.Namespace, id.Name) != nil
-}
-
-// generatedValuesProducer reports the producer that would generate the
-// Secret identified by id, if one is indexed. Coverage is limited to the
-// kinds rawProducerTargetID recognises (ExternalSecret, SealedSecret);
-// any other kind returns (zero, false) and is treated as non-generated —
-// see the rawProducerIndex field comment for why that is safe-but-degraded.
-func (c *Controller) generatedValuesProducer(id manifest.NamedResource) (manifest.NamedResource, bool) {
-	if v, ok := c.rawProducerIndex.Load(id); ok {
-		return v.(manifest.NamedResource), true
-	}
-	return manifest.NamedResource{}, false
 }
 
 func valuesRefID(hr *manifest.HelmRelease, ref manifest.ValuesReference) (manifest.NamedResource, bool) {

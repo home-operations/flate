@@ -61,6 +61,13 @@ type Result struct {
 	// produces. Available in full mode, unlike the changed-only
 	// producer index.
 	SelfProduce *loader.SelfProduceIndex
+	// Producers maps a target Secret to the in-repo ExternalSecret /
+	// SealedSecret that declares it, seeded by the same self-produce walk.
+	// The source + HR controllers consult it to skip a missing auth /
+	// valuesFrom Secret that has a declared producer, without
+	// --allow-missing-secrets. Augmented at render time by the HR
+	// controller's EventObjectAdded listener. See manifest.ProducerIndex.
+	Producers *manifest.ProducerIndex
 	// Existence holds every file-loaded object the DiscoveryOnly
 	// loader kept out of the Store: HRs, sources, CMs, Secrets, and
 	// raw manifests. depwait's missing-dep fallback consults it to
@@ -181,12 +188,14 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// etc.) keep working in DiscoveryOnly mode.
 	d.promoteOrphans(prefixes)
 
+	producers := &manifest.ProducerIndex{}
 	return &Result{
 		RepoRoot:    repoRoot,
 		SourceFiles: d.sourceFiles,
 		SourceRefs:  d.sourceRefs,
 		ParentOf:    parentOf,
-		SelfProduce: loader.BuildSelfProduceIndex(d.cfg.Store, repoRoot),
+		SelfProduce: loader.BuildSelfProduceIndex(d.cfg.Store, repoRoot, producers),
+		Producers:   producers,
 		Existence:   l.Existence,
 		WipeSecrets: cfg.WipeSecrets,
 	}, nil

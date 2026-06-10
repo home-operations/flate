@@ -104,9 +104,10 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	fs.BoolVar(&f.skipCRDs, "skip-crds", true, "exclude CRD objects from rendered output")
 	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
 	fs.BoolVar(&f.allowMissingSecrets, "allow-missing-secrets", false,
-		"soft-skip source auth Secrets and omit unavailable HelmRelease valuesFrom Secret/ConfigMap refs "+
-			"that only materialize in the live cluster. "+
-			"Verify/cert/proxy secretRefs still fail loud.")
+		"soft-skip ALL source auth Secrets and HelmRelease valuesFrom Secret/ConfigMap refs "+
+			"that only materialize in the live cluster. Usually unnecessary: a missing Secret "+
+			"declared by an in-repo ExternalSecret/SealedSecret (with a static target name) is "+
+			"auto-skipped without this flag. Verify/cert/proxy secretRefs still fail loud.")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
 	// Commands with no -o variants (test) register no -o flag at all, so
 	// `-o anything` is an unknown flag rather than a rendered alternative.

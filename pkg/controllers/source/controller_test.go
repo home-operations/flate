@@ -231,6 +231,56 @@ func TestController_AllowMissingSecretsOffStillFails(t *testing.T) {
 	}
 }
 
+// Without the flag, a missing auth Secret declared by an in-repo producer
+// (recorded in the shared index) is skipped — the producer is positive
+// evidence it materializes live. The structured *src.MissingSecretError carries
+// the Secret identity the index lookup needs.
+func TestController_ProducerBackedMissingSecretSkippedWithoutFlag(t *testing.T) {
+	const secretRef = "ghcr-creds"
+	f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", secretRef, "not found")}
+	producers := &manifest.ProducerIndex{}
+	producers.Record(
+		manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: secretRef},
+		manifest.NamedResource{Kind: "ExternalSecret", Namespace: "ns", Name: "ghcr-es"},
+	)
+	c, st := newConfiguredController(t,
+		map[string]src.Fetcher{manifest.KindOCIRepository: f},
+		FetchOptions{Producers: producers}) // no flag
+
+	repo := &manifest.OCIRepository{
+		Name: "r", Namespace: "ns",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+	}
+	st.AddObject(repo)
+
+	info := dispatchToFixpoint(t, c, st, repo.Named())
+	if info.Status != store.StatusReady || !store.IsSkipped(info) {
+		t.Fatalf("status = %+v, want Ready+skipped (producer-backed secret)", info)
+	}
+	if art := st.GetArtifact(repo.Named()); art != nil {
+		t.Errorf("skipped source must not produce an artifact; got %+v", art)
+	}
+}
+
+// Fail-loud safety: without the flag, a missing auth Secret with NO declared
+// producer still fails — producer inference must not swallow a genuine error.
+func TestController_MissingSecretNoProducerFailsWithoutFlag(t *testing.T) {
+	f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", "ghcr-creds", "not found")}
+	c, st := newConfiguredController(t,
+		map[string]src.Fetcher{manifest.KindOCIRepository: f},
+		FetchOptions{Producers: &manifest.ProducerIndex{}}) // no flag, empty index
+
+	repo := &manifest.OCIRepository{
+		Name: "r", Namespace: "ns",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+	}
+	st.AddObject(repo)
+
+	if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want StatusFailed (no producer → fail loud)", info)
+	}
+}
+
 func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 

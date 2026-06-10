@@ -40,6 +40,13 @@ type Controller struct {
 	// skip (StatusReady with reason starting "skipped: "). Wired from
 	// Config.AllowMissingSecrets via Configure.
 	allowMissingSecrets bool
+
+	// producers is the orchestrator-owned producer index (shared with the
+	// HR controller). When a source's auth Secret is missing but an in-repo
+	// ExternalSecret / SealedSecret declares it, the fetch is skipped even
+	// without allowMissingSecrets — the producer is positive evidence the
+	// Secret materializes live. Nil-safe. See manifest.ProducerIndex.
+	producers *manifest.ProducerIndex
 }
 
 // FetchOptions carries the post-bootstrap state the orchestrator wires
@@ -48,6 +55,11 @@ type Controller struct {
 type FetchOptions struct {
 	Filter              *change.Filter
 	AllowMissingSecrets bool
+	// Producers is the orchestrator-owned producer index (ExternalSecret /
+	// SealedSecret target → producer), shared with the HR controller. A
+	// missing auth Secret with a declared producer is skipped even without
+	// AllowMissingSecrets. Nil is OK — no producer is ever known.
+	Producers *manifest.ProducerIndex
 }
 
 // New constructs a source controller. Register fetchers on the
@@ -64,6 +76,7 @@ func New(s *store.Store, t *task.Service) *Controller {
 func (c *Controller) Configure(opts FetchOptions) {
 	c.SetFilter(opts.Filter)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
+	c.producers = opts.Producers
 }
 
 // Start registers listeners on the Store. The controller runs until
@@ -139,7 +152,11 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) e
 	})
 	if fetchErr != nil {
 		slog.Debug("source: fetch failed", "id", id.String(), "duration", time.Since(started), "err", fetchErr)
-		if c.allowMissingSecrets && errors.Is(fetchErr, manifest.ErrMissingSecret) {
+		// Skip a missing auth Secret either when the user asked globally
+		// (--allow-missing-secrets) or when an in-repo ExternalSecret /
+		// SealedSecret declares it (producer-backed: positive evidence it
+		// materializes live). A missing Secret with neither still fails loud.
+		if errors.Is(fetchErr, manifest.ErrMissingSecret) && (c.allowMissingSecrets || c.producerBacked(fetchErr)) {
 			slog.Info("source: skipped (missing secret)", "id", id.String(), "err", fetchErr)
 			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(fetchErr.Error()))
 		}
@@ -155,4 +172,19 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) e
 		c.Store.SetArtifact(id, artifact)
 	}
 	return nil
+}
+
+// producerBacked reports whether err is a missing-auth-Secret error whose
+// Secret is declared by an in-repo producer (ExternalSecret / SealedSecret) in
+// the shared index — in which case the source is skipped without the global
+// --allow-missing-secrets flag. The structured *src.MissingSecretError carries
+// the Secret identity; a missing-secret error that isn't that type (or whose
+// Secret has no producer) is not producer-backed.
+func (c *Controller) producerBacked(err error) bool {
+	var mse *src.MissingSecretError
+	if !errors.As(err, &mse) {
+		return false
+	}
+	_, ok := c.producers.Producer(mse.Secret)
+	return ok
 }

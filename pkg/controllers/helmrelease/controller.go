@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -43,26 +42,16 @@ type Controller struct {
 	// HelmRelease valuesFrom refs that cannot be resolved offline.
 	allowMissingSecrets bool
 
-	// rawProducerIndex is an in-memory index populated by the store
-	// listener in Start. It maps the target NamedResource (the Secret
-	// that a producer generates) to the producer's own NamedResource
-	// (the ExternalSecret or SealedSecret in the store). This replaces
-	// the O(N) Store.ListObjects("") scan in generatedValuesProducer with
-	// an O(1) sync.Map lookup, eliminating the per-reconcile read-lock
-	// contention on the store when --allow-missing-secrets is active.
-	//
-	// Key:   manifest.NamedResource — the generated Secret's identity
-	//        (Kind=KindSecret, Namespace, Name)
-	// Value: manifest.NamedResource — the producer's identity
-	//
-	// Coverage is intentionally limited to ExternalSecret and SealedSecret
-	// (see rawProducerTargetID). A future producer kind that generates a
-	// Secret is NOT indexed until added there; generatedValuesProducer then
-	// returns (zero, false) for it and the --allow-missing-secrets omit
-	// path treats the ref as non-generated. That is degraded behavior, not
-	// a correctness bug — but the coverage must be extended in lockstep
-	// with any new producer kind.
-	rawProducerIndex sync.Map
+	// producers is the orchestrator-owned producer index, shared with the
+	// source controller. It maps a target Secret to the in-repo
+	// ExternalSecret / SealedSecret that declares it. A valuesFrom ref
+	// whose Secret only materializes live (a declared producer exists) is
+	// omitted from the offline render rather than waited on — even without
+	// --allow-missing-secrets. Seeded at discovery and augmented by
+	// onRawProducerAdded as KS renders emit ES/SS with post-transform
+	// names. Nil-safe: an absent index reports no producers. See
+	// manifest.ProducerIndex.
+	producers *manifest.ProducerIndex
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -96,6 +85,11 @@ type ReconcileOptions struct {
 	// AllowMissingSecrets omits non-optional valuesFrom refs that point
 	// at known live-cluster/generated data or fail to materialize offline.
 	AllowMissingSecrets bool
+	// Producers is the orchestrator-owned producer index (ExternalSecret /
+	// SealedSecret target → producer), shared with the source controller. A
+	// valuesFrom Secret with a declared producer is omitted even without
+	// AllowMissingSecrets. Nil is OK — no producer is ever known.
+	Producers *manifest.ProducerIndex
 }
 
 // New constructs a HelmRelease controller.
@@ -117,6 +111,7 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 	c.SetPreflight(opts.PreflightFailure)
 	c.SetParentOf(opts.ParentOf)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
+	c.producers = opts.Producers
 	c.SetRenderTracker(opts.RenderTracker)
 }
 
@@ -128,10 +123,9 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 // the canonical Store. One fewer push-registry to keep in sync.
 func (c *Controller) Start(_ context.Context) {
 	c.StartLifecycle()
-	// The producer index is read by the reconcile body
-	// (generatedValuesProducer), not a dispatch trigger, so it stays wired.
-	// The scheduler owns dispatch (via ReconcileNode), so no dispatch listener
-	// is registered here.
+	// The producer index is read by the reconcile body (shouldOmitValuesRef),
+	// not a dispatch trigger, so this listener stays wired even though the
+	// scheduler owns dispatch (via ReconcileNode) — no dispatch listener here.
 	c.AddListener(store.EventObjectAdded, c.onRawProducerAdded())
 }
 
@@ -145,53 +139,24 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 }
 
 // onRawProducerAdded returns a listener that indexes RawObject producers
-// (ExternalSecret, SealedSecret) into rawProducerIndex. Registered with
-// flush=true (via AddListener) so the index is populated with any objects
-// already in the store at Start time and kept current as new objects arrive.
+// (ExternalSecret, SealedSecret) into the shared producer index. Registered
+// with flush=true (via AddListener) so the index picks up any objects already
+// in the store at Start time and stays current as KS renders emit more — with
+// the post-kustomize-transform names a discovery-time file scan can't see.
 //
-// The index maps targetID → producer.Named(), mirroring the classification
-// logic in rawProducerTargetID so generatedValuesProducer can be answered
-// in O(1) without a full-store scan.
+// The index maps targetID → producer.Named() via manifest.ProducerTargetSecret
+// so the valuesFrom producer lookup answers in O(1) without a full-store scan.
 func (c *Controller) onRawProducerAdded() store.Listener {
 	return func(_ manifest.NamedResource, payload any) {
 		raw, ok := payload.(*manifest.RawObject)
 		if !ok {
 			return
 		}
-		targetID, ok := rawProducerTargetID(raw)
+		targetID, ok := manifest.ProducerTargetSecret(raw)
 		if !ok {
 			return
 		}
-		c.rawProducerIndex.Store(targetID, raw.Named())
-	}
-}
-
-// rawProducerTargetID returns the NamedResource of the Secret that raw
-// will produce, or (zero, false) when raw is not a recognised producer kind.
-// It is the single source of truth for producer classification; extending
-// coverage to a new kind means adding a case here (see the rawProducerIndex
-// field comment).
-func rawProducerTargetID(raw *manifest.RawObject) (manifest.NamedResource, bool) {
-	secretID := func(name string) manifest.NamedResource {
-		if name == "" {
-			name = raw.Name
-		}
-		return manifest.NamedResource{Kind: manifest.KindSecret, Namespace: raw.Namespace, Name: name}
-	}
-	switch raw.Kind {
-	case "ExternalSecret":
-		target, _ := raw.Spec["target"].(map[string]any)
-		name, _ := target["name"].(string)
-		return secretID(name), true
-	case "SealedSecret":
-		// Indexing a nil map yields the zero value, so the failed
-		// intermediate asserts flow through without explicit nil checks.
-		tmpl, _ := raw.Spec["template"].(map[string]any)
-		metadata, _ := tmpl["metadata"].(map[string]any)
-		name, _ := metadata["name"].(string)
-		return secretID(name), true
-	default:
-		return manifest.NamedResource{}, false
+		c.producers.Record(targetID, raw.Named())
 	}
 }
 

@@ -184,6 +184,13 @@ type Orchestrator struct {
 	// postBuild.substituteFrom ConfigMap from the dependency set.
 	selfProduce *loader.SelfProduceIndex
 
+	// producers maps a target Secret to the in-repo ExternalSecret /
+	// SealedSecret declaring it (seeded at discovery, augmented at render).
+	// Injected into the source + HR controllers so a missing auth /
+	// valuesFrom Secret with a declared producer is skipped without
+	// --allow-missing-secrets. See manifest.ProducerIndex.
+	producers *manifest.ProducerIndex
+
 	// rendered tracks IDs the KS controller emitted from a parent
 	// render (vs. only loaded by the file walker). detectOrphans reads
 	// it to demote stale-on-disk resources to "orphan" rather than
@@ -468,6 +475,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.sourceRefs = res.SourceRefs
 	o.parentOf = res.ParentOf
 	o.selfProduce = res.SelfProduce
+	o.producers = res.Producers
 	o.existence = res.Existence
 
 	o.failDependsOnCycles()

@@ -81,6 +81,7 @@ func (o *Orchestrator) configureControllers() {
 	o.src.Configure(sourcectrl.FetchOptions{
 		Filter:              o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
+		Producers:           o.producers,
 	})
 	// parentResolver unifies the two sources of structural-parent
 	// info: (1) the pre-built file-path prefix index for file-loaded
@@ -131,6 +132,7 @@ func (o *Orchestrator) configureControllers() {
 		Existence:           existence,
 		PreflightFailure:    o.preflightFailure,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
+		Producers:           o.producers,
 	})
 }
 

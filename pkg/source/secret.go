@@ -7,11 +7,43 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// MissingSecretErr wraps manifest.ErrMissingSecret so the source
-// controller's --allow-missing-secrets path matches via errors.Is.
+// MissingSecretError reports that a source's auth SecretRef couldn't be
+// resolved offline. It carries the missing Secret's identity so the source
+// controller can consult the producer index (an in-repo ExternalSecret /
+// SealedSecret declaring that Secret) and auto-skip without
+// --allow-missing-secrets. Unwrap returns manifest.ErrMissingSecret so the
+// existing errors.Is(err, ErrMissingSecret) gates (and the flag path) hold.
+type MissingSecretError struct {
+	// Owner is the source CR whose SecretRef couldn't resolve.
+	Owner manifest.NamedResource
+	// Secret is the missing Secret the SecretRef points at (Kind=Secret,
+	// the source's namespace, the ref name).
+	Secret manifest.NamedResource
+	// Detail is the human reason ("not found", "missing username/password").
+	Detail string
+}
+
+// Error renders the same string the previous fmt.Errorf form produced, so the
+// skip reason surfaced via base.go (SkippedPrefix + TrimSentinelPrefix) is
+// byte-identical to before.
+func (e *MissingSecretError) Error() string {
+	return fmt.Sprintf("%s: %s %s/%s: secret %s/%s %s",
+		manifest.ErrMissingSecret, e.Owner.Kind, e.Owner.Namespace, e.Owner.Name,
+		e.Secret.Namespace, e.Secret.Name, e.Detail)
+}
+
+// Unwrap keeps errors.Is(err, manifest.ErrMissingSecret) working.
+func (e *MissingSecretError) Unwrap() error { return manifest.ErrMissingSecret }
+
+// MissingSecretErr builds a *MissingSecretError. The signature is unchanged
+// from the prior string-only form so every call site compiles untouched. The
+// owner and secret share the namespace ns (a SecretRef is same-namespace).
 func MissingSecretErr(kind, ns, name, secretRef, reason string) error {
-	return fmt.Errorf("%w: %s %s/%s: secret %s/%s %s",
-		manifest.ErrMissingSecret, kind, ns, name, ns, secretRef, reason)
+	return &MissingSecretError{
+		Owner:  manifest.NamedResource{Kind: kind, Namespace: ns, Name: name},
+		Secret: manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: secretRef},
+		Detail: reason,
+	}
 }
 
 // resolveSecretRef fetches the Secret a set *SecretRef points at, shared

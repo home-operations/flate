@@ -58,7 +58,7 @@ func newFake(graph map[NodeID][]NodeID) *fakeDisp {
 	}
 }
 
-func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outcome, []NodeID, bool) {
+func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outcome, []NodeID) {
 	f.mu.Lock()
 	g := f.gate[nid]
 	f.mu.Unlock()
@@ -102,13 +102,13 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outc
 	case failed:
 		f.termAny[nid] = true
 		f.termReady[nid] = false
-		return OutcomeTerminal, nil, false
+		return OutcomeTerminal, nil
 	case len(blocked) > 0:
-		return OutcomeBlocked, blocked, false
+		return OutcomeBlocked, blocked
 	default:
 		f.termAny[nid] = true
 		f.termReady[nid] = true
-		return OutcomeTerminal, nil, true
+		return OutcomeTerminal, nil
 	}
 }
 

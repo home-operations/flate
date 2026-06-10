@@ -74,11 +74,8 @@ type Dispatcher interface {
 	// goroutine (a task.Service worker) and reports back:
 	//   - out: OutcomeTerminal or OutcomeBlocked.
 	//   - blocked: unsatisfied dependency ids (non-nil only when Blocked).
-	//   - ready: whether id's final store status is Ready (meaningful only
-	//     when Terminal) — the scheduler records it so a node parking on id
-	//     can tell, without reading the store, whether id is satisfied.
 	// drainLevel is one of DrainNone/DrainCascade/DrainForce.
-	Dispatch(ctx context.Context, id NodeID, drainLevel int) (out Outcome, blocked []NodeID, ready bool)
+	Dispatch(ctx context.Context, id NodeID, drainLevel int) (out Outcome, blocked []NodeID)
 }
 
 type nodeState uint8
@@ -93,7 +90,6 @@ const (
 type node struct {
 	id        NodeID
 	state     nodeState
-	ready     bool     // for stateTerminal: did it end Ready (vs Failed)?
 	blockedOn []NodeID // deps recorded at the last OutcomeBlocked
 	// rerunRequested is set when a wake arrives while the node is running, so
 	// complete() re-queues it once instead of dropping the wake (the re-run
@@ -201,9 +197,9 @@ func (s *Scheduler) Run(ctx context.Context) {
 			level := s.draining
 			s.mu.Unlock()
 			s.tasks.Go(ctx, "schedule/"+id.String(), func(ctx context.Context) {
-				out, blocked, ready := s.disp.Dispatch(ctx, id, level)
+				out, blocked := s.disp.Dispatch(ctx, id, level)
 				rerun := s.rerunAtDrain != nil && s.rerunAtDrain(id)
-				s.complete(id, out, blocked, ready, rerun)
+				s.complete(id, out, blocked, rerun)
 			})
 			s.mu.Lock()
 		}
@@ -253,7 +249,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 // complete records the result of one Dispatch. Runs on the worker goroutine;
 // acquires mu. Touches ONLY scheduler state — never the store or the pool.
-func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, ready, rerun bool) {
+func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun bool) {
 	s.mu.Lock()
 	// Broadcast on EVERY path (terminalize, park, re-queue) so the Run loop
 	// re-evaluates inFlight/runq after any transition — a terminalize that
@@ -286,7 +282,6 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, ready, re
 	switch out {
 	case OutcomeTerminal:
 		n.state = stateTerminal
-		n.ready = ready
 		n.blockedOn = nil
 		s.wakeWaitersLocked(id)
 	case OutcomeBlocked:
@@ -389,7 +384,6 @@ func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 			// Content changed (Refire reset, or a parent re-emitted a mutated
 			// spec): re-run so the new content is reconciled.
 			n.state = stateRunnable
-			n.ready = false
 			s.runq = append(s.runq, id)
 		case stateRunning:
 			n.rerunRequested = true
@@ -471,7 +465,6 @@ func (s *Scheduler) requeueRerunLocked() bool {
 	slices.SortFunc(due, func(a, b *node) int { return a.id.Compare(b.id) })
 	for _, n := range due {
 		n.state = stateRunnable
-		n.ready = false
 		n.blockedOn = nil
 		s.runq = append(s.runq, n.id)
 	}
@@ -486,7 +479,6 @@ func (s *Scheduler) finalSweepLocked() {
 	for _, n := range s.nodes {
 		if n.state == stateParked {
 			n.state = stateTerminal
-			n.ready = false
 			s.unparkSelfLocked(n)
 		}
 	}

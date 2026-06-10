@@ -10,36 +10,34 @@ import (
 )
 
 // dagDispatcher implements schedule.Dispatcher: it routes a node by Kind to the
-// owning controller's ReconcileNode and maps the (blocked, ready) result into a
+// owning controller's ReconcileNode and maps the blocked result into a
 // scheduler Outcome. This is the single composition point where the scheduler,
 // the controllers, and the store meet — pkg/schedule itself imports none of
 // them. NodeID is manifest.NamedResource, so the blocked slice flows through
-// untranslated.
+// untranslated. The controllers' ReconcileNode also reports a readiness bool,
+// which the scheduler does not consume, so it is discarded here.
 type dagDispatcher struct{ o *Orchestrator }
 
-func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel int) (schedule.Outcome, []schedule.NodeID, bool) {
+func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel int) (schedule.Outcome, []schedule.NodeID) {
 	o := d.o
-	var (
-		blocked []manifest.NamedResource
-		ready   bool
-	)
+	var blocked []manifest.NamedResource
 	switch {
 	case id.Kind == manifest.KindKustomization:
-		blocked, ready = o.ksc.ReconcileNode(ctx, id, drainLevel)
+		blocked, _ = o.ksc.ReconcileNode(ctx, id, drainLevel)
 	case id.Kind == manifest.KindHelmRelease:
-		blocked, ready = o.hrc.ReconcileNode(ctx, id, drainLevel)
+		blocked, _ = o.hrc.ReconcileNode(ctx, id, drainLevel)
 	case id.Kind == manifest.KindResourceSet:
-		blocked, ready = o.rsc.ReconcileNode(ctx, id, drainLevel)
+		blocked, _ = o.rsc.ReconcileNode(ctx, id, drainLevel)
 	case o.src.HasFetcher(id.Kind):
-		blocked, ready = o.src.ReconcileNode(ctx, id, drainLevel)
+		blocked, _ = o.src.ReconcileNode(ctx, id, drainLevel)
 	default:
 		// Not a schedulable kind (should never be dispatched) — terminal no-op.
-		return schedule.OutcomeTerminal, nil, true
+		return schedule.OutcomeTerminal, nil
 	}
 	if len(blocked) > 0 {
-		return schedule.OutcomeBlocked, blocked, false
+		return schedule.OutcomeBlocked, blocked
 	}
-	return schedule.OutcomeTerminal, nil, ready
+	return schedule.OutcomeTerminal, nil
 }
 
 // dagSchedulable reports whether id is a node the scheduler runs

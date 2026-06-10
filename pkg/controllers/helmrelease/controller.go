@@ -74,7 +74,7 @@ type ReconcileOptions struct {
 // New constructs a HelmRelease controller.
 func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wipeSecrets bool) *Controller {
 	return &Controller{
-		Controller:  base.New(s, t),
+		Controller:  base.New(s, t, "helmrelease"),
 		Helm:        h,
 		Options:     opts,
 		WipeSecrets: wipeSecrets,
@@ -110,7 +110,7 @@ func (c *Controller) Start(_ context.Context) {
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
 	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
 		func(hr *manifest.HelmRelease) bool { return hr.Suspend },
-		"helmrelease", c.reconcile)
+		c.reconcile)
 }
 
 // onRawProducerAdded returns a listener that indexes RawObject producers
@@ -257,7 +257,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// HR-emitted source CR re-emit is a DeepEqual no-op anyway) — see its doc
 	// for the rationale (#657–#660). fp is reused for SetArtifact below.
 	fp := helmReleaseFingerprint(hr)
-	if handled, err := c.FingerprintDedup(id, fp, "helmrelease", func(docs []map[string]any) {
+	if handled, err := c.FingerprintDedup(id, fp, func(docs []map[string]any) {
 		c.emitRenderedChildren(id, docs, false)
 	}); handled {
 		return err

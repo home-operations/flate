@@ -176,7 +176,7 @@ func TestController_CloseDrainsConcurrentAddListener(t *testing.T) {
 
 	for iter := range 100 {
 		s := store.New()
-		c := base.New(s, nil)
+		c := base.New(s, nil, "test")
 
 		var fired atomic.Int64
 		var wg sync.WaitGroup
@@ -228,7 +228,7 @@ func TestController_AddListenerAfterCloseIsNoOp(t *testing.T) {
 	t.Parallel()
 
 	s := store.New()
-	c := base.New(s, nil)
+	c := base.New(s, nil, "test")
 
 	c.Close()
 
@@ -253,7 +253,7 @@ func TestController_DoubleCloseIsSafe(t *testing.T) {
 	t.Parallel()
 
 	s := store.New()
-	c := base.New(s, nil)
+	c := base.New(s, nil, "test")
 
 	var fired atomic.Int64
 	c.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) {
@@ -287,7 +287,7 @@ func TestController_DoubleCloseIsSafe(t *testing.T) {
 func TestDispatchNode(t *testing.T) {
 	s := store.New()
 	ts := task.New()
-	c := base.New(s, ts)
+	c := base.New(s, ts, "test")
 	c.SetPreflight(func(id manifest.NamedResource) (string, bool) {
 		return "synthetic cycle", id.Name == "preflightfail"
 	})
@@ -298,7 +298,7 @@ func TestDispatchNode(t *testing.T) {
 	suspended := func(hr *manifest.HelmRelease) bool { return hr.Name == "suspended" }
 	reconcile := func(_ context.Context, _ *manifest.HelmRelease) error { ran.Add(1); return nil }
 	dispatch := func(id manifest.NamedResource) bool {
-		_, ready := base.DispatchNode(t.Context(), c, id, 0, suspended, "helmrelease", reconcile)
+		_, ready := base.DispatchNode(t.Context(), c, id, 0, suspended, reconcile)
 		return ready
 	}
 
@@ -344,7 +344,7 @@ func TestDispatchNode(t *testing.T) {
 // (handled=true, err) without emitting.
 func TestFingerprintDedup(t *testing.T) {
 	s := store.New()
-	c := base.New(s, nil)
+	c := base.New(s, nil, "test")
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 	s.AddObject(ks)
 	id := ks.Named()
@@ -355,16 +355,16 @@ func TestFingerprintDedup(t *testing.T) {
 	emit := func([]map[string]any) { emitted++ }
 
 	// Fingerprint mismatch → render (not handled), no emit.
-	if handled, err := c.FingerprintDedup(id, "other", "kustomization", emit); handled || err != nil {
+	if handled, err := c.FingerprintDedup(id, "other", emit); handled || err != nil {
 		t.Errorf("mismatch: handled=%v err=%v; want false,nil", handled, err)
 	}
 	// Match → handled, emit replays the cached docs.
-	if handled, err := c.FingerprintDedup(id, "fp1", "kustomization", emit); !handled || err != nil {
+	if handled, err := c.FingerprintDedup(id, "fp1", emit); !handled || err != nil {
 		t.Errorf("match: handled=%v err=%v; want true,nil", handled, err)
 	}
 	// No artifact for the id → render (not handled).
 	none := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "none"}
-	if handled, _ := c.FingerprintDedup(none, "fp1", "kustomization", emit); handled {
+	if handled, _ := c.FingerprintDedup(none, "fp1", emit); handled {
 		t.Error("no-artifact id: handled=true; want false")
 	}
 	if emitted != 1 {
@@ -373,7 +373,7 @@ func TestFingerprintDedup(t *testing.T) {
 
 	// Empty fingerprint never matches (safe re-render), even fp==""==stored.
 	s.SetArtifact(id, &store.KustomizationArtifact{Manifests: docs, Fingerprint: ""})
-	if handled, _ := c.FingerprintDedup(id, "", "kustomization", emit); handled {
+	if handled, _ := c.FingerprintDedup(id, "", emit); handled {
 		t.Error("empty fingerprint matched; want never-match (false)")
 	}
 }
@@ -382,14 +382,14 @@ func TestFingerprintDedup(t *testing.T) {
 // mid-flight preflight failure returns (handled=true, err) and does not emit.
 func TestFingerprintDedup_PreflightError(t *testing.T) {
 	s := store.New()
-	c := base.New(s, nil)
+	c := base.New(s, nil, "test")
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 	s.AddObject(ks)
 	id := ks.Named()
 	s.SetArtifact(id, &store.KustomizationArtifact{Fingerprint: "fp1"})
 	c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle detected", true })
 
-	handled, err := c.FingerprintDedup(id, "fp1", "kustomization", func([]map[string]any) {
+	handled, err := c.FingerprintDedup(id, "fp1", func([]map[string]any) {
 		t.Error("emit must not run when a preflight error is surfaced")
 	})
 	if !handled || err == nil {

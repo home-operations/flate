@@ -60,7 +60,7 @@ type Options struct {
 // New constructs a Kustomization controller.
 func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecrets bool) *Controller {
 	return &Controller{
-		Controller:  base.New(s, t),
+		Controller:  base.New(s, t, "kustomization"),
 		Trees:       trees,
 		WipeSecrets: wipeSecrets,
 	}
@@ -87,7 +87,7 @@ func (c *Controller) Start(_ context.Context) {
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
 	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
 		func(ks *manifest.Kustomization) bool { return ks.Suspend },
-		"kustomization", c.reconcile)
+		c.reconcile)
 }
 
 func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) error {
@@ -153,7 +153,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	// shared helper publishes nothing (publish=false) — see its doc for the
 	// churn/quiescence rationale (#657–#660). fp is reused for SetArtifact below.
 	fp := kustomizationFingerprint(ks, sourceRoot)
-	if handled, err := c.FingerprintDedup(id, fp, "kustomization", func(docs []map[string]any) {
+	if handled, err := c.FingerprintDedup(id, fp, func(docs []map[string]any) {
 		c.emitRenderedChildren(id, docs, false)
 	}); handled {
 		return err

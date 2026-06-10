@@ -66,6 +66,13 @@ type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
 
+	// name is the controller's stable identity (e.g. "helmrelease",
+	// "kustomization", "resourceset", "source"), set once at New and never
+	// mutated. It is the single source for the controller-kind label in
+	// reconcile log lines, so concrete controllers no longer thread a literal
+	// through every DispatchNode / FingerprintDedup call. Read via Name().
+	name string
+
 	started atomic.Bool
 	filter  *change.Filter
 
@@ -97,11 +104,16 @@ type Controller struct {
 	renderTracker RenderTracker
 }
 
-// New constructs a base controller. Concrete controllers call this
-// from their own constructor and embed the result.
-func New(s *store.Store, t *task.Service) *Controller {
-	return &Controller{Store: s, Tasks: t}
+// New constructs a base controller with the given stable name (its
+// controller-kind identity, surfaced in reconcile logs via Name()). Concrete
+// controllers call this from their own constructor and embed the result.
+func New(s *store.Store, t *task.Service, name string) *Controller {
+	return &Controller{Store: s, Tasks: t, name: name}
 }
+
+// Name returns the controller's stable identity (e.g. "helmrelease"). Set once
+// at New; the base reconcile helpers use it for their log-kind label.
+func (c *Controller) Name() string { return c.name }
 
 // requireNotStarted panics if the started gate is set, enforcing the
 // invariant that reconcile-shaping config is frozen once dispatch
@@ -283,7 +295,7 @@ func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string
 // Returns (handled=true, err): the caller returns err. err is non-nil only when
 // a preflight error was discovered mid-flight. Returns (false, nil) to render
 // normally. Centralizes the byte-identical KS/HR dedup short-circuit.
-func (c *Controller) FingerprintDedup(id manifest.NamedResource, fp, logKind string, emit func(docs []map[string]any)) (bool, error) {
+func (c *Controller) FingerprintDedup(id manifest.NamedResource, fp string, emit func(docs []map[string]any)) (bool, error) {
 	existing, ok := c.Store.GetArtifact(id).(store.RenderedArtifact)
 	if !ok || existing.RenderedFingerprint() == "" || existing.RenderedFingerprint() != fp {
 		return false, nil
@@ -291,7 +303,7 @@ func (c *Controller) FingerprintDedup(id manifest.NamedResource, fp, logKind str
 	if err := c.PreflightError(id); err != nil {
 		return true, err
 	}
-	slog.Debug(logKind+": skipped re-render (fingerprint unchanged)", "id", id.String())
+	slog.Debug(c.name+": skipped re-render (fingerprint unchanged)", "id", id.String())
 	emit(existing.RenderedManifests())
 	return true, nil
 }
@@ -634,7 +646,6 @@ func DispatchNode[T manifest.BaseManifest](
 	id manifest.NamedResource,
 	drainLevel int,
 	suspended func(T) bool,
-	logKind string,
 	reconcile func(context.Context, T) error,
 ) (blocked []manifest.NamedResource, ready bool) {
 	ctx = WithDrainLevel(ctx, drainLevel)
@@ -642,7 +653,7 @@ func DispatchNode[T manifest.BaseManifest](
 	if !ok {
 		// Vanished — RunWithStatusOutcome's vanished branch records a terminal
 		// status; report it.
-		blocked = RunWithStatusOutcome[T](ctx, c.Store, id, logKind, reconcile)
+		blocked = RunWithStatusOutcome[T](ctx, c.Store, id, c.name, reconcile)
 		return blocked, c.statusReady(id)
 	}
 	if c.PreGate(id, suspended(obj)) {
@@ -652,6 +663,6 @@ func DispatchNode[T manifest.BaseManifest](
 		c.Store.UpdateStatus(id, store.StatusFailed, msg)
 		return nil, false
 	}
-	blocked = RunWithStatusOutcome[T](ctx, c.Store, id, logKind, reconcile)
+	blocked = RunWithStatusOutcome[T](ctx, c.Store, id, c.name, reconcile)
 	return blocked, c.statusReady(id)
 }

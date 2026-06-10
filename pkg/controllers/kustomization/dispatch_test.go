@@ -11,7 +11,7 @@ import (
 
 func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 	s := store.New()
-	c := &Controller{Controller: base.New(s, task.New())}
+	c := &Controller{Controller: base.New(s, task.New(), "kustomization")}
 	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
@@ -40,7 +40,7 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 // reported)"). A real Flux Kustomization in the same batch is still emitted.
 func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 	s := store.New()
-	c := &Controller{Controller: base.New(s, task.New())}
+	c := &Controller{Controller: base.New(s, task.New(), "kustomization")}
 	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
 
 	var leaked bool
@@ -88,7 +88,7 @@ func (r *recordingTracker) MarkRenderedBatch(parent manifest.NamedResource, chil
 // fresh-render path (publish=true) still publishes.
 func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
 	s := store.New()
-	c := &Controller{Controller: base.New(s, task.New())}
+	c := &Controller{Controller: base.New(s, task.New(), "kustomization")}
 	rt := &recordingTracker{}
 	c.SetRenderTracker(rt)
 

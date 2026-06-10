@@ -57,7 +57,7 @@ type Options struct {
 // New constructs a ResourceSet controller.
 func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 	return &Controller{
-		Controller:  base.New(s, t),
+		Controller:  base.New(s, t, "resourceset"),
 		WipeSecrets: wipeSecrets,
 	}
 }
@@ -85,7 +85,7 @@ func (c *Controller) Start(_ context.Context) {
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
 	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
 		func(*manifest.ResourceSet) bool { return false },
-		"resourceset", c.reconcile)
+		c.reconcile)
 }
 
 func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet) error {
@@ -136,7 +136,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet) er
 	// change re-reads a different fingerprint and re-renders below. fp is
 	// reused for SetArtifact.
 	fp := resourceSetFingerprint(rs, c.Store)
-	if handled, err := c.FingerprintDedup(id, fp, "resourceset", func([]map[string]any) {}); handled {
+	if handled, err := c.FingerprintDedup(id, fp, func([]map[string]any) {}); handled {
 		return err
 	}
 

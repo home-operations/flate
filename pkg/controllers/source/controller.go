@@ -66,7 +66,7 @@ type FetchOptions struct {
 // returned struct's Fetchers map before Start.
 func New(s *store.Store, t *task.Service) *Controller {
 	return &Controller{
-		Controller: base.New(s, t),
+		Controller: base.New(s, t, "source"),
 		Fetchers:   map[string]src.Fetcher{},
 	}
 }
@@ -106,7 +106,7 @@ func (c *Controller) HasFetcher(kind string) bool {
 // for source-kind nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
 	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
-		suspendedSource, "source", c.reconcile)
+		suspendedSource, c.reconcile)
 }
 
 // reconcile fetches the source artifact via the registered Fetcher and

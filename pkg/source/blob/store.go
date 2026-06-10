@@ -65,11 +65,10 @@ func (s *Store) Exists(digest string) bool {
 // acquire (no write performed).
 //
 // Takes the package-level GC shared lock so a concurrent gc.Sweep
-// can't delete a blob between the Exists check and the caller's
-// subsequent Refs.Put. The early-return path also refreshes the
-// blob's mtime — without that bump, a reused-but-old blob whose
-// "fresh" ref lands after Sweep's mark walk would be age-pruned even
-// though a live caller just touched it.
+// can't age-read a stale mtime or delete the blob between this call's
+// Exists check and its mtime refresh / finalize. The early-return path
+// also refreshes the blob's mtime — without that bump, a reused-but-old
+// blob would be age-pruned even though a live caller just touched it.
 //
 // Returns the populated blob directory path and the computed digest.
 func (s *Store) PutBytes(ctx context.Context, content []byte, filename string) (string, string, error) {

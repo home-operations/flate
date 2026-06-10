@@ -72,10 +72,11 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 	}
 
 	// Hold the exclusive GC lock for the entire mark + sweep so no
-	// blob.Refs.Put can land an atomic-rename between markLiveDigests
-	// and the blob sweep — the race would otherwise purge a freshly-
-	// referenced blob as orphan-old. Refs.Put takes the shared lock so
-	// the gate is invisible for the common case (no GC running).
+	// concurrent blob write (Store.PutBytes refreshing a reused blob's
+	// mtime) can interleave with markLiveDigests and the blob sweep — the
+	// race would otherwise purge a freshly-touched blob as orphan-old.
+	// PutBytes takes the shared lock so the gate is invisible for the
+	// common case (no GC running).
 	if err := blob.WithSweepLock(func() error {
 		live := markLiveDigests(layout, &res)
 
@@ -215,7 +216,7 @@ func sweepDanglingRefs(layout cacheroot.Layout, dryRun bool, res *SweepResult) {
 			return nil
 		}
 		if strings.HasPrefix(d.Name(), ".tmp.") {
-			// Orphaned staging file from a torn Refs.Put — clean.
+			// Orphaned staging file from a torn ref write — clean.
 			res.Removed = append(res.Removed, path)
 			if !dryRun {
 				_ = os.Remove(path) //nolint:gosec // path is a WalkDir result under refsRoot

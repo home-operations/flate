@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -222,63 +223,62 @@ func TestSweep_UnreferencedOldBlobIsPruned(t *testing.T) {
 }
 
 // TestSweep_PutInFlightPreservesBlob is the regression test for the
-// mark↔sweep race fix in gclock.go. The caller's PutBytes + Refs.Put
-// pair runs concurrently with Sweep; the invariant is "if the ref
-// landed, its blob still resolves" — i.e., no ref points at a freshly-
-// purged blob.
+// mark↔sweep race in gclock.go, exercised on the surviving Store.PutBytes
+// path. A PutBytes that reuses an existing (old) blob refreshes its mtime so
+// an age-pruning Sweep keeps it — a live caller is about to use the directory
+// it returns. That mtime refresh and Sweep's age-read/remove must not
+// interleave.
 //
-// Pre-fix: Sweep marks refs before PutBytes refreshes the (old) blob's
-// mtime, then ages-out the blob; Refs.Put then writes a ref pointing
-// at a deleted blob. Post-fix: PutBytes holds rLockGC and refreshes
-// mtime, Refs.Put holds rLockGC, Sweep holds the exclusive lock via
-// blob.WithSweepLock — the three operations serialize cleanly so the
-// invariant holds in every interleaving.
+// Pre-fix: Sweep age-reads the blob's STALE mtime and RemoveAll's it between
+// PutBytes's Exists check and its mtime refresh; PutBytes then hands back a
+// directory that no longer exists. Post-fix: PutBytes holds rLockGC across
+// check→refresh→finalize and Sweep holds the exclusive lock across mark+sweep
+// (blob.WithSweepLock), so a successful PutBytes never returns a blob Sweep
+// then deletes. MaxAge is generous so a just-refreshed blob is legitimately
+// "young" and kept; only the torn interleave can violate the invariant. The
+// loop shakes out interleavings.
 func TestSweep_PutInFlightPreservesBlob(t *testing.T) {
 	layout := cacheroot.New(t.TempDir())
 	store := blob.NewStore(layout)
-	refs := blob.NewRefs(layout, "test")
 
-	// Pre-seed an OLD blob so Sweep would age-prune it on the next pass.
-	content := []byte("payload")
-	dir, digest, err := store.PutBytes(context.Background(), content, "f.bin")
-	if err != nil {
-		t.Fatalf("seed PutBytes: %v", err)
-	}
-	old := time.Now().Add(-30 * 24 * time.Hour)
-	if err := os.Chtimes(dir, old, old); err != nil {
-		t.Fatal(err)
-	}
+	for i := range 20 {
+		// Seed an OLD blob (unique content → unique digest) so a tight-MaxAge
+		// Sweep would reap it unless the racing PutBytes refreshes its mtime.
+		content := fmt.Appendf(nil, "payload-%d", i)
+		dir, digest, err := store.PutBytes(context.Background(), content, "f.bin")
+		if err != nil {
+			t.Fatalf("seed PutBytes: %v", err)
+		}
+		old := time.Now().Add(-30 * 24 * time.Hour)
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
 
-	// Race the (PutBytes → Refs.Put) pair against Sweep with a tight
-	// MaxAge that would otherwise reap the seeded blob.
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		if _, _, perr := store.PutBytes(context.Background(), content, "f.bin"); perr != nil {
-			t.Errorf("racing PutBytes: %v", perr)
-			return
-		}
-		if perr := refs.Put("k", digest); perr != nil {
-			t.Errorf("racing Refs.Put: %v", perr)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if _, serr := Sweep(layout, SweepOpts{MaxAge: 1 * time.Nanosecond}); serr != nil {
-			t.Errorf("Sweep: %v", serr)
-		}
-	}()
-	wg.Wait()
-
-	// Invariant: if the ref landed, its blob must resolve.
-	if got, ok := refs.Get("k"); ok {
-		if got != digest {
-			t.Fatalf("ref points at unexpected digest %q (want %q)", got, digest)
-		}
-		if _, err := os.Stat(layout.Blob(got)); err != nil {
-			t.Errorf("ref → blob invariant broken: ref exists but blob is gone: %v", err)
-		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			got, gotDigest, perr := store.PutBytes(context.Background(), content, "f.bin")
+			if perr != nil {
+				t.Errorf("racing PutBytes: %v", perr)
+				return
+			}
+			if gotDigest != digest {
+				t.Errorf("digest changed across PutBytes: got %q want %q", gotDigest, digest)
+			}
+			// Invariant: a successful PutBytes always yields a resolvable blob —
+			// Sweep never deletes the directory it just handed back.
+			if _, serr := os.Stat(got); serr != nil {
+				t.Errorf("PutBytes returned a blob Sweep deleted: %v", serr)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if _, serr := Sweep(layout, SweepOpts{MaxAge: time.Hour}); serr != nil {
+				t.Errorf("Sweep: %v", serr)
+			}
+		}()
+		wg.Wait()
 	}
 }
 

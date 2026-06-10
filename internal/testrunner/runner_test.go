@@ -5,10 +5,43 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+// TestWrite_VerdictGlyphAndElapsed: the summary leads with a green ✓ when all
+// pass and a red ✗ when anything fails, and shows the elapsed clock only when
+// non-zero.
+func TestWrite_VerdictGlyphAndElapsed(t *testing.T) {
+	pass := store.New()
+	ok := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
+	pass.AddObject(&manifest.Kustomization{Name: ok.Name, Namespace: ok.Namespace})
+	pass.UpdateStatus(ok, store.StatusReady, "")
+	var pb bytes.Buffer
+	if err := Run(Job{Store: pass}).Write(&pb, false, 1500*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if out := pb.String(); !strings.Contains(out, style.GlyphPass) || strings.Contains(out, style.GlyphFail) {
+		t.Errorf("all-pass summary wants ✓ and no ✗:\n%s", out)
+	} else if !strings.Contains(out, "1.5s") {
+		t.Errorf("summary should show the elapsed clock:\n%s", out)
+	}
+
+	fail := store.New()
+	bad := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "bad"}
+	fail.AddObject(&manifest.Kustomization{Name: bad.Name, Namespace: bad.Namespace})
+	fail.UpdateStatus(bad, store.StatusFailed, "boom")
+	var fb bytes.Buffer
+	_ = Run(Job{Store: fail}).Write(&fb, false, 0)
+	if out := fb.String(); !strings.Contains(out, style.GlyphFail) {
+		t.Errorf("failing summary wants ✗:\n%s", out)
+	} else if strings.Contains(out, "0.0s") {
+		t.Errorf("elapsed=0 should be omitted, not rendered:\n%s", out)
+	}
+}
 
 func TestRun_AllPass(t *testing.T) {
 	s := store.New()
@@ -22,7 +55,7 @@ func TestRun_AllPass(t *testing.T) {
 		t.Errorf("expected 2 passed, got %+v", rep)
 	}
 	var b bytes.Buffer
-	if err := rep.Write(&b, false); err != nil {
+	if err := rep.Write(&b, false, 0); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if !strings.Contains(b.String(), "2 passed") {
@@ -105,7 +138,7 @@ func TestWrite_ShowsSkippedByDefault(t *testing.T) {
 	rep := Run(Job{Store: s})
 
 	var b bytes.Buffer
-	if err := rep.Write(&b, false); err != nil {
+	if err := rep.Write(&b, false, 0); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	out := b.String()
@@ -132,7 +165,7 @@ func TestWrite_FailedNeverHidden(t *testing.T) {
 
 	rep := Run(Job{Store: s})
 	var b bytes.Buffer
-	if err := rep.Write(&b, false); err != nil {
+	if err := rep.Write(&b, false, 0); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if out := b.String(); !strings.Contains(out, "✗") || !strings.Contains(out, "broken") {
@@ -153,10 +186,10 @@ func TestWrite_Color(t *testing.T) {
 	rep := Run(Job{Store: s})
 
 	var colored, plain bytes.Buffer
-	if err := rep.Write(&colored, true); err != nil {
+	if err := rep.Write(&colored, true, 0); err != nil {
 		t.Fatalf("Write(color): %v", err)
 	}
-	if err := rep.Write(&plain, false); err != nil {
+	if err := rep.Write(&plain, false, 0); err != nil {
 		t.Fatalf("Write(plain): %v", err)
 	}
 	if !strings.Contains(colored.String(), "\x1b") {
@@ -200,7 +233,7 @@ func TestWrite_ReturnsWriterError(t *testing.T) {
 	want := errors.New("write failed")
 	rep := Report{Cases: []Case{{ID: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "apps"}}}}
 
-	if err := rep.Write(errWriter{err: want}, false); !errors.Is(err, want) {
+	if err := rep.Write(errWriter{err: want}, false, 0); !errors.Is(err, want) {
 		t.Fatalf("Write error = %v, want %v", err, want)
 	}
 }

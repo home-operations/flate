@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -54,10 +55,12 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 				return err
 			}
 			defer stopProfile()
+			start := time.Now()
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			if o == nil {
 				return runErr
 			}
+			elapsed := time.Since(start)
 			// testrunner.Report.AnyFailed already covers per-resource
 			// reconcile failures, so the runErr is informational here —
 			// the structured report is what the user reads. We still
@@ -79,7 +82,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			// (colorprofile) honors NO_COLOR / CLICOLOR / TTY-ness; piped or
 			// redirected output stays plain.
 			color := style.ColorEnabled(cmd.OutOrStdout())
-			if err := report.Write(cmd.OutOrStdout(), color); err != nil {
+			if err := report.Write(cmd.OutOrStdout(), color, elapsed); err != nil {
 				return errors.Join(err, runErr)
 			}
 			if report.AnyFailed() {

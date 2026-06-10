@@ -135,7 +135,7 @@ func (m barModel) View() tea.View {
 	if names := summarizeInflight(m.inflightLabels(), maxInflightNames); names != "" {
 		line += " " + style.Dim(names, m.color)
 	}
-	line += "  " + style.Dim(fmtElapsed(time.Since(m.startedAt)), m.color)
+	line += "  " + style.Dim(style.Elapsed(time.Since(m.startedAt)), m.color)
 	return tea.NewView(style.Truncate(line, m.width))
 }
 
@@ -188,13 +188,4 @@ func summarizeInflight(names []string, limit int) string {
 	default:
 		return fmt.Sprintf("%s +%d", strings.Join(names[:limit], ", "), len(names)-limit)
 	}
-}
-
-// fmtElapsed renders a duration compactly: tenths of a second under a minute,
-// m+ss above it.
-func fmtElapsed(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	}
-	return fmt.Sprintf("%dm%02ds", int(d/time.Minute), int(d%time.Minute/time.Second))
 }

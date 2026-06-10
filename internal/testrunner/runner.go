@@ -14,6 +14,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -67,18 +68,19 @@ func (r Report) AnyFailed() bool { return r.Failed > 0 }
 func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 	switch o {
 	case OutcomePassed:
-		return "✓", style.Pass
+		return style.GlyphPass, style.Pass
 	case OutcomeFailed:
-		return "✗", style.Fail
+		return style.GlyphFail, style.Fail
 	default: // OutcomeSkipped
-		return "‒", style.Skip
+		return style.GlyphSkip, style.Skip
 	}
 }
 
 // Write renders the report: one row per case (status glyph, dimmed kind column,
-// namespace/name, dimmed reason) followed by a colored count summary. color
+// namespace/name, dimmed reason) followed by a summary — an overall verdict
+// glyph, the colored counts, and a dim elapsed clock (omitted when zero). color
 // gates the ANSI codes — the caller decides based on the sink (see cli.test).
-func (r Report) Write(w io.Writer, color bool) error {
+func (r Report) Write(w io.Writer, color bool, elapsed time.Duration) error {
 	kindW := 0
 	for _, c := range r.Cases {
 		kindW = max(kindW, len(c.ID.Kind))
@@ -98,15 +100,23 @@ func (r Report) Write(w io.Writer, color bool) error {
 		b.WriteByte('\n')
 	}
 
-	// Summary: always the passed count; skipped/failed only when non-zero, so
-	// an all-green run reads "N passed" and an empty run still prints something.
-	b.WriteString("\n  ")
+	// Summary: a verdict glyph (green ✓ / red ✗) leads the colored counts —
+	// always the passed count; skipped/failed only when non-zero — and a dim
+	// elapsed clock closes it. An empty run still reads "✓ 0 passed".
+	verdict, paintVerdict := style.GlyphPass, style.Pass
+	if r.Failed > 0 {
+		verdict, paintVerdict = style.GlyphFail, style.Fail
+	}
+	b.WriteString("\n  " + paintVerdict(verdict, color) + " ")
 	b.WriteString(style.Pass(fmt.Sprintf("%d passed", r.Passed), color))
 	if r.Skipped > 0 {
 		b.WriteString(" · " + style.Dim(fmt.Sprintf("%d skipped", r.Skipped), color))
 	}
 	if r.Failed > 0 {
 		b.WriteString(" · " + style.Fail(fmt.Sprintf("%d failed", r.Failed), color))
+	}
+	if elapsed > 0 {
+		b.WriteString("   " + style.Dim(style.Elapsed(elapsed), color))
 	}
 	b.WriteByte('\n')
 

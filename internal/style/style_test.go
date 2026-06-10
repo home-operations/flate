@@ -4,9 +4,26 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
+
+// TestElapsed: compact duration formatting shared by the bar and the report.
+func TestElapsed(t *testing.T) {
+	cases := map[time.Duration]string{
+		0:                        "0.0s",
+		1500 * time.Millisecond:  "1.5s",
+		59900 * time.Millisecond: "59.9s",
+		90 * time.Second:         "1m30s",
+		3725 * time.Second:       "62m05s",
+	}
+	for d, want := range cases {
+		if got := Elapsed(d); got != want {
+			t.Errorf("Elapsed(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
 
 // TestColorEnabled_NonTTY: a buffer (pipe/CI/e2e sink) is never a terminal, so
 // styling stays off without a flag.

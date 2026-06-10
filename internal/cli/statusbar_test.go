@@ -4,7 +4,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -127,21 +126,6 @@ func TestSummarizeInflight(t *testing.T) {
 	for _, c := range cases {
 		if got := summarizeInflight(c.names, c.max); got != c.want {
 			t.Errorf("summarizeInflight(%v, %d) = %q, want %q", c.names, c.max, got, c.want)
-		}
-	}
-}
-
-func TestFmtElapsed(t *testing.T) {
-	cases := map[time.Duration]string{
-		0:                        "0.0s",
-		1500 * time.Millisecond:  "1.5s",
-		59900 * time.Millisecond: "59.9s",
-		90 * time.Second:         "1m30s",
-		3725 * time.Second:       "62m05s",
-	}
-	for d, want := range cases {
-		if got := fmtElapsed(d); got != want {
-			t.Errorf("fmtElapsed(%v) = %q, want %q", d, got, want)
 		}
 	}
 }

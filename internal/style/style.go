@@ -1,7 +1,7 @@
-// Package style is flate's terminal styling layer: lipgloss-backed color
-// helpers and ANSI-aware truncation shared by the CLI status bar and the
-// `flate test` report, so both surfaces speak one styling vocabulary instead of
-// hand-rolling escape codes.
+// Package style is flate's terminal presentation layer: the glyphs, lipgloss
+// color helpers, ANSI-aware truncation, and duration formatting shared by the
+// CLI status bar and the `flate test` report, so both surfaces speak one
+// vocabulary instead of hand-rolling escape codes and symbols.
 //
 // Color is gated per output writer: callers resolve ColorEnabled(w) once (a
 // pipe, NO_COLOR, CLICOLOR=0, or a dumb terminal renders plain) and thread the
@@ -9,12 +9,22 @@
 package style
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
+)
+
+// Status glyphs shared across surfaces: a passing/success mark, a failure mark,
+// and a skipped/secondary dash. Pair with Pass/Fail/Skip for color.
+const (
+	GlyphPass = "✓"
+	GlyphFail = "✗"
+	GlyphSkip = "‒"
 )
 
 // Semantic styles, by ANSI base color (0-7) so they downsample cleanly on
@@ -72,4 +82,13 @@ func Truncate(s string, width int) string {
 		return s
 	}
 	return ansi.Truncate(s, width, "…")
+}
+
+// Elapsed renders a duration compactly for live and summary timing: tenths of a
+// second under a minute, m+ss above it.
+func Elapsed(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%dm%02ds", int(d/time.Minute), int(d%time.Minute/time.Second))
 }

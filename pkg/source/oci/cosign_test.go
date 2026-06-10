@@ -218,10 +218,13 @@ func TestLoadCosignPublicKeys_ParsesPEMFromData(t *testing.T) {
 	}
 }
 
-// Keyless cosign (matchOIDCIdentity, no secretRef) cannot be enforced
-// offline. Verify that verifyCosignSignature returns nil — the chart
-// still renders for diff purposes — without touching the registry.
-func TestVerifyCosignSignature_KeylessSkipsAndReturnsNil(t *testing.T) {
+// TestVerifyCosignSignature_KeylessSignatureUnreachableSkips: keyless verify
+// (matchOIDCIdentity, no secretRef) honors the same transport boundary as the
+// keyed path — when the signature isn't reachable in the registry the check
+// can't complete, so it WARNs and skips (false, nil) rather than failing the
+// render. A reachable keyless signature is verified end-to-end against captured
+// material in keyless_test.go.
+func TestVerifyCosignSignature_KeylessSignatureUnreachableSkips(t *testing.T) {
 	f := &Fetcher{}
 	repo := &manifest.OCIRepository{
 		Name: "app-template", Namespace: "flux-system",
@@ -235,10 +238,12 @@ func TestVerifyCosignSignature_KeylessSkipsAndReturnsNil(t *testing.T) {
 			},
 		},
 	}
-	// repoClient nil is fine: keyless path returns before any registry call.
-	verified, err := f.verifyCosignSignature(context.Background(), nil, repo, "sha256:deadbeef")
+	// blobRepoClient serves /blobs/ only; any /manifests/ lookup 404s, so
+	// Resolve(sigTag) fails → unreachable → skip.
+	rc := blobRepoClient(t, map[string][]byte{})
+	verified, err := f.verifyCosignSignature(context.Background(), rc, repo, "sha256:deadbeef")
 	if err != nil || verified {
-		t.Errorf("keyless cosign should skip: got (verified=%v, err=%v), want (false, nil)", verified, err)
+		t.Errorf("unreachable keyless signature should skip: got (verified=%v, err=%v), want (false, nil)", verified, err)
 	}
 }
 

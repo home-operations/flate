@@ -1,0 +1,1 @@
+{"critical":{"identity":{"docker-reference":"ghcr.io/external-secrets/charts/external-secrets"},"image":{"docker-manifest-digest":"sha256:6b8ef5067976d0aa6195f6f173a4841ef66a53b167f3a28b4b3b9593d2063cf1"},"type":"cosign container image signature"},"optional":null}

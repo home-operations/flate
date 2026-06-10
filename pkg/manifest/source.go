@@ -179,10 +179,15 @@ const (
 )
 
 // OCIRepositoryVerify is the Flux OCIRepositoryVerification from
-// source-controller. Flate implements keyed cosign mode only: keyless
-// (OIDC) parses for round-trip fidelity, logs a warn at Fetch time,
-// and proceeds with rendering. Notation is also unenforced.
+// source-controller. Flate enforces cosign verification — keyed
+// (secretRef → trusted public keys) and keyless (matchOIDCIdentity →
+// Fulcio/Rekor via sigstore-go, see pkg/source/oci/keyless.go). Notation
+// is unenforced (hard error if requested).
 type OCIRepositoryVerify = sourcev1.OCIRepositoryVerification
+
+// OIDCIdentityMatch is the Flux keyless identity matcher (issuer + subject
+// regex pair) carried in OCIRepositoryVerify.MatchOIDCIdentity.
+type OIDCIdentityMatch = sourcev1.OIDCIdentityMatch
 
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {

@@ -36,6 +36,10 @@ type fakeDisp struct {
 	// closed — used to force interleavings (e.g. the lost-wakeup race).
 	gate map[NodeID]chan struct{}
 
+	// drainRerun, if set for an id, makes Dispatch return rerunAtDrain=true for
+	// it — modeling a selector ResourceSet that re-expands at the fixpoint.
+	drainRerun map[NodeID]bool
+
 	mu        sync.Mutex
 	termReady map[NodeID]bool
 	termAny   map[NodeID]bool
@@ -45,15 +49,16 @@ type fakeDisp struct {
 
 func newFake(graph map[NodeID][]NodeID) *fakeDisp {
 	return &fakeDisp{
-		graph:     graph,
-		gate:      map[NodeID]chan struct{}{},
-		termReady: map[NodeID]bool{},
-		termAny:   map[NodeID]bool{},
-		runs:      map[NodeID]int{},
+		graph:      graph,
+		gate:       map[NodeID]chan struct{}{},
+		drainRerun: map[NodeID]bool{},
+		termReady:  map[NodeID]bool{},
+		termAny:    map[NodeID]bool{},
+		runs:       map[NodeID]int{},
 	}
 }
 
-func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outcome, []NodeID, bool) {
+func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outcome, []NodeID, bool, bool) {
 	f.mu.Lock()
 	g := f.gate[nid]
 	f.mu.Unlock()
@@ -67,6 +72,7 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outc
 	if drainLevel > f.maxDrain {
 		f.maxDrain = drainLevel
 	}
+	rerun := f.drainRerun[nid]
 	deps := f.graph[nid]
 	var blocked []NodeID
 	failed := false
@@ -97,13 +103,13 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outc
 	case failed:
 		f.termAny[nid] = true
 		f.termReady[nid] = false
-		return OutcomeTerminal, nil, false
+		return OutcomeTerminal, nil, false, rerun
 	case len(blocked) > 0:
-		return OutcomeBlocked, blocked, false
+		return OutcomeBlocked, blocked, false, rerun
 	default:
 		f.termAny[nid] = true
 		f.termReady[nid] = true
-		return OutcomeTerminal, nil, true
+		return OutcomeTerminal, nil, true, rerun
 	}
 }
 
@@ -298,6 +304,51 @@ func TestCrossKindCycleForceDrains(t *testing.T) {
 	if f.maxDrainLevel() != DrainForce {
 		t.Fatalf("a cycle must escalate to DrainForce; maxDrain=%d", f.maxDrainLevel())
 	}
+}
+
+func TestDrainRerunReexpandsOnArrival(t *testing.T) {
+	// A drain-rerun node (a selector ResourceSet) terminalizes immediately, then
+	// a later arrival bumps gen. At the structural fixpoint the node must re-run
+	// once — re-expanding against the now-complete store — even though it parked
+	// on nothing and the arriving id is not one it waited on.
+	f := newFake(map[NodeID][]NodeID{
+		id("rs"):        nil,
+		id("keepalive"): nil,
+	})
+	f.drainRerun[id("rs")] = true
+	gate := make(chan struct{})
+	f.gate[id("keepalive")] = gate
+
+	ts := task.NewBounded(8)
+	s := New(ts, f)
+	s.Seed([]NodeID{id("rs"), id("keepalive")})
+	done := make(chan struct{})
+	go func() { s.Run(context.Background()); close(done) }()
+
+	// rs ran once (gen still 0). Now a late data arrival bumps gen; with the
+	// pool held non-idle by keepalive, the fixpoint can't fire until we release.
+	waitUntil(t, func() bool { return f.runCount(id("rs")) >= 1 })
+	s.OnArrival(NodeID{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "late"}, false)
+	close(gate)
+	<-done
+
+	if rc := f.runCount(id("rs")); rc != 2 {
+		t.Fatalf("drain-rerun node ran %d times; want exactly 2 (initial + one re-expansion)", rc)
+	}
+	assertReady(t, f, "rs")
+}
+
+func TestDrainRerunTerminatesWithoutArrival(t *testing.T) {
+	// With no arrival after its run, a drain-rerun node converges: gen never
+	// advances past its lastGen, so the fixpoint does NOT re-run it. This is the
+	// termination bound — re-runs require a fresh arrival.
+	f := newFake(map[NodeID][]NodeID{id("rs"): nil})
+	f.drainRerun[id("rs")] = true
+	run(t, f, 8)
+	if rc := f.runCount(id("rs")); rc != 1 {
+		t.Fatalf("drain-rerun node ran %d times with no arrival; want exactly 1 (no re-run)", rc)
+	}
+	assertReady(t, f, "rs")
 }
 
 func TestDanglingChainRunCountBounded(t *testing.T) {

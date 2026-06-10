@@ -77,8 +77,13 @@ type Dispatcher interface {
 	//   - ready: whether id's final store status is Ready (meaningful only
 	//     when Terminal) — the scheduler records it so a node parking on id
 	//     can tell, without reading the store, whether id is satisfied.
+	//   - rerunAtDrain: whether id wants to be re-run at the structural
+	//     fixpoint. A node with no nameable dependency to park on (a
+	//     ResourceSet with a selector-only inputsFrom, whose matching inputs
+	//     may be emitted by an unknown producer) sets this so the scheduler
+	//     re-expands it once the graph is quiescent — see requeueDrainRerunLocked.
 	// drainLevel is one of DrainNone/DrainCascade/DrainForce.
-	Dispatch(ctx context.Context, id NodeID, drainLevel int) (out Outcome, blocked []NodeID, ready bool)
+	Dispatch(ctx context.Context, id NodeID, drainLevel int) (out Outcome, blocked []NodeID, ready, rerunAtDrain bool)
 }
 
 type nodeState uint8
@@ -99,6 +104,13 @@ type node struct {
 	// complete() re-queues it once instead of dropping the wake (the re-run
 	// re-reads the store and re-evaluates its gate against current state).
 	rerunRequested bool
+	// drainRerun marks a node that asked (via Dispatch's rerunAtDrain) to be
+	// re-run at the structural fixpoint. lastGen is the arrival generation
+	// observed when the node was last dispatched; the fixpoint re-runs the node
+	// only if a newer arrival has happened since (gen > lastGen), which bounds
+	// re-runs by the finite, monotone set of arrivals. See requeueDrainRerunLocked.
+	drainRerun bool
+	lastGen    uint64
 }
 
 // Scheduler is a re-entrant fixpoint reconcile driver. Construct with New,
@@ -116,6 +128,10 @@ type Scheduler struct {
 	inFlight  int                            // count of stateRunning nodes (EXCLUDES parked)
 	draining  int                            // DrainNone/DrainCascade/DrainForce
 	canceled  bool
+	// gen counts object arrivals (OnArrival). A drain-rerun node records the gen
+	// it last ran at; the fixpoint re-runs it only when gen has since advanced,
+	// so re-runs are bounded by the finite, monotone arrival set.
+	gen uint64
 }
 
 // New constructs a Scheduler that runs bodies on tasks via disp.
@@ -176,12 +192,17 @@ func (s *Scheduler) Run(ctx context.Context) {
 			n.state = stateRunning
 			n.rerunRequested = false
 			n.blockedOn = nil
+			// Snapshot the arrival generation at dispatch (not completion): any
+			// arrival during or after this body — including the body's own
+			// emissions — then leaves gen > lastGen, so a needed re-expansion is
+			// never missed. The cost is one FingerprintDedup'd no-op re-run.
+			n.lastGen = s.gen
 			s.inFlight++
 			level := s.draining
 			s.mu.Unlock()
 			s.tasks.Go(ctx, "schedule/"+id.String(), func(ctx context.Context) {
-				out, blocked, ready := s.disp.Dispatch(ctx, id, level)
-				s.complete(id, out, blocked, ready)
+				out, blocked, ready, rerunAtDrain := s.disp.Dispatch(ctx, id, level)
+				s.complete(id, out, blocked, ready, rerunAtDrain)
 			})
 			s.mu.Lock()
 		}
@@ -190,6 +211,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 		//    must be drained.
 		if s.inFlight == 0 {
 			if !s.hasParkedLocked() {
+				// Quiescent: nothing running, nothing parked. Before declaring
+				// the fixpoint, re-run any drain-rerun node that has seen a new
+				// arrival since it last ran — a selector ResourceSet re-expands
+				// here against the now-complete store. The gen-guard bounds this.
+				if s.requeueDrainRerunLocked() {
+					continue
+				}
 				break // clean fixpoint: every node terminal
 			}
 			// Parked nodes remain with nothing in flight. Escalate the drain
@@ -220,7 +248,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 // complete records the result of one Dispatch. Runs on the worker goroutine;
 // acquires mu. Touches ONLY scheduler state — never the store or the pool.
-func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, ready bool) {
+func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, ready, rerunAtDrain bool) {
 	s.mu.Lock()
 	// Broadcast on EVERY path (terminalize, park, re-queue) so the Run loop
 	// re-evaluates inFlight/runq after any transition — a terminalize that
@@ -230,6 +258,9 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, ready boo
 	defer s.cond.Broadcast()
 	n := s.nodes[id]
 	s.inFlight--
+	// Record the node's drain-rerun intent (static per node — a selector
+	// ResourceSet always asks). Read by requeueDrainRerunLocked at the fixpoint.
+	n.drainRerun = rerunAtDrain
 
 	// A wake landed while this body was running: honor it exactly once by
 	// re-queuing, regardless of the outcome just reported. The re-run
@@ -334,6 +365,9 @@ func (s *Scheduler) unparkLocked(n *node) {
 func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// An arrival is the only thing that can change a drain-rerun node's resolved
+	// input set; bump the generation so the fixpoint knows a re-expansion is due.
+	s.gen++
 	if n := s.nodes[id]; n == nil {
 		if schedulable {
 			// Render-discovered node: register and queue it.
@@ -425,6 +459,33 @@ func (s *Scheduler) requeueAllParkedLocked() {
 	for _, n := range parked {
 		s.unparkLocked(n)
 	}
+}
+
+// requeueDrainRerunLocked re-queues, in id order, every terminal drain-rerun
+// node that has seen a new arrival since it last ran (gen advanced past its
+// lastGen), so it re-expands against the now-complete store at quiescence.
+// Returns whether any node was re-queued. Termination: a re-run requires an
+// arrival since the node's last run, arrivals are finite and monotone, and a
+// re-run that resolves identically is a fingerprint-dedup no-op that adds
+// nothing to the runq — so the gen-guard converges. Caller holds mu.
+func (s *Scheduler) requeueDrainRerunLocked() bool {
+	var due []*node
+	for _, n := range s.nodes {
+		if n.state == stateTerminal && n.drainRerun && n.lastGen < s.gen {
+			due = append(due, n)
+		}
+	}
+	if len(due) == 0 {
+		return false
+	}
+	slices.SortFunc(due, func(a, b *node) int { return a.id.Compare(b.id) })
+	for _, n := range due {
+		n.state = stateRunnable
+		n.ready = false
+		n.blockedOn = nil
+		s.runq = append(s.runq, n.id)
+	}
+	return true
 }
 
 // finalSweepLocked is a defensive backstop: after DrainForce every parked node

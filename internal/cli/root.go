@@ -57,11 +57,11 @@ func New(version string) *cobra.Command {
 		// GetBool then returns (false, err), which is the correct "no stream".
 		noProgress, _ := cmd.Flags().GetBool("no-progress")
 		stream, _ := cmd.Flags().GetBool("stream")
-		stderrSink = nil
+		barSink = nil
 		logSink := cmd.ErrOrStderr()
 		if progressBarEnabled(noProgress, stream, writerIsTTY(cmd.OutOrStdout()), writerIsTTY(cmd.ErrOrStderr())) {
-			stderrSink = newStderrRouter(cmd.ErrOrStderr())
-			logSink = stderrSink
+			barSink = newBarWriter(cmd.ErrOrStderr())
+			logSink = barSink
 		}
 		lvl, _ := cmd.Flags().GetString("log-level")
 		return setLogLevel(lvl, logSink)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -539,15 +540,29 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...fun
 	if err != nil {
 		return nil, nil, err
 	}
-	// Live status bar on stderr (TTY-gated via stderrSink). Attached before
-	// Render so its counters and spinner track the reconcile as it runs;
-	// stdout (the rendered output) is untouched. Defers run LIFO, so the
-	// unsubscribe fires before finish() draws the summary.
-	if stderrSink != nil {
-		bar := newStatusBar(stderrSink)
-		defer bar.finish()
-		defer bar.attach(o.Store())()
-		bar.start()
+	// Live status bar on stderr (TTY-gated via barSink). A Bubble Tea program
+	// runs the inline frame; store status events feed it via Program.Send, so
+	// its counters and spinner track the reconcile as it runs. stdout (the
+	// rendered output) is untouched. Defers run LIFO: the unsubscribe fires,
+	// then finishMsg clears the frame and the program is detached from slog
+	// before Render's callers print anything.
+	if barSink != nil {
+		p := tea.NewProgram(newBarModel(barSink.color),
+			tea.WithOutput(barSink.out),
+			tea.WithInput(nil),         // output-only: never capture the keyboard
+			tea.WithoutSignalHandler(), // the CLI context owns Ctrl-C, not the bar
+		)
+		barSink.setProgram(p)
+		go func() { _, _ = p.Run() }()
+		unsub := o.Store().OnStatus(func(id manifest.NamedResource, info store.StatusInfo) {
+			p.Send(statusMsg{id: id, info: info})
+		}, false)
+		defer func() {
+			unsub()
+			p.Send(finishMsg{})
+			p.Wait()
+			barSink.setProgram(nil)
+		}()
 	}
 	for _, hook := range pre {
 		defer hook(o)()

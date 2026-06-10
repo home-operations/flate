@@ -1,11 +1,12 @@
 package cli
 
 import (
-	"bytes"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -21,13 +22,23 @@ func barID(name string) manifest.NamedResource {
 	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
-// TestRenderFrame_FitsWidth: the frame never exceeds the terminal width at any
-// size, so it can repaint in place without wrapping (a wrap breaks \r repaint).
-func TestRenderFrame_FitsWidth(t *testing.T) {
-	names := []string{"alpha", "bravo", "charlie", "delta", "echo"}
+// inflightModel builds a model with names tracked as in-flight (Pending).
+func inflightModel(color bool, names ...string) barModel {
+	m := newBarModel(color)
+	for _, n := range names {
+		m.track(barID(n), store.StatusInfo{Status: store.StatusPending})
+	}
+	return m
+}
+
+// TestView_FitsWidth: the frame never exceeds the terminal width at any size, so
+// Bubble Tea's inline renderer never wraps (a wrap would break the sticky line).
+func TestView_FitsWidth(t *testing.T) {
 	for _, width := range []int{1, 3, 8, 20, 40, 80, 200} {
 		for _, color := range []bool{false, true} {
-			got := renderFrame("⠹", 42, 86, names, 12300*time.Millisecond, width, color)
+			m := inflightModel(color, "alpha", "bravo", "charlie", "delta", "echo")
+			m.done, m.total, m.width = 42, 86, width
+			got := m.View().Content
 			if vl := visibleLen(got); vl > width {
 				t.Errorf("width=%d color=%v: visible len %d > width (%q)", width, color, vl, got)
 			}
@@ -35,30 +46,69 @@ func TestRenderFrame_FitsWidth(t *testing.T) {
 	}
 }
 
-// TestRenderFrame_PlainNoColor: with color off the frame carries no escape
-// codes and shows the counts, spinner, names, and elapsed.
-func TestRenderFrame_PlainNoColor(t *testing.T) {
-	got := renderFrame("⠹", 3, 10, []string{"plex"}, 1500*time.Millisecond, 80, false)
+// TestView_PlainNoColor: with color off the frame carries no escape codes and
+// shows the counts + in-flight names.
+func TestView_PlainNoColor(t *testing.T) {
+	m := inflightModel(false, "plex")
+	m.done, m.total, m.width = 3, 10, 80
+	got := m.View().Content
 	if strings.Contains(got, "\x1b") {
 		t.Errorf("color=false leaked an escape code: %q", got)
 	}
-	for _, want := range []string{"⠹", "[3/10]", "plex", "1.5s"} {
+	for _, want := range []string{"[3/10]", "plex"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("frame %q missing %q", got, want)
 		}
 	}
 }
 
-// TestRenderFrame_ColorInvisibleToWidth: the same logical content fits the same
-// width whether or not it is colorized — codes don't consume columns.
-func TestRenderFrame_ColorInvisibleToWidth(t *testing.T) {
-	plain := renderFrame("⠹", 3, 10, []string{"plex"}, time.Second, 40, false)
-	color := renderFrame("⠹", 3, 10, []string{"plex"}, time.Second, 40, true)
-	if visibleLen(plain) != visibleLen(color) {
-		t.Errorf("visible lengths differ: plain=%d color=%d", visibleLen(plain), visibleLen(color))
+// TestView_ColorInvisibleToWidth: the same content fits the same width whether
+// colorized or not — codes don't consume columns.
+func TestView_ColorInvisibleToWidth(t *testing.T) {
+	plain := inflightModel(false, "plex")
+	plain.done, plain.total, plain.width = 3, 10, 40
+	color := inflightModel(true, "plex")
+	color.done, color.total, color.width = 3, 10, 40
+
+	pc, cc := plain.View().Content, color.View().Content
+	if visibleLen(pc) != visibleLen(cc) {
+		t.Errorf("visible lengths differ: plain=%d color=%d", visibleLen(pc), visibleLen(cc))
 	}
-	if !strings.Contains(color, "\x1b") {
-		t.Errorf("color frame carries no ANSI styling: %q", color)
+	if !strings.Contains(cc, "\x1b") {
+		t.Errorf("color frame carries no ANSI styling: %q", cc)
+	}
+}
+
+// TestModel_FinishVanishes: finishMsg sets the bar to render an empty frame
+// (clearing the line so it vanishes) and returns the quit command.
+func TestModel_FinishVanishes(t *testing.T) {
+	m := inflightModel(false, "a")
+	m.done, m.total = 1, 1
+	updated, cmd := m.Update(finishMsg{})
+	if c := updated.View().Content; c != "" {
+		t.Errorf("finished view should be empty, got %q", c)
+	}
+	if cmd == nil {
+		t.Fatal("finishMsg should return a quit command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("finishMsg should quit; got cmd msg %T", cmd())
+	}
+}
+
+// TestModel_InitTicks: Init kicks off the spinner animation.
+func TestModel_InitTicks(t *testing.T) {
+	if newBarModel(false).Init() == nil {
+		t.Error("Init should return the spinner tick command")
+	}
+}
+
+// TestModel_WindowSize: a resize updates the width used for truncation.
+func TestModel_WindowSize(t *testing.T) {
+	m := newBarModel(false)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120})
+	if w := updated.(barModel).width; w != 120 {
+		t.Errorf("width = %d, want 120", w)
 	}
 }
 
@@ -96,116 +146,70 @@ func TestFmtElapsed(t *testing.T) {
 	}
 }
 
-// TestStatusBar_CountsAndFailureLine drives onStatus through realistic events:
-// counters track unique terminal ids, but the bar writes nothing permanent —
-// it is a pure loading indicator.
-func TestStatusBar_CountsNoPermanentOutput(t *testing.T) {
-	var buf bytes.Buffer
-	bar := newStatusBar(newStderrRouter(&buf))
-	bar.color = false
-
+// TestModel_Counts drives track through realistic events: counters track unique
+// terminal ids; Ready, Failed, and skipped all count as "done loading".
+func TestModel_Counts(t *testing.T) {
+	m := newBarModel(false)
 	a, b, s := barID("a"), barID("b"), barID("suspended")
-	bar.onStatus(a, store.StatusInfo{Status: store.StatusPending})
-	bar.onStatus(b, store.StatusInfo{Status: store.StatusPending})
-	bar.onStatus(a, store.StatusInfo{Status: store.StatusReady})
-	bar.onStatus(b, store.StatusInfo{Status: store.StatusFailed, Message: "boom: chart not found"})
-	bar.onStatus(s, store.StatusInfo{Status: store.StatusReady, Message: store.MsgSuspended})
+	m.track(a, store.StatusInfo{Status: store.StatusPending})
+	m.track(b, store.StatusInfo{Status: store.StatusPending})
+	m.track(a, store.StatusInfo{Status: store.StatusReady})
+	m.track(b, store.StatusInfo{Status: store.StatusFailed, Message: "boom: chart not found"})
+	m.track(s, store.StatusInfo{Status: store.StatusReady, Message: store.MsgSuspended})
 
-	// Ready, Failed, and skipped all count as "done loading" — and none of
-	// them write a permanent line.
-	if buf.Len() != 0 {
-		t.Fatalf("bar wrote permanent output (it must stay silent): %q", buf.String())
+	if m.done != 3 || m.total != 3 {
+		t.Errorf("counts: done=%d total=%d; want 3/3", m.done, m.total)
 	}
-	if bar.done != 3 || bar.total != 3 {
-		t.Errorf("counts: done=%d total=%d; want 3/3", bar.done, bar.total)
-	}
-	if got := bar.inflightLabels(); len(got) != 0 {
+	if got := m.inflightLabels(); len(got) != 0 {
 		t.Errorf("all resources terminal but still in-flight: %v", got)
 	}
 }
 
-// TestStatusBar_DedupAndInflight: an idempotent terminal re-write doesn't
+// TestModel_DedupAndInflight: an idempotent terminal re-write doesn't
 // double-count, and a resource drops out of the in-flight set the moment it
 // reaches a terminal status.
-func TestStatusBar_DedupAndInflight(t *testing.T) {
-	bar := newStatusBar(newStderrRouter(&bytes.Buffer{}))
-	bar.color = false
-
+func TestModel_DedupAndInflight(t *testing.T) {
+	m := newBarModel(false)
 	a := barID("a")
-	bar.onStatus(a, store.StatusInfo{Status: store.StatusPending})
-	if got := bar.inflightLabels(); len(got) != 1 || got[0] != "a" {
+	m.track(a, store.StatusInfo{Status: store.StatusPending})
+	if got := m.inflightLabels(); len(got) != 1 || got[0] != "a" {
 		t.Fatalf("in-flight after Pending = %v, want [a]", got)
 	}
-	bar.onStatus(a, store.StatusInfo{Status: store.StatusReady})
-	bar.onStatus(a, store.StatusInfo{Status: store.StatusReady}) // duplicate
-	if bar.done != 1 {
-		t.Errorf("duplicate Ready double-counted: done=%d, want 1", bar.done)
+	m.track(a, store.StatusInfo{Status: store.StatusReady})
+	m.track(a, store.StatusInfo{Status: store.StatusReady}) // duplicate
+	if m.done != 1 {
+		t.Errorf("duplicate Ready double-counted: done=%d, want 1", m.done)
 	}
-	if got := bar.inflightLabels(); len(got) != 0 {
+	if got := m.inflightLabels(); len(got) != 0 {
 		t.Errorf("terminal resource still in-flight: %v", got)
 	}
 }
 
-// TestStatusBar_ExcludesSyntheticIDs: the synthetic bootstrap GitRepository and
-// internally-synthesized HelmCharts are reconciled internally but appear in no
-// `flate test`/`build` report, so the bar must neither count them nor list them
-// in-flight — otherwise its [done/total] overshoots every report (the 175-vs-174
-// gap). A normal declared resource alongside them still counts and names.
-func TestStatusBar_ExcludesSyntheticIDs(t *testing.T) {
-	bar := newStatusBar(newStderrRouter(&bytes.Buffer{}))
-	bar.color = false
-
+// TestModel_ExcludesSyntheticIDs: the synthetic bootstrap GitRepository and
+// internally-synthesized HelmCharts appear in no `flate test`/`build` report, so
+// the bar must neither count them nor list them in-flight — otherwise its
+// [done/total] overshoots every report (the 175-vs-174 gap).
+func TestModel_ExcludesSyntheticIDs(t *testing.T) {
+	m := newBarModel(false)
 	boot := manifest.BootstrapSourceID
 	chart := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "ns", Name: "repo-app-abc1234"}
 	declared := barID("declared")
 
-	// Drive each excluded id through a full Pending→terminal lifecycle, and the
-	// declared one too.
 	for _, id := range []manifest.NamedResource{boot, chart, declared} {
-		bar.onStatus(id, store.StatusInfo{Status: store.StatusPending})
+		m.track(id, store.StatusInfo{Status: store.StatusPending})
 	}
 	for _, id := range []manifest.NamedResource{boot, chart, declared} {
-		bar.onStatus(id, store.StatusInfo{Status: store.StatusReady})
+		m.track(id, store.StatusInfo{Status: store.StatusReady})
+	}
+	if m.done != 1 || m.total != 1 {
+		t.Errorf("synthetic ids leaked into counts: done=%d total=%d; want 1/1", m.done, m.total)
 	}
 
-	// Only the declared resource is counted, in either column.
-	if bar.done != 1 || bar.total != 1 {
-		t.Errorf("synthetic ids leaked into counts: done=%d total=%d; want 1/1", bar.done, bar.total)
-	}
 	// Excluded ids never enter the in-flight set, even while Pending.
-	bar2 := newStatusBar(newStderrRouter(&bytes.Buffer{}))
-	bar2.color = false
-	bar2.onStatus(boot, store.StatusInfo{Status: store.StatusPending})
-	bar2.onStatus(chart, store.StatusInfo{Status: store.StatusPending})
-	if got := bar2.inflightLabels(); len(got) != 0 {
+	m2 := newBarModel(false)
+	m2.track(boot, store.StatusInfo{Status: store.StatusPending})
+	m2.track(chart, store.StatusInfo{Status: store.StatusPending})
+	if got := m2.inflightLabels(); len(got) != 0 {
 		t.Errorf("synthetic ids listed in-flight: %v", got)
-	}
-}
-
-// TestStatusBar_StartFinish: the live lifecycle paints at least one frame and
-// then vanishes completely — finish erases the bar and leaves no trace
-// (exercises the ticker + router under the race detector).
-func TestStatusBar_StartFinish(t *testing.T) {
-	var buf bytes.Buffer
-	bar := newStatusBar(newStderrRouter(&buf))
-	bar.color = false
-
-	bar.onStatus(barID("a"), store.StatusInfo{Status: store.StatusPending})
-	bar.start()
-	bar.onStatus(barID("a"), store.StatusInfo{Status: store.StatusReady})
-	time.Sleep(250 * time.Millisecond) // let the ticker paint a few frames
-	bar.finish()
-
-	out := buf.String()
-	if !strings.Contains(out, eraseLine) {
-		t.Errorf("no in-place repaint observed: %q", out)
-	}
-	// Pure loading indicator: nothing permanent survives the run.
-	if strings.Contains(out, "flate:") {
-		t.Errorf("bar left a summary/trace behind; it must vanish: %q", out)
-	}
-	// finish ends with a bare erase, leaving the cursor on a clean empty line.
-	if !strings.HasSuffix(out, eraseLine) {
-		t.Errorf("bar not erased on finish; want trailing erase: %q", out)
 	}
 }

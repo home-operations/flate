@@ -2,45 +2,44 @@ package cli
 
 import (
 	"fmt"
-	"io"
-	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
-	"golang.org/x/term"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// statusBar is the live, single-line progress indicator flate paints to
-// stderr during a run — one sticky frame that repaints in place:
+// barModel is the live, single-line progress indicator flate paints to stderr
+// during a run — a Bubble Tea model rendered inline:
 //
 //	⠹ [42/86] plex, factorio +3  12.3s
 //
-// A background ticker advances a braille spinner ~10×/s; the store's status
-// events drive the counters and the in-flight set. The bar is purely a
-// loading indicator: it prints nothing permanent and is erased without a
-// trace when the run ends (finish). Failures aren't surfaced here — flate's
-// own end-of-run report prints them once the bar is gone.
+// Bubble Tea owns the render loop, the braille spinner (bubbles/spinner), resize,
+// and printing log lines above the frame; the store's status events feed it via
+// Program.Send. The bar is purely a loading indicator: it prints nothing
+// permanent and clears itself (an empty View on finishMsg) when the run ends.
+// Failures aren't surfaced here — flate's end-of-run report prints them once the
+// bar is gone.
 //
-// The bar paints exclusively through a stderrRouter, which also carries slog
-// output, so log records slot in cleanly above the bar without ever
-// corrupting it. stdout is untouched.
-type statusBar struct {
-	r         *stderrRouter
+// Update runs on Bubble Tea's single goroutine, so the model needs no mutex even
+// though statusMsg crosses from the orchestrator's reconcile goroutines.
+type barModel struct {
+	spinner   spinner.Model
 	color     bool
+	width     int
 	startedAt time.Time
+	finished  bool // set on finishMsg → View renders empty so the bar vanishes
 
-	mu sync.Mutex
 	// first records each id's first-seen time — drives in-flight ordering.
 	first    map[manifest.NamedResource]time.Time
 	inflight map[manifest.NamedResource]struct{}
-	// printed records the last terminal status counted per id, so an
-	// idempotent re-write doesn't double-count and a genuine flip recounts.
+	// printed records the last terminal status counted per id, so an idempotent
+	// re-write doesn't double-count and a genuine flip recounts.
 	printed map[manifest.NamedResource]store.Status
 	done    int // declared resources that reached a terminal status
 	// total counts every declared id seen so far — a live lower bound that grows
@@ -48,15 +47,22 @@ type statusBar struct {
 	// (the bootstrap source, synthesized HelmCharts) are excluded via barExcluded
 	// so the denominator matches flate's own report rather than overshooting it.
 	total int
-
-	stop chan struct{}
-	wg   sync.WaitGroup
 }
 
-func newStatusBar(r *stderrRouter) *statusBar {
-	return &statusBar{
-		r:         r,
-		color:     style.ColorEnabled(r.w),
+// statusMsg carries one store status event into the bar's Update loop.
+type statusMsg struct {
+	id   manifest.NamedResource
+	info store.StatusInfo
+}
+
+// finishMsg clears the frame and quits the program — the bar leaves no trace.
+type finishMsg struct{}
+
+func newBarModel(color bool) barModel {
+	return barModel{
+		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		color:     color,
+		width:     80,
 		startedAt: time.Now(),
 		first:     map[manifest.NamedResource]time.Time{},
 		inflight:  map[manifest.NamedResource]struct{}{},
@@ -64,10 +70,73 @@ func newStatusBar(r *stderrRouter) *statusBar {
 	}
 }
 
-// attach subscribes the bar to s's status events. Call before the run starts;
-// the returned unsubscribe must fire when it ends (before finish).
-func (b *statusBar) attach(s *store.Store) store.Unsubscribe {
-	return s.OnStatus(b.onStatus, false)
+// Init starts the spinner animation; subsequent TickMsgs re-render the frame
+// (which also refreshes the elapsed clock).
+func (m barModel) Init() tea.Cmd { return m.spinner.Tick }
+
+func (m barModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	case tea.WindowSizeMsg:
+		if msg.Width > 0 {
+			m.width = msg.Width
+		}
+		return m, nil
+	case statusMsg:
+		m.track(msg.id, msg.info)
+		return m, nil
+	case finishMsg:
+		m.finished = true
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// track applies one status event: the declared-only counting + in-flight set
+// behind the [done/total] gauge. A first sighting grows total (and joins the
+// in-flight set while Pending); any terminal status (Ready / Failed / a
+// skipped-or-suspended Ready) counts toward done once and drops the id from
+// in-flight. barExcluded drops synthetic/internal ids so the gauge mirrors the
+// report.
+func (m *barModel) track(id manifest.NamedResource, info store.StatusInfo) {
+	if barExcluded(id) {
+		return
+	}
+	if _, seen := m.first[id]; !seen {
+		m.first[id] = time.Now()
+		m.total++
+		if info.Status == store.StatusPending {
+			m.inflight[id] = struct{}{}
+		}
+	}
+	if info.Status != store.StatusReady && info.Status != store.StatusFailed {
+		return
+	}
+	if m.printed[id] == info.Status {
+		return
+	}
+	m.printed[id] = info.Status
+	delete(m.inflight, id)
+	m.done++
+}
+
+// View composes one frame, styled via internal/style and truncated to the
+// terminal width (ANSI- and wide-rune-aware). An empty frame after finishMsg
+// clears the line so the bar vanishes without a trace.
+func (m barModel) View() tea.View {
+	if m.finished {
+		return tea.NewView("")
+	}
+	line := style.Cyan(m.spinner.View(), m.color) + " " +
+		style.Bold(fmt.Sprintf("[%d/%d]", m.done, m.total), m.color)
+	if names := summarizeInflight(m.inflightLabels(), maxInflightNames); names != "" {
+		line += " " + style.Dim(names, m.color)
+	}
+	line += "  " + style.Dim(fmtElapsed(time.Since(m.startedAt)), m.color)
+	return tea.NewView(style.Truncate(line, m.width))
 }
 
 // barExcluded reports ids the bar must neither count nor name: the synthetic
@@ -83,86 +152,15 @@ func barExcluded(id manifest.NamedResource) bool {
 	return id == manifest.BootstrapSourceID || id.Kind == manifest.KindHelmChart
 }
 
-func (b *statusBar) onStatus(id manifest.NamedResource, info store.StatusInfo) {
-	if barExcluded(id) {
-		return
-	}
-	now := time.Now()
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if _, seen := b.first[id]; !seen {
-		b.first[id] = now
-		b.total++
-		if info.Status == store.StatusPending {
-			b.inflight[id] = struct{}{}
-		}
-	}
-	if info.Status != store.StatusReady && info.Status != store.StatusFailed {
-		return
-	}
-	if b.printed[id] == info.Status {
-		return
-	}
-	// Any terminal status (Ready, Failed, or a skipped/suspended/unchanged
-	// Ready) means the resource is done loading: count it and drop it from the
-	// in-flight set. The bar emits nothing here — it's a pure loading
-	// indicator; failures surface via flate's end-of-run report after the bar
-	// is erased.
-	b.printed[id] = info.Status
-	delete(b.inflight, id)
-	b.done++
-}
-
-// start launches the spinner ticker. It paints ~10×/s until stop is closed.
-func (b *statusBar) start() {
-	b.stop = make(chan struct{})
-	b.wg.Go(func() {
-		t := time.NewTicker(100 * time.Millisecond)
-		defer t.Stop()
-		for spin := 0; ; spin++ {
-			select {
-			case <-b.stop:
-				return
-			case <-t.C:
-				b.repaint(spin)
-			}
-		}
-	})
-}
-
-// finish stops the ticker and erases the bar, leaving no trace — the bar
-// exists only during the loading phase. Safe to call once after the attach
-// unsubscribe has fired.
-func (b *statusBar) finish() {
-	if b.stop != nil {
-		close(b.stop)
-		b.wg.Wait()
-	}
-	b.r.Stop()
-}
-
-// repaint snapshots the live counts under the lock and paints one frame.
-func (b *statusBar) repaint(spin int) {
-	b.mu.Lock()
-	done, total := b.done, b.total
-	labels := b.inflightLabels()
-	b.mu.Unlock()
-	glyph := string(spinnerFrames[spin%len(spinnerFrames)])
-	frame := renderFrame(glyph, done, total, labels,
-		time.Since(b.startedAt), b.r.width(), b.color)
-	b.r.Paint(frame)
-}
-
 // inflightLabels returns the in-flight resource names ordered by first-seen
-// (id-tiebroken) so the bar's name list is stable frame to frame. Caller holds
-// b.mu.
-func (b *statusBar) inflightLabels() []string {
-	ids := make([]manifest.NamedResource, 0, len(b.inflight))
-	for id := range b.inflight {
+// (id-tiebroken) so the bar's name list is stable frame to frame.
+func (m barModel) inflightLabels() []string {
+	ids := make([]manifest.NamedResource, 0, len(m.inflight))
+	for id := range m.inflight {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool {
-		ti, tj := b.first[ids[i]], b.first[ids[j]]
+		ti, tj := m.first[ids[i]], m.first[ids[j]]
 		if !ti.Equal(tj) {
 			return ti.Before(tj)
 		}
@@ -178,29 +176,6 @@ func (b *statusBar) inflightLabels() []string {
 // maxInflightNames caps how many in-flight resource names the bar lists before
 // collapsing the rest into a "+N" tail.
 const maxInflightNames = 2
-
-// spinnerFrames is the classic braille spinner cycle.
-var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-
-// renderFrame composes one status-bar line, styled via internal/style and
-// truncated to width by visible columns (style.Truncate is ANSI- and wide-rune-
-// aware, so escape codes never count against the budget). Pure: deterministic in
-// its inputs, so the layout, truncation, and "+N" collapse are unit-testable.
-//
-//	⠹ [42/86] plex, factorio +3  12.3s
-func renderFrame(spin string, done, total int, inflight []string, elapsed time.Duration, width int, color bool) string {
-	var b strings.Builder
-	b.WriteString(style.Cyan(spin, color))
-	b.WriteByte(' ')
-	b.WriteString(style.Bold(fmt.Sprintf("[%d/%d]", done, total), color))
-	if names := summarizeInflight(inflight, maxInflightNames); names != "" {
-		b.WriteByte(' ')
-		b.WriteString(style.Dim(names, color))
-	}
-	b.WriteString("  ")
-	b.WriteString(style.Dim(fmtElapsed(elapsed), color))
-	return style.Truncate(b.String(), width)
-}
 
 // summarizeInflight renders up to limit names joined by ", ", collapsing any
 // remainder into a "+N" tail. Empty in → empty out.
@@ -222,14 +197,4 @@ func fmtElapsed(d time.Duration) string {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 	return fmt.Sprintf("%dm%02ds", int(d/time.Minute), int(d%time.Minute/time.Second))
-}
-
-// terminalWidth reports w's column count when it is a sized terminal, else 80.
-func terminalWidth(w io.Writer) int {
-	if f, ok := w.(*os.File); ok {
-		if cols, _, err := term.GetSize(int(f.Fd())); err == nil && cols > 0 {
-			return cols
-		}
-	}
-	return 80
 }

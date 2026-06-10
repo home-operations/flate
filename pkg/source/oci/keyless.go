@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
@@ -109,6 +110,34 @@ func (f *Fetcher) verifyPayloadKeyless(layer signatureLayer, payload []byte, rep
 	return true, nil
 }
 
+// verifyNativeBundle verifies a native sigstore bundle — the
+// application/vnd.dev.sigstore.bundle.v0.x+json a cosign 2.x keyless signature
+// publishes as an OCI 1.1 referrer — against the configured OIDC identities.
+// Unlike the legacy `.sig` path there is nothing to reconstruct: the bundle is
+// self-contained (DSSE envelope, Fulcio cert, Rekor inclusion), so flate
+// unmarshals it and verifies through the same keylessVerifier. The digest
+// binding is the in-toto statement's subject digest, pinned to pulledDigest by
+// nativeIdentityPolicy. Returns (true, nil) on success and (false, err) on a
+// genuine verification failure.
+func (f *Fetcher) verifyNativeBundle(bundleBytes []byte, repo *manifest.OCIRepository, pulledDigest string) (bool, error) {
+	v, err := keylessVerifier()
+	if err != nil {
+		return false, err
+	}
+	var b bundle.Bundle
+	if err := b.UnmarshalJSON(bundleBytes); err != nil {
+		return false, fmt.Errorf("keyless: parse sigstore bundle: %w", err)
+	}
+	policy, err := nativeIdentityPolicy(pulledDigest, repo.Verify.MatchOIDCIdentity)
+	if err != nil {
+		return false, err
+	}
+	if _, err := v.Verify(&b, policy); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // legacyBundle assembles a v0.1 sigstore bundle from a legacy cosign `.sig`
 // layer: the leaf Fulcio certificate (PEM; the trusted root supplies the CA
 // chain), the base64 signature, the signed payload, and the Rekor bundle JSON.
@@ -187,14 +216,23 @@ func rekorKindVersion(body []byte) (kind, version string, err error) {
 	return head.Kind, head.APIVersion, nil
 }
 
-// identityPolicy builds the verification policy: the artifact is the cosign
-// payload (the message signature is over it), gated by the OIDC identity
-// matchers. Each spec.verify.matchOIDCIdentity entry contributes an
-// issuer+subject regex pair; any one matching satisfies the policy. An empty
-// matcher set mirrors Flux's "keyless, identity unconstrained" semantics — the
-// chain and transparency log still gate, the identity does not.
+// identityPolicy builds the verification policy for the legacy `.sig` path: the
+// artifact is the cosign payload (the message signature is over it), gated by
+// the OIDC identity matchers.
 func identityPolicy(payload []byte, matchers []manifest.OIDCIdentityMatch) (verify.PolicyBuilder, error) {
-	artifact := verify.WithArtifact(bytes.NewReader(payload))
+	return keylessPolicy(verify.WithArtifact(bytes.NewReader(payload)), matchers)
+}
+
+// keylessPolicy builds a sigstore-go verification policy from an artifact-
+// binding option and the spec.verify.matchOIDCIdentity matchers. Each matcher
+// contributes an issuer+subject regex pair; any one matching satisfies the
+// policy. An empty matcher set mirrors Flux's "keyless, identity unconstrained"
+// semantics — the chain and transparency log still gate, the identity does not.
+// The artifact option is the ONLY thing that differs between the legacy `.sig`
+// path (WithArtifact over the payload bytes) and the referrers-bundle path
+// (WithArtifactDigest over the pulled digest); everything else is shared so the
+// two can't drift.
+func keylessPolicy(artifact verify.ArtifactPolicyOption, matchers []manifest.OIDCIdentityMatch) (verify.PolicyBuilder, error) {
 	if len(matchers) == 0 {
 		return verify.NewPolicy(artifact, verify.WithoutIdentitiesUnsafe()), nil
 	}
@@ -207,4 +245,23 @@ func identityPolicy(payload []byte, matchers []manifest.OIDCIdentityMatch) (veri
 		opts = append(opts, verify.WithCertificateIdentity(id))
 	}
 	return verify.NewPolicy(artifact, opts...), nil
+}
+
+// nativeIdentityPolicy builds the policy for the referrers-bundle path. The
+// native bundle is a DSSE envelope wrapping an in-toto statement; sigstore-go
+// binds the signature to the artifact by requiring the policy's artifact digest
+// to appear among the statement's subject digests. Passing the pulled OCI
+// manifest digest (bare algorithm + raw bytes, NOT the "sha256:"-prefixed
+// string) is what stops a signature being lifted onto a different artifact —
+// WithoutArtifactUnsafe would skip that binding and must never be used here.
+func nativeIdentityPolicy(pulledDigest string, matchers []manifest.OIDCIdentityMatch) (verify.PolicyBuilder, error) {
+	alg, hexHash, ok := strings.Cut(pulledDigest, ":")
+	if !ok {
+		return verify.PolicyBuilder{}, fmt.Errorf("keyless: malformed pulled digest %q", pulledDigest)
+	}
+	raw, err := hex.DecodeString(hexHash)
+	if err != nil {
+		return verify.PolicyBuilder{}, fmt.Errorf("keyless: decode pulled digest %q: %w", pulledDigest, err)
+	}
+	return keylessPolicy(verify.WithArtifactDigest(alg, raw), matchers)
 }

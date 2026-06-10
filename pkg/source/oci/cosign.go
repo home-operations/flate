@@ -134,6 +134,16 @@ func (f *Fetcher) verifyCosignSignature(
 	sigTag := cosignSigTag(pulledDigest)
 	manDesc, err := repoClient.Resolve(ctx, sigTag)
 	if err != nil {
+		// No legacy `.sig` tag. Modern cosign (2.x — the default on referrers-
+		// capable registries like ghcr.io) instead attaches a native sigstore
+		// bundle via the OCI 1.1 referrers API. Try that before skipping. The
+		// referrers-bundle path is keyless-only; keyed verification stays on the
+		// `.sig` path (see verifyViaReferrers).
+		if keyless {
+			if verified, handled, rerr := f.verifyViaReferrers(ctx, repoClient, repo, pulledDigest); handled || rerr != nil {
+				return verified, rerr
+			}
+		}
 		f.warnSkipVerify(repo, pulledDigest, "signature not found in registry ("+sigTag+"): "+err.Error())
 		return false, nil
 	}
@@ -378,4 +388,102 @@ func verifyCosignSignatureBytes(key crypto.PublicKey, payload, sig []byte) error
 func cosignSigTag(digest string) string {
 	d := strings.ReplaceAll(digest, ":", "-")
 	return d + ".sig"
+}
+
+// sigstoreBundleArtifactPrefix is the media-type base every cosign sigstore-
+// bundle referrer carries on its manifest artifactType. It is versioned in
+// practice (…bundle.v0.3+json today), so flate matches the prefix rather than
+// pin a version.
+const sigstoreBundleArtifactPrefix = "application/vnd.dev.sigstore.bundle"
+
+// referrerManifest is the subset of an OCI 1.1 referrer manifest flate reads:
+// the top-level artifactType identifying a sigstore bundle, plus the single
+// layer holding the bundle blob.
+type referrerManifest struct {
+	ArtifactType string           `json:"artifactType"`
+	Layers       []signatureLayer `json:"layers"`
+}
+
+// verifyViaReferrers discovers and verifies a cosign signature published as an
+// OCI 1.1 referrer (cosign 2.x keyless: a native sigstore bundle linked to the
+// pulled artifact) when the legacy `.sig` tag is absent. oras-go's Referrers
+// transparently tries the referrers API and falls back to the `sha256-<digest>`
+// tag schema, so this one call covers both registry shapes.
+//
+// Returns:
+//   - (true,  true,  nil) — a referrer bundle verified.
+//   - (false, true,  err) — a bundle was reachable but failed verification; the
+//     caller hard-fails (past the transport boundary).
+//   - (false, false, nil) — nothing usable was reachable (referrers unsupported,
+//     no sigstore-bundle referrer, or every candidate was unreadable); the
+//     caller falls through to warn-and-skip, preserving flate's offline-tool
+//     "couldn't reach the signature" boundary.
+func (f *Fetcher) verifyViaReferrers(ctx context.Context, repoClient *remote.Repository, repo *manifest.OCIRepository, pulledDigest string) (verified, handled bool, err error) {
+	subject := ocispec.Descriptor{Digest: digest.Digest(pulledDigest)}
+	var refs []ocispec.Descriptor
+	collect := func(page []ocispec.Descriptor) error {
+		refs = append(refs, page...)
+		return nil
+	}
+	if rerr := repoClient.Referrers(ctx, subject, "", collect); rerr != nil {
+		// Referrers unsupported/unreachable — fall through to the legacy skip.
+		return false, false, nil
+	}
+
+	var lastErr error
+	var sawBundle bool
+	for _, ref := range refs {
+		bundleBytes, ok := fetchReferrerBundle(ctx, repoClient, ref)
+		if !ok {
+			continue // not a sigstore bundle, or unreadable — try the next.
+		}
+		sawBundle = true
+		v, verr := f.verifyNativeBundle(bundleBytes, repo, pulledDigest)
+		if verr == nil && v {
+			return true, true, nil
+		}
+		lastErr = verr
+	}
+	if !sawBundle {
+		return false, false, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no referrer signature matched the verify policy")
+	}
+	return false, true, fmt.Errorf("%s: cosign verify failed: %w", ociID(repo), lastErr)
+}
+
+// fetchReferrerBundle fetches ref's manifest, confirms it is a sigstore-bundle
+// referrer, and returns its bundle-blob bytes. ok is false (skip, no error) when
+// the referrer is not a sigstore bundle or its manifest/blob can't be read — a
+// referrer flate listed but can't fetch is a transport miss (stays on the
+// warn-and-skip side of the boundary), not a trust failure.
+func fetchReferrerBundle(ctx context.Context, repoClient *remote.Repository, ref ocispec.Descriptor) (bundleBytes []byte, ok bool) {
+	manBytes, err := fetchBytes(repoClient.Fetch(ctx, ref))
+	if err != nil {
+		return nil, false
+	}
+	var man referrerManifest
+	if err := json.Unmarshal(manBytes, &man); err != nil {
+		return nil, false
+	}
+	if !strings.HasPrefix(man.ArtifactType, sigstoreBundleArtifactPrefix) || len(man.Layers) == 0 {
+		return nil, false
+	}
+	blob, err := fetchBytes(repoClient.Blobs().Fetch(ctx, descriptorFromLayer(man.Layers[0])))
+	if err != nil {
+		return nil, false
+	}
+	return blob, true
+}
+
+// fetchBytes reads and closes an oras Fetch result, so the referrer path's
+// fetch→ReadAll→Close dance reads as one expression:
+// fetchBytes(repoClient.Fetch(ctx, desc)).
+func fetchBytes(rc io.ReadCloser, err error) ([]byte, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rc.Close() }()
+	return io.ReadAll(rc)
 }

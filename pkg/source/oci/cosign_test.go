@@ -14,8 +14,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -640,4 +643,124 @@ func TestVerifyLayerAgainstKeys(t *testing.T) {
 			t.Fatalf("err = %v, want parse payload JSON", err)
 		}
 	})
+}
+
+// referrerFixtures loads the captured cnpg referrer manifest + native sigstore
+// bundle blob (testdata/referrers, from ghcr.io/cloudnative-pg/charts).
+func referrerFixtures(t *testing.T) (referrerManifest, bundleBlob []byte) {
+	t.Helper()
+	read := func(name string) []byte {
+		b, err := os.ReadFile(filepath.Join("testdata", "referrers", name)) //nolint:gosec // fixed in-repo testdata path
+		if err != nil {
+			t.Fatalf("read fixture %s: %v", name, err)
+		}
+		return b
+	}
+	return read("referrer-manifest.json"), read("bundle.json")
+}
+
+// referrersIndex synthesizes the OCI 1.1 referrers index the API returns for a
+// single sigstore-bundle referrer — the referrer manifest's digest + size.
+func referrersIndex(referrerManifest []byte) []byte {
+	return fmt.Appendf(nil,
+		`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[`+
+			`{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"size":%d,`+
+			`"artifactType":"application/vnd.dev.sigstore.bundle.v0.3+json"}]}`,
+		sha256Digest(referrerManifest), len(referrerManifest))
+}
+
+// referrersRepoClient builds a *remote.Repository serving the OCI 1.1 referrers
+// API plus the referrer manifest and bundle blob it points at, so the full
+// verifyViaReferrers path runs offline. referrers is the index the API returns
+// (pass an empty-manifests index for the "nothing reachable" case). No `.sig`
+// tag is served, so verifyCosignSignature falls into the referrers branch.
+// Modeled on cosignSigRepoClient.
+func referrersRepoClient(t *testing.T, referrers, referrerManifest, bundleBlob []byte) *remote.Repository {
+	t.Helper()
+	refDigest := sha256Digest(referrerManifest)
+	bundleDigest := sha256Digest(bundleBlob)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		ref := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v2/"):
+			return
+		case strings.Contains(r.URL.Path, "/referrers/"):
+			w.Header().Set("Content-Type", "application/vnd.oci.image.index.v1+json")
+			_, _ = w.Write(referrers)
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			if ref != refDigest {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			w.Header().Set("Docker-Content-Digest", refDigest)
+			_, _ = w.Write(referrerManifest)
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			if ref != bundleDigest {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Docker-Content-Digest", bundleDigest)
+			_, _ = w.Write(bundleBlob)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	repoClient, err := remote.NewRepository(mustURL(t, srv.URL).Host + "/test/repo")
+	if err != nil {
+		t.Fatalf("NewRepository: %v", err)
+	}
+	repoClient.Client = &auth.Client{
+		Client: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed test cert
+			},
+		},
+	}
+	return repoClient
+}
+
+// TestVerifyCosignSignature_ReferrersBundleVerifies: with no legacy `.sig` tag,
+// verifyCosignSignature discovers the native sigstore bundle via the referrers
+// API and verifies it — the cnpg / cosign-2.x keyless path end-to-end, offline.
+func TestVerifyCosignSignature_ReferrersBundleVerifies(t *testing.T) {
+	man, blob := referrerFixtures(t)
+	rc := referrersRepoClient(t, referrersIndex(man), man, blob)
+	repo := keylessRepo(manifest.OIDCIdentityMatch{Issuer: cnpgIssuer, Subject: cnpgSubject})
+	verified, err := (&Fetcher{}).verifyCosignSignature(context.Background(), rc, repo, cnpgDigest)
+	if !verified || err != nil {
+		t.Fatalf("verifyCosignSignature = (%v, %v), want (true, nil)", verified, err)
+	}
+}
+
+// TestVerifyCosignSignature_NoReferrerNoSigSkips: neither a `.sig` tag nor a
+// sigstore-bundle referrer is reachable → skip + WARN, render unverified
+// (false, nil). The offline-tool transport boundary is preserved — not a hard
+// fail.
+func TestVerifyCosignSignature_NoReferrerNoSigSkips(t *testing.T) {
+	man, blob := referrerFixtures(t)
+	empty := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}`)
+	rc := referrersRepoClient(t, empty, man, blob)
+	repo := keylessRepo(manifest.OIDCIdentityMatch{Issuer: cnpgIssuer, Subject: cnpgSubject})
+	verified, err := (&Fetcher{}).verifyCosignSignature(context.Background(), rc, repo, cnpgDigest)
+	if verified || err != nil {
+		t.Fatalf("verifyCosignSignature (nothing reachable) = (%v, %v), want (false, nil)", verified, err)
+	}
+}
+
+// TestVerifyCosignSignature_ReferrerWrongIdentityHardFails: a referrer bundle is
+// reachable but the configured identity doesn't match → past the transport
+// boundary, so a hard error (false, err), not a silent skip.
+func TestVerifyCosignSignature_ReferrerWrongIdentityHardFails(t *testing.T) {
+	man, blob := referrerFixtures(t)
+	rc := referrersRepoClient(t, referrersIndex(man), man, blob)
+	repo := keylessRepo(manifest.OIDCIdentityMatch{Issuer: cnpgIssuer, Subject: `^https://github\.com/evil/impostor.*$`})
+	verified, err := (&Fetcher{}).verifyCosignSignature(context.Background(), rc, repo, cnpgDigest)
+	if verified || err == nil {
+		t.Fatalf("verifyCosignSignature (wrong identity) = (%v, %v), want (false, err)", verified, err)
+	}
 }

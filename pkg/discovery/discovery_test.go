@@ -186,15 +186,13 @@ spec:
 	}
 }
 
-// TestRun_ResourceSetReExpandsForLateRSIPs pins a discovery-loop
-// fix: a ResourceSet whose RSIP providers only become visible in a
-// later iteration (because they live behind a Kustomization path
-// that hasn't been walked yet) must be re-rendered, not memoized
-// after its first empty render. Without the fix, the RS would
-// render to zero docs on the first pass — when no RSIPs were in
-// the store — and never recover when the deeper KS expansion
-// produced them.
-func TestRun_ResourceSetReExpandsForLateRSIPs(t *testing.T) {
+// TestRun_LoadsResourceSetAndDeepRSIP pins that discovery loads a
+// ResourceSet and the RSIPs behind a Kustomization's spec.path into the
+// store WITHOUT expanding the RS — expansion is now a run-time concern
+// owned by the ResourceSet controller (a first-class DAG node), not
+// discovery. Discovery must still walk the parent KS's path so the RSIP
+// is seeded; the RS-emitted child Kustomization is NOT produced here.
+func TestRun_LoadsResourceSetAndDeepRSIP(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
@@ -229,9 +227,8 @@ spec:
       sourceRef: {kind: GitRepository, name: flux-system}
 `)
 	// RSIP lives BEHIND the parent KS's path — discovery must expand
-	// that path before the RSIP is in the store. Re-rendering the RS
-	// on a later iter is what makes the child-rsip Kustomization show
-	// up at all.
+	// that path so the RSIP is loaded into the store for the run-time
+	// RS controller to resolve.
 	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "rsip.yaml"), `---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSetInputProvider
@@ -252,15 +249,22 @@ spec:
 		t.Fatalf("Run: %v", err)
 	}
 
-	// The RS render produces a Kustomization named "child-rsip" — present
-	// only when the RS re-renders after the RSIP gets loaded.
-	want := manifest.NamedResource{
-		Kind:      manifest.KindKustomization,
-		Namespace: "flux-system",
-		Name:      "child-rsip",
+	// The RS itself is loaded into the store as a node for the run phase.
+	rsID := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "late-rs"}
+	if st.GetObject(rsID) == nil {
+		t.Errorf("expected ResourceSet %s loaded into store", rsID)
 	}
-	if st.GetObject(want) == nil {
-		t.Errorf("expected RS-emitted Kustomization %s in store; the RS likely rendered before its RSIP was loaded and was never retried", want)
+	// The deep RSIP behind the parent KS's path is loaded — discovery
+	// walked the spec.path even though it no longer expands the RS.
+	rsipID := manifest.NamedResource{Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: "rsip"}
+	if st.GetObject(rsipID) == nil {
+		t.Errorf("expected ResourceSetInputProvider %s loaded into store (parent KS path walked)", rsipID)
+	}
+	// Discovery does NOT expand the RS anymore — the child Kustomization
+	// is produced at run time by the RS controller, not here.
+	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child-rsip"}
+	if st.GetObject(child) != nil {
+		t.Errorf("discovery should not pre-expand the RS; %s must be produced at run time", child)
 	}
 }
 

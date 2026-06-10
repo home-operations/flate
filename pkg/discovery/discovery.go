@@ -167,7 +167,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// generator (issue #396).
 	l.FinalizeGenerators(repoRoot)
 	// Unified parent index over every reconcilable kind that uses a
-	// parent gate. KS and HR keys never collide because NamedResource
+	// parent gate. KS, HR and RS keys never collide because NamedResource
 	// includes Kind; downstream controllers look up by their own id
 	// and naturally filter to their own kind. Pass repoRoot — the
 	// helpers read each KS's spec.path joined under this root to
@@ -178,9 +178,17 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// previously rebuilt the identical list (an O(KS) walk + sort +
 	// component reads); the shared ComponentCache deduped the file reads
 	// but not the iteration/sort/list construction.
+	//
+	// ResourceSet is included so a file-loaded RS knows its structural
+	// parent KS at reconcile time — the RS controller gates on the parent
+	// (parent-render-time spec mutations) and attributes its RawObject
+	// children to that parent for `flate build` output. Without the
+	// file-path entry the RS would only learn its parent once the parent
+	// re-emitted it, racing the RS's own first render.
 	prefixes := loader.KSPathPrefixesWithCache(d.cfg.Store, repoRoot, cfg.ComponentCache)
 	parentOf := loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindKustomization)
 	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease))
+	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindResourceSet))
 	// Orphan promotion: every Existence entry whose file path is NOT
 	// under any KS spec.path will never reach the Store through KS
 	// render emission. Promote it now so standalone CRs (loose HR
@@ -220,9 +228,9 @@ type discoverer struct {
 
 // loadManifests scans cfg.Path, then iteratively follows each loaded
 // Flux Kustomization's spec.path until a fixed point is reached.
-// Interleaved with KS expansion is ResourceSet rendering: a parent
-// KS may emit a ResourceSet which itself emits child Kustomizations
-// referencing new spec.paths the file walker hasn't visited yet.
+// ResourceSets are loaded into the store by the file walker but expanded
+// during the run by the ResourceSet controller (a first-class DAG node),
+// not here — discovery only resolves KS spec.path references.
 func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	l := d.loader
 	l.SourceRoot = repoRoot
@@ -256,25 +264,14 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	d.applyNamespaces(repoRoot)
 
 	// Fixed-point expansion: each pass renders Kustomizations the prior
-	// pass discovered, plus ResourceSets that may emit further KSes.
-	// PreferExisting lets repeated AddObject re-emission be a no-op so
-	// the loop terminates on convergence (no new objects added).
-	//
-	// ResourceSets are re-rendered when new inputs may have arrived.
-	// A RS's inputsFrom selector may match RSIPs that only show up
-	// after a downstream Kustomization chain expands — observed in
-	// tholinka/home-ops where `dragonfly-acls` (Permute) selects RSIPs
-	// from `renovate-operator-jobs-jobs`. The optimization: skip
-	// re-rendering an RS that already converged (produced 0 new docs
-	// on its last render) UNLESS the count of available RSIPs in the
-	// store has grown since the previous pass. RSIPs are only ever
-	// added during discovery, never removed, so a count check is
-	// sufficient — RSes that added zero docs at count C stay
-	// converged through any later pass with count == C.
+	// pass discovered. PreferExisting lets repeated AddObject re-emission
+	// be a no-op so the loop terminates on convergence (no new objects
+	// added). ResourceSets that emit child Kustomizations referencing new
+	// spec.paths are handled at run time — the RS controller emits the
+	// child KS via AddObject and the scheduler discovers it as a new node;
+	// discovery no longer pre-expands RSes.
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
-	rsConverged := map[manifest.NamedResource]struct{}{}
-	prevRSIPCount := d.rsipCount()
 	for {
 		added := 0
 		for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
@@ -308,30 +305,6 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			}
 			added++
 		}
-		// Re-evaluate the convergence cache when new RSIPs arrived
-		// between passes — they may match selectors that previously
-		// returned zero inputs.
-		currentRSIPCount := d.rsipCount()
-		if currentRSIPCount != prevRSIPCount {
-			clear(rsConverged)
-			prevRSIPCount = currentRSIPCount
-		}
-		for _, rs := range store.ListAs[*manifest.ResourceSet](d.cfg.Store, manifest.KindResourceSet) {
-			rsID := rs.Named()
-			if _, done := rsConverged[rsID]; done {
-				continue
-			}
-			n, err := d.renderResourceSet(rs)
-			if err != nil {
-				return err
-			}
-			if n > 0 {
-				added++
-				total += n
-			} else {
-				rsConverged[rsID] = struct{}{}
-			}
-		}
 		if added == 0 {
 			break
 		}
@@ -357,11 +330,4 @@ func (d *discoverer) loadAt(ctx context.Context, dir string, scanned map[string]
 	}
 	*total += n
 	return nil
-}
-
-// rsipCount reports how many ResourceSetInputProviders are currently in
-// the store. The expansion loop compares this between passes to decide
-// when to invalidate the ResourceSet convergence cache.
-func (d *discoverer) rsipCount() int {
-	return len(store.ListAs[*manifest.ResourceSetInputProvider](d.cfg.Store, manifest.KindResourceSetInputProvider))
 }

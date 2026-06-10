@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -616,108 +616,43 @@ data: {k: v}
 	}
 }
 
-func TestExpandResourceSetsPostRun_ReturnsRenderError(t *testing.T) {
-	parent := &manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
-	}
-	rs := &manifest.ResourceSet{
-		Name: "broken", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			ResourcesTemplate: `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: << inputs.nonexistent >>
-`,
-		},
-	}
-	o := &Orchestrator{
-		store:    store.New(),
-		rendered: newRenderedSet(),
-		sourceFiles: map[manifest.NamedResource]string{
-			rs.Named(): "apps/resourceset.yaml",
-		},
-	}
-	o.store.AddObject(parent)
-	o.store.AddObject(rs)
-
-	err := o.expandResourceSetsPostRun(context.Background())
-	if err == nil {
-		t.Fatal("expected ResourceSet render error")
-	}
-	if !strings.Contains(err.Error(), "ResourceSet/flux-system/broken") {
-		t.Fatalf("error should identify ResourceSet: %v", err)
-	}
-	info, ok := o.store.GetStatus(rs.Named())
-	if !ok || info.Status != store.StatusFailed {
-		t.Fatalf("ResourceSet status = (%+v, %v), want Failed", info, ok)
-	}
-}
-
-func TestExpandResourceSetsPostRun_RespectsCanceledContext(t *testing.T) {
-	rs := &manifest.ResourceSet{Name: "apps", Namespace: "flux-system"}
-	o := &Orchestrator{store: store.New()}
-	o.store.AddObject(rs)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	if err := o.expandResourceSetsPostRun(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("expandResourceSetsPostRun canceled = %v, want context.Canceled", err)
-	}
-}
-
-// TestExpandResourceSetsPostRun_DeterministicCollisionWinner pins that
-// when two distinct ResourceSets emit the SAME object identity
-// (apiVersion|kind|ns|name) with DIFFERENT content, the global first-
-// wins dedup winner is deterministic — the ResourceSet that sorts first
-// in store order wins, independent of goroutine scheduling. Before the
-// serial-commit rework the winner was whichever render goroutine reached
-// the shared map first (an 8-way errgroup), so output could flip
-// run-to-run. A Widget (unmodeled kind) is used so ParseDoc yields a
-// RawObject — the only shape expandResourceSetsPostRun re-emits.
-func TestExpandResourceSetsPostRun_DeterministicCollisionWinner(t *testing.T) {
-	parent := &manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
-	}
-	mkRS := func(name, owner string) *manifest.ResourceSet {
-		return &manifest.ResourceSet{
-			Name: name, Namespace: "flux-system",
-			ResourceSetSpec: fluxopv1.ResourceSetSpec{
-				ResourcesTemplate: "apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: shared\n  namespace: default\nspec:\n  owner: " + owner + "\n",
-			},
+// TestRSRawSink_DeterministicCollisionWinner pins that when two distinct
+// ResourceSets emit the SAME object identity (the same DedupKey) with
+// DIFFERENT content, the global first-wins dedup winner is deterministic
+// — the ResourceSet that sorts first (rs-a) wins, independent of the
+// order in which the concurrent RS reconciles Record into the sink. The
+// sink now owns the deterministic commit-time dedup that the deleted
+// post-run errgroup pass used to perform serially in store order.
+func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	ownerA := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-a"}
+	ownerB := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-b"}
+	mkDoc := func(owner string) map[string]any {
+		return map[string]any{
+			"apiVersion": "example.com/v1",
+			"kind":       "Widget",
+			"metadata":   map[string]any{"name": "shared", "namespace": "default"},
+			"spec":       map[string]any{"owner": owner},
 		}
 	}
-	// rs-a sorts before rs-b (same namespace, "rs-a" < "rs-b"), so the
-	// deterministic winner of the shared Widget must always be rs-a's.
-	rsA := mkRS("rs-a", "a-wins")
-	rsB := mkRS("rs-b", "b-loses")
+	docA, docB := mkDoc("a-wins"), mkDoc("b-loses")
+	key := resourceset.DedupKey(docA) // same identity → same key for both
 
-	newOrch := func() *Orchestrator {
-		o := &Orchestrator{
-			store:    store.New(),
-			rendered: newRenderedSet(),
-			sourceFiles: map[manifest.NamedResource]string{
-				rsA.Named(): "apps/rs-a.yaml",
-				rsB.Named(): "apps/rs-b.yaml",
-			},
-		}
-		o.store.AddObject(parent)
-		o.store.AddObject(rsA)
-		o.store.AddObject(rsB)
-		return o
-	}
-
-	// Many iterations (fresh orchestrator each) shake out any scheduling-
-	// dependent winner; the contract is that rs-a always wins.
+	// Record in both orders across many iterations; rs-a (sorts first) must
+	// always win regardless of arrival order.
 	for iter := range 50 {
-		o := newOrch()
-		if err := o.expandResourceSetsPostRun(context.Background()); err != nil {
-			t.Fatalf("iter %d: expandResourceSetsPostRun: %v", iter, err)
+		var sink rsRawSink
+		if iter%2 == 0 {
+			sink.Record(ownerB, parent, key, docB)
+			sink.Record(ownerA, parent, key, docA)
+		} else {
+			sink.Record(ownerA, parent, key, docA)
+			sink.Record(ownerB, parent, key, docB)
 		}
-		docs := o.rsExtensions[parent.Named()]
+		out := sink.commit()
+		docs := out[parent]
 		if len(docs) != 1 {
-			t.Fatalf("iter %d: rsExtensions[apps] = %d docs, want 1 (deduped to one winner)", iter, len(docs))
+			t.Fatalf("iter %d: out[apps] = %d docs, want 1 (deduped to one winner)", iter, len(docs))
 		}
 		spec, _ := docs[0]["spec"].(map[string]any)
 		if got := spec["owner"]; got != "a-wins" {

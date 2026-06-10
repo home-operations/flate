@@ -28,6 +28,8 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLe
 		blocked, ready = o.ksc.ReconcileNode(ctx, id, drainLevel)
 	case id.Kind == manifest.KindHelmRelease:
 		blocked, ready = o.hrc.ReconcileNode(ctx, id, drainLevel)
+	case id.Kind == manifest.KindResourceSet:
+		blocked, ready = o.rsc.ReconcileNode(ctx, id, drainLevel)
 	case o.src.HasFetcher(id.Kind):
 		blocked, ready = o.src.ReconcileNode(ctx, id, drainLevel)
 	default:
@@ -41,20 +43,31 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLe
 }
 
 // dagSchedulable reports whether id is a node the scheduler runs
-// (Kustomization/HelmRelease/source) versus pure data (ConfigMap/Secret) that
-// only WAKES nodes parked on it.
+// (Kustomization/HelmRelease/ResourceSet/source) versus pure data
+// (ConfigMap/Secret/RSIP) that only WAKES nodes parked on it. A
+// ResourceSetInputProvider is deliberately excluded: a render-emitted
+// RSIP fires EventObjectAdded to wake RSes parked on it, but it is not a
+// runnable node (flate exports its inputs statically, there is nothing to
+// reconcile).
 func (o *Orchestrator) dagSchedulable(id manifest.NamedResource) bool {
-	return isReconcilableKind(id.Kind) || o.src.HasFetcher(id.Kind)
+	return isReconcilableKind(id.Kind) ||
+		id.Kind == manifest.KindResourceSet ||
+		o.src.HasFetcher(id.Kind)
 }
 
-// seedNodes returns every file-loaded reconcilable + source object currently in
-// the store — the scheduler's initial frontier.
+// seedNodes returns every file-loaded reconcilable + ResourceSet + source
+// object currently in the store — the scheduler's initial frontier.
+// ResourceSetInputProviders are NOT seeded: they are pure data, not
+// runnable nodes (see dagSchedulable).
 func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 	var ids []manifest.NamedResource
 	for _, kind := range reconcilableKinds {
 		for _, obj := range o.store.ListObjects(kind) {
 			ids = append(ids, obj.Named())
 		}
+	}
+	for _, obj := range o.store.ListObjects(manifest.KindResourceSet) {
+		ids = append(ids, obj.Named())
 	}
 	for kind := range o.src.Fetchers {
 		for _, obj := range o.store.ListObjects(kind) {
@@ -71,6 +84,12 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 func (o *Orchestrator) runDAG(ctx context.Context) error {
 	defer o.Stop()
 	sched := schedule.New(o.tasks, dagDispatcher{o})
+	// A selector-inputsFrom ResourceSet has no nameable input provider to park
+	// on, so the scheduler re-expands it at the structural fixpoint (against the
+	// now-complete store). Only ResourceSets ever opt in.
+	sched.SetRerunAtDrain(func(id manifest.NamedResource) bool {
+		return id.Kind == manifest.KindResourceSet && o.rsc.WantsDrainRerun(id)
+	})
 
 	// Start the controllers. This registers lifecycle state + the HR producer
 	// index (flush=true replay), but no dispatch listeners — the scheduler owns
@@ -79,6 +98,7 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	o.src.Start(ctx)
 	o.ksc.Start(ctx)
 	o.hrc.Start(ctx)
+	o.rsc.Start(ctx)
 
 	// Store → scheduler adapters (fire-only, flush=false), registered AFTER the
 	// shared cycle-detect listener so cycle preflight runs first.

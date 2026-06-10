@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
+	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
@@ -147,6 +148,7 @@ type Orchestrator struct {
 	src    *sourcectrl.Controller
 	ksc    *kustomization.Controller
 	hrc    *helmrelease.Controller
+	rsc    *resourcesetctrl.Controller
 	filter *change.Filter
 
 	// repoRoot is the resolved .git ancestor of cfg.Path (or
@@ -243,11 +245,18 @@ type Orchestrator struct {
 
 	// rsExtensions holds non-Flux docs produced by ResourceSet renders,
 	// keyed by the owning structural-parent Kustomization. Populated
-	// by expandResourceSetsPostRun (called from Render) after Run
-	// completes, so it sees RSIPs emitted via KS-controller kustomize
-	// substitution; merged into Result.Manifests at Render time so
-	// `flate build` surfaces what the RS would create in-cluster.
+	// in-DAG: the RS controller feeds each RawObject child into rsRawSink
+	// as it renders (so it sees RSIPs emitted via KS-controller kustomize
+	// substitution), and render() commits the sink into this map before
+	// the Result.Manifests merge so `flate build` surfaces what the RS
+	// would create in-cluster.
 	rsExtensions map[manifest.NamedResource][]map[string]any
+
+	// rsRawSink collects RS RawObject children + their grouping parent KS
+	// during the run, deduped deterministically at commit time. The RS
+	// controller writes to it via the Options.RawSink closure; render()
+	// commits it into rsExtensions.
+	rsRawSink rsRawSink
 
 	// bootstrapped flips true once Bootstrap returns. Read by
 	// WithFetcher to refuse late fetcher swaps that would silently
@@ -404,6 +413,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		src:            srcCtrl,
 		ksc:            kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
 		hrc:            helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		rsc:            resourcesetctrl.New(st, ts, cfg.WipeSecrets),
 		rendered:       newRenderedSet(),
 		componentCache: manifest.NewComponentCache(),
 		depGraph:       newDependencyGraph(),

@@ -95,6 +95,28 @@ func (a *HelmReleaseArtifact) RenderedManifests() []map[string]any { return a.Ma
 // RenderedFingerprint implements RenderedArtifact.
 func (a *HelmReleaseArtifact) RenderedFingerprint() string { return a.Fingerprint }
 
+// ResourceSetArtifact is the rendered output of a ResourceSet expansion.
+//
+// Fingerprint mirrors KustomizationArtifact: a stable hash of the inputs
+// that determine the rendered output (the RS spec plus the resolved
+// inputsFrom provider set). The RS controller compares it on every
+// reconcile and skips re-running resourceset.Render when a re-dispatch
+// (a parent KS re-emit, or a drain-rerun whose inputs converged) arrives
+// with the same effective inputs — the same wasted-work short-circuit
+// KS and HR carry.
+type ResourceSetArtifact struct {
+	Manifests   []map[string]any
+	Fingerprint string
+}
+
+func (*ResourceSetArtifact) artifact() {}
+
+// RenderedManifests implements RenderedArtifact.
+func (a *ResourceSetArtifact) RenderedManifests() []map[string]any { return a.Manifests }
+
+// RenderedFingerprint implements RenderedArtifact.
+func (a *ResourceSetArtifact) RenderedFingerprint() string { return a.Fingerprint }
+
 // --- Store operations on artifacts ---
 
 // SetArtifact stores an artifact for id and dispatches an

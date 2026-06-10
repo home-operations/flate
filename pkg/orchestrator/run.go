@@ -2,15 +2,16 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
+	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -134,6 +135,20 @@ func (o *Orchestrator) configureControllers() {
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 		Producers:           o.producers,
 	})
+	// The RS controller feeds each RawObject child it renders into
+	// rsRawSink keyed by the RS's parent KS; render() commits the sink
+	// into rsExtensions for the Result.Manifests grouping. DedupKey is
+	// computed here so the sink stays orchestrator-internal.
+	o.rsc.Configure(resourcesetctrl.Options{
+		Filter:           o.filter,
+		ParentOf:         parentResolver,
+		RenderTracker:    o.rendered,
+		Existence:        existence,
+		PreflightFailure: o.preflightFailure,
+		RawSink: func(owner, parentKS manifest.NamedResource, doc map[string]any) {
+			o.rsRawSink.Record(owner, parentKS, resourceset.DedupKey(doc), doc)
+		},
+	})
 }
 
 // Render is the structured embed-friendly entry point: Bootstrap +
@@ -176,13 +191,12 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 		return nil, err
 	}
 	runErr := o.Run(ctx)
-	// Post-Run RS expansion: re-render every ResourceSet now that
-	// KS-controller-emitted RSIPs (kustomize-substituted dynamic
-	// names like dragonfly-${APP}) are in the store. Discovery's
-	// pre-Bootstrap renders see only literal-file RSIPs and miss
-	// these. The output attributes non-Flux children to the owning
-	// parent KS so `flate build` surfaces them.
-	rsErr := o.expandResourceSetsPostRun(ctx)
+	// ResourceSets now expand in-DAG (the RS controller renders them as
+	// first-class nodes), feeding each RawObject child into rsRawSink as
+	// it goes. Commit the sink into rsExtensions so the Result.Manifests
+	// merge below groups those non-Flux children under their owning
+	// parent KS — what `flate build` surfaces as the RS's offline output.
+	o.rsExtensions = o.rsRawSink.commit()
 	res := &Result{
 		Manifests: map[manifest.NamedResource][]map[string]any{},
 		Failed:    map[manifest.NamedResource]store.StatusInfo{},
@@ -227,7 +241,7 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 	// changes.
 	maps.Copy(res.Failed, sanitizeFailed(o.store.FailedResources()))
 	maps.Copy(res.Orphans, o.orphans)
-	return res, errors.Join(runErr, rsErr)
+	return res, runErr
 }
 
 // Stop shuts the controllers down in reverse-construction order. Safe to call
@@ -239,6 +253,7 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 // is nothing to release here — it is freed with the Orchestrator.
 func (o *Orchestrator) Stop() {
 	o.stopOnce.Do(func() {
+		o.rsc.Close()
 		o.hrc.Close()
 		o.ksc.Close()
 		o.src.Close()

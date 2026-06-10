@@ -23,8 +23,9 @@ import (
 // (Result.Manifests keeps artifacts of failed resources). finish runs after
 // Render to catch up anything that never streamed — most notably
 // ResourceSet-extension docs, which are attributed to their owning
-// Kustomization only after the run (expandResourceSetsPostRun) — and to
-// preserve the explicit-name typo error.
+// Kustomization and committed into Result.Manifests after the run (the RS
+// controller feeds them into the orchestrator's raw sink as it renders) —
+// and to preserve the explicit-name typo error.
 type streamEmitter struct {
 	out    io.Writer
 	errOut io.Writer // stale-stream warnings (stderr; never stdout)

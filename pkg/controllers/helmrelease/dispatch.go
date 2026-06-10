@@ -4,7 +4,7 @@ import "github.com/home-operations/flate/pkg/manifest"
 
 // isFluxSourceKind reports whether obj is a Flux source CR — one
 // the source controller is registered to reconcile. Mirrors the
-// subset of kustomization.shouldDispatchAsObject that the HR
+// subset of emit.ShouldDispatchAsObject that the HR
 // controller actually wants to re-emit: only sources are
 // chart-rendered in the wild (tofu-controller's OCIRepository, ESO
 // chart's HelmRepository fallback). Charts that render KS / HR are

@@ -100,3 +100,18 @@ func StringFromSecret(sec *manifest.Secret, key string) string {
 	}
 	return ""
 }
+
+// BasicAuthFromSecret extracts the username/password pair every HTTP-auth
+// fetcher reads from a Secret (git HTTPS, HelmRepository). It returns a uniform
+// MissingSecretErr when either field is absent or PLACEHOLDER-wiped — empty
+// covers both the missing-key and ExternalSecret-stub cases, so a caller's
+// --allow-missing-secrets gate (errors.Is ErrMissingSecret) treats them
+// alike. ownerKind/ns/name/secretRef only shape that error message.
+func BasicAuthFromSecret(sec *manifest.Secret, ownerKind, ns, name, secretRef string) (username, password string, err error) {
+	username = StringFromSecret(sec, "username")
+	password = StringFromSecret(sec, "password")
+	if username == "" || password == "" {
+		return "", "", MissingSecretErr(ownerKind, ns, name, secretRef, "missing username/password")
+	}
+	return username, password, nil
+}

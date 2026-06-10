@@ -62,13 +62,9 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 	if token := source.StringFromSecret(sec, "bearerToken"); token != "" {
 		return &githttp.TokenAuth{Token: token}, nil
 	}
-	username := source.StringFromSecret(sec, "username")
-	password := source.StringFromSecret(sec, "password")
-	if username == "" || password == "" {
-		// Empty covers both missing-key and PLACEHOLDER-wiped values
-		// (the ExternalSecret case). Same sentinel so
-		// --allow-missing-secrets covers both shapes.
-		return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing username/password (or bearerToken) for HTTPS auth")
+	username, password, err := source.BasicAuthFromSecret(sec, "GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name)
+	if err != nil {
+		return nil, err
 	}
 	return &githttp.BasicAuth{Username: username, Password: password}, nil
 }

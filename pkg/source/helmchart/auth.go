@@ -34,12 +34,9 @@ func (f *Fetcher) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Opti
 	if sec == nil {
 		return nil, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "not found")
 	}
-	username := source.StringFromSecret(sec, "username")
-	password := source.StringFromSecret(sec, "password")
-	if username == "" || password == "" {
-		// Empty covers missing-key and PLACEHOLDER-wiped values (the
-		// ExternalSecret case). Same sentinel.
-		return nil, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "missing username/password")
+	username, password, err := source.BasicAuthFromSecret(sec, "HelmRepository", r.Namespace, r.Name, r.SecretRef.Name)
+	if err != nil {
+		return nil, err
 	}
 	opts := []getter.Option{getter.WithBasicAuth(username, password)}
 	if r.PassCredentials {
@@ -95,6 +92,14 @@ func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Optio
 		// A secret present but carrying none of the TLS keys is malformed
 		// config — fail loud (no ErrMissingSecret wrap), like BuildTLSConfig.
 		return nil, noCleanup, fmt.Errorf("%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
+			helmID(r), r.Namespace, r.CertSecretRef.Name)
+	}
+	// A client cert needs both halves; reject a half-pair rather than feed
+	// helm a cert without its key (or vice versa). Matches source.BuildTLSConfig,
+	// which the OCI/Bucket paths enforce via ResolveCertSecret.
+	if (paths[0] == "") != (paths[1] == "") {
+		cleanup()
+		return nil, noCleanup, fmt.Errorf("%s: certSecretRef %s/%s must provide both tls.crt and tls.key (or neither)",
 			helmID(r), r.Namespace, r.CertSecretRef.Name)
 	}
 	return []getter.Option{getter.WithTLSClientConfig(paths[0], paths[1], paths[2])}, cleanup, nil

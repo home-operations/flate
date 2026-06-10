@@ -555,11 +555,19 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...fun
 		)
 		barSink.setProgram(p)
 		go func() { _, _ = p.Run() }()
+		// kustomize writes deprecation/sort-order warnings straight to the
+		// stderr fd (no injectable writer), which would shred the inline frame.
+		// Capture the fd for the bar's lifetime and demote those lines to
+		// slog.Debug — flate's own structured warnings still reach the user
+		// above the frame via barSink, while dependency fd chatter stays off the
+		// clean bar unless --log-level debug asks for it.
+		restoreStderr := captureStderr(func(line string) { slog.Debug(line) })
 		unsub := o.Store().OnStatus(func(id manifest.NamedResource, info store.StatusInfo) {
 			p.Send(statusMsg{id: id, info: info})
 		}, false)
 		defer func() {
 			unsub()
+			restoreStderr() // restore os.Stderr + flush the drain while the frame is still live
 			p.Send(finishMsg{})
 			p.Wait()
 			barSink.setProgram(nil)

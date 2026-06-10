@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"io"
 	"os"
 	"strings"
@@ -54,6 +55,52 @@ func (w *barWriter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	return w.out.Write(p)
+}
+
+// captureStderr redirects the process os.Stderr to a pipe and delivers each
+// line written to it to emit, returning a restore func that puts the original
+// os.Stderr back and blocks until the drain has flushed. It exists for output
+// from libraries that write to the stderr file descriptor directly and take no
+// injectable writer — notably kustomize, which prints deprecation and
+// sort-order warnings via fmt.Fprintf(os.Stderr, …) deep in its build. Left
+// alone those writes shred the status bar's inline frame; routed through emit
+// (slog.Debug) they stay off the clean bar yet remain available under
+// --log-level debug. flate's own structured logs are unaffected: slog and
+// Bubble Tea hold barSink.out (the real stderr captured at startup), not the
+// os.Stderr variable this swaps.
+//
+// The caller installs it while the bar is live and defers restore() before the
+// program is torn down, so the last drained lines still land above the frame.
+// The swap is race-free: it is installed once before Render fans out the build
+// goroutines (the only readers of os.Stderr) and restored once after Render
+// joins them, so no read races the write. If the pipe cannot be created,
+// os.Stderr is left untouched and restore is a no-op — a build never fails
+// because capture was unavailable.
+func captureStderr(emit func(line string)) (restore func()) {
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		return func() {}
+	}
+	os.Stderr = w
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			emit(sc.Text())
+		}
+		// A line past the 1 MiB cap stops Scan; keep draining so a writer
+		// never blocks on a full pipe.
+		_, _ = io.Copy(io.Discard, r)
+	}()
+	return func() {
+		os.Stderr = orig
+		_ = w.Close() // EOF the read end so the drain goroutine returns
+		<-done
+		_ = r.Close()
+	}
 }
 
 // writerIsTTY reports whether w is a character device (an interactive terminal).

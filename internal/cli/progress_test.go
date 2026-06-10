@@ -2,8 +2,41 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"slices"
+	"sync"
 	"testing"
 )
+
+// TestCaptureStderr verifies the stray-fd capture: lines written straight to
+// os.Stderr (as kustomize does for its deprecation warnings) are delivered to
+// emit one per line — including a final line with no trailing newline, flushed
+// at EOF — and os.Stderr is restored afterward. Not parallel: it swaps the
+// process-wide os.Stderr.
+func TestCaptureStderr(t *testing.T) {
+	orig := os.Stderr
+	var mu sync.Mutex
+	var got []string
+	restore := captureStderr(func(line string) {
+		mu.Lock()
+		got = append(got, line)
+		mu.Unlock()
+	})
+	fmt.Fprintln(os.Stderr, "# Warning: 'commonLabels' is deprecated.")
+	fmt.Fprint(os.Stderr, "tail-without-newline")
+	restore()
+
+	if os.Stderr != orig {
+		t.Error("captureStderr did not restore os.Stderr")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"# Warning: 'commonLabels' is deprecated.", "tail-without-newline"}
+	if !slices.Equal(got, want) {
+		t.Errorf("captured lines = %q, want %q", got, want)
+	}
+}
 
 // TestBarWriter_NoProgramWritesThrough: with no Bubble Tea program attached, the
 // slog adapter is a plain passthrough to the underlying stderr (the non-TTY /

@@ -106,11 +106,6 @@ type ParseDocOptions struct {
 	WipeSecrets bool
 }
 
-// defaultParseDocOptions returns the standard options — secrets wiped.
-func defaultParseDocOptions() ParseDocOptions {
-	return ParseDocOptions{WipeSecrets: true}
-}
-
 // ParseDoc dispatches on kind + apiVersion to the appropriate concrete
 // parser. Unknown kinds become a RawObject; kustomize.config.k8s.io
 // build directives and bare data files are silently dropped.

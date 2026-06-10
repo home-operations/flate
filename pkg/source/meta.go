@@ -12,7 +12,7 @@ import (
 
 // SlotMetaFile is the single structured sidecar a fetched cache slot carries,
 // replacing the family of per-fact .flate-* marker files (the git revision, the
-// OCI digest, the verify-policy fingerprint). It is `.flate-`-prefixed so it
+// OCI digest). It is `.flate-`-prefixed so it
 // never collides with a user file in the materialized source tree, and JSON so
 // a new fact is a new field rather than a new file.
 const SlotMetaFile = ".flate-meta.json"
@@ -53,9 +53,9 @@ func WriteSlotMeta(slotDir string, meta SlotMeta) error {
 // UpdateSlotMeta read-modify-writes the slot's sidecar: read the current
 // SlotMeta (preserving fields the caller leaves alone), apply mutate, write it
 // back. Marker writers run under the slot lock (cache.Slot serializes per key),
-// so the RMW has a single writer. Shared by the per-kind fetchers (oci digest +
-// verify fingerprint, helmchart chart resolution, git revision) so each records
-// its facts without clobbering the others.
+// so the RMW has a single writer. Shared by the per-kind fetchers (oci digest,
+// helmchart chart resolution, git revision) so each records its facts without
+// clobbering the others.
 func UpdateSlotMeta(slotDir string, mutate func(*SlotMeta)) error {
 	m, _ := ReadSlotMeta(slotDir)
 	mutate(&m)

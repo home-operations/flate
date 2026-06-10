@@ -13,6 +13,12 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
+// defaultParseDocOptions returns the standard ParseDoc options — secrets wiped.
+// Test-only helper; production callers pass an explicit ParseDocOptions.
+func defaultParseDocOptions() ParseDocOptions {
+	return ParseDocOptions{WipeSecrets: true}
+}
+
 // mustYAML decodes a single YAML document literal into a generic map.
 func mustYAML(t *testing.T, doc string) map[string]any {
 	t.Helper()
@@ -923,43 +929,6 @@ spec:
 	}
 	if k.PostBuildSubstitute["DOMAIN"] != "example.com" {
 		t.Errorf("substitute = %+v", k.PostBuildSubstitute)
-	}
-
-	kept, dropped := filterDependsOn(k.DependsOn, map[string]struct{}{"flux-system/infra": {}})
-	if len(kept) != 1 || kept[0].NamespacedName() != "flux-system/infra" {
-		t.Errorf("filterDependsOn kept = %v", kept)
-	}
-	if dropped == 0 {
-		t.Errorf("expected at least one dropped entry")
-	}
-}
-
-// filterDependsOn is the free function shared by KS and HR pruning;
-// verify it works on a synthetic HR-style dep list too.
-func TestFilterDependsOn_AcrossKinds(t *testing.T) {
-	deps := []DependencyRef{
-		{NamedResource: NamedResource{Kind: KindHelmRelease, Namespace: "media", Name: "plex"}},
-		{NamedResource: NamedResource{Kind: KindHelmRelease, Namespace: "media", Name: "gone"}},
-	}
-	known := map[string]struct{}{"media/plex": {}}
-	kept, dropped := filterDependsOn(deps, known)
-	if len(kept) != 1 || kept[0].NamespacedName() != "media/plex" {
-		t.Errorf("kept = %v", kept)
-	}
-	if dropped != 1 {
-		t.Errorf("dropped = %d, want 1", dropped)
-	}
-
-	// nil-known: every dep dropped.
-	_, dropped = filterDependsOn(deps, nil)
-	if dropped != 2 {
-		t.Errorf("nil-known dropped = %d, want 2", dropped)
-	}
-
-	// empty deps: no work, no allocation.
-	out, dropped := filterDependsOn(nil, known)
-	if out != nil || dropped != 0 {
-		t.Errorf("empty deps: out=%v dropped=%d", out, dropped)
 	}
 }
 

@@ -107,8 +107,8 @@ type node struct {
 }
 
 // Scheduler is a re-entrant fixpoint reconcile driver. Construct with New,
-// Seed the initial node set, wire store events to OnArrival/OnStatusWake/
-// OnDelete, then call Run.
+// Seed the initial node set, wire store events to OnArrival/OnStatusWake,
+// then call Run.
 type Scheduler struct {
 	tasks *task.Service
 	disp  Dispatcher
@@ -411,21 +411,6 @@ func (s *Scheduler) OnStatusWake(id NodeID, ready, failed bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.wakeWaitersLocked(id)
-	s.cond.Broadcast()
-}
-
-// OnDelete is called when a render-discovered node is removed from the store
-// mid-run. It terminalizes the node in the scheduler and wakes its waiters,
-// which re-Require and route through the absent-dep path.
-func (s *Scheduler) OnDelete(id NodeID) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if n := s.nodes[id]; n != nil && n.state != stateRunning {
-		n.state = stateTerminal
-		n.ready = false
-		s.unparkSelfLocked(n)
-	}
 	s.wakeWaitersLocked(id)
 	s.cond.Broadcast()
 }

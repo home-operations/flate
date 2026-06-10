@@ -8,18 +8,10 @@ package task
 import (
 	"context"
 	"log/slog"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 )
-
-// defaultWorkers caps Go-body concurrency in a Service constructed via
-// New. Sized for I/O-bound work (helm template / oras pull / git
-// clone) — sufficient to saturate the CPU while leaving headroom for
-// blocked network calls. Embedders that need a different cap should
-// call NewBounded explicitly.
-var defaultWorkers = runtime.NumCPU() * 4
 
 // Service tracks active goroutines.
 type Service struct {
@@ -37,19 +29,11 @@ type Service struct {
 	sem chan struct{}
 }
 
-// New constructs a Service with the package-default bounded worker
-// pool (runtime.NumCPU() * 4). This was previously unbounded — every
-// Go call spawned a goroutine that ran immediately — which is a
-// foot-gun for embedders that fan out thousands of submits and rely
-// on the pool to throttle. Callers that genuinely need unbounded
-// concurrency must use NewUnbounded explicitly.
-func New() *Service { return NewBounded(defaultWorkers) }
-
 // NewBounded constructs a Service that caps the number of concurrently
 // executing active-task bodies at workers. Submitting more does not
 // block — the surplus goroutines exist but wait on an internal
-// semaphore until a slot opens. workers <= 0 disables bounding
-// (equivalent to NewUnbounded).
+// semaphore until a slot opens. workers <= 0 disables bounding (every
+// Go submission runs immediately on a fresh goroutine).
 //
 // Sized for I/O-bound work: helm template / oras pull / git clone all
 // release the worker briefly while blocked on the network. A sensible
@@ -62,15 +46,6 @@ func NewBounded(workers int) *Service {
 	}
 	return s
 }
-
-// NewUnbounded constructs a Service with no concurrency cap — every
-// Go submission runs immediately on a fresh goroutine. Use only when
-// the caller's workload is naturally bounded (single-digit submits,
-// fixed-fanout testing harness) or when the caller manages its own
-// throttling on top of the Service. Most production paths should
-// prefer NewBounded with a workload-sized cap, or New for the
-// package default.
-func NewUnbounded() *Service { return &Service{} }
 
 // Go launches an active task. ctx is propagated to fn. Completion is
 // reported via BlockTillDone. When the Service is
@@ -119,7 +94,7 @@ func (s *Service) Go(ctx context.Context, name string, fn func(context.Context))
 // a phantom slot on unwind, eventually hanging another goroutine that
 // did own a slot legitimately.
 //
-// On an unbounded Service (New or NewBounded(<=0)), fn runs unchanged.
+// On an unbounded Service (NewBounded(<=0)), fn runs unchanged.
 func (s *Service) YieldSlot(fn func()) {
 	if s.sem != nil {
 		defer s.releaseSlot()()
@@ -144,72 +119,3 @@ func (s *Service) Failures() int64 { return s.failures.Load() }
 // BlockTillDone waits until every active task has finished. Safe to
 // call concurrently with Go.
 func (s *Service) BlockTillDone() { s.wgActive.Wait() }
-
-// Coalescer keeps at most one task per key in flight; submits that
-// arrive while a key is running collapse into a single re-run after it
-// returns. fn must re-read its inputs each call — a coalesced re-run
-// exists precisely because the previous submit's inputs went stale.
-type Coalescer[K comparable] struct {
-	svc  *Service
-	mu   sync.Mutex
-	slot map[K]*coalSlot
-}
-
-type coalSlot struct {
-	running bool
-	pending bool
-}
-
-// NewCoalescer constructs a Coalescer that schedules work onto svc.
-func NewCoalescer[K comparable](svc *Service) *Coalescer[K] {
-	return &Coalescer[K]{svc: svc, slot: make(map[K]*coalSlot)}
-}
-
-// Submit schedules fn for key, starting a new active task if key is
-// idle or marking the running slot pending otherwise.
-func (c *Coalescer[K]) Submit(ctx context.Context, name string, key K, fn func(context.Context)) {
-	c.mu.Lock()
-	s := c.slot[key]
-	if s == nil {
-		s = &coalSlot{}
-		c.slot[key] = s
-	}
-	if s.running {
-		s.pending = true
-		c.mu.Unlock()
-		return
-	}
-	s.running = true
-	c.mu.Unlock()
-
-	c.svc.Go(ctx, name, func(ctx context.Context) {
-		// On panic, clear the slot before re-raising so future Submits
-		// on this key dispatch normally. If a pending re-run exists it
-		// is dropped — restarting on deterministic-panic input loops —
-		// and logged so the loss is observable.
-		defer func() {
-			if r := recover(); r != nil {
-				c.mu.Lock()
-				lostPending := s.pending
-				delete(c.slot, key)
-				c.mu.Unlock()
-				if lostPending {
-					slog.Warn("task coalescer: dropped pending re-run because the previous run panicked",
-						"key", key)
-				}
-				panic(r)
-			}
-		}()
-		for {
-			fn(ctx)
-			c.mu.Lock()
-			if !s.pending {
-				delete(c.slot, key)
-				c.mu.Unlock()
-				return
-			}
-			s.pending = false
-			c.mu.Unlock()
-		}
-	})
-}

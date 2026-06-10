@@ -43,7 +43,7 @@ func newController(t *testing.T, fetchers map[string]src.Fetcher) (*Controller, 
 func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts FetchOptions) (*Controller, *store.Store) {
 	t.Helper()
 	st := store.New()
-	ts := task.New()
+	ts := task.NewBounded(0)
 	c := New(st, ts)
 	maps.Copy(c.Fetchers, fetchers)
 	c.Configure(opts)
@@ -59,7 +59,7 @@ func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts
 // levels (none→cascade→force), mirroring the scheduler's structural fixpoint,
 // until the node terminalizes (no blocked deps) or drain is exhausted, then
 // returns the final store status. Synchronous — replaces the event engine's
-// AddObject→listener→WaitForStatus dispatch in unit tests.
+// AddObject→listener→status-poll dispatch in unit tests.
 //
 // The source reconcile yields its worker slot around the fetch
 // (Tasks.YieldSlot), which corrupts semaphore accounting unless it runs inside

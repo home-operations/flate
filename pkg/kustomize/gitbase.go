@@ -224,7 +224,7 @@ func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSyste
 }
 
 // copyDirIntoFS materializes every regular file under srcRoot into memFS at
-// destPrefix/<rel>, applying the same SkipStageDir / symlink-deref rules as
+// destPrefix/<rel>, applying the same skipStageDir / symlink-deref rules as
 // source-tree materialization. Used to drop a cloned git base into a render's
 // private fs.
 func copyDirIntoFS(memFS filesys.FileSystem, srcRoot, destPrefix string) error {

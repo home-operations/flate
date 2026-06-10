@@ -35,32 +35,6 @@ type Provider interface {
 	Secret(namespace, name string) *manifest.Secret
 }
 
-// SliceProvider implements Provider from in-memory slices.
-type SliceProvider struct {
-	ConfigMaps []*manifest.ConfigMap
-	Secrets    []*manifest.Secret
-}
-
-// ConfigMap finds a ConfigMap by namespace+name.
-func (p *SliceProvider) ConfigMap(namespace, name string) *manifest.ConfigMap {
-	for _, c := range p.ConfigMaps {
-		if c.Name == name && c.Namespace == namespace {
-			return c
-		}
-	}
-	return nil
-}
-
-// Secret finds a Secret by namespace+name.
-func (p *SliceProvider) Secret(namespace, name string) *manifest.Secret {
-	for _, s := range p.Secrets {
-		if s.Name == name && s.Namespace == namespace {
-			return s
-		}
-	}
-	return nil
-}
-
 // NewStoreProvider returns a Provider backed by the central Store.
 func NewStoreProvider(s *store.Store) Provider { return &storeProvider{s: s} }
 

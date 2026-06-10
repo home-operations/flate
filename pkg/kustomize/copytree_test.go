@@ -25,8 +25,8 @@ func TestSkipStageDir(t *testing.T) {
 		{"", false},
 	}
 	for _, c := range cases {
-		if got := SkipStageDir(c.base); got != c.want {
-			t.Errorf("SkipStageDir(%q) = %v; want %v", c.base, got, c.want)
+		if got := skipStageDir(c.base); got != c.want {
+			t.Errorf("skipStageDir(%q) = %v; want %v", c.base, got, c.want)
 		}
 	}
 }

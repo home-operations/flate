@@ -57,8 +57,8 @@ type KSPathPrefix struct {
 //
 // A shared component cache is threaded in via cache. The orchestrator
 // instantiates one cache per Bootstrap and passes it to every consumer
-// (discovery's orphan promotion, BuildParentIndexForKindWithCache, the
-// orchestrator's finalize detectOrphans, change.buildOwnership) so the
+// (discovery's orphan promotion, the orchestrator's finalize detectOrphans,
+// change.buildOwnership) so the
 // kustomization.yaml at each spec.path is read once per Bootstrap
 // instead of once per consumer. Pass nil to fall back to a per-call
 // cache so a single call doesn't re-read the same kustomization.yaml
@@ -114,55 +114,25 @@ func longestStrictParent(prefixes []KSPathPrefix, file string, self manifest.Nam
 	return manifest.NamedResource{}, false
 }
 
-// BuildParentIndexForKindWithCache maps each childKind resource to its
-// enclosing Flux Kustomization — the KS whose spec.path or component
-// directory is the deepest strict ancestor of the child's source
-// file. Excludes self-matches.
+// BuildParentIndexFromPrefixes maps each childKind resource to its enclosing
+// Flux Kustomization — the KS whose spec.path or component directory is the
+// deepest strict ancestor of the child's source file. Excludes self-matches.
+// The KS path-prefix list is passed in precomputed: discovery.Run derives the
+// prefixes once (an O(KS) walk + sort + component reads) and reuses them for
+// the KS-parent index, the HR-parent index, AND orphan promotion — three
+// consumers that previously each rebuilt the identical list.
 //
-// Real Flux's reconcile chain enforces this naturally: a parent
-// Kustomization renders and applies its children, then the
-// downstream controller reconciles each. flate's controllers fire
-// on AddObject and would otherwise race the parent's render — the
-// child controllers use this index to gate reconcile on the
-// parent's Ready, so any parent-render-time spec mutations
-// (`replacements:` injecting spec.targetNamespace, `patches:`
-// rewriting HelmRelease driftDetection) are visible to the child's
-// first reconcile. Without the gate the file-loaded child renders
-// once with stale spec, the parent re-emits a mutated copy, and the
-// child renders again — twice the helm template / kustomize build
-// work for one logical resource.
+// Real Flux's reconcile chain enforces this parent→child ordering naturally: a
+// parent Kustomization renders and applies its children, then the downstream
+// controller reconciles each. flate's controllers fire on AddObject and would
+// otherwise race the parent's render — the child controllers use this index to
+// gate reconcile on the parent's Ready, so parent-render-time spec mutations
+// (`replacements:` injecting spec.targetNamespace, `patches:` rewriting
+// HelmRelease driftDetection) are visible to the child's first reconcile.
 //
-// sourceFiles is the orchestrator's NamedResource → repo-relative
-// source-file map; entries without a recorded file are skipped.
-//
-// childKind=KindKustomization for the KS→KS parent map; pass
-// KindHelmRelease for the HR→KS map. The orchestrator builds both
-// and merges them (see discovery.Run).
-//
-// repoRoot is the filesystem root used to read each KS's
-// kustomization.yaml when folding `components:` into the prefix set;
-// pass the orchestrator's --path. An empty repoRoot means "no on-disk
-// component lookup", which still gives a correct (just slightly
-// less-precise) index built from spec.path + spec.components alone.
-//
-// A shared *manifest.ComponentCache is threaded into the
-// KSPathPrefixesWithCache call via cache. Used by discovery so the
-// KS-parent-map build and the HR-parent-map build share component-file
-// reads across the two passes — without sharing, each invocation walks
-// the same KS list and re-reads every kustomization.yaml's
-// `components:` independently. Pass nil to fall back to a per-call
-// cache.
-func BuildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string, cache *manifest.ComponentCache) map[manifest.NamedResource]manifest.NamedResource {
-	return BuildParentIndexFromPrefixes(KSPathPrefixesWithCache(s, repoRoot, cache), s, sourceFiles, childKind)
-}
-
-// BuildParentIndexFromPrefixes is BuildParentIndexForKindWithCache with
-// the KS path-prefix list passed in precomputed. discovery.Run derives
-// the prefixes once (an O(KS) walk + sort + component reads) and reuses
-// them for the KS-parent index, the HR-parent index, AND orphan
-// promotion — three consumers that previously each rebuilt the identical
-// list. Standalone callers use BuildParentIndexForKindWithCache, which
-// computes the prefixes for a single use.
+// sourceFiles is the orchestrator's NamedResource → repo-relative source-file
+// map; entries without a recorded file are skipped. childKind=KindKustomization
+// for the KS→KS parent map; pass KindHelmRelease for the HR→KS map.
 func BuildParentIndexFromPrefixes(prefixes []KSPathPrefix, s *store.Store, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
 	// Group each id's own claimed prefixes so a peer KS claiming the same
 	// spec.path directory isn't mistaken for an enclosing parent (which

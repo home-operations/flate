@@ -13,6 +13,33 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// SliceProvider is a test-only Provider backed by in-memory slices.
+// Production wires NewStoreProvider against the central Store.
+type SliceProvider struct {
+	ConfigMaps []*manifest.ConfigMap
+	Secrets    []*manifest.Secret
+}
+
+// ConfigMap finds a ConfigMap by namespace+name.
+func (p *SliceProvider) ConfigMap(namespace, name string) *manifest.ConfigMap {
+	for _, c := range p.ConfigMaps {
+		if c.Name == name && c.Namespace == namespace {
+			return c
+		}
+	}
+	return nil
+}
+
+// Secret finds a Secret by namespace+name.
+func (p *SliceProvider) Secret(namespace, name string) *manifest.Secret {
+	for _, s := range p.Secrets {
+		if s.Name == name && s.Namespace == namespace {
+			return s
+		}
+	}
+	return nil
+}
+
 // TestDeepMergeInto_MutatesDstPreservesSemantics pins the in-place
 // variant's contract: dst is mutated, override is read-only, and
 // the resulting tree matches DeepMerge's output for the same inputs.

@@ -47,7 +47,7 @@ func TestNewBounded_LimitsConcurrentBodies(t *testing.T) {
 }
 
 func TestNewBounded_Unbounded(t *testing.T) {
-	// Workers <= 0 disables bounding; matches NewUnbounded.
+	// Workers <= 0 disables bounding (no semaphore allocated).
 	s := NewBounded(0)
 	if s.sem != nil {
 		t.Errorf("expected nil semaphore for workers=0")
@@ -58,29 +58,8 @@ func TestNewBounded_Unbounded(t *testing.T) {
 	}
 }
 
-// TestNew_DefaultsToBounded asserts the package default — New
-// no longer spawns an unbounded pool; embedders that fan out
-// thousands of submits get throttled by runtime.NumCPU()*4
-// without having to opt in.
-func TestNew_DefaultsToBounded(t *testing.T) {
-	s := New()
-	if s.sem == nil {
-		t.Fatal("New() returned a Service with no worker cap; expected bounded default")
-	}
-	assert.Equal(t, cap(s.sem), defaultWorkers)
-}
-
-// TestNewUnbounded_HasNoCap pins the explicit opt-in path: callers
-// who deliberately want unbounded fan-out must call NewUnbounded.
-func TestNewUnbounded_HasNoCap(t *testing.T) {
-	u := NewUnbounded()
-	if u.sem != nil {
-		t.Errorf("NewUnbounded should not allocate a semaphore")
-	}
-}
-
 func TestService_BlockTillDone(t *testing.T) {
-	s := New()
+	s := NewBounded(0)
 	var n atomic.Int64
 	for range 50 {
 		s.Go(context.Background(), "w", func(_ context.Context) {
@@ -93,126 +72,12 @@ func TestService_BlockTillDone(t *testing.T) {
 }
 
 func TestService_PanicCountedAndRecovered(t *testing.T) {
-	s := New()
+	s := NewBounded(0)
 	s.Go(context.Background(), "boom", func(_ context.Context) {
 		panic("oops")
 	})
 	s.BlockTillDone()
 	assert.Equal(t, s.Failures(), int64(1))
-}
-
-// TestCoalescer_RecoversSlotAfterPanic guards a stuck-slot bug: if
-// fn(ctx) panicked, the Service-level recover absorbed the panic but
-// the per-key slot stayed running=true forever, so every subsequent
-// Submit on that key would mark pending and exit without ever
-// re-running. The recover in Coalescer.Submit now resets the slot
-// before re-raising for the Service-level logger to catch.
-func TestCoalescer_RecoversSlotAfterPanic(t *testing.T) {
-	s := New()
-	c := NewCoalescer[string](s)
-
-	var calls atomic.Int64
-	c.Submit(context.Background(), "boom", "k", func(_ context.Context) {
-		calls.Add(1)
-		panic("boom")
-	})
-	s.BlockTillDone()
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("panicking call: expected 1 run, got %d", got)
-	}
-	assert.Equal(t, s.Failures(), int64(1))
-	c.mu.Lock()
-	slots := len(c.slot)
-	c.mu.Unlock()
-	assert.Equal(t, slots, 0) // panicked slot must not be retained
-
-	// Slot must be unlocked: a fresh Submit on the same key runs.
-	c.Submit(context.Background(), "recovery", "k", func(_ context.Context) {
-		calls.Add(1)
-	})
-	s.BlockTillDone()
-	assert.Equal(t, calls.Load(), int64(2)) // post-panic Submit re-runs
-}
-
-func TestCoalescer_DropsIdleSlots(t *testing.T) {
-	s := New()
-	c := NewCoalescer[string](s)
-
-	c.Submit(context.Background(), "a", "a", func(_ context.Context) {})
-	s.BlockTillDone()
-
-	c.mu.Lock()
-	got := len(c.slot)
-	c.mu.Unlock()
-	assert.Equal(t, got, 0) // idle slots dropped
-}
-
-func TestCoalescer_SerializesPerKey(t *testing.T) {
-	s := New()
-	c := NewCoalescer[string](s)
-
-	var concurrent atomic.Int32
-	var maxConcurrent atomic.Int32
-	var runs atomic.Int64
-	gate := make(chan struct{})
-
-	bumpPeak := func() {
-		now := concurrent.Add(1)
-		for {
-			peak := maxConcurrent.Load()
-			if now <= peak || maxConcurrent.CompareAndSwap(peak, now) {
-				return
-			}
-		}
-	}
-
-	c.Submit(context.Background(), "k", "k", func(_ context.Context) {
-		bumpPeak()
-		runs.Add(1)
-		<-gate
-		concurrent.Add(-1)
-	})
-	for range 5 {
-		c.Submit(context.Background(), "k", "k", func(_ context.Context) {
-			bumpPeak()
-			runs.Add(1)
-			concurrent.Add(-1)
-		})
-	}
-
-	close(gate)
-	s.BlockTillDone()
-
-	assert.Equal(t, runs.Load(), int64(2)) // initial + 1 coalesced re-run
-	if peak := maxConcurrent.Load(); peak > 1 {
-		t.Errorf("Coalescer permitted %d concurrent runs for same key; must be 1", peak)
-	}
-}
-
-func TestCoalescer_DistinctKeysRunConcurrently(t *testing.T) {
-	s := New()
-	c := NewCoalescer[string](s)
-
-	bothStarted := make(chan struct{}, 2)
-	release := make(chan struct{})
-
-	for _, k := range []string{"a", "b"} {
-		c.Submit(context.Background(), k, k, func(_ context.Context) {
-			bothStarted <- struct{}{}
-			<-release
-		})
-	}
-
-	deadline := time.After(2 * time.Second)
-	for range 2 {
-		select {
-		case <-bothStarted:
-		case <-deadline:
-			t.Fatal("distinct keys did not run concurrently")
-		}
-	}
-	close(release)
-	s.BlockTillDone()
 }
 
 // TestYieldSlot_AllowsChildrenWhenParentsFillPool simulates the
@@ -270,7 +135,7 @@ func TestYieldSlot_AllowsChildrenWhenParentsFillPool(t *testing.T) {
 // TestYieldSlot_UnboundedIsNoOp asserts the no-pool path runs fn
 // transparently.
 func TestYieldSlot_UnboundedIsNoOp(t *testing.T) {
-	s := NewUnbounded()
+	s := NewBounded(0)
 	called := false
 	s.YieldSlot(func() { called = true })
 	if !called {

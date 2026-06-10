@@ -170,7 +170,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 // cloneIntoSlot runs the legacy full-clone path into the slot's staging dir:
 // PlainClone (with optional shallow/submodule), fetch any explicit named ref,
 // checkout the requested ref (honoring sparse paths), recurse submodules, then
-// finalize (verify + ignore + marker) and commit. The mirror-path counterpart
+// apply source-ignore, write the marker, and commit. The mirror-path counterpart
 // is fetchViaMirror; fetch() picks between them via canUseMirror.
 func (f *Fetcher) cloneIntoSlot(ctx context.Context, repo *manifest.GitRepository, refLabel string, slot *source.Slot, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
 	url := repo.URL
@@ -337,9 +337,8 @@ func (f *Fetcher) canUseMirror(repo *manifest.GitRepository) bool {
 
 // fetchViaMirror runs the bare-mirror path: open-or-update the
 // per-URL mirror, resolve the requested ref to a commit hash, then
-// materialize the tree into the slot's staging dir. PGP verification
-// runs against the mirror (which has the object store); ApplyIgnore
-// and the revision-marker write delegate to applyIgnoreAndMark.
+// materialize the tree into the slot's staging dir; ApplyIgnore and the
+// revision-marker write delegate to applyIgnoreAndMark.
 func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitRepository, refStr string, slot *source.Slot, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
 	mirrorRepo, err := f.Mirrors.OpenOrFetch(ctx, repo.URL, auth, proxy, f.mirrorFetchPlan(repo.Reference))
 	if err != nil {

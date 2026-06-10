@@ -16,8 +16,8 @@ import (
 // a hand-modified or legacy cache rebuilds rather than trusting a bad digest.
 var digestRE = regexp.MustCompile(`^[a-z0-9]+:[a-fA-F0-9]{32,}$`)
 
-// writeCachedDigest records digest in the slot's meta sidecar, preserving any
-// existing verify fingerprint.
+// writeCachedDigest records digest in the slot's meta sidecar, preserving the
+// slot's other recorded facts.
 func writeCachedDigest(slot, digest string) error {
 	return source.UpdateSlotMeta(slot, func(m *source.SlotMeta) { m.Digest = digest })
 }

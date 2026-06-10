@@ -332,40 +332,6 @@ func (f *Filter) addEmittedLocked(emitter manifest.NamedResource, child manifest
 	return added
 }
 
-// addUngated unconditionally extends the keep set with id (and its
-// transitive sourceRef/chartRef/valuesFrom deps) at runtime, marking
-// every newly-inserted entry primary.
-//
-// Internal-only: production code MUST use AddEmitted so the
-// primary-emitter gate prevents the ancestor-cascade failure mode.
-// Test scaffolding that needs to seed an entry without simulating a
-// render emission can call this directly from within the package.
-//
-// No-op when the filter is disabled. Safe for concurrent use.
-func (f *Filter) addUngated(id manifest.NamedResource) {
-	if !f.Enabled() {
-		return
-	}
-	f.fireOnAdd(f.addRecursive(id))
-}
-
-// addRecursive adds id (and transitive deps) to keep AND primary,
-// returning the list of ids that were newly added (so the caller
-// can dispatch OnAdd notifications outside the lock). Holds mu for
-// the full graph walk so the recursion sees a coherent keep
-// snapshot.
-//
-// Every entry inserted by this path is primary: runtime adds happen
-// when a primary parent emits a child, so the child inherits primacy
-// and any future emissions IT produces also propagate. Ancestor-only
-// entries are inserted directly into f.keep (NOT f.primary) by
-// resolve()'s own walks, never via addRecursive.
-func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResource {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.addRecursiveLocked(id)
-}
-
 // markKept records id in the keep set, mirroring it into keepByName
 // only for empty-namespace ids (see ShouldReconcile for the asymmetry
 // rationale). Caller MUST hold f.mu.Lock().

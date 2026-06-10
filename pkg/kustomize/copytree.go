@@ -8,17 +8,17 @@ import (
 	"strings"
 )
 
-// SkipStageDir reports whether a directory base name is excluded when a source
+// skipStageDir reports whether a directory base name is excluded when a source
 // tree is walked: `node_modules` and every dot-prefixed dir (which captures
 // `.git`, `.flate-cache`, IDE state, etc.). Apply to non-root directories only;
 // callers own root detection.
-func SkipStageDir(base string) bool {
+func skipStageDir(base string) bool {
 	return base == "node_modules" || strings.HasPrefix(base, ".")
 }
 
 // walkSourceFiles walks root and invokes visit(rel, body) for every regular
 // file (symlinks dereferenced; dangling and irregular entries skipped silently),
-// descending all directories except those SkipStageDir excludes. rel is
+// descending all directories except those skipStageDir excludes. rel is
 // relative to root, using the OS separator. Used to copy a cloned git base into
 // a render's in-memory fs (see copyDirIntoFS).
 func walkSourceFiles(root string, visit func(rel string, body []byte) error) error {
@@ -34,7 +34,7 @@ func walkSourceFiles(root string, visit func(rel string, body []byte) error) err
 			return nil
 		}
 		if d.IsDir() {
-			if SkipStageDir(d.Name()) {
+			if skipStageDir(d.Name()) {
 				return fs.SkipDir
 			}
 			return nil

@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"cmp"
-	"log/slog"
 	"maps"
 	"slices"
 
@@ -96,34 +95,6 @@ func (k *Kustomization) Clone() *Kustomization {
 	out.Labels = maps.Clone(k.Labels)
 	out.Annotations = maps.Clone(k.Annotations)
 	return &out
-}
-
-// filterDependsOn returns a copy of deps with any entries whose target
-// is not present in known removed. known is a set of "namespace/name"
-// identifiers. The second return value is the count of dropped
-// entries. Pure function — does not mutate deps. Callers updating a
-// stored object should follow the Store's immutability contract:
-// shallow-copy the object, set the new DependsOn on the copy, then
-// re-AddObject the copy.
-func filterDependsOn(deps []DependencyRef, known map[string]struct{}) ([]DependencyRef, int) {
-	if len(deps) == 0 {
-		return deps, 0
-	}
-	kept := slices.DeleteFunc(slices.Clone(deps), func(dep DependencyRef) bool {
-		_, ok := known[dep.NamespacedName()]
-		return !ok
-	})
-	dropped := len(deps) - len(kept)
-	if dropped > 0 {
-		// Demoted to Debug: dependsOn references often dangle in a
-		// statically-loaded view because parent-Kustomization
-		// targetNamespace inheritance happens lazily. Real Flux resolves
-		// them at apply time, and dropping them here only affects the
-		// wait order during flate's reconcile.
-		slog.Debug("dependsOn entries dropped",
-			"dropped", dropped, "kept", len(kept))
-	}
-	return kept, dropped
 }
 
 // UpdatePostBuildSubstitutions merges the given map into the substitution

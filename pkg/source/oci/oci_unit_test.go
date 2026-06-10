@@ -40,8 +40,7 @@ func TestReadCachedDigest_MissingReturnsEmpty(t *testing.T) {
 // TestReadCachedDigest_MalformedTreatedAsMissing pins the
 // format-validation contract: a malformed digest in the sidecar (partial,
 // garbage, or shorter than the OCI spec minimum) must read as "" so the
-// fetcher's cache-hit path resets the slot instead of passing the bad digest
-// to cosign (which would produce a misleading "signature not found" failure).
+// fetcher's cache-hit path resets the slot instead of trusting a bad digest.
 func TestReadCachedDigest_MalformedTreatedAsMissing(t *testing.T) {
 	cases := []struct {
 		name    string

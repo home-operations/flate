@@ -18,7 +18,7 @@ import (
 func newController(t *testing.T) (*Controller, *store.Store) {
 	t.Helper()
 	s := store.New()
-	tasks := task.New()
+	tasks := task.NewBounded(0)
 	c := New(s, tasks, true)
 	c.Configure(Options{})
 	c.Start(context.Background())

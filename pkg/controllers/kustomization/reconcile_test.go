@@ -47,7 +47,7 @@ data: {greeting: hi}
 
 	cache := kustomize.NewTreeCache()
 
-	tasks := task.New()
+	tasks := task.NewBounded(0)
 	c := New(s, tasks, cache, true)
 	c.Configure(Options{})
 	c.Start(context.Background())
@@ -62,7 +62,7 @@ data: {greeting: hi}
 // levels (none→cascade→force), mirroring the scheduler's structural fixpoint,
 // until the node terminalizes (no blocked deps) or drain is exhausted, then
 // returns the final store status. Synchronous — replaces the event engine's
-// AddObject→listener→WaitForStatus dispatch in unit tests.
+// AddObject→listener→status-poll dispatch in unit tests.
 func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
 	t.Helper()
 	for _, drain := range []int{0, 1, 2} {

@@ -287,7 +287,7 @@ func TestController_DoubleCloseIsSafe(t *testing.T) {
 // scheduler's Dispatcher routes by Kind, so DispatchNode does no match check.)
 func TestDispatchNode(t *testing.T) {
 	s := store.New()
-	ts := task.New()
+	ts := task.NewBounded(0)
 	c := base.New(s, ts, "test")
 	c.SetPreflight(func(id manifest.NamedResource) (string, bool) {
 		return "synthetic cycle", id.Name == "preflightfail"

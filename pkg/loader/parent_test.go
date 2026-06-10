@@ -9,6 +9,13 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+// buildParentIndexForKindWithCache builds the parent index for a single use,
+// computing the KS path prefixes inline. Test-only: production threads a shared
+// prefix list through BuildParentIndexFromPrefixes (see discovery.Run).
+func buildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string, cache *manifest.ComponentCache) map[manifest.NamedResource]manifest.NamedResource {
+	return BuildParentIndexFromPrefixes(KSPathPrefixesWithCache(s, repoRoot, cache), s, sourceFiles, childKind)
+}
+
 func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
 	// cluster-apps is the root with spec.path=./kubernetes/apps/main.
 	// karma lives at apps/main/observability/karma.yaml — under
@@ -37,7 +44,7 @@ func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
 		clusterApps.Named(): "kubernetes/clusters/main/apps.yaml",
 		karma.Named():       "kubernetes/apps/main/observability/karma.yaml",
 	}
-	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
+	parents := buildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 
 	if got, want := parents[karma.Named()], clusterApps.Named(); got != want {
 		t.Errorf("karma.parent = %+v; want %+v", got, want)
@@ -76,7 +83,7 @@ func TestBuildParentIndex_DeepestPrefixWins(t *testing.T) {
 		inner.Named():      "apps/media/kustomization.yaml",
 		grandchild.Named(): "apps/media/plex/ks.yaml",
 	}
-	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
+	parents := buildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 
 	if got, want := parents[grandchild.Named()], inner.Named(); got != want {
 		t.Errorf("grandchild.parent = %+v; want %+v (deepest prefix)", got, want)
@@ -99,7 +106,7 @@ func TestBuildParentIndex_NoSelfMatch(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		ks.Named(): "apps/self/ks.yaml",
 	}
-	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
+	parents := buildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 	if _, ok := parents[ks.Named()]; ok {
 		t.Errorf("KS must not be its own parent: %v", parents)
 	}
@@ -128,7 +135,7 @@ func TestBuildParentIndex_PeersSharingSamePathHaveNoParent(t *testing.T) {
 		config.Named():    "clusters/main/flux/flux-repo.yaml",
 		softServe.Named(): "clusters/main/flux/flux-repo.yaml",
 	}
-	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
+	parents := buildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 	if p, ok := parents[config.Named()]; ok {
 		t.Errorf("same-spec.path peer must not be a parent: 0-config.parent = %+v", p)
 	}
@@ -161,7 +168,7 @@ func TestBuildParentIndex_RendererOfDefinitionFileStillParents(t *testing.T) {
 		// app is defined in the dir root renders, but claims ./apps.
 		app.Named(): "clusters/main/flux/app-ks.yaml",
 	}
-	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
+	parents := buildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 	if got, want := parents[app.Named()], root.Named(); got != want {
 		t.Errorf("app.parent = %+v; want %+v (the KS that renders app's definition dir)", got, want)
 	}
@@ -188,7 +195,7 @@ func TestBuildParentIndex_NoSourceFileSkipped(t *testing.T) {
 		parent.Named(): "clusters/main/apps.yaml",
 		// orphan deliberately absent.
 	}
-	parents := BuildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
+	parents := buildParentIndexForKindWithCache(s, "", sourceFiles, manifest.KindKustomization, nil)
 	if _, ok := parents[orphan.Named()]; ok {
 		t.Errorf("KS without source file must not appear in parent index: %v", parents)
 	}

@@ -37,7 +37,7 @@ func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedReso
 func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Controller, *store.Store) {
 	t.Helper()
 	st := store.New()
-	ts := task.New()
+	ts := task.NewBounded(0)
 	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
@@ -66,7 +66,7 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 // levels (none→cascade→force), mirroring the scheduler's structural fixpoint,
 // until the node terminalizes (no blocked deps) or drain is exhausted, then
 // returns the final store status. Synchronous — replaces the event engine's
-// AddObject→listener→WaitForStatus dispatch in unit tests.
+// AddObject→listener→status-poll dispatch in unit tests.
 func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
 	t.Helper()
 	for _, drain := range []int{0, 1, 2} {
@@ -610,7 +610,7 @@ func (s *spyTracker) MarkRenderedBatch(parent manifest.NamedResource, children [
 // tracking and filter keep-set extension, matching KS behavior.
 func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testing.T) {
 	st := store.New()
-	ts := task.New()
+	ts := task.NewBounded(0)
 	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
@@ -708,7 +708,7 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 // KeepEmitted (keep-set) + ReportRendered (provenance) — MUST still fire.
 func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 	st := store.New()
-	ts := task.New()
+	ts := task.NewBounded(0)
 	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
@@ -768,7 +768,7 @@ func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 
 func TestEmitRenderedChildren_NilTrackerAndNilFilterAreNoops(t *testing.T) {
 	st := store.New()
-	ts := task.New()
+	ts := task.NewBounded(0)
 	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)

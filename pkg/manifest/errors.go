@@ -79,19 +79,6 @@ func inputf(format string, args ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{ErrInput}, args...)...)
 }
 
-// ResourceFailedError signals that a reconciliation entered a terminal
-// failed state.
-type ResourceFailedError struct {
-	Resource string
-	Reason   string
-}
-
-func (e *ResourceFailedError) Error() string {
-	return fmt.Sprintf("resource %s failed: %s", e.Resource, cmp.Or(e.Reason, "unknown error"))
-}
-
-func (*ResourceFailedError) Unwrap() error { return ErrFlux }
-
 // DependencyFailedError signals that a parent resource cannot proceed
 // because one of its dependencies has failed.
 type DependencyFailedError struct {

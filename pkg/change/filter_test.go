@@ -12,6 +12,29 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// addUngated and addRecursive are test-only scaffolding: they seed the keep
+// set directly, bypassing the primary-emitter gate AddEmitted enforces in
+// production. Kept in the test file so the production binary carries neither;
+// both walk through addRecursiveLocked, the lock-free body production shares.
+
+// addUngated unconditionally extends the keep set with id (and its transitive
+// sourceRef/chartRef/valuesFrom deps), marking every newly-inserted entry
+// primary. No-op when the filter is disabled.
+func (f *Filter) addUngated(id manifest.NamedResource) {
+	if !f.Enabled() {
+		return
+	}
+	f.fireOnAdd(f.addRecursive(id))
+}
+
+// addRecursive adds id (and transitive deps) to keep AND primary under f.mu,
+// returning the newly-added ids so the caller can fire OnAdd outside the lock.
+func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResource {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.addRecursiveLocked(id)
+}
+
 // refObj wraps a NamedResource as a minimal BaseManifest for AddEmitted
 // call sites that exercise only keep-set membership — the emitted child's
 // own chartRef/sourceRef is resolved from the Store-backed ObjectLister

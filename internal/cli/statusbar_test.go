@@ -57,8 +57,8 @@ func TestRenderFrame_ColorInvisibleToWidth(t *testing.T) {
 	if visibleLen(plain) != visibleLen(color) {
 		t.Errorf("visible lengths differ: plain=%d color=%d", visibleLen(plain), visibleLen(color))
 	}
-	if !strings.Contains(color, ansiCyan) {
-		t.Errorf("color frame missing the cyan spinner code: %q", color)
+	if !strings.Contains(color, "\x1b") {
+		t.Errorf("color frame carries no ANSI styling: %q", color)
 	}
 }
 

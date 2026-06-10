@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -55,7 +56,7 @@ type statusBar struct {
 func newStatusBar(r *stderrRouter) *statusBar {
 	return &statusBar{
 		r:         r,
-		color:     colorEnabled(),
+		color:     style.ColorEnabled(r.w),
 		startedAt: time.Now(),
 		first:     map[manifest.NamedResource]time.Time{},
 		inflight:  map[manifest.NamedResource]struct{}{},
@@ -181,77 +182,24 @@ const maxInflightNames = 2
 // spinnerFrames is the classic braille spinner cycle.
 var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
-// ANSI SGR codes. Width math never counts these — they are zero visible runes.
-const (
-	ansiReset = "\x1b[0m"
-	ansiBold  = "\x1b[1m"
-	ansiDim   = "\x1b[2m"
-	ansiCyan  = "\x1b[36m"
-)
-
-// renderFrame composes one status-bar line and truncates it to width without
-// counting ANSI codes against the budget. Pure: deterministic in its inputs,
-// so the layout, truncation, and "+N" collapse are all unit-testable.
+// renderFrame composes one status-bar line, styled via internal/style and
+// truncated to width by visible columns (style.Truncate is ANSI- and wide-rune-
+// aware, so escape codes never count against the budget). Pure: deterministic in
+// its inputs, so the layout, truncation, and "+N" collapse are unit-testable.
 //
 //	⠹ [42/86] plex, factorio +3  12.3s
 func renderFrame(spin string, done, total int, inflight []string, elapsed time.Duration, width int, color bool) string {
-	segs := []segment{
-		{spin, ansiCyan},
-		{" ", ""},
-		{fmt.Sprintf("[%d/%d]", done, total), ansiBold},
-	}
-	if names := summarizeInflight(inflight, maxInflightNames); names != "" {
-		segs = append(segs, segment{" ", ""}, segment{names, ansiDim})
-	}
-	segs = append(segs, segment{"  ", ""}, segment{fmtElapsed(elapsed), ansiDim})
-	return assemble(segs, width, color)
-}
-
-// segment is a run of text with an optional color; assemble emits the code
-// only when color is on, and never counts it toward the width budget.
-type segment struct {
-	text string
-	code string
-}
-
-// assemble concatenates segments, truncating with an ellipsis the moment the
-// visible width would exceed width. Color codes wrap each kept segment but are
-// invisible to the width count.
-func assemble(segs []segment, width int, color bool) string {
-	if width < 1 {
-		width = 1
-	}
 	var b strings.Builder
-	used := 0
-	for _, s := range segs {
-		if s.text == "" {
-			continue
-		}
-		runes := []rune(s.text)
-		if used+len(runes) <= width {
-			writeSegment(&b, s.text, s.code, color)
-			used += len(runes)
-			continue
-		}
-		// Overflow: keep what fits, reserving one column for the ellipsis.
-		if remain := width - used; remain >= 2 {
-			writeSegment(&b, string(runes[:remain-1])+"…", s.code, color)
-		} else if remain == 1 {
-			writeSegment(&b, "…", s.code, color)
-		}
-		break
+	b.WriteString(style.Cyan(spin, color))
+	b.WriteByte(' ')
+	b.WriteString(style.Bold(fmt.Sprintf("[%d/%d]", done, total), color))
+	if names := summarizeInflight(inflight, maxInflightNames); names != "" {
+		b.WriteByte(' ')
+		b.WriteString(style.Dim(names, color))
 	}
-	return b.String()
-}
-
-func writeSegment(b *strings.Builder, text, code string, color bool) {
-	if color && code != "" {
-		b.WriteString(code)
-		b.WriteString(text)
-		b.WriteString(ansiReset)
-		return
-	}
-	b.WriteString(text)
+	b.WriteString("  ")
+	b.WriteString(style.Dim(fmtElapsed(elapsed), color))
+	return style.Truncate(b.String(), width)
 }
 
 // summarizeInflight renders up to limit names joined by ", ", collapsing any
@@ -274,20 +222,6 @@ func fmtElapsed(d time.Duration) string {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 	return fmt.Sprintf("%dm%02ds", int(d/time.Minute), int(d%time.Minute/time.Second))
-}
-
-// colorEnabled reports whether ANSI color is appropriate, honoring the
-// NO_COLOR convention and dumb/absent terminals.
-func colorEnabled() bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	switch os.Getenv("TERM") {
-	case "", "dumb":
-		return false
-	default:
-		return true
-	}
 }
 
 // terminalWidth reports w's column count when it is a sized terminal, else 80.

@@ -12,6 +12,15 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// Child is one parsed render-emission: the typed object and the source doc it
+// was parsed from. Children returns these in doc order so a caller can
+// post-process them (e.g. the ResourceSet controller routes RawObject children
+// to its output sink) without re-parsing.
+type Child struct {
+	Obj manifest.BaseManifest
+	Doc map[string]any
+}
+
 // Children parses the rendered docs and lands them in the store using a
 // two-pass emission strategy:
 //
@@ -48,9 +57,13 @@ import (
 // provenance (ReportRendered) and keep-set (KeepEmitted) side-effects
 // the replay exists for are idempotent and event-free, so they still
 // run on both paths; only the redundant republish is skipped.
-func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, docs []map[string]any, publish bool) {
+//
+// Returns the parsed children in doc order (build directives and parse
+// failures excluded), so a caller can post-process them without re-parsing —
+// the ResourceSet controller routes the RawObject children to its output sink.
+func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, docs []map[string]any, publish bool) []Child {
 	type parsed struct {
-		obj          manifest.BaseManifest
+		Child
 		reconcilable bool
 		leaf         bool // held for pass 2 (Kustomization / HelmRelease)
 	}
@@ -72,7 +85,7 @@ func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, d
 		}
 		reconcilable := ShouldDispatchAsObject(obj)
 		objs = append(objs, parsed{
-			obj:          obj,
+			Child:        Child{Obj: obj, Doc: doc},
 			reconcilable: reconcilable,
 			leaf:         reconcilable && IsLeafReconcilable(obj),
 		})
@@ -93,26 +106,31 @@ func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, d
 		case p.leaf:
 			continue // held for pass 2
 		case p.reconcilable:
-			keep(p.obj)
+			keep(p.Obj)
 			if publish {
-				c.Store.AddObject(p.obj)
+				c.Store.AddObject(p.Obj)
 			}
 		default:
-			c.Store.AddRendered(p.obj)
+			c.Store.AddRendered(p.Obj)
 		}
 	}
 	// Pass 2 — leaf reconcilables.
 	var leaves []manifest.BaseManifest
 	for _, p := range objs {
 		if p.leaf {
-			keep(p.obj)
-			leaves = append(leaves, p.obj)
+			keep(p.Obj)
+			leaves = append(leaves, p.Obj)
 		}
 	}
 	c.ReportRendered(id, rendered)
 	if publish {
 		c.Store.AddObjects(leaves)
 	}
+	children := make([]Child, len(objs))
+	for i, p := range objs {
+		children[i] = p.Child
+	}
+	return children
 }
 
 // ShouldDispatchAsObject reports whether a render-emitted Flux

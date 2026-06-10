@@ -263,8 +263,10 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, ready, re
 	defer s.cond.Broadcast()
 	n := s.nodes[id]
 	s.inFlight--
-	// Record the node's rerun intent (static per node — a selector ResourceSet
-	// always asks). Read by requeueRerunLocked at the fixpoint.
+	// Record the node's rerun intent, re-evaluated at each dispatch. The value
+	// is stable per node — a selector-only ResourceSet's rerun status is a fixed
+	// spec property — so each write sets the same value. Read by
+	// requeueRerunLocked at the fixpoint.
 	n.rerun = rerun
 
 	// A wake landed while this body was running: honor it exactly once by

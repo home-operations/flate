@@ -170,7 +170,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet) er
 // otherwise — the cached docs were already sunk by the render that set
 // the artifact).
 func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publish bool) {
-	emit.Children(c.Controller, c.WipeSecrets, id, docs, publish)
+	children := emit.Children(c.Controller, c.WipeSecrets, id, docs, publish)
 	if !publish || c.rawSink == nil {
 		return
 	}
@@ -178,16 +178,13 @@ func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publ
 	if !ok {
 		return
 	}
-	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
-	for _, doc := range docs {
-		obj, err := manifest.ParseDoc(doc, opts)
-		if err != nil {
-			continue
+	// Route the RawObject (non-Flux) children to the orchestrator's output sink,
+	// reusing emit.Children's parse — they group under the parent KS in the
+	// build output, the same as the deleted post-run pass produced.
+	for _, child := range children {
+		if _, raw := child.Obj.(*manifest.RawObject); raw {
+			c.rawSink(id, parentKS, child.Doc)
 		}
-		if _, raw := obj.(*manifest.RawObject); !raw {
-			continue
-		}
-		c.rawSink(id, parentKS, doc)
 	}
 }
 

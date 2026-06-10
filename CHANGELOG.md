@@ -1,5 +1,114 @@
 # Changelog
 
+## [0.3.4](https://github.com/home-operations/flate/compare/v0.3.3...v0.3.4) (2026-06-10)
+
+
+### Features
+
+* **cli:** add opt-in --stream for incremental YAML output ([#685](https://github.com/home-operations/flate/issues/685)) ([a4f0c56](https://github.com/home-operations/flate/commit/a4f0c56a35353e97590ae1d50252982af72af390))
+* **cli:** live per-resource progress on stderr ([#684](https://github.com/home-operations/flate/issues/684)) ([481a37a](https://github.com/home-operations/flate/commit/481a37a4ce9515597f2ee141b19333b94bb80837))
+* **cli:** modern `flate test` output on a shared lipgloss style layer ([#696](https://github.com/home-operations/flate/issues/696)) ([713ae9b](https://github.com/home-operations/flate/commit/713ae9b347412d37311c104cb9df7265365a7609))
+* **cli:** replace scrolling progress with a live status bar ([#686](https://github.com/home-operations/flate/issues/686)) ([57f4a3e](https://github.com/home-operations/flate/commit/57f4a3ed682f33f5f454763fcb05bdf44390e49e))
+* **deps:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.50.0 → v0.51.0) ([#678](https://github.com/home-operations/flate/issues/678)) ([021bcbe](https://github.com/home-operations/flate/commit/021bcbeef922a73e481c83dc2acb584e85193329))
+* **deps:** update module golang.org/x/crypto (v0.52.0 → v0.53.0) ([#661](https://github.com/home-operations/flate/issues/661)) ([9106e9e](https://github.com/home-operations/flate/commit/9106e9ee3ab650cbadf8f19497afda3903ee9d96))
+* deterministic Helm certs via ed25519; simplify random funcs to stdlib ([#670](https://github.com/home-operations/flate/issues/670)) ([ac735c0](https://github.com/home-operations/flate/commit/ac735c0abdeae7fbcad632267fd194ecc064b132))
+* **engine:** make the dag fixpoint scheduler the default ([#677](https://github.com/home-operations/flate/issues/677)) ([59c27b5](https://github.com/home-operations/flate/commit/59c27b5867ba723dbdece3660ca5cc73c2803929))
+* **engine:** re-entrant fixpoint scheduler behind --engine=dag ([#676](https://github.com/home-operations/flate/issues/676)) ([0ba5114](https://github.com/home-operations/flate/commit/0ba51144670c9e63f9ed72c11914d4dcdd5c2e1c))
+* **mise:** update tool oxfmt (0.53.0 → 0.54.0) ([#662](https://github.com/home-operations/flate/issues/662)) ([a8d97fb](https://github.com/home-operations/flate/commit/a8d97fb8ff8a12ae220566b528ddd5068ef7fde6))
+* render Helm with a deterministic clock to stop now-derived churn ([#667](https://github.com/home-operations/flate/issues/667)) ([1e85b65](https://github.com/home-operations/flate/commit/1e85b6527e7e4817c6de10080639b60ad40a48ea))
+* **resourceset:** make ResourceSet a first-class DAG node ([#705](https://github.com/home-operations/flate/issues/705)) ([84bbb22](https://github.com/home-operations/flate/commit/84bbb22a45c3c6de1eaac6bc77686bbe0159905a))
+* **schedule:** generation-guarded rerun-at-drain primitive ([#703](https://github.com/home-operations/flate/issues/703)) ([e9e1f18](https://github.com/home-operations/flate/commit/e9e1f185a41fabf4a4151c0c6b92458482d139b8))
+* **secrets:** auto-skip missing secrets declared by an in-repo ExternalSecret/SealedSecret ([#700](https://github.com/home-operations/flate/issues/700)) ([3bf18be](https://github.com/home-operations/flate/commit/3bf18be866f25435c45de3b25ec3d6fef8d65cc4))
+* seed Helm's random template funcs to stop checksum/secret churn ([#668](https://github.com/home-operations/flate/issues/668)) ([1ac35d6](https://github.com/home-operations/flate/commit/1ac35d69a719b45167380210e62d6002981dd0c8))
+
+
+### Bug Fixes
+
+* base.Await parks waits on present CEL-free Kustomization/HelmRelease deps with YieldSlot (stay active) instead of YieldQuiescent (decrement) — these multi-hop deps are the transient-drain victims and always terminalize, so holding active keeps the pool non-zero across the handoff. Source-kind/ReadyExpr deps stay on YieldQuiescent (single-hop; preserves the post-Failed fast-fail). Cycles still fail via the preflight detector. ([6215fde](https://github.com/home-operations/flate/commit/6215fdebb71fe1c5348b574aa5cd4a7c4dd3efee))
+* bind dependency waits to fetch completion, not a wall clock ([#655](https://github.com/home-operations/flate/issues/655)) ([462be1c](https://github.com/home-operations/flate/commit/462be1c116f26f153850a006865005f088427672))
+* bound git/OCI/bucket HTTP fetches with a response-header liveness backstop ([#656](https://github.com/home-operations/flate/issues/656)) ([e0ec660](https://github.com/home-operations/flate/commit/e0ec6609db79e7044831c01d027a6b9c6ce294ac))
+* **cli:** count only declared resources in the status bar ([#691](https://github.com/home-operations/flate/issues/691)) ([80095a9](https://github.com/home-operations/flate/commit/80095a9a0d2b2b95199b46b82f49f86bb18189b2))
+* **cli:** suppress the status bar when --stream shares the terminal ([#695](https://github.com/home-operations/flate/issues/695)) ([abcc2c9](https://github.com/home-operations/flate/commit/abcc2c946ba01642370b6b3b540854c2cbec001c))
+* **deps:** update module go.yaml.in/yaml/v4 (v4.0.0-rc.4 → v4.0.0-rc.5) ([#673](https://github.com/home-operations/flate/issues/673)) ([1d5ff1e](https://github.com/home-operations/flate/commit/1d5ff1e44f75cc6377bff63fce90f9964f4290ce))
+* **deps:** update module oras.land/oras-go/v2 (v2.6.0 → v2.6.1) ([#669](https://github.com/home-operations/flate/issues/669)) ([2cbeb60](https://github.com/home-operations/flate/commit/2cbeb6073160ac6a4fd778b68ccf660b749bf170))
+* don't transiently re-downgrade an already-Ready ExistenceFetcher source ([#658](https://github.com/home-operations/flate/issues/658)) ([15d54ec](https://github.com/home-operations/flate/commit/15d54ecd00aa8d22ef0a3c061774faa886899262))
+* **git:** restore the bounded HTTPS client after a custom-CA fetch ([#693](https://github.com/home-operations/flate/issues/693)) ([cc67d55](https://github.com/home-operations/flate/commit/cc67d55e7c1e7064446ae1a220eadb44b4d1b5fa))
+* hold active for reconcilable dep waits so a transient pool drain can't drop them ([#666](https://github.com/home-operations/flate/issues/666)) ([6215fde](https://github.com/home-operations/flate/commit/6215fdebb71fe1c5348b574aa5cd4a7c4dd3efee))
+* keep a re-rendered Kustomization Ready so dependents don't race quiescence ([#657](https://github.com/home-operations/flate/issues/657)) ([07efc79](https://github.com/home-operations/flate/commit/07efc797046ab864fa56c65bc74fbbeb695f2414))
+* **kustomize:** propagate filepath.SkipDir to the disk layer in overlayFS.Walk ([#644](https://github.com/home-operations/flate/issues/644)) ([4ff40cc](https://github.com/home-operations/flate/commit/4ff40ccbf07881fe6013e6d70b4ede2ccd0d8b59))
+* **kustomize:** resolve git-repository references in kustomize resources ([#624](https://github.com/home-operations/flate/issues/624)) ([fdd5267](https://github.com/home-operations/flate/commit/fdd52671eb45f7ecca0f0f4adc33eb52f22e2840))
+* **manifest:** wipe only SOPS ciphertext, not all Secret values ([#688](https://github.com/home-operations/flate/issues/688)) ([74beebe](https://github.com/home-operations/flate/commit/74beebe6bad2fe5809401a379980a6603fce1acc))
+* resolve replacements-based targetNamespace so base HelmReleases aren't empty-namespaced ([#665](https://github.com/home-operations/flate/issues/665)) ([7927c59](https://github.com/home-operations/flate/commit/7927c59f820c6025448381672ccaf9951133fa89))
+* substitute postBuild ${VAR} in map-key position to match Flux ([#664](https://github.com/home-operations/flate/issues/664)) ([d5269f8](https://github.com/home-operations/flate/commit/d5269f8012453f540db7349172f6d2650f81056f))
+
+
+### Performance Improvements
+
+* benchmark-gated hot-path optimizations (round 1) ([#645](https://github.com/home-operations/flate/issues/645)) ([ea80f99](https://github.com/home-operations/flate/commit/ea80f99ee1c02a238eccf259d275ac7e32d86409))
+* benchmark-gated warm-path optimizations (round 2) ([#646](https://github.com/home-operations/flate/issues/646)) ([3755cd2](https://github.com/home-operations/flate/commit/3755cd23e6f74a8c965c2c7fd392f7600952e8c6))
+* **orchestrator:** drop the blocking git-mirror prewarm pass ([#683](https://github.com/home-operations/flate/issues/683)) ([477c1d7](https://github.com/home-operations/flate/commit/477c1d76fcad2c24e7085e85ea62aef7c081de8e))
+* persist HelmRepository index resolution to skip per-run index fetches ([#674](https://github.com/home-operations/flate/issues/674)) ([8d9c3f9](https://github.com/home-operations/flate/commit/8d9c3f920314c955adb7b86048f262da13015bfe))
+* read only the referenced key in valuesFrom lookups ([#672](https://github.com/home-operations/flate/issues/672)) ([6572914](https://github.com/home-operations/flate/commit/6572914526240f67b7a450bfdcbbfcee70b6c8eb))
+
+
+### Documentation
+
+* **cleanup:** scrub dangling references to the deleted event engine ([#682](https://github.com/home-operations/flate/issues/682)) ([f613131](https://github.com/home-operations/flate/commit/f6131316086a0c4f8625a552122a0841b1497b06))
+* scrub stale references to the deleted on-disk staging cache ([#629](https://github.com/home-operations/flate/issues/629)) ([7ec83d2](https://github.com/home-operations/flate/commit/7ec83d2e81e5e2f3875c044c77ac354b7581ce17))
+
+
+### Code Refactoring
+
+* **blob:** remove dead Refs type, re-express [#405](https://github.com/home-operations/flate/issues/405) race test on Store ([#694](https://github.com/home-operations/flate/issues/694)) ([2776fa3](https://github.com/home-operations/flate/commit/2776fa307f9aab47386d3ad0d96e0a319fad3009))
+* centralize the no-transient-downgrade guard as base.SetPendingUnlessReady ([#659](https://github.com/home-operations/flate/issues/659)) ([f1d1706](https://github.com/home-operations/flate/commit/f1d1706ad1136a027e66ac7fd56b661cf59f8e0e))
+* **cli,source:** retire the inert --stage-cache-mb flag and dead stage layout ([#628](https://github.com/home-operations/flate/issues/628)) ([e5be7b9](https://github.com/home-operations/flate/commit/e5be7b9c10a5fb619f0d7b332f0111101e23e047))
+* **cli:** drive the status bar with Bubble Tea v2 ([#698](https://github.com/home-operations/flate/issues/698)) ([69b1ef3](https://github.com/home-operations/flate/commit/69b1ef300ab64ff52e147a7680ea7155a6ef3fec))
+* **cli:** make the status bar vanish completely when done ([#687](https://github.com/home-operations/flate/issues/687)) ([a61e71a](https://github.com/home-operations/flate/commit/a61e71a4404b528c852c91795db481204aaedac9))
+* **cli:** retrofit the status bar onto internal/style ([#697](https://github.com/home-operations/flate/issues/697)) ([25a40ef](https://github.com/home-operations/flate/commit/25a40ef4859b1d4de5aea34fffa283f10d913717))
+* **cli:** unify the bar + test vocabulary; verdict glyph & timing ([#699](https://github.com/home-operations/flate/issues/699)) ([b7585ba](https://github.com/home-operations/flate/commit/b7585ba49233f2472e1a4b0e856b07fec133b3e0))
+* code-cleanliness sweep ([#617](https://github.com/home-operations/flate/issues/617)) ([90af88b](https://github.com/home-operations/flate/commit/90af88b6ecb4c1105dc5ffff6e1b751f68fa1ccc))
+* codebase-wide behavior-preserving cleanliness pass ([#630](https://github.com/home-operations/flate/issues/630)) ([c8722fd](https://github.com/home-operations/flate/commit/c8722fd7f74ec177556b77e11bc20fd0b6f8673d))
+* **controllers:** add engine-agnostic Require dependency seam ([#675](https://github.com/home-operations/flate/issues/675)) ([fe88398](https://github.com/home-operations/flate/commit/fe88398a47f33a6b0d94a6f2fd133157a7dde853))
+* **controllers:** fuse dep-wait re-read, route adapters via GetByName[T], fix RS attribution ([#622](https://github.com/home-operations/flate/issues/622)) ([18812e0](https://github.com/home-operations/flate/commit/18812e01453d56a3cf4a07aa7ab16f3d68274d10))
+* **controllers:** give each controller a name instead of threading a string ([#708](https://github.com/home-operations/flate/issues/708)) ([ae1ae9b](https://github.com/home-operations/flate/commit/ae1ae9b06ab870819e5175334e2a34557001527c))
+* **controllers:** lift shared reconcile config into base.Options ([#707](https://github.com/home-operations/flate/issues/707)) ([ef2a761](https://github.com/home-operations/flate/commit/ef2a761bac10c73f8f3d364613a095ed1836d99b))
+* **controllers:** log through a pre-bound controller logger ([#709](https://github.com/home-operations/flate/issues/709)) ([f915787](https://github.com/home-operations/flate/commit/f9157872969095212acf56d9a33b852c555a3b8c))
+* deduplicate dispatch, fingerprint-dedup, and hashing across controllers ([#663](https://github.com/home-operations/flate/issues/663)) ([eb74444](https://github.com/home-operations/flate/commit/eb74444ae3ba839b434ed61357e5fe6f3c4d6e84))
+* deep cleanliness pass (loader/manifest/values) ([#647](https://github.com/home-operations/flate/issues/647)) ([f7894b1](https://github.com/home-operations/flate/commit/f7894b15da7ad8d320794750d188dfcae7ab127d))
+* deep cleanliness pass 2 (dedup, dead-code, stale comments) ([#648](https://github.com/home-operations/flate/issues/648)) ([fdec58c](https://github.com/home-operations/flate/commit/fdec58c7aaf9918e1d46c9215098118a9aea8598))
+* deep cleanliness pass 3 (recompute hoist + stale docs) ([#649](https://github.com/home-operations/flate/issues/649)) ([52b24fc](https://github.com/home-operations/flate/commit/52b24fcd620c0e5ddcdd70661384291ddbb15934))
+* deep cleanliness pass 4 (dedup + modern idioms) ([#650](https://github.com/home-operations/flate/issues/650)) ([5fde632](https://github.com/home-operations/flate/commit/5fde63256fbeb2361bef2e70b6c4d2ddc63b2975))
+* deep cleanliness pass 5 (stale docs + guard-clause reorder) ([#651](https://github.com/home-operations/flate/issues/651)) ([95c0406](https://github.com/home-operations/flate/commit/95c04060988c02c8f13bb4f7e103bf9bbde470dd))
+* deep cleanliness pass 6 (iter.Seq + stale-doc/type fixes) ([#652](https://github.com/home-operations/flate/issues/652)) ([16c46d2](https://github.com/home-operations/flate/commit/16c46d22d287f62bb7e9eea6223f2771882886be))
+* deep cleanliness pass 7 (dedup + accurate docs) ([#653](https://github.com/home-operations/flate/issues/653)) ([aa45cba](https://github.com/home-operations/flate/commit/aa45cba0c0194ee1d37fb3c5cfe5dce1d4d9813a))
+* drop unused speculative store.Mutate and cas.Stage adopted-bool ([#671](https://github.com/home-operations/flate/issues/671)) ([c18dd0c](https://github.com/home-operations/flate/commit/c18dd0c406859e46739c879653d42caf494a1711))
+* eighth behavior-preserving cleanliness pass ([#637](https://github.com/home-operations/flate/issues/637)) ([05e3a79](https://github.com/home-operations/flate/commit/05e3a794441a74fde17d9e95527f0c1c84acf081))
+* eleventh behavior-preserving cleanliness pass ([#640](https://github.com/home-operations/flate/issues/640)) ([252afe7](https://github.com/home-operations/flate/commit/252afe7353aaa8bd6c22b199535721f826f32fc0))
+* **emit:** return parsed children so ResourceSet skips a re-parse ([#706](https://github.com/home-operations/flate/issues/706)) ([e0f2396](https://github.com/home-operations/flate/commit/e0f23965ca68234ec6124418ca79fd1b5f8af120))
+* **engine:** delete the legacy event engine; dag is the only engine ([#679](https://github.com/home-operations/flate/issues/679)) ([6443fe2](https://github.com/home-operations/flate/commit/6443fe2a5a80e03ae5e25e14a9a94d0ac710e9dd))
+* fifth behavior-preserving cleanliness pass ([#634](https://github.com/home-operations/flate/issues/634)) ([47f5007](https://github.com/home-operations/flate/commit/47f500733994364ba00e4f9472e31853a7302374))
+* fourteenth behavior-preserving cleanliness pass ([#643](https://github.com/home-operations/flate/issues/643)) ([d19a851](https://github.com/home-operations/flate/commit/d19a851f98371928e9262e6ca3bf397edb04bb5e))
+* fourth behavior-preserving cleanliness pass ([#633](https://github.com/home-operations/flate/issues/633)) ([f27cf92](https://github.com/home-operations/flate/commit/f27cf92d6231a4579cd42ade5c8e5a62df50e1ea))
+* gate the HelmRelease dedup-replay source re-emit (mirror KS publish gate) ([#660](https://github.com/home-operations/flate/issues/660)) ([2e5a945](https://github.com/home-operations/flate/commit/2e5a9453e77b95cf19dd4ff46a59f4ba494c2f02))
+* **helmrelease:** extract resolvePreRenderValuesFrom from reconcile ([#623](https://github.com/home-operations/flate/issues/623)) ([9cf4499](https://github.com/home-operations/flate/commit/9cf4499ff578cd9b6e3cff568e0b81fdd32bc365))
+* **kustomize:** render in memory, drop the on-disk staging cache ([#626](https://github.com/home-operations/flate/issues/626)) ([23a1480](https://github.com/home-operations/flate/commit/23a148018bfe2e1d277ad8279ccea5e585f563d5))
+* **kustomize:** unify staging-cache internals + extract testable cosign verify ([#621](https://github.com/home-operations/flate/issues/621)) ([d882e8b](https://github.com/home-operations/flate/commit/d882e8bb13a138ce81fa732251f182c806c981d4))
+* **loader:** typed decode + unified strategies in transformer_ns.go ([#681](https://github.com/home-operations/flate/issues/681)) ([a2eb1ff](https://github.com/home-operations/flate/commit/a2eb1ffba62df21eee022fb315ffd421ea12900b))
+* **manifest:** single-source the cross-package KS/substitute invariants ([#620](https://github.com/home-operations/flate/issues/620)) ([efe65cd](https://github.com/home-operations/flate/commit/efe65cd77de084d5acd5e116a41e45555ae1fbd9))
+* ninth behavior-preserving cleanliness pass ([#638](https://github.com/home-operations/flate/issues/638)) ([495e871](https://github.com/home-operations/flate/commit/495e87178a78d1eb037baad1ff44472553cc67e6))
+* **oci:** decompose the fetch god-function into a readable pipeline ([#689](https://github.com/home-operations/flate/issues/689)) ([c135c33](https://github.com/home-operations/flate/commit/c135c337600f0ff1872b7a5b1871c1afae589ef5))
+* **schedule:** crisp dirty-bit rerun-at-drain primitive ([#704](https://github.com/home-operations/flate/issues/704)) ([1f1f935](https://github.com/home-operations/flate/commit/1f1f93573f29d0b9a04a30ea0550fe107ca4987b))
+* second behavior-preserving cleanliness pass ([#631](https://github.com/home-operations/flate/issues/631)) ([2fbb444](https://github.com/home-operations/flate/commit/2fbb444269c006f091c7ed67c1bc7bb326f086a2))
+* seventh behavior-preserving cleanliness pass ([#636](https://github.com/home-operations/flate/issues/636)) ([f9eeae7](https://github.com/home-operations/flate/commit/f9eeae7e63bd65d933ea81f3ef8d239792626e51))
+* sixth behavior-preserving cleanliness pass ([#635](https://github.com/home-operations/flate/issues/635)) ([6a61d60](https://github.com/home-operations/flate/commit/6a61d60f4861ce7f103b506ff970b4ccf9f0ab57))
+* **source:** collapse cache-slot markers into one meta.json sidecar ([#627](https://github.com/home-operations/flate/issues/627)) ([aaf40c4](https://github.com/home-operations/flate/commit/aaf40c410ae6c08a40c63de12be6d042e08c9150))
+* **source:** pass-1 cleanups — dead code, bucket alloc, resolve-persist dedup ([#692](https://github.com/home-operations/flate/issues/692)) ([50ef65b](https://github.com/home-operations/flate/commit/50ef65bfb01ef63f545ededde7f266131c9c7222))
+* **source:** unify error-prefix + slot-meta helpers across fetchers ([#690](https://github.com/home-operations/flate/issues/690)) ([943b731](https://github.com/home-operations/flate/commit/943b7310b701c759762aa3f29fd06ebc8a99e0fe))
+* tenth behavior-preserving cleanliness pass ([#639](https://github.com/home-operations/flate/issues/639)) ([c6af0c1](https://github.com/home-operations/flate/commit/c6af0c1e2e7cb863776c796b68627275c67edd4e))
+* third behavior-preserving cleanliness pass ([#632](https://github.com/home-operations/flate/issues/632)) ([38c7c07](https://github.com/home-operations/flate/commit/38c7c07fb38567c3320d76044531f7a55aecebf6))
+* thirteenth behavior-preserving cleanliness pass ([#642](https://github.com/home-operations/flate/issues/642)) ([d8b2042](https://github.com/home-operations/flate/commit/d8b20429540bdf3dcdd93e9093ebba2fef203a8e))
+* twelfth behavior-preserving cleanliness pass ([#641](https://github.com/home-operations/flate/issues/641)) ([40beb8d](https://github.com/home-operations/flate/commit/40beb8dd8baf06cc26aa98a398ea3fc642819e17))
+
 ## [0.3.3](https://github.com/home-operations/flate/compare/v0.3.2...v0.3.3) (2026-06-07)
 
 

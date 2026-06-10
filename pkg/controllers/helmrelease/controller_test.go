@@ -70,7 +70,7 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
 	t.Helper()
 	for _, drain := range []int{0, 1, 2} {
-		if blocked, _ := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
+		if blocked := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
 			break
 		}
 	}

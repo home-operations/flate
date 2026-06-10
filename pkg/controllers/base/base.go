@@ -641,20 +641,11 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 	return nil
 }
 
-// statusReady reports whether id's current store status is Ready — the dag
-// scheduler's "this terminal node satisfies a dependency" signal.
-func (c *Controller) statusReady(id manifest.NamedResource) bool {
-	info, ok := c.Store.GetStatus(id)
-	return ok && info.Status == store.StatusReady
-}
-
-// DispatchNode runs id's reconcile body under the dag engine and reports what
-// the scheduler needs: the blocked dependency set (nil = terminalized) and
-// whether id's final store status is Ready. It performs the PreGate /
+// DispatchNode runs id's reconcile body under the dag engine and reports the
+// blocked dependency set (nil = terminalized). It performs the PreGate /
 // preflight pre-checks, then RunWithStatusOutcome. drainLevel threads the
-// scheduler's fixpoint level into
-// Require via ctx. The orchestrator's Dispatcher calls this, routing by Kind, so
-// no per-kind match check is needed here.
+// scheduler's fixpoint level into Require via ctx. The orchestrator's Dispatcher
+// calls this, routing by Kind, so no per-kind match check is needed here.
 func DispatchNode[T manifest.BaseManifest](
 	ctx context.Context,
 	c *Controller,
@@ -662,22 +653,19 @@ func DispatchNode[T manifest.BaseManifest](
 	drainLevel int,
 	suspended func(T) bool,
 	reconcile func(context.Context, T) error,
-) (blocked []manifest.NamedResource, ready bool) {
+) []manifest.NamedResource {
 	ctx = WithDrainLevel(ctx, drainLevel)
 	obj, ok := store.Get[T](c.Store, id)
 	if !ok {
-		// Vanished — RunWithStatusOutcome's vanished branch records a terminal
-		// status; report it.
-		blocked = RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
-		return blocked, c.statusReady(id)
+		// Vanished — RunWithStatusOutcome's vanished branch records a terminal status.
+		return RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
 	}
 	if c.PreGate(id, suspended(obj)) {
-		return nil, c.statusReady(id) // gated out: Ready (suspended/unchanged)
+		return nil // gated out (suspended/unchanged)
 	}
 	if msg, failed := c.PreflightFailure(id); failed {
 		c.Store.UpdateStatus(id, store.StatusFailed, msg)
-		return nil, false
+		return nil
 	}
-	blocked = RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
-	return blocked, c.statusReady(id)
+	return RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
 }

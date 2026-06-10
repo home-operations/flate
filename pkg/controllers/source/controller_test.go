@@ -83,7 +83,7 @@ func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifes
 func reconcileNode(c *Controller, id manifest.NamedResource, drain int) (terminal bool) {
 	done := make(chan struct{})
 	c.Tasks.Go(context.Background(), "test/"+id.String(), func(ctx context.Context) {
-		blocked, _ := c.ReconcileNode(ctx, id, drain)
+		blocked := c.ReconcileNode(ctx, id, drain)
 		terminal = len(blocked) == 0
 		close(done)
 	})

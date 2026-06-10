@@ -37,7 +37,7 @@ func newController(t *testing.T) (*Controller, *store.Store) {
 func dispatchToFixpoint(t *testing.T, c *Controller, s *store.Store, id manifest.NamedResource) store.StatusInfo {
 	t.Helper()
 	for _, drain := range []int{0, 1, 2} {
-		if blocked, _ := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
+		if blocked := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
 			break
 		}
 	}
@@ -101,7 +101,7 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 
 	// First dispatch (no RSIP yet): the named dep is absent, so the node
 	// blocks rather than terminalizing.
-	blocked, _ := c.ReconcileNode(context.Background(), rs.Named(), 0)
+	blocked := c.ReconcileNode(context.Background(), rs.Named(), 0)
 	if len(blocked) != 1 {
 		t.Fatalf("first dispatch blocked = %v, want [rsip] (parked on the named RSIP)", blocked)
 	}

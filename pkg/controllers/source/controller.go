@@ -103,7 +103,7 @@ func (c *Controller) HasFetcher(kind string) bool {
 // blocked dependency set (always nil — sources have no depwait gates) and
 // whether id ended Ready. The orchestrator's scheduler Dispatcher calls this
 // for source-kind nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
 	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
 		suspendedSource, c.reconcile)
 }

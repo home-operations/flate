@@ -84,7 +84,7 @@ func (c *Controller) Start(_ context.Context) {
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
 // dependency set (nil = terminalized) and whether id ended Ready. The
 // orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
 	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
 		func(ks *manifest.Kustomization) bool { return ks.Suspend },
 		c.reconcile)

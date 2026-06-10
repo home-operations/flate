@@ -14,8 +14,7 @@ import (
 // scheduler Outcome. This is the single composition point where the scheduler,
 // the controllers, and the store meet — pkg/schedule itself imports none of
 // them. NodeID is manifest.NamedResource, so the blocked slice flows through
-// untranslated. The controllers' ReconcileNode also reports a readiness bool,
-// which the scheduler does not consume, so it is discarded here.
+// untranslated.
 type dagDispatcher struct{ o *Orchestrator }
 
 func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel int) (schedule.Outcome, []schedule.NodeID) {
@@ -23,13 +22,13 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLe
 	var blocked []manifest.NamedResource
 	switch {
 	case id.Kind == manifest.KindKustomization:
-		blocked, _ = o.ksc.ReconcileNode(ctx, id, drainLevel)
+		blocked = o.ksc.ReconcileNode(ctx, id, drainLevel)
 	case id.Kind == manifest.KindHelmRelease:
-		blocked, _ = o.hrc.ReconcileNode(ctx, id, drainLevel)
+		blocked = o.hrc.ReconcileNode(ctx, id, drainLevel)
 	case id.Kind == manifest.KindResourceSet:
-		blocked, _ = o.rsc.ReconcileNode(ctx, id, drainLevel)
+		blocked = o.rsc.ReconcileNode(ctx, id, drainLevel)
 	case o.src.HasFetcher(id.Kind):
-		blocked, _ = o.src.ReconcileNode(ctx, id, drainLevel)
+		blocked = o.src.ReconcileNode(ctx, id, drainLevel)
 	default:
 		// Not a schedulable kind (should never be dispatched) — terminal no-op.
 		return schedule.OutcomeTerminal, nil

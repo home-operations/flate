@@ -82,7 +82,7 @@ func (c *Controller) Start(_ context.Context) {
 // The orchestrator's scheduler Dispatcher calls this for ResourceSet
 // nodes. A ResourceSet has no Suspend field, so the suspended predicate
 // is always false.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) (blocked []manifest.NamedResource, ready bool) {
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
 	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
 		func(*manifest.ResourceSet) bool { return false },
 		c.reconcile)

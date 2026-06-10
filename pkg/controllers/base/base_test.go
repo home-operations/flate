@@ -283,8 +283,8 @@ func TestController_DoubleCloseIsSafe(t *testing.T) {
 // TestDispatchNode pins the dag scheduler's per-node entry point: it must bail
 // (via PreGate) on a suspended object — Ready/"suspended", no reconcile — mark a
 // preflight-failed id Failed without running it, and run the reconcile only for
-// a non-suspended, preflight-clean object, reporting ready accordingly. (The
-// scheduler's Dispatcher routes by Kind, so DispatchNode does no match check.)
+// a non-suspended, preflight-clean object. (The scheduler's Dispatcher routes by
+// Kind, so DispatchNode does no match check.)
 func TestDispatchNode(t *testing.T) {
 	s := store.New()
 	ts := task.NewBounded(0)
@@ -298,27 +298,22 @@ func TestDispatchNode(t *testing.T) {
 	var ran atomic.Int64
 	suspended := func(hr *manifest.HelmRelease) bool { return hr.Name == "suspended" }
 	reconcile := func(_ context.Context, _ *manifest.HelmRelease) error { ran.Add(1); return nil }
-	dispatch := func(id manifest.NamedResource) bool {
-		_, ready := base.DispatchNode(t.Context(), c, id, 0, suspended, reconcile)
-		return ready
+	dispatch := func(id manifest.NamedResource) {
+		base.DispatchNode(t.Context(), c, id, 0, suspended, reconcile)
 	}
 
 	// Suspended → PreGate bails to Ready/"suspended", no reconcile.
 	susHR := &manifest.HelmRelease{Name: "suspended", Namespace: "ns"}
 	s.AddObject(susHR)
-	if !dispatch(susHR.Named()) {
-		t.Error("suspended HR: want ready=true (PreGate→Ready)")
-	}
+	dispatch(susHR.Named())
 	if info, _ := s.GetStatus(susHR.Named()); info.Message != "suspended" {
 		t.Errorf("suspended HR status = %+v; want Ready/suspended via PreGate", info)
 	}
 
-	// Preflight-failed → Failed, ready=false, no reconcile.
+	// Preflight-failed → Failed, no reconcile.
 	pfHR := &manifest.HelmRelease{Name: "preflightfail", Namespace: "ns"}
 	s.AddObject(pfHR)
-	if dispatch(pfHR.Named()) {
-		t.Error("preflight-failed HR: want ready=false")
-	}
+	dispatch(pfHR.Named())
 	if info, _ := s.GetStatus(pfHR.Named()); info.Status != store.StatusFailed {
 		t.Errorf("preflight-failed HR status = %+v; want Failed", info)
 	}
@@ -326,9 +321,7 @@ func TestDispatchNode(t *testing.T) {
 	// Clean → reconcile runs → Ready.
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
-	if !dispatch(hr.Named()) {
-		t.Error("clean HR: want ready=true")
-	}
+	dispatch(hr.Named())
 	if info, _ := s.GetStatus(hr.Named()); info.Status != store.StatusReady {
 		t.Errorf("clean HR status = %+v; want Ready", info)
 	}

@@ -26,7 +26,7 @@ const (
 func keylessFixture(t *testing.T) (signatureLayer, []byte) {
 	t.Helper()
 	read := func(name string) []byte {
-		b, err := os.ReadFile(filepath.Join("testdata", "keyless", name))
+		b, err := os.ReadFile(filepath.Join("testdata", "keyless", name)) //nolint:gosec // fixed in-repo testdata path
 		if err != nil {
 			t.Fatalf("read fixture %s: %v", name, err)
 		}

@@ -11,9 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -44,29 +42,12 @@ type Controller struct {
 	selfProduces func(cm, consumer manifest.NamedResource) bool
 }
 
-// Options carries the post-bootstrap state the orchestrator wires onto
-// the controller before Start. Filter narrows reconciliation to
-// changed resources in changed-only mode. ParentOf maps each Flux
-// Kustomization to its structural parent so reconcile waits for the
-// parent's Ready before rendering (so any parent-render-time spec
-// mutations — e.g. `replacements:` injecting spec.targetNamespace —
-// are observable when the child renders). A nil ParentOf disables
-// parent-enforcement, matching pre-#102 behavior. RenderTracker
-// receives every reconcilable child this KS emits during render.
+// Options carries the post-bootstrap state the orchestrator wires onto the
+// controller before Start. base.Options holds the config common to every
+// render controller (Filter / ParentOf / RenderTracker / Existence /
+// PreflightFailure); SelfProduces is Kustomization-specific.
 type Options struct {
-	Filter        *change.Filter
-	ParentOf      func(manifest.NamedResource) (manifest.NamedResource, bool)
-	RenderTracker base.RenderTracker
-	// Existence is the file-existence lookup the orchestrator wires
-	// against the loader's ExistenceIndex. Classify uses it to lazy-
-	// promote file-indexed deps and to distinguish render-only
-	// deps from typo'd ones. See depwait.ExistenceLookup for the
-	// decision matrix. Forwarded to every Waiter built during reconcile.
-	Existence depwait.ExistenceLookup
-	// PreflightFailure reports dependency-graph errors discovered by the
-	// orchestrator before reconcile. When set for an id, the controller
-	// marks the resource Failed and does not render it.
-	PreflightFailure func(manifest.NamedResource) (string, bool)
+	base.Options
 	// SelfProduces reports whether consumer's OWN render emits cm. When
 	// it does, collectDeps drops cm from the dependency set — a KS can't
 	// hard-wait on a postBuild.substituteFrom ConfigMap that only its own
@@ -89,11 +70,7 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 // Start — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
 func (c *Controller) Configure(opts Options) {
-	c.SetFilter(opts.Filter)
-	c.SetDepwait(opts.Existence)
-	c.SetPreflight(opts.PreflightFailure)
-	c.SetParentOf(opts.ParentOf)
-	c.SetRenderTracker(opts.RenderTracker)
+	c.Controller.Configure(opts.Options)
 	c.selfProduces = opts.SelfProduces
 }
 

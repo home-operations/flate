@@ -9,6 +9,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -124,7 +125,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 		}
 		return manifest.NamedResource{}, false
 	}
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{Options: base.Options{ParentOf: resolver}})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
 	info := dispatchToFixpoint(t, c, st, hr.Named())

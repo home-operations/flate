@@ -7,6 +7,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -22,9 +23,9 @@ func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
 	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{
+	c.Configure(Options{Options: base.Options{ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{
 		child.Named(): parent,
-	})})
+	})}})
 	deps := c.collectDeps(child)
 	for _, d := range deps {
 		if d.NamedResource == parent {
@@ -153,7 +154,7 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	)
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{Filter: f})
+	c.Configure(Options{Options: base.Options{Filter: f}})
 	deps := c.collectDeps(consumerObj)
 
 	wantCM := manifest.NamedResource{
@@ -205,7 +206,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	)
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{Filter: f})
+	c.Configure(Options{Options: base.Options{Filter: f}})
 	deps := c.collectDeps(selfObj)
 
 	for _, d := range deps {

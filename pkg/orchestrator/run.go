@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
@@ -118,20 +119,18 @@ func (o *Orchestrator) configureControllers() {
 	selfProduces := func(cm, consumer manifest.NamedResource) bool {
 		return slices.Contains(o.selfProduce.ProducedBy(cm), consumer)
 	}
-	o.ksc.Configure(kustomization.Options{
+	// The reconcile-shaping config common to all three render controllers,
+	// built once; each Configure adds its controller-specific fields.
+	common := base.Options{
 		Filter:           o.filter,
 		ParentOf:         parentResolver,
 		RenderTracker:    o.rendered,
 		Existence:        existence,
 		PreflightFailure: o.preflightFailure,
-		SelfProduces:     selfProduces,
-	})
+	}
+	o.ksc.Configure(kustomization.Options{Options: common, SelfProduces: selfProduces})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
-		Filter:              o.filter,
-		ParentOf:            parentResolver,
-		RenderTracker:       o.rendered,
-		Existence:           existence,
-		PreflightFailure:    o.preflightFailure,
+		Options:             common,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 		Producers:           o.producers,
 	})
@@ -140,11 +139,7 @@ func (o *Orchestrator) configureControllers() {
 	// into rsExtensions for the Result.Manifests grouping. DedupKey is
 	// computed here so the sink stays orchestrator-internal.
 	o.rsc.Configure(resourcesetctrl.Options{
-		Filter:           o.filter,
-		ParentOf:         parentResolver,
-		RenderTracker:    o.rendered,
-		Existence:        existence,
-		PreflightFailure: o.preflightFailure,
+		Options: common,
 		RawSink: func(owner, parentKS manifest.NamedResource, doc map[string]any) {
 			o.rsRawSink.Record(owner, parentKS, resourceset.DedupKey(doc), doc)
 		},

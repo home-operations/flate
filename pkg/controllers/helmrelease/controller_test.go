@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -21,7 +22,7 @@ import (
 
 func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store.Store) {
 	t.Helper()
-	return newTestControllerWithOptions(t, ReconcileOptions{Filter: filter})
+	return newTestControllerWithOptions(t, ReconcileOptions{Options: base.Options{Filter: filter}})
 }
 
 func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedResource]manifest.NamedResource) (*Controller, *store.Store) {
@@ -30,7 +31,7 @@ func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedReso
 		parent, ok := parentOf[id]
 		return parent, ok
 	}
-	return newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
+	return newTestControllerWithOptions(t, ReconcileOptions{Options: base.Options{ParentOf: resolver}})
 }
 
 func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Controller, *store.Store) {
@@ -638,10 +639,10 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 	)
 
 	c := New(st, ts, hc, helm.Options{}, false)
-	c.Configure(ReconcileOptions{
+	c.Configure(ReconcileOptions{Options: base.Options{
 		Filter:        filter,
 		RenderTracker: tracker,
-	})
+	}})
 	c.Start(context.Background())
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 
@@ -723,7 +724,7 @@ func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 		testutil.MapLister{},
 	)
 	c := New(st, ts, hc, helm.Options{}, false)
-	c.Configure(ReconcileOptions{Filter: filter, RenderTracker: tracker})
+	c.Configure(ReconcileOptions{Options: base.Options{Filter: filter, RenderTracker: tracker}})
 	c.Start(context.Background())
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 

@@ -11,10 +11,8 @@ import (
 	"cmp"
 	"context"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/emit"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
@@ -45,20 +43,15 @@ type Controller struct {
 	rawSink RawSink
 }
 
-// Options carries the post-bootstrap state the orchestrator wires onto
-// the controller before Start. Filter narrows reconciliation in
-// changed-only mode. ParentOf maps each RS to its structural parent KS
-// so reconcile waits for the parent's Ready before rendering (the parent
-// may re-emit the RS with a substituted name/namespace). RenderTracker
-// receives every reconcilable child this RS emits. RawSink receives the
-// RS's RawObject children for output grouping under the parent KS.
+// Options carries the post-bootstrap state the orchestrator wires onto the
+// controller before Start. base.Options holds the config common to every
+// render controller (Filter / ParentOf — here gating the RS render on its
+// structural parent KS, which may re-emit the RS with a substituted
+// name/namespace — RenderTracker / Existence / PreflightFailure); RawSink is
+// ResourceSet-specific.
 type Options struct {
-	Filter           *change.Filter
-	ParentOf         func(manifest.NamedResource) (manifest.NamedResource, bool)
-	RenderTracker    base.RenderTracker
-	Existence        depwait.ExistenceLookup
-	PreflightFailure func(manifest.NamedResource) (string, bool)
-	RawSink          RawSink
+	base.Options
+	RawSink RawSink
 }
 
 // New constructs a ResourceSet controller.
@@ -73,11 +66,7 @@ func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 // Start — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
 func (c *Controller) Configure(opts Options) {
-	c.SetFilter(opts.Filter)
-	c.SetDepwait(opts.Existence)
-	c.SetPreflight(opts.PreflightFailure)
-	c.SetParentOf(opts.ParentOf)
-	c.SetRenderTracker(opts.RenderTracker)
+	c.Controller.Configure(opts.Options)
 	c.rawSink = opts.RawSink
 }
 

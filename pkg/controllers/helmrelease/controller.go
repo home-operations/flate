@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
@@ -54,34 +53,14 @@ type Controller struct {
 	producers *manifest.ProducerIndex
 }
 
-// ReconcileOptions carries the post-bootstrap state the orchestrator
-// wires onto the controller. Filter narrows reconciliation to changed
-// HelmReleases (and their referenced sources/values) in changed-only
-// mode. ParentOf resolves each HR to its enclosing KS at lookup time
-// (combines the file-loaded path-prefix index with the runtime
-// renderedSet); reconcile depwaits on the parent before rendering so
-// spec patches (driftDetection / upgrade strategy / CRD policy at the
-// cluster KS level, post-build substitutions, kustomize replacements)
-// land before the first helm.Template call.
+// ReconcileOptions carries the post-bootstrap state the orchestrator wires
+// onto the controller. base.Options holds the config common to every render
+// controller (Filter / ParentOf — here resolving each HR to its enclosing KS,
+// which reconcile depwaits on so cluster-KS spec patches land before the first
+// helm.Template call — RenderTracker / Existence / PreflightFailure);
+// AllowMissingSecrets and Producers are HelmRelease-specific.
 type ReconcileOptions struct {
-	Filter   *change.Filter
-	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
-	// RenderTracker receives every source-kind child emitted during HR
-	// render. Mirrors kustomization.Options.RenderTracker; feeds the
-	// orchestrator's parent-provenance index (detectOrphans, parent
-	// resolver, ResourceSet attribution). Nil is OK — no-op.
-	RenderTracker base.RenderTracker
-	// Existence is the file-existence lookup the orchestrator wires
-	// against the loader's ExistenceIndex. Classify uses it to lazy-
-	// promote file-indexed deps (HelmRepository, OCIRepository,
-	// HelmChart, …) and to distinguish render-only deps from typo'd
-	// ones. See depwait.ExistenceLookup for the decision matrix.
-	// Forwarded to every Waiter built during reconcile.
-	Existence depwait.ExistenceLookup
-	// PreflightFailure reports dependency-graph errors discovered by the
-	// orchestrator before reconcile. When set for an id, the controller
-	// marks the resource Failed and does not render it.
-	PreflightFailure func(manifest.NamedResource) (string, bool)
+	base.Options
 	// AllowMissingSecrets omits non-optional valuesFrom refs that point
 	// at known live-cluster/generated data or fail to materialize offline.
 	AllowMissingSecrets bool
@@ -106,13 +85,9 @@ func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wip
 // Start — encodes the invariant that reconcile-shaping config is
 // read-only once dispatch begins.
 func (c *Controller) Configure(opts ReconcileOptions) {
-	c.SetFilter(opts.Filter)
-	c.SetDepwait(opts.Existence)
-	c.SetPreflight(opts.PreflightFailure)
-	c.SetParentOf(opts.ParentOf)
+	c.Controller.Configure(opts.Options)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
 	c.producers = opts.Producers
-	c.SetRenderTracker(opts.RenderTracker)
 }
 
 // Start registers the listeners. The controller runs until Close.

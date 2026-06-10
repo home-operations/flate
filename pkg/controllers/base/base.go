@@ -148,6 +148,47 @@ func (c *Controller) SetRenderTracker(rt RenderTracker) {
 	c.renderTracker = rt
 }
 
+// Options is the post-bootstrap, reconcile-shaping config common to every
+// render controller (Kustomization, HelmRelease, ResourceSet). The
+// orchestrator wires it once before Start; the source controller is fetch-only
+// and configures just its filter directly, so it does NOT embed this. A
+// concrete controller embeds Options in its own option struct and forwards it
+// to Configure, then assigns its controller-specific fields.
+type Options struct {
+	// Filter narrows reconciliation to changed resources in changed-only mode.
+	Filter *change.Filter
+	// ParentOf maps a resource to its structural-parent Kustomization so
+	// reconcile waits for the parent's Ready before rendering — any
+	// parent-render-time spec mutation (replacements injecting
+	// targetNamespace, postBuild substitutions, a re-emitted patched spec) is
+	// then observable. Nil disables parent enforcement.
+	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
+	// RenderTracker receives every reconcilable child a render emits, feeding
+	// the orchestrator's parent-provenance index (orphan detection, parent
+	// resolution, attribution).
+	RenderTracker RenderTracker
+	// Existence is the file-existence lookup depwait uses to lazy-promote
+	// file-indexed deps and to distinguish a render-only dep still in flight
+	// from a typo'd one. See depwait.ExistenceLookup.
+	Existence depwait.ExistenceLookup
+	// PreflightFailure reports dependency-graph errors discovered before
+	// reconcile; when set for an id the controller marks it Failed and renders
+	// nothing.
+	PreflightFailure func(manifest.NamedResource) (string, bool)
+}
+
+// Configure applies the common reconcile-shaping config. A concrete controller
+// calls c.Controller.Configure(opts.Options) before assigning its own fields.
+// The five setters are independent single-field writes, so their order is
+// immaterial; each still panics if called after Start.
+func (c *Controller) Configure(opts Options) {
+	c.SetFilter(opts.Filter)
+	c.SetDepwait(opts.Existence)
+	c.SetPreflight(opts.PreflightFailure)
+	c.SetParentOf(opts.ParentOf)
+	c.SetRenderTracker(opts.RenderTracker)
+}
+
 // KeepEmitted extends the change filter's keep set so render-emitted
 // children pass the changed-only-mode PreGate check. Without this, a
 // parent whose render emits a child that wasn't on disk at filter-build

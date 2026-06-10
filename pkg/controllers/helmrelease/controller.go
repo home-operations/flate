@@ -10,7 +10,6 @@ package helmrelease
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -420,12 +419,12 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
 			name, ns := manifest.DocMetadata(doc)
-			slog.Debug("helmrelease: SOPS-encrypted resource wiped to placeholder",
+			c.Logger().Debug("SOPS-encrypted resource wiped to placeholder",
 				"id", id.String(), "ref", manifest.DocKind(doc)+" "+ns+"/"+name)
 		}
 		obj, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
-			slog.Debug("helmrelease: skipped doc", "id", id.String(), "err", err)
+			c.Logger().Debug("skipped doc", "id", id.String(), "err", err)
 			continue
 		}
 		if manifest.IsKustomizeBuildDirective(obj) {

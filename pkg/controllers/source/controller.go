@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -151,18 +150,18 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) e
 		artifact, fetchErr = fetcher.Fetch(ctx, obj)
 	})
 	if fetchErr != nil {
-		slog.Debug("source: fetch failed", "id", id.String(), "duration", time.Since(started), "err", fetchErr)
+		c.Logger().Debug("fetch failed", "id", id.String(), "duration", time.Since(started), "err", fetchErr)
 		// Skip a missing auth Secret either when the user asked globally
 		// (--allow-missing-secrets) or when an in-repo ExternalSecret /
 		// SealedSecret declares it (producer-backed: positive evidence it
 		// materializes live). A missing Secret with neither still fails loud.
 		if errors.Is(fetchErr, manifest.ErrMissingSecret) && (c.allowMissingSecrets || c.producerBacked(fetchErr)) {
-			slog.Info("source: skipped (missing secret)", "id", id.String(), "err", fetchErr)
+			c.Logger().Info("skipped (missing secret)", "id", id.String(), "err", fetchErr)
 			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(fetchErr.Error()))
 		}
 		return fetchErr
 	}
-	slog.Debug("source: fetch complete", "id", id.String(), "duration", time.Since(started), "artifact", artifact != nil)
+	c.Logger().Debug("fetch complete", "id", id.String(), "duration", time.Since(started), "artifact", artifact != nil)
 	// An ExistenceFetcher returns (nil, nil) — the kind doesn't produce
 	// an on-disk artifact (HelmRepository; OCIRepository when fetching
 	// is disabled). RunWithStatus will still mark Ready so dependsOn

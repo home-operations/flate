@@ -3,6 +3,7 @@ package base_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,7 +21,7 @@ func TestRunWithStatus_Success(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatus(t.Context(), s, id, "helmrelease",
+	base.RunWithStatus(t.Context(), s, id, slog.Default(),
 		func(_ context.Context, obj *manifest.HelmRelease) error {
 			if obj.Name != "app" {
 				t.Errorf("re-read got %q, want app", obj.Name)
@@ -40,7 +41,7 @@ func TestRunWithStatus_Failure(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatus(t.Context(), s, id, "helmrelease",
+	base.RunWithStatus(t.Context(), s, id, slog.Default(),
 		func(_ context.Context, _ *manifest.HelmRelease) error {
 			return errors.New("render failed")
 		},
@@ -67,7 +68,7 @@ func TestRunWithStatus_Panic(t *testing.T) {
 	var rec any
 	func() {
 		defer func() { rec = recover() }()
-		base.RunWithStatus(t.Context(), s, id, "helmrelease",
+		base.RunWithStatus(t.Context(), s, id, slog.Default(),
 			func(_ context.Context, _ *manifest.HelmRelease) error {
 				panic("kaboom")
 			},
@@ -89,7 +90,7 @@ func TestRunWithStatus_MissingObject(t *testing.T) {
 	s := store.New()
 	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "ghost"}
 	called := false
-	base.RunWithStatus(t.Context(), s, id, "helmrelease",
+	base.RunWithStatus(t.Context(), s, id, slog.Default(),
 		func(_ context.Context, _ *manifest.HelmRelease) error {
 			called = true
 			return nil
@@ -119,7 +120,7 @@ func TestRunWithStatus_PreservesInformativeReadyMessage(t *testing.T) {
 			id := hr.Named()
 			s.UpdateStatus(id, store.StatusReady, message)
 
-			base.RunWithStatus(t.Context(), s, id, "helmrelease",
+			base.RunWithStatus(t.Context(), s, id, slog.Default(),
 				func(_ context.Context, _ *manifest.HelmRelease) error { return nil },
 			)
 			got, _ := s.GetStatus(id)
@@ -139,7 +140,7 @@ func TestRunWithStatus_PreservesExternalFailure(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatus(t.Context(), s, id, "helmrelease",
+	base.RunWithStatus(t.Context(), s, id, slog.Default(),
 		func(_ context.Context, _ *manifest.HelmRelease) error {
 			s.UpdateStatus(id, store.StatusFailed, "dependency cycle detected")
 			return nil

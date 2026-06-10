@@ -8,7 +8,6 @@ package helmrelease
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -116,7 +115,7 @@ func (c *Controller) omitValuesFrom(
 		if hasProducer {
 			args = append(args, "producer", producer.String())
 		}
-		slog.Debug("helmrelease: omitted unavailable valuesFrom ref", args...)
+		c.Logger().Debug("omitted unavailable valuesFrom ref", args...)
 	}
 	return cloneWithValuesFrom(hr, filtered)
 }

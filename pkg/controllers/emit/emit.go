@@ -68,16 +68,20 @@ func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, d
 		leaf         bool // held for pass 2 (Kustomization / HelmRelease)
 	}
 	opts := manifest.ParseDocOptions{WipeSecrets: wipeSecrets}
+	// Log under the invoking controller's identity plus component=emit, so a
+	// "skipped doc" line names both the controller whose render produced the
+	// doc and the emit helper it surfaced in.
+	log := c.Logger().With(slog.String("component", "emit"))
 	objs := make([]parsed, 0, len(docs))
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
 			name, ns := manifest.DocMetadata(doc)
-			slog.Debug("emit: SOPS-encrypted resource wiped to placeholder",
+			log.Debug("SOPS-encrypted resource wiped to placeholder",
 				"id", id.String(), "ref", manifest.DocKind(doc)+" "+ns+"/"+name)
 		}
 		obj, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
-			slog.Debug("emit: skipped doc", "id", id.String(), "err", err)
+			log.Debug("skipped doc", "id", id.String(), "err", err)
 			continue
 		}
 		if manifest.IsKustomizeBuildDirective(obj) {

@@ -68,10 +68,15 @@ type Controller struct {
 
 	// name is the controller's stable identity (e.g. "helmrelease",
 	// "kustomization", "resourceset", "source"), set once at New and never
-	// mutated. It is the single source for the controller-kind label in
-	// reconcile log lines, so concrete controllers no longer thread a literal
-	// through every DispatchNode / FingerprintDedup call. Read via Name().
+	// mutated. Read via Name().
 	name string
+
+	// log is name's logger, pre-bound at New with a controller=<name>
+	// attribute. Reconcile bodies and the shared base helpers log through it
+	// (via Logger()) so the controller identity is a structured field rather
+	// than a per-call message prefix. Bound once from slog.Default(), which the
+	// CLI installs in PersistentPreRunE before any controller is constructed.
+	log *slog.Logger
 
 	started atomic.Bool
 	filter  *change.Filter
@@ -108,12 +113,23 @@ type Controller struct {
 // controller-kind identity, surfaced in reconcile logs via Name()). Concrete
 // controllers call this from their own constructor and embed the result.
 func New(s *store.Store, t *task.Service, name string) *Controller {
-	return &Controller{Store: s, Tasks: t, name: name}
+	return &Controller{
+		Store: s,
+		Tasks: t,
+		name:  name,
+		log:   slog.Default().With(slog.String("controller", name)),
+	}
 }
 
 // Name returns the controller's stable identity (e.g. "helmrelease"). Set once
-// at New; the base reconcile helpers use it for their log-kind label.
+// at New.
 func (c *Controller) Name() string { return c.name }
+
+// Logger returns the controller's slog logger, pre-bound with a
+// controller=<name> attribute. Reconcile bodies (and the emit helper, via the
+// controller they receive) log through it so the controller identity is a
+// structured field rather than a per-call message prefix.
+func (c *Controller) Logger() *slog.Logger { return c.log }
 
 // requireNotStarted panics if the started gate is set, enforcing the
 // invariant that reconcile-shaping config is frozen once dispatch
@@ -303,7 +319,7 @@ func (c *Controller) FingerprintDedup(id manifest.NamedResource, fp string, emit
 	if err := c.PreflightError(id); err != nil {
 		return true, err
 	}
-	slog.Debug(c.name+": skipped re-render (fingerprint unchanged)", "id", id.String())
+	c.log.Debug("skipped re-render (fingerprint unchanged)", "id", id.String())
 	emit(existing.RenderedManifests())
 	return true, nil
 }
@@ -522,21 +538,20 @@ func DepFailed(id manifest.NamedResource) func(depwait.Summary) error {
 
 // Recover catches a panic from the current goroutine and marks id
 // StatusFailed with a "panic: <r>" message so the orchestrator
-// surfaces it. Intended for use as `defer base.Recover(store, id, "kind")`
-// in controllers that don't go through RunWithStatus (e.g. source
-// fetchers that own their own status writes).
+// surfaces it. log is the controller's pre-bound logger (Logger()); the
+// panic is recorded under its controller=<name> attribute.
 //
 // After recording status, re-raises the panic so the enclosing
 // task.Service.Go increments its failures counter — a panicked
 // reconcile MUST count against the orchestrator's failure gate, not
 // silently masquerade as success when Service.Failures() is consulted
 // for the final exit-code decision.
-func Recover(s *store.Store, id manifest.NamedResource, logKind string) {
+func Recover(s *store.Store, id manifest.NamedResource, log *slog.Logger) {
 	r := recover()
 	if r == nil {
 		return
 	}
-	slog.Error(logKind+": panic during reconcile", "id", id.String(), "panic", r)
+	log.Error("panic during reconcile", "id", id.String(), "panic", r)
 	s.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
 	panic(r)
 }
@@ -561,10 +576,10 @@ func RunWithStatus[T manifest.BaseManifest](
 	ctx context.Context,
 	s *store.Store,
 	id manifest.NamedResource,
-	logKind string,
+	log *slog.Logger,
 	fn func(context.Context, T) error,
 ) {
-	_ = RunWithStatusOutcome[T](ctx, s, id, logKind, fn)
+	_ = RunWithStatusOutcome[T](ctx, s, id, log, fn)
 }
 
 // RunWithStatusOutcome is RunWithStatus that additionally reports the dag
@@ -577,10 +592,10 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 	ctx context.Context,
 	s *store.Store,
 	id manifest.NamedResource,
-	logKind string,
+	log *slog.Logger,
 	fn func(context.Context, T) error,
 ) []manifest.NamedResource {
-	defer Recover(s, id, logKind)
+	defer Recover(s, id, log)
 	obj, ok := store.Get[T](s, id)
 	if !ok {
 		// Object deleted (or wrong type) between discovery/enqueue and run.
@@ -653,7 +668,7 @@ func DispatchNode[T manifest.BaseManifest](
 	if !ok {
 		// Vanished — RunWithStatusOutcome's vanished branch records a terminal
 		// status; report it.
-		blocked = RunWithStatusOutcome[T](ctx, c.Store, id, c.name, reconcile)
+		blocked = RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
 		return blocked, c.statusReady(id)
 	}
 	if c.PreGate(id, suspended(obj)) {
@@ -663,6 +678,6 @@ func DispatchNode[T manifest.BaseManifest](
 		c.Store.UpdateStatus(id, store.StatusFailed, msg)
 		return nil, false
 	}
-	blocked = RunWithStatusOutcome[T](ctx, c.Store, id, c.name, reconcile)
+	blocked = RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
 	return blocked, c.statusReady(id)
 }

@@ -64,7 +64,10 @@ func InstallHTTPS(tlsCfg *tls.Config, proxy *source.ProxyConfig) (func(), error)
 	}
 	client.InstallProtocol("https", githttp.NewClient(&http.Client{Transport: tr}))
 	return sync.OnceFunc(func() {
-		client.InstallProtocol("https", githttp.DefaultClient)
+		// Restore the BOUNDED default installed at init (not go-git's unbounded
+		// githttp.DefaultClient) so anonymous fetches after a custom-CA fetch
+		// keep the ResponseHeaderTimeout liveness backstop.
+		client.InstallProtocol("https", boundedHTTPSClient)
 		mu.Unlock()
 	}), nil
 }

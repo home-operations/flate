@@ -77,13 +77,8 @@ type Dispatcher interface {
 	//   - ready: whether id's final store status is Ready (meaningful only
 	//     when Terminal) — the scheduler records it so a node parking on id
 	//     can tell, without reading the store, whether id is satisfied.
-	//   - rerunAtDrain: whether id wants to be re-run at the structural
-	//     fixpoint. A node with no nameable dependency to park on (a
-	//     ResourceSet with a selector-only inputsFrom, whose matching inputs
-	//     may be emitted by an unknown producer) sets this so the scheduler
-	//     re-expands it once the graph is quiescent — see requeueDrainRerunLocked.
 	// drainLevel is one of DrainNone/DrainCascade/DrainForce.
-	Dispatch(ctx context.Context, id NodeID, drainLevel int) (out Outcome, blocked []NodeID, ready, rerunAtDrain bool)
+	Dispatch(ctx context.Context, id NodeID, drainLevel int) (out Outcome, blocked []NodeID, ready bool)
 }
 
 type nodeState uint8
@@ -104,13 +99,11 @@ type node struct {
 	// complete() re-queues it once instead of dropping the wake (the re-run
 	// re-reads the store and re-evaluates its gate against current state).
 	rerunRequested bool
-	// drainRerun marks a node that asked (via Dispatch's rerunAtDrain) to be
-	// re-run at the structural fixpoint. lastGen is the arrival generation
-	// observed when the node was last dispatched; the fixpoint re-runs the node
-	// only if a newer arrival has happened since (gen > lastGen), which bounds
-	// re-runs by the finite, monotone set of arrivals. See requeueDrainRerunLocked.
-	drainRerun bool
-	lastGen    uint64
+	// rerun marks a node that re-runs at the structural fixpoint — a
+	// ResourceSet whose selector-only inputsFrom has no nameable producer to
+	// park on, so it must re-expand once the store has quiesced. Set from the
+	// scheduler's rerunAtDrain predicate after the node's first dispatch.
+	rerun bool
 }
 
 // Scheduler is a re-entrant fixpoint reconcile driver. Construct with New,
@@ -128,11 +121,23 @@ type Scheduler struct {
 	inFlight  int                            // count of stateRunning nodes (EXCLUDES parked)
 	draining  int                            // DrainNone/DrainCascade/DrainForce
 	canceled  bool
-	// gen counts object arrivals (OnArrival). A drain-rerun node records the gen
-	// it last ran at; the fixpoint re-runs it only when gen has since advanced,
-	// so re-runs are bounded by the finite, monotone arrival set.
-	gen uint64
+	// dirty records that an object arrived since the last quiescence sweep. A
+	// rerun node re-expands at the structural fixpoint only when the store has
+	// grown since it last ran; the sweep clears dirty, so a sweep that produces
+	// nothing new (every re-render a dedup no-op) leaves it clear and the run
+	// terminates. Arrivals are finite and monotone, so sweeps are bounded.
+	dirty bool
+	// rerunAtDrain reports whether a node wants to re-run at the fixpoint. Set
+	// by the orchestrator (SetRerunAtDrain); evaluated off the hot path in the
+	// dispatch goroutine, never under mu.
+	rerunAtDrain func(NodeID) bool
 }
+
+// SetRerunAtDrain installs the predicate that decides whether a node re-runs at
+// the structural fixpoint (a selector-only ResourceSet, which has no nameable
+// input provider to park on). It is evaluated in the dispatch goroutine after
+// each Dispatch, so it may read the store. Optional — nil means no node reruns.
+func (s *Scheduler) SetRerunAtDrain(fn func(NodeID) bool) { s.rerunAtDrain = fn }
 
 // New constructs a Scheduler that runs bodies on tasks via disp.
 func New(tasks *task.Service, disp Dispatcher) *Scheduler {
@@ -192,17 +197,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 			n.state = stateRunning
 			n.rerunRequested = false
 			n.blockedOn = nil
-			// Snapshot the arrival generation at dispatch (not completion): any
-			// arrival during or after this body — including the body's own
-			// emissions — then leaves gen > lastGen, so a needed re-expansion is
-			// never missed. The cost is one FingerprintDedup'd no-op re-run.
-			n.lastGen = s.gen
 			s.inFlight++
 			level := s.draining
 			s.mu.Unlock()
 			s.tasks.Go(ctx, "schedule/"+id.String(), func(ctx context.Context) {
-				out, blocked, ready, rerunAtDrain := s.disp.Dispatch(ctx, id, level)
-				s.complete(id, out, blocked, ready, rerunAtDrain)
+				out, blocked, ready := s.disp.Dispatch(ctx, id, level)
+				rerun := s.rerunAtDrain != nil && s.rerunAtDrain(id)
+				s.complete(id, out, blocked, ready, rerun)
 			})
 			s.mu.Lock()
 		}
@@ -211,12 +212,16 @@ func (s *Scheduler) Run(ctx context.Context) {
 		//    must be drained.
 		if s.inFlight == 0 {
 			if !s.hasParkedLocked() {
-				// Quiescent: nothing running, nothing parked. Before declaring
-				// the fixpoint, re-run any drain-rerun node that has seen a new
-				// arrival since it last ran — a selector ResourceSet re-expands
-				// here against the now-complete store. The gen-guard bounds this.
-				if s.requeueDrainRerunLocked() {
-					continue
+				// Quiescent: nothing running, nothing parked. If the store grew
+				// since the last sweep, re-run the rerun nodes (a selector
+				// ResourceSet re-expands against the now-complete store) and loop;
+				// the dirty bit, cleared here and re-set only by a fresh arrival,
+				// bounds the sweeps.
+				if s.dirty {
+					s.dirty = false
+					if s.requeueRerunLocked() {
+						continue
+					}
 				}
 				break // clean fixpoint: every node terminal
 			}
@@ -248,7 +253,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 // complete records the result of one Dispatch. Runs on the worker goroutine;
 // acquires mu. Touches ONLY scheduler state — never the store or the pool.
-func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, ready, rerunAtDrain bool) {
+func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, ready, rerun bool) {
 	s.mu.Lock()
 	// Broadcast on EVERY path (terminalize, park, re-queue) so the Run loop
 	// re-evaluates inFlight/runq after any transition — a terminalize that
@@ -258,9 +263,9 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, ready, re
 	defer s.cond.Broadcast()
 	n := s.nodes[id]
 	s.inFlight--
-	// Record the node's drain-rerun intent (static per node — a selector
-	// ResourceSet always asks). Read by requeueDrainRerunLocked at the fixpoint.
-	n.drainRerun = rerunAtDrain
+	// Record the node's rerun intent (static per node — a selector ResourceSet
+	// always asks). Read by requeueRerunLocked at the fixpoint.
+	n.rerun = rerun
 
 	// A wake landed while this body was running: honor it exactly once by
 	// re-queuing, regardless of the outcome just reported. The re-run
@@ -365,9 +370,9 @@ func (s *Scheduler) unparkLocked(n *node) {
 func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// An arrival is the only thing that can change a drain-rerun node's resolved
-	// input set; bump the generation so the fixpoint knows a re-expansion is due.
-	s.gen++
+	// An arrival can change a rerun node's resolved input set; mark the store
+	// dirty so the next quiescence sweep re-expands rerun nodes.
+	s.dirty = true
 	if n := s.nodes[id]; n == nil {
 		if schedulable {
 			// Render-discovered node: register and queue it.
@@ -461,17 +466,15 @@ func (s *Scheduler) requeueAllParkedLocked() {
 	}
 }
 
-// requeueDrainRerunLocked re-queues, in id order, every terminal drain-rerun
-// node that has seen a new arrival since it last ran (gen advanced past its
-// lastGen), so it re-expands against the now-complete store at quiescence.
-// Returns whether any node was re-queued. Termination: a re-run requires an
-// arrival since the node's last run, arrivals are finite and monotone, and a
-// re-run that resolves identically is a fingerprint-dedup no-op that adds
-// nothing to the runq — so the gen-guard converges. Caller holds mu.
-func (s *Scheduler) requeueDrainRerunLocked() bool {
+// requeueRerunLocked re-queues every terminal rerun node, in id order, so each
+// re-expands against the now-complete store at quiescence. Returns whether any
+// node was re-queued. The caller gates this on (and clears) the dirty bit, so a
+// sweep whose re-renders all dedup-no-op produces no new arrival, leaves dirty
+// clear, and the run terminates. Caller holds mu.
+func (s *Scheduler) requeueRerunLocked() bool {
 	var due []*node
 	for _, n := range s.nodes {
-		if n.state == stateTerminal && n.drainRerun && n.lastGen < s.gen {
+		if n.state == stateTerminal && n.rerun {
 			due = append(due, n)
 		}
 	}

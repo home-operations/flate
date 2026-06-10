@@ -58,7 +58,7 @@ func newFake(graph map[NodeID][]NodeID) *fakeDisp {
 	}
 }
 
-func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outcome, []NodeID, bool, bool) {
+func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outcome, []NodeID, bool) {
 	f.mu.Lock()
 	g := f.gate[nid]
 	f.mu.Unlock()
@@ -72,7 +72,6 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outc
 	if drainLevel > f.maxDrain {
 		f.maxDrain = drainLevel
 	}
-	rerun := f.drainRerun[nid]
 	deps := f.graph[nid]
 	var blocked []NodeID
 	failed := false
@@ -103,13 +102,13 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outc
 	case failed:
 		f.termAny[nid] = true
 		f.termReady[nid] = false
-		return OutcomeTerminal, nil, false, rerun
+		return OutcomeTerminal, nil, false
 	case len(blocked) > 0:
-		return OutcomeBlocked, blocked, false, rerun
+		return OutcomeBlocked, blocked, false
 	default:
 		f.termAny[nid] = true
 		f.termReady[nid] = true
-		return OutcomeTerminal, nil, true, rerun
+		return OutcomeTerminal, nil, true
 	}
 }
 
@@ -137,6 +136,7 @@ func run(t *testing.T, f *fakeDisp, workers int) *Scheduler {
 	t.Helper()
 	ts := task.NewBounded(workers)
 	s := New(ts, f)
+	s.SetRerunAtDrain(func(id NodeID) bool { return f.drainRerun[id] })
 	seeds := make([]NodeID, 0, len(f.graph))
 	for k := range f.graph {
 		seeds = append(seeds, k)
@@ -307,10 +307,10 @@ func TestCrossKindCycleForceDrains(t *testing.T) {
 }
 
 func TestDrainRerunReexpandsOnArrival(t *testing.T) {
-	// A drain-rerun node (a selector ResourceSet) terminalizes immediately, then
-	// a later arrival bumps gen. At the structural fixpoint the node must re-run
-	// once — re-expanding against the now-complete store — even though it parked
-	// on nothing and the arriving id is not one it waited on.
+	// A rerun node (a selector ResourceSet) terminalizes immediately, then a
+	// later arrival dirties the store. At the structural fixpoint the node must
+	// re-run once — re-expanding against the now-complete store — even though it
+	// parked on nothing and the arriving id is not one it waited on.
 	f := newFake(map[NodeID][]NodeID{
 		id("rs"):        nil,
 		id("keepalive"): nil,
@@ -321,27 +321,28 @@ func TestDrainRerunReexpandsOnArrival(t *testing.T) {
 
 	ts := task.NewBounded(8)
 	s := New(ts, f)
+	s.SetRerunAtDrain(func(id NodeID) bool { return f.drainRerun[id] })
 	s.Seed([]NodeID{id("rs"), id("keepalive")})
 	done := make(chan struct{})
 	go func() { s.Run(context.Background()); close(done) }()
 
-	// rs ran once (gen still 0). Now a late data arrival bumps gen; with the
-	// pool held non-idle by keepalive, the fixpoint can't fire until we release.
+	// rs ran once. Now a late data arrival dirties the store; with the pool held
+	// non-idle by keepalive, the fixpoint can't fire until we release.
 	waitUntil(t, func() bool { return f.runCount(id("rs")) >= 1 })
 	s.OnArrival(NodeID{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "late"}, false)
 	close(gate)
 	<-done
 
 	if rc := f.runCount(id("rs")); rc != 2 {
-		t.Fatalf("drain-rerun node ran %d times; want exactly 2 (initial + one re-expansion)", rc)
+		t.Fatalf("rerun node ran %d times; want exactly 2 (initial + one re-expansion)", rc)
 	}
 	assertReady(t, f, "rs")
 }
 
 func TestDrainRerunTerminatesWithoutArrival(t *testing.T) {
-	// With no arrival after its run, a drain-rerun node converges: gen never
-	// advances past its lastGen, so the fixpoint does NOT re-run it. This is the
-	// termination bound — re-runs require a fresh arrival.
+	// With no arrival after its run, a rerun node converges: the store is never
+	// re-dirtied, so the fixpoint does NOT re-run it. This is the termination
+	// bound — a sweep requires a fresh arrival.
 	f := newFake(map[NodeID][]NodeID{id("rs"): nil})
 	f.drainRerun[id("rs")] = true
 	run(t, f, 8)

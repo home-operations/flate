@@ -17,7 +17,7 @@ import (
 // untranslated.
 type dagDispatcher struct{ o *Orchestrator }
 
-func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel int) (schedule.Outcome, []schedule.NodeID, bool, bool) {
+func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel int) (schedule.Outcome, []schedule.NodeID, bool) {
 	o := d.o
 	var (
 		blocked []manifest.NamedResource
@@ -32,15 +32,12 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLe
 		blocked, ready = o.src.ReconcileNode(ctx, id, drainLevel)
 	default:
 		// Not a schedulable kind (should never be dispatched) — terminal no-op.
-		return schedule.OutcomeTerminal, nil, true, false
+		return schedule.OutcomeTerminal, nil, true
 	}
-	// rerunAtDrain stays false for KS/HR/source: they park on named deps and are
-	// woken by id-keyed arrivals. The ResourceSet controller (a later step) is
-	// the only producer of rerunAtDrain=true.
 	if len(blocked) > 0 {
-		return schedule.OutcomeBlocked, blocked, false, false
+		return schedule.OutcomeBlocked, blocked, false
 	}
-	return schedule.OutcomeTerminal, nil, ready, false
+	return schedule.OutcomeTerminal, nil, ready
 }
 
 // dagSchedulable reports whether id is a node the scheduler runs

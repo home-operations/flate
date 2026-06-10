@@ -296,6 +296,13 @@ type Result struct {
 	Manifests map[manifest.NamedResource][]map[string]any
 	Failed    map[manifest.NamedResource]store.StatusInfo
 	Orphans   map[manifest.NamedResource]string
+	// DependsOn is the declared spec.dependsOn graph: each Kustomization or
+	// HelmRelease that names dependencies maps to the sorted ids it depends on.
+	// Same-kind only (KS→KS, HR→HR per the Flux spec); implicit coupling
+	// (healthChecks, shared CRDs, service DNS) is not represented. Nodes with no
+	// declared dependencies are omitted. Consumers invert this into a dependents
+	// adjacency list for impact / "blast radius" analysis.
+	DependsOn map[manifest.NamedResource][]manifest.NamedResource
 }
 
 // New constructs an Orchestrator. It allocates the Store and TaskService

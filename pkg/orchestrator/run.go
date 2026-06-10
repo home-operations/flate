@@ -196,6 +196,9 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 		Manifests: map[manifest.NamedResource][]map[string]any{},
 		Failed:    map[manifest.NamedResource]store.StatusInfo{},
 		Orphans:   map[manifest.NamedResource]string{},
+		// The dependsOn graph is fully populated by now (Bootstrap's rebuild +
+		// per-id ReplaceEdges during Run); snapshot it for blast-radius consumers.
+		DependsOn: o.depGraph.Edges(),
 	}
 	// Apply --skip-secrets / --skip-crds / --skip-kinds uniformly here
 	// so embedders calling Render see consistent Result.Manifests

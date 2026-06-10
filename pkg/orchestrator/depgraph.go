@@ -282,3 +282,37 @@ func (g *dependencyGraph) Failures() map[manifest.NamedResource]string {
 	defer g.mu.Unlock()
 	return g.snapshotFailedLocked()
 }
+
+// snapshotEdgesLocked returns the dependsOn graph as src → sorted dependency
+// list, a defensive copy that doesn't alias the graph's internal sets. Nodes
+// registered with no out-edges are omitted (only nodes that declare a
+// dependency appear); dependencies are sorted for deterministic output. Returns
+// nil when nothing depends on anything. Caller holds mu.
+func (g *dependencyGraph) snapshotEdgesLocked() map[manifest.NamedResource][]manifest.NamedResource {
+	out := make(map[manifest.NamedResource][]manifest.NamedResource, len(g.outEdges))
+	for src, dsts := range g.outEdges {
+		if len(dsts) == 0 {
+			continue
+		}
+		deps := make([]manifest.NamedResource, 0, len(dsts))
+		for dst := range dsts {
+			deps = append(deps, dst)
+		}
+		slices.SortFunc(deps, manifest.NamedResource.Compare)
+		out[src] = deps
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// Edges returns a snapshot of the declared dependsOn graph: each Kustomization
+// or HelmRelease that names dependencies → the sorted ids it depends on
+// (same-kind only, per the Flux spec). The orchestrator installs it into
+// Result.DependsOn for impact / blast-radius analysis. Safe for concurrent use.
+func (g *dependencyGraph) Edges() map[manifest.NamedResource][]manifest.NamedResource {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.snapshotEdgesLocked()
+}

@@ -10,7 +10,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.26.1
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.7
-	github.com/controlplaneio-fluxcd/flux-operator v0.51.0
+	github.com/controlplaneio-fluxcd/flux-operator v0.52.0
 	github.com/distribution/reference v0.6.0
 	github.com/fluxcd/helm-controller/api v1.5.5
 	github.com/fluxcd/kustomize-controller/api v1.8.5

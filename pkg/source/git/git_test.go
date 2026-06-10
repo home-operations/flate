@@ -507,65 +507,6 @@ func TestFetcher_CommitCacheKeyIncludesIgnore(t *testing.T) {
 	}
 }
 
-func TestFetcher_CommitCacheKeyIncludesVerification(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-	commit := mustHead(t, src)
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
-	f := &Fetcher{Cache: cache}
-
-	plainRepo := &manifest.GitRepository{
-		Name: "plain", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Commit: commit},
-		},
-	}
-	if _, err := f.Fetch(context.Background(), plainRepo); err != nil {
-		t.Fatalf("Fetch plain: %v", err)
-	}
-
-	verifiedRepo := &manifest.GitRepository{
-		Name: "verified", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       plainRepo.URL,
-			Reference: &sourcev1.GitRepositoryRef{Commit: commit},
-			Verification: &manifest.GitRepositoryVerify{
-				Mode:      manifest.GitVerifyModeHEAD,
-				SecretRef: manifest.LocalObjectReference{Name: "trusted-keys"},
-			},
-		},
-	}
-	if _, err := f.Fetch(context.Background(), verifiedRepo); err == nil {
-		t.Fatal("verified fetch reused an unverified commit cache slot")
-	} else if !strings.Contains(err.Error(), "source.SecretGetter") {
-		t.Fatalf("verified fetch error = %v, want missing SecretGetter", err)
-	}
-}
-
-func TestGitCacheKeyIncludesVerificationNamespace(t *testing.T) {
-	ref := sourcev1.GitRepositoryRef{Commit: strings.Repeat("a", 40)}
-	mkRepo := func(ns string) *manifest.GitRepository {
-		return &manifest.GitRepository{
-			Name: "repo", Namespace: ns,
-			GitRepositorySpec: sourcev1.GitRepositorySpec{
-				URL:       "https://example.com/repo.git",
-				Reference: &ref,
-				Verification: &manifest.GitRepositoryVerify{
-					Mode:      manifest.GitVerifyModeHEAD,
-					SecretRef: manifest.LocalObjectReference{Name: "trusted-keys"},
-				},
-			},
-		}
-	}
-
-	a := gitCacheKey(mkRepo("ns-a"), gitRefLabel(ref))
-	b := gitCacheKey(mkRepo("ns-b"), gitRefLabel(ref))
-	if a == b {
-		t.Fatalf("verification cache key ignored namespace: %q", a)
-	}
-}
-
 // mustInitRepoWithFiles creates a git repo at dir with the given
 // {path: contents} entries committed as one revision.
 func mustInitRepoWithFiles(t *testing.T, dir string, files map[string]string) {

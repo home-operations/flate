@@ -126,9 +126,9 @@ func CacheKeyHash(v any, n int) (string, error) {
 }
 
 // SecretGetter resolves a Secret CR by namespace + name. Fetchers
-// that read authentication, TLS, proxy, or cosign-verify material
-// from a Flux spec.*SecretRef accept one of these so they don't need
-// a back-reference to the Store. Today: GitRepository (auth + TLS),
-// OCIRepository (auth + TLS + cosign verify), Bucket (auth + TLS).
+// that read authentication, TLS, or proxy material from a Flux
+// spec.*SecretRef accept one of these so they don't need a
+// back-reference to the Store. Today: GitRepository (auth + TLS),
+// OCIRepository (auth + TLS), Bucket (auth + TLS).
 // The orchestrator wires it to Store.GetByName at construction time.
 type SecretGetter func(namespace, name string) *manifest.Secret

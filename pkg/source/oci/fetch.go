@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log/slog"
 
 	"oras.land/oras-go/v2"
 	orasoci "oras.land/oras-go/v2/content/oci"
@@ -19,11 +18,11 @@ import (
 // fetch pulls the OCIRepository artifact into cache. It reads as a pipeline:
 // build the registry client, resolve spec.ref to a concrete digest (honoring
 // the tag→digest resolve cache), acquire the artifact slot and try a cache
-// hit, otherwise oras.Copy the artifact and publish it (verify, layer-select,
-// ignore, markers, commit). Credentials come from a docker-style config.json;
-// when spec.ref.semver is set the registry is listed and the highest matching
-// tag resolved before pulling; when spec.verify is set the pulled digest is
-// cosign-verified before the slot is committed.
+// hit, otherwise oras.Copy the artifact and publish it (layer-select, ignore,
+// marker, commit). Credentials come from a docker-style config.json; when
+// spec.ref.semver is set the registry is listed and the highest matching tag
+// resolved before pulling. flate does not verify signatures, so spec.verify is
+// ignored and the artifact is pulled unconditionally.
 func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, registryConfig string, tlsCfg *tls.Config, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
 	cache := f.Cache
 	// Fetch already type-asserts repo non-nil before calling fetch().
@@ -79,12 +78,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	defer slot.Release()
 	if slot.Exists {
 		if resolvedDigest != "" {
-			artifact, hit, hitErr := f.checkCacheHit(ctx, repoClient, repo, slot.Path, ref, versioned, resolvedDigest)
-			if hitErr != nil {
-				_ = slot.Reset()
-				return nil, hitErr
-			}
-			if hit {
+			if artifact, hit := checkCacheHit(repo, slot.Path, ref, versioned, resolvedDigest); hit {
 				return artifact, nil
 			}
 		}
@@ -101,7 +95,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	if resolvedDigest != "" && digest != resolvedDigest {
 		return nil, fmt.Errorf("%s: resolved digest %s but copied %s", ociID(repo), resolvedDigest, digest)
 	}
-	return f.publishArtifact(ctx, repoClient, repo, slot, ref, digest, size)
+	return publishArtifact(repo, slot, ref, digest, size)
 }
 
 // resolveRef resolves a semver ref to a concrete tag by listing the registry;
@@ -140,18 +134,11 @@ func copyArtifact(ctx context.Context, repoClient *remote.Repository, slotPath, 
 	return desc.Digest.String(), desc.Size, nil
 }
 
-// publishArtifact finalizes a freshly pulled slot: cosign-verify (when
-// configured), select/extract the layer, apply source-ignore, persist the
-// markers, and commit. It is the last leg of the pull and owns slot.Commit().
-func (f *Fetcher) publishArtifact(ctx context.Context, repoClient *remote.Repository, repo *manifest.OCIRepository, slot *source.Slot, ref manifest.OCIRepositoryRef, digest string, size int64) (*store.SourceArtifact, error) {
-	verified := false
-	if repo.Verify != nil {
-		v, err := f.verifyCosignSignature(ctx, repoClient, repo, digest)
-		if err != nil {
-			return nil, err
-		}
-		verified = v
-	}
+// publishArtifact finalizes a freshly pulled slot: select/extract the layer,
+// apply source-ignore, persist the digest marker, and commit. It is the last
+// leg of the pull and owns slot.Commit(). flate does not verify signatures, so
+// spec.verify is ignored.
+func publishArtifact(repo *manifest.OCIRepository, slot *source.Slot, ref manifest.OCIRepositoryRef, digest string, size int64) (*store.SourceArtifact, error) {
 	if err := applyLayerSelector(slot.Path, digest, repo.LayerSelector); err != nil {
 		return nil, fmt.Errorf("%s: layer select: %w", ociID(repo), err)
 	}
@@ -171,18 +158,6 @@ func (f *Fetcher) publishArtifact(ctx context.Context, repoClient *remote.Reposi
 	// staging dir via Release so the next run starts clean.
 	if err := writeCachedDigest(slot.Path, digest); err != nil {
 		return nil, fmt.Errorf("%s: persist cached digest: %w", ociID(repo), err)
-	}
-	// Record the verify-policy fingerprint so subsequent cache hits can skip
-	// the cosign re-fetch — but ONLY when verification actually succeeded. A
-	// skipped verify (keyless, wiped/absent key, unreachable signature)
-	// returns verified=false with just a WARN; writing the marker there would
-	// silence the WARN on every cache hit (checkCacheHit would see a match and
-	// skip re-verify). Leave it absent for skips so the WARN re-fires.
-	if verified {
-		if err := writeVerifyMarker(slot.Path, verifyFingerprint(repo.Verify)); err != nil {
-			slog.Warn("oci: failed to persist verify marker; cache hits will re-verify online",
-				"ociRepository", repo.Namespace+"/"+repo.Name, "err", err)
-		}
 	}
 	if err := slot.Commit(); err != nil {
 		return nil, fmt.Errorf("%s: commit slot: %w", ociID(repo), err)

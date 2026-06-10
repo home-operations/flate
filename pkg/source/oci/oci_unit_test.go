@@ -1,13 +1,11 @@
 package oci
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
 
@@ -116,124 +114,5 @@ func TestLoadCredentials_EmptyPathFallsBackToDocker(t *testing.T) {
 	_, err := loadCredentials("")
 	if err != nil {
 		t.Errorf("empty path should never error; got %v", err)
-	}
-}
-
-// TestDescriptorFromLayer copies fields verbatim — sanity check the
-// mapping shape so a future field-add to signatureLayer doesn't
-// silently drop something cosign needs.
-func TestDescriptorFromLayer(t *testing.T) {
-	l := signatureLayer{
-		MediaType: "application/vnd.dev.cosign.simplesigning.v1+json",
-		Digest:    "sha256:beef",
-		Size:      1024,
-	}
-	d := descriptorFromLayer(l)
-	if d.MediaType != l.MediaType || string(d.Digest) != l.Digest || d.Size != l.Size {
-		t.Errorf("descriptor lost fields: %+v from %+v", d, l)
-	}
-}
-
-// TestVerifyFingerprint_DeterministicAndPolicySensitive pins the
-// verify-marker key: identical Verify specs must hash to the same
-// fingerprint (so a cache hit re-uses the prior verify), and any
-// meaningful policy change (provider, MatchOIDCIdentity, SecretRef)
-// must produce a different fingerprint (forcing re-verify). A nil
-// Verify hashes to empty — matches readVerifyMarker's empty-on-miss
-// return so the cache-hit path's "want == got" check naturally
-// requires both ends absent.
-func TestVerifyFingerprint_DeterministicAndPolicySensitive(t *testing.T) {
-	a := &manifest.OCIRepositoryVerify{Provider: "cosign"}
-	b := &manifest.OCIRepositoryVerify{Provider: "cosign"}
-	if verifyFingerprint(a) != verifyFingerprint(b) {
-		t.Errorf("identical specs hashed differently: %q vs %q",
-			verifyFingerprint(a), verifyFingerprint(b))
-	}
-	// Provider change -> different fingerprint.
-	c := &manifest.OCIRepositoryVerify{Provider: "notation"}
-	if verifyFingerprint(a) == verifyFingerprint(c) {
-		t.Error("Provider change did not affect fingerprint")
-	}
-	// SecretRef change -> different fingerprint.
-	d := &manifest.OCIRepositoryVerify{Provider: "cosign", SecretRef: &manifest.LocalObjectReference{Name: "trusted"}}
-	if verifyFingerprint(a) == verifyFingerprint(d) {
-		t.Error("SecretRef addition did not affect fingerprint")
-	}
-	// Nil hashes to empty (matches readVerifyMarker's miss return).
-	if got := verifyFingerprint(nil); got != "" {
-		t.Errorf("nil Verify fingerprint = %q, want empty", got)
-	}
-}
-
-// TestVerifyMarker_AtomicRoundtrip pins the writeVerifyMarker /
-// readVerifyMarker pair: a well-formed write roundtrips, and the
-// final slot contains only the marker file (the atomic-write temp
-// must have been renamed away). Mirrors the existing
-// TestWriteCachedDigest_AtomicNoPartial discipline.
-func TestVerifyMarker_AtomicRoundtrip(t *testing.T) {
-	slot := t.TempDir()
-	const fp = "abcd1234"
-	if err := writeVerifyMarker(slot, fp); err != nil {
-		t.Fatalf("writeVerifyMarker: %v", err)
-	}
-	if got := readVerifyMarker(slot); got != fp {
-		t.Errorf("readVerifyMarker = %q, want %q", got, fp)
-	}
-	// Empty slot path: missing marker should read as "".
-	if got := readVerifyMarker(t.TempDir()); got != "" {
-		t.Errorf("missing marker read as %q, want empty", got)
-	}
-	// No temp leftover.
-	entries, _ := os.ReadDir(slot)
-	for _, e := range entries {
-		if e.Name() == source.SlotMetaFile {
-			continue
-		}
-		t.Errorf("unexpected leftover entry %q in slot after writeVerifyMarker", e.Name())
-	}
-}
-
-// TestSignatureManifestRoundtrip pins the JSON shape — cosign
-// signature manifests must unmarshal cleanly into signatureManifest.
-func TestSignatureManifestRoundtrip(t *testing.T) {
-	raw := `{"layers":[{"mediaType":"application/vnd.dev.cosign.simplesigning.v1+json","digest":"sha256:abc","size":42,"annotations":{"dev.cosignproject.cosign/signature":"MEUC..."}}]}`
-	var m signatureManifest
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(m.Layers) != 1 || !strings.Contains(m.Layers[0].Digest, "sha256:") {
-		t.Errorf("unexpected layers: %+v", m.Layers)
-	}
-	if m.Layers[0].Annotations["dev.cosignproject.cosign/signature"] == "" {
-		t.Error("annotation roundtrip lost the signature key")
-	}
-}
-
-// TestSlotMeta_DigestAndVerifyCoexist pins the read-modify-write contract of
-// the unified sidecar: writing the digest, then the verify fingerprint (the
-// real fetch order), must leave BOTH readable — a writer must never clobber the
-// sibling field. A regression here surfaces as a cache hit re-verifying every
-// run (digest lost) or, worse, the digest rewrite dropping the fingerprint, so
-// it is the load-bearing invariant of the marker unification.
-func TestSlotMeta_DigestAndVerifyCoexist(t *testing.T) {
-	slot := t.TempDir()
-	if err := writeCachedDigest(slot, fullDigest); err != nil {
-		t.Fatalf("writeCachedDigest: %v", err)
-	}
-	if err := writeVerifyMarker(slot, "fp99"); err != nil {
-		t.Fatalf("writeVerifyMarker: %v", err)
-	}
-	if got := readCachedDigest(slot); got != fullDigest {
-		t.Errorf("digest lost after verify write: %q", got)
-	}
-	if got := readVerifyMarker(slot); got != "fp99" {
-		t.Errorf("verify lost: %q", got)
-	}
-	// A re-pull (digest rewrite) must preserve the verify fingerprint.
-	if err := writeCachedDigest(slot, fullDigest); err != nil {
-		t.Fatalf("rewrite digest: %v", err)
-	}
-	if got := readVerifyMarker(slot); got != "fp99" {
-		t.Errorf("verify clobbered by digest rewrite: %q", got)
 	}
 }

@@ -63,14 +63,9 @@ var (
 	//
 	// Scope: auth secretRef ONLY. certSecretRef and proxySecretRef sites
 	// intentionally still fail loud — silently dropping proxy/TLS material
-	// is a security downgrade flate refuses to make implicit. Cosign verify
-	// is the one nuance: a MISSING verify secret still fails loud here, but
-	// an unusable public key (no PEM key material) or an unreachable
-	// signature now WARNs and renders unverified rather than hard-failing —
-	// flate is an offline renderer, not an admission gate (see
-	// oci.verifyCosignSignature). Note parseSecret no longer blanket-wipes
-	// Secret values: only SOPS ciphertext is neutralized, so a plaintext
-	// public key passes through and keyed verification works.
+	// is a security downgrade flate refuses to make implicit. (flate does
+	// not verify signatures, so spec.verify secretRefs are ignored, never
+	// resolved.)
 	ErrMissingSecret = fmt.Errorf("%w: missing secret", ErrFlux)
 	// ErrSourceSkipped signals that a downstream consumer (KS sourceRef,
 	// HR chartRef) cannot proceed because its source was skipped —

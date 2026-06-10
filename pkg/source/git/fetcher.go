@@ -24,14 +24,12 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 	"github.com/home-operations/flate/pkg/source/git/mirror"
-	"github.com/home-operations/flate/pkg/source/git/verify"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -220,7 +218,7 @@ func (f *Fetcher) cloneIntoSlot(ctx context.Context, repo *manifest.GitRepositor
 	}
 
 	art := gitArtifact(repo.URL, slot.Path, readResolvedRevision(slot.Path))
-	if err := f.finalize(repo, art); err != nil {
+	if err := applyIgnoreAndMark(repo, art); err != nil {
 		return nil, err
 	}
 	return commitArtifact(repo, slot, art)
@@ -262,23 +260,14 @@ func gitCacheKey(repo *manifest.GitRepository, refLabel string) string {
 		Ignore            string   `json:"ignore,omitempty"`
 		SparseCheckout    []string `json:"sparseCheckout,omitempty"`
 		RecurseSubmodules bool     `json:"recurseSubmodules,omitempty"`
-		Verify            string   `json:"verify,omitempty"`
 	}{
 		Ref:               refLabel,
 		Ignore:            ignore,
 		SparseCheckout:    slices.Clone(repo.SparseCheckout),
 		RecurseSubmodules: repo.RecurseSubmodules,
-		Verify:            gitVerifyCacheKey(repo.Namespace, repo.Verification),
 	}
 	h, _ := source.CacheKeyHash(payload, 8)
 	return refLabel + "#opts:" + h
-}
-
-func gitVerifyCacheKey(namespace string, v *manifest.GitRepositoryVerify) string {
-	if v == nil {
-		return ""
-	}
-	return string(v.GetMode()) + ":" + namespace + "/" + v.SecretRef.Name
 }
 
 func canUseCachedGitSlot(ref *manifest.GitRepositoryRef) bool {
@@ -311,32 +300,9 @@ func fetchExplicitNamedRef(ctx context.Context, repo *git.Repository, auth trans
 	return nil
 }
 
-// finalize runs PGP verification (when configured), applies the
-// source-controller-compatible ignore patterns, and writes the cache-
-// hit marker. Returns the first error encountered; the caller is
-// expected to Reset the slot on error while still holding the lock.
-func (f *Fetcher) finalize(repo *manifest.GitRepository, art *store.SourceArtifact) error {
-	if repo.Verification != nil {
-		cloned, oerr := git.PlainOpen(art.LocalPath)
-		if oerr != nil {
-			return fmt.Errorf("verify: reopen %s: %w", art.LocalPath, oerr)
-		}
-		head, herr := cloned.Head()
-		if herr != nil {
-			return fmt.Errorf("verify: resolve HEAD: %w", herr)
-		}
-		if err := f.verifySignatures(repo, cloned, head.Hash()); err != nil {
-			return err
-		}
-	}
-	return applyIgnoreAndMark(repo, art)
-}
-
 // applyIgnoreAndMark applies the source-controller-compatible ignore
 // patterns to the materialized slot, then writes the revision marker.
-// Separated from finalize so the mirror path can call it without
-// re-opening the local worktree for verification (the mirror path
-// verifies against the bare-repo object store instead).
+// Shared by the clone and mirror paths.
 //
 // The marker is written AFTER ApplyIgnore so it survives user-supplied
 // "exclude all" patterns (common: `/*` + reincludes). Next run's
@@ -350,22 +316,6 @@ func applyIgnoreAndMark(repo *manifest.GitRepository, art *store.SourceArtifact)
 		_ = writeCachedRevision(art.LocalPath, art.Revision)
 	}
 	return nil
-}
-
-// verifySignatures runs PGP verification of the object at hash within
-// gitRepo (a local worktree or a bare mirror — both carry the object
-// store verify.Signatures walks). A no-op when repo.Verification is
-// unset, so callers can invoke it unconditionally.
-func (f *Fetcher) verifySignatures(repo *manifest.GitRepository, gitRepo *git.Repository, hash plumbing.Hash) error {
-	if repo.Verification == nil {
-		return nil
-	}
-	tagName := ""
-	if repo.Reference != nil {
-		tagName = repo.Reference.Tag
-	}
-	return verify.Signatures(f.Secrets, repo.Namespace, repo.Name,
-		repo.Verification.SecretRef.Name, repo.Verification.GetMode(), tagName, gitRepo, hash)
 }
 
 // canUseMirror reports whether this Fetcher can take the bare-mirror
@@ -417,9 +367,6 @@ func (f *Fetcher) fetchViaMirror(ctx context.Context, repo *manifest.GitReposito
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("materialize %s at %s: %w", hash, refStr, err)
-	}
-	if err := f.verifySignatures(repo, mirrorRepo, hash); err != nil {
-		return nil, err
 	}
 	art := gitArtifact(repo.URL, slot.Path, hash.String())
 	if err := applyIgnoreAndMark(repo, art); err != nil {

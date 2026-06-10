@@ -11,9 +11,9 @@ import (
 
 // locateOCIChart resolves a chart whose source is an OCIRepository. The
 // source controller's oci.Fetcher has already pulled the artifact (applying
-// spec.verify cosign verification, layerSelector, certSecretRef,
-// proxySecretRef, insecure, ignore, and semver tag resolution) into a slot
-// under the shared source cache; the HR depwait blocks render until that
+// layerSelector, certSecretRef, proxySecretRef, insecure, ignore, and semver
+// tag resolution) into a slot under the shared source cache; the HR depwait
+// blocks render until that
 // source is Ready, so the artifact is on disk by the time this runs. Reading
 // it from the Store keeps every Flux OCIRepository feature working uniformly
 // for both Kustomization and HelmRelease consumers — the same artifact-read

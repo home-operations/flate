@@ -4,23 +4,16 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// An OCI slot records its resolved digest and verify-policy fingerprint in the
-// slot's source.SlotMeta sidecar (one .flate-meta.json per slot). The digest is
-// written as the final step of a successful pull; the verify fingerprint is
-// written (read-modify-write, preserving the digest) only after a successful
-// verification, so meta.Verified == want always implies the cached content was
-// validated under that exact policy — the cache-hit verify-skip can never skip
-// an unvalidated slot. Both writers run under the slot lock (cache.Slot
-// serializes per key), so the read-modify-write has a single writer.
+// An OCI slot records its resolved digest in the slot's source.SlotMeta sidecar
+// (one .flate-meta.json per slot), written as the final step of a successful
+// pull. The write runs under the slot lock (cache.Slot serializes per key).
 
 // digestRE matches a well-formed OCI content digest ("<algorithm>:<hex>", hex
 // >= 32 chars). A digest that doesn't match is treated as a missing marker so
-// a hand-modified or legacy cache rebuilds rather than feeding a bad digest to
-// cosign.
+// a hand-modified or legacy cache rebuilds rather than trusting a bad digest.
 var digestRE = regexp.MustCompile(`^[a-z0-9]+:[a-fA-F0-9]{32,}$`)
 
 // writeCachedDigest records digest in the slot's meta sidecar, preserving any
@@ -47,34 +40,4 @@ func cachedDigestFresh(slot string, maxAge time.Duration) (string, bool) {
 		return "", false
 	}
 	return m.Digest, true
-}
-
-// verifyFingerprint hashes the verify spec into a short identifier stored in
-// the sidecar. Any meaningful change to the verify policy (provider,
-// MatchOIDCIdentity, SecretRef) produces a different fingerprint and forces
-// re-verify. JSON-marshal the spec for a deterministic representation.
-func verifyFingerprint(v *manifest.OCIRepositoryVerify) string {
-	if v == nil {
-		return ""
-	}
-	h, err := source.CacheKeyHash(v, 16)
-	if err != nil {
-		// Marshal-of-typed-struct shouldn't fail; if it does we fingerprint as
-		// empty, which forces re-verify (the safe default).
-		return ""
-	}
-	return h
-}
-
-// writeVerifyMarker records the verify-policy fingerprint in the slot's meta
-// sidecar, preserving the digest. Called only after a successful verification.
-func writeVerifyMarker(slot, fingerprint string) error {
-	return source.UpdateSlotMeta(slot, func(m *source.SlotMeta) { m.Verified = fingerprint })
-}
-
-// readVerifyMarker returns the slot's recorded verify fingerprint, or "" when
-// the sidecar is absent (forcing re-verify).
-func readVerifyMarker(slot string) string {
-	m, _ := source.ReadSlotMeta(slot)
-	return m.Verified
 }

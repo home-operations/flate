@@ -18,18 +18,14 @@ import (
 const SlotMetaFile = ".flate-meta.json"
 
 // SlotMeta is the content of SlotMetaFile: the metadata a cache-hit needs to
-// validate a slot and decide whether work (a refetch, a re-verify) can be
-// skipped. Fields are populated by whichever fetcher owns the slot — git sets
-// Revision, OCI sets Digest (+ Verified when spec.verify is configured).
+// validate a slot and decide whether a refetch can be skipped. Fields are
+// populated by whichever fetcher owns the slot — git sets Revision, OCI sets
+// Digest.
 type SlotMeta struct {
 	// Revision is the resolved git commit SHA (GitRepository slots).
 	Revision string `json:"revision,omitempty"`
 	// Digest is the resolved OCI content digest (OCIRepository slots).
 	Digest string `json:"digest,omitempty"`
-	// Verified is the verify-policy fingerprint the slot's content was last
-	// validated against; empty when verify is unconfigured. A mismatch on the
-	// next reconcile forces re-verify.
-	Verified string `json:"verified,omitempty"`
 
 	// ChartVersion, ChartDigest, ChartURL record a HelmRepository HTTP chart
 	// resolution (the concrete version, bare-hex tarball sha256, and absolute

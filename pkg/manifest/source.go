@@ -39,16 +39,6 @@ type GitRepository struct {
 	sourcev1.GitRepositorySpec `json:",inline" yaml:",inline"`
 }
 
-// GitRepositoryVerify is the Flux GitRepositoryVerification type.
-type GitRepositoryVerify = sourcev1.GitRepositoryVerification
-
-// Git verification modes — typed re-exports of sourcev1.GitVerificationMode.
-const (
-	GitVerifyModeHEAD       = sourcev1.ModeGitHEAD
-	GitVerifyModeTag        = sourcev1.ModeGitTag
-	GitVerifyModeTagAndHEAD = sourcev1.ModeGitTagAndHEAD
-)
-
 // Named identifies the GitRepository.
 func (g *GitRepository) Named() NamedResource {
 	return NamedResource{Kind: KindGitRepository, Namespace: g.Namespace, Name: g.Name}
@@ -126,12 +116,6 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 		r.Commit = ResolveEnvsubstDefaults(r.Commit)
 		r.Name = ResolveEnvsubstDefaults(r.Name)
 	}
-	if v := cr.Spec.Verification; v != nil {
-		// GetMode normalizes the legacy "head" alias to "HEAD" and
-		// applies the schema default. Write it back so consumers see a
-		// canonical mode regardless of source casing.
-		v.Mode = v.GetMode()
-	}
 	owner := cr.Namespace + "/" + cr.Name
 	if err := validateOptionalRefs("GitRepository", owner,
 		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},
@@ -139,11 +123,7 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 	); err != nil {
 		return nil, err
 	}
-	if v := cr.Spec.Verification; v != nil {
-		if err := validateSecretRefName("GitRepository", owner, "spec.verify.secretRef", v.SecretRef.Name); err != nil {
-			return nil, err
-		}
-	}
+	// flate does not verify signatures: spec.verify is ignored, not validated.
 	return &GitRepository{
 		Name:              cr.Name,
 		Namespace:         cr.Namespace,
@@ -177,17 +157,6 @@ const (
 	OCILayerOperationExtract = "extract"
 	OCILayerOperationCopy    = "copy"
 )
-
-// OCIRepositoryVerify is the Flux OCIRepositoryVerification from
-// source-controller. Flate enforces cosign verification — keyed
-// (secretRef → trusted public keys) and keyless (matchOIDCIdentity →
-// Fulcio/Rekor via sigstore-go, see pkg/source/oci/keyless.go). Notation
-// is unenforced (hard error if requested).
-type OCIRepositoryVerify = sourcev1.OCIRepositoryVerification
-
-// OIDCIdentityMatch is the Flux keyless identity matcher (issuer + subject
-// regex pair) carried in OCIRepositoryVerify.MatchOIDCIdentity.
-type OIDCIdentityMatch = sourcev1.OIDCIdentityMatch
 
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {
@@ -238,13 +207,7 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	); err != nil {
 		return nil, err
 	}
-	if v := cr.Spec.Verify; v != nil {
-		if err := validateOptionalRefs("OCIRepository", owner,
-			secretRefCheck{Field: "spec.verify.secretRef", Ref: v.SecretRef},
-		); err != nil {
-			return nil, err
-		}
-	}
+	// flate does not verify signatures: spec.verify is ignored, not validated.
 	return &OCIRepository{
 		Name:              cr.Name,
 		Namespace:         cr.Namespace,

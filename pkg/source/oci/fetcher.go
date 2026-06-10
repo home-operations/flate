@@ -9,9 +9,11 @@
 //	client.go   — registry client: TLS, registry-config, credentials
 //	cache.go    — cache keys, resolve-cache, cache-hit gate, artifact
 //	resolve.go  — OCI ref parsing, semver tag picking, revision shape
-//	marker.go   — cached-digest / verify-policy slot meta sidecar
-//	cosign.go   — cosign signature verification
+//	marker.go   — cached-digest slot meta sidecar
 //	layer.go    — media types, spec.layerSelector copy/extract
+//
+// flate does not verify OCI signatures: spec.verify is ignored and the artifact
+// is pulled unconditionally (see README).
 package oci
 
 import (
@@ -43,8 +45,7 @@ type Fetcher struct {
 //
 // Fetch resolves credentials, TLS, and proxy from the CR's *SecretRef
 // fields, then hands off to fetch() — the workhorse in fetch.go that
-// owns slot lifecycle, oras Copy, cosign verification, layer
-// extraction, and marker writes.
+// owns slot lifecycle, oras Copy, layer extraction, and marker writes.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*store.SourceArtifact, error) {
 	if repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
 		return nil, source.ErrUnsupportedProvider("OCIRepository",
@@ -76,14 +77,10 @@ func ociID(repo *manifest.OCIRepository) string {
 }
 
 // authIdentity returns the cache-key auth tag for an OCIRepository.
-// Combines SecretRef (registry creds), CertSecretRef (TLS material),
-// ProxySecretRef, and verify.SecretRef (cosign keys) since each can
-// change which artifact bytes a reconcile resolves to.
+// Combines SecretRef (registry creds), CertSecretRef (TLS material), and
+// ProxySecretRef since each can change which artifact bytes a reconcile
+// resolves to.
 func authIdentity(repo *manifest.OCIRepository) string {
-	var verifyRef *manifest.LocalObjectReference
-	if repo.Verify != nil {
-		verifyRef = repo.Verify.SecretRef
-	}
 	return source.AuthIdentityFromRefs(repo.Namespace,
-		repo.SecretRef, repo.CertSecretRef, repo.ProxySecretRef, verifyRef)
+		repo.SecretRef, repo.CertSecretRef, repo.ProxySecretRef)
 }

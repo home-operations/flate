@@ -9,7 +9,7 @@ import (
 
 func TestSlotMeta_RoundTrip(t *testing.T) {
 	slot := t.TempDir()
-	want := SlotMeta{Revision: "abc123", Digest: "sha256:dead", Verified: "fp42"}
+	want := SlotMeta{Revision: "abc123", Digest: "sha256:dead"}
 	if err := WriteSlotMeta(slot, want); err != nil {
 		t.Fatalf("write: %v", err)
 	}

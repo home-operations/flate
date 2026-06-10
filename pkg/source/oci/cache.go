@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"oras.land/oras-go/v2/registry/remote"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
@@ -95,17 +93,12 @@ func writeResolveCache(slot *source.Slot, digest string) error {
 	return slot.PersistMeta(func(m *source.SlotMeta) { m.Digest = digest })
 }
 
-// checkCacheHit applies the cache-hit gauntlet to a populated slot:
-// (1) require a well-formed cached digest, (2) reject leftover OCI Image Layout
-// artifacts, (3) re-verify cosign when configured (but skip the re-verify when
-// the persisted verify marker proves the cached digest was checked under the
-// same spec.verify policy — closes the "offline tool that requires online" gap
-// on flate's hot path).
-//
-// Returns (artifact, true, nil) on a confirmed hit; (nil, false, nil) when the
-// slot should be reset and re-pulled; (nil, false, err) on a fatal failure
-// (e.g. cosign rejected the cached bytes).
-func (f *Fetcher) checkCacheHit(ctx context.Context, repoClient *remote.Repository, repo *manifest.OCIRepository, slotPath string, ref manifest.OCIRepositoryRef, versioned, expectedDigest string) (*store.SourceArtifact, bool, error) {
+// checkCacheHit applies the cache-hit gauntlet to a populated slot: require a
+// well-formed cached digest, reject leftover OCI Image Layout artifacts, and
+// confirm the cached digest matches the resolved one. Returns (artifact, true)
+// on a confirmed hit, or (nil, false) when the slot should be reset and
+// re-pulled.
+func checkCacheHit(repo *manifest.OCIRepository, slotPath string, ref manifest.OCIRepositoryRef, versioned, expectedDigest string) (*store.SourceArtifact, bool) {
 	cachedDigest := readCachedDigest(slotPath)
 	if cachedDigest == "" {
 		// The cached digest is recorded in the meta sidecar as the FINAL
@@ -113,7 +106,7 @@ func (f *Fetcher) checkCacheHit(ctx context.Context, repoClient *remote.Reposito
 		// rename only after that write), so its absence on a final slot
 		// means the slot was committed from a pre-marker flate version or
 		// someone hand-modified the cache.
-		return nil, false, nil
+		return nil, false
 	}
 	if hasUnfinishedOCILayout(slotPath) {
 		// Defensive: a valid cached digest should imply applyLayerSelector
@@ -124,39 +117,10 @@ func (f *Fetcher) checkCacheHit(ctx context.Context, repoClient *remote.Reposito
 		// rebuilds the slot cleanly.
 		slog.Warn("oci: cache slot has leftover OCI Image Layout artifacts; resetting and re-fetching",
 			"slot", slotPath, "url", versioned)
-		return nil, false, nil
+		return nil, false
 	}
 	if expectedDigest != "" && cachedDigest != expectedDigest {
-		return nil, false, nil
+		return nil, false
 	}
-	if repo.Verify != nil {
-		want := verifyFingerprint(repo.Verify)
-		if want != readVerifyMarker(slotPath) {
-			// Verify policy changed since the slot was populated (or the
-			// marker is missing) — re-fetch the signature material and
-			// validate. This is the only path that hits the registry on a
-			// cache hit; with a stable verify policy and intact marker the
-			// cache hit is fully offline.
-			//
-			// A skipped verify (keyless, wiped/absent key, or unreachable
-			// signature) leaves the marker absent (see the post-pull write
-			// site), so cache hits ALWAYS land here and verifyCosignSignature
-			// re-emits its WARN — surfacing the unverified-render status on
-			// every reconcile rather than once-per-process.
-			verified, err := f.verifyCosignSignature(ctx, repoClient, repo, cachedDigest)
-			if err != nil {
-				return nil, false, err
-			}
-			// Persist the new fingerprint so subsequent hits skip the network
-			// — but only when verification actually succeeded. A skip leaves
-			// the marker absent for the WARN-re-fire reason above.
-			if verified {
-				if err := writeVerifyMarker(slotPath, want); err != nil {
-					slog.Warn("oci: failed to persist verify marker after re-verify; future hits will re-verify online",
-						"slot", slotPath, "err", err)
-				}
-			}
-		}
-	}
-	return ociArtifact(repo, slotPath, ref, cachedDigest, 0), true, nil
+	return ociArtifact(repo, slotPath, ref, cachedDigest, 0), true
 }

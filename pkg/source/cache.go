@@ -280,7 +280,7 @@ func (s *Slot) Release() {
 }
 
 // Reset wipes the final slot — used by callers that detected a stale
-// cache hit (e.g. cosign signature changed against the cached digest).
+// cache hit (e.g. an OCI digest that no longer matches the resolved one).
 // After Reset the slot looks like an Exists=false miss; the caller
 // can write to a new staging via a fresh Cache.Slot call, OR can call
 // Stage on this same Slot to allocate staging in place.

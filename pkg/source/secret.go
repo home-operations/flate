@@ -73,9 +73,8 @@ func resolveSecretRef(secrets SecretGetter, ns, ownerKind, ownerID, field string
 // "missing keys" error rather than authenticating with the literal
 // placeholder.
 //
-// Used by per-kind Fetchers (git, oci, bucket) and cosign verification
-// to resolve auth + trust material from the Secret a SecretRef points
-// at.
+// Used by per-kind Fetchers (git, oci, bucket) to resolve auth + TLS
+// material from the Secret a SecretRef points at.
 func StringFromSecret(sec *manifest.Secret, key string) string {
 	if v, ok := sec.StringData[key].(string); ok {
 		if manifest.IsValuePlaceholder(v) {

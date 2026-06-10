@@ -7,11 +7,11 @@ import (
 )
 
 // stderrSink is the terminal router live progress is painted through. Set by
-// the root command's PersistentPreRunE when stderr is an interactive terminal
-// and --no-progress is unset; nil disables the status bar entirely (pipes, CI,
-// the in-process e2e harness). When set, slog is also routed through it so log
-// lines interleave cleanly above the bar. stdout is never touched — the
-// rendered output stays byte-deterministic.
+// the root command's PersistentPreRunE when progressBarEnabled allows it; nil
+// disables the status bar entirely (pipes, CI, the in-process e2e harness,
+// --no-progress, or a --stream run that shares the terminal with stdout). When
+// set, slog is also routed through it so log lines interleave cleanly above the
+// bar. stdout is never touched — the rendered output stays byte-deterministic.
 var stderrSink *stderrRouter
 
 // writerIsTTY reports whether w is a character device (an interactive
@@ -24,6 +24,21 @@ func writerIsTTY(w io.Writer) bool {
 	}
 	fi, err := f.Stat()
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// progressBarEnabled reports whether the live status bar should paint. It is
+// off when --no-progress is set, when stderr isn't an interactive terminal
+// (pipes/CI/e2e buffers), or when --stream shares that terminal with stdout:
+// the bar repaints a sticky stderr line, while --stream writes raw YAML to
+// stdout outside the bar's router, so on one terminal the two interleave and
+// corrupt each other — the stream wins. A --stream run whose stdout is
+// redirected (file/pipe) keeps the bar: it paints cleanly to stderr with no
+// collision.
+func progressBarEnabled(noProgress, stream, stdoutTTY, stderrTTY bool) bool {
+	if noProgress || !stderrTTY {
+		return false
+	}
+	return !stream || !stdoutTTY
 }
 
 // stderrRouter multiplexes a sticky single-line status bar with the ordinary

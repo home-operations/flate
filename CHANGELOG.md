@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.1](https://github.com/home-operations/flate/compare/v0.4.0...v0.4.1) (2026-06-10)
+
+
+### Features
+
+* **orchestrator:** expose the dependsOn graph on Result ([#722](https://github.com/home-operations/flate/issues/722)) ([b05b5d4](https://github.com/home-operations/flate/commit/b05b5d4ae9c6170acb90061e22329e5210fad0c7))
+
+
+### Bug Fixes
+
+* **manifest:** skip non-manifest YAML instead of failing the file ([#720](https://github.com/home-operations/flate/issues/720)) ([e56f6e4](https://github.com/home-operations/flate/commit/e56f6e4080f55e8b264e4c3798cfaa3808b0f403))
+
 ## [0.4.0](https://github.com/home-operations/flate/compare/v0.3.4...v0.4.0) (2026-06-10)
 
 

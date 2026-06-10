@@ -76,7 +76,9 @@ func ReleaseIfNotRetained(doc map[string]any, obj BaseManifest) {
 }
 
 // DecodeDocs reads zero or more YAML documents from r and returns each
-// as a generic map. Empty / null-scalar documents are skipped.
+// as a generic map. Documents that are empty, null, or whose root is not a
+// mapping (a top-level sequence or scalar — i.e. not a Kubernetes manifest)
+// are skipped; only a genuine YAML syntax error aborts.
 //
 // Decodes directly into map[string]any via the yaml.v4 library — same
 // shape sigs.k8s.io/yaml uses behind real Flux. Letting the library
@@ -107,6 +109,21 @@ func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 			putDecodedMap(m)
 			if errors.Is(err, io.EOF) {
 				return out, nil
+			}
+			// Valid YAML whose root is not a mapping (a top-level sequence or
+			// scalar — e.g. an ansible task file) can't decode into
+			// map[string]any. yaml.v4 records that as a recoverable
+			// *yaml.LoadErrors and the decoder advances past the doc, so the
+			// loop continues with the next one. Such a document simply isn't a
+			// Kubernetes manifest, so skip it like an empty doc rather than
+			// failing the whole file. Decoding into map[string]any, a construct
+			// error can ONLY mean a non-mapping root: every value fits `any`, so
+			// no nested type mismatch is possible. A genuine YAML syntax error
+			// is a single *yaml.LoadError (not the plural *LoadErrors) and so
+			// falls through to the hard error below.
+			var notManifest *yaml.LoadErrors
+			if errors.As(err, &notManifest) {
+				continue
 			}
 			return nil, fmt.Errorf("%w: %w", ErrInput, err)
 		}

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.3](https://github.com/home-operations/flate/compare/v0.4.2...v0.4.3) (2026-06-11)
+
+
+### Features
+
+* **cli:** root-cause failure report — collapse cascades, defer log noise ([#728](https://github.com/home-operations/flate/issues/728)) ([79a8a18](https://github.com/home-operations/flate/commit/79a8a188ea01af644f595653aefd5238d0b13a3c))
+* **kustomize:** name the paths that collide on a duplicate-resource-id build ([#726](https://github.com/home-operations/flate/issues/726)) ([fec00de](https://github.com/home-operations/flate/commit/fec00dea9692d30991634b3748634a0655f3841d))
+
+
+### Bug Fixes
+
+* **cli:** fold dependency cascades under their root cause on every surface ([#729](https://github.com/home-operations/flate/issues/729)) ([7895f1f](https://github.com/home-operations/flate/commit/7895f1ff7537b279cb2a147987ba2fffd9ec2668))
+
+
+### Code Refactoring
+
+* tidy the root-cause failure-output internals ([#730](https://github.com/home-operations/flate/issues/730)) ([18833e8](https://github.com/home-operations/flate/commit/18833e863629b2621e3cd52af070e19773b4ca5d))
+
 ## [0.4.2](https://github.com/home-operations/flate/compare/v0.4.1...v0.4.2) (2026-06-11)
 
 

@@ -18,12 +18,13 @@ package kustomize
 // risking a stale hit.
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"cmp"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // nodeKind classifies a probed path so a dir↔file↔absent transition the build
@@ -45,6 +46,15 @@ func diskKind(exists, isDir bool) nodeKind {
 	default:
 		return kindFile
 	}
+}
+
+// hashEntries is the order-independent digest of a directory's child names. The
+// record side (recordDir) and the validate side (stillValid) must agree
+// byte-for-byte, so both go through this one definition.
+func hashEntries(entries []string) string {
+	sorted := slices.Clone(entries)
+	slices.Sort(sorted)
+	return manifest.SHA256Hex([]byte(strings.Join(sorted, "\x00")))
 }
 
 // readSet accumulates a build's disk reads. Safe for the concurrent access a
@@ -87,8 +97,7 @@ func (rs *readSet) recordFile(abs string, content []byte, readErr error) {
 	}
 	h := ""
 	if readErr == nil {
-		sum := sha256.Sum256(content)
-		h = hex.EncodeToString(sum[:])
+		h = manifest.SHA256Hex(content)
 	}
 	rs.mu.Lock()
 	rs.files[rel] = h
@@ -101,11 +110,9 @@ func (rs *readSet) recordDir(abs string, entries []string) {
 		rs.markBypass()
 		return
 	}
-	sorted := append([]string(nil), entries...)
-	sort.Strings(sorted)
-	sum := sha256.Sum256([]byte(strings.Join(sorted, "\x00")))
+	h := hashEntries(entries)
 	rs.mu.Lock()
-	rs.dirs[rel] = hex.EncodeToString(sum[:])
+	rs.dirs[rel] = h
 	rs.mu.Unlock()
 }
 
@@ -177,9 +184,9 @@ func (rs *readSet) snapshot() readSetSnapshot {
 		}
 		snap.Nodes = append(snap.Nodes, nodeEntry{Path: p, Kind: k})
 	}
-	sort.Slice(snap.Files, func(i, j int) bool { return snap.Files[i].Path < snap.Files[j].Path })
-	sort.Slice(snap.Dirs, func(i, j int) bool { return snap.Dirs[i].Path < snap.Dirs[j].Path })
-	sort.Slice(snap.Nodes, func(i, j int) bool { return snap.Nodes[i].Path < snap.Nodes[j].Path })
+	slices.SortFunc(snap.Files, func(a, b fileEntry) int { return cmp.Compare(a.Path, b.Path) })
+	slices.SortFunc(snap.Dirs, func(a, b fileEntry) int { return cmp.Compare(a.Path, b.Path) })
+	slices.SortFunc(snap.Nodes, func(a, b nodeEntry) int { return cmp.Compare(a.Path, b.Path) })
 	return snap
 }
 
@@ -203,11 +210,8 @@ func (snap readSetSnapshot) stillValid(disk diskReader, root string) bool {
 		if (err != nil) != (f.Hash == "") {
 			return false // file appeared or vanished since recording
 		}
-		if err == nil {
-			sum := sha256.Sum256(b)
-			if hex.EncodeToString(sum[:]) != f.Hash {
-				return false // content changed
-			}
+		if err == nil && manifest.SHA256Hex(b) != f.Hash {
+			return false // content changed
 		}
 	}
 	for _, d := range snap.Dirs {
@@ -215,10 +219,7 @@ func (snap readSetSnapshot) stillValid(disk diskReader, root string) bool {
 		if err != nil {
 			return false
 		}
-		sorted := append([]string(nil), entries...)
-		sort.Strings(sorted)
-		sum := sha256.Sum256([]byte(strings.Join(sorted, "\x00")))
-		if hex.EncodeToString(sum[:]) != d.Hash {
+		if hashEntries(entries) != d.Hash {
 			return false // a child was added or removed
 		}
 	}

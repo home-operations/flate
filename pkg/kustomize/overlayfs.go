@@ -120,10 +120,11 @@ func (fs overlayFS) CleanedAbs(path string) (filesys.ConfirmedDir, string, error
 }
 
 func (fs overlayFS) ReadDir(path string) ([]string, error) {
-	if entries, err := fs.disk.ReadDir(path); err == nil && fs.rec != nil {
+	entries, err := fs.disk.ReadDir(path)
+	if err == nil && fs.rec != nil {
 		fs.rec.recordDir(path, entries)
 	}
-	return mergeFSResults(fs.memory.ReadDir(path))(fs.disk.ReadDir(path))
+	return mergeFSResults(fs.memory.ReadDir(path))(entries, err)
 }
 
 func (fs overlayFS) Glob(pattern string) ([]string, error) {

@@ -607,16 +607,37 @@ func scopedRunError(o *orchestrator.Orchestrator, res *orchestrator.Result, c *c
 		return runErr
 	}
 	extras := nonResourceRunErrors(runErr)
-	failed := make(map[manifest.NamedResource]store.StatusInfo, len(res.Failed))
-	for id, info := range res.Failed {
-		if c == nil || c.includeNamespace(o.Filter(), id.Namespace) {
-			failed[id] = info
-		}
-	}
+	failed, blocked := scopedFailures(o, res, c)
 	if len(failed) == 0 {
 		return errors.Join(extras...)
 	}
-	return errors.Join(aggregateScopedFailures(failed), errors.Join(extras...))
+	return errors.Join(aggregateScopedFailures(failed, blocked), errors.Join(extras...))
+}
+
+// scopedFailures projects res.Failed (and the matching res.Blocked subset) onto
+// c's namespace scope. Single-sourced so the machine-error builder
+// (aggregateScopedFailures) and the rendered report (reportFailures) can't drift
+// on what counts as in scope. Returns empty (non-nil) maps when there is no
+// orchestrator/result or nothing in scope.
+func scopedFailures(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags) (
+	map[manifest.NamedResource]store.StatusInfo,
+	map[manifest.NamedResource][]manifest.NamedResource,
+) {
+	failed := map[manifest.NamedResource]store.StatusInfo{}
+	blocked := map[manifest.NamedResource][]manifest.NamedResource{}
+	if o == nil || res == nil {
+		return failed, blocked
+	}
+	for id, info := range res.Failed {
+		if c != nil && !c.includeNamespace(o.Filter(), id.Namespace) {
+			continue
+		}
+		failed[id] = info
+		if b := res.Blocked[id]; len(b) > 0 {
+			blocked[id] = b
+		}
+	}
+	return failed, blocked
 }
 
 // emitResult joins an emit-time error with the scoped run error so a
@@ -656,18 +677,7 @@ func (e reportedError) Unwrap() error { return e.err }
 // non-zero while run avoids printing it twice; otherwise err passes through.
 func reportFailures(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, err error, elapsed time.Duration) error {
 	notes := drainLogNotes()
-	failed := map[manifest.NamedResource]store.StatusInfo{}
-	blocked := map[manifest.NamedResource][]manifest.NamedResource{}
-	if o != nil && res != nil {
-		for id, info := range res.Failed {
-			if c == nil || c.includeNamespace(o.Filter(), id.Namespace) {
-				failed[id] = info
-				if b := res.Blocked[id]; len(b) > 0 {
-					blocked[id] = b
-				}
-			}
-		}
-	}
+	failed, blocked := scopedFailures(o, res, c)
 	m := report.Build(failed, blocked, notes)
 	if m.Empty() {
 		return err
@@ -679,28 +689,44 @@ func reportFailures(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator
 	return reportedError{err}
 }
 
-// resourceAggregatePrefix is the leading text of the error
-// aggregateScopedFailures produces. nonResourceRunErrors uses it to tell
-// the per-resource failure aggregate apart from incidental run errors, so
-// both must reference this one constant or the classification silently
-// drifts.
-const resourceAggregatePrefix = "reconcile completed with "
-
-func aggregateScopedFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
+// aggregateScopedFailures is the machine error value for a scoped failure set.
+// It enumerates the PRIMARY failures (root causes) one per line and tallies the
+// derived ones as "(+N blocked …)" rather than listing every cascade victim, so
+// the plain error a verb returns — printed by run() for get/diff, carried for
+// errors.Is / the non-zero exit on every verb — stays a concise root-cause
+// summary. build/test additionally render the styled report (see
+// reportFailures). Typed as *orchestrator.FailuresError so scopedRunError can
+// recognize and re-scope an aggregate that arrives as the run error.
+func aggregateScopedFailures(
+	failed map[manifest.NamedResource]store.StatusInfo,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) error {
 	msgs := make([]string, 0, len(failed))
+	nBlocked := 0
 	for id, info := range failed {
+		if len(blocked[id]) > 0 {
+			nBlocked++
+			continue
+		}
 		msgs = append(msgs, fmt.Sprintf("%s: %s", id, info.Message))
 	}
 	slices.Sort(msgs)
-	return fmt.Errorf("%s%d failure(s):\n  %s",
-		resourceAggregatePrefix, len(msgs), strings.Join(msgs, "\n  "))
+	msg := fmt.Sprintf("reconcile completed with %d failure(s)", len(msgs))
+	if len(msgs) > 0 {
+		msg += ":\n  " + strings.Join(msgs, "\n  ")
+	}
+	if nBlocked > 0 {
+		msg += fmt.Sprintf("\n  (+%d blocked by failed/missing dependencies)", nBlocked)
+	}
+	return &orchestrator.FailuresError{Count: len(msgs), Message: msg}
 }
 
 func nonResourceRunErrors(err error) []error {
 	var out []error
 	for _, leaf := range flattenErrors(err) {
-		if isResourceAggregateError(leaf) {
-			continue
+		var aggregate *orchestrator.FailuresError
+		if errors.As(leaf, &aggregate) {
+			continue // re-scoped + re-rendered from res.Failed, not carried verbatim
 		}
 		out = append(out, leaf)
 	}
@@ -722,10 +748,6 @@ func flattenErrors(err error) []error {
 		return flattenErrors(uw.Unwrap())
 	}
 	return []error{err}
-}
-
-func isResourceAggregateError(err error) bool {
-	return strings.HasPrefix(err.Error(), resourceAggregatePrefix)
 }
 
 func cmdContext(cmd *cobra.Command) context.Context {

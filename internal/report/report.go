@@ -57,6 +57,11 @@ type Model struct {
 	Primary []Primary
 	Missing []Missing
 	Notes   []Note
+	// Blocked is the count of distinct derived (cascaded) failures. It is the
+	// verdict's "N blocked" figure — distinct resources, not the sum of the
+	// per-root Blocks/RequiredBy lists, which can overlap when one resource
+	// traces to more than one root (e.g. a failed parent AND a missing dep).
+	Blocked int
 }
 
 // Empty reports whether there is nothing to render.
@@ -74,13 +79,7 @@ func (m Model) Empty() bool {
 // blocked) or a missing id (absent from failed). Cascaded resources never get
 // their own line — they appear only in a root's Blocks / RequiredBy list.
 func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource, notes []Note) Model {
-	// root id → resources that trace to it.
-	byRoot := map[manifest.NamedResource][]manifest.NamedResource{}
-	for id := range blocked {
-		for _, r := range rootsOf(id, blocked) {
-			byRoot[r] = append(byRoot[r], id)
-		}
-	}
+	byRoot := Roots(blocked)
 
 	var primary []Primary
 	var missing []Missing
@@ -99,7 +98,23 @@ func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manif
 
 	slices.SortFunc(primary, func(a, b Primary) int { return a.ID.Compare(b.ID) })
 	slices.SortFunc(missing, func(a, b Missing) int { return a.ID.Compare(b.ID) })
-	return Model{Primary: primary, Missing: missing, Notes: notes}
+	return Model{Primary: primary, Missing: missing, Notes: notes, Blocked: len(blocked)}
+}
+
+// Roots inverts a blocked graph into root cause → the resources that trace to
+// it. blocked maps each derived failure to the immediate dependencies that
+// blocked it; a root is any id reached by walking those blockers that is not
+// itself blocked (a primary failure, or a dependency missing from the graph).
+// Shared by Build and the test runner so both fold a cascade under the same
+// root with identical walk semantics.
+func Roots(blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
+	byRoot := map[manifest.NamedResource][]manifest.NamedResource{}
+	for id := range blocked {
+		for _, r := range rootsOf(id, blocked) {
+			byRoot[r] = append(byRoot[r], id)
+		}
+	}
+	return byRoot
 }
 
 // rootsOf resolves the root cause(s) of a blocked id by walking its blockers to
@@ -142,11 +157,9 @@ func (m Model) Write(w io.Writer, color bool, elapsed time.Duration) error {
 			style.Fail(style.GlyphFail, color),
 			style.Dim(p.ID.Kind, color),
 			p.ID.NamespacedName())
-		if msg := oneLine(p.Msg); msg != "" {
-			fmt.Fprintf(&b, "  %s", msg)
-		}
+		writeMessage(&b, p.Msg)
 		if len(p.Blocks) > 0 {
-			fmt.Fprintf(&b, "\n      %s", style.Dim("blocks "+summarize(p.Blocks), color))
+			fmt.Fprintf(&b, "\n%s%s", msgIndent, style.Dim("blocks "+summarize(p.Blocks), color))
 		}
 		b.WriteByte('\n')
 	}
@@ -171,19 +184,13 @@ func (m Model) Write(w io.Writer, color bool, elapsed time.Duration) error {
 		}
 	}
 
-	// Verdict: failed = primary + missing roots; blocked = cascaded resources.
-	blockedCount := 0
-	for _, p := range m.Primary {
-		blockedCount += len(p.Blocks)
-	}
-	for _, mr := range m.Missing {
-		blockedCount += len(mr.RequiredBy)
-	}
+	// Verdict: failed = primary + missing roots; blocked = distinct cascaded
+	// resources (m.Blocked, not the sum of per-root lists, which can overlap).
 	failedCount := len(m.Primary) + len(m.Missing)
 	b.WriteString("\n  " + style.Fail(style.GlyphFail, color) + " " +
 		style.Fail(fmt.Sprintf("%d failed", failedCount), color))
-	if blockedCount > 0 {
-		b.WriteString(" · " + style.Dim(fmt.Sprintf("%d blocked", blockedCount), color))
+	if m.Blocked > 0 {
+		b.WriteString(" · " + style.Dim(fmt.Sprintf("%d blocked", m.Blocked), color))
 	}
 	if elapsed > 0 {
 		b.WriteString("   " + style.Dim(style.Elapsed(elapsed), color))
@@ -206,14 +213,37 @@ func summarize(ids []manifest.NamedResource) string {
 	return fmt.Sprintf("%s +%d more", strings.Join(names[:blockedSample], ", "), len(names)-blockedSample)
 }
 
-// oneLine collapses a multi-line message to a single line so a primary failure
-// stays one row; helm/kustomize errors are often multi-line.
-func oneLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
-		return strings.TrimSpace(s[:i]) + " …"
+// msgIndent aligns a primary failure's continuation lines (and its "blocks …"
+// line) under the message column.
+const msgIndent = "         "
+
+// writeMessage appends a primary failure's message to its resource header line:
+// the first line follows inline; any continuation lines print indented beneath.
+// Multi-line build/template diagnostics — notably the duplicate-id producer
+// attribution from pkg/kustomize — survive intact instead of being truncated to
+// their first line.
+func writeMessage(b *strings.Builder, msg string) {
+	lines := MessageLines(msg)
+	if len(lines) == 0 {
+		return
 	}
-	return s
+	b.WriteString("  " + lines[0])
+	for _, line := range lines[1:] {
+		b.WriteString("\n" + msgIndent + line)
+	}
+}
+
+// MessageLines splits a stored failure message into trimmed, non-empty lines.
+// Shared with the test runner so a multi-line build/template diagnostic renders
+// the same way on both surfaces.
+func MessageLines(s string) []string {
+	var out []string
+	for line := range strings.SplitSeq(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func noteTotal(notes []Note) int {

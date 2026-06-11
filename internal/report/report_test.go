@@ -101,3 +101,66 @@ func TestBuild_Empty(t *testing.T) {
 		t.Error("a clean run must produce an empty model")
 	}
 }
+
+// TestWrite_PrimaryMessageIsMultiLine pins that a multi-line primary message (a
+// kustomize duplicate-id diagnostic) renders every line — the producer
+// attribution must survive intact rather than being truncated to the first
+// line, which is exactly the detail that tells the user what to fix.
+func TestWrite_PrimaryMessageIsMultiLine(t *testing.T) {
+	a := ks("a")
+	f := map[manifest.NamedResource]store.StatusInfo{
+		a: {Status: store.StatusFailed, Message: "may not add resource with an already registered id: X\n" +
+			"duplicate resource(s) produced by multiple accumulated paths:\n  - ./one\n  - ./two"},
+	}
+	var b bytes.Buffer
+	if err := Build(f, nil, nil).Write(&b, false, 0); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{"already registered id: X", "produced by multiple accumulated paths", "- ./one", "- ./two"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("multi-line primary message missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestBuild_BlockedCountsDistinctResources pins that a resource blocked by two
+// independent roots (a failed parent AND a missing dependency) counts once in
+// the verdict, even though it folds under both roots' lists.
+func TestBuild_BlockedCountsDistinctResources(t *testing.T) {
+	root, missing, dual := ks("root"), ks("missing"), ks("dual")
+	f := failed(root, dual) // missing is absent from the store
+	blocked := map[manifest.NamedResource][]manifest.NamedResource{
+		dual: {root, missing}, // blocked by a failed parent AND a missing dep
+	}
+
+	m := Build(f, blocked, nil)
+	if m.Blocked != 1 {
+		t.Errorf("Blocked = %d, want 1 distinct blocked resource", m.Blocked)
+	}
+	if len(m.Primary) != 1 || len(m.Primary[0].Blocks) != 1 {
+		t.Errorf("root should fold dual once: %+v", m.Primary)
+	}
+	if len(m.Missing) != 1 || len(m.Missing[0].RequiredBy) != 1 {
+		t.Errorf("missing should fold dual once: %+v", m.Missing)
+	}
+
+	var b bytes.Buffer
+	_ = m.Write(&b, false, 0)
+	if out := b.String(); !strings.Contains(out, "1 blocked") {
+		t.Errorf("verdict should count the dual-rooted resource once:\n%s", out)
+	}
+}
+
+// TestRoots_WalksTransitiveChainToTrueRoot pins the shared grouping the test
+// runner reuses: a leaf folds under the primary at the top of its blocker chain.
+func TestRoots_WalksTransitiveChainToTrueRoot(t *testing.T) {
+	root, mid, leaf := ks("root"), ks("mid"), ks("leaf")
+	byRoot := Roots(map[manifest.NamedResource][]manifest.NamedResource{
+		mid:  {root},
+		leaf: {mid},
+	})
+	if got := byRoot[root]; len(got) != 2 {
+		t.Fatalf("root should gather mid and leaf, got %+v", got)
+	}
+}

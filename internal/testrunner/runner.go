@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/internal/report"
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -42,6 +43,10 @@ const (
 	OutcomePassed Outcome = iota
 	OutcomeSkipped
 	OutcomeFailed
+	// OutcomeBlocked is a resource that failed only because a dependency
+	// failed or was missing — the body never ran. These are folded under
+	// their root cause rather than listed per-resource (see Report.Write).
+	OutcomeBlocked
 )
 
 // Case is one Kustomization (or HelmRelease) result.
@@ -51,17 +56,34 @@ type Case struct {
 	Reason  string
 }
 
+// BlockedGroup folds the resources that cascaded from one root cause into a
+// single reported line: Count resources blocked by Root. Missing is true when
+// Root was never loaded (a dependency that does not exist), false when Root is a
+// failure reported elsewhere in the table.
+type BlockedGroup struct {
+	Root    manifest.NamedResource
+	Count   int
+	Missing bool
+}
+
 // Report is the aggregate outcome.
 type Report struct {
 	Cases   []Case
 	Passed  int
 	Skipped int
 	Failed  int
-	Matched int
+	// Blocked counts resources folded under a root cause (not listed as
+	// Cases); BlockedRoots names those roots with their tallies.
+	Blocked      int
+	BlockedRoots []BlockedGroup
+	Matched      int
 }
 
-// AnyFailed reports whether any case failed.
-func (r Report) AnyFailed() bool { return r.Failed > 0 }
+// AnyFailed reports whether the run should be considered failed: a primary
+// failure, or a cascade blocked on one. A broken dependency that blocks
+// everything downstream must still flip the exit code even if nothing reported
+// a primary failure in scope.
+func (r Report) AnyFailed() bool { return r.Failed > 0 || r.Blocked > 0 }
 
 // decorate maps an outcome to its leading glyph and the style renderer that
 // colors it. Glyphs render in both modes (any UTF-8 sink); only color is gated.
@@ -75,6 +97,9 @@ func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 		return style.GlyphSkip, style.Skip
 	}
 }
+
+// reasonIndent aligns a failure's continuation lines beneath its row.
+const reasonIndent = "         "
 
 // Write renders the report: one row per case (status glyph, dimmed kind column,
 // namespace/name, dimmed reason) followed by a summary — an overall verdict
@@ -94,17 +119,36 @@ func (r Report) Write(w io.Writer, color bool, elapsed time.Duration) error {
 			paint(glyph, color),
 			style.Dim(fmt.Sprintf("%-*s", kindW, c.ID.Kind), color),
 			c.ID.NamespacedName())
-		if c.Reason != "" {
-			fmt.Fprintf(&b, "  %s", style.Dim(c.Reason, color))
+		// A single-line reason stays inline; a multi-line one (a kustomize
+		// build / helm template diagnostic) prints its first line inline and
+		// the rest indented beneath, so the detail survives instead of running
+		// the row off the right edge.
+		if lines := report.MessageLines(c.Reason); len(lines) > 0 {
+			fmt.Fprintf(&b, "  %s", style.Dim(lines[0], color))
+			for _, line := range lines[1:] {
+				fmt.Fprintf(&b, "\n%s%s", reasonIndent, style.Dim(line, color))
+			}
 		}
 		b.WriteByte('\n')
 	}
 
+	// Cascades fold under their root cause: one dim line per root, naming the
+	// count it blocks, in place of a per-resource row for each victim.
+	for _, g := range r.BlockedRoots {
+		root := g.Root.NamespacedName()
+		if g.Missing {
+			root += " (not found)"
+		}
+		fmt.Fprintf(&b, "  %s  %s\n",
+			style.Dim(style.GlyphBlocked, color),
+			style.Dim(fmt.Sprintf("%d blocked by %s", g.Count, root), color))
+	}
+
 	// Summary: a verdict glyph (green ✓ / red ✗) leads the colored counts —
-	// always the passed count; skipped/failed only when non-zero — and a dim
-	// elapsed clock closes it. An empty run still reads "✓ 0 passed".
+	// always the passed count; skipped/failed/blocked only when non-zero — and a
+	// dim elapsed clock closes it. An empty run still reads "✓ 0 passed".
 	verdict, paintVerdict := style.GlyphPass, style.Pass
-	if r.Failed > 0 {
+	if r.Failed > 0 || r.Blocked > 0 {
 		verdict, paintVerdict = style.GlyphFail, style.Fail
 	}
 	b.WriteString("\n  " + paintVerdict(verdict, color) + " ")
@@ -114,6 +158,9 @@ func (r Report) Write(w io.Writer, color bool, elapsed time.Duration) error {
 	}
 	if r.Failed > 0 {
 		b.WriteString(" · " + style.Fail(fmt.Sprintf("%d failed", r.Failed), color))
+	}
+	if r.Blocked > 0 {
+		b.WriteString(" · " + style.Dim(fmt.Sprintf("%d blocked", r.Blocked), color))
 	}
 	if elapsed > 0 {
 		b.WriteString("   " + style.Dim(style.Elapsed(elapsed), color))
@@ -133,6 +180,9 @@ func Run(j Job) Report {
 		kinds = []string{manifest.KindKustomization, manifest.KindHelmRelease}
 	}
 	var rep Report
+	// id → its immediate blockers, accumulated across kinds so a cross-kind
+	// cascade still resolves to one root in blockedGroups.
+	blocked := map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, kind := range kinds {
 		objs := j.Store.ListObjects(kind)
 		slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
@@ -166,13 +216,33 @@ func Run(j Job) Report {
 				rep.Passed++
 			case OutcomeSkipped:
 				rep.Skipped++
-			case OutcomeFailed:
+			case OutcomeBlocked:
+				// Folded under its root cause, not listed per-resource.
+				rep.Blocked++
+				blocked[id] = j.Store.BlockedBy(id)
+				continue
+			default: // OutcomeFailed
 				rep.Failed++
 			}
 			rep.Cases = append(rep.Cases, c)
 		}
 	}
+	rep.BlockedRoots = blockedGroups(j.Store, blocked)
 	return rep
+}
+
+// blockedGroups inverts the blocked graph (id → its immediate blockers) into one
+// BlockedGroup per root cause, sorted by root, using the same root-resolution as
+// the build/diff report so a cascade folds identically on every surface.
+func blockedGroups(s *store.Store, blocked map[manifest.NamedResource][]manifest.NamedResource) []BlockedGroup {
+	byRoot := report.Roots(blocked)
+	groups := make([]BlockedGroup, 0, len(byRoot))
+	for root, ids := range byRoot {
+		_, known := s.GetStatus(root)
+		groups = append(groups, BlockedGroup{Root: root, Count: len(ids), Missing: !known})
+	}
+	slices.SortFunc(groups, func(a, b BlockedGroup) int { return a.Root.Compare(b.Root) })
+	return groups
 }
 
 func classify(s *store.Store, id manifest.NamedResource) Case {
@@ -181,6 +251,13 @@ func classify(s *store.Store, id manifest.NamedResource) Case {
 	case !ok:
 		return Case{ID: id, Outcome: OutcomeFailed, Reason: "no status reported"}
 	case info.Status == store.StatusFailed:
+		// A failure with recorded blockers never ran its body — it's blocked by
+		// a failed/missing dependency, not a primary fault. Fold it under the
+		// root cause (Report.Write) rather than reprinting the nested
+		// "dependencies failed:" chain on its own row.
+		if len(s.BlockedBy(id)) > 0 {
+			return Case{ID: id, Outcome: OutcomeBlocked}
+		}
 		// Strip the `flux error: input error:` sentinel chain so the
 		// `flate test` table shows the actual cause rather than two
 		// layers of bureaucracy. Same treatment the orchestrator gives

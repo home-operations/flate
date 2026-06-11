@@ -22,9 +22,10 @@ import (
 // Status glyphs shared across surfaces: a passing/success mark, a failure mark,
 // and a skipped/secondary dash. Pair with Pass/Fail/Skip for color.
 const (
-	GlyphPass = "✓"
-	GlyphFail = "✗"
-	GlyphSkip = "‒"
+	GlyphPass    = "✓"
+	GlyphFail    = "✗"
+	GlyphSkip    = "‒"
+	GlyphBlocked = "⊘"
 )
 
 // Semantic styles, by ANSI base color (0-7) so they downsample cleanly on

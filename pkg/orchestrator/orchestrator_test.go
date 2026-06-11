@@ -114,6 +114,46 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 	}
 }
 
+// TestDetectOrphans_ParentFailedIsCascadeNotOrphan pins the cascade/orphan
+// discriminator: when a child's covering parent itself FAILED (so it emitted
+// nothing, making every child under its spec.path look unreferenced), the child
+// is a blocked cascade victim — NOT an orphan. Demoting it would drop it from
+// the failure set and let the report/test runner score a broken tree as passing.
+// Only a child under a parent that SUCCEEDED is a genuine orphan.
+func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
+	parent := &manifest.Kustomization{
+		Name: "cluster-apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps"},
+	}
+	child := &manifest.Kustomization{
+		Name: "plex", Namespace: "media",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps/media/plex/app"},
+	}
+
+	o := &Orchestrator{
+		store:    store.New(),
+		rendered: newRenderedSet(),
+		sourceFiles: map[manifest.NamedResource]string{
+			parent.Named(): "kubernetes/flux/cluster/ks.yaml",
+			child.Named():  "kubernetes/apps/media/plex/ks.yaml",
+		},
+	}
+	o.store.AddObject(parent)
+	o.store.AddObject(child)
+
+	failed := map[manifest.NamedResource]store.StatusInfo{
+		parent.Named(): {Status: store.StatusFailed, Message: "kustomize build boom"}, // the build that emitted nothing
+		child.Named():  {Status: store.StatusFailed, Message: "dependencies failed: cluster-apps"},
+	}
+	orphans := o.detectOrphans(failed)
+	if _, ok := orphans[child.Named()]; ok {
+		t.Errorf("child under a FAILED covering parent is a cascade victim, not an orphan: %+v", orphans)
+	}
+	if len(orphans) != 0 {
+		t.Errorf("expected no orphans when the covering parent failed, got %+v", orphans)
+	}
+}
+
 // TestOrchestrator_WithFetcherAfterBootstrapPanics pins the
 // contract that WithFetcher MUST be called before Bootstrap. A
 // late swap would silently miss any source CR discovery already

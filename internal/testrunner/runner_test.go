@@ -245,3 +245,76 @@ type errWriter struct {
 func (w errWriter) Write(_ []byte) (int, error) {
 	return 0, w.err
 }
+
+// TestRun_BlockedFoldsUnderRoot pins the cascade fold: a failure with recorded
+// blockers classifies as Blocked (not Failed), is kept out of the per-resource
+// rows, and folds under its root in BlockedRoots — the verdict counting it as
+// blocked, the run still non-zero.
+func TestRun_BlockedFoldsUnderRoot(t *testing.T) {
+	s := store.New()
+	root := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
+	s.AddObject(&manifest.Kustomization{Name: root.Name, Namespace: root.Namespace})
+	s.AddObject(&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
+	s.UpdateStatus(root, store.StatusFailed, "kustomize build boom") // primary
+	s.UpdateStatus(child, store.StatusFailed, "dependencies failed: cluster-apps")
+	s.SetBlocked(child, []manifest.NamedResource{root})
+
+	rep := Run(Job{Store: s})
+	if rep.Failed != 1 || rep.Blocked != 1 {
+		t.Fatalf("want 1 failed (root) + 1 blocked (child), got %+v", rep)
+	}
+	if !rep.AnyFailed() {
+		t.Error("a blocked cascade must flip the run to failed")
+	}
+	for _, c := range rep.Cases {
+		if c.ID == child {
+			t.Errorf("blocked child must not get its own case row: %+v", c)
+		}
+	}
+	if len(rep.BlockedRoots) != 1 || rep.BlockedRoots[0].Root != root ||
+		rep.BlockedRoots[0].Count != 1 || rep.BlockedRoots[0].Missing {
+		t.Fatalf("want one BlockedGroup{root, count 1, not missing}, got %+v", rep.BlockedRoots)
+	}
+
+	var b bytes.Buffer
+	_ = rep.Write(&b, false, 0)
+	out := b.String()
+	if !strings.Contains(out, "1 blocked by flux-system/cluster-apps") {
+		t.Errorf("fold line missing:\n%s", out)
+	}
+	if !strings.Contains(out, "1 failed") || !strings.Contains(out, "1 blocked") {
+		t.Errorf("verdict should separate failed and blocked:\n%s", out)
+	}
+	if strings.Contains(out, "media/plex") {
+		t.Errorf("blocked child must not appear as a row:\n%s", out)
+	}
+}
+
+// TestRun_BlockedByMissingDep covers a resource blocked on a dependency that was
+// never loaded: the root folds with a "(not found)" marker and counts as blocked
+// even though no primary failure exists, keeping the run non-zero.
+func TestRun_BlockedByMissingDep(t *testing.T) {
+	s := store.New()
+	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "volsync-system", Name: "kopiur-repository"}
+	missing := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kopiur-system", Name: "kopiur"}
+	s.AddObject(&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
+	s.UpdateStatus(child, store.StatusFailed, "dependencies failed: kopiur")
+	s.SetBlocked(child, []manifest.NamedResource{missing})
+
+	rep := Run(Job{Store: s})
+	if rep.Failed != 0 || rep.Blocked != 1 {
+		t.Fatalf("want 0 failed + 1 blocked, got %+v", rep)
+	}
+	if !rep.AnyFailed() {
+		t.Error("a blocked-only run must still be non-zero")
+	}
+	if len(rep.BlockedRoots) != 1 || !rep.BlockedRoots[0].Missing {
+		t.Fatalf("want the missing root marked Missing, got %+v", rep.BlockedRoots)
+	}
+	var b bytes.Buffer
+	_ = rep.Write(&b, false, 0)
+	if !strings.Contains(b.String(), "not found") {
+		t.Errorf("missing root should render (not found):\n%s", b.String())
+	}
+}

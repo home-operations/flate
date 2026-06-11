@@ -145,7 +145,7 @@ func TestScopedRunError_FiltersOutsideNamespace(t *testing.T) {
 		},
 	}}
 
-	got := scopedRunError(o, res, &commonFlags{namespace: "media"}, aggregateScopedFailures(res.Failed))
+	got := scopedRunError(o, res, &commonFlags{namespace: "media"}, aggregateScopedFailures(res.Failed, nil))
 	if got == nil {
 		t.Fatal("expected scoped failure")
 	}
@@ -169,7 +169,7 @@ func TestScopedRunError_ReturnsNilWhenOnlyOutsideNamespaceFailed(t *testing.T) {
 		},
 	}}
 
-	if got := scopedRunError(o, res, &commonFlags{namespace: "media"}, aggregateScopedFailures(res.Failed)); got != nil {
+	if got := scopedRunError(o, res, &commonFlags{namespace: "media"}, aggregateScopedFailures(res.Failed, nil)); got != nil {
 		t.Fatalf("scopedRunError = %v, want nil", got)
 	}
 }
@@ -186,7 +186,7 @@ func TestScopedRunError_PreservesUnattributedRunError(t *testing.T) {
 		},
 	}}
 	panicErr := errors.New("1 task(s) panicked without per-resource attribution; check logs")
-	runErr := errors.Join(aggregateScopedFailures(res.Failed), panicErr)
+	runErr := errors.Join(aggregateScopedFailures(res.Failed, nil), panicErr)
 
 	got := scopedRunError(o, res, &commonFlags{namespace: "media"}, runErr)
 	if got == nil {
@@ -211,7 +211,7 @@ func TestScopedRunError_CancellationStillFiltersHiddenFailures(t *testing.T) {
 			Message: "default failed",
 		},
 	}}
-	runErr := errors.Join(aggregateScopedFailures(res.Failed), context.Canceled)
+	runErr := errors.Join(aggregateScopedFailures(res.Failed, nil), context.Canceled)
 
 	got := scopedRunError(o, res, &commonFlags{namespace: "media"}, runErr)
 	if !errors.Is(got, context.Canceled) {
@@ -238,7 +238,7 @@ func TestScopedRunError_JoinsScopedAndUnattributed(t *testing.T) {
 		},
 	}}
 	panicErr := errors.New("1 task(s) panicked without per-resource attribution; check logs")
-	runErr := errors.Join(aggregateScopedFailures(res.Failed), panicErr)
+	runErr := errors.Join(aggregateScopedFailures(res.Failed, nil), panicErr)
 
 	got := scopedRunError(o, res, &commonFlags{namespace: "media"}, runErr)
 	if got == nil {
@@ -275,6 +275,36 @@ func TestOutputValue_Validates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must be one of: yaml, json") {
 		t.Errorf("error should name the accepted set: %q", err)
+	}
+}
+
+// TestAggregateScopedFailures_FoldsBlocked pins the concise machine error: it
+// enumerates only primary (root-cause) failures and tallies the blocked cascade
+// as a count, so get/diff print a root-cause summary rather than a wall of every
+// cascade victim. It is typed so scopedRunError can recognize and re-scope it.
+func TestAggregateScopedFailures_FoldsBlocked(t *testing.T) {
+	root := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
+	failed := map[manifest.NamedResource]store.StatusInfo{
+		root:  {Status: store.StatusFailed, Message: "kustomize build boom"},
+		child: {Status: store.StatusFailed, Message: "dependencies failed: cluster-apps"},
+	}
+	blocked := map[manifest.NamedResource][]manifest.NamedResource{child: {root}}
+
+	err := aggregateScopedFailures(failed, blocked)
+	msg := err.Error()
+	if !strings.Contains(msg, "cluster-apps") || !strings.Contains(msg, "kustomize build boom") {
+		t.Errorf("primary failure should be enumerated: %q", msg)
+	}
+	if strings.Contains(msg, "media/plex") || strings.Contains(msg, "dependencies failed") {
+		t.Errorf("blocked cascade victim should be folded, not enumerated: %q", msg)
+	}
+	if !strings.Contains(msg, "1 blocked") {
+		t.Errorf("blocked count should be summarized: %q", msg)
+	}
+	var fe *orchestrator.FailuresError
+	if !errors.As(err, &fe) {
+		t.Errorf("aggregate must be a *orchestrator.FailuresError, got %T", err)
 	}
 }
 

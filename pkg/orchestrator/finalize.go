@@ -40,9 +40,21 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		if !ok {
 			continue
 		}
-		if _, ok := loader.LongestParent(prefixes, file, id); ok {
-			out[id] = info.Message
+		parent, ok := loader.LongestParent(prefixes, file, id)
+		if !ok {
+			continue
 		}
+		// A covering parent that itself FAILED emitted nothing, so every child
+		// under its spec.path looks unreferenced — but these are blocked
+		// cascade victims, not stale unwired files. Leave them Failed (with the
+		// BlockedBy the dependency gate recorded) so the report folds them under
+		// the root cause instead of demoting each to a quiet "orphaned" warning.
+		// A child under a parent that SUCCEEDED but still didn't emit it is the
+		// genuine orphan this detection exists for.
+		if _, parentFailed := failed[parent]; parentFailed {
+			continue
+		}
+		out[id] = info.Message
 	}
 	return out
 }
@@ -197,6 +209,18 @@ func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]sto
 	}
 }
 
+// FailuresError aggregates per-resource reconcile failures into one error. Its
+// identity (recovered with errors.As) — not its message text — is how the CLI
+// tells the resource-failure aggregate apart from incidental run errors (a
+// panic, a cancellation) when it re-scopes failures to a namespace filter and
+// re-renders them. Count is the number of failures aggregated.
+type FailuresError struct {
+	Count   int
+	Message string
+}
+
+func (e *FailuresError) Error() string { return e.Message }
+
 func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))
 	for id, info := range sanitizeFailed(failed) {
@@ -207,8 +231,10 @@ func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store
 		}
 	}
 	slices.Sort(msgs) // deterministic ordering across runs
-	return fmt.Errorf("reconcile completed with %d failure(s):\n  %s",
-		len(msgs), strings.Join(msgs, "\n  "))
+	return &FailuresError{
+		Count:   len(msgs),
+		Message: fmt.Sprintf("reconcile completed with %d failure(s):\n  %s", len(msgs), strings.Join(msgs, "\n  ")),
+	}
 }
 
 // sanitizeFailed returns a copy of the failure map with each entry's

@@ -41,10 +41,23 @@ type TreeCache struct {
 	// pkg/source/git (import cycle). nil ⇒ a git-base resource fails with a
 	// clear error. See gitbase.go.
 	gitBase GitBaseFetcher
+
+	// render is the cross-run, content-validated kustomize render cache (see
+	// render_cache.go). nil ⇒ disabled; every render rebuilds. Set once at
+	// construction via SetRenderCache.
+	render *renderCache
 }
 
 // NewTreeCache constructs an empty render cache.
 func NewTreeCache() *TreeCache { return &TreeCache{} }
+
+// SetRenderCache enables the cross-run render cache, persisting under dir with a
+// capBytes disk cap (<=0 or empty dir disables it). The orchestrator calls this
+// once at construction; embedders/tests may leave it unset for an always-render
+// TreeCache.
+func (c *TreeCache) SetRenderCache(dir string, capBytes int64) {
+	c.render = newRenderCache(dir, capBytes)
+}
 
 // SetGitBaseFetcher wires the git-clone capability used to resolve remote git
 // bases referenced from a kustomization's resources:. The orchestrator calls

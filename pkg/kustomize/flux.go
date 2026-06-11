@@ -81,6 +81,23 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 	}
 	sourceRoot = dr.root
 
+	// Cross-run render cache: a stored render whose recorded disk inputs still
+	// validate against the live tree reproduces the output exactly, so krusty is
+	// skipped entirely. The readSet (see readset.go) makes a hit sound even for
+	// `..`-escaping / transitive inputs a spec hash alone would miss.
+	key := renderKey(rawSpec, dr.root, subPath, applyIgnore)
+	if rc := cache.render; rc != nil && key != "" {
+		if snap, output, ok := rc.get(key); ok && snap.stillValid(dr.diskFS, dr.root) {
+			return output, nil
+		}
+	}
+	// On a miss, record this build's disk reads so the next run can validate it.
+	// A nil recorder (cache disabled or unkeyable) keeps the overlay byte-identical.
+	var rec *readSet
+	if cache.render != nil && key != "" {
+		rec = newReadSet(dr.root)
+	}
+
 	// Memory-over-disk overlay: source files are read from the secure on-disk
 	// FS rooted at sourceRoot (no real-FS reach beyond root; symlinks
 	// evaluated), while the merged kustomization.yaml + any pre-fetched remote
@@ -89,7 +106,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 	// gets its own overlay). Reading source from disk also sidesteps the
 	// in-memory fs's filename restriction, so trees with exotic names (spaces,
 	// etc.) render.
-	memFS := newOverlayFS(dr.diskFS)
+	memFS := newOverlayFS(dr.diskFS, rec)
 
 	subDir := filepath.Join(sourceRoot, subPath)
 	if info, statErr := os.Stat(subDir); statErr != nil || !info.IsDir() {
@@ -100,7 +117,8 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 	// resources: into the memory layer so the build only ever sees local files
 	// and never reaches the network (kustomize's git/HTTP fallback would
 	// otherwise run outside the fs sandbox). Scoped to subDir. See preflight.go.
-	if err := preflightRemoteResources(ctx, cache, memFS, subDir); err != nil {
+	injected, err := preflightRemoteResources(ctx, cache, memFS, subDir)
+	if err != nil {
 		return nil, err
 	}
 
@@ -115,6 +133,17 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 			return nil, ierr
 		}
 		ignore = m
+		// sourceignore.New → flux.LoadIgnorePatterns reads .sourceignore files
+		// directly off disk, OUTSIDE the recording overlay, so their content is
+		// invisible to the read-set — an in-place edit would otherwise stale-hit
+		// a cached render. Read each one back through the overlay so its content
+		// is recorded and a change invalidates the entry. Scoped to the
+		// auto-generate path (no in-tree kustomization), the matcher's only
+		// output-affecting consumer (scanManifests); a .sourceignore added or
+		// removed is already caught by the directory listings the build records.
+		if _, hasKust := kustomizationFileIn(memFS, subDir); rec != nil && !hasKust {
+			recordIgnoreFiles(memFS, subDir)
+		}
 	}
 
 	// Merge spec.patches/images/components/targetNamespace/namePrefix/nameSuffix
@@ -159,7 +188,48 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 	if err != nil {
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
+	// Persist for the next run, unless the build consumed inputs the disk
+	// read-set can't validate: pre-fetched remote content (injected) or an
+	// unrepresentable read such as a Glob (rec.bypassed).
+	if rec != nil && !injected && !rec.bypassed() {
+		cache.render.put(key, rec.snapshot(), out)
+	}
 	return out, nil
+}
+
+// renderKey is the cross-run render-cache lookup key for a RenderFlux call: a
+// stable fingerprint of everything that determines the output BEFORE the source
+// tree's content is consulted (the read-set validates that content). The full
+// rawSpec is hashed — generateManifest's merge and the post-build
+// applyOwnerLabels/applyCommonMetadata all derive from it. Empty (caching off
+// for this render) when the spec can't be hashed.
+func renderKey(rawSpec map[string]any, sourceRoot, subPath string, applyIgnore bool) string {
+	return manifest.Fingerprint(struct {
+		Spec        map[string]any
+		SourceRoot  string
+		SubPath     string
+		ApplyIgnore bool
+	}{rawSpec, sourceRoot, subPath, applyIgnore})
+}
+
+// ignoreFileName is the in-tree source-controller exclusion file flux's
+// LoadIgnorePatterns reads (off-overlay) and recurses subdirectories for.
+const ignoreFileName = ".sourceignore"
+
+// recordIgnoreFiles reads every .sourceignore under subDir back through the
+// recording overlay so each one's content lands in the render cache's read-set
+// (flux loads them off-disk, bypassing the overlay — see RenderFlux). The
+// read-through's side effect is the recording; the returned bytes are discarded.
+func recordIgnoreFiles(memFS filesys.FileSystem, subDir string) {
+	_ = memFS.Walk(subDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if filepath.Base(path) == ignoreFileName {
+			_, _ = memFS.ReadFile(path)
+		}
+		return nil
+	})
 }
 
 // diskRoot holds the per-sourceRoot invariants RenderFlux reuses across every

@@ -63,10 +63,13 @@ const remoteResourcePrefix = ".flate-remote-"
 // On a fetch failure (timeout, 4xx, 5xx, DNS, connection refused) preflight
 // returns the error immediately, so the KS controller surfaces it as a real
 // reconcile failure rather than a silent missing resource.
-func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) error {
-	return memFS.Walk(subPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+// The injected return reports whether any remote resource or git base was
+// pre-fetched into the in-memory layer. When true the build reads inputs the
+// disk read-set can't capture, so RenderFlux must not cache that render.
+func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) (injected bool, err error) {
+	walkErr := memFS.Walk(subPath, func(path string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return werr
 		}
 		if info.IsDir() {
 			// Skip a git base materialized by a prior resources: entry — its
@@ -80,8 +83,13 @@ func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS files
 		if !slices.Contains(manifest.KustomizeBuilderFilenames, filepath.Base(path)) {
 			return nil
 		}
-		return rewriteURLResources(ctx, cache, memFS, path)
+		changed, rerr := rewriteURLResources(ctx, cache, memFS, path)
+		if changed {
+			injected = true
+		}
+		return rerr
 	})
+	return injected, walkErr
 }
 
 // rewriteURLResources rewrites URL entries in one kustomization file via
@@ -92,10 +100,10 @@ func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS files
 //
 // Returns the first fetch failure encountered so the caller can fail the
 // Kustomization's reconcile rather than silently dropping the missing resource.
-func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, ksFile string) error {
+func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, ksFile string) (bool, error) {
 	body, err := memFS.ReadFile(ksFile)
 	if err != nil {
-		return err
+		return false, err
 	}
 	// Fast path: a resource is rewritten only when its scalar carries an
 	// http://|https:// scheme — every trigger (isHTTPURL, and isGitRemoteBase
@@ -105,7 +113,7 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 	// is provably a no-op. Skipping it for the common (local-only) kustomization
 	// avoids a yaml.Unmarshal of every kustomization file on every render.
 	if !containsHTTPFold(body) {
-		return nil
+		return false, nil
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil {
@@ -114,11 +122,11 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		// kustomize will load them via its own parser, and if any carry URL
 		// resources we fall back to kustomize's own fetch path. Better to
 		// render imperfectly than fail loud on a doc kustomize itself handles.
-		return nil
+		return false, nil
 	}
 	resourcesNode := findMappingValue(&doc, "resources")
 	if resourcesNode == nil || resourcesNode.Kind != yaml.SequenceNode || len(resourcesNode.Content) == 0 {
-		return nil
+		return false, nil
 	}
 	changed := false
 	dir := filepath.Dir(ksFile)
@@ -133,7 +141,7 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		if spec, ok := isGitRemoteBase(entry.Value); ok {
 			localDir, fetchErr := fetchGitBase(ctx, cache, memFS, dir, spec)
 			if fetchErr != nil {
-				return fmt.Errorf("remote git base %s: %w", entry.Value, fetchErr)
+				return false, fmt.Errorf("remote git base %s: %w", entry.Value, fetchErr)
 			}
 			setPlainScalar(entry, localDir)
 			changed = true
@@ -144,19 +152,19 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		}
 		localFile, fetchErr := fetchRemoteResource(ctx, cache, memFS, dir, entry.Value)
 		if fetchErr != nil {
-			return fmt.Errorf("remote resource %s: %w", entry.Value, fetchErr)
+			return false, fmt.Errorf("remote resource %s: %w", entry.Value, fetchErr)
 		}
 		setPlainScalar(entry, "./"+localFile)
 		changed = true
 	}
 	if !changed {
-		return nil
+		return false, nil
 	}
 	out, err := yaml.Marshal(&doc)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return memFS.WriteFile(ksFile, out)
+	return true, memFS.WriteFile(ksFile, out)
 }
 
 // setPlainScalar rewrites node to a plain (unquoted, untagged) string scalar

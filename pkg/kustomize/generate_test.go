@@ -24,7 +24,7 @@ func testOverlayFS(t *testing.T, root string) filesys.FileSystem {
 	if err != nil {
 		t.Fatalf("secure fs: %v", err)
 	}
-	return newOverlayFS(disk)
+	return newOverlayFS(disk, nil)
 }
 
 // These tests pin flate's in-memory generateManifest to flux's real on-disk

@@ -68,6 +68,13 @@ const (
 	// is gzipped rendered manifest bytes. Cross-process safe via atomic
 	// rename; eviction is mtime-LRU bounded by the caller's byte cap.
 	RenderHelmCacheDir = "render/helm"
+	// RenderKustomizeCacheDir holds the persisted kustomize render-output
+	// cache: `<root>/render/kustomize/<hex[:2]>/<hex>` where <hex> is the
+	// sha256 render key; content is gzipped {read-set snapshot + rendered
+	// bytes}. An entry is reused only when its recorded disk inputs still
+	// validate (see pkg/kustomize/render_cache.go) — same cross-process /
+	// mtime-LRU machinery as the helm render cache.
+	RenderKustomizeCacheDir = "render/kustomize"
 )
 
 // pathSep is the platform separator as a string, used by join so it can
@@ -156,3 +163,7 @@ func (l Layout) HelmTmp() string { return join(l.Root, HelmTmpDir) }
 // the first two hex chars of the cache key; the disk layer in
 // pkg/helm owns the layout below this root.
 func (l Layout) RenderHelmCache() string { return join(l.Root, RenderHelmCacheDir) }
+
+// RenderKustomizeCache is the root of the persisted kustomize render cache; the
+// disk layer in pkg/kustomize owns the sharded layout below it.
+func (l Layout) RenderKustomizeCache() string { return join(l.Root, RenderKustomizeCacheDir) }

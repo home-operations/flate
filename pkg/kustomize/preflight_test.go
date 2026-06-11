@@ -62,7 +62,7 @@ func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/foo.yaml\n"})
-	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/missing.yaml\n"})
-	err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, ".")
+	_, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, ".")
 	if err == nil {
 		t.Fatal("expected error on 404; got nil (preflight would silently swallow the failure)")
 	}
@@ -119,7 +119,7 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 func TestPreflightRemoteResources_IgnoresLocalEntries(t *testing.T) {
 	body := "resources:\n  - ./local.yaml\n  - ../shared/cm.yaml\n"
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": body})
-	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 	got, _ := fsys.ReadFile("kustomization.yaml")
@@ -141,7 +141,7 @@ func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 		"kustomization.yaml":              "resources:\n  - ./components/x\n",
 		"components/x/kustomization.yaml": "resources:\n  - " + srv.URL + "/nested.yaml\n",
 	})
-	if err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 	body, _ := fsys.ReadFile("components/x/kustomization.yaml")
@@ -201,7 +201,7 @@ func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 	for _, name := range []string{"kustomization.yml", "Kustomization"} {
 		t.Run(name, func(t *testing.T) {
 			fsys := memFSWith(t, map[string]string{name: "resources:\n  - " + srv.URL + "/x.yaml\n"})
-			if err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
+			if _, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
 				t.Fatalf("preflight: %v", err)
 			}
 			body, _ := fsys.ReadFile(name)
@@ -235,7 +235,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 	})
 
 	cache := newPreflightCache(t)
-	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 	if hits != 1 {
@@ -250,7 +250,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 	// A second preflight against the same cache (production runs one preflight
 	// per RenderFlux) must NOT re-fetch.
 	fsys2 := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/shared.yaml\n"})
-	if err := preflightRemoteResources(context.Background(), cache, fsys2, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), cache, fsys2, "."); err != nil {
 		t.Fatalf("second preflight: %v", err)
 	}
 	if hits != 1 {
@@ -297,7 +297,7 @@ resources:
 namespace: my-app
 `
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": original})
-	if err := rewriteURLResources(context.Background(), newPreflightCache(t), fsys, "kustomization.yaml"); err != nil {
+	if _, err := rewriteURLResources(context.Background(), newPreflightCache(t), fsys, "kustomization.yaml"); err != nil {
 		t.Fatalf("rewriteURLResources: %v", err)
 	}
 

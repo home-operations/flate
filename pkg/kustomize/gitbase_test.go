@@ -111,7 +111,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 
 	cache := newPreflightCache(t)
 	withFakeGitBase(cache, worktree, nil)
-	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 
 	cache := newPreflightCache(t)
 	withFakeGitBase(cache, worktree, nil)
-	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 // base surfaces a clear error rather than silently HTTP-GETting the URL.
 func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://github.com/o/r?ref=v1\n"})
-	err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, ".")
+	_, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, ".")
 	if err == nil {
 		t.Fatal("expected error when no git fetcher is wired")
 	}
@@ -270,7 +270,7 @@ func TestPreflightGitBase_EachKSGetsOwnCopy(t *testing.T) {
 	var calls atomic.Int32
 	cache := newPreflightCache(t)
 	withFakeGitBase(cache, worktree, &calls)
-	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 

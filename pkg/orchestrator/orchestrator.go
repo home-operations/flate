@@ -138,6 +138,13 @@ type Config struct {
 	// The CLI flag `--helm-render-cache-mb` exposes this in MB
 	// units; embedders pass bytes directly.
 	HelmRenderCacheBytes int64
+
+	// KustomizeRenderCacheBytes caps the persistent on-disk kustomize
+	// render cache. Cross-process reuse: a Kustomization whose recorded
+	// disk inputs are unchanged since a prior run skips krusty entirely
+	// (see pkg/kustomize/render_cache.go). <= 0 disables it. The CLI flag
+	// `--kustomize-render-cache-mb` exposes this in MB; embedders pass bytes.
+	KustomizeRenderCacheBytes int64
 }
 
 // Orchestrator wires controllers and drives reconciliation.
@@ -347,6 +354,9 @@ func New(cfg Config) (*Orchestrator, error) {
 	// render derives a private in-memory filesystem (no disk staging). Nothing
 	// to clean up on Stop.
 	treeCache := kustomize.NewTreeCache()
+	if cfg.KustomizeRenderCacheBytes > 0 {
+		treeCache.SetRenderCache(layout.RenderKustomizeCache(), cfg.KustomizeRenderCacheBytes)
+	}
 
 	st := store.New()
 	ts := task.NewBounded(cfg.Concurrency)

@@ -88,6 +88,12 @@ type commonFlags struct {
 	// previously-rendered manifests instead of re-running
 	// action.Install.RunWithContext.
 	helmRenderCacheMB int
+	// kustomizeRenderCacheMB caps the persistent on-disk kustomize render
+	// cache in megabytes. Default 1024; 0 disables. Plumbed through
+	// orchestrator.Config.KustomizeRenderCacheBytes into the TreeCache.
+	// Cross-process: a Kustomization whose source inputs are unchanged since
+	// a prior run skips krusty entirely.
+	kustomizeRenderCacheMB int
 }
 
 // bindCommon wires the flags every reconcile-running subcommand shares.
@@ -162,6 +168,11 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	// CI runners where disk cost outweighs the rerun savings).
 	fs.IntVar(&f.helmRenderCacheMB, "helm-render-cache-mb", 1024,
 		"size of the persistent on-disk helm template-output cache in megabytes (0 disables)")
+	// 1 GiB default mirrors the helm render cache. Cross-process: a
+	// Kustomization whose source inputs are unchanged since a prior run skips
+	// krusty entirely. 0 disables (debugging the uncached path / disk-constrained CI).
+	fs.IntVar(&f.kustomizeRenderCacheMB, "kustomize-render-cache-mb", 1024,
+		"size of the persistent on-disk kustomize render cache in megabytes (0 disables)")
 }
 
 // skipResourceKinds delegates to helm.Options.SkipResourceKinds so
@@ -403,11 +414,12 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 			MaxWait:  c.sourceRetryMaxWait,
 			Jitter:   c.sourceRetryJitter,
 		},
-		GitDepth:               c.gitDepth,
-		AllowMissingSecrets:    c.allowMissingSecrets,
-		CacheDir:               c.resolveCacheRoot(),
-		HelmTemplateCacheBytes: int64(c.helmTemplateCacheMB) << 20,
-		HelmRenderCacheBytes:   int64(c.helmRenderCacheMB) << 20,
+		GitDepth:                  c.gitDepth,
+		AllowMissingSecrets:       c.allowMissingSecrets,
+		CacheDir:                  c.resolveCacheRoot(),
+		HelmTemplateCacheBytes:    int64(c.helmTemplateCacheMB) << 20,
+		HelmRenderCacheBytes:      int64(c.helmRenderCacheMB) << 20,
+		KustomizeRenderCacheBytes: int64(c.kustomizeRenderCacheMB) << 20,
 	}
 }
 

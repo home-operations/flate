@@ -14,6 +14,13 @@ package kustomize
 // also sidesteps the in-memory fs's filename restriction for exotic source
 // names like spaces). The disk layer is a secure FS, so disk reads stay
 // confined to the source root.
+//
+// When a non-nil *readSet is threaded in, every read served from the DISK layer
+// is recorded (file content, directory listing, or probed-path kind) so the
+// render cache can validate a later run by replaying those reads. Memory-layer
+// reads are not recorded: the generated kustomization.yaml is captured by the
+// cache key, and remote-resource builds bypass the cache entirely. With a nil
+// readSet the methods are byte-identical to the uninstrumented overlay.
 
 import (
 	"os"
@@ -23,14 +30,16 @@ import (
 )
 
 // newOverlayFS returns a filesystem that reads from disk and writes to memory.
-func newOverlayFS(disk filesys.FileSystem) filesys.FileSystem {
-	return overlayFS{disk: disk, memory: filesys.MakeFsInMemory()}
+// rec, when non-nil, records disk-layer reads for render-cache validation.
+func newOverlayFS(disk filesys.FileSystem, rec *readSet) filesys.FileSystem {
+	return overlayFS{disk: disk, memory: filesys.MakeFsInMemory(), rec: rec}
 }
 
 // overlayFS layers an in-memory filesystem over a read-only disk filesystem.
 type overlayFS struct {
 	disk   filesys.FileSystem
 	memory filesys.FileSystem
+	rec    *readSet // nil disables recording (and keeps reads byte-identical)
 }
 
 // Write operations: memory only.
@@ -41,14 +50,48 @@ func (fs overlayFS) MkdirAll(path string) error               { return fs.memory
 func (fs overlayFS) RemoveAll(path string) error              { return fs.memory.RemoveAll(path) }
 func (fs overlayFS) WriteFile(path string, d []byte) error    { return fs.memory.WriteFile(path, d) }
 
-// Read operations: memory first, then disk.
+// Read operations: memory first, then disk. Disk reads are recorded.
 
-func (fs overlayFS) Exists(path string) bool { return fs.memory.Exists(path) || fs.disk.Exists(path) }
-func (fs overlayFS) IsDir(path string) bool  { return fs.memory.IsDir(path) || fs.disk.IsDir(path) }
+// recordProbe records the disk-layer node kind of a path that was only probed
+// (existence / type checked, not read or listed). diskExists is the already-
+// computed disk.Exists result so the common path adds at most one IsDir stat.
+func (fs overlayFS) recordProbe(path string, diskExists bool) {
+	if fs.rec == nil {
+		return
+	}
+	isDir := diskExists && fs.disk.IsDir(path)
+	fs.rec.recordNode(path, diskKind(diskExists, isDir))
+}
+
+func (fs overlayFS) Exists(path string) bool {
+	if fs.memory.Exists(path) {
+		return true
+	}
+	e := fs.disk.Exists(path)
+	fs.recordProbe(path, e)
+	return e
+}
+
+func (fs overlayFS) IsDir(path string) bool {
+	if fs.memory.IsDir(path) {
+		return true
+	}
+	d := fs.disk.IsDir(path)
+	if fs.rec != nil {
+		fs.rec.recordNode(path, diskKind(d || fs.disk.Exists(path), d))
+	}
+	return d
+}
 
 func (fs overlayFS) Open(path string) (filesys.File, error) {
 	if fs.memory.Exists(path) {
 		return fs.memory.Open(path)
+	}
+	if fs.rec != nil {
+		// Open streams content the recorder can't observe; re-read once to hash
+		// it (rare — krusty Opens at most a handful of files per build).
+		b, err := fs.disk.ReadFile(path)
+		fs.rec.recordFile(path, b, err)
 	}
 	return fs.disk.Open(path)
 }
@@ -57,7 +100,11 @@ func (fs overlayFS) ReadFile(path string) ([]byte, error) {
 	if fs.memory.Exists(path) {
 		return fs.memory.ReadFile(path)
 	}
-	return fs.disk.ReadFile(path)
+	b, err := fs.disk.ReadFile(path)
+	if fs.rec != nil {
+		fs.rec.recordFile(path, b, err)
+	}
+	return b, err
 }
 
 // CleanedAbs resolves memory paths against the memory layer (so added files —
@@ -67,14 +114,24 @@ func (fs overlayFS) CleanedAbs(path string) (filesys.ConfirmedDir, string, error
 	if fs.memory.Exists(path) {
 		return fs.memory.CleanedAbs(path)
 	}
-	return fs.disk.CleanedAbs(path)
+	d, s, err := fs.disk.CleanedAbs(path)
+	fs.recordProbe(path, err == nil)
+	return d, s, err
 }
 
 func (fs overlayFS) ReadDir(path string) ([]string, error) {
+	if entries, err := fs.disk.ReadDir(path); err == nil && fs.rec != nil {
+		fs.rec.recordDir(path, entries)
+	}
 	return mergeFSResults(fs.memory.ReadDir(path))(fs.disk.ReadDir(path))
 }
 
 func (fs overlayFS) Glob(pattern string) ([]string, error) {
+	// Glob results aren't a single path we can replay soundly; disable caching
+	// for any build that globs rather than risk a stale hit.
+	if fs.rec != nil {
+		fs.rec.markBypass()
+	}
 	return mergeFSResults(fs.memory.Glob(pattern))(fs.disk.Glob(pattern))
 }
 
@@ -104,6 +161,14 @@ func (fs overlayFS) Walk(path string, walkFn filepath.WalkFunc) error {
 		}
 		if _, ok := visited[p]; ok {
 			return nil
+		}
+		// Record each disk directory entered so an added/removed sibling
+		// invalidates the cached render (file content is recorded via ReadFile
+		// when the walk body reads it).
+		if fs.rec != nil && info != nil && info.IsDir() {
+			if entries, derr := fs.disk.ReadDir(p); derr == nil {
+				fs.rec.recordDir(p, entries)
+			}
 		}
 		return walkFn(p, info, err)
 	})

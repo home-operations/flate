@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/home-operations/flate/compare/v0.4.1...v0.4.2) (2026-06-11)
+
+
+### Bug Fixes
+
+* **diff:** drop dyff's spurious file-level "order changed" on a rename ([#724](https://github.com/home-operations/flate/issues/724)) ([a2daac3](https://github.com/home-operations/flate/commit/a2daac382d4230648048f2d360646477ef50ffb3))
+
 ## [0.4.1](https://github.com/home-operations/flate/compare/v0.4.0...v0.4.1) (2026-06-10)
 
 

@@ -142,3 +142,33 @@ func TestRenderDocs_ContainerByNameImageChange(t *testing.T) {
 		t.Errorf("expected image value change lines; got:\n%s", s)
 	}
 }
+
+// TestRenderDocs_RenameNoFileLevelOrderChange locks the changeset fix: renaming
+// ONE resource (a remove of the old identity + an add of the new) keeps the
+// document COUNT equal, which makes dyff raise a file-level "order changed" note
+// listing every document — dragging untouched neighbors into a localized diff.
+// flate emits documents in a deterministic sorted order, so that note is always
+// an artifact of the add/remove (already reported) and is filtered out. The
+// rename itself must still surface; the unchanged neighbors must not.
+func TestRenderDocs_RenameNoFileLevelOrderChange(t *testing.T) {
+	// Equal count on both sides (3 == 3) is what arms dyff's order check; the
+	// middle doc is renamed, the neighbors are byte-identical.
+	left := []Doc{ncm("aaa", "k", "v"), ncm("plex", "k", "v"), ncm("zzz", "k", "v")}
+	right := []Doc{ncm("aaa", "k", "v"), ncm("plex2", "k", "v"), ncm("zzz", "k", "v")}
+	for _, style := range []Format{FormatHuman, FormatGitHub} {
+		out, err := RenderDocs(left, right, Options{Format: style})
+		if err != nil {
+			t.Fatalf("%s: %v", style, err)
+		}
+		s := string(out)
+		if !strings.Contains(s, "plex2") {
+			t.Errorf("%s: the rename must surface (added plex2); got:\n%s", style, s)
+		}
+		if strings.Contains(s, "order changed") {
+			t.Errorf("%s: a localized rename must not emit a file-level 'order changed':\n%s", style, s)
+		}
+		if strings.Contains(s, "aaa") || strings.Contains(s, "zzz") {
+			t.Errorf("%s: untouched neighbors must not be dragged into the diff:\n%s", style, s)
+		}
+	}
+}

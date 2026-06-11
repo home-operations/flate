@@ -718,7 +718,7 @@ func aggregateScopedFailures(
 	if nBlocked > 0 {
 		msg += fmt.Sprintf("\n  (+%d blocked by failed/missing dependencies)", nBlocked)
 	}
-	return &orchestrator.FailuresError{Count: len(msgs), Message: msg}
+	return &orchestrator.FailuresError{Message: msg}
 }
 
 func nonResourceRunErrors(err error) []error {

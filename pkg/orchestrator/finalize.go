@@ -15,9 +15,11 @@ import (
 // detectOrphans returns the subset of failed resources that are
 // "orphans" — Kustomizations/HelmReleases whose source files sit
 // under another Kustomization's spec.path but were never emitted by
-// that parent's render output. Such files exist on disk but Flux
-// would never see them, so flate downgrades the failure to a
-// warning rather than gating the test on stale local files.
+// that parent's render output, AND whose covering parent itself
+// succeeded. Such files exist on disk but Flux would never see them,
+// so flate downgrades the failure to a warning rather than gating the
+// test on stale local files. A child under a parent that FAILED is a
+// blocked cascade victim, not an orphan — it stays failed (see below).
 func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]string {
 	out := make(map[manifest.NamedResource]string)
 	// Use repoRoot (not cfg.Path) so KSPathPrefixes' component
@@ -213,11 +215,8 @@ func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]sto
 // identity (recovered with errors.As) — not its message text — is how the CLI
 // tells the resource-failure aggregate apart from incidental run errors (a
 // panic, a cancellation) when it re-scopes failures to a namespace filter and
-// re-renders them. Count is the number of failures aggregated.
-type FailuresError struct {
-	Count   int
-	Message string
-}
+// re-renders them.
+type FailuresError struct{ Message string }
 
 func (e *FailuresError) Error() string { return e.Message }
 
@@ -231,10 +230,8 @@ func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store
 		}
 	}
 	slices.Sort(msgs) // deterministic ordering across runs
-	return &FailuresError{
-		Count:   len(msgs),
-		Message: fmt.Sprintf("reconcile completed with %d failure(s):\n  %s", len(msgs), strings.Join(msgs, "\n  ")),
-	}
+	return &FailuresError{Message: fmt.Sprintf("reconcile completed with %d failure(s):\n  %s",
+		len(msgs), strings.Join(msgs, "\n  "))}
 }
 
 // sanitizeFailed returns a copy of the failure map with each entry's

@@ -143,7 +143,7 @@ func rootsOf(id manifest.NamedResource, blocked map[manifest.NamedResource][]man
 func sortedIDs(ids []manifest.NamedResource) []manifest.NamedResource {
 	out := slices.Clone(ids)
 	slices.SortFunc(out, manifest.NamedResource.Compare)
-	return slices.CompactFunc(out, func(a, b manifest.NamedResource) bool { return a.Compare(b) == 0 })
+	return slices.Compact(out) // NamedResource is a comparable struct; sorted ⇒ dups adjacent
 }
 
 // Write renders the model to w. color gates ANSI styling; elapsed, when > 0,
@@ -165,11 +165,12 @@ func (m Model) Write(w io.Writer, color bool, elapsed time.Duration) error {
 	}
 
 	for _, mr := range m.Missing {
-		fmt.Fprintf(&b, "  %s  %s  %s  %s\n      %s\n",
+		fmt.Fprintf(&b, "  %s  %s  %s  %s\n%s%s\n",
 			style.Fail(style.GlyphFail, color),
 			style.Dim(mr.ID.Kind, color),
 			mr.ID.NamespacedName(),
 			style.Fail("not found", color),
+			msgIndent,
 			style.Dim("required by "+summarize(mr.RequiredBy), color))
 	}
 

@@ -323,12 +323,42 @@ func scanManifests(fsys filesys.FileSystem, base string, ignore *sourceignore.Ma
 			}
 		}()
 		if _, err := rf.SliceFromBytes(contents); err != nil {
+			// A kustomize Kustomization/Component config decodes as a resource
+			// without metadata.name and fails cryptically. The usual cause is a
+			// misnamed kustomization file (e.g. "kustomzation.yaml"), which the
+			// scan then treats as a resource — say so plainly instead.
+			if kind := kustomizeConfigKind(contents); kind != "" {
+				return fmt.Errorf("%s: looks like a misnamed kustomization file (kind %s); rename it to %s or remove it",
+					path, kind, konfig.DefaultKustomizationFileName())
+			}
 			return fmt.Errorf("failed to decode Kubernetes YAML from %s: %w", path, err)
 		}
 		paths = append(paths, path)
 		return nil
 	})
 	return paths, err
+}
+
+// kustomizeConfigKind reports the kustomize config kind (Kustomization or
+// Component) when b is a kustomize.config.k8s.io document, else "". The resource
+// scan uses it to recognize a misnamed kustomization file — which would
+// otherwise fail to decode as a Kubernetes object on the missing metadata.name —
+// and report it clearly.
+func kustomizeConfigKind(b []byte) string {
+	var head struct {
+		APIVersion string `json:"apiVersion"`
+		Kind       string `json:"kind"`
+	}
+	if err := yaml.Unmarshal(b, &head); err != nil {
+		return ""
+	}
+	if !strings.HasPrefix(head.APIVersion, "kustomize.config.k8s.io/") {
+		return ""
+	}
+	if head.Kind == "Kustomization" || head.Kind == "Component" {
+		return head.Kind
+	}
+	return ""
 }
 
 // decodeTypedSlice reads a nested []any field and converts each element into T

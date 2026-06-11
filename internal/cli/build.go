@@ -106,7 +106,7 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			// emitResult surfaces both an emit-time IO failure AND the
 			// partial-failure list — previously the emit error masked
 			// the run failures, so CI fixed the wrong thing.
-			return emitResult(emitErr, o, res, c, runErr)
+			return reportFailures(cmd.ErrOrStderr(), o, res, c, emitResult(emitErr, o, res, c, runErr), 0)
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)

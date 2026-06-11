@@ -310,6 +310,13 @@ type Result struct {
 	// render filters, so an id here may have no entry in Manifests when its kind
 	// was skipped.
 	DependsOn map[manifest.NamedResource][]manifest.NamedResource
+	// Blocked maps a failed resource to the immediate dependencies that blocked
+	// it — present only for failures that are purely derived (the resource's own
+	// reconcile never ran because a dependency failed or was missing), absent for
+	// primary failures (a real render/template/build error). A consumer groups
+	// derived failures under their root cause by walking these edges to a primary
+	// failure or a missing id, instead of surfacing every cascaded failure.
+	Blocked map[manifest.NamedResource][]manifest.NamedResource
 }
 
 // New constructs an Orchestrator. It allocates the Store and TaskService

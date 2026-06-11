@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"runtime"
@@ -16,6 +17,8 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/internal/report"
+	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -622,6 +625,58 @@ func scopedRunError(o *orchestrator.Orchestrator, res *orchestrator.Result, c *c
 // error (and both nil to nil) via errors.Join's nil handling.
 func emitResult(emitErr error, o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, runErr error) error {
 	return errors.Join(emitErr, scopedRunError(o, res, c, runErr))
+}
+
+// logBuffer is the process-wide deferred-log sink installed by setLogLevel; the
+// noisy Warn/Info chatter a failing run emits is held here and rendered in the
+// report footer instead of interleaving with output. nil only in tests that
+// bypass root setup.
+var logBuffer *deferSink
+
+// drainLogNotes returns and clears the buffered log lines (nil when unset).
+func drainLogNotes() []report.Note {
+	if logBuffer == nil {
+		return nil
+	}
+	return logBuffer.drain()
+}
+
+// reportedError marks an error whose human-facing report has already been
+// rendered to stderr, so run's top-level printer skips the plain reprint.
+type reportedError struct{ err error }
+
+func (e reportedError) Error() string { return e.err.Error() }
+func (e reportedError) Unwrap() error { return e.err }
+
+// reportFailures renders the styled root-cause report — real errors shown once,
+// cascaded failures folded under the root that caused them, and any deferred log
+// lines in a footer — to w, scoped to c's namespace filter. It always drains the
+// log buffer (so notes aren't lost even on a clean run). When something rendered
+// and err is non-nil, err is wrapped as reportedError so the caller still exits
+// non-zero while run avoids printing it twice; otherwise err passes through.
+func reportFailures(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, err error, elapsed time.Duration) error {
+	notes := drainLogNotes()
+	failed := map[manifest.NamedResource]store.StatusInfo{}
+	blocked := map[manifest.NamedResource][]manifest.NamedResource{}
+	if o != nil && res != nil {
+		for id, info := range res.Failed {
+			if c == nil || c.includeNamespace(o.Filter(), id.Namespace) {
+				failed[id] = info
+				if b := res.Blocked[id]; len(b) > 0 {
+					blocked[id] = b
+				}
+			}
+		}
+	}
+	m := report.Build(failed, blocked, notes)
+	if m.Empty() {
+		return err
+	}
+	_ = m.Write(w, style.ColorEnabled(w), elapsed)
+	if err == nil {
+		return nil
+	}
+	return reportedError{err}
 }
 
 // resourceAggregatePrefix is the leading text of the error

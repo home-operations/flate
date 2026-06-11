@@ -46,6 +46,12 @@ type shard struct {
 	objects    map[manifest.NamedResource]manifest.BaseManifest
 	conditions map[manifest.NamedResource][]Condition
 	artifacts  map[manifest.NamedResource]Artifact
+	// blocked records, for a resource that failed only because a dependency
+	// failed or was missing, the immediate dependency ids responsible — the
+	// structured form of a DependencyFailedError, captured at the failure sink
+	// so the failure report can group derived failures under their root cause
+	// instead of reprinting nested "dependencies failed: …" chains.
+	blocked map[manifest.NamedResource][]manifest.NamedResource
 
 	// byName mirrors the per-shard slice of the Store-wide secondary
 	// index. Keyed by Kind first so a single GetByName lookup is two
@@ -59,6 +65,7 @@ func newShard() *shard {
 		objects:    make(map[manifest.NamedResource]manifest.BaseManifest),
 		conditions: make(map[manifest.NamedResource][]Condition),
 		artifacts:  make(map[manifest.NamedResource]Artifact),
+		blocked:    make(map[manifest.NamedResource][]manifest.NamedResource),
 		byName:     make(map[string]map[string]manifest.BaseManifest),
 	}
 }

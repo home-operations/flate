@@ -624,6 +624,16 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 				store.SkippedPrefix+" "+manifest.TrimSentinelPrefix(err.Error()))
 			return nil
 		}
+		// A DependencyFailedError means the body never ran — the Require gate
+		// failed because a dependency failed or was missing. Record the
+		// structured blockers so the failure report can group this derived
+		// failure under its root cause instead of reprinting the nested chain.
+		// Any other error is a primary failure (its own render/template/build)
+		// and leaves the blocked set empty.
+		var depErr *manifest.DependencyFailedError
+		if errors.As(err, &depErr) {
+			s.SetBlocked(id, depErr.Failed)
+		}
 		s.UpdateStatus(id, store.StatusFailed, err.Error())
 		return nil
 	}

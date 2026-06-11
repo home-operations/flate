@@ -199,6 +199,7 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 		// The dependsOn graph is fully populated by now (Bootstrap's rebuild +
 		// per-id ReplaceEdges during Run); snapshot it for blast-radius consumers.
 		DependsOn: o.depGraph.Edges(),
+		Blocked:   map[manifest.NamedResource][]manifest.NamedResource{},
 	}
 	// Apply --skip-secrets / --skip-crds / --skip-kinds uniformly here
 	// so embedders calling Render see consistent Result.Manifests
@@ -239,6 +240,13 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 	// changes.
 	maps.Copy(res.Failed, sanitizeFailed(o.store.FailedResources()))
 	maps.Copy(res.Orphans, o.orphans)
+	// Tag the derived (dependency-blocked) failures so a consumer can collapse
+	// the cascade under its root cause. A failure with no blockers is primary.
+	for id := range res.Failed {
+		if b := o.store.BlockedBy(id); len(b) > 0 {
+			res.Blocked[id] = b
+		}
+	}
 	return res, runErr
 }
 

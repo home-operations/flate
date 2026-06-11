@@ -120,6 +120,7 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 		}
 		msg := fmt.Sprintf("parent %s failed: %s", parent.String(), parentInfo.Message)
 		o.store.UpdateStatus(child, store.StatusFailed, msg)
+		o.store.SetBlocked(child, []manifest.NamedResource{parent})
 		failed[child] = store.StatusInfo{Status: store.StatusFailed, Message: msg}
 		slog.Debug("cascaded parent failure to child",
 			"child", child.String(),

@@ -319,3 +319,24 @@ func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 	}
 	return out
 }
+
+// SetBlocked records that id failed only because the given dependencies failed
+// or were missing — the structured form of a DependencyFailedError, captured at
+// the failure sink. The failure report uses it to group derived failures under
+// their root cause instead of reprinting nested "dependencies failed: …" chains.
+// A defensive copy is stored so the caller's slice can't mutate store state.
+func (s *Store) SetBlocked(id manifest.NamedResource, deps []manifest.NamedResource) {
+	sh := s.shardFor(id)
+	sh.mu.Lock()
+	sh.blocked[id] = append([]manifest.NamedResource(nil), deps...)
+	sh.mu.Unlock()
+}
+
+// BlockedBy returns the immediate dependencies that blocked id (set via
+// SetBlocked), or nil when id failed on its own — i.e. a primary failure.
+func (s *Store) BlockedBy(id manifest.NamedResource) []manifest.NamedResource {
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+	return append([]manifest.NamedResource(nil), sh.blocked[id]...)
+}

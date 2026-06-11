@@ -14,6 +14,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -103,8 +104,25 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	if err := root.ExecuteContext(ctx); err != nil {
-		_, _ = io.WriteString(stderr, "flate error: "+err.Error()+"\n")
+	err := root.ExecuteContext(ctx)
+	// Flush any deferred log notes a command didn't already render (diff/get/
+	// cache, or a clean run) so nothing buffered is lost.
+	if logBuffer != nil {
+		for _, n := range logBuffer.drain() {
+			line := n.Text
+			if n.Count > 1 {
+				line = fmt.Sprintf("%s (×%d)", line, n.Count)
+			}
+			_, _ = io.WriteString(stderr, line+"\n")
+		}
+	}
+	if err != nil {
+		// reportFailures already rendered a styled report for this error; don't
+		// reprint it as a flat "flate error: …" line.
+		var reported reportedError
+		if !errors.As(err, &reported) {
+			_, _ = io.WriteString(stderr, "flate error: "+err.Error()+"\n")
+		}
 		return 1
 	}
 	return 0
@@ -129,6 +147,12 @@ func setLogLevel(lvl string, w io.Writer) error {
 	default:
 		return fmt.Errorf("invalid --log-level %q: must be one of debug, info, warn, error", lvl)
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l})))
+	// Wrap the text handler in a deferring sink so the Warn/Info chatter a
+	// failing run emits (chiefly "resource orphaned") is held back and rendered
+	// in the report footer instead of interleaving with output; Error records
+	// still pass straight through. Commands drain it via reportFailures; run
+	// flushes anything left so no note is lost.
+	logBuffer = newDeferSink(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l}))
+	slog.SetDefault(slog.New(logBuffer))
 	return nil
 }

@@ -461,8 +461,14 @@ func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 	if !strings.Contains(stdout, "✗") {
 		t.Errorf("stdout should still include failed test row:\n%s", stdout)
 	}
-	if !strings.Contains(stderr, "reconcile completed") {
-		t.Errorf("stderr should preserve scoped run error, got %q", stderr)
+	// The scoped failure surfaces in the styled root-cause report on stderr —
+	// the failing resource named with its real (primary) error, plus a verdict —
+	// not the old flat "reconcile completed with …" aggregate.
+	if !strings.Contains(stderr, "apps") || !strings.Contains(stderr, "kustomize build") {
+		t.Errorf("stderr should surface the failing resource and its error, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "failed") {
+		t.Errorf("stderr should include the failure verdict, got %q", stderr)
 	}
 }
 

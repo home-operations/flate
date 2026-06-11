@@ -85,10 +85,13 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if err := report.Write(cmd.OutOrStdout(), color, elapsed); err != nil {
 				return errors.Join(err, runErr)
 			}
+			final := runErr
 			if report.AnyFailed() {
-				return errors.Join(errors.New("test failures detected"), runErr)
+				final = errors.Join(errors.New("test failures detected"), runErr)
 			}
-			return runErr
+			// Root-cause report (+ deferred-log footer) to stderr, replacing the
+			// flat aggregate; the per-resource table above stays on stdout.
+			return reportFailures(cmd.ErrOrStderr(), o, res, c, final, elapsed)
 		},
 	}
 	bindCommon(cmd.Flags(), c)

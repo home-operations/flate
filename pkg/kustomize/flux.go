@@ -137,7 +137,14 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 		return fluxkustomize.Build(memFS, subDir)
 	}()
 	if err != nil {
-		return nil, fmt.Errorf("kustomize build %s: %w", subPath, err)
+		built := fmt.Errorf("kustomize build %s: %w", subPath, err)
+		// On a duplicate-resource-id failure, name every accumulated path that
+		// emits the colliding resource so a localized duplicate is locatable
+		// (no-op for any other error — see duplicateProducers).
+		if attr := duplicateProducers(err, memFS, subDir, subPath, data); attr != "" {
+			return nil, fmt.Errorf("%w\n%s", built, attr)
+		}
+		return nil, built
 	}
 	// Owner labels first so user-supplied spec.commonMetadata wins on a key
 	// collision. Matches kustomize-controller's ordering: SetOwnerLabels runs at

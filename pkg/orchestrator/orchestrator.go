@@ -300,8 +300,15 @@ type Result struct {
 	// HelmRelease that names dependencies maps to the sorted ids it depends on.
 	// Same-kind only (KS→KS, HR→HR per the Flux spec); implicit coupling
 	// (healthChecks, shared CRDs, service DNS) is not represented. Nodes with no
-	// declared dependencies are omitted. Consumers invert this into a dependents
+	// declared dependencies are omitted, and the map is nil (not empty) when
+	// nothing declares a dependsOn. Consumers invert this into a dependents
 	// adjacency list for impact / "blast radius" analysis.
+	//
+	// It is the declared graph verbatim: cycle members and self-edges (A → A) are
+	// retained, not pruned (cycles also surface as render Failures) — a consumer
+	// that walks it must tolerate them. It is also independent of the --skip-*
+	// render filters, so an id here may have no entry in Manifests when its kind
+	// was skipped.
 	DependsOn map[manifest.NamedResource][]manifest.NamedResource
 }
 

@@ -294,6 +294,11 @@ func (g *dependencyGraph) snapshotEdgesLocked() map[manifest.NamedResource][]man
 		if len(dsts) == 0 {
 			continue
 		}
+		// Collect-and-sort by hand (pre-sized) rather than the sortedNeighbors
+		// helper: sortedNeighbors goes through slices.SortedFunc(maps.Keys(...)),
+		// which starts from a nil slice with no capacity hint and allocates an
+		// iterator closure per call. This snapshot walks the whole graph, so the
+		// pre-sized make() is the leaner form — don't "DRY" it into sortedNeighbors.
 		deps := make([]manifest.NamedResource, 0, len(dsts))
 		for dst := range dsts {
 			deps = append(deps, dst)
@@ -311,6 +316,11 @@ func (g *dependencyGraph) snapshotEdgesLocked() map[manifest.NamedResource][]man
 // or HelmRelease that names dependencies → the sorted ids it depends on
 // (same-kind only, per the Flux spec). The orchestrator installs it into
 // Result.DependsOn for impact / blast-radius analysis. Safe for concurrent use.
+//
+// The declared graph is returned verbatim: cycle members and self-edges (A → A)
+// are NOT pruned — cycle reporting is the separate concern of Failures(), and a
+// consumer walking these edges must tolerate them (e.g. a visited set). Returns
+// nil (not an empty map) when nothing declares a dependsOn, mirroring Failures().
 func (g *dependencyGraph) Edges() map[manifest.NamedResource][]manifest.NamedResource {
 	g.mu.Lock()
 	defer g.mu.Unlock()

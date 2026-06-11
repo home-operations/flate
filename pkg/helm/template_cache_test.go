@@ -10,6 +10,7 @@ import (
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
+	"github.com/home-operations/flate/internal/diskcache"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -418,6 +419,133 @@ func TestTemplateCache_DisabledViaOptions(t *testing.T) {
 	hr := newHR()
 	if _, err := cli.Template(context.Background(), hr, nil, Options{}); err != nil {
 		t.Fatalf("Template with disabled cache: %v", err)
+	}
+}
+
+// TestTemplateCache_PromotesFromDisk pins the in-memory layer's fall-through to
+// disk: a Get that misses memory but hits disk returns the disk payload AND
+// populates the LRU so the second same-process Get stays a memory hit. The Len()
+// probe before and after verifies the promotion happened.
+func TestTemplateCache_PromotesFromDisk(t *testing.T) {
+	dir := t.TempDir()
+	disk := diskcache.NewStore(dir, 1<<20)
+	key := strings.Repeat("e", 64)
+	disk.Put(key, []byte("from-disk"))
+
+	mem := newTemplateCache(1<<20, disk)
+	if got := mem.Len(); got != 0 {
+		t.Fatalf("fresh cache should be empty, has %d entries", got)
+	}
+
+	v, ok := mem.Get(key)
+	if !ok {
+		t.Fatalf("Get should hit via disk fall-through")
+	}
+	if v != "from-disk" {
+		t.Fatalf("disk fall-through returned wrong value: %q", v)
+	}
+	if got := mem.Len(); got != 1 {
+		t.Fatalf("disk hit must promote to memory; Len=%d, want 1", got)
+	}
+	// Second Get serves from memory; the Len invariant should still hold (no
+	// double-insert).
+	if _, ok := mem.Get(key); !ok {
+		t.Fatalf("second Get on a promoted key must hit")
+	}
+	if got := mem.Len(); got != 1 {
+		t.Fatalf("Len after second Get = %d, want 1", got)
+	}
+}
+
+// TestTemplateCache_PutWritesThroughToDisk pins the write-through contract: a Put
+// against the in-memory layer must persist to disk so a subsequent fresh cache
+// instance reads the same value. Without this, the cross-process hit rate would
+// stay at zero.
+func TestTemplateCache_PutWritesThroughToDisk(t *testing.T) {
+	dir := t.TempDir()
+	disk1 := diskcache.NewStore(dir, 1<<20)
+	mem1 := newTemplateCache(1<<20, disk1)
+	key := strings.Repeat("f", 64)
+	mem1.Put(key, "persistent")
+
+	// Fresh stack — no shared state with mem1/disk1 — but pointing at the same
+	// on-disk root.
+	disk2 := diskcache.NewStore(dir, 1<<20)
+	mem2 := newTemplateCache(1<<20, disk2)
+	got, ok := mem2.Get(key)
+	if !ok {
+		t.Fatalf("fresh cache must read the disk-write-through value")
+	}
+	if got != "persistent" {
+		t.Fatalf("fresh cache returned wrong value: %q", got)
+	}
+}
+
+// TestTemplateCache_TemplateIntegrationCrossProcess covers the on-the-render-path
+// behavior end-to-end: render with cache instance A, instantiate cache instance
+// B pointing at the same disk root, render again — second render returns
+// byte-identical output via the disk cache without re-running action.Install.
+// The byte-identity assertion catches any divergence between cached and uncached
+// output.
+func TestTemplateCache_TemplateIntegrationCrossProcess(t *testing.T) {
+	// Chart fixture mirrors the in-process integration test so values churn
+	// meaningfully on each render.
+	chartDir := t.TempDir()
+	testutil.WriteFile(t, chartDir, "mychart/Chart.yaml",
+		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
+	testutil.WriteFile(t, chartDir, "mychart/values.yaml", "greeting: hi\n")
+	testutil.WriteFile(t, chartDir, "mychart/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-cm
+data:
+  greeting: {{ .Values.greeting }}
+`)
+
+	cacheRoot := t.TempDir()
+	layout := cacheroot.New(cacheRoot)
+
+	// First client: render and persist to disk.
+	first, err := NewClientWithOptions(layout, ClientOptions{
+		TemplateCacheBytes: 1 << 20,
+		RenderCacheBytes:   1 << 20,
+		RenderCacheRoot:    layout.RenderHelmCache(),
+	})
+	if err != nil {
+		t.Fatalf("NewClientWithOptions first: %v", err)
+	}
+	first.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", chartDir))
+
+	hr := newHR()
+	ctx := context.Background()
+	expected, err := first.Template(ctx, hr, map[string]any{"greeting": "hi"}, Options{})
+	if err != nil {
+		t.Fatalf("first Template: %v", err)
+	}
+
+	// Second client: fresh in-memory cache, same disk root. The render must hit
+	// disk and return byte-identical output.
+	second, err := NewClientWithOptions(layout, ClientOptions{
+		TemplateCacheBytes: 1 << 20,
+		RenderCacheBytes:   1 << 20,
+		RenderCacheRoot:    layout.RenderHelmCache(),
+	})
+	if err != nil {
+		t.Fatalf("NewClientWithOptions second: %v", err)
+	}
+	second.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", chartDir))
+
+	got, err := second.Template(ctx, hr, map[string]any{"greeting": "hi"}, Options{})
+	if err != nil {
+		t.Fatalf("second Template: %v", err)
+	}
+	if got != expected {
+		t.Fatalf("cross-process disk-cached render diverged from initial render:\nfirst:\n%s\nsecond:\n%s", expected, got)
+	}
+	// Second client's in-memory cache should have exactly one entry — the disk
+	// fall-through promotion.
+	if got := second.templateCache.Len(); got != 1 {
+		t.Errorf("expected 1 in-memory entry after disk-cached render, got %d", got)
 	}
 }
 

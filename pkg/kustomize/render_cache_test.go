@@ -1,9 +1,11 @@
 package kustomize
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -140,5 +142,46 @@ func TestRenderFlux_DisabledCacheUnchanged(t *testing.T) {
 	}
 	if string(outPlain) != string(outCached) {
 		t.Errorf("render cache changed output:\nplain:\n%s\ncached:\n%s", outPlain, outCached)
+	}
+}
+
+// TestEncodeDecodeFrame_RoundTrip pins the kustomize-specific value codec: the
+// read-set snapshot + rendered output survive framing intact. The frame is the
+// plain (un-gzipped) bytes the shared diskcache.Store compresses; gzip is the
+// Store's job, so this test never touches it.
+func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
+	snap := readSetSnapshot{
+		Files: []fileEntry{{Path: "kustomization.yaml", Hash: "h1"}, {Path: "a.yaml", Hash: "h2"}},
+		Dirs:  []fileEntry{{Path: ".", Hash: "dirhash"}},
+		Nodes: []nodeEntry{{Path: "comp", Kind: kindAbsent}},
+	}
+	output := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")
+
+	frame, err := encodeFrame(snap, output)
+	if err != nil {
+		t.Fatalf("encodeFrame: %v", err)
+	}
+	gotSnap, gotOut, err := decodeFrame(frame)
+	if err != nil {
+		t.Fatalf("decodeFrame: %v", err)
+	}
+	if !bytes.Equal(gotOut, output) {
+		t.Errorf("output mismatch:\nwant %q\ngot  %q", output, gotOut)
+	}
+	if !reflect.DeepEqual(gotSnap, snap) {
+		t.Errorf("snapshot mismatch:\nwant %+v\ngot  %+v", snap, gotSnap)
+	}
+}
+
+// TestDecodeFrame_RejectsMalformed pins the bounds checks: a frame shorter than
+// the 4-byte header, or one whose header claims more snapshot bytes than exist,
+// is a decode error (→ a cache miss, never a panic or torn read).
+func TestDecodeFrame_RejectsMalformed(t *testing.T) {
+	if _, _, err := decodeFrame([]byte{0, 0}); err == nil {
+		t.Error("a frame shorter than the 4-byte header must error")
+	}
+	// Header claims 10 snapshot bytes but only 1 follows.
+	if _, _, err := decodeFrame([]byte{0, 0, 0, 10, 'x'}); err == nil {
+		t.Error("an out-of-range header length must error")
 	}
 }

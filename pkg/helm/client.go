@@ -12,6 +12,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/cli"
 
+	"github.com/home-operations/flate/internal/diskcache"
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -225,7 +226,7 @@ func NewClientWithOptions(layout cacheroot.Layout, opts ClientOptions) (*Client,
 		valuesCache:      values.NewCache(),
 		templateCache: newTemplateCache(
 			opts.TemplateCacheBytes,
-			newDiskRenderCache(opts.RenderCacheRoot, opts.RenderCacheBytes),
+			diskcache.NewStore(opts.RenderCacheRoot, opts.RenderCacheBytes),
 		),
 	}, nil
 }

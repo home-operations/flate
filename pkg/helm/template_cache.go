@@ -12,6 +12,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
+	"github.com/home-operations/flate/internal/diskcache"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -38,14 +39,14 @@ type templateCache struct {
 	list  *list.List
 	index map[string]*list.Element
 
-	// disk is the persistent cross-process layer. nil
-	// when disk caching is disabled (RenderCacheBytes <= 0 or empty
-	// RenderCacheRoot). Get falls through to disk on memory miss and
-	// promotes hits to the in-process LRU; Put writes through to disk
-	// after the in-process insert. The disk layer is content-
-	// addressed so two processes pointing at the same root share
-	// entries safely.
-	disk *diskRenderCache
+	// disk is the persistent cross-process layer (the shared
+	// diskcache.Store). nil when disk caching is disabled
+	// (RenderCacheBytes <= 0 or empty RenderCacheRoot). Get falls through
+	// to disk on memory miss and promotes hits to the in-process LRU; Put
+	// writes through to disk after the in-process insert. The disk layer
+	// is content-addressed so two processes pointing at the same root
+	// share entries safely.
+	disk *diskcache.Store
 }
 
 // templateEntry is the value type stored in templateCache.list. cost
@@ -69,7 +70,7 @@ type templateEntry struct {
 // Get falls straight through to disk. That shape is useful for
 // embedders that want cross-process reuse without the memory cost of
 // a same-process LRU.
-func newTemplateCache(limitBytes int64, disk *diskRenderCache) *templateCache {
+func newTemplateCache(limitBytes int64, disk *diskcache.Store) *templateCache {
 	if limitBytes <= 0 && disk == nil {
 		return nil
 	}

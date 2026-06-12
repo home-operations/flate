@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.5](https://github.com/home-operations/flate/compare/v0.4.4...v0.4.5) (2026-06-12)
+
+
+### Bug Fixes
+
+* **deps:** update module helm.sh/helm/v4 (v4.2.0 → v4.2.1) ([#736](https://github.com/home-operations/flate/issues/736)) ([bfd9922](https://github.com/home-operations/flate/commit/bfd9922aa18ccc87564dc8976d32cdf780be0754))
+
 ## [0.4.4](https://github.com/home-operations/flate/compare/v0.4.3...v0.4.4) (2026-06-12)
 
 

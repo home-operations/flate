@@ -281,3 +281,41 @@ func TestPreflightGitBase_EachKSGetsOwnCopy(t *testing.T) {
 		}
 	}
 }
+
+// TestPreflightGitBase_SymlinkEscapeNotMaterialized is the #741 end-to-end
+// regression: a fork-PR-controlled remote base whose worktree contains a symlink
+// pointing at a host file (here a valid ConfigMap so it WOULD render unfixed)
+// must not have that host content copied into the render fs. Legit base files
+// are still materialized; only the escaping symlink is dropped.
+func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
+	// A host file OUTSIDE the base root, shaped as a valid manifest so an
+	// unfixed copy would surface it straight into the rendered diff.
+	outside := t.TempDir()
+	const sentinel = "host-secret-exfil"
+	hostFile := filepath.Join(outside, "host.yaml")
+	testutil.WriteFileAt(t, hostFile, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: "+sentinel+"\n")
+
+	worktree := fakeWorktree(t, map[string]string{
+		"kustomization.yaml": "resources:\n  - ./cm.yaml\n  - ./creds.yaml\n",
+		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
+	})
+	// The attacker's symlink: a referenced resource whose target escapes the base.
+	if err := os.Symlink(hostFile, filepath.Join(worktree, "creds.yaml")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n"})
+	cache := newPreflightCache(t)
+	withFakeGitBase(cache, worktree, nil)
+	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+
+	wantDir := remoteResourcePrefix + urlHash("https://example.com/o/r@v1")
+	if !fsys.Exists(filepath.Join(wantDir, "cm.yaml")) {
+		t.Error("legit base resource should still be materialized")
+	}
+	if fsys.Exists(filepath.Join(wantDir, "creds.yaml")) {
+		t.Fatal("symlink escaping the base root must NOT be materialized into the render fs (#741)")
+	}
+}

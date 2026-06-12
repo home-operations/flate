@@ -144,6 +144,35 @@ func TestSafeJoin_ForwardSlashNormalization(t *testing.T) {
 	}
 }
 
+// TestContains exercises the pure containment check the kustomize remote-base
+// copy uses to confine a symlink's resolved target to the base root. Both args
+// are absolute, symlink-resolved paths; only the algebraic check is tested.
+func TestContains(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "base", "root")
+	cases := []struct {
+		name   string
+		target string
+		want   bool
+	}{
+		{name: "file directly inside", target: filepath.Join(root, "a.yaml"), want: true},
+		{name: "nested inside", target: filepath.Join(root, "sub", "a.yaml"), want: true},
+		{name: "root itself", target: root, want: true},
+		{name: "parent escape", target: filepath.Join(root, "..", "secret"), want: false},
+		{name: "absolute outside", target: filepath.Join(string(filepath.Separator), "etc", "passwd"), want: false},
+		// /base/rootx must NOT count as inside /base/root (prefix-boundary case).
+		{name: "sibling prefix not contained", target: root + "x" + string(filepath.Separator) + "a.yaml", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := safepath.Contains(root, tc.target); got != tc.want {
+				t.Errorf("Contains(%q, %q) = %v; want %v", root, tc.target, got, tc.want)
+			}
+		})
+	}
+}
+
 // assertUnderBase verifies that path is strictly inside base (or equal to base).
 func assertUnderBase(t *testing.T, base, path, rel string) {
 	t.Helper()

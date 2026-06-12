@@ -3,6 +3,7 @@ package kustomize
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -79,5 +80,49 @@ func TestWalkSourceFiles_FollowsLiveSymlink(t *testing.T) {
 	}
 	if got := collectWalk(t, src)["alias.yaml"]; got != "kind: ConfigMap\n" {
 		t.Errorf("symlink target lost; got %q", got)
+	}
+}
+
+// TestWalkSourceFiles_RejectsSymlinkEscape is the #741 regression: a remote git
+// base is untrusted, so a symlink whose target escapes the base root (e.g.
+// creds.yaml -> /proc/self/environ) must NOT be read through — its host bytes
+// must never reach the render fs. In-root symlinks and regular files are
+// unaffected.
+func TestWalkSourceFiles_RejectsSymlinkEscape(t *testing.T) {
+	// An outside-root "host file" with distinctive bytes.
+	outside := t.TempDir()
+	const sentinel = "SECRET-HOST-BYTES\n"
+	hostFile := filepath.Join(outside, "host-secret.yaml")
+	if err := os.WriteFile(hostFile, []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "real.yaml"), []byte("kind: ConfigMap\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// In-tree symlink — must still be dereferenced (confine, not skip-all).
+	if err := os.Symlink(filepath.Join(src, "real.yaml"), filepath.Join(src, "alias.yaml")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	// Escaping symlink — must be dropped.
+	if err := os.Symlink(hostFile, filepath.Join(src, "creds.yaml")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	got := collectWalk(t, src)
+	if got["real.yaml"] != "kind: ConfigMap\n" {
+		t.Errorf("regular file missing/wrong: %q", got["real.yaml"])
+	}
+	if got["alias.yaml"] != "kind: ConfigMap\n" {
+		t.Errorf("in-tree symlink should still be dereferenced; got %q", got["alias.yaml"])
+	}
+	if body, ok := got["creds.yaml"]; ok {
+		t.Errorf("symlink escaping the base root must be skipped; got %q", body)
+	}
+	for rel, body := range got {
+		if strings.Contains(body, sentinel) {
+			t.Fatalf("host-file bytes exfiltrated via %q: %q", rel, body)
+		}
 	}
 }

@@ -69,3 +69,13 @@ func SafeJoin(base, rel string, rejectAbsolute bool) (string, error) {
 func isEscaped(rel string) bool {
 	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
+
+// Contains reports whether target lies within root. Both must already be
+// absolute and symlink-resolved by the caller; Contains is pure (no I/O) and
+// only does the algebraic containment check (filepath.Rel + the same `..`-prefix
+// test SafeJoin uses). root == target counts as contained. Used by the kustomize
+// remote-base copy to confine a symlink's resolved target to the base root.
+func Contains(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	return err == nil && !isEscaped(rel)
+}

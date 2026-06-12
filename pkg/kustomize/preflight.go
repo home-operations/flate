@@ -19,6 +19,7 @@ import (
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
 
 // remoteFetchTimeout caps each pre-flight HTTP GET. Kustomize's
@@ -33,10 +34,16 @@ const remoteFetchTimeout = 5 * time.Second
 // URL endpoint.
 const remoteFetchMaxBytes = 64 << 20 // 64 MiB
 
-// remoteFetchClient is the package-level client used by the
-// pre-flight pass. Distinct from the helm/oci clients so resource-
-// fetch latency stays observable.
-var remoteFetchClient = &http.Client{Timeout: remoteFetchTimeout}
+// remoteFetchClient is the package-level client used by the pre-flight pass.
+// Distinct from the helm/oci clients so resource-fetch latency stays
+// observable. Its transport carries the SSRF egress guard (inert unless
+// ssrfguard.Restrict is enabled) so an untrusted kustomization can't drive a
+// fetch to a private/metadata address; redirects re-dial through the same guard.
+var remoteFetchClient = func() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	ssrfguard.WrapTransport(tr)
+	return &http.Client{Timeout: remoteFetchTimeout, Transport: tr}
+}()
 
 // remoteResourcePrefix names the in-memory entries preflight writes beside a
 // kustomization for a pre-fetched remote resource: a `<prefix><hash>.yaml`

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -27,12 +29,16 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 	if err != nil {
 		return nil, err
 	}
-	tlsOpts, cleanup, err := f.helmRepoTLSOptions(r)
+	tr, err := f.helmRepoTransport(r)
 	if err != nil {
 		return nil, err
 	}
-	defer cleanup()
-	allOpts := slices.Concat(authOpts, tlsOpts)
+	allOpts := authOpts
+	if tr != nil {
+		// Custom-CA repo: override httpGet's default guarded transport with one
+		// that also carries this repo's TLS (last WithTransport wins).
+		allOpts = append(slices.Clone(authOpts), getter.WithTransport(tr))
+	}
 
 	res, err := f.resolveChart(ctx, r, chartName, version, allOpts)
 	if err != nil {
@@ -228,6 +234,18 @@ func absChartURL(base, urlStr string) (string, error) {
 // tests can shrink it; mutate only before a run starts to stay race-clean.
 var helmHTTPTimeout = 120 * time.Second
 
+// helmGuardedTransport is the default transport for every helm HTTP repo fetch:
+// the SSRF egress guard (source.NewHTTPTransport) with compression disabled to
+// match helm's own getter transport (chart tarballs are already compressed). A
+// custom-CA repo overrides it per-fetch (see helmRepoTransport). Built once; the
+// guard's blocking is gated by the process-global toggle, so this is inert
+// unless ssrfguard.Restrict is enabled.
+var helmGuardedTransport = func() *http.Transport {
+	tr, _ := source.NewHTTPTransport(nil, nil) // nil/nil never errors
+	tr.DisableCompression = true
+	return tr
+}()
+
 // httpGet fetches url with helm's HTTP getter and the given options. Callers
 // wrap the error with their own context (index fetch vs chart download).
 func httpGet(url string, opts []getter.Option) (*bytes.Buffer, error) {
@@ -235,10 +253,14 @@ func httpGet(url string, opts []getter.Option) (*bytes.Buffer, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Prepend the liveness timeout so a caller-supplied WithTimeout (none
-	// today) still overrides it — getter applies options in order, last
-	// write wins. source.WithRetry layers attempts on top.
-	opts = append([]getter.Option{getter.WithTimeout(helmHTTPTimeout)}, opts...)
+	// Prepend the liveness timeout AND the default guarded transport so EVERY
+	// helm HTTP fetch (index.yaml + chart .tgz) is egress-guarded. A caller-
+	// supplied WithTransport (the custom-CA path) still overrides, since getter
+	// applies options in order, last write wins. source.WithRetry layers attempts.
+	opts = append([]getter.Option{
+		getter.WithTimeout(helmHTTPTimeout),
+		getter.WithTransport(helmGuardedTransport),
+	}, opts...)
 	return g.Get(url, opts...)
 }
 

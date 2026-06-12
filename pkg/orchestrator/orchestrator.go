@@ -25,6 +25,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/git/mirror"
 	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/source/oci"
+	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -74,6 +75,16 @@ type Config struct {
 	// resources mark Ready with a "skipped:" reason; omitted valuesFrom
 	// refs let HelmReleases render with the remaining values.
 	AllowMissingSecrets bool
+
+	// RestrictEgress enables the SSRF egress guard for ALL source fetches
+	// (kustomize remote resources/bases + Git/OCI/Helm/Bucket sources):
+	// outbound dials to loopback/RFC1918/link-local/cloud-metadata addresses
+	// are refused. Off by default — flate normally renders TRUSTED repos that
+	// legitimately reach private/LAN hosts; a consumer rendering UNTRUSTED input
+	// (e.g. konflate fork mode) sets this. It is process-level (see
+	// pkg/source/ssrfguard): go-git installs its HTTPS transport process-wide,
+	// so a per-render git egress policy is impossible.
+	RestrictEgress bool
 
 	// RegistryConfig is the docker config.json used for OCI auth.
 	RegistryConfig string
@@ -332,6 +343,10 @@ func New(cfg Config) (*Orchestrator, error) {
 	if cfg.Path == "" {
 		return nil, errors.New("orchestrator: path is required")
 	}
+
+	// Arm (or disarm) the process-global SSRF egress guard before any fetcher
+	// transport dials. Inert by default; see Config.RestrictEgress.
+	ssrfguard.Restrict(cfg.RestrictEgress)
 
 	layout := cacheroot.New(cmp.Or(cfg.CacheDir, cacheroot.Default()))
 	helmClientOpts := helm.ClientOptions{

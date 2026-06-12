@@ -2,6 +2,7 @@ package helmchart
 
 import (
 	"fmt"
+	"net/http"
 
 	"helm.sh/helm/v4/pkg/getter"
 
@@ -45,62 +46,29 @@ func (f *Fetcher) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Opti
 	return opts, nil
 }
 
-// helmRepoTLSOptions resolves spec.certSecretRef into helm getter options.
-// The Secret carries one or both of (tls.crt, tls.key) for client-cert auth
-// plus optional ca.crt. Each present file is materialized to a temp file
-// (helm getter v4's WithTLSClientConfig takes paths) removed by cleanup.
-func (f *Fetcher) helmRepoTLSOptions(r *manifest.HelmRepository) ([]getter.Option, func(), error) {
-	noCleanup := func() {}
+// helmRepoTransport builds a per-repo guarded HTTP transport when a
+// HelmRepository sets spec.certSecretRef, returning nil for the common
+// no-custom-TLS case (httpGet's package-default guarded transport then applies).
+// The transport carries client-cert / CA TLS resolved via source.ResolveCertSecret
+// (the canonical cross-kind cert helper — same error sentinels as git/OCI/bucket,
+// incl. the --allow-missing-secrets case) AND the SSRF egress guard
+// (source.NewHTTPTransport wraps it). It is passed to helm's getter via
+// getter.WithTransport, the only way to apply BOTH flate's dial guard and the
+// repo's TLS — helm's getter treats WithTransport and WithTLSClientConfig as
+// mutually exclusive. DisableCompression mirrors helm's own getter transport
+// (chart tarballs are already compressed).
+func (f *Fetcher) helmRepoTransport(r *manifest.HelmRepository) (*http.Transport, error) {
 	if r.CertSecretRef == nil {
-		return nil, noCleanup, nil
+		return nil, nil
 	}
-	if f.secrets == nil {
-		// certSecretRef carries TLS trust material — an unwired SecretGetter
-		// is a wiring bug, not a missing-in-cluster secret. Fail loud (no
-		// ErrMissingSecret wrap, which --allow-missing-secrets would soft-skip):
-		// silently dropping TLS material is a security downgrade. Mirrors
-		// source.ResolveCertSecret, the canonical cross-kind cert helper.
-		return nil, noCleanup, fmt.Errorf("%s references certSecretRef but no SecretGetter is wired", helmID(r))
+	tlsCfg, err := source.ResolveCertSecret(f.secrets, r.Namespace, "HelmRepository", helmID(r), r.CertSecretRef)
+	if err != nil {
+		return nil, err
 	}
-	sec := f.secrets(r.Namespace, r.CertSecretRef.Name)
-	if sec == nil {
-		// A genuinely-absent secret IS the --allow-missing-secrets case
-		// (cert materialized live, not in git) — same sentinel git/oci/bucket
-		// use via source.ResolveCertSecret.
-		return nil, noCleanup, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.CertSecretRef.Name, "not found")
+	tr, err := source.NewHTTPTransport(tlsCfg, nil)
+	if err != nil {
+		return nil, err
 	}
-
-	// Scope the materialized PEM files under the fetcher's per-fetch
-	// tmpDir; helm's getter only reads them. cleanup removes every file
-	// a successful write registered (see source.TempFiles).
-	tf := source.NewTempFiles(f.tmpDir)
-	cleanup := tf.Cleanup
-
-	// Materialize tls.crt / tls.key / ca.crt in the order WithTLSClientConfig
-	// takes them; a missing/empty key yields no file (path stays "").
-	var paths [3]string
-	for i, key := range [3]string{"tls.crt", "tls.key", "ca.crt"} {
-		p, err := tf.Write("helm-tls-*.pem", source.StringFromSecret(sec, key))
-		if err != nil {
-			cleanup()
-			return nil, noCleanup, err
-		}
-		paths[i] = p
-	}
-	if paths == [3]string{} {
-		cleanup()
-		// A secret present but carrying none of the TLS keys is malformed
-		// config — fail loud (no ErrMissingSecret wrap), like BuildTLSConfig.
-		return nil, noCleanup, fmt.Errorf("%s: certSecretRef %s/%s contains none of tls.crt / tls.key / ca.crt",
-			helmID(r), r.Namespace, r.CertSecretRef.Name)
-	}
-	// A client cert needs both halves; reject a half-pair rather than feed
-	// helm a cert without its key (or vice versa). Matches source.BuildTLSConfig,
-	// which the OCI/Bucket paths enforce via ResolveCertSecret.
-	if (paths[0] == "") != (paths[1] == "") {
-		cleanup()
-		return nil, noCleanup, fmt.Errorf("%s: certSecretRef %s/%s must provide both tls.crt and tls.key (or neither)",
-			helmID(r), r.Namespace, r.CertSecretRef.Name)
-	}
-	return []getter.Option{getter.WithTLSClientConfig(paths[0], paths[1], paths[2])}, cleanup, nil
+	tr.DisableCompression = true
+	return tr, nil
 }

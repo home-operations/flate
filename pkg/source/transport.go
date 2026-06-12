@@ -4,6 +4,8 @@ import (
 	"crypto/tls"
 	"net/http"
 	"time"
+
+	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
 
 // ResponseHeaderTimeout bounds how long an HTTP source fetch (git over HTTPS,
@@ -45,5 +47,10 @@ func NewHTTPTransport(tlsCfg *tls.Config, proxy *ProxyConfig) (*http.Transport, 
 		}
 		tr.Proxy = http.ProxyURL(u)
 	}
+	// Install the SSRF egress guard's dial Control on every source-fetch
+	// transport (git/OCI/bucket here; helm + kustomize wrap their own clients
+	// the same way). A no-op unless ssrfguard.Restrict is enabled, so untrusted
+	// renders are guarded while trusted renders keep reaching private/LAN hosts.
+	ssrfguard.WrapTransport(tr)
 	return tr, nil
 }

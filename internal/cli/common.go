@@ -47,6 +47,7 @@ type commonFlags struct {
 	skipCRDs            bool
 	skipSecrets         bool
 	allowMissingSecrets bool
+	restrictEgress      bool
 	skipKinds           []string
 	output              string
 	registryConfig      string
@@ -117,6 +118,11 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"that only materialize in the live cluster. Usually unnecessary: a missing Secret "+
 			"declared by an in-repo ExternalSecret/SealedSecret (with a static target name) is "+
 			"auto-skipped without this flag. cert/proxy secretRefs still fail loud.")
+	fs.BoolVar(&f.restrictEgress, "restrict-egress", false,
+		"block source fetches (kustomize remote resources/bases, Git/OCI/Helm/Bucket sources) to "+
+			"loopback, RFC1918, link-local, and cloud-metadata (169.254.169.254) addresses. Off by "+
+			"default — only enable when rendering UNTRUSTED input; trusted repos legitimately reach "+
+			"private/LAN hosts. A configured proxy and ssh:// git are not covered (operator-owned).")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
 	// Commands with no -o variants (test) register no -o flag at all, so
 	// `-o anything` is an unknown flag rather than a rendered alternative.
@@ -416,6 +422,7 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		},
 		GitDepth:                  c.gitDepth,
 		AllowMissingSecrets:       c.allowMissingSecrets,
+		RestrictEgress:            c.restrictEgress,
 		CacheDir:                  c.resolveCacheRoot(),
 		HelmTemplateCacheBytes:    int64(c.helmTemplateCacheMB) << 20,
 		HelmRenderCacheBytes:      int64(c.helmRenderCacheMB) << 20,

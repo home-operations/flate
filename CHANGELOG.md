@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.4](https://github.com/home-operations/flate/compare/v0.4.3...v0.4.4) (2026-06-12)
+
+
+### Features
+
+* **kustomize:** cross-run render cache validated by a recorded read-set ([#731](https://github.com/home-operations/flate/issues/731)) ([8358365](https://github.com/home-operations/flate/commit/835836521a76491fcffd36307cb2779ae1665c49))
+
+
+### Performance Improvements
+
+* **cache:** compress render cache with zstd instead of gzip ([#735](https://github.com/home-operations/flate/issues/735)) ([a896d9b](https://github.com/home-operations/flate/commit/a896d9b7ea79615a3e0c23985cb0e8b7bbe36c11))
+
+
+### Code Refactoring
+
+* **cache:** share one disk render-cache substrate across helm + kustomize ([#733](https://github.com/home-operations/flate/issues/733)) ([89e0167](https://github.com/home-operations/flate/commit/89e01675ee96e8dd19393bc74df21fd3a95eeaf4))
+* **kustomize:** tidy the render-cache read path after [#731](https://github.com/home-operations/flate/issues/731)/[#733](https://github.com/home-operations/flate/issues/733) ([#734](https://github.com/home-operations/flate/issues/734)) ([68c8359](https://github.com/home-operations/flate/commit/68c8359d9dac2958962ea4919d25ffac29ef3350))
+
 ## [0.4.3](https://github.com/home-operations/flate/compare/v0.4.2...v0.4.3) (2026-06-11)
 
 

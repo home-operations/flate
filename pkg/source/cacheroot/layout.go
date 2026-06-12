@@ -65,13 +65,13 @@ const (
 	// RenderHelmCacheDir holds the persisted helm template-output
 	// cache. Entries are sharded `<root>/render/helm/<hex[:2]>/<hex>`
 	// where <hex> is the full sha256 of the template-cache key. Content
-	// is gzipped rendered manifest bytes. Cross-process safe via atomic
-	// rename; eviction is mtime-LRU bounded by the caller's byte cap.
+	// is zstd-compressed rendered manifest bytes. Cross-process safe via
+	// atomic rename; eviction is mtime-LRU bounded by the caller's byte cap.
 	RenderHelmCacheDir = "render/helm"
 	// RenderKustomizeCacheDir holds the persisted kustomize render-output
 	// cache: `<root>/render/kustomize/<hex[:2]>/<hex>` where <hex> is the
-	// sha256 render key; content is gzipped {read-set snapshot + rendered
-	// bytes}. An entry is reused only when its recorded disk inputs still
+	// sha256 render key; content is zstd-compressed {read-set snapshot +
+	// rendered bytes}. An entry is reused only when its recorded disk inputs still
 	// validate (see pkg/kustomize/render_cache.go) — same cross-process /
 	// mtime-LRU machinery as the helm render cache.
 	RenderKustomizeCacheDir = "render/kustomize"

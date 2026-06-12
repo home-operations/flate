@@ -1,11 +1,8 @@
 package diskcache
 
 import (
-	"bytes"
 	"cmp"
-	"compress/gzip"
 	"errors"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -13,16 +10,31 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
+
 	"github.com/home-operations/flate/pkg/source/atomic"
 )
 
-// Store is a persistent, cross-process disk cache of gzip-compressed byte
+// zstdEncoder and zstdDecoder are process-lifetime singletons. zstd's EncodeAll
+// and DecodeAll are safe for concurrent use, so every Store shares one of each
+// rather than allocating a codec per call (the idiomatic, near-zero-allocation
+// usage). SpeedDefault compresses flate's rendered-manifest payloads ~2x smaller
+// than gzip while compressing ~8x and decompressing ~3.5x faster, at one
+// allocation per call instead of gzip's 20-30 — see the codec benchmark in the
+// PR that introduced this. NewWriter/NewReader cannot error with nil options, so
+// the errors are discarded; both live for the process and are never closed.
+var (
+	zstdEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	zstdDecoder, _ = zstd.NewReader(nil)
+)
+
+// Store is a persistent, cross-process disk cache of zstd-compressed byte
 // payloads keyed by a content hash. Both render caches sit on it: the helm
 // template-output cache (pkg/helm) stores rendered manifest bytes directly; the
 // kustomize render cache (pkg/kustomize) stores a framed read-set + output and
 // owns that framing on top. The Store owns everything below the value: the
-// sharded on-disk layout, gzip, atomic writes, and the single-flight mtime-LRU
-// sweep that bounds total bytes.
+// sharded on-disk layout, zstd compression, atomic writes, and the single-flight
+// mtime-LRU sweep that bounds total bytes.
 //
 // Layout under root:
 //
@@ -30,7 +42,7 @@ import (
 //
 // where <hex> is the full hex-encoded sha256 cache key. The two-char shard
 // avoids one giant directory (mkdir scan / readdir cost balloons past ~100k
-// entries on common filesystems). Contents are gzip(payload).
+// entries on common filesystems). Contents are zstd(payload).
 //
 // Concurrency: Get is unsynchronized — the filesystem already serialises
 // atomic-rename writes against partial reads. Put is likewise unsynchronized;
@@ -97,15 +109,12 @@ func (s *Store) Get(key string) ([]byte, bool) {
 		}
 		return nil, false
 	}
-	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	out, err := zstdDecoder.DecodeAll(raw, nil)
 	if err != nil {
-		slog.Debug("disk render cache: gunzip header", "path", p, "err", err)
-		return nil, false
-	}
-	defer func() { _ = gz.Close() }()
-	out, err := io.ReadAll(gz)
-	if err != nil {
-		slog.Debug("disk render cache: gunzip body", "path", p, "err", err)
+		// A decode failure is a clean miss: a torn write, or an entry left by a
+		// prior build that used a different codec (the format rolls forward by
+		// re-rendering, never by a flag day).
+		slog.Debug("disk render cache: decompress", "path", p, "err", err)
 		return nil, false
 	}
 	// Touch the file so LRU eviction by mtime treats this entry as fresh.
@@ -116,7 +125,7 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	return out, true
 }
 
-// Put gzip-encodes payload and atomically writes it to the sharded path.
+// Put zstd-compresses payload and atomically writes it to the sharded path.
 // Subsequent reads either observe the previous complete file or the new one —
 // never a partial. After the write we kick a background sweep (single-flight via
 // sweepGate) so the fast path doesn't block on directory walks.
@@ -140,19 +149,11 @@ func (s *Store) Put(key string, payload []byte) {
 		return
 	}
 
-	var buf bytes.Buffer
-	// Default gzip level — rendered manifests are mostly text and compress 4-6x;
-	// the CPU cost of level=DefaultCompression vs. BestSpeed is dominated by the
-	// render we just skipped.
-	gw := gzip.NewWriter(&buf)
-	if _, err := gw.Write(payload); err != nil {
-		slog.Debug("disk render cache: gzip write", "path", p, "err", err)
-		return
-	}
-	if err := gw.Close(); err != nil {
-		slog.Debug("disk render cache: gzip close", "path", p, "err", err)
-		return
-	}
+	// EncodeAll with the shared encoder is allocation-light and needs no
+	// Close; rendered manifests are repetitive text that zstd packs ~2x tighter
+	// than gzip, and the compress cost is dominated by the render we just
+	// skipped on this (miss) path anyway.
+	comp := zstdEncoder.EncodeAll(payload, nil)
 
 	// syncDir=false: a render cache miss is cheap to re-derive on the next
 	// invocation, so we trade durability for write throughput. Mirrors
@@ -161,7 +162,7 @@ func (s *Store) Put(key string, payload []byte) {
 	// atomic.WriteFile removes its staged tmpfile on any error path (see
 	// pkg/source/atomic/file.go's committed-bool defer guard), so a failed Put
 	// can't leak partial state into the cache root.
-	if err := atomic.WriteFile(p, buf.Bytes(), 0o600, false); err != nil {
+	if err := atomic.WriteFile(p, comp, 0o600, false); err != nil {
 		slog.Debug("disk render cache: write", "path", p, "err", err)
 		return
 	}

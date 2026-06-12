@@ -88,8 +88,8 @@ func newTemplateCache(limitBytes int64, disk *diskcache.Store) *templateCache {
 //
 // On an in-memory miss with a wired disk layer, Get reads through to
 // disk and promotes the hit back into the LRU so subsequent same-
-// process Gets stay fast. Cross-process disk hits incur a gunzip read
-// (cheap vs. the helm render they avoid).
+// process Gets stay fast. Cross-process disk hits incur a decompress
+// read (cheap vs. the helm render they avoid).
 func (c *templateCache) Get(key string) (string, bool) {
 	if c == nil {
 		return "", false
@@ -141,7 +141,7 @@ func (c *templateCache) Put(key, value string) {
 	c.putLocked(key, value)
 	c.mu.Unlock()
 	// Write through to the disk layer outside the in-memory lock so
-	// the gzip + atomic-write doesn't hold off concurrent Gets. Put
+	// the compress + atomic-write doesn't hold off concurrent Gets. Put
 	// no-ops on a nil disk receiver.
 	if c.disk != nil {
 		c.disk.Put(key, []byte(value))

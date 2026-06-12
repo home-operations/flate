@@ -8,8 +8,8 @@ package kustomize
 //
 // renderCache is the kustomize-domain layer: the read-set framing (encodeFrame /
 // decodeFrame) on top of the shared diskcache.Store, which owns the sharded
-// layout, gzip, atomic writes, and the mtime-LRU sweep. helm's render cache sits
-// on the same Store with a plain-bytes value instead of a frame.
+// layout, zstd compression, atomic writes, and the mtime-LRU sweep. helm's
+// render cache sits on the same Store with a plain-bytes value instead of a frame.
 
 import (
 	"encoding/binary"
@@ -73,8 +73,8 @@ func (c *renderCache) put(key string, snap readSetSnapshot, output []byte) {
 }
 
 // encodeFrame frames the entry as uint32(len(snapshotJSON)) | snapshotJSON |
-// rawOutput. The Store gzips this plain frame on write (and gunzips on read), so
-// the output stays raw here — gzip compresses it as text.
+// rawOutput. The Store compresses this plain frame on write (and decompresses on
+// read), so the output stays raw here — zstd compresses it as text.
 func encodeFrame(snap readSetSnapshot, output []byte) ([]byte, error) {
 	js, err := json.Marshal(snap)
 	if err != nil {
@@ -90,7 +90,7 @@ func encodeFrame(snap readSetSnapshot, output []byte) ([]byte, error) {
 	return buf, nil
 }
 
-// decodeFrame is the inverse of encodeFrame over the Store's already-gunzipped
+// decodeFrame is the inverse of encodeFrame over the Store's already-decompressed
 // bytes: read the 4-byte length header, unmarshal that many bytes as the
 // snapshot JSON, and return the remainder as the rendered output.
 func decodeFrame(plain []byte) (readSetSnapshot, []byte, error) {

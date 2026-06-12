@@ -2,12 +2,14 @@ package diskcache
 
 import (
 	"bytes"
-	"compress/gzip"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // sweepBlocking forces a synchronous eviction pass. Test affordance — production
@@ -26,7 +28,7 @@ func (s *Store) sweepBlocking() {
 }
 
 // TestStore_RoundTrip pins the basic put-then-get path: payload bytes survive
-// gzip + atomic rename + read intact. The load-bearing assertion is
+// zstd + atomic rename + read intact. The load-bearing assertion is
 // byte-identity — a single corrupted byte would be silently observed by every
 // downstream consumer.
 func TestStore_RoundTrip(t *testing.T) {
@@ -64,7 +66,7 @@ func TestStore_PutShardsByHexPrefix(t *testing.T) {
 		t.Fatalf("expected file at %s, got %v", want, err)
 	}
 	if info.Size() == 0 {
-		t.Fatalf("file at %s is empty; Put should have written gzipped bytes", want)
+		t.Fatalf("file at %s is empty; Put should have written compressed bytes", want)
 	}
 }
 
@@ -103,17 +105,19 @@ func TestStore_DisabledOnEmptyRoot(t *testing.T) {
 // TestStore_SweepEvictsOldestByMtime pins the LRU-by-mtime eviction policy: with
 // three entries totaling more than the limit, the sweep removes the oldest until
 // total ≤ limit. The fixed per-entry mtimes (manually Chtimes-d after the write)
-// make the expected eviction order deterministic across filesystems.
+// make the expected eviction order deterministic across filesystems. Payloads are
+// incompressible so the on-disk size is codec-independent (~1 KB each), keeping
+// the eviction math from depending on how well the codec packs the bytes.
 func TestStore_SweepEvictsOldestByMtime(t *testing.T) {
 	dir := t.TempDir()
-	s := NewStore(dir, 50) // 50 bytes total
+	s := NewStore(dir, 1500) // ~1.5 entries fit; the sweep must drop the oldest two
 	keys := []string{
 		strings.Repeat("1", 64),
 		strings.Repeat("2", 64),
 		strings.Repeat("3", 64),
 	}
 	for i, k := range keys {
-		s.Put(k, []byte(strings.Repeat("x", 1024)))
+		s.Put(k, incompressible(1024, uint64(i+1)))
 		// Stagger mtimes so the sort key is unambiguous. Older entries get
 		// earlier timestamps.
 		p := s.pathFor(k)
@@ -191,38 +195,123 @@ func TestStore_GetBumpsMtime(t *testing.T) {
 	}
 }
 
-// TestStore_ReadsExternallyWrittenGzip pins the on-disk wire format: a file that
-// is simply gzip(payload) at the sharded path is a valid Store entry. This is
-// what guarantees a warm cache written by a prior binary stays readable across
-// an upgrade — the format is gzip(payload), nothing more.
-func TestStore_ReadsExternallyWrittenGzip(t *testing.T) {
+// TestStore_ReadsExternallyWrittenZstd pins the on-disk wire format: a file that
+// is simply zstd(payload) at the sharded path is a valid Store entry — the format
+// is zstd(payload), nothing more.
+func TestStore_ReadsExternallyWrittenZstd(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir, 1<<20)
 	key := strings.Repeat("f", 64)
 	payload := []byte("hello: world\n")
 
-	// Write gzip(payload) by hand at the sharded path — no Store.Put involved.
+	// Write zstd(payload) by hand at the sharded path — no Store.Put involved.
 	p := s.pathFor(key)
 	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	if _, err := gw.Write(payload); err != nil {
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gw.Close(); err != nil {
+	if err := os.WriteFile(p, enc.EncodeAll(payload, nil), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, buf.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	_ = enc.Close()
 
 	got, ok := s.Get(key)
 	if !ok {
-		t.Fatalf("Store must read an externally-written gzip(payload) entry")
+		t.Fatalf("Store must read an externally-written zstd(payload) entry")
 	}
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("wire-format read mismatch:\nwant: %q\ngot:  %q", payload, got)
+	}
+}
+
+// TestStore_RejectsForeignCodec pins the format-roll-forward behavior: an entry
+// in some other codec (here gzip, the prior format) is a clean miss, not a
+// panic or a garbage hit — so a stale cache simply re-renders.
+func TestStore_RejectsForeignCodec(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir, 1<<20)
+	key := strings.Repeat("9", 64)
+	p := s.pathFor(key)
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// 0x1f 0x8b is the gzip magic — not zstd's 0x28 0xb5 0x2f 0xfd.
+	if err := os.WriteFile(p, []byte{0x1f, 0x8b, 0x08, 0x00, 0x00}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := s.Get(key); ok || got != nil {
+		t.Fatalf("a foreign-codec entry must miss cleanly; got (%v, %v)", got, ok)
+	}
+}
+
+// incompressible returns n high-entropy bytes (an LCG's top byte) that neither
+// gzip nor zstd can pack down, so a test's on-disk size math is codec-independent.
+// seed varies the stream per entry.
+func incompressible(n int, seed uint64) []byte {
+	b := make([]byte, n)
+	x := seed
+	for i := range b {
+		x = x*6364136223846793005 + 1442695040888963407
+		b[i] = byte(x >> 56)
+	}
+	return b
+}
+
+// syntheticManifests returns a payload shaped like flate's real cache values:
+// repetitive rendered Kubernetes YAML (~tens of KB), which compresses heavily.
+func syntheticManifests(docs int) []byte {
+	var b strings.Builder
+	for i := range docs {
+		fmt.Fprintf(&b, `---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config-%d
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/name: app-%d
+    app.kubernetes.io/instance: app-%d
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+data:
+  KEY_ONE: "value-one-%d"
+  KEY_TWO: "value-two-%d"
+  CONFIG: |
+    server.host=example.local
+    server.port=8080
+    log.level=info
+`, i, i, i, i, i)
+	}
+	return []byte(b.String())
+}
+
+// BenchmarkStore_Put / _Get guard the codec on a representative payload so a
+// future codec change is measured, not guessed. Put covers the cache-miss
+// (compress) path; Get covers the warm-hit (decompress) path.
+func BenchmarkStore_Put(b *testing.B) {
+	s := NewStore(b.TempDir(), 1<<30)
+	payload := syntheticManifests(200)
+	key := strings.Repeat("a", 64)
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+	for b.Loop() {
+		s.Put(key, payload)
+	}
+}
+
+func BenchmarkStore_Get(b *testing.B) {
+	s := NewStore(b.TempDir(), 1<<30)
+	payload := syntheticManifests(200)
+	key := strings.Repeat("a", 64)
+	s.Put(key, payload)
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, ok := s.Get(key); !ok {
+			b.Fatal("expected hit")
+		}
 	}
 }

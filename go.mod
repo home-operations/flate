@@ -17,7 +17,7 @@ require (
 	github.com/fluxcd/pkg/apis/kustomize v1.18.0
 	github.com/fluxcd/pkg/apis/meta v1.29.0
 	github.com/fluxcd/pkg/envsubst v1.7.0
-	github.com/fluxcd/pkg/kustomize v1.32.0
+	github.com/fluxcd/pkg/kustomize v1.33.0
 	github.com/fluxcd/pkg/sourceignore v0.18.0
 	github.com/fluxcd/source-controller/api v1.8.5
 	github.com/go-git/go-git/v5 v5.19.1

@@ -126,6 +126,15 @@ type Store struct {
 	// listenerSet has its own internal mutex so the shard locks don't
 	// serialize listener registration.
 	listeners [numEventKinds + 1]*listenerSet
+
+	// warn collects render advisories (manifest.Warning) for Result.Warnings.
+	// Kept off the shards: warnings are low-volume, some are render-global
+	// (zero NamedResource) so they can't shard by id, and the orchestrator
+	// reads them once at finalize. Its own mutex keeps advisory writes off the
+	// shard locks' hot path. See warning.go.
+	warnMu    sync.Mutex
+	warnOrder []manifest.Warning
+	warnIndex map[string]int // dedupKey → index into warnOrder (Count bump)
 }
 
 // New constructs an empty Store.

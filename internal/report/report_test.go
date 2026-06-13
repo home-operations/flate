@@ -36,7 +36,7 @@ func TestBuild_GroupsCascadeUnderRoots(t *testing.T) {
 		dependent: {missing},
 	}
 
-	m := Build(f, blocked, nil)
+	m := Build(f, blocked, nil, nil)
 
 	if len(m.Primary) != 1 || m.Primary[0].ID != root {
 		t.Fatalf("Primary = %+v, want only root", m.Primary)
@@ -73,7 +73,7 @@ func TestBuild_GroupsCascadeUnderRoots(t *testing.T) {
 // TestBuild_PrimaryOnly covers a lone real failure with nothing depending on it.
 func TestBuild_PrimaryOnly(t *testing.T) {
 	a := ks("a")
-	m := Build(failed(a), nil, nil)
+	m := Build(failed(a), nil, nil, nil)
 	if len(m.Primary) != 1 || len(m.Missing) != 0 || len(m.Primary[0].Blocks) != 0 {
 		t.Fatalf("want one primary with no blocks, got %+v", m)
 	}
@@ -84,7 +84,7 @@ func TestBuild_PrimaryOnly(t *testing.T) {
 
 // TestBuild_NotesOnly covers a clean run that only carries deferred log notes.
 func TestBuild_NotesOnly(t *testing.T) {
-	m := Build(nil, nil, []Note{{Text: "resource orphaned id=x", Count: 3}})
+	m := Build(nil, nil, nil, []Note{{Text: "resource orphaned id=x", Count: 3}})
 	if len(m.Primary) != 0 || len(m.Missing) != 0 || m.Empty() {
 		t.Fatalf("notes-only model should be non-empty with no failures: %+v", m)
 	}
@@ -97,8 +97,45 @@ func TestBuild_NotesOnly(t *testing.T) {
 
 // TestBuild_Empty covers a clean run with nothing to show.
 func TestBuild_Empty(t *testing.T) {
-	if !Build(nil, nil, nil).Empty() {
+	if !Build(nil, nil, nil, nil).Empty() {
 		t.Error("a clean run must produce an empty model")
+	}
+}
+
+// TestWrite_WarningsSection: a clean run carrying only render advisories renders
+// a "warnings" section (attributed + detail) and NO red "✗ 0 failed" verdict.
+func TestWrite_WarningsSection(t *testing.T) {
+	hr := manifest.NamedResource{Kind: "HelmRelease", Namespace: "default", Name: "app"}
+	warns := []manifest.Warning{
+		{Resource: hr, Category: manifest.WarnStaleValues, Message: "values not defined by the chart schema", Detail: []string{"image.tagg", "oldKey"}},
+		{Category: manifest.WarnEmptyScan, Message: "no Flux objects found"}, // global
+	}
+	m := Build(nil, nil, warns, nil)
+	if m.Empty() {
+		t.Fatal("a model with warnings is not empty")
+	}
+	var b bytes.Buffer
+	if err := m.Write(&b, false, 0); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{"warnings (2)", "HelmRelease default/app: values not defined", "image.tagg, oldKey", "no Flux objects found"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("warnings section missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "failed") {
+		t.Errorf("a warnings-only run must not render a failure verdict:\n%s", out)
+	}
+}
+
+// TestWrite_WarningCount: a deduped warning renders its repeat count.
+func TestWrite_WarningCount(t *testing.T) {
+	warns := []manifest.Warning{{Category: manifest.WarnPathConfig, Message: "same root", Count: 4}}
+	var b bytes.Buffer
+	_ = Build(nil, nil, warns, nil).Write(&b, false, 0)
+	if out := b.String(); !strings.Contains(out, "×4") {
+		t.Errorf("warning repeat count not rendered:\n%s", out)
 	}
 }
 
@@ -113,7 +150,7 @@ func TestWrite_PrimaryMessageIsMultiLine(t *testing.T) {
 			"duplicate resource(s) produced by multiple accumulated paths:\n  - ./one\n  - ./two"},
 	}
 	var b bytes.Buffer
-	if err := Build(f, nil, nil).Write(&b, false, 0); err != nil {
+	if err := Build(f, nil, nil, nil).Write(&b, false, 0); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -134,7 +171,7 @@ func TestBuild_BlockedCountsDistinctResources(t *testing.T) {
 		dual: {root, missing}, // blocked by a failed parent AND a missing dep
 	}
 
-	m := Build(f, blocked, nil)
+	m := Build(f, blocked, nil, nil)
 	if m.Blocked != 1 {
 		t.Errorf("Blocked = %d, want 1 distinct blocked resource", m.Blocked)
 	}

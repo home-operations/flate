@@ -1,0 +1,5 @@
+apiVersion: v2
+name: opaquechart
+description: chart that consumes .Values wholesale (toYaml) — detection must stay silent
+version: 0.1.0
+appVersion: "1.0"

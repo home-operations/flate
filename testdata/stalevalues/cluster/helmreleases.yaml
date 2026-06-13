@@ -1,0 +1,48 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: https://example.test/cluster.git
+---
+# appchart's templates name each value they read (.Values.greeting/.replicas),
+# so flate flags oldUnusedKey — a value no template references (#744).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: app
+  namespace: apps
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/appchart
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  values:
+    greeting: hello-from-helm
+    replicas: 3
+    oldUnusedKey: true
+---
+# opaquechart consumes .Values wholesale (toYaml), so flate can't prove any key
+# unused and stays silent — even for the same oldUnusedKey.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: opaque
+  namespace: apps
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/opaquechart
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  values:
+    greeting: hello-from-helm
+    oldUnusedKey: true

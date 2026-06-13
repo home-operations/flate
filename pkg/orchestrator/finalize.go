@@ -186,11 +186,14 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 		"kustomizations", ksCount,
 		"helm_releases", hrCount,
 		"failed", len(failed))
-	// Surface a clear warning when the scan turned up nothing — covers
+	// Surface a clear advisory when the scan turned up nothing — covers
 	// the "typo'd --path that happens to be an empty directory" case
 	// where flate would otherwise look like a silent success.
 	if ksCount == 0 && hrCount == 0 {
-		slog.Warn("no Flux Kustomization or HelmRelease objects found under --path; check the path is correct")
+		o.store.AddWarning(manifest.Warning{
+			Category: manifest.WarnEmptyScan,
+			Message:  "no Flux Kustomization or HelmRelease objects found under --path; check the path is correct",
+		})
 	}
 }
 

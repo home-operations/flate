@@ -56,7 +56,11 @@ type Note struct {
 type Model struct {
 	Primary []Primary
 	Missing []Missing
-	Notes   []Note
+	// Warnings are non-fatal render advisories (Result.Warnings) — rendered in
+	// their own footer section above operational Notes. Distinct from failures
+	// (the render succeeded) and from Notes (operational slog lines).
+	Warnings []manifest.Warning
+	Notes    []Note
 	// Blocked is the count of distinct derived (cascaded) failures. It is the
 	// verdict's "N blocked" figure — distinct resources, not the sum of the
 	// per-root Blocks/RequiredBy lists, which can overlap when one resource
@@ -66,7 +70,7 @@ type Model struct {
 
 // Empty reports whether there is nothing to render.
 func (m Model) Empty() bool {
-	return len(m.Primary) == 0 && len(m.Missing) == 0 && len(m.Notes) == 0
+	return len(m.Primary) == 0 && len(m.Missing) == 0 && len(m.Warnings) == 0 && len(m.Notes) == 0
 }
 
 // Build partitions failures into primary errors and root-grouped cascades.
@@ -78,7 +82,7 @@ func (m Model) Empty() bool {
 // blockers until reaching a primary failure (a failed id that is not itself
 // blocked) or a missing id (absent from failed). Cascaded resources never get
 // their own line — they appear only in a root's Blocks / RequiredBy list.
-func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource, notes []Note) Model {
+func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource, warnings []manifest.Warning, notes []Note) Model {
 	byRoot := Roots(blocked)
 
 	var primary []Primary
@@ -98,7 +102,7 @@ func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manif
 
 	slices.SortFunc(primary, func(a, b Primary) int { return a.ID.Compare(b.ID) })
 	slices.SortFunc(missing, func(a, b Missing) int { return a.ID.Compare(b.ID) })
-	return Model{Primary: primary, Missing: missing, Notes: notes, Blocked: len(blocked)}
+	return Model{Primary: primary, Missing: missing, Warnings: warnings, Notes: notes, Blocked: len(blocked)}
 }
 
 // Roots inverts a blocked graph into root cause → the resources that trace to
@@ -149,57 +153,123 @@ func sortedIDs(ids []manifest.NamedResource) []manifest.NamedResource {
 // Write renders the model to w. color gates ANSI styling; elapsed, when > 0,
 // closes the verdict line.
 func (m Model) Write(w io.Writer, color bool, elapsed time.Duration) error {
-	var b strings.Builder
-	b.WriteByte('\n')
+	blocks := nonEmpty(
+		m.failuresBlock(color),
+		m.warningsBlock(color),
+		m.notesBlock(color),
+		m.verdictBlock(color, elapsed),
+	)
+	if len(blocks) == 0 {
+		return nil
+	}
+	// One spacing rule for the whole footer: a leading blank line parts it from
+	// preceding output, and a single blank line separates each section. Blocks
+	// carry no blank lines of their own, so there's no per-section newline
+	// bookkeeping to drift.
+	_, err := io.WriteString(w, "\n"+strings.Join(blocks, "\n\n")+"\n")
+	return err
+}
 
+// failuresBlock renders the root-cause rows: each primary failure (its inline
+// message and the resources it blocks) followed by each missing dependency.
+func (m Model) failuresBlock(color bool) string {
+	var rows []string
 	for _, p := range m.Primary {
-		fmt.Fprintf(&b, "  %s  %s  %s",
-			style.Fail(style.GlyphFail, color),
-			style.Dim(p.ID.Kind, color),
-			p.ID.NamespacedName())
-		writeMessage(&b, p.Msg)
+		row := fmt.Sprintf("  %s  %s  %s",
+			style.Fail(style.GlyphFail, color), style.Dim(p.ID.Kind, color), p.ID.NamespacedName()) +
+			messageTail(p.Msg)
 		if len(p.Blocks) > 0 {
-			fmt.Fprintf(&b, "\n%s%s", msgIndent, style.Dim("blocks "+summarize(p.Blocks), color))
+			row += "\n" + msgIndent + style.Dim("blocks "+summarize(p.Blocks), color)
 		}
-		b.WriteByte('\n')
+		rows = append(rows, row)
 	}
-
 	for _, mr := range m.Missing {
-		fmt.Fprintf(&b, "  %s  %s  %s  %s\n%s%s\n",
-			style.Fail(style.GlyphFail, color),
-			style.Dim(mr.ID.Kind, color),
-			mr.ID.NamespacedName(),
-			style.Fail("not found", color),
-			msgIndent,
-			style.Dim("required by "+summarize(mr.RequiredBy), color))
+		rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s\n%s%s",
+			style.Fail(style.GlyphFail, color), style.Dim(mr.ID.Kind, color), mr.ID.NamespacedName(),
+			style.Fail("not found", color), msgIndent,
+			style.Dim("required by "+summarize(mr.RequiredBy), color)))
 	}
+	return strings.Join(rows, "\n")
+}
 
-	if len(m.Notes) > 0 {
-		fmt.Fprintf(&b, "\n  %s\n", style.Dim(fmt.Sprintf("notes (%d)", noteTotal(m.Notes)), color))
-		for _, n := range m.Notes {
-			line := n.Text
-			if n.Count > 1 {
-				line = fmt.Sprintf("%s (×%d)", line, n.Count)
-			}
-			fmt.Fprintf(&b, "    %s\n", style.Dim(line, color))
+// warningsBlock renders the advisory section: a header counting the warnings,
+// then one attributed line each (with an indented detail line when present).
+func (m Model) warningsBlock(color bool) string {
+	items := make([]string, 0, len(m.Warnings))
+	for _, wn := range m.Warnings {
+		head := wn.Message
+		if wn.Resource != (manifest.NamedResource{}) {
+			head = wn.Resource.Kind + " " + wn.Resource.NamespacedName() + ": " + wn.Message
 		}
+		if wn.Count > 1 {
+			head = fmt.Sprintf("%s (×%d)", head, wn.Count)
+		}
+		item := style.Warn(head, color)
+		if len(wn.Detail) > 0 {
+			item += "\n      " + style.Dim(strings.Join(wn.Detail, ", "), color)
+		}
+		items = append(items, item)
 	}
+	return section(style.Warn(fmt.Sprintf("%s warnings (%d)", style.GlyphWarn, len(m.Warnings)), color), items)
+}
 
-	// Verdict: failed = primary + missing roots; blocked = distinct cascaded
-	// resources (m.Blocked, not the sum of per-root lists, which can overlap).
+// notesBlock renders the operational-log section: a header counting the notes,
+// then one dim line each (collapsed identical lines carry a ×N suffix).
+func (m Model) notesBlock(color bool) string {
+	items := make([]string, 0, len(m.Notes))
+	for _, n := range m.Notes {
+		line := n.Text
+		if n.Count > 1 {
+			line = fmt.Sprintf("%s (×%d)", line, n.Count)
+		}
+		items = append(items, style.Dim(line, color))
+	}
+	return section(style.Dim(fmt.Sprintf("notes (%d)", noteTotal(m.Notes)), color), items)
+}
+
+// verdictBlock renders the "✗ N failed · M blocked   elapsed" line, or "" when
+// nothing failed — a clean run carrying only advisories shows just those, not a
+// misleading red "✗ 0 failed". failed = primary + missing roots; blocked is the
+// distinct cascaded count (m.Blocked, not the sum of per-root lists).
+func (m Model) verdictBlock(color bool, elapsed time.Duration) string {
 	failedCount := len(m.Primary) + len(m.Missing)
-	b.WriteString("\n  " + style.Fail(style.GlyphFail, color) + " " +
-		style.Fail(fmt.Sprintf("%d failed", failedCount), color))
+	if failedCount == 0 && m.Blocked == 0 {
+		return ""
+	}
+	s := "  " + style.Fail(style.GlyphFail, color) + " " +
+		style.Fail(fmt.Sprintf("%d failed", failedCount), color)
 	if m.Blocked > 0 {
-		b.WriteString(" · " + style.Dim(fmt.Sprintf("%d blocked", m.Blocked), color))
+		s += " · " + style.Dim(fmt.Sprintf("%d blocked", m.Blocked), color)
 	}
 	if elapsed > 0 {
-		b.WriteString("   " + style.Dim(style.Elapsed(elapsed), color))
+		s += "   " + style.Dim(style.Elapsed(elapsed), color)
 	}
-	b.WriteByte('\n')
+	return s
+}
 
-	_, err := io.WriteString(w, b.String())
-	return err
+// section composes a titled footer block: the header line, then each item
+// indented beneath it. Returns "" (an empty block Write drops) when no items.
+func section(header string, items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("  " + header)
+	for _, it := range items {
+		b.WriteString("\n    " + it)
+	}
+	return b.String()
+}
+
+// nonEmpty returns the non-empty blocks, in order.
+func nonEmpty(blocks ...string) []string {
+	out := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b != "" {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // summarize renders an id list as "a, b, c +N more", capped at blockedSample.
@@ -218,20 +288,22 @@ func summarize(ids []manifest.NamedResource) string {
 // line) under the message column.
 const msgIndent = "         "
 
-// writeMessage appends a primary failure's message to its resource header line:
-// the first line follows inline; any continuation lines print indented beneath.
+// messageTail renders a primary failure's message as it trails the resource
+// header line: the first line inline, any continuation lines indented beneath.
 // Multi-line build/template diagnostics — notably the duplicate-id producer
 // attribution from pkg/kustomize — survive intact instead of being truncated to
-// their first line.
-func writeMessage(b *strings.Builder, msg string) {
+// their first line. Returns "" for an empty message.
+func messageTail(msg string) string {
 	lines := MessageLines(msg)
 	if len(lines) == 0 {
-		return
+		return ""
 	}
+	var b strings.Builder
 	b.WriteString("  " + lines[0])
 	for _, line := range lines[1:] {
 		b.WriteString("\n" + msgIndent + line)
 	}
+	return b.String()
 }
 
 // MessageLines splits a stored failure message into trimmed, non-empty lines.

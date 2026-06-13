@@ -90,8 +90,11 @@ func (o *Orchestrator) computeChangeSet(repoRoot string) (*change.Set, error) {
 	// against itself producing an empty change set. Skip filter build so
 	// the user's `--path-orig` typo doesn't silently render zero output.
 	if origRoot == repoRoot {
-		slog.Warn("--path and --path-orig resolve to the same root; ignoring --path-orig",
-			"resolved_path", repoRoot)
+		o.store.AddWarning(manifest.Warning{
+			Category: manifest.WarnPathConfig,
+			Message:  "--path and --path-orig resolve to the same root; ignoring --path-orig",
+			Detail:   []string{repoRoot},
+		})
 		return nil, nil
 	}
 	cs, err := change.Detect(origRoot, repoRoot)
@@ -100,7 +103,10 @@ func (o *Orchestrator) computeChangeSet(repoRoot string) (*change.Set, error) {
 	}
 	slog.Debug("changed-only mode", "baseline", origRoot, "current", repoRoot, "changed_files", cs.Len())
 	if cs.Len() == 0 {
-		slog.Warn("no changes detected between --path and --path-orig — output will be empty; verify both paths reference distinct snapshots")
+		o.store.AddWarning(manifest.Warning{
+			Category: manifest.WarnPathConfig,
+			Message:  "no changes detected between --path and --path-orig — output will be empty; verify both paths reference distinct snapshots",
+		})
 	}
 	return cs, nil
 }

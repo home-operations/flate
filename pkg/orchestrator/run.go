@@ -200,6 +200,9 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 		// per-id ReplaceEdges during Run); snapshot it for blast-radius consumers.
 		DependsOn: o.depGraph.Edges(),
 		Blocked:   map[manifest.NamedResource][]manifest.NamedResource{},
+		// Render advisories collected by producers during Run (HR stale values,
+		// empty scan, …). Nil when none, sorted deterministically by the store.
+		Warnings: o.store.Warnings(),
 	}
 	// Apply --skip-secrets / --skip-crds / --skip-kinds uniformly here
 	// so embedders calling Render see consistent Result.Manifests

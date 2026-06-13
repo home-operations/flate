@@ -661,6 +661,25 @@ func scopedFailures(o *orchestrator.Orchestrator, res *orchestrator.Result, c *c
 	return failed, blocked
 }
 
+// scopedWarnings projects Result.Warnings onto c's namespace filter: a
+// resource-attributed advisory is kept only when its namespace is in scope;
+// render-global advisories (zero Resource) always pass. Mirrors scopedFailures
+// so the footer's warnings section honors --namespace like the failure list.
+func scopedWarnings(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags) []manifest.Warning {
+	if o == nil || res == nil || len(res.Warnings) == 0 {
+		return nil
+	}
+	out := make([]manifest.Warning, 0, len(res.Warnings))
+	for _, w := range res.Warnings {
+		if w.Resource != (manifest.NamedResource{}) && c != nil &&
+			!c.includeNamespace(o.Filter(), w.Resource.Namespace) {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
 // emitResult joins an emit-time error with the scoped run error so a
 // partial render still surfaces both the IO/format failure and any
 // per-resource reconcile failures. A nil emitErr collapses to just the run
@@ -699,7 +718,7 @@ func (e reportedError) Unwrap() error { return e.err }
 func reportFailures(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, err error, elapsed time.Duration) error {
 	notes := drainLogNotes()
 	failed, blocked := scopedFailures(o, res, c)
-	m := report.Build(failed, blocked, notes)
+	m := report.Build(failed, blocked, scopedWarnings(o, res, c), notes)
 	if m.Empty() {
 		return err
 	}

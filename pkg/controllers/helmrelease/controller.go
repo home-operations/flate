@@ -270,6 +270,18 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	if err != nil {
 		return err
 	}
+	// #744: flag top-level release values no chart template references — a key
+	// renamed/removed when the chart was upgraded silently does nothing, so the
+	// override is a stale no-op. Advisory only; rides Result.Warnings to the
+	// footer + konflate. See StaleValuePaths.
+	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values); len(stale) > 0 {
+		c.Store.AddWarning(manifest.Warning{
+			Resource: id,
+			Category: manifest.WarnStaleValues,
+			Message:  "values not used by the chart",
+			Detail:   stale,
+		})
+	}
 	// Render-output pipeline: flatten List wrappers first so the
 	// post-render passes stamp the items, then apply commonMetadata and
 	// origin labels (origin last so it wins on key collisions), then drop

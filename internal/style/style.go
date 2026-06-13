@@ -26,16 +26,18 @@ const (
 	GlyphFail    = "✗"
 	GlyphSkip    = "‒"
 	GlyphBlocked = "⊘"
+	GlyphWarn    = "⚠"
 )
 
 // Semantic styles, by ANSI base color (0-7) so they downsample cleanly on
 // 16-color terminals: 1 red, 2 green, 6 cyan; faint and bold carry no hue.
 var (
-	greenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	redStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	cyanStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	boldStyle  = lipgloss.NewStyle().Bold(true)
-	faintStyle = lipgloss.NewStyle().Faint(true)
+	greenStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	redStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	cyanStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	yellowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	boldStyle   = lipgloss.NewStyle().Bold(true)
+	faintStyle  = lipgloss.NewStyle().Faint(true)
 )
 
 // ColorEnabled reports whether w should receive ANSI styling. colorprofile.Detect
@@ -59,6 +61,9 @@ func Pass(s string, color bool) string { return render(greenStyle, s, color) }
 
 // Fail renders s as a failure (red) when color is on, else verbatim.
 func Fail(s string, color bool) string { return render(redStyle, s, color) }
+
+// Warn renders s as an advisory (yellow) when color is on, else verbatim.
+func Warn(s string, color bool) string { return render(yellowStyle, s, color) }
 
 // Skip renders s as skipped/secondary (faint) when color is on, else verbatim.
 func Skip(s string, color bool) string { return render(faintStyle, s, color) }

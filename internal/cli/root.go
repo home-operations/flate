@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -154,5 +155,21 @@ func setLogLevel(lvl string, w io.Writer) error {
 	// flushes anything left so no note is lost.
 	logBuffer = newDeferSink(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l}))
 	slog.SetDefault(slog.New(logBuffer))
+	// slog.SetDefault also reroutes the standard library `log` package through
+	// this handler. A dependency's log.Printf — chiefly Helm's values-coalesce
+	// "destination … is a table" warnings (chart/common/util/coalesce.go uses
+	// log.Printf, not slog) — would then land in the notes footer, but ONLY on a
+	// render-cache miss: a cache hit never re-runs the code that logs it, so the
+	// footer differs between otherwise-identical runs depending on cache state
+	// (looks like a race). flate's own diagnostics all use slog, never the
+	// stdlib logger, so detach `log` from the footer: discard it by default
+	// (notes stay deterministic and free of dependency render-noise), or pass it
+	// straight to the sink under --log-level debug, where determinism isn't
+	// promised and the dependency chatter aids troubleshooting.
+	if l <= slog.LevelDebug {
+		log.SetOutput(w)
+	} else {
+		log.SetOutput(io.Discard)
+	}
 	return nil
 }

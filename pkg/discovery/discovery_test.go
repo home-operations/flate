@@ -440,6 +440,241 @@ spec:
 	}
 }
 
+// TestRun_AliasesRootSourceWithoutRemotes covers the no-URL-signal fallback
+// (pass 3): when the working tree exposes no git remote and the caller supplied
+// no SelfURLs, pass 2's URL match can't fire, so an in-tree GitRepository that
+// is a *root* Kustomization's source — the cluster pulling itself, e.g. a
+// `.git`-less checkout or extracted tree — is aliased to the working tree. This
+// stops its (irrelevant, fetch-only) deploy-key secret from cascading every
+// consumer to blocked (#752).
+func TestRun_AliasesRootSourceWithoutRemotes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// No .git/config here: selfRemotes() is empty, so the URL match can't fire
+	// and pass 3's topology fallback is the only thing that can alias the source.
+	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "flux", "cluster.yaml"), `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: home-kubernetes
+  namespace: flux-system
+spec:
+  url: ssh://git@github.com/example/home-ops.git
+  ref:
+    branch: main
+  secretRef:
+    name: github-deploy-key
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster
+  namespace: flux-system
+spec:
+  path: ./k8s/apps
+  sourceRef:
+    kind: GitRepository
+    name: home-kubernetes
+  interval: 1h
+`)
+	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}
+	art, ok := st.GetArtifact(id).(*store.SourceArtifact)
+	if !ok {
+		t.Fatalf("root-KS source must be aliased to the working tree; got artifact %v", st.GetArtifact(id))
+	}
+	if !strings.HasPrefix(art.URL, "file://") {
+		t.Errorf("expected a file:// working-tree alias; got %q", art.URL)
+	}
+	if info, ok := st.GetStatus(id); !ok || info.Status != store.StatusReady {
+		t.Errorf("aliased source must be Ready; got ok=%v info=%+v", ok, info)
+	}
+}
+
+// TestRun_LeavesRootOCISourceWithoutRemotes pins that pass 3 stays GitRepository
+// only: a committed OCIRepository that is a root Kustomization's source is, by
+// convention, an external artifact pull, not the cluster's own tree — even with
+// no remotes it must NOT be aliased (its missing pull Secret soft-skips via
+// --allow-missing-secrets instead; see TestOrchestrator_AllowMissingSecretsPropagates).
+func TestRun_LeavesRootOCISourceWithoutRemotes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "flux", "cluster.yaml"), `---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  name: private-app
+  namespace: flux-system
+spec:
+  url: oci://ghcr.io/upstream/private-app
+  ref:
+    tag: latest
+  secretRef:
+    name: ghcr-pull
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster
+  namespace: flux-system
+spec:
+  path: ./k8s/apps
+  sourceRef:
+    kind: OCIRepository
+    name: private-app
+  interval: 1h
+`)
+	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	id := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "private-app"}
+	if st.GetArtifact(id) != nil {
+		t.Errorf("a committed OCIRepository source must NOT be aliased to the working tree (it's an external pull)")
+	}
+}
+
+// TestRun_LeavesRootSourceWithMissingLocalPath pins pass 3's local-content
+// guard: even with no remotes, a root Kustomization whose spec.path is NOT a
+// directory inside the working tree is an external source flate can't satisfy
+// offline — its GitRepository must be left to fail loud, never aliased to (and
+// rendered against) the wrong tree.
+func TestRun_LeavesRootSourceWithMissingLocalPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFileAt(t, filepath.Join(dir, "cluster.yaml"), `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: shared-infra
+  namespace: flux-system
+spec:
+  url: https://github.com/upstream/shared-infra.git
+  ref:
+    branch: main
+  secretRef:
+    name: deploy-key
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster
+  namespace: flux-system
+spec:
+  path: ./not-in-this-tree
+  sourceRef:
+    kind: GitRepository
+    name: shared-infra
+  interval: 1h
+`)
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared-infra"}
+	if st.GetArtifact(id) != nil {
+		t.Errorf("a root source whose spec.path isn't local must NOT be aliased to the working tree")
+	}
+}
+
+// TestRun_LeavesNonRootSourceWithoutRemotes pins pass 3's root-only guard: a
+// GitRepository referenced solely by a NON-root tenant Kustomization (one a
+// parent KS's spec.path covers) is a genuine external source, never the
+// cluster's own — it must not be aliased even when there are no remotes.
+func TestRun_LeavesNonRootSourceWithoutRemotes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Root entry KS lives outside ./apps and pulls the cluster itself.
+	testutil.WriteFileAt(t, filepath.Join(dir, "clusters", "cluster.yaml"), `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: home-kubernetes
+  namespace: flux-system
+spec:
+  url: ssh://git@github.com/example/home-ops.git
+  ref:
+    branch: main
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: home-kubernetes
+  interval: 1h
+`)
+	// app-x lives UNDER ./apps (so cluster is its parent → non-root) and pulls
+	// a separate external private repo.
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "app-x.yaml"), `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: ext-private
+  namespace: flux-system
+spec:
+  url: https://github.com/upstream/ext-private.git
+  ref:
+    branch: main
+  secretRef:
+    name: ext-key
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: app-x
+  namespace: default
+spec:
+  path: ./apps/x
+  sourceRef:
+    kind: GitRepository
+    name: ext-private
+    namespace: flux-system
+  interval: 1h
+`)
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: [./app-x.yaml]\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "x", "kustomization.yaml"), "resources: []\n")
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// The root's own source is aliased (the fix); the non-root tenant's external
+	// source is not.
+	root := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}
+	if st.GetArtifact(root) == nil {
+		t.Errorf("root-KS source should be aliased to the working tree")
+	}
+	ext := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "ext-private"}
+	if st.GetArtifact(ext) != nil {
+		t.Errorf("an external source referenced only by a non-root KS must NOT be aliased")
+	}
+}
+
 // TestRun_ComponentGeneratorMaterializesCM mirrors home-operations/flate
 // issue #396: a Flux Kustomization references a kustomize Component
 // whose configMapGenerator produces cluster-settings. Without the

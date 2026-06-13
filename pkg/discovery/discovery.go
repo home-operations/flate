@@ -150,7 +150,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
-	d.aliasBootstrapSources(repoRoot)
+	aliased := d.aliasBootstrapSources(repoRoot)
 	d.applyNamespaces(repoRoot)
 	// Resolve bare ${VAR} in Kustomization dependsOn against the
 	// cluster's postBuild substitute values, now that the full KS set is
@@ -189,6 +189,14 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	parentOf := loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindKustomization)
 	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease))
 	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindResourceSet))
+	// Pass 3 of bootstrap aliasing (deferred to here because it needs the
+	// parent index to tell a root Kustomization from a nested one): alias a
+	// root KS's in-tree GitRepository source to the working tree when no URL
+	// match aliased it, so a missing deploy-key Secret on the cluster's own
+	// source doesn't cascade every consumer to blocked (#752). Folded into the
+	// same multi-alias WARN as passes 1–2.
+	aliased = append(aliased, d.overrideRootSourcesToWorkingTree(repoRoot, parentOf)...)
+	warnIfMultipleBootstrapAliases(aliased, repoRoot)
 	// Orphan promotion: every Existence entry whose file path is NOT
 	// under any KS spec.path will never reach the Store through KS
 	// render emission. Promote it now so standalone CRs (loose HR

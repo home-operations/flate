@@ -2,6 +2,9 @@ package discovery
 
 import (
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
@@ -58,7 +61,10 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 }
 
 // aliasBootstrapSources resolves sources that real Flux would fetch
-// remotely but flate must satisfy from the working tree. Two passes:
+// remotely but flate must satisfy from the working tree. Two passes run
+// here; a third (overrideRootSourcesToWorkingTree) runs later in
+// discovery.Run once the parent index is built, and the caller folds all
+// three into one warnIfMultipleBootstrapAliases tally:
 //
 //  1. aliasMissingKustomizationSources — for every Kustomization
 //     whose sourceRef points at a Git/OCIRepository CR that isn't in
@@ -71,10 +77,10 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 //     override the artifact to the local checkout so the SOPS-decrypted
 //     remote fetch is avoided.
 //
-// Both passes alias to the same working tree, so the combined result
-// is logged at WARN when more than one source is aliased — multiple
-// remote shared-infra repos would silently render against the same
-// (wrong) tree.
+// All three passes alias to the same working tree, so the caller logs at
+// WARN when more than one source is aliased — multiple remote shared-infra
+// repos would silently render against the same (wrong) tree. Returns the
+// ids aliased here so the caller can fold pass 3's into that tally.
 //
 // All namespaces are aliased, not just `flux-system` (#199): the
 // convention of running Flux in a non-default namespace (e.g.
@@ -82,10 +88,114 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 // the-local-tree property is identical regardless. A typo'd sourceRef
 // silently renders against the working tree instead of failing fast —
 // trade-off inherited from the original `flux-system` path.
-func (d *discoverer) aliasBootstrapSources(repoRoot string) {
+func (d *discoverer) aliasBootstrapSources(repoRoot string) []manifest.NamedResource {
 	aliased := d.aliasMissingKustomizationSources(repoRoot)
 	aliased = append(aliased, d.overrideSelfReferentialGitRepositories(repoRoot)...)
-	warnIfMultipleBootstrapAliases(aliased, repoRoot)
+	return aliased
+}
+
+// overrideRootSourcesToWorkingTree is pass 3, the no-URL-match fallback. When
+// passes 1–2 left a *root* Kustomization's in-tree GitRepository source
+// un-aliased — because the working tree has no .git remote, the caller supplied
+// no SelfURLs, or the declared spec.url simply doesn't normalize-match either —
+// alias that source to the working tree anyway. A root KS (one no other KS's
+// spec.path covers, i.e. absent from parentOf) pulls the cluster's own repo by
+// the flux-bootstrap convention, so its source IS the working tree: flate
+// renders the KS's spec.path from the local checkout, and the auth secret real
+// Flux needs only to FETCH that repo is irrelevant and must not block the run
+// (issue #752). Without this an in-tree bootstrap GitRepository at a non-default
+// id whose URL can't be matched falls through to a real fetch, fails on the
+// (SOPS-wiped / out-of-band) deploy-key Secret, and cascades every consumer to
+// blocked.
+//
+// Four guards keep this from silently rendering an external private repo
+// against the wrong files:
+//   - no-URL-signal: this runs ONLY when the working tree exposes no remotes
+//     and the caller supplied no SelfURLs. When remotes DO exist but none
+//     matched, an unmatched in-tree GitRepository is a genuine external source
+//     (shared-infra), not the cluster pulling itself — the URL match is the
+//     authoritative signal and we defer to it. Pinned by
+//     TestRun_LeavesUnmatchedInTreeGitRepository.
+//   - root-only: a source referenced solely by a non-root tenant KS is never
+//     touched (parentOf membership ⇒ skip).
+//   - already-handled: a source with an artifact (pass 1/2 URL match, or the
+//     seeded BootstrapSourceID) is left untouched, so a URL-matched checkout —
+//     the common CI case — stays byte-identical.
+//   - local-content: the root KS's spec.path must resolve to a directory inside
+//     the working tree. A root pointing at a path this tree doesn't contain is
+//     an external source flate can't satisfy offline — leave it to fail loud.
+//
+// Returns the ids aliased so the caller folds them into the multi-alias WARN.
+func (d *discoverer) overrideRootSourcesToWorkingTree(repoRoot string, parentOf map[manifest.NamedResource]manifest.NamedResource) []manifest.NamedResource {
+	// Only fall back to topology when there's no URL signal at all. With remotes
+	// (or SelfURLs) present, pass 2's URL match is authoritative — an unmatched
+	// source is external, not self, and must not be aliased to this tree.
+	if len(d.selfRemotes(repoRoot)) > 0 {
+		return nil
+	}
+	var overridden []manifest.NamedResource
+	seen := map[manifest.NamedResource]struct{}{}
+	for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
+		if _, hasParent := parentOf[ks.Named()]; hasParent {
+			continue // not a root — its source resolves through its parent's tree
+		}
+		src := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+		// GitRepository only. A committed OCIRepository is, by overwhelming
+		// convention, an EXTERNAL artifact pull (an app/chart registry), not the
+		// cluster's own tree — its missing pull Secret should soft-skip, not be
+		// aliased away (locked by TestOrchestrator_AllowMissingSecretsPropagates).
+		// A genuine OCI *bootstrap* source (flux-operator publishing the repo as an
+		// OCI artifact) is operator-created and absent from the tree, so pass 1
+		// already aliases it; there's no safe topological signal that distinguishes
+		// a committed self OCI source from an external one (no URL match is possible
+		// for oci://), so pass 3 stays Git-only.
+		if src.Kind != manifest.KindGitRepository || src.Name == "" {
+			continue
+		}
+		if _, done := seen[src]; done {
+			continue
+		}
+		seen[src] = struct{}{}
+		// During discovery only aliasing sets a source artifact, so a non-nil
+		// artifact means pass 1/2 (or the seed) already handled this id — never
+		// clobber it, keeping the URL-matched path byte-identical.
+		if d.cfg.Store.GetArtifact(src) != nil {
+			continue
+		}
+		// Must be a real in-tree GitRepository; a missing source is pass 1's job.
+		if _, ok := d.cfg.Store.GetObject(src).(*manifest.GitRepository); !ok {
+			continue
+		}
+		if !rootPathInTree(repoRoot, ks.Path) {
+			continue
+		}
+		d.cfg.Store.SetArtifact(src, &store.SourceArtifact{
+			Kind: manifest.KindGitRepository,
+			URL:  "file://" + repoRoot, LocalPath: repoRoot,
+		})
+		d.cfg.Store.UpdateStatus(src, store.StatusReady, "bootstrap alias (root Kustomization source)")
+		slog.Debug("discovery: aliased root Kustomization source to working tree (no URL match)",
+			"id", src.String(), "rootKS", ks.Named().String(), "localPath", repoRoot)
+		overridden = append(overridden, src)
+	}
+	return overridden
+}
+
+// rootPathInTree reports whether a Kustomization spec.path resolves to an
+// existing directory inside repoRoot. Empty path or one that escapes the tree
+// (`..`) ↦ false: a bare-sourceRef root is anchored on the already-seeded
+// BootstrapSourceID, and an escaping path is never a self-pull we can satisfy.
+func rootPathInTree(repoRoot, specPath string) bool {
+	if specPath == "" {
+		return false
+	}
+	clean := filepath.Join(repoRoot, filepath.FromSlash(strings.TrimPrefix(specPath, "./")))
+	rel, err := filepath.Rel(repoRoot, clean)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	info, err := os.Stat(clean)
+	return err == nil && info.IsDir()
 }
 
 // aliasMissingKustomizationSources is pass 1. It walks every loaded

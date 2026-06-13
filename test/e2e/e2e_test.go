@@ -403,6 +403,105 @@ spec:
 	}
 }
 
+// TestE2E_BootstrapSelfSourceSecretDoesNotBlock reproduces the home-ops
+// pattern behind issue #752: a bootstrap GitRepository points at the cluster's
+// own repo and carries a deploy-key secretRef that only exists out-of-band
+// (created by `flux bootstrap`, never committed). When flate renders a tree
+// with no matching git remote — a `.git`-less checkout or extracted tree — that
+// fetch-only secret is irrelevant, so it must NOT cascade every consumer to
+// blocked. Discovery aliases the root Kustomization's source to the working
+// tree (pass 3) and the run is clean.
+func TestE2E_BootstrapSelfSourceSecretDoesNotBlock(t *testing.T) {
+	dir := t.TempDir()
+	// No .git: the URL match can't fire, so only the root-KS topology fallback
+	// can recognize home-kubernetes as the cluster pulling itself.
+	testutil.WriteFile(t, dir, "clusters/cluster.yaml", `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: home-kubernetes, namespace: flux-system}
+spec:
+  url: ssh://git@github.com/example/home-ops.git
+  ref: {branch: main}
+  secretRef: {name: github-deploy-key}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: home-kubernetes}
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [./cm.yaml]\n")
+	testutil.WriteFile(t, dir, "apps/cm.yaml", `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: demo, namespace: default}
+data: {hello: world}
+`)
+
+	// runCLI requires a clean (exit 0) run — the whole point of the fix.
+	out := runCLI(t, "test", "all", "--path", dir)
+	if strings.Contains(out, "github-deploy-key") || strings.Contains(out, "not found") {
+		t.Errorf("bootstrap deploy-key secret must be irrelevant (source aliased to the tree); got:\n%s", out)
+	}
+	if strings.Contains(out, "blocked") {
+		t.Errorf("nothing should be blocked on the aliased bootstrap source; got:\n%s", out)
+	}
+}
+
+// TestE2E_SkippedSourcePropagatesSkipNotBlock locks the issue-#752 contract for
+// a genuinely-external source: when a private GitRepository referenced by a
+// non-root app is soft-skipped (--allow-missing-secrets), the consuming
+// Kustomization must report SKIPPED, not blocked, and the run must stay clean
+// (exit 0). Pins the DAG engine's skip-propagation so it can't regress.
+func TestE2E_SkippedSourcePropagatesSkipNotBlock(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "clusters/cluster.yaml", `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-apps, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	// app-x (under ./apps, so non-root) pulls a separate external private repo
+	// whose deploy-key Secret is absent.
+	testutil.WriteFile(t, dir, "apps/app-x.yaml", `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: ext-private, namespace: flux-system}
+spec:
+  url: ssh://git@example.com/other/repo.git
+  ref: {branch: main}
+  secretRef: {name: ext-deploy-key}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: app-x, namespace: default}
+spec:
+  path: ./apps/x
+  sourceRef: {kind: GitRepository, name: ext-private, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [./app-x.yaml]\n")
+	testutil.WriteFile(t, dir, "apps/x/kustomization.yaml", "resources: [./cm.yaml]\n")
+	testutil.WriteFile(t, dir, "apps/x/cm.yaml", `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: x-config, namespace: default}
+data: {k: v}
+`)
+
+	// Clean exit: a skip is not a failure. (The skipped source + consumer show
+	// on stdout; runCLI asserts exit 0.)
+	out := runCLI(t, "test", "all", "--path", dir, "--allow-missing-secrets")
+	if !strings.Contains(out, "app-x") || !strings.Contains(out, "skipped") {
+		t.Errorf("consumer of a skipped source must report skipped; got:\n%s", out)
+	}
+	if strings.Contains(out, "blocked") {
+		t.Errorf("a skipped source must propagate skip, not block its consumers; got:\n%s", out)
+	}
+}
+
 // TestE2E_ComponentChangePropagatesToAllConsumers — the fixture has
 // two apps (app-a, app-b) consuming components/shared; mutating the
 // shared component must show up in both consumers' diffs.

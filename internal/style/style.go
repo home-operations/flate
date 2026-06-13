@@ -30,7 +30,7 @@ const (
 )
 
 // Semantic styles, by ANSI base color (0-7) so they downsample cleanly on
-// 16-color terminals: 1 red, 2 green, 6 cyan; faint and bold carry no hue.
+// 16-color terminals: 1 red, 2 green, 3 yellow, 6 cyan; faint and bold carry no hue.
 var (
 	greenStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	redStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))

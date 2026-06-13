@@ -114,16 +114,19 @@ func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manif
 func Roots(blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
 	byRoot := map[manifest.NamedResource][]manifest.NamedResource{}
 	for id := range blocked {
-		for _, r := range rootsOf(id, blocked) {
+		for _, r := range RootsOf(id, blocked) {
 			byRoot[r] = append(byRoot[r], id)
 		}
 	}
 	return byRoot
 }
 
-// rootsOf resolves the root cause(s) of a blocked id by walking its blockers to
-// a primary failure or a missing id. Cycle-safe via a visited set.
-func rootsOf(id manifest.NamedResource, blocked map[manifest.NamedResource][]manifest.NamedResource) []manifest.NamedResource {
+// RootsOf resolves the root cause(s) of a blocked id by walking its blockers to
+// a primary failure or a missing id, returning a fresh slice. Cycle-safe via a
+// visited set: a victim whose blockers form a closed cycle (no escape to a
+// primary/missing root) yields nil — callers that must account for every victim
+// fall back to its immediate blockers.
+func RootsOf(id manifest.NamedResource, blocked map[manifest.NamedResource][]manifest.NamedResource) []manifest.NamedResource {
 	var out []manifest.NamedResource
 	seen := map[manifest.NamedResource]bool{id: true}
 	var walk func(manifest.NamedResource)

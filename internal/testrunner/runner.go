@@ -44,8 +44,8 @@ const (
 	OutcomeSkipped
 	OutcomeFailed
 	// OutcomeBlocked is a resource that failed only because a dependency
-	// failed or was missing — the body never ran. These are folded under
-	// their root cause rather than listed per-resource (see Report.Write).
+	// failed or was missing — the body never ran. Blocked cases render after
+	// the roster, each naming the root cause(s) it traces to.
 	OutcomeBlocked
 )
 
@@ -56,34 +56,24 @@ type Case struct {
 	Reason  string
 }
 
-// BlockedGroup folds the resources that cascaded from one root cause into a
-// single reported line: Count resources blocked by Root. Missing is true when
-// Root was never loaded (a dependency that does not exist), false when Root is a
-// failure reported elsewhere in the table.
-type BlockedGroup struct {
-	Root    manifest.NamedResource
-	Count   int
-	Missing bool
-}
-
 // Report is the aggregate outcome.
 type Report struct {
 	Cases   []Case
 	Passed  int
 	Skipped int
 	Failed  int
-	// Blocked counts resources folded under a root cause (not listed as
-	// Cases); BlockedRoots names those roots with their tallies.
-	Blocked      int
-	BlockedRoots []BlockedGroup
-	Matched      int
+	// Blocked holds one Case per resource whose dependency failed or was
+	// missing — the body never ran. They render after the roster, each naming
+	// the root cause(s) it traces to (see blockedCases).
+	Blocked []Case
+	Matched int
 }
 
 // AnyFailed reports whether the run should be considered failed: a primary
 // failure, or a cascade blocked on one. A broken dependency that blocks
 // everything downstream must still flip the exit code even if nothing reported
 // a primary failure in scope.
-func (r Report) AnyFailed() bool { return r.Failed > 0 || r.Blocked > 0 }
+func (r Report) AnyFailed() bool { return r.Failed > 0 || len(r.Blocked) > 0 }
 
 // decorate maps an outcome to its leading glyph and the style renderer that
 // colors it. Glyphs render in both modes (any UTF-8 sink); only color is gated.
@@ -93,6 +83,8 @@ func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 		return style.GlyphPass, style.Pass
 	case OutcomeFailed:
 		return style.GlyphFail, style.Fail
+	case OutcomeBlocked:
+		return style.GlyphBlocked, style.Dim
 	default: // OutcomeSkipped
 		return style.GlyphSkip, style.Skip
 	}
@@ -102,10 +94,10 @@ func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 const reasonIndent = "         "
 
 // Write renders the whole `flate test` report to w as one document: the roster
-// (one row per case, plus a folded line per blocked root), then the render
-// advisories (warnings) and deferred operational logs (notes), then a single
-// verdict — composed through the shared report toolkit so the test surface and
-// the build/diff report speak one spacing and verdict grammar. Failures already
+// (one row per case, then one per blocked resource), then the render advisories
+// (warnings) and deferred operational logs (notes), then a single verdict —
+// composed through the shared report toolkit so the test surface and the
+// build/diff report speak one spacing and verdict grammar. Failures already
 // appear inline on their roster rows, so this is the complete picture: there is
 // no separate failure block to print elsewhere. color gates the ANSI codes — the
 // caller decides based on the sink (see cli.test).
@@ -120,43 +112,40 @@ func (r Report) Write(w io.Writer, warnings []manifest.Warning, notes []report.N
 	return err
 }
 
-// rosterBlock renders one row per case (status glyph, dimmed kind column,
-// namespace/name, dimmed reason — a multi-line reason keeps its first line
-// inline and indents the rest) and one folded line per blocked root. Empty when
-// the run matched nothing, so Document drops it and only the verdict shows.
+// rosterBlock renders the roster followed by the blocked cases — every row a
+// uniform caseRow, the blocked ones trailing so the actionable failures lead and
+// their downstream cascade reads as one group beneath. Empty when the run matched
+// nothing, so Document drops it and only the verdict shows.
 func (r Report) rosterBlock(color bool) string {
+	all := slices.Concat(r.Cases, r.Blocked)
 	kindW := 0
-	for _, c := range r.Cases {
+	for _, c := range all {
 		kindW = max(kindW, len(c.ID.Kind))
 	}
-	var rows []string
-	for _, c := range r.Cases {
-		glyph, paint := c.Outcome.decorate()
-		var row strings.Builder
-		fmt.Fprintf(&row, "  %s  %s  %s",
-			paint(glyph, color),
-			style.Dim(fmt.Sprintf("%-*s", kindW, c.ID.Kind), color),
-			c.ID.NamespacedName())
-		if lines := report.MessageLines(c.Reason); len(lines) > 0 {
-			fmt.Fprintf(&row, "  %s", style.Dim(lines[0], color))
-			for _, line := range lines[1:] {
-				fmt.Fprintf(&row, "\n%s%s", reasonIndent, style.Dim(line, color))
-			}
-		}
-		rows = append(rows, row.String())
-	}
-	// Cascades fold under their root cause: one dim line per root, naming the
-	// count it blocks, in place of a per-resource row for each victim.
-	for _, g := range r.BlockedRoots {
-		root := g.Root.NamespacedName()
-		if g.Missing {
-			root += " (not found)"
-		}
-		rows = append(rows, fmt.Sprintf("  %s  %s",
-			style.Dim(style.GlyphBlocked, color),
-			style.Dim(fmt.Sprintf("%d blocked by %s", g.Count, root), color)))
+	rows := make([]string, len(all))
+	for i, c := range all {
+		rows[i] = caseRow(c, kindW, color)
 	}
 	return strings.Join(rows, "\n")
+}
+
+// caseRow renders one roster row: status glyph, dimmed kind column, the
+// resource's namespace/name, then its dimmed reason — a multi-line reason keeps
+// its first line inline and indents the continuation beneath it.
+func caseRow(c Case, kindW int, color bool) string {
+	glyph, paint := c.Outcome.decorate()
+	var row strings.Builder
+	fmt.Fprintf(&row, "  %s  %s  %s",
+		paint(glyph, color),
+		style.Dim(fmt.Sprintf("%-*s", kindW, c.ID.Kind), color),
+		c.ID.NamespacedName())
+	if lines := report.MessageLines(c.Reason); len(lines) > 0 {
+		fmt.Fprintf(&row, "  %s", style.Dim(lines[0], color))
+		for _, line := range lines[1:] {
+			fmt.Fprintf(&row, "\n%s%s", reasonIndent, style.Dim(line, color))
+		}
+	}
+	return row.String()
 }
 
 // verdict renders the summary line: a green ✓ when everything passed, a red ✗
@@ -164,14 +153,14 @@ func (r Report) rosterBlock(color bool) string {
 // the rest only when non-zero) and the elapsed clock.
 func (r Report) verdict(color bool, elapsed time.Duration) string {
 	glyph, paint := style.GlyphPass, style.Pass
-	if r.Failed > 0 || r.Blocked > 0 {
+	if r.Failed > 0 || len(r.Blocked) > 0 {
 		glyph, paint = style.GlyphFail, style.Fail
 	}
 	return report.Verdict(color, glyph, paint, elapsed,
 		report.Count{N: r.Passed, Label: "passed", Paint: style.Pass},
 		report.Count{N: r.Skipped, Label: "skipped", Paint: style.Dim},
 		report.Count{N: r.Failed, Label: "failed", Paint: style.Fail},
-		report.Count{N: r.Blocked, Label: "blocked", Paint: style.Dim},
+		report.Count{N: len(r.Blocked), Label: "blocked", Paint: style.Dim},
 	)
 }
 
@@ -185,7 +174,7 @@ func Run(j Job) Report {
 	}
 	var rep Report
 	// id → its immediate blockers, accumulated across kinds so a cross-kind
-	// cascade still resolves to one root in blockedGroups.
+	// cascade still resolves to its root cause(s) in blockedCases.
 	blocked := map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, kind := range kinds {
 		objs := j.Store.ListObjects(kind)
@@ -221,8 +210,7 @@ func Run(j Job) Report {
 			case OutcomeSkipped:
 				rep.Skipped++
 			case OutcomeBlocked:
-				// Folded under its root cause, not listed per-resource.
-				rep.Blocked++
+				// Resolved to its root cause(s) after the scan; see blockedCases.
 				blocked[id] = j.Store.BlockedBy(id)
 				continue
 			default: // OutcomeFailed
@@ -236,8 +224,8 @@ func Run(j Job) Report {
 	// primary fault isn't silently dropped now that there's no separate
 	// build/diff failure block to catch it. The per-kind loop above already
 	// covered roster kinds; here we only add previously-unseen failed ids.
-	// Blocked-folded victims keep folding under their root; a failed id that
-	// is itself blocked joins the cascade rather than listing on its own row.
+	// A victim already classified blocked stays in the blocked set; a failed id
+	// that is itself blocked joins the cascade rather than listing on its own row.
 	seen := make(map[manifest.NamedResource]bool, len(rep.Cases)+len(blocked))
 	for _, c := range rep.Cases {
 		seen[c.ID] = true
@@ -271,29 +259,49 @@ func Run(j Job) Report {
 		rep.Matched++
 		c := classify(j.Store, id)
 		if c.Outcome == OutcomeBlocked {
-			rep.Blocked++
 			blocked[id] = j.Store.BlockedBy(id)
 			continue
 		}
 		rep.Failed++
 		rep.Cases = append(rep.Cases, c)
 	}
-	rep.BlockedRoots = blockedGroups(j.Store, blocked)
+	rep.Blocked = blockedCases(j.Store, blocked)
 	return rep
 }
 
-// blockedGroups inverts the blocked graph (id → its immediate blockers) into one
-// BlockedGroup per root cause, sorted by root, using the same root-resolution as
-// the build/diff report so a cascade folds identically on every surface.
-func blockedGroups(s *store.Store, blocked map[manifest.NamedResource][]manifest.NamedResource) []BlockedGroup {
-	byRoot := report.Roots(blocked)
-	groups := make([]BlockedGroup, 0, len(byRoot))
-	for root, ids := range byRoot {
-		_, known := s.GetStatus(root)
-		groups = append(groups, BlockedGroup{Root: root, Count: len(ids), Missing: !known})
+// blockedCases turns the blocked-by graph into one roster Case per victim. The
+// keys of blocked ARE the resources classified blocked, so iterating them counts
+// every victim exactly once — the rendered rows and the verdict's len(r.Blocked)
+// are the same set by construction, with none lost to a grouping miss. Each
+// victim's reason names its root cause(s) via report.RootsOf; a victim whose
+// blockers form a closed cycle reaches no root, so it falls back to naming its
+// immediate blockers rather than vanishing from the report.
+func blockedCases(s *store.Store, blocked map[manifest.NamedResource][]manifest.NamedResource) []Case {
+	cases := make([]Case, 0, len(blocked))
+	for victim, blockers := range blocked {
+		roots := report.RootsOf(victim, blocked)
+		if len(roots) == 0 {
+			roots = slices.Clone(blockers)
+		}
+		slices.SortFunc(roots, manifest.NamedResource.Compare)
+		cases = append(cases, Case{ID: victim, Outcome: OutcomeBlocked, Reason: blockedReason(s, roots)})
 	}
-	slices.SortFunc(groups, func(a, b BlockedGroup) int { return a.Root.Compare(b.Root) })
-	return groups
+	slices.SortFunc(cases, func(a, b Case) int { return a.ID.Compare(b.ID) })
+	return cases
+}
+
+// blockedReason names the root cause(s) a victim traces to, tagging any the
+// store never loaded — a dependency that does not exist — as "(not found)" to
+// set it apart from a root that failed on its own roster row.
+func blockedReason(s *store.Store, roots []manifest.NamedResource) string {
+	names := make([]string, len(roots))
+	for i, r := range roots {
+		names[i] = r.NamespacedName()
+		if _, known := s.GetStatus(r); !known {
+			names[i] += " (not found)"
+		}
+	}
+	return "blocked by " + strings.Join(names, ", ")
 }
 
 func classify(s *store.Store, id manifest.NamedResource) Case {
@@ -303,9 +311,9 @@ func classify(s *store.Store, id manifest.NamedResource) Case {
 		return Case{ID: id, Outcome: OutcomeFailed, Reason: "no status reported"}
 	case info.Status == store.StatusFailed:
 		// A failure with recorded blockers never ran its body — it's blocked by
-		// a failed/missing dependency, not a primary fault. Fold it under the
-		// root cause (Report.Write) rather than reprinting the nested
-		// "dependencies failed:" chain on its own row.
+		// a failed/missing dependency, not a primary fault. Report it as blocked
+		// (resolved to its root cause(s) by blockedCases) rather than reprinting
+		// the nested "dependencies failed:" chain on its own row.
 		if len(s.BlockedBy(id)) > 0 {
 			return Case{ID: id, Outcome: OutcomeBlocked}
 		}

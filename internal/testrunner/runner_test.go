@@ -3,6 +3,7 @@ package testrunner
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -246,11 +247,11 @@ func (w errWriter) Write(_ []byte) (int, error) {
 	return 0, w.err
 }
 
-// TestRun_BlockedFoldsUnderRoot pins the cascade fold: a failure with recorded
-// blockers classifies as Blocked (not Failed), is kept out of the per-resource
-// rows, and folds under its root in BlockedRoots — the verdict counting it as
-// blocked, the run still non-zero.
-func TestRun_BlockedFoldsUnderRoot(t *testing.T) {
+// TestRun_BlockedByPrimaryFailure pins the cascade: a failure with recorded
+// blockers classifies as Blocked (not Failed), is kept out of the roster Cases,
+// and lands in Blocked as a "blocked by <root>" case naming the primary failure
+// it traces to — the verdict counting it as blocked, the run still non-zero.
+func TestRun_BlockedByPrimaryFailure(t *testing.T) {
 	s := store.New()
 	root := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
 	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
@@ -261,7 +262,7 @@ func TestRun_BlockedFoldsUnderRoot(t *testing.T) {
 	s.SetBlocked(child, []manifest.NamedResource{root})
 
 	rep := Run(Job{Store: s})
-	if rep.Failed != 1 || rep.Blocked != 1 {
+	if rep.Failed != 1 || len(rep.Blocked) != 1 {
 		t.Fatalf("want 1 failed (root) + 1 blocked (child), got %+v", rep)
 	}
 	if !rep.AnyFailed() {
@@ -269,25 +270,25 @@ func TestRun_BlockedFoldsUnderRoot(t *testing.T) {
 	}
 	for _, c := range rep.Cases {
 		if c.ID == child {
-			t.Errorf("blocked child must not get its own case row: %+v", c)
+			t.Errorf("blocked child must not get a roster Cases row: %+v", c)
 		}
 	}
-	if len(rep.BlockedRoots) != 1 || rep.BlockedRoots[0].Root != root ||
-		rep.BlockedRoots[0].Count != 1 || rep.BlockedRoots[0].Missing {
-		t.Fatalf("want one BlockedGroup{root, count 1, not missing}, got %+v", rep.BlockedRoots)
+	// The root is a primary failure on its own row, so it carries no "(not found)".
+	want := []Case{{ID: child, Outcome: OutcomeBlocked, Reason: "blocked by flux-system/cluster-apps"}}
+	if !reflect.DeepEqual(rep.Blocked, want) {
+		t.Fatalf("Blocked = %+v, want %+v", rep.Blocked, want)
 	}
 
 	var b bytes.Buffer
 	_ = rep.Write(&b, nil, nil, false, 0)
 	out := b.String()
-	if !strings.Contains(out, "1 blocked by flux-system/cluster-apps") {
-		t.Errorf("fold line missing:\n%s", out)
-	}
 	if !strings.Contains(out, "1 failed") || !strings.Contains(out, "1 blocked") {
 		t.Errorf("verdict should separate failed and blocked:\n%s", out)
 	}
-	if strings.Contains(out, "media/plex") {
-		t.Errorf("blocked child must not appear as a row:\n%s", out)
+	// The blocked child gets its own row naming the root cause, so the user can
+	// see WHAT is blocked and WHY without it counting as a primary failure.
+	if !strings.Contains(out, "media/plex") || !strings.Contains(out, "blocked by flux-system/cluster-apps") {
+		t.Errorf("blocked child should render naming its root:\n%s", out)
 	}
 }
 
@@ -364,8 +365,9 @@ func TestRun_SkipsSyntheticHelmChartFailure(t *testing.T) {
 }
 
 // TestRun_BlockedByMissingDep covers a resource blocked on a dependency that was
-// never loaded: the root folds with a "(not found)" marker and counts as blocked
-// even though no primary failure exists, keeping the run non-zero.
+// never loaded: its reason names the root with a "(not found)" marker and it
+// counts as blocked even though no primary failure exists, keeping the run
+// non-zero.
 func TestRun_BlockedByMissingDep(t *testing.T) {
 	s := store.New()
 	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "volsync-system", Name: "kopiur-repository"}
@@ -375,18 +377,54 @@ func TestRun_BlockedByMissingDep(t *testing.T) {
 	s.SetBlocked(child, []manifest.NamedResource{missing})
 
 	rep := Run(Job{Store: s})
-	if rep.Failed != 0 || rep.Blocked != 1 {
+	if rep.Failed != 0 || len(rep.Blocked) != 1 {
 		t.Fatalf("want 0 failed + 1 blocked, got %+v", rep)
 	}
 	if !rep.AnyFailed() {
 		t.Error("a blocked-only run must still be non-zero")
 	}
-	if len(rep.BlockedRoots) != 1 || !rep.BlockedRoots[0].Missing {
-		t.Fatalf("want the missing root marked Missing, got %+v", rep.BlockedRoots)
+	want := []Case{{ID: child, Outcome: OutcomeBlocked, Reason: "blocked by kopiur-system/kopiur (not found)"}}
+	if !reflect.DeepEqual(rep.Blocked, want) {
+		t.Fatalf("Blocked = %+v, want %+v", rep.Blocked, want)
 	}
 	var b bytes.Buffer
 	_ = rep.Write(&b, nil, nil, false, 0)
 	if !strings.Contains(b.String(), "not found") {
 		t.Errorf("missing root should render (not found):\n%s", b.String())
+	}
+}
+
+// TestRun_BlockedByCycle pins that a cross-kind dependency cycle (which never
+// escapes to a primary/missing root) still reports every victim: the count is
+// keyed off the blocked set, not off root resolution, so a cycle can't silently
+// drop a failure and flip the run green. Each victim falls back to naming its
+// immediate blocker.
+func TestRun_BlockedByCycle(t *testing.T) {
+	s := store.New()
+	ks := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "ks-a"}
+	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "app", Name: "hr-b"}
+	s.AddObject(&manifest.Kustomization{Name: ks.Name, Namespace: ks.Namespace})
+	s.AddObject(&manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace})
+	// A ⇄ B: each blocked on the other, both terminally failed — a closed cycle.
+	s.UpdateStatus(ks, store.StatusFailed, "dependencies failed: hr-b")
+	s.UpdateStatus(hr, store.StatusFailed, "dependencies failed: ks-a")
+	s.SetBlocked(ks, []manifest.NamedResource{hr})
+	s.SetBlocked(hr, []manifest.NamedResource{ks})
+
+	rep := Run(Job{Store: s})
+	if rep.Failed != 0 || len(rep.Blocked) != 2 {
+		t.Fatalf("want 0 failed + 2 blocked (neither victim dropped), got %+v", rep)
+	}
+	if !rep.AnyFailed() {
+		t.Error("a cyclic block must still flip the run to failed, not pass green")
+	}
+	// RootsOf reaches no root, so each victim names its immediate blocker; both
+	// blockers carry a status, so neither is tagged "(not found)".
+	want := []Case{
+		{ID: hr, Outcome: OutcomeBlocked, Reason: "blocked by flux-system/ks-a"},
+		{ID: ks, Outcome: OutcomeBlocked, Reason: "blocked by app/hr-b"},
+	}
+	if !reflect.DeepEqual(rep.Blocked, want) {
+		t.Fatalf("Blocked = %+v, want %+v", rep.Blocked, want)
 	}
 }

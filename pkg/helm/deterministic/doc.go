@@ -1,7 +1,8 @@
 // Package deterministic provides drop-in replacements for the
 // nondeterministic functions Helm exposes to chart templates through
-// sprig — the time- and crypto/rand-backed ones (now, randAlphaNum,
-// genCA, …) — so flate renders byte-identically run to run.
+// sprig — the time-, crypto/rand-, and math/rand-backed ones (now,
+// randAlphaNum, shuffle, genCA, …) — so flate renders byte-identically
+// run to run.
 //
 // Helm v4 applies action.Configuration.CustomTemplateFuncs LAST when it
 // assembles the engine FuncMap (maps.Copy over sprig's defaults in

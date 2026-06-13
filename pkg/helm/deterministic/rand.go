@@ -38,7 +38,23 @@ func randFuncs(s *stream) template.FuncMap {
 		"randBytes":    func(n int) (string, error) { return randBytes(s, n) },
 		"randInt":      func(minN, maxN int) int { return randInt(s, minN, maxN) },
 		"uuidv4":       func() string { return uuidv4(s) },
+		"shuffle":      func(in string) string { return shuffle(s, in) },
 	}
+}
+
+// shuffle returns a deterministic permutation of in's runes, drawn from the
+// stream. sprig maps "shuffle" to xstrings.Shuffle, which draws from a
+// process-global, time-seeded RNG — nondeterministic across renders. It is the
+// source of flipping checksum/secret annotations on charts whose secret
+// template passes a generated value through `| shuffle` (bitnami common's
+// passwords.manage with strong=true does exactly this for its secret_key).
+// Drawing from the per-render stream makes it reproducible; the result is a
+// valid permutation, not byte-identical to sprig.
+func shuffle(s *stream, in string) string {
+	r := []rune(in)
+	//nolint:gosec // G404: deterministic rendering deliberately draws from the seeded ChaCha8, not crypto/rand.
+	rand.New(s.c).Shuffle(len(r), func(i, j int) { r[i], r[j] = r[j], r[i] })
+	return string(r)
 }
 
 // randString returns n characters, each one stream byte mapped into charset by

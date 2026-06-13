@@ -96,6 +96,50 @@ func TestTemplate_DeterministicRandom(t *testing.T) {
 	}
 }
 
+// TestTemplate_DeterministicShuffle guards the sprig `shuffle` override: a
+// chart that pipes a value through `| shuffle` — the shape bitnami common's
+// passwords.manage uses for a strong secret_key, behind a checksum/secret
+// annotation — must render byte-identically across two UNCACHED renders. sprig
+// maps shuffle to xstrings.Shuffle, which draws from a process-global,
+// time-seeded RNG; un-overridden, the two renders differ (and real-world
+// checksum/secret annotations flip run-to-run). The override redirects it to
+// the seeded per-render stream. Caching is disabled so byte-identity can only
+// come from the override.
+func TestTemplate_DeterministicShuffle(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
+		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
+	// A sha256 over a shuffled value mirrors the checksum/secret shape; the
+	// shuffled field itself is also emitted so the guard covers both surfaces.
+	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\n  annotations:\n    checksum/secret: {{ printf \"%s%s\" (randAlphaNum 8) (randAscii 12) | shuffle | sha256sum | quote }}\ndata:\n  pw: {{ \"abcdefghijklmnopqrstuvwxyz\" | shuffle | quote }}\n")
+
+	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	if err != nil {
+		t.Fatalf("NewClientWithOptions: %v", err)
+	}
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart", RepoName: "chart-repo",
+			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+		},
+	}
+
+	first, err := cli.Template(context.Background(), hr, nil, Options{})
+	if err != nil {
+		t.Fatalf("first render: %v", err)
+	}
+	second, err := cli.Template(context.Background(), hr, nil, Options{})
+	if err != nil {
+		t.Fatalf("second render: %v", err)
+	}
+	if first != second {
+		t.Errorf("uncached renders differ — shuffle not deterministic:\n first=%q\nsecond=%q", first, second)
+	}
+}
+
 // TestTemplate_DeterministicCerts is the Tier 3 integration guard: a chart
 // that generates a CA and a leaf signed by it (the caBundle/tls.crt shape)
 // must render byte-identically across two UNCACHED renders. sprig draws cert

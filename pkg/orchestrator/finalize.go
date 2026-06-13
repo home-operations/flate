@@ -28,7 +28,11 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 	// the orchestrator side. Route through the shared component
 	// cache populated during Bootstrap so the per-KS component file
 	// reads are served from memory rather than re-stat'd here.
-	prefixes := loader.KSPathPrefixesLocalOnly(o.store, o.repoRoot, o.componentCache)
+	// Built lazily on the first failure that survives the cheap
+	// per-id guards below: a clean run (no reconcilable failures)
+	// never pays the full KS list + claim build + sort.
+	var prefixes []loader.KSPathPrefix
+	var prefixesBuilt bool
 	for id, info := range failed {
 		if !isReconcilableKind(id.Kind) {
 			continue
@@ -41,6 +45,10 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		file, ok := o.sourceFiles[id]
 		if !ok {
 			continue
+		}
+		if !prefixesBuilt {
+			prefixes = loader.KSPathPrefixesLocalOnly(o.store, o.repoRoot, o.componentCache)
+			prefixesBuilt = true
 		}
 		parent, ok := loader.LongestParent(prefixes, file, id)
 		if !ok {

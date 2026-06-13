@@ -267,6 +267,12 @@ func (c *commonFlags) includeNamespace(filter *change.Filter, ns string) bool {
 	if ns == "" {
 		return true
 	}
+	// Explicit --namespace is a single-element scope: compare directly
+	// rather than letting scopedNamespaces allocate a one-entry map per
+	// resource on this in-loop path.
+	if c.namespace != "" {
+		return ns == c.namespace
+	}
 	scope := c.scopedNamespaces(filter)
 	if scope == nil {
 		return true

@@ -177,11 +177,10 @@ func Run(j Job) Report {
 	// cascade still resolves to its root cause(s) in blockedCases.
 	blocked := map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, kind := range kinds {
-		objs := j.Store.ListObjects(kind)
-		slices.SortFunc(objs, func(a, b manifest.BaseManifest) int {
-			return a.Named().Compare(b.Named())
-		})
-		for _, obj := range objs {
+		// ListObjects already returns this kind's objects sorted by
+		// (namespace, name); within a single kind that order is identical to
+		// NamedResource.Compare (Kind is constant), so no re-sort is needed.
+		for _, obj := range j.Store.ListObjects(kind) {
 			id := obj.Named()
 			if j.Name != "" && id.Name != j.Name {
 				continue

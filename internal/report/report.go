@@ -172,7 +172,7 @@ func (m Model) Write(w io.Writer, color bool, elapsed time.Duration) error {
 // failuresBlock renders the root-cause rows: each primary failure (its inline
 // message and the resources it blocks) followed by each missing dependency.
 func (m Model) failuresBlock(color bool) string {
-	var rows []string
+	rows := make([]string, 0, len(m.Primary)+len(m.Missing))
 	for _, p := range m.Primary {
 		row := fmt.Sprintf("  %s  %s  %s",
 			style.Fail(style.GlyphFail, color), style.Dim(p.ID.Kind, color), p.ID.NamespacedName()) +

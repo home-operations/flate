@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -296,7 +295,7 @@ func gitCacheKey(repo *manifest.GitRepository, refLabel string) string {
 	}{
 		Ref:               refLabel,
 		Ignore:            ignore,
-		SparseCheckout:    slices.Clone(repo.SparseCheckout),
+		SparseCheckout:    repo.SparseCheckout,
 		RecurseSubmodules: repo.RecurseSubmodules,
 	}
 	h, _ := source.CacheKeyHash(payload, 8)

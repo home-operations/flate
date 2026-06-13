@@ -764,8 +764,7 @@ func aggregateScopedFailures(
 func nonResourceRunErrors(err error) []error {
 	var out []error
 	for _, leaf := range flattenErrors(err) {
-		var aggregate *orchestrator.FailuresError
-		if errors.As(leaf, &aggregate) {
+		if _, ok := errors.AsType[*orchestrator.FailuresError](leaf); ok {
 			continue // re-scoped + re-rendered from res.Failed, not carried verbatim
 		}
 		out = append(out, leaf)

@@ -108,14 +108,12 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 	err := root.ExecuteContext(ctx)
 	// Flush any deferred log notes a command didn't already render (diff/get/
 	// cache, or a clean run) so nothing buffered is lost.
-	if logBuffer != nil {
-		for _, n := range logBuffer.drain() {
-			line := n.Text
-			if n.Count > 1 {
-				line = fmt.Sprintf("%s (×%d)", line, n.Count)
-			}
-			_, _ = io.WriteString(stderr, line+"\n")
+	for _, n := range drainLogNotes() {
+		line := n.Text
+		if n.Count > 1 {
+			line = fmt.Sprintf("%s (×%d)", line, n.Count)
 		}
+		_, _ = io.WriteString(stderr, line+"\n")
 	}
 	if err != nil {
 		// reportFailures already rendered a styled report for this error; don't

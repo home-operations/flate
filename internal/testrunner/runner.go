@@ -153,7 +153,7 @@ func caseRow(c Case, kindW int, color bool) string {
 // the rest only when non-zero) and the elapsed clock.
 func (r Report) verdict(color bool, elapsed time.Duration) string {
 	glyph, paint := style.GlyphPass, style.Pass
-	if r.Failed > 0 || len(r.Blocked) > 0 {
+	if r.AnyFailed() {
 		glyph, paint = style.GlyphFail, style.Fail
 	}
 	return report.Verdict(color, glyph, paint, elapsed,

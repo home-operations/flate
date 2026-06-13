@@ -288,7 +288,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 		sh.mu.Lock()
 		for _, obj := range buckets[i] {
 			id := obj.Named()
-			if cur, ok := sh.objects[id]; ok && reflect.DeepEqual(cur, obj) {
+			if cur, ok := sh.objects[id]; ok && (cur == obj || reflect.DeepEqual(cur, obj)) {
 				continue
 			}
 			sh.setLocked(id, obj)

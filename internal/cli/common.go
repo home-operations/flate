@@ -231,7 +231,7 @@ func bindSelector(fs *pflag.FlagSet, f *listFlags) {
 //     machinery as diff.
 //
 // Mutually exclusive with --path-orig (the absolute-path escape
-// hatch); the check fires at runtime in resolveBaselineIfRequested.
+// hatch); the check fires at runtime in resolveBaseline.
 func bindBase(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVar(&f.base, "base", "",
 		"baseline git rev (e.g. main, origin/main, HEAD~3, SHA) — "+

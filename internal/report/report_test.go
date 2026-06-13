@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -186,6 +187,51 @@ func TestBuild_BlockedCountsDistinctResources(t *testing.T) {
 	_ = m.Write(&b, false, 0)
 	if out := b.String(); !strings.Contains(out, "1 blocked") {
 		t.Errorf("verdict should count the dual-rooted resource once:\n%s", out)
+	}
+}
+
+// TestDocument pins the one spacing rule: a leading blank line, one blank line
+// between non-empty blocks, a trailing newline, and "" when all blocks are empty.
+func TestDocument(t *testing.T) {
+	cases := []struct {
+		name   string
+		blocks []string
+		want   string
+	}{
+		{"empty", []string{"", ""}, ""},
+		{"none", nil, ""},
+		{"single", []string{"a"}, "\na\n"},
+		{"two", []string{"a", "b"}, "\na\n\nb\n"},
+		{"drops empties between", []string{"a", "", "b"}, "\na\n\nb\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Document(tc.blocks...); got != tc.want {
+				t.Errorf("Document(%q) = %q, want %q", tc.blocks, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestVerdict pins the shared verdict grammar: a lead glyph, the lead count
+// always shown (even at zero), later counts only when non-zero, joined by " · ",
+// and a trailing elapsed clock only when > 0.
+func TestVerdict(t *testing.T) {
+	pass := func(s string, _ bool) string { return s }
+	c := func(n int, label string) Count { return Count{N: n, Label: label, Paint: pass} }
+
+	if got := Verdict(false, "✓", pass, 0); got != "" {
+		t.Errorf("no counts = %q, want empty", got)
+	}
+	if got := Verdict(false, "✓", pass, 0, c(0, "passed")); got != "  ✓ 0 passed" {
+		t.Errorf("lead-at-zero = %q", got)
+	}
+	if got := Verdict(false, "✓", pass, 0,
+		c(2, "passed"), c(0, "skipped"), c(3, "failed")); got != "  ✓ 2 passed · 3 failed" {
+		t.Errorf("zero non-lead dropped = %q", got)
+	}
+	if got := Verdict(false, "✗", pass, 1500*time.Millisecond, c(1, "failed")); got != "  ✗ 1 failed   1.5s" {
+		t.Errorf("elapsed = %q", got)
 	}
 }
 

@@ -153,20 +153,16 @@ func sortedIDs(ids []manifest.NamedResource) []manifest.NamedResource {
 // Write renders the model to w. color gates ANSI styling; elapsed, when > 0,
 // closes the verdict line.
 func (m Model) Write(w io.Writer, color bool, elapsed time.Duration) error {
-	blocks := nonEmpty(
+	doc := Document(
 		m.failuresBlock(color),
 		m.warningsBlock(color),
 		m.notesBlock(color),
 		m.verdictBlock(color, elapsed),
 	)
-	if len(blocks) == 0 {
+	if doc == "" {
 		return nil
 	}
-	// One spacing rule for the whole footer: a leading blank line parts it from
-	// preceding output, and a single blank line separates each section. Blocks
-	// carry no blank lines of their own, so there's no per-section newline
-	// bookkeeping to drift.
-	_, err := io.WriteString(w, "\n"+strings.Join(blocks, "\n\n")+"\n")
+	_, err := io.WriteString(w, doc)
 	return err
 }
 
@@ -232,19 +228,14 @@ func (m Model) notesBlock(color bool) string {
 // misleading red "✗ 0 failed". failed = primary + missing roots; blocked is the
 // distinct cascaded count (m.Blocked, not the sum of per-root lists).
 func (m Model) verdictBlock(color bool, elapsed time.Duration) string {
-	failedCount := len(m.Primary) + len(m.Missing)
-	if failedCount == 0 && m.Blocked == 0 {
+	failed := len(m.Primary) + len(m.Missing)
+	if failed == 0 && m.Blocked == 0 {
 		return ""
 	}
-	s := "  " + style.Fail(style.GlyphFail, color) + " " +
-		style.Fail(fmt.Sprintf("%d failed", failedCount), color)
-	if m.Blocked > 0 {
-		s += " · " + style.Dim(fmt.Sprintf("%d blocked", m.Blocked), color)
-	}
-	if elapsed > 0 {
-		s += "   " + style.Dim(style.Elapsed(elapsed), color)
-	}
-	return s
+	return Verdict(color, style.GlyphFail, style.Fail, elapsed,
+		Count{N: failed, Label: "failed", Paint: style.Fail},
+		Count{N: m.Blocked, Label: "blocked", Paint: style.Dim},
+	)
 }
 
 // section composes a titled footer block: the header line, then each item
@@ -270,6 +261,56 @@ func nonEmpty(blocks ...string) []string {
 		}
 	}
 	return out
+}
+
+// Document assembles a footer from section blocks: a leading blank line parts it
+// from preceding output, a single blank line separates each non-empty block, and
+// it ends with a newline. Returns "" when every block is empty, so the caller
+// writes nothing. Blocks carry no blank lines of their own — spacing lives here,
+// in one place, so there's no per-section newline bookkeeping to drift. Shared
+// by the build/diff failure report and the `flate test` roster.
+func Document(blocks ...string) string {
+	nz := nonEmpty(blocks...)
+	if len(nz) == 0 {
+		return ""
+	}
+	return "\n" + strings.Join(nz, "\n\n") + "\n"
+}
+
+// Count is one labeled tally in a Verdict line: N items, a noun, and the paint
+// that colors "<N> <Label>" (e.g. style.Fail for "failed").
+type Count struct {
+	N     int
+	Label string
+	Paint func(string, bool) string
+}
+
+// Verdict renders a one-line run summary: the lead glyph, then each count as
+// "<N> <Label>" joined by " · ", then a dim elapsed clock (omitted when zero).
+// The first count always shows (even at zero, e.g. "0 passed"); later counts
+// show only when non-zero. Returns "" when given no counts. Shared by the
+// build/diff failure report and the `flate test` roster so both speak one
+// verdict grammar.
+func Verdict(color bool, glyph string, paintGlyph func(string, bool) string, elapsed time.Duration, counts ...Count) string {
+	if len(counts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("  " + paintGlyph(glyph, color))
+	for i, c := range counts {
+		if i > 0 && c.N == 0 {
+			continue
+		}
+		sep := " "
+		if i > 0 {
+			sep = " · "
+		}
+		b.WriteString(sep + c.Paint(fmt.Sprintf("%d %s", c.N, c.Label), color))
+	}
+	if elapsed > 0 {
+		b.WriteString("   " + style.Dim(style.Elapsed(elapsed), color))
+	}
+	return b.String()
 }
 
 // summarize renders an id list as "a, b, c +N more", capped at blockedSample.

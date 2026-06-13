@@ -101,37 +101,41 @@ func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 // reasonIndent aligns a failure's continuation lines beneath its row.
 const reasonIndent = "         "
 
-// Write renders the report: one row per case (status glyph, dimmed kind column,
-// namespace/name, dimmed reason) followed by a summary — an overall verdict
-// glyph, the colored counts, and a dim elapsed clock (omitted when zero). color
-// gates the ANSI codes — the caller decides based on the sink (see cli.test).
+// Write renders the report as a roster block (one row per case, plus a folded
+// line per blocked root) followed by the verdict summary, composed through the
+// shared report.Document/report.Verdict toolkit so the test surface and the
+// build/diff failure report speak one spacing and verdict grammar. color gates
+// the ANSI codes — the caller decides based on the sink (see cli.test).
 func (r Report) Write(w io.Writer, color bool, elapsed time.Duration) error {
+	_, err := io.WriteString(w, report.Document(r.rosterBlock(color), r.verdict(color, elapsed)))
+	return err
+}
+
+// rosterBlock renders one row per case (status glyph, dimmed kind column,
+// namespace/name, dimmed reason — a multi-line reason keeps its first line
+// inline and indents the rest) and one folded line per blocked root. Empty when
+// the run matched nothing, so Document drops it and only the verdict shows.
+func (r Report) rosterBlock(color bool) string {
 	kindW := 0
 	for _, c := range r.Cases {
 		kindW = max(kindW, len(c.ID.Kind))
 	}
-
-	var b strings.Builder
-	b.WriteByte('\n')
+	var rows []string
 	for _, c := range r.Cases {
 		glyph, paint := c.Outcome.decorate()
-		fmt.Fprintf(&b, "  %s  %s  %s",
+		var row strings.Builder
+		fmt.Fprintf(&row, "  %s  %s  %s",
 			paint(glyph, color),
 			style.Dim(fmt.Sprintf("%-*s", kindW, c.ID.Kind), color),
 			c.ID.NamespacedName())
-		// A single-line reason stays inline; a multi-line one (a kustomize
-		// build / helm template diagnostic) prints its first line inline and
-		// the rest indented beneath, so the detail survives instead of running
-		// the row off the right edge.
 		if lines := report.MessageLines(c.Reason); len(lines) > 0 {
-			fmt.Fprintf(&b, "  %s", style.Dim(lines[0], color))
+			fmt.Fprintf(&row, "  %s", style.Dim(lines[0], color))
 			for _, line := range lines[1:] {
-				fmt.Fprintf(&b, "\n%s%s", reasonIndent, style.Dim(line, color))
+				fmt.Fprintf(&row, "\n%s%s", reasonIndent, style.Dim(line, color))
 			}
 		}
-		b.WriteByte('\n')
+		rows = append(rows, row.String())
 	}
-
 	// Cascades fold under their root cause: one dim line per root, naming the
 	// count it blocks, in place of a per-resource row for each victim.
 	for _, g := range r.BlockedRoots {
@@ -139,36 +143,27 @@ func (r Report) Write(w io.Writer, color bool, elapsed time.Duration) error {
 		if g.Missing {
 			root += " (not found)"
 		}
-		fmt.Fprintf(&b, "  %s  %s\n",
+		rows = append(rows, fmt.Sprintf("  %s  %s",
 			style.Dim(style.GlyphBlocked, color),
-			style.Dim(fmt.Sprintf("%d blocked by %s", g.Count, root), color))
+			style.Dim(fmt.Sprintf("%d blocked by %s", g.Count, root), color)))
 	}
+	return strings.Join(rows, "\n")
+}
 
-	// Summary: a verdict glyph (green ✓ / red ✗) leads the colored counts —
-	// always the passed count; skipped/failed/blocked only when non-zero — and a
-	// dim elapsed clock closes it. An empty run still reads "✓ 0 passed".
-	verdict, paintVerdict := style.GlyphPass, style.Pass
+// verdict renders the summary line: a green ✓ when everything passed, a red ✗
+// when anything failed or blocked, leading the colored counts (passed always,
+// the rest only when non-zero) and the elapsed clock.
+func (r Report) verdict(color bool, elapsed time.Duration) string {
+	glyph, paint := style.GlyphPass, style.Pass
 	if r.Failed > 0 || r.Blocked > 0 {
-		verdict, paintVerdict = style.GlyphFail, style.Fail
+		glyph, paint = style.GlyphFail, style.Fail
 	}
-	b.WriteString("\n  " + paintVerdict(verdict, color) + " ")
-	b.WriteString(style.Pass(fmt.Sprintf("%d passed", r.Passed), color))
-	if r.Skipped > 0 {
-		b.WriteString(" · " + style.Dim(fmt.Sprintf("%d skipped", r.Skipped), color))
-	}
-	if r.Failed > 0 {
-		b.WriteString(" · " + style.Fail(fmt.Sprintf("%d failed", r.Failed), color))
-	}
-	if r.Blocked > 0 {
-		b.WriteString(" · " + style.Dim(fmt.Sprintf("%d blocked", r.Blocked), color))
-	}
-	if elapsed > 0 {
-		b.WriteString("   " + style.Dim(style.Elapsed(elapsed), color))
-	}
-	b.WriteByte('\n')
-
-	_, err := io.WriteString(w, b.String())
-	return err
+	return report.Verdict(color, glyph, paint, elapsed,
+		report.Count{N: r.Passed, Label: "passed", Paint: style.Pass},
+		report.Count{N: r.Skipped, Label: "skipped", Paint: style.Dim},
+		report.Count{N: r.Failed, Label: "failed", Paint: style.Fail},
+		report.Count{N: r.Blocked, Label: "blocked", Paint: style.Dim},
+	)
 }
 
 // Run inspects the store and produces a Report. When j.Kinds is empty,

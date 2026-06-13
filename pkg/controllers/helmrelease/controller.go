@@ -113,24 +113,23 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 }
 
 // onRawProducerAdded returns a listener that indexes RawObject producers
-// (ExternalSecret, SealedSecret) into the shared producer index. Registered
-// with flush=true (via AddListener) so the index picks up any objects already
-// in the store at Start time and stays current as KS renders emit more — with
-// the post-kustomize-transform names a discovery-time file scan can't see.
+// (ExternalSecret, SealedSecret, ObjectBucketClaim) into the shared producer
+// index. Registered with flush=true (via AddListener) so the index picks up any
+// objects already in the store at Start time and stays current as KS renders
+// emit more — with the post-kustomize-transform names a discovery-time file
+// scan can't see.
 //
-// The index maps targetID → producer.Named() via manifest.ProducerTargetSecret
-// so the valuesFrom producer lookup answers in O(1) without a full-store scan.
+// The index maps each target → producer.Named() via manifest.ProducerTargets so
+// the valuesFrom producer lookup answers in O(1) without a full-store scan.
 func (c *Controller) onRawProducerAdded() store.Listener {
 	return func(_ manifest.NamedResource, payload any) {
 		raw, ok := payload.(*manifest.RawObject)
 		if !ok {
 			return
 		}
-		targetID, ok := manifest.ProducerTargetSecret(raw)
-		if !ok {
-			return
+		for _, targetID := range manifest.ProducerTargets(raw) {
+			c.producers.Record(targetID, raw.Named())
 		}
-		c.producers.Record(targetID, raw.Named())
 	}
 }
 

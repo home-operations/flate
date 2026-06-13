@@ -100,7 +100,7 @@ func secretID(ns, name string) manifest.NamedResource {
 func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./es.yaml\n  - ./sealed.yaml\n  - ./explicit.yaml\n")
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./es.yaml\n  - ./sealed.yaml\n  - ./explicit.yaml\n  - ./obc.yaml\n")
 	// ExternalSecret, no namespace in file → inherits `secure`; explicit target.
 	testutil.WriteFile(t, dir, "apps/es.yaml",
 		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: app-creds\nspec:\n  target:\n    name: app-values\n")
@@ -111,6 +111,10 @@ func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
 	// overrides it, exactly as kustomize does.
 	testutil.WriteFile(t, dir, "apps/explicit.yaml",
 		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: own\n  namespace: ignored\nspec:\n  target:\n    name: own-values\n")
+	// ObjectBucketClaim: its provisioner materializes a Secret AND a ConfigMap
+	// both named after the claim, in the (transformer-resolved) namespace.
+	testutil.WriteFile(t, dir, "apps/obc.yaml",
+		"apiVersion: objectbucket.io/v1alpha1\nkind: ObjectBucketClaim\nmetadata:\n  name: media-bucket\nspec:\n  bucketName: media\n  storageClassName: ceph-bucket\n")
 
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{
@@ -121,10 +125,13 @@ func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
 	producers := &manifest.ProducerIndex{}
 	BuildSelfProduceIndex(s, dir, producers)
 
-	want := map[manifest.NamedResource]string{ // target Secret → producer name
+	want := map[manifest.NamedResource]string{ // target → producer name
 		secretID("secure", "app-values"): "app-creds",
 		secretID("secure", "db-secret"):  "db",
 		secretID("secure", "own-values"): "own",
+		// The OBC produces BOTH a Secret and a ConfigMap named after the claim.
+		secretID("secure", "media-bucket"):                                        "media-bucket",
+		{Kind: manifest.KindConfigMap, Namespace: "secure", Name: "media-bucket"}: "media-bucket",
 	}
 	for target, prodName := range want {
 		got, ok := producers.Producer(target)

@@ -243,21 +243,20 @@ func (b *selfProduceBuilder) recordConfigMap(cm *manifest.ConfigMap, baseNS, roo
 	b.idx.byID[id] = appendUniqueProducer(b.idx.byID[id], ks)
 }
 
-// recordProducer records the target Secret an ExternalSecret / SealedSecret
-// generates, re-keyed under the producer's effective namespace so it matches a
-// consumer's same-namespace lookup. Non-producer kinds and a nil index are
-// no-ops.
+// recordProducer records the target(s) a producer generates — the Secret an
+// ExternalSecret / SealedSecret materializes, or the Secret + ConfigMap an
+// ObjectBucketClaim's provisioner creates — each re-keyed under the producer's
+// effective namespace so it matches a consumer's same-namespace lookup.
+// Non-producer kinds and a nil index are no-ops.
 func (b *selfProduceBuilder) recordProducer(raw *manifest.RawObject, baseNS, rootNS string) {
-	target, ok := manifest.ProducerTargetSecret(raw)
-	if !ok {
-		return
+	for _, target := range manifest.ProducerTargets(raw) {
+		ns := cmp.Or(baseNS, target.Namespace, rootNS)
+		if ns == "" {
+			continue
+		}
+		target.Namespace = ns
+		b.producers.Record(target, raw.Named())
 	}
-	ns := cmp.Or(baseNS, target.Namespace, rootNS)
-	if ns == "" {
-		return
-	}
-	target.Namespace = ns
-	b.producers.Record(target, raw.Named())
 }
 
 func appendUniqueProducer(dst []manifest.NamedResource, v manifest.NamedResource) []manifest.NamedResource {

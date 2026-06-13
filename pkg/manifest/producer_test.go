@@ -1,55 +1,56 @@
 package manifest
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
-func TestProducerTargetSecret(t *testing.T) {
+func TestProducerTargets(t *testing.T) {
 	cases := []struct {
-		name     string
-		raw      *RawObject
-		wantOK   bool
-		wantName string
-		wantNS   string
+		name string
+		raw  *RawObject
+		want []NamedResource
 	}{
 		{
 			name: "ExternalSecret explicit target.name",
 			raw: &RawObject{Kind: "ExternalSecret", Namespace: "default", Name: "app-creds",
 				Spec: map[string]any{"target": map[string]any{"name": "app-values"}}},
-			wantOK: true, wantName: "app-values", wantNS: "default",
+			want: []NamedResource{{Kind: KindSecret, Namespace: "default", Name: "app-values"}},
 		},
 		{
-			name:   "ExternalSecret no target falls back to own name",
-			raw:    &RawObject{Kind: "ExternalSecret", Namespace: "staging", Name: "my-secret", Spec: map[string]any{}},
-			wantOK: true, wantName: "my-secret", wantNS: "staging",
+			name: "ExternalSecret no target falls back to own name",
+			raw:  &RawObject{Kind: "ExternalSecret", Namespace: "staging", Name: "my-secret", Spec: map[string]any{}},
+			want: []NamedResource{{Kind: KindSecret, Namespace: "staging", Name: "my-secret"}},
 		},
 		{
 			name: "SealedSecret template.metadata.name",
 			raw: &RawObject{Kind: "SealedSecret", Namespace: "prod", Name: "sealed",
 				Spec: map[string]any{"template": map[string]any{"metadata": map[string]any{"name": "sealed-db"}}}},
-			wantOK: true, wantName: "sealed-db", wantNS: "prod",
+			want: []NamedResource{{Kind: KindSecret, Namespace: "prod", Name: "sealed-db"}},
 		},
 		{
-			name:   "SealedSecret no template falls back to own name",
-			raw:    &RawObject{Kind: "SealedSecret", Namespace: "prod", Name: "sealed-db", Spec: map[string]any{}},
-			wantOK: true, wantName: "sealed-db", wantNS: "prod",
+			name: "SealedSecret no template falls back to own name",
+			raw:  &RawObject{Kind: "SealedSecret", Namespace: "prod", Name: "sealed-db", Spec: map[string]any{}},
+			want: []NamedResource{{Kind: KindSecret, Namespace: "prod", Name: "sealed-db"}},
 		},
 		{
-			name:   "non-producer kind",
-			raw:    &RawObject{Kind: "Certificate", Namespace: "default", Name: "tls"},
-			wantOK: false,
+			name: "ObjectBucketClaim produces a Secret and a ConfigMap named after the claim",
+			raw:  &RawObject{Kind: "ObjectBucketClaim", Namespace: "default", Name: "netbox-obc"},
+			want: []NamedResource{
+				{Kind: KindSecret, Namespace: "default", Name: "netbox-obc"},
+				{Kind: KindConfigMap, Namespace: "default", Name: "netbox-obc"},
+			},
+		},
+		{
+			name: "non-producer kind",
+			raw:  &RawObject{Kind: "Certificate", Namespace: "default", Name: "tls"},
+			want: nil,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := ProducerTargetSecret(c.raw)
-			if ok != c.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, c.wantOK)
-			}
-			if !c.wantOK {
-				return
-			}
-			want := NamedResource{Kind: KindSecret, Namespace: c.wantNS, Name: c.wantName}
-			if got != want {
-				t.Errorf("target = %v, want %v", got, want)
+			if got := ProducerTargets(c.raw); !slices.Equal(got, c.want) {
+				t.Errorf("targets = %v, want %v", got, c.want)
 			}
 		})
 	}

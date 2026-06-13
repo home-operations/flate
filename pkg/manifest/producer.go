@@ -1,43 +1,55 @@
 package manifest
 
-import "sync"
+import (
+	"cmp"
+	"sync"
+)
 
-// ProducerTargetSecret returns the Secret that raw — an ExternalSecret
-// (external-secrets.io) or SealedSecret (bitnami-labs/sealed-secrets) — will
-// generate in-cluster, or (zero, false) when raw is not a recognised producer
-// kind. It is the single source of truth for producer classification:
-// extending coverage to a new generator kind means adding a case here.
+// ProducerTargets returns the in-cluster objects raw will generate live, or nil
+// when raw is not a recognised producer kind. It is the single source of truth
+// for producer classification: extending coverage to a new generator kind means
+// adding a case here.
 //
-// The target name comes from the producer's own declaration — ExternalSecret
-// spec.target.name, SealedSecret spec.template.metadata.name — defaulting to
-// metadata.name when unset, matching each controller's own defaulting. The
-// target Secret lands in the producer's namespace.
+//   - ExternalSecret (external-secrets.io) / SealedSecret
+//     (bitnami-labs/sealed-secrets): the one Secret each materializes —
+//     spec.target.name / spec.template.metadata.name, defaulting to
+//     metadata.name (matching each controller's own defaulting).
+//   - ObjectBucketClaim (objectbucket.io — Rook/Ceph's lib-bucket-provisioner):
+//     a Secret AND a ConfigMap, both named after the OBC. The Secret holds the
+//     S3 credentials (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY), the ConfigMap
+//     the bucket connection info (BUCKET_HOST / BUCKET_PORT / BUCKET_NAME); a
+//     consuming HelmRelease valuesFrom (or substituteFrom) references them by
+//     the claim's name and neither exists in the offline tree.
+//
+// Every target lands in the producer's namespace.
 //
 // Coverage caveat: this reads the producer's RAW declared name. A kustomize
-// namePrefix / nameSuffix / replacement that rewrites the generated Secret's
-// identity is NOT followed (kustomize does not register a nameReference
-// fieldSpec for spec.target.name), so producer-inference misses a transformed
-// target and the consumer falls back to fail-loud or --allow-missing-secrets.
-// Degraded-but-safe: never a false match.
-func ProducerTargetSecret(raw *RawObject) (NamedResource, bool) {
+// namePrefix / nameSuffix / replacement that rewrites the generated object's
+// identity is NOT followed (kustomize registers no nameReference fieldSpec for
+// these), so producer-inference misses a transformed target and the consumer
+// falls back to fail-loud or --allow-missing-secrets. Degraded-but-safe: never
+// a false match.
+func ProducerTargets(raw *RawObject) []NamedResource {
 	// Failed map asserts yield nil, and indexing nil yields the zero value, so
 	// the nested lookups need no explicit nil checks.
-	var name string
 	switch raw.Kind {
 	case "ExternalSecret":
 		target, _ := raw.Spec["target"].(map[string]any)
-		name, _ = target["name"].(string)
+		name, _ := target["name"].(string)
+		return []NamedResource{{Kind: KindSecret, Namespace: raw.Namespace, Name: cmp.Or(name, raw.Name)}}
 	case "SealedSecret":
 		tmpl, _ := raw.Spec["template"].(map[string]any)
 		meta, _ := tmpl["metadata"].(map[string]any)
-		name, _ = meta["name"].(string)
+		name, _ := meta["name"].(string)
+		return []NamedResource{{Kind: KindSecret, Namespace: raw.Namespace, Name: cmp.Or(name, raw.Name)}}
+	case "ObjectBucketClaim":
+		return []NamedResource{
+			{Kind: KindSecret, Namespace: raw.Namespace, Name: raw.Name},
+			{Kind: KindConfigMap, Namespace: raw.Namespace, Name: raw.Name},
+		}
 	default:
-		return NamedResource{}, false
+		return nil
 	}
-	if name == "" {
-		name = raw.Name // both controllers default the target to the CR's own name
-	}
-	return NamedResource{Kind: KindSecret, Namespace: raw.Namespace, Name: name}, true
 }
 
 // ProducerIndex maps a target resource — the Secret an ExternalSecret /

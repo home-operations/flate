@@ -21,7 +21,7 @@ func TestWrite_VerdictGlyphAndElapsed(t *testing.T) {
 	pass.AddObject(&manifest.Kustomization{Name: ok.Name, Namespace: ok.Namespace})
 	pass.UpdateStatus(ok, store.StatusReady, "")
 	var pb bytes.Buffer
-	if err := Run(Job{Store: pass}).Write(&pb, false, 1500*time.Millisecond); err != nil {
+	if err := Run(Job{Store: pass}).Write(&pb, nil, nil, false, 1500*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if out := pb.String(); !strings.Contains(out, style.GlyphPass) || strings.Contains(out, style.GlyphFail) {
@@ -35,7 +35,7 @@ func TestWrite_VerdictGlyphAndElapsed(t *testing.T) {
 	fail.AddObject(&manifest.Kustomization{Name: bad.Name, Namespace: bad.Namespace})
 	fail.UpdateStatus(bad, store.StatusFailed, "boom")
 	var fb bytes.Buffer
-	_ = Run(Job{Store: fail}).Write(&fb, false, 0)
+	_ = Run(Job{Store: fail}).Write(&fb, nil, nil, false, 0)
 	if out := fb.String(); !strings.Contains(out, style.GlyphFail) {
 		t.Errorf("failing summary wants ✗:\n%s", out)
 	} else if strings.Contains(out, "0.0s") {
@@ -55,7 +55,7 @@ func TestRun_AllPass(t *testing.T) {
 		t.Errorf("expected 2 passed, got %+v", rep)
 	}
 	var b bytes.Buffer
-	if err := rep.Write(&b, false, 0); err != nil {
+	if err := rep.Write(&b, nil, nil, false, 0); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if !strings.Contains(b.String(), "2 passed") {
@@ -138,7 +138,7 @@ func TestWrite_ShowsSkippedByDefault(t *testing.T) {
 	rep := Run(Job{Store: s})
 
 	var b bytes.Buffer
-	if err := rep.Write(&b, false, 0); err != nil {
+	if err := rep.Write(&b, nil, nil, false, 0); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	out := b.String()
@@ -165,7 +165,7 @@ func TestWrite_FailedNeverHidden(t *testing.T) {
 
 	rep := Run(Job{Store: s})
 	var b bytes.Buffer
-	if err := rep.Write(&b, false, 0); err != nil {
+	if err := rep.Write(&b, nil, nil, false, 0); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if out := b.String(); !strings.Contains(out, "✗") || !strings.Contains(out, "broken") {
@@ -186,10 +186,10 @@ func TestWrite_Color(t *testing.T) {
 	rep := Run(Job{Store: s})
 
 	var colored, plain bytes.Buffer
-	if err := rep.Write(&colored, true, 0); err != nil {
+	if err := rep.Write(&colored, nil, nil, true, 0); err != nil {
 		t.Fatalf("Write(color): %v", err)
 	}
-	if err := rep.Write(&plain, false, 0); err != nil {
+	if err := rep.Write(&plain, nil, nil, false, 0); err != nil {
 		t.Fatalf("Write(plain): %v", err)
 	}
 	if !strings.Contains(colored.String(), "\x1b") {
@@ -233,7 +233,7 @@ func TestWrite_ReturnsWriterError(t *testing.T) {
 	want := errors.New("write failed")
 	rep := Report{Cases: []Case{{ID: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "apps"}}}}
 
-	if err := rep.Write(errWriter{err: want}, false, 0); !errors.Is(err, want) {
+	if err := rep.Write(errWriter{err: want}, nil, nil, false, 0); !errors.Is(err, want) {
 		t.Fatalf("Write error = %v, want %v", err, want)
 	}
 }
@@ -278,7 +278,7 @@ func TestRun_BlockedFoldsUnderRoot(t *testing.T) {
 	}
 
 	var b bytes.Buffer
-	_ = rep.Write(&b, false, 0)
+	_ = rep.Write(&b, nil, nil, false, 0)
 	out := b.String()
 	if !strings.Contains(out, "1 blocked by flux-system/cluster-apps") {
 		t.Errorf("fold line missing:\n%s", out)
@@ -288,6 +288,78 @@ func TestRun_BlockedFoldsUnderRoot(t *testing.T) {
 	}
 	if strings.Contains(out, "media/plex") {
 		t.Errorf("blocked child must not appear as a row:\n%s", out)
+	}
+}
+
+// TestRun_SurfacesNonRosterFailure pins the consolidation contract: a run-time
+// failure whose kind isn't in the roster (here a ResourceSet whose template
+// won't parse) must still appear as a failed row and count in the verdict.
+// Before the single-report consolidation this failure lived only in the
+// now-dropped stderr block; the testrunner scans Store.FailedResources for any
+// failed id the per-kind loop didn't cover and lists it so no primary fault is
+// silently dropped.
+func TestRun_SurfacesNonRosterFailure(t *testing.T) {
+	s := store.New()
+	ks := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	rs := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "broken-rs"}
+	s.AddObject(&manifest.Kustomization{Name: ks.Name, Namespace: ks.Namespace})
+	s.AddObject(&manifest.ResourceSet{Name: rs.Name, Namespace: rs.Namespace})
+	s.UpdateStatus(ks, store.StatusReady, "")
+	s.UpdateStatus(rs, store.StatusFailed, `parse template: function "nope" not defined`)
+
+	rep := Run(Job{Store: s})
+	if rep.Passed != 1 || rep.Failed != 1 {
+		t.Fatalf("want 1 passed (KS) + 1 failed (ResourceSet), got %+v", rep)
+	}
+	var found *Case
+	for i := range rep.Cases {
+		if rep.Cases[i].ID == rs {
+			found = &rep.Cases[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("ResourceSet failure not surfaced as a case: %+v", rep.Cases)
+	}
+	if found.Outcome != OutcomeFailed || !strings.Contains(found.Reason, "nope") {
+		t.Errorf("ResourceSet case = %+v, want failed with the parse error", found)
+	}
+	var b bytes.Buffer
+	_ = rep.Write(&b, nil, nil, false, 0)
+	if out := b.String(); !strings.Contains(out, "broken-rs") || !strings.Contains(out, "nope") {
+		t.Errorf("roster must show the non-roster failure inline:\n%s", out)
+	}
+}
+
+// TestRun_SkipsSyntheticHelmChartFailure pins the dedup half of the scan: a
+// synthetic HelmChart (internal plumbing flate materializes to fetch an HR's
+// chart) is never a first-class tested kind, and its failure always re-surfaces
+// on the consuming HR's own row. Listing the hash-suffixed chart id again would
+// be pure duplication, so the scan skips KindHelmChart.
+func TestRun_SkipsSyntheticHelmChartFailure(t *testing.T) {
+	s := store.New()
+	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "nvidia", Name: "gpu-operator"}
+	chart := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "nvidia", Name: "nvidia-gpu-operator-16d855d"}
+	s.AddObject(&manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace})
+	s.AddObject(&manifest.HelmChartSource{Name: chart.Name, Namespace: chart.Namespace})
+	s.UpdateStatus(hr, store.StatusFailed, "chart source HelmChart/nvidia/nvidia-gpu-operator-16d855d not ready: 404 Not Found")
+	s.UpdateStatus(chart, store.StatusFailed, "download chart: 404 Not Found")
+
+	rep := Run(Job{Store: s})
+	if rep.Failed != 1 {
+		t.Fatalf("want only the HR counted as failed, got %+v", rep)
+	}
+	for _, c := range rep.Cases {
+		if c.ID.Kind == manifest.KindHelmChart {
+			t.Errorf("synthetic HelmChart must not get its own row: %+v", c)
+		}
+	}
+	// Write renders only Cases (+ blocked folds), so the Case-level check above
+	// already guarantees no separate HelmChart row; confirm the consuming HR
+	// row still carries the chart error so the failure isn't lost.
+	var b bytes.Buffer
+	_ = rep.Write(&b, nil, nil, false, 0)
+	if out := b.String(); !strings.Contains(out, "gpu-operator") || !strings.Contains(out, "404") {
+		t.Errorf("the consuming HR row must still carry the chart error:\n%s", out)
 	}
 }
 
@@ -313,7 +385,7 @@ func TestRun_BlockedByMissingDep(t *testing.T) {
 		t.Fatalf("want the missing root marked Missing, got %+v", rep.BlockedRoots)
 	}
 	var b bytes.Buffer
-	_ = rep.Write(&b, false, 0)
+	_ = rep.Write(&b, nil, nil, false, 0)
 	if !strings.Contains(b.String(), "not found") {
 		t.Errorf("missing root should render (not found):\n%s", b.String())
 	}

@@ -155,8 +155,8 @@ func sortedIDs(ids []manifest.NamedResource) []manifest.NamedResource {
 func (m Model) Write(w io.Writer, color bool, elapsed time.Duration) error {
 	doc := Document(
 		m.failuresBlock(color),
-		m.warningsBlock(color),
-		m.notesBlock(color),
+		WarningsBlock(m.Warnings, color),
+		NotesBlock(m.Notes, color),
 		m.verdictBlock(color, elapsed),
 	)
 	if doc == "" {
@@ -188,11 +188,13 @@ func (m Model) failuresBlock(color bool) string {
 	return strings.Join(rows, "\n")
 }
 
-// warningsBlock renders the advisory section: a header counting the warnings,
-// then one attributed line each (with an indented detail line when present).
-func (m Model) warningsBlock(color bool) string {
-	items := make([]string, 0, len(m.Warnings))
-	for _, wn := range m.Warnings {
+// WarningsBlock renders the advisory section: a header counting the warnings,
+// then one attributed line each (with an indented detail line when present), or
+// "" when there are none. Exported so the build/diff report and the `flate test`
+// roster surface advisories identically.
+func WarningsBlock(warnings []manifest.Warning, color bool) string {
+	items := make([]string, 0, len(warnings))
+	for _, wn := range warnings {
 		head := wn.Message
 		if wn.Resource != (manifest.NamedResource{}) {
 			head = wn.Resource.Kind + " " + wn.Resource.NamespacedName() + ": " + wn.Message
@@ -206,21 +208,22 @@ func (m Model) warningsBlock(color bool) string {
 		}
 		items = append(items, item)
 	}
-	return section(style.Warn(fmt.Sprintf("%s warnings (%d)", style.GlyphWarn, len(m.Warnings)), color), items)
+	return section(style.Warn(fmt.Sprintf("%s warnings (%d)", style.GlyphWarn, len(warnings)), color), items)
 }
 
-// notesBlock renders the operational-log section: a header counting the notes,
-// then one dim line each (collapsed identical lines carry a ×N suffix).
-func (m Model) notesBlock(color bool) string {
-	items := make([]string, 0, len(m.Notes))
-	for _, n := range m.Notes {
+// NotesBlock renders the operational-log section: a header counting the notes,
+// then one dim line each (collapsed identical lines carry a ×N suffix), or ""
+// when there are none. Shared by every footer-bearing surface.
+func NotesBlock(notes []Note, color bool) string {
+	items := make([]string, 0, len(notes))
+	for _, n := range notes {
 		line := n.Text
 		if n.Count > 1 {
 			line = fmt.Sprintf("%s (×%d)", line, n.Count)
 		}
 		items = append(items, style.Dim(line, color))
 	}
-	return section(style.Dim(fmt.Sprintf("notes (%d)", noteTotal(m.Notes)), color), items)
+	return section(style.Dim(fmt.Sprintf("notes (%d)", noteTotal(notes)), color), items)
 }
 
 // verdictBlock renders the "✗ N failed · M blocked   elapsed" line, or "" when

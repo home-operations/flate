@@ -349,16 +349,18 @@ func TestE2E_DiffImagesRequiresBaselineWhenNoGit(t *testing.T) {
 }
 
 // TestE2E_BootstrapErrorSurfacesNotMasked pins the contract that
-// when discovery itself fails (e.g. a ResourceSet template that
-// fails to parse, a YAML schema rejection), the actual error reaches
-// the user instead of getting drowned under a wall of phantom
-// "FAILED (no status reported)" rows from the testrunner running on
-// a partial Store. Surfaced by tholinka/home-ops where an
-// unimplemented inputStrategy: Permute ResourceSet produced 247
-// generic failure rows instead of the actual message. Now that
-// Permute is implemented, the test triggers Bootstrap failure with
-// a malformed template — same code path through
-// runOrchestratorCfg's `res == nil` guard.
+// when a ResourceSet fails (here a template that won't parse), the
+// actual error reaches the user instead of getting drowned under a
+// wall of phantom "FAILED (no status reported)" rows. Surfaced by
+// tholinka/home-ops where an unimplemented inputStrategy: Permute
+// ResourceSet produced 247 generic failure rows instead of the actual
+// message.
+//
+// ResourceSet isn't a roster kind, so its run-time failure surfaces
+// through the testrunner's Store.FailedResources scan (see
+// testrunner.Run) as a single failed row carrying the real parse
+// error — never the phantom "no status reported" rows that a partial
+// Store would otherwise produce.
 func TestE2E_BootstrapErrorSurfacesNotMasked(t *testing.T) {
 	dir := t.TempDir()
 	// Minimal repo: one Kustomization + one ResourceSet whose template

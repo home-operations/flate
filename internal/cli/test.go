@@ -82,16 +82,26 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			// (colorprofile) honors NO_COLOR / CLICOLOR / TTY-ness; piped or
 			// redirected output stays plain.
 			color := style.ColorEnabled(cmd.OutOrStdout())
-			if err := report.Write(cmd.OutOrStdout(), color, elapsed); err != nil {
+			// One consolidated report on stdout: the per-resource roster (failures
+			// already appear inline on their rows), then render advisories
+			// (warnings) and deferred logs (notes), then a single verdict. No
+			// separate stderr failure block — that double-printed every failure and
+			// a second, differently-counted verdict.
+			warnings := scopedWarnings(o, res, c)
+			notes := drainLogNotes()
+			if err := report.Write(cmd.OutOrStdout(), warnings, notes, color, elapsed); err != nil {
 				return errors.Join(err, runErr)
 			}
 			final := runErr
 			if report.AnyFailed() {
 				final = errors.Join(errors.New("test failures detected"), runErr)
 			}
-			// Root-cause report (+ deferred-log footer) to stderr, replacing the
-			// flat aggregate; the per-resource table above stays on stdout.
-			return reportFailures(cmd.ErrOrStderr(), o, res, c, final, elapsed)
+			// The report is rendered; wrap so run's top-level printer doesn't
+			// reprint the error.
+			if final != nil {
+				return reportedError{final}
+			}
+			return nil
 		},
 	}
 	bindCommon(cmd.Flags(), c)

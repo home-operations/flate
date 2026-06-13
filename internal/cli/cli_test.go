@@ -461,14 +461,18 @@ func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 	if !strings.Contains(stdout, "✗") {
 		t.Errorf("stdout should still include failed test row:\n%s", stdout)
 	}
-	// The scoped failure surfaces in the styled root-cause report on stderr —
-	// the failing resource named with its real (primary) error, plus a verdict —
-	// not the old flat "reconcile completed with …" aggregate.
-	if !strings.Contains(stderr, "apps") || !strings.Contains(stderr, "kustomize build") {
-		t.Errorf("stderr should surface the failing resource and its error, got %q", stderr)
+	// `flate test` is one consolidated report on stdout: the failing resource
+	// named with its real (primary) error on its roster row, plus the verdict.
+	// The old separate stderr failure block — which double-printed failures and a
+	// second, differently-counted verdict — is gone.
+	if !strings.Contains(stdout, "apps") || !strings.Contains(stdout, "kustomize build") {
+		t.Errorf("stdout should surface the failing resource and its error, got %q", stdout)
 	}
-	if !strings.Contains(stderr, "failed") {
-		t.Errorf("stderr should include the failure verdict, got %q", stderr)
+	if !strings.Contains(stdout, "failed") {
+		t.Errorf("stdout should include the failure verdict, got %q", stdout)
+	}
+	if strings.Contains(stderr, "failed") {
+		t.Errorf("failures + verdict are consolidated on stdout; stderr must not carry a second verdict, got %q", stderr)
 	}
 }
 

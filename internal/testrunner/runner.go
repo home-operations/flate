@@ -101,13 +101,22 @@ func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 // reasonIndent aligns a failure's continuation lines beneath its row.
 const reasonIndent = "         "
 
-// Write renders the report as a roster block (one row per case, plus a folded
-// line per blocked root) followed by the verdict summary, composed through the
-// shared report.Document/report.Verdict toolkit so the test surface and the
-// build/diff failure report speak one spacing and verdict grammar. color gates
-// the ANSI codes — the caller decides based on the sink (see cli.test).
-func (r Report) Write(w io.Writer, color bool, elapsed time.Duration) error {
-	_, err := io.WriteString(w, report.Document(r.rosterBlock(color), r.verdict(color, elapsed)))
+// Write renders the whole `flate test` report to w as one document: the roster
+// (one row per case, plus a folded line per blocked root), then the render
+// advisories (warnings) and deferred operational logs (notes), then a single
+// verdict — composed through the shared report toolkit so the test surface and
+// the build/diff report speak one spacing and verdict grammar. Failures already
+// appear inline on their roster rows, so this is the complete picture: there is
+// no separate failure block to print elsewhere. color gates the ANSI codes — the
+// caller decides based on the sink (see cli.test).
+func (r Report) Write(w io.Writer, warnings []manifest.Warning, notes []report.Note, color bool, elapsed time.Duration) error {
+	doc := report.Document(
+		r.rosterBlock(color),
+		report.WarningsBlock(warnings, color),
+		report.NotesBlock(notes, color),
+		r.verdict(color, elapsed),
+	)
+	_, err := io.WriteString(w, doc)
 	return err
 }
 
@@ -221,6 +230,53 @@ func Run(j Job) Report {
 			}
 			rep.Cases = append(rep.Cases, c)
 		}
+	}
+	// Surface run failures whose kind isn't in the roster (e.g. a
+	// ResourceSet whose template won't parse, or a synthetic HelmChart) so a
+	// primary fault isn't silently dropped now that there's no separate
+	// build/diff failure block to catch it. The per-kind loop above already
+	// covered roster kinds; here we only add previously-unseen failed ids.
+	// Blocked-folded victims keep folding under their root; a failed id that
+	// is itself blocked joins the cascade rather than listing on its own row.
+	seen := make(map[manifest.NamedResource]bool, len(rep.Cases)+len(blocked))
+	for _, c := range rep.Cases {
+		seen[c.ID] = true
+	}
+	for id := range blocked {
+		seen[id] = true
+	}
+	extra := make([]manifest.NamedResource, 0)
+	for id := range j.Store.FailedResources() {
+		if seen[id] || id == manifest.BootstrapSourceID {
+			continue
+		}
+		// A synthetic HelmChart is internal plumbing flate materializes to
+		// drive an HR's chart fetch — never a first-class tested kind (absent
+		// from every `test` subcommand's roster). Its failure always re-surfaces
+		// inline on the consuming HR's row ("chart source … not ready: <err>"),
+		// so listing the hash-suffixed chart id again is pure duplication.
+		if id.Kind == manifest.KindHelmChart {
+			continue
+		}
+		if j.Name != "" && id.Name != j.Name {
+			continue
+		}
+		if j.Include != nil && !j.Include(id) {
+			continue
+		}
+		extra = append(extra, id)
+	}
+	slices.SortFunc(extra, func(a, b manifest.NamedResource) int { return a.Compare(b) })
+	for _, id := range extra {
+		rep.Matched++
+		c := classify(j.Store, id)
+		if c.Outcome == OutcomeBlocked {
+			rep.Blocked++
+			blocked[id] = j.Store.BlockedBy(id)
+			continue
+		}
+		rep.Failed++
+		rep.Cases = append(rep.Cases, c)
 	}
 	rep.BlockedRoots = blockedGroups(j.Store, blocked)
 	return rep

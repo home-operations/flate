@@ -60,6 +60,17 @@ type Fetcher struct {
 	// recursion. The worktree materialization only needs the resolved
 	// tip's tree, which a shallow clone provides in full.
 	Depth int
+
+	// RestrictSchemes rejects GitRepository URLs whose transport is not
+	// https/ssh — file:// (local repo read), git:// (plaintext), http://,
+	// and bare paths. It is the untrusted-render guard for #743: a fork-PR
+	// GitRepository{ url: file:///some/path } would otherwise clone an
+	// arbitrary in-pod git repo and surface its manifests in the diff.
+	// Set from Config.RestrictEgress (the same --restrict-egress switch
+	// that arms the SSRF guard), so trusted renders keep file:// working
+	// (local fixtures, the synthetic self-source — which is pre-seeded and
+	// never reaches this fetch path anyway). Default false.
+	RestrictSchemes bool
 }
 
 // Fetch implements source.TypedFetcher[*manifest.GitRepository].
@@ -117,7 +128,7 @@ func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (transport.Auth
 // Supported transports: HTTPS (anonymous, basic, bearer), SSH (key
 // from SecretRef or ssh-agent), and file:// URLs.
 func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
-	if err := validateRepo(repo); err != nil {
+	if err := f.validateRepo(repo); err != nil {
 		return nil, err
 	}
 
@@ -225,15 +236,37 @@ func (f *Fetcher) cloneIntoSlot(ctx context.Context, repo *manifest.GitRepositor
 }
 
 // validateRepo guards the preconditions Fetch requires before touching
-// the network: a non-nil CR with a URL.
-func validateRepo(repo *manifest.GitRepository) error {
+// the network: a non-nil CR with a URL, and — when RestrictSchemes is on
+// (untrusted render) — a remote https/ssh transport rather than a
+// local/plaintext scheme.
+func (f *Fetcher) validateRepo(repo *manifest.GitRepository) error {
 	if repo == nil {
 		return errors.New("git repository is nil")
 	}
 	if repo.URL == "" {
 		return fmt.Errorf("%w: %s missing url", manifest.ErrInput, gitID(repo))
 	}
+	if f.RestrictSchemes && !gitSchemeAllowed(repo.URL) {
+		return fmt.Errorf("%w: %s url %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
+			manifest.ErrInput, gitID(repo), repo.URL)
+	}
 	return nil
+}
+
+// gitSchemeAllowed reports whether url uses a remote transport safe for an
+// untrusted render: https, ssh, or scp-style (user@host:path → SSH). It
+// blocks file:// (local repo read, #743), git:// (plaintext), http://, and
+// bare filesystem paths.
+func gitSchemeAllowed(url string) bool {
+	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "ssh://") {
+		return true
+	}
+	// scp-style git@host:path carries no "://" scheme: a ':' before any '/'
+	// with a '@' in the host part. go-git routes this over SSH.
+	if i := strings.IndexAny(url, ":/"); i >= 0 && url[i] == ':' && strings.Contains(url[:i], "@") {
+		return true
+	}
+	return false
 }
 
 func effectiveNamedRef(ref manifest.GitRepositoryRef) string {

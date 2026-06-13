@@ -43,6 +43,13 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, repoURL, ref string) (*st
 	if repoURL == "" {
 		return nil, fmt.Errorf("%w: remote git base missing url", manifest.ErrInput)
 	}
+	// Defense-in-depth for #743: an untrusted render only reaches here via an
+	// https kustomize ?ref= base today (see isGitRemoteBase), but gate the
+	// scheme anyway so a future broadening can't smuggle a file:// base past it.
+	if f.RestrictSchemes && !gitSchemeAllowed(repoURL) {
+		return nil, fmt.Errorf("%w: remote git base %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
+			manifest.ErrInput, repoURL)
+	}
 	refLabel := cmp.Or(ref, "HEAD")
 
 	// Per-(url, ref) slot, anonymous (authID ""). The ref label is

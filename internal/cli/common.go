@@ -119,10 +119,12 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"declared by an in-repo ExternalSecret/SealedSecret (with a static target name) is "+
 			"auto-skipped without this flag. cert/proxy secretRefs still fail loud.")
 	fs.BoolVar(&f.restrictEgress, "restrict-egress", false,
-		"block source fetches (kustomize remote resources/bases, Git/OCI/Helm/Bucket sources) to "+
-			"loopback, RFC1918, link-local, and cloud-metadata (169.254.169.254) addresses. Off by "+
-			"default — only enable when rendering UNTRUSTED input; trusted repos legitimately reach "+
-			"private/LAN hosts. A configured proxy and ssh:// git are not covered (operator-owned).")
+		"untrusted-render guard: block source fetches (kustomize remote resources/bases, "+
+			"Git/OCI/Helm/Bucket sources) to loopback, RFC1918, link-local, and cloud-metadata "+
+			"(169.254.169.254) addresses, AND reject file:// / non-https-ssh GitRepository sources "+
+			"(no reading arbitrary in-pod repos). Off by default — only enable when rendering "+
+			"UNTRUSTED input; trusted repos legitimately reach private/LAN hosts and use local "+
+			"file:// self-sources. A configured proxy and ssh:// git egress are not covered (operator-owned).")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
 	// Commands with no -o variants (test) register no -o flag at all, so
 	// `-o anything` is an unknown flag rather than a rendered alternative.

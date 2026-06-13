@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,75 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	}
 	if art2.Revision != sa.Revision {
 		t.Errorf("unchanged default ref revision changed: %s vs %s", sa.Revision, art2.Revision)
+	}
+}
+
+// TestFetcher_RestrictSchemesBlocksFileURL: with RestrictSchemes on (the
+// untrusted-render guard, #743), a file:// GitRepository is rejected before
+// any clone with an ErrInput-wrapped error naming the scheme; with it off
+// (the default) the same file:// source clones normally. Guards against a
+// fork-PR file:// source disclosing an arbitrary in-pod git repo.
+func TestFetcher_RestrictSchemesBlocksFileURL(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	repo := &manifest.GitRepository{
+		Name: "evil", Namespace: "flux-system",
+		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+	}
+
+	blocked := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir())), RestrictSchemes: true}
+	_, err := blocked.Fetch(context.Background(), repo)
+	if err == nil {
+		t.Fatal("RestrictSchemes: true must reject a file:// GitRepository")
+	}
+	if !errors.Is(err, manifest.ErrInput) {
+		t.Errorf("error must wrap manifest.ErrInput; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "scheme not allowed") {
+		t.Errorf("error must name the rejected scheme; got %v", err)
+	}
+
+	allowed := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))} // RestrictSchemes defaults off
+	if _, err := allowed.Fetch(context.Background(), repo); err != nil {
+		t.Fatalf("RestrictSchemes off must allow file://: %v", err)
+	}
+}
+
+// TestFetcher_RestrictSchemesAllowsRemoteURLs: RestrictSchemes only blocks
+// local/plaintext schemes — an https:// or scp-style (git@host:path) URL
+// passes the validateRepo scheme check even when the guard is on. Asserted at
+// the validation layer to avoid a live clone of an unreachable remote.
+func TestFetcher_RestrictSchemesAllowsRemoteURLs(t *testing.T) {
+	f := &Fetcher{RestrictSchemes: true}
+	for _, url := range []string{"https://github.com/o/r", "ssh://git@github.com/o/r", "git@github.com:o/r.git"} {
+		repo := &manifest.GitRepository{
+			Name: "r", Namespace: "flux-system",
+			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: url},
+		}
+		if err := f.validateRepo(repo); err != nil {
+			t.Errorf("validateRepo(%q) under RestrictSchemes must pass: %v", url, err)
+		}
+	}
+}
+
+func TestGitSchemeAllowed(t *testing.T) {
+	cases := map[string]bool{
+		"https://github.com/o/r":    true,
+		"ssh://git@github.com/o/r":  true,
+		"git@github.com:o/r.git":    true, // scp-style → SSH
+		"user@host.xz:path/to/repo": true,
+		"file:///srv/repo":          false,
+		"git://github.com/o/r":      false,
+		"http://github.com/o/r":     false,
+		"/bare/local/path":          false,
+		"./relative":                false,
+		"ssh-but-not-scheme://x":    false, // not the ssh:// prefix
+		"":                          false,
+	}
+	for url, want := range cases {
+		if got := gitSchemeAllowed(url); got != want {
+			t.Errorf("gitSchemeAllowed(%q) = %v, want %v", url, got, want)
+		}
 	}
 }
 

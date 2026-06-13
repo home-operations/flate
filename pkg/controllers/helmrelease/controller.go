@@ -150,7 +150,12 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// driftDetection / install.crds / upgrade strategy / rollback to
 	// every HR, so all of them were hit by this).
 	if parent, ok := c.LookupParent(id); ok {
-		err := c.Require(ctx, id, hr.Timeout,
+		// The parent's render may have replaced this HR in the store
+		// with a patched copy; re-read so the rest of reconcile uses
+		// the canonical spec instead of the pre-patch snapshot we
+		// were dispatched with.
+		fresh, ok, err := base.RequireRefresh[*manifest.HelmRelease](
+			ctx, c.Controller, id, hr.Timeout,
 			[]manifest.DependencyRef{{NamedResource: parent}},
 			"waiting for parent KS",
 			func(sum depwait.Summary) error {
@@ -160,12 +165,8 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		if err != nil {
 			return err
 		}
-		// The parent's render may have replaced this HR in the store
-		// with a patched copy; re-read so the rest of reconcile uses
-		// the canonical spec instead of the pre-patch snapshot we
-		// were dispatched with.
-		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
-			hr = obj
+		if ok {
+			hr = fresh
 		}
 	}
 	if err := c.PreflightError(id); err != nil {

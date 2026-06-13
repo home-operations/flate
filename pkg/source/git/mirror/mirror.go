@@ -67,9 +67,9 @@ func urlHash(url string) string {
 	return hex.EncodeToString(h[:8])
 }
 
-// proxyOptions converts a nullable ProxyConfig into go-git's inline
+// ProxyOptions converts a nullable ProxyConfig into go-git's inline
 // struct so every call site doesn't repeat the nil guard.
-func proxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
+func ProxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
 	if proxy == nil {
 		return transport.ProxyOptions{}
 	}
@@ -118,7 +118,7 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 		repo, err = git.PlainCloneContext(ctx, path, true, &git.CloneOptions{
 			URL:          url,
 			Auth:         auth,
-			ProxyOptions: proxyOptions(proxy),
+			ProxyOptions: ProxyOptions(proxy),
 			Depth:        plan.Depth,
 		})
 		if err == nil {
@@ -168,7 +168,7 @@ func (m *Cache) fetchInto(ctx context.Context, repo *git.Repository, auth transp
 	err := repo.FetchContext(ctx, &git.FetchOptions{
 		Auth:         auth,
 		RefSpecs:     refSpecs,
-		ProxyOptions: proxyOptions(proxy),
+		ProxyOptions: ProxyOptions(proxy),
 		Depth:        plan.Depth,
 		// All refspecs above are explicit (named refs, +refs/tags/*, or the
 		// +refs/*:refs/* fallback), so suppress go-git's default tag auto-

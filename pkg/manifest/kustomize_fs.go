@@ -155,7 +155,7 @@ func BuildKSClaims(kss []*Kustomization, repoRoot string, cache *ComponentCache)
 			continue
 		}
 		id := ks.Named()
-		base := normalizeClaimBase(ks.Path)
+		base := NormalizeClaimBase(ks.Path)
 		claims = append(claims, KSClaim{ID: id, Prefix: base + "/"})
 		for _, comp := range ks.Components {
 			add(id, base, comp)
@@ -170,11 +170,11 @@ func BuildKSClaims(kss []*Kustomization, repoRoot string, cache *ComponentCache)
 	return claims
 }
 
-// normalizeClaimBase turns a Kustomization spec.path into a clean,
+// NormalizeClaimBase turns a Kustomization spec.path into a clean,
 // slash-separated, repo-relative base with no trailing slash. ToSlash is
 // applied so Windows-style spec.path values (rare, but unconstrained by the
 // Flux CRD) normalize to the same shape as SourceFiles keys.
-func normalizeClaimBase(p string) string {
+func NormalizeClaimBase(p string) string {
 	p = filepath.ToSlash(p)
 	p = strings.TrimPrefix(p, "./")
 	return strings.TrimSuffix(p, "/")

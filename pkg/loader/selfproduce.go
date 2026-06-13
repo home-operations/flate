@@ -127,7 +127,7 @@ func (b *selfProduceBuilder) directives(dir string) (kustomizeDirectives, bool) 
 func (b *selfProduceBuilder) walkRoot(ks *manifest.Kustomization) {
 	id := ks.Named()
 	rootNS := cmp.Or(ks.TargetNamespace, ks.Namespace)
-	specDir := strings.TrimSuffix(NormalizePrefix(ks.Path), "/")
+	specDir := manifest.NormalizeClaimBase(ks.Path)
 	visited := map[string]struct{}{}
 
 	if _, ok := b.directives(specDir); ok {

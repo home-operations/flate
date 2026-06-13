@@ -25,6 +25,7 @@ import (
 	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
 // nodeKind classifies a probed path so a dir↔file↔absent transition the build
@@ -83,7 +84,7 @@ func newReadSet(root string) *readSet {
 // not-ok so the caller can bypass.
 func (rs *readSet) rel(abs string) (string, bool) {
 	r, err := filepath.Rel(rs.root, abs)
-	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+	if err != nil || safepath.Escaped(r) {
 		return "", false
 	}
 	return filepath.ToSlash(r), true

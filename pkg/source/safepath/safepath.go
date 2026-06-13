@@ -46,7 +46,7 @@ func SafeJoin(base, rel string, rejectAbsolute bool) (string, error) {
 		}
 		target := filepath.Join(base, clean)
 		relInside, err := filepath.Rel(base, target)
-		if err != nil || isEscaped(relInside) {
+		if err != nil || Escaped(relInside) {
 			return "", fmt.Errorf("path escapes target directory: %q", rel)
 		}
 		return target, nil
@@ -60,13 +60,17 @@ func SafeJoin(base, rel string, rejectAbsolute bool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("path resolution: %w", err)
 	}
-	if isEscaped(relInside) {
+	if Escaped(relInside) {
 		return "", fmt.Errorf("path traversal: %q escapes target directory", rel)
 	}
 	return target, nil
 }
 
-func isEscaped(rel string) bool {
+// Escaped reports whether a filepath.Rel result escapes its base: the rel is
+// exactly ".." or begins with a ".." path component (OS separator). It is the
+// shared containment predicate used by SafeJoin, Contains, and callers that
+// keep the rel string but must reject repo/root escapes.
+func Escaped(rel string) bool {
 	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
@@ -77,5 +81,5 @@ func isEscaped(rel string) bool {
 // remote-base copy to confine a symlink's resolved target to the base root.
 func Contains(root, target string) bool {
 	rel, err := filepath.Rel(root, target)
-	return err == nil && !isEscaped(rel)
+	return err == nil && !Escaped(rel)
 }

@@ -191,7 +191,7 @@ func (f *Fetcher) cloneIntoSlot(ctx context.Context, repo *manifest.GitRepositor
 
 	cloneOpts := &git.CloneOptions{URL: url, NoCheckout: true, Auth: auth}
 	if proxy != nil {
-		cloneOpts.ProxyOptions = proxyOptions(proxy)
+		cloneOpts.ProxyOptions = mirror.ProxyOptions(proxy)
 	}
 	if repo.RecurseSubmodules {
 		cloneOpts.RecurseSubmodules = git.DefaultSubmoduleRecursionDepth
@@ -324,7 +324,7 @@ func fetchExplicitNamedRef(ctx context.Context, repo *git.Repository, auth trans
 		RefSpecs: []config.RefSpec{config.RefSpec("+" + name + ":" + name)},
 	}
 	if proxy != nil {
-		opts.ProxyOptions = proxyOptions(proxy)
+		opts.ProxyOptions = mirror.ProxyOptions(proxy)
 	}
 	if err := remote.FetchContext(ctx, opts); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return fmt.Errorf("fetch ref.name %s: %w", name, err)
@@ -471,16 +471,6 @@ func gitID(repo *manifest.GitRepository) string {
 func authIdentity(repo *manifest.GitRepository) string {
 	return source.AuthIdentityFromRefs(repo.Namespace,
 		repo.SecretRef, repo.ProxySecretRef)
-}
-
-// proxyOptions maps a resolved ProxyConfig into go-git transport options,
-// shared by the clone and explicit-ref fetch paths.
-func proxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
-	return transport.ProxyOptions{
-		URL:      proxy.Address,
-		Username: proxy.Username,
-		Password: proxy.Password,
-	}
 }
 
 // commitArtifact atomically commits the staged slot and stamps the

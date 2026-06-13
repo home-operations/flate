@@ -15,7 +15,6 @@ import (
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -241,8 +240,7 @@ var helmHTTPTimeout = 120 * time.Second
 // guard's blocking is gated by the process-global toggle, so this is inert
 // unless ssrfguard.Restrict is enabled.
 var helmGuardedTransport = func() *http.Transport {
-	tr, _ := source.NewHTTPTransport(nil, nil) // nil/nil never errors
-	tr.DisableCompression = true
+	tr, _ := helmTransport(nil) // nil/nil never errors
 	return tr
 }()
 

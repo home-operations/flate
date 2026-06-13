@@ -1,6 +1,7 @@
 package helmchart
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 
@@ -65,6 +66,14 @@ func (f *Fetcher) helmRepoTransport(r *manifest.HelmRepository) (*http.Transport
 	if err != nil {
 		return nil, err
 	}
+	return helmTransport(tlsCfg)
+}
+
+// helmTransport builds the helm-specific HTTP transport kernel: the SSRF
+// egress guard (source.NewHTTPTransport) carrying tlsCfg, with compression
+// disabled to match helm's own getter transport (chart tarballs are already
+// compressed — the only source kind that disables it).
+func helmTransport(tlsCfg *tls.Config) (*http.Transport, error) {
 	tr, err := source.NewHTTPTransport(tlsCfg, nil)
 	if err != nil {
 		return nil, err

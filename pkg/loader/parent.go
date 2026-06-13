@@ -14,9 +14,7 @@ import (
 // (rare, but possible since the Flux CRD doesn't constrain it)
 // normalize to the same shape as loader.SourceFiles entries.
 func NormalizePrefix(p string) string {
-	p = filepath.ToSlash(p)
-	p = strings.TrimPrefix(p, "./")
-	return strings.TrimSuffix(p, "/") + "/"
+	return manifest.NormalizeClaimBase(p) + "/"
 }
 
 // KSPathPrefix pairs a Kustomization id with one of its

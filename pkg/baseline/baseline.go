@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/cas"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
 // Result describes a materialized baseline tree on disk.
@@ -185,7 +186,7 @@ func relToRepo(repoRoot, path string) (string, error) {
 	// otherwise, handled above), so no IsAbs check is needed — reject
 	// only the repo-escaping ".." and "../…" forms. A dir literally named
 	// "..foo" is in-repo and stays accepted.
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if safepath.Escaped(rel) {
 		return "", fmt.Errorf("--path %q is outside the git repo at %q; pass --path-orig explicitly", path, repoRoot)
 	}
 	return rel, nil

@@ -403,6 +403,76 @@ spec:
 	}
 }
 
+// TestE2E_ExternalSourcedWidePathDoesNotBlockCluster reproduces
+// lunevans/talos-cluster (issue #752): a "sync" Kustomization pulls a private
+// side-repo (an in-tree GitRepository flate can't fetch offline) and declares a
+// WIDE spec.path (./kubernetes) that, resolved against the LOCAL tree, covers the
+// whole cluster. flate must NOT treat that external-sourced KS as the structural
+// parent/producer of the local tree — otherwise its soft-skip (missing auth
+// Secret) cascades to every app ("179 passed · 209 blocked"). The sync KS itself
+// skips; everything else renders.
+func TestE2E_ExternalSourcedWidePathDoesNotBlockCluster(t *testing.T) {
+	dir := t.TempDir()
+	// Root entry: cluster-apps renders ./kubernetes/apps from the bootstrap
+	// source. Its file lives under ./kubernetes/flux, so the wide sync path
+	// ./kubernetes is its only structural ancestor — the trap.
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster.yaml", `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-apps, namespace: flux-system}
+spec:
+  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", "resources: [./app-a.yaml, ./sync.yaml]\n")
+	// A normal app sourced from the bootstrap tree — must pass.
+	testutil.WriteFile(t, dir, "kubernetes/apps/app-a.yaml", `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: app-a, namespace: default}
+spec:
+  path: ./kubernetes/apps/app-a
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/app-a/kustomization.yaml", "resources: [./cm.yaml]\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/app-a/cm.yaml", `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: app-a, namespace: default}
+data: {k: v}
+`)
+	// The trap: a sync KS with a WIDE path, sourced from an external private repo.
+	testutil.WriteFile(t, dir, "kubernetes/apps/sync.yaml", `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: side-repo, namespace: flux-system}
+spec:
+  url: ssh://git@github.com/someone/private-side-repo.git
+  ref: {branch: main}
+  secretRef: {name: side-repo-deploy}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: side-sync, namespace: flux-system}
+spec:
+  path: ./kubernetes
+  sourceRef: {kind: GitRepository, name: side-repo, namespace: flux-system}
+`)
+
+	// --allow-missing-secrets soft-skips the external source; a skip is not a
+	// failure so the run is clean (runCLI requires exit 0).
+	out := runCLI(t, "test", "all", "--path", dir, "--allow-missing-secrets")
+	if !strings.Contains(out, "app-a") || !strings.Contains(out, "passed") {
+		t.Errorf("a bootstrap-sourced app must render, not block, behind an external-sourced wide-path KS:\n%s", out)
+	}
+	if strings.Contains(out, "blocked") {
+		t.Errorf("an external-sourced wide-path KS must not parent (and block) the local tree:\n%s", out)
+	}
+	if !strings.Contains(out, "skipped") {
+		t.Errorf("the external-sourced sync KS (and its source) should skip:\n%s", out)
+	}
+}
+
 // TestE2E_ComponentChangePropagatesToAllConsumers — the fixture has
 // two apps (app-a, app-b) consuming components/shared; mutating the
 // shared component must show up in both consumers' diffs.

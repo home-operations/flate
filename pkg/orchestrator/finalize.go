@@ -28,7 +28,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 	// the orchestrator side. Route through the shared component
 	// cache populated during Bootstrap so the per-KS component file
 	// reads are served from memory rather than re-stat'd here.
-	prefixes := loader.KSPathPrefixesWithCache(o.store, o.repoRoot, o.componentCache)
+	prefixes := loader.KSPathPrefixesLocalOnly(o.store, o.repoRoot, o.componentCache)
 	for id, info := range failed {
 		if !isReconcilableKind(id.Kind) {
 			continue

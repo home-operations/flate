@@ -33,6 +33,67 @@ type KSPathPrefix struct {
 	Prefix string
 }
 
+// ExternalSourcedKSIDs returns the ids of Kustomizations whose sourceRef points
+// at a genuine EXTERNAL source rather than the working tree, so callers can keep
+// their spec.path from being resolved against the local checkout.
+//
+// flate renders the local tree. A KS sourced from the bootstrap/self source (or
+// a bare sourceRef, which anchors on the seeded BootstrapSourceID) renders that
+// local tree, so its spec.path legitimately claims local prefixes. But a KS
+// sourced from an in-tree GitRepository/OCIRepository CR that was NOT aliased to
+// the working tree — a private side-repo synced into the cluster, e.g.
+// `shelly-fleet` (ssh://…/shelly-fleet.git) with `path: ./kubernetes` — renders
+// THAT repo's tree, which flate can't see. Letting such a KS claim local
+// prefixes makes it the false structural parent/producer of everything beneath a
+// wide spec.path like ./kubernetes, so when its source soft-skips (missing auth
+// Secret) the skip cascades to the entire cluster (179 passed / 209 blocked on
+// lunevans/talos-cluster, issue #752).
+//
+// A source is "local" — excluded from the result — when: the sourceRef is bare
+// (→ BootstrapSourceID), the id IS BootstrapSourceID, the source carries a
+// working-tree artifact (aliased by discovery, LocalPath == repoRoot), or no
+// source object exists yet (a missing sourceRef that bootstrap aliasing
+// resolves). Only an in-tree, non-bootstrap, non-aliased source CR is external.
+func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedResource]struct{} {
+	out := map[manifest.NamedResource]struct{}{}
+	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+		if ks.Path == "" || ks.SourceName == "" {
+			continue
+		}
+		src := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+		if src == manifest.BootstrapSourceID {
+			continue
+		}
+		if art, ok := s.GetArtifact(src).(*store.SourceArtifact); ok && art.LocalPath == repoRoot {
+			continue
+		}
+		if s.GetObject(src) == nil {
+			continue
+		}
+		out[ks.Named()] = struct{}{}
+	}
+	return out
+}
+
+// KSPathPrefixesLocalOnly is KSPathPrefixesWithCache with external-sourced
+// Kustomizations' claims dropped (see ExternalSourcedKSIDs). Use this for the
+// parent index, orphan promotion, and any other local-tree path attribution so
+// an external-sourced KS never becomes the structural parent of local resources.
+func KSPathPrefixesLocalOnly(s *store.Store, repoRoot string, cache *manifest.ComponentCache) []KSPathPrefix {
+	all := KSPathPrefixesWithCache(s, repoRoot, cache)
+	external := ExternalSourcedKSIDs(s, repoRoot)
+	if len(external) == 0 {
+		return all
+	}
+	out := make([]KSPathPrefix, 0, len(all))
+	for _, p := range all {
+		if _, skip := external[p.ID]; !skip {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // KSPathPrefixesWithCache returns one or more entries per loaded
 // Kustomization with a non-empty spec.path. Each KS contributes:
 //

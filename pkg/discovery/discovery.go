@@ -185,7 +185,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// children to that parent for `flate build` output. Without the
 	// file-path entry the RS would only learn its parent once the parent
 	// re-emitted it, racing the RS's own first render.
-	prefixes := loader.KSPathPrefixesWithCache(d.cfg.Store, repoRoot, cfg.ComponentCache)
+	prefixes := loader.KSPathPrefixesLocalOnly(d.cfg.Store, repoRoot, cfg.ComponentCache)
 	parentOf := loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindKustomization)
 	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindHelmRelease))
 	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.cfg.Store, d.sourceFiles, manifest.KindResourceSet))

@@ -70,8 +70,16 @@ func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.
 		idx:       idx,
 		producers: producers,
 	}
+	// A KS sourced from a genuine external repo renders that repo's tree, not the
+	// local checkout — walking its spec.path against repoRoot would record it as
+	// producing local ConfigMaps/Secrets it doesn't own (and cascade its skip).
+	// See loader.ExternalSourcedKSIDs.
+	external := ExternalSourcedKSIDs(s, repoRoot)
 	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
 		if ks.Path == "" {
+			continue
+		}
+		if _, skip := external[ks.Named()]; skip {
 			continue
 		}
 		b.walkRoot(ks)

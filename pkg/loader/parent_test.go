@@ -16,6 +16,72 @@ func buildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFil
 	return BuildParentIndexFromPrefixes(KSPathPrefixesWithCache(s, repoRoot, cache), s, sourceFiles, childKind)
 }
 
+// TestKSPathPrefixesLocalOnly_DropsExternalSourced pins issue #752
+// (lunevans/talos-cluster): a Kustomization sourced from a genuine external repo
+// (an in-tree GitRepository with no working-tree artifact) must not claim
+// local-tree path prefixes, even with a wide spec.path like ./kubernetes —
+// otherwise it becomes the false structural parent of the whole cluster and its
+// skip cascades. A bootstrap-sourced KS and an aliased (working-tree) source
+// keep their claims.
+func TestKSPathPrefixesLocalOnly_DropsExternalSourced(t *testing.T) {
+	repoRoot := "/repo" // no on-disk component reads will resolve; that's fine
+	s := store.New()
+
+	// Bootstrap-sourced root (sourceRef == BootstrapSourceID) — kept.
+	bootstrap := &manifest.Kustomization{
+		Name: "cluster-apps", Namespace: "flux-system",
+		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps"},
+	}
+	// Self/aliased source: an in-tree GitRepository with a working-tree artifact
+	// (URL-matched by discovery) — kept.
+	aliasedKS := &manifest.Kustomization{
+		Name: "self-apps", Namespace: "flux-system",
+		SourceKind: manifest.KindGitRepository, SourceName: "home-kubernetes", SourceNamespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/self"},
+	}
+	// External source: an in-tree GitRepository with NO working-tree artifact,
+	// claiming the WIDE ./kubernetes — must be dropped.
+	external := &manifest.Kustomization{
+		Name: "side-sync", Namespace: "flux-system",
+		SourceKind: manifest.KindGitRepository, SourceName: "side-repo", SourceNamespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes"},
+	}
+	s.AddObject(bootstrap)
+	s.AddObject(aliasedKS)
+	s.AddObject(external)
+	s.AddObject(&manifest.GitRepository{Name: "home-kubernetes", Namespace: "flux-system"})
+	s.AddObject(&manifest.GitRepository{Name: "side-repo", Namespace: "flux-system"})
+	// home-kubernetes is aliased to the working tree (LocalPath == repoRoot).
+	s.SetArtifact(
+		manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"},
+		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, LocalPath: repoRoot},
+	)
+
+	ext := ExternalSourcedKSIDs(s, repoRoot)
+	if _, ok := ext[external.Named()]; !ok {
+		t.Errorf("external-sourced KS must be flagged; got %v", ext)
+	}
+	if _, ok := ext[bootstrap.Named()]; ok {
+		t.Errorf("bootstrap-sourced KS must NOT be flagged")
+	}
+	if _, ok := ext[aliasedKS.Named()]; ok {
+		t.Errorf("working-tree-aliased source must NOT be flagged")
+	}
+
+	prefixes := KSPathPrefixesLocalOnly(s, repoRoot, nil)
+	seen := map[manifest.NamedResource]bool{}
+	for _, p := range prefixes {
+		seen[p.ID] = true
+	}
+	if seen[external.Named()] {
+		t.Errorf("external-sourced KS claim must be dropped from the prefix index")
+	}
+	if !seen[bootstrap.Named()] || !seen[aliasedKS.Named()] {
+		t.Errorf("local-sourced KS claims must be retained; seen=%v", seen)
+	}
+}
+
 func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
 	// cluster-apps is the root with spec.path=./kubernetes/apps/main.
 	// karma lives at apps/main/observability/karma.yaml — under

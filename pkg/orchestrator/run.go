@@ -204,44 +204,16 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 		// empty scan, …). Nil when none, sorted deterministically by the store.
 		Warnings: o.store.Warnings(),
 	}
-	// Apply --skip-secrets / --skip-crds / --skip-kinds uniformly here
-	// so embedders calling Render see consistent Result.Manifests
-	// regardless of producing controller. helm.TemplateDocs pre-filters
-	// HR output upstream, but Kustomization-rendered docs reach the
-	// artifact unfiltered (the Store must hold the full set so
-	// downstream valuesFrom / substituteFrom resolution finds Secret /
-	// ConfigMap objects). The drop happens here, on the slice that
-	// crosses the embed boundary — Store stays whole. Iter-15 #169
-	// patched the CLI emit paths; this closes the same gap one layer
-	// down for SDK consumers.
-	skip := o.cfg.HelmOptions.SkipResourceKinds()
-	for _, kind := range reconcilableKinds {
-		for _, obj := range o.store.ListObjects(kind) {
-			id := obj.Named()
-			var mans []map[string]any
-			if art, ok := o.store.GetArtifact(id).(store.RenderedArtifact); ok {
-				mans = art.RenderedManifests()
-			}
-			// Append any ResourceSet-rendered non-Flux docs whose
-			// owning KS is this one. The RS doc itself stays in the
-			// parent's render output (kustomize emitted it); these
-			// are its synthetic children that flate evaluates offline.
-			if kind == manifest.KindKustomization {
-				if ext := o.rsExtensions[id]; len(ext) > 0 {
-					mans = append(mans, ext...)
-				}
-			}
-			mans = manifest.DropKinds(mans, skip)
-			if len(mans) > 0 {
-				res.Manifests[id] = mans
-			}
-		}
-	}
+	// failed is computed once and reused for both the manifest harvest (which
+	// drops the orphaned children of FAILED HelmReleases — see collectManifests)
+	// and res.Failed below, so the two stay consistent.
+	failed := o.store.FailedResources()
+	res.Manifests = o.collectManifests(failed)
 	// Same projection logResourceFailures + aggregateFailures use —
 	// see sanitizeFailed for the contract. Centralizing in one
 	// helper keeps the three readers in sync if the strip rule
 	// changes.
-	maps.Copy(res.Failed, sanitizeFailed(o.store.FailedResources()))
+	maps.Copy(res.Failed, sanitizeFailed(failed))
 	maps.Copy(res.Orphans, o.orphans)
 	// Tag the derived (dependency-blocked) failures so a consumer can collapse
 	// the cascade under its root cause. A failure with no blockers is primary.
@@ -251,6 +223,46 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 		}
 	}
 	return res, runErr
+}
+
+// collectManifests harvests every reconcilable resource's rendered docs into a
+// Result.Manifests map, applying --skip-secrets/--skip-crds/--skip-kinds
+// uniformly so embedders see the same output the CLI emits. Kustomization docs
+// reach the artifact unfiltered (the Store must hold the full set for downstream
+// valuesFrom/substituteFrom resolution), so the skip-kind drop happens here, at
+// the embed boundary, leaving the Store whole.
+//
+// A FAILED HelmRelease contributes no children: its artifact may be a stale
+// transient render — the parent KS's postBuild.substituteFrom not yet applied,
+// so ${…} vars were still literal and passed schema — that the canonical
+// substituted render later rejects. Failed status is sticky (base.Controller
+// never downgrades it), so dropping it here is deterministic regardless of which
+// render won the cold-cache scheduling race.
+func (o *Orchestrator) collectManifests(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource][]map[string]any {
+	skip := o.cfg.HelmOptions.SkipResourceKinds()
+	out := map[manifest.NamedResource][]map[string]any{}
+	for _, kind := range reconcilableKinds {
+		for _, obj := range o.store.ListObjects(kind) {
+			id := obj.Named()
+			var docs []map[string]any
+			// Take the rendered artifact unless this is a FAILED HelmRelease
+			// (whose artifact may be a stale transient render — see above).
+			if _, failedHR := failed[id]; kind != manifest.KindHelmRelease || !failedHR {
+				if art, ok := o.store.GetArtifact(id).(store.RenderedArtifact); ok {
+					docs = art.RenderedManifests()
+				}
+			}
+			// ResourceSet children attach to their owning Kustomization (the RS
+			// doc itself stays in the parent's kustomize output).
+			if kind == manifest.KindKustomization {
+				docs = append(docs, o.rsExtensions[id]...)
+			}
+			if docs = manifest.DropKinds(docs, skip); len(docs) > 0 {
+				out[id] = docs
+			}
+		}
+	}
+	return out
 }
 
 // Stop shuts the controllers down in reverse-construction order. Safe to call

@@ -268,6 +268,25 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	}
 	docs, err := c.Helm.TemplateDocs(ctx, hr, hr.Values, c.Options)
 	if err != nil {
+		// Best-effort rescue: if this HR's parent Kustomization couldn't read a
+		// substituteFrom Secret offline, a required value the render needs may
+		// have substituted to empty (e.g. cronjob.timeZone from ${CONFIG_TZ}).
+		// Re-render with those empties filled by placeholders so the resource
+		// stays VISIBLE in the diff instead of being dropped by the FAILED-HR
+		// gate. Bounded: only failing HRs are touched, and only adopted if the
+		// retry actually renders — a failure with a different cause (missing
+		// container, chart 404) re-fails and falls through to the error below.
+		if rescued, paths, ok := c.renderBestEffort(ctx, id, hr); ok {
+			docs, err = rescued, nil
+			c.Store.AddWarning(manifest.Warning{
+				Resource: id,
+				Category: manifest.WarnUnresolvedSubstitution,
+				Message:  "rendered best-effort: unresolved substitution values replaced with placeholders",
+				Detail:   paths,
+			})
+		}
+	}
+	if err != nil {
 		return err
 	}
 	// #744: flag top-level release values no chart template references — a key
@@ -305,6 +324,46 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
 	return nil
+}
+
+// renderBestEffort retries a failed chart render with empty values replaced by
+// placeholders, scoped to HelmReleases whose parent Kustomization couldn't read
+// a substituteFrom Secret offline — the signal that the failure is plausibly an
+// unresolved secret-sourced value rather than a genuine misconfiguration. It
+// adopts the retry only if it renders, returning the rescued docs and the
+// filled value paths. ok=false when there's nothing to rescue (no unreadable
+// parent secret, no empty leaves) or the retry still fails — the caller then
+// surfaces the original error and the HR fails as before, so a non-empty cause
+// (missing container, chart 404) is never masked.
+func (c *Controller) renderBestEffort(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease) ([]map[string]any, []string, bool) {
+	if !c.parentReadsUnreadableSecret(id) {
+		return nil, nil, false
+	}
+	filled, paths := manifest.FillEmptyValueLeaves(hr.Values)
+	if len(paths) == 0 {
+		return nil, nil, false
+	}
+	docs, err := c.Helm.TemplateDocs(ctx, hr, filled, c.Options)
+	if err != nil {
+		return nil, nil, false
+	}
+	return docs, paths, true
+}
+
+// parentReadsUnreadableSecret reports whether id's structural parent
+// Kustomization lists a substituteFrom Secret flate couldn't read offline — the
+// signal that an empty value in id's render likely came from an unresolved
+// ${VAR} rather than a genuine empty-field mistake.
+func (c *Controller) parentReadsUnreadableSecret(id manifest.NamedResource) bool {
+	parent, ok := c.LookupParent(id)
+	if !ok {
+		return false
+	}
+	ks, ok := c.Store.GetObject(parent).(*manifest.Kustomization)
+	if !ok {
+		return false
+	}
+	return len(values.UnreadableSubstituteSecrets(ks, values.NewStoreProvider(c.Store))) > 0
 }
 
 // chartSourceID is the resource identity of the HelmRelease's current chart

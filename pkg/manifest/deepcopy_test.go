@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -8,6 +9,54 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/apis/kustomize"
 )
+
+// TestFillEmptyValueLeaves: empty-string and null leaves (nested, in slices)
+// become ..PLACEHOLDER_<key>.. and are reported as sorted dotted paths;
+// non-empty leaves (strings, numbers, bools, partial concatenations) are
+// untouched; the source map is not mutated.
+func TestFillEmptyValueLeaves(t *testing.T) {
+	in := map[string]any{
+		"timeZone": "",
+		"server":   nil,
+		"replicas": 3,
+		"enabled":  false,
+		"url":      "https://x",         // non-empty
+		"suffix":   ".cfargotunnel.com", // partial concatenation — non-empty
+		"nested": map[string]any{
+			"cronjob": map[string]any{"timeZone": ""},
+			"list":    []any{"", "keep"},
+		},
+	}
+	out, paths := FillEmptyValueLeaves(in)
+
+	if in["timeZone"] != "" || in["server"] != nil {
+		t.Fatalf("source mutated: %#v", in)
+	}
+	if out["timeZone"] != "..PLACEHOLDER_timeZone.." {
+		t.Errorf("timeZone = %v, want placeholder", out["timeZone"])
+	}
+	if out["server"] != "..PLACEHOLDER_server.." {
+		t.Errorf("server = %v, want placeholder", out["server"])
+	}
+	if out["replicas"] != 3 || out["enabled"] != false || out["url"] != "https://x" || out["suffix"] != ".cfargotunnel.com" {
+		t.Errorf("non-empty leaf mutated: %#v", out)
+	}
+	if got := out["nested"].(map[string]any)["cronjob"].(map[string]any)["timeZone"]; got != "..PLACEHOLDER_timeZone.." {
+		t.Errorf("nested timeZone = %v, want placeholder", got)
+	}
+	if list := out["nested"].(map[string]any)["list"].([]any); list[0] != "..PLACEHOLDER_list.." || list[1] != "keep" {
+		t.Errorf("list = %v, want [placeholder keep]", list)
+	}
+	want := []string{"nested.cronjob.timeZone", "nested.list[0]", "server", "timeZone"}
+	if !slices.Equal(paths, want) {
+		t.Errorf("paths = %v, want %v", paths, want)
+	}
+
+	// Nil input yields no copy and no paths.
+	if cp, p := FillEmptyValueLeaves(nil); cp != nil || p != nil {
+		t.Errorf("nil input: got (%v, %v), want (nil, nil)", cp, p)
+	}
+}
 
 // DeepCopyMap must produce an independent tree — mutating the copy
 // can't bleed into the original or vice versa. Used by Kustomization.

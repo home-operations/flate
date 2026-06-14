@@ -148,3 +148,83 @@ spec:
 		t.Fatalf("missing UnresolvedSubstitution warning naming cluster-secrets; Warnings=%+v", res.Warnings)
 	}
 }
+
+// TestRender_BestEffortRescue: a HelmRelease whose required value rendered empty
+// because its parent Kustomization couldn't read a substituteFrom Secret offline
+// is rendered best-effort — the empty value is filled with a placeholder so the
+// chart templates instead of failing, the HR stays OUT of the failed roster, its
+// child carries the placeholder, and a per-HR UnresolvedSubstitution warning
+// names the filled field. The gate is the unreadable parent secret, so a chart
+// that fails for an unrelated reason would NOT be rescued.
+func TestRender_BestEffortRescue(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  url: https://example.test/cluster.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substitute: {KEEP: "ok"}
+    substituteFrom:
+      - kind: Secret
+        name: missing
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./hr.yaml\n")
+	testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: apps}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/req
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  values:
+    greeting: "${MISSING}"
+`)
+	// The chart hard-requires .Values.greeting — an empty value fails the
+	// template (the offline-substitution-empty case the rescue targets).
+	testutil.WriteFile(t, dir, "charts/req/Chart.yaml", "apiVersion: v2\nname: req\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "charts/req/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
+
+	o, err := New(Config{Path: dir, WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	demo := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+	if info, failed := res.Failed[demo]; failed {
+		t.Fatalf("demo should be rescued, not failed; got %+v", info)
+	}
+	sawPlaceholder := false
+	for _, doc := range res.Manifests[demo] {
+		if manifest.ContainsValuePlaceholder(doc) {
+			sawPlaceholder = true
+		}
+	}
+	if !sawPlaceholder {
+		t.Errorf("rescued render should carry a placeholder; manifests=%v", res.Manifests[demo])
+	}
+	warned := false
+	for _, w := range res.Warnings {
+		if w.Resource == demo && w.Category == manifest.WarnUnresolvedSubstitution && slices.Contains(w.Detail, "greeting") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("missing per-HR best-effort warning naming greeting; Warnings=%+v", res.Warnings)
+	}
+}

@@ -225,6 +225,43 @@ func TestBuildSelfProduceIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	}
 }
 
+// A SOPS-encrypted Secret in a Kustomization's render subtree is materialized
+// into the store under its rendered namespace, values wiped to placeholders — so
+// a root Kustomization that substituteFroms a secret its OWN render produces (the
+// cluster-secrets-in-a-substitutions-component self-produce pattern) resolves it
+// at Prepare instead of seeing it absent and flagging it unreadable. A cleartext
+// Secret carries no placeholders and is left alone.
+func TestBuildSelfProduceIndex_MaterializesSopsSecret(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./secret.sops.yaml\n  - ./plain.yaml\n")
+	// The top-level sops block makes parseSecret wipe stringData to placeholders.
+	testutil.WriteFile(t, dir, "apps/secret.sops.yaml",
+		"apiVersion: v1\nkind: Secret\nmetadata:\n  name: cluster-secrets\nstringData:\n  SECRET_DOMAIN: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]\nsops:\n  mac: ENC[AES256_GCM,data:a,type:str]\n  version: 3.9.0\n")
+	// Cleartext Secret → no placeholders → not materialized.
+	testutil.WriteFile(t, dir, "apps/plain.yaml",
+		"apiVersion: v1\nkind: Secret\nmetadata:\n  name: plain-secret\nstringData:\n  TOKEN: hunter2\n")
+
+	s := store.New()
+	s.AddObject(&manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+	})
+
+	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, true)
+
+	got, _ := s.GetObject(secretID("flux-system", "cluster-secrets")).(*manifest.Secret)
+	if got == nil {
+		t.Fatal("SOPS cluster-secrets was not materialized into the store")
+	}
+	if want := fmt.Sprintf(manifest.ValuePlaceholderTemplate, "SECRET_DOMAIN"); got.StringData["SECRET_DOMAIN"] != want {
+		t.Errorf("materialized SECRET_DOMAIN = %v, want %q", got.StringData["SECRET_DOMAIN"], want)
+	}
+	if obj := s.GetObject(secretID("flux-system", "plain-secret")); obj != nil {
+		t.Errorf("a cleartext Secret must not be materialized; got %#v", obj)
+	}
+}
+
 // The placeholder Secret is a wipe-mode stand-in (a stand-in for a value flate
 // can't read), so --no-wipe-secrets suppresses synthesis entirely — the secret
 // is left genuinely absent, exactly as it was before this feature.

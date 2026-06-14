@@ -221,12 +221,13 @@ func (b *selfProduceBuilder) walkBase(dir, parentNS, rootNS string, ks manifest.
 }
 
 // recordProduced parses one file `resources:` entry and records what it
-// produces into both indexes: every ConfigMap (for the self-produce index) and
-// every ExternalSecret / SealedSecret (its target Secret, for the producer
-// index). It rides decodeFileObjects with keepRaw so ExternalSecret /
-// SealedSecret — which parse as RawObject and parseFile drops — are visible,
-// while inheriting the shared parse-error / envsubst filtering, so the recorded
-// ConfigMap set stays identical to the prior parseFile-based recording.
+// produces: every ConfigMap into the self-produce index, every ExternalSecret /
+// SealedSecret into the producer index (+ a placeholder target Secret), and
+// every SOPS-wiped Secret into the store (see materializeSecret). It rides
+// decodeFileObjects with keepRaw so ExternalSecret / SealedSecret — which parse
+// as RawObject and parseFile drops — are visible, while inheriting the shared
+// parse-error / envsubst filtering, so the recorded ConfigMap set stays
+// identical to the prior parseFile-based recording.
 func (b *selfProduceBuilder) recordProduced(relFile, baseNS, rootNS string, ks manifest.NamedResource) {
 	_ = decodeFileObjects(filepath.Join(b.repoRoot, relFile),
 		manifest.ParseDocOptions{WipeSecrets: true}, true,
@@ -234,10 +235,37 @@ func (b *selfProduceBuilder) recordProduced(relFile, baseNS, rootNS string, ks m
 			switch o := obj.(type) {
 			case *manifest.ConfigMap:
 				b.recordConfigMap(o, baseNS, rootNS, ks)
+			case *manifest.Secret:
+				b.materializeSecret(o, baseNS, rootNS)
 			case *manifest.RawObject:
 				b.recordProducer(o, baseNS, rootNS)
 			}
 		})
+}
+
+// materializeSecret pre-loads an in-repo SOPS-wiped Secret into the store under
+// its rendered namespace, so a Kustomization that substituteFroms a secret its
+// OWN render produces resolves it to placeholders at Prepare time. The
+// cluster-config self-produce pattern hits this: a substitutions component holds
+// cluster-secrets, and the root Kustomization substituteFroms it — but it isn't
+// in the store until that very render runs, so its Prepare-time lookup would
+// otherwise see it absent and flag it unreadable / render its ${VAR}s empty.
+// Like a SOPS secret's keys are knowable though its values aren't (and like a
+// producer's declared keys, see recordProducer), the placeholder copy lets the
+// vars resolve. Scoped to wipe-mode placeholder secrets — a cleartext Secret is
+// left alone — and never clobbers a Secret already in the store.
+func (b *selfProduceBuilder) materializeSecret(s *manifest.Secret, baseNS, rootNS string) {
+	ns := cmp.Or(baseNS, s.Namespace, rootNS)
+	if !b.wipeSecrets || b.store == nil || ns == "" {
+		return
+	}
+	if !manifest.ContainsValuePlaceholder(s.StringData) && !manifest.ContainsValuePlaceholder(s.Data) {
+		return
+	}
+	s.Namespace = ns
+	if b.store.GetObject(s.Named()) == nil {
+		b.store.AddObject(s)
+	}
 }
 
 // recordConfigMap attributes cm to ks's self-produce set under its effective

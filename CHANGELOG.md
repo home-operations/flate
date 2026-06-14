@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.4.6](https://github.com/home-operations/flate/compare/v0.4.5...v0.4.6) (2026-06-14)
+
+
+### Features
+
+* **deps:** update module github.com/fluxcd/pkg/apis/kustomize (v1.18.0 → v1.19.0) ([#746](https://github.com/home-operations/flate/issues/746)) ([8d94d99](https://github.com/home-operations/flate/commit/8d94d99cd3191c4a8657d89736aa944670f38744))
+* **deps:** update module github.com/fluxcd/pkg/apis/meta (v1.29.0 → v1.30.0) ([#747](https://github.com/home-operations/flate/issues/747)) ([8f4b923](https://github.com/home-operations/flate/commit/8f4b923655924a7bcdb0474f2ad875d7e9511ffd))
+* **deps:** update module github.com/fluxcd/pkg/kustomize (v1.32.0 → v1.33.0) ([#738](https://github.com/home-operations/flate/issues/738)) ([adeb4ca](https://github.com/home-operations/flate/commit/adeb4cad28de5ec07e614c60a4490ccfb61d6461))
+* **deps:** update module github.com/fluxcd/pkg/kustomize (v1.33.0 → v1.34.0) ([#748](https://github.com/home-operations/flate/issues/748)) ([3adfc4e](https://github.com/home-operations/flate/commit/3adfc4ee766e3966764103a25043a82074a0bf06))
+* **orchestrator:** structured Result.Warnings channel + stale HelmRelease values ([#744](https://github.com/home-operations/flate/issues/744)) ([#753](https://github.com/home-operations/flate/issues/753)) ([eabe181](https://github.com/home-operations/flate/commit/eabe181182c90c05e19366eb86b35cc214faf0a9))
+* **producer:** treat ObjectBucketClaim as a producer of its Secret + ConfigMap ([#759](https://github.com/home-operations/flate/issues/759)) ([5101c78](https://github.com/home-operations/flate/commit/5101c785626593f1bf3c8917872d581b20dfb07a))
+* **source:** opt-in SSRF egress guard for source fetches ([#742](https://github.com/home-operations/flate/issues/742)) ([#750](https://github.com/home-operations/flate/issues/750)) ([82ff482](https://github.com/home-operations/flate/commit/82ff482af70ca1202631a169683fda50970b8d56))
+* **test:** report each blocked resource as its own roster row ([#760](https://github.com/home-operations/flate/issues/760)) ([c972a22](https://github.com/home-operations/flate/commit/c972a22f832d94868521e08719dfc96ebbce0c4a))
+
+
+### Bug Fixes
+
+* **cli:** detach the stdlib logger from the notes footer for determinism ([#758](https://github.com/home-operations/flate/issues/758)) ([49d1367](https://github.com/home-operations/flate/commit/49d1367b6ab4345896841da0ec3f160424b2691d))
+* **deps:** update kubernetes monorepo (v0.36.1 → v0.36.2) ([#745](https://github.com/home-operations/flate/issues/745)) ([9fd2aa0](https://github.com/home-operations/flate/commit/9fd2aa089ab22580115e82e38bb960277a2fdc67))
+* **deps:** update module charm.land/lipgloss/v2 (v2.0.3 → v2.0.4) ([#740](https://github.com/home-operations/flate/issues/740)) ([ae74d9d](https://github.com/home-operations/flate/commit/ae74d9d572100fa7430868f3daaff078b882b07a))
+* **helm:** override sprig shuffle so renders are deterministic ([#767](https://github.com/home-operations/flate/issues/767)) ([3be1225](https://github.com/home-operations/flate/commit/3be1225c4958aa957ada2462b481f657e2320139))
+* **kustomize:** confine remote-git-base symlinks to the base root ([#741](https://github.com/home-operations/flate/issues/741)) ([#749](https://github.com/home-operations/flate/issues/749)) ([ec34f6f](https://github.com/home-operations/flate/commit/ec34f6f381c592703f6a89b0b709851c790fbda2))
+* **loader:** don't let an external-sourced Kustomization claim the local tree ([#757](https://github.com/home-operations/flate/issues/757)) ([51204ab](https://github.com/home-operations/flate/commit/51204ab41790f5043252f1c5b270a077d0812538))
+* **orchestrator:** a FAILED HelmRelease emits no rendered children ([#768](https://github.com/home-operations/flate/issues/768)) ([7c1c0e9](https://github.com/home-operations/flate/commit/7c1c0e939085199d6ece8ea5c99eff7ca345e2af))
+* **source:** reject file:// (non-https/ssh) git schemes under --restrict-egress ([#751](https://github.com/home-operations/flate/issues/751)) ([bffdee5](https://github.com/home-operations/flate/commit/bffdee55041884f094c4e9798242d614c287d8e5))
+
+
+### Documentation
+
+* cleanup sweep pass 6 — style comment lists yellow(3) (post-v0.4.5) ([#766](https://github.com/home-operations/flate/issues/766)) ([2b1c48b](https://github.com/home-operations/flate/commit/2b1c48b572bf99ce5d47cc43e04563e5c87cd415))
+
+
+### Code Refactoring
+
+* cleanup sweep pass 1 — idiom, dedup, drop a needless clone (post-v0.4.5) ([#761](https://github.com/home-operations/flate/issues/761)) ([4db1047](https://github.com/home-operations/flate/commit/4db10477035c88707df040910ba46ad6666b715e))
+* cleanup sweep pass 2 — cross-file dedup onto shared helpers (post-v0.4.5) ([#762](https://github.com/home-operations/flate/issues/762)) ([829b6c4](https://github.com/home-operations/flate/commit/829b6c4b7eccb1dc52cb3b42f615682c905849de))
+* cleanup sweep pass 3 — shed redundant work + allocations (post-v0.4.5) ([#763](https://github.com/home-operations/flate/issues/763)) ([5c06a6d](https://github.com/home-operations/flate/commit/5c06a6dd448b6672cf4143faa64438c4a149f4e0))
+* cleanup sweep pass 4 — fold HR parent gate onto base.RequireRefresh (post-v0.4.5) ([#764](https://github.com/home-operations/flate/issues/764)) ([90baa71](https://github.com/home-operations/flate/commit/90baa716a3090cde35c3e846c525ca598d449031))
+* cleanup sweep pass 5 — store AddObjects fast-path + stale doc fix (post-v0.4.5) ([#765](https://github.com/home-operations/flate/issues/765)) ([a1ef853](https://github.com/home-operations/flate/commit/a1ef8537fb338760f31657c5481788a977393a45))
+* **report:** one rendering toolkit for the test + build footers ([#754](https://github.com/home-operations/flate/issues/754)) ([b4bf60a](https://github.com/home-operations/flate/commit/b4bf60a13ae890fd49dfd4f5294e349094b36d2c))
+* **test:** consolidate `flate test` into one stdout report ([#755](https://github.com/home-operations/flate/issues/755)) ([7204ef1](https://github.com/home-operations/flate/commit/7204ef1309ddaaf6172971bb814cf1ae002064ff))
+
 ## [0.4.5](https://github.com/home-operations/flate/compare/v0.4.4...v0.4.5) (2026-06-12)
 
 

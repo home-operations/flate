@@ -43,6 +43,13 @@ const (
 	// WarnPathConfig: a --path / --path-orig misconfiguration (same root, or no
 	// detected changes). Render-global.
 	WarnPathConfig = "PathConfig"
+	// WarnUnresolvedSubstitution: a spec.postBuild.substituteFrom Secret could
+	// not be read offline (absent, or an ExternalSecret-synthesized empty
+	// target), so the ${VAR}s it would supply render as the empty string —
+	// dependent resources may then fail schema/template validation and drop
+	// out of the render. Render-global (Message names the Secret) so the many
+	// per-namespace KSes a cluster-config KS re-emits collapse to one line.
+	WarnUnresolvedSubstitution = "UnresolvedSubstitution"
 )
 
 // CompareWarning orders warnings deterministically by category, then resource,

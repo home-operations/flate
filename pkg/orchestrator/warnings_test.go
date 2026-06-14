@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -101,5 +102,49 @@ spec:
 	}
 	if !slices.Equal(got.Detail, []string{"oldUnusedKey"}) {
 		t.Errorf("warning Detail = %v, want [oldUnusedKey]", got.Detail)
+	}
+}
+
+// TestRender_UnresolvedSubstitutionWarning is the konflate-facing contract: a
+// Kustomization whose postBuild.substituteFrom Secret can't be read offline
+// (absent here, as an ExternalSecret-backed one is) surfaces a structured
+// Result.Warnings entry (Category WarnUnresolvedSubstitution, attributed to the
+// Secret) — explaining why the ${VAR}s it would supply render empty. The render
+// itself still succeeds: Secret refs are not hard dependency edges.
+func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-apps, namespace: flux-system}
+spec:
+  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: cluster-secrets
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\ndata:\n  k: v\n")
+
+	o, err := New(Config{Path: dir, WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	found := false
+	for _, w := range res.Warnings {
+		if w.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(w.Message, `"cluster-secrets"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing UnresolvedSubstitution warning naming cluster-secrets; Warnings=%+v", res.Warnings)
 	}
 }

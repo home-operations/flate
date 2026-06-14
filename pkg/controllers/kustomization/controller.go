@@ -139,9 +139,26 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	// the same pre-render dance an embedder calling RenderFlux directly
 	// would perform. Keeping one canonical implementation here means
 	// changes to the contract only land in one place. Mirrors helm.Prepare.
-	ks, err = kustomize.Prepare(ks, values.NewStoreProvider(c.Store))
+	provider := values.NewStoreProvider(c.Store)
+	ks, err = kustomize.Prepare(ks, provider)
 	if err != nil {
 		return err
+	}
+	// A substituteFrom Secret flate can't read offline (absent, or an
+	// ExternalSecret-synthesized empty target) leaves the ${VAR}s it would
+	// supply empty — a dependent resource may then fail schema/template
+	// validation and drop out of the render. Surface that as a non-fatal
+	// advisory so the gap is explained rather than silent; substitution
+	// itself stays Flux-faithful. SOPS secrets resolve to placeholders and
+	// aren't reported. Render-global and keyed on the bare Secret name (not
+	// ns/name): the same logical secret is referenced by the many per-
+	// namespace KSes a cluster-config KS re-emits, so the store collapses
+	// them to one advisory line per secret name.
+	for _, name := range values.UnreadableSubstituteSecrets(ks, provider) {
+		c.Store.AddWarning(manifest.Warning{
+			Category: manifest.WarnUnresolvedSubstitution,
+			Message:  fmt.Sprintf("substituteFrom Secret %q could not be read offline; the ${VAR}s it provides render empty", name),
+		})
 	}
 	if err := c.PreflightError(id); err != nil {
 		return err

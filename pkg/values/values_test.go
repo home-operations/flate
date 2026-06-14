@@ -466,6 +466,37 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 	}
 }
 
+// TestUnreadableSubstituteSecrets reports only substituteFrom Secret refs whose
+// data flate can't read offline. A SOPS-wiped Secret (placeholder data) and a
+// real Secret are readable; a ConfigMap ref and an optional ref are skipped.
+func TestUnreadableSubstituteSecrets(t *testing.T) {
+	provider := &SliceProvider{
+		ConfigMaps: []*manifest.ConfigMap{{Name: "cm", Namespace: "flux-system", Data: map[string]any{"X": "1"}}},
+		Secrets: []*manifest.Secret{
+			// SOPS-wiped: data resolves to a placeholder, so its vars still substitute.
+			{Name: "sops-vars", Namespace: "flux-system", StringData: map[string]any{"Y": fmt.Sprintf(manifest.ValuePlaceholderTemplate, "Y")}},
+			// A real, readable Secret.
+			{Name: "real", Namespace: "flux-system", StringData: map[string]any{"Z": "z"}},
+		},
+	}
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindSecret, Name: "absent-vars"},                // unreadable → reported
+			{Kind: manifest.KindSecret, Name: "sops-vars"},                  // placeholder data → readable
+			{Kind: manifest.KindSecret, Name: "real"},                       // real data → readable
+			{Kind: manifest.KindConfigMap, Name: "cm"},                      // not a Secret → skipped
+			{Kind: manifest.KindSecret, Name: "opt-absent", Optional: true}, // optional → skipped
+		},
+	}
+	if got, want := UnreadableSubstituteSecrets(ks, provider), []string{"absent-vars"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("UnreadableSubstituteSecrets = %v, want %v", got, want)
+	}
+	if got := UnreadableSubstituteSecrets(&manifest.Kustomization{Name: "x", Namespace: "ns"}, provider); got != nil {
+		t.Errorf("no substituteFrom should yield nil, got %v", got)
+	}
+}
+
 // TestReplaceValueAtPath_SingleCharQuoteNoPanic pins the
 // len(value) >= 2 guard: a single `'` or `"` previously slipped past
 // the prefix+suffix check (prefix == suffix on a single byte) and

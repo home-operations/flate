@@ -667,6 +667,38 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 	return nil
 }
 
+// UnreadableSubstituteSecrets returns the names of ks.PostBuildSubstituteFrom
+// Secret references whose data flate can't read offline — an absent Secret or
+// an ExternalSecret-synthesized empty target, both of which yield no data so
+// the ${VAR}s they would supply expand to the empty string. SOPS-encrypted
+// Secrets are NOT reported: their data is wiped to placeholders, so their vars
+// still substitute. Optional refs are skipped (the author marked them
+// best-effort). The result is sorted and de-duplicated; nil when none.
+//
+// This is a pure advisory query — it does not affect substitution. The
+// Kustomization controller surfaces the result as a WarnUnresolvedSubstitution
+// Warning so an unreadable secret is explained rather than silently leaving
+// empty values behind.
+func UnreadableSubstituteSecrets(ks *manifest.Kustomization, p Provider) []string {
+	if ks == nil || ks.Namespace == "" {
+		return nil
+	}
+	var unreadable []string
+	for _, ref := range ks.PostBuildSubstituteFrom {
+		if ref.Kind != manifest.KindSecret || ref.Optional {
+			continue
+		}
+		if data, err := lookupResourceData(ref.Kind, ks.Namespace, ref.Name, p); err == nil && data == nil {
+			unreadable = append(unreadable, ref.Name)
+		}
+	}
+	if len(unreadable) == 0 {
+		return nil
+	}
+	slices.Sort(unreadable)
+	return slices.Compact(unreadable)
+}
+
 // VarsMap returns the substitution variables for use with
 // kustomize.Substitute. Non-string scalar values are stringified;
 // nested maps/slices and other unsupported shapes are silently

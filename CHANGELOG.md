@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.7](https://github.com/home-operations/flate/compare/v0.4.6...v0.4.7) (2026-06-14)
+
+
+### Features
+
+* **cli:** surface warnings and notes only in `flate test` ([#773](https://github.com/home-operations/flate/issues/773)) ([80f12e1](https://github.com/home-operations/flate/commit/80f12e13022a20d8f4e17924e732afbd865cc933))
+* **helmrelease:** best-effort render HRs blocked by an unreadable secret's empty values ([#771](https://github.com/home-operations/flate/issues/771)) ([71ab506](https://github.com/home-operations/flate/commit/71ab506312e8cd6a69249ae7cde97ded033f45dd))
+* **loader:** materialize placeholder Secrets at discovery for known-key secrets ([#772](https://github.com/home-operations/flate/issues/772)) ([60d80e7](https://github.com/home-operations/flate/commit/60d80e7ca6b448abcb807a11b437b5986c8287cd))
+* **values:** warn when a postBuild substituteFrom Secret is unreadable offline ([#769](https://github.com/home-operations/flate/issues/769)) ([28f4002](https://github.com/home-operations/flate/commit/28f400242408ea0dae3c6d2e3155e0c989b0639d))
+
 ## [0.4.6](https://github.com/home-operations/flate/compare/v0.4.5...v0.4.6) (2026-06-14)
 
 

@@ -202,7 +202,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		SourceFiles: d.sourceFiles,
 		SourceRefs:  d.sourceRefs,
 		ParentOf:    parentOf,
-		SelfProduce: loader.BuildSelfProduceIndex(d.cfg.Store, repoRoot, producers),
+		SelfProduce: loader.BuildSelfProduceIndex(d.cfg.Store, repoRoot, producers, cfg.WipeSecrets),
 		Producers:   producers,
 		Existence:   l.Existence,
 		WipeSecrets: cfg.WipeSecrets,

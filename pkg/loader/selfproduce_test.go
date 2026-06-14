@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestBuildSelfProduceIndex_BareDirComponentNamespace(t *testing.T) {
 	}
 	s.AddObject(clusterApps)
 
-	idx := BuildSelfProduceIndex(s, dir, nil)
+	idx := BuildSelfProduceIndex(s, dir, nil, true)
 
 	// Produced in EVERY group's namespace (the namespace transformer stamps
 	// the component's namespace-less ConfigMap per base) — not just the first.
@@ -74,7 +75,7 @@ func TestBuildSelfProduceIndex_NonProducerNotAttributed(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	idx := BuildSelfProduceIndex(s, dir, nil)
+	idx := BuildSelfProduceIndex(s, dir, nil, true)
 	if got := idx.ProducedBy(cmID("flux-system")); len(got) != 0 {
 		t.Errorf("ProducedBy = %v, want empty (KS produces no cluster-settings)", got)
 	}
@@ -123,7 +124,7 @@ func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
 	})
 
 	producers := &manifest.ProducerIndex{}
-	BuildSelfProduceIndex(s, dir, producers)
+	BuildSelfProduceIndex(s, dir, producers, true)
 
 	want := map[manifest.NamedResource]string{ // target → producer name
 		secretID("secure", "app-values"): "app-creds",
@@ -164,7 +165,7 @@ func TestBuildSelfProduceIndex_NamePrefixNotFollowed(t *testing.T) {
 	})
 
 	producers := &manifest.ProducerIndex{}
-	BuildSelfProduceIndex(s, dir, producers)
+	BuildSelfProduceIndex(s, dir, producers, true)
 
 	if _, ok := producers.Producer(secretID("secure", "app-values")); !ok {
 		t.Error("producer not recorded under its raw target name")
@@ -173,5 +174,76 @@ func TestBuildSelfProduceIndex_NamePrefixNotFollowed(t *testing.T) {
 	// record that — pinning the documented namePrefix coverage gap.
 	if _, ok := producers.Producer(secretID("secure", "prod-app-values")); ok {
 		t.Error("scan unexpectedly followed namePrefix; the caveat test is stale")
+	}
+}
+
+// An ExternalSecret that statically declares its output keys (target.template.data
+// here) materializes a stand-in placeholder Secret in the store, so a downstream
+// substituteFrom / valuesFrom resolves those keys to ..PLACEHOLDER_<key>.. rather
+// than empty — flate's SOPS shape, applied to a secret whose keys are knowable
+// but whose values are not. The scan never clobbers a real Secret already
+// occupying the target id; a dataFrom-only producer declares nothing, so none is
+// synthesized and it stays genuinely unreadable.
+func TestBuildSelfProduceIndex_SynthesizesPlaceholderSecret(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./declared.yaml\n  - ./datafrom.yaml\n  - ./preexisting.yaml\n")
+	// Declares output keys via target.template.data → synthesized.
+	testutil.WriteFile(t, dir, "apps/declared.yaml",
+		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: app\nspec:\n  target:\n    name: app-secret\n    template:\n      data:\n        HOST: \"{{ .h }}\"\n        TOKEN: \"{{ .t }}\"\n")
+	// dataFrom-only → declares nothing → NOT synthesized.
+	testutil.WriteFile(t, dir, "apps/datafrom.yaml",
+		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: dyn\nspec:\n  target:\n    name: dyn-secret\n  dataFrom:\n    - extract:\n        key: vault/dyn\n")
+	// Declares a key, but a real Secret already occupies the target id → never clobbered.
+	testutil.WriteFile(t, dir, "apps/preexisting.yaml",
+		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: pre\nspec:\n  target:\n    name: pre-secret\n    template:\n      data:\n        K: \"{{ .k }}\"\n")
+
+	s := store.New()
+	s.AddObject(&manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+	})
+	existing := &manifest.Secret{Name: "pre-secret", Namespace: "secure", StringData: map[string]any{"K": "real"}}
+	s.AddObject(existing)
+
+	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, true)
+
+	got, _ := s.GetObject(secretID("secure", "app-secret")).(*manifest.Secret)
+	if got == nil {
+		t.Fatal("app-secret was not synthesized from its declared keys")
+	}
+	for _, k := range []string{"HOST", "TOKEN"} {
+		if want := fmt.Sprintf(manifest.ValuePlaceholderTemplate, k); got.StringData[k] != want {
+			t.Errorf("app-secret stringData[%s] = %v, want %q", k, got.StringData[k], want)
+		}
+	}
+	if obj := s.GetObject(secretID("secure", "dyn-secret")); obj != nil {
+		t.Errorf("dataFrom-only ExternalSecret must NOT be synthesized; got %#v", obj)
+	}
+	if obj := s.GetObject(secretID("secure", "pre-secret")); obj != manifest.BaseManifest(existing) {
+		t.Errorf("a real Secret on the target id must not be clobbered; got %#v", obj)
+	}
+}
+
+// The placeholder Secret is a wipe-mode stand-in (a stand-in for a value flate
+// can't read), so --no-wipe-secrets suppresses synthesis entirely — the secret
+// is left genuinely absent, exactly as it was before this feature.
+func TestBuildSelfProduceIndex_NoSynthesisWithoutWipe(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./es.yaml\n")
+	testutil.WriteFile(t, dir, "apps/es.yaml",
+		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: app\nspec:\n  target:\n    name: app-secret\n    template:\n      data:\n        TOKEN: \"{{ .t }}\"\n")
+
+	s := store.New()
+	s.AddObject(&manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+	})
+
+	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, false)
+
+	if obj := s.GetObject(secretID("secure", "app-secret")); obj != nil {
+		t.Errorf("wipeSecrets=false must suppress synthesis; got %#v", obj)
 	}
 }

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -226,5 +227,84 @@ spec:
 	}
 	if !warned {
 		t.Errorf("missing per-HR best-effort warning naming greeting; Warnings=%+v", res.Warnings)
+	}
+}
+
+// TestRender_ProducerDeclaredSecretPlaceholder is the konflate-facing contract
+// for the cloudflared-secret case: when a Kustomization's postBuild.substituteFrom
+// Secret is materialized by an in-repo ExternalSecret that enumerates its keys
+// (spec.target.template.data), flate synthesizes a placeholder Secret for those
+// keys — so the ${VAR}s it supplies resolve to ..PLACEHOLDER_<key>.. (not the
+// empty string) and NO UnresolvedSubstitution advisory fires, because the secret
+// is now readable-as-placeholders, exactly like a SOPS-encrypted Secret.
+func TestRender_ProducerDeclaredSecretPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  url: https://example.test/cluster.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: cloudflared-secret
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./externalsecret.yaml\n  - ./cm.yaml\n")
+	// The ExternalSecret materializing cloudflared-secret enumerates its output
+	// keys via target.template.data (the dataFrom feeds the template's inputs).
+	testutil.WriteFile(t, dir, "apps/externalsecret.yaml", `apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: cloudflared}
+spec:
+  secretStoreRef: {kind: ClusterSecretStore, name: onepassword}
+  target:
+    name: cloudflared-secret
+    template:
+      data:
+        CLOUDFLARE_TUNNEL_ID: "{{ .id }}"
+  dataFrom:
+    - extract: {key: cloudflare}
+`)
+	// A resource consuming the secret-sourced var through postBuild substitution.
+	testutil.WriteFile(t, dir, "apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: tunnel\ndata:\n  target: \"${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com\"\n")
+
+	o, err := New(Config{Path: dir, WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := o.Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	// The ${CLOUDFLARE_TUNNEL_ID} resolved to its placeholder, not empty/literal.
+	want := fmt.Sprintf(manifest.ValuePlaceholderTemplate, "CLOUDFLARE_TUNNEL_ID") + ".cfargotunnel.com"
+	var got string
+	for _, docs := range res.Manifests {
+		for _, d := range docs {
+			md, _ := d["metadata"].(map[string]any)
+			data, _ := d["data"].(map[string]any)
+			if d["kind"] == "ConfigMap" && md["name"] == "tunnel" {
+				got, _ = data["target"].(string)
+			}
+		}
+	}
+	if got != want {
+		t.Errorf("tunnel ConfigMap data.target = %q, want %q", got, want)
+	}
+	// No unreadable-secret advisory: a producer-declared secret is readable as placeholders.
+	for _, w := range res.Warnings {
+		if w.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(w.Message, "cloudflared-secret") {
+			t.Errorf("a producer-declared secret must not warn as unreadable; got %+v", w)
+		}
 	}
 }

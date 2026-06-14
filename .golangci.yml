@@ -20,6 +20,11 @@ linters:
         linters:
           - errcheck
           - unparam
+          # gosec's production-security heuristics (G101 hardcoded credentials,
+          # …) misfire on test fixtures, which legitimately carry credential-
+          # shaped literals — e.g. a Secret/ExternalSecret table keyed on
+          # PASSWORD/TOKEN. Test code isn't shipped, so suppress it here.
+          - gosec
       # SA5011 trips on `if x == nil { t.Fatal(...) }` followed by
       # `x.Field`. testing.T.Fatal* calls runtime.Goexit, so the
       # deref is unreachable — but the staticcheck build bundled in

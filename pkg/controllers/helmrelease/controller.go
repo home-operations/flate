@@ -127,8 +127,8 @@ func (c *Controller) onRawProducerAdded() store.Listener {
 		if !ok {
 			return
 		}
-		for _, targetID := range manifest.ProducerTargets(raw) {
-			c.producers.Record(targetID, raw.Named())
+		for _, target := range manifest.ProducerTargets(raw) {
+			c.producers.Record(target.NamedResource, raw.Named())
 		}
 	}
 }

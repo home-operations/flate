@@ -66,7 +66,11 @@ func New(version string) *cobra.Command {
 			logSink = barSink
 		}
 		lvl, _ := cmd.Flags().GetString("log-level")
-		return setLogLevel(lvl, logSink)
+		// Changed reports whether --log-level (or its FLATE_LOG_LEVEL env
+		// binding) was set explicitly. If so the user asked for logs: stream
+		// them live to stderr on every command. Left at the default, chatter is
+		// deferred into the notes buffer that only `flate test` renders.
+		return setLogLevel(lvl, cmd.Flags().Changed("log-level"), logSink)
 	}
 
 	root.AddCommand(
@@ -106,15 +110,11 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	err := root.ExecuteContext(ctx)
-	// Flush any deferred log notes a command didn't already render (diff/get/
-	// cache, or a clean run) so nothing buffered is lost.
-	for _, n := range drainLogNotes() {
-		line := n.Text
-		if n.Count > 1 {
-			line = fmt.Sprintf("%s (×%d)", line, n.Count)
-		}
-		_, _ = io.WriteString(stderr, line+"\n")
-	}
+	// Deferred log notes (and Result.Warnings) are surfaced ONLY by `flate
+	// test`, the diagnostic command — a data-producing verb (build/get/diff/
+	// cache) stays quiet. So there is no end-of-run flush: anything buffered by
+	// a non-test verb is intentionally dropped (it has already been drained and
+	// rendered by `test`, or it belongs to a verb that doesn't report it).
 	if err != nil {
 		// reportFailures already rendered a styled report for this error; don't
 		// reprint it as a flat "flate error: …" line.
@@ -132,7 +132,7 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 // `--log-level bogus` fails clearly instead of silently degrading to
 // info — the previous behavior misled users who typo'd `--log-level
 // dbug` and assumed Debug output was simply quiet.
-func setLogLevel(lvl string, w io.Writer) error {
+func setLogLevel(lvl string, explicit bool, w io.Writer) error {
 	var l slog.Level
 	switch lvl {
 	case "debug":
@@ -147,11 +147,16 @@ func setLogLevel(lvl string, w io.Writer) error {
 		return fmt.Errorf("invalid --log-level %q: must be one of debug, info, warn, error", lvl)
 	}
 	// Wrap the text handler in a deferring sink so the Warn/Info chatter a
-	// failing run emits (chiefly "resource orphaned") is held back and rendered
-	// in the report footer instead of interleaving with output; Error records
-	// still pass straight through. Commands drain it via reportFailures; run
-	// flushes anything left so no note is lost.
-	logBuffer = newDeferSink(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l}))
+	// failing run emits (chiefly "resource orphaned") is held back rather than
+	// interleaving with output; Error records still pass straight through. Only
+	// `flate test` drains and renders the held-back notes — a data-producing
+	// verb (build/get/diff) leaves them buffered, so its output stays clean.
+	//
+	// But an explicitly chosen --log-level is the user asking for logs: turn the
+	// buffering OFF so records stream live to stderr on every command, the
+	// behavior a normal logger would give. Without this, raising the log level
+	// on a build/get/diff would be silently swallowed (the footer is test-only).
+	logBuffer = newDeferSink(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l}), !explicit)
 	slog.SetDefault(slog.New(logBuffer))
 	// slog.SetDefault also reroutes the standard library `log` package through
 	// this handler. A dependency's log.Printf — chiefly Helm's values-coalesce

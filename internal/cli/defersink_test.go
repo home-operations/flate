@@ -21,7 +21,7 @@ func (h captureHandler) WithGroup(string) slog.Handler      { return h }
 // through inline; after drain, buffering is off so later logs flow normally.
 func TestDeferSink_BuffersWarnPassesError(t *testing.T) {
 	var inline []string
-	sink := newDeferSink(captureHandler{&inline})
+	sink := newDeferSink(captureHandler{&inline}, true)
 	log := slog.New(sink)
 
 	log.Warn("resource orphaned", "id", "a")

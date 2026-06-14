@@ -7,32 +7,34 @@ import (
 
 // TestE2E_StaleValuesWarning exercises #744 end-to-end: a HelmRelease pins a
 // value (`oldUnusedKey`) that no chart template references. The render still
-// succeeds (advisory only), and the unused key surfaces in the stderr warnings
-// footer attributed to that HR — while a sibling on a chart that consumes
-// .Values wholesale (toYaml) stays silent.
+// succeeds (advisory only). The advisory surfaces in `flate test` — the
+// diagnostic command — attributed to that HR, while `flate build` renders the
+// same output but stays quiet: warnings and notes never appear in a build, only
+// in test. (The advisory's content — opaque sibling silent, referenced values
+// never flagged — is unit-covered by orchestrator.TestRender_StaleValuesWarning.)
 func TestE2E_StaleValuesWarning(t *testing.T) {
-	stdout, stderr, code := runCLIBuffers("build", "hr", "--path", copyTree(t, testdataPath(t, "stalevalues")))
+	path := copyTree(t, testdataPath(t, "stalevalues"))
 
+	// build renders the same output but emits no advisory, on stdout or stderr.
+	bOut, bErr, code := runCLIBuffers("build", "hr", "--path", path)
 	if code != 0 {
-		t.Fatalf("stale-value detection is advisory and must not fail the render; exit=%d\nstderr:\n%s", code, stderr)
+		t.Fatalf("stale-value detection is advisory and must not fail the render; exit=%d\nstderr:\n%s", code, bErr)
 	}
-	// The unused key is flagged, attributed to the HR whose chart names its values.
+	if !strings.Contains(bOut, "app-cm") || !strings.Contains(bOut, "opaque-cm") {
+		t.Errorf("rendered HR output missing:\n%s", bOut)
+	}
+	// The advisory footer lived on stderr; it must be gone. (The rendered
+	// opaque-cm legitimately contains "oldUnusedKey" in its dumped values, so
+	// only stderr — never stdout — is asserted clean.)
+	if strings.Contains(bErr, "warnings") || strings.Contains(bErr, "oldUnusedKey") {
+		t.Errorf("build stderr must not surface the stale-value advisory:\n%s", bErr)
+	}
+
+	// test surfaces the advisory, attributed to the HR whose chart names its values.
+	tOut, tErr, _ := runCLIBuffers("test", "hr", "--path", path)
 	for _, want := range []string{"warnings", "apps/app", "oldUnusedKey"} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("stderr missing %q:\n%s", want, stderr)
+		if !strings.Contains(tOut, want) {
+			t.Errorf("test stdout missing %q:\n%s\nstderr:\n%s", want, tOut, tErr)
 		}
-	}
-	// The opaque-chart sibling pins the same key but must NOT warn (we can't
-	// prove it unused when the chart reads .Values wholesale).
-	if strings.Contains(stderr, "apps/opaque") {
-		t.Errorf("a chart that consumes .Values wholesale must not produce a stale-value warning:\n%s", stderr)
-	}
-	// Referenced values are never reported.
-	if strings.Contains(stderr, "greeting") || strings.Contains(stderr, "replicas") {
-		t.Errorf("referenced values must not appear in the warnings footer:\n%s", stderr)
-	}
-	// Rendered output is unaffected — both HRs produce their ConfigMaps.
-	if !strings.Contains(stdout, "app-cm") || !strings.Contains(stdout, "opaque-cm") {
-		t.Errorf("rendered HR output missing:\n%s", stdout)
 	}
 }

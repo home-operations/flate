@@ -396,6 +396,56 @@ func TestRun_GetImages_RejectsBadOutput(t *testing.T) {
 
 // TestRun_TestAll exercises the report path on the fixture — every
 // resource should pass (✓ rows, no failures in the summary).
+// writeUnreadableSecretFixture writes a tree whose Flux Kustomization
+// substituteFroms a Secret flate can't read offline (absent, non-SOPS, no
+// producer), so the render emits a WarnUnresolvedSubstitution advisory.
+func writeUnreadableSecretFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	k8s := filepath.Join(root, "kubernetes")
+	testutil.WriteFileAt(t, filepath.Join(k8s, "flux", "cluster.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: cluster-secrets
+`)
+	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "kustomization.yaml"), "resources:\n- cm.yaml\n")
+	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "cm.yaml"), `---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello, namespace: flux-system}
+data:
+  greeting: hi
+`)
+	return k8s
+}
+
+// TestRun_AdvisoriesOnlyInTest pins the contract: a render advisory (here an
+// unreadable substituteFrom Secret) surfaces in `flate test` output but NOT in
+// `flate build` — build is a data-producing verb, so warnings and deferred
+// notes belong to the diagnostic command, never the build's stdout or stderr.
+func TestRun_AdvisoriesOnlyInTest(t *testing.T) {
+	k8s := writeUnreadableSecretFixture(t)
+	const advisory = "could not be read offline"
+
+	bOut, bErr, _ := runCLI(t, "build", "all", "--path", k8s)
+	if strings.Contains(bOut, advisory) || strings.Contains(bErr, advisory) {
+		t.Errorf("build must not surface the advisory.\nstdout:\n%s\nstderr:\n%s", bOut, bErr)
+	}
+
+	tOut, _, _ := runCLI(t, "test", "all", "--path", k8s)
+	if !strings.Contains(tOut, advisory) {
+		t.Errorf("test must surface the advisory; stdout:\n%s", tOut)
+	}
+}
+
 func TestRun_TestAll(t *testing.T) {
 	path := writeFixture(t)
 	stdout, stderr, code := runCLI(t, "test", "all", "--path", path)

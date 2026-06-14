@@ -716,15 +716,17 @@ func (e reportedError) Error() string { return e.err.Error() }
 func (e reportedError) Unwrap() error { return e.err }
 
 // reportFailures renders the styled root-cause report — real errors shown once,
-// cascaded failures folded under the root that caused them, and any deferred log
-// lines in a footer — to w, scoped to c's namespace filter. It always drains the
-// log buffer (so notes aren't lost even on a clean run). When something rendered
-// and err is non-nil, err is wrapped as reportedError so the caller still exits
-// non-zero while run avoids printing it twice; otherwise err passes through.
+// cascaded failures folded under the root that caused them — to w, scoped to c's
+// namespace filter. Advisories (warnings) and deferred operational logs (notes)
+// are deliberately NOT rendered here: they belong to `flate test`, the
+// diagnostic command. A data-producing `flate build` stays quiet but for the
+// failure report it must surface — CI relies on the non-zero exit and the cause.
+// When something rendered and err is non-nil, err is wrapped as reportedError so
+// the caller still exits non-zero while run avoids printing it twice; otherwise
+// err passes through.
 func reportFailures(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, err error, elapsed time.Duration) error {
-	notes := drainLogNotes()
 	failed, blocked := scopedFailures(o, res, c)
-	m := report.Build(failed, blocked, scopedWarnings(o, res, c), notes)
+	m := report.Build(failed, blocked, nil, nil)
 	if m.Empty() {
 		return err
 	}

@@ -15,7 +15,14 @@ import (
 // the scattered Warn/Info lines (chiefly "resource orphaned") that otherwise
 // interleave with, and bury, the final report — and hands them to the command
 // to render in a quiet footer instead. Error records (panics) always pass
-// through inline so a crash stays loud.
+// through inline so a crash stays loud. Only `flate test` drains and renders
+// the held-back notes; a data-producing verb leaves them buffered (and they're
+// dropped at exit), so its output stays clean.
+//
+// When buffering is off the sink is transparent — every record passes straight
+// to the inner handler, live. setLogLevel turns it off for an explicitly chosen
+// --log-level: that's the user asking for logs, which must stream to stderr on
+// every command, not vanish into a footer only `test` renders.
 //
 // One shared buffer backs every handler slog derives via WithAttrs/WithGroup, so
 // attribute-scoped loggers buffer into the same place. drain() returns the
@@ -33,8 +40,10 @@ type noteBuffer struct {
 	counts map[string]int
 }
 
-func newDeferSink(inner slog.Handler) *deferSink {
-	return &deferSink{inner: inner, buf: &noteBuffer{on: true, counts: map[string]int{}}}
+// newDeferSink wraps inner. When buffer is true it holds back Warn/Info chatter
+// for `flate test` to render; when false it is transparent (live pass-through).
+func newDeferSink(inner slog.Handler, buffer bool) *deferSink {
+	return &deferSink{inner: inner, buf: &noteBuffer{on: buffer, counts: map[string]int{}}}
 }
 
 func (d *deferSink) Enabled(ctx context.Context, l slog.Level) bool { return d.inner.Enabled(ctx, l) }

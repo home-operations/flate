@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.8](https://github.com/home-operations/flate/compare/v0.4.7...v0.4.8) (2026-06-16)
+
+
+### Features
+
+* **deps:** update module github.com/fluxcd/pkg/kustomize (v1.34.0 → v1.35.0) ([#778](https://github.com/home-operations/flate/issues/778)) ([6d45657](https://github.com/home-operations/flate/commit/6d456577e43e90120f36bc3029c68579541c5d6a))
+
+
+### Bug Fixes
+
+* **discovery:** substitute cross-tree base Kustomizations ([b2c8d7b](https://github.com/home-operations/flate/commit/b2c8d7bb14366da5331e799872e5cf0de7bb67f1))
+
 ## [0.4.7](https://github.com/home-operations/flate/compare/v0.4.6...v0.4.7) (2026-06-14)
 
 

@@ -197,12 +197,31 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	d.promoteOrphans(prefixes)
 
 	producers := &manifest.ProducerIndex{}
+	selfProduce := loader.BuildSelfProduceIndex(d.cfg.Store, repoRoot, producers, cfg.WipeSecrets)
+	// Gate cross-tree base Kustomizations (#777) on their emitting parent. Such a
+	// base sits under no KS spec.path, so BuildParentIndexFromPrefixes gave it no
+	// gate — it would reconcile the raw UNSUBSTITUTED copy and race the parent's
+	// substituted emission. Wiring its emitter into ParentOf makes its first
+	// render wait, exactly like the spec.path-prefix gate (see
+	// EmissionParentByFile). A KS already gated by spec.path, and self-emits
+	// (parent == id), are left alone.
+	for id, file := range d.sourceFiles {
+		if id.Kind != manifest.KindKustomization {
+			continue
+		}
+		if _, gated := parentOf[id]; gated {
+			continue
+		}
+		if parent, ok := selfProduce.EmissionParentByFile(file); ok && parent != id {
+			parentOf[id] = parent
+		}
+	}
 	return &Result{
 		RepoRoot:    repoRoot,
 		SourceFiles: d.sourceFiles,
 		SourceRefs:  d.sourceRefs,
 		ParentOf:    parentOf,
-		SelfProduce: loader.BuildSelfProduceIndex(d.cfg.Store, repoRoot, producers, cfg.WipeSecrets),
+		SelfProduce: selfProduce,
 		Producers:   producers,
 		Existence:   l.Existence,
 		WipeSecrets: cfg.WipeSecrets,

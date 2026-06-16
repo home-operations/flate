@@ -275,6 +275,76 @@ func TestRun_RequiresStoreAndLoader(t *testing.T) {
 	}
 }
 
+// TestRun_CrossTreeBaseEmissionGate pins the #777 gate: a Flux KS stored as a
+// cross-tree kustomize base (apps/base/app-a/ks.yaml pulled in by cluster-apps
+// via apps/test/app-a -> ../../base/app-a) gets cluster-apps wired as its
+// structural parent in ParentOf, even though its source file sits under no KS
+// spec.path. A self-emitting KS (spec.path covering its own definition file)
+// must NOT be gated on itself, or it would deadlock waiting for itself.
+func TestRun_CrossTreeBaseEmissionGate(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	testutil.WriteFile(t, dir, "cluster/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-apps
+  namespace: flux-system
+spec:
+  path: ./apps/test
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+`)
+	testutil.WriteFile(t, dir, "apps/test/kustomization.yaml", "resources:\n  - ./app-a\n")
+	testutil.WriteFile(t, dir, "apps/test/app-a/kustomization.yaml", "resources:\n  - ../../base/app-a\n")
+	testutil.WriteFile(t, dir, "apps/base/app-a/kustomization.yaml", "resources:\n  - ks.yaml\n")
+	// ${VAR} path — unresolvable at discovery, so app-a's own walk can't follow
+	// it; only cluster-apps emits its file, giving an unambiguous gate.
+	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: app-a
+  namespace: flux-system
+spec:
+  path: ./apps/${CLUSTER_ENV}/app-a
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+`)
+
+	// A self-emitting KS: its spec.path (./self) holds its own ks.yaml.
+	testutil.WriteFile(t, dir, "self/kustomization.yaml", "resources:\n  - ks.yaml\n")
+	testutil.WriteFile(t, dir, "self/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: selfish
+  namespace: flux-system
+spec:
+  path: ./self
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+`)
+
+	st := store.New()
+	res, err := discovery.Run(context.Background(), discovery.Config{Path: dir, Store: st, WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	appA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
+	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	if got := res.ParentOf[appA]; got != clusterApps {
+		t.Errorf("ParentOf[app-a] = %v, want cluster-apps (cross-tree emission gate)", got)
+	}
+
+	selfish := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "selfish"}
+	if got, gated := res.ParentOf[selfish]; gated {
+		t.Errorf("ParentOf[selfish] = %v, want absent (a self-emit must not gate on itself)", got)
+	}
+}
+
 func TestResolveScanPath_SymlinkResolved(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

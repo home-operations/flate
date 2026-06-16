@@ -104,6 +104,14 @@ func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, d
 		c.KeepEmitted(id, obj)
 		rendered = append(rendered, obj.Named())
 	}
+	// A KS whose spec.path re-includes its own definition file (the Zariel
+	// self-emit, or a cross-tree base/ overlay it belongs to, #777) re-emits
+	// ITSELF. Its own render is never the source of truth for its spec — that's
+	// its file or its parent's substituted/patched emission — and re-storing the
+	// self-copy would strip a parent-injected postBuild, flip-flopping spec.path
+	// back to unsubstituted. Skip the store write; renderedSet already drops the
+	// self-edge for attribution.
+	selfEmit := func(obj manifest.BaseManifest) bool { return obj.Named() == id }
 	// Pass 1 — data first.
 	for _, p := range objs {
 		switch {
@@ -111,7 +119,7 @@ func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, d
 			continue // held for pass 2
 		case p.reconcilable:
 			keep(p.Obj)
-			if publish {
+			if publish && !selfEmit(p.Obj) {
 				c.Store.AddObject(p.Obj)
 			}
 		default:
@@ -123,7 +131,9 @@ func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, d
 	for _, p := range objs {
 		if p.leaf {
 			keep(p.Obj)
-			leaves = append(leaves, p.Obj)
+			if !selfEmit(p.Obj) {
+				leaves = append(leaves, p.Obj)
+			}
 		}
 	}
 	c.ReportRendered(id, rendered)

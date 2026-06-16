@@ -88,6 +88,48 @@ func TestSelfProduceIndex_NilSafe(t *testing.T) {
 	if got := idx.ProducedBy(cmID("flux-system")); got != nil {
 		t.Errorf("nil index ProducedBy = %v, want nil", got)
 	}
+	if _, ok := idx.EmissionParentByFile("apps/base/app-a/ks.yaml"); ok {
+		t.Errorf("nil index EmissionParentByFile = ok, want absent")
+	}
+}
+
+// EmissionParentByFile records a base ks.yaml reached cross-tree through EXACTLY
+// one parent's render subtree (apps/base/app-a/ks.yaml pulled in via
+// apps/test/app-a -> ../../base/app-a, applied by cluster-apps) — the #777 gate
+// signal. A base shared by two distinct parents is ambiguous and omitted.
+func TestBuildSelfProduceIndex_EmissionParentByFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// app-a: pulled by exactly one parent (cluster-apps). ${VAR} path so the
+	// walk records only cluster-apps (no literal self-include).
+	testutil.WriteFile(t, dir, "apps/test/kustomization.yaml", "resources:\n  - ./app-a\n  - ./shared\n")
+	testutil.WriteFile(t, dir, "apps/test/app-a/kustomization.yaml", "resources:\n  - ../../base/app-a\n")
+	testutil.WriteFile(t, dir, "apps/base/app-a/kustomization.yaml", "resources:\n  - ks.yaml\n")
+	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml",
+		"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: app-a\n  namespace: flux-system\nspec:\n  path: ./apps/${CLUSTER_ENV}/app-a\n")
+	// shared: pulled by BOTH cluster-apps (./apps/test -> ./shared) and
+	// cluster-apps2 (./apps/test2) — two distinct parents, ambiguous.
+	testutil.WriteFile(t, dir, "apps/test/shared/kustomization.yaml", "resources:\n  - ../../base/shared\n")
+	testutil.WriteFile(t, dir, "apps/test2/kustomization.yaml", "resources:\n  - ../base/shared\n")
+	testutil.WriteFile(t, dir, "apps/base/shared/kustomization.yaml", "resources:\n  - ks.yaml\n")
+	testutil.WriteFile(t, dir, "apps/base/shared/ks.yaml",
+		"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: shared\n  namespace: flux-system\nspec:\n  path: ./apps/${CLUSTER_ENV}/shared\n")
+
+	s := store.New()
+	s.AddObject(&manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/test"}})
+	s.AddObject(&manifest.Kustomization{Name: "cluster-apps2", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/test2"}})
+
+	idx := BuildSelfProduceIndex(s, dir, nil, true)
+
+	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	if got, ok := idx.EmissionParentByFile("apps/base/app-a/ks.yaml"); !ok || got != clusterApps {
+		t.Errorf("EmissionParentByFile(app-a) = (%v, %v), want (cluster-apps, true)", got, ok)
+	}
+	if got, ok := idx.EmissionParentByFile("apps/base/shared/ks.yaml"); ok {
+		t.Errorf("EmissionParentByFile(shared) = (%v, true), want absent (two distinct parents are ambiguous)", got)
+	}
 }
 
 func secretID(ns, name string) manifest.NamedResource {

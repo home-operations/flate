@@ -29,6 +29,9 @@ import (
 // Built once per Bootstrap (in discovery.Run) and read-only afterwards.
 type SelfProduceIndex struct {
 	byID map[manifest.NamedResource][]manifest.NamedResource
+	// emissionParentByFile: cross-tree base ks.yaml path → its single emitting
+	// parent KS. See EmissionParentByFile.
+	emissionParentByFile map[string]manifest.NamedResource
 }
 
 // ProducedBy returns the Kustomizations whose render subtree emits cm.
@@ -39,6 +42,22 @@ func (i *SelfProduceIndex) ProducedBy(cm manifest.NamedResource) []manifest.Name
 		return nil
 	}
 	return i.byID[cm]
+}
+
+// EmissionParentByFile returns the Flux Kustomization whose render subtree emits
+// the ks.yaml at the given repo-relative path, when exactly one does — i.e. a
+// cross-tree kustomize base (apps/base/app-X/ks.yaml pulled in via
+// apps/test/app-X -> ../../base/app-X, applied by cluster-apps with postBuild
+// substitution). discovery.Run gates such a base on that parent so it reconciles
+// the parent's substituted emission, not the raw file. Keyed by FILE so it maps
+// onto the loaded copy's store id regardless of namespace inheritance; nil-safe.
+// See #777.
+func (i *SelfProduceIndex) EmissionParentByFile(file string) (manifest.NamedResource, bool) {
+	if i == nil {
+		return manifest.NamedResource{}, false
+	}
+	p, ok := i.emissionParentByFile[file]
+	return p, ok
 }
 
 // BuildSelfProduceIndex resolves, per Flux Kustomization with a spec.path,
@@ -61,17 +80,21 @@ func (i *SelfProduceIndex) ProducedBy(cm manifest.NamedResource) []manifest.Name
 // a namePrefix/nameSuffix, are not covered here — they fall back to the
 // render-time listener (valuesFrom) or fail-loud/the flag (source auth).
 func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.ProducerIndex, wipeSecrets bool) *SelfProduceIndex {
-	idx := &SelfProduceIndex{byID: map[manifest.NamedResource][]manifest.NamedResource{}}
+	idx := &SelfProduceIndex{
+		byID:                 map[manifest.NamedResource][]manifest.NamedResource{},
+		emissionParentByFile: map[string]manifest.NamedResource{},
+	}
 	if repoRoot == "" {
 		return idx
 	}
 	b := &selfProduceBuilder{
-		repoRoot:    repoRoot,
-		dirs:        map[string]cachedDir{},
-		idx:         idx,
-		producers:   producers,
-		store:       s,
-		wipeSecrets: wipeSecrets,
+		repoRoot:     repoRoot,
+		dirs:         map[string]cachedDir{},
+		idx:          idx,
+		emittedFiles: map[string][]manifest.NamedResource{},
+		producers:    producers,
+		store:        s,
+		wipeSecrets:  wipeSecrets,
 	}
 	// A KS sourced from a genuine external repo renders that repo's tree, not the
 	// local checkout — walking its spec.path against repoRoot would record it as
@@ -86,6 +109,13 @@ func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.
 			continue
 		}
 		b.walkRoot(ks)
+	}
+	// Keep only files reached through exactly one parent — a base shared by peer
+	// overlays is ambiguous, so add no gate.
+	for file, parents := range b.emittedFiles {
+		if len(parents) == 1 {
+			idx.emissionParentByFile[file] = parents[0]
+		}
 	}
 	return idx
 }
@@ -103,6 +133,10 @@ type selfProduceBuilder struct {
 	// once. Discovery is serial, so no lock is needed.
 	dirs map[string]cachedDir
 	idx  *SelfProduceIndex
+	// emittedFiles accumulates each cross-tree-emitted ks.yaml path → the
+	// distinct parents reaching it; resolved to single-parent
+	// emissionParentByFile edges after the walk.
+	emittedFiles map[string][]manifest.NamedResource
 	// producers, when non-nil, receives target-Secret → ExternalSecret /
 	// SealedSecret edges discovered during the same walk. See
 	// BuildSelfProduceIndex.
@@ -237,6 +271,8 @@ func (b *selfProduceBuilder) recordProduced(relFile, baseNS, rootNS string, ks m
 				b.recordConfigMap(o, baseNS, rootNS, ks)
 			case *manifest.Secret:
 				b.materializeSecret(o, baseNS, rootNS)
+			case *manifest.Kustomization:
+				b.recordEmittedKS(relFile, ks)
 			case *manifest.RawObject:
 				b.recordProducer(o, baseNS, rootNS)
 			}
@@ -279,6 +315,13 @@ func (b *selfProduceBuilder) recordConfigMap(cm *manifest.ConfigMap, baseNS, roo
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ns, Name: cm.Name}
 	b.idx.byID[id] = appendUniqueProducer(b.idx.byID[id], ks)
+}
+
+// recordEmittedKS notes that ks's render subtree reaches a Flux Kustomization
+// defined at relFile — i.e. ks emits that cross-tree base. Accumulated per file;
+// resolved to a single-parent gate after the walk (see EmissionParentByFile).
+func (b *selfProduceBuilder) recordEmittedKS(relFile string, ks manifest.NamedResource) {
+	b.emittedFiles[relFile] = appendUniqueProducer(b.emittedFiles[relFile], ks)
 }
 
 // recordProducer records the target(s) a producer generates — the Secret an

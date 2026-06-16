@@ -145,8 +145,8 @@ github.com/fluxcd/pkg/apis/meta v1.30.0 h1:26TOd1hbamH3c5KOb/CIMGpUDB4G4JV+WCcPy
 github.com/fluxcd/pkg/apis/meta v1.30.0/go.mod h1:q1YjUeCmf0syhkZoMcRmP3pkBaLKFLl7g0mUvVGG4CM=
 github.com/fluxcd/pkg/envsubst v1.7.0 h1:PL9Nj/V2fgaMR9KYZR7mEEw+vlYgP80nFZjOQQKAfJs=
 github.com/fluxcd/pkg/envsubst v1.7.0/go.mod h1:aoWeSIOamhqBZ3bHVj1GDwpdA10DXrI8yYbyjPiFly0=
-github.com/fluxcd/pkg/kustomize v1.34.0 h1:plmUt9VcvD/mtdfYhyxmoCi51OiZ4KBBlGATn20NJRs=
-github.com/fluxcd/pkg/kustomize v1.34.0/go.mod h1:M1jIz03OQ86QmcsO+2W3y0+X4B0dbh2QLUF8h3gzyJE=
+github.com/fluxcd/pkg/kustomize v1.35.0 h1:Hl3Y6WPPo1btDyUTrT+CS3b4GbAqCuE+bZebpIG2cxg=
+github.com/fluxcd/pkg/kustomize v1.35.0/go.mod h1:M1jIz03OQ86QmcsO+2W3y0+X4B0dbh2QLUF8h3gzyJE=
 github.com/fluxcd/pkg/sourceignore v0.18.0 h1:WU2tPKasG9AM7/H/LlqdjULyaSknnZBTrpHsDDtOuns=
 github.com/fluxcd/pkg/sourceignore v0.18.0/go.mod h1:mnH7rFFlEbMTclhz7JZP7tiHssKdXRNpCqnly2JGvaI=
 github.com/fluxcd/source-controller/api v1.8.5 h1:mLKc9YVMk46JCt1BQbkG6irkrpBZp95kiXh2+GYB6KQ=

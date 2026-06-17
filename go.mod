@@ -39,7 +39,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.5
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sync v0.21.0
-	helm.sh/helm/v4 v4.2.1
+	helm.sh/helm/v4 v4.2.2
 	k8s.io/apiextensions-apiserver v0.36.2
 	k8s.io/apimachinery v0.36.2
 	oras.land/oras-go/v2 v2.6.1

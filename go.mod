@@ -13,7 +13,7 @@ require (
 	github.com/controlplaneio-fluxcd/flux-operator v0.52.0
 	github.com/distribution/reference v0.6.0
 	github.com/fluxcd/helm-controller/api v1.6.0
-	github.com/fluxcd/kustomize-controller/api v1.8.5
+	github.com/fluxcd/kustomize-controller/api v1.9.0
 	github.com/fluxcd/pkg/apis/kustomize v1.19.0
 	github.com/fluxcd/pkg/apis/meta v1.30.0
 	github.com/fluxcd/pkg/envsubst v1.7.0

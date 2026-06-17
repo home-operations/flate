@@ -52,6 +52,13 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		}
 		parent, ok := loader.LongestParent(prefixes, file, id)
 		if !ok {
+			// No covering spec.path parent. A Flux KS that is a stray manifest its
+			// own kustomize base excludes (apps/base/app-X/ks.yaml not listed in the
+			// dir's kustomization.yaml) is one real Flux never applies — demote it
+			// rather than hard-failing a file that isn't wired into any tree (#777).
+			if loader.IsUnreferencedKustomizeResource(o.repoRoot, file) {
+				out[id] = info.Message
+			}
 			continue
 		}
 		// A covering parent that itself FAILED emitted nothing, so every child

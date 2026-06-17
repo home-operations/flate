@@ -1,6 +1,10 @@
 package loader
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
+)
 
 // TestResolveDataPath covers generator-file path resolution. Rows:
 //   - in-tree relative path resolves to its absolute equivalent;
@@ -65,6 +69,36 @@ func TestResolveResourcePath(t *testing.T) {
 			}
 			if ok && abs != tc.wantAbs {
 				t.Errorf("resolveResourcePath(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
+			}
+		})
+	}
+}
+
+// TestIsUnreferencedKustomizeResource pins the #777 orphan signal: a manifest is
+// "unreferenced" only when its own directory's kustomization.yaml exists and does
+// not list it. A listed file, or a directory with no kustomization at all (a
+// loose top-level entry), is not.
+func TestIsUnreferencedKustomizeResource(t *testing.T) {
+	dir := t.TempDir()
+	// excluded/ — kustomization references only cm.yaml; ks.yaml is a stray file.
+	testutil.WriteFile(t, dir, "excluded/kustomization.yaml", "resources:\n  - cm.yaml\n")
+	// referenced/ — kustomization references ks.yaml.
+	testutil.WriteFile(t, dir, "referenced/kustomization.yaml", "resources:\n  - ks.yaml\n  - cm.yaml\n")
+	// loose/ — a KS file with no kustomization.yaml beside it.
+
+	cases := []struct {
+		name string
+		file string
+		want bool
+	}{
+		{"excluded by own kustomization", "excluded/ks.yaml", true},
+		{"referenced by own kustomization", "referenced/ks.yaml", false},
+		{"no kustomization in dir", "loose/ks.yaml", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsUnreferencedKustomizeResource(dir, tc.file); got != tc.want {
+				t.Errorf("IsUnreferencedKustomizeResource(%q) = %v, want %v", tc.file, got, tc.want)
 			}
 		})
 	}

@@ -2,6 +2,7 @@ package loader
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -218,4 +219,27 @@ func resolvePath(base, rel string) (string, bool) {
 // caller after stat), so this is the dir-descent path only.
 func resolveResourcePath(base, rel string) (string, bool) {
 	return resolvePath(base, rel)
+}
+
+// IsUnreferencedKustomizeResource reports whether the repo-relative file sits in
+// a directory whose kustomization.yaml does NOT list it as a resource — a stray
+// manifest a kustomize base deliberately excludes, so kustomize (and Flux) never
+// apply it. Orphan detection uses this to demote such a stray Flux Kustomization
+// to a warning instead of hard-failing a file that isn't wired into the tree
+// (the apps/base/app-X/ks.yaml-not-in-kustomization.yaml shape, #777). A
+// directory with no kustomization file returns false: there the manifest is a
+// loose top-level entry, not an excluded base resource.
+func IsUnreferencedKustomizeResource(repoRoot, file string) bool {
+	file = filepath.ToSlash(file)
+	dir := path.Dir(file)
+	d, ok := readKustomizeDirectives(repoRoot, dir)
+	if !ok {
+		return false
+	}
+	for _, r := range d.Resources {
+		if resolved, ok := resolveResourcePath(dir, r); ok && filepath.ToSlash(resolved) == file {
+			return false
+		}
+	}
+	return true
 }

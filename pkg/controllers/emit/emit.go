@@ -67,6 +67,16 @@ func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, d
 		reconcilable bool
 		leaf         bool // held for pass 2 (Kustomization / HelmRelease)
 	}
+	// Default namespace-less rendered objects to the emitting parent's namespace,
+	// like kustomize-controller does on apply — otherwise a child that omits
+	// metadata.namespace (e.g. an OCIRepository with just a name) is emitted
+	// unnamespaced and never dedups against its namespace-inherited file-loaded
+	// copy, leaving the unsubstituted copy to be validated. A KS's render already
+	// applied spec.targetNamespace, so a doc is only namespace-less here when the
+	// KS sets none, where id.Namespace matches loader.ApplyNamespaceInheritance.
+	// StampNamespaces skips cluster-scoped kinds and preserves explicit
+	// namespaces, so it is a no-op once a namespace is set.
+	manifest.StampNamespaces(docs, id.Namespace)
 	opts := manifest.ParseDocOptions{WipeSecrets: wipeSecrets}
 	// Log under the invoking controller's identity plus component=emit, so a
 	// "skipped doc" line names both the controller whose render produced the

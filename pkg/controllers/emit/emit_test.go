@@ -3,7 +3,10 @@ package emit
 import (
 	"testing"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 // TestShouldDispatchAsObject_KnownKinds documents which kinds the
@@ -104,5 +107,39 @@ func TestPass1Pass2Categories(t *testing.T) {
 		if IsLeafReconcilable(k) && !ShouldDispatchAsObject(k) {
 			t.Errorf("%T is a leaf reconcilable but not dispatch-as-object", k)
 		}
+	}
+}
+
+// TestChildren_DefaultsNamespace pins the fix for the unsubstituted-OCIRepository
+// bug: a namespace-less rendered child must inherit the emitting parent's
+// namespace, so it dedups against its namespace-inherited file-loaded copy
+// instead of lingering at empty namespace. An explicit namespace is preserved.
+func TestChildren_DefaultsNamespace(t *testing.T) {
+	s := store.New()
+	c := base.New(s, task.NewBounded(1), "test")
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "infra"}
+
+	Children(c, true, parent, []map[string]any{
+		{
+			"apiVersion": "source.toolkit.fluxcd.io/v1",
+			"kind":       "OCIRepository",
+			"metadata":   map[string]any{"name": "certmanager"},
+			"spec":       map[string]any{"url": "oci://quay.io/c", "provider": "generic"},
+		},
+		{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "cm", "namespace": "other"},
+		},
+	}, true)
+
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "certmanager"}) == nil {
+		t.Error("namespace-less OCIRepository was not defaulted to the parent namespace flux-system")
+	}
+	if obj := s.GetObject(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "", Name: "certmanager"}); obj != nil {
+		t.Errorf("empty-namespace OCIRepository phantom present: %v", obj.Named())
+	}
+	if s.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "other", Name: "cm"}) == nil {
+		t.Error("explicit namespace not preserved for ConfigMap other/cm")
 	}
 }

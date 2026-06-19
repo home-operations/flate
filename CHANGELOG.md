@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.9](https://github.com/home-operations/flate/compare/v0.4.8...v0.4.9) (2026-06-19)
+
+
+### Features
+
+* **deps:** update module github.com/alecthomas/chroma/v2 (v2.26.1 → v2.27.0) ([#781](https://github.com/home-operations/flate/issues/781)) ([e35f200](https://github.com/home-operations/flate/commit/e35f200de1e7b8bcfc8253cb3dc0a97efd71b313))
+* **deps:** update module github.com/fluxcd/helm-controller/api (v1.5.5 → v1.6.0) ([#784](https://github.com/home-operations/flate/issues/784)) ([be6f160](https://github.com/home-operations/flate/commit/be6f16013582cc74bd54c1965e73c303f0404fe3))
+* **deps:** update module github.com/fluxcd/kustomize-controller/api (v1.8.5 → v1.9.0) ([#782](https://github.com/home-operations/flate/issues/782)) ([ceba07a](https://github.com/home-operations/flate/commit/ceba07a220ae289af9954c2be5ad7984b1538497))
+* **deps:** update module github.com/fluxcd/source-controller/api (v1.8.5 → v1.9.0) ([#783](https://github.com/home-operations/flate/issues/783)) ([e5527d6](https://github.com/home-operations/flate/commit/e5527d6b597ca364d6e620b5eef852ec1c13ffde))
+
+
+### Bug Fixes
+
+* **deps:** update module go.yaml.in/yaml/v4 (v4.0.0-rc.5 → v4.0.0-rc.6) ([#791](https://github.com/home-operations/flate/issues/791)) ([6321bbc](https://github.com/home-operations/flate/commit/6321bbc0a2f2f7738e2e240ce63f2f9577e1876a))
+* **deps:** update module helm.sh/helm/v4 (v4.2.1 → v4.2.2) ([#788](https://github.com/home-operations/flate/issues/788)) ([e962fbd](https://github.com/home-operations/flate/commit/e962fbd5c385c56468ebc69295af3a2f7af5a5e6))
+* **emit:** default namespace-less rendered children to the emitting parent ([#792](https://github.com/home-operations/flate/issues/792)) ([02ec12c](https://github.com/home-operations/flate/commit/02ec12c26f000a7b872b372cba97c6c224021fea))
+* **orchestrator:** orphan unreferenced base Kustomizations ([#785](https://github.com/home-operations/flate/issues/785)) ([2178438](https://github.com/home-operations/flate/commit/21784388a2e57f04e375b5125c8a8b5a09c35904))
+
 ## [0.4.8](https://github.com/home-operations/flate/compare/v0.4.7...v0.4.8) (2026-06-16)
 
 

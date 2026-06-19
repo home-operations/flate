@@ -491,7 +491,11 @@ func newHighlighter() (*highlighter, string, error) {
 	if dark == nil {
 		dark = light
 	}
-	fmtr := chromahtml.New(chromahtml.WithClasses(true), chromahtml.PreventSurroundingPre(true))
+	// WithModeClasses scopes the wrapper class and WriteCSS rules by the style's
+	// mode (.chroma.light / .chroma.dark) — the light/dark scoping diff.html.tmpl
+	// toggles. chroma made it opt-in in v2.27.0 (implicitly on before); without it
+	// both stylesheets collapse onto a single unscoped .chroma.
+	fmtr := chromahtml.New(chromahtml.WithClasses(true), chromahtml.WithModeClasses(true), chromahtml.PreventSurroundingPre(true))
 	var css bytes.Buffer
 	if err := fmtr.WriteCSS(&css, light); err != nil {
 		return nil, "", fmt.Errorf("chroma css (light): %w", err)

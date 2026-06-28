@@ -173,6 +173,64 @@ entries:
 `, digestLine)
 }
 
+// startHelmRepoSubpath serves the index.yaml and chart .tgz under a non-root
+// path prefix (e.g. /charts), mirroring real repos like https://repos.emqx.io/charts
+// and https://helm.ngc.nvidia.com/nvidia whose index entries carry RELATIVE urls.
+// A relative url must resolve against the repo's base directory, so the prefix
+// must be preserved — anything served at host root 404s.
+func startHelmRepoSubpath(t *testing.T, prefix string, chartBytes []byte, indexDigest string) (*httptest.Server, *int) {
+	t.Helper()
+	hits := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc(prefix+"/index.yaml", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-yaml")
+		_, _ = w.Write([]byte(helmRepoIndex(indexDigest)))
+	})
+	mux.HandleFunc(prefix+"/app-template-1.0.0.tgz", func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(chartBytes)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+// TestFetchHTTPChart_SubpathRelativeURL reproduces issue #796: a HelmRepository
+// whose index lives under a path prefix (.../charts) and lists relative chart
+// urls. Without a trailing slash on spec.url, a naive ResolveReference drops the
+// last path segment and fetches from host root (404). Helm and Flux force a
+// trailing slash before resolving; flate must match.
+func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
+	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
+
+	t.Run("no trailing slash", func(t *testing.T) {
+		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
+		f := newHTTPFetcher(t, httpRepo(srv.URL+"/charts"))
+		art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"))
+		if err != nil {
+			t.Fatalf("Fetch: %v", err)
+		}
+		if *hits != 1 {
+			t.Errorf("chart fetched %d times from subpath, want 1 (url resolved against host root?)", *hits)
+		}
+		if _, err := os.Stat(filepath.Join(art.LocalPath, "chart.tgz")); err != nil {
+			t.Errorf("chart.tgz not at LocalPath %s: %v", art.LocalPath, err)
+		}
+	})
+
+	t.Run("trailing slash", func(t *testing.T) {
+		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
+		f := newHTTPFetcher(t, httpRepo(srv.URL+"/charts/"))
+		if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
+			t.Fatalf("Fetch: %v", err)
+		}
+		if *hits != 1 {
+			t.Errorf("chart fetched %d times from subpath, want 1", *hits)
+		}
+	})
+}
+
 func chartDigest(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])

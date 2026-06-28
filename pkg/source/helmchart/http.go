@@ -206,6 +206,10 @@ func normalizeChartDigest(digest string) string {
 
 // absChartURL resolves urlStr against base — HelmRepository index entries
 // often carry relative URLs which need joining against the repo's spec.url.
+// A trailing slash is forced on the base path so ResolveReference (RFC 3986)
+// treats spec.url as the index's base directory rather than a file: without it
+// `https://host/charts` + `emqx-5.8.9.tgz` would drop the `/charts` segment and
+// 404. Matches Helm's repo.ResolveReferenceURL and Flux source-controller.
 func absChartURL(base, urlStr string) (string, error) {
 	u, err := url.Parse(urlStr)
 	if err != nil {
@@ -218,6 +222,7 @@ func absChartURL(base, urlStr string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	baseURL.Path = strings.TrimSuffix(baseURL.Path, "/") + "/"
 	return baseURL.ResolveReference(u).String(), nil
 }
 

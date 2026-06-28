@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.10](https://github.com/home-operations/flate/compare/v0.4.9...v0.4.10) (2026-06-28)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/minio/minio-go/v7 (v7.2.0 → v7.2.1) ([#797](https://github.com/home-operations/flate/issues/797)) ([71ebb0c](https://github.com/home-operations/flate/commit/71ebb0c9ee934f6de57027248159dc6bc01578c5))
+* **source:** resolve relative HelmRepository chart URLs against repo base ([#799](https://github.com/home-operations/flate/issues/799)) ([499fa27](https://github.com/home-operations/flate/commit/499fa2702f5242c28ea30af3f194e57643ff1ac2))
+
 ## [0.4.9](https://github.com/home-operations/flate/compare/v0.4.8...v0.4.9) (2026-06-19)
 
 

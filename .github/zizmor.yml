@@ -1,0 +1,8 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/zizmorcore/zizmor/main/docs/schemas/zizmor.schema.json
+rules:
+  # Go cache on the goreleaser split legs: tag runs only restore caches saved
+  # from main, and PRs can't write those (PR cache saves are scoped to the PR).
+  cache-poisoning:
+    ignore:
+      - release.yaml

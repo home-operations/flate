@@ -1,5 +1,5 @@
 ---
-# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# yaml-language-server: $schema=https://goreleaser.com/static/schema-pro.json
 version: 2
 project_name: flate
 
@@ -71,6 +71,11 @@ homebrew_casks:
       - flate
     binaries:
       - flate
+    # Versioned casks: @major.minor is overwritten per patch, @major.minor.patch
+    # accumulates one tap file per release.
+    alternative_names:
+      - "flate@{{ .Major }}.{{ .Minor }}"
+      - "flate@{{ .Major }}.{{ .Minor }}.{{ .Patch }}"
     generate_completions_from_executable:
       shell_parameter_format: cobra
       shells:
@@ -95,3 +100,8 @@ homebrew_casks:
 # attaches binaries/sboms/sigs to it.
 release:
   mode: keep-existing
+
+# Parallel per-GOOS release jobs (release.yaml): `release --split` legs +
+# one `continue --merge` job for checksums/signing/SBOMs/publish.
+partial:
+  by: goos

@@ -121,7 +121,7 @@ dependsOn:
 
 **Substitution opt-out** — the `kustomize.toolkit.fluxcd.io/substitute: disabled` label or annotation is honored per-resource, matching kustomize-controller. Used for ConfigMaps embedding bash array expansions envsubst can't parse.
 
-**Signature verification** — flate does **not** verify signatures. `spec.verify` on `OCIRepository` (cosign) and `GitRepository` (PGP) is ignored: the artifact is pulled and rendered unconditionally, with no warning. flate is an offline renderer of what Flux *would* apply, not an admission gate — signature enforcement belongs in-cluster (see [Limits](#limits)).
+**Signature verification** — flate does **not** verify signatures. `spec.verify` on `OCIRepository` (cosign) and `GitRepository` (PGP) is ignored: the artifact is pulled and rendered unconditionally, with no warning. flate is an offline renderer of what Flux _would_ apply, not an admission gate — signature enforcement belongs in-cluster (see [Limits](#limits)).
 
 **ResourceSet inputs (`inputs` / `inputsFrom`)** — a `ResourceSet` renders its `resources` / `resourcesTemplate` once per input set. Inline `spec.inputs` and `spec.inputsFrom` both contribute sets; each `inputsFrom` entry references a `ResourceSetInputProvider` by `name` or by label `selector` (scoped to the ResourceSet's namespace). The built-in `inputs.provider` block on every set reflects the _sourcing_ CR's `apiVersion`/`kind`/`name`/`namespace` — the referenced provider for `inputsFrom`, the ResourceSet itself for inline.
 
@@ -188,6 +188,10 @@ golangci-lint run ./...
 ```
 
 Tool versions pin via [mise](https://mise.jdx.dev). Testdata lives in [`testdata/`](testdata/); [`test/e2e`](test/e2e/) runs the cobra command tree in-process — no fork/exec, no freshly built binary.
+
+## Releases
+
+Release artifacts (archives, the Homebrew cask, SBOMs, and Cosign signatures) are built and published with [GoReleaser Pro](https://goreleaser.com/pro/). If it's useful to your own projects, consider [sponsoring its author](https://github.com/sponsors/caarlos0).
 
 ## License
 

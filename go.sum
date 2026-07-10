@@ -133,8 +133,8 @@ github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/fluxcd/cli-utils v1.2.1 h1:ug9CicKW7H9QXnvNDapTSKuryZvWcu4Nw7pRvQa6jDY=
 github.com/fluxcd/cli-utils v1.2.1/go.mod h1:cky6M6eHvTQkoPtsuFYLIgAMYdpTCSLoor4IA6vueSw=
-github.com/fluxcd/helm-controller/api v1.6.1 h1:h48BXjp/hvN8pIst5KfU++3oyLlO2OpigXfclSj7NW4=
-github.com/fluxcd/helm-controller/api v1.6.1/go.mod h1:CaI5bHedusLcXYj1+pkd4RkSE8TtiEHI3ReHNsUySbg=
+github.com/fluxcd/helm-controller/api v1.6.2 h1:oH3kXfiSVDKB5Mmh7tF4ywC2yK1Ui7enjt7GKWJbTxM=
+github.com/fluxcd/helm-controller/api v1.6.2/go.mod h1:CaI5bHedusLcXYj1+pkd4RkSE8TtiEHI3ReHNsUySbg=
 github.com/fluxcd/kustomize-controller/api v1.9.0 h1:thrGRwrUWpEcvVWJd6xxEcIpcOVvre1JCmMY+tl+MF8=
 github.com/fluxcd/kustomize-controller/api v1.9.0/go.mod h1:/tk2hHcPxglZX/C0zL1NAGN+X+sZTR+JXr5LpzNRSh8=
 github.com/fluxcd/pkg/apis/acl v0.10.0 h1:KPfAmELNvtvaz8wixnm/MYXqa+MJf7ntVVMUU93Aenk=

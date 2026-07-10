@@ -24,7 +24,7 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0
 	github.com/gofrs/flock v0.13.0
 	github.com/gonvenience/ytbx v1.5.0
-	github.com/google/cel-go v0.28.1
+	github.com/google/cel-go v0.29.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/gosimple/slug v1.15.0

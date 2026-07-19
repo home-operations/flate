@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.4.11](https://github.com/home-operations/flate/compare/v0.4.10...v0.4.11) (2026-07-19)
+
+
+### Features
+
+* **ci:** goreleaser Pro — split/merge release matrix + versioned casks ([#815](https://github.com/home-operations/flate/issues/815)) ([ad759dd](https://github.com/home-operations/flate/commit/ad759ddf52765923993da7f56517a41ba9c25bd0))
+* **deps:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.52.0 → v0.53.0) ([#809](https://github.com/home-operations/flate/issues/809)) ([10f887f](https://github.com/home-operations/flate/commit/10f887f81bc3ecbc073499f354b021f1d585202b))
+* **deps:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.53.0 → v0.55.0) ([#824](https://github.com/home-operations/flate/issues/824)) ([2007f23](https://github.com/home-operations/flate/commit/2007f23fd8407a2ec2385692a1a176a2e92640d1))
+* **deps:** update module github.com/fluxcd/pkg/apis/meta (v1.30.1 → v1.31.0) ([#802](https://github.com/home-operations/flate/issues/802)) ([3d82f73](https://github.com/home-operations/flate/commit/3d82f737827643c74780f2c09183c2e5d131403a))
+* **deps:** update module github.com/fluxcd/pkg/kustomize (v1.35.0 → v1.38.0) ([#803](https://github.com/home-operations/flate/issues/803)) ([9e9a7bf](https://github.com/home-operations/flate/commit/9e9a7bfaabc2870e71d3de0662e1f288b6d873f1))
+* **deps:** update module github.com/google/cel-go (v0.28.1 → v0.29.2) ([#814](https://github.com/home-operations/flate/issues/814)) ([566b9c2](https://github.com/home-operations/flate/commit/566b9c2928c607df21b427984926aaf71a672ec2))
+* **deps:** update module github.com/klauspost/compress (v1.18.6 → v1.19.0) ([#805](https://github.com/home-operations/flate/issues/805)) ([c940a9c](https://github.com/home-operations/flate/commit/c940a9cd15f78cfa1fc9278f45160b770e520c57))
+* **deps:** update module golang.org/x/crypto (v0.53.0 → v0.54.0) ([#829](https://github.com/home-operations/flate/issues/829)) ([14523cd](https://github.com/home-operations/flate/commit/14523cd82bd1bd6a6539f63c69bf25728def6058))
+* **deps:** update module golang.org/x/sync (v0.21.0 → v0.22.0) ([#826](https://github.com/home-operations/flate/issues/826)) ([154861c](https://github.com/home-operations/flate/commit/154861c2d234b3a9b2f8cc1d39f778553d7d35cf))
+
+
+### Bug Fixes
+
+* **cli:** stop terminal capability probes leaking into the shell ([#840](https://github.com/home-operations/flate/issues/840)) ([7943950](https://github.com/home-operations/flate/commit/794395049586f7f3f6705dc18378f49577d5b7dd))
+* **deps:** update module charm.land/bubbles/v2 (v2.1.0 → v2.1.1) ([#817](https://github.com/home-operations/flate/issues/817)) ([2dd9c55](https://github.com/home-operations/flate/commit/2dd9c55d0feeeee6223982edc8cb8de4df889f71))
+* **deps:** update module charm.land/bubbletea/v2 (v2.0.7 → v2.0.8) ([#811](https://github.com/home-operations/flate/issues/811)) ([57ef528](https://github.com/home-operations/flate/commit/57ef5285d833420257759217b9bf59208df1a875))
+* **deps:** update module charm.land/lipgloss/v2 (v2.0.4 → v2.0.5) ([#812](https://github.com/home-operations/flate/issues/812)) ([d39fa95](https://github.com/home-operations/flate/commit/d39fa95bc7ae0e2522b4a28d49e2d6863e1ab9f2))
+* **deps:** update module github.com/fluxcd/helm-controller/api (v1.6.0 → v1.6.1) ([#806](https://github.com/home-operations/flate/issues/806)) ([439d6c9](https://github.com/home-operations/flate/commit/439d6c9549d21861b393b177b07cd3da18c7d9a0))
+* **deps:** update module github.com/fluxcd/helm-controller/api (v1.6.1 → v1.6.2) ([#822](https://github.com/home-operations/flate/issues/822)) ([c205f23](https://github.com/home-operations/flate/commit/c205f23e3eefde14d2fdb6bd875d84340ad38f11))
+* **deps:** update module github.com/fluxcd/kustomize-controller/api (v1.9.0 → v1.9.3) ([#807](https://github.com/home-operations/flate/issues/807)) ([a0ce058](https://github.com/home-operations/flate/commit/a0ce058e1eb46d5ca61956b5c6996d9d0780e447))
+* **deps:** update module github.com/fluxcd/source-controller/api (v1.9.0 → v1.9.1) ([#808](https://github.com/home-operations/flate/issues/808)) ([52ed890](https://github.com/home-operations/flate/commit/52ed890b0385db2ef8bf71020bbecdc36d759f54))
+* **deps:** update module github.com/fluxcd/source-controller/api (v1.9.1 → v1.9.3) ([#823](https://github.com/home-operations/flate/issues/823)) ([403ebbd](https://github.com/home-operations/flate/commit/403ebbda176218bfc4a8a48511ae03be3977c607))
+* **deps:** update module helm.sh/helm/v4 (v4.2.2 → v4.2.3) ([#830](https://github.com/home-operations/flate/issues/830)) ([85ab1b9](https://github.com/home-operations/flate/commit/85ab1b9c5a596fbd492787d7548de6dc1e662dd4))
+* **deps:** update module oras.land/oras-go/v2 (v2.6.1 → v2.6.2) ([#831](https://github.com/home-operations/flate/issues/831)) ([5bd4b0e](https://github.com/home-operations/flate/commit/5bd4b0e03199dc6368f7e735fa602f29c153f829))
+
+
+### Documentation
+
+* credit GoReleaser Pro in the README ([#818](https://github.com/home-operations/flate/issues/818)) ([b29fd43](https://github.com/home-operations/flate/commit/b29fd436a5566214801bca4a2a45ce2e421b90ea))
+
 ## [0.4.10](https://github.com/home-operations/flate/compare/v0.4.9...v0.4.10) (2026-06-28)
 
 

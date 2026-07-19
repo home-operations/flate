@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"os"
 	"strings"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/home-operations/flate/internal/style"
 )
@@ -55,6 +57,42 @@ func (w *barWriter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	return w.out.Write(p)
+}
+
+// terminalQueries are the capability probes Bubble Tea writes at program start
+// (DECRQM for synchronized output / unicode core). The bar runs with
+// WithInput(nil), so the terminal's replies are never consumed — they would sit
+// in the tty input buffer and spill into the shell's next prompt. Stripping the
+// probes keeps the program truly output-only; the renderer simply never enables
+// those modes, which is the same behavior as a terminal that doesn't reply.
+var terminalQueries = [][]byte{
+	[]byte(ansi.RequestModeSynchronizedOutput),
+	[]byte(ansi.RequestModeUnicodeCore),
+}
+
+// queryFilterFile wraps the bar's stderr TTY and drops terminalQueries from
+// everything written through it. It stays a term.File (embedded *os.File) so
+// Bubble Tea still recognizes the output as a terminal for sizing and state
+// restore; only Write is intercepted. Program.execute buffers each probe pair
+// in one call and flush writes the whole buffer in one Write, so a sequence is
+// never split across calls.
+type queryFilterFile struct {
+	*os.File
+}
+
+func (f *queryFilterFile) Write(p []byte) (int, error) {
+	filtered := p
+	for _, q := range terminalQueries {
+		if bytes.Contains(filtered, q) {
+			filtered = bytes.ReplaceAll(filtered, q, nil)
+		}
+	}
+	if len(filtered) > 0 {
+		if _, err := f.File.Write(filtered); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
 }
 
 // captureStderr redirects the process os.Stderr to a pipe and delivers each

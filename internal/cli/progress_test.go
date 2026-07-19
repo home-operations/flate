@@ -52,6 +52,42 @@ func TestBarWriter_NoProgramWritesThrough(t *testing.T) {
 	}
 }
 
+// TestQueryFilterFile: the bar's output wrapper strips Bubble Tea's startup
+// terminal probes (mode 2026/2027 DECRQM) — whose replies nothing reads, since
+// the program runs input-less — while passing every other byte through and
+// reporting the full input length as written.
+func TestQueryFilterFile(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	w := &queryFilterFile{File: f}
+
+	in := []byte("\x1b[?2026$p\x1b[?2027$pframe \x1b[?2026h+content")
+	n, err := w.Write(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(in) {
+		t.Errorf("Write returned n=%d, want full length %d", n, len(in))
+	}
+	// A flush that is nothing but probes writes no bytes at all.
+	if _, err := w.Write([]byte("\x1b[?2026$p")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The set-mode sequence (2026h) and frame text survive; only the $p
+	// probes are dropped.
+	if want := "frame \x1b[?2026h+content"; string(got) != want {
+		t.Errorf("filtered output = %q, want %q", got, want)
+	}
+}
+
 // TestWriterIsTTY_NonFile: buffers (the e2e harness, pipes-as-buffers) are
 // never TTYs, so the bar stays off without a flag.
 func TestWriterIsTTY_NonFile(t *testing.T) {

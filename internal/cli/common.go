@@ -578,8 +578,15 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...fun
 	// then finishMsg clears the frame and the program is detached from slog
 	// before Render's callers print anything.
 	if barSink != nil {
+		// With no input attached, Bubble Tea's startup terminal queries would
+		// get answered into the shell's input buffer; queryFilterFile strips
+		// them (progressBarEnabled guarantees out is a TTY *os.File).
+		out := barSink.out
+		if f, ok := out.(*os.File); ok {
+			out = &queryFilterFile{File: f}
+		}
 		p := tea.NewProgram(newBarModel(barSink.color),
-			tea.WithOutput(barSink.out),
+			tea.WithOutput(out),
 			tea.WithInput(nil),         // output-only: never capture the keyboard
 			tea.WithoutSignalHandler(), // the CLI context owns Ctrl-C, not the bar
 		)

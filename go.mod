@@ -15,7 +15,7 @@ require (
 	github.com/fluxcd/helm-controller/api v1.6.2
 	github.com/fluxcd/kustomize-controller/api v1.9.3
 	github.com/fluxcd/pkg/apis/kustomize v1.20.0
-	github.com/fluxcd/pkg/apis/meta v1.30.1
+	github.com/fluxcd/pkg/apis/meta v1.31.0
 	github.com/fluxcd/pkg/envsubst v1.7.0
 	github.com/fluxcd/pkg/kustomize v1.38.0
 	github.com/fluxcd/pkg/sourceignore v0.18.0

@@ -4,12 +4,12 @@ Install the [flate](https://github.com/home-operations/flate) CLI on Linux, macO
 
 ```yaml
 steps:
-    # Installs flate matching the pinned action ref and reuses its
-    # on-disk cache across runs.
-    - uses: home-operations/flate/action@0.1.30
-      with:
-          cache: true
-    - run: flate get ks --path ./kubernetes
+  # Installs flate matching the pinned action ref and reuses its
+  # on-disk cache across runs.
+  - uses: home-operations/flate/action@0.1.30
+    with:
+      cache: true
+  - run: flate get ks --path ./kubernetes
 ```
 
 The action downloads the release archive from GitHub, verifies its SHA-256, installs into `$RUNNER_TOOL_CACHE` (or the path given via `bindir`), and exports `FLATE_CACHE_DIR` so subsequent `flate` calls write to a predictable location.

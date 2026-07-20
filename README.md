@@ -114,9 +114,9 @@ flate renders your own repo offline, so Secret values pass through verbatim — 
 
 ```yaml
 dependsOn:
-    - name: infra-controllers
-      readyExpr: |
-          dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")
+  - name: infra-controllers
+    readyExpr: |
+      dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")
 ```
 
 **Substitution opt-out** — the `kustomize.toolkit.fluxcd.io/substitute: disabled` label or annotation is honored per-resource, matching kustomize-controller. Used for ConfigMaps embedding bash array expansions envsubst can't parse.

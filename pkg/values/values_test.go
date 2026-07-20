@@ -237,7 +237,7 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 }
 
 func TestExpandValueReferences_LiteralTargetPath(t *testing.T) {
-config := `concurrent = 4
+	config := `concurrent = 4
 environment = ["FOO=bar", "BAZ=qux"]
 `
 	cm := &manifest.ConfigMap{
@@ -264,6 +264,39 @@ environment = ["FOO=bar", "BAZ=qux"]
 	runners := hr.Values["runners"].(map[string]any)
 	if runners["config"] != config {
 		t.Errorf("config: %q, want %q", runners["config"], config)
+	}
+}
+
+// TestExpandValueReferences_LiteralTargetPathEscapedDot pins the Flux
+// chartutil.ReplacePathLiteralValue contract that a literal ref keeps `\.`
+// escape support in the targetPath (helm's own --set-literal parser does
+// not): the escaped segment stays one key, and the value — commas and all —
+// lands verbatim.
+func TestExpandValueReferences_LiteralTargetPathEscapedDot(t *testing.T) {
+	cm := &manifest.ConfigMap{
+		Name: "scrape", Namespace: "default",
+		Data: map[string]any{"value": "true,false"},
+	}
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{
+					Kind:       "ConfigMap",
+					Name:       "scrape",
+					ValuesKey:  "value",
+					TargetPath: `annotations.prometheus\.io/scrape`,
+					Literal:    true,
+				},
+			},
+		},
+	}
+	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
+		t.Fatalf("ExpandValueReferences: %v", err)
+	}
+	annotations := hr.Values["annotations"].(map[string]any)
+	if got := annotations["prometheus.io/scrape"]; got != "true,false" {
+		t.Errorf(`annotations = %#v, want key "prometheus.io/scrape" = "true,false"`, annotations)
 	}
 }
 

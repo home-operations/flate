@@ -498,7 +498,9 @@ func bagValueAsString(v any) (string, error) {
 // validation against `replicaCount: integer` and similar. The targetPath
 // path bypasses the cache — strvals parsing already mutates values in
 // place per-call and is comparatively cheap (no map allocation for the
-// parsed tree).
+// parsed tree). A ref with `literal: true` skips all of that syntax and
+// lands the value verbatim as a string (`helm --set-literal` semantics,
+// via replaceLiteralValueAtPath).
 //
 // Otherwise the found YAML is parsed (memoized in cache when non-nil, keyed
 // by kind, namespace, name, valuesKey, content-hash) and deep-merged.
@@ -522,10 +524,8 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 		// moment any ref carries a TargetPath), so `values` is owned and
 		// the in-place strvals write below is safe.
 		if ref.Literal {
-			if err := strvals.ParseLiteralInto(ref.TargetPath+"="+found, values); err != nil {
-				return values, fmt.Errorf("targetPath %q: %w", ref.TargetPath, err)
-			}
-			return values, nil
+			_, err := replaceLiteralValueAtPath(values, ref.TargetPath, found)
+			return values, err
 		}
 		_, err := replaceValueAtPath(values, ref.TargetPath, found)
 		return values, err
@@ -579,6 +579,30 @@ func replaceValueAtPath(values map[string]any, path, value string) (map[string]a
 		err = strvals.ParseInto(path+"="+value, values)
 	}
 	if err != nil {
+		return nil, fmt.Errorf("targetPath %q: %w", path, err)
+	}
+	return values, nil
+}
+
+// replaceLiteralValueAtPath writes value verbatim at the dot-notation path,
+// mirroring upstream Flux's chartutil.ReplacePathLiteralValue. Flux does not
+// use helm's strvals.ParseLiteralInto here: that parser has no backslash
+// escape support in the path, which would break `\.` targetPath segments
+// (e.g. `annotations.prometheus\.io/scrape`). Instead the value has its
+// strvals metacharacters pre-escaped and goes through ParseIntoString, which
+// keeps escape-aware path parsing while the value round-trips verbatim.
+func replaceLiteralValueAtPath(values map[string]any, path, value string) (map[string]any, error) {
+	// Backslash must be escaped first so the escapes added for the other
+	// metacharacters aren't themselves re-escaped.
+	escaper := strings.NewReplacer(
+		`\`, `\\`,
+		`,`, `\,`,
+		`[`, `\[`,
+		`]`, `\]`,
+		`{`, `\{`,
+		`}`, `\}`,
+	)
+	if err := strvals.ParseIntoString(path+"="+escaper.Replace(value), values); err != nil {
 		return nil, fmt.Errorf("targetPath %q: %w", path, err)
 	}
 	return values, nil

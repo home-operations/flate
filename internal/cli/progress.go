@@ -60,7 +60,8 @@ func (w *barWriter) Write(p []byte) (int, error) {
 }
 
 // terminalQueries are the capability probes Bubble Tea writes at program start
-// (DECRQM for synchronized output / unicode core). The bar runs with
+// (DECRQM for synchronized output / unicode core, and the renderer's Kitty
+// keyboard protocol query on the first frame). The bar runs with
 // WithInput(nil), so the terminal's replies are never consumed — they would sit
 // in the tty input buffer and spill into the shell's next prompt. Stripping the
 // probes keeps the program truly output-only; the renderer simply never enables
@@ -68,14 +69,16 @@ func (w *barWriter) Write(p []byte) (int, error) {
 var terminalQueries = [][]byte{
 	[]byte(ansi.RequestModeSynchronizedOutput),
 	[]byte(ansi.RequestModeUnicodeCore),
+	[]byte(ansi.RequestKittyKeyboard),
 }
 
 // queryFilterFile wraps the bar's stderr TTY and drops terminalQueries from
 // everything written through it. It stays a term.File (embedded *os.File) so
 // Bubble Tea still recognizes the output as a terminal for sizing and state
-// restore; only Write is intercepted. Program.execute buffers each probe pair
-// in one call and flush writes the whole buffer in one Write, so a sequence is
-// never split across calls.
+// restore; only Write is intercepted. Both probe paths reach Write whole:
+// Program.execute buffers each probe pair in one call, and the renderer's
+// frame flush writes its entire buffer in one Write, so a sequence is never
+// split across calls.
 type queryFilterFile struct {
 	*os.File
 }

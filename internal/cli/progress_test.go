@@ -53,9 +53,10 @@ func TestBarWriter_NoProgramWritesThrough(t *testing.T) {
 }
 
 // TestQueryFilterFile: the bar's output wrapper strips Bubble Tea's startup
-// terminal probes (mode 2026/2027 DECRQM) — whose replies nothing reads, since
-// the program runs input-less — while passing every other byte through and
-// reporting the full input length as written.
+// terminal probes (mode 2026/2027 DECRQM and the renderer's Kitty keyboard
+// query) — whose replies nothing reads, since the program runs input-less —
+// while passing every other byte through and reporting the full input length
+// as written.
 func TestQueryFilterFile(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "bar")
 	if err != nil {
@@ -64,7 +65,9 @@ func TestQueryFilterFile(t *testing.T) {
 	defer f.Close()
 	w := &queryFilterFile{File: f}
 
-	in := []byte("\x1b[?2026$p\x1b[?2027$pframe \x1b[?2026h+content")
+	// The Kitty *set* sequence (\x1b[=0;1u) rides in the same frame flush as
+	// the query (\x1b[?u) and must survive the strip.
+	in := []byte("\x1b[?2026$p\x1b[?2027$pframe \x1b[?2026h\x1b[=0;1u\x1b[?u+content")
 	n, err := w.Write(in)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +76,7 @@ func TestQueryFilterFile(t *testing.T) {
 		t.Errorf("Write returned n=%d, want full length %d", n, len(in))
 	}
 	// A flush that is nothing but probes writes no bytes at all.
-	if _, err := w.Write([]byte("\x1b[?2026$p")); err != nil {
+	if _, err := w.Write([]byte("\x1b[?2026$p\x1b[?u")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,9 +84,9 @@ func TestQueryFilterFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The set-mode sequence (2026h) and frame text survive; only the $p
-	// probes are dropped.
-	if want := "frame \x1b[?2026h+content"; string(got) != want {
+	// The set sequences (2026h, =0;1u) and frame text survive; only the
+	// query probes are dropped.
+	if want := "frame \x1b[?2026h\x1b[=0;1u+content"; string(got) != want {
 		t.Errorf("filtered output = %q, want %q", got, want)
 	}
 }

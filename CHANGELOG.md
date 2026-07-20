@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.12](https://github.com/home-operations/flate/compare/v0.4.11...v0.4.12) (2026-07-20)
+
+
+### Bug Fixes
+
+* **cli:** strip the Kitty keyboard probe from progress output ([#846](https://github.com/home-operations/flate/issues/846)) ([22be53e](https://github.com/home-operations/flate/commit/22be53ed815cc907d6b5c20c21bf7908439caa96))
+* **deps:** update module github.com/klauspost/compress (v1.19.0 → v1.19.1) ([#841](https://github.com/home-operations/flate/issues/841)) ([4fc0b02](https://github.com/home-operations/flate/commit/4fc0b02b6abbc829ab8e1e97f205d3fa0f90fbce))
+* **values:** honor literal valuesFrom target paths ([#842](https://github.com/home-operations/flate/issues/842)) ([54aef4f](https://github.com/home-operations/flate/commit/54aef4f47efcc288bd2a96c79f85a2a11261da7f))
+
 ## [0.4.11](https://github.com/home-operations/flate/compare/v0.4.10...v0.4.11) (2026-07-19)
 
 

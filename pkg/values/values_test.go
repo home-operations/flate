@@ -236,6 +236,37 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 	}
 }
 
+func TestExpandValueReferences_LiteralTargetPath(t *testing.T) {
+config := `concurrent = 4
+environment = ["FOO=bar", "BAZ=qux"]
+`
+	cm := &manifest.ConfigMap{
+		Name: "runner", Namespace: "default",
+		Data: map[string]any{"config.toml": config},
+	}
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{
+					Kind:       "ConfigMap",
+					Name:       "runner",
+					ValuesKey:  "config.toml",
+					TargetPath: "runners.config",
+					Literal:    true,
+				},
+			},
+		},
+	}
+	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
+		t.Fatalf("ExpandValueReferences: %v", err)
+	}
+	runners := hr.Values["runners"].(map[string]any)
+	if runners["config"] != config {
+		t.Errorf("config: %q, want %q", runners["config"], config)
+	}
+}
+
 func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",

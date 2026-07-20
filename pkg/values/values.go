@@ -521,6 +521,12 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 		// Only reached when share==false (the caller sets share false the
 		// moment any ref carries a TargetPath), so `values` is owned and
 		// the in-place strvals write below is safe.
+		if ref.Literal {
+			if err := strvals.ParseLiteralInto(ref.TargetPath+"="+found, values); err != nil {
+				return values, fmt.Errorf("targetPath %q: %w", ref.TargetPath, err)
+			}
+			return values, nil
+		}
 		_, err := replaceValueAtPath(values, ref.TargetPath, found)
 		return values, err
 	}

@@ -79,6 +79,10 @@ func TestSynthesizeOCIRepository(t *testing.T) {
 	if d := synthesizeOCIRepository(r, "kromgo", "sha256:abc"); d.Reference == nil || d.Reference.Digest != "sha256:abc" || d.Reference.Tag != "" {
 		t.Errorf("digest Reference = %+v", d.Reference)
 	}
+	// semver constraint → SemVer ref (routed through versionToOCIRef)
+	if c := synthesizeOCIRepository(r, "kromgo", "1.20.x"); c.Reference == nil || c.Reference.SemVer != "1.20.x" || c.Reference.Tag != "" || c.Reference.Digest != "" {
+		t.Errorf("constraint Reference = %+v, want SemVer 1.20.x", c.Reference)
+	}
 	// empty version → no ref
 	if v := synthesizeOCIRepository(r, "kromgo", ""); v.Reference != nil {
 		t.Errorf("empty version → Reference = %+v, want nil", v.Reference)
@@ -86,6 +90,47 @@ func TestSynthesizeOCIRepository(t *testing.T) {
 	// distinct versions → distinct stable names
 	if synthesizeOCIRepository(r, "kromgo", "1.0.0").Name == synthesizeOCIRepository(r, "kromgo", "2.0.0").Name {
 		t.Error("distinct versions collided on synthetic name")
+	}
+}
+
+func TestVersionToOCIRef(t *testing.T) {
+	cases := []struct {
+		name       string
+		version    string
+		wantTag    string
+		wantSemVer string
+		wantDigest string
+	}{
+		// Semver constraints route to SemVer (GC-847-R1).
+		{"wildcard x", "1.20.x", "", "1.20.x", ""},
+		{"wildcard X", "1.20.X", "", "1.20.X", ""},
+		{"star", "*", "", "*", ""},
+		{"tilde", "~1.20.0", "", "~1.20.0", ""},
+		{"caret", "^1.20.0", "", "^1.20.0", ""},
+		{"range", ">=1.20.0 <1.21.0", "", ">=1.20.0 <1.21.0", ""},
+		// Exact pins stay literal tags (GC-847-R2).
+		{"exact pin", "1.20.0", "1.20.0", "", ""},
+		{"v-prefixed pin", "v1.20.0", "v1.20.0", "", ""},
+		// Bare partials parse as concrete versions and must stay tags: the
+		// canary for the isExactSemver-before-isSemverConstraint ordering.
+		{"bare minor partial", "1.20", "1.20", "", ""},
+		{"bare major partial", "1", "1", "", ""},
+		// Digest stays a digest (GC-847-R3).
+		{"digest", "sha256:abc", "", "", "sha256:abc"},
+		// Non-semver literal tags stay tags (GC-847-R4).
+		{"literal tag", "latest", "latest", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ref := versionToOCIRef(tc.version)
+			if ref == nil {
+				t.Fatalf("versionToOCIRef(%q) = nil", tc.version)
+			}
+			if ref.Tag != tc.wantTag || ref.SemVer != tc.wantSemVer || ref.Digest != tc.wantDigest {
+				t.Errorf("versionToOCIRef(%q) = {Tag:%q SemVer:%q Digest:%q}, want {Tag:%q SemVer:%q Digest:%q}",
+					tc.version, ref.Tag, ref.SemVer, ref.Digest, tc.wantTag, tc.wantSemVer, tc.wantDigest)
+			}
+		})
 	}
 }
 

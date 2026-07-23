@@ -25,6 +25,27 @@ func TestPickSemverTag(t *testing.T) {
 			want: "1.3.0",
 		},
 		{
+			// GC-847-R1: 1.20.x resolves to the highest 1.20.* tag.
+			name: "wildcard selects highest patch in minor",
+			tags: []string{"1.20.0", "1.20.5", "1.21.0"},
+			expr: "1.20.x",
+			want: "1.20.5",
+		},
+		{
+			// GC-847-R1: ~1.20.0 == >=1.20.0 <1.21.0.
+			name: "tilde selects highest patch in minor",
+			tags: []string{"1.20.0", "1.20.5", "1.21.0"},
+			expr: "~1.20.0",
+			want: "1.20.5",
+		},
+		{
+			// GC-847-R1: ^1.20.0 == >=1.20.0 <2.0.0.
+			name: "caret selects highest minor in major",
+			tags: []string{"1.20.0", "1.20.5", "1.21.0"},
+			expr: "^1.20.0",
+			want: "1.21.0",
+		},
+		{
 			name: "regex filter narrows candidate set",
 			// Without filter the highest 1.x semver wins. With filter only
 			// rc-prereleased entries qualify; semver treats prereleases as

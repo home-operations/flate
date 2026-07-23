@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Masterminds/semver/v3"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/keylock"
@@ -153,8 +154,11 @@ func isOCIHelmRepo(r *manifest.HelmRepository) bool {
 // exactly as for a real OCIRepository.
 //
 // The HelmRepository's auth / TLS / insecure / provider are lifted (it
-// carries no proxySecretRef). The resolved version becomes a digest ref
-// when it contains ':' else a tag, matching the OCIRepository path.
+// carries no proxySecretRef). The version is classified by versionToOCIRef:
+// a ':' is a digest, an exact semver pin or a non-semver literal stays a
+// tag, and a semver constraint becomes a SemVer ref so the OCI fetcher
+// resolves it to the highest matching published tag — matching the
+// OCIRepository path.
 func synthesizeOCIRepository(r *manifest.HelmRepository, chartName, version string) *manifest.OCIRepository {
 	chartURL := normalizeChartURL(r.URL, chartName)
 	syn := &manifest.OCIRepository{Namespace: r.Namespace}
@@ -162,18 +166,54 @@ func synthesizeOCIRepository(r *manifest.HelmRepository, chartName, version stri
 	syn.URL = chartURL
 	syn.Provider = r.Provider
 	if version != "" {
-		ref := &manifest.OCIRepositoryRef{}
-		if strings.Contains(version, ":") {
-			ref.Digest = version
-		} else {
-			ref.Tag = version
-		}
-		syn.Reference = ref
+		syn.Reference = versionToOCIRef(version)
 	}
 	syn.SecretRef = r.SecretRef
 	syn.CertSecretRef = r.CertSecretRef
 	syn.Insecure = r.Insecure
 	return syn
+}
+
+// versionToOCIRef classifies a HelmRelease chart version into an OCI
+// reference. A ':' means a digest. Otherwise a string that parses as a
+// concrete semver version is an exact pin kept as a literal tag; a string
+// that is not a concrete version but is a valid semver constraint (1.20.x,
+// *, ~, ^, ranges) is routed to SemVer so the OCI fetcher's semver resolver
+// selects the highest matching published tag; anything else is a non-semver
+// literal tag (e.g. "latest").
+//
+// The isExactSemver-before-isSemverConstraint ordering is load-bearing:
+// semver.NewConstraint("1.20.0") succeeds as "=1.20.0", so testing the
+// constraint first would misroute exact pins and bare partials (1.20, 1) to
+// SemVer. Peeling concrete versions off first is what separates a pin from a
+// constraint.
+func versionToOCIRef(version string) *manifest.OCIRepositoryRef {
+	ref := &manifest.OCIRepositoryRef{}
+	switch {
+	case strings.Contains(version, ":"):
+		ref.Digest = version
+	case isExactSemver(version):
+		ref.Tag = version
+	case isSemverConstraint(version):
+		ref.SemVer = version
+	default:
+		ref.Tag = version
+	}
+	return ref
+}
+
+// isExactSemver reports whether version parses as a single concrete semver
+// version (an exact pin), including coerced partials such as "1.20" and "1".
+func isExactSemver(version string) bool {
+	_, err := semver.NewVersion(version)
+	return err == nil
+}
+
+// isSemverConstraint reports whether version parses as a semver constraint
+// (wildcards, tilde/caret, ranges).
+func isSemverConstraint(version string) bool {
+	_, err := semver.NewConstraint(version)
+	return err == nil
 }
 
 // syntheticChartName derives the stable <helmrepo>-<chart>-<short hash>

@@ -2,7 +2,9 @@ package schedule
 
 import (
 	"context"
+	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -371,5 +373,139 @@ func TestDanglingChainRunCountBounded(t *testing.T) {
 		if rc := f.runCount(id(n)); rc > 6 {
 			t.Fatalf("%s ran %d times; expected a small bounded count", n, rc)
 		}
+	}
+}
+
+func TestSchedulerCapFiresOnPathologicalNode(t *testing.T) {
+	// Change A (#828), GC-828-R1 observability: a node re-admitted without bound
+	// must trip the per-node re-dispatch cap — Run RETURNS (does not hang) and
+	// CapErr() names the capped node and its count. Drive the storm through the
+	// REAL re-dispatch seam: pump OnArrival(x, schedulable=true) on a node that
+	// terminalizes each cycle, so every arrival re-admits it via the
+	// stateTerminal -> stateRunnable transition (the #828 path). A SEPARATE gated
+	// keepalive holds inFlight > 0 so Run cannot reach its fixpoint and settle
+	// between pumps (which would pass the test vacuously); the storming node x is
+	// NOT gated (build-lane note OI1).
+	f := newFake(map[NodeID][]NodeID{
+		id("x"):         nil, // terminalizes Ready on every dispatch
+		id("keepalive"): nil,
+	})
+	gate := make(chan struct{})
+	f.gate[id("keepalive")] = gate
+
+	ts := task.NewBounded(8)
+	s := New(ts, f)
+	s.Seed([]NodeID{id("x"), id("keepalive")})
+	done := make(chan struct{})
+	go func() { s.Run(context.Background()); close(done) }()
+
+	// x has been dispatched once (its initial seed dispatch); keepalive's task
+	// was launched in the same frontier pass, so inFlight is held > 0.
+	waitUntil(t, func() bool { return f.runCount(id("x")) >= 1 })
+
+	// Pump the storm past capLimit. CapErr() is mu-guarded, so this concurrent
+	// read is race-safe (the -race run on pkg/schedule is the backstop); break as
+	// soon as the cap trips. OnArrival on an already-capped node is refused, so
+	// runCount plateaus — CapErr is the termination signal here.
+	tripped := false
+	for range 5_000_000 {
+		if s.CapErr() != nil {
+			tripped = true
+			break
+		}
+		s.OnArrival(id("x"), true)
+		runtime.Gosched()
+	}
+	close(gate) // release keepalive so Run can settle
+	<-done
+
+	if !tripped {
+		t.Fatal("re-dispatch cap never tripped while pumping the storm")
+	}
+	err := s.CapErr()
+	if err == nil {
+		t.Fatal("CapErr() is nil after Run returned; want the capped node named")
+	}
+	if !strings.Contains(err.Error(), id("x").String()) {
+		t.Fatalf("CapErr() = %q; want it to name the capped node %q", err, id("x").String())
+	}
+	// The cap trips at capLimit+1 dispatches, so x was dispatched EXACTLY capLimit
+	// times (cumulative, never reset) for the 2-node set.
+	wantDispatches := capFloor + capPerNode*2
+	if rc := f.runCount(id("x")); rc != wantDispatches {
+		t.Fatalf("x dispatched %d times; want capLimit=%d (cap trips on the next attempt)", rc, wantDispatches)
+	}
+}
+
+func TestSchedulerCapNoFalsePositiveOnConvergingDAG(t *testing.T) {
+	// Change A (#828), GC-828-R3 false-positive guard: a legitimately-converging
+	// large DAG must NOT trip the cap. capLimit = capFloor + capPerNode*len(nodes)
+	// scales far above the legitimate per-node re-dispatch ceiling (<=6
+	// dangling-chain re-runs + bounded drain escalation + one selector
+	// re-expansion per arrival), so CapErr() stays nil. Exercise both legitimate
+	// re-dispatch sources at once: several depth-5 dangling chains that drain with
+	// bounded re-runs, and a selector rerun node re-expanding on distinct arrivals.
+	g := map[NodeID][]NodeID{}
+	const chains, depth = 10, 5
+	var chainNodes []string
+	for c := range chains {
+		names := make([]string, depth)
+		for d := range depth {
+			names[d] = fmt.Sprintf("c%d-n%d", c, d)
+		}
+		for i, n := range names {
+			if i+1 < len(names) {
+				g[id(n)] = []NodeID{id(names[i+1])}
+			} else {
+				g[id(n)] = []NodeID{id("absent")} // leaf blocks on an absent dep -> drains
+			}
+			chainNodes = append(chainNodes, n)
+		}
+	}
+	g[id("rs")] = nil
+	g[id("keepalive")] = nil
+	f := newFake(g)
+	f.drainRerun[id("rs")] = true
+
+	gate := make(chan struct{})
+	f.gate[id("keepalive")] = gate
+
+	ts := task.NewBounded(8)
+	s := New(ts, f)
+	s.SetRerunAtDrain(func(id NodeID) bool { return f.drainRerun[id] })
+	seeds := make([]NodeID, 0, len(g))
+	for k := range g {
+		seeds = append(seeds, k)
+	}
+	s.Seed(seeds)
+	done := make(chan struct{})
+	go func() { s.Run(context.Background()); close(done) }()
+
+	// rs terminalizes on its first dispatch; wait for it, then dirty the store
+	// with several distinct data arrivals (buffered while keepalive holds the
+	// pool non-idle). Releasing the gate lets the chains drain and rs re-expand
+	// against the now-quiesced store.
+	waitUntil(t, func() bool { return f.runCount(id("rs")) >= 1 })
+	for i := range 5 {
+		s.OnArrival(NodeID{Kind: manifest.KindConfigMap, Namespace: "ns", Name: fmt.Sprintf("late-%d", i)}, false)
+	}
+	close(gate)
+	<-done
+
+	if err := s.CapErr(); err != nil {
+		t.Fatalf("converging DAG tripped the re-dispatch cap: %v", err)
+	}
+	// Every chain node drains to terminal-Failed with a bounded re-run count, far
+	// below capLimit = capFloor + capPerNode*len(nodes).
+	capLimit := capFloor + capPerNode*len(g)
+	for _, n := range chainNodes {
+		assertFailed(t, f, n)
+		if rc := f.runCount(id(n)); rc >= capLimit {
+			t.Fatalf("%s ran %d times; a converging node must stay far below capLimit=%d", n, rc, capLimit)
+		}
+	}
+	assertReady(t, f, "rs")
+	if rc := f.runCount(id("rs")); rc < 2 {
+		t.Fatalf("rerun node ran %d times; want >=2 (initial + at least one re-expansion)", rc)
 	}
 }

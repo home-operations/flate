@@ -125,5 +125,10 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	sched.Seed(o.seedNodes())
 	sched.Run(ctx)
 
-	return errors.Join(o.finalize(), ctx.Err())
+	// sched.CapErr() is non-nil only if the scheduler's per-node re-dispatch cap
+	// tripped (Change A/#828): a non-converging emit was terminalized loudly
+	// instead of hanging. Fold it into the returned error so a #828 recurrence
+	// surfaces as an errored run naming the offending node — the scheduler writes
+	// no store and no controller changes.
+	return errors.Join(o.finalize(), ctx.Err(), sched.CapErr())
 }

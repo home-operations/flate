@@ -11,9 +11,12 @@ on:
       - .renovate/**.json5
   workflow_dispatch:
   issues:
-    types: [edited]
+    types:
+      - edited
   pull_request:
-    types: [closed, edited]
+    types:
+      - closed
+      - edited
 
 permissions: {}
 

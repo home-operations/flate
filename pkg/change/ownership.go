@@ -102,18 +102,18 @@ func (idx ownershipIndex) matchingPrefixes(file string) iter.Seq[[]manifest.Name
 		// Candidate prefixes are prefixed[:k] for every k where prefixed[k-1]
 		// is '/', longest first. The full prefixed (k==len, a claim on file's
 		// own directory) is the first candidate; each earlier "/" truncation
-		// follows.
-		for end := len(prefixed); end > 0; {
+		// follows. When no earlier "/" remains, the loop reaches k==0 (the
+		// repo root), allowing the root prefix "" to match.
+		for end := len(prefixed); ; {
 			if ids, ok := idx.byPrefix[prefixed[:end]]; ok {
 				if !yield(ids) {
 					return
 				}
 			}
-			i := strings.LastIndexByte(prefixed[:end-1], '/')
-			if i < 0 {
-				break
+			if end == 0 {
+				return
 			}
-			end = i + 1
+			end = strings.LastIndexByte(prefixed[:end-1], '/') + 1
 		}
 	}
 }

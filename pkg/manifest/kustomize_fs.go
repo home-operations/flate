@@ -156,7 +156,11 @@ func BuildKSClaims(kss []*Kustomization, repoRoot string, cache *ComponentCache)
 		}
 		id := ks.Named()
 		base := NormalizeClaimBase(ks.Path)
-		claims = append(claims, KSClaim{ID: id, Prefix: base + "/"})
+		prefix := base + "/"
+		if base == "" {
+			prefix = ""
+		}
+		claims = append(claims, KSClaim{ID: id, Prefix: prefix})
 		for _, comp := range ks.Components {
 			add(id, base, comp)
 		}

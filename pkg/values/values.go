@@ -531,18 +531,18 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 		return values, err
 	}
 
-	// Wiped Secret values surface here as the literal placeholder
-	// string. yaml.Unmarshal of a scalar string into a map errors out
-	// — treat as empty so a wiped values-file (common pattern: kustomize
-	// `secretGenerator` wrapping a SOPS-encrypted values.yaml) doesn't
-	// block the whole HR render.
-	if manifest.IsValuePlaceholder(found) {
-		return values, nil
-	}
 	key := valuesRefCacheKey(ref.Kind, namespace, ref.Name, ref.GetValuesKey(), found)
 	parsed, ok := cache.lookup(key)
 	if !ok {
 		if err := yaml.Unmarshal([]byte(found), &parsed); err != nil {
+			// Wiped Secret values surface here as the literal placeholder
+			// string. yaml.Unmarshal of a scalar string into a map errors out
+			// — treat as empty so a wiped values-file (common pattern: kustomize
+			// `secretGenerator` wrapping a SOPS-encrypted values.yaml) doesn't
+			// block the whole HR render.
+			if manifest.IsValuePlaceholder(found) {
+				return values, nil
+			}
 			return values, fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)
 		}
 		if parsed == nil {

@@ -75,7 +75,7 @@ jobs:
   goreleaser:
     name: GoReleaser
     if: ${{ github.event_name == 'release' }}
-    uses: ./.github/workflows/goreleaser.yaml
+    uses: $/.github/workflows/goreleaser.yaml
     permissions:
       contents: write
       id-token: write

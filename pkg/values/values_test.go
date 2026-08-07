@@ -797,3 +797,67 @@ func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T)
 		t.Errorf("TargetPath write leaked into a prior HR's shared values: %#v", a.Values["image"])
 	}
 }
+
+// TestExpandValueReferences_YAMLContainingPlaceholderIsMerged verifies that
+// a ConfigMap whose values.yaml contains placeholder tokens inside valid YAML
+// values (e.g. from postBuild substitution on a configMapGenerator) is correctly
+// parsed and merged into hr.Values instead of being discarded.
+func TestExpandValueReferences_YAMLContainingPlaceholderIsMerged(t *testing.T) {
+	cm := &manifest.ConfigMap{
+		Name:      "generator-cm",
+		Namespace: "default",
+		Data: map[string]any{
+			"values.yaml": "domain: ..PLACEHOLDER_DOMAIN..\nport: 8080\n",
+		},
+	}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "generator-cm"},
+			},
+		},
+	}
+	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+		t.Fatalf("ExpandValueReferences failed: %v", err)
+	}
+	if hr.Values["domain"] != "..PLACEHOLDER_DOMAIN.." {
+		t.Errorf("domain = %v, want ..PLACEHOLDER_DOMAIN..", hr.Values["domain"])
+	}
+	if fmt.Sprint(hr.Values["port"]) != "8080" {
+		t.Errorf("port = %v, want 8080", hr.Values["port"])
+	}
+}
+
+// TestExpandValueReferences_WipedScalarPlaceholderTolerated verifies that
+// a Secret whose values.yaml is a wiped scalar placeholder string (e.g. from
+// a SOPS-encrypted values file) is safely treated as empty rather than failing
+// YAML unmarshaling.
+func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
+	sec := &manifest.Secret{
+		Name:      "sops-secret",
+		Namespace: "default",
+		StringData: map[string]any{
+			"values.yaml": "..PLACEHOLDER_values.yaml..",
+		},
+	}
+	provider := &SliceProvider{Secrets: []*manifest.Secret{sec}}
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: "Secret", Name: "sops-secret"},
+			},
+		},
+	}
+	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+		t.Fatalf("ExpandValueReferences failed for wiped scalar placeholder: %v", err)
+	}
+	if len(hr.Values) != 0 {
+		t.Errorf("expected empty values, got %v", hr.Values)
+	}
+}
+

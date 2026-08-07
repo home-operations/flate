@@ -201,6 +201,13 @@ func Run(j Job) Report {
 			if id == manifest.BootstrapSourceID {
 				continue
 			}
+			// A foreign CRD that reuses a rostered kind name
+			// (seaweed.seaweedfs.com Bucket) parses to a RawObject and no
+			// controller reconciles it, so it carries no status — rostering
+			// it would fail the run with "no status reported".
+			if manifest.IsRawObject(obj) {
+				continue
+			}
 			rep.Matched++
 			c := classify(j.Store, id)
 			switch c.Outcome {

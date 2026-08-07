@@ -109,6 +109,12 @@ type ParseDocOptions struct {
 // ParseDoc dispatches on kind + apiVersion to the appropriate concrete
 // parser. Unknown kinds become a RawObject; kustomize.config.k8s.io
 // build directives and bare data files are silently dropped.
+//
+// Every case matches BOTH kind and API group: a kind name is not unique
+// across groups, and a foreign CRD that happens to reuse one of Flux's
+// (seaweed.seaweedfs.com Bucket, s3.services.k8s.aws Bucket) is an
+// ordinary cluster resource, so it falls through to RawObject rather
+// than being decoded as — and reconciled as — the Flux CR it isn't.
 func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
 	kind := DocKind(doc)
 	apiVersion := DocAPIVersion(doc)
@@ -129,29 +135,29 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
 	}
 
 	switch {
-	case kind == KindKustomization && strings.HasPrefix(apiVersion, FluxKustomizeDomain):
+	case kind == KindKustomization && inGroup(apiVersion, FluxKustomizeDomain):
 		return parseKustomization(doc)
-	case kind == KindHelmRelease:
+	case kind == KindHelmRelease && inGroup(apiVersion, HelmReleaseDomain):
 		return parseHelmRelease(doc)
-	case kind == KindHelmRepository:
+	case kind == KindHelmRepository && inGroup(apiVersion, SourceDomain):
 		return parseHelmRepository(doc)
-	case kind == KindHelmChart && strings.HasPrefix(apiVersion, SourceDomain):
+	case kind == KindHelmChart && inGroup(apiVersion, SourceDomain):
 		return parseHelmChartSource(doc)
-	case kind == KindGitRepository:
+	case kind == KindGitRepository && inGroup(apiVersion, SourceDomain):
 		return parseGitRepository(doc)
-	case kind == KindOCIRepository:
+	case kind == KindOCIRepository && inGroup(apiVersion, SourceDomain):
 		return ParseOCIRepository(doc)
-	case kind == KindExternalArtifact && strings.HasPrefix(apiVersion, SourceDomain):
+	case kind == KindExternalArtifact && inGroup(apiVersion, SourceDomain):
 		return parseExternalArtifact(doc)
-	case kind == KindBucket && strings.HasPrefix(apiVersion, SourceDomain):
+	case kind == KindBucket && inGroup(apiVersion, SourceDomain):
 		return parseBucket(doc)
-	case kind == KindResourceSet && strings.HasPrefix(apiVersion, FluxOperatorDomain):
+	case kind == KindResourceSet && inGroup(apiVersion, FluxOperatorDomain):
 		return parseResourceSet(doc)
-	case kind == KindResourceSetInputProvider && strings.HasPrefix(apiVersion, FluxOperatorDomain):
+	case kind == KindResourceSetInputProvider && inGroup(apiVersion, FluxOperatorDomain):
 		return parseResourceSetInputProvider(doc)
-	case kind == KindConfigMap:
+	case kind == KindConfigMap && apiVersion == CoreAPIVersion:
 		return parseConfigMap(doc, opts.WipeSecrets)
-	case kind == KindSecret:
+	case kind == KindSecret && apiVersion == CoreAPIVersion:
 		return parseSecret(doc, opts.WipeSecrets)
 	}
 	return parseRawObject(doc)
@@ -167,6 +173,15 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
 func IsKustomizeBuildDirective(obj BaseManifest) bool {
 	raw, ok := obj.(*RawObject)
 	return ok && strings.HasPrefix(raw.APIVersion, KustomizeDomain)
+}
+
+// inGroup reports whether apiVersion belongs to the API group group.
+// The group is compared exactly while the version is ignored, so any
+// version of a group flate models is accepted (see constants.go) and a
+// group that merely starts with one of ours is not.
+func inGroup(apiVersion, group string) bool {
+	g, _, _ := strings.Cut(apiVersion, "/")
+	return g == group
 }
 
 // checkAPIVersion enforces an api group prefix on a raw document.

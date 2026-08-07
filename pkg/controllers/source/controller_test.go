@@ -186,6 +186,42 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 	}
 }
 
+// TestController_OwnsExcludesForeignKind pins issue #872: a CRD from another
+// API group that reuses a source kind name (seaweed.seaweedfs.com Bucket)
+// parses to a RawObject, so the kind's Fetcher would reject it with
+// "unexpected payload". Owns keeps the scheduler from ever dispatching it.
+func TestController_OwnsExcludesForeignKind(t *testing.T) {
+	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindBucket}}
+	c, st := newController(t, map[string]src.Fetcher{manifest.KindBucket: f})
+
+	foreign := &manifest.RawObject{
+		Kind:       manifest.KindBucket,
+		APIVersion: "seaweed.seaweedfs.com/v1",
+		Name:       "greptimedb", Namespace: "observability",
+	}
+	st.AddRendered(foreign)
+	if c.Owns(foreign.Named()) {
+		t.Fatalf("Owns(%s) = true for a foreign %s CRD", foreign.Named(), foreign.APIVersion)
+	}
+
+	flux := &manifest.Bucket{
+		Name: "b", Namespace: "ns",
+		BucketSpec: sourcev1.BucketSpec{BucketName: "b", Endpoint: "minio:9000"},
+	}
+	st.AddObject(flux)
+	if !c.Owns(flux.Named()) {
+		t.Errorf("Owns(%s) = false for the Flux Bucket", flux.Named())
+	}
+	// An id the store never saw stays ours — the vanished-object report is
+	// the controller's to write.
+	if !c.Owns(manifest.NamedResource{Kind: manifest.KindBucket, Namespace: "ns", Name: "gone"}) {
+		t.Errorf("Owns = false for an absent id of a registered kind")
+	}
+	if c.Owns(manifest.NamedResource{Kind: "Deployment", Namespace: "ns", Name: "app"}) {
+		t.Errorf("Owns = true for a kind with no fetcher")
+	}
+}
+
 func TestController_AllowMissingSecretsConvertsFailureToSkip(t *testing.T) {
 	f := &fakeFetcher{err: fmt.Errorf("%w: OCIRepository ns/r: secret ns/ghcr-creds not found",
 		manifest.ErrMissingSecret)}

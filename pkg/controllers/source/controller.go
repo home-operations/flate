@@ -92,11 +92,25 @@ func suspendedSource(obj manifest.BaseManifest) bool {
 	return s != nil && s.Suspended()
 }
 
-// HasFetcher reports whether a fetcher is registered for kind — the dag
-// Dispatcher uses it to route source-kind nodes to ReconcileNode.
+// HasFetcher reports whether a fetcher is registered for kind.
 func (c *Controller) HasFetcher(kind string) bool {
 	_, ok := c.Fetchers[kind]
 	return ok
+}
+
+// Owns reports whether id is a node this controller reconciles — the dag
+// Dispatcher uses it to route source nodes to ReconcileNode. A registered
+// kind is not enough: kind names are not unique across API groups, and a
+// foreign CRD reusing one (seaweed.seaweedfs.com Bucket) parses to a
+// RawObject that the kind's Fetcher would reject as an unexpected payload.
+// An id absent from the store still counts as ours — reporting the
+// vanished object is the controller's job.
+func (c *Controller) Owns(id manifest.NamedResource) bool {
+	if !c.HasFetcher(id.Kind) {
+		return false
+	}
+	obj := c.Store.GetObject(id)
+	return obj == nil || !manifest.IsRawObject(obj)
 }
 
 // ReconcileNode runs id's source fetch under the dag engine, returning the

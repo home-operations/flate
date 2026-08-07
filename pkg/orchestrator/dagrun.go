@@ -27,7 +27,7 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLe
 		blocked = o.hrc.ReconcileNode(ctx, id, drainLevel)
 	case id.Kind == manifest.KindResourceSet:
 		blocked = o.rsc.ReconcileNode(ctx, id, drainLevel)
-	case o.src.HasFetcher(id.Kind):
+	case o.src.Owns(id):
 		blocked = o.src.ReconcileNode(ctx, id, drainLevel)
 	default:
 		// Not a schedulable kind (should never be dispatched) — terminal no-op.
@@ -49,7 +49,7 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLe
 func (o *Orchestrator) dagSchedulable(id manifest.NamedResource) bool {
 	return isReconcilableKind(id.Kind) ||
 		id.Kind == manifest.KindResourceSet ||
-		o.src.HasFetcher(id.Kind)
+		o.src.Owns(id)
 }
 
 // seedNodes returns every file-loaded reconcilable + ResourceSet + source
@@ -68,7 +68,9 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 	}
 	for kind := range o.src.Fetchers {
 		for _, obj := range o.store.ListObjects(kind) {
-			ids = append(ids, obj.Named())
+			if id := obj.Named(); o.src.Owns(id) {
+				ids = append(ids, id)
+			}
 		}
 	}
 	return ids

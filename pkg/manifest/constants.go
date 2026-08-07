@@ -10,6 +10,11 @@ const (
 	// FluxOperatorDomain is the API group for flux-operator (controlplane.io)
 	// resources — ResourceSet, ResourceSetInputProvider, FluxInstance.
 	FluxOperatorDomain = "fluxcd.controlplane.io"
+	// CoreAPIVersion is the full apiVersion of the group-less core
+	// Kubernetes API, which is where ConfigMap and Secret live. A CRD
+	// reusing either kind name carries a group, so the exact match keeps
+	// it out of the typed parsers.
+	CoreAPIVersion = "v1"
 )
 
 // Kubernetes kinds we recognize.

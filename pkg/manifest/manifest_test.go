@@ -1192,6 +1192,85 @@ metadata: {name: x}`, "Foo"},
 	}
 }
 
+// TestParseDoc_ForeignAPIGroup pins that a CRD reusing a kind name flate
+// models, but from another API group, parses to a RawObject instead of
+// being decoded as (or rejected as a malformed) Flux CR — issue #872,
+// where a seaweed.seaweedfs.com Bucket reached the Flux Bucket fetcher.
+func TestParseDoc_ForeignAPIGroup(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{"seaweedfs bucket", `
+apiVersion: seaweed.seaweedfs.com/v1
+kind: Bucket
+metadata: {name: greptimedb, namespace: observability}
+spec: {name: greptimedb, reclaimPolicy: Retain}`},
+		{"ack s3 bucket", `
+apiVersion: s3.services.k8s.aws/v1alpha1
+kind: Bucket
+metadata: {name: assets, namespace: default}
+spec: {name: assets}`},
+		{"legacy flux helmrelease", `
+apiVersion: helm.fluxcd.io/v1
+kind: HelmRelease
+metadata: {name: app, namespace: default}
+spec: {chart: {repository: https://example, name: c, version: 1.0.0}}`},
+		{"foreign gitrepository", `
+apiVersion: example.com/v1
+kind: GitRepository
+metadata: {name: r, namespace: default}
+spec: {url: https://example.git}`},
+		{"foreign ocirepository", `
+apiVersion: example.com/v1
+kind: OCIRepository
+metadata: {name: r, namespace: default}
+spec: {url: oci://example}`},
+		{"foreign helmrepository", `
+apiVersion: example.com/v1
+kind: HelmRepository
+metadata: {name: r, namespace: default}
+spec: {url: https://example}`},
+		{"foreign configmap", `
+apiVersion: example.com/v1
+kind: ConfigMap
+metadata: {name: c, namespace: default}`},
+		// The group is compared exactly, so a group that merely starts
+		// with one of ours is foreign too.
+		{"group with flux prefix", `
+apiVersion: source.toolkit.fluxcd.io.example.com/v1
+kind: Bucket
+metadata: {name: b, namespace: default}
+spec: {name: b}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obj, err := ParseDoc(mustYAML(t, tc.yaml), defaultParseDocOptions())
+			if err != nil {
+				t.Fatalf("ParseDoc: %v", err)
+			}
+			if !IsRawObject(obj) {
+				t.Fatalf("got %T, want *RawObject", obj)
+			}
+			// Identity must survive: the object still renders and diffs
+			// like any other unmodeled resource.
+			raw := obj.(*RawObject)
+			if raw.Kind != DocKind(mustYAML(t, tc.yaml)) || raw.Name == "" {
+				t.Errorf("RawObject lost identity: %+v", raw)
+			}
+		})
+	}
+}
+
+func TestIsRawObject(t *testing.T) {
+	if IsRawObject(&Bucket{Name: "b"}) {
+		t.Error("typed Flux Bucket reported as RawObject")
+	}
+	if !IsRawObject(&RawObject{Kind: KindBucket, Name: "b"}) {
+		t.Error("RawObject not reported as RawObject")
+	}
+}
+
 func TestStripResourceAttributes(t *testing.T) {
 	r := map[string]any{
 		"kind": "Deployment",

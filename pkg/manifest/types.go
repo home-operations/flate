@@ -111,6 +111,17 @@ func (r *RawObject) Named() NamedResource {
 	return NamedResource{Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
 }
 
+// IsRawObject reports whether obj is the unmodeled fallback type rather
+// than one of flate's typed CRs. ParseDoc only produces a typed CR when
+// the document's API group matches too, so a resource whose kind names a
+// Flux CR but which parses to a RawObject is a foreign CRD sharing the
+// name — every consumer that routes on Kind alone (the source
+// controller's Fetchers map, the `flate test` roster) must exclude it.
+func IsRawObject(obj BaseManifest) bool {
+	_, raw := obj.(*RawObject)
+	return raw
+}
+
 // Clone returns a deep copy safe for mutation without aliasing the
 // store-owned source. The Spec map is recursively cloned so
 // downstream transformations (e.g. namespace inheritance,

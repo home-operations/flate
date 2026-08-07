@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.14](https://github.com/home-operations/flate/compare/v0.4.13...v0.4.14) (2026-08-07)
+
+
+### Bug Fixes
+
+* **manifest:** match source CRs on API group, not kind alone ([#894](https://github.com/home-operations/flate/issues/894)) ([67de8e5](https://github.com/home-operations/flate/commit/67de8e519ad307d56bca823d467e2691fb79bd27))
+
 ## [0.4.13](https://github.com/home-operations/flate/compare/v0.4.12...v0.4.13) (2026-08-07)
 
 

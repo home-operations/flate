@@ -19,7 +19,7 @@ require (
 	github.com/fluxcd/pkg/envsubst v1.7.0
 	github.com/fluxcd/pkg/kustomize v1.39.0
 	github.com/fluxcd/pkg/sourceignore v0.18.0
-	github.com/fluxcd/source-controller/api v1.9.3
+	github.com/fluxcd/source-controller/api v1.9.4
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-task/slim-sprig/v3 v3.0.0
 	github.com/gofrs/flock v0.13.0

@@ -82,8 +82,8 @@ github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJ
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
 github.com/cloudflare/circl v1.6.3 h1:9GPOhQGF9MCYUeXyMYlqTR6a5gTrgR/fBLXvUgtVcg8=
 github.com/cloudflare/circl v1.6.3/go.mod h1:2eXP6Qfat4O/Yhh8BznvKnJ+uzEoTQ6jVKJRn81BiS4=
-github.com/controlplaneio-fluxcd/flux-operator v0.57.0 h1:+vku744nlgXPu4ozwmMDPCi7cb6KrnpOx0y4J4G+pPo=
-github.com/controlplaneio-fluxcd/flux-operator v0.57.0/go.mod h1:/l13WMecD/ouRoxD8pgFKAes5B2xO62kaUjxNio6Vi4=
+github.com/controlplaneio-fluxcd/flux-operator v0.58.0 h1:7fbGeGRzp7sEwfg7jjc3a3bJvMYTAgPv+hl5qf9SBxo=
+github.com/controlplaneio-fluxcd/flux-operator v0.58.0/go.mod h1:/l13WMecD/ouRoxD8pgFKAes5B2xO62kaUjxNio6Vi4=
 github.com/coreos/go-systemd/v22 v22.7.0 h1:LAEzFkke61DFROc7zNLX/WA2i5J8gYqe0rSj9KI28KA=
 github.com/coreos/go-systemd/v22 v22.7.0/go.mod h1:xNUYtjHu2EDXbsxz1i41wouACIwT7Ybq9o0BQhMwD0w=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=

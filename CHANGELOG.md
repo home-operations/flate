@@ -1,5 +1,68 @@
 # Changelog
 
+## [0.4.13](https://github.com/home-operations/flate/compare/v0.4.12...v0.4.13) (2026-08-07)
+
+
+### Features
+
+* **deps:** update module github.com/fluxcd/pkg/kustomize (v1.38.0 → v1.39.0) ([#852](https://github.com/home-operations/flate/issues/852)) ([69fa93c](https://github.com/home-operations/flate/commit/69fa93c2d5f71138ff058d80ce3c0bd15e12ede0))
+* **go:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.55.0 → v0.56.0) ([#861](https://github.com/home-operations/flate/issues/861)) ([63ae4ea](https://github.com/home-operations/flate/commit/63ae4ead0ffc6bdb0fa32ae7d407db57f5964fa3))
+* **go:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.56.0 → v0.57.0) ([#874](https://github.com/home-operations/flate/issues/874)) ([6824ce0](https://github.com/home-operations/flate/commit/6824ce0605dca4daf4b2a1b45709429b53ea8448))
+* **go:** update module github.com/google/cel-go (v0.29.2 → v0.30.0) ([#866](https://github.com/home-operations/flate/issues/866)) ([03d6386](https://github.com/home-operations/flate/commit/03d63863b3ae098439143abc2e097e206f65d300))
+
+
+### Bug Fixes
+
+* **ci:** fail the merge gate on cancelled jobs, and key the lint cache on the toolchain ([#880](https://github.com/home-operations/flate/issues/880)) ([db82991](https://github.com/home-operations/flate/commit/db82991241e65243cd798ce9067e730a5dcd9a1f))
+* **go:** update kubernetes monorepo (v0.36.2 → v0.36.3) ([#856](https://github.com/home-operations/flate/issues/856)) ([3acebc7](https://github.com/home-operations/flate/commit/3acebc700235bf8701fc2f03aeb7ebeec966ce53))
+* **go:** update module github.com/fluxcd/helm-controller/api (v1.6.2 → v1.6.3) ([#857](https://github.com/home-operations/flate/issues/857)) ([5087f44](https://github.com/home-operations/flate/commit/5087f4411fba333ff67a35ac7504c5ed4f1e28b4))
+* **go:** update module github.com/fluxcd/kustomize-controller/api (v1.9.3 → v1.9.4) ([#858](https://github.com/home-operations/flate/issues/858)) ([8231bd0](https://github.com/home-operations/flate/commit/8231bd0e812cd08b78a53f5484ba94de251173e2))
+* **go:** update module github.com/go-git/go-git/v5 (v5.19.1 → v5.19.2) ([#878](https://github.com/home-operations/flate/issues/878)) ([167bfe8](https://github.com/home-operations/flate/commit/167bfe8fa12469086ceb5c98f5a55353dd8ce15c))
+* **go:** update module github.com/klauspost/compress (v1.19.1 → v1.19.2) ([#892](https://github.com/home-operations/flate/issues/892)) ([263ef8b](https://github.com/home-operations/flate/commit/263ef8b480485c77de855438fd90f88c5d10501c))
+* **go:** update module go (1.26.4 → 1.26.5) ([#890](https://github.com/home-operations/flate/issues/890)) ([2914b67](https://github.com/home-operations/flate/commit/2914b67259c4bd851b6910191fcdbbd284bf75a2))
+* match root prefix in matchingPrefixes ([#871](https://github.com/home-operations/flate/issues/871)) ([7800749](https://github.com/home-operations/flate/commit/78007497c60b8c8b5faa3dca7c47178cd32c174f))
+* **source:** route OCI HelmRepository semver constraints to ref.SemVer ([#855](https://github.com/home-operations/flate/issues/855)) ([30441fc](https://github.com/home-operations/flate/commit/30441fc0b509e551c3f56c416a87ad864a18b968))
+* **values:** preserve configMapGenerator values with unresolved substitution placeholders ([#881](https://github.com/home-operations/flate/issues/881)) ([d20f0e8](https://github.com/home-operations/flate/commit/d20f0e839bcbd9486483a673c4b3e5afa99b04a5))
+
+
+### Documentation
+
+* add AGENTS.md with Go conventions ([#884](https://github.com/home-operations/flate/issues/884)) ([7f648b5](https://github.com/home-operations/flate/commit/7f648b509a7b31eb9917875c14c4929b7a9dd55a))
+* point the CI badge at ci.yaml ([#865](https://github.com/home-operations/flate/issues/865)) ([3010a9e](https://github.com/home-operations/flate/commit/3010a9e6defb9bb09900bc8e406512ca4f63e347))
+
+
+### Build System
+
+* **mise:** add actionlint and refresh the lockfile ([#867](https://github.com/home-operations/flate/issues/867)) ([8494589](https://github.com/home-operations/flate/commit/8494589a5759c1d0954dd39574cd2497688ad08c))
+
+
+### Continuous Integration
+
+* gate pull requests on Build Success and share goreleaser via workflow_call ([#864](https://github.com/home-operations/flate/issues/864)) ([9e38ac7](https://github.com/home-operations/flate/commit/9e38ac7968c383258b9e439d712eb90cc84f88e6))
+* **github-action:** Update action actions/stale (v10.4.0 → v11.0.0) ([#882](https://github.com/home-operations/flate/issues/882)) ([3584f52](https://github.com/home-operations/flate/commit/3584f5253976a267fee9f41c18e1c359bd08b5f6))
+* **github-action:** Update action docker/github-builder (v1.14.0 → v1.15.0) ([#879](https://github.com/home-operations/flate/issues/879)) ([556bdb9](https://github.com/home-operations/flate/commit/556bdb94c553e4acac7b5b022d10091f22a91f73))
+* **github-action:** Update action home-operations/.github/actions/workflow-lint (v1.0.2 → v1.0.3) ([#889](https://github.com/home-operations/flate/issues/889)) ([82df120](https://github.com/home-operations/flate/commit/82df120c60e502d9d20c1952024c95e6e5a2b566))
+* **github-action:** Update action jdx/mise-action (v4.2.1 → v4.2.2) ([#870](https://github.com/home-operations/flate/issues/870)) ([ac1344a](https://github.com/home-operations/flate/commit/ac1344aa66ca8e0190311a9c61c6136ebb2d2c32))
+* **github-action:** Update action jdx/mise-action (v4.2.2 → v4.2.3) ([#876](https://github.com/home-operations/flate/issues/876)) ([16b8d10](https://github.com/home-operations/flate/commit/16b8d1054e2d88a0291532af62f3d1f6fb535a64))
+* **github-action:** Update action jdx/mise-action (v4.2.3 → v4.2.4) ([#891](https://github.com/home-operations/flate/issues/891)) ([06066be](https://github.com/home-operations/flate/commit/06066be860f567b325cd71dda35ed9fc9afd039b))
+* lint workflows with the shared composite action ([#868](https://github.com/home-operations/flate/issues/868)) ([e6f644f](https://github.com/home-operations/flate/commit/e6f644ff7ce6fe1436edc9d7b0a28c59f4a5f1b4))
+* **renovate:** reactive dashboard + config runs in one workflow ([#862](https://github.com/home-operations/flate/issues/862)) ([9bfe9ae](https://github.com/home-operations/flate/commit/9bfe9aec1e700fcc27822c79f69b386f28028961))
+* skip release-please version-bump PRs in checks ([#863](https://github.com/home-operations/flate/issues/863)) ([baa7bdc](https://github.com/home-operations/flate/commit/baa7bdc50861824dc882f3d9cbd7f0b59b13225f))
+* update workflow-lint and use self-repository syntax ([#886](https://github.com/home-operations/flate/issues/886)) ([f5ad8c1](https://github.com/home-operations/flate/commit/f5ad8c1ba28a7a284b871198d3aa1607f0d04b3f))
+* wire govulncheck into mise and CI ([#888](https://github.com/home-operations/flate/issues/888)) ([e63c8a6](https://github.com/home-operations/flate/commit/e63c8a66a7a52004be5160bdd3d3b626271a9a48))
+
+
+### Miscellaneous Chores
+
+* **mise:** prune lockfile to used platforms ([#887](https://github.com/home-operations/flate/issues/887)) ([65aa795](https://github.com/home-operations/flate/commit/65aa795c6807b070dae7ff8d4dba1e625e9c5e9e))
+* **mise:** Update tool oxfmt (0.59.0 → 0.60.0) ([#851](https://github.com/home-operations/flate/issues/851)) ([0a40b1e](https://github.com/home-operations/flate/commit/0a40b1efc0ca69d9e9875ad06332b2ee12b2dd84))
+* **mise:** Update tool oxfmt (0.60.0 → 0.61.0) ([#873](https://github.com/home-operations/flate/issues/873)) ([993772d](https://github.com/home-operations/flate/commit/993772dfb51234fceda98180988d50381a610475))
+* **mise:** Update tool oxfmt (0.61.0 → 0.62.0) ([#893](https://github.com/home-operations/flate/issues/893)) ([a171cf8](https://github.com/home-operations/flate/commit/a171cf8aaed740c70fd638b4d94bd489356217f2))
+* **mise:** Update tool zizmor (1.27.0 → 1.28.0) ([#850](https://github.com/home-operations/flate/issues/850)) ([7a78285](https://github.com/home-operations/flate/commit/7a7828589de848aa04e3437160ef14442167ddfe))
+* **mise:** Update tool zizmor (1.28.0 → 1.29.0) ([#885](https://github.com/home-operations/flate/issues/885)) ([e4accfa](https://github.com/home-operations/flate/commit/e4accfa62d586f217ad62a0d2f98fe7c9c57a63a))
+* **release-please:** standardize the release pull request title pattern ([#883](https://github.com/home-operations/flate/issues/883)) ([ef2b676](https://github.com/home-operations/flate/commit/ef2b6767ce279c8294874855eb87c0516f144bae))
+* standardize release-please changelog sections ([#877](https://github.com/home-operations/flate/issues/877)) ([e8d55ce](https://github.com/home-operations/flate/commit/e8d55ce4daa1fcb762a12aa8e3828e67bf888419))
+
 ## [0.4.12](https://github.com/home-operations/flate/compare/v0.4.11...v0.4.12) (2026-07-20)
 
 

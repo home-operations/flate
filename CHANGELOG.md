@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.0](https://github.com/home-operations/flate/compare/v0.4.14...v0.5.0) (2026-08-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **go:** Update module github.com/google/cel-go (v0.30.0 → v0.31.0) ([#899](https://github.com/home-operations/flate/issues/899))
+* **go:** Update module github.com/controlplaneio-fluxcd/flux-operator (v0.57.0 → v0.58.0) ([#897](https://github.com/home-operations/flate/issues/897))
+
+### Features
+
+* **go:** Update module github.com/controlplaneio-fluxcd/flux-operator (v0.57.0 → v0.58.0) ([#897](https://github.com/home-operations/flate/issues/897)) ([1504c8f](https://github.com/home-operations/flate/commit/1504c8f8717fe9eec61ed35a6dc97fa7141ef89b))
+* **go:** Update module github.com/google/cel-go (v0.30.0 → v0.31.0) ([#899](https://github.com/home-operations/flate/issues/899)) ([60910c6](https://github.com/home-operations/flate/commit/60910c6f9c6a7db3f396ee42bb2f84ccbe21bed4))
+
+
+### Bug Fixes
+
+* **go:** update module github.com/fluxcd/source-controller/api (v1.9.3 → v1.9.4) ([#896](https://github.com/home-operations/flate/issues/896)) ([666c427](https://github.com/home-operations/flate/commit/666c42773dbd56958588675daaddd1a1e04d4664))
+* **release:** strip cask quarantine bit in preflight ([#901](https://github.com/home-operations/flate/issues/901)) ([c7ef285](https://github.com/home-operations/flate/commit/c7ef2854be1c3ca9f8ea065916bf752977cc3d28))
+
+
+### Continuous Integration
+
+* **github-action:** Update action docker/github-builder (v1.15.0 → v1.16.0) ([#900](https://github.com/home-operations/flate/issues/900)) ([be7d39e](https://github.com/home-operations/flate/commit/be7d39eb0df05c3ea36ec36225f1d5febbf91199))
+
 ## [0.4.14](https://github.com/home-operations/flate/compare/v0.4.13...v0.4.14) (2026-08-07)
 
 

@@ -463,6 +463,58 @@ func TestMaterialize_PreservesExecutableBit(t *testing.T) {
 	}
 }
 
+// TestAutoResolve_LinkedWorktree pins auto-resolution inside a linked
+// worktree. Opened without the common dir, no ref resolves at all and
+// the ladder never gets past HEAD.
+func TestAutoResolve_LinkedWorktree(t *testing.T) {
+	mainDir := t.TempDir()
+	baseCommit := initRepoWithFile(t, mainDir, "a.yaml", "base")
+	repo := openHelper(t, mainDir)
+	setRef(t, repo, plumbing.NewRemoteReferenceName("origin", "main"), baseCommit)
+	headCommit := writeAndCommit(t, mainDir, "a.yaml", "new")
+	setRef(t, repo, plumbing.NewBranchReferenceName("feature"), headCommit)
+
+	wtDir := linkedWorktree(t, mainDir, "wt", plumbing.NewBranchReferenceName("feature"))
+
+	res, err := AutoResolve(wtDir, "", cacheroot.Layout{})
+	if err != nil {
+		t.Fatalf("AutoResolve in linked worktree: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(res.TempDir) }()
+	if res.Source != "merge-base with origin/main" {
+		t.Errorf("Source = %q, want 'merge-base with origin/main'", res.Source)
+	}
+	got, err := os.ReadFile(filepath.Join(res.TempDir, "a.yaml"))
+	if err != nil {
+		t.Fatalf("read materialized: %v", err)
+	}
+	if string(got) != "base" {
+		t.Errorf("materialized a.yaml = %q, want %q (the baseline tree)", got, "base")
+	}
+}
+
+// TestAutoResolve_ShallowLinkedWorktree: the shallow marker lives in the
+// common dir, so a worktree that exhausts the ladder must still get the
+// fetch-depth guidance rather than the "no upstream" advice.
+func TestAutoResolve_ShallowLinkedWorktree(t *testing.T) {
+	mainDir := t.TempDir()
+	commit := initRepoWithFile(t, mainDir, "a.yaml", "x")
+	repo := openHelper(t, mainDir)
+	setRef(t, repo, plumbing.NewBranchReferenceName("feature"), commit)
+	if err := os.WriteFile(filepath.Join(mainDir, ".git", "shallow"), []byte(commit.String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wtDir := linkedWorktree(t, mainDir, "wt", plumbing.NewBranchReferenceName("feature"))
+
+	_, err := AutoResolve(wtDir, "", cacheroot.Layout{})
+	if err == nil {
+		t.Fatal("expected shallow error")
+	}
+	if !strings.Contains(err.Error(), "fetch-depth: 0") {
+		t.Errorf("error %q should suggest fetch-depth: 0", err)
+	}
+}
+
 // --- helpers --------------------------------------------------------
 
 func initRepoWithFile(t *testing.T, dir, path, content string) plumbing.Hash {
@@ -548,4 +600,30 @@ func configureBranch(t *testing.T, repo *git.Repository, branch, remote, merge s
 	if err := repo.SetConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// linkedWorktree builds the layout `git worktree add -b` produces and
+// returns the worktree root.
+func linkedWorktree(t *testing.T, mainDir, name string, branch plumbing.ReferenceName) string {
+	t.Helper()
+	wtDir := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(wtDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	gitDir := filepath.Join(mainDir, ".git", "worktrees", name)
+	if err := os.MkdirAll(gitDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		filepath.Join(wtDir, ".git"):       "gitdir: " + gitDir + "\n",
+		filepath.Join(gitDir, "gitdir"):    filepath.Join(wtDir, ".git") + "\n",
+		filepath.Join(gitDir, "commondir"): "../..\n",
+		filepath.Join(gitDir, "HEAD"):      "ref: " + branch.String() + "\n",
+	}
+	for path, content := range files {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return wtDir
 }

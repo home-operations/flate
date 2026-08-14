@@ -216,12 +216,15 @@ func GitRepoRoot(path string) string {
 
 // openRepo opens the git repo containing path. Returns the *Repository
 // and the repo root (the directory containing .git).
+//
+// EnableDotGitCommonDir is what makes a linked worktree work: its gitdir
+// holds only HEAD and index, so every ref lookup needs the common dir.
 func openRepo(path string) (*git.Repository, string, error) {
 	root := GitRepoRoot(path)
 	if root == "" {
 		return nil, "", fmt.Errorf("--path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout", path)
 	}
-	repo, err := git.PlainOpen(root)
+	repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
 	if err != nil {
 		return nil, "", fmt.Errorf("open git repo at %q: %w", root, err)
 	}
@@ -404,16 +407,14 @@ func mergeBase(repo *git.Repository, headCommit *object.Commit, other plumbing.H
 	return best.Hash, nil
 }
 
-// isShallow reports whether the repo is a shallow clone (presence of
-// .git/shallow). Used to distinguish "merge-base unreachable because
-// CI shallow-cloned" from "merge-base unreachable because no upstream".
+// isShallow reports whether the repo is a shallow clone. Used to
+// distinguish "merge-base unreachable because CI shallow-cloned" from
+// "merge-base unreachable because no upstream". Read through the storer,
+// which resolves `shallow` in the common dir — a linked worktree has no
+// gitdir of its own to stat.
 func isShallow(repo *git.Repository) bool {
-	wt, err := repo.Worktree()
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(filepath.Join(wt.Filesystem.Root(), ".git", "shallow"))
-	return err == nil
+	hashes, err := repo.Storer.Shallow()
+	return err == nil && len(hashes) > 0
 }
 
 // isDir reports whether path exists and is a directory. Used to detect

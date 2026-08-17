@@ -42,7 +42,7 @@ func BenchmarkBuildOwnership(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = buildOwnership(s, repoRoot, nil)
+		_ = buildOwnership(s, repoRoot, nil, nil)
 	}
 }
 

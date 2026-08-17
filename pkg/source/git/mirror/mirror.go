@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/gofrs/flock"
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/source"
@@ -26,6 +28,8 @@ import (
 // the persistent object store that incremental Fetches update; the
 // per-(URL, ref) cache slots materialize their worktrees from it
 // without re-cloning across runs or across refs of the same repo.
+// Cache instances sharing a Layout serialize mirror updates through
+// per-URL filesystem locks.
 //
 // Construct via New; pass to git.Fetcher.Mirrors. A nil
 // Fetcher.Mirrors disables mirroring — the legacy PlainClone-into-slot
@@ -80,8 +84,9 @@ func ProxyOptions(proxy *source.ProxyConfig) transport.ProxyOptions {
 
 // OpenOrFetch returns the bare mirror repo for url, ensuring it
 // carries up-to-date refs. First call for a URL runs a bare clone;
-// subsequent calls incrementally Fetch. Holds the per-URL lock across
-// the network operation so two concurrent callers serialize.
+// subsequent calls incrementally Fetch. Holds process-local and file
+// locks across the network operation so concurrent callers sharing a
+// cache root serialize even when they use separate Cache instances.
 func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.AuthMethod, proxy *source.ProxyConfig, plan FetchPlan) (*git.Repository, error) {
 	hash := urlHash(url)
 	release, err := m.locks.Acquire(ctx, hash)
@@ -94,6 +99,23 @@ func (m *Cache) OpenOrFetch(ctx context.Context, url string, auth transport.Auth
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("mirror parent: %w", err)
 	}
+	fileLock := flock.New(path+".lock", flock.SetPermissions(0o600))
+	locked, err := fileLock.TryLockContext(ctx, 100*time.Millisecond)
+	if err != nil {
+		_ = fileLock.Close()
+		return nil, fmt.Errorf("mirror lock: %w", err)
+	}
+	if !locked {
+		_ = fileLock.Close()
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("mirror lock: %w", err)
+		}
+		return nil, errors.New("mirror lock: not acquired")
+	}
+	defer func() {
+		_ = fileLock.Unlock()
+		_ = fileLock.Close()
+	}()
 
 	repo, openErr := git.PlainOpen(path)
 	if openErr == nil {

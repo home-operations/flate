@@ -17,6 +17,21 @@ import (
 	"github.com/home-operations/flate/pkg/source/git/mirror"
 )
 
+func readMirrorDirs(t *testing.T, dir string) []os.DirEntry {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir mirrors: %v", err)
+	}
+	dirs := entries[:0]
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs = append(dirs, entry)
+		}
+	}
+	return dirs
+}
+
 // TestMirror_BareClonePersistsAcrossFetches confirms that a Fetcher
 // with Mirrors set creates the bare mirror once and reuses it on the
 // second fetch — the per-URL mirror dir is present after run 1 and
@@ -46,10 +61,7 @@ func TestMirror_BareClonePersistsAcrossFetches(t *testing.T) {
 	}
 
 	// The mirror directory must exist after the first fetch.
-	entries, err := os.ReadDir(mirrorDir)
-	if err != nil {
-		t.Fatalf("mirror dir missing: %v", err)
-	}
+	entries := readMirrorDirs(t, mirrorDir)
 	if len(entries) != 1 {
 		t.Errorf("expected one mirror dir, got %d: %v", len(entries), entries)
 	}
@@ -64,7 +76,7 @@ func TestMirror_BareClonePersistsAcrossFetches(t *testing.T) {
 	if art2.Revision != art.Revision {
 		t.Errorf("revision drifted: %s vs %s", art.Revision, art2.Revision)
 	}
-	entries2, _ := os.ReadDir(mirrorDir)
+	entries2 := readMirrorDirs(t, mirrorDir)
 	if len(entries2) != 1 {
 		t.Errorf("mirror dir count drifted: %d → %d", len(entries), len(entries2))
 	}
@@ -177,10 +189,7 @@ func TestMirror_TagRefreshFetchesOnlyRequestedTag(t *testing.T) {
 		t.Errorf("revision = %q, want %q", art.Revision, v1)
 	}
 
-	entries, err := os.ReadDir(layout.GitMirrors())
-	if err != nil {
-		t.Fatalf("ReadDir mirrors: %v", err)
-	}
+	entries := readMirrorDirs(t, layout.GitMirrors())
 	if len(entries) != 1 {
 		t.Fatalf("expected one mirror dir, got %d", len(entries))
 	}

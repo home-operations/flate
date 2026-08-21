@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.1](https://github.com/home-operations/flate/compare/v0.5.0...v0.5.1) (2026-08-21)
+
+
+### Features
+
+* **go:** update module charm.land/bubbles/v2 (v2.1.1 → v2.2.0) ([#924](https://github.com/home-operations/flate/issues/924)) ([9f6cccb](https://github.com/home-operations/flate/commit/9f6cccb701f0d3bf8f99dc3f512332bd37887b2f))
+* **go:** update module github.com/google/cel-go (v0.31.0 → v0.32.0) ([#922](https://github.com/home-operations/flate/issues/922)) ([6a83532](https://github.com/home-operations/flate/commit/6a8353233afeca906a8e99fe8ac25918f5f9d6b8))
+* **go:** update module github.com/minio/minio-go/v7 (v7.2.1 → v7.3.0) ([#910](https://github.com/home-operations/flate/issues/910)) ([ec7f5d7](https://github.com/home-operations/flate/commit/ec7f5d75deb2c3dab10b740b2aea12a4b4d8e64f))
+* **go:** update module golang.org/x/crypto (v0.54.0 → v0.55.0) ([#904](https://github.com/home-operations/flate/issues/904)) ([167da9c](https://github.com/home-operations/flate/commit/167da9cb1fc8a323ace9290c71b70a37511e67d0))
+
+
+### Bug Fixes
+
+* **baseline:** flate now works in worktree branches ([#909](https://github.com/home-operations/flate/issues/909)) ([4b71e45](https://github.com/home-operations/flate/commit/4b71e4598ff529a746aac7559fe6a21d174f595c))
+* **change:** exclude external-sourced KS claims from the ownership index ([#917](https://github.com/home-operations/flate/issues/917)) ([14ce977](https://github.com/home-operations/flate/commit/14ce977b81df1291f6282d7da0e6eb62a5712e9e))
+* **go:** update kubernetes monorepo (v0.36.3 → v0.36.4) ([#923](https://github.com/home-operations/flate/issues/923)) ([b9800ab](https://github.com/home-operations/flate/commit/b9800ab5db356cb2cdc28f35004ff787fbbde2f7))
+* **go:** update module charm.land/bubbletea/v2 (v2.0.8 → v2.0.9) ([#921](https://github.com/home-operations/flate/issues/921)) ([405a6d3](https://github.com/home-operations/flate/commit/405a6d3ba3ce00ea39a7276d1a2a1a3b0fa75581))
+* **go:** update module charm.land/lipgloss/v2 (v2.0.5 → v2.0.6) ([#903](https://github.com/home-operations/flate/issues/903)) ([23a1237](https://github.com/home-operations/flate/commit/23a1237cc9392a8f76e14661eb0793c39f1d7ed2))
+* **go:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.58.0 → v0.58.1) ([#919](https://github.com/home-operations/flate/issues/919)) ([7f3fadf](https://github.com/home-operations/flate/commit/7f3fadfe5e4b0a8897addb8724b40c7822d589ee))
+* **go:** update module helm.sh/helm/v4 (v4.2.3 → v4.2.4) ([#906](https://github.com/home-operations/flate/issues/906)) ([2063c0a](https://github.com/home-operations/flate/commit/2063c0aabedb77fd36ac8dd29ff859b18398dbc0))
+* **mirror:** serialize access across cache instances ([#916](https://github.com/home-operations/flate/issues/916)) ([07c381a](https://github.com/home-operations/flate/commit/07c381a723a0e31af8094b670b9a09c4d66b863d))
+
+
+### Miscellaneous Chores
+
+* **github-action:** update action jdx/mise-action (v4.2.4 → v4.2.5) ([#911](https://github.com/home-operations/flate/issues/911)) ([819d2d9](https://github.com/home-operations/flate/commit/819d2d9b7ef740309f3e01675d99024bb875dca0))
+* **go:** pin go directive to 1.26.0 ([#912](https://github.com/home-operations/flate/issues/912)) ([276ff6a](https://github.com/home-operations/flate/commit/276ff6a09d77baff1275051f9bd03cb66600fd9e))
+* **mise:** update tool go (1.26.5 → 1.26.6) ([#914](https://github.com/home-operations/flate/issues/914)) ([1f469c2](https://github.com/home-operations/flate/commit/1f469c236890b0ffb06dbd8ab19f7e446b8623ac))
+* **mise:** update tool go:golang.org/x/vuln/cmd/govulncheck (1.6.0 → v1.7.0) ([#908](https://github.com/home-operations/flate/issues/908)) ([3054b21](https://github.com/home-operations/flate/commit/3054b212fd5869f1580c83987d444938943491b0))
+* **mise:** update tool oxfmt (0.62.0 → 0.63.0) ([#905](https://github.com/home-operations/flate/issues/905)) ([6edd1fd](https://github.com/home-operations/flate/commit/6edd1fdaedd3213bdcc1108ef45f06cf03b6fcda))
+
 ## [0.5.0](https://github.com/home-operations/flate/compare/v0.4.14...v0.5.0) (2026-08-08)
 
 

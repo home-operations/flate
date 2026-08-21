@@ -6,6 +6,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -26,7 +27,11 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	if changes == nil {
 		return nil
 	}
-	f := change.NewFilterWithCache(changes, o.sourceFiles, repoRoot, o.store, o.componentCache, o.sourceRefs)
+	// External-sourced KSes must not claim local paths in the ownership
+	// index — same exclusion the loader applies to the parent index via
+	// KSPathPrefixesLocalOnly (a `path: ./` on an OCI-sourced KS would
+	// otherwise own the repo root and cascade into every resolve).
+	f := change.NewFilterWithCache(changes, o.sourceFiles, repoRoot, o.store, o.componentCache, o.sourceRefs, loader.ExternalSourcedKSIDs(o.store, repoRoot))
 	// Wire OnAdd so a runtime keep-set extension (KS controller's
 	// emitRenderedChildren → keepEmitted) refires any source whose
 	// listener already short-circuited via PreGate before the

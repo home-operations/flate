@@ -3,6 +3,7 @@ module github.com/home-operations/flate
 go 1.26.0
 
 require (
+	cel.dev/cel-go v0.32.0
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.8
 	charm.land/lipgloss/v2 v2.0.5
@@ -24,7 +25,6 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0
 	github.com/gofrs/flock v0.13.0
 	github.com/gonvenience/ytbx v1.5.0
-	github.com/google/cel-go v0.31.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/gosimple/slug v1.15.0

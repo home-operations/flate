@@ -43,11 +43,24 @@ type ownershipIndex struct {
 // by loader.KSPathPrefixes during discovery are served from cache
 // here. nil cache falls back to a per-call local map; behavior is
 // identical, just without cross-call sharing.
-func buildOwnership(objs ObjectLister, repoRoot string, cache *manifest.ComponentCache) ownershipIndex {
+//
+// externalKS drops the claims of external-sourced Kustomizations (see
+// loader.ExternalSourcedKSIDs): their spec.path is relative to their own
+// source artifact, not the local tree, so letting them claim local
+// prefixes makes them false owners/ancestors of unrelated local files.
+// A `path: ./` on an OCIRepository-sourced KS claims the repo root,
+// which — since the root-prefix match landed in matchingPrefixes —
+// routes every changed file's ancestor chain through that KS; its own
+// dependsOn then blocks the whole graph as a cycle (same shape as the
+// loader-side issue #752). Mirrors KSPathPrefixesLocalOnly.
+func buildOwnership(objs ObjectLister, repoRoot string, cache *manifest.ComponentCache, externalKS map[manifest.NamedResource]struct{}) ownershipIndex {
 	objList := objs.ListObjects(manifest.KindKustomization)
 	kss := make([]*manifest.Kustomization, 0, len(objList))
 	for _, obj := range objList {
 		if ks, ok := obj.(*manifest.Kustomization); ok {
+			if _, external := externalKS[ks.Named()]; external {
+				continue
+			}
 			kss = append(kss, ks)
 		}
 	}

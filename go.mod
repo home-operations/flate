@@ -10,7 +10,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/charmbracelet/colorprofile v0.4.3
-	github.com/charmbracelet/x/ansi v0.11.7
+	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/controlplaneio-fluxcd/flux-operator v0.58.1
 	github.com/distribution/reference v0.6.0
 	github.com/fluxcd/helm-controller/api v1.6.3

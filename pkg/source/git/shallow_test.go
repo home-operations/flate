@@ -23,10 +23,7 @@ import (
 // to .git/shallow and observable via Storer.Shallow().
 func openOnlyMirror(t *testing.T, layout cacheroot.Layout) *git.Repository {
 	t.Helper()
-	entries, err := os.ReadDir(layout.GitMirrors())
-	if err != nil {
-		t.Fatalf("ReadDir mirrors: %v", err)
-	}
+	entries := readMirrorDirs(t, layout.GitMirrors())
 	if len(entries) != 1 {
 		t.Fatalf("expected exactly one mirror dir, got %d", len(entries))
 	}

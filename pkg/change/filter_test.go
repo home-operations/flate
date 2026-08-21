@@ -226,6 +226,49 @@ func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 	}
 }
 
+func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
+	// An external-sourced KS (e.g. OCIRepository) with `path: ./` claims
+	// the repo root — since matchingPrefixes matches the root prefix,
+	// that makes it a false ancestor of EVERY changed file, and its own
+	// dependsOn then blocks the whole graph as a cycle (immich-app
+	// yucca-o11y; loader-side counterpart is issue #752). Its spec.path
+	// is relative to its own artifact, not the local tree, so resolve()
+	// must drop its claims when the orchestrator supplies it via
+	// externalKS.
+	external := &manifest.Kustomization{
+		Name: "yucca-o11y", Namespace: "flux-system",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./"},
+	}
+	plex := &manifest.Kustomization{
+		Name: "plex", Namespace: "media",
+		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/media/plex/app"},
+	}
+	externalID, plexID := external.Named(), plex.Named()
+	sourceFiles := map[manifest.NamedResource]string{
+		externalID: "flux/cluster/yucca-o11y.yaml",
+		plexID:     "apps/media/plex/app/ks.yaml",
+	}
+	lister := testutil.MapLister{externalID: external, plexID: plex}
+	changed := []string{"apps/media/plex/app/helmrelease.yaml"}
+
+	// Without the exclusion the root claim wins ancestor status — this
+	// pins the cascade the fix removes (and the root-prefix match that
+	// enables it).
+	f := NewFilterWithCache(NewSet(changed), sourceFiles, "", lister, nil, nil, nil)
+	if !f.ShouldReconcile(externalID) {
+		t.Fatalf("precondition: root-claiming KS should be an ancestor without exclusions; keep=%v", f.KeepNames())
+	}
+
+	f = NewFilterWithCache(NewSet(changed), sourceFiles, "", lister, nil, nil,
+		map[manifest.NamedResource]struct{}{externalID: {}})
+	if !f.ShouldReconcile(plexID) {
+		t.Fatalf("owner of the changed file must be kept; keep=%v", f.KeepNames())
+	}
+	if f.ShouldReconcile(externalID) {
+		t.Errorf("external-sourced root-claiming KS must not enter keep as ancestor; keep=%v", f.KeepNames())
+	}
+}
+
 func TestFilter_KeepNamespaces(t *testing.T) {
 	// Drive keep via NewFilter rather than mutating the struct.
 	ksA := &manifest.Kustomization{Name: "x", Namespace: "ns-a"}
@@ -766,6 +809,7 @@ func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
 			hr:      {oci},
 			sibling: {otherOCI},
 		},
+		nil,
 	)
 
 	if !f.ShouldReconcile(oci) {
@@ -818,6 +862,7 @@ func TestFilter_ReverseEdgeNoCascadeFromChangedConsumer(t *testing.T) {
 			aID: {shared},
 			bID: {shared},
 		},
+		nil,
 	)
 
 	if !f.ShouldReconcile(aID) {
@@ -863,6 +908,7 @@ func TestFilter_ForwardEdgeChangedHRKeepsChartRefSource(t *testing.T) {
 			hr:      {oci},
 			sibling: {oci}, // shares the same chart source
 		},
+		nil,
 	)
 
 	if !f.ShouldReconcile(hr) {

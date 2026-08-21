@@ -41,6 +41,13 @@ type Filter struct {
 	// to drive the reverse edge. Nil disables reverse propagation.
 	consumerRefs map[manifest.NamedResource][]manifest.NamedResource
 
+	// externalKS is the set of external-sourced Kustomizations whose
+	// path claims are excluded from resolve()'s ownership index —
+	// supplied by the orchestrator from loader.ExternalSourcedKSIDs
+	// (mirroring loader.KSPathPrefixesLocalOnly on the parent-index
+	// side). Nil means no exclusions.
+	externalKS map[manifest.NamedResource]struct{}
+
 	// objs is captured from NewFilter so runtime AddEmitted can
 	// walk transitiveDeps without the caller re-supplying it. The
 	// pointer is set once at construction and never reassigned —
@@ -138,7 +145,7 @@ func keyOf(id manifest.NamedResource) nameKey {
 //     a forward dep of step 4), so a single HR edit can't reverse-
 //     cascade into every sibling sharing its source.
 func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister) *Filter {
-	return NewFilterWithCache(changes, sourceFiles, repoRoot, objs, nil, nil)
+	return NewFilterWithCache(changes, sourceFiles, repoRoot, objs, nil, nil, nil)
 }
 
 // NewFilterWithCache is NewFilter with a shared
@@ -156,7 +163,12 @@ func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repo
 // HelmReleases are absent from the Store at resolve() time. It drives
 // the reverse edge (step 5 above). Pass nil to disable reverse
 // propagation (the default for tests that don't exercise it).
-func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache, consumerRefs map[manifest.NamedResource][]manifest.NamedResource) *Filter {
+//
+// externalKS is the set of external-sourced Kustomizations (from
+// loader.ExternalSourcedKSIDs) whose path claims resolve() must drop
+// from the ownership index; see buildOwnership. Pass nil for no
+// exclusions.
+func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache, consumerRefs map[manifest.NamedResource][]manifest.NamedResource, externalKS map[manifest.NamedResource]struct{}) *Filter {
 	f := &Filter{
 		changes:        changes,
 		sourceFiles:    sourceFiles,
@@ -164,6 +176,7 @@ func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]str
 		objs:           objs,
 		componentCache: cache,
 		consumerRefs:   consumerRefs,
+		externalKS:     externalKS,
 	}
 	if changes == nil {
 		return f
@@ -471,7 +484,7 @@ func (f *Filter) resolve() {
 		queue = append(queue, id)
 	}
 
-	owners := buildOwnership(objs, f.repoRoot, f.componentCache)
+	owners := buildOwnership(objs, f.repoRoot, f.componentCache, f.externalKS)
 	// enqueueAncestorChain marks the structural parent that owns file
 	// (longest-prefix spec.path match) plus its meta-Kustomization
 	// ancestors as ancestor-only — they must render to inject patches /

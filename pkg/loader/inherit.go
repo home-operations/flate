@@ -95,9 +95,9 @@ func ApplyNamespaceInheritanceWithRefs(s *store.Store, sourceFiles map[manifest.
 // top-level Flux Operator and HelmChart source objects after namespace
 // inheritance has had a chance to project kustomize/Flux namespaces.
 func ApplyDefaultNamespaces(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
-	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSet](s, manifest.KindResourceSet))
-	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.ResourceSetInputProvider](s, manifest.KindResourceSetInputProvider))
-	applyDefaultNS(s, sourceFiles, store.ListAs[*manifest.HelmChartSource](s, manifest.KindHelmChart))
+	applyDefaultNS(s, sourceFiles, s.ListAs[*manifest.ResourceSet](manifest.KindResourceSet))
+	applyDefaultNS(s, sourceFiles, s.ListAs[*manifest.ResourceSetInputProvider](manifest.KindResourceSetInputProvider))
+	applyDefaultNS(s, sourceFiles, s.ListAs[*manifest.HelmChartSource](manifest.KindHelmChart))
 }
 
 // applyDefaultNS assigns manifest.DefaultNamespace to every object in objs
@@ -170,7 +170,7 @@ func resolveNamespace(file string, flux, kust []pathEntry) string {
 // stay unsorted.
 func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]string, kust []pathEntry) []pathEntry {
 	var out []pathEntry
-	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		if ks.Path == "" {
 			continue
 		}

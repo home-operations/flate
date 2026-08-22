@@ -65,13 +65,11 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffe
 		}
 	}
 	cfg := kustypes.Kustomization{
-		TypeMeta: kustypes.TypeMeta{
-			APIVersion: kustypes.KustomizationVersion,
-			Kind:       kustypes.KustomizationKind,
-		},
-		Resources: []string{inputFile},
-		Images:    adaptImages(k.Images),
-		Patches:   patches,
+		APIVersion: kustypes.KustomizationVersion,
+		Kind:       kustypes.KustomizationKind,
+		Resources:  []string{inputFile},
+		Images:     adaptImages(k.Images),
+		Patches:    patches,
 	}
 
 	raw, err := json.Marshal(cfg)

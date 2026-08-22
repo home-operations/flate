@@ -83,7 +83,7 @@ func (c *Controller) Start(_ context.Context) {
 // nodes. A ResourceSet has no Suspend field, so the suspended predicate
 // is always false.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
-	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
+	return c.DispatchNode(ctx, id, drainLevel,
 		func(*manifest.ResourceSet) bool { return false },
 		c.reconcile)
 }
@@ -107,8 +107,8 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet) er
 		// targetNamespace into a duplicate copy). Without the refresh the
 		// first render would use the stale-spec snapshot. Mirrors the KS
 		// controller (#102).
-		fresh, ok, err := base.RequireRefresh[*manifest.ResourceSet](
-			ctx, c.Controller, id, nil, deps,
+		fresh, ok, err := c.RequireRefresh[*manifest.ResourceSet](
+			ctx, id, nil, deps,
 			"", base.DepFailed(id)) // empty pendingMsg: status set above
 		if err != nil {
 			return err
@@ -189,9 +189,7 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 	deps := make([]manifest.DependencyRef, 0, len(rs.DependsOn)+len(rs.InputsFrom)+1)
 	for _, dep := range rs.DependsOn {
 		deps = append(deps, manifest.DependencyRef{
-			NamedResource: manifest.NamedResource{
-				Kind: dep.Kind, Namespace: cmp.Or(dep.Namespace, rs.Namespace), Name: dep.Name,
-			},
+			Kind: dep.Kind, Namespace: cmp.Or(dep.Namespace, rs.Namespace), Name: dep.Name,
 			ReadyExpr: dep.ReadyExpr,
 		})
 	}
@@ -202,11 +200,9 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 		// InputProviderReference is same-namespace by spec — RSIPs live in
 		// the ResourceSet's own namespace.
 		deps = append(deps, manifest.DependencyRef{
-			NamedResource: manifest.NamedResource{
-				Kind:      manifest.KindResourceSetInputProvider,
-				Namespace: rs.Namespace,
-				Name:      ref.Name,
-			},
+			Kind:      manifest.KindResourceSetInputProvider,
+			Namespace: rs.Namespace,
+			Name:      ref.Name,
 		})
 	}
 	if parent, ok := c.LookupParent(rs.Named()); ok {
@@ -223,7 +219,7 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 // re-expands against the now-complete RSIP set. Returns false when id is not
 // a RS in the store.
 func (c *Controller) WantsDrainRerun(id manifest.NamedResource) bool {
-	rs, ok := store.Get[*manifest.ResourceSet](c.Store, id)
+	rs, ok := c.Store.Get[*manifest.ResourceSet](id)
 	if !ok {
 		return false
 	}

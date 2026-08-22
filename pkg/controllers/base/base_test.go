@@ -299,7 +299,7 @@ func TestDispatchNode(t *testing.T) {
 	suspended := func(hr *manifest.HelmRelease) bool { return hr.Name == "suspended" }
 	reconcile := func(_ context.Context, _ *manifest.HelmRelease) error { ran.Add(1); return nil }
 	dispatch := func(id manifest.NamedResource) {
-		base.DispatchNode(t.Context(), c, id, 0, suspended, reconcile)
+		c.DispatchNode(t.Context(), id, 0, suspended, reconcile)
 	}
 
 	// Suspended → PreGate bails to Ready/"suspended", no reconcile.

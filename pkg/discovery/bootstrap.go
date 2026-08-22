@@ -3,8 +3,6 @@ package discovery
 import (
 	"log/slog"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -50,7 +48,7 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 	if d.cfg.Store.GetObject(id) == nil {
 		repo := &manifest.GitRepository{
 			Name: id.Name, Namespace: id.Namespace,
-			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + root},
+			URL: "file://" + root,
 		}
 		d.cfg.Store.AddObject(repo)
 	}
@@ -100,7 +98,7 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 	// a second map.
 	existing := knownSourceIDs(d.cfg.Store, manifest.KindGitRepository, manifest.KindOCIRepository)
 	var aliased []manifest.NamedResource
-	for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
+	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		id := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 		if _, ok := existing[id]; ok {
 			continue
@@ -136,7 +134,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string) []m
 		return nil
 	}
 	var overridden []manifest.NamedResource
-	for _, repo := range store.ListAs[*manifest.GitRepository](d.cfg.Store, manifest.KindGitRepository) {
+	for _, repo := range d.cfg.Store.ListAs[*manifest.GitRepository](manifest.KindGitRepository) {
 		id := repo.Named()
 		normalized := normalizeGitURL(repo.URL)
 		if normalized == "" {
@@ -185,7 +183,7 @@ func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.Bas
 		url := "file://" + repoRoot
 		return &manifest.GitRepository{
 			Name: id.Name, Namespace: id.Namespace,
-			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: url},
+			URL: url,
 		}, url, true
 	case manifest.KindOCIRepository:
 		// Synthetic oci:// URL — never resolved, only present so the
@@ -196,7 +194,7 @@ func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.Bas
 		url := "oci://flate-bootstrap-alias/" + id.Namespace + "/" + id.Name
 		return &manifest.OCIRepository{
 			Name: id.Name, Namespace: id.Namespace,
-			OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: url},
+			URL: url,
 		}, url, true
 	}
 	return nil, "", false

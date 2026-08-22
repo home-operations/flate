@@ -5,11 +5,8 @@ import (
 	"testing"
 	"time"
 
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -28,15 +25,13 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 	// hangs until timeout, then fails.
 	src := &manifest.OCIRepository{
 		Name: "podinfo", Namespace: "flux-system",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example.test/podinfo"},
+		URL: "oci://example.test/podinfo",
 	}
 	st.AddObject(src)
 
 	hr := &manifest.HelmRelease{
 		Name: "podinfo", Namespace: "flux-system",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Timeout: ptrDuration(100 * time.Millisecond),
-		},
+		Timeout: ptrDuration(100 * time.Millisecond),
 		Chart: manifest.HelmChart{
 			Name: "podinfo", RepoKind: manifest.KindOCIRepository,
 			RepoName: "podinfo", RepoNamespace: "flux-system",
@@ -62,9 +57,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 
 	hr := &manifest.HelmRelease{
 		Name: "depender", Namespace: "flux-system",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Timeout: ptrDuration(100 * time.Millisecond),
-		},
+		Timeout:   ptrDuration(100 * time.Millisecond),
 		DependsOn: []manifest.DependencyRef{{NamedResource: dep.Named()}},
 	}
 	st.AddObject(hr)
@@ -84,9 +77,7 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
 	hr := &manifest.HelmRelease{
 		Name: "child", Namespace: "flux-system",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Timeout: ptrDuration(80 * time.Millisecond),
-		},
+		Timeout: ptrDuration(80 * time.Millisecond),
 	}
 	c, st := newTestControllerWithParentOf(t, map[manifest.NamedResource]manifest.NamedResource{
 		hr.Named(): parent.Named(),
@@ -112,9 +103,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
 	hr := &manifest.HelmRelease{
 		Name: "child", Namespace: "flux-system",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Timeout: ptrDuration(80 * time.Millisecond),
-		},
+		Timeout: ptrDuration(80 * time.Millisecond),
 	}
 	// Resolver returns the parent for the HR only — closes over
 	// captured state, the production shape (which combines a map +
@@ -125,7 +114,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 		}
 		return manifest.NamedResource{}, false
 	}
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{Options: base.Options{ParentOf: resolver}})
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
 	info := dispatchToFixpoint(t, c, st, hr.Named())
@@ -179,9 +168,7 @@ func TestReconcile_MissingChartFails(t *testing.T) {
 	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
 		Name: "broken", Namespace: "flux-system",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Timeout: ptrDuration(80 * time.Millisecond),
-		},
+		Timeout: ptrDuration(80 * time.Millisecond),
 		// Chart left empty — depwait on an unset source ref times out.
 	}
 	st.AddObject(hr)

@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -13,7 +11,7 @@ import (
 func gitRepoWithSecret(name, url, secretName string) *manifest.GitRepository {
 	repo := &manifest.GitRepository{
 		Name: name, Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: url},
+		URL: url,
 	}
 	if secretName != "" {
 		repo.SecretRef = &manifest.LocalObjectReference{Name: secretName}

@@ -3,8 +3,6 @@ package kustomization
 import (
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -17,10 +15,8 @@ import (
 func TestKustomizationFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	base := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path:            "./apps",
-			TargetNamespace: "apps",
-		},
+		Path:            "./apps",
+		TargetNamespace: "apps",
 	}
 	stamped := base.Clone()
 	stamped.Labels = map[string]string{
@@ -42,7 +38,7 @@ func TestKustomizationFingerprint_StableAcrossLabelStamping(t *testing.T) {
 func TestKustomizationFingerprint_DifferentOnSpecChange(t *testing.T) {
 	base := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps", TargetNamespace: "apps"},
+		Path: "./apps", TargetNamespace: "apps",
 	}
 	patched := base.Clone()
 	patched.TargetNamespace = "production"
@@ -60,7 +56,7 @@ func TestKustomizationFingerprint_DifferentOnSpecChange(t *testing.T) {
 func TestKustomizationFingerprint_SourceRootInputs(t *testing.T) {
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	}
 	if a, b := kustomizationFingerprint(ks, "/repo-a"), kustomizationFingerprint(ks, "/repo-b"); a == b {
 		t.Errorf("fingerprint must differ across distinct sourceRoots; both = %q", a)

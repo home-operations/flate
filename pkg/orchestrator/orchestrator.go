@@ -391,7 +391,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	ts := task.NewBounded(cfg.Concurrency)
 	cache := cmp.Or(cfg.SourceCache, source.NewCache(layout))
 	secretGet := func(ns, name string) *manifest.Secret {
-		s, _ := store.GetByName[*manifest.Secret](st, manifest.KindSecret, ns, name)
+		s, _ := st.GetByName[*manifest.Secret](manifest.KindSecret, ns, name)
 		return s
 	}
 	// Route helm.Client's source-CR lookups straight through the canonical

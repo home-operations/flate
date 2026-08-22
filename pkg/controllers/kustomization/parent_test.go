@@ -3,11 +3,8 @@ package kustomization
 import (
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -23,9 +20,9 @@ func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
 	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{Options: base.Options{ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{
+	c.Configure(Options{ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{
 		child.Named(): parent,
-	})}})
+	})})
 	deps := c.collectDeps(child)
 	for _, d := range deps {
 		if d.NamedResource == parent {
@@ -126,14 +123,14 @@ func TestCollectDeps_SubstituteFromIgnoresMalformedRefs(t *testing.T) {
 func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	consumerObj := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps"},
+		Path: "kubernetes/apps",
 		PostBuildSubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
 		},
 	}
 	producerObj := &manifest.Kustomization{
 		Name: "cluster-vars", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/flux/vars"},
+		Path: "kubernetes/flux/vars",
 	}
 	consumer := consumerObj.Named()
 	producer := producerObj.Named()
@@ -154,7 +151,7 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	)
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{Options: base.Options{Filter: f}})
+	c.Configure(Options{Filter: f})
 	deps := c.collectDeps(consumerObj)
 
 	wantCM := manifest.NamedResource{
@@ -184,7 +181,7 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	selfObj := &manifest.Kustomization{
 		Name: "app", Namespace: "foo",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/foo/app"},
+		Path: "kubernetes/foo/app",
 		PostBuildSubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "settings"},
 		},
@@ -206,7 +203,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	)
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{Options: base.Options{Filter: f}})
+	c.Configure(Options{Filter: f})
 	deps := c.collectDeps(selfObj)
 
 	for _, d := range deps {

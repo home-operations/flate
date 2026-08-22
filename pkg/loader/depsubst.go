@@ -46,7 +46,7 @@ func ResolveDependsOnSubstitutions(s *store.Store) {
 		v, ok := union[name]
 		return v, ok
 	}
-	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		resolved := resolveDeps(ks.DependsOn, mapping)
 		if resolved == nil {
 			continue
@@ -67,7 +67,7 @@ func ResolveDependsOnSubstitutions(s *store.Store) {
 func substituteUnion(s *store.Store) map[string]string {
 	union := map[string]string{}
 	conflicting := map[string]struct{}{}
-	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		for k, v := range values.VarsMap(ks.PostBuildSubstitute) {
 			if _, bad := conflicting[k]; bad {
 				continue

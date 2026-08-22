@@ -14,7 +14,7 @@ func TestGet_ReturnsTypedObject(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
 	s.AddObject(ks)
 
-	got, ok := store.Get[*manifest.Kustomization](s, ks.Named())
+	got, ok := s.Get[*manifest.Kustomization](ks.Named())
 	if !ok {
 		t.Fatalf("expected hit; got miss")
 	}
@@ -29,7 +29,7 @@ func TestGet_MissReturnsZeroFalse(t *testing.T) {
 	s := store.New()
 	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "ghost"}
 
-	got, ok := store.Get[*manifest.Kustomization](s, id)
+	got, ok := s.Get[*manifest.Kustomization](id)
 	if ok {
 		t.Fatalf("expected miss; got hit")
 	}
@@ -48,7 +48,7 @@ func TestGet_WrongTypeReturnsZeroFalse(t *testing.T) {
 	s.AddObject(hr)
 
 	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
-	got, ok := store.Get[*manifest.Kustomization](s, id)
+	got, ok := s.Get[*manifest.Kustomization](id)
 	if ok {
 		t.Errorf("Get with wrong type should miss; got hit %v", got)
 	}
@@ -59,7 +59,7 @@ func TestGet_WrongTypeReturnsZeroFalse(t *testing.T) {
 // (zero, false) without panic.
 func TestGet_NilStoreSafe(t *testing.T) {
 	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "x"}
-	if got, ok := store.Get[*manifest.Kustomization](nil, id); ok || got != nil {
+	if got, ok := (*store.Store)(nil).Get[*manifest.Kustomization](id); ok || got != nil {
 		t.Errorf("nil store: want (nil, false); got (%v, %v)", got, ok)
 	}
 }
@@ -72,7 +72,7 @@ func TestGetByName_ReturnsTypedObject(t *testing.T) {
 	sec := &manifest.Secret{Name: "creds", Namespace: "flux-system"}
 	s.AddObject(sec)
 
-	got, ok := store.GetByName[*manifest.Secret](s, manifest.KindSecret, "flux-system", "creds")
+	got, ok := s.GetByName[*manifest.Secret](manifest.KindSecret, "flux-system", "creds")
 	if !ok {
 		t.Fatalf("expected hit; got miss")
 	}
@@ -83,7 +83,7 @@ func TestGetByName_ReturnsTypedObject(t *testing.T) {
 
 // TestGetByName_NilStoreSafe mirrors Get's defensive nil guard.
 func TestGetByName_NilStoreSafe(t *testing.T) {
-	if got, ok := store.GetByName[*manifest.Secret](nil, manifest.KindSecret, "ns", "name"); ok || got != nil {
+	if got, ok := (*store.Store)(nil).GetByName[*manifest.Secret](manifest.KindSecret, "ns", "name"); ok || got != nil {
 		t.Errorf("nil store: want (nil, false); got (%v, %v)", got, ok)
 	}
 }
@@ -100,7 +100,7 @@ func TestListAs_TypedSlice(t *testing.T) {
 	// Add a HelmRelease to confirm kind filtering excludes other kinds.
 	s.AddObject(&manifest.HelmRelease{Name: "noisy", Namespace: "flux-system"})
 
-	got := store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization)
+	got := s.ListAs[*manifest.Kustomization](manifest.KindKustomization)
 	if len(got) != 3 {
 		t.Fatalf("expected 3 KSes; got %d", len(got))
 	}
@@ -117,7 +117,7 @@ func TestListAs_TypedSlice(t *testing.T) {
 
 // TestListAs_NilStoreReturnsNil mirrors Get's nil-store guard.
 func TestListAs_NilStoreReturnsNil(t *testing.T) {
-	if got := store.ListAs[*manifest.Kustomization](nil, manifest.KindKustomization); got != nil {
+	if got := (*store.Store)(nil).ListAs[*manifest.Kustomization](manifest.KindKustomization); got != nil {
 		t.Errorf("nil store: want nil slice; got %v", got)
 	}
 }
@@ -127,7 +127,7 @@ func TestListAs_NilStoreReturnsNil(t *testing.T) {
 // iteration without nil-check.
 func TestListAs_EmptyKindReturnsEmpty(t *testing.T) {
 	s := store.New()
-	got := store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization)
+	got := s.ListAs[*manifest.Kustomization](manifest.KindKustomization)
 	if got == nil {
 		t.Errorf("want empty slice, not nil")
 	}

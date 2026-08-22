@@ -15,9 +15,8 @@ func classifyDep(t *testing.T, w *Waiter, ref manifest.DependencyRef, drain int)
 }
 
 func ksDep(name string) manifest.DependencyRef {
-	return manifest.DependencyRef{NamedResource: manifest.NamedResource{
-		Kind: manifest.KindKustomization, Namespace: "ns", Name: name,
-	}}
+	return manifest.DependencyRef{
+		Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
 // TestClassify_CoreStates exercises the non-ReadyExpr branches that drive the

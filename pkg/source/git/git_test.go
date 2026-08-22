@@ -27,7 +27,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+		URL: "file://" + src,
 	}
 
 	f := &Fetcher{Cache: cache}
@@ -62,7 +62,7 @@ func TestFetcher_RestrictSchemesBlocksFileURL(t *testing.T) {
 	mustInitRepo(t, src)
 	repo := &manifest.GitRepository{
 		Name: "evil", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+		URL: "file://" + src,
 	}
 
 	blocked := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir())), RestrictSchemes: true}
@@ -92,7 +92,7 @@ func TestFetcher_RestrictSchemesAllowsRemoteURLs(t *testing.T) {
 	for _, url := range []string{"https://github.com/o/r", "ssh://git@github.com/o/r", "git@github.com:o/r.git"} {
 		repo := &manifest.GitRepository{
 			Name: "r", Namespace: "flux-system",
-			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: url},
+			URL: url,
 		}
 		if err := f.validateRepo(repo); err != nil {
 			t.Errorf("validateRepo(%q) under RestrictSchemes must pass: %v", url, err)
@@ -128,7 +128,7 @@ func TestFetcher_MutableDefaultRefRefreshesCache(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+		URL: "file://" + src,
 	}
 	f := &Fetcher{Cache: cache}
 
@@ -159,10 +159,8 @@ func TestFetcher_MutableRefUsesFreshIntervalCache(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:      "file://" + src,
-			Interval: metav1.Duration{Duration: time.Hour},
-		},
+		URL:      "file://" + src,
+		Interval: metav1.Duration{Duration: time.Hour},
 	}
 	f := &Fetcher{Cache: cache}
 
@@ -190,7 +188,7 @@ func TestFetcher_MutableRefreshFailureKeepsPreviousSlot(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+		URL: "file://" + src,
 	}
 	f := &Fetcher{Cache: cache}
 
@@ -220,10 +218,8 @@ func TestFetcher_RefByName(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Name: "refs/tags/v0.1.0"},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Name: "refs/tags/v0.1.0"},
 	}
 	f := &Fetcher{Cache: cache}
 	art, err := f.Fetch(context.Background(), repo)
@@ -244,10 +240,8 @@ func TestFetcher_RefByName_Unresolvable(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/does-not-exist"},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/does-not-exist"},
 	}
 	f := &Fetcher{Cache: cache}
 	_, err := f.Fetch(context.Background(), repo)
@@ -267,11 +261,9 @@ func TestFetcher_RefByNameFallbackFetchesExplicitRef(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:            "file://" + src,
-			Reference:      &sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"},
-			SparseCheckout: []string{"apps/a"},
-		},
+		URL:            "file://" + src,
+		Reference:      &sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"},
+		SparseCheckout: []string{"apps/a"},
 	}
 	f := &Fetcher{Cache: cache}
 	art, err := f.Fetch(context.Background(), repo)
@@ -299,10 +291,8 @@ func TestFetcher_SemVerRef(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0", SemVer: ">=1.1.0"},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0", SemVer: ">=1.1.0"},
 	}
 	f := &Fetcher{Cache: cache}
 	art, err := f.Fetch(context.Background(), repo)
@@ -327,12 +317,10 @@ func TestFetcher_CommitPrecedesRefName(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL: "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{
-				Commit: first,
-				Name:   "refs/tags/v1.1.0",
-			},
+		URL: "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{
+			Commit: first,
+			Name:   "refs/tags/v1.1.0",
 		},
 	}
 	f := &Fetcher{Cache: cache}
@@ -357,12 +345,10 @@ func TestFetcher_CommitPrecedesUnresolvableRefName(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL: "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{
-				Commit: first,
-				Name:   "refs/pull/does-not-exist/head",
-			},
+		URL: "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{
+			Commit: first,
+			Name:   "refs/pull/does-not-exist/head",
 		},
 	}
 	f := &Fetcher{Cache: cache}
@@ -387,10 +373,8 @@ func TestFetcher_CommitMustBeReachableFromBranch(t *testing.T) {
 
 	commitOnly := &manifest.GitRepository{
 		Name: "commit-only", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Commit: mainOnly},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Commit: mainOnly},
 	}
 	if _, err := f.Fetch(context.Background(), commitOnly); err != nil {
 		t.Fatalf("commit-only fetch should populate the unconstrained cache slot: %v", err)
@@ -398,12 +382,10 @@ func TestFetcher_CommitMustBeReachableFromBranch(t *testing.T) {
 
 	constrained := &manifest.GitRepository{
 		Name: "constrained", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL: "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{
-				Branch: "staging",
-				Commit: mainOnly,
-			},
+		URL: "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{
+			Branch: "staging",
+			Commit: mainOnly,
 		},
 	}
 	_, err := f.Fetch(context.Background(), constrained)
@@ -430,10 +412,8 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:            "file://" + src,
-			SparseCheckout: []string{"apps/a"},
-		},
+		URL:            "file://" + src,
+		SparseCheckout: []string{"apps/a"},
 	}
 	f := &Fetcher{Cache: cache}
 	art, err := f.Fetch(context.Background(), repo)
@@ -464,10 +444,8 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 	cache := source.NewCache(cacheroot.New(t.TempDir()))
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:    "file://" + src,
-			Ignore: &patterns,
-		},
+		URL:    "file://" + src,
+		Ignore: &patterns,
 	}
 	f := &Fetcher{Cache: cache}
 	art, err := f.Fetch(context.Background(), repo)
@@ -498,11 +476,9 @@ func TestFetcher_CacheMarkerSurvivesIgnore(t *testing.T) {
 	commit := mustHead(t, src)
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Commit: commit},
-			Ignore:    &patterns,
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Commit: commit},
+		Ignore:    &patterns,
 	}
 	f := &Fetcher{Cache: cache}
 	art, err := f.Fetch(context.Background(), repo)
@@ -544,11 +520,9 @@ func TestFetcher_CommitCacheKeyIncludesIgnore(t *testing.T) {
 	ignore := "docs.md\n"
 	ignoredRepo := &manifest.GitRepository{
 		Name: "ignored", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Commit: commit},
-			Ignore:    &ignore,
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Commit: commit},
+		Ignore:    &ignore,
 	}
 	ignored, err := f.Fetch(context.Background(), ignoredRepo)
 	if err != nil {
@@ -560,10 +534,8 @@ func TestFetcher_CommitCacheKeyIncludesIgnore(t *testing.T) {
 
 	plainRepo := &manifest.GitRepository{
 		Name: "plain", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Commit: commit},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Commit: commit},
 	}
 	plain, err := f.Fetch(context.Background(), plainRepo)
 	if err != nil {

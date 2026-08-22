@@ -75,8 +75,7 @@ func TestDependencyFailedError_Unwraps(t *testing.T) {
 		t.Errorf("expected errors.Is(err, ErrFlux) to be true (ErrInput wraps ErrFlux)")
 	}
 
-	var typed *DependencyFailedError
-	if !errors.As(err, &typed) {
+	if _, ok := errors.AsType[*DependencyFailedError](err); !ok {
 		t.Errorf("errors.As should match *DependencyFailedError")
 	}
 }

@@ -118,7 +118,7 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 // whether id ended Ready. The orchestrator's scheduler Dispatcher calls this
 // for source-kind nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
-	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
+	return c.DispatchNode(ctx, id, drainLevel,
 		suspendedSource, c.reconcile)
 }
 

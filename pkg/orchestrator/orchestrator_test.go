@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
@@ -30,19 +28,19 @@ import (
 func TestDetectOrphans(t *testing.T) {
 	parent := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps"},
+		Path: "./kubernetes/apps",
 	}
 	orphan := &manifest.Kustomization{
 		Name: "orphan", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps/orphan/app"},
+		Path: "./kubernetes/apps/orphan/app",
 	}
 	emittedChild := &manifest.Kustomization{
 		Name: "wired", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps/wired/app"},
+		Path: "./kubernetes/apps/wired/app",
 	}
 	root := &manifest.Kustomization{
 		Name: "another-root", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./standalone"},
+		Path: "./standalone",
 	}
 
 	o := &Orchestrator{
@@ -91,7 +89,7 @@ func TestDetectOrphans(t *testing.T) {
 func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 	parent := &manifest.Kustomization{
 		Name: "p", Namespace: "ns",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	}
 	cm := &manifest.ConfigMap{Name: "stuck", Namespace: "ns"}
 
@@ -123,11 +121,11 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 	parent := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps"},
+		Path: "./kubernetes/apps",
 	}
 	child := &manifest.Kustomization{
 		Name: "plex", Namespace: "media",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps/media/plex/app"},
+		Path: "./kubernetes/apps/media/plex/app",
 	}
 
 	o := &Orchestrator{

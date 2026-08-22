@@ -17,7 +17,6 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/opencontainers/go-digest"
-	specs "github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -51,13 +50,11 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 	repo := &manifest.OCIRepository{
 		Name:      "flux-manifests",
 		Namespace: "flux-system",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL: fmt.Sprintf("oci://%s/fluxcd/flux-manifests", mustURL(t, srv.URL).Host),
-			// httptest.NewTLSServer issues a self-signed cert; flate
-			// maps spec.insecure to TLS InsecureSkipVerify.
-			Insecure:  true,
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "v2.8.8"},
-		},
+		URL:       fmt.Sprintf("oci://%s/fluxcd/flux-manifests", mustURL(t, srv.URL).Host),
+		// httptest.NewTLSServer issues a self-signed cert; flate
+		// maps spec.insecure to TLS InsecureSkipVerify.
+		Insecure:  true,
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "v2.8.8"},
 	}
 
 	art, err := f.Fetch(t.Context(), repo)
@@ -109,11 +106,9 @@ func TestFetcher_PartialSlotInvalidated(t *testing.T) {
 	repo := &manifest.OCIRepository{
 		Name:      "partial",
 		Namespace: "test",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       fmt.Sprintf("oci://%s/partial", mustURL(t, srv.URL).Host),
-			Insecure:  true,
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
-		},
+		URL:       fmt.Sprintf("oci://%s/partial", mustURL(t, srv.URL).Host),
+		Insecure:  true,
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
 	}
 
 	// First fetch populates the slot fully.
@@ -176,11 +171,9 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 	repo := &manifest.OCIRepository{
 		Name:      "collider",
 		Namespace: "test",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       fmt.Sprintf("oci://%s/collider", mustURL(t, srv.URL).Host),
-			Insecure:  true,
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
-		},
+		URL:       fmt.Sprintf("oci://%s/collider", mustURL(t, srv.URL).Host),
+		Insecure:  true,
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
 	}
 
 	art, err := f.Fetch(t.Context(), repo)
@@ -214,11 +207,9 @@ func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
 	repo := &manifest.OCIRepository{
 		Name:      "mutable",
 		Namespace: "test",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
-			Insecure:  true,
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
-		},
+		URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
+		Insecure:  true,
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 	}
 
 	art1, err := f.Fetch(t.Context(), repo)
@@ -251,12 +242,10 @@ func TestFetcher_MutableTagUsesFreshIntervalResolveCache(t *testing.T) {
 	repo := &manifest.OCIRepository{
 		Name:      "mutable",
 		Namespace: "test",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
-			Insecure:  true,
-			Interval:  metav1.Duration{Duration: time.Hour},
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
-		},
+		URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
+		Insecure:  true,
+		Interval:  metav1.Duration{Duration: time.Hour},
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 	}
 
 	art1, err := f.Fetch(t.Context(), repo)
@@ -285,11 +274,9 @@ func TestFetcher_TagCacheHitSkipsSecondPull(t *testing.T) {
 	repo := &manifest.OCIRepository{
 		Name:      "stable-tag",
 		Namespace: "test",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       fmt.Sprintf("oci://%s/stable-tag", mustURL(t, srv.URL).Host),
-			Insecure:  true,
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
-		},
+		URL:       fmt.Sprintf("oci://%s/stable-tag", mustURL(t, srv.URL).Host),
+		Insecure:  true,
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
 	}
 
 	art1, err := f.Fetch(t.Context(), repo)
@@ -317,11 +304,9 @@ func TestFetcher_MutableRefreshFailureKeepsPreviousSlot(t *testing.T) {
 	repo := &manifest.OCIRepository{
 		Name:      "mutable",
 		Namespace: "test",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
-			Insecure:  true,
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
-		},
+		URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
+		Insecure:  true,
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 	}
 
 	art, err := f.Fetch(t.Context(), repo)
@@ -345,11 +330,9 @@ func TestFetcher_DigestRefUsesCachedSlot(t *testing.T) {
 	repo := &manifest.OCIRepository{
 		Name:      "pinned",
 		Namespace: "test",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       fmt.Sprintf("oci://%s/pinned", mustURL(t, srv.URL).Host),
-			Insecure:  true,
-			Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
-		},
+		URL:       fmt.Sprintf("oci://%s/pinned", mustURL(t, srv.URL).Host),
+		Insecure:  true,
+		Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
 	}
 	if _, err := f.Fetch(t.Context(), repo); err != nil {
 		t.Fatalf("first Fetch: %v", err)
@@ -368,13 +351,11 @@ func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
 	copyRepo := &manifest.OCIRepository{
 		Name:      "copy",
 		Namespace: "test",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       fmt.Sprintf("oci://%s/app", mustURL(t, srv.URL).Host),
-			Insecure:  true,
-			Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
-			LayerSelector: &sourcev1.OCILayerSelector{
-				Operation: manifest.OCILayerOperationCopy,
-			},
+		URL:       fmt.Sprintf("oci://%s/app", mustURL(t, srv.URL).Host),
+		Insecure:  true,
+		Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
+		LayerSelector: &sourcev1.OCILayerSelector{
+			Operation: manifest.OCILayerOperationCopy,
 		},
 	}
 	copyArt, err := f.Fetch(t.Context(), copyRepo)
@@ -388,11 +369,9 @@ func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
 	extractRepo := &manifest.OCIRepository{
 		Name:      "extract",
 		Namespace: "test",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       copyRepo.URL,
-			Insecure:  true,
-			Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
-		},
+		URL:       copyRepo.URL,
+		Insecure:  true,
+		Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
 	}
 	extractArt, err := f.Fetch(t.Context(), extractRepo)
 	if err != nil {
@@ -571,8 +550,8 @@ func startMutableFakeRegistry(t *testing.T, artifacts ...fakeOCIArtifact) (*http
 func mustManifestJSON(t *testing.T, configBytes, layerBytes []byte, configMT, layerMT string) []byte {
 	t.Helper()
 	m := ocispec.Manifest{
-		Versioned: specs.Versioned{SchemaVersion: 2},
-		MediaType: ocispec.MediaTypeImageManifest,
+		SchemaVersion: 2,
+		MediaType:     ocispec.MediaTypeImageManifest,
 		Config: ocispec.Descriptor{
 			MediaType: configMT,
 			Digest:    digest.Digest(sha256Digest(configBytes)),

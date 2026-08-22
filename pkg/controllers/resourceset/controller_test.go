@@ -53,11 +53,9 @@ func staticRSIP(name, ns string, labels map[string]string, defaults map[string]s
 	}
 	return &manifest.ResourceSetInputProvider{
 		Name: name, Namespace: ns,
-		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
-			Type:          fluxopv1.InputProviderStatic,
-			DefaultValues: vals,
-		},
-		Labels: labels,
+		Type:          fluxopv1.InputProviderStatic,
+		DefaultValues: vals,
+		Labels:        labels,
 	}
 }
 
@@ -86,16 +84,14 @@ func TestReconcile_NamedInputsFrom_ParksOnRSIP(t *testing.T) {
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "acl", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputsFrom: []fluxopv1.InputProviderReference{
-				{Kind: manifest.KindResourceSetInputProvider, Name: "rsip"},
-			},
-			ResourcesTemplate: `---
+		InputsFrom: []fluxopv1.InputProviderReference{
+			{Kind: manifest.KindResourceSetInputProvider, Name: "rsip"},
+		},
+		ResourcesTemplate: `---
 apiVersion: example.com/v1
 kind: Widget
 metadata: {name: << inputs.user >>, namespace: flux-system}
 `,
-		},
 	}
 	s.AddObject(rs)
 
@@ -135,21 +131,19 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "acl", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputsFrom: []fluxopv1.InputProviderReference{
-				{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{"role": "db"},
-				}},
-			},
-			// Guard on inputs so the no-match first pass (nil input set under
-			// Flatten) renders nothing; once the RSIP arrives the input set is
-			// populated and the Widget emits.
-			ResourcesTemplate: `<< if inputs >>---
+		InputsFrom: []fluxopv1.InputProviderReference{
+			{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"role": "db"},
+			}},
+		},
+		// Guard on inputs so the no-match first pass (nil input set under
+		// Flatten) renders nothing; once the RSIP arrives the input set is
+		// populated and the Widget emits.
+		ResourcesTemplate: `<< if inputs >>---
 apiVersion: example.com/v1
 kind: Widget
 metadata: {name: << inputs.user >>, namespace: flux-system}
 << end >>`,
-		},
 	}
 	s.AddObject(rs)
 
@@ -186,8 +180,7 @@ func TestReconcile_EmitsFluxChildToStore(t *testing.T) {
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "fleet", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			ResourcesTemplate: `---
+		ResourcesTemplate: `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: child, namespace: flux-system}
@@ -195,7 +188,6 @@ spec:
   path: ./child
   sourceRef: {kind: GitRepository, name: flux-system}
 `,
-		},
 	}
 	s.AddObject(rs)
 
@@ -204,7 +196,7 @@ spec:
 		t.Fatalf("status = %+v, want Ready", info)
 	}
 	childID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child"}
-	child, ok := store.Get[*manifest.Kustomization](s, childID)
+	child, ok := s.Get[*manifest.Kustomization](childID)
 	if !ok || child == nil {
 		t.Fatalf("expected RS-emitted Kustomization %s in store (AddObject), got ok=%v", childID, ok)
 	}
@@ -217,13 +209,11 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "broken", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			ResourcesTemplate: `---
+		ResourcesTemplate: `---
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: << .nonexistent.field >>}
 `,
-		},
 	}
 	s.AddObject(rs)
 
@@ -240,10 +230,8 @@ func TestWantsDrainRerun_NamedOnly(t *testing.T) {
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "named", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputsFrom: []fluxopv1.InputProviderReference{
-				{Kind: manifest.KindResourceSetInputProvider, Name: "rsip"},
-			},
+		InputsFrom: []fluxopv1.InputProviderReference{
+			{Kind: manifest.KindResourceSetInputProvider, Name: "rsip"},
 		},
 	}
 	s.AddObject(rs)

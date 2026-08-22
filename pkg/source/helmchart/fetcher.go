@@ -124,11 +124,9 @@ func Synthesize(r *manifest.HelmRepository, chartName, version string) *manifest
 	return &manifest.HelmChartSource{
 		Name:      syntheticChartName(r.Name, chartName, chartURL, version),
 		Namespace: r.Namespace,
-		HelmChartSpec: sourcev1.HelmChartSpec{
-			Chart:     chartName,
-			Version:   version,
-			SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: r.Name},
-		},
+		Chart:     chartName,
+		Version:   version,
+		SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: r.Name},
 	}
 }
 

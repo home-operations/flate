@@ -5,8 +5,6 @@ import (
 	"slices"
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -36,9 +34,9 @@ func TestBuildSelfProduceIndex_BareDirComponentNamespace(t *testing.T) {
 
 	s := store.New()
 	clusterApps := &manifest.Kustomization{
-		Name:              "cluster-apps",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps"},
+		Name:      "cluster-apps",
+		Namespace: "flux-system",
+		Path:      "./kubernetes/apps",
 	}
 	s.AddObject(clusterApps)
 
@@ -69,9 +67,9 @@ func TestBuildSelfProduceIndex_NonProducerNotAttributed(t *testing.T) {
 
 	s := store.New()
 	ks := &manifest.Kustomization{
-		Name:              "cluster-apps",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps"},
+		Name:      "cluster-apps",
+		Namespace: "flux-system",
+		Path:      "./kubernetes/apps",
 	}
 	s.AddObject(ks)
 
@@ -117,9 +115,9 @@ func TestBuildSelfProduceIndex_EmissionParentByFile(t *testing.T) {
 
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/test"}})
+		Path: "./apps/test"})
 	s.AddObject(&manifest.Kustomization{Name: "cluster-apps2", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/test2"}})
+		Path: "./apps/test2"})
 
 	idx := BuildSelfProduceIndex(s, dir, nil, true)
 
@@ -162,7 +160,7 @@ func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	})
 
 	producers := &manifest.ProducerIndex{}
@@ -203,7 +201,7 @@ func TestBuildSelfProduceIndex_NamePrefixNotFollowed(t *testing.T) {
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	})
 
 	producers := &manifest.ProducerIndex{}
@@ -243,7 +241,7 @@ func TestBuildSelfProduceIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	})
 	existing := &manifest.Secret{Name: "pre-secret", Namespace: "secure", StringData: map[string]any{"K": "real"}}
 	s.AddObject(existing)
@@ -287,7 +285,7 @@ func TestBuildSelfProduceIndex_MaterializesSopsSecret(t *testing.T) {
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	})
 
 	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, true)
@@ -317,7 +315,7 @@ func TestBuildSelfProduceIndex_NoSynthesisWithoutWipe(t *testing.T) {
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	})
 
 	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, false)

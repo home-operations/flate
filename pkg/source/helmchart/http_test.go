@@ -16,8 +16,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -26,7 +24,7 @@ import (
 func httpRepo(url string) *manifest.HelmRepository {
 	return &manifest.HelmRepository{
 		Name: "repo", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: url},
+		URL: url,
 	}
 }
 

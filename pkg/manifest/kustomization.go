@@ -191,8 +191,8 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 			return nil, inputf("Kustomization missing dependsOn.name")
 		}
 		dependsOn = append(dependsOn, DependencyRef{
-			NamedResource: NamedResource{Kind: KindKustomization, Namespace: cmp.Or(dep.Namespace, ns), Name: dep.Name},
-			ReadyExpr:     dep.ReadyExpr,
+			Kind: KindKustomization, Namespace: cmp.Or(dep.Namespace, ns), Name: dep.Name,
+			ReadyExpr: dep.ReadyExpr,
 		})
 	}
 

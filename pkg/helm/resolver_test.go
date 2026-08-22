@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -40,7 +38,7 @@ data:
 	st := store.New()
 	gr := &manifest.GitRepository{
 		Name: "chart-repo", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + dir},
+		URL: "file://" + dir,
 	}
 	st.AddObject(gr)
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{

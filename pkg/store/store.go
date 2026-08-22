@@ -435,10 +435,11 @@ func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 	return sh.deleteLocked(id)
 }
 
-// GetByName returns the object matching (kind, namespace, name), or nil
+// GetObjectByName returns the object matching (kind, namespace, name), or nil
 // when none is present. Hot-path callers (valuesFrom expansion, source
-// resolution) should prefer this over filtering ListObjects.
-func (s *Store) GetByName(kind, namespace, name string) manifest.BaseManifest {
+// resolution) should prefer this over filtering ListObjects. The typed
+// GetByName is its assert-to-T sibling, as Get is to GetObject.
+func (s *Store) GetObjectByName(kind, namespace, name string) manifest.BaseManifest {
 	sh := s.shardForKind(kind)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()

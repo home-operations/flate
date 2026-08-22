@@ -501,9 +501,8 @@ func (c *Controller) Require(
 // sites). Wait and re-read were two statements joined only by convention;
 // fusing them means a future gate site can't call Require and silently forget
 // the re-read.
-func RequireRefresh[T manifest.BaseManifest](
+func (c *Controller) RequireRefresh[T manifest.BaseManifest](
 	ctx context.Context,
-	c *Controller,
 	id manifest.NamedResource,
 	timeout *metav1.Duration,
 	deps []manifest.DependencyRef,
@@ -514,7 +513,7 @@ func RequireRefresh[T manifest.BaseManifest](
 		var zero T
 		return zero, false, err
 	}
-	obj, ok := store.Get[T](c.Store, id)
+	obj, ok := c.Store.Get[T](id)
 	return obj, ok, nil
 }
 
@@ -596,7 +595,7 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 	fn func(context.Context, T) error,
 ) []manifest.NamedResource {
 	defer Recover(s, id, log)
-	obj, ok := store.Get[T](s, id)
+	obj, ok := s.Get[T](id)
 	if !ok {
 		// Object deleted (or wrong type) between discovery/enqueue and run.
 		// Write a terminal Ready with a brief reason so dependents unblock and
@@ -611,8 +610,7 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 		// A dependency gate is unsatisfied. Surface the blocked deps WITHOUT
 		// writing Failed — the node keeps the Pending status Require wrote and
 		// stays parkable + re-runnable.
-		var blocked *depwait.ErrBlocked
-		if errors.As(err, &blocked) {
+		if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 			return blocked.Deps
 		}
 		// ErrSourceSkipped propagates a soft-skip from a referenced source
@@ -630,8 +628,7 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 		// failure under its root cause instead of reprinting the nested chain.
 		// Any other error is a primary failure (its own render/template/build)
 		// and leaves the blocked set empty.
-		var depErr *manifest.DependencyFailedError
-		if errors.As(err, &depErr) {
+		if depErr, ok := errors.AsType[*manifest.DependencyFailedError](err); ok {
 			s.SetBlocked(id, depErr.Failed)
 		}
 		s.UpdateStatus(id, store.StatusFailed, err.Error())
@@ -656,16 +653,15 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 // preflight pre-checks, then RunWithStatusOutcome. drainLevel threads the
 // scheduler's fixpoint level into Require via ctx. The orchestrator's Dispatcher
 // calls this, routing by Kind, so no per-kind match check is needed here.
-func DispatchNode[T manifest.BaseManifest](
+func (c *Controller) DispatchNode[T manifest.BaseManifest](
 	ctx context.Context,
-	c *Controller,
 	id manifest.NamedResource,
 	drainLevel int,
 	suspended func(T) bool,
 	reconcile func(context.Context, T) error,
 ) []manifest.NamedResource {
 	ctx = WithDrainLevel(ctx, drainLevel)
-	obj, ok := store.Get[T](c.Store, id)
+	obj, ok := c.Store.Get[T](id)
 	if !ok {
 		// Vanished — RunWithStatusOutcome's vanished branch records a terminal status.
 		return RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)

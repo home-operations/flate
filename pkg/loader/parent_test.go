@@ -3,8 +3,6 @@ package loader
 import (
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -31,21 +29,21 @@ func TestKSPathPrefixesLocalOnly_DropsExternalSourced(t *testing.T) {
 	bootstrap := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/apps"},
+		Path: "./kubernetes/apps",
 	}
 	// Self/aliased source: an in-tree GitRepository with a working-tree artifact
 	// (URL-matched by discovery) — kept.
 	aliasedKS := &manifest.Kustomization{
 		Name: "self-apps", Namespace: "flux-system",
 		SourceKind: manifest.KindGitRepository, SourceName: "home-kubernetes", SourceNamespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes/self"},
+		Path: "./kubernetes/self",
 	}
 	// External source: an in-tree GitRepository with NO working-tree artifact,
 	// claiming the WIDE ./kubernetes — must be dropped.
 	external := &manifest.Kustomization{
 		Name: "side-sync", Namespace: "flux-system",
 		SourceKind: manifest.KindGitRepository, SourceName: "side-repo", SourceNamespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./kubernetes"},
+		Path: "./kubernetes",
 	}
 	s.AddObject(bootstrap)
 	s.AddObject(aliasedKS)
@@ -92,16 +90,12 @@ func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
 	clusterApps := &manifest.Kustomization{
 		Name:      "cluster-apps",
 		Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./kubernetes/apps/main",
-		},
+		Path:      "./kubernetes/apps/main",
 	}
 	karma := &manifest.Kustomization{
 		Name:      "karma",
 		Namespace: "observability",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./kubernetes/apps/base/observability/karma",
-		},
+		Path:      "./kubernetes/apps/base/observability/karma",
 	}
 	s.AddObject(clusterApps)
 	s.AddObject(karma)
@@ -126,19 +120,19 @@ func TestBuildParentIndex_DeepestPrefixWins(t *testing.T) {
 	// the structural parent.
 	s := store.New()
 	outer := &manifest.Kustomization{
-		Name:              "outer",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Name:      "outer",
+		Namespace: "flux-system",
+		Path:      "./apps",
 	}
 	inner := &manifest.Kustomization{
-		Name:              "inner",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/media"},
+		Name:      "inner",
+		Namespace: "flux-system",
+		Path:      "./apps/media",
 	}
 	grandchild := &manifest.Kustomization{
-		Name:              "plex",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/media/plex/app"},
+		Name:      "plex",
+		Namespace: "flux-system",
+		Path:      "./apps/media/plex/app",
 	}
 	s.AddObject(outer)
 	s.AddObject(inner)
@@ -164,9 +158,9 @@ func TestBuildParentIndex_NoSelfMatch(t *testing.T) {
 	// match itself as parent. Edge case for in-place trees.
 	s := store.New()
 	ks := &manifest.Kustomization{
-		Name:              "self",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Name:      "self",
+		Namespace: "flux-system",
+		Path:      "./apps",
 	}
 	s.AddObject(ks)
 	sourceFiles := map[manifest.NamedResource]string{
@@ -186,14 +180,14 @@ func TestBuildParentIndex_PeersSharingSamePathHaveNoParent(t *testing.T) {
 	// other to reach Ready, then both time out).
 	s := store.New()
 	config := &manifest.Kustomization{
-		Name:              "0-config",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./clusters/main/flux"},
+		Name:      "0-config",
+		Namespace: "flux-system",
+		Path:      "./clusters/main/flux",
 	}
 	softServe := &manifest.Kustomization{
-		Name:              "0-soft-serve",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./clusters/main/flux"},
+		Name:      "0-soft-serve",
+		Namespace: "flux-system",
+		Path:      "./clusters/main/flux",
 	}
 	s.AddObject(config)
 	s.AddObject(softServe)
@@ -218,14 +212,14 @@ func TestBuildParentIndex_RendererOfDefinitionFileStillParents(t *testing.T) {
 	// this strict-ancestor edge must survive.
 	s := store.New()
 	root := &manifest.Kustomization{
-		Name:              "0-config",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./clusters/main/flux"},
+		Name:      "0-config",
+		Namespace: "flux-system",
+		Path:      "./clusters/main/flux",
 	}
 	app := &manifest.Kustomization{
-		Name:              "app",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Name:      "app",
+		Namespace: "flux-system",
+		Path:      "./apps",
 	}
 	s.AddObject(root)
 	s.AddObject(app)
@@ -246,14 +240,14 @@ func TestBuildParentIndex_NoSourceFileSkipped(t *testing.T) {
 	// has no detectable file — skip rather than blow up.
 	s := store.New()
 	parent := &manifest.Kustomization{
-		Name:              "parent",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Name:      "parent",
+		Namespace: "flux-system",
+		Path:      "./apps",
 	}
 	orphan := &manifest.Kustomization{
-		Name:              "orphan",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/orphan/app"},
+		Name:      "orphan",
+		Namespace: "flux-system",
+		Path:      "./apps/orphan/app",
 	}
 	s.AddObject(parent)
 	s.AddObject(orphan)
@@ -276,15 +270,15 @@ func TestKSPathPrefixes_SortsLongestFirst(t *testing.T) {
 	s := store.New()
 	root := &manifest.Kustomization{
 		Name: "root", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	}
 	mid := &manifest.Kustomization{
 		Name: "mid", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/team-a"},
+		Path: "./apps/team-a",
 	}
 	leaf := &manifest.Kustomization{
 		Name: "leaf", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/team-a/web"},
+		Path: "./apps/team-a/web",
 	}
 	s.AddObject(root)
 	s.AddObject(mid)
@@ -308,7 +302,7 @@ func TestKSPathPrefixes_SkipsEmptyPath(t *testing.T) {
 	s := store.New()
 	with := &manifest.Kustomization{
 		Name: "with", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	}
 	without := &manifest.Kustomization{Name: "without", Namespace: "flux-system"}
 	s.AddObject(with)
@@ -345,10 +339,8 @@ func TestKSPathPrefixes_IncludesSpecComponents(t *testing.T) {
 	s := store.New()
 	parent := &manifest.Kustomization{
 		Name: "parent", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path:       "./apps/team-a",
-			Components: []string{"../shared/observability"},
-		},
+		Path:       "./apps/team-a",
+		Components: []string{"../shared/observability"},
 	}
 	s.AddObject(parent)
 
@@ -394,11 +386,11 @@ func TestLongestParent_DeepestMatchWins(t *testing.T) {
 	s := store.New()
 	root := &manifest.Kustomization{
 		Name: "root", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
+		Path: "./apps",
 	}
 	leaf := &manifest.Kustomization{
 		Name: "leaf", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/team-a/web"},
+		Path: "./apps/team-a/web",
 	}
 	s.AddObject(root)
 	s.AddObject(leaf)

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -97,7 +96,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "https://example/r.git"},
+		URL: "https://example/r.git",
 	}
 	st.AddObject(repo)
 
@@ -119,7 +118,7 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "https://example/r.git"},
+		URL: "https://example/r.git",
 	}
 	st.AddObject(repo)
 
@@ -138,7 +137,7 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "https://example/r.git", Suspend: true},
+		URL: "https://example/r.git", Suspend: true,
 	}
 	st.AddObject(repo)
 
@@ -165,7 +164,7 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 
 	unregistered := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "https://example/r.git"},
+		URL: "https://example/r.git",
 	}
 	st.AddObject(unregistered)
 
@@ -173,7 +172,7 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 	// is alive and the unregistered skip is targeted.
 	oci := &manifest.OCIRepository{
 		Name: "o", Namespace: "ns",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+		URL: "oci://example/img",
 	}
 	st.AddObject(oci)
 	if info := dispatchToFixpoint(t, c, st, oci.Named()); info.Status != store.StatusReady {
@@ -206,7 +205,7 @@ func TestController_OwnsExcludesForeignKind(t *testing.T) {
 
 	flux := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
-		BucketSpec: sourcev1.BucketSpec{BucketName: "b", Endpoint: "minio:9000"},
+		BucketName: "b", Endpoint: "minio:9000",
 	}
 	st.AddObject(flux)
 	if !c.Owns(flux.Named()) {
@@ -231,7 +230,7 @@ func TestController_AllowMissingSecretsConvertsFailureToSkip(t *testing.T) {
 
 	repo := &manifest.OCIRepository{
 		Name: "r", Namespace: "ns",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+		URL: "oci://example/img",
 	}
 	st.AddObject(repo)
 
@@ -258,7 +257,7 @@ func TestController_AllowMissingSecretsOffStillFails(t *testing.T) {
 
 	repo := &manifest.OCIRepository{
 		Name: "r", Namespace: "ns",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+		URL: "oci://example/img",
 	}
 	st.AddObject(repo)
 
@@ -285,7 +284,7 @@ func TestController_ProducerBackedMissingSecretSkippedWithoutFlag(t *testing.T) 
 
 	repo := &manifest.OCIRepository{
 		Name: "r", Namespace: "ns",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+		URL: "oci://example/img",
 	}
 	st.AddObject(repo)
 
@@ -308,7 +307,7 @@ func TestController_MissingSecretNoProducerFailsWithoutFlag(t *testing.T) {
 
 	repo := &manifest.OCIRepository{
 		Name: "r", Namespace: "ns",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://example/img"},
+		URL: "oci://example/img",
 	}
 	st.AddObject(repo)
 
@@ -334,7 +333,7 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 
 	repo := &manifest.GitRepository{
 		Name: "r", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "https://example/r.git"},
+		URL: "https://example/r.git",
 	}
 	st.AddObject(repo)
 
@@ -366,7 +365,7 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 	})
 	repo := &manifest.HelmRepository{
 		Name: "charts", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example", Type: "default"},
+		URL: "https://charts.example", Type: "default",
 	}
 	st.AddObject(repo)
 	if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusReady {
@@ -391,10 +390,8 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 	// must keep the source Ready without a transient Pending write.
 	reemit := &manifest.HelmRepository{
 		Name: "charts", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
-			URL: "https://charts.example", Type: "default",
-			Interval: metav1.Duration{Duration: time.Hour},
-		},
+		URL: "https://charts.example", Type: "default",
+		Interval: metav1.Duration{Duration: time.Hour},
 	}
 	st.AddObject(reemit)
 	reconcileNode(c, repo.Named(), 0)

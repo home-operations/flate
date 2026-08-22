@@ -65,7 +65,7 @@ func StampTransformerTargetNamespaces(s *store.Store, sourceFiles map[manifest.N
 	// ancestry, and resolution re-reads kustomization.yaml files off
 	// disk. Live only for this pass.
 	cache := map[string]nsResolution{}
-	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		if ks.TargetNamespace != "" {
 			continue
 		}

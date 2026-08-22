@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.0](https://github.com/home-operations/flate/compare/v0.5.1...v0.6.0) (2026-08-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **go:** update to go 1.27.0 and adopt generic methods ([#928](https://github.com/home-operations/flate/issues/928))
+
+### Bug Fixes
+
+* **go:** update to go 1.27.0 and adopt generic methods ([#928](https://github.com/home-operations/flate/issues/928)) ([82e5a04](https://github.com/home-operations/flate/commit/82e5a04d5a8b869c05989200f9fd60164e7c24bf))
+
+
+### Miscellaneous Chores
+
+* **mise:** update tool oxfmt (0.63.0 → 0.64.0) ([#926](https://github.com/home-operations/flate/issues/926)) ([ba916a1](https://github.com/home-operations/flate/commit/ba916a12528edb7a6122a99449c744a759ef4680))
+
 ## [0.5.1](https://github.com/home-operations/flate/compare/v0.5.0...v0.5.1) (2026-08-21)
 
 

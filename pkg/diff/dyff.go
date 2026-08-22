@@ -94,15 +94,13 @@ func diffSyntaxReport(report dyff.Report, pathPrefix, rootPrefix, changePrefix s
 		PathPrefix:            pathPrefix,
 		RootDescriptionPrefix: rootPrefix,
 		ChangeTypePrefix:      changePrefix,
-		HumanReport: dyff.HumanReport{
-			Report:                report,
-			Indent:                0,
-			UseIndentLines:        true,
-			NoTableStyle:          true,
-			OmitHeader:            true,
-			PrefixMultiline:       true,
-			MultilineContextLines: 4,
-			MinorChangeThreshold:  0.1,
-		},
+		Report:                report,
+		Indent:                0,
+		UseIndentLines:        true,
+		NoTableStyle:          true,
+		OmitHeader:            true,
+		PrefixMultiline:       true,
+		MultilineContextLines: 4,
+		MinorChangeThreshold:  0.1,
 	}
 }

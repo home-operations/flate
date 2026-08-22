@@ -4,8 +4,6 @@ import (
 	"slices"
 	"testing"
 
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -69,17 +67,13 @@ func TestFilter_ResolveDirectMatch(t *testing.T) {
 func TestFilter_SharedComponentPropagatesToAllConsumers(t *testing.T) {
 	plex := &manifest.Kustomization{
 		Name: "plex", Namespace: "media",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path:       "apps/media/plex/app",
-			Components: []string{"../../../../components/volsync"},
-		},
+		Path:       "apps/media/plex/app",
+		Components: []string{"../../../../components/volsync"},
 	}
 	atuin := &manifest.Kustomization{
 		Name: "atuin", Namespace: "default",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path:       "apps/default/atuin/app",
-			Components: []string{"../../../../components/volsync"},
-		},
+		Path:       "apps/default/atuin/app",
+		Components: []string{"../../../../components/volsync"},
 	}
 	hrPlex := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "media", Name: "plex"}
 	hrAtuin := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "atuin"}
@@ -113,11 +107,11 @@ func TestFilter_AncestorKSAlsoKept(t *testing.T) {
 	// post-mutation spec. See #58.
 	meta := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps"},
+		Path: "apps",
 	}
 	plex := &manifest.Kustomization{
 		Name: "plex", Namespace: "media",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/media/plex/app"},
+		Path: "apps/media/plex/app",
 	}
 	hrPlex := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "media", Name: "plex"}
 	metaID, plexID := meta.Named(), plex.Named()
@@ -153,11 +147,11 @@ func TestFilter_AncestorKSAlsoKept(t *testing.T) {
 func TestFilter_StructuralParentOfOwnerKSAlsoKept(t *testing.T) {
 	parent := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/main"},
+		Path: "apps/main",
 	}
 	leaf := &manifest.Kustomization{
 		Name: "actual", Namespace: "self-hosted",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/base/self-hosted/actual"},
+		Path: "apps/base/self-hosted/actual",
 	}
 	hrActual := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "self-hosted", Name: "actual"}
 	parentID, leafID := parent.Named(), leaf.Named()
@@ -187,15 +181,15 @@ func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 	// does not widen sibling-resource coverage.
 	meta := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps"},
+		Path: "apps",
 	}
 	plex := &manifest.Kustomization{
 		Name: "plex", Namespace: "media",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/media/plex/app"},
+		Path: "apps/media/plex/app",
 	}
 	atuin := &manifest.Kustomization{
 		Name: "atuin", Namespace: "default",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/default/atuin/app"},
+		Path: "apps/default/atuin/app",
 	}
 	metaID, plexID, atuinID := meta.Named(), plex.Named(), atuin.Named()
 	hrAtuin := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "atuin"}
@@ -237,11 +231,11 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 	// externalKS.
 	external := &manifest.Kustomization{
 		Name: "yucca-o11y", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./"},
+		Path: "./",
 	}
 	plex := &manifest.Kustomization{
 		Name: "plex", Namespace: "media",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/media/plex/app"},
+		Path: "apps/media/plex/app",
 	}
 	externalID, plexID := external.Named(), plex.Named()
 	sourceFiles := map[manifest.NamedResource]string{
@@ -299,10 +293,8 @@ func TestFilter_TransitiveDepsHelmRelease(t *testing.T) {
 		Chart: manifest.HelmChart{
 			RepoKind: manifest.KindOCIRepository, RepoName: "app-template", RepoNamespace: "flux-system",
 		},
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: manifest.KindConfigMap, Name: "plex-values"},
-			},
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: manifest.KindConfigMap, Name: "plex-values"},
 		},
 	}
 	hrID := hr.Named()
@@ -329,7 +321,7 @@ func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 		Name: "apps", Namespace: "flux-system",
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		DependsOn: []manifest.DependencyRef{{
-			NamedResource: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "repositories"},
+			Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "repositories",
 		}},
 	}
 	ksID := ks.Named()
@@ -361,7 +353,7 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 		Name: "a", Namespace: "flux-system",
 		SourceKind: manifest.KindGitRepository, SourceName: "src", SourceNamespace: "flux-system",
 		DependsOn: []manifest.DependencyRef{{
-			NamedResource: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "b"},
+			Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "b",
 		}},
 	}
 	b := &manifest.Kustomization{Name: "b", Namespace: "flux-system"}
@@ -477,11 +469,11 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 	siblingApp := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "media", Name: "plex-app"}
 
 	leafKSObj := &manifest.Kustomization{Name: "reloader-app", Namespace: "kube-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/kube-system/reloader/app"}}
+		Path: "kubernetes/apps/kube-system/reloader/app"}
 	clusterAppsObj := &manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps"}}
+		Path: "kubernetes/apps"}
 	siblingObj := &manifest.Kustomization{Name: "plex-app", Namespace: "media",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/media/plex/app"}}
+		Path: "kubernetes/apps/media/plex/app"}
 
 	f := NewFilter(
 		NewSet([]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"}),
@@ -547,13 +539,13 @@ func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
 
 	objs := testutil.MapLister{
 		clusterApps: &manifest.Kustomization{Name: clusterApps.Name, Namespace: clusterApps.Namespace,
-			KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps"}},
+			Path: "kubernetes/apps"},
 		kubeSystem: &manifest.Kustomization{Name: kubeSystem.Name, Namespace: kubeSystem.Namespace,
-			KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/kube-system"}},
+			Path: "kubernetes/apps/kube-system"},
 		reloader: &manifest.Kustomization{Name: reloader.Name, Namespace: reloader.Namespace,
-			KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/kube-system/reloader"}},
+			Path: "kubernetes/apps/kube-system/reloader"},
 		reloaderApp: &manifest.Kustomization{Name: reloaderApp.Name, Namespace: reloaderApp.Namespace,
-			KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/kube-system/reloader/app"}},
+			Path: "kubernetes/apps/kube-system/reloader/app"},
 		mediaSibling:    &manifest.Kustomization{Name: mediaSibling.Name, Namespace: mediaSibling.Namespace},
 		spegelSibling:   &manifest.Kustomization{Name: spegelSibling.Name, Namespace: spegelSibling.Namespace},
 		reloaderSibling: &manifest.Kustomization{Name: reloaderSibling.Name, Namespace: reloaderSibling.Namespace},
@@ -737,10 +729,8 @@ func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 	}
 	hc := &manifest.HelmChartSource{
 		Name: "demo-chart", Namespace: "apps",
-		HelmChartSpec: sourcev1.HelmChartSpec{
-			SourceRef: sourcev1.LocalHelmChartSourceReference{
-				Kind: manifest.KindOCIRepository, Name: "backing-oci",
-			},
+		SourceRef: sourcev1.LocalHelmChartSourceReference{
+			Kind: manifest.KindOCIRepository, Name: "backing-oci",
 		},
 	}
 	hrID := hr.Named()
@@ -789,9 +779,9 @@ func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
 	sibling := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "envoy-gateway", Name: "other"}
 	otherOCI := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "something-else"}
 	reposKS := &manifest.Kustomization{Name: "repositories", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "repositories"}}
+		Path: "repositories"}
 	appKS := &manifest.Kustomization{Name: "envoy-gateway", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "clusters/main/kubernetes/networking/envoy-gateway/app"}}
+		Path: "clusters/main/kubernetes/networking/envoy-gateway/app"}
 
 	f := NewFilterWithCache(
 		NewSet([]string{ociFile}),
@@ -938,28 +928,22 @@ func TestFilter_ForwardEdgeChangedHRKeepsChartRefSource(t *testing.T) {
 func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) {
 	clusterAppsObj := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "kubernetes/apps",
-		},
+		Path: "kubernetes/apps",
 		PostBuildSubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
 		},
 	}
 	clusterVarsObj := &manifest.Kustomization{
 		Name: "cluster-vars", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "kubernetes/flux/vars",
-			// The CM lives in a shared Component referenced by
-			// cluster-vars — ownersOf returns cluster-vars for any
-			// file under the resolved component path.
-			Components: []string{"../../components/cluster-settings"},
-		},
+		Path: "kubernetes/flux/vars",
+		// The CM lives in a shared Component referenced by
+		// cluster-vars — ownersOf returns cluster-vars for any
+		// file under the resolved component path.
+		Components: []string{"../../components/cluster-settings"},
 	}
 	ntfyObj := &manifest.Kustomization{
 		Name: "ntfy", Namespace: "communication",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "kubernetes/apps/communication/ntfy/app",
-		},
+		Path: "kubernetes/apps/communication/ntfy/app",
 	}
 	hrObj := &manifest.HelmRelease{Name: "ntfy", Namespace: "communication"}
 	// rawSettings is the DiscoveryOnly-indexed pre-render form:
@@ -1025,9 +1009,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent-apps"}
 	childObj := &manifest.Kustomization{
 		Name: "child-app", Namespace: "apps",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "kubernetes/apps/child",
-		},
+		Path: "kubernetes/apps/child",
 		PostBuildSubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "shared-settings"},
 		},
@@ -1035,9 +1017,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	child := childObj.Named()
 	producerObj := &manifest.Kustomization{
 		Name: "settings-producer", Namespace: "apps",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "kubernetes/apps/settings",
-		},
+		Path: "kubernetes/apps/settings",
 	}
 	producer := producerObj.Named()
 	// CM with namespace="" mirrors the DiscoveryOnly pre-render form.
@@ -1091,7 +1071,7 @@ func TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer(t *testing.T) {
 	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent-apps"}
 	childObj := &manifest.Kustomization{
 		Name: "child-app", Namespace: "apps",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/child"},
+		Path: "kubernetes/apps/child",
 		PostBuildSubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "shared-settings"},
 		},
@@ -1099,7 +1079,7 @@ func TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer(t *testing.T) {
 	child := childObj.Named()
 	producerObj := &manifest.Kustomization{
 		Name: "settings-producer", Namespace: "apps",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/apps/settings"},
+		Path: "kubernetes/apps/settings",
 	}
 	producer := producerObj.Named()
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "", Name: "shared-settings"}
@@ -1136,21 +1116,21 @@ func TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer(t *testing.T) {
 func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
 	aObj := &manifest.Kustomization{
 		Name: "consumer", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/consumer"},
+		Path: "kubernetes/consumer",
 		PostBuildSubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cm-a"},
 		},
 	}
 	bObj := &manifest.Kustomization{
 		Name: "producer-b", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/b"},
+		Path: "kubernetes/b",
 		PostBuildSubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cm-b"},
 		},
 	}
 	cObj := &manifest.Kustomization{
 		Name: "producer-c", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/c"},
+		Path: "kubernetes/c",
 	}
 	a, b, c := aObj.Named(), bObj.Named(), cObj.Named()
 
@@ -1190,7 +1170,7 @@ func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
 func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
 	selfObj := &manifest.Kustomization{
 		Name: "self", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "kubernetes/self"},
+		Path: "kubernetes/self",
 		PostBuildSubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "self-settings"},
 		},
@@ -1235,11 +1215,11 @@ func TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 	// only to its own CM file.
 	aObj := &manifest.Kustomization{
 		Name: "producer-a", Namespace: "ns1",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "p1"},
+		Path: "p1",
 	}
 	bObj := &manifest.Kustomization{
 		Name: "producer-b", Namespace: "ns2",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "p2"},
+		Path: "p2",
 	}
 	a, b := aObj.Named(), bObj.Named()
 

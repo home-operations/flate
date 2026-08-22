@@ -99,7 +99,7 @@ func Children(c *base.Controller, wipeSecrets bool, id manifest.NamedResource, d
 		}
 		reconcilable := ShouldDispatchAsObject(obj)
 		objs = append(objs, parsed{
-			Child:        Child{Obj: obj, Doc: doc},
+			Obj: obj, Doc: doc,
 			reconcilable: reconcilable,
 			leaf:         reconcilable && IsLeafReconcilable(obj),
 		})

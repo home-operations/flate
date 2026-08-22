@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -23,7 +22,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 	s := store.New()
 	bootstrap := &manifest.GitRepository{
 		Name: "flux-system", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file:///repo"},
+		URL: "file:///repo",
 	}
 	s.AddObject(bootstrap)
 	s.SetArtifact(bootstrap.Named(), &store.SourceArtifact{
@@ -55,7 +54,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 	s := store.New()
 	gitrepo := &manifest.GitRepository{
 		Name: "external", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file:///external"},
+		URL: "file:///external",
 	}
 	s.AddObject(gitrepo)
 	s.SetArtifact(gitrepo.Named(), &store.SourceArtifact{
@@ -64,7 +63,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 	// Seed bootstrap too — the fallback must not preempt the explicit ref.
 	bootstrap := &manifest.GitRepository{
 		Name: "flux-system", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file:///repo"},
+		URL: "file:///repo",
 	}
 	s.AddObject(bootstrap)
 	s.SetArtifact(bootstrap.Named(), &store.SourceArtifact{
@@ -74,10 +73,10 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 	c := New(s, nil, nil, false)
 	ks := &manifest.Kustomization{
 		Name: "foo", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./app"},
-		SourceKind:        manifest.KindGitRepository,
-		SourceName:        "external",
-		SourceNamespace:   "flux-system",
+		Path:            "./app",
+		SourceKind:      manifest.KindGitRepository,
+		SourceName:      "external",
+		SourceNamespace: "flux-system",
 	}
 	got, _, err := c.resolveSource(ks)
 	if err != nil {
@@ -95,7 +94,7 @@ func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
 	c := New(store.New(), nil, nil, false)
 	ks := &manifest.Kustomization{
 		Name: "foo", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./app"},
+		Path: "./app",
 	}
 	_, _, err := c.resolveSource(ks)
 	if err == nil {

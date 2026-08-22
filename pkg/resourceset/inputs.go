@@ -199,7 +199,7 @@ func StoreResolver(s *store.Store) ProviderResolver {
 				Namespace: namespace,
 				Name:      ref.Name,
 			}
-			obj, ok := store.Get[*manifest.ResourceSetInputProvider](s, id)
+			obj, ok := s.Get[*manifest.ResourceSetInputProvider](id)
 			if !ok {
 				return nil, nil
 			}
@@ -209,7 +209,7 @@ func StoreResolver(s *store.Store) ProviderResolver {
 			return nil, nil
 		}
 		var out []*manifest.ResourceSetInputProvider
-		for _, p := range store.ListAs[*manifest.ResourceSetInputProvider](s, manifest.KindResourceSetInputProvider) {
+		for _, p := range s.ListAs[*manifest.ResourceSetInputProvider](manifest.KindResourceSetInputProvider) {
 			if p.Namespace != namespace {
 				continue
 			}

@@ -15,10 +15,8 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:      "https://github.com/x/y.git",
-			Provider: sourcev1.GitProviderGitHub,
-		},
+		URL:      "https://github.com/x/y.git",
+		Provider: sourcev1.GitProviderGitHub,
 	}
 	_, err := f.Fetch(context.Background(), repo)
 	if err == nil {
@@ -42,10 +40,8 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 	}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "https://github.com/x/y.git",
-			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-		},
+		URL:       "https://github.com/x/y.git",
+		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
 	auth, err := f.resolveAuth(repo)
 	if err != nil {
@@ -74,10 +70,8 @@ func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 	}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "https://github.com/x/y.git",
-			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-		},
+		URL:       "https://github.com/x/y.git",
+		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
 	auth, err := f.resolveAuth(repo)
 	if err != nil {
@@ -100,10 +94,8 @@ func TestFetcher_HTTPSMissingCreds(t *testing.T) {
 	}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "https://github.com/x/y.git",
-			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-		},
+		URL:       "https://github.com/x/y.git",
+		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
 	_, err := f.resolveAuth(repo)
 	if err == nil || !strings.Contains(err.Error(), "missing username/password") {
@@ -115,7 +107,7 @@ func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "https://github.com/x/y.git"},
+		URL: "https://github.com/x/y.git",
 	}
 	auth, err := f.resolveAuth(repo)
 	if err != nil {
@@ -130,10 +122,8 @@ func TestFetcher_SecretRefMissingGetter(t *testing.T) {
 	f := &Fetcher{} // no Secrets
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "https://github.com/x/y.git",
-			SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-		},
+		URL:       "https://github.com/x/y.git",
+		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
 	_, err := f.resolveAuth(repo)
 	if err == nil || !strings.Contains(err.Error(), "SecretGetter") {

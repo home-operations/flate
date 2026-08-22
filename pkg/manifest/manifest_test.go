@@ -795,11 +795,9 @@ spec:
 
 	src := &HelmChartSource{
 		Name: "my-chart", Namespace: "flux-system",
-		HelmChartSpec: sourcev1.HelmChartSpec{
-			Chart: "podinfo", Version: "6.3.2",
-			SourceRef: sourcev1.LocalHelmChartSourceReference{
-				Name: "podinfo", Kind: KindHelmRepository,
-			},
+		Chart: "podinfo", Version: "6.3.2",
+		SourceRef: sourcev1.LocalHelmChartSourceReference{
+			Name: "podinfo", Kind: KindHelmRepository,
 		},
 	}
 	lookup := func(namespace, name string) *HelmChartSource {

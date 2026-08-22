@@ -121,8 +121,7 @@ func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 			// no nested type mismatch is possible. A genuine YAML syntax error
 			// is a single *yaml.LoadError (not the plural *LoadErrors) and so
 			// falls through to the hard error below.
-			var notManifest *yaml.LoadErrors
-			if errors.As(err, &notManifest) {
+			if _, ok := errors.AsType[*yaml.LoadErrors](err); ok {
 				continue
 			}
 			return nil, fmt.Errorf("%w: %w", ErrInput, err)

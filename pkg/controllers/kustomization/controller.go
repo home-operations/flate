@@ -85,7 +85,7 @@ func (c *Controller) Start(_ context.Context) {
 // dependency set (nil = terminalized) and whether id ended Ready. The
 // orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
-	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
+	return c.DispatchNode(ctx, id, drainLevel,
 		func(ks *manifest.Kustomization) bool { return ks.Suspend },
 		c.reconcile)
 }
@@ -114,8 +114,8 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		// stale-spec snapshot captured by RunWithStatus, producing
 		// duplicate renders that linger in the store with the wrong
 		// namespace. See #102.
-		fresh, ok, err := base.RequireRefresh[*manifest.Kustomization](
-			ctx, c.Controller, id, ks.Timeout, deps,
+		fresh, ok, err := c.RequireRefresh[*manifest.Kustomization](
+			ctx, id, ks.Timeout, deps,
 			"", base.DepFailed(id)) // empty pendingMsg: status set above (kept Ready on a no-op re-run)
 		if err != nil {
 			return err
@@ -252,9 +252,7 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	deps := slices.Clone(ks.DependsOn)
 	if ks.SourceKind != "" && ks.SourceName != "" {
 		deps = append(deps, manifest.DependencyRef{
-			NamedResource: manifest.NamedResource{
-				Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
-			},
+			Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
 		})
 	}
 	if parent, ok := c.LookupParent(ks.Named()); ok {

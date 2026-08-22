@@ -337,8 +337,8 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 			return nil, inputf("HelmRelease missing dependsOn.name")
 		}
 		dependsOn = append(dependsOn, DependencyRef{
-			NamedResource: NamedResource{Kind: KindHelmRelease, Namespace: cmp.Or(dep.Namespace, cr.Namespace), Name: dep.Name},
-			ReadyExpr:     dep.ReadyExpr,
+			Kind: KindHelmRelease, Namespace: cmp.Or(dep.Namespace, cr.Namespace), Name: dep.Name,
+			ReadyExpr: dep.ReadyExpr,
 		})
 	}
 	// spec.chart.spec.valuesFiles (inline template). spec.chartRef

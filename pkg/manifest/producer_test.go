@@ -8,8 +8,8 @@ import (
 // secret is a small helper so each case reads as identity + declared keys.
 func secret(ns, name string, keys ...string) ProducerTarget {
 	return ProducerTarget{
-		NamedResource: NamedResource{Kind: KindSecret, Namespace: ns, Name: name},
-		DeclaredKeys:  keys,
+		Kind: KindSecret, Namespace: ns, Name: name,
+		DeclaredKeys: keys,
 	}
 }
 
@@ -70,7 +70,7 @@ func TestProducerTargets(t *testing.T) {
 			raw:  &RawObject{Kind: "ObjectBucketClaim", Namespace: "default", Name: "netbox-obc"},
 			want: []ProducerTarget{
 				secret("default", "netbox-obc"),
-				{NamedResource: NamedResource{Kind: KindConfigMap, Namespace: "default", Name: "netbox-obc"}},
+				{Kind: KindConfigMap, Namespace: "default", Name: "netbox-obc"},
 			},
 		},
 		{

@@ -479,7 +479,7 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 		return false
 	}
 	dirRel := filepath.ToSlash(rel) + "/"
-	for _, ks := range store.ListAs[*manifest.Kustomization](l.Store, manifest.KindKustomization) {
+	for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		if ks.Path == "" {
 			continue
 		}
@@ -789,7 +789,7 @@ func parentNamespaceFor(prefixes []KSPathPrefix, s *store.Store, absPath, repoRo
 	if !ok {
 		return ""
 	}
-	ks, _ := store.GetByName[*manifest.Kustomization](s, manifest.KindKustomization, owner.Namespace, owner.Name)
+	ks, _ := s.GetByName[*manifest.Kustomization](manifest.KindKustomization, owner.Namespace, owner.Name)
 	if ks == nil {
 		return ""
 	}

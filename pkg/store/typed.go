@@ -12,11 +12,11 @@ import "github.com/home-operations/flate/pkg/manifest"
 //	ks, ok := s.GetObject(id).(*manifest.Kustomization)
 //
 //	// after
-//	ks, ok := store.Get[*manifest.Kustomization](s, id)
+//	ks, ok := s.Get[*manifest.Kustomization](id)
 //
 // The constraint on T is manifest.BaseManifest — any stored manifest
 // type — so Get and GetByName share one uniform, type-safe lookup.
-func Get[T manifest.BaseManifest](s *Store, id manifest.NamedResource) (T, bool) {
+func (s *Store) Get[T manifest.BaseManifest](id manifest.NamedResource) (T, bool) {
 	if s == nil {
 		var zero T
 		return zero, false
@@ -26,17 +26,17 @@ func Get[T manifest.BaseManifest](s *Store, id manifest.NamedResource) (T, bool)
 }
 
 // GetByName is the (kind, namespace, name) sibling of Get — performs
-// the same store lookup as Store.GetByName and asserts the result to
-// T. Returns (zero, false) on miss or type mismatch.
+// the same store lookup as Store.GetObjectByName and asserts the
+// result to T. Returns (zero, false) on miss or type mismatch.
 //
 // Useful when the caller has the human-readable triple (e.g. from a
 // SecretRef or valuesFrom) rather than a NamedResource.
-func GetByName[T manifest.BaseManifest](s *Store, kind, namespace, name string) (T, bool) {
+func (s *Store) GetByName[T manifest.BaseManifest](kind, namespace, name string) (T, bool) {
 	if s == nil {
 		var zero T
 		return zero, false
 	}
-	obj, ok := s.GetByName(kind, namespace, name).(T)
+	obj, ok := s.GetObjectByName(kind, namespace, name).(T)
 	return obj, ok
 }
 
@@ -52,7 +52,7 @@ func GetByName[T manifest.BaseManifest](s *Store, kind, namespace, name string) 
 //	}
 //
 //	// after
-//	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+//	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 //	    // use ks
 //	}
 //
@@ -61,7 +61,7 @@ func GetByName[T manifest.BaseManifest](s *Store, kind, namespace, name string) 
 // defensive net rather than a real filter — but keeping it cheap
 // means a future invariant relaxation degrades safely rather than
 // panicking.
-func ListAs[T manifest.BaseManifest](s *Store, kind string) []T {
+func (s *Store) ListAs[T manifest.BaseManifest](kind string) []T {
 	if s == nil {
 		return nil
 	}

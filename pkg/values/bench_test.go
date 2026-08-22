@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -53,8 +51,8 @@ func BenchmarkExpandValueReferences_SharedLargeCM(b *testing.B) {
 	for b.Loop() {
 		hr := &manifest.HelmRelease{
 			Name: "app", Namespace: "default",
-			HelmReleaseSpec: helmv2.HelmReleaseSpec{ValuesFrom: []manifest.ValuesReference{ref}},
-			Values:          map[string]any{"replicaCount": 2},
+			ValuesFrom: []manifest.ValuesReference{ref},
+			Values:     map[string]any{"replicaCount": 2},
 		}
 		if err := ExpandValueReferences(hr, provider, cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)
@@ -101,8 +99,8 @@ counts:
 		// in place; the merge result accumulates across runs otherwise.
 		hr := &manifest.HelmRelease{
 			Name: "demo", Namespace: "default",
-			HelmReleaseSpec: helmv2.HelmReleaseSpec{ValuesFrom: refs},
-			Values:          map[string]any{"image": map[string]any{"repository": "nginx"}},
+			ValuesFrom: refs,
+			Values:     map[string]any{"image": map[string]any{"repository": "nginx"}},
 		}
 		if err := ExpandValueReferences(hr, provider, cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)
@@ -135,7 +133,7 @@ func BenchmarkExpandValueReferences_ManyKeyCM(b *testing.B) {
 	for b.Loop() {
 		hr := &manifest.HelmRelease{
 			Name: "app", Namespace: "default",
-			HelmReleaseSpec: helmv2.HelmReleaseSpec{ValuesFrom: []manifest.ValuesReference{ref}},
+			ValuesFrom: []manifest.ValuesReference{ref},
 		}
 		if err := ExpandValueReferences(hr, provider, cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)

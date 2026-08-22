@@ -81,10 +81,8 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 	}
 
 	kus := kustypes.Kustomization{
-		TypeMeta: kustypes.TypeMeta{
-			APIVersion: kustypes.KustomizationVersion,
-			Kind:       kustypes.KustomizationKind,
-		},
+		APIVersion: kustypes.KustomizationVersion,
+		Kind:       kustypes.KustomizationKind,
 	}
 	if err := yaml.Unmarshal(data, &kus); err != nil {
 		return nil, "", err
@@ -247,10 +245,8 @@ func findOrGenerateKustomization(fsys filesys.FileSystem, dirPath string, ignore
 	}
 
 	kus := kustypes.Kustomization{
-		TypeMeta: kustypes.TypeMeta{
-			APIVersion: kustypes.KustomizationVersion,
-			Kind:       kustypes.KustomizationKind,
-		},
+		APIVersion: kustypes.KustomizationVersion,
+		Kind:       kustypes.KustomizationKind,
 	}
 	var resources []string
 	for _, file := range files {

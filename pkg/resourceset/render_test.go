@@ -22,28 +22,24 @@ import (
 func TestRender_PermuteScopesByProviderName(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "myrset", Namespace: "default",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
-			Inputs:        []fluxopv1.ResourceSetInput{{"env": jsonTmpl(t, `"prod"`)}},
-			InputsFrom: []fluxopv1.InputProviderReference{{
-				Kind: manifest.KindResourceSetInputProvider, Name: "myrsip",
-			}},
-			// Permute templates dereference inputs by provider name.
-			// `myrset` (the rs.Name) wraps the inline input;
-			// `myrsip` wraps the RSIP's defaultValues.
-			ResourcesTemplate: `apiVersion: v1
+		InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
+		Inputs:        []fluxopv1.ResourceSetInput{{"env": jsonTmpl(t, `"prod"`)}},
+		InputsFrom: []fluxopv1.InputProviderReference{{
+			Kind: manifest.KindResourceSetInputProvider, Name: "myrsip",
+		}},
+		// Permute templates dereference inputs by provider name.
+		// `myrset` (the rs.Name) wraps the inline input;
+		// `myrsip` wraps the RSIP's defaultValues.
+		ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: << index inputs "myrset" "env" >>-<< index inputs "myrsip" "tenant" >>
   namespace: default`,
-		},
 	}
 	rsip := &manifest.ResourceSetInputProvider{
 		Name: "myrsip", Namespace: "default",
-		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
-			Type:          fluxopv1.InputProviderStatic,
-			DefaultValues: fluxopv1.ResourceSetInput{"tenant": jsonTmpl(t, `"alpha"`)},
-		},
+		Type:          fluxopv1.InputProviderStatic,
+		DefaultValues: fluxopv1.ResourceSetInput{"tenant": jsonTmpl(t, `"alpha"`)},
 	}
 	resolver := func(ref fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
 		if ref.Name == "myrsip" {
@@ -72,29 +68,25 @@ metadata:
 func TestRender_PermuteMultiInlineCartesian(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "rset", Namespace: "default",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
-			Inputs: []fluxopv1.ResourceSetInput{
-				{"env": jsonTmpl(t, `"prod"`)},
-				{"env": jsonTmpl(t, `"stage"`)},
-			},
-			InputsFrom: []fluxopv1.InputProviderReference{{
-				Kind: manifest.KindResourceSetInputProvider, Name: "rsip",
-			}},
-			ResourcesTemplate: `apiVersion: v1
+		InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
+		Inputs: []fluxopv1.ResourceSetInput{
+			{"env": jsonTmpl(t, `"prod"`)},
+			{"env": jsonTmpl(t, `"stage"`)},
+		},
+		InputsFrom: []fluxopv1.InputProviderReference{{
+			Kind: manifest.KindResourceSetInputProvider, Name: "rsip",
+		}},
+		ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: << index inputs "rset" "env" >>-<< index inputs "rsip" "tenant" >>
   namespace: default`,
-		},
 	}
 	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{{
 			Name: "rsip", Namespace: "default",
-			ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
-				Type:          fluxopv1.InputProviderStatic,
-				DefaultValues: fluxopv1.ResourceSetInput{"tenant": jsonTmpl(t, `"alpha"`)},
-			},
+			Type:          fluxopv1.InputProviderStatic,
+			DefaultValues: fluxopv1.ResourceSetInput{"tenant": jsonTmpl(t, `"alpha"`)},
 		}}, nil
 	}
 	docs, err := resourceset.Render(rs, resolver)
@@ -120,27 +112,23 @@ metadata:
 func TestRender_PermuteSkipsEmptyProviderByDefault(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "rset", Namespace: "default",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
-			Inputs:        []fluxopv1.ResourceSetInput{{"env": jsonTmpl(t, `"prod"`)}},
-			InputsFrom: []fluxopv1.InputProviderReference{{
-				Kind: manifest.KindResourceSetInputProvider, Name: "dyn",
-			}},
-			ResourcesTemplate: `apiVersion: v1
+		InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
+		Inputs:        []fluxopv1.ResourceSetInput{{"env": jsonTmpl(t, `"prod"`)}},
+		InputsFrom: []fluxopv1.InputProviderReference{{
+			Kind: manifest.KindResourceSetInputProvider, Name: "dyn",
+		}},
+		ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: << index inputs "rset" "env" >>
   namespace: default`,
-		},
 	}
 	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
 		// Dynamic provider (GitHubBranch etc.) — flate can't fetch
 		// remote APIs offline, so it exports zero input sets.
 		return []*manifest.ResourceSetInputProvider{{
 			Name: "dyn", Namespace: "default",
-			ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
-				Type: fluxopv1.InputProviderGitHubBranch,
-			},
+			Type: fluxopv1.InputProviderGitHubBranch,
 		}}, nil
 	}
 	docs, err := resourceset.Render(rs, resolver)
@@ -160,26 +148,22 @@ metadata:
 func TestRender_PermuteIncludeEmptyProvidersCollapses(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "rset", Namespace: "default",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputStrategy: &fluxopv1.InputStrategySpec{
-				Name:                  fluxopv1.InputStrategyPermute,
-				IncludeEmptyProviders: true,
-			},
-			Inputs: []fluxopv1.ResourceSetInput{{"env": jsonTmpl(t, `"prod"`)}},
-			InputsFrom: []fluxopv1.InputProviderReference{{
-				Kind: manifest.KindResourceSetInputProvider, Name: "dyn",
-			}},
-			ResourcesTemplate: `apiVersion: v1
+		InputStrategy: &fluxopv1.InputStrategySpec{
+			Name:                  fluxopv1.InputStrategyPermute,
+			IncludeEmptyProviders: true,
+		},
+		Inputs: []fluxopv1.ResourceSetInput{{"env": jsonTmpl(t, `"prod"`)}},
+		InputsFrom: []fluxopv1.InputProviderReference{{
+			Kind: manifest.KindResourceSetInputProvider, Name: "dyn",
+		}},
+		ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: x, namespace: default}`,
-		},
 	}
 	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{{
 			Name: "dyn", Namespace: "default",
-			ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
-				Type: fluxopv1.InputProviderGitHubBranch,
-			},
+			Type: fluxopv1.InputProviderGitHubBranch,
 		}}, nil
 	}
 	docs, err := resourceset.Render(rs, resolver)
@@ -202,13 +186,11 @@ func TestRender_PermuteMaxPermutationsRejected(t *testing.T) {
 	}
 	rs := &manifest.ResourceSet{
 		Name: "rset", Namespace: "default",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
-			Inputs:        inputs,
-			ResourcesTemplate: `apiVersion: v1
+		InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
+		Inputs:        inputs,
+		ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: x, namespace: default}`,
-		},
 	}
 	_, err := resourceset.Render(rs, nil)
 	if err == nil {
@@ -230,18 +212,16 @@ func jsonTmpl(t *testing.T, raw string) *apix.JSON {
 func TestRender_InputsExpandTemplates(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{
-				{"tenant": jsonTmpl(t, `"frontend"`)},
-				{"tenant": jsonTmpl(t, `"backend"`)},
-			},
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		Inputs: []fluxopv1.ResourceSetInput{
+			{"tenant": jsonTmpl(t, `"frontend"`)},
+			{"tenant": jsonTmpl(t, `"backend"`)},
+		},
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1",
 					"kind": "ConfigMap",
 					"metadata": {"name": "<< inputs.tenant >>-cm", "namespace": "<< inputs.tenant >>"}
 				}`),
-			},
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
@@ -265,23 +245,21 @@ func TestRender_InputsExpandTemplates(t *testing.T) {
 func TestRender_Deduplication(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{
-				{"tenant": jsonTmpl(t, `"a"`)},
-				{"tenant": jsonTmpl(t, `"b"`)},
-			},
-			Resources: []*apix.JSON{
-				// Shared — same name regardless of input.
-				jsonTmpl(t, `{
+		Inputs: []fluxopv1.ResourceSetInput{
+			{"tenant": jsonTmpl(t, `"a"`)},
+			{"tenant": jsonTmpl(t, `"b"`)},
+		},
+		Resources: []*apix.JSON{
+			// Shared — same name regardless of input.
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "shared", "namespace": "flux-system"}
 				}`),
-				// Per-tenant.
-				jsonTmpl(t, `{
+			// Per-tenant.
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "<< inputs.tenant >>", "namespace": "flux-system"}
 				}`),
-			},
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
@@ -299,13 +277,11 @@ func TestRender_Deduplication(t *testing.T) {
 func TestRender_NoInputsRendersOnce(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "policies", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "flux-allowlist", "namespace": "flux-system"}
 				}`),
-			},
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
@@ -324,20 +300,18 @@ func TestRender_NoInputsRendersOnce(t *testing.T) {
 func TestRender_DefaultsNamespace(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "tenant-x",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"a"`)}},
-			Resources: []*apix.JSON{
-				// Namespaced — should default to tenant-x.
-				jsonTmpl(t, `{
+		Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"a"`)}},
+		Resources: []*apix.JSON{
+			// Namespaced — should default to tenant-x.
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "<< inputs.name >>"}
 				}`),
-				// Cluster-scoped — must stay namespace-less.
-				jsonTmpl(t, `{
+			// Cluster-scoped — must stay namespace-less.
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "Namespace",
 					"metadata": {"name": "<< inputs.name >>"}
 				}`),
-			},
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
@@ -366,17 +340,15 @@ func TestRender_DefaultsNamespace(t *testing.T) {
 func TestRender_CommonMetadata(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			CommonMetadata: &fluxopv1.CommonMetadata{
-				Labels:      map[string]string{"team": "platform"},
-				Annotations: map[string]string{"owner": "x"},
-			},
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		CommonMetadata: &fluxopv1.CommonMetadata{
+			Labels:      map[string]string{"team": "platform"},
+			Annotations: map[string]string{"owner": "x"},
+		},
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "x", "namespace": "flux-system"}
 				}`),
-			},
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
@@ -397,13 +369,11 @@ func TestRender_CommonMetadata(t *testing.T) {
 func TestRender_OwnerLabels(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "tenant-a",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "x"}
 				}`),
-			},
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
@@ -425,17 +395,15 @@ func TestRender_OwnerLabels(t *testing.T) {
 func TestRender_SprigFunctions(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{
-				{"tenant": jsonTmpl(t, `"Team One"`)},
-			},
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		Inputs: []fluxopv1.ResourceSetInput{
+			{"tenant": jsonTmpl(t, `"Team One"`)},
+		},
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "<< inputs.tenant | slugify >>", "namespace": "flux-system"},
 					"data": {"upper": "<< inputs.tenant | upper >>"}
 				}`),
-			},
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
@@ -458,13 +426,12 @@ func TestRender_SprigFunctions(t *testing.T) {
 func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{
-				{"tenant": jsonTmpl(t, `"a"`)},
-				{"tenant": jsonTmpl(t, `"b"`)},
-			},
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		Inputs: []fluxopv1.ResourceSetInput{
+			{"tenant": jsonTmpl(t, `"a"`)},
+			{"tenant": jsonTmpl(t, `"b"`)},
+		},
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {
 						"name": "<< inputs.tenant >>", "namespace": "flux-system",
@@ -473,7 +440,6 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 						}
 					}
 				}`),
-			},
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
@@ -497,10 +463,9 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 func TestRender_InputsProviderBuiltinField(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{{"tenant": jsonTmpl(t, `"a"`)}},
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		Inputs: []fluxopv1.ResourceSetInput{{"tenant": jsonTmpl(t, `"a"`)}},
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "x", "namespace": "flux-system"},
 					"data": {
@@ -509,7 +474,6 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 						"providerNamespace": "<< inputs.provider.namespace >>"
 					}
 				}`),
-			},
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
@@ -535,14 +499,12 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 func TestRender_MissingKeyErrors(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{{"tenant": jsonTmpl(t, `"a"`)}},
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		Inputs: []fluxopv1.ResourceSetInput{{"tenant": jsonTmpl(t, `"a"`)}},
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "<< inputs.nonexistent >>", "namespace": "flux-system"}
 				}`),
-			},
 		},
 	}
 	_, err := resourceset.Render(rs, nil)
@@ -554,24 +516,20 @@ func TestRender_MissingKeyErrors(t *testing.T) {
 func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputsFrom: []fluxopv1.InputProviderReference{{
-				Kind: manifest.KindResourceSetInputProvider, Name: "branches",
-			}},
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		InputsFrom: []fluxopv1.InputProviderReference{{
+			Kind: manifest.KindResourceSetInputProvider, Name: "branches",
+		}},
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "<< inputs.name >>", "namespace": "flux-system"},
 					"data": {"id": "<< inputs.id >>"}
 				}`),
-			},
 		},
 	}
 	rsip := &manifest.ResourceSetInputProvider{
 		Name: "branches", Namespace: "flux-system",
-		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
-			Type: fluxopv1.InputProviderGitHubBranch,
-		},
+		Type: fluxopv1.InputProviderGitHubBranch,
 		Status: fluxopv1.ResourceSetInputProviderStatus{
 			ExportedInputs: []fluxopv1.ResourceSetInput{{
 				"name": jsonTmpl(t, `"feature-a"`),
@@ -600,10 +558,8 @@ func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
 func TestResourceSetInputProvider_StatusExportedInputsOverrideDerivedID(t *testing.T) {
 	rsip := &manifest.ResourceSetInputProvider{
 		Name: "static", Namespace: "flux-system",
-		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
-			Type:          fluxopv1.InputProviderStatic,
-			DefaultValues: fluxopv1.ResourceSetInput{"id": jsonTmpl(t, `"default-id"`)},
-		},
+		Type:          fluxopv1.InputProviderStatic,
+		DefaultValues: fluxopv1.ResourceSetInput{"id": jsonTmpl(t, `"default-id"`)},
 		Status: fluxopv1.ResourceSetInputProviderStatus{
 			ExportedInputs: []fluxopv1.ResourceSetInput{{
 				"id": jsonTmpl(t, `"exported-id"`),
@@ -625,14 +581,12 @@ func TestResourceSetInputProvider_StatusExportedInputsOverrideDerivedID(t *testi
 func TestRender_MalformedTemplateErrors(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"a"`)}},
-			Resources: []*apix.JSON{
-				jsonTmpl(t, `{
+		Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"a"`)}},
+		Resources: []*apix.JSON{
+			jsonTmpl(t, `{
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "<< inputs.name "}
 				}`), // unterminated template
-			},
 		},
 	}
 	_, err := resourceset.Render(rs, nil)
@@ -649,11 +603,10 @@ func TestRender_MalformedTemplateErrors(t *testing.T) {
 func TestRender_ToYamlNindent(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{
-				{"layerSelector": jsonTmpl(t, `{"mediaType": "x", "operation": "copy"}`)},
-			},
-			ResourcesTemplate: `apiVersion: source.toolkit.fluxcd.io/v1
+		Inputs: []fluxopv1.ResourceSetInput{
+			{"layerSelector": jsonTmpl(t, `{"mediaType": "x", "operation": "copy"}`)},
+		},
+		ResourcesTemplate: `apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
   name: app
@@ -661,7 +614,6 @@ metadata:
 spec:
   layerSelector: << inputs.layerSelector | toYaml | nindent 4 >>
 `,
-		},
 	}
 	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
@@ -681,21 +633,18 @@ spec:
 func TestRender_InputsFrom_StaticProvider(t *testing.T) {
 	rsip := &manifest.ResourceSetInputProvider{
 		Name: "apps", Namespace: "kube-system",
-		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
-			Type: fluxopv1.InputProviderStatic,
-			DefaultValues: fluxopv1.ResourceSetInput{
-				"defaults": jsonTmpl(t, `{"capacity": "1Gi"}`),
-				"apps":     jsonTmpl(t, `[{"app": "alpha"}, {"app": "bravo", "capacity": "5Gi"}]`),
-			},
+		Type: fluxopv1.InputProviderStatic,
+		DefaultValues: fluxopv1.ResourceSetInput{
+			"defaults": jsonTmpl(t, `{"capacity": "1Gi"}`),
+			"apps":     jsonTmpl(t, `[{"app": "alpha"}, {"app": "bravo", "capacity": "5Gi"}]`),
 		},
 	}
 	rs := &manifest.ResourceSet{
 		Name: "volsync", Namespace: "kube-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			InputsFrom: []fluxopv1.InputProviderReference{
-				{Name: "apps"},
-			},
-			ResourcesTemplate: `<<- range $app := inputs.apps >>
+		InputsFrom: []fluxopv1.InputProviderReference{
+			{Name: "apps"},
+		},
+		ResourcesTemplate: `<<- range $app := inputs.apps >>
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -706,7 +655,6 @@ data:
   capacity: << get $app "capacity" | default inputs.defaults.capacity >>
 <<- end >>
 `,
-		},
 	}
 	resolver := func(ref fluxopv1.InputProviderReference, ns string) ([]*manifest.ResourceSetInputProvider, error) {
 		if ref.Name == "apps" && ns == "kube-system" {
@@ -739,27 +687,23 @@ data:
 func TestRender_InputsFrom_DynamicProviderEmptySkip(t *testing.T) {
 	rsip := &manifest.ResourceSetInputProvider{
 		Name: "branches", Namespace: "flux-system",
-		ResourceSetInputProviderSpec: fluxopv1.ResourceSetInputProviderSpec{
-			Type: fluxopv1.InputProviderGitHubBranch,
-			URL:  "https://github.com/foo/bar",
-		},
+		Type: fluxopv1.InputProviderGitHubBranch,
+		URL:  "https://github.com/foo/bar",
 	}
 	rs := &manifest.ResourceSet{
 		Name: "matrix", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{
-				{"tenant": jsonTmpl(t, `"inline-only"`)},
-			},
-			InputsFrom: []fluxopv1.InputProviderReference{
-				{Name: "branches"},
-			},
-			ResourcesTemplate: `apiVersion: v1
+		Inputs: []fluxopv1.ResourceSetInput{
+			{"tenant": jsonTmpl(t, `"inline-only"`)},
+		},
+		InputsFrom: []fluxopv1.InputProviderReference{
+			{Name: "branches"},
+		},
+		ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: << inputs.tenant >>
   namespace: flux-system
 `,
-		},
 	}
 	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{rsip}, nil
@@ -794,13 +738,11 @@ metadata:
 `
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
-		ResourceSetSpec: fluxopv1.ResourceSetSpec{
-			Inputs: []fluxopv1.ResourceSetInput{
-				{"name": jsonTmpl(t, `"a"`)},
-				{"name": jsonTmpl(t, `"b"`)},
-			},
-			ResourcesTemplate: tmpl,
+		Inputs: []fluxopv1.ResourceSetInput{
+			{"name": jsonTmpl(t, `"a"`)},
+			{"name": jsonTmpl(t, `"b"`)},
 		},
+		ResourcesTemplate: tmpl,
 	}
 	docs, err := resourceset.Render(rs, nil)
 	if err != nil {

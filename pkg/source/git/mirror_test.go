@@ -48,7 +48,7 @@ func TestMirror_BareClonePersistsAcrossFetches(t *testing.T) {
 	cache := source.NewCache(layout)
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+		URL: "file://" + src,
 	}
 	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout)}
 
@@ -90,9 +90,7 @@ func TestMirror_FallsBackForSubmodules(t *testing.T) {
 	f := &Fetcher{Mirrors: mirror.New(cacheroot.New(t.TempDir()))}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL: "https://example.com/x", RecurseSubmodules: true,
-		},
+		URL: "https://example.com/x", RecurseSubmodules: true,
 	}
 	if f.canUseMirror(repo) {
 		t.Error("RecurseSubmodules should disable the mirror path")
@@ -129,10 +127,8 @@ func TestMirror_TagResolvesAcrossRefs(t *testing.T) {
 	// First: fetch a tag.
 	tagRepo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
 	art, err := f.Fetch(context.Background(), tagRepo)
 	if err != nil {
@@ -145,7 +141,7 @@ func TestMirror_TagResolvesAcrossRefs(t *testing.T) {
 	// Second: fetch HEAD (same commit but different ref path).
 	headRepo := &manifest.GitRepository{
 		Name: "u", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+		URL: "file://" + src,
 	}
 	art2, err := f.Fetch(context.Background(), headRepo)
 	if err != nil {
@@ -169,10 +165,8 @@ func TestMirror_TagRefreshFetchesOnlyRequestedTag(t *testing.T) {
 	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout)}
 	repo := &manifest.GitRepository{
 		Name: "tagged", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
 	if _, err := f.Fetch(context.Background(), repo); err != nil {
 		t.Fatalf("Fetch v1: %v", err)
@@ -212,10 +206,8 @@ func TestMirror_RefNameResolvesNonBranchRefs(t *testing.T) {
 	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout)}
 	repo := &manifest.GitRepository{
 		Name: "pull", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"},
 	}
 
 	art, err := f.Fetch(context.Background(), repo)
@@ -239,12 +231,10 @@ func TestMirror_CommitMustBeReachableFromBranch(t *testing.T) {
 	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout)}
 	repo := &manifest.GitRepository{
 		Name: "constrained", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL: "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{
-				Branch: "staging",
-				Commit: mainOnly,
-			},
+		URL: "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{
+			Branch: "staging",
+			Commit: mainOnly,
 		},
 	}
 

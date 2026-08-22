@@ -12,7 +12,6 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -22,7 +21,7 @@ import (
 
 func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store.Store) {
 	t.Helper()
-	return newTestControllerWithOptions(t, ReconcileOptions{Options: base.Options{Filter: filter}})
+	return newTestControllerWithOptions(t, ReconcileOptions{Filter: filter})
 }
 
 func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedResource]manifest.NamedResource) (*Controller, *store.Store) {
@@ -31,7 +30,7 @@ func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedReso
 		parent, ok := parentOf[id]
 		return parent, ok
 	}
-	return newTestControllerWithOptions(t, ReconcileOptions{Options: base.Options{ParentOf: resolver}})
+	return newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
 }
 
 func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Controller, *store.Store) {
@@ -82,10 +81,8 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	c, st := newTestController(t, nil)
 	st.AddObject(&manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
-			URL:  "oci://oci.trueforge.org/truecharts",
-			Type: manifest.RepoTypeOCI,
-		},
+		URL:  "oci://oci.trueforge.org/truecharts",
+		Type: manifest.RepoTypeOCI,
 	})
 	hr := &manifest.HelmRelease{
 		Name: "kromgo", Namespace: "apps",
@@ -117,7 +114,7 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	// Synthetic HelmChart registered for the source controller, seeded
 	// Pending so the chart-source depwait never observes it as absent.
 	synID := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: got.Chart.RepoNamespace, Name: got.Chart.RepoName}
-	obj := st.GetByName(manifest.KindHelmChart, synID.Namespace, synID.Name)
+	obj := st.GetObjectByName(manifest.KindHelmChart, synID.Namespace, synID.Name)
 	if obj == nil {
 		t.Fatalf("synthetic HelmChart %s not added to store", synID)
 	}
@@ -143,7 +140,7 @@ func TestMaterializeHelmChartSource_IdempotentReSeed(t *testing.T) {
 	c, st := newTestController(t, nil)
 	st.AddObject(&manifest.HelmRepository{
 		Name: "bitnami", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example/bitnami"},
+		URL: "https://charts.example/bitnami",
 	})
 	mkHR := func(name string) *manifest.HelmRelease {
 		return &manifest.HelmRelease{
@@ -215,10 +212,8 @@ func TestMaterializeHelmChartSource_LateArrival(t *testing.T) {
 	// HelmRepository arrives mid-run (render-emitted / lazily promoted).
 	st.AddObject(&manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{
-			URL:  "oci://oci.trueforge.org/truecharts",
-			Type: manifest.RepoTypeOCI,
-		},
+		URL:  "oci://oci.trueforge.org/truecharts",
+		Type: manifest.RepoTypeOCI,
 	})
 
 	// Pass 2: now present — must repoint to the synthetic HelmChart.
@@ -235,7 +230,7 @@ func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
 	c, st := newTestController(t, nil)
 	st.AddObject(&manifest.HelmRepository{
 		Name: "bitnami", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example/bitnami"},
+		URL: "https://charts.example/bitnami",
 	})
 	hr := &manifest.HelmRelease{
 		Name: "redis", Namespace: "apps",
@@ -248,7 +243,7 @@ func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
 	if !repointed || got.Chart.RepoKind != manifest.KindHelmChart {
 		t.Fatalf("HTTP HelmRepository was not materialized: %+v (repointed=%v)", got.Chart, repointed)
 	}
-	if hc, ok := st.GetByName(manifest.KindHelmChart, got.Chart.RepoNamespace, got.Chart.RepoName).(*manifest.HelmChartSource); !ok || hc.SourceRef.Name != "bitnami" {
+	if hc, ok := st.GetObjectByName(manifest.KindHelmChart, got.Chart.RepoNamespace, got.Chart.RepoName).(*manifest.HelmChartSource); !ok || hc.SourceRef.Name != "bitnami" {
 		t.Errorf("synthetic HelmChart does not reference the bitnami repo: %v", got.Chart)
 	}
 }
@@ -261,7 +256,7 @@ func TestMaterializeHelmChartSource_EmptyVersion(t *testing.T) {
 	c, st := newTestController(t, nil)
 	st.AddObject(&manifest.HelmRepository{
 		Name: "bitnami", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example/bitnami"},
+		URL: "https://charts.example/bitnami",
 	})
 	hr := &manifest.HelmRelease{
 		Name: "redis", Namespace: "apps",
@@ -280,7 +275,7 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{Suspend: true},
+		Suspend: true,
 	}
 	st.AddObject(hr)
 
@@ -351,14 +346,12 @@ data:
 	})
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Interval: metav1Duration(time.Hour),
-			Timeout:  ptrDuration(100 * time.Millisecond),
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: manifest.KindConfigMap, Name: "present-values"},
-				{Kind: manifest.KindSecret, Name: "app-values"},
-				{Kind: manifest.KindConfigMap, Name: "runtime-values"},
-			},
+		Interval: metav1Duration(time.Hour),
+		Timeout:  ptrDuration(100 * time.Millisecond),
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: manifest.KindConfigMap, Name: "present-values"},
+			{Kind: manifest.KindSecret, Name: "app-values"},
+			{Kind: manifest.KindConfigMap, Name: "runtime-values"},
 		},
 		Chart: manifest.HelmChart{
 			Name:          "mychart",
@@ -425,13 +418,11 @@ data:
 	})
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Interval: metav1Duration(time.Hour),
-			Timeout:  ptrDuration(100 * time.Millisecond),
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: manifest.KindConfigMap, Name: "present-values"},
-				{Kind: manifest.KindSecret, Name: "app-values"},
-			},
+		Interval: metav1Duration(time.Hour),
+		Timeout:  ptrDuration(100 * time.Millisecond),
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: manifest.KindConfigMap, Name: "present-values"},
+			{Kind: manifest.KindSecret, Name: "app-values"},
 		},
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "charts",
@@ -474,11 +465,9 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 	st.UpdateStatus(src.Named(), store.StatusReady, "")
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Interval:   metav1Duration(time.Hour),
-			Timeout:    ptrDuration(100 * time.Millisecond),
-			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "no-producer"}},
-		},
+		Interval:   metav1Duration(time.Hour),
+		Timeout:    ptrDuration(100 * time.Millisecond),
+		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "no-producer"}},
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "charts",
 			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
@@ -502,11 +491,9 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 	c, st := newTestController(t, nil)
 	src := &manifest.HelmChartSource{
 		Name: "podinfo", Namespace: "flux-system",
-		HelmChartSpec: sourcev1.HelmChartSpec{
-			Chart:     "podinfo",
-			Version:   "6.3.2",
-			SourceRef: sourcev1.LocalHelmChartSourceReference{Name: "podinfo", Kind: manifest.KindHelmRepository},
-		},
+		Chart:     "podinfo",
+		Version:   "6.3.2",
+		SourceRef: sourcev1.LocalHelmChartSourceReference{Name: "podinfo", Kind: manifest.KindHelmRepository},
 	}
 	st.AddObject(src)
 
@@ -532,11 +519,9 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	base := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Interval: metav1Duration(time.Hour),
-		},
-		Chart:  manifest.HelmChart{Name: "podinfo", RepoName: "podinfo", RepoNamespace: "flux-system", RepoKind: manifest.KindHelmRepository},
-		Values: map[string]any{"replicas": 2},
+		Interval: metav1Duration(time.Hour),
+		Chart:    manifest.HelmChart{Name: "podinfo", RepoName: "podinfo", RepoNamespace: "flux-system", RepoKind: manifest.KindHelmRepository},
+		Values:   map[string]any{"replicas": 2},
 	}
 	stamped := base.Clone()
 	stamped.Labels = map[string]string{
@@ -558,8 +543,8 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
 	base := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{Interval: metav1Duration(time.Hour)},
-		Chart:           manifest.HelmChart{Name: "podinfo"},
+		Interval: metav1Duration(time.Hour),
+		Chart:    manifest.HelmChart{Name: "podinfo"},
 	}
 	patched := base.Clone()
 	patched.DriftDetection = &helmv2.DriftDetection{Mode: helmv2.DriftDetectionEnabled}
@@ -639,10 +624,9 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 	)
 
 	c := New(st, ts, hc, helm.Options{}, false)
-	c.Configure(ReconcileOptions{Options: base.Options{
+	c.Configure(ReconcileOptions{
 		Filter:        filter,
-		RenderTracker: tracker,
-	}})
+		RenderTracker: tracker})
 	c.Start(context.Background())
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 
@@ -724,7 +708,7 @@ func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 		testutil.MapLister{},
 	)
 	c := New(st, ts, hc, helm.Options{}, false)
-	c.Configure(ReconcileOptions{Options: base.Options{Filter: filter, RenderTracker: tracker}})
+	c.Configure(ReconcileOptions{Filter: filter, RenderTracker: tracker})
 	c.Start(context.Background())
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 
@@ -950,7 +934,7 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		DependsOn: []manifest.DependencyRef{
-			{NamedResource: manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "other"}},
+			{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "other"},
 		},
 	}
 	got := c.collectHRDeps(hr)
@@ -1022,10 +1006,8 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Interval: metav1Duration(time.Hour),
-			Timeout:  ptrDuration(100 * time.Millisecond),
-		},
+		Interval: metav1Duration(time.Hour),
+		Timeout:  ptrDuration(100 * time.Millisecond),
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "charts", RepoNamespace: "flux-system",
 			RepoKind: manifest.KindGitRepository,

@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // resolvePreRenderValuesFrom reduces hr's valuesFrom to the set helm.Prepare
@@ -67,7 +66,7 @@ func (c *Controller) resolvePreRenderValuesFrom(ctx context.Context, id manifest
 			}
 			return nil, err
 		}
-		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
+		if obj, ok := c.Store.Get[*manifest.HelmRelease](id); ok {
 			hr = obj
 		}
 		if len(omittedValuesRefs) > 0 {
@@ -159,7 +158,7 @@ func cloneWithValuesFrom(hr *manifest.HelmRelease, filtered []manifest.ValuesRef
 }
 
 func (c *Controller) valuesRefExists(id manifest.NamedResource) bool {
-	return c.Store.GetByName(id.Kind, id.Namespace, id.Name) != nil
+	return c.Store.GetObjectByName(id.Kind, id.Namespace, id.Name) != nil
 }
 
 func valuesRefID(hr *manifest.HelmRelease, ref manifest.ValuesReference) (manifest.NamedResource, bool) {

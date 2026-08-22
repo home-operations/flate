@@ -13,7 +13,6 @@ import (
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func newDiffCmd() *cobra.Command {
@@ -301,7 +300,7 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 		}
 	}
 	docs := diff.DocsFromManifests(sub, func(id manifest.NamedResource) string {
-		if ks, ok := store.Get[*manifest.Kustomization](o.Store(), id); ok {
+		if ks, ok := o.Store().Get[*manifest.Kustomization](id); ok {
 			return strings.TrimPrefix(ks.Path, "./")
 		}
 		return ""

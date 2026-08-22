@@ -11,7 +11,7 @@ func ksWithDeps(name, ns string, sub map[string]any, depNames ...string) *manife
 	deps := make([]manifest.DependencyRef, len(depNames))
 	for i, dn := range depNames {
 		deps[i] = manifest.DependencyRef{
-			NamedResource: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: ns, Name: dn},
+			Kind: manifest.KindKustomization, Namespace: ns, Name: dn,
 		}
 	}
 	return &manifest.Kustomization{
@@ -23,7 +23,7 @@ func ksWithDeps(name, ns string, sub map[string]any, depNames ...string) *manife
 
 func firstDepName(t *testing.T, s *store.Store, ns, name string) string {
 	t.Helper()
-	ks, ok := store.GetByName[*manifest.Kustomization](s, manifest.KindKustomization, ns, name)
+	ks, ok := s.GetByName[*manifest.Kustomization](manifest.KindKustomization, ns, name)
 	if !ok {
 		t.Fatalf("Kustomization %s/%s missing from store", ns, name)
 	}

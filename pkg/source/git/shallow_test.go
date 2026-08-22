@@ -49,7 +49,7 @@ func TestMirror_ShallowCloneTruncatesHistory(t *testing.T) {
 	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+		URL: "file://" + src,
 	}
 
 	art, err := f.Fetch(context.Background(), repo)
@@ -94,10 +94,8 @@ func TestMirror_ShallowTagFetch(t *testing.T) {
 	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
 
 	art, err := f.Fetch(context.Background(), repo)
@@ -129,7 +127,7 @@ func TestMirror_ShallowIncrementalFetchAfterTipMove(t *testing.T) {
 	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+		URL: "file://" + src,
 	}
 
 	art1, err := f.Fetch(context.Background(), repo)
@@ -171,10 +169,8 @@ func TestMirror_ShallowSemverFetchesTagTips(t *testing.T) {
 	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{SemVer: ">=1.0.0"},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{SemVer: ">=1.0.0"},
 	}
 
 	art, err := f.Fetch(context.Background(), repo)
@@ -206,10 +202,8 @@ func TestMirror_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{
-			URL:       "file://" + src,
-			Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
-		},
+		URL:       "file://" + src,
+		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
 	if _, err := f.Fetch(context.Background(), repo); err != nil {
 		t.Fatalf("Fetch tag: %v", err)
@@ -278,7 +272,7 @@ func TestFetch_ShallowLegacyClone(t *testing.T) {
 		f := &Fetcher{Cache: cache, Depth: 1} // nil Mirrors → legacy path
 		repo := &manifest.GitRepository{
 			Name: "t", Namespace: "flux-system",
-			GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + src},
+			URL: "file://" + src,
 		}
 		art, err := f.Fetch(context.Background(), repo)
 		if err != nil {
@@ -303,10 +297,8 @@ func TestFetch_ShallowLegacyClone(t *testing.T) {
 		f := &Fetcher{Cache: cache, Depth: 1}
 		repo := &manifest.GitRepository{
 			Name: "t", Namespace: "flux-system",
-			GitRepositorySpec: sourcev1.GitRepositorySpec{
-				URL:            "file://" + src,
-				SparseCheckout: []string{"apps/a"},
-			},
+			URL:            "file://" + src,
+			SparseCheckout: []string{"apps/a"},
 		}
 		art, err := f.Fetch(context.Background(), repo)
 		if err != nil {

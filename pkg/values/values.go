@@ -41,12 +41,12 @@ func NewStoreProvider(s *store.Store) Provider { return &storeProvider{s: s} }
 type storeProvider struct{ s *store.Store }
 
 func (p *storeProvider) ConfigMap(namespace, name string) *manifest.ConfigMap {
-	c, _ := store.GetByName[*manifest.ConfigMap](p.s, manifest.KindConfigMap, namespace, name)
+	c, _ := p.s.GetByName[*manifest.ConfigMap](manifest.KindConfigMap, namespace, name)
 	return c
 }
 
 func (p *storeProvider) Secret(namespace, name string) *manifest.Secret {
-	s, _ := store.GetByName[*manifest.Secret](p.s, manifest.KindSecret, namespace, name)
+	s, _ := p.s.GetByName[*manifest.Secret](manifest.KindSecret, namespace, name)
 	return s
 }
 

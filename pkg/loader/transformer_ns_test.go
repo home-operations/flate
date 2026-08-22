@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -49,8 +47,8 @@ resources:
 
 func leafKS(name, path string) *manifest.Kustomization {
 	return &manifest.Kustomization{
-		Name:              name,
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: path},
+		Name: name,
+		Path: path,
 		Contents: map[string]any{
 			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 			"kind":       "Kustomization",
@@ -73,7 +71,7 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 
 	StampTransformerTargetNamespaces(s, sourceFiles, root)
 
-	got, ok := store.Get[*manifest.Kustomization](s, ks.Named())
+	got, ok := s.Get[*manifest.Kustomization](ks.Named())
 	if !ok {
 		t.Fatal("KS missing after stamp")
 	}
@@ -107,7 +105,7 @@ resources:
 
 	StampTransformerTargetNamespaces(s, sourceFiles, root)
 
-	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "" {
 		t.Errorf("TargetNamespace=%q want empty (no NamespaceTransformer)", got.TargetNamespace)
 	}
@@ -148,7 +146,7 @@ fieldSpecs:
 
 	StampTransformerTargetNamespaces(s, sourceFiles, root)
 
-	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "" {
 		t.Errorf("TargetNamespace=%q want empty (no NamespaceTransformer)", got.TargetNamespace)
 	}
@@ -168,7 +166,7 @@ func TestStampTransformerTargetNamespaces_ExplicitTargetNamespacePreserved(t *te
 
 	StampTransformerTargetNamespaces(s, sourceFiles, root)
 
-	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "explicit" {
 		t.Errorf("TargetNamespace=%q want explicit (must not override)", got.TargetNamespace)
 	}
@@ -209,7 +207,7 @@ resources:
 
 	StampTransformerTargetNamespaces(s, sourceFiles, root)
 
-	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "inner" {
 		t.Errorf("TargetNamespace=%q want inner (deepest overlay)", got.TargetNamespace)
 	}
@@ -244,7 +242,7 @@ func stampReplacementsKS(t *testing.T, root, overlayDir, overlayKustomization st
 		ks.Named(): overlayDir + "/app/ks.yaml",
 	}
 	StampTransformerTargetNamespaces(s, sourceFiles, root)
-	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	return got
 }
 
@@ -435,7 +433,7 @@ func TestStampTransformerTargetNamespaces_NoEnclosingOverlay(t *testing.T) {
 	s.AddObject(ks)
 	sourceFiles := map[manifest.NamedResource]string{ks.Named(): "apps/bare/app/ks.yaml"}
 	StampTransformerTargetNamespaces(s, sourceFiles, root)
-	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "" {
 		t.Errorf("TargetNamespace=%q want empty (no enclosing overlay)", got.TargetNamespace)
 	}
@@ -512,7 +510,7 @@ resources:
 		ks.Named(): "apps/outer/inner/app/ks.yaml",
 	}
 	StampTransformerTargetNamespaces(s, sourceFiles, root)
-	got, _ := store.Get[*manifest.Kustomization](s, ks.Named())
+	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "inner" {
 		t.Errorf("TargetNamespace=%q want inner (deepest overlay)", got.TargetNamespace)
 	}

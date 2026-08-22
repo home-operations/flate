@@ -54,7 +54,7 @@ type KSPathPrefix struct {
 // resolves). Only an in-tree, non-bootstrap, non-aliased source CR is external.
 func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedResource]struct{} {
 	out := map[manifest.NamedResource]struct{}{}
-	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		if ks.Path == "" || ks.SourceName == "" {
 			continue
 		}
@@ -128,7 +128,7 @@ func KSPathPrefixesWithCache(s *store.Store, repoRoot string, cache *manifest.Co
 	// reject/clean resolver, longest-first sort) is single-sourced there so
 	// it can't drift from change.buildOwnership. This side keeps only the
 	// KSPathPrefix shape and the LongestParent lookup semantics.
-	claims := manifest.BuildKSClaims(store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization), repoRoot, cache)
+	claims := manifest.BuildKSClaims(s.ListAs[*manifest.Kustomization](manifest.KindKustomization), repoRoot, cache)
 	out := make([]KSPathPrefix, len(claims))
 	for i, c := range claims {
 		out[i] = KSPathPrefix{ID: c.ID, Prefix: c.Prefix}

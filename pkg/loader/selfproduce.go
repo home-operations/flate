@@ -101,7 +101,7 @@ func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.
 	// producing local ConfigMaps/Secrets it doesn't own (and cascade its skip).
 	// See loader.ExternalSourcedKSIDs.
 	external := ExternalSourcedKSIDs(s, repoRoot)
-	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
+	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		if ks.Path == "" {
 			continue
 		}

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -83,10 +81,10 @@ func seedKSStore(n int) (*store.Store, map[manifest.NamedResource]string) {
 		path := fmt.Sprintf("./apps/app-%d", i)
 		ks := &manifest.Kustomization{
 			Name: name, Namespace: "flux-system",
-			KustomizationSpec: kustomizev1.KustomizationSpec{Path: path},
-			SourceKind:        manifest.KindGitRepository,
-			SourceName:        "flux-system",
-			SourceNamespace:   "flux-system",
+			Path:            path,
+			SourceKind:      manifest.KindGitRepository,
+			SourceName:      "flux-system",
+			SourceNamespace: "flux-system",
 		}
 		s.AddObject(ks)
 		sourceFiles[ks.Named()] = fmt.Sprintf("apps/app-%d/ks.yaml", i)

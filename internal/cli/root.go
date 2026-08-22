@@ -118,8 +118,7 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		// reportFailures already rendered a styled report for this error; don't
 		// reprint it as a flat "flate error: …" line.
-		var reported reportedError
-		if !errors.As(err, &reported) {
+		if _, ok := errors.AsType[reportedError](err); !ok {
 			_, _ = io.WriteString(stderr, "flate error: "+err.Error()+"\n")
 		}
 		return 1

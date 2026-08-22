@@ -293,7 +293,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	ksExpanded := map[manifest.NamedResource]struct{}{}
 	for {
 		added := 0
-		for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
+		for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 			id := ks.Named()
 			if _, seen := ksExpanded[id]; seen {
 				continue

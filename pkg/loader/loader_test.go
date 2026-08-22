@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -53,9 +51,9 @@ spec:
 	// covers apps/test/network/). Pre-seeded so the guard sees it regardless
 	// of walk order.
 	s.AddObject(&manifest.Kustomization{
-		Name:              "cluster-apps",
-		Namespace:         "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "apps/test"},
+		Name:      "cluster-apps",
+		Namespace: "flux-system",
+		Path:      "apps/test",
 	})
 
 	l := New(s)

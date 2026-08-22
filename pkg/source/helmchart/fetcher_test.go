@@ -14,18 +14,16 @@ import (
 func ociRepo(url string) *manifest.HelmRepository {
 	return &manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: url, Type: manifest.RepoTypeOCI},
+		URL: url, Type: manifest.RepoTypeOCI,
 	}
 }
 
 func helmChart(repoName, chart, version string) *manifest.HelmChartSource {
 	return &manifest.HelmChartSource{
 		Name: repoName + "-" + chart, Namespace: "flux-system",
-		HelmChartSpec: sourcev1.HelmChartSpec{
-			Chart:     chart,
-			Version:   version,
-			SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: repoName},
-		},
+		Chart:     chart,
+		Version:   version,
+		SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: repoName},
 	}
 }
 
@@ -47,9 +45,9 @@ func TestIsOCIHelmRepo(t *testing.T) {
 		repo *manifest.HelmRepository
 		want bool
 	}{
-		{"type oci", &manifest.HelmRepository{HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://x", Type: manifest.RepoTypeOCI}}, true},
-		{"oci:// url no type", &manifest.HelmRepository{HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "oci://reg/x"}}, true},
-		{"http default", &manifest.HelmRepository{HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "https://charts.example"}}, false},
+		{"type oci", &manifest.HelmRepository{URL: "https://x", Type: manifest.RepoTypeOCI}, true},
+		{"oci:// url no type", &manifest.HelmRepository{URL: "oci://reg/x"}, true},
+		{"http default", &manifest.HelmRepository{URL: "https://charts.example"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,7 +61,7 @@ func TestIsOCIHelmRepo(t *testing.T) {
 func TestSynthesizeOCIRepository(t *testing.T) {
 	r := &manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
-		HelmRepositorySpec: sourcev1.HelmRepositorySpec{URL: "oci://oci.trueforge.org/truecharts/", Type: manifest.RepoTypeOCI},
+		URL: "oci://oci.trueforge.org/truecharts/", Type: manifest.RepoTypeOCI,
 	}
 	syn := synthesizeOCIRepository(r, "kromgo", "3.0.0")
 	if syn.URL != "oci://oci.trueforge.org/truecharts/kromgo" {

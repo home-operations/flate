@@ -8,7 +8,6 @@ import (
 	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -37,7 +36,7 @@ data: {greeting: hi}
 	s := store.New()
 	bootstrap := &manifest.GitRepository{
 		Name: "flux-system", Namespace: "flux-system",
-		GitRepositorySpec: sourcev1.GitRepositorySpec{URL: "file://" + root},
+		URL: "file://" + root,
 	}
 	s.AddObject(bootstrap)
 	s.SetArtifact(bootstrap.Named(), &store.SourceArtifact{
@@ -82,11 +81,9 @@ func TestReconcile_HappyPath(t *testing.T) {
 	c, s, root := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./apps",
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-			},
+		Path: "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
@@ -123,11 +120,9 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./apps",
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-			},
+		Path: "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
@@ -168,11 +163,9 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./apps",
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-			},
+		Path: "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
@@ -228,11 +221,9 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./apps",
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-			},
+		Path: "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
@@ -286,11 +277,9 @@ func TestReconcile_SuspendShortCircuits(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "suspended", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./apps", Suspend: true,
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-			},
+		Path: "./apps", Suspend: true,
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 	}
@@ -314,11 +303,9 @@ func TestReconcile_MissingPathFails(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "broken", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./nonexistent",
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-			},
+		Path: "./nonexistent",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
@@ -344,13 +331,11 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 
 	ks := &manifest.Kustomization{
 		Name: "depender", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./apps",
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-			},
-			Timeout: &metav1.Duration{Duration: 100 * time.Millisecond},
+		Path: "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
+		Timeout:    &metav1.Duration{Duration: 100 * time.Millisecond},
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		DependsOn: []manifest.DependencyRef{
 			{NamedResource: dep.Named()},

@@ -8,8 +8,6 @@ import (
 	"sync"
 	"testing"
 
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -111,10 +109,8 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
-		},
-		Values: map[string]any{"image": map[string]any{"repository": "x"}},
+		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
+		Values:     map[string]any{"image": map[string]any{"repository": "x"}},
 	}
 	if err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
@@ -143,9 +139,7 @@ func TestExpandValueReferences_IgnoresConfigMapBinaryData(t *testing.T) {
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "mixed"}},
-		},
+		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "mixed"}},
 	}
 	if err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
@@ -178,9 +172,7 @@ func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
 	}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
-		},
+		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
 	}
 	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
 		t.Fatalf("malformed sibling must not fail the ref (Flux reads only the named key): %v", err)
@@ -200,9 +192,7 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 	}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
-		},
+		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
 	}
 	err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
 	if err == nil {
@@ -221,10 +211,8 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: "ConfigMap", Name: "k", ValuesKey: "v", TargetPath: "auth.password"},
-			},
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: "ConfigMap", Name: "k", ValuesKey: "v", TargetPath: "auth.password"},
 		},
 	}
 	if err := ExpandValueReferences(hr, provider, nil); err != nil {
@@ -246,15 +234,13 @@ environment = ["FOO=bar", "BAZ=qux"]
 	}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{
-					Kind:       "ConfigMap",
-					Name:       "runner",
-					ValuesKey:  "config.toml",
-					TargetPath: "runners.config",
-					Literal:    true,
-				},
+		ValuesFrom: []manifest.ValuesReference{
+			{
+				Kind:       "ConfigMap",
+				Name:       "runner",
+				ValuesKey:  "config.toml",
+				TargetPath: "runners.config",
+				Literal:    true,
 			},
 		},
 	}
@@ -279,15 +265,13 @@ func TestExpandValueReferences_LiteralTargetPathEscapedDot(t *testing.T) {
 	}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{
-					Kind:       "ConfigMap",
-					Name:       "scrape",
-					ValuesKey:  "value",
-					TargetPath: `annotations.prometheus\.io/scrape`,
-					Literal:    true,
-				},
+		ValuesFrom: []manifest.ValuesReference{
+			{
+				Kind:       "ConfigMap",
+				Name:       "scrape",
+				ValuesKey:  "value",
+				TargetPath: `annotations.prometheus\.io/scrape`,
+				Literal:    true,
 			},
 		},
 	}
@@ -304,10 +288,8 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Values: map[string]any{"existing": "kept"},
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k", Optional: true},
-			},
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k", Optional: true},
 		},
 	}
 	provider := &SliceProvider{}
@@ -325,10 +307,8 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 func TestExpandValueReferences_MissingRequiredTargetPathFails(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k"},
-			},
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k"},
 		},
 	}
 
@@ -346,10 +326,8 @@ func TestExpandValueReferences_MissingOptionalKeySkipped(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Values: map[string]any{"existing": "kept"},
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: "ConfigMap", Name: "extra", ValuesKey: "missing.yaml", Optional: true},
-			},
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: "ConfigMap", Name: "extra", ValuesKey: "missing.yaml", Optional: true},
 		},
 	}
 
@@ -376,9 +354,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 	hr := func() *manifest.HelmRelease {
 		return &manifest.HelmRelease{
 			Name: "demo", Namespace: "default",
-			HelmReleaseSpec: helmv2.HelmReleaseSpec{
-				ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "platform"}},
-			},
+			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "platform"}},
 		}
 	}
 
@@ -435,9 +411,7 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 	mk := func() *manifest.HelmRelease {
 		return &manifest.HelmRelease{
 			Name: "demo", Namespace: "default",
-			HelmReleaseSpec: helmv2.HelmReleaseSpec{
-				ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "platform"}},
-			},
+			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "platform"}},
 		}
 	}
 
@@ -473,9 +447,7 @@ func TestExpandValueReferences_NilCache(t *testing.T) {
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
-		},
+		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
 	}
 	if err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences nil cache: %v", err)
@@ -700,9 +672,7 @@ func nestedValuesCM() *manifest.ConfigMap {
 func wholeDocHR() *manifest.HelmRelease {
 	return &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "platform"}},
-		},
+		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "platform"}},
 	}
 }
 
@@ -768,11 +738,9 @@ func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T)
 	// corrupt it. The TargetPath presence must force the eager path.
 	b := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: "ConfigMap", Name: "platform"},
-				{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.pullPolicy"},
-			},
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: "ConfigMap", Name: "platform"},
+			{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.pullPolicy"},
 		},
 	}
 	if err := ExpandValueReferences(b, provider, cache); err != nil {
@@ -814,10 +782,8 @@ func TestExpandValueReferences_YAMLContainingPlaceholderIsMerged(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
 		Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: "ConfigMap", Name: "generator-cm"},
-			},
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: "ConfigMap", Name: "generator-cm"},
 		},
 	}
 	if err := ExpandValueReferences(hr, provider, nil); err != nil {
@@ -847,10 +813,8 @@ func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
 		Namespace: "default",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			ValuesFrom: []manifest.ValuesReference{
-				{Kind: "Secret", Name: "sops-secret"},
-			},
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: "Secret", Name: "sops-secret"},
 		},
 	}
 	if err := ExpandValueReferences(hr, provider, nil); err != nil {
@@ -860,4 +824,3 @@ func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
 		t.Errorf("expected empty values, got %v", hr.Values)
 	}
 }
-

@@ -107,7 +107,7 @@ func (c *Controller) Start(_ context.Context) {
 // dependency set (nil = terminalized) and whether id ended Ready. The
 // orchestrator's scheduler Dispatcher calls this for HelmRelease nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
-	return base.DispatchNode(ctx, c.Controller, id, drainLevel,
+	return c.DispatchNode(ctx, id, drainLevel,
 		func(hr *manifest.HelmRelease) bool { return hr.Suspend },
 		c.reconcile)
 }
@@ -154,8 +154,8 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		// with a patched copy; re-read so the rest of reconcile uses
 		// the canonical spec instead of the pre-patch snapshot we
 		// were dispatched with.
-		fresh, ok, err := base.RequireRefresh[*manifest.HelmRelease](
-			ctx, c.Controller, id, hr.Timeout,
+		fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](
+			ctx, id, hr.Timeout,
 			[]manifest.DependencyRef{{NamedResource: parent}},
 			"waiting for parent KS",
 			func(sum depwait.Summary) error {
@@ -183,8 +183,8 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		// with explicit spec.dependsOn but no structural parent — or one
 		// whose parent re-emitted us after the parent-gate cleared — keeps
 		// the pre-mutation snapshot through chart resolution.
-		fresh, ok, err := base.RequireRefresh[*manifest.HelmRelease](
-			ctx, c.Controller, id, hr.Timeout, deps,
+		fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](
+			ctx, id, hr.Timeout, deps,
 			"resolving dependencies", base.DepFailed(id))
 		if err != nil {
 			return err
@@ -564,18 +564,16 @@ func preparePrereqs(hr *manifest.HelmRelease) []manifest.DependencyRef {
 	// chartRefs); Prepare's ResolveChartRef would synchronously read
 	// the HelmChartSource from the store to materialize it.
 	if hr.Chart.RepoKind == manifest.KindHelmChart && hr.Chart.Version == "" {
-		out = append(out, manifest.DependencyRef{NamedResource: manifest.NamedResource{
-			Kind: manifest.KindHelmChart, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
-		}})
+		out = append(out, manifest.DependencyRef{
+			Kind: manifest.KindHelmChart, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName})
 	}
 
 	for _, ref := range hr.ValuesFrom {
 		if ref.Optional {
 			continue
 		}
-		out = append(out, manifest.DependencyRef{NamedResource: manifest.NamedResource{
-			Kind: ref.Kind, Namespace: hr.Namespace, Name: ref.Name,
-		}})
+		out = append(out, manifest.DependencyRef{
+			Kind: ref.Kind, Namespace: hr.Namespace, Name: ref.Name})
 	}
 
 	return out

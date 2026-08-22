@@ -559,7 +559,7 @@ configMapGenerator:
 	cmID := manifest.NamedResource{
 		Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings",
 	}
-	cm, _ := store.GetByName[*manifest.ConfigMap](st, manifest.KindConfigMap, "flux-system", "cluster-settings")
+	cm, _ := st.GetByName[*manifest.ConfigMap](manifest.KindConfigMap, "flux-system", "cluster-settings")
 	if cm == nil {
 		t.Fatalf("ConfigMap %s not synthesized from configMapGenerator", cmID)
 	}

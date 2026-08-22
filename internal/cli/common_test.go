@@ -302,8 +302,7 @@ func TestAggregateScopedFailures_FoldsBlocked(t *testing.T) {
 	if !strings.Contains(msg, "1 blocked") {
 		t.Errorf("blocked count should be summarized: %q", msg)
 	}
-	var fe *orchestrator.FailuresError
-	if !errors.As(err, &fe) {
+	if _, ok := errors.AsType[*orchestrator.FailuresError](err); !ok {
 		t.Errorf("aggregate must be a *orchestrator.FailuresError, got %T", err)
 	}
 }

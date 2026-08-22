@@ -101,8 +101,8 @@ func (r *RawObject) secret(name string, declaredKeys []string) ProducerTarget {
 
 func (r *RawObject) target(kind, name string, declaredKeys []string) ProducerTarget {
 	return ProducerTarget{
-		NamedResource: NamedResource{Kind: kind, Namespace: r.Namespace, Name: name},
-		DeclaredKeys:  declaredKeys,
+		Kind: kind, Namespace: r.Namespace, Name: name,
+		DeclaredKeys: declaredKeys,
 	}
 }
 

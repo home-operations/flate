@@ -91,10 +91,8 @@ func TestLocateOCIChart_NoArtifactErrors(t *testing.T) {
 	st := store.New()
 	repo := &manifest.OCIRepository{
 		Name: "chart", Namespace: "flux-system",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL:       "oci://ghcr.io/test/chart",
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "0.1.0"},
-		},
+		URL:       "oci://ghcr.io/test/chart",
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "0.1.0"},
 	}
 	st.AddObject(repo)
 	// Intentionally NO SetArtifact.
@@ -232,9 +230,7 @@ func setupOCIChartTest(t *testing.T, slot, label string) (*Client, *manifest.Hel
 	st := store.New()
 	repo := &manifest.OCIRepository{
 		Name: "chart-" + label, Namespace: "flux-system",
-		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL: "oci://ghcr.io/test/chart-" + label,
-		},
+		URL: "oci://ghcr.io/test/chart-" + label,
 	}
 	st.AddObject(repo)
 	st.SetArtifact(repo.Named(), &store.SourceArtifact{

@@ -19,12 +19,10 @@ func TestApplyNamespaceInheritance_FluxTargetNamespaceWins(t *testing.T) {
 
 	s := store.New()
 	parent := &manifest.Kustomization{
-		Name:      "plex",
-		Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path:            "apps/plex",
-			TargetNamespace: "media",
-		},
+		Name:            "plex",
+		Namespace:       "flux-system",
+		Path:            "apps/plex",
+		TargetNamespace: "media",
 	}
 	hr := &manifest.HelmRelease{
 		Name:      "plex",
@@ -154,9 +152,7 @@ func TestApplyNamespaceInheritance_CrossTreeBasePattern(t *testing.T) {
 	// spec.targetNamespace is set in the source YAML.
 	ks := &manifest.Kustomization{
 		Name: "romm",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			Path: "./apps/base/games/romm",
-		},
+		Path: "./apps/base/games/romm",
 	}
 	hr := &manifest.HelmRelease{Name: "romm"}
 	s.AddObject(ks)
@@ -252,11 +248,9 @@ func TestApplyNamespaceInheritance_FluxOperatorAndHelmChartSource(t *testing.T) 
 	s := store.New()
 	ks := &manifest.Kustomization{
 		Name: "workload",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind: manifest.KindGitRepository,
-				Name: "repo",
-			},
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository,
+			Name: "repo",
 		},
 		SourceKind:      manifest.KindGitRepository,
 		SourceName:      "repo",
@@ -265,19 +259,17 @@ func TestApplyNamespaceInheritance_FluxOperatorAndHelmChartSource(t *testing.T) 
 			"metadata": map[string]any{"name": "workload"},
 		},
 		DependsOn: []manifest.DependencyRef{{
-			NamedResource: manifest.NamedResource{Kind: manifest.KindKustomization, Name: "infra"},
+			Kind: manifest.KindKustomization, Name: "infra",
 		}},
 	}
 	rs := &manifest.ResourceSet{Name: "apps"}
 	rsip := &manifest.ResourceSetInputProvider{Name: "apps-inputs"}
 	hc := &manifest.HelmChartSource{
-		Name: "chart",
-		HelmChartSpec: sourcev1.HelmChartSpec{
-			Chart: "podinfo",
-			SourceRef: sourcev1.LocalHelmChartSourceReference{
-				Kind: manifest.KindHelmRepository,
-				Name: "podinfo",
-			},
+		Name:  "chart",
+		Chart: "podinfo",
+		SourceRef: sourcev1.LocalHelmChartSourceReference{
+			Kind: manifest.KindHelmRepository,
+			Name: "podinfo",
 		},
 	}
 	s.AddObject(ks)

@@ -48,6 +48,11 @@ type Filter struct {
 	// side). Nil means no exclusions.
 	externalKS map[manifest.NamedResource]struct{}
 
+	// fileOwners is resolve()'s fallback for a file no claimed spec.path
+	// prefix covers — typically loader.SelfProduceIndex.OwnersOfFile.
+	// Nil disables the fallback. See ownershipIndex.fileOwners.
+	fileOwners FileOwnerLookup
+
 	// objs is captured from NewFilter so runtime AddEmitted can
 	// walk transitiveDeps without the caller re-supplying it. The
 	// pointer is set once at construction and never reassigned —
@@ -145,7 +150,7 @@ func keyOf(id manifest.NamedResource) nameKey {
 //     a forward dep of step 4), so a single HR edit can't reverse-
 //     cascade into every sibling sharing its source.
 func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister) *Filter {
-	return NewFilterWithCache(changes, sourceFiles, repoRoot, objs, nil, nil, nil)
+	return NewFilterWithCache(changes, sourceFiles, repoRoot, objs, nil, nil, nil, nil)
 }
 
 // NewFilterWithCache is NewFilter with a shared
@@ -168,7 +173,11 @@ func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repo
 // loader.ExternalSourcedKSIDs) whose path claims resolve() must drop
 // from the ownership index; see buildOwnership. Pass nil for no
 // exclusions.
-func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache, consumerRefs map[manifest.NamedResource][]manifest.NamedResource, externalKS map[manifest.NamedResource]struct{}) *Filter {
+//
+// fileOwners is resolve()'s fallback ownership lookup for a file no
+// claimed spec.path prefix covers (a resources: escape); pass nil to
+// disable the fallback.
+func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache, consumerRefs map[manifest.NamedResource][]manifest.NamedResource, externalKS map[manifest.NamedResource]struct{}, fileOwners FileOwnerLookup) *Filter {
 	f := &Filter{
 		changes:        changes,
 		sourceFiles:    sourceFiles,
@@ -177,6 +186,7 @@ func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]str
 		componentCache: cache,
 		consumerRefs:   consumerRefs,
 		externalKS:     externalKS,
+		fileOwners:     fileOwners,
 	}
 	if changes == nil {
 		return f
@@ -484,7 +494,7 @@ func (f *Filter) resolve() {
 		queue = append(queue, id)
 	}
 
-	owners := buildOwnership(objs, f.repoRoot, f.componentCache, f.externalKS)
+	owners := buildOwnership(objs, f.repoRoot, f.componentCache, f.externalKS, f.fileOwners)
 	// enqueueAncestorChain marks the structural parent that owns file
 	// (longest-prefix spec.path match) plus its meta-Kustomization
 	// ancestors as ancestor-only — they must render to inject patches /

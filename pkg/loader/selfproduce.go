@@ -32,6 +32,12 @@ type SelfProduceIndex struct {
 	// emissionParentByFile: cross-tree base ks.yaml path → its single emitting
 	// parent KS. See EmissionParentByFile.
 	emissionParentByFile map[string]manifest.NamedResource
+	// filesByKS: every file the walk reads (each layer's kustomization
+	// file plus every resource file) → the top-level Kustomization(s)
+	// that reached it. Unlike the prefix claim index, this follows the
+	// actual resources:/components: graph, so it also covers a
+	// resources: escape outside every claimed spec.path. See OwnersOfFile.
+	filesByKS map[string][]manifest.NamedResource
 }
 
 // ProducedBy returns the Kustomizations whose render subtree emits cm.
@@ -42,6 +48,19 @@ func (i *SelfProduceIndex) ProducedBy(cm manifest.NamedResource) []manifest.Name
 		return nil
 	}
 	return i.byID[cm]
+}
+
+// OwnersOfFile returns the top-level Kustomization(s) whose render
+// subtree reads file, regardless of whether file falls under any
+// claimed spec.path. Used by change.ownershipIndex as a fallback when
+// the prefix claim index finds no owner — a resources: escape (#833).
+// Multiple owners are possible when peer overlays share a base.
+// Nil-safe.
+func (i *SelfProduceIndex) OwnersOfFile(file string) []manifest.NamedResource {
+	if i == nil {
+		return nil
+	}
+	return i.filesByKS[file]
 }
 
 // EmissionParentByFile returns the Flux Kustomization whose render subtree emits
@@ -83,6 +102,7 @@ func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.
 	idx := &SelfProduceIndex{
 		byID:                 map[manifest.NamedResource][]manifest.NamedResource{},
 		emissionParentByFile: map[string]manifest.NamedResource{},
+		filesByKS:            map[string][]manifest.NamedResource{},
 	}
 	if repoRoot == "" {
 		return idx
@@ -121,8 +141,9 @@ func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.
 }
 
 type cachedDir struct {
-	d  kustomizeDirectives
-	ok bool
+	d    kustomizeDirectives
+	file string
+	ok   bool
 }
 
 type selfProduceBuilder struct {
@@ -151,14 +172,15 @@ type selfProduceBuilder struct {
 }
 
 // directives returns the (memoized) kustomization directives at the
-// repo-relative dir; ok is false when no kustomization file is present.
-func (b *selfProduceBuilder) directives(dir string) (kustomizeDirectives, bool) {
+// repo-relative dir, plus the repo-relative path of the kustomization file
+// itself; ok is false when no kustomization file is present.
+func (b *selfProduceBuilder) directives(dir string) (kustomizeDirectives, string, bool) {
 	if c, ok := b.dirs[dir]; ok {
-		return c.d, c.ok
+		return c.d, c.file, c.ok
 	}
-	d, ok := readKustomizeDirectives(b.repoRoot, dir)
-	b.dirs[dir] = cachedDir{d: d, ok: ok}
-	return d, ok
+	d, file, ok := readKustomizeDirectives(b.repoRoot, dir)
+	b.dirs[dir] = cachedDir{d: d, file: file, ok: ok}
+	return d, file, ok
 }
 
 // walkRoot enumerates the base(s) of a Flux Kustomization's spec.path and
@@ -174,7 +196,7 @@ func (b *selfProduceBuilder) walkRoot(ks *manifest.Kustomization) {
 	specDir := manifest.NormalizeClaimBase(ks.Path)
 	visited := map[string]struct{}{}
 
-	if _, ok := b.directives(specDir); ok {
+	if _, _, ok := b.directives(specDir); ok {
 		b.walkBase(specDir, "", rootNS, id, visited)
 		return
 	}
@@ -187,7 +209,7 @@ func (b *selfProduceBuilder) walkRoot(ks *manifest.Kustomization) {
 			continue
 		}
 		sub := path.Join(specDir, e.Name())
-		if _, ok := b.directives(sub); ok {
+		if _, _, ok := b.directives(sub); ok {
 			b.walkBase(sub, "", rootNS, id, visited)
 		}
 	}
@@ -214,10 +236,11 @@ func (b *selfProduceBuilder) walkBase(dir, parentNS, rootNS string, ks manifest.
 	}
 	visited[key] = struct{}{}
 
-	d, ok := b.directives(dir)
+	d, file, ok := b.directives(dir)
 	if !ok {
 		return
 	}
+	b.recordFile(file, ks)
 	baseNS := cmp.Or(parentNS, d.Namespace)
 
 	for _, r := range d.Resources {
@@ -263,6 +286,7 @@ func (b *selfProduceBuilder) walkBase(dir, parentNS, rootNS string, ks manifest.
 // parse-error / envsubst filtering, so the recorded ConfigMap set stays
 // identical to the prior parseFile-based recording.
 func (b *selfProduceBuilder) recordProduced(relFile, baseNS, rootNS string, ks manifest.NamedResource) {
+	b.recordFile(relFile, ks)
 	_ = decodeFileObjects(filepath.Join(b.repoRoot, relFile),
 		manifest.ParseDocOptions{WipeSecrets: true}, true,
 		func(obj manifest.BaseManifest) {
@@ -315,6 +339,16 @@ func (b *selfProduceBuilder) recordConfigMap(cm *manifest.ConfigMap, baseNS, roo
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ns, Name: cm.Name}
 	b.idx.byID[id] = appendUniqueProducer(b.idx.byID[id], ks)
+}
+
+// recordFile attributes relFile to ks in SelfProduceIndex.filesByKS (see
+// OwnersOfFile). Called for every file the walk reads, regardless of
+// what it parses as.
+func (b *selfProduceBuilder) recordFile(relFile string, ks manifest.NamedResource) {
+	if relFile == "" {
+		return
+	}
+	b.idx.filesByKS[relFile] = appendUniqueProducer(b.idx.filesByKS[relFile], ks)
 }
 
 // recordEmittedKS notes that ks's render subtree reaches a Flux Kustomization

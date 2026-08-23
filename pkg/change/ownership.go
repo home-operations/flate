@@ -32,7 +32,16 @@ type ownershipIndex struct {
 	byPrefix       map[string][]manifest.NamedResource
 	ownersCache    map[string][]manifest.NamedResource
 	ancestorsCache map[string][]manifest.NamedResource
+	// fileOwners is consulted by ownersOf when no claimed prefix matches —
+	// a `resources:` reference that escapes every Kustomization's own
+	// spec.path (#833). nil disables the fallback. Typically
+	// loader.SelfProduceIndex.OwnersOfFile.
+	fileOwners FileOwnerLookup
 }
+
+// FileOwnerLookup answers "which Kustomization(s) render this file", for
+// files no spec.path-prefix claim covers. See ownershipIndex.fileOwners.
+type FileOwnerLookup func(file string) []manifest.NamedResource
 
 // buildOwnership records every Flux KS's spec.path, spec.components,
 // and any `components:` referenced from the kustomization.yaml at
@@ -53,7 +62,7 @@ type ownershipIndex struct {
 // routes every changed file's ancestor chain through that KS; its own
 // dependsOn then blocks the whole graph as a cycle (same shape as the
 // loader-side issue #752). Mirrors KSPathPrefixesLocalOnly.
-func buildOwnership(objs ObjectLister, repoRoot string, cache *manifest.ComponentCache, externalKS map[manifest.NamedResource]struct{}) ownershipIndex {
+func buildOwnership(objs ObjectLister, repoRoot string, cache *manifest.ComponentCache, externalKS map[manifest.NamedResource]struct{}, fileOwners FileOwnerLookup) ownershipIndex {
 	objList := objs.ListObjects(manifest.KindKustomization)
 	kss := make([]*manifest.Kustomization, 0, len(objList))
 	for _, obj := range objList {
@@ -83,6 +92,7 @@ func buildOwnership(objs ObjectLister, repoRoot string, cache *manifest.Componen
 		byPrefix:       byPrefix,
 		ownersCache:    make(map[string][]manifest.NamedResource),
 		ancestorsCache: make(map[string][]manifest.NamedResource),
+		fileOwners:     fileOwners,
 	}
 }
 
@@ -138,6 +148,9 @@ func (idx ownershipIndex) ownersOf(file string) []manifest.NamedResource {
 	return memoize(idx.ownersCache, file, func() []manifest.NamedResource {
 		for ids := range idx.matchingPrefixes(file) {
 			return ids // longest match first — take it and stop
+		}
+		if idx.fileOwners != nil {
+			return idx.fileOwners(file)
 		}
 		return nil
 	})

@@ -143,7 +143,7 @@ func resolveInjectedTargetNamespace(repoRoot, overlayDir string) nsResolution {
 // sets Kustomization spec/targetNamespace, the directive value is the namespace
 // that transformer injects.
 func transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
-	d, ok := readKustomizeDirectives(repoRoot, overlayDir)
+	d, _, ok := readKustomizeDirectives(repoRoot, overlayDir)
 	if !ok || len(d.Transformers) == 0 {
 		return nsResolution{}
 	}
@@ -152,7 +152,7 @@ func transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
 		if !ok {
 			continue
 		}
-		td, ok := readKustomizeDirectives(repoRoot, transformerDir)
+		td, _, ok := readKustomizeDirectives(repoRoot, transformerDir)
 		if !ok || td.Namespace == "" {
 			continue
 		}
@@ -173,7 +173,7 @@ func transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
 // left unstamped rather than guessed, and a bare `namespace:` directive with no
 // targetNamespace rule is owned by metadata.namespace inheritance, not us.
 func replacementInjectedNamespace(repoRoot, overlayDir string) nsResolution {
-	d, ok := readKustomizeDirectives(repoRoot, overlayDir)
+	d, _, ok := readKustomizeDirectives(repoRoot, overlayDir)
 	if !ok || d.Namespace == "" || len(d.Replacements) == 0 {
 		return nsResolution{}
 	}
@@ -198,7 +198,7 @@ func subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]str
 		return false
 	}
 	visited[dir] = struct{}{}
-	d, ok := readKustomizeDirectives(repoRoot, dir)
+	d, _, ok := readKustomizeDirectives(repoRoot, dir)
 	if !ok {
 		return false
 	}
@@ -377,10 +377,11 @@ func fieldMatches(single string, plural []string, want string) bool {
 
 // readKustomizeDirectives reads the kustomization file in dir (resolved
 // under repoRoot) and returns its namespace/resources/transformers/
-// components/replacements fields. ok is false when no kustomization file is
+// components/replacements fields, plus the repo-relative path of the
+// kustomization file itself. ok is false when no kustomization file is
 // present or it can't be parsed — pure best-effort, same contract as
 // readKustomizeNamespace.
-func readKustomizeDirectives(repoRoot, dir string) (kustomizeDirectives, bool) {
+func readKustomizeDirectives(repoRoot, dir string) (kustomizeDirectives, string, bool) {
 	for _, name := range manifest.KustomizeBuilderFilenames {
 		data, err := os.ReadFile(filepath.Join(repoRoot, dir, name)) //nolint:gosec // path composed from known cluster layout
 		if err != nil {
@@ -390,7 +391,7 @@ func readKustomizeDirectives(repoRoot, dir string) (kustomizeDirectives, bool) {
 		if err := yaml.Unmarshal(data, &d); err != nil {
 			continue
 		}
-		return d, true
+		return d, path.Join(dir, name), true
 	}
-	return kustomizeDirectives{}, false
+	return kustomizeDirectives{}, "", false
 }

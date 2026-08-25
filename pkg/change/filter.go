@@ -48,9 +48,9 @@ type Filter struct {
 	// side). Nil means no exclusions.
 	externalKS map[manifest.NamedResource]struct{}
 
-	// fileOwners is resolve()'s fallback for a file no claimed spec.path
-	// prefix covers — typically loader.SelfProduceIndex.OwnersOfFile.
-	// Nil disables the fallback. See ownershipIndex.fileOwners.
+	// fileOwners supplements resolve()'s prefix-claim ownership lookup —
+	// typically loader.SelfProduceIndex.OwnersOfFile. Nil disables it.
+	// See ownershipIndex.fileOwners.
 	fileOwners FileOwnerLookup
 
 	// objs is captured from NewFilter so runtime AddEmitted can
@@ -174,9 +174,10 @@ func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repo
 // from the ownership index; see buildOwnership. Pass nil for no
 // exclusions.
 //
-// fileOwners is resolve()'s fallback ownership lookup for a file no
-// claimed spec.path prefix covers (a resources: escape); pass nil to
-// disable the fallback.
+// fileOwners supplements resolve()'s prefix-claim ownership lookup with
+// any Kustomization that reads a file via resources: — including one
+// pulled in from outside every claimed spec.path; pass nil to disable
+// it.
 func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache, consumerRefs map[manifest.NamedResource][]manifest.NamedResource, externalKS map[manifest.NamedResource]struct{}, fileOwners FileOwnerLookup) *Filter {
 	f := &Filter{
 		changes:        changes,

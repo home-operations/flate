@@ -52,8 +52,9 @@ func (i *SelfProduceIndex) ProducedBy(cm manifest.NamedResource) []manifest.Name
 
 // OwnersOfFile returns the top-level Kustomization(s) whose render
 // subtree reads file, regardless of whether file falls under any
-// claimed spec.path. Used by change.ownershipIndex as a fallback when
-// the prefix claim index finds no owner — a resources: escape (#833).
+// claimed spec.path. Used by change.ownershipIndex to supplement the
+// prefix claim index with resources: reads a prefix match alone can't
+// see (#833) — including a file another KS also claims by prefix.
 // Multiple owners are possible when peer overlays share a base.
 // Nil-safe.
 func (i *SelfProduceIndex) OwnersOfFile(file string) []manifest.NamedResource {

@@ -32,15 +32,17 @@ type ownershipIndex struct {
 	byPrefix       map[string][]manifest.NamedResource
 	ownersCache    map[string][]manifest.NamedResource
 	ancestorsCache map[string][]manifest.NamedResource
-	// fileOwners is consulted by ownersOf when no claimed prefix matches —
-	// a `resources:` reference that escapes every Kustomization's own
-	// spec.path (#833). nil disables the fallback. Typically
+	// fileOwners is always consulted by ownersOf, in addition to the
+	// prefix match — a `resources:` reference can pull a file in from
+	// outside (or alongside) another Kustomization's own claimed
+	// spec.path (#833). nil disables the lookup. Typically
 	// loader.SelfProduceIndex.OwnersOfFile.
 	fileOwners FileOwnerLookup
 }
 
-// FileOwnerLookup answers "which Kustomization(s) render this file", for
-// files no spec.path-prefix claim covers. See ownershipIndex.fileOwners.
+// FileOwnerLookup answers "which Kustomization(s) read this file",
+// supplementing the spec.path-prefix claim with resources: references a
+// prefix match alone can't see. See ownershipIndex.fileOwners.
 type FileOwnerLookup func(file string) []manifest.NamedResource
 
 // buildOwnership records every Flux KS's spec.path, spec.components,
@@ -141,18 +143,24 @@ func (idx ownershipIndex) matchingPrefixes(file string) iter.Seq[[]manifest.Name
 	}
 }
 
-// ownersOf returns every KS that claims the longest-matching prefix
-// of file. Multiple KSes are possible when a shared component is in
+// ownersOf returns every KS that claims the longest-matching prefix of
+// file, plus any additional owner fileOwners reports for it. The two
+// sets aren't mutually exclusive: a file can sit under one KS's claimed
+// spec.path AND be pulled in separately by another KS's resources:
+// entry, so a prefix hit must not short-circuit the fileOwners lookup
+// (#833). Multiple KSes are also possible when a shared component is in
 // play. Results are memoized — see ownershipIndex doc.
 func (idx ownershipIndex) ownersOf(file string) []manifest.NamedResource {
 	return memoize(idx.ownersCache, file, func() []manifest.NamedResource {
+		var owners []manifest.NamedResource
 		for ids := range idx.matchingPrefixes(file) {
-			return ids // longest match first — take it and stop
+			owners = appendUniqueProducers(owners, ids) // longest match first
+			break
 		}
 		if idx.fileOwners != nil {
-			return idx.fileOwners(file)
+			owners = appendUniqueProducers(owners, idx.fileOwners(file))
 		}
-		return nil
+		return owners
 	})
 }
 

@@ -292,6 +292,42 @@ func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 	}
 }
 
+// TestFilter_FileOwnerMergesWithPrefixClaim: an escaped resource can sit
+// under ANOTHER Kustomization's own claimed spec.path. A prefix hit
+// there must not skip the fileOwners lookup — both the prefix claimant
+// and the KS that reads the file via resources: need to be kept.
+func TestFilter_FileOwnerMergesWithPrefixClaim(t *testing.T) {
+	postgres := &manifest.Kustomization{Name: "postgres", Namespace: "flux-system", Path: "apps/base/postgres"}
+	apps := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "apps/homelab"}
+	postgresID, appsID := postgres.Named(), apps.Named()
+	const baseFile = "apps/base/postgres/cluster.yaml"
+
+	fileOwners := func(file string) []manifest.NamedResource {
+		if file == baseFile {
+			return []manifest.NamedResource{appsID}
+		}
+		return nil
+	}
+
+	f := NewFilterWithCache(
+		NewSet([]string{baseFile}),
+		map[manifest.NamedResource]string{
+			postgresID: "apps/base/postgres/kustomization.yaml",
+			appsID:     "apps/homelab/kustomization.yaml",
+		},
+		"",
+		testutil.MapLister{postgresID: postgres, appsID: apps},
+		nil, nil, nil,
+		fileOwners,
+	)
+	if !f.ShouldReconcile(postgresID) {
+		t.Errorf("prefix claimant must still be kept; keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(appsID) {
+		t.Errorf("fileOwners owner must be kept alongside the prefix claimant; keep=%v", f.KeepNames())
+	}
+}
+
 // TestFilter_NoFileOwnerFallbackLeavesUnclaimedFileUnowned pins the
 // pre-fix behavior: without a FileOwnerLookup, an unclaimed file's
 // change resolves to an empty keep set.

@@ -40,11 +40,6 @@ archives:
         formats:
           - zip
 
-upx:
-  - enabled: true
-    compress: best
-    lzma: true
-
 checksum:
   algorithm: sha256
   split: true

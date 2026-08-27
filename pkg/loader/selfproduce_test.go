@@ -148,6 +148,35 @@ func TestBuildSelfProduceIndex_OwnersOfFileDanglingResource(t *testing.T) {
 	}
 }
 
+// TestBuildSelfProduceIndex_OwnersOfFileDanglingDirectory: the directory
+// form of the dangling case. A resources: entry pointing at a directory
+// that no longer exists records only the directory path, but change
+// detection reports the deleted files individually — OwnersOfFile must
+// resolve them through the recorded parent directory.
+func TestBuildSelfProduceIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
+
+	s := store.New()
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
+	s.AddObject(ks)
+
+	idx := BuildSelfProduceIndex(s, dir, nil, true)
+
+	for _, file := range []string{
+		"apps/base/postgres/kustomization.yaml",
+		"apps/base/postgres/nested/cluster.yaml",
+	} {
+		if got := idx.OwnersOfFile(file); !slices.Contains(got, ks.Named()) {
+			t.Errorf("OwnersOfFile(%s under deleted dir) = %v, want to contain apps", file, got)
+		}
+	}
+	if got := idx.OwnersOfFile("apps/base/redis/cm.yaml"); got != nil {
+		t.Errorf("OwnersOfFile(unrelated file) = %v, want nil", got)
+	}
+}
+
 // EmissionParentByFile records a base ks.yaml reached cross-tree through EXACTLY
 // one parent's render subtree (apps/base/app-a/ks.yaml pulled in via
 // apps/test/app-a -> ../../base/app-a, applied by cluster-apps) — the #777 gate

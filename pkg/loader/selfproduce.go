@@ -61,7 +61,19 @@ func (i *SelfProduceIndex) OwnersOfFile(file string) []manifest.NamedResource {
 	if i == nil {
 		return nil
 	}
-	return i.filesByKS[file]
+	if owners, ok := i.filesByKS[file]; ok {
+		return owners
+	}
+	// No direct hit: the walk only records a directory key when a
+	// resources: entry pointed at a directory that no longer exists, so a
+	// parent-directory hit means file was deleted along with that
+	// directory while the entry still references it.
+	for dir := path.Dir(file); dir != "." && dir != "/"; dir = path.Dir(dir) {
+		if owners, ok := i.filesByKS[dir]; ok {
+			return owners
+		}
+	}
+	return nil
 }
 
 // EmissionParentByFile returns the Flux Kustomization whose render subtree emits

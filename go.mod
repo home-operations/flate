@@ -23,7 +23,7 @@ require (
 	github.com/fluxcd/source-controller/api v1.9.4
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-task/slim-sprig/v3 v3.0.0
-	github.com/gofrs/flock v0.13.0
+	github.com/gofrs/flock v0.13.1
 	github.com/gonvenience/ytbx v1.5.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0

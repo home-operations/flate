@@ -252,6 +252,11 @@ func (b *selfProduceBuilder) walkBase(dir, parentNS, rootNS string, ks manifest.
 		resolved = filepath.ToSlash(resolved)
 		info, err := os.Stat(filepath.Join(b.repoRoot, resolved))
 		if err != nil {
+			// Still attribute the path: a resource deleted from this tree
+			// while its resources: entry remains must resolve to ks in
+			// changed-only mode so the broken reference renders and fails
+			// loud instead of being skipped.
+			b.recordFile(resolved, ks)
 			continue
 		}
 		if info.IsDir() {

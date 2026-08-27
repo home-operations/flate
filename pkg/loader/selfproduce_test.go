@@ -125,6 +125,29 @@ func TestBuildSelfProduceIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 	}
 }
 
+// TestBuildSelfProduceIndex_OwnersOfFileDanglingResource: a resources: entry
+// whose file is missing from this tree (deleted, entry left behind) must
+// still be attributed to the Kustomization that references it. Otherwise
+// changed-only mode finds no owner for the deleted path and silently skips
+// the broken reference instead of rendering it and failing loud.
+func TestBuildSelfProduceIndex_OwnersOfFileDanglingResource(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
+	testutil.WriteFile(t, dir, "apps/base/postgres/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cluster.yaml\n")
+
+	s := store.New()
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
+	s.AddObject(ks)
+
+	idx := BuildSelfProduceIndex(s, dir, nil, true)
+
+	if got := idx.OwnersOfFile("apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
+		t.Errorf("OwnersOfFile(dangling cluster.yaml) = %v, want to contain apps", got)
+	}
+}
+
 // EmissionParentByFile records a base ks.yaml reached cross-tree through EXACTLY
 // one parent's render subtree (apps/base/app-a/ks.yaml pulled in via
 // apps/test/app-a -> ../../base/app-a, applied by cluster-apps) — the #777 gate

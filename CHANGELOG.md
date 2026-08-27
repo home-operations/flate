@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.1](https://github.com/home-operations/flate/compare/v0.6.0...v0.6.1) (2026-08-27)
+
+
+### Features
+
+* **go:** update kubernetes monorepo (v0.36.4 → v0.37.0) ([#939](https://github.com/home-operations/flate/issues/939)) ([4355aaa](https://github.com/home-operations/flate/commit/4355aaacaa77939c26a58f5472e6a968ee746704))
+
+
+### Bug Fixes
+
+* drop UPX compression, packed binaries segfault (upx/upx[#18902](https://github.com/home-operations/flate/issues/18902)) ([#935](https://github.com/home-operations/flate/issues/935)) ([ea3d95b](https://github.com/home-operations/flate/commit/ea3d95b1c3188d6c01754611a3558b82d33c15b9))
+* **go:** update module charm.land/bubbles/v2 (v2.2.0 → v2.2.1) ([#931](https://github.com/home-operations/flate/issues/931)) ([a41b3be](https://github.com/home-operations/flate/commit/a41b3bea960be7d3f607e745648f2c075a3ad5bf))
+
+
+### Miscellaneous Chores
+
+* **github-action:** update action docker/github-builder (v1.16.0 → v1.17.0) ([#932](https://github.com/home-operations/flate/issues/932)) ([87ff16f](https://github.com/home-operations/flate/commit/87ff16f2d82817ed17f192f01de730422e99f6d7))
+* **mise:** update mise tools ([#929](https://github.com/home-operations/flate/issues/929)) ([5481169](https://github.com/home-operations/flate/commit/5481169e7434cd186a491a4eeedbbb4844f80ce5))
+
 ## [0.6.0](https://github.com/home-operations/flate/compare/v0.5.1...v0.6.0) (2026-08-22)
 
 

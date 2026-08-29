@@ -61,19 +61,17 @@ func (i *SelfProduceIndex) OwnersOfFile(file string) []manifest.NamedResource {
 	if i == nil {
 		return nil
 	}
-	if owners, ok := i.filesByKS[file]; ok {
-		return owners
-	}
-	// No direct hit: the walk only records a directory key when a
-	// resources: entry pointed at a directory that no longer exists, so a
-	// parent-directory hit means file was deleted along with that
-	// directory while the entry still references it.
+	// A directory key exists only for a resources: entry whose directory is
+	// gone, so a parent hit means file was deleted with it. Union it with any
+	// exact hit: a peer KS may claim the file directly while another owns the
+	// deleted directory. Clone so the append never mutates the stored slice.
+	owners := slices.Clone(i.filesByKS[file])
 	for dir := path.Dir(file); dir != "." && dir != "/"; dir = path.Dir(dir) {
-		if owners, ok := i.filesByKS[dir]; ok {
-			return owners
+		for _, ks := range i.filesByKS[dir] {
+			owners = appendUniqueProducer(owners, ks)
 		}
 	}
-	return nil
+	return owners
 }
 
 // EmissionParentByFile returns the Flux Kustomization whose render subtree emits
@@ -279,6 +277,9 @@ func (b *selfProduceBuilder) walkBase(dir, parentNS, rootNS string, ks manifest.
 		// used for paths that get opened (resolveResourcePath permits
 		// escapes for the dir-descent case only).
 		if _, ok := resolveDataPath(dir, r); !ok {
+			// Escaping file: not opened for content, but still attributed so
+			// changed-only mode keeps ks when it is the only edit (#833).
+			b.recordFile(resolved, ks)
 			continue
 		}
 		b.recordProduced(resolved, baseNS, rootNS, ks)

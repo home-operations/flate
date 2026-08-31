@@ -38,6 +38,7 @@ const (
 type htmlData struct {
 	Changed, Added, Removed int
 	ChromaCSS               template.CSS // light + dark token stylesheets (chroma)
+	Suppressed              []string     // one-sided render failures withheld from the diff
 	Tree                    []treeParent // sidebar navigation
 	Resources               []htmlResource
 }
@@ -118,6 +119,9 @@ func renderHTML(left, right []Doc, opts Options) ([]byte, error) {
 	}
 
 	data := htmlData{ChromaCSS: template.CSS(css)} //nolint:gosec // chroma-generated stylesheet, not user input
+	for _, s := range opts.Suppressed {
+		data.Suppressed = append(data.Suppressed, s.String())
+	}
 	for _, p := range pair(left, right) {
 		from, err := marshalForUnified(p.a)
 		if err != nil {
@@ -142,7 +146,7 @@ func renderHTML(left, right []Doc, opts Options) ([]byte, error) {
 			data.Changed++
 		}
 	}
-	if len(data.Resources) == 0 {
+	if len(data.Resources) == 0 && len(data.Suppressed) == 0 {
 		return nil, nil // no diff — emit nothing, matching the other formats
 	}
 	data.Tree = buildTree(data.Resources)

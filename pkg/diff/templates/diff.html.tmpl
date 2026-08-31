@@ -107,6 +107,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 /* ── Resource header (sticky) ────────────────────────────────────────────── */
 .placeholder { color: var(--muted); padding: 24px 4px; font-size: 14px; }
+.suppressed { margin: 12px 16px 0; padding: 10px 12px; border: 1px solid #d4a72c; border-radius: 6px; background: rgba(212,167,44,.12); font-size: 13px; }
 .resource { display: none; }
 .resource.active { display: block; }
 /* Title + parent stick together as one block, above the diff's z-1/2 overlays,
@@ -236,7 +237,8 @@ tr.folded { display: none; }
   </nav>
   <div class="splitter" id="splitter"></div>
   <main class="content">
-    <div class="placeholder" id="placeholder">Select a resource from the tree to view its diff.</div>
+    {{range .Suppressed}}<div class="suppressed">&#9888; {{.}}</div>
+    {{end}}<div class="placeholder" id="placeholder">Select a resource from the tree to view its diff.</div>
     {{range $res := .Resources}}
     <section class="resource" id="{{$res.ID}}">
       <div class="rtop">

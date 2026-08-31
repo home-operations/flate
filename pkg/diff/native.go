@@ -34,7 +34,11 @@ func renderNative(left, right []Doc, opts Options) ([]byte, error) {
 	if style == "" {
 		style = FormatHuman
 	}
-	return dyffReport(from, to, style)
+	body, err := dyffReport(from, to, style)
+	if err != nil {
+		return nil, err
+	}
+	return withHeader(suppressionHeader(opts, notePrefix(style)), body), nil
 }
 
 // multiDocInput marshals a doc set into a single multi-document YAML

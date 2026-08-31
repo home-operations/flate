@@ -17,7 +17,7 @@ require (
 	github.com/fluxcd/kustomize-controller/api v1.9.4
 	github.com/fluxcd/pkg/apis/kustomize v1.20.0
 	github.com/fluxcd/pkg/apis/meta v1.31.0
-	github.com/fluxcd/pkg/envsubst v1.7.0
+	github.com/fluxcd/pkg/envsubst v1.8.0
 	github.com/fluxcd/pkg/kustomize v1.39.0
 	github.com/fluxcd/pkg/sourceignore v0.18.0
 	github.com/fluxcd/source-controller/api v1.9.4

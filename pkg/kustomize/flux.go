@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"sync"
 
@@ -46,11 +45,14 @@ var BuildMutex sync.Mutex
 // to the root (a path escaping it simply does not resolve), giving
 // SecureBuild's security posture for free.
 //
-// applyIgnore selects whether source-controller's default file exclusions
-// (.sops.yaml, binaries, CI dirs, in-tree .sourceignore) are applied while
-// auto-generating a kustomization — true for working-tree / self-referential
+// applyIgnore selects whether source-controller's file exclusions (its
+// defaults — .sops.yaml, binaries, CI dirs — plus every in-tree .sourceignore,
+// loaded from the source root exactly as source-controller does) are hidden
+// from the build's disk layer — true for working-tree / self-referential
 // sources that never passed through a fetcher's artifact filtering, false for
-// already-filtered fetched artifacts. spec.commonMetadata is applied post-build
+// already-filtered fetched artifacts. With the filter in place a spec.path or
+// kustomization resource that only exists outside the artifact fails to
+// resolve here as it would in-cluster. spec.commonMetadata is applied post-build
 // (the Generator does not handle it, mirroring kustomize-controller's
 // apply-time pass).
 //
@@ -81,13 +83,27 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 	}
 	sourceRoot = dr.root
 
+	// Working-tree sources read through the source-controller-filtered view of
+	// the disk (see ignorefs.go); the cache key carries the .sourceignore
+	// fingerprint because those files are loaded off-overlay, invisible to the
+	// read-set, so an in-place edit must miss by key instead.
+	diskFS, ignoreKey := dr.diskFS, ""
+	if applyIgnore {
+		ig, ierr := dr.ignored()
+		if ierr != nil {
+			return nil, ierr
+		}
+		diskFS, ignoreKey = ig.fs, ig.key
+	}
+
 	// Cross-run render cache: a stored render whose recorded disk inputs still
 	// validate against the live tree reproduces the output exactly, so krusty is
 	// skipped entirely. The readSet (see readset.go) makes a hit sound even for
-	// `..`-escaping / transitive inputs a spec hash alone would miss.
-	key := renderKey(rawSpec, dr.root, subPath, applyIgnore)
+	// `..`-escaping / transitive inputs a spec hash alone would miss. Validation
+	// replays against the same (possibly filtered) disk view the build read.
+	key := renderKey(rawSpec, dr.root, subPath, ignoreKey)
 	if rc := cache.render; rc != nil && key != "" {
-		if snap, output, ok := rc.get(key); ok && snap.stillValid(dr.diskFS, dr.root) {
+		if snap, output, ok := rc.get(key); ok && snap.stillValid(diskFS, dr.root) {
 			return output, nil
 		}
 	}
@@ -106,10 +122,10 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 	// gets its own overlay). Reading source from disk also sidesteps the
 	// in-memory fs's filename restriction, so trees with exotic names (spaces,
 	// etc.) render.
-	memFS := newOverlayFS(dr.diskFS, rec)
+	memFS := newOverlayFS(diskFS, rec)
 
 	subDir := filepath.Join(sourceRoot, subPath)
-	if info, statErr := os.Stat(subDir); statErr != nil || !info.IsDir() {
+	if !memFS.IsDir(subDir) {
 		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s", manifest.ErrInput, subPath)
 	}
 
@@ -122,34 +138,10 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 		return nil, err
 	}
 
-	// For working-tree / self-referential sources (applyIgnore), exclude
-	// source-controller-ignored files while auto-generating a kustomization, so
-	// the tree renders like a fetched artifact would. Fetched artifacts were
-	// already filtered by their fetcher, so they pass nil.
-	var ignore *sourceignore.Matcher
-	if applyIgnore {
-		m, ierr := sourceignore.New(subDir, nil, true)
-		if ierr != nil {
-			return nil, ierr
-		}
-		ignore = m
-		// sourceignore.New → flux.LoadIgnorePatterns reads .sourceignore files
-		// directly off disk, OUTSIDE the recording overlay, so their content is
-		// invisible to the read-set — an in-place edit would otherwise stale-hit
-		// a cached render. Read each one back through the overlay so its content
-		// is recorded and a change invalidates the entry. Scoped to the
-		// auto-generate path (no in-tree kustomization), the matcher's only
-		// output-affecting consumer (scanManifests); a .sourceignore added or
-		// removed is already caught by the directory listings the build records.
-		if _, hasKust := kustomizationFileIn(memFS, subDir); rec != nil && !hasKust {
-			recordIgnoreFiles(memFS, subDir)
-		}
-	}
-
 	// Merge spec.patches/images/components/targetNamespace/namePrefix/nameSuffix
 	// into the kustomization.yaml exactly as flux's Generator does, then write it
 	// into the memory layer for the build to consume. See generate.go.
-	data, kfile, err := generateManifest(memFS, subDir, rawSpec, ignore)
+	data, kfile, err := generateManifest(memFS, subDir, rawSpec)
 	if err != nil {
 		return nil, fmt.Errorf("flux kustomize generator: %w", err)
 	}
@@ -201,44 +193,36 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 // stable fingerprint of everything that determines the output BEFORE the source
 // tree's content is consulted (the read-set validates that content). The full
 // rawSpec is hashed — generateManifest's merge and the post-build
-// applyOwnerLabels/applyCommonMetadata all derive from it. Empty (caching off
-// for this render) when the spec can't be hashed.
-func renderKey(rawSpec map[string]any, sourceRoot, subPath string, applyIgnore bool) string {
+// applyOwnerLabels/applyCommonMetadata all derive from it. ignoreKey is the
+// source root's .sourceignore fingerprint for a working-tree render, "" for a
+// fetched artifact. Empty (caching off for this render) when the spec can't be
+// hashed.
+func renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) string {
 	return manifest.Fingerprint(struct {
-		Spec        map[string]any
-		SourceRoot  string
-		SubPath     string
-		ApplyIgnore bool
-	}{rawSpec, sourceRoot, subPath, applyIgnore})
-}
-
-// ignoreFileName is the in-tree source-controller exclusion file flux's
-// LoadIgnorePatterns reads (off-overlay) and recurses subdirectories for.
-const ignoreFileName = ".sourceignore"
-
-// recordIgnoreFiles reads every .sourceignore under subDir back through the
-// recording overlay so each one's content lands in the render cache's read-set
-// (flux loads them off-disk, bypassing the overlay — see RenderFlux). The
-// read-through's side effect is the recording; the returned bytes are discarded.
-func recordIgnoreFiles(memFS filesys.FileSystem, subDir string) {
-	_ = memFS.Walk(subDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil || info.IsDir() {
-			return nil
-		}
-		if filepath.Base(path) == ignoreFileName {
-			_, _ = memFS.ReadFile(path)
-		}
-		return nil
-	})
+		Spec       map[string]any
+		SourceRoot string
+		SubPath    string
+		Ignore     string
+	}{rawSpec, sourceRoot, subPath, ignoreKey})
 }
 
 // diskRoot holds the per-sourceRoot invariants RenderFlux reuses across every
 // Kustomization that targets the same root: the symlink-resolved absolute root
 // and its secure on-disk FS. diskFS is an immutable fsSecure value over a
 // stateless MakeFsOnDisk, so it is safe to share read-only across goroutines.
+// ignored lazily derives the working-tree view — diskFS behind the
+// source-controller ignore matcher loaded from root — plus the .sourceignore
+// fingerprint that keys it; built once per root because loading the matcher
+// walks the whole tree.
 type diskRoot struct {
-	root   string
-	diskFS filesys.FileSystem
+	root    string
+	diskFS  filesys.FileSystem
+	ignored func() (ignoredRoot, error)
+}
+
+type ignoredRoot struct {
+	fs  filesys.FileSystem
+	key string
 }
 
 // diskRootFor returns the cached diskRoot for sourceRoot, computing and
@@ -260,6 +244,17 @@ func (c *TreeCache) diskRootFor(sourceRoot string) (*diskRoot, error) {
 		return nil, fmt.Errorf("kustomize: secure fs %s: %w", resolved, err)
 	}
 	dr := &diskRoot{root: resolved, diskFS: diskFS}
+	dr.ignored = sync.OnceValues(func() (ignoredRoot, error) {
+		matcher, err := sourceignore.New(resolved, nil, true)
+		if err != nil {
+			return ignoredRoot{}, err
+		}
+		key, err := sourceignore.Fingerprint(resolved)
+		if err != nil {
+			return ignoredRoot{}, err
+		}
+		return ignoredRoot{fs: newIgnoreFS(diskFS, resolved, matcher), key: key}, nil
+	})
 	actual, _ := c.diskRoots.LoadOrStore(sourceRoot, dr)
 	return actual.(*diskRoot), nil
 }

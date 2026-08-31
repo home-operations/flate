@@ -142,3 +142,29 @@ components: [./alpha, ./beta]
 	}
 	wg.Wait()
 }
+
+// TestNormalizeClaimBase pins the spec.path shapes that must all claim the
+// same repo-relative files. The leading-slash case is #920: Flux resolves
+// spec.path root-relatively, so `/kubernetes/apps` must not keep a slash that
+// a repo-relative source file can never match.
+func TestNormalizeClaimBase(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"./kubernetes/apps", "kubernetes/apps"},
+		{"kubernetes/apps/", "kubernetes/apps"},
+		{"/kubernetes/apps", "kubernetes/apps"},
+		{"/kubernetes/apps/", "kubernetes/apps"},
+		{"//kubernetes/apps", "kubernetes/apps"},
+		{"./", ""},
+		{"/", ""},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := NormalizeClaimBase(tc.in); got != tc.want {
+				t.Errorf("NormalizeClaimBase(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

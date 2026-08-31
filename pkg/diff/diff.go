@@ -53,6 +53,10 @@ type Options struct {
 	// Format selects the output style (see the Format constants). The
 	// zero value renders the human default.
 	Format Format
+	// Suppressed lists the producers SuppressFailed withheld from the two
+	// doc sets. Every format discloses them in a leading note block so a
+	// one-sided render failure is never mistaken for a wholesale change.
+	Suppressed []Suppression
 }
 
 // RenderDocs is the top-level entry point: it compares the two doc sets and

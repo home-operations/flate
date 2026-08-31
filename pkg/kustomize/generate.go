@@ -40,8 +40,6 @@ import (
 	kustypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
-
-	"github.com/home-operations/flate/pkg/source/sourceignore"
 )
 
 // Flux Kustomization spec field names (mirrors the unexported consts in
@@ -67,15 +65,13 @@ const (
 //
 // It is a faithful port of Generator.GenerateManifest: same field order, same
 // _placeholder / originAnnotations empty-build guards, same sigs.k8s.io/yaml
-// encoder, so the output is byte-identical to flux's. ignore, when non-nil,
-// reproduces flux's NewGeneratorWithIgnore behavior for the auto-generated
-// (path: ./) case — source-controller-excluded files (.sops.yaml, binaries, …)
-// are skipped while scanning for resources, so a working-tree source renders
-// like a fetched artifact would (this is the bo0tzz fix). The base path comes
-// from fsys.CleanedAbs (the real on-disk path under the memory-over-disk
-// overlay), matching flux's filepath.Abs(dirPath).
-func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]any, ignore *sourceignore.Matcher) ([]byte, string, error) {
-	data, kfile, foundExisting, err := findOrGenerateKustomization(fsys, dirPath, ignore)
+// encoder, so the output is byte-identical to flux's. Source-controller's file
+// exclusions are not consulted here: a working-tree fsys already hides them
+// (see ignorefs.go), so the scan sees the same files a fetched artifact holds.
+// The base path comes from fsys.CleanedAbs (the real on-disk path under the
+// memory-over-disk overlay), matching flux's filepath.Abs(dirPath).
+func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]any) ([]byte, string, error) {
+	data, kfile, foundExisting, err := findOrGenerateKustomization(fsys, dirPath)
 	if err != nil {
 		return nil, "", err
 	}
@@ -225,7 +221,7 @@ func kustomizationFileIn(fsys filesys.FileSystem, dir string) (path string, ok b
 // findOrGenerateKustomization returns the existing kustomization file's bytes
 // (foundExisting=true) or, when none is present, synthesizes one from the YAML
 // manifests in dirPath via scanManifests. Mirrors the like-named flux function.
-func findOrGenerateKustomization(fsys filesys.FileSystem, dirPath string, ignore *sourceignore.Matcher) (data []byte, kfile string, foundExisting bool, err error) {
+func findOrGenerateKustomization(fsys filesys.FileSystem, dirPath string) (data []byte, kfile string, foundExisting bool, err error) {
 	if kpath, ok := kustomizationFileIn(fsys, dirPath); ok {
 		b, rerr := fsys.ReadFile(kpath)
 		return b, kpath, true, rerr
@@ -239,7 +235,7 @@ func findOrGenerateKustomization(fsys filesys.FileSystem, dirPath string, ignore
 	if err != nil {
 		return nil, "", false, err
 	}
-	files, err := scanManifests(fsys, base.String(), ignore)
+	files, err := scanManifests(fsys, base.String())
 	if err != nil {
 		return nil, "", false, err
 	}
@@ -275,9 +271,9 @@ func findOrGenerateKustomization(fsys filesys.FileSystem, dirPath string, ignore
 // resources: a sub-directory that itself carries a kustomization file is added
 // as a resource and not descended into; every other .yaml/.yml file is added
 // once it parses as Kubernetes YAML. Mirrors the like-named flux function
-// (filter==false: no sourceignore consulted — that filtering happened at
-// materialize time).
-func scanManifests(fsys filesys.FileSystem, base string, ignore *sourceignore.Matcher) ([]string, error) {
+// (filter==false: no sourceignore consulted — that filtering happens at the
+// filesystem, see ignorefs.go).
+func scanManifests(fsys filesys.FileSystem, base string) ([]string, error) {
 	var paths []string
 	rf := provider.NewDefaultDepProvider().GetResourceFactory()
 
@@ -297,15 +293,6 @@ func scanManifests(fsys filesys.FileSystem, base string, ignore *sourceignore.Ma
 		}
 		if ext := filepath.Ext(path); ext != ".yaml" && ext != ".yml" {
 			return nil
-		}
-		// Skip source-controller-excluded files (sourceignore defaults +
-		// in-tree .sourceignore) for working-tree sources — flux's
-		// filter==true behavior, which keeps a stray .sops.yaml or binary
-		// out of an auto-generated kustomization's resource list.
-		if ignore != nil {
-			if rel, rerr := filepath.Rel(base, path); rerr == nil && ignore.Match(rel, false) {
-				return nil
-			}
 		}
 		contents, err := fsys.ReadFile(path)
 		if err != nil {

@@ -27,6 +27,22 @@ func testOverlayFS(t *testing.T, root string) filesys.FileSystem {
 	return newOverlayFS(disk, nil)
 }
 
+// testIgnoreOverlayFS is testOverlayFS with the source-controller ignore
+// matcher loaded from root in front of the disk layer — the working-tree
+// (applyIgnore) view RenderFlux builds against.
+func testIgnoreOverlayFS(t *testing.T, root string) filesys.FileSystem {
+	t.Helper()
+	disk, err := fluxfilesys.MakeFsOnDiskSecure(root)
+	if err != nil {
+		t.Fatalf("secure fs: %v", err)
+	}
+	matcher, err := sourceignore.New(root, nil, true)
+	if err != nil {
+		t.Fatalf("matcher: %v", err)
+	}
+	return newOverlayFS(newIgnoreFS(disk, root, matcher), nil)
+}
+
 // These tests pin flate's in-memory generateManifest to flux's real on-disk
 // Generator.GenerateManifest. The acceptance gate for the whole in-memory
 // redesign is byte-equivalence: for an identical source tree and Kustomization
@@ -226,7 +242,7 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 				t.Fatalf("flux GenerateManifest: %v", err)
 			}
 
-			got, _, err := generateManifest(testOverlayFS(t, root), filepath.Join(root, tc.subPath), deepCopyDoc(t, doc), nil)
+			got, _, err := generateManifest(testOverlayFS(t, root), filepath.Join(root, tc.subPath), deepCopyDoc(t, doc))
 			if err != nil {
 				t.Fatalf("generateManifest: %v", err)
 			}
@@ -245,7 +261,7 @@ func renderInMemory(t *testing.T, root, subPath string, doc map[string]any) []by
 	t.Helper()
 	fsys := testOverlayFS(t, root)
 	absSub := filepath.Join(root, subPath)
-	data, kfile, err := generateManifest(fsys, absSub, doc, nil)
+	data, kfile, err := generateManifest(fsys, absSub, doc)
 	if err != nil {
 		t.Fatalf("generateManifest: %v", err)
 	}
@@ -356,24 +372,20 @@ func TestBuild_InMemorySandbox(t *testing.T) {
 
 // TestGenerateManifest_SourceIgnoreFiltersScan is the bo0tzz fix: a working tree
 // carrying a root .sops.yaml renders cleanly through a `path: ./` Kustomization
-// because the sourceignore matcher keeps the SOPS config out of the
+// because the ignore filesystem keeps the SOPS config out of the
 // auto-generated kustomization's resource list — the same artifact a real
-// GitRepository fetch would produce. Without the matcher the SOPS config is
+// GitRepository fetch would produce. Without the filter the SOPS config is
 // scanned as a manifest and the build fails.
 func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		".sops.yaml": "creation_rules:\n  - path_regex: .*\n    age: age1example\n",
 		"cm.yaml":    cmYAML("config"),
 	})
-	matcher, err := sourceignore.New(root, nil, true)
-	if err != nil {
-		t.Fatalf("matcher: %v", err)
-	}
 
-	// With the matcher, scanManifests skips .sops.yaml so a path:./ build over
-	// the working tree renders the ConfigMap.
-	fsys := testOverlayFS(t, root)
-	data, kfile, err := generateManifest(fsys, root, ksDoc(nil), matcher)
+	// Behind the ignore filesystem, scanManifests never sees .sops.yaml so a
+	// path:./ build over the working tree renders the ConfigMap.
+	fsys := testIgnoreOverlayFS(t, root)
+	data, kfile, err := generateManifest(fsys, root, ksDoc(nil))
 	if err != nil {
 		t.Fatalf("generateManifest(ignore): %v", err)
 	}
@@ -392,10 +404,10 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 		t.Fatalf("expected rendered ConfigMap, got:\n%s", out)
 	}
 
-	// Without the matcher (a fetched artifact, already filtered, would not hit
+	// Without the filter (a fetched artifact, already filtered, would not hit
 	// this), scanManifests includes .sops.yaml and fails to decode it — the bug
 	// the filter fixes.
-	if _, _, err := generateManifest(testOverlayFS(t, root), root, ksDoc(nil), nil); err == nil {
+	if _, _, err := generateManifest(testOverlayFS(t, root), root, ksDoc(nil)); err == nil {
 		t.Fatal("expected generate/scan to fail on the unfiltered .sops.yaml, got nil")
 	}
 }
@@ -425,7 +437,7 @@ func TestFindOrGenerate_MemoryPopulatedSubdirNotDescended(t *testing.T) {
 		t.Fatalf("seed memory: %v", err)
 	}
 
-	data, _, foundExisting, err := findOrGenerateKustomization(fsys, root, nil)
+	data, _, foundExisting, err := findOrGenerateKustomization(fsys, root)
 	if err != nil {
 		t.Fatalf("findOrGenerateKustomization: %v", err)
 	}

@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -164,5 +165,29 @@ func TestIsSSHURL(t *testing.T) {
 		if isSSHURL(u) {
 			t.Errorf("isSSHURL(%q) = true, want false", u)
 		}
+	}
+}
+
+func TestFetcher_ForceGenericProvider(t *testing.T) {
+	// Gate bypassed: the generic path runs and fails on the absent secret.
+	f := &Fetcher{
+		ForceGeneric: true,
+		Secrets:      func(_, _ string) *manifest.Secret { return nil },
+	}
+	repo := &manifest.GitRepository{
+		Name: "g", Namespace: "ns",
+		URL:       "https://github.com/x/y.git",
+		Provider:  sourcev1.GitProviderGitHub,
+		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+	}
+	_, err := f.Fetch(context.Background(), repo)
+	if err == nil {
+		t.Fatalf("expected missing-secret error")
+	}
+	if strings.Contains(err.Error(), "not implemented") {
+		t.Errorf("provider gate should be bypassed with ForceGeneric; got %v", err)
+	}
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("want ErrMissingSecret from the generic path; got %v", err)
 	}
 }

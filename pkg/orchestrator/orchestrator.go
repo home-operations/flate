@@ -76,6 +76,12 @@ type Config struct {
 	// refs let HelmReleases render with the remaining values.
 	AllowMissingSecrets bool
 
+	// ForceGenericProvider sends non-generic spec.provider sources
+	// (GitRepository, OCIRepository, Bucket) down the generic SecretRef path
+	// instead of rejecting them up front. That path works offline when static
+	// credentials are supplied; otherwise it fails on the missing secret.
+	ForceGenericProvider bool
+
 	// RestrictEgress is the untrusted-render switch. It (1) enables the SSRF
 	// egress guard for ALL source fetches (kustomize remote resources/bases +
 	// Git/OCI/Helm/Bucket sources) — outbound dials to loopback/RFC1918/link-
@@ -412,6 +418,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		Mirrors:         mirror.New(layout),
 		Depth:           cfg.GitDepth,
 		RestrictSchemes: cfg.RestrictEgress,
+		ForceGeneric:    cfg.ForceGenericProvider,
 	}
 	// Resolve kustomize remote git bases (resources: URLs carrying ?ref= or a
 	// git marker) through the same clone/mirror/ref-resolution machinery as
@@ -429,7 +436,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap(
 		manifest.KindExternalArtifact, &external.Fetcher{})
 	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap(
-		manifest.KindBucket, &bucket.Fetcher{Cache: cache, Secrets: secretGet})
+		manifest.KindBucket, &bucket.Fetcher{Cache: cache, Secrets: secretGet, ForceGeneric: cfg.ForceGenericProvider})
 	// HelmRepository: existence-only — the controller just needs the
 	// resource in Ready so HelmRelease deps unblock. The chart itself is
 	// fetched per (chart, version) through a synthesized HelmChart (see
@@ -444,7 +451,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	// Embedders that want one can still WithFetcher a source.ExistenceFetcher.
 	// Not separately retry-wrapped: each consuming fetcher's own WithRetry
 	// wrapper owns retries.
-	ociFetcher := &oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet}
+	ociFetcher := &oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: cfg.ForceGenericProvider}
 	srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap(
 		manifest.KindOCIRepository, ociFetcher)
 	// HelmChart: the single authoritative chart fetcher. The HR controller

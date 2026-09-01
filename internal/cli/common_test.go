@@ -33,6 +33,30 @@ func TestBindCommon_CacheDirFlag(t *testing.T) {
 	}
 }
 
+// TestBindCommon_ForceGenericProviderFlag pins the whole
+// --force-generic-provider handoff: flag → commonFlags →
+// orchestrator.Config. Config is what puts ForceGeneric on the git/OCI/
+// bucket fetchers, so dropping that assignment would silently disable the
+// flag with every other test still green.
+func TestBindCommon_ForceGenericProviderFlag(t *testing.T) {
+	parse := func(t *testing.T, args ...string) orchestrator.Config {
+		t.Helper()
+		var f commonFlags
+		fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		bindCommon(fs, &f)
+		if err := fs.Parse(args); err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		return buildOrchCfg(f, helmFlags{})
+	}
+	if cfg := parse(t); cfg.ForceGenericProvider {
+		t.Errorf("default: ForceGenericProvider = true, want false")
+	}
+	if cfg := parse(t, "--force-generic-provider"); !cfg.ForceGenericProvider {
+		t.Errorf("--force-generic-provider: ForceGenericProvider = false, want true")
+	}
+}
+
 // TestCacheDir_FlagAndEnvPopulateRoot runs build all twice — once via
 // --cache-dir and once via FLATE_CACHE_DIR — against fresh tempdirs
 // and asserts each one ends up non-empty. The kustomize stage cache

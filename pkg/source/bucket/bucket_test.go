@@ -2,6 +2,7 @@ package bucket_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -84,5 +85,29 @@ func TestFetcher_SecretRefNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "secret ns/creds not found") {
 		t.Errorf("error should name the missing secret; got %v", err)
+	}
+}
+
+func TestFetcher_ForceGenericProvider(t *testing.T) {
+	// Gate bypassed: the generic path runs and fails on the absent secret.
+	f := &bucket.Fetcher{
+		ForceGeneric: true,
+		Secrets:      func(_, _ string) *manifest.Secret { return nil },
+	}
+	b := &manifest.Bucket{
+		Name: "b", Namespace: "ns",
+		Provider:   sourcev1.BucketProviderAmazon,
+		BucketName: "x", Endpoint: "s3.amazonaws.com",
+		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
+	}
+	_, err := f.Fetch(context.Background(), b)
+	if err == nil {
+		t.Fatalf("expected missing-secret error")
+	}
+	if strings.Contains(err.Error(), "not implemented") {
+		t.Errorf("provider gate should be bypassed with ForceGeneric; got %v", err)
+	}
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("want ErrMissingSecret from the generic path; got %v", err)
 	}
 }

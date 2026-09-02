@@ -842,3 +842,33 @@ type failingWriter struct {
 func (w failingWriter) Write(_ []byte) (int, error) {
 	return 0, w.err
 }
+
+// TestRun_Diff_OneSidedFailureSuppressed is the #938 regression: when the
+// Kustomization renders on the orig side but fails on the current side, its
+// objects must not be diffed as removals. The output leads with a suppression
+// note, the failure summary is printed on stderr, and the exit code stays
+// non-zero.
+func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
+	orig := writeFixture(t)
+	current := writeFixture(t)
+	// Break the current side's kustomize entry point so the KS fails there only.
+	testutil.WriteFileAt(t, filepath.Join(current, "apps", "kustomization.yaml"),
+		"resources:\n- missing.yaml\n")
+
+	stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig, "-o", "github")
+	if code == 0 {
+		t.Fatal("expected non-zero exit: the current side failed to render")
+	}
+	if strings.Contains(stdout, "document removed") || strings.Contains(stdout, "greeting") {
+		t.Errorf("the orig-only objects must be suppressed, not diffed as removals:\n%s", stdout)
+	}
+	if !strings.HasPrefix(stdout, "! Kustomization flux-system/apps: 1 object not rendered on the current side; diff suppressed (") {
+		t.Errorf("stdout should lead with the suppression note; got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "flate error: current snapshot: reconcile completed with 1 failure(s)") {
+		t.Errorf("stderr should carry the failure summary:\n%s", stderr)
+	}
+	if strings.Count(stderr, "flate error:") != 1 {
+		t.Errorf("failure summary should be printed exactly once:\n%s", stderr)
+	}
+}

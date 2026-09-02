@@ -12,7 +12,11 @@
 package sourceignore
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -65,4 +69,44 @@ func (m *Matcher) Match(rel string, isDir bool) bool {
 // splitPath breaks p into its components using the OS path separator.
 func splitPath(p string) []string {
 	return strings.Split(p, string(filepath.Separator))
+}
+
+// Fingerprint digests every .sourceignore file under root — relative path and
+// content, in LoadIgnorePatterns' traversal order — so work cached against a
+// Matcher built from root can be keyed on the files that shaped it: an edit,
+// addition, or removal of any .sourceignore changes the result. Directories
+// named .git are skipped, as the loader skips them.
+func Fingerprint(root string) (string, error) {
+	h := sha256.New()
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if p != root && d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() != flux.IgnoreFile {
+			return nil
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		b, err := os.ReadFile(p) //nolint:gosec // p is a .sourceignore found by walking root
+		if err != nil {
+			return err
+		}
+		h.Write([]byte(filepath.ToSlash(rel)))
+		h.Write([]byte{0})
+		h.Write(b)
+		h.Write([]byte{0})
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("sourceignore fingerprint: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

@@ -44,7 +44,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := renderKey(demoRawSpec, dr.root, ".", false)
+	key := renderKey(demoRawSpec, dr.root, ".", "")
 	snap, _, ok := cache.render.get(key)
 	if !ok {
 		t.Fatal("first render did not populate the cache")
@@ -79,15 +79,18 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 // TestRenderFlux_SourceignoreContentInvalidates is the regression for the
 // adversarially-found stale hit: .sourceignore is loaded off-disk (outside the
 // recording overlay), so an in-place edit that changes which resources an
-// auto-generated kustomization includes must still invalidate the cache.
+// auto-generated kustomization includes must still invalidate the cache. The
+// ignore matcher is memoized per root for the life of a TreeCache (one run), so
+// the edit is made between two runs sharing the on-disk render cache.
 func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"a.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n",
 		"b.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b\n",
 		".sourceignore": "# excludes nothing yet\n",
 	})
+	cacheDir := t.TempDir()
 	cache := NewTreeCache()
-	cache.SetRenderCache(t.TempDir(), 1<<30)
+	cache.SetRenderCache(cacheDir, 1<<30)
 	ctx := context.Background()
 
 	out1, err := RenderFlux(ctx, cache, root, true /* applyIgnore */, ".", demoRawSpec)
@@ -104,6 +107,8 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	cache = NewTreeCache()
+	cache.SetRenderCache(cacheDir, 1<<30)
 	out2, err := RenderFlux(ctx, cache, root, true, ".", demoRawSpec)
 	if err != nil {
 		t.Fatalf("second render: %v", err)

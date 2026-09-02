@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.6.2](https://github.com/home-operations/flate/compare/v0.6.1...v0.6.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **diff:** suppress objects of a producer that failed to render on one side ([#948](https://github.com/home-operations/flate/issues/948)) ([b988a10](https://github.com/home-operations/flate/commit/b988a10f3cc2fe77aabd0da63ba3be836e66d64e))
+* **go:** update module github.com/gofrs/flock (v0.13.0 → v0.13.1) ([#941](https://github.com/home-operations/flate/issues/941)) ([f79290c](https://github.com/home-operations/flate/commit/f79290cacb68980f7a6b7eca43f87d7bc94b858c))
+* **kustomize:** apply .sourceignore from the source root for working-tree renders ([#946](https://github.com/home-operations/flate/issues/946)) ([25821b1](https://github.com/home-operations/flate/commit/25821b1dc76fb672372fb7e2fba71086e0052663))
+* **loader:** attribute children to Kustomizations whose spec.path has a leading slash ([#947](https://github.com/home-operations/flate/issues/947)) ([ec2e8d7](https://github.com/home-operations/flate/commit/ec2e8d79d254321da9a0745c6b8979009d76c2ac))
+
+
+### Documentation
+
+* **agents:** derive Go version from go.mod ([c44beed](https://github.com/home-operations/flate/commit/c44beedcc8d01abd14e0ecd2ed2005e4be1be9e8))
+
+
+### Miscellaneous Chores
+
+* **github-action:** update action anchore/sbom-action (v0.24.0 → v0.24.1) ([#944](https://github.com/home-operations/flate/issues/944)) ([e70925e](https://github.com/home-operations/flate/commit/e70925ea3cb631b90e7071571732321b4d8e3971))
+* **github-action:** update action jdx/mise-action (v4.2.5 → v4.3.0) ([#943](https://github.com/home-operations/flate/issues/943)) ([272d436](https://github.com/home-operations/flate/commit/272d436ad22bc634747b7e086d3cd863c99ee746))
+* **mise:** update tool golangci-lint (2.13.1 → 2.13.2) ([#945](https://github.com/home-operations/flate/issues/945)) ([ab9aebc](https://github.com/home-operations/flate/commit/ab9aebc65c95fa7c816b8170a6eeba5cd15b0de3))
+* **mise:** update tool lefthook (2.1.11 → 2.1.12) ([#949](https://github.com/home-operations/flate/issues/949)) ([ebc1303](https://github.com/home-operations/flate/commit/ebc1303d659a95f6f3821d61a3403a7d0adac866))
+* **mise:** update tool oxfmt (0.64.0 → 0.65.0) ([#942](https://github.com/home-operations/flate/issues/942)) ([b2f94c2](https://github.com/home-operations/flate/commit/b2f94c2ba8913b875d05b390b7c9d87c438307cd))
+
 ## [0.6.1](https://github.com/home-operations/flate/compare/v0.6.0...v0.6.1) (2026-08-27)
 
 

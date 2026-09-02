@@ -403,3 +403,27 @@ func TestLongestParent_DeepestMatchWins(t *testing.T) {
 		t.Errorf("expected deepest parent 'leaf', got %q", got.Name)
 	}
 }
+
+// TestLongestParent_AbsoluteSpecPath is the #920 regression: a Kustomization
+// whose spec.path carries a leading slash (accepted by Flux, which resolves it
+// against the artifact root) must still be found as the parent of the files
+// under that directory. Before the fix its claim prefix kept the slash, so no
+// repo-relative source file ever matched and every child was orphaned.
+func TestLongestParent_AbsoluteSpecPath(t *testing.T) {
+	s := store.New()
+	ks := &manifest.Kustomization{
+		Name: "flux-instance", Namespace: "flux-system",
+		Path: "/kubernetes/apps/flux-system/flux-operator/instance",
+	}
+	s.AddObject(ks)
+
+	prefixes := KSPathPrefixesWithCache(s, "", nil)
+	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "flux-instance"}
+	parent, ok := LongestParent(prefixes, "kubernetes/apps/flux-system/flux-operator/instance/helm-release.yaml", hr)
+	if !ok {
+		t.Fatalf("expected the absolute spec.path KS to parent its helm-release.yaml; prefixes=%v", prefixes)
+	}
+	if parent != ks.Named() {
+		t.Errorf("parent = %v, want %v", parent, ks.Named())
+	}
+}

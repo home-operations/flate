@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func newDiffCmd() *cobra.Command {
@@ -167,19 +169,47 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
 	}
 
+	// A producer that failed on one side only has nothing to pair against, so
+	// its healthy-side output would read as a wholesale add or delete. Withhold
+	// it and let the formats disclose the suppression instead (#938).
+	origFailed, _ := scopedFailures(orig.O, orig.Res, c)
+	currentFailed, _ := scopedFailures(current.O, current.Res, c)
+	var suppressed []diff.Suppression
+	origDocs, currentDocs, suppressed = diff.SuppressFailed(origDocs, currentDocs,
+		failureReasons(origFailed), failureReasons(currentFailed))
+
 	out := diff.Format(c.output)
 	formatted, err := diff.RenderDocs(origDocs, currentDocs, diff.Options{
 		StripAttrs:  d.stripAttrs,
 		StripFields: d.stripFields,
 		Format:      out,
+		Suppressed:  suppressed,
 	})
 	if err != nil {
 		return errors.Join(err, diffRunErr)
 	}
+	// Surface the failure summary BEFORE the diff body so a reader scanning a
+	// CI log meets the cause first; run() then skips its trailing reprint.
+	if diffRunErr != nil {
+		_, _ = io.WriteString(cmd.ErrOrStderr(), "flate error: "+diffRunErr.Error()+"\n")
+	}
 	if _, err := cmd.OutOrStdout().Write(formatted); err != nil {
 		return errors.Join(err, diffRunErr)
 	}
-	return diffRunErr
+	if diffRunErr != nil {
+		return reportedError{diffRunErr}
+	}
+	return nil
+}
+
+// failureReasons projects a scoped failure map onto the id -> message shape
+// diff.SuppressFailed consumes.
+func failureReasons(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]string {
+	out := make(map[manifest.NamedResource]string, len(failed))
+	for id, info := range failed {
+		out[id] = info.Message
+	}
+	return out
 }
 
 // diffSide pairs an Orchestrator with its render Result. Diff

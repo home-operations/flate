@@ -11,16 +11,16 @@ require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.8
-	github.com/controlplaneio-fluxcd/flux-operator v0.58.1
+	github.com/controlplaneio-fluxcd/flux-operator v0.59.0
 	github.com/distribution/reference v0.6.0
-	github.com/fluxcd/helm-controller/api v1.6.3
-	github.com/fluxcd/kustomize-controller/api v1.9.4
+	github.com/fluxcd/helm-controller/api v1.6.4
+	github.com/fluxcd/kustomize-controller/api v1.9.5
 	github.com/fluxcd/pkg/apis/kustomize v1.20.0
 	github.com/fluxcd/pkg/apis/meta v1.31.0
 	github.com/fluxcd/pkg/envsubst v1.8.0
 	github.com/fluxcd/pkg/kustomize v1.40.0
 	github.com/fluxcd/pkg/sourceignore v0.18.0
-	github.com/fluxcd/source-controller/api v1.9.4
+	github.com/fluxcd/source-controller/api v1.9.5
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-task/slim-sprig/v3 v3.0.0
 	github.com/gofrs/flock v0.13.1

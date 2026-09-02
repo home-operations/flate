@@ -149,3 +149,21 @@ func loadCredentials(configPath string) (credentials.Store, error) {
 	}
 	return s, nil
 }
+
+// hasCredentialFallback reports whether a generic credential source is
+// available for a spec.provider fetcher can't authenticate for. A
+// non-empty configPath (a SecretRef temp file or --registry-config) is
+// always a deliberate choice and counts on its own. With neither set,
+// NewStoreFromDocker succeeds even when no config.json exists — it just
+// returns an empty store — so the docker default lookup only counts when
+// IsAuthConfigured reports real auths/credsStore/credHelpers entries.
+func hasCredentialFallback(configPath string) bool {
+	if configPath != "" {
+		return true
+	}
+	store, err := credentials.NewStoreFromDocker(credentials.StoreOptions{AllowPlaintextPut: false})
+	if err != nil {
+		return false
+	}
+	return store.IsAuthConfigured()
+}

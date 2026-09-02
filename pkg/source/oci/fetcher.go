@@ -1,6 +1,8 @@
 // Package oci implements the source.Fetcher for KindOCIRepository
-// via oras-go. Generic provider only — IRSA / Workload Identity is
-// out of scope for offline flate.
+// via oras-go. IRSA / Workload Identity is out of scope for offline
+// flate; a non-generic provider only fails when no generic credential
+// (SecretRef, --registry-config, or the local docker config) is set
+// either, per the provider check in Fetch.
 //
 // File map:
 //
@@ -46,15 +48,20 @@ type Fetcher struct {
 // Fetch resolves credentials, TLS, and proxy from the CR's *SecretRef
 // fields, then hands off to fetch() — the workhorse in fetch.go that
 // owns slot lifecycle, oras Copy, layer extraction, and marker writes.
+//
+// spec.provider selects cloud IAM auth flate cannot perform offline; the
+// fetch only fails on a non-generic provider when no generic credential
+// (SecretRef, --registry-config, or the local docker config) is set either.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*store.SourceArtifact, error) {
-	if repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
-		return nil, source.ErrUnsupportedProvider("OCIRepository",
-			repo.Namespace, repo.Name, repo.Provider, sourcev1.GenericOCIProvider,
-			"SecretRef or --registry-config credentials")
-	}
 	configPath, cleanup, err := f.resolveRegistryConfig(repo)
 	if err != nil {
 		return nil, err
+	}
+	if repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider && !hasCredentialFallback(configPath) {
+		cleanup()
+		return nil, source.ErrUnsupportedProvider("OCIRepository",
+			repo.Namespace, repo.Name, repo.Provider, sourcev1.GenericOCIProvider,
+			"SecretRef or --registry-config credentials")
 	}
 	defer cleanup()
 	tlsCfg, err := f.resolveTLS(repo)

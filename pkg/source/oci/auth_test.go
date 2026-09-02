@@ -3,7 +3,9 @@ package oci
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +13,8 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func ociRepo(name string, set func(s *sourcev1.OCIRepositorySpec)) *manifest.OCIRepository {
@@ -109,6 +113,11 @@ func TestFetcher_ResolveTLS_AllKeysMissing(t *testing.T) {
 }
 
 func TestFetcher_NonGenericProvider(t *testing.T) {
+	// No credential source configured anywhere: no SecretRef, no
+	// --registry-config, and the docker default lookup finds nothing
+	// (DOCKER_CONFIG points at an empty dir, isolating this from whatever
+	// docker config the machine running the test happens to have).
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	f := &Fetcher{}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
 		s.URL = "oci://ghcr.io/x/y"
@@ -120,6 +129,62 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not implemented") {
 		t.Errorf("error should say 'not implemented'; got %v", err)
+	}
+}
+
+func TestFetcher_NonGenericProvider_RegistryConfigFallsBack(t *testing.T) {
+	layerBytes := mustTarGz(t, map[string]string{"Chart.yaml": "apiVersion: v2\nname: x\nversion: 0.1.0\n"})
+	configBytes := []byte(`{}`)
+	manifestBytes := mustManifestJSON(t, configBytes, layerBytes,
+		"application/vnd.cncf.flux.config.v1+json",
+		"application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+	)
+	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
+
+	// The fake registry doesn't check auth, so a config.json with no
+	// matching host entry is enough to prove the provider check let the
+	// fetch through to --registry-config instead of refusing outright.
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"auths":{}}`), 0o600); err != nil {
+		t.Fatalf("write docker config: %v", err)
+	}
+
+	f := &Fetcher{RegistryConfig: configPath, Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.URL = fmt.Sprintf("oci://%s/x/y", mustURL(t, srv.URL).Host)
+		s.Provider = sourcev1.GoogleOCIProvider
+		s.Insecure = true
+		s.Reference = &sourcev1.OCIRepositoryRef{Tag: "v1"}
+	})
+	if _, err := f.Fetch(context.Background(), repo); err != nil {
+		t.Fatalf("Fetch: expected the --registry-config fallback to be used, got %v", err)
+	}
+}
+
+func TestFetcher_NonGenericProvider_SecretRefFallsBack(t *testing.T) {
+	layerBytes := mustTarGz(t, map[string]string{"Chart.yaml": "apiVersion: v2\nname: x\nversion: 0.1.0\n"})
+	configBytes := []byte(`{}`)
+	manifestBytes := mustManifestJSON(t, configBytes, layerBytes,
+		"application/vnd.cncf.flux.config.v1+json",
+		"application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+	)
+	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
+
+	f := &Fetcher{
+		Cache: source.NewCache(cacheroot.New(t.TempDir())),
+		Secrets: func(_, _ string) *manifest.Secret {
+			return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": `{"auths":{}}`}}
+		},
+	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.URL = fmt.Sprintf("oci://%s/x/y", mustURL(t, srv.URL).Host)
+		s.Provider = sourcev1.GoogleOCIProvider
+		s.Insecure = true
+		s.Reference = &sourcev1.OCIRepositoryRef{Tag: "v1"}
+		s.SecretRef = &manifest.LocalObjectReference{Name: "registry-creds"}
+	})
+	if _, err := f.Fetch(context.Background(), repo); err != nil {
+		t.Fatalf("Fetch: expected the SecretRef fallback to be used, got %v", err)
 	}
 }
 

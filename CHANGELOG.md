@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.5](https://github.com/home-operations/flate/compare/v0.6.4...v0.6.5) (2026-09-02)
+
+
+### Features
+
+* **cli:** add --krmignore to override the scan root .krmignore ([#965](https://github.com/home-operations/flate/issues/965)) ([3d1deda](https://github.com/home-operations/flate/commit/3d1dedab87b627ce628a9a0563ef759aec13dcab))
+* **go:** update module github.com/klauspost/compress (v1.19.2 → v1.20.0) ([#966](https://github.com/home-operations/flate/issues/966)) ([38c144b](https://github.com/home-operations/flate/commit/38c144bb29cc085622c76523f5efa9b3503aed19))
+
+
+### Documentation
+
+* note the provider gate on GitRepository/OCIRepository ([#963](https://github.com/home-operations/flate/issues/963)) ([ea74d25](https://github.com/home-operations/flate/commit/ea74d25e5464784acdf91817c0c7c4e07f961156))
+
 ## [0.6.4](https://github.com/home-operations/flate/compare/v0.6.3...v0.6.4) (2026-09-02)
 
 

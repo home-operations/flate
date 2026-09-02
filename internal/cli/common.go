@@ -121,9 +121,10 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"auto-skipped without this flag. cert/proxy secretRefs still fail loud.")
 	fs.BoolVar(&f.forceGenericProvider, "force-generic-provider", false,
 		"route non-generic spec.provider sources (GitRepository/OCIRepository/Bucket) "+
-			"through the generic SecretRef path instead of failing. Works offline when "+
-			"static credentials are supplied; otherwise the fetch fails on the missing "+
-			"auth Secret, which --allow-missing-secrets soft-skips.")
+			"through the generic credential path instead of failing. With a secretRef, "+
+			"static credentials render offline and a missing one is soft-skipped by "+
+			"--allow-missing-secrets; with no secretRef, Git/Bucket go anonymous and OCI "+
+			"falls back to --registry-config, so a private source fails on auth.")
 	fs.BoolVar(&f.restrictEgress, "restrict-egress", false,
 		"untrusted-render guard: block source fetches (kustomize remote resources/bases, "+
 			"Git/OCI/Helm/Bucket sources) to loopback, RFC1918, link-local, and cloud-metadata "+

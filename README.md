@@ -69,6 +69,8 @@ Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig
 
 **Default output filters.** `--skip-secrets` and `--skip-crds` both default to `true` — `build` and `diff` strip rendered `Secret` and `CustomResourceDefinition` objects from manifest output. Pass `--skip-secrets=false` / `--skip-crds=false` to include them; `--skip-kinds <kind>` (repeatable) drops additional kinds. These are output-stream filters, distinct from `--allow-missing-secrets`, which gates source auth and generated HR values Secret readiness.
 
+**Scoping the scan.** A gitignore-syntax `.krmignore` at `--path` filters which files the scan loads (`!` re-includes work, so an allowlist like `/*`, `!/common/**`, `!/environments/production/**` mirrors a `GitRepository` `spec.ignore`). `--krmignore <file>` (`FLATE_KRMIGNORE`) reads that file in place of `<path>/.krmignore`, with patterns still relative to `--path`, so one checkout can keep a `.krmignore.staging` and a `.krmignore.production` and pick one per run.
+
 **Cache.** flate persists source fetches and helm template output under an on-disk cache (honoring Flux intervals). `flate cache gc` prunes stale entries; `flate cache clear-render` drops the persistent helm template-output cache.
 
 ## Changed-only mode

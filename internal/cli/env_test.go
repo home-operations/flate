@@ -164,6 +164,7 @@ func TestEnvKey(t *testing.T) {
 	for in, want := range map[string]string{
 		"path":         "FLATE_PATH",
 		"path-orig":    "FLATE_PATH_ORIG",
+		"krmignore":    "FLATE_KRMIGNORE",
 		"log-level":    "FLATE_LOG_LEVEL",
 		"skip-kinds":   "FLATE_SKIP_KINDS",
 		"api-versions": "FLATE_API_VERSIONS",

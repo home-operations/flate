@@ -700,7 +700,7 @@ func TestBindCommon_DefaultValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find build all: %v", err)
 	}
-	for _, name := range []string{"path", "namespace", "output", "concurrency", "skip-crds", "skip-secrets"} {
+	for _, name := range []string{"path", "krmignore", "namespace", "output", "concurrency", "skip-crds", "skip-secrets"} {
 		if build.Flags().Lookup(name) == nil {
 			t.Errorf("expected common flag %q on `build all`", name)
 		}
@@ -870,5 +870,52 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 	}
 	if strings.Count(stderr, "flate error:") != 1 {
 		t.Errorf("failure summary should be printed exactly once:\n%s", stderr)
+	}
+}
+
+// TestKrmignoreFlag_OverridesScanRootIgnore exercises --krmignore end to
+// end: the named file replaces <path>/.krmignore for the scan, and a
+// file that doesn't exist fails the run rather than rendering unfiltered.
+func TestKrmignoreFlag_OverridesScanRootIgnore(t *testing.T) {
+	path := writeFixture(t)
+	testutil.WriteFileAt(t, filepath.Join(path, "flux", "extra.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps-extra
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	ignore := filepath.Join(t.TempDir(), "no-extra.krmignore")
+	testutil.WriteFileAt(t, ignore, "flux/extra.yaml\n")
+
+	stdout, stderr, code := runCLI(t, "get", "ks", "--path", path, "-o", "name")
+	if code != 0 {
+		t.Fatalf("get ks exited %d: stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "apps-extra") {
+		t.Fatalf("unfiltered get ks should list apps-extra:\n%s", stdout)
+	}
+
+	stdout, stderr, code = runCLI(t, "get", "ks", "--path", path, "--krmignore", ignore, "-o", "name")
+	if code != 0 {
+		t.Fatalf("get ks --krmignore exited %d: stderr=%s", code, stderr)
+	}
+	if strings.Contains(stdout, "apps-extra") {
+		t.Errorf("--krmignore should drop apps-extra:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "apps") {
+		t.Errorf("--krmignore should keep apps:\n%s", stdout)
+	}
+
+	_, stderr, code = runCLI(t, "get", "ks", "--path", path, "--krmignore", ignore+".missing")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for missing --krmignore file")
+	}
+	if !strings.Contains(stderr, ignore+".missing") {
+		t.Errorf("error should name the missing file; got %q", stderr)
 	}
 }

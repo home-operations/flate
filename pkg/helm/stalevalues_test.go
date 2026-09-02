@@ -3,6 +3,8 @@ package helm
 import (
 	"slices"
 	"testing"
+
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
 
 // allow is the default top-level allowlist for walker tests (no chart deps).
@@ -158,5 +160,62 @@ func TestValuesKeyReferenced(t *testing.T) {
 		if got := valuesKeyReferenced(src, key); got != want {
 			t.Errorf("valuesKeyReferenced(%q) = %v, want %v", key, got, want)
 		}
+	}
+}
+
+func TestKnownTopLevelKeys(t *testing.T) {
+	sub := &chart.Chart{
+		Metadata: &chart.Metadata{
+			Name: "operator",
+			Dependencies: []*chart.Dependency{
+				{Name: "inner-crd", Condition: "innerCrds.enabled"},
+			},
+		},
+	}
+	ch := &chart.Chart{
+		Metadata: &chart.Metadata{
+			Name: "parent",
+			Dependencies: []*chart.Dependency{
+				{Name: "alloy-crd", Condition: "crds.deployAlloyCRD"},
+				{Name: "podlogs-crd", Alias: "podlogs", Condition: "crds.deployPodLogsCRD, extra.enabled"},
+				{Name: "metrics", Condition: "metricsEnabled", Tags: []string{"observability"}},
+				nil,
+			},
+		},
+	}
+	ch.AddDependency(sub)
+
+	cases := []struct {
+		name string
+		ch   *chart.Chart
+		want []string
+	}{
+		{
+			name: "nil chart still allows global",
+			ch:   nil,
+			want: []string{"global"},
+		},
+		{
+			name: "names, aliases, condition segments, tags, and subchart conditions",
+			ch:   ch,
+			want: []string{
+				"alloy-crd", "crds", "extra", "global", "innerCrds",
+				"metrics", "metricsEnabled", "operator", "podlogs",
+				"podlogs-crd", "tags",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := knownTopLevelKeys(tc.ch)
+			keys := make([]string, 0, len(got))
+			for k := range got {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			if !slices.Equal(keys, tc.want) {
+				t.Fatalf("knownTopLevelKeys keys = %v, want %v", keys, tc.want)
+			}
+		})
 	}
 }

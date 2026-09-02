@@ -25,6 +25,10 @@ import (
 // Top-level only, and deliberately conservative to avoid false positives:
 //   - Keys addressed to a subchart (a dependency name/alias) or Helm's shared
 //     "global" are always treated as used — the subchart consumes them.
+//   - Keys gating a dependency are always treated as used: the top-level
+//     segment of every dependencies[].condition path in the tree, and "tags"
+//     when any dependency declares tags — Helm's dependency evaluation consumes
+//     them without any template naming them (#930).
 //   - If the chart accesses `.Values` opaquely — ranges/dumps the whole map
 //     (toYaml .Values), binds it to a variable, or indexes it with a non-literal
 //     key — we can't statically prove any key unused, so we report NOTHING.
@@ -65,9 +69,10 @@ func unreferencedValuePaths(src string, values map[string]any, allow map[string]
 }
 
 // knownTopLevelKeys are release top-level keys always treated as used,
-// regardless of the parent chart's templates: Helm's shared "global" key, and
+// regardless of the parent chart's templates: Helm's shared "global" key,
 // every declared dependency's name/alias (values addressed to a subchart nest
-// under these and are consumed by the subchart, not the parent).
+// under these and are consumed by the subchart, not the parent), and every key
+// gating a dependency (see addDependencyGateKeys).
 func knownTopLevelKeys(ch *chart.Chart) map[string]struct{} {
 	allow := map[string]struct{}{"global": {}}
 	if ch == nil {
@@ -91,7 +96,38 @@ func knownTopLevelKeys(ch *chart.Chart) map[string]struct{} {
 			allow[n] = struct{}{}
 		}
 	}
+	addDependencyGateKeys(ch, allow)
 	return allow
+}
+
+// addDependencyGateKeys allowlists the keys Helm's dependency evaluation
+// consumes from the top parent's values: the top-level segment of each
+// dependencies[].condition path (a comma-separated list of dotted paths), and
+// the shared "tags" block when any dependency declares tags. Conditions
+// anywhere in the tree resolve against the top parent's values, so subcharts'
+// own Chart.yaml dependencies are walked too (#930).
+func addDependencyGateKeys(ch *chart.Chart, allow map[string]struct{}) {
+	if ch == nil {
+		return
+	}
+	if ch.Metadata != nil {
+		for _, d := range ch.Metadata.Dependencies {
+			if d == nil {
+				continue
+			}
+			for cond := range strings.SplitSeq(d.Condition, ",") {
+				if top, _, _ := strings.Cut(strings.TrimSpace(cond), "."); top != "" {
+					allow[top] = struct{}{}
+				}
+			}
+			if len(d.Tags) > 0 {
+				allow["tags"] = struct{}{}
+			}
+		}
+	}
+	for _, sub := range ch.Dependencies() {
+		addDependencyGateKeys(sub, allow)
+	}
 }
 
 // chartTemplateText concatenates every template (including _helpers.tpl and

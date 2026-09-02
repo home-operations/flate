@@ -909,5 +909,11 @@ func (w *walker) shouldSkipDir(name, full string) bool {
 	if strings.HasPrefix(name, ".") && name != "." {
 		return true
 	}
+	// With `!` re-includes in play, an ignored directory can still hold
+	// re-included files, so descend and let the per-file checks filter —
+	// matching sourceignore's per-file evaluation of spec.ignore.
+	if w.ignore != nil && w.ignore.hasNegation {
+		return false
+	}
 	return w.ignoreMatches(full, true)
 }

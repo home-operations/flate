@@ -248,18 +248,101 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 	// Without the exclusion the root claim wins ancestor status — this
 	// pins the cascade the fix removes (and the root-prefix match that
 	// enables it).
-	f := NewFilterWithCache(NewSet(changed), sourceFiles, "", lister, nil, nil, nil)
+	f := NewFilterWithCache(NewSet(changed), sourceFiles, "", lister, nil, nil, nil, nil)
 	if !f.ShouldReconcile(externalID) {
 		t.Fatalf("precondition: root-claiming KS should be an ancestor without exclusions; keep=%v", f.KeepNames())
 	}
 
 	f = NewFilterWithCache(NewSet(changed), sourceFiles, "", lister, nil, nil,
-		map[manifest.NamedResource]struct{}{externalID: {}})
+		map[manifest.NamedResource]struct{}{externalID: {}}, nil)
 	if !f.ShouldReconcile(plexID) {
 		t.Fatalf("owner of the changed file must be kept; keep=%v", f.KeepNames())
 	}
 	if f.ShouldReconcile(externalID) {
 		t.Errorf("external-sourced root-claiming KS must not enter keep as ancestor; keep=%v", f.KeepNames())
+	}
+}
+
+// TestFilter_FileOwnerFallbackCatchesResourcesEscape reproduces #833: a
+// Kustomization's resources: entry reaches outside its own claimed
+// spec.path, so resolve() must fall back to the caller-supplied
+// FileOwnerLookup to find the owner.
+func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
+	apps := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "apps/homelab"}
+	appsID := apps.Named()
+	const baseFile = "apps/base/postgres/cluster.yaml"
+
+	fileOwners := func(file string) []manifest.NamedResource {
+		if file == baseFile {
+			return []manifest.NamedResource{appsID}
+		}
+		return nil
+	}
+
+	f := NewFilterWithCache(
+		NewSet([]string{baseFile}),
+		map[manifest.NamedResource]string{appsID: "apps/homelab/kustomization.yaml"},
+		"",
+		testutil.MapLister{appsID: apps},
+		nil, nil, nil,
+		fileOwners,
+	)
+	if !f.ShouldReconcile(appsID) {
+		t.Fatalf("owner supplied by the fileOwners fallback must be kept; keep=%v", f.KeepNames())
+	}
+}
+
+// TestFilter_FileOwnerMergesWithPrefixClaim: an escaped resource can sit
+// under ANOTHER Kustomization's own claimed spec.path. A prefix hit
+// there must not skip the fileOwners lookup — both the prefix claimant
+// and the KS that reads the file via resources: need to be kept.
+func TestFilter_FileOwnerMergesWithPrefixClaim(t *testing.T) {
+	postgres := &manifest.Kustomization{Name: "postgres", Namespace: "flux-system", Path: "apps/base/postgres"}
+	apps := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "apps/homelab"}
+	postgresID, appsID := postgres.Named(), apps.Named()
+	const baseFile = "apps/base/postgres/cluster.yaml"
+
+	fileOwners := func(file string) []manifest.NamedResource {
+		if file == baseFile {
+			return []manifest.NamedResource{appsID}
+		}
+		return nil
+	}
+
+	f := NewFilterWithCache(
+		NewSet([]string{baseFile}),
+		map[manifest.NamedResource]string{
+			postgresID: "apps/base/postgres/kustomization.yaml",
+			appsID:     "apps/homelab/kustomization.yaml",
+		},
+		"",
+		testutil.MapLister{postgresID: postgres, appsID: apps},
+		nil, nil, nil,
+		fileOwners,
+	)
+	if !f.ShouldReconcile(postgresID) {
+		t.Errorf("prefix claimant must still be kept; keep=%v", f.KeepNames())
+	}
+	if !f.ShouldReconcile(appsID) {
+		t.Errorf("fileOwners owner must be kept alongside the prefix claimant; keep=%v", f.KeepNames())
+	}
+}
+
+// TestFilter_NoFileOwnerFallbackLeavesUnclaimedFileUnowned pins the
+// pre-fix behavior: without a FileOwnerLookup, an unclaimed file's
+// change resolves to an empty keep set.
+func TestFilter_NoFileOwnerFallbackLeavesUnclaimedFileUnowned(t *testing.T) {
+	apps := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "apps/homelab"}
+	appsID := apps.Named()
+
+	f := NewFilter(
+		NewSet([]string{"apps/base/postgres/cluster.yaml"}),
+		map[manifest.NamedResource]string{appsID: "apps/homelab/kustomization.yaml"},
+		"",
+		testutil.MapLister{appsID: apps},
+	)
+	if f.Size() != 0 {
+		t.Errorf("expected empty keep set without a fileOwners fallback; keep=%v", f.KeepNames())
 	}
 }
 
@@ -800,6 +883,7 @@ func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
 			sibling: {otherOCI},
 		},
 		nil,
+		nil,
 	)
 
 	if !f.ShouldReconcile(oci) {
@@ -853,6 +937,7 @@ func TestFilter_ReverseEdgeNoCascadeFromChangedConsumer(t *testing.T) {
 			bID: {shared},
 		},
 		nil,
+		nil,
 	)
 
 	if !f.ShouldReconcile(aID) {
@@ -898,6 +983,7 @@ func TestFilter_ForwardEdgeChangedHRKeepsChartRefSource(t *testing.T) {
 			hr:      {oci},
 			sibling: {oci}, // shares the same chart source
 		},
+		nil,
 		nil,
 	)
 

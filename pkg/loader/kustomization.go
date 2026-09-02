@@ -232,7 +232,7 @@ func resolveResourcePath(base, rel string) (string, bool) {
 func IsUnreferencedKustomizeResource(repoRoot, file string) bool {
 	file = filepath.ToSlash(file)
 	dir := path.Dir(file)
-	d, ok := readKustomizeDirectives(repoRoot, dir)
+	d, _, ok := readKustomizeDirectives(repoRoot, dir)
 	if !ok {
 		return false
 	}

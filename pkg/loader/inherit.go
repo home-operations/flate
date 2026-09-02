@@ -217,7 +217,7 @@ func indexKustomizeNamespaces(sourceFiles map[manifest.NamedResource]string, rep
 // a kustomization.yaml in dir (resolved relative to repoRoot), or ""
 // if no kustomize file exists or the namespace key is absent.
 func readKustomizeNamespace(repoRoot, dir string) string {
-	d, _ := readKustomizeDirectives(repoRoot, dir)
+	d, _, _ := readKustomizeDirectives(repoRoot, dir)
 	return d.Namespace
 }
 

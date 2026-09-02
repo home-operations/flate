@@ -89,6 +89,125 @@ func TestSelfProduceIndex_NilSafe(t *testing.T) {
 	if _, ok := idx.EmissionParentByFile("apps/base/app-a/ks.yaml"); ok {
 		t.Errorf("nil index EmissionParentByFile = ok, want absent")
 	}
+	if got := idx.OwnersOfFile("apps/base/postgres/cluster.yaml"); got != nil {
+		t.Errorf("nil index OwnersOfFile = %v, want nil", got)
+	}
+}
+
+// TestBuildSelfProduceIndex_OwnersOfFileResourcesEscape reproduces #833: an
+// overlay's kustomization.yaml pulls a resource in from outside its own
+// spec.path via a `resources:` entry. OwnersOfFile must attribute every
+// file the walk reads — both kustomization.yamls and the leaf resource —
+// back to the owning top-level Kustomization.
+func TestBuildSelfProduceIndex_OwnersOfFileResourcesEscape(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
+	testutil.WriteFile(t, dir, "apps/base/postgres/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cluster.yaml\n")
+	testutil.WriteFile(t, dir, "apps/base/postgres/cluster.yaml",
+		"apiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: postgres\n")
+
+	s := store.New()
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
+	s.AddObject(ks)
+
+	idx := BuildSelfProduceIndex(s, dir, nil, true)
+
+	for _, file := range []string{
+		"apps/homelab/kustomization.yaml",
+		"apps/base/postgres/kustomization.yaml",
+		"apps/base/postgres/cluster.yaml",
+	} {
+		if got := idx.OwnersOfFile(file); !slices.Contains(got, ks.Named()) {
+			t.Errorf("OwnersOfFile(%s) = %v, want to contain apps", file, got)
+		}
+	}
+}
+
+// TestBuildSelfProduceIndex_OwnersOfFileDirectFileEscape: an overlay lists an
+// existing resource file directly, by a path escaping its own directory. Even
+// though the escape-rejecting policy keeps it from being opened, it must still
+// be attributed to the owning KS — the direct-file twin of the dir escape in
+// #833. Otherwise changed-only mode omits the KS when that file is the only edit.
+func TestBuildSelfProduceIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres/cluster.yaml\n")
+	testutil.WriteFile(t, dir, "apps/base/postgres/cluster.yaml",
+		"apiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: postgres\n")
+
+	s := store.New()
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
+	s.AddObject(ks)
+
+	idx := BuildSelfProduceIndex(s, dir, nil, true)
+
+	if got := idx.OwnersOfFile("apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
+		t.Errorf("OwnersOfFile(escaped file cluster.yaml) = %v, want to contain apps", got)
+	}
+}
+
+// TestBuildSelfProduceIndex_OwnersOfFileDanglingResource: a resources: entry
+// whose file is missing from this tree (deleted, entry left behind) must
+// still be attributed to the Kustomization that references it. Otherwise
+// changed-only mode finds no owner for the deleted path and silently skips
+// the broken reference instead of rendering it and failing loud.
+func TestBuildSelfProduceIndex_OwnersOfFileDanglingResource(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
+	testutil.WriteFile(t, dir, "apps/base/postgres/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cluster.yaml\n")
+
+	s := store.New()
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
+	s.AddObject(ks)
+
+	idx := BuildSelfProduceIndex(s, dir, nil, true)
+
+	if got := idx.OwnersOfFile("apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
+		t.Errorf("OwnersOfFile(dangling cluster.yaml) = %v, want to contain apps", got)
+	}
+}
+
+// TestBuildSelfProduceIndex_OwnersOfFileDanglingDirectory: the directory
+// form of the dangling case. A resources: entry pointing at a directory
+// that no longer exists records only the directory path, but change
+// detection reports the deleted files individually — OwnersOfFile must
+// resolve them through the recorded parent directory.
+func TestBuildSelfProduceIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
+	// A peer overlay directly references a deleted file beneath the deleted
+	// directory: its exact-key owner must not mask the directory owner.
+	testutil.WriteFile(t, dir, "apps/other/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres/cluster.yaml\n")
+
+	s := store.New()
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
+	other := &manifest.Kustomization{Name: "other", Namespace: "flux-system", Path: "./apps/other"}
+	s.AddObject(ks)
+	s.AddObject(other)
+
+	idx := BuildSelfProduceIndex(s, dir, nil, true)
+
+	for _, file := range []string{
+		"apps/base/postgres/kustomization.yaml",
+		"apps/base/postgres/nested/cluster.yaml",
+	} {
+		if got := idx.OwnersOfFile(file); !slices.Contains(got, ks.Named()) {
+			t.Errorf("OwnersOfFile(%s under deleted dir) = %v, want to contain apps", file, got)
+		}
+	}
+	// Owned by both: other by its exact entry, apps through the deleted dir.
+	if got := idx.OwnersOfFile("apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) || !slices.Contains(got, other.Named()) {
+		t.Errorf("OwnersOfFile(deleted cluster.yaml) = %v, want to contain both apps and other", got)
+	}
+	if got := idx.OwnersOfFile("apps/base/redis/cm.yaml"); got != nil {
+		t.Errorf("OwnersOfFile(unrelated file) = %v, want nil", got)
+	}
 }
 
 // EmissionParentByFile records a base ks.yaml reached cross-tree through EXACTLY

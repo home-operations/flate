@@ -1211,6 +1211,72 @@ spec:
 	}
 }
 
+// TestOrchestrator_ChangedOnlyKeepsResourcesEscapeOwner reproduces #833
+// end-to-end: a Flux Kustomization's overlay pulls a base in from OUTSIDE
+// its own spec.path via a `resources:` escape, and the only edit is to a
+// plain resource under that base. The prefix-claim index alone attributes
+// the file to no owner; the SelfProduceIndex file attribution must reach
+// the change filter through buildChangeFilter so the owning KS is kept.
+// Exercises the real wiring (SelfProduceIndex.OwnersOfFile is nil-safe, so
+// a nil selfProduce would silently disable the fallback and the unit tests
+// with a fake FileOwnerLookup would still pass).
+func TestOrchestrator_ChangedOnlyKeepsResourcesEscapeOwner(t *testing.T) {
+	writeTree := func(dir, value string) {
+		testutil.WriteFile(t, dir, "clusters/prod/flux-system/apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./apps/prod
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+`)
+		testutil.WriteFile(t, dir, "apps/prod/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base/postgres
+`)
+		testutil.WriteFile(t, dir, "apps/base/postgres/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cluster.yaml
+`)
+		testutil.WriteFile(t, dir, "apps/base/postgres/cluster.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres
+  namespace: default
+data:
+  replicas: "`+value+`"
+`)
+	}
+	dir, origDir := t.TempDir(), t.TempDir()
+	writeTree(origDir, "1")
+	writeTree(dir, "2")
+
+	o, err := New(Config{Path: dir, PathOrig: origDir, WipeSecrets: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(o.Stop)
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	f := o.Filter()
+	if f == nil {
+		t.Fatal("expected non-nil change filter when PathOrig differs from Path")
+	}
+	apps := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "apps", Namespace: "flux-system"}
+	if !f.ShouldReconcile(apps) {
+		t.Fatalf("KS reading the changed file via a resources: escape must be kept; keep=%v", f.KeepNames())
+	}
+}
+
 // TestOrchestrator_BootstrapIsIdempotent locks the A.1 invariant:
 // Bootstrap mutates orchestrator state (sourceFiles, parentOf,
 // existence, depGraph, componentCache, filter). A second call must

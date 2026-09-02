@@ -73,7 +73,7 @@ Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig
 
 ## Changed-only mode
 
-`--path-orig` flips every command into change-aware reconcile. flate diffs the two paths, walks ownership backwards (longest matching Flux KS `spec.path`, including `spec.components`), and reconciles only the touched subtree plus its content dependencies.
+`--path-orig` flips every command into change-aware reconcile. flate diffs the two paths, walks ownership backwards (longest matching Flux KS `spec.path`, including `spec.components`, plus any file a KS reads through a `resources:` reference outside its `spec.path`), and reconciles only the touched subtree plus its content dependencies.
 
 In the keep-set: direct file edits, chart sources, KS `sourceRef`, HR `valuesFrom`, kustomize components (touching a shared component re-renders every consumer).
 

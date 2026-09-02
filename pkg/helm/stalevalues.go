@@ -26,9 +26,9 @@ import (
 //   - Keys addressed to a subchart (a dependency name/alias) or Helm's shared
 //     "global" are always treated as used — the subchart consumes them.
 //   - Keys gating a dependency are always treated as used: the top-level
-//     segment of every dependencies[].condition path in the tree, and "tags"
-//     when any dependency declares tags — Helm's dependency evaluation consumes
-//     them without any template naming them (#930).
+//     segment of the root chart's dependencies[].condition paths, and "tags"
+//     when any dependency in the tree declares tags — Helm's dependency
+//     evaluation consumes them without any template naming them (#930).
 //   - If the chart accesses `.Values` opaquely — ranges/dumps the whole map
 //     (toYaml .Values), binds it to a variable, or indexes it with a non-literal
 //     key — we can't statically prove any key unused, so we report NOTHING.
@@ -101,11 +101,15 @@ func knownTopLevelKeys(ch *chart.Chart) map[string]struct{} {
 }
 
 // addDependencyGateKeys allowlists the keys Helm's dependency evaluation
-// consumes from the top parent's values: the top-level segment of each
-// dependencies[].condition path (a comma-separated list of dotted paths), and
-// the shared "tags" block when any dependency declares tags. Conditions
-// anywhere in the tree resolve against the top parent's values, so subcharts'
-// own Chart.yaml dependencies are walked too (#930).
+// consumes from the release's top-level values: the top-level segment of each
+// root-chart dependencies[].condition path (a comma-separated list of dotted
+// paths), and the shared "tags" block when any dependency in the tree declares
+// tags (#930). Only the root chart's conditions are harvested — Helm prefixes a
+// nested chart's condition with its parent path, so those resolve under the
+// dependency's name, which is already allowlisted; flattening them here would
+// suppress a valid warning for an unrelated root key of the same name. Tag
+// evaluation reads the unprefixed top-level "tags" table at every depth, so the
+// whole tree is walked for tags.
 func addDependencyGateKeys(ch *chart.Chart, allow map[string]struct{}) {
 	if ch == nil {
 		return
@@ -120,14 +124,26 @@ func addDependencyGateKeys(ch *chart.Chart, allow map[string]struct{}) {
 					allow[top] = struct{}{}
 				}
 			}
-			if len(d.Tags) > 0 {
-				allow["tags"] = struct{}{}
+		}
+	}
+	if anyDependencyTags(ch) {
+		allow["tags"] = struct{}{}
+	}
+}
+
+// anyDependencyTags reports whether any dependency in ch's tree declares tags.
+func anyDependencyTags(ch *chart.Chart) bool {
+	if ch == nil {
+		return false
+	}
+	if ch.Metadata != nil {
+		for _, d := range ch.Metadata.Dependencies {
+			if d != nil && len(d.Tags) > 0 {
+				return true
 			}
 		}
 	}
-	for _, sub := range ch.Dependencies() {
-		addDependencyGateKeys(sub, allow)
-	}
+	return slices.ContainsFunc(ch.Dependencies(), anyDependencyTags)
 }
 
 // chartTemplateText concatenates every template (including _helpers.tpl and

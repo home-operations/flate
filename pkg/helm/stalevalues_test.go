@@ -172,6 +172,15 @@ func TestKnownTopLevelKeys(t *testing.T) {
 			},
 		},
 	}
+	tagsOnlyNested := &chart.Chart{Metadata: &chart.Metadata{Name: "parent"}}
+	tagsOnlyNested.AddDependency(&chart.Chart{
+		Metadata: &chart.Metadata{
+			Name: "child",
+			Dependencies: []*chart.Dependency{
+				{Name: "grand", Tags: []string{"group"}},
+			},
+		},
+	})
 	ch := &chart.Chart{
 		Metadata: &chart.Metadata{
 			Name: "parent",
@@ -196,13 +205,21 @@ func TestKnownTopLevelKeys(t *testing.T) {
 			want: []string{"global"},
 		},
 		{
-			name: "names, aliases, condition segments, tags, and subchart conditions",
+			// operator's nested innerCrds.enabled condition resolves at
+			// operator.innerCrds.enabled, so innerCrds must NOT leak into
+			// the root allowlist.
+			name: "names, aliases, root condition segments, and tags",
 			ch:   ch,
 			want: []string{
-				"alloy-crd", "crds", "extra", "global", "innerCrds",
+				"alloy-crd", "crds", "extra", "global",
 				"metrics", "metricsEnabled", "operator", "podlogs",
 				"podlogs-crd", "tags",
 			},
+		},
+		{
+			name: "tags on a nested dependency still allowlist the shared tags block",
+			ch:   tagsOnlyNested,
+			want: []string{"child", "global", "tags"},
 		},
 	}
 	for _, tc := range cases {

@@ -19,16 +19,20 @@ import (
 // "generic" provider (any S3-API-compatible storage) is wired up
 // today via minio-go. The aws/gcp/azure providers parse and route
 // here but return a clear "not implemented" error rather than silently
-// falling back.
+// falling back, unless ForceGeneric sends them down the generic path.
 type Fetcher struct {
 	Cache   *source.Cache
 	Secrets source.SecretGetter
+
+	// ForceGeneric skips the provider gate; the generic path then needs
+	// static credentials (a SecretRef) or it fails.
+	ForceGeneric bool
 }
 
 // Fetch implements source.TypedFetcher[*manifest.Bucket]. The typed
 // signature is wrapped via source.Wrap at orchestrator registration.
 func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceArtifact, error) {
-	if b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
+	if !f.ForceGeneric && b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
 		return nil, source.ErrUnsupportedProvider("Bucket",
 			b.Namespace, b.Name, b.Provider, sourcev1.BucketProviderGeneric,
 			"S3-compatible")

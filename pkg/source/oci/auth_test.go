@@ -225,3 +225,26 @@ func TestFetcher_ResolveConfig_SecretNotFound(t *testing.T) {
 		t.Errorf("expected ErrMissingSecret wrap; got %v", err)
 	}
 }
+
+func TestFetcher_ForceGenericProvider(t *testing.T) {
+	// Gate bypassed: the generic path runs and fails on the absent secret.
+	f := &Fetcher{
+		ForceGeneric: true,
+		Secrets:      func(_, _ string) *manifest.Secret { return nil },
+	}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.URL = "oci://ghcr.io/x/y"
+		s.Provider = sourcev1.AmazonOCIProvider
+		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+	})
+	_, err := f.Fetch(context.Background(), repo)
+	if err == nil {
+		t.Fatalf("expected missing-secret error")
+	}
+	if strings.Contains(err.Error(), "not implemented") {
+		t.Errorf("provider gate should be bypassed with ForceGeneric; got %v", err)
+	}
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("want ErrMissingSecret from the generic path; got %v", err)
+	}
+}

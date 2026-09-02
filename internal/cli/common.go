@@ -40,18 +40,19 @@ type commonFlags struct {
 	// baseline side) are threaded explicitly rather than re-derived from a
 	// .git. Empty for an explicit --path-orig (the CLI defaults the root
 	// via repoRootOf and lets the side read its own .git remotes).
-	pathOrigRoot        string
-	pathOrigSelfURLs    []string
-	base                string
-	namespace           string
-	skipCRDs            bool
-	skipSecrets         bool
-	allowMissingSecrets bool
-	restrictEgress      bool
-	skipKinds           []string
-	output              string
-	registryConfig      string
-	concurrency         int
+	pathOrigRoot         string
+	pathOrigSelfURLs     []string
+	base                 string
+	namespace            string
+	skipCRDs             bool
+	skipSecrets          bool
+	allowMissingSecrets  bool
+	forceGenericProvider bool
+	restrictEgress       bool
+	skipKinds            []string
+	output               string
+	registryConfig       string
+	concurrency          int
 	// sourceRetry* tune the bounded retry applied uniformly to every source
 	// fetch on transient network errors. attempts is the total tries (first +
 	// retries); 1 disables. min/max bound the exponential backoff and jitter
@@ -118,6 +119,11 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"that only materialize in the live cluster. Usually unnecessary: a missing Secret "+
 			"declared by an in-repo ExternalSecret/SealedSecret (with a static target name) is "+
 			"auto-skipped without this flag. cert/proxy secretRefs still fail loud.")
+	fs.BoolVar(&f.forceGenericProvider, "force-generic-provider", false,
+		"route non-generic spec.provider sources (GitRepository/OCIRepository/Bucket) "+
+			"through the generic SecretRef path instead of failing. Works offline when "+
+			"static credentials are supplied; otherwise the fetch fails on the missing "+
+			"auth Secret, which --allow-missing-secrets soft-skips.")
 	fs.BoolVar(&f.restrictEgress, "restrict-egress", false,
 		"untrusted-render guard: block source fetches (kustomize remote resources/bases, "+
 			"Git/OCI/Helm/Bucket sources) to loopback, RFC1918, link-local, and cloud-metadata "+
@@ -430,6 +436,7 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		},
 		GitDepth:                  c.gitDepth,
 		AllowMissingSecrets:       c.allowMissingSecrets,
+		ForceGenericProvider:      c.forceGenericProvider,
 		RestrictEgress:            c.restrictEgress,
 		CacheDir:                  c.resolveCacheRoot(),
 		HelmTemplateCacheBytes:    int64(c.helmTemplateCacheMB) << 20,

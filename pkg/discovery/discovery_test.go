@@ -570,3 +570,49 @@ configMapGenerator:
 		t.Errorf("TIMEZONE = %q, want UTC", got)
 	}
 }
+
+// TestRun_KRMIgnoreFileScopesInitialScanOnly pins the override's reach:
+// Config.KRMIgnoreFile filters the --path scan, while spec.path targets
+// followed afterwards still honor their own .krmignore rather than the
+// override (whose patterns are anchored at the scan root).
+func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
+	dir := t.TempDir()
+	ks := func(name, path string) string {
+		return `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ` + name + `
+  namespace: flux-system
+spec:
+  path: ` + path + `
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  interval: 10m
+`
+	}
+	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", "keep.yaml"), ks("keep", "./apps"))
+	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", "drop.yaml"), ks("drop", "./apps"))
+	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", ".krmignore"), "keep.yaml\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "override.krmignore"), "drop.yaml\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "leaf.yaml"), ks("leaf", "./apps/leaf"))
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "hidden.yaml"), ks("hidden", "./apps/leaf"))
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", ".krmignore"), "hidden.yaml\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "leaf", "kustomization.yaml"), "resources: []\n")
+
+	st := store.New()
+	if _, err := discovery.Run(context.Background(), discovery.Config{
+		Path: filepath.Join(dir, "cluster"), RepoRoot: dir, Store: st, WipeSecrets: true,
+		KRMIgnoreFile: filepath.Join(dir, "override.krmignore"),
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	id := func(name string) manifest.NamedResource {
+		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+	}
+	for name, want := range map[string]bool{"keep": true, "drop": false, "leaf": true, "hidden": false} {
+		if got := st.GetObject(id(name)) != nil; got != want {
+			t.Errorf("Store has %s = %v, want %v", name, got, want)
+		}
+	}
+}

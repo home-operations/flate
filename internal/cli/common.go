@@ -42,6 +42,7 @@ type commonFlags struct {
 	// via repoRootOf and lets the side read its own .git remotes).
 	pathOrigRoot         string
 	pathOrigSelfURLs     []string
+	krmIgnore            string
 	base                 string
 	namespace            string
 	skipCRDs             bool
@@ -109,6 +110,8 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	fs.StringVarP(&f.path, "path", "p", ".", "path to the Flux cluster directory")
 	fs.StringVarP(&f.pathOrig, "path-orig", "P", "",
 		"baseline path; when set, every command runs in changed-only mode")
+	fs.StringVar(&f.krmIgnore, "krmignore", "",
+		"gitignore-style file read instead of <path>/.krmignore; patterns are relative to --path")
 	bindBase(fs, f)
 	fs.StringVarP(&f.namespace, "namespace", "n", "",
 		"limit to this namespace (default: every namespace, or just the changed ones when --path-orig is set)")
@@ -425,6 +428,7 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		// root, or the .git default of an explicit --path-orig. Replaces
 		// the core's old .git "widen" heuristic.
 		PathOrig:       c.baselineRoot(),
+		KRMIgnoreFile:  c.krmIgnore,
 		HelmOptions:    c.helmOptions(h),
 		WipeSecrets:    true,
 		RegistryConfig: c.registryConfig,

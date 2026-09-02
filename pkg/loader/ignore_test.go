@@ -315,3 +315,58 @@ data: {env: `+env+`}
 		}
 	})
 }
+
+// TestLoader_IgnoreFileOverride covers Loader.IgnoreFile: an explicitly
+// named file replaces <root>/.krmignore, its patterns anchor at the scan
+// root regardless of where the file lives, and naming a file that does
+// not exist fails loud instead of silently scanning unfiltered.
+func TestLoader_IgnoreFileOverride(t *testing.T) {
+	appID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
+
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, ".krmignore", "/environments/staging/\n")
+	testutil.WriteFile(t, dir, "ignores/production.krmignore", "/environments/production/\n")
+	for _, env := range []string{"production", "staging"} {
+		testutil.WriteFile(t, dir, "environments/"+env+"/app.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: app-config, namespace: default}
+data: {env: `+env+`}
+`)
+	}
+
+	envOf := func(t *testing.T, ignoreFile string) string {
+		t.Helper()
+		s := store.New()
+		l := New(s)
+		l.IgnoreFile = ignoreFile
+		if _, err := l.Load(t.Context(), dir); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		cm, ok := s.GetObject(appID).(*manifest.ConfigMap)
+		if !ok {
+			t.Fatal("app-config was not loaded")
+		}
+		env, _ := cm.Data["env"].(string)
+		return env
+	}
+
+	t.Run("empty falls back to root .krmignore", func(t *testing.T) {
+		if got := envOf(t, ""); got != "production" {
+			t.Errorf("env = %q, want production", got)
+		}
+	})
+
+	t.Run("override anchors at the scan root", func(t *testing.T) {
+		if got := envOf(t, filepath.Join(dir, "ignores", "production.krmignore")); got != "staging" {
+			t.Errorf("env = %q, want staging", got)
+		}
+	})
+
+	t.Run("missing override file errors", func(t *testing.T) {
+		l := New(store.New())
+		l.IgnoreFile = filepath.Join(dir, "nope.krmignore")
+		if _, err := l.Load(t.Context(), dir); err == nil {
+			t.Fatal("Load: expected error for missing IgnoreFile")
+		}
+	})
+}

@@ -100,9 +100,15 @@ type Config struct {
 	// resolves it. Supplied explicitly by SDK consumers rendering
 	// extracted trees (no .git/config to read); empty ⇒ fall back to the
 	// working tree's .git remotes, preserving local behavior.
-	SelfURLs    []string
-	Store       *store.Store
-	WipeSecrets bool
+	SelfURLs []string
+	// KRMIgnoreFile, when non-empty, is read in place of <Path>/.krmignore
+	// for the initial scan; spec.path targets followed afterwards keep
+	// their own per-directory .krmignore. Lets one checkout carry several
+	// scan scopes (e.g. .krmignore.staging / .krmignore.production) and
+	// pick one per run.
+	KRMIgnoreFile string
+	Store         *store.Store
+	WipeSecrets   bool
 	// ComponentCache, when non-nil, memoizes
 	// manifest.ReadKustomizeComponents reads across discovery's
 	// internal passes (parent-index build, orphan promotion, the
@@ -269,9 +275,11 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	}
 	scanned := map[string]struct{}{}
 	total := 0
+	l.IgnoreFile = d.cfg.KRMIgnoreFile
 	if err := d.loadAt(ctx, scanRoot, scanned, &total); err != nil {
 		return err
 	}
+	l.IgnoreFile = ""
 	// Apply namespaces once over the initially-scanned set so the
 	// bootstrap-source alias and the first expansion pass see populated
 	// namespaces. The fixed-point loop below intentionally does NOT

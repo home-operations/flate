@@ -86,6 +86,14 @@ type Loader struct {
 	// consumer's NamedResource; mirrors SourceFiles' lifecycle.
 	SourceRefs map[manifest.NamedResource][]manifest.NamedResource
 
+	// IgnoreFile, when non-empty, is the gitignore-grammar file Load
+	// reads in place of <root>/.krmignore, with its patterns anchored
+	// at the Load root. Discovery sets it for the --path scan only:
+	// spec.path targets followed afterwards keep their own
+	// per-directory .krmignore, exactly as if the file sat at the
+	// scan root.
+	IgnoreFile string
+
 	// PreferExisting suppresses overwrites of resources already in
 	// the store (and their SourceFiles entries). Used by the
 	// orchestrator's recursive spec.path discovery so the initial
@@ -138,7 +146,12 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	ignore, err := loadIgnore(abs)
+	var ignore *ignoreSet
+	if l.IgnoreFile != "" {
+		ignore, err = loadIgnoreFile(l.IgnoreFile, abs)
+	} else {
+		ignore, err = loadIgnore(abs)
+	}
 	if err != nil {
 		return 0, err
 	}

@@ -2,6 +2,7 @@ package loader
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,17 +30,35 @@ type ignoreSet struct {
 // the full gitignore glob syntax, including ** for zero-or-more path
 // segments.
 func loadIgnore(root string) (*ignoreSet, error) {
-	out := &ignoreSet{}
-	path := filepath.Join(root, ".krmignore")
-	f, err := os.Open(path) //nolint:gosec // root is the cluster scan root
+	f, err := os.Open(filepath.Join(root, ".krmignore")) //nolint:gosec // root is the cluster scan root
 	if err != nil {
 		if os.IsNotExist(err) {
-			return out, nil
+			return &ignoreSet{}, nil
 		}
-		return out, err
+		return &ignoreSet{}, err
 	}
 	defer func() { _ = f.Close() }()
+	return parseIgnore(f, root)
+}
 
+// loadIgnoreFile reads the ignore file at path in place of
+// <root>/.krmignore. The patterns are still anchored at root, so a file
+// kept elsewhere in the repo (e.g. .krmignore.staging) reads exactly as
+// it would at the scan root. Unlike loadIgnore, a missing file is an
+// error: the caller named it explicitly.
+func loadIgnoreFile(path, root string) (*ignoreSet, error) {
+	f, err := os.Open(path) //nolint:gosec // path is a user-supplied ignore file
+	if err != nil {
+		return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	return parseIgnore(f, root)
+}
+
+// parseIgnore builds the ignoreSet from one gitignore-grammar file,
+// anchoring its patterns at root.
+func parseIgnore(f *os.File, root string) (*ignoreSet, error) {
+	out := &ignoreSet{}
 	// domain is the root split into path segments, used by the gitignore
 	// pattern parser to anchor absolute-style patterns correctly.
 	domain := strings.Split(filepath.ToSlash(root), "/")

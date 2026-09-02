@@ -59,6 +59,10 @@ type Config struct {
 	// Supplied explicitly by SDK consumers rendering extracted trees with
 	// no .git/config; empty ⇒ the working tree's .git remotes are read.
 	SelfURLs []string
+	// KRMIgnoreFile, when non-empty, is the gitignore-grammar file read in
+	// place of <Path>/.krmignore for the initial scan of Path; see
+	// discovery.Config.KRMIgnoreFile.
+	KRMIgnoreFile string
 	// PathOrig, when non-empty, switches every command into
 	// changed-only mode: only resources whose source files differ
 	// (plus the sources they reference) get reconciled.
@@ -542,7 +546,8 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	}
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
-		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
+		KRMIgnoreFile: o.cfg.KRMIgnoreFile,
+		Store:         o.store, WipeSecrets: o.cfg.WipeSecrets,
 		ComponentCache: o.componentCache,
 	})
 	if err != nil {

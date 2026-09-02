@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.4](https://github.com/home-operations/flate/compare/v0.6.3...v0.6.4) (2026-09-02)
+
+
+### Bug Fixes
+
+* **helm:** treat dependency condition and tags keys as used values ([#962](https://github.com/home-operations/flate/issues/962)) ([37b0d1a](https://github.com/home-operations/flate/commit/37b0d1a4c3261d35f46ac26ce668eef15e325e2b))
+* **loader:** descend into ignored dirs when .krmignore has re-includes ([#960](https://github.com/home-operations/flate/issues/960)) ([aab62cf](https://github.com/home-operations/flate/commit/aab62cf99c4e034458ba6af89197a46652ff9aac))
+
 ## [0.6.3](https://github.com/home-operations/flate/compare/v0.6.2...v0.6.3) (2026-09-02)
 
 

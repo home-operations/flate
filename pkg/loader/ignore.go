@@ -14,6 +14,13 @@ import (
 // file at the scan root.
 type ignoreSet struct {
 	matcher gitignore.Matcher
+	// hasNegation is true when any pattern is a `!` re-include. The
+	// walker's directory prune consults it: pruning an ignored
+	// directory would prevent a deeper `!` pattern from re-including
+	// files beneath it (per-file checks still filter everything the
+	// walk visits), which is how source-controller's sourceignore
+	// evaluates spec.ignore — see pkg/source/ignore.go.
+	hasNegation bool
 }
 
 // loadIgnore reads <root>/.krmignore (or returns an empty set if not
@@ -42,6 +49,9 @@ func loadIgnore(root string) (*ignoreSet, error) {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
+		}
+		if strings.HasPrefix(line, "!") {
+			out.hasNegation = true
 		}
 		patterns = append(patterns, gitignore.ParsePattern(line, domain))
 	}

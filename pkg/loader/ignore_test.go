@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // TestLoadIgnore_GlobStarMatchesAcrossDirectories is the regression test for
@@ -234,4 +236,82 @@ func TestNormalizePrefix_LivesInParent(t *testing.T) {
 			t.Errorf("NormalizePrefix(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
+}
+
+// TestLoader_KrmignoreEnvironmentAllowlist mirrors the multi-environment
+// layout from issue #816: environments/<env>/ trees carry same-named
+// resources, so an unfiltered scan lets the alphabetically-last env
+// shadow the others in the Store. A .krmignore using the exact
+// allowlist patterns from the issue (the ones the reporter feeds to
+// GitRepository spec.ignore) must scope the walk to common/ plus one
+// environment, so the selected env's resources win.
+func TestLoader_KrmignoreEnvironmentAllowlist(t *testing.T) {
+	appID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
+	commonID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "common-settings"}
+
+	writeTree := func(t *testing.T, ignore string) *store.Store {
+		t.Helper()
+		dir := t.TempDir()
+		testutil.WriteFile(t, dir, ".krmignore", ignore)
+		testutil.WriteFile(t, dir, "common/settings.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: common-settings, namespace: default}
+`)
+		for _, env := range []string{"production", "staging"} {
+			testutil.WriteFile(t, dir, "environments/"+env+"/app.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: app-config, namespace: default}
+data: {env: `+env+`}
+`)
+		}
+		s := store.New()
+		if _, err := New(s).Load(t.Context(), dir); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		return s
+	}
+
+	envOf := func(t *testing.T, s *store.Store) string {
+		t.Helper()
+		obj := s.GetObject(appID)
+		if obj == nil {
+			t.Fatal("app-config was not loaded at all")
+		}
+		cm, ok := obj.(*manifest.ConfigMap)
+		if !ok {
+			t.Fatalf("app-config is %T, want *manifest.ConfigMap", obj)
+		}
+		env, _ := cm.Data["env"].(string)
+		return env
+	}
+
+	t.Run("no filtering: staging shadows production", func(t *testing.T) {
+		s := writeTree(t, "")
+		if got := envOf(t, s); got != "staging" {
+			t.Errorf("unfiltered walk: app-config env = %q, want %q (alphabetically-last env wins)", got, "staging")
+		}
+	})
+
+	t.Run("issue #816 allowlist patterns select production", func(t *testing.T) {
+		s := writeTree(t, `/*
+!/common/**/*.yaml
+!/environments/production/**/*.yaml
+`)
+		if got := envOf(t, s); got != "production" {
+			t.Errorf("allowlist walk: app-config env = %q, want %q", got, "production")
+		}
+		if s.GetObject(commonID) == nil {
+			t.Error("common-settings must be re-included by !/common/**/*.yaml")
+		}
+	})
+
+	t.Run("directory exclusion selects production", func(t *testing.T) {
+		s := writeTree(t, "/environments/staging/\n")
+		if got := envOf(t, s); got != "production" {
+			t.Errorf("exclusion walk: app-config env = %q, want %q", got, "production")
+		}
+		if s.GetObject(commonID) == nil {
+			t.Error("common-settings must still load")
+		}
+	})
 }

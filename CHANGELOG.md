@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.3](https://github.com/home-operations/flate/compare/v0.6.2...v0.6.3) (2026-09-02)
+
+
+### Features
+
+* add --force-generic-provider ([#958](https://github.com/home-operations/flate/issues/958)) ([9bd9f5d](https://github.com/home-operations/flate/commit/9bd9f5dc96f5d9c3d55f855165b939f94df039b6))
+* **go:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.58.1 → v0.59.0) ([#957](https://github.com/home-operations/flate/issues/957)) ([83a1cf8](https://github.com/home-operations/flate/commit/83a1cf8c4ca00586d393da4cb0523aee656f64e8))
+* **go:** update module github.com/fluxcd/pkg/envsubst (v1.7.0 → v1.8.0) ([#950](https://github.com/home-operations/flate/issues/950)) ([c729c40](https://github.com/home-operations/flate/commit/c729c40cfb2a91c983d84b8490672fdd9d49c4f1))
+* **go:** update module github.com/fluxcd/pkg/kustomize (v1.39.0 → v1.40.0) ([#951](https://github.com/home-operations/flate/issues/951)) ([243de8c](https://github.com/home-operations/flate/commit/243de8cad76dbfa9e39b904371a532a1805a811b))
+
+
+### Bug Fixes
+
+* **change:** attribute resources: escapes to their owning Kustomization ([#934](https://github.com/home-operations/flate/issues/934)) ([8e43f49](https://github.com/home-operations/flate/commit/8e43f49fd69eccc6d265458221a8c7b5182c6d81))
+* **go:** update module github.com/fluxcd/helm-controller/api (v1.6.3 → v1.6.4) ([#954](https://github.com/home-operations/flate/issues/954)) ([cf17211](https://github.com/home-operations/flate/commit/cf1721192a3597ef43933a3f3f1d4e04b859e192))
+* **go:** update module github.com/fluxcd/kustomize-controller/api (v1.9.4 → v1.9.5) ([#955](https://github.com/home-operations/flate/issues/955)) ([466c17d](https://github.com/home-operations/flate/commit/466c17d9e2f65b9cfb8036acfbc997b24be1f88e))
+* **go:** update module github.com/fluxcd/source-controller/api (v1.9.4 → v1.9.5) ([#956](https://github.com/home-operations/flate/issues/956)) ([bb5cc19](https://github.com/home-operations/flate/commit/bb5cc19e51f7da14c2d3184cecfca6b94ebdba23))
+
+
+### Miscellaneous Chores
+
+* **github-action:** update action anchore/sbom-action (v0.24.1 → v0.24.2) ([#953](https://github.com/home-operations/flate/issues/953)) ([855c4c9](https://github.com/home-operations/flate/commit/855c4c9c932a2fd85e320152e2245e6c18a43df3))
+
 ## [0.6.2](https://github.com/home-operations/flate/compare/v0.6.1...v0.6.2) (2026-08-31)
 
 

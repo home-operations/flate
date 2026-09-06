@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -1087,5 +1088,58 @@ metadata: {name: a, namespace: ns}
 	_, err := New(store.New()).Load(ctx, dir)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+// TestLoader_MalformedManifestFails pins that a file the walk opens which
+// isn't valid YAML fails Load instead of being logged and skipped. Both walk
+// modes must agree: the kustomize graph (the file is listed under
+// `resources:`) and the ad-hoc tree walk (no kustomization.yaml). Skipping
+// the file would silently drop any Flux Kustomization it declares from the
+// run, and when the parent that renders the directory sits outside the scan
+// root nothing else ever reports the syntax error.
+func TestLoader_MalformedManifestFails(t *testing.T) {
+	const broken = `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: blackbox-exporter
+  namespace: flux-system
+spec:
+  path: ./apps/blackbox-exporter
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+brokenPointer: [ unclosed
+`
+	cases := []struct {
+		name  string
+		files map[string]string
+	}{
+		{
+			name: "kustomize graph",
+			files: map[string]string{
+				"kustomization.yaml": "resources:\n  - blackbox-exporter.yaml\n",
+			},
+		},
+		{
+			name:  "ad-hoc walk",
+			files: map[string]string{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "blackbox-exporter.yaml", broken)
+			for name, body := range tc.files {
+				testutil.WriteFile(t, dir, name, body)
+			}
+			_, err := New(store.New()).Load(t.Context(), dir)
+			if !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("Load error = %v, want one wrapping manifest.ErrInput", err)
+			}
+			if !strings.Contains(err.Error(), "blackbox-exporter.yaml") {
+				t.Errorf("Load error must name the malformed file; got: %v", err)
+			}
+		})
 	}
 }

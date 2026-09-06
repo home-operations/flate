@@ -861,3 +861,42 @@ func copyTree(t *testing.T, src string) string {
 	}
 	return dst
 }
+
+// TestE2E_MalformedPointerFailsTest covers the narrow --path shape from
+// #971: a Flux Kustomization "pointer" file listed in a kustomization.yaml
+// has a YAML syntax error, and the parent Kustomization that would render
+// the directory (and so trip kustomize's own error) is outside the scan
+// root. `flate test` must still exit non-zero and name the file, instead of
+// dropping the pointer from the roster and reporting green.
+func TestE2E_MalformedPointerFailsTest(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "monitoring/kustomization.yaml", `resources:
+  - blackbox-exporter.yaml
+  - other.yaml
+`)
+	testutil.WriteFile(t, dir, "monitoring/blackbox-exporter.yaml", `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: blackbox-exporter, namespace: flux-system}
+spec:
+  path: ./monitoring/blackbox-exporter/app
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+brokenPointer: [ unclosed
+`)
+	testutil.WriteFile(t, dir, "monitoring/other.yaml", `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: other, namespace: flux-system}
+spec:
+  path: ./monitoring/other/app
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+
+	out, code := runCLIExpectErr(t, "test", "all", "--path", filepath.Join(dir, "monitoring"), "--no-progress")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for a malformed pointer file; got 0:\n%s", out)
+	}
+	if !strings.Contains(out, "blackbox-exporter.yaml") {
+		t.Errorf("error must name the malformed file; got:\n%s", out)
+	}
+}

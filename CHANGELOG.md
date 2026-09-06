@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.6](https://github.com/home-operations/flate/compare/v0.6.5...v0.6.6) (2026-09-06)
+
+
+### Features
+
+* **go:** update module golang.org/x/crypto (v0.55.0 → v0.56.0) ([#968](https://github.com/home-operations/flate/issues/968)) ([26b09b4](https://github.com/home-operations/flate/commit/26b09b4775c5ae821c0960faaf07e9148c8bef88))
+
+
+### Bug Fixes
+
+* **loader:** fail the run on a malformed manifest instead of skipping it ([#974](https://github.com/home-operations/flate/issues/974)) ([ca451d3](https://github.com/home-operations/flate/commit/ca451d3a54cb683e9619eabe2de2157ebddbe69c))
+
+
+### Miscellaneous Chores
+
+* **mise:** update tool go (1.27.0 → 1.27.1) ([#973](https://github.com/home-operations/flate/issues/973)) ([cc80a29](https://github.com/home-operations/flate/commit/cc80a29d6cebef9d52dc6199db995265bc98ba89))
+* **mise:** update tool oxfmt (0.65.0 → 0.66.0) ([#972](https://github.com/home-operations/flate/issues/972)) ([1ad27b6](https://github.com/home-operations/flate/commit/1ad27b6ccfe72f2f9dcb22d637ffe753083133fb))
+* **mise:** update tool zizmor (1.29.0 → 1.30.0) ([#967](https://github.com/home-operations/flate/issues/967)) ([b80598c](https://github.com/home-operations/flate/commit/b80598cd58c164d79ee38eb20cdacf4a75573a25))
+
 ## [0.6.5](https://github.com/home-operations/flate/compare/v0.6.4...v0.6.5) (2026-09-02)
 
 

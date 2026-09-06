@@ -26,6 +26,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -358,8 +359,12 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		}
 		n, err := w.loader.loadFile(abs)
 		if err != nil {
-			slog.Warn("loader: file failed to parse", "path", abs, "err", err)
-			continue
+			// A file kustomize would read that isn't valid YAML fails
+			// `kustomize build` for whichever Kustomization renders
+			// this package. That parent may sit outside the scan
+			// root, so fail here rather than let the file's Flux CRs
+			// silently drop out of the run.
+			return count, fmt.Errorf("loader: %w", err)
 		}
 		count += n
 	}
@@ -633,8 +638,7 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 		}
 		n, err := w.loader.loadFile(path)
 		if err != nil {
-			slog.Warn("loader: file failed to parse", "path", path, "err", err)
-			return nil
+			return fmt.Errorf("loader: %w", err)
 		}
 		count += n
 		return nil

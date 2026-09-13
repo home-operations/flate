@@ -18,7 +18,7 @@ require (
 	github.com/fluxcd/pkg/apis/kustomize v1.20.0
 	github.com/fluxcd/pkg/apis/meta v1.31.0
 	github.com/fluxcd/pkg/envsubst v1.8.0
-	github.com/fluxcd/pkg/kustomize v1.40.0
+	github.com/fluxcd/pkg/kustomize v1.41.0
 	github.com/fluxcd/pkg/sourceignore v0.18.0
 	github.com/fluxcd/source-controller/api v1.9.5
 	github.com/go-git/go-git/v5 v5.19.2
@@ -43,7 +43,7 @@ require (
 	k8s.io/apiextensions-apiserver v0.37.0
 	k8s.io/apimachinery v0.37.0
 	oras.land/oras-go/v2 v2.6.2
-	sigs.k8s.io/kustomize/api v0.21.1
+	sigs.k8s.io/kustomize/api v0.22.0
 	sigs.k8s.io/kustomize/kyaml v0.21.1
 	sigs.k8s.io/yaml v1.6.0
 )

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.6.6](https://github.com/home-operations/flate/compare/v0.6.5...v0.6.6) (2026-09-13)
+
+
+### Features
+
+* **go:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.59.0 → v0.60.0) ([#984](https://github.com/home-operations/flate/issues/984)) ([7afccce](https://github.com/home-operations/flate/commit/7afccceb6ef08ceaa0bc66d9d381fa6b4ef9ad35))
+* **go:** update module golang.org/x/crypto (v0.55.0 → v0.56.0) ([#968](https://github.com/home-operations/flate/issues/968)) ([26b09b4](https://github.com/home-operations/flate/commit/26b09b4775c5ae821c0960faaf07e9148c8bef88))
+* **go:** update module golang.org/x/crypto (v0.56.0 → v0.57.0) ([#979](https://github.com/home-operations/flate/issues/979)) ([07d4e3d](https://github.com/home-operations/flate/commit/07d4e3d8b8a379b5d942367527f726568343e083))
+* **go:** update module golang.org/x/sync (v0.22.0 → v0.23.0) ([#977](https://github.com/home-operations/flate/issues/977)) ([ab9b215](https://github.com/home-operations/flate/commit/ab9b2157ef254c2b7f54c27ef0a0f0fd1c50af0a))
+* **go:** update module helm.sh/helm/v4 (v4.2.4 → v4.3.0) ([#982](https://github.com/home-operations/flate/issues/982)) ([c97e789](https://github.com/home-operations/flate/commit/c97e789bc0724b029c54b13ed2578a9e22795c6d))
+
+
+### Bug Fixes
+
+* **loader:** fail the run on a malformed manifest instead of skipping it ([#974](https://github.com/home-operations/flate/issues/974)) ([ca451d3](https://github.com/home-operations/flate/commit/ca451d3a54cb683e9619eabe2de2157ebddbe69c))
+
+
+### Miscellaneous Chores
+
+* **mise:** update tool go (1.27.0 → 1.27.1) ([#973](https://github.com/home-operations/flate/issues/973)) ([cc80a29](https://github.com/home-operations/flate/commit/cc80a29d6cebef9d52dc6199db995265bc98ba89))
+* **mise:** update tool go:golang.org/x/vuln/cmd/govulncheck (1.7.0 → v1.8.0) ([#978](https://github.com/home-operations/flate/issues/978)) ([0231ced](https://github.com/home-operations/flate/commit/0231ced4ecd4c2d7333505b10c417d2b3e28e520))
+* **mise:** update tool oxfmt (0.65.0 → 0.66.0) ([#972](https://github.com/home-operations/flate/issues/972)) ([1ad27b6](https://github.com/home-operations/flate/commit/1ad27b6ccfe72f2f9dcb22d637ffe753083133fb))
+* **mise:** update tool oxfmt (0.66.0 → 0.67.0) ([#983](https://github.com/home-operations/flate/issues/983)) ([e8151a0](https://github.com/home-operations/flate/commit/e8151a027bc6cfc3e530d3a6a972bd4a4596fd36))
+* **mise:** update tool zizmor (1.29.0 → 1.30.0) ([#967](https://github.com/home-operations/flate/issues/967)) ([b80598c](https://github.com/home-operations/flate/commit/b80598cd58c164d79ee38eb20cdacf4a75573a25))
+* **mise:** update tool zizmor (1.30.0 → 1.30.1) ([#985](https://github.com/home-operations/flate/issues/985)) ([123366d](https://github.com/home-operations/flate/commit/123366dc5c17f0f86418be95b55e000d9b29040f))
+
 ## [0.6.5](https://github.com/home-operations/flate/compare/v0.6.4...v0.6.5) (2026-09-02)
 
 

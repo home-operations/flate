@@ -15,11 +15,11 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/fluxcd/helm-controller/api v1.6.4
 	github.com/fluxcd/kustomize-controller/api v1.9.5
-	github.com/fluxcd/pkg/apis/kustomize v1.20.0
+	github.com/fluxcd/pkg/apis/kustomize v1.21.0
 	github.com/fluxcd/pkg/apis/meta v1.31.0
 	github.com/fluxcd/pkg/envsubst v1.8.0
-	github.com/fluxcd/pkg/kustomize v1.40.0
-	github.com/fluxcd/pkg/sourceignore v0.18.0
+	github.com/fluxcd/pkg/kustomize v1.41.0
+	github.com/fluxcd/pkg/sourceignore v0.19.0
 	github.com/fluxcd/source-controller/api v1.9.5
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-task/slim-sprig/v3 v3.0.0
@@ -205,7 +205,7 @@ require (
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
 	k8s.io/kubectl v0.37.0 // indirect
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd // indirect
-	sigs.k8s.io/controller-runtime v0.24.1 // indirect
+	sigs.k8s.io/controller-runtime v0.25.0 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect

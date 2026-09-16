@@ -19,7 +19,7 @@ require (
 	github.com/fluxcd/pkg/apis/meta v1.31.0
 	github.com/fluxcd/pkg/envsubst v1.8.0
 	github.com/fluxcd/pkg/kustomize v1.40.0
-	github.com/fluxcd/pkg/sourceignore v0.18.0
+	github.com/fluxcd/pkg/sourceignore v0.19.0
 	github.com/fluxcd/source-controller/api v1.9.5
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-task/slim-sprig/v3 v3.0.0

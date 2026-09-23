@@ -56,7 +56,7 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*sto
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GenericOCIProvider,
 			"SecretRef or --registry-config credentials")
 	}
-	configPath, cleanup, err := f.resolveRegistryConfig(repo)
+	configPath, cleanup, err := f.resolveRegistryConfig(ctx, repo)
 	if err != nil {
 		return nil, err
 	}

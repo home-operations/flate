@@ -145,6 +145,33 @@ func TestParseOCIRef(t *testing.T) {
 	}
 }
 
+func TestRegistryHost(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain ref", "oci://ghcr.io/owner/chart", "ghcr.io"},
+		{"with tag", "oci://ghcr.io/owner/chart:v1.2.3", "ghcr.io"},
+		{"with digest", "oci://ghcr.io/owner/chart@sha256:abc123", "ghcr.io"},
+		{"with port", "oci://registry:5000/x:v1", "registry:5000"},
+		{"no scheme", "ghcr.io/owner/chart", "ghcr.io"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := registryHost(tc.in)
+			if err != nil {
+				t.Fatalf("registryHost(%q): %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("registryHost(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOCIRevision(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

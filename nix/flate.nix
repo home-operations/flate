@@ -2,6 +2,7 @@
   buildGoModule,
   go,
   lib,
+  installShellFiles,
 
   version ? "git",
 }:
@@ -23,6 +24,17 @@
   };
 
   vendorHash = "sha256-N2BuuBSBzLf87g98FlTdWDFpeegsNmXLaxHPJHXRHQQ=";
+
+  nativeBuildInputs = [
+    installShellFiles
+  ];
+
+  postInstall = ''
+    installShellCompletion --cmd flate \
+      --bash <($out/bin/flate completion bash) \
+      --fish <($out/bin/flate completion fish) \
+      --zsh <($out/bin/flate completion zsh) \
+  '';
 
   env.CGO_ENABLED = 0;
 

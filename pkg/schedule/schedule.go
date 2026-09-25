@@ -23,7 +23,9 @@ package schedule
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -87,6 +89,42 @@ const (
 	stateTerminal
 )
 
+// Change A (#828) — per-node re-dispatch cap. A schedulable node whose emitted
+// content is non-deterministic across concurrent re-runs feeds an unbounded
+// re-dispatch storm: Run never reaches its inFlight == 0 fixpoint and the pool
+// spawns dispatches without bound. The scheduler is a faithful AMPLIFIER of that
+// emit defect, not its source; the cap bounds the amplifier so a non-converging
+// emit fails LOUDLY (an errored Run naming the node, see CapErr) instead of
+// hanging silently.
+//
+// The ceiling is cumulative per node over one Run — never reset, because the
+// storm re-dispatches a terminal node, so a per-terminal reset would zero the
+// count every cycle and the cap would never fire. It scales with node count:
+//
+//	capLimit = capFloor + capPerNode*len(nodes)
+//
+// The legitimate per-node re-dispatch ceiling is itself bounded: 1 initial
+// dispatch + the <=6 re-runs a depth-5 dangling chain tolerates
+// (TestDanglingChainRunCountBounded) + <=2 drain-escalation re-queues + one
+// selector-ResourceSet re-expansion per distinct arrival (O(nodes)). capFloor
+// covers the constant terms with headroom; capPerNode covers the per-arrival
+// re-expansion with ~4x headroom. For a 90-node tree capLimit is ~392 —
+// comfortably above the ~100 legitimate ceiling and far below an unbounded
+// storm. The constants deliberately favor NEVER false-positive over fast
+// detection: a late-but-certain loud failure beats a false terminalize of a
+// converging DAG.
+const (
+	capFloor   = 32
+	capPerNode = 4
+)
+
+// capDiag records a node the re-dispatch cap terminalized and the cumulative
+// dispatch count it reached, for CapErr to report after Run returns.
+type capDiag struct {
+	id    NodeID
+	count int
+}
+
 type node struct {
 	id        NodeID
 	state     nodeState
@@ -100,6 +138,15 @@ type node struct {
 	// park on, so it must re-expand once the store has quiesced. Set from the
 	// scheduler's rerunAtDrain predicate after the node's first dispatch.
 	rerun bool
+	// dispatchCount is the cumulative number of times this node has been
+	// dispatched at the Run chokepoint over one Run, never reset (Change A/#828).
+	// When it would exceed capLimit the node is force-terminalized instead of
+	// dispatched, and capped is latched.
+	dispatchCount int
+	// capped is latched when the re-dispatch cap terminalizes this node; once
+	// set, no path (OnArrival re-admission, the fixpoint rerun sweep) may
+	// re-admit it, so the storm provably stops.
+	capped bool
 }
 
 // Scheduler is a re-entrant fixpoint reconcile driver. Construct with New,
@@ -127,6 +174,9 @@ type Scheduler struct {
 	// by the orchestrator (SetRerunAtDrain); evaluated off the hot path in the
 	// dispatch goroutine, never under mu.
 	rerunAtDrain func(NodeID) bool
+	// capExceeded records nodes the re-dispatch cap terminalized (Change A/#828),
+	// populated under mu at the dispatch chokepoint. CapErr reports them.
+	capExceeded []capDiag
 }
 
 // SetRerunAtDrain installs the predicate that decides whether a node re-runs at
@@ -190,6 +240,23 @@ func (s *Scheduler) Run(ctx context.Context) {
 			if n == nil || n.state != stateRunnable {
 				continue
 			}
+			// Change A (#828): count every dispatch at this single chokepoint —
+			// the one site all enqueue paths (OnArrival, complete()'s
+			// rerunRequested re-queue, unparkLocked, requeueRerunLocked) funnel
+			// through. Past the cumulative cap, do NOT dispatch: force the node
+			// terminal, record the diagnostic, and wake anything parked on it
+			// (mirroring the normal terminal path in complete()). This converts a
+			// non-converging re-dispatch storm from a silent hang into a loud,
+			// attributable failure surfaced via CapErr.
+			n.dispatchCount++
+			if n.dispatchCount > s.capLimitLocked() {
+				n.capped = true
+				n.state = stateTerminal
+				n.blockedOn = nil
+				s.capExceeded = append(s.capExceeded, capDiag{id: id, count: n.dispatchCount})
+				s.wakeWaitersLocked(id)
+				continue
+			}
 			n.state = stateRunning
 			n.rerunRequested = false
 			n.blockedOn = nil
@@ -245,6 +312,32 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 	s.mu.Unlock()
 	s.tasks.BlockTillDone()
+}
+
+// capLimitLocked returns the per-node cumulative re-dispatch ceiling for the
+// current node set: capFloor + capPerNode*len(nodes). It scales with node count
+// because the legitimate re-dispatch ceiling does (per-arrival selector
+// re-expansion is O(nodes)). Caller holds mu.
+func (s *Scheduler) capLimitLocked() int {
+	return capFloor + capPerNode*len(s.nodes)
+}
+
+// CapErr returns a non-nil error naming every node the re-dispatch cap
+// terminalized (Change A/#828) and the cumulative dispatch count each reached,
+// or nil if the cap never tripped. Its contract is to be read after Run returns;
+// it takes mu so a race-detector-clean mid-Run read is also safe.
+func (s *Scheduler) CapErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.capExceeded) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(s.capExceeded))
+	for _, d := range s.capExceeded {
+		parts = append(parts, fmt.Sprintf("%s (re-dispatched %d times)", d.id.String(), d.count))
+	}
+	return fmt.Errorf("schedule: re-dispatch cap exceeded for %d node(s): %s",
+		len(s.capExceeded), strings.Join(parts, ", "))
 }
 
 // complete records the result of one Dispatch. Runs on the worker goroutine;
@@ -382,9 +475,14 @@ func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 		switch n.state {
 		case stateTerminal:
 			// Content changed (Refire reset, or a parent re-emitted a mutated
-			// spec): re-run so the new content is reconciled.
-			n.state = stateRunnable
-			s.runq = append(s.runq, id)
+			// spec): re-run so the new content is reconciled — UNLESS the
+			// re-dispatch cap already terminalized this node (Change A/#828), in
+			// which case a later content-changed arrival must not re-admit it and
+			// reopen the storm.
+			if !n.capped {
+				n.state = stateRunnable
+				s.runq = append(s.runq, id)
+			}
 		case stateRunning:
 			n.rerunRequested = true
 		}
@@ -455,7 +553,10 @@ func (s *Scheduler) requeueAllParkedLocked() {
 func (s *Scheduler) requeueRerunLocked() bool {
 	var due []*node
 	for _, n := range s.nodes {
-		if n.state == stateTerminal && n.rerun {
+		// !capped: the re-dispatch cap (Change A/#828) terminalized this node, so
+		// the fixpoint rerun sweep must not re-admit it either — the chokepoint
+		// would only re-cap it, and no path may reopen the storm.
+		if n.state == stateTerminal && n.rerun && !n.capped {
 			due = append(due, n)
 		}
 	}

@@ -24,7 +24,7 @@ import (
 // LocalPath is the blob dir containing chart.tgz. A warm run with a fresh
 // on-disk resolution and the blob already cached opens zero sockets.
 func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository, chartName, version string) (*store.SourceArtifact, error) {
-	authOpts, err := f.helmRepoAuthOptions(r)
+	authOpts, err := f.helmRepoAuthOptions(ctx, r)
 	if err != nil {
 		return nil, err
 	}

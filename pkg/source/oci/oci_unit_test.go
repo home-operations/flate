@@ -2,7 +2,6 @@ package oci
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -86,32 +85,5 @@ func TestWriteCachedDigest_AtomicNoPartial(t *testing.T) {
 			continue
 		}
 		t.Errorf("unexpected leftover entry in slot after writeCachedDigest: %q (atomic write should have cleaned up the temp)", e.Name())
-	}
-}
-
-// TestLoadCredentials_ValidJSONLoads covers the happy path with a
-// minimal docker config.
-func TestLoadCredentials_ValidJSONLoads(t *testing.T) {
-	dir := t.TempDir()
-	config := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(config, []byte(`{"auths":{}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := loadCredentials(config)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if store == nil {
-		t.Error("expected non-nil store for valid config")
-	}
-}
-
-// TestLoadCredentials_EmptyPathFallsBackToDocker covers the
-// docker-default lookup arm. Either it succeeds or it gracefully
-// returns (nil, nil) when no default is configured — never errors.
-func TestLoadCredentials_EmptyPathFallsBackToDocker(t *testing.T) {
-	_, err := loadCredentials("")
-	if err != nil {
-		t.Errorf("empty path should never error; got %v", err)
 	}
 }

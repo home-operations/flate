@@ -43,6 +43,22 @@ func parseOCIRef(versioned string) (string, error) {
 	return versioned, nil
 }
 
+// registryHost returns the registry host of a versioned OCI URL —
+// "oci://ghcr.io/a/b:1" → "ghcr.io" — for credential probing. Reuses
+// parseOCIRef so the oci:// prefix and tag/digest stripping can't drift
+// from what the pull itself will parse; the host is everything before
+// the first slash of the parsed ref (registry hosts never contain one).
+func registryHost(versioned string) (string, error) {
+	ref, err := parseOCIRef(versioned)
+	if err != nil {
+		return "", err
+	}
+	if i := strings.Index(ref, "/"); i > 0 {
+		return ref[:i], nil
+	}
+	return ref, nil
+}
+
 // versionTag returns the per-reference tag oras.Copy should target.
 // Digest wins over SemVer wins over Tag; empty when
 // the caller wants the registry's default ("latest" downstream).

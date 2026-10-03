@@ -100,7 +100,9 @@ type Config struct {
 	// policy is impossible.
 	RestrictEgress bool
 
-	// RegistryConfig is the docker config.json used for OCI auth.
+	// RegistryConfig is the docker config.json used for OCI auth, and the
+	// fallback credential probe when a source secretRef can't resolve
+	// offline (OCI pulls and HTTP HelmRepository basic auth).
 	RegistryConfig string
 
 	// CacheDir overrides the default on-disk cache root. The default
@@ -462,7 +464,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	// synthesizes a HelmChart per (chart, version, repo) for every
 	// HelmRepository-sourced chart; this fetcher pulls it — HTTP repos via
 	// helm's getter, OCI repos via the OCI fetcher above.
-	hcFetcher, err := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, cache, layout)
+	hcFetcher, err := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, cache, layout, cfg.RegistryConfig)
 	if err != nil {
 		return nil, err
 	}

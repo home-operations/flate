@@ -1,12 +1,11 @@
 package oci
 
 import (
+	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -41,7 +40,7 @@ func newRepoClient(repo *manifest.OCIRepository, registryConfig string, tlsCfg *
 	if err != nil {
 		return nil, fmt.Errorf("oras: %w", err)
 	}
-	credStore, err := loadCredentials(registryConfig)
+	credStore, err := source.RegistryCredentialStore(registryConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -84,11 +83,21 @@ func (f *Fetcher) resolveTLS(repo *manifest.OCIRepository) (*tls.Config, error) 
 //     Secret materialized to a temp file).
 //  2. global --registry-config path (f.RegistryConfig).
 //  3. docker's default lookup (~/.docker/config.json), handled inside
-//     loadCredentials when configPath is empty.
+//     RegistryCredentialStore when configPath is empty.
+//
+// When the secretRef can't resolve offline — the Secret is missing, or its
+// .dockerconfigjson is absent or PLACEHOLDER-wiped — steps 2 and 3 are tried
+// before giving up (#999). Each candidate store is probed for an actual
+// credential for the repo's registry, and the first store holding one wins.
+// The probe is what keeps ErrMissingSecret the genuine last resort: falling
+// through blindly would let a config file that exists but doesn't cover the
+// registry (the norm on CI runners) replace the sentinel — and with it
+// --allow-missing-secrets and producer-backed skips — with an
+// anonymous-pull 401.
 //
 // The cleanup func removes any temp file the SecretRef path created;
 // safe to call when no temp file was made (no-op).
-func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, func(), error) {
+func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository) (string, func(), error) {
 	noCleanup := func() {}
 	if repo.SecretRef == nil {
 		return f.RegistryConfig, noCleanup, nil
@@ -97,55 +106,56 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 		return "", noCleanup, fmt.Errorf("%s references secretRef but no source.SecretGetter is wired", ociID(repo))
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
-	if sec == nil {
-		return "", noCleanup, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found")
+	if sec != nil {
+		if configJSON := source.StringFromSecret(sec, dockerConfigJSONKey); configJSON != "" {
+			// System temp (dir ""): the docker credential store only needs the
+			// file to exist for the duration of the pull.
+			tf := source.NewTempFiles("")
+			path, err := tf.Write("flate-oci-creds-*.json", configJSON)
+			if err != nil {
+				return "", noCleanup, err
+			}
+			return path, tf.Cleanup, nil
+		}
 	}
-	configJSON := source.StringFromSecret(sec, dockerConfigJSONKey)
-	if configJSON == "" {
-		// Empty here covers both (a) the Secret has no .dockerconfigjson
-		// key at all and (b) the key exists but `--wipe-secrets` (always
-		// on) replaced its value with PLACEHOLDER, which StringFromSecret
-		// returns as "". The ExternalSecret case in #190 hits (b): the
-		// Secret manifest is in-tree but its data is materialized live.
-		// Same ErrMissingSecret sentinel so --allow-missing-secrets
-		// covers both — matching only the literal "secret not found"
-		// path would leave the actual reporter's case still failing.
-		return "", noCleanup, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)")
+	// The secretRef is unresolvable offline. This reason wording is what
+	// surfaces verbatim in skip messages when no fallback credential
+	// exists, so don't rephrase it lightly.
+	reason := "not found"
+	if sec != nil {
+		// Empty .dockerconfigjson covers both (a) the Secret has no
+		// .dockerconfigjson key at all and (b) the key exists but
+		// `--wipe-secrets` (always on) replaced its value with
+		// PLACEHOLDER, which StringFromSecret returns as "". The
+		// ExternalSecret case in #190 hits (b): the Secret manifest is
+		// in-tree but its data is materialized live. Matching only the
+		// literal "secret not found" path would leave the actual
+		// reporter's case still failing.
+		reason = "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"
 	}
-	// System temp (dir ""): the docker credential store only needs the
-	// file to exist for the duration of the pull.
-	tf := source.NewTempFiles("")
-	path, err := tf.Write("flate-oci-creds-*.json", configJSON)
+	host, err := registryHost(repo.URL)
 	if err != nil {
 		return "", noCleanup, err
 	}
-	return path, tf.Cleanup, nil
-}
-
-// loadCredentials returns a credentials.Store backed by the given config
-// path. An empty configPath uses the docker default lookup.
-func loadCredentials(configPath string) (credentials.Store, error) {
-	if configPath != "" {
-		s, err := credentials.NewFileStore(configPath)
+	if f.RegistryConfig != "" {
+		credStore, err := source.RegistryCredentialStore(f.RegistryConfig)
 		if err != nil {
-			return nil, fmt.Errorf("load credentials %s: %w", configPath, err)
+			return "", noCleanup, err
 		}
-		return s, nil
-	}
-	s, err := credentials.NewStoreFromDocker(credentials.StoreOptions{AllowPlaintextPut: false})
-	if err != nil {
-		// Missing docker config is not fatal — anonymous pulls work.
-		// Distinguish os.ErrNotExist (the common case: no docker login
-		// on this machine) from permission / corrupt-JSON errors so an
-		// operator running flate with a broken ~/.docker/config.json
-		// gets a breadcrumb instead of a silent "401 unauthorized"
-		// from the registry.
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+		if _, found := source.CredentialForHost(ctx, credStore, host); found {
+			slog.Warn("oci: secretRef unresolvable; authenticating via --registry-config",
+				"id", ociID(repo), "secret", repo.Namespace+"/"+repo.SecretRef.Name, "registry", host)
+			return f.RegistryConfig, noCleanup, nil
 		}
-		slog.Debug("oci: docker credentials load failed; falling back to anonymous pulls",
-			"err", err)
-		return nil, nil
 	}
-	return s, nil
+	// Empty configPath: RegistryCredentialStore falls back to docker's
+	// default lookup, and so does newRepoClient when the returned path is "".
+	if credStore, err := source.RegistryCredentialStore(""); err == nil && credStore != nil {
+		if _, found := source.CredentialForHost(ctx, credStore, host); found {
+			slog.Warn("oci: secretRef unresolvable; authenticating via docker config",
+				"id", ociID(repo), "secret", repo.Namespace+"/"+repo.SecretRef.Name, "registry", host)
+			return "", noCleanup, nil
+		}
+	}
+	return "", noCleanup, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, reason)
 }

@@ -1,9 +1,12 @@
 package helmchart
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/url"
 
 	"helm.sh/helm/v4/pkg/getter"
 
@@ -22,7 +25,15 @@ func helmRepoAuthIdentity(r *manifest.HelmRepository) string {
 // helmRepoAuthOptions resolves SecretRef credentials for a HelmRepository
 // into helm getter options. Returns nil options when no SecretRef is set
 // (anonymous). Username/password basic auth + optional PassCredentials.
-func (f *Fetcher) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Option, error) {
+//
+// When the secretRef can't resolve offline — the Secret is missing, or its
+// username/password are absent or PLACEHOLDER-wiped — the global docker-style
+// credential stores are probed for the repo's host before giving up (#999):
+// --registry-config first, then docker's default lookup. Each probe must
+// find an actual credential for the host, so a config covering other
+// registries (the norm on CI runners) can't replace the ErrMissingSecret
+// sentinel — --allow-missing-secrets and producer-backed skips keep working.
+func (f *Fetcher) helmRepoAuthOptions(ctx context.Context, r *manifest.HelmRepository) ([]getter.Option, error) {
 	if r.SecretRef == nil {
 		return nil, nil
 	}
@@ -33,18 +44,84 @@ func (f *Fetcher) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Opti
 			manifest.ErrMissingSecret, helmID(r))
 	}
 	sec := f.secrets(r.Namespace, r.SecretRef.Name)
+	var username, password string
+	var err error
 	if sec == nil {
-		return nil, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "not found")
+		err = source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "not found")
+	} else {
+		username, password, err = source.BasicAuthFromSecret(sec, "HelmRepository", r.Namespace, r.Name, r.SecretRef.Name)
 	}
-	username, password, err := source.BasicAuthFromSecret(sec, "HelmRepository", r.Namespace, r.Name, r.SecretRef.Name)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		return basicAuthOptions(r, username, password), nil
 	}
-	opts := []getter.Option{getter.WithBasicAuth(username, password)}
+	u, p, ferr := f.fallbackBasicAuth(ctx, r)
+	switch {
+	case ferr != nil:
+		return nil, ferr
+	case u != "":
+		return basicAuthOptions(r, u, p), nil
+	}
+	return nil, err
+}
+
+// basicAuthOptions builds the getter options for username/password auth,
+// honoring spec.passCredentials on redirects. WithURL is load-bearing:
+// helm's getter only attaches basic auth when the option URL's scheme+host
+// match the fetched URL, so without it the credentials are silently
+// dropped (helm pairs WithURL with auth the same way in its own repo
+// code). Cross-host chart URLs then need spec.passCredentials.
+func basicAuthOptions(r *manifest.HelmRepository, username, password string) []getter.Option {
+	opts := []getter.Option{getter.WithURL(r.URL), getter.WithBasicAuth(username, password)}
 	if r.PassCredentials {
 		opts = append(opts, getter.WithPassCredentialsAll(true))
 	}
-	return opts, nil
+	return opts
+}
+
+// fallbackBasicAuth probes the global docker-style credential stores for a
+// basic-auth credential for r's host (the docker config's auths keys are
+// bare host[:port]): --registry-config first, then docker's default lookup
+// (#999). Returns a non-empty username when a credential was found; a
+// non-nil error is a hard failure (a corrupt explicit --registry-config)
+// that must not degrade to the missing-secret sentinel.
+func (f *Fetcher) fallbackBasicAuth(ctx context.Context, r *manifest.HelmRepository) (string, string, error) {
+	host, ok := repoHost(r.URL)
+	if !ok {
+		return "", "", nil
+	}
+	if f.registryConfig != "" {
+		credStore, err := source.RegistryCredentialStore(f.registryConfig)
+		if err != nil {
+			return "", "", err
+		}
+		if cred, found := source.CredentialForHost(ctx, credStore, host); found {
+			slog.Warn("helmchart: secretRef unresolvable; authenticating via --registry-config",
+				"id", helmID(r), "secret", r.Namespace+"/"+r.SecretRef.Name, "registry", host)
+			return cred.Username, cred.Password, nil
+		}
+	}
+	// Empty configPath: RegistryCredentialStore falls back to docker's
+	// default lookup (~/.docker/config.json).
+	if credStore, err := source.RegistryCredentialStore(""); err == nil && credStore != nil {
+		if cred, found := source.CredentialForHost(ctx, credStore, host); found {
+			slog.Warn("helmchart: secretRef unresolvable; authenticating via docker config",
+				"id", helmID(r), "secret", r.Namespace+"/"+r.SecretRef.Name, "registry", host)
+			return cred.Username, cred.Password, nil
+		}
+	}
+	return "", "", nil
+}
+
+// repoHost extracts host[:port] from a HelmRepository URL for credential
+// probing. Reports false when the URL carries no host — the fetch fails on
+// its own later, and the fallback stays silent rather than turning a URL
+// problem into an auth error.
+func repoHost(repoURL string) (string, bool) {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Host == "" {
+		return "", false
+	}
+	return u.Host, true
 }
 
 // helmRepoTransport builds a per-repo guarded HTTP transport when a

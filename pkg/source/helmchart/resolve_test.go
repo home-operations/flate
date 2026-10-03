@@ -41,7 +41,7 @@ func startHelmRepoCounted(t *testing.T, chartBytes []byte, indexDigest string) (
 // separate `flate` invocations (each with a fresh in-process indexCache).
 func fetcherWithCache(t *testing.T, r *manifest.HelmRepository, cache *source.Cache, layout cacheroot.Layout) *Fetcher {
 	t.Helper()
-	f, err := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, cache, layout)
+	f, err := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, cache, layout, "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

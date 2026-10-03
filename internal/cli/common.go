@@ -144,7 +144,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 		f.output = string(outputs[0]) // default; outputValue.String reports it in --help
 		fs.VarP(&outputValue{target: &f.output, allowed: outputs}, "output", "o", outputUsage(outputs))
 	}
-	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
+	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication; also the fallback when a source secretRef can't resolve offline (OCI and HTTP HelmRepository)")
 	fs.StringVar(&f.cacheDir, "cache-dir", "",
 		"on-disk cache root for source artifacts, helm charts, "+
 			"and persistent render output. Defaults to $XDG_CACHE_HOME/flate "+

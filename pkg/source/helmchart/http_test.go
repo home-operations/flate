@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -36,7 +38,7 @@ func newHTTPFetcher(t *testing.T, r *manifest.HelmRepository) *Fetcher {
 func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets source.SecretGetter) *Fetcher {
 	t.Helper()
 	layout := cacheroot.New(t.TempDir())
-	f, err := New(secrets, func(_, _ string) *manifest.HelmRepository { return r }, nil, source.NewCache(layout), layout)
+	f, err := New(secrets, func(_, _ string) *manifest.HelmRepository { return r }, nil, source.NewCache(layout), layout, "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -154,6 +156,50 @@ func startHelmRepo(t *testing.T, chartBytes []byte, indexDigest string) (*httpte
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, &hits
+}
+
+// startAuthedHelmRepo serves the index + chart only with the expected
+// basic auth, proving the fallback credential actually authenticates.
+func startAuthedHelmRepo(t *testing.T, chartBytes []byte, user, pass string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/index.yaml", func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok || u != user || p != pass {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(helmRepoIndex("")))
+	})
+	mux.HandleFunc("/app-template-1.0.0.tgz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(chartBytes)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// #999 end-to-end: a HelmRepository whose secretRef can't resolve offline
+// authenticates from --registry-config — index and chart download succeed
+// against a server that requires basic auth.
+func TestFetchHTTPChart_SecretMissingAuthsFromRegistryConfig(t *testing.T) {
+	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
+	srv := startAuthedHelmRepo(t, chartBytes, "alice", "hunter2")
+	creds := base64.StdEncoding.EncodeToString([]byte("alice:hunter2"))
+	cfg := writeRegistryConfig(t, `"`+strings.TrimPrefix(srv.URL, "http://")+`":{"auth":"`+creds+`"}`)
+	r := httpRepo(srv.URL)
+	r.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return nil })
+	f.registryConfig = cfg
+
+	art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"))
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(art.LocalPath, "chart.tgz")); err != nil {
+		t.Errorf("chart.tgz not at LocalPath %s: %v", art.LocalPath, err)
+	}
 }
 
 func helmRepoIndex(digest string) string {

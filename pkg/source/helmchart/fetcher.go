@@ -44,29 +44,32 @@ type Fetcher struct {
 	oci     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
 	cache   *source.Cache       // content-addressed store for HTTP chart tarballs
 
-	indexCache    sync.Map                // map[string]*repo.IndexFile (process lifetime)
-	indexLocks    *keylock.KeyMap[string] // coalesce one index.yaml fetch per repo
-	downloadLocks *keylock.KeyMap[string] // coalesce one download per chart
-	tmpDir        string                  // index/TLS temp files
+	registryConfig string                  // --registry-config: the #999 secretRef fallback probe
+	indexCache     sync.Map                // map[string]*repo.IndexFile (process lifetime)
+	indexLocks     *keylock.KeyMap[string] // coalesce one index.yaml fetch per repo
+	downloadLocks  *keylock.KeyMap[string] // coalesce one download per chart
+	tmpDir         string                  // index/TLS temp files
 }
 
 // New constructs a HelmChart fetcher. cache is the shared content-addressed
 // store HTTP chart tarballs land in (so they dedup with the rest of the cache
 // and the GC sweep sees them); layout supplies the helm tmp dir for index/TLS
-// temp files.
-func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cache *source.Cache, layout cacheroot.Layout) (*Fetcher, error) {
+// temp files; registryConfig is the --registry-config path probed when a
+// HelmRepository's secretRef can't resolve offline.
+func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cache *source.Cache, layout cacheroot.Layout, registryConfig string) (*Fetcher, error) {
 	tmpDir := layout.HelmTmp()
 	if err := os.MkdirAll(tmpDir, 0o750); err != nil {
 		return nil, fmt.Errorf("helmchart: tmp dir: %w", err)
 	}
 	return &Fetcher{
-		secrets:       secrets,
-		repos:         repos,
-		oci:           oci,
-		cache:         cache,
-		indexLocks:    keylock.New[string](),
-		downloadLocks: keylock.New[string](),
-		tmpDir:        tmpDir,
+		secrets:        secrets,
+		repos:          repos,
+		oci:            oci,
+		cache:          cache,
+		registryConfig: registryConfig,
+		indexLocks:     keylock.New[string](),
+		downloadLocks:  keylock.New[string](),
+		tmpDir:         tmpDir,
 	}, nil
 }
 

@@ -84,16 +84,15 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: https://github.com/home-operations/flate
     description: Render and diff Flux GitOps repositories offline, without a cluster
-    # Binaries aren't notarized — strip the quarantine bit so macOS doesn't
-    # block the first run with "developer cannot be verified". Must be
-    # preflight, not postflight: Homebrew orders cask artifacts by class
-    # (PreflightBlock < Binary < GeneratedCompletion < PostflightBlock), so a
-    # postflight hook runs *after* generate_completions_from_executable has
-    # already tried to execute the still-quarantined binary and been SIGKILLed.
-    hooks:
-      pre:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/flate"] if OS.mac?
+    # GoReleaser does not yet expose Homebrew's structured flight steps, so use
+    # a custom block instead of hooks, which generate deprecated Ruby stanzas.
+    # This must run before completion generation executes the binary.
+    custom_block: |
+      preflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "flate"], chdir: "."
+        end
+      end
 
 # release-please creates the GitHub Release with the changelog; goreleaser
 # attaches binaries/sboms/sigs to it.

@@ -28,3 +28,11 @@ tmp/
 *.out
 *.prof
 *.pprof
+
+# Nix
+result/
+result
+
+# envrc
+.direnv/
+.envrc

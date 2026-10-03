@@ -316,6 +316,102 @@ func TestController_MissingSecretNoProducerFailsWithoutFlag(t *testing.T) {
 	}
 }
 
+func TestController_MissingSecretWaitsForRender(t *testing.T) {
+	tests := []struct {
+		name         string
+		allowMissing bool
+	}{
+		{name: "strict"},
+		{name: "allow missing", allowMissing: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", "ca", "not found")}
+			c, st := newConfiguredController(t,
+				map[string]src.Fetcher{manifest.KindOCIRepository: f},
+				FetchOptions{AllowMissingSecrets: tt.allowMissing})
+			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns"}
+			st.AddObject(repo)
+
+			if reconcileNode(c, repo.Named(), 0) {
+				t.Fatal("missing Secret must block while renders can still produce it")
+			}
+			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusPending {
+				t.Fatalf("status = %+v, want Pending", info)
+			}
+
+			st.AddObject(&manifest.Secret{Name: "ca", Namespace: "ns"})
+			f.err = nil
+			f.artifact = &store.SourceArtifact{Kind: manifest.KindOCIRepository}
+			if !reconcileNode(c, repo.Named(), 0) {
+				t.Fatal("source must finish after the Secret arrives")
+			}
+			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || store.IsSkipped(info) {
+				t.Fatalf("status = %+v, want Ready without a skip", info)
+			}
+			if st.GetArtifact(repo.Named()) == nil {
+				t.Fatal("source artifact missing after retry")
+			}
+		})
+	}
+}
+
+func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
+	tests := []struct {
+		name         string
+		present      bool
+		allowMissing bool
+		producer     bool
+		wantSkip     bool
+	}{
+		{name: "missing"},
+		{name: "missing allowed", allowMissing: true, wantSkip: true},
+		{name: "missing producer backed", producer: true, wantSkip: true},
+		{name: "missing keys", present: true},
+		{name: "missing keys allowed", present: true, allowMissing: true, wantSkip: true},
+		{name: "missing keys producer backed", present: true, producer: true, wantSkip: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			secret := &manifest.Secret{Name: "auth", Namespace: "ns"}
+			detail := "not found"
+			if tt.present {
+				detail = "missing username/password"
+			}
+			f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", secret.Name, detail)}
+			producers := &manifest.ProducerIndex{}
+			if tt.producer {
+				producers.Record(secret.Named(), manifest.NamedResource{Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
+			}
+			c, st := newConfiguredController(t,
+				map[string]src.Fetcher{manifest.KindOCIRepository: f},
+				FetchOptions{AllowMissingSecrets: tt.allowMissing, Producers: producers})
+			if tt.present {
+				st.AddObject(secret)
+			}
+			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns"}
+			st.AddObject(repo)
+			if reconcileNode(c, repo.Named(), 0) {
+				t.Fatal("must wait while renders can still supply Secret contents")
+			}
+			if !reconcileNode(c, repo.Named(), 1) {
+				t.Fatal("unavailable Secret must terminalize at the fixpoint")
+			}
+			info, _ := st.GetStatus(repo.Named())
+			wantStatus := store.StatusFailed
+			if tt.wantSkip {
+				wantStatus = store.StatusReady
+			}
+			if info.Status != wantStatus || store.IsSkipped(info) != tt.wantSkip || !strings.Contains(info.Message, detail) {
+				t.Fatalf("status = %+v, want %v (skip=%t) preserving %q", info, wantStatus, tt.wantSkip, detail)
+			}
+			if f.calls != 2 {
+				t.Errorf("fetch calls = %d, want 2", f.calls)
+			}
+		})
+	}
+}
+
 func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 

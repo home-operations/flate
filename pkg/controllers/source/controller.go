@@ -17,6 +17,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
@@ -114,20 +115,22 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 }
 
 // ReconcileNode runs id's source fetch under the dag engine, returning the
-// blocked dependency set (always nil — sources have no depwait gates) and
-// whether id ended Ready. The orchestrator's scheduler Dispatcher calls this
-// for source-kind nodes.
+// blocked Secret dependencies, or nil when the fetch terminalizes. The
+// orchestrator's scheduler Dispatcher calls this for source-kind nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
 	return c.DispatchNode(ctx, id, drainLevel,
-		suspendedSource, c.reconcile)
+		suspendedSource, func(ctx context.Context, obj manifest.BaseManifest) error {
+			return c.reconcile(ctx, obj, drainLevel > 0)
+		})
 }
 
 // reconcile fetches the source artifact via the registered Fetcher and
 // writes the result through base.RunWithStatus so panic recovery,
 // final status writes, and ErrSourceSkipped routing match the
 // KS/HR controllers' shape. Returning ErrSourceSkipped yields a
-// Ready+"skipped: ..." status; any other error yields Failed.
-func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) error {
+// Ready+"skipped: ..." status; ErrBlocked parks the fetch for a dependency
+// retry; any other error yields Failed.
+func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, draining bool) error {
 	id := obj.Named()
 	// The listener already filtered by registered Kind (see
 	// onObjectAdded), so this Fetchers lookup can't miss; it's cheap and
@@ -164,6 +167,13 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest) e
 		artifact, fetchErr = fetcher.Fetch(ctx, obj)
 	})
 	if fetchErr != nil {
+		// A Kustomization may still emit or patch this Secret. Wait for
+		// the rendered contents; only fail or skip for a missing Secret
+		// once the scheduler reaches a fixpoint.
+		if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok && !draining {
+			c.Store.UpdateStatus(id, store.StatusPending, "waiting for source Secret")
+			return &depwait.ErrBlocked{Deps: []manifest.NamedResource{missing.Secret}}
+		}
 		c.Logger().Debug("fetch failed", "id", id.String(), "duration", time.Since(started), "err", fetchErr)
 		// Skip a missing auth Secret either when the user asked globally
 		// (--allow-missing-secrets) or when an in-repo ExternalSecret /

@@ -57,6 +57,10 @@ type Result struct {
 type resolution struct {
 	Hash   plumbing.Hash
 	Source string
+	// Repo holds the commit: the checkout itself, or the throwaway repo
+	// a fetched baseline landed in, released by cleanup.
+	Repo    *git.Repository
+	cleanup func()
 }
 
 // AutoResolve picks a baseline for path, materializes it, and returns
@@ -73,7 +77,7 @@ type resolution struct {
 //
 // Errors carry the suggested next flag so the user knows whether to
 // pass --base=<rev> or --path-orig=<dir>.
-func AutoResolve(path, base string, layout cacheroot.Layout) (*Result, error) {
+func AutoResolve(ctx context.Context, path, base string, layout cacheroot.Layout) (*Result, error) {
 	repo, repoRoot, err := openRepo(path)
 	if err != nil {
 		return nil, err
@@ -83,12 +87,15 @@ func AutoResolve(path, base string, layout cacheroot.Layout) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	r, err := resolve(repo, base)
+	r, err := resolve(ctx, repo, base)
 	if err != nil {
 		return nil, err
 	}
+	if r.cleanup != nil {
+		defer r.cleanup()
+	}
 
-	dir, persistent, err := materializeAt(repo, r.Hash, layout)
+	dir, persistent, err := materializeAt(ctx, r.Repo, r.Hash, layout)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +133,7 @@ func repoRemoteURLs(repo *git.Repository) []string {
 // returns (dir, persistent, err). When layout.Root is non-empty the
 // directory lives at layout.Baseline(hash) and is reused across runs;
 // otherwise an MkdirTemp directory is allocated.
-func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.Layout) (string, bool, error) {
+func materializeAt(ctx context.Context, repo *git.Repository, hash plumbing.Hash, layout cacheroot.Layout) (string, bool, error) {
 	if layout.Root != "" {
 		slot := layout.Baseline(hash.String())
 		if isDir(slot) {
@@ -142,7 +149,7 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 		// through to their own stage (one wins the rename, the rest
 		// see ErrExist, discard the temp, and adopt the winner's slot).
 		if err := cas.Stage(parent, slot, "baseline staging", "baseline finalize",
-			func(staging string) error { return materialize(repo, hash, staging) },
+			func(staging string) error { return materialize(ctx, repo, hash, staging) },
 			func() bool { return isDir(slot) },
 		); err != nil {
 			return "", false, err
@@ -154,7 +161,7 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 	if err != nil {
 		return "", false, fmt.Errorf("baseline tempdir: %w", err)
 	}
-	if err := materialize(repo, hash, tmp); err != nil {
+	if err := materialize(ctx, repo, hash, tmp); err != nil {
 		_ = os.RemoveAll(tmp)
 		return "", false, err
 	}
@@ -163,8 +170,8 @@ func materializeAt(repo *git.Repository, hash plumbing.Hash, layout cacheroot.La
 
 // materialize extracts hash's tree into root, skipping (and warning on)
 // any submodules.
-func materialize(repo *git.Repository, hash plumbing.Hash, root string) error {
-	return gittree.Materialize(context.Background(), repo, hash, root, gittree.Options{
+func materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, root string) error {
+	return gittree.Materialize(ctx, repo, hash, root, gittree.Options{
 		OnSubmodule: func(path string) {
 			slog.Warn("baseline: skipping submodule", "path", path)
 		},
@@ -245,9 +252,17 @@ func openRepo(path string) (*git.Repository, string, error) {
 // "preview my dirty edits"). Shallow clones can't compute a merge-base
 // against any of these refs because the necessary commits are absent;
 // detect .git/shallow and emit a CI-friendly error.
-func resolve(repo *git.Repository, base string) (*resolution, error) {
+func resolve(ctx context.Context, repo *git.Repository, base string) (*resolution, error) {
+	if base != "" {
+		return resolveExplicit(ctx, repo, base)
+	}
 	head, err := repo.Head()
 	if err != nil {
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return nil, errors.New(
+				"baseline: HEAD has no commits to merge-base from; " +
+					"pass --base=<rev> to fetch the baseline from origin, or --path-orig=<dir>")
+		}
 		return nil, fmt.Errorf("resolve HEAD: %w", err)
 	}
 	headCommit, err := repo.CommitObject(head.Hash())
@@ -255,30 +270,11 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 		return nil, fmt.Errorf("load HEAD commit: %w", err)
 	}
 
-	if base != "" {
-		if h, err := repo.ResolveRevision(plumbing.Revision(base)); err == nil {
-			return &resolution{Hash: *h, Source: "explicit --base=" + base}, nil
-		}
-		// CI checkouts (actions/checkout with default fetch-depth=1)
-		// land the PR's branch but not local branch refs for sibling
-		// branches — only remote-tracking ones. Retry as origin/<base>
-		// so `--base main` works without forcing CI users to type
-		// `--base origin/main`. Skip the fallback when base already
-		// looks remote-qualified to keep the error close to intent.
-		if !strings.ContainsRune(base, '/') {
-			remote := "origin/" + base
-			if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
-				return &resolution{Hash: *h, Source: "explicit --base=" + base + " (via " + remote + ")"}, nil
-			}
-		}
-		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s", base, base)
-	}
-
 	// Each rung names a candidate ref tip and tries the merge-base
 	// against HEAD; the first that resolves wins.
 	mergeBaseWith := func(candidate plumbing.Hash, source string) (*resolution, bool) {
 		if mb, err := mergeBase(repo, headCommit, candidate); err == nil {
-			return &resolution{Hash: mb, Source: source}, true
+			return &resolution{Hash: mb, Source: source, Repo: repo}, true
 		}
 		return nil, false
 	}
@@ -326,6 +322,38 @@ func resolve(repo *git.Repository, base string) (*resolution, error) {
 	return nil, errors.New(
 		"baseline: could not auto-detect — HEAD has no upstream, origin/HEAD is unset, " +
 			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>")
+}
+
+// resolveExplicit resolves --base=<rev>: locally first, then as
+// origin/<rev>, and finally by fetching it from the origin remote into a
+// throwaway repo. The fetch is what makes a checkout without the
+// baseline's history work: a fetch-depth=1 clone of another branch, or
+// a tree written straight to disk over `git init` with only a remote.
+func resolveExplicit(ctx context.Context, repo *git.Repository, base string) (*resolution, error) {
+	if h, err := repo.ResolveRevision(plumbing.Revision(base)); err == nil {
+		return &resolution{Hash: *h, Source: "explicit --base=" + base, Repo: repo}, nil
+	}
+	// CI checkouts (actions/checkout with default fetch-depth=1)
+	// land the PR's branch but not local branch refs for sibling
+	// branches — only remote-tracking ones. Retry as origin/<base>
+	// so `--base main` works without forcing CI users to type
+	// `--base origin/main`. Skip the fallback when base already
+	// looks remote-qualified to keep the error close to intent.
+	if !strings.ContainsRune(base, '/') {
+		remote := "origin/" + base
+		if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
+			return &resolution{Hash: *h, Source: "explicit --base=" + base + " (via " + remote + ")", Repo: repo}, nil
+		}
+	}
+	url, ok := originURL(repo)
+	if !ok {
+		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and there is no origin remote to fetch it from", base, base)
+	}
+	f, err := fetchBase(ctx, url, base)
+	if err != nil {
+		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and fetching it from origin %s failed: %w", base, base, url, err)
+	}
+	return &resolution{Hash: f.hash, Source: "explicit --base=" + base + " (fetched from origin)", Repo: f.repo, cleanup: f.cleanup}, nil
 }
 
 // upstreamHash reads the current branch's upstream from the repo

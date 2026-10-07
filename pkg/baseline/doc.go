@@ -7,10 +7,13 @@
 // branch's upstream / origin/HEAD / origin/{main,master}) and extracts
 // that commit's tree into a fresh tempdir. The CLI sets --path-orig to
 // that tempdir for the remainder of the diff run, then deletes it on
-// exit.
+// exit. An explicit rev the checkout doesn't hold is fetched from its
+// origin remote into a throwaway bare repo, so a checkout with only a
+// remote and the current files still has a baseline.
 //
 // This package treats the user's checkout as read-only — it opens
 // the existing repo via go-git's object store and does not mutate
-// the working tree, the index, or refs. The materialized tempdir is
-// the only side effect, and it lives only for the diff invocation.
+// the working tree, the index, or refs. The materialized tempdir and
+// the fetch's throwaway repo are the only side effects, and they live
+// only for the diff invocation.
 package baseline

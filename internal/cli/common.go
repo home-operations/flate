@@ -246,6 +246,7 @@ func bindBase(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVar(&f.base, "base", "",
 		"baseline git rev (e.g. main, origin/main, HEAD~3, SHA) — "+
 			"materializes the rev's tree to a tempdir and runs in changed-only mode. "+
+			"A rev the checkout doesn't hold is fetched from its origin remote. "+
 			"On `diff`, omitting --base auto-detects via merge-base with @{u} / origin/HEAD. "+
 			"On `build`/`get`/`test`, omitting --base keeps the default full-tree behavior. "+
 			"Mutually exclusive with --path-orig.")
@@ -360,7 +361,7 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 //
 // Callers receive a no-op when no materialization happened (no
 // --base / no autoFallback / explicit --path-orig).
-func resolveBaseline(c *commonFlags, autoFallback bool) (func(), error) {
+func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (func(), error) {
 	noop := func() {}
 	if c.pathOrig != "" && c.base != "" {
 		return noop, errors.New("--path-orig and --base are mutually exclusive")
@@ -375,7 +376,7 @@ func resolveBaseline(c *commonFlags, autoFallback bool) (func(), error) {
 		// default).
 		return noop, nil
 	}
-	res, err := baseline.AutoResolve(c.path, c.base, cacheroot.New(c.resolveCacheRoot()))
+	res, err := baseline.AutoResolve(ctx, c.path, c.base, cacheroot.New(c.resolveCacheRoot()))
 	if err != nil {
 		return noop, err
 	}
@@ -479,7 +480,7 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags, pre ...fun
 	// Cleanup is deferred (not bound to ctx) so the tempdir survives
 	// SIGINT until the orchestrator's read paths have actually
 	// unwound.
-	cleanup, err := resolveBaseline(&c, false)
+	cleanup, err := resolveBaseline(ctx, &c, false)
 	if err != nil {
 		return nil, nil, err
 	}

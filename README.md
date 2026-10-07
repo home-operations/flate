@@ -88,6 +88,8 @@ flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
 
 `--path` can point at a narrow Flux entry like `./kubernetes/flux/cluster`; flate iteratively follows each loaded KS's `spec.path` to discover the rest of the tree.
 
+`--base <rev>` materializes the rev's tree instead of needing a second worktree, and `flate diff` without either flag picks the merge-base with the branch's upstream. A rev the checkout doesn't hold (a `fetch-depth: 1` clone of another branch, or files written over `git init` with only a remote) is fetched from `origin`, so `--base main` works there too.
+
 ## Source kinds and auth
 
 | Kind               | Status         | Auth (`spec.secretRef`)                                                                                                                    |

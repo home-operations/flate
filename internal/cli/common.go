@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -35,8 +36,8 @@ type commonFlags struct {
 	path     string
 	pathOrig string
 	// The materialized --base tree carries no .git, so its source root
-	// is threaded explicitly. Both baseline flows carry the live tree's
-	// remote URLs for self-referential aliasing on snapshots without .git.
+	// is threaded explicitly. Snapshots without .git use the live tree's
+	// remote URLs for self-referential aliasing.
 	pathOrigRoot         string
 	pathOrigSelfURLs     []string
 	krmIgnore            string
@@ -364,25 +365,31 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 		return noop, errors.New("--path-orig and --base are mutually exclusive")
 	}
 	if c.pathOrig != "" {
-		// An explicit snapshot may have no .git; give it the same source
-		// identity as a materialized --base tree.
-		repo, err := git.PlainOpenWithOptions(repoRootOf(c.path), &git.PlainOpenOptions{
+		c.pathOrigSelfURLs = nil
+		root, side := c.baselineRoot(), "baseline tree"
+		if _, err := os.Stat(filepath.Join(root, ".git")); errors.Is(err, os.ErrNotExist) {
+			// Snapshots without git metadata inherit the current source identity.
+			root, side = repoRootOf(c.path), "working tree"
+		} else if err != nil {
+			return noop, fmt.Errorf("baseline: stat baseline tree git metadata: %w", err)
+		}
+		repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{
 			EnableDotGitCommonDir: true,
 		})
-		if errors.Is(err, git.ErrRepositoryNotExists) {
+		if side == "working tree" && errors.Is(err, git.ErrRepositoryNotExists) {
 			return noop, nil
 		}
 		if err != nil {
-			return noop, fmt.Errorf("baseline: open working tree: %w", err)
+			return noop, fmt.Errorf("baseline: open %s: %w", side, err)
 		}
 		cfg, err := repo.Config()
 		if err != nil {
-			return noop, fmt.Errorf("baseline: read working tree git config: %w", err)
+			return noop, fmt.Errorf("baseline: read %s git config: %w", side, err)
 		}
-		c.pathOrigSelfURLs = nil
 		for _, remote := range cfg.Remotes {
 			c.pathOrigSelfURLs = append(c.pathOrigSelfURLs, remote.URLs...)
 		}
+		slices.Sort(c.pathOrigSelfURLs)
 		return noop, nil
 	}
 	if c.base == "" && !autoFallback {

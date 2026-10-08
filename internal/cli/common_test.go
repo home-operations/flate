@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/format"
@@ -351,5 +353,132 @@ func TestProfileValue_Validates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must be one of: cpu, mem, block, mutex, trace") {
 		t.Errorf("error should name the accepted set: %q", err)
+	}
+}
+
+func writeBaselineGit(t *testing.T, root string, urls ...string) {
+	t.Helper()
+	var cfg strings.Builder
+	cfg.WriteString("[core]\n  repositoryformatversion = 0\n")
+	for i, url := range urls {
+		fmt.Fprintf(&cfg, "[remote \"remote-%d\"]\n  url = %s\n", i, url)
+	}
+	testutil.WriteFile(t, root, ".git/config", cfg.String())
+	testutil.WriteFile(t, root, ".git/HEAD", "ref: refs/heads/main\n")
+}
+
+func writeBaselineWorktree(t *testing.T, root, common string) {
+	t.Helper()
+	gitDir := filepath.Join(common, ".git", "worktrees", "baseline")
+	testutil.WriteFile(t, root, ".git", "gitdir: "+gitDir+"\n")
+	testutil.WriteFile(t, gitDir, "gitdir", filepath.Join(root, ".git")+"\n")
+	testutil.WriteFile(t, gitDir, "commondir", "../..\n")
+	testutil.WriteFile(t, gitDir, "HEAD", "ref: refs/heads/main\n")
+}
+
+func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
+	const currentURL = "https://example.invalid/fork.git"
+	const baselineURL = "https://example.invalid/upstream.git"
+	for _, tc := range []struct {
+		name       string
+		currentGit bool
+		baseline   string
+		want       []string
+	}{
+		{name: "different origins", currentGit: true, baseline: "different", want: []string{baselineURL}},
+		{name: "matching origins", currentGit: true, baseline: "matching", want: []string{currentURL}},
+		{name: "snapshot fallback", currentGit: true, want: []string{currentURL}},
+		{name: "no repositories"},
+		{name: "no remotes", currentGit: true, baseline: "empty"},
+		{name: "baseline only", baseline: "different", want: []string{baselineURL}},
+		{name: "linked worktree", currentGit: true, baseline: "linked", want: []string{baselineURL}},
+		{name: "nested scan", currentGit: true, baseline: "nested", want: []string{baselineURL}},
+		{name: "sorted remotes", currentGit: true, baseline: "sorted", want: []string{currentURL, baselineURL}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current, orig := t.TempDir(), t.TempDir()
+			for _, dir := range []string{current, orig} {
+				if got := repoRootOf(dir); got != dir {
+					t.Fatalf("fixture inherited a parent repository: repoRootOf(%q) = %q", dir, got)
+				}
+			}
+			if tc.currentGit {
+				writeBaselineGit(t, current, currentURL)
+			}
+			scan := orig
+			switch tc.baseline {
+			case "different":
+				writeBaselineGit(t, orig, baselineURL)
+			case "matching":
+				writeBaselineGit(t, orig, currentURL)
+			case "empty":
+				writeBaselineGit(t, orig)
+			case "linked":
+				common := t.TempDir()
+				writeBaselineGit(t, common, baselineURL)
+				writeBaselineWorktree(t, orig, common)
+			case "nested":
+				writeBaselineGit(t, orig, baselineURL)
+				testutil.WriteFile(t, orig, "nested/scan/manifest.yaml", "")
+				scan = filepath.Join(orig, "nested", "scan")
+			case "sorted":
+				writeBaselineGit(t, orig, currentURL, baselineURL)
+			}
+			c := commonFlags{path: current, pathOrig: scan, pathOrigSelfURLs: []string{"stale"}}
+			cleanup, err := resolveBaseline(t.Context(), &c, false)
+			defer cleanup()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.want, c.pathOrigSelfURLs); diff != "" {
+				t.Errorf("baseline identity (-want +got):\n%s", diff)
+			}
+			if got := c.baselineRoot(); got != orig {
+				t.Errorf("baselineRoot = %q, want %q", got, orig)
+			}
+		})
+	}
+}
+
+func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		file    string
+		data    string
+		current bool
+		want    string
+	}{
+		{name: "baseline git metadata", file: ".git", data: "invalid gitdir\n", want: "open baseline tree"},
+		{name: "missing linked gitdir", file: ".git", data: "gitdir: missing\n", want: "open baseline tree"},
+		{name: "baseline config", file: ".git/config", data: "[invalid", want: "open baseline tree"},
+		{name: "baseline stat", want: "stat baseline tree git metadata"},
+		{name: "current fallback config", file: ".git/config", data: "[invalid", current: true, want: "open working tree"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current, orig := t.TempDir(), t.TempDir()
+			writeBaselineGit(t, current, "https://example.invalid/fork.git")
+			selected := orig
+			if tc.current {
+				selected = current
+			} else if tc.file == ".git/config" {
+				writeBaselineGit(t, orig, "https://example.invalid/upstream.git")
+			}
+			if tc.file == "" {
+				if err := os.Symlink(".git", filepath.Join(orig, ".git")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				testutil.WriteFile(t, selected, tc.file, tc.data)
+			}
+			c := commonFlags{path: current, pathOrig: orig, pathOrigSelfURLs: []string{"stale"}}
+			cleanup, err := resolveBaseline(t.Context(), &c, false)
+			defer cleanup()
+			if err == nil || !strings.Contains(err.Error(), tc.want) || errors.Unwrap(err) == nil {
+				t.Fatalf("error = %v, want wrapped %q error", err, tc.want)
+			}
+			if len(c.pathOrigSelfURLs) != 0 {
+				t.Errorf("selected repository failure retained URLs: %v", c.pathOrigSelfURLs)
+			}
+		})
 	}
 }

@@ -198,7 +198,8 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	// envsubst's parser cannot handle. Mirror that behavior here:
 	// substitute per-doc, skip opted-out resources, so we match Flux
 	// bit-for-bit.
-	if vars := values.VarsMap(ks.PostBuildSubstitute); len(vars) > 0 {
+	if ks.PostBuild != nil {
+		vars := values.VarsMap(ks.PostBuildSubstitute)
 		for i, doc := range docs {
 			if manifest.HasSubstituteDisabled(doc) {
 				continue

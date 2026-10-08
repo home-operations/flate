@@ -2,6 +2,7 @@ package kustomization
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -108,6 +109,84 @@ func TestReconcile_HappyPath(t *testing.T) {
 	}
 	if filepath.Dir(art.Path) == "/" {
 		t.Errorf("unexpected artifact path: %q (root=%s)", art.Path, root)
+	}
+}
+
+func TestReconcile_PostBuildSubstitution(t *testing.T) {
+	cases := []struct {
+		name      string
+		postBuild map[string]any
+		disabled  string
+		want      string
+	}{
+		{name: "no postBuild", want: "${VAR:=default}"},
+		{name: "empty postBuild", postBuild: map[string]any{}, want: "default"},
+		{name: "empty substitute", postBuild: map[string]any{"substitute": map[string]any{}}, want: "default"},
+		{
+			name: "missing optional ConfigMap",
+			postBuild: map[string]any{"substituteFrom": []any{
+				map[string]any{"kind": "ConfigMap", "name": "missing", "optional": true},
+			}},
+			want: "default",
+		},
+		{
+			name: "missing Secret",
+			postBuild: map[string]any{"substituteFrom": []any{
+				map[string]any{"kind": "Secret", "name": "missing"},
+			}},
+			want: "default",
+		},
+		{
+			name:      "inline substitute",
+			postBuild: map[string]any{"substitute": map[string]any{"VAR": "configured"}},
+			want:      "configured",
+		},
+		{name: "disabled label", postBuild: map[string]any{}, disabled: "labels", want: "${VAR:=default}"},
+		{name: "disabled annotation", postBuild: map[string]any{}, disabled: "annotations", want: "${VAR:=default}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, s, root := newControllerWithFixture(t)
+			optOut := ""
+			if tc.disabled != "" {
+				optOut = fmt.Sprintf(", %s: {kustomize.toolkit.fluxcd.io/substitute: disabled}", tc.disabled)
+			}
+			testutil.WriteFileAt(t, filepath.Join(root, "apps", "cm.yaml"), fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello, namespace: default%s}
+data: {greeting: '${VAR:=default}'}
+`, optOut))
+
+			spec := map[string]any{
+				"path":      "./apps",
+				"sourceRef": map[string]any{"kind": "GitRepository", "name": "flux-system"},
+			}
+			if tc.postBuild != nil {
+				spec["postBuild"] = tc.postBuild
+			}
+			obj, err := manifest.ParseDoc(map[string]any{
+				"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+				"kind":       "Kustomization",
+				"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
+				"spec":       spec,
+			}, manifest.ParseDocOptions{})
+			if err != nil {
+				t.Fatalf("ParseDoc: %v", err)
+			}
+			ks := obj.(*manifest.Kustomization)
+			s.AddObject(ks)
+			if info := dispatchToFixpoint(t, c, s, ks.Named()); info.Status != store.StatusReady {
+				t.Fatalf("status = %+v, want StatusReady", info)
+			}
+			art, _ := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact)
+			if art == nil || len(art.Manifests) != 1 {
+				t.Fatalf("expected one rendered manifest, got %+v", art)
+			}
+			data := art.Manifests[0]["data"].(map[string]any)
+			if got := data["greeting"]; got != tc.want {
+				t.Errorf("greeting = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

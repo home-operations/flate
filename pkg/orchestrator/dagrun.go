@@ -26,7 +26,18 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLe
 	case id.Kind == manifest.KindHelmRelease:
 		blocked = o.hrc.ReconcileNode(ctx, id, drainLevel)
 	case id.Kind == manifest.KindResourceSet:
+		before, _ := o.store.GetArtifact(id).(*store.ResourceSetArtifact)
 		blocked = o.rsc.ReconcileNode(ctx, id, drainLevel)
+		if len(blocked) == 0 && before != nil && before.Fingerprint != "" && o.store.GetArtifact(id) == before {
+			info, ok := o.store.GetStatus(id)
+			_, present := o.store.Get[*manifest.ResourceSet](id)
+			// A fresh fingerprint replaces the artifact even for identical docs.
+			// Nil dependencies alone do not prove success: gates and vanished
+			// objects may preserve an artifact and an informative Ready status.
+			if ok && present && info.Status == store.StatusReady && info.Message == "" {
+				return schedule.OutcomeTerminalNoop, nil
+			}
+		}
 	case o.src.Owns(id):
 		blocked = o.src.ReconcileNode(ctx, id, drainLevel)
 	default:

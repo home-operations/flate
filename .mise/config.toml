@@ -20,8 +20,8 @@ description = "Scan for known vulnerabilities with govulncheck"
 run = "govulncheck ./..."
 
 [tasks.test]
-description = "Run tests with coverage"
-run = "go test $(go list ./...) -coverprofile cover.out"
+description = "Run tests with race detection and coverage"
+run = "go test -race $(go list ./...) -coverprofile cover.out"
 
 [tasks.bench]
 description = "Run benchmark suite (use BENCH=Pattern to filter, COUNT=N to repeat)"

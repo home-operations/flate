@@ -377,22 +377,58 @@ func (s *Store) Refire(id manifest.NamedResource) {
 }
 
 // AddRendered records a manifest produced by helm/kustomize rendering.
-// Compared to AddObject it skips the reflect.DeepEqual dedup check —
-// rendered docs change on every render and the dedup would never hit.
-// Listener dispatch is unconditional: the listener-contract gap that
-// previously existed (silent miss for any future kind with listeners,
-// e.g. watching rendered Secret docs for valuesFrom invalidation) is
-// closed by routing every write through fireUnderLock. The empty-set
-// fast path in listenerSet.snapshot keeps the common "no listeners
-// for this kind" case at one mutex pair, no allocations.
+// Unchanged replays must not fire arrivals: the scheduler uses arrivals
+// to request reconciles and to decide whether its fixpoint is dirty.
 func (s *Store) AddRendered(obj manifest.BaseManifest) {
 	id := obj.Named()
 	sh := s.shardFor(id)
 	sh.mu.Lock()
+	if prev, ok := sh.objects[id]; ok && renderedEqual(prev, obj) {
+		sh.mu.Unlock()
+		return
+	}
 	sh.setLocked(id, obj)
 	dispatch := s.fireUnderLock(EventObjectAdded, id, obj)
 	sh.mu.Unlock()
 	dispatch()
+}
+
+func renderedEqual(a, b manifest.BaseManifest) bool {
+	if a == b {
+		return true
+	}
+	if prev, ok := a.(*manifest.RawObject); ok {
+		cur, ok := b.(*manifest.RawObject)
+		return ok && prev.Kind == cur.Kind && prev.APIVersion == cur.APIVersion &&
+			prev.Name == cur.Name && prev.Namespace == cur.Namespace && renderedValueEqual(prev.Spec, cur.Spec)
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+// Raw rendered specs contain JSON-shaped maps and slices. Comparing those
+// directly avoids reflection's per-entry allocations on replayed charts.
+func renderedValueEqual(a, b any) bool {
+	switch v := a.(type) {
+	case map[string]any:
+		other, ok := b.(map[string]any)
+		if !ok || (v == nil) != (other == nil) || len(v) != len(other) {
+			return false
+		}
+		for key, value := range v {
+			ov, exists := other[key]
+			if !exists || !renderedValueEqual(value, ov) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		other, ok := b.([]any)
+		return ok && (v == nil) == (other == nil) && slices.EqualFunc(v, other, renderedValueEqual)
+	case nil, string, bool, int, int64, float64:
+		return a == b
+	default:
+		return reflect.DeepEqual(a, b)
+	}
 }
 
 // GetObject returns the manifest for id, or nil if not present.

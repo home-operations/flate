@@ -2,15 +2,82 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestDAG_ParallelRenderedReplayConverges(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			dir := t.TempDir()
+			hr := `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: app, namespace: flux-system}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/app
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  valuesFrom:
+    - kind: ConfigMap
+      name: shared-values
+`
+			testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  url: https://example.test/cluster.git
+`)
+			testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- hr.yaml\n- values.yaml\n")
+			testutil.WriteFile(t, dir, "apps/hr.yaml", hr)
+			testutil.WriteFile(t, dir, "apps/values.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: shared-values, namespace: flux-system}
+data:
+  values.yaml: |
+    greeting: hello
+`)
+			testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
+			// A chart may emit Flux resources; replaying its own unchanged HR
+			// must not request another reconcile while that HR is running.
+			testutil.WriteFile(t, dir, "charts/app/templates/hr.yaml", hr)
+			testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: greeting, namespace: flux-system}\ndata:\n  greeting: {{ .Values.greeting | quote }}\n")
+			o, err := New(Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			res, err := o.Render(ctx)
+			if err != nil {
+				t.Fatalf("Render must converge: %v", err)
+			}
+			if ctx.Err() != nil || len(res.Failed) != 0 {
+				t.Fatalf("Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
+			}
+			for _, id := range []manifest.NamedResource{ksID("apps"), {Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}} {
+				info, ok := o.Store().GetStatus(id)
+				if !ok || info.Status != store.StatusReady {
+					t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
+				}
+			}
+			cm, ok := o.Store().Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "greeting"})
+			if !ok || cm.Data["greeting"] != "hello" {
+				t.Fatalf("shared values were not rendered: %+v", cm)
+			}
+		})
+	}
+}
 
 // ksYAML is a minimal Kustomization manifest for the dag tests.
 func ksYAML(name, path, dependsOn string) string {

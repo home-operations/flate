@@ -23,6 +23,8 @@ package schedule
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"sync"
 
@@ -87,10 +89,16 @@ const (
 	stateTerminal
 )
 
+// Existing scheduler fixtures need at most three dispatches per node under
+// -race. Allow 32 content-driven redispatches, excluding dependency retries,
+// to leave ample room for healthy propagation while bounding feedback loops.
+const maxRedispatches = 32
+
 type node struct {
-	id        NodeID
-	state     nodeState
-	blockedOn []NodeID // deps recorded at the last OutcomeBlocked
+	id           NodeID
+	state        nodeState
+	blockedOn    []NodeID // deps recorded at the last OutcomeBlocked
+	redispatches int
 	// rerunRequested is set when a wake arrives while the node is running, so
 	// complete() re-queues it once instead of dropping the wake (the re-run
 	// re-reads the store and re-evaluates its gate against current state).
@@ -117,6 +125,7 @@ type Scheduler struct {
 	inFlight  int                            // count of stateRunning nodes (EXCLUDES parked)
 	draining  int                            // DrainNone/DrainCascade/DrainForce
 	canceled  bool
+	err       error
 	// dirty records that an object arrived since the last quiescence sweep. A
 	// rerun node re-expands at the structural fixpoint only when the store has
 	// grown since it last ran; the sweep clears dirty, so a sweep that produces
@@ -165,8 +174,11 @@ func (s *Scheduler) Seed(ids []NodeID) {
 }
 
 // Run drives the scheduler to a fixpoint, returning when every node is
-// terminal (or ctx is canceled) after the in-flight bodies drain.
-func (s *Scheduler) Run(ctx context.Context) {
+// terminal, ctx is canceled, or a node exceeds its redispatch budget.
+// In-flight bodies drain before returning.
+func (s *Scheduler) Run(ctx context.Context) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
@@ -181,9 +193,9 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}()
 
 	s.mu.Lock()
-	for !s.canceled {
+	for !s.canceled && s.err == nil {
 		// 1. Dispatch the runnable frontier onto the bounded pool.
-		for len(s.runq) > 0 && !s.canceled {
+		for len(s.runq) > 0 && !s.canceled && s.err == nil {
 			id := s.runq[0]
 			s.runq = s.runq[1:]
 			n := s.nodes[id]
@@ -196,12 +208,15 @@ func (s *Scheduler) Run(ctx context.Context) {
 			s.inFlight++
 			level := s.draining
 			s.mu.Unlock()
-			s.tasks.Go(ctx, "schedule/"+id.String(), func(ctx context.Context) {
+			s.tasks.Go(runCtx, "schedule/"+id.String(), func(ctx context.Context) {
 				out, blocked := s.disp.Dispatch(ctx, id, level)
 				rerun := s.rerunAtDrain != nil && s.rerunAtDrain(id)
 				s.complete(id, out, blocked, rerun)
 			})
 			s.mu.Lock()
+		}
+		if s.err != nil || s.canceled {
+			break
 		}
 		// 2. Frontier empty. If nothing is in flight, we are at a fixpoint:
 		//    either done, or the remaining parked nodes are unproducible and
@@ -240,11 +255,14 @@ func (s *Scheduler) Run(ctx context.Context) {
 		// 3. Work in flight, frontier empty: wait for a completion or arrival.
 		s.cond.Wait()
 	}
-	if !s.canceled {
+	if !s.canceled && s.err == nil {
 		s.finalSweepLocked()
 	}
+	err := s.err
 	s.mu.Unlock()
+	cancel()
 	s.tasks.BlockTillDone()
+	return errors.Join(err, ctx.Err())
 }
 
 // complete records the result of one Dispatch. Runs on the worker goroutine;
@@ -259,6 +277,10 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	defer s.cond.Broadcast()
 	n := s.nodes[id]
 	s.inFlight--
+	if s.err != nil || s.canceled {
+		n.state = stateTerminal
+		return
+	}
 	// Record the node's rerun intent, re-evaluated at each dispatch. The value
 	// is stable per node — a selector-only ResourceSet's rerun status is a fixed
 	// spec property — so each write sets the same value. Read by
@@ -273,6 +295,11 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	// terminal here.
 	if n.rerunRequested {
 		n.rerunRequested = false
+		if out == OutcomeTerminal {
+			n.state = stateTerminal
+			s.redispatchLocked(n)
+			return
+		}
 		n.state = stateRunnable
 		n.blockedOn = nil
 		s.runq = append(s.runq, id)
@@ -367,6 +394,9 @@ func (s *Scheduler) unparkLocked(n *node) {
 func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.err != nil || s.canceled {
+		return
+	}
 	// An arrival can change a rerun node's resolved input set; mark the store
 	// dirty so the next quiescence sweep re-expands rerun nodes.
 	s.dirty = true
@@ -383,8 +413,7 @@ func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 		case stateTerminal:
 			// Content changed (Refire reset, or a parent re-emitted a mutated
 			// spec): re-run so the new content is reconciled.
-			n.state = stateRunnable
-			s.runq = append(s.runq, id)
+			s.redispatchLocked(n)
 		case stateRunning:
 			n.rerunRequested = true
 		}
@@ -464,10 +493,22 @@ func (s *Scheduler) requeueRerunLocked() bool {
 	}
 	slices.SortFunc(due, func(a, b *node) int { return a.id.Compare(b.id) })
 	for _, n := range due {
-		n.state = stateRunnable
-		n.blockedOn = nil
-		s.runq = append(s.runq, n.id)
+		if !s.redispatchLocked(n) {
+			break
+		}
 	}
+	return true
+}
+
+func (s *Scheduler) redispatchLocked(n *node) bool {
+	if n.redispatches >= maxRedispatches {
+		s.err = fmt.Errorf("schedule: %s exceeded %d redispatches; reconcile did not converge", n.id, maxRedispatches)
+		return false
+	}
+	n.redispatches++
+	n.state = stateRunnable
+	n.blockedOn = nil
+	s.runq = append(s.runq, n.id)
 	return true
 }
 

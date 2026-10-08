@@ -195,8 +195,8 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 // captured here cannot interleave with an in-progress add.
 //
 // When no listeners are registered for event, fireUnderLock returns
-// a no-op closure with no allocation — AddRendered always dispatches
-// (so the listener-contract gap is closed) and must stay cheap on
+// a no-op closure with no allocation — AddRendered dispatches changed
+// objects and must stay cheap on
 // the render hot path when nothing's listening.
 //
 // The snapshot slice is drawn from a sync.Pool keyed on capacity

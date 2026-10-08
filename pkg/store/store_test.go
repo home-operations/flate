@@ -18,6 +18,83 @@ func newCM(name, ns string) *manifest.ConfigMap {
 	return &manifest.ConfigMap{Name: name, Namespace: ns}
 }
 
+func TestStore_AddRenderedContentDedup(t *testing.T) {
+	for _, distinct := range []bool{false, true} {
+		t.Run(fmt.Sprintf("distinct=%t", distinct), func(t *testing.T) {
+			s := New()
+			obj := &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "app", Namespace: "ns", Spec: map[string]any{"replicas": 1}}
+			seen := 0
+			s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+				seen++
+				if s.GetObject(id) == nil {
+					t.Error("listener cannot see rendered object")
+				}
+			}, false)
+			s.AddRendered(obj)
+			equal := obj
+			if distinct {
+				equal = obj.Clone()
+			}
+			s.AddRendered(equal)
+			assert.Equal(t, seen, 1)
+			changed := obj.Clone()
+			changed.Spec["replicas"] = 2
+			s.AddRendered(changed)
+			assert.Equal(t, seen, 2)
+			assert.Equal(t, s.GetObject(obj.Named()), manifest.BaseManifest(changed))
+			assert.Equal(t, s.GetObjectByName(obj.Kind, obj.Namespace, obj.Name), manifest.BaseManifest(changed))
+		})
+	}
+}
+
+func TestStore_AddRenderedConcurrentDedup(t *testing.T) {
+	s := New()
+	var seen atomic.Int64
+	s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen.Add(1) }, false)
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Go(func() {
+			s.AddRendered(&manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "app", Spec: map[string]any{"replicas": 1}})
+		})
+	}
+	wg.Wait()
+	assert.Equal(t, seen.Load(), int64(1))
+}
+
+func TestStore_AddRenderedNestedContent(t *testing.T) {
+	cases := []struct {
+		name  string
+		spec  map[string]any
+		equal bool
+	}{
+		{"equal", map[string]any{"items": []any{map[string]any{"value": "same"}, true, int64(1), 1.5}, "extra": []string{"a"}}, true},
+		{"nested map changed", map[string]any{"items": []any{map[string]any{"value": "changed"}, true, int64(1), 1.5}, "extra": []string{"a"}}, false},
+		{"slice length changed", map[string]any{"items": []any{map[string]any{"value": "same"}}, "extra": []string{"a"}}, false},
+		{"scalar type changed", map[string]any{"items": []any{map[string]any{"value": "same"}, true, 1, 1.5}, "extra": []string{"a"}}, false},
+		{"fallback changed", map[string]any{"items": []any{map[string]any{"value": "same"}, true, int64(1), 1.5}, "extra": []string{"b"}}, false},
+		{"missing key", map[string]any{"items": []any{map[string]any{"value": "same"}, true, int64(1), 1.5}, "other": []string{"a"}}, false},
+		{"nil spec", nil, false},
+		{"empty spec", map[string]any{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New()
+			seen := 0
+			s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen++ }, false)
+			obj := &manifest.RawObject{APIVersion: "example.test/v1", Kind: "Widget", Name: "app", Spec: cases[0].spec}
+			s.AddRendered(obj)
+			clone := *obj
+			clone.Spec = tc.spec
+			s.AddRendered(&clone)
+			want := 2
+			if tc.equal {
+				want = 1
+			}
+			assert.Equal(t, seen, want)
+		})
+	}
+}
+
 func TestStore_AddObjectIdempotent(t *testing.T) {
 	s := New()
 	cm := newCM("a", "ns")

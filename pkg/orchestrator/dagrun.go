@@ -125,7 +125,7 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	defer unsubStatus()
 
 	sched.Seed(o.seedNodes())
-	sched.Run(ctx)
+	err := sched.Run(ctx)
 
-	return errors.Join(o.finalize(), ctx.Err())
+	return errors.Join(err, o.finalize())
 }

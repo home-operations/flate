@@ -8,6 +8,38 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func BenchmarkAddRendered(b *testing.B) {
+	for _, listeners := range []bool{false, true} {
+		b.Run(fmt.Sprintf("listeners=%t", listeners), func(b *testing.B) {
+			for _, distinct := range []bool{false, true} {
+				b.Run(fmt.Sprintf("distinct=%t", distinct), func(b *testing.B) {
+					s := New()
+					if listeners {
+						s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) {}, false)
+					}
+					obj := &manifest.RawObject{
+						APIVersion: "apps/v1", Kind: "Deployment", Name: "app", Namespace: "ns",
+						Spec: map[string]any{"replicas": 2, "template": map[string]any{
+							"spec": map[string]any{"containers": []any{map[string]any{
+								"name": "app", "image": "example/app:1.0",
+							}}},
+						}},
+					}
+					s.AddRendered(obj)
+					twin := obj
+					if distinct {
+						twin = obj.Clone()
+					}
+					b.ReportAllocs()
+					for b.Loop() {
+						s.AddRendered(twin)
+					}
+				})
+			}
+		})
+	}
+}
+
 // BenchmarkAddObject_Contended exercises the hot path with a single
 // Kind under writer contention — measures the within-shard cost
 // (shard sharding can't help when every goroutine hits the same

@@ -166,14 +166,14 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	origDocs, origMatched := gatherAllArtifacts(orig.O, orig.Res, kind, name, c)
 	currentDocs, currentMatched := gatherAllArtifacts(current.O, current.Res, kind, name, c)
 	diffRunErr := scopedDiffRunError(orig, current, c, runErr)
-	if name != "" && origMatched+currentMatched == 0 {
-		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
-	}
 	if err := reportExternalDiffSkips(cmd.ErrOrStderr(), orig, c.baselineRoot(), "orig", c, kind, name); err != nil {
 		return errors.Join(err, diffRunErr)
 	}
 	if err := reportExternalDiffSkips(cmd.ErrOrStderr(), current, repoRootOf(c.path), "current", c, kind, name); err != nil {
 		return errors.Join(err, diffRunErr)
+	}
+	if name != "" && origMatched+currentMatched == 0 {
+		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
 	}
 
 	// A producer that failed on one side only has nothing to pair against, so

@@ -275,3 +275,86 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 		})
 	}
 }
+
+func TestRun_DiffKS_NamedExternalSourceDisclosure(t *testing.T) {
+	current, orig := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/home-ops.git")
+	for _, dir := range []string{current, orig} {
+		for _, rel := range []string{"flux/cluster.yaml", "flux/second.yaml"} {
+			data, err := os.ReadFile(filepath.Join(dir, rel))
+			if err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFile(t, dir, rel, strings.ReplaceAll(string(data), "gitops-system", "alpha"))
+		}
+		testutil.WriteFile(t, dir, "flux/external.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: external, namespace: beta}
+spec: {url: "https://example.invalid/external.git", interval: 1h}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: external-apps, namespace: beta}
+spec:
+  path: ./external
+  sourceRef: {kind: GitRepository, name: external}
+  interval: 1h
+`)
+	}
+	for _, app := range []string{"apps", "second-apps"} {
+		name := "hello"
+		if app == "second-apps" {
+			name = "second"
+		}
+		testutil.WriteFile(t, orig, app+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {greeting: hola}\n")
+	}
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		warn      bool
+		code      int
+		fieldDiff bool
+	}{
+		{name: "named inferred namespace", args: []string{"external-apps"}, warn: true, code: 1},
+		{name: "named at error log level", args: []string{"external-apps", "--log-level", "error"}, warn: true, code: 1},
+		{name: "unnamed", warn: true, fieldDiff: true},
+		{name: "explicit namespace", args: []string{"external-apps", "--namespace", "beta"}, warn: true},
+		{name: "excluded namespace", args: []string{"external-apps", "--namespace", "alpha"}, code: 1},
+		{name: "local name", args: []string{"apps"}, fieldDiff: true},
+		{name: "nonexistent name", args: []string{"missing"}, code: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"diff", "ks"}, tc.args...)
+			args = append(args, "--path", current, "--path-orig", orig, "--cache-dir", t.TempDir(),
+				"--concurrency", "2", "-o", "diff")
+			stdout, stderr, code := runCLI(t, args...)
+			if code != tc.code {
+				t.Fatalf("diff exited %d, want %d: %s", code, tc.code, stderr)
+			}
+			origWarning := strings.Index(stderr, "orig snapshot: Kustomization/beta/external-apps skipped: external source GitRepository/beta/external")
+			currentWarning := strings.Index(stderr, "current snapshot: Kustomization/beta/external-apps skipped: external source GitRepository/beta/external")
+			errorAt := strings.Index(stderr, "no Kustomization named")
+			if tc.warn {
+				if origWarning < 0 || currentWarning <= origWarning || strings.Count(stderr, "not rendered") != 2 {
+					t.Errorf("want orig then current external-source disclosure: %s", stderr)
+				}
+				if tc.code != 0 && (errorAt < 0 || errorAt <= currentWarning) {
+					t.Errorf("missing-name error must follow both warnings: %s", stderr)
+				}
+			} else if strings.Contains(stderr, "external source") {
+				t.Errorf("unrelated external source was disclosed: %s", stderr)
+			}
+			if tc.code != 0 && errorAt < 0 {
+				t.Errorf("missing-name error absent: %s", stderr)
+			}
+			if tc.fieldDiff {
+				for _, want := range []string{"-  greeting: hola", "+  greeting: hi"} {
+					if !strings.Contains(stdout, want) {
+						t.Errorf("missing local field diff %q:\n%s", want, stdout)
+					}
+				}
+			} else if stdout != "" {
+				t.Errorf("external selection produced resource output:\n%s", stdout)
+			}
+		})
+	}
+}

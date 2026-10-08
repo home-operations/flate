@@ -16,6 +16,16 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+func BenchmarkOCIChartVersion_DirectReference(b *testing.B) {
+	const revision = "6.15.0@sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := ociChartVersion("6.15.0", revision); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // BenchmarkTemplate_AppTemplateChart measures helm.Template against
 // the testdata/simple/charts/mychart chart referenced in the plan.
 // Each b.Loop iteration runs one Template — the same shape every HR

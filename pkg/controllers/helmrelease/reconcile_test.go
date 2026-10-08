@@ -5,11 +5,118 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestReconcile_OCIChartDigestTracking(t *testing.T) {
+	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+	for _, pin := range []string{"tag", "digest"} {
+		t.Run(pin, func(t *testing.T) {
+			c, st := newTestController(t, nil)
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: podinfo\nversion: 6.15.0\n")
+			testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: podinfo
+  labels:
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | quote }}
+data:
+  version: {{ .Chart.Version | quote }}
+`)
+			ref := map[string]any{"tag": "6.15.0"}
+			revision := "6.15.0@" + digest
+			if pin == "digest" {
+				ref = map[string]any{"digest": digest}
+				revision = digest
+			}
+			src, err := manifest.ParseOCIRepository(map[string]any{
+				"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository",
+				"metadata": map[string]any{"name": "podinfo", "namespace": "apps"},
+				"spec":     map[string]any{"url": "oci://example.test/podinfo", "ref": ref},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			obj, err := manifest.ParseDoc(map[string]any{
+				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
+				"metadata": map[string]any{"name": "podinfo", "namespace": "apps"},
+				"spec":     map[string]any{"chartRef": map[string]any{"kind": "OCIRepository", "name": "podinfo"}},
+			}, manifest.ParseDocOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			hr := obj.(*manifest.HelmRelease)
+			original := hr.Clone()
+			st.AddObject(src)
+			st.SetArtifact(src.Named(), &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: revision, Digest: digest,
+			})
+			st.UpdateStatus(src.Named(), store.StatusReady, "recorded artifact")
+			st.AddObject(hr)
+			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+				t.Fatalf("reconcile: %+v", info)
+			}
+			art := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			if got := renderedConfigMapValue(art.Manifests, "version"); got != "6.15.0+ff3d3e14728f" {
+				t.Fatalf("rendered chart version = %q, want 6.15.0+ff3d3e14728f", got)
+			}
+			md := art.Manifests[0]["metadata"].(map[string]any)
+			labels := md["labels"].(map[string]any)
+			if got := labels["helm.sh/chart"]; got != "podinfo-6.15.0_ff3d3e14728f" {
+				t.Fatalf("rendered chart label = %v", got)
+			}
+			if diff := cmp.Diff(original, hr); diff != "" {
+				t.Fatalf("stored release mutated (-want +got):\n%s", diff)
+			}
+			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+				t.Fatalf("repeat reconcile: %+v", info)
+			}
+			if st.GetArtifact(hr.Named()) != art {
+				t.Fatal("unchanged inputs did not deduplicate")
+			}
+			sharedPrefix := digest[:len(digest)-1] + "9"
+			st.SetArtifact(src.Named(), &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "6.15.0@" + sharedPrefix, Digest: sharedPrefix,
+			})
+			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+				t.Fatalf("shared-prefix digest reconcile: %+v", info)
+			}
+			sameVersion := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			if sameVersion.Fingerprint == art.Fingerprint {
+				t.Fatal("full digests sharing twelve characters reused controller fingerprint")
+			}
+			if diff := cmp.Diff(art.Manifests, sameVersion.Manifests); diff != "" {
+				t.Fatalf("same visible identity changed output (-want +got):\n%s", diff)
+			}
+			const next = "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+			st.SetArtifact(src.Named(), &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "6.15.0@" + next, Digest: next,
+			})
+			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+				t.Fatalf("changed digest reconcile: %+v", info)
+			}
+			updated := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			if got := renderedConfigMapValue(updated.Manifests, "version"); got != "6.15.0+abcdef123456" {
+				t.Fatalf("changed digest version = %q", got)
+			}
+			if art.Fingerprint == updated.Fingerprint {
+				t.Fatal("changed digest reused controller fingerprint")
+			}
+			st.SetArtifact(src.Named(), &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "invalid", Digest: next,
+			})
+			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusFailed {
+				t.Fatalf("invalid changed revision bypassed validation: %+v", info)
+			}
+		})
+	}
+}
 
 func ptrDuration(d time.Duration) *metav1.Duration {
 	out := metav1.Duration{Duration: d}

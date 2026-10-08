@@ -255,7 +255,15 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// labels. The shared helper publishes nothing (publish=false; an
 	// HR-emitted source CR re-emit is a DeepEqual no-op anyway) — see its doc
 	// for the rationale (#657–#660). fp is reused for SetArtifact below.
-	fp := helmReleaseFingerprint(hr)
+	var source *store.SourceArtifact
+	if hr.ChartRef != nil && hr.ChartRef.Kind == manifest.KindOCIRepository {
+		source = c.Helm.Resolver().LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
+		if source == nil {
+			return fmt.Errorf("resolve oci chart identity: %w: OCIRepository %s artifact not available",
+				manifest.ErrObjectNotFound, hr.Chart.RepoFullName())
+		}
+	}
+	fp := helmReleaseFingerprint(hr, source)
 	if handled, err := c.FingerprintDedup(id, fp, func(docs []map[string]any) {
 		c.emitRenderedChildren(id, docs, false)
 	}); handled {

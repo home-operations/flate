@@ -33,7 +33,10 @@ func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest)
 	if got := source.StringFromSecret(secret, "ca.crt"); got != "rendered-ca" {
 		return nil, fmt.Errorf("source: CA = %q, want rendered-ca", got)
 	}
-	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: f.chart}, nil
+	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+	return &store.SourceArtifact{
+		Kind: manifest.KindOCIRepository, LocalPath: f.chart, Digest: digest, Revision: "0.1.0@" + digest,
+	}, nil
 }
 
 func TestOrchestrator_SourceSecretRenderedBeforeFetch(t *testing.T) {

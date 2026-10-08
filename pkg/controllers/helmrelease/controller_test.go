@@ -580,7 +580,7 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	}
 	stamped.Annotations = map[string]string{"reconcile.fluxcd.io/requestedAt": "now"}
 
-	if got, want := helmReleaseFingerprint(stamped), helmReleaseFingerprint(base); got != want {
+	if got, want := helmReleaseFingerprint(stamped, nil), helmReleaseFingerprint(base, nil); got != want {
 		t.Errorf("fingerprint changed under label/annotation stamping; got %q want %q", got, want)
 	}
 }
@@ -599,8 +599,32 @@ func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
 	patched := base.Clone()
 	patched.DriftDetection = &helmv2.DriftDetection{Mode: helmv2.DriftDetectionEnabled}
 
-	if got := helmReleaseFingerprint(base); got == helmReleaseFingerprint(patched) {
+	if got := helmReleaseFingerprint(base, nil); got == helmReleaseFingerprint(patched, nil) {
 		t.Errorf("fingerprint should differ when spec.driftDetection mutates; both = %q", got)
+	}
+}
+
+func TestHelmReleaseFingerprint_SourceIdentity(t *testing.T) {
+	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps"}
+	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+	art := &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest, LocalPath: "/chart"}
+	fp := helmReleaseFingerprint(hr, art)
+	for _, tc := range []struct {
+		name     string
+		edit     func(*store.SourceArtifact)
+		wantSame bool
+	}{
+		{"digest", func(a *store.SourceArtifact) { a.Digest = digest[:len(digest)-1] + "9" }, false},
+		{"revision", func(a *store.SourceArtifact) { a.Revision = "invalid" }, false},
+		{"local path", func(a *store.SourceArtifact) { a.LocalPath = "/other" }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := *art
+			tc.edit(&changed)
+			if same := helmReleaseFingerprint(hr, &changed) == fp; same != tc.wantSame {
+				t.Fatalf("fingerprint unchanged = %v, want %v", same, tc.wantSame)
+			}
+		})
 	}
 }
 

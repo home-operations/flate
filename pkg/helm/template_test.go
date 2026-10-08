@@ -34,7 +34,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	}
 	names := []string{"values-prod.yaml"}
 
-	first, err := cli.mergeChartValuesFiles(ch, names, false)
+	first, err := cli.mergeChartValuesFiles(ch, names, false, "")
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	// file and (with ignoreMissing=false) return an error. A successful
 	// second call therefore PROVES the cache served it.
 	ch.Files = nil
-	second, err := cli.mergeChartValuesFiles(ch, names, false)
+	second, err := cli.mergeChartValuesFiles(ch, names, false, "")
 	if err != nil {
 		t.Fatalf("second call (cache hit expected): %v", err)
 	}
@@ -57,7 +57,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	// Caller-mutation safety: mutating the first result must not
 	// affect the second (defensive deep-clone on cache read).
 	first["replicaCount"] = "stomped"
-	third, err := cli.mergeChartValuesFiles(ch, names, false)
+	third, err := cli.mergeChartValuesFiles(ch, names, false, "")
 	if err != nil {
 		t.Fatalf("third call: %v", err)
 	}
@@ -89,11 +89,11 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 		},
 	}
 
-	a, err := cli.mergeChartValuesFiles(chA, []string{"values.yaml"}, false)
+	a, err := cli.mergeChartValuesFiles(chA, []string{"values.yaml"}, false, "")
 	if err != nil {
 		t.Fatalf("chartA: %v", err)
 	}
-	b, err := cli.mergeChartValuesFiles(chB, []string{"values.yaml"}, false)
+	b, err := cli.mergeChartValuesFiles(chB, []string{"values.yaml"}, false, "")
 	if err != nil {
 		t.Fatalf("chartB: %v", err)
 	}

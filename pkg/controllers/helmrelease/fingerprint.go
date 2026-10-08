@@ -4,6 +4,7 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // helmReleaseFingerprint produces a stable hash of the inputs that
@@ -14,12 +15,18 @@ import (
 // the payload can't be hashed (degrades safely: manifest.Fingerprint
 // returns "", which never matches, so the dedup short-circuit is
 // skipped and we re-render).
-func helmReleaseFingerprint(hr *manifest.HelmRelease) string {
-	return manifest.Fingerprint(helmReleaseFingerprintPayload(hr))
+func helmReleaseFingerprint(hr *manifest.HelmRelease, source *store.SourceArtifact) string {
+	return manifest.Fingerprint(helmReleaseFingerprintPayload(hr, source))
 }
 
-func helmReleaseFingerprintPayload(hr *manifest.HelmRelease) any {
+func helmReleaseFingerprintPayload(hr *manifest.HelmRelease, source *store.SourceArtifact) any {
+	var digest, revision string
+	if source != nil {
+		digest, revision = source.Digest, source.Revision
+	}
 	return struct {
+		SourceDigest             string `json:",omitempty"`
+		SourceRevision           string `json:",omitempty"`
 		ReleaseName              string
 		ReleaseNamespace         string
 		Chart                    manifest.HelmChart
@@ -31,6 +38,8 @@ func helmReleaseFingerprintPayload(hr *manifest.HelmRelease) any {
 		DisableSchemaValidation  bool
 		DisableOpenAPIValidation bool
 	}{
+		SourceDigest:             digest,
+		SourceRevision:           revision,
 		ReleaseName:              hr.ReleaseName(),
 		ReleaseNamespace:         hr.ReleaseNamespace(),
 		Chart:                    hr.Chart,

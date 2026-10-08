@@ -6,8 +6,43 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// ociChartVersion matches Flux's source revision semantics, replacing build
+// metadata while preserving the chart's prerelease. OCI tags encode '+' as '_'.
+func ociChartVersion(version, revision string) (string, error) {
+	ver, err := semver.NewVersion(version)
+	if err != nil {
+		return "", fmt.Errorf("track oci chart version: %w: invalid chart version %q: %w", manifest.ErrInput, version, err)
+	}
+	tag, digest, tagged := strings.Cut(revision, "@")
+	candidate := revision
+	if tagged {
+		candidate = strings.ReplaceAll(tag, "_", "+")
+	}
+	if tagVer, err := semver.NewVersion(candidate); err == nil {
+		if !tagged || strings.Contains(digest, "@") || !tagVer.Equal(ver) {
+			return "", fmt.Errorf("track oci chart version: %w: artifact revision %q does not match chart version %q",
+				manifest.ErrInput, revision, version)
+		}
+	} else {
+		// Flux extracts directly from the revision for digest pins and
+		// non-semver tags (e.g. latest@sha256:<digest>).
+		digest = revision
+	}
+	_, suffix, ok := strings.Cut(digest, ":")
+	if !ok || strings.Contains(suffix, ":") || len(suffix) < 12 {
+		return "", fmt.Errorf("track oci chart version: %w: invalid artifact revision %q", manifest.ErrInput, revision)
+	}
+	tracked, err := ver.SetMetadata(suffix[:12])
+	if err != nil {
+		return "", fmt.Errorf("track oci chart version: %w: invalid artifact revision %q: %w", manifest.ErrInput, revision, err)
+	}
+	return tracked.String(), nil
+}
 
 // locateOCIChart resolves a chart whose source is an OCIRepository. The
 // source controller's oci.Fetcher has already pulled the artifact (applying

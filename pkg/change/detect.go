@@ -191,10 +191,13 @@ func detectViaGit(before, after string) (*Set, error) {
 			continue
 		}
 		p := filepath.ToSlash(string(rawPath))
-		rel, ok := strings.CutPrefix(p, beforePrefix)
-		if !ok {
-			rel, ok = strings.CutPrefix(p, afterPrefix)
+		// Git reports additions from after and other changes from before,
+		// so select the side before stripping overlapping roots.
+		prefix := beforePrefix
+		if status[0] == 'A' {
+			prefix = afterPrefix
 		}
+		rel, ok := strings.CutPrefix(p, prefix)
 		if !ok {
 			// Unexpected path shape — skip rather than mis-attribute.
 			// Defensive only: git always reports paths under the input

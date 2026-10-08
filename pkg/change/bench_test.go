@@ -2,8 +2,11 @@ package change
 
 import (
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -90,4 +93,27 @@ func seedKSStore(n int) (*store.Store, map[manifest.NamedResource]string) {
 		sourceFiles[ks.Named()] = fmt.Sprintf("apps/app-%d/ks.yaml", i)
 	}
 	return s, sourceFiles
+}
+
+func BenchmarkDetectViaGit(b *testing.B) {
+	if _, err := exec.LookPath("git"); err != nil {
+		b.Skip("git not on PATH")
+	}
+	for _, name := range []string{"separate", "nested"} {
+		b.Run(name, func(b *testing.B) {
+			after := b.TempDir()
+			before := b.TempDir()
+			if name == "nested" {
+				before = filepath.Join(after, ".cache", "baselines", "base")
+			}
+			testutil.WriteFile(b, before, "mod.yaml", "AAA")
+			testutil.WriteFile(b, after, "mod.yaml", "BBB")
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := detectViaGit(before, after); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }

@@ -177,6 +177,10 @@ func TestDetectViaGit_BehavesLikeWalker(t *testing.T) {
 	writeFile(t, after, "added.yaml", "new")
 	writeFile(t, before, "mod.yaml", "AAA")
 	writeFile(t, after, "mod.yaml", "BBB")
+	writeFile(t, before, "type.yaml", "target")
+	if err := os.Symlink("target", filepath.Join(after, "type.yaml")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
 	// .git/ contents must NOT appear in the set — git diff --no-index
 	// happily reports them; the isFilteredPath post-filter drops them.
 	writeFile(t, before, ".git/HEAD", "a")
@@ -190,12 +194,68 @@ func TestDetectViaGit_BehavesLikeWalker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detectViaWalker: %v", err)
 	}
-	want := []string{"added.yaml", "mod.yaml", "removed.yaml"}
+	want := []string{"added.yaml", "mod.yaml", "removed.yaml", "type.yaml"}
 	if got := gotGit.Paths(); !slices.Equal(got, want) {
 		t.Errorf("git path: %v, want %v", got, want)
 	}
 	if got := gotWalker.Paths(); !slices.Equal(got, want) {
 		t.Errorf("walker path: %v, want %v (must agree with git path)", got, want)
+	}
+}
+
+func TestDetectViaGit_NestedRoots(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	cases := []struct {
+		name         string
+		beforeNested bool
+		changed      bool
+	}{
+		{name: "before_nested_unchanged", beforeNested: true},
+		{name: "after_nested_unchanged"},
+		{name: "before_nested_changed", beforeNested: true, changed: true},
+		{name: "after_nested_changed", changed: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outer := t.TempDir()
+			inner := filepath.Join(outer, ".cache", "baselines", "base")
+			before, after := outer, inner
+			if tc.beforeNested {
+				before, after = inner, outer
+			}
+			writeFile(t, before, "same.yaml", "same")
+			writeFile(t, after, "same.yaml", "same")
+			writeFile(t, before, ".cache/noise.yaml", "old")
+			writeFile(t, after, ".cache/noise.yaml", "new")
+			var want []string
+			if tc.changed {
+				writeFile(t, before, "removed.yaml", "gone")
+				writeFile(t, after, "added.yaml", "new")
+				writeFile(t, before, "mod.yaml", "AAA")
+				writeFile(t, after, "mod.yaml", "BBB")
+				writeFile(t, before, "type.yaml", "target")
+				if err := os.Symlink("target", filepath.Join(after, "type.yaml")); err != nil {
+					t.Skipf("symlink unsupported: %v", err)
+				}
+				want = []string{"added.yaml", "mod.yaml", "removed.yaml", "type.yaml"}
+			}
+			gotGit, err := detectViaGit(before, after)
+			if err != nil {
+				t.Fatalf("detectViaGit: %v", err)
+			}
+			gotWalker, err := detectViaWalker(before, after)
+			if err != nil {
+				t.Fatalf("detectViaWalker: %v", err)
+			}
+			if got := gotGit.Paths(); !slices.Equal(got, want) {
+				t.Errorf("git paths = %v, want %v", got, want)
+			}
+			if got := gotWalker.Paths(); !slices.Equal(got, want) {
+				t.Errorf("walker paths = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

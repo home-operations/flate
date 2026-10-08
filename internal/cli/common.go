@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/go-git/go-git/v5"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -33,13 +34,9 @@ import (
 type commonFlags struct {
 	path     string
 	pathOrig string
-	// pathOrigRoot / pathOrigSelfURLs are resolved by resolveBaseline for
-	// the --base flow: the materialized baseline tree carries no .git, so
-	// its repo root (the spec.path anchor + change-detect root) and the
-	// live tree's remote URLs (for self-referential aliasing on the
-	// baseline side) are threaded explicitly rather than re-derived from a
-	// .git. Empty for an explicit --path-orig (the CLI defaults the root
-	// via repoRootOf and lets the side read its own .git remotes).
+	// The materialized --base tree carries no .git, so its source root
+	// is threaded explicitly. Both baseline flows carry the live tree's
+	// remote URLs for self-referential aliasing on snapshots without .git.
 	pathOrigRoot         string
 	pathOrigSelfURLs     []string
 	krmIgnore            string
@@ -367,7 +364,25 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 		return noop, errors.New("--path-orig and --base are mutually exclusive")
 	}
 	if c.pathOrig != "" {
-		// Explicit --path-orig — caller already specified the baseline.
+		// An explicit snapshot may have no .git; give it the same source
+		// identity as a materialized --base tree.
+		repo, err := git.PlainOpenWithOptions(repoRootOf(c.path), &git.PlainOpenOptions{
+			EnableDotGitCommonDir: true,
+		})
+		if errors.Is(err, git.ErrRepositoryNotExists) {
+			return noop, nil
+		}
+		if err != nil {
+			return noop, fmt.Errorf("baseline: open working tree: %w", err)
+		}
+		cfg, err := repo.Config()
+		if err != nil {
+			return noop, fmt.Errorf("baseline: read working tree git config: %w", err)
+		}
+		c.pathOrigSelfURLs = nil
+		for _, remote := range cfg.Remotes {
+			c.pathOrigSelfURLs = append(c.pathOrigSelfURLs, remote.URLs...)
+		}
 		return noop, nil
 	}
 	if c.base == "" && !autoFallback {

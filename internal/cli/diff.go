@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/diff"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
@@ -168,6 +169,12 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	if name != "" && origMatched+currentMatched == 0 {
 		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
 	}
+	if err := reportExternalDiffSkips(cmd.ErrOrStderr(), orig, c.baselineRoot(), "orig", c, kind, name); err != nil {
+		return errors.Join(err, diffRunErr)
+	}
+	if err := reportExternalDiffSkips(cmd.ErrOrStderr(), current, repoRootOf(c.path), "current", c, kind, name); err != nil {
+		return errors.Join(err, diffRunErr)
+	}
 
 	// A producer that failed on one side only has nothing to pair against, so
 	// its healthy-side output would read as a wholesale add or delete. Withhold
@@ -198,6 +205,33 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	}
 	if diffRunErr != nil {
 		return reportedError{diffRunErr}
+	}
+	return nil
+}
+
+func reportExternalDiffSkips(w io.Writer, side diffSide, repoRoot, label string, c *commonFlags, kind, name string) error {
+	if kind != "" && kind != manifest.KindKustomization {
+		return nil
+	}
+	external := loader.ExternalSourcedKSIDs(side.O.Store(), repoRoot)
+	for _, ks := range side.O.Store().ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+		id := ks.Named()
+		if _, ok := external[id]; !ok || (name != "" && id.Name != name) {
+			continue
+		}
+		// The inferred changed-only namespace scope excludes these skips;
+		// disclosure must still honor an explicit namespace selection.
+		if c.namespace != "" && id.Namespace != "" && id.Namespace != c.namespace {
+			continue
+		}
+		info, _ := side.O.Store().GetStatus(id)
+		if !store.IsUnchanged(info) && !store.IsSkipped(info) {
+			continue
+		}
+		src := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+		if _, err := fmt.Fprintf(w, "flate warning: %s snapshot: %s skipped: external source %s is outside the local tree; not rendered\n", label, id, src); err != nil {
+			return err
+		}
 	}
 	return nil
 }

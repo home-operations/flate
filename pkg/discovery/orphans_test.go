@@ -38,7 +38,7 @@ spec:
 		cfg: Config{Store: st, WipeSecrets: true}, loader: l,
 		sourceFiles: map[manifest.NamedResource]string{self: "apps/bundle.yaml", child: "apps/bundle.yaml"},
 	}
-	d.promoteOrphans([]loader.KSPathPrefix{{ID: self, Prefix: "apps/"}})
+	d.promoteOrphans([]loader.KSPathPrefix{{ID: self, Prefix: "apps/"}}, nil, l.Existence.All(), nil)
 	if st.GetObject(self) == nil {
 		t.Error("self-excluded orphan must be admitted")
 	}

@@ -195,15 +195,24 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	parentOf := loader.BuildParentIndexFromPrefixes(prefixes, d.sourceFiles, manifest.KindKustomization)
 	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.sourceFiles, manifest.KindHelmRelease))
 	maps.Copy(parentOf, loader.BuildParentIndexFromPrefixes(prefixes, d.sourceFiles, manifest.KindResourceSet))
-	// Orphan promotion: every Existence entry whose file path is NOT
-	// under any KS spec.path will never reach the Store through KS
-	// render emission. Promote it now so standalone CRs (loose HR
-	// at repo root, sources next to flux-system/kustomization.yaml,
-	// etc.) keep working in DiscoveryOnly mode.
-	d.promoteOrphans(prefixes)
-
+	entries := l.Existence.All()
+	var standaloneSecrets []manifest.NamedResource
+	if cfg.WipeSecrets {
+		for id := range entries {
+			if id.Kind != manifest.KindSecret || d.cfg.Store.GetObject(id) != nil {
+				continue
+			}
+			if file, ok := d.sourceFiles[id]; ok {
+				if _, covered := loader.LongestParent(prefixes, file, id); !covered {
+					standaloneSecrets = append(standaloneSecrets, id)
+				}
+			}
+		}
+	}
 	producers := &manifest.ProducerIndex{}
 	selfProduce := loader.BuildSelfProduceIndex(d.cfg.Store, repoRoot, producers, cfg.WipeSecrets)
+	d.promoteOrphans(prefixes, selfProduce, entries, standaloneSecrets)
+
 	// Gate cross-tree base Kustomizations (#777) on their emitting parent. Such a
 	// base sits under no KS spec.path, so BuildParentIndexFromPrefixes gave it no
 	// gate — it would reconcile the raw UNSUBSTITUTED copy and race the parent's

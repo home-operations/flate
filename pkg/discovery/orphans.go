@@ -2,59 +2,58 @@ package discovery
 
 import (
 	"log/slog"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// promoteOrphans materializes Existence entries that no Kustomization
-// will ever render. An "orphan" here is a file-indexed object whose
-// source file is not under any loaded KS's spec.path — render-driven
-// discovery would leave it stranded otherwise. Common shapes:
-//
-//   - A loose HelmRelease/source at repo root that `flate build`
-//     should still render even with no enclosing KS.
-//   - flux-system bootstrap CRs that exist beside the bootstrap KS
-//     itself but aren't inside its spec.path tree.
-//
-// Entries whose path IS under a KS's spec.path stay in Existence —
-// they'll be emitted by that KS's render via emitRenderedChildren
-// (or resolved on-demand by depwait's lazy-promotion fallback when a
-// substituteFrom edge fires before the producing KS reconciles).
-//
-// Shares the parent-path-prefix predicate with the orchestrator's
-// detectOrphans via loader.LongestParent — the two run in
-// complementary phases (pre-reconcile materialization here,
-// post-reconcile failure demotion there) and must agree on the
-// same "under a KS path" predicate so an object can't be classified
-// orphan by one and parented by the other.
-func (d *discoverer) promoteOrphans(prefixes []loader.KSPathPrefix) {
+// promoteOrphans materializes file-indexed objects outside every local
+// Kustomization's path and resource graph. Owned objects must await transformed
+// render emission; the admission callback applies that boundary to siblings too.
+func (d *discoverer) promoteOrphans(prefixes []loader.KSPathPrefix, selfProduce *loader.SelfProduceIndex, entries map[manifest.NamedResource]string, standaloneSecrets []manifest.NamedResource) {
 	if d.loader.Existence == nil {
 		return
 	}
-	// prefixes is the same KS spec.path list discovery.Run computed for
-	// the parent-index passes (identical repoRoot + shared component
-	// cache). Reusing it keeps this and the parent index in lockstep on
-	// the "under a KS path" predicate and avoids a third rebuild.
+	owned := func(id manifest.NamedResource, file string) bool {
+		if _, covered := loader.LongestParent(prefixes, file, id); covered {
+			return true
+		}
+		for _, owner := range selfProduce.OwnersOfFile(file) {
+			if owner != id {
+				return true
+			}
+		}
+		return false
+	}
 	admit := func(obj manifest.BaseManifest) bool {
 		file, ok := d.sourceFiles[obj.Named()]
-		if !ok {
-			return false
-		}
-		_, covered := loader.LongestParent(prefixes, file, obj.Named())
-		return !covered
+		return ok && !owned(obj.Named(), file)
 	}
-	for id := range d.loader.Existence.All() {
+	// Pre-build absence identifies builder materialization. Remove all admitted
+	// stand-ins before any file promotion so real sibling Secrets take precedence.
+	slices.SortFunc(standaloneSecrets, manifest.NamedResource.Compare)
+	var saved []*manifest.Secret
+	for _, id := range standaloneSecrets {
+		if obj, ok := d.cfg.Store.GetObject(id).(*manifest.Secret); ok && admit(obj) {
+			saved = append(saved, obj)
+			d.cfg.Store.DeleteObject(id)
+		}
+	}
+	for id := range entries {
 		if d.cfg.Store.GetObject(id) != nil {
 			continue
 		}
-		if file, ok := d.sourceFiles[id]; ok {
-			if _, covered := loader.LongestParent(prefixes, file, id); covered {
-				continue
-			}
+		if file, ok := d.sourceFiles[id]; ok && owned(id, file) {
+			continue
 		}
 		if !d.loader.Existence.Promote(d.cfg.Store, id, d.cfg.WipeSecrets, admit) {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
+		}
+	}
+	for _, obj := range saved {
+		if d.cfg.Store.GetObject(obj.Named()) == nil {
+			d.cfg.Store.AddObject(obj)
 		}
 	}
 }

@@ -170,18 +170,18 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outc
 	}
 	deps := f.graph[nid]
 	var blocked []NodeID
-	failed := false
+	var failed []NodeID
 	for _, d := range deps {
 		if f.termAny[d] {
 			if !f.termReady[d] {
-				failed = true
+				failed = append(failed, d)
 			}
 			continue // terminal-ready -> satisfied
 		}
 		if _, isNode := f.graph[d]; !isNode {
 			// absent dep
 			if drainLevel >= DrainCascade {
-				failed = true
+				failed = append(failed, d)
 				continue
 			}
 			blocked = append(blocked, d)
@@ -189,16 +189,16 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outc
 		}
 		// present but not yet terminal (pending)
 		if drainLevel >= DrainForce {
-			failed = true
+			failed = append(failed, d)
 			continue
 		}
 		blocked = append(blocked, d)
 	}
 	switch {
-	case failed:
+	case len(failed) > 0:
 		f.termAny[nid] = true
 		f.termReady[nid] = false
-		return OutcomeTerminal, nil
+		return OutcomeDependencyFailed, failed
 	case len(blocked) > 0:
 		return OutcomeBlocked, blocked
 	default:

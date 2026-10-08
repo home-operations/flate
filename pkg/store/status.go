@@ -328,7 +328,11 @@ func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 func (s *Store) SetBlocked(id manifest.NamedResource, deps []manifest.NamedResource) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
-	sh.blocked[id] = slices.Clone(deps)
+	if len(deps) == 0 {
+		delete(sh.blocked, id)
+	} else {
+		sh.blocked[id] = slices.Clone(deps)
+	}
 	sh.mu.Unlock()
 }
 

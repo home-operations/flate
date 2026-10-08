@@ -660,6 +660,10 @@ func (c *Controller) DispatchNode[T manifest.BaseManifest](
 	suspended func(T) bool,
 	reconcile func(context.Context, T) error,
 ) []manifest.NamedResource {
+	derived := len(c.Store.BlockedBy(id)) > 0
+	if derived {
+		c.Store.SetBlocked(id, nil)
+	}
 	ctx = WithDrainLevel(ctx, drainLevel)
 	obj, ok := c.Store.Get[T](id)
 	if !ok {
@@ -672,6 +676,11 @@ func (c *Controller) DispatchNode[T manifest.BaseManifest](
 	if msg, failed := c.PreflightFailure(id); failed {
 		c.Store.UpdateStatus(id, store.StatusFailed, msg)
 		return nil
+	}
+	if derived {
+		if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusFailed {
+			c.Store.UpdateStatus(id, store.StatusPending, "")
+		}
 	}
 	return RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
 }

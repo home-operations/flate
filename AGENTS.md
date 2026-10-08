@@ -61,10 +61,12 @@ Leaf packages stay leaf: `manifest`, `task`, `schedule` (store and controllers o
   template and disk caches) instead of re-rendering, re-fetching or re-parsing.
 - Hot paths that are allocation-free stay allocation-free; allocs/op must not rise on an
   existing benchmark.
-- Any PR touching a package with benchmarks pastes `benchstat` against the committed
-  `bench/baseline.txt` (`mise run bench`, `COUNT=5`). A regression over 5% on a hot path, or
-  any allocs/op increase, blocks review unless argued with numbers and accepted explicitly.
-  Refresh the baseline only via `mise run bench-baseline`.
+- Any PR touching a package with benchmarks pastes a `benchstat` comparison: `mise run bench`
+  on the base commit and on the branch, `benchstat <base>.txt <branch>.txt` (results land in
+  `bench/results/`). `bench/baseline.txt` is a placeholder until it is regenerated with
+  `mise run bench-baseline`; compare against it only once it holds measured numbers. A
+  regression over 5% on a hot path, or any allocs/op increase, blocks review unless argued with
+  numbers and accepted explicitly.
 - Concurrent code gets a `-race` test at concurrency >= 2, not a serialized stand-in.
 
 ## Code style
@@ -75,7 +77,8 @@ Leaf packages stay leaf: `manifest`, `task`, `schedule` (store and controllers o
   `errors.AsType`. Run `go fix` after touching a package. No `interface{}`, naked returns,
   `ioutil`, or reflection on hot paths.
 - `ctx context.Context` is the first parameter of anything that does I/O and is never stored
-  in a struct. `context.Background()` belongs to `internal/cli` only.
+  in a struct. `context.Background()` belongs to `internal/cli`, except for documented shared
+  work that must outlive one caller's cancellation, such as `TreeCache.FetchRemote`.
 - Errors: `fmt.Errorf("<lowercase op>: %w", err)`; tag with a `manifest.Err*` sentinel as
   `fmt.Errorf("%w: detail", manifest.ErrInput)`. Every domain error wraps `manifest.ErrFlux`.
   Classify with `errors.Is`/`errors.AsType`, never by string. Panic only on impossible

@@ -660,7 +660,7 @@ func (c *Controller) DispatchNode[T manifest.BaseManifest](
 	suspended func(T) bool,
 	reconcile func(context.Context, T) error,
 ) []manifest.NamedResource {
-	derived := len(c.Store.BlockedBy(id)) > 0
+	derived := c.Store.HasBlocked(id)
 	if derived {
 		c.Store.SetBlocked(id, nil)
 	}

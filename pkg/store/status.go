@@ -336,6 +336,14 @@ func (s *Store) SetBlocked(id manifest.NamedResource, deps []manifest.NamedResou
 	sh.mu.Unlock()
 }
 
+// HasBlocked reports whether id has a dependency-derived failure.
+func (s *Store) HasBlocked(id manifest.NamedResource) bool {
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+	return len(sh.blocked[id]) > 0
+}
+
 // BlockedBy returns the immediate dependencies that blocked id (set via
 // SetBlocked), or nil when id failed on its own — i.e. a primary failure.
 func (s *Store) BlockedBy(id manifest.NamedResource) []manifest.NamedResource {

@@ -12,7 +12,13 @@ func TestSetBlocked_ReplaceAndDelete(t *testing.T) {
 	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "consumer"}
 	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "dep"}
 	deps := []manifest.NamedResource{dep}
+	if st.HasBlocked(id) {
+		t.Fatal("unblocked resource has blockers")
+	}
 	st.SetBlocked(id, deps)
+	if !st.HasBlocked(id) {
+		t.Fatal("dependency-derived failure has no blockers")
+	}
 	deps[0].Name = "mutated"
 	got := st.BlockedBy(id)
 	if !slices.Equal(got, []manifest.NamedResource{dep}) {
@@ -23,6 +29,9 @@ func TestSetBlocked_ReplaceAndDelete(t *testing.T) {
 		t.Fatal("reader mutated blockers")
 	}
 	st.SetBlocked(id, nil)
+	if st.HasBlocked(id) {
+		t.Fatal("cleared dependency-derived failure retains blockers")
+	}
 	if got := st.BlockedBy(id); got != nil {
 		t.Fatalf("empty blocker set was not deleted: %v", got)
 	}

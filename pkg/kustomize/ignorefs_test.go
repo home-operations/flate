@@ -2,12 +2,15 @@ package kustomize
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
@@ -211,5 +214,56 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 	}
 	if string(out2) != "SENTINEL\n" {
 		t.Errorf("expected a cache hit against the filtered view; got a re-render:\n%s", out2)
+	}
+}
+
+func TestRenderFlux_SourceignoreConfigMapGenerator(t *testing.T) {
+	const image = "\x89PNG\r\n\x1a\n"
+	cases := []struct {
+		name    string
+		ignore  *string
+		wantErr bool
+	}{
+		{name: "user patterns preserve image", ignore: new("*.tmp\n")},
+		{name: "no sourceignore excludes image", wantErr: true},
+		{name: "empty sourceignore excludes image", ignore: new(""), wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{
+				"app/icons/logo.png": image,
+				"app/kustomization.yaml": `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+- name: icons
+  files:
+  - logo.png=icons/logo.png
+`,
+			}
+			if tc.ignore != nil {
+				files[".sourceignore"] = *tc.ignore
+			}
+			root := writeTree(t, files)
+			out, err := RenderFlux(t.Context(), NewTreeCache(), root, true, "app", ksDoc(map[string]any{"path": "./app"}))
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "logo.png") {
+					t.Fatalf("expected excluded image to fail the build, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			var cm struct {
+				Kind       string            `json:"kind"`
+				BinaryData map[string]string `json:"binaryData"`
+			}
+			if err := yaml.Unmarshal(out, &cm); err != nil {
+				t.Fatalf("decode ConfigMap: %v", err)
+			}
+			if cm.Kind != "ConfigMap" || cm.BinaryData["logo.png"] != base64.StdEncoding.EncodeToString([]byte(image)) {
+				t.Fatalf("expected image bytes in generated ConfigMap, got:\n%s", out)
+			}
+		})
 	}
 }

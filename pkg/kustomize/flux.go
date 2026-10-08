@@ -45,10 +45,9 @@ var BuildMutex sync.Mutex
 // to the root (a path escaping it simply does not resolve), giving
 // SecureBuild's security posture for free.
 //
-// applyIgnore selects whether source-controller's file exclusions (its
-// defaults — .sops.yaml, binaries, CI dirs — plus every in-tree .sourceignore,
-// loaded from the source root exactly as source-controller does) are hidden
-// from the build's disk layer — true for working-tree / self-referential
+// applyIgnore selects whether source-controller's file exclusions (VCS plus
+// every in-tree .sourceignore, or defaults when no user patterns are loaded)
+// are hidden from the build's disk layer: true for working-tree / self-referential
 // sources that never passed through a fetcher's artifact filtering, false for
 // already-filtered fetched artifacts. With the filter in place a spec.path or
 // kustomization resource that only exists outside the artifact fails to

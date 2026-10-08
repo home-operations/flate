@@ -1,8 +1,9 @@
 // Package sourceignore builds the file-exclusion matcher Flux's
 // source-controller applies when it packages a GitRepository/OCIRepository
-// artifact: its default patterns (.git/, .github/, *.jpg/png/zip, .sops.yaml,
-// .flux.yaml, .goreleaser.yml, …) plus any in-tree .sourceignore files plus
-// caller-supplied spec.ignore patterns.
+// artifact: VCS exclusions plus any in-tree .sourceignore files and
+// caller-supplied spec.ignore patterns. When no user patterns are loaded,
+// Flux's default exclusions also apply (.github/, *.jpg/png/zip, .sops.yaml,
+// .flux.yaml, .goreleaser.yml, …).
 //
 // It is a leaf package — it depends only on the vendored fluxcd/go-git
 // ignore primitives, never on pkg/source or pkg/kustomize — so BOTH the
@@ -34,10 +35,10 @@ type Matcher struct {
 
 // New builds a Matcher for the tree rooted at root.
 //
-// withDefaults adds Flux's default VCS + ExcludeExt/CI/Extra patterns — the
-// GitRepository/OCIRepository behavior; pass false for the Bucket flavor
-// (in-tree .sourceignore + extra only). extra, when non-empty, appends
-// caller patterns (a source's spec.ignore).
+// withDefaults adds Flux's VCS patterns and, when no user patterns are loaded,
+// its ExcludeExt/CI/Extra patterns for GitRepository/OCIRepository sources.
+// Pass false for the Bucket flavor (in-tree .sourceignore + extra only).
+// extra, when non-empty, appends caller patterns (a source's spec.ignore).
 func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -54,7 +55,10 @@ func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 	}
 
 	if withDefaults {
-		return &Matcher{matcher: flux.NewDefaultMatcher(patterns, domain), domain: domain}, nil
+		if len(patterns) == 0 {
+			return &Matcher{matcher: flux.NewDefaultMatcher(patterns, domain), domain: domain}, nil
+		}
+		patterns = append(flux.VCSPatterns(domain), patterns...)
 	}
 	return &Matcher{matcher: flux.NewMatcher(patterns), domain: domain}, nil
 }

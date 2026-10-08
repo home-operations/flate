@@ -11,14 +11,11 @@ import (
 )
 
 // ApplyIgnore deletes every file under root that matches the source-
-// controller ignore matcher: VCS + Default excludes (.git/, .github/,
-// *.jpg/png/zip, .sops.yaml, .flux.yaml, ...) PLUS any in-tree
-// .sourceignore files PLUS the user-supplied spec.ignore patterns when
-// non-nil. Mirrors source-controller's GitRepository / OCIRepository
-// artifact-build behavior.
-//
-// nil spec.ignore is NOT a no-op — the VCS + Default patterns still
-// apply, matching what real Flux ships in a Git/OCI artifact tarball.
+// controller ignore matcher: VCS exclusions plus in-tree .sourceignore and
+// user-supplied spec.ignore patterns. With no user patterns, Flux's default
+// exclusions (.github/, *.jpg/png/zip, .sops.yaml, .flux.yaml, ...) also apply.
+// Mirrors source-controller's GitRepository / OCIRepository artifact-build
+// behavior.
 //
 // Bucket sources use ApplyIgnoreNoDefaults instead — see that function
 // for the rationale.

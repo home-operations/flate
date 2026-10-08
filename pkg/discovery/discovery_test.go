@@ -664,3 +664,173 @@ spec:
 		}
 	}
 }
+
+func TestRun_GraphOwnedOrphans(t *testing.T) {
+	for _, tc := range []struct{ name, resource, namespace string }{
+		{"sibling", "../shared/demo", ""},
+		{"direct", "../shared/demo/bundle.yaml", ""},
+		{"explicit", "../shared/demo", "demo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: owner, namespace: flux-system}
+spec: {path: ./cluster/per-cluster, sourceRef: {kind: GitRepository, name: flux-system}}
+`)
+			testutil.WriteFile(t, dir, "cluster/per-cluster/kustomization.yaml", "namespace: demo\nresources: ["+tc.resource+"]\n")
+			testutil.WriteFile(t, dir, "cluster/shared/demo/kustomization.yaml", "namespace: demo\nresources: [bundle.yaml]\n")
+			ns := ""
+			if tc.namespace != "" {
+				ns = ", namespace: " + tc.namespace
+			}
+			testutil.WriteFile(t, dir, "cluster/shared/demo/bundle.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo`+ns+`}
+spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: demo}}}}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: demo`+ns+`}
+spec: {url: "https://charts.example.invalid", interval: 1h}
+`)
+			testutil.WriteFile(t, dir, "standalone.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: standalone, namespace: demo}
+data: {value: fixture}
+`)
+			st := store.New()
+			res, err := discovery.Run(t.Context(), discovery.Config{Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "demo", Namespace: tc.namespace}
+			if _, ok := res.Existence.Get(raw); !ok {
+				t.Error("raw release must remain indexed")
+			}
+			if st.GetObject(raw) != nil {
+				t.Errorf("graph-owned release promoted: %s", raw)
+			}
+			repos := st.ListAs[*manifest.HelmRepository](manifest.KindHelmRepository)
+			if len(repos) != 1 || repos[0].Name != "demo" || repos[0].Namespace != "demo" {
+				t.Errorf("repositories = %+v, want only demo/demo", repos)
+			}
+			if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "demo", Name: "standalone"}) == nil {
+				t.Error("standalone ConfigMap not promoted")
+			}
+		})
+	}
+}
+
+func TestRun_StandaloneSecretWinsProducerPlaceholder(t *testing.T) {
+	for _, scenario := range []string{"standalone", "preexisting", "graph-owned"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: owner, namespace: flux-system}
+spec: {path: ./apps, sourceRef: {kind: GitRepository, name: flux-system}}
+`)
+			resources := "producer.yaml"
+			if scenario == "graph-owned" {
+				resources += ", ../secret.yaml"
+			}
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "namespace: secure\nresources: ["+resources+"]\n")
+			testutil.WriteFile(t, dir, "apps/producer.yaml", `apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: producer, namespace: secure}
+spec:
+ target: {name: app-secret}
+ data: [{secretKey: HOST, remoteRef: {key: fixture}}]
+`)
+			testutil.WriteFile(t, dir, "secret.yaml", `apiVersion: v1
+kind: Secret
+metadata: {name: app-secret, namespace: secure}
+stringData: {HOST: fixture-value}
+`)
+			st := store.New()
+			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "secure", Name: "app-secret"}
+			preexisting := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"HOST": "preexisting-value"}}
+			if scenario == "preexisting" {
+				st.AddObject(preexisting)
+			}
+			res, err := discovery.Run(t.Context(), discovery.Config{Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "fixture-value"
+			if scenario == "preexisting" {
+				want = "preexisting-value"
+			}
+			if scenario == "graph-owned" {
+				want = "..PLACEHOLDER_HOST.."
+			}
+			secret, ok := st.GetObject(id).(*manifest.Secret)
+			if !ok || secret.StringData["HOST"] != want {
+				t.Fatalf("Secret = %+v, want HOST=%q", secret, want)
+			}
+			if scenario == "preexisting" && secret != preexisting {
+				t.Error("preexisting immutable Secret replaced")
+			}
+			producer, ok := res.Producers.Producer(id)
+			if !ok || producer != (manifest.NamedResource{Kind: "ExternalSecret", Namespace: "secure", Name: "producer"}) {
+				t.Errorf("producer attribution = %v, %v", producer, ok)
+			}
+		})
+	}
+}
+
+func TestRun_GraphOwnershipSourceClassification(t *testing.T) {
+	for _, scenario := range []string{"bootstrap", "self", "external"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			sourceName := "flux-system"
+			if scenario != "bootstrap" {
+				sourceName = "source"
+				testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: source, namespace: flux-system}
+spec: {url: "https://example.invalid/cluster.git"}
+`)
+			}
+			testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: owner, namespace: flux-system}
+spec: {path: ./apps, sourceRef: {kind: GitRepository, name: `+sourceName+`}}
+`)
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [../shared/cm.yaml]\n")
+			testutil.WriteFile(t, dir, "shared/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: config, namespace: flux-system}
+data: {value: fixture}
+`)
+			cfg := discovery.Config{Path: dir, RepoRoot: dir, Store: store.New(), WipeSecrets: true}
+			if scenario == "self" {
+				cfg.SelfURLs = []string{"https://example.invalid/cluster.git"}
+			}
+			res, err := discovery.Run(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owners := res.SelfProduce.OwnersOfFile("shared/cm.yaml")
+			if scenario == "external" {
+				if len(owners) != 0 {
+					t.Errorf("external KS owns local file: %v", owners)
+				}
+			} else if len(owners) != 1 || owners[0].Name != "owner" {
+				t.Errorf("local graph owners = %v", owners)
+			}
+			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "config"}
+			if got, want := cfg.Store.GetObject(id) != nil, scenario == "external"; got != want {
+				t.Errorf("standalone promotion = %v, want %v", got, want)
+			}
+			src := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: sourceName}
+			if cfg.Store.GetObject(src) == nil {
+				t.Error("source must remain file-loaded")
+			}
+			if got, want := cfg.Store.GetArtifact(src) != nil, scenario != "external"; got != want {
+				t.Errorf("source alias = %v, want %v", got, want)
+			}
+		})
+	}
+}

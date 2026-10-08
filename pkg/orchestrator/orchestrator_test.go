@@ -2,13 +2,20 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
@@ -1494,4 +1501,229 @@ func TestOrchestrator_RenderErrorPathStopsCleanly(t *testing.T) {
 	// sync.Once guard composes safely with the deferred Stop above
 	// and any explicit caller Stop. No panic from double-Close.
 	o.Stop()
+}
+
+func writeDigestTrackingRelease(t *testing.T, root, rel, text string) {
+	t.Helper()
+	testutil.WriteFile(t, root, rel, `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: flux-instance, namespace: flux-system}
+spec:
+  suspend: true
+  chartRef: {kind: OCIRepository, name: fixture}
+  values:
+    instance:
+      kustomize:
+        patches:
+          - target: {name: helm-controller}
+            patch: "--feature-gates=DisableChartDigestTracking=`+text+`"
+`)
+}
+
+func writeDigestTrackingTree(t *testing.T, root string) {
+	t.Helper()
+	testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system}
+  postBuild:
+    substitute: {GATE: "true"}
+`)
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
+}
+
+func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
+	for _, covered := range []bool{false, true} {
+		for _, detect := range []bool{false, true} {
+			for _, supplied := range []bool{false, true} {
+				for _, gate := range []bool{false, true} {
+					name := fmt.Sprintf("covered_%t/detect_%t/supplied_%t/gate_%t", covered, detect, supplied, gate)
+					t.Run(name, func(t *testing.T) {
+						root := t.TempDir()
+						writeDigestTrackingTree(t, root)
+						rel := "apps/hr.yaml"
+						if !covered {
+							rel = "flux/hr.yaml"
+							testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
+						}
+						writeDigestTrackingRelease(t, root, rel, strconv.FormatBool(gate))
+						o, err := New(Config{
+							Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2,
+							DetectChartDigestTracking: detect,
+							HelmOptions:               helm.Options{DisableChartDigestTracking: supplied},
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+						t.Cleanup(o.Stop)
+						if err := o.Bootstrap(t.Context()); err != nil {
+							t.Fatal(err)
+						}
+						want := supplied || detect && gate
+						assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking, want)
+						assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, want)
+						id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
+						assert.Equal(t, o.store.GetObject(id) == nil, covered)
+						_, indexed := o.existence.Get(id)
+						assert.Equal(t, indexed, true)
+						writeDigestTrackingRelease(t, root, rel, strconv.FormatBool(!gate))
+						if err := o.Bootstrap(t.Context()); err != nil {
+							t.Fatal(err)
+						}
+						assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking, want)
+						assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, want)
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
+	for _, stage := range []string{"discovery", "change filter"} {
+		t.Run(stage, func(t *testing.T) {
+			root := t.TempDir()
+			writeDigestTrackingTree(t, root)
+			writeDigestTrackingRelease(t, root, "apps/hr.yaml", "true")
+			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2, DetectChartDigestTracking: true}
+			if stage == "discovery" {
+				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [hr.yaml, broken.yaml]\n")
+				testutil.WriteFile(t, root, "apps/broken.yaml", "invalid: [\n")
+			} else {
+				cfg.PathOrig = filepath.Join(root, "baseline-loop")
+				if err := os.Symlink("baseline-loop", cfg.PathOrig); err != nil {
+					t.Fatal(err)
+				}
+			}
+			o, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(o.Stop)
+			if err := o.Bootstrap(t.Context()); err == nil {
+				t.Fatal("expected Bootstrap failure")
+			}
+			assert.Equal(t, o.bootstrapped, false)
+			assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking, false)
+			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, false)
+			writeDigestTrackingRelease(t, root, "apps/hr.yaml", "false")
+			if stage == "discovery" {
+				testutil.WriteFile(t, root, "apps/broken.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: valid}\n")
+			} else {
+				o.cfg.PathOrig = ""
+			}
+			if err := o.Bootstrap(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, o.bootstrapped, true)
+			assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking, false)
+			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, false)
+		})
+	}
+}
+
+func TestOrchestrator_ChartDigestTrackingRenderedBoundary(t *testing.T) {
+	for _, producer := range []string{"file", "kustomization", "resourceset"} {
+		t.Run(producer, func(t *testing.T) {
+			root := t.TempDir()
+			writeDigestTrackingTree(t, root)
+			switch producer {
+			case "file":
+				writeDigestTrackingRelease(t, root, "apps/hr.yaml", "true")
+			case "kustomization":
+				writeDigestTrackingRelease(t, root, "apps/hr.yaml", "${GATE}")
+			default:
+				testutil.WriteFile(t, root, "apps/hr.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: instance, namespace: flux-system}
+spec:
+  inputs: [{gate: "true"}]
+  resourcesTemplate: |
+    apiVersion: helm.toolkit.fluxcd.io/v2
+    kind: HelmRelease
+    metadata: {name: flux-instance, namespace: flux-system}
+    spec:
+      suspend: true
+      chartRef: {kind: OCIRepository, name: fixture}
+      values:
+        instance:
+          kustomize:
+            patches:
+              - patch: "DisableChartDigestTracking=<< inputs.gate >>"
+`)
+			}
+			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: proof}\ndata: {value: stable}\n")
+			var previous []byte
+			for _, resources := range []string{"[hr.yaml, cm.yaml]", "[cm.yaml, hr.yaml]"} {
+				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: "+resources+"\n")
+				o, err := New(Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2, DetectChartDigestTracking: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(o.Stop)
+				if err := o.Bootstrap(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, producer == "file")
+				res, err := o.Render(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
+				hr, ok := o.store.Get[*manifest.HelmRelease](id)
+				if !ok || !helm.DisablesChartDigestTracking(hr) {
+					t.Fatal("qualifying rendered release missing")
+				}
+				assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking, producer == "file")
+				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, producer == "file")
+				ks := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+				docs := slices.Clone(res.Manifests[ks])
+				slices.SortFunc(docs, func(a, b map[string]any) int {
+					return strings.Compare(a["kind"].(string), b["kind"].(string))
+				})
+				output, err := json.Marshal(docs)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if previous != nil {
+					assert.Equal(t, string(output), string(previous))
+				}
+				previous = output
+				o.Stop()
+			}
+		})
+	}
+}
+
+func TestRenderTrees_ChartDigestTrackingIndependent(t *testing.T) {
+	baseRoot, headRoot := t.TempDir(), t.TempDir()
+	for _, root := range []string{baseRoot, headRoot} {
+		writeDigestTrackingTree(t, root)
+	}
+	writeDigestTrackingRelease(t, baseRoot, "apps/hr.yaml", "false")
+	writeDigestTrackingRelease(t, headRoot, "apps/hr.yaml", "true")
+	for _, tc := range []struct {
+		name                         string
+		detect, supplied, base, head bool
+	}{
+		{name: "independent detection", detect: true, head: true},
+		{name: "force tracking"},
+		{name: "force disabled", supplied: true, base: true, head: true},
+		{name: "preserve supplied", detect: true, supplied: true, base: true, head: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base, head, err := RenderTrees(t.Context(),
+				Tree{Path: filepath.Join(baseRoot, "flux"), RepoRoot: baseRoot},
+				Tree{Path: filepath.Join(headRoot, "flux"), RepoRoot: headRoot},
+				Config{CacheDir: t.TempDir(), Concurrency: 2, DetectChartDigestTracking: tc.detect,
+					HelmOptions: helm.Options{DisableChartDigestTracking: tc.supplied}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, base.hrc.Options.DisableChartDigestTracking, tc.base)
+			assert.Equal(t, head.hrc.Options.DisableChartDigestTracking, tc.head)
+		})
+	}
 }

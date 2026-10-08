@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -480,5 +483,92 @@ func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
 				t.Errorf("selected repository failure retained URLs: %v", c.pathOrigSelfURLs)
 			}
 		})
+	}
+}
+
+func TestHelmFlags_ChartDigestTrackingOverride(t *testing.T) {
+	const key = "FLATE_DISABLE_CHART_DIGEST_TRACKING"
+	for _, tc := range []struct {
+		name                             string
+		args                             []string
+		env                              string
+		setEnv, detect, disable, invalid bool
+	}{
+		{name: "absent", detect: true},
+		{name: "bare", args: []string{"--disable-chart-digest-tracking"}, disable: true},
+		{name: "explicit true", args: []string{"--disable-chart-digest-tracking=true"}, disable: true},
+		{name: "explicit false", args: []string{"--disable-chart-digest-tracking=false"}},
+		{name: "env true", env: "true", setEnv: true, disable: true},
+		{name: "env false", env: "false", setEnv: true},
+		{name: "flag false wins", args: []string{"--disable-chart-digest-tracking=false"}, env: "true", setEnv: true},
+		{name: "flag true wins", args: []string{"--disable-chart-digest-tracking=true"}, env: "false", setEnv: true, disable: true},
+		{name: "flag overrides invalid env", args: []string{"--disable-chart-digest-tracking=false"}, env: "invalid", setEnv: true},
+		{name: "invalid env", env: "invalid", setEnv: true, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(key, tc.env)
+			if !tc.setEnv {
+				if err := os.Unsetenv(key); err != nil {
+					t.Fatal(err)
+				}
+			}
+			root := New("test")
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+			var h helmFlags
+			var got orchestrator.Config
+			ran := false
+			cmd := &cobra.Command{Use: "probe", RunE: func(*cobra.Command, []string) error {
+				ran = true
+				got = buildOrchCfg(commonFlags{}, h)
+				return nil
+			}}
+			bindHelmFlags(cmd.Flags(), &h)
+			root.AddCommand(cmd)
+			root.SetArgs(append([]string{"probe"}, tc.args...))
+			err := root.ExecuteContext(t.Context())
+			if tc.invalid {
+				if err == nil || !strings.Contains(err.Error(), key) || ran {
+					t.Fatalf("invalid environment result: err=%v ran=%t", err, ran)
+				}
+				return
+			}
+			if err != nil || !ran {
+				t.Fatalf("command result: err=%v ran=%t", err, ran)
+			}
+			assert.Equal(t, got.DetectChartDigestTracking, tc.detect)
+			assert.Equal(t, got.HelmOptions.DisableChartDigestTracking, tc.disable)
+			assert.Equal(t, h.digestTrackingFlag.Changed, !tc.detect)
+		})
+	}
+	got := buildOrchCfg(commonFlags{}, helmFlags{})
+	assert.Equal(t, got.DetectChartDigestTracking, true)
+	assert.Equal(t, got.HelmOptions.DisableChartDigestTracking, false)
+	got = buildOrchCfg(commonFlags{}, helmFlags{disableChartDigestTracking: true})
+	assert.Equal(t, got.HelmOptions.DisableChartDigestTracking, true)
+}
+
+func TestHelmFlags_ChartDigestTrackingBindings(t *testing.T) {
+	root := New("test")
+	for _, verb := range []string{"build", "get", "diff", "test"} {
+		kinds := []string{"ks", "hr", "all"}
+		if verb == "get" || verb == "diff" {
+			kinds = append(kinds, "images")
+		}
+		for _, kind := range kinds {
+			t.Run(verb+" "+kind, func(t *testing.T) {
+				cmd, _, err := root.Find([]string{verb, kind})
+				if err != nil {
+					t.Fatal(err)
+				}
+				flag := cmd.Flags().Lookup("disable-chart-digest-tracking")
+				if flag == nil || flag.Value.Type() != "bool" || flag.NoOptDefVal != "true" {
+					t.Fatal("missing boolean override binding")
+				}
+				if !strings.Contains(flag.Usage, envKey("disable-chart-digest-tracking")) {
+					t.Fatal("missing environment usage")
+				}
+			})
+		}
 	}
 }

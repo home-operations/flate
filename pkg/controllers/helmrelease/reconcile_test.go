@@ -15,9 +15,16 @@ import (
 
 func TestReconcile_OCIChartDigestTracking(t *testing.T) {
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-	for _, pin := range []string{"tag", "digest"} {
-		t.Run(pin, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, pin string
+		disable   bool
+	}{
+		{"tag", "tag", false}, {"digest", "digest", false},
+		{"tag tracking off", "tag", true}, {"digest tracking off", "digest", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			c, st := newTestController(t, nil)
+			c.Options.DisableChartDigestTracking = tc.disable
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: podinfo\nversion: 6.15.0\n")
 			testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
@@ -31,7 +38,7 @@ data:
 `)
 			ref := map[string]any{"tag": "6.15.0"}
 			revision := "6.15.0@" + digest
-			if pin == "digest" {
+			if tc.pin == "digest" {
 				ref = map[string]any{"digest": digest}
 				revision = digest
 			}
@@ -63,12 +70,16 @@ data:
 				t.Fatalf("reconcile: %+v", info)
 			}
 			art := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
-			if got := renderedConfigMapValue(art.Manifests, "version"); got != "6.15.0+ff3d3e14728f" {
-				t.Fatalf("rendered chart version = %q, want 6.15.0+ff3d3e14728f", got)
+			version := "6.15.0"
+			if !tc.disable {
+				version += "+ff3d3e14728f"
+			}
+			if got := renderedConfigMapValue(art.Manifests, "version"); got != version {
+				t.Fatalf("rendered chart version = %q, want %s", got, version)
 			}
 			md := art.Manifests[0]["metadata"].(map[string]any)
 			labels := md["labels"].(map[string]any)
-			if got := labels["helm.sh/chart"]; got != "podinfo-6.15.0_ff3d3e14728f" {
+			if got := labels["helm.sh/chart"]; got != "podinfo-"+strings.ReplaceAll(version, "+", "_") {
 				t.Fatalf("rendered chart label = %v", got)
 			}
 			if diff := cmp.Diff(original, hr); diff != "" {
@@ -102,11 +113,28 @@ data:
 				t.Fatalf("changed digest reconcile: %+v", info)
 			}
 			updated := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
-			if got := renderedConfigMapValue(updated.Manifests, "version"); got != "6.15.0+abcdef123456" {
+			version = "6.15.0"
+			if !tc.disable {
+				version += "+abcdef123456"
+			}
+			if got := renderedConfigMapValue(updated.Manifests, "version"); got != version {
 				t.Fatalf("changed digest version = %q", got)
 			}
 			if art.Fingerprint == updated.Fingerprint {
 				t.Fatal("changed digest reused controller fingerprint")
+			}
+			st.SetArtifact(src.Named(), &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "latest@" + next, Digest: next,
+			})
+			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+				t.Fatalf("changed revision reconcile: %+v", info)
+			}
+			revised := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			if revised.Fingerprint == updated.Fingerprint {
+				t.Fatal("changed revision reused controller fingerprint")
+			}
+			if diff := cmp.Diff(updated.Manifests, revised.Manifests); diff != "" {
+				t.Fatalf("same visible version changed output (-want +got):\n%s", diff)
 			}
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
 				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "invalid", Digest: next,

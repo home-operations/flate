@@ -54,7 +54,9 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if err != nil {
 			return "", err
 		}
-		loaded.Chart.Metadata.Version = version
+		if !opts.DisableChartDigestTracking {
+			loaded.Chart.Metadata.Version = version
+		}
 		if c.templateCache != nil {
 			loaded.Fingerprint = manifest.SHA256Hex([]byte(loaded.Fingerprint + "\x00" + art.Digest + "\x00" + art.Revision + "\x00" + version))
 		}

@@ -293,13 +293,16 @@ func (c *commonFlags) includeNamespace(filter *change.Filter, ns string) bool {
 // helmFlags collect the helm template options. Mirrors flux-local's
 // --kube-version/--api-versions/--no-hooks/etc.
 type helmFlags struct {
-	kubeVersion          string
-	apiVersions          string
-	isUpgrade            bool
-	noHooks              bool
-	showOnly             []string
-	enableDNS            bool
-	skipSchemaValidation bool
+	kubeVersion                string
+	apiVersions                string
+	isUpgrade                  bool
+	noHooks                    bool
+	showOnly                   []string
+	enableDNS                  bool
+	skipSchemaValidation       bool
+	disableChartDigestTracking bool
+	// The flag pointer preserves explicit CLI/environment presence in value copies.
+	digestTrackingFlag *pflag.Flag
 }
 
 func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
@@ -316,21 +319,25 @@ func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
 	fs.BoolVar(&h.enableDNS, "enable-dns", false, "enable DNS lookups during helm template")
 	fs.BoolVar(&h.skipSchemaValidation, "skip-schema-validation", false,
 		"skip helm values.schema.json validation (dominates allocation churn on big repos)")
+	fs.BoolVar(&h.disableChartDigestTracking, "disable-chart-digest-tracking", false,
+		"preserve original OCI chart versions (absent: auto-detect; =false: force digest tracking)")
+	h.digestTrackingFlag = fs.Lookup("disable-chart-digest-tracking")
 }
 
 func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	return helm.Options{
-		SkipCRDs:             c.skipCRDs,
-		SkipSecrets:          c.skipSecrets,
-		SkipKinds:            c.skipKinds,
-		KubeVersion:          h.kubeVersion,
-		APIVersions:          h.apiVersions,
-		IsUpgrade:            h.isUpgrade,
-		NoHooks:              h.noHooks,
-		ShowOnly:             h.showOnly,
-		EnableDNS:            h.enableDNS,
-		SkipSchemaValidation: h.skipSchemaValidation,
-		SkipTests:            true,
+		SkipCRDs:                   c.skipCRDs,
+		SkipSecrets:                c.skipSecrets,
+		SkipKinds:                  c.skipKinds,
+		KubeVersion:                h.kubeVersion,
+		APIVersions:                h.apiVersions,
+		IsUpgrade:                  h.isUpgrade,
+		NoHooks:                    h.noHooks,
+		ShowOnly:                   h.showOnly,
+		EnableDNS:                  h.enableDNS,
+		SkipSchemaValidation:       h.skipSchemaValidation,
+		DisableChartDigestTracking: h.disableChartDigestTracking,
+		SkipTests:                  true,
 	}
 }
 
@@ -450,12 +457,13 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		// (change.Detect diffs root-to-root): the materialized --base tree
 		// root, or the .git default of an explicit --path-orig. Replaces
 		// the core's old .git "widen" heuristic.
-		PathOrig:       c.baselineRoot(),
-		KRMIgnoreFile:  c.krmIgnore,
-		HelmOptions:    c.helmOptions(h),
-		WipeSecrets:    true,
-		RegistryConfig: c.registryConfig,
-		Concurrency:    c.concurrency,
+		PathOrig:                  c.baselineRoot(),
+		KRMIgnoreFile:             c.krmIgnore,
+		HelmOptions:               c.helmOptions(h),
+		DetectChartDigestTracking: h.digestTrackingFlag == nil || !h.digestTrackingFlag.Changed,
+		WipeSecrets:               true,
+		RegistryConfig:            c.registryConfig,
+		Concurrency:               c.concurrency,
 		SourceRetry: source.RetryConfig{
 			Attempts: c.sourceRetryAttempts,
 			MinWait:  c.sourceRetryMinWait,

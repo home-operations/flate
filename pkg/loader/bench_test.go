@@ -305,3 +305,28 @@ func synthDeepComponents(b *testing.B, root string, depth int) {
 			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-%d\n  namespace: flux-system\ndata:\n  k: v\n", i))
 	}
 }
+
+func BenchmarkLoad_HelmReleaseObserver(b *testing.B) {
+	dir := b.TempDir()
+	synthLargeRepo(b, dir, 200, 100, 50)
+	for _, observe := range []bool{false, true} {
+		b.Run(fmt.Sprintf("observe_%t", observe), func(b *testing.B) {
+			var callback func(*manifest.HelmRelease)
+			var seen int
+			if observe {
+				callback = func(*manifest.HelmRelease) { seen++ }
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				l := New(store.New())
+				l.Options.OnHelmRelease = callback
+				if _, err := l.Load(b.Context(), dir); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if observe && seen == 0 {
+				b.Fatal("no release observed")
+			}
+		})
+	}
+}

@@ -71,6 +71,10 @@ type Config struct {
 	// HelmOptions tunes templating (skip CRDs/secrets/tests, kube
 	// version, etc.).
 	HelmOptions helm.Options
+	// DetectChartDigestTracking enables detection from file-loaded releases
+	// during Bootstrap. The false zero value preserves HelmOptions. Detection
+	// is finalized before reconciliation and excludes generated releases.
+	DetectChartDigestTracking bool
 	// WipeSecrets controls Secret cleartext placeholders.
 	WipeSecrets bool
 	// AllowMissingSecrets converts source auth-secret-not-found errors
@@ -544,12 +548,19 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if o.bootstrapped {
 		return nil
 	}
-	res, err := discovery.Run(ctx, discovery.Config{
+	disableChartDigestTracking := o.cfg.HelmOptions.DisableChartDigestTracking
+	discoveryCfg := discovery.Config{
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
 		KRMIgnoreFile: o.cfg.KRMIgnoreFile,
 		Store:         o.store, WipeSecrets: o.cfg.WipeSecrets,
 		ComponentCache: o.componentCache,
-	})
+	}
+	if o.cfg.DetectChartDigestTracking {
+		discoveryCfg.OnHelmRelease = func(hr *manifest.HelmRelease) {
+			disableChartDigestTracking = disableChartDigestTracking || helm.DisablesChartDigestTracking(hr)
+		}
+	}
+	res, err := discovery.Run(ctx, discoveryCfg)
 	if err != nil {
 		return err
 	}
@@ -565,6 +576,8 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err
 	}
+	o.cfg.HelmOptions.DisableChartDigestTracking = disableChartDigestTracking
+	o.hrc.Options.DisableChartDigestTracking = disableChartDigestTracking
 	o.bootstrapped = true
 	return nil
 }

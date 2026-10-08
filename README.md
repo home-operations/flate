@@ -105,6 +105,8 @@ flate renders your own repo offline, so Secret values pass through verbatim — 
 
 ## Behaviors
 
+**Chart digest tracking** - flate detects `DisableChartDigestTracking=true` in file-loaded HelmRelease values under `instance.kustomize.patches[]` when the inline patch has no target or targets `name: helm-controller`, including releases owned by a Kustomization. For direct OCIRepository chart references, tracking emits versions such as `6.15.0+ff3d3e14728f`; disabling it preserves `6.15.0` and the corresponding chart-derived labels. Revision validation and full digest/revision cache identity apply in both modes. **Breaking change from #969 for clusters using this gate:** detection restores the original version and labels. With the override absent, flate auto-detects; `--disable-chart-digest-tracking` or `=true` forces tracking off, while `=false` forces it on. `FLATE_DISABLE_CHART_DIGEST_TRACKING=true/false` also overrides detection, and the CLI flag takes precedence. Directly committed FluxInstance CRs and flux-bootstrap Deployment patches require the explicit flag.
+
 **SOPS** — `spec.decryption` is not implemented. Encrypted Secret/ConfigMap values get wiped to `..PLACEHOLDER_<key>..` (flate can't decrypt offline, and raw `ENC[…]` ciphertext poisons downstream rendering). Cleartext Secret values are NOT wiped — flate renders your own repo, not a live cluster. Downstream `postBuild.substituteFrom` lookups resolve a SOPS value to the placeholder rather than failing.
 
 **`spec.suspend`** — honored on every reconcilable CR. Suspended resources mark `Ready / "suspended"` and produce no rendered output.

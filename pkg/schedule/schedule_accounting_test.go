@@ -394,3 +394,39 @@ func TestOutcome_Compatibility(t *testing.T) {
 		t.Fatal("Outcome values must retain public numeric compatibility")
 	}
 }
+
+func TestRedispatch_ContentAndStatusCoalesce(t *testing.T) {
+	for _, state := range []nodeState{stateParked, stateRunnable, stateRunning, stateTerminal} {
+		for _, contentFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("state_%d/content_first_%v", state, contentFirst), func(t *testing.T) {
+				s := New(task.NewBounded(2), nil)
+				nid, dep := id("consumer"), id("dependency")
+				n := &node{id: nid, state: state}
+				s.nodes[nid] = n
+				if state == stateParked || state == stateRunning {
+					n.blockedOn = []NodeID{dep}
+					s.parkedIdx[dep] = map[NodeID]struct{}{nid: {}}
+				}
+				if state == stateRunnable {
+					s.runq = []NodeID{nid}
+				}
+				if contentFirst {
+					s.OnArrival(nid, true)
+				}
+				s.OnStatusWake(dep, true, false)
+				s.OnStatusWake(dep, false, true)
+				if !contentFirst {
+					s.OnArrival(nid, true)
+				}
+				if state == stateRunning {
+					s.unparkSelfLocked(n)
+					s.inFlight = 1
+					s.complete(nid, OutcomeBlocked, []NodeID{dep}, false)
+				}
+				if n.state != stateRunnable || n.redispatches != 1 || n.contentRequested || n.rerunRequested || len(s.runq) != 1 {
+					t.Fatalf("content/status causes did not coalesce: node=%+v queue=%v", n, s.runq)
+				}
+			})
+		}
+	}
+}

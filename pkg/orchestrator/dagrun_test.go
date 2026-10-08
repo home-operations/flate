@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -169,5 +171,86 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	midInfo, ok := res.Failed[ksID("mid")]
 	if !ok || !strings.Contains(midInfo.Message, "leaf") {
 		t.Fatalf("mid: want FAILED cascading leaf's failure, got %+v (ok=%v)", midInfo, ok)
+	}
+}
+
+func TestDAG_SelectorResourceSetChain(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			const depth = 40
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "ks.yaml", ksYAML("apps", "apps", ""))
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- sets.yaml\n- seed.yaml\n")
+			testutil.WriteFile(t, dir, "apps/seed.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata: {name: provider-00, namespace: flux-system, labels: {stage: "0"}}
+spec: {type: Static, defaultValues: {value: ready}}
+`)
+			var sets strings.Builder
+			for i := range depth {
+				fmt.Fprintf(&sets, `---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: stage-%02d, namespace: flux-system}
+spec:
+  inputsFrom:
+    - apiVersion: fluxcd.controlplane.io/v1
+      kind: ResourceSetInputProvider
+      selector:
+        matchLabels: {stage: "%d"}
+  resourcesTemplate: |
+    << if inputs >>
+    apiVersion: fluxcd.controlplane.io/v1
+    kind: ResourceSetInputProvider
+    metadata: {name: provider-%02d, namespace: flux-system, labels: {stage: "%d"}}
+    spec: {type: Static, defaultValues: {value: ready}}
+    ---
+    apiVersion: example.com/v1
+    kind: Widget
+    metadata: {name: proof-%02d, namespace: flux-system}
+    << end >>
+`, i, i, i+1, i+1, i+1)
+			}
+			testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			var previous []byte
+			for range 3 {
+				o, err := New(Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, err := o.Render(ctx)
+				if err != nil || len(res.Failed) != 0 {
+					t.Fatalf("selector chain failed: error=%v failures=%v", err, res.Failed)
+				}
+				for i := range depth + 1 {
+					nid := manifest.NamedResource{Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: fmt.Sprintf("provider-%02d", i)}
+					if _, ok := o.Store().Get[*manifest.ResourceSetInputProvider](nid); !ok {
+						t.Fatalf("missing chain output %s", nid)
+					}
+				}
+				if count := len(o.Store().ListObjects(manifest.KindResourceSetInputProvider)); count != depth+1 {
+					t.Fatalf("provider count=%d, want %d", count, depth+1)
+				}
+				proofs := 0
+				for _, doc := range res.Manifests[ksID("apps")] {
+					if doc["kind"] == "Widget" {
+						proofs++
+					}
+				}
+				if proofs != depth {
+					t.Fatalf("rendered provider proofs=%d, want %d", proofs, depth)
+				}
+				output, err := json.Marshal(res.Manifests[ksID("apps")])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if previous != nil && !bytes.Equal(previous, output) {
+					t.Fatal("repeated render bytes differ")
+				}
+				previous = output
+			}
+		})
 	}
 }

@@ -1,18 +1,21 @@
 package testutil
 
 import (
-	"fmt"
+	"strings"
 	"testing"
 )
 
 // WriteGeneratedValuesCluster creates two ordered releases using a generated values ConfigMap.
 func WriteGeneratedValuesCluster(t testing.TB, root string) {
 	t.Helper()
-	WriteFile(t, root, "flux/apps.yaml", dependencyKS("apps", "apps", ""))
+	WriteFile(t, root, "flux/apps.yaml", dependencyKS("apps", "apps", "")+`  postBuild:
+    substituteFrom:
+    - kind: ConfigMap
+      name: bootstrap-values
+`)
 	WriteFile(t, root, "apps/kustomization.yaml", `namespace: flux-system
 resources:
 - a.yaml
-- b.yaml
 configurations:
 - references.yaml
 configMapGenerator:
@@ -29,32 +32,51 @@ configMapGenerator:
     path: spec/valuesFrom/name
 `)
 	WriteFile(t, root, "apps/values.yaml", "greeting: hello\nreplicas: 2\n")
-	for _, name := range []string{"a", "b"} {
-		dep := ""
-		if name == "b" {
-			dep = "  dependsOn:\n  - name: a\n"
-		}
-		WriteFile(t, root, "apps/"+name+".yaml", fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
+	// The parent's substituteFrom must promote the data without admitting its
+	// raw HR sibling before the generated nameReference rewrite.
+	WriteFile(t, root, "apps/a.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
-metadata: {name: %s, namespace: flux-system}
+metadata: {name: a, namespace: flux-system}
 spec:
   interval: 10m
-%s  chart:
+  chart:
     spec:
       chart: charts/app
       sourceRef: {kind: GitRepository, name: shared, namespace: flux-system}
   valuesFrom:
   - kind: ConfigMap
     name: generated-values
-`, name, dep))
-	}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: bootstrap-values, namespace: flux-system}
+data: {BOOTSTRAP: ready}
+`)
+	// A standalone dependent must resolve A before A's parent has emitted it.
+	WriteFile(t, root, "standalone/b.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: b, namespace: flux-system}
+spec:
+  interval: 10m
+  dependsOn:
+  - name: a
+  chart:
+    spec:
+      chart: charts/app
+      sourceRef: {kind: GitRepository, name: shared, namespace: flux-system}
+  values: {greeting: hello, replicas: 2}
+`)
 	writeDependencyChart(t, root)
 }
 
 // WriteFilteredOrderingCluster keeps required data beside excluded controllers and sources.
 func WriteFilteredOrderingCluster(t testing.TB, root, greeting string, brokenSource bool) {
 	t.Helper()
-	WriteFile(t, root, "flux/selected.yaml", dependencyKS("selected", "apps/selected", "monitor-a"))
+	// Excluded resources are marked Ready, so a rejected CEL gate makes
+	// the dependsOn prune necessary even when the target is skipped.
+	selected := dependencyKS("selected", "apps/selected", "monitor-a")
+	selected = strings.Replace(selected, "  - name: monitor-a\n", "  - name: monitor-a\n    readyExpr: 'dep.isHealthy()'\n", 1)
+	WriteFile(t, root, "flux/selected.yaml", selected+"  postBuild:\n    substitute:\n      GREETING: "+greeting+"\n")
 	for _, name := range []string{"monitor-a", "monitor-b"} {
 		WriteFile(t, root, "flux/"+name+".yaml", dependencyKS(name, "apps/"+name, ""))
 		WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources:\n- missing.yaml\n- "+map[string]string{"monitor-a": "bundle.yaml", "monitor-b": "hr.yaml"}[name]+"\n")

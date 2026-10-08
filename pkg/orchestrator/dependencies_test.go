@@ -24,11 +24,9 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"a", "b"} {
-				id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: name}
-				if o.store.GetObject(id) != nil || o.parentOf[id] != ksID("apps") {
-					t.Fatalf("raw HR arrived or parent gate missing: %s parent=%s", id, o.parentOf[id])
-				}
+			a := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "a"}
+			if o.store.GetObject(a) != nil || o.parentOf[a] != ksID("apps") {
+				t.Fatalf("raw HR arrived or parent gate missing: %s parent=%s", a, o.parentOf[a])
 			}
 			res, err := o.Render(t.Context())
 			if err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 {
@@ -37,18 +35,23 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 			for _, name := range []string{"a", "b"} {
 				id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: name}
 				hr, ok := o.store.Get[*manifest.HelmRelease](id)
-				if !ok || len(hr.ValuesFrom) != 1 || !strings.HasPrefix(hr.ValuesFrom[0].Name, "generated-values-") {
-					t.Fatalf("HR did not retain rewritten reference: %+v", hr)
+				if !ok {
+					t.Fatalf("HR missing: %s", id)
 				}
-				ref := hr.ValuesFrom[0].Name
-				if generatedName != "" && ref != generatedName {
-					t.Fatalf("generated reference varies by entry or concurrency: %q != %q", ref, generatedName)
-				}
-				generatedName = ref
-				cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: id.Namespace, Name: ref}
-				cm, ok := o.store.Get[*manifest.ConfigMap](cmID)
-				if !ok || cm.Data["values.yaml"] != "greeting: hello\nreplicas: 2\n" {
-					t.Fatalf("generated values unavailable: %+v", cm)
+				if name == "a" {
+					if len(hr.ValuesFrom) != 1 || !strings.HasPrefix(hr.ValuesFrom[0].Name, "generated-values-") {
+						t.Fatalf("HR did not retain rewritten reference: %+v", hr)
+					}
+					ref := hr.ValuesFrom[0].Name
+					if generatedName != "" && ref != generatedName {
+						t.Fatalf("generated reference varies by entry or concurrency: %q != %q", ref, generatedName)
+					}
+					generatedName = ref
+					cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: id.Namespace, Name: ref}
+					cm, ok := o.store.Get[*manifest.ConfigMap](cmID)
+					if !ok || cm.Data["values.yaml"] != "greeting: hello\nreplicas: 2\n" {
+						t.Fatalf("generated values unavailable: %+v", cm)
+					}
 				}
 				renderedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: id.Namespace, Name: name + "-rendered"}
 				rendered, ok := o.store.Get[*manifest.ConfigMap](renderedID)
@@ -84,11 +87,12 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 				st := side.Store()
 				selected := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "selected"}
 				for _, id := range []manifest.NamedResource{
+					ksID("monitor-a"), ksID("monitor-b"),
 					{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "monitor-a"},
 					{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "monitor-b"},
 					{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "excluded-values"},
 				} {
-					if st.GetObject(id) != nil || side.Filter().ShouldReconcile(id) {
+					if (id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) || side.Filter().ShouldReconcile(id) {
 						t.Errorf("excluded sibling or ordering target admitted: %s", id)
 					}
 				}
@@ -108,6 +112,9 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 				}
 				if side.Err != nil || len(side.Result.Failed) != 0 || len(side.Result.Blocked) != 0 {
 					t.Fatalf("excluded chain contaminated snapshot: error=%v failures=%v", side.Err, side.Result.Failed)
+				}
+				if st.GetArtifact(ksID("selected")) == nil {
+					t.Fatal("selected KS was skipped instead of reconciled")
 				}
 				chart := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "shared-chart"}
 				if st.GetObject(chart) == nil || !side.Filter().ShouldReconcile(chart) {

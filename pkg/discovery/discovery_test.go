@@ -856,7 +856,12 @@ spec: {suspend: true, chartRef: {kind: OCIRepository, name: fixture}}
 `
 	testutil.WriteFile(t, root, "apps/child/hr.yaml", fmt.Sprintf(hrYAML, "covered"))
 	testutil.WriteFile(t, root, "flux/loose.yaml", fmt.Sprintf(hrYAML, "loose"))
-	var baselineFiles map[manifest.NamedResource]string
+	baseline, err := discovery.Run(t.Context(), discovery.Config{
+		Path: filepath.Join(root, "flux"), RepoRoot: root, Store: store.New(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, observe := range []bool{false, true} {
 		t.Run(fmt.Sprintf("observe_%t", observe), func(t *testing.T) {
 			st := store.New()
@@ -886,9 +891,7 @@ spec: {suspend: true, chartRef: {kind: OCIRepository, name: fixture}}
 			wantCounts := [2]int{}
 			if observe {
 				wantCounts = [2]int{2, 1}
-				assert.Diff(t, res.SourceFiles, baselineFiles)
-			} else {
-				baselineFiles = res.SourceFiles
+				assert.Diff(t, res.SourceFiles, baseline.SourceFiles)
 			}
 			assert.Equal(t, counts, wantCounts)
 		})

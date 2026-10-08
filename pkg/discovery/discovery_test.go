@@ -87,6 +87,54 @@ spec:
 	}
 }
 
+func TestRun_IndexesParentBeforeHelmReleaseArrival(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [release.yaml]\n")
+	release := `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: demo
+  namespace: apps
+spec:
+  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`
+	testutil.WriteFile(t, dir, "apps/release.yaml", release)
+	testutil.WriteFile(t, dir, "orphan.yaml", strings.Replace(release, "name: demo", "name: orphan", 1))
+	st := store.New()
+	res, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st, WipeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	if st.GetObject(hr) != nil {
+		t.Fatal("parent-owned HelmRelease must wait for rendering")
+	}
+	if _, indexed := res.SourceFiles[hr]; !indexed {
+		t.Fatal("HelmRelease source identity must be indexed")
+	}
+	if got := res.ParentOf[hr]; got != parent {
+		t.Errorf("ParentOf[%s] = %v, want %v", hr, got, parent)
+	}
+	orphan := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "orphan"}
+	if _, gated := res.ParentOf[orphan]; gated || st.GetObject(orphan) == nil {
+		t.Error("standalone HelmRelease must be available without a parent gate")
+	}
+}
+
 // TestRun_AliasesNonDefaultNamespaceBootstrap pins issue #199: a
 // Kustomization whose sourceRef points at a GitRepository in a
 // non-`flux-system` namespace (typical of the flux-operator /

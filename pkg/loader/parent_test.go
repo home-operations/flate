@@ -11,7 +11,45 @@ import (
 // computing the KS path prefixes inline. Test-only: production threads a shared
 // prefix list through BuildParentIndexFromPrefixes (see discovery.Run).
 func buildParentIndexForKindWithCache(s *store.Store, repoRoot string, sourceFiles map[manifest.NamedResource]string, childKind string, cache *manifest.ComponentCache) map[manifest.NamedResource]manifest.NamedResource {
-	return BuildParentIndexFromPrefixes(KSPathPrefixesWithCache(s, repoRoot, cache), s, sourceFiles, childKind)
+	return BuildParentIndexFromPrefixes(KSPathPrefixesWithCache(s, repoRoot, cache), sourceFiles, childKind)
+}
+
+func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
+	for _, kind := range []string{manifest.KindHelmRelease, manifest.KindResourceSet} {
+		t.Run(kind, func(t *testing.T) {
+			s := store.New()
+			outer := &manifest.Kustomization{Name: "outer", Namespace: "flux-system", Path: "./apps"}
+			inner := &manifest.Kustomization{Name: "inner", Namespace: "flux-system", Path: "./apps/team"}
+			s.AddObject(outer)
+			s.AddObject(inner)
+			cases := []struct {
+				name, namespace, file string
+				want                  manifest.NamedResource
+			}{
+				{"deepest", "team", "apps/team/release.yaml", inner.Named()},
+				{"outer", "other", "apps/other/release.yaml", outer.Named()},
+				{"standalone", "team", "release.yaml", manifest.NamedResource{}},
+				{"empty", "team", "", manifest.NamedResource{}},
+			}
+			files := map[manifest.NamedResource]string{}
+			for _, tc := range cases {
+				files[manifest.NamedResource{Kind: kind, Namespace: tc.namespace, Name: tc.name}] = tc.file
+			}
+			files[manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "team", Name: "data"}] = "apps/team/data.yaml"
+			parents := buildParentIndexForKindWithCache(s, "", files, kind, nil)
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					id := manifest.NamedResource{Kind: kind, Namespace: tc.namespace, Name: tc.name}
+					if got := parents[id]; got != tc.want {
+						t.Errorf("parent[%s] = %v, want %v", id, got, tc.want)
+					}
+				})
+			}
+			if len(parents) != 2 || len(s.ListObjects(kind)) != 0 {
+				t.Errorf("parents = %v; indexed children must stay absent from store", parents)
+			}
+		})
+	}
 }
 
 // TestKSPathPrefixesLocalOnly_DropsExternalSourced pins issue #752

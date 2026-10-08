@@ -192,7 +192,7 @@ func longestStrictParent(prefixes []KSPathPrefix, file string, self manifest.Nam
 // sourceFiles is the orchestrator's NamedResource → repo-relative source-file
 // map; entries without a recorded file are skipped. childKind=KindKustomization
 // for the KS→KS parent map; pass KindHelmRelease for the HR→KS map.
-func BuildParentIndexFromPrefixes(prefixes []KSPathPrefix, s *store.Store, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
+func BuildParentIndexFromPrefixes(prefixes []KSPathPrefix, sourceFiles map[manifest.NamedResource]string, childKind string) map[manifest.NamedResource]manifest.NamedResource {
 	// Group each id's own claimed prefixes so a peer KS claiming the same
 	// spec.path directory isn't mistaken for an enclosing parent (which
 	// would mutually deadlock the pair through collectDeps). Children
@@ -208,10 +208,8 @@ func BuildParentIndexFromPrefixes(prefixes []KSPathPrefix, s *store.Store, sourc
 		set[p.Prefix] = struct{}{}
 	}
 	out := map[manifest.NamedResource]manifest.NamedResource{}
-	for _, obj := range s.ListObjects(childKind) {
-		id := obj.Named()
-		file, ok := sourceFiles[id]
-		if !ok {
+	for id, file := range sourceFiles {
+		if id.Kind != childKind || file == "" {
 			continue
 		}
 		if parent, ok := longestStrictParent(prefixes, file, id, ownPrefixes[id]); ok {

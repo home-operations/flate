@@ -118,7 +118,7 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	}, false)
 	defer unsubAdd()
 	//   EventStatusUpdated: wake nodes parked on a dep that reached a terminal
-	//   status. Pending updates reset Ready transition bookkeeping without waking nodes.
+	//   status. Non-terminal (Pending) updates return before the scheduler lock.
 	unsubStatus := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		info, ok := payload.(store.StatusInfo)
 		if !ok {

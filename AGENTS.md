@@ -61,7 +61,7 @@ Leaf packages stay leaf: `manifest`, `task`, `schedule` (store and controllers o
   template and disk caches) instead of re-rendering, re-fetching or re-parsing.
 - Hot paths that are allocation-free stay allocation-free; allocs/op must not rise on an
   existing benchmark.
-- Any PR touching a package with benchmarks pastes a `benchstat` comparison: `mise run bench`
+- Any PR touching a package with benchmarks pastes a `benchstat` comparison: `COUNT=10 mise run bench`
   on the base commit and on the branch, `benchstat <base>.txt <branch>.txt` (results land in
   `bench/results/`). `bench/baseline.txt` is a placeholder until it is regenerated with
   `mise run bench-baseline`; compare against it only once it holds measured numbers. A

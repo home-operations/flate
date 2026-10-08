@@ -174,27 +174,29 @@ func sha256() string {
 func TestSplit(t *testing.T) {
 	digest := "sha256:" + sha256()
 	cases := []struct {
+		testName     string
 		ref          string
 		name, verstr string
 	}{
-		{"ghcr.io/home-operations/sonarr:v4.1.0", "ghcr.io/home-operations/sonarr", "v4.1.0"},
-		{"ghcr.io/foo/bar@" + digest, "ghcr.io/foo/bar", digest},
-		// tag + digest → digest wins (more specific).
-		{"ghcr.io/foo/bar:v1@" + digest, "ghcr.io/foo/bar", digest},
+		{"tag only", "ghcr.io/home-operations/sonarr:v4.1.0", "ghcr.io/home-operations/sonarr", "v4.1.0"},
+		{"digest only", "ghcr.io/foo/bar@" + digest, "ghcr.io/foo/bar", digest},
+		{"tag and digest", "ghcr.io/foo/bar:v1@" + digest, "ghcr.io/foo/bar", "v1@" + digest},
 		// a registry port must not be mistaken for the version.
-		{"localhost:5000/foo/bar:v1", "localhost:5000/foo/bar", "v1"},
+		{"registry port", "localhost:5000/foo/bar:v1", "localhost:5000/foo/bar", "v1"},
 		// no tag or digest → empty version, name verbatim.
-		{"ghcr.io/foo/bar", "ghcr.io/foo/bar", ""},
+		{"no version", "ghcr.io/foo/bar", "ghcr.io/foo/bar", ""},
 		// not normalized: a bare name keeps its verbatim form.
-		{"nginx:1.27", "nginx", "1.27"},
+		{"bare name", "nginx:1.27", "nginx", "1.27"},
 		// unparseable → returned verbatim with no version.
-		{"not a ref", "not a ref", ""},
+		{"invalid reference", "not a ref", "not a ref", ""},
 	}
 	for _, c := range cases {
-		name, version := Split(c.ref)
-		if name != c.name || version != c.verstr {
-			t.Errorf("Split(%q) = (%q, %q); want (%q, %q)", c.ref, name, version, c.name, c.verstr)
-		}
+		t.Run(c.testName, func(t *testing.T) {
+			name, version := Split(c.ref)
+			if name != c.name || version != c.verstr {
+				t.Errorf("Split(%q) = (%q, %q); want (%q, %q)", c.ref, name, version, c.name, c.verstr)
+			}
+		})
 	}
 }
 

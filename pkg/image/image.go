@@ -33,8 +33,7 @@ func Extract(doc map[string]any) []string {
 }
 
 // Split separates an OCI image reference into its repository name and
-// its version — the tag, or the digest when one is present (a digest is
-// more specific, so it wins when a reference carries both). The name is
+// its version: the tag, the digest, or both joined with "@". The name is
 // returned verbatim, NOT normalized: "nginx:1" splits to ("nginx", "1"),
 // not ("docker.io/library/nginx", …). Intended for references Extract
 // returned; a value that doesn't parse as a reference yields (ref, "").
@@ -53,13 +52,16 @@ func Split(ref string) (name, version string) {
 		return ref, ""
 	}
 	name = named.Name()
-	if d, ok := parsed.(reference.Digested); ok {
-		return name, d.Digest().String()
-	}
 	if t, ok := parsed.(reference.Tagged); ok {
-		return name, t.Tag()
+		version = t.Tag()
 	}
-	return name, ""
+	if d, ok := parsed.(reference.Digested); ok {
+		if version != "" {
+			version += "@"
+		}
+		version += d.Digest().String()
+	}
+	return name, version
 }
 
 func walk(v any, set map[string]struct{}) {

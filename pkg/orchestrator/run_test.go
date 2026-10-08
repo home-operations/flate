@@ -119,3 +119,26 @@ spec: {url: https://example.test/excluded.git}
 		t.Error("availability must not bypass admission")
 	}
 }
+
+func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
+	for _, tc := range []struct {
+		name, recorded, requested string
+		want                      bool
+	}{
+		{"exact", "apps", "apps", true},
+		{"inherited namespace", "", "apps", true},
+		{"explicit other namespace", "other", "apps", false},
+		{"bare query cannot match explicit", "apps", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			idx := loader.NewExistenceIndex()
+			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.recorded, Name: "target"}
+			idx.Record(id, "target.yaml")
+			e := &orchestratorExistence{idx: idx}
+			id.Namespace = tc.requested
+			if got := e.IsFileIndexed(id); got != tc.want {
+				t.Errorf("IsFileIndexed(%s) = %v, want %v", id, got, tc.want)
+			}
+		})
+	}
+}

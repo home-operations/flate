@@ -529,18 +529,11 @@ func (c *Controller) collectHRDeps(hr *manifest.HelmRelease) []manifest.Dependen
 		return nil
 	}
 	deps := slices.Clone(hr.DependsOn)
-	// Changed-only mode: a dependsOn target outside the keep-set is
-	// unchanged, so its producing Kustomization is skipped and the target
-	// HR is never render-emitted into the Store — depwait would report
-	// "dependency not found" for a dep that's simply unchanged. Drop it:
-	// an unchanged dep is satisfied for a delta check, mirroring how a
-	// skipped in-Store resource resolves Ready via base.PreGate. dependsOn
-	// is pure reconcile ordering and never affects offline render content
-	// (see change.transitiveDeps). Unlike KS deps, HRs have no file-loaded
-	// Store object to carry that Ready, hence the prune here. See #517.
+	// Unknown targets retain missing-dependency diagnosis even outside keep.
 	if f := c.Filter(); f != nil && f.Enabled() {
 		deps = slices.DeleteFunc(deps, func(d manifest.DependencyRef) bool {
-			return !f.ShouldReconcile(d.NamedResource)
+			return !f.ShouldReconcile(d.NamedResource) &&
+				(c.IsFileIndexed(d.NamedResource) || c.Store.GetObject(d.NamedResource) != nil)
 		})
 	}
 	return deps

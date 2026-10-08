@@ -46,6 +46,14 @@ func (e *orchestratorExistence) admit(obj manifest.BaseManifest) bool {
 }
 
 func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
+	if _, ok := e.idx.Get(id); ok {
+		return true
+	}
+	if id.Namespace == "" {
+		return false
+	}
+	// Discovery retains bare identities until a parent stamps the namespace.
+	id.Namespace = ""
 	_, ok := e.idx.Get(id)
 	return ok
 }

@@ -2,6 +2,7 @@ package helmrelease
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,55 @@ import (
 func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store.Store) {
 	t.Helper()
 	return newTestControllerWithOptions(t, ReconcileOptions{Filter: filter})
+}
+
+type indexedOrderingDeps map[manifest.NamedResource]bool
+
+func (i indexedOrderingDeps) IsFileIndexed(id manifest.NamedResource) bool { return i[id] }
+func (indexedOrderingDeps) Promote(manifest.NamedResource) bool            { return false }
+
+func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		active, selected, indexed bool
+		present                   bool
+		status                    store.Status
+		retain                    bool
+	}{
+		{name: "unfiltered missing", retain: true},
+		{name: "known file excluded", active: true, indexed: true},
+		{name: "render generated excluded", active: true, present: true},
+		{name: "unknown retained", active: true, retain: true},
+		{name: "selected ready", active: true, selected: true, present: true, status: store.StatusReady, retain: true},
+		{name: "selected failed", active: true, selected: true, present: true, status: store.StatusFailed, retain: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := &manifest.HelmRelease{Name: "target", Namespace: "apps"}
+			var changes *change.Set
+			if tc.active {
+				files := []string{"consumer.yaml"}
+				if tc.selected {
+					files = append(files, "target.yaml")
+				}
+				changes = change.NewSet(files)
+			}
+			hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []manifest.DependencyRef{{NamedResource: target.Named(), ReadyExpr: "dep.spec.suspend == false"}}}
+			filter := change.NewFilter(changes, map[manifest.NamedResource]string{hr.Named(): "consumer.yaml", target.Named(): "target.yaml"}, "", testutil.MapLister{})
+			c, st := newTestControllerWithOptions(t, ReconcileOptions{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}})
+			if tc.present {
+				st.AddObject(target)
+				st.UpdateStatus(target.Named(), tc.status, "fixture")
+			}
+			size := filter.Size()
+			deps := c.collectHRDeps(hr)
+			if got := slices.Contains(deps, hr.DependsOn[0]); got != tc.retain {
+				t.Errorf("ordering edge retained = %v, want %v; deps = %v", got, tc.retain, deps)
+			}
+			if filter.Size() != size || len(hr.DependsOn) != 1 {
+				t.Error("ordering collection must preserve keep and input edges")
+			}
+		})
+	}
 }
 
 func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedResource]manifest.NamedResource) (*Controller, *store.Store) {
@@ -963,7 +1013,8 @@ func TestController_CollectHRDepsPrunesUnchangedDeps(t *testing.T) {
 		"",
 		testutil.MapLister{},
 	)
-	c, _ := newTestController(t, filter)
+	c, st := newTestController(t, filter)
+	st.AddObject(&manifest.HelmRelease{Name: prowlarr.Name, Namespace: prowlarr.Namespace})
 	hr := &manifest.HelmRelease{
 		Name: "lidarr", Namespace: "downloads",
 		DependsOn: []manifest.DependencyRef{{NamedResource: qbit}, {NamedResource: prowlarr}},

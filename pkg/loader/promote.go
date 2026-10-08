@@ -7,24 +7,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Promote materializes id into st by re-parsing the file the
-// ExistenceIndex recorded for it and AddObject'ing every Flux CR in
-// the file. Returns true on success; false if the id is unknown to
-// the index or its file can no longer be parsed.
-//
-// The whole file is parsed (not just id) because YAML multi-doc files
-// often pack a CM + its Secret + a HelmRelease together — promoting
-// one frequently means callers will need a sibling next. Parsing once
-// and AddObject'ing every doc avoids re-opening the same file
-// repeatedly when several lazy lookups land on it.
-//
-// PreferExisting semantics are honored: if an id already lives in
-// the store (already promoted, or render-emitted by a KS), the
-// existing object stays put. wipeSecrets matches the loader's:
-// callers should pass through whatever DiscoveryOnly used at file-
-// load time so SOPS Secrets stay wiped on promotion the same way
-// they were skipped at load.
-func (i *ExistenceIndex) Promote(st *store.Store, id manifest.NamedResource, wipeSecrets bool) bool {
+// Promote materializes admitted objects from id's indexed file. Admission is
+// checked separately for every document, including siblings. It returns whether
+// id is available and admitted. Existing objects take precedence over raw files;
+// wipeSecrets preserves discovery's secret-wiping policy on re-parse.
+func (i *ExistenceIndex) Promote(st *store.Store, id manifest.NamedResource, wipeSecrets bool, admit func(manifest.BaseManifest) bool) bool {
 	if i == nil || st == nil {
 		return false
 	}
@@ -32,8 +19,8 @@ func (i *ExistenceIndex) Promote(st *store.Store, id manifest.NamedResource, wip
 	if !ok {
 		return false
 	}
-	if st.GetObject(id) != nil {
-		return true
+	if obj := st.GetObject(id); obj != nil {
+		return admit(obj)
 	}
 	objs, err := parseFile(path, manifest.ParseDocOptions{WipeSecrets: wipeSecrets})
 	if err != nil {
@@ -41,10 +28,11 @@ func (i *ExistenceIndex) Promote(st *store.Store, id manifest.NamedResource, wip
 		return false
 	}
 	for _, obj := range objs {
-		if st.GetObject(obj.Named()) != nil {
+		if !admit(obj) || st.GetObject(obj.Named()) != nil {
 			continue
 		}
 		st.AddObject(obj)
 	}
-	return st.GetObject(id) != nil
+	obj := st.GetObject(id)
+	return obj != nil && admit(obj)
 }

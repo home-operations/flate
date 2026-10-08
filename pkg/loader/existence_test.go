@@ -111,7 +111,7 @@ data:
 	if st.GetObject(id) != nil {
 		t.Fatalf("precondition: CM should not be in store yet")
 	}
-	if !l.Existence.Promote(st, id, true) {
+	if !l.Existence.Promote(st, id, true, func(manifest.BaseManifest) bool { return true }) {
 		t.Fatalf("Promote should return true on a known id")
 	}
 	if st.GetObject(id) == nil {
@@ -127,7 +127,7 @@ data:
 func TestExistenceIndex_PromoteNilReceiverSafe(t *testing.T) {
 	var idx *ExistenceIndex
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "x"}
-	if got := idx.Promote(store.New(), id, true); got {
+	if got := idx.Promote(store.New(), id, true, func(manifest.BaseManifest) bool { return true }); got {
 		t.Errorf("nil index Promote should return false, got true")
 	}
 }
@@ -140,7 +140,7 @@ func TestExistenceIndex_PromoteNilReceiverSafe(t *testing.T) {
 func TestExistenceIndex_PromoteUnknownIDReturnsFalse(t *testing.T) {
 	idx := NewExistenceIndex()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
-	if got := idx.Promote(store.New(), id, true); got {
+	if got := idx.Promote(store.New(), id, true, func(manifest.BaseManifest) bool { return true }); got {
 		t.Errorf("Promote on unknown id should return false, got true")
 	}
 }
@@ -174,7 +174,7 @@ data:
 		t.Fatalf("remove: %v", err)
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ephemeral"}
-	if got := l.Existence.Promote(st, id, true); got {
+	if got := l.Existence.Promote(st, id, true, func(manifest.BaseManifest) bool { return true }); got {
 		t.Errorf("Promote on a removed file should return false, got true")
 	}
 	if st.GetObject(id) != nil {
@@ -216,7 +216,7 @@ data:
 	}
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
 	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-secret"}
-	if !l.Existence.Promote(st, cmID, true) {
+	if !l.Existence.Promote(st, cmID, true, func(manifest.BaseManifest) bool { return true }) {
 		t.Fatalf("Promote(cm) should succeed")
 	}
 	if st.GetObject(cmID) == nil {
@@ -224,6 +224,56 @@ data:
 	}
 	if st.GetObject(secretID) == nil {
 		t.Errorf("sibling Secret should have been promoted alongside the CM (whole-file parse contract)")
+	}
+}
+
+func TestExistenceIndex_PromoteAdmissionAndPreferExisting(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		secret   bool
+		existing bool
+	}{
+		{name: "admitted request"},
+		{name: "rejected request", secret: true},
+		{name: "rendered object retained", existing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: selected, namespace: apps}
+data: {source: raw}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: excluded, namespace: apps}
+stringData: {value: fixture}
+`)
+			cm := &manifest.ConfigMap{Name: "selected", Namespace: "apps", Data: map[string]any{"source": "rendered"}}
+			secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "excluded"}
+			st := store.New()
+			if tc.existing {
+				st.AddObject(cm)
+			}
+			idx := NewExistenceIndex()
+			for _, id := range []manifest.NamedResource{cm.Named(), secret} {
+				idx.Record(id, filepath.Join(dir, "bundle.yaml"))
+			}
+			id := cm.Named()
+			if tc.secret {
+				id = secret
+			}
+			admit := func(obj manifest.BaseManifest) bool { return obj.Named() == cm.Named() }
+			if got := idx.Promote(st, id, true, admit); got == tc.secret {
+				t.Errorf("Promote returned %v, want %v", got, !tc.secret)
+			}
+			if st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil {
+				t.Error("admission must apply separately to requested and sibling objects")
+			}
+			if tc.existing && st.GetObject(cm.Named()) != cm {
+				t.Error("existing rendered object must take precedence")
+			}
+		})
 	}
 }
 

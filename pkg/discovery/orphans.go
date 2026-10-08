@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // promoteOrphans materializes Existence entries that no Kustomization
@@ -35,6 +36,14 @@ func (d *discoverer) promoteOrphans(prefixes []loader.KSPathPrefix) {
 	// the parent-index passes (identical repoRoot + shared component
 	// cache). Reusing it keeps this and the parent index in lockstep on
 	// the "under a KS path" predicate and avoids a third rebuild.
+	admit := func(obj manifest.BaseManifest) bool {
+		file, ok := d.sourceFiles[obj.Named()]
+		if !ok {
+			return false
+		}
+		_, covered := loader.LongestParent(prefixes, file, obj.Named())
+		return !covered
+	}
 	for id := range d.loader.Existence.All() {
 		if d.cfg.Store.GetObject(id) != nil {
 			continue
@@ -44,7 +53,7 @@ func (d *discoverer) promoteOrphans(prefixes []loader.KSPathPrefix) {
 				continue
 			}
 		}
-		if !d.loader.Existence.Promote(d.cfg.Store, id, d.cfg.WipeSecrets) {
+		if !d.loader.Existence.Promote(d.cfg.Store, id, d.cfg.WipeSecrets, admit) {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}
 	}

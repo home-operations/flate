@@ -116,7 +116,6 @@ type node struct {
 }
 
 type progress struct {
-	ready      bool
 	generation uint64
 }
 
@@ -314,7 +313,7 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 			// A dependency can recover after Dispatch reads its failure but
 			// before this reverse edge exists. Compare under the same lock
 			// that records Ready progress, without querying the store here.
-			if p := s.progress[dep]; p.ready && p.generation > n.startedAt {
+			if p := s.progress[dep]; p.generation > n.startedAt {
 				n.rerunRequested = true
 			}
 		}
@@ -429,12 +428,25 @@ func (s *Scheduler) clearFailedLocked(n *node) {
 }
 
 func (s *Scheduler) recordProgressLocked(id NodeID) {
+	// Idle wakes have no consumer; keep this guard inlineable.
+	if s.inFlight == 0 && len(s.failedIdx) == 0 {
+		return
+	}
+	s.advanceProgressLocked(id)
+}
+
+func (s *Scheduler) advanceProgressLocked(id NodeID) {
+	set := s.failedIdx[id]
+	// Only active dispatches can race failed-edge registration. With no
+	// active dispatch or recorded waiter, progress cannot recover a node.
+	if s.inFlight == 0 && len(set) == 0 {
+		return
+	}
 	s.generation++
 	if s.progress == nil {
 		s.progress = map[NodeID]progress{}
 	}
-	s.progress[id] = progress{ready: true, generation: s.generation}
-	set := s.failedIdx[id]
+	s.progress[id] = progress{generation: s.generation}
 	if len(set) == 0 {
 		return
 	}
@@ -475,9 +487,6 @@ func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 	s.dirty = true
 	if !schedulable {
 		s.recordProgressLocked(id)
-	} else if p, ok := s.progress[id]; ok {
-		p.ready = false
-		s.progress[id] = p
 	}
 	if n := s.nodes[id]; n == nil {
 		if schedulable {
@@ -503,26 +512,22 @@ func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 	s.cond.Broadcast()
 }
 
-// OnStatusWake wakes parked nodes on terminal status updates. Only a new Ready
-// transition retries terminal dependency failures; Pending resets that transition
-// bookkeeping without waking parked nodes.
+// OnStatusWake wakes parked nodes on terminal status updates. Store condition
+// writes suppress identical values, so every Ready wake records fresh progress.
 func (s *Scheduler) OnStatusWake(id NodeID, ready, failed bool) {
+	if !ready && !failed {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil || s.canceled {
 		return
 	}
-	p := s.progress[id]
-	if ready && !p.ready {
+	if ready {
 		s.recordProgressLocked(id)
-	} else if !ready && p.ready {
-		p.ready = false
-		s.progress[id] = p
 	}
-	if ready || failed {
-		s.wakeWaitersLocked(id)
-		s.cond.Broadcast()
-	}
+	s.wakeWaitersLocked(id)
+	s.cond.Broadcast()
 }
 
 // unparkSelfLocked removes n from every parkedIdx set without queuing it (used

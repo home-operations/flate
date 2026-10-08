@@ -59,7 +59,6 @@ func TestDependencyFailureRecovery(t *testing.T) {
 								s.OnArrival(dep, false)
 							} else {
 								s.OnStatusWake(dep, true, false)
-								s.OnStatusWake(dep, true, false)
 							}
 						}
 						if mode == "during registration" {
@@ -126,7 +125,6 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 						if !awaitSignal(ctx, entered) {
 							return OutcomeTerminal, nil
 						}
-						s.OnStatusWake(second, true, false)
 						s.OnStatusWake(second, true, false)
 						if mode == "cancellation" {
 							cancel()

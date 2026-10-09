@@ -120,6 +120,12 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 	}
 }
 
+func TestResolveLocal_RejectsNilSource(t *testing.T) {
+	if _, err := ResolveLocal(t.Context(), t.TempDir(), []*manifest.GitRepository{nil}, nil); !errors.Is(err, manifest.ErrInput) {
+		t.Fatalf("nil source = %v", err)
+	}
+}
+
 func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 	root, repo, a, b := localFixture(t)
 	cache := source.NewCache(cacheroot.New(t.TempDir()))

@@ -2,6 +2,7 @@ package gittree
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -172,6 +173,57 @@ func TestMaterialize_PreservesSymlinksAndExecutableModes(t *testing.T) {
 	}
 	if info, err := os.Stat(filepath.Join(root, "bin/script")); err != nil || info.Mode()&0o100 == 0 {
 		t.Fatalf("executable mode lost: %v, %v", info, err)
+	}
+}
+
+func TestMaterialize_RejectsExistingSymlinkFile(t *testing.T) {
+	src := t.TempDir()
+	repo := mustInit(t, src)
+	testutil.WriteFile(t, src, "value", "committed")
+	hash := mustCommit(t, repo, src)
+	root, outside := t.TempDir(), t.TempDir()
+	testutil.WriteFile(t, outside, "value", "untouched")
+	if err := os.Symlink(filepath.Join(outside, "value"), filepath.Join(root, "value")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Materialize(t.Context(), repo, hash, root, Options{Workers: 2}); err == nil {
+		t.Fatal("followed an existing symlink file")
+	}
+	if content, err := os.ReadFile(filepath.Join(outside, "value")); err != nil || string(content) != "untouched" {
+		t.Fatalf("outside file changed: %q, %v", content, err)
+	}
+}
+
+func TestMaterialize_RejectsUnreadableDirectoryObjects(t *testing.T) {
+	repo := mustInit(t, t.TempDir())
+	hash := craftedCommit(t, repo, object.TreeEntry{Name: "dir", Mode: filemode.Dir})
+	commit, err := repo.CommitObject(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree.Entries[0].Hash = plumbing.NewHash("ffffffffffffffffffffffffffffffffffffffff")
+	encoded := repo.Storer.NewEncodedObject()
+	if err := tree.Encode(encoded); err != nil {
+		t.Fatal(err)
+	}
+	commit.TreeHash, err = repo.Storer.SetEncodedObject(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded = repo.Storer.NewEncodedObject()
+	if err := commit.Encode(encoded); err != nil {
+		t.Fatal(err)
+	}
+	hash, err = repo.Storer.SetEncodedObject(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Materialize(t.Context(), repo, hash, t.TempDir(), Options{Workers: 2}); !errors.Is(err, plumbing.ErrObjectNotFound) {
+		t.Fatalf("unreadable directory became successful EOF: %v", err)
 	}
 }
 

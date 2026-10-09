@@ -55,11 +55,10 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	destination, err := os.OpenRoot(root)
+	root, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return fmt.Errorf("open materialization root: %w", err)
+		return fmt.Errorf("resolve materialization root: %w", err)
 	}
-	defer func() { _ = destination.Close() }()
 	if opts.Workers <= 0 {
 		opts.Workers = runtime.NumCPU()
 	}
@@ -107,25 +106,32 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 				strings.ContainsAny(entry.Name, "/\\\x00") {
 				return fmt.Errorf("malformed tree entry name %q", entry.Name)
 			}
-			if _, err := safepath.SafeJoin(root, name, true); err != nil {
-				return err
-			}
 			if entry.Mode == filemode.Submodule {
 				opts.OnSubmodule(name)
 				continue
 			}
 			if entry.Mode == filemode.Dir {
-				// Pre-create the directory once on the walker. Without
-				// this, every worker that writes a blob into the dir
-				// would re-call MkdirAll for the same parent — on a
-				// 50k-file monorepo with 5k unique dirs, that's 10×
-				// the syscalls. Walker is single-threaded so each
-				// unique dir is created once.
-				if err := destination.MkdirAll(filepath.FromSlash(name), 0o750); err != nil {
-					return fmt.Errorf("mkdir %s: %w", name, err)
+				dir, err := safepath.SafeJoin(root, name, true)
+				if err != nil {
+					return err
+				}
+				// Parents are visited first. Directories must be real, and
+				// exclusive blob creation prevents workers replacing them.
+				info, err := os.Lstat(dir)
+				if err == nil {
+					if !info.IsDir() {
+						return fmt.Errorf("unsafe directory destination %q", name)
+					}
+				} else if os.IsNotExist(err) {
+					if err := os.Mkdir(dir, 0o750); err != nil {
+						return fmt.Errorf("mkdir %s: %w", name, err)
+					}
+				} else {
+					return fmt.Errorf("stat directory %s: %w", name, err)
 				}
 				continue
 			}
+
 			if !entry.Mode.IsFile() {
 				return fmt.Errorf("malformed tree entry mode %s for %q", entry.Mode, name)
 			}
@@ -142,7 +148,7 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 				if err := gctx.Err(); err != nil {
 					return err
 				}
-				if err := writeEntry(objects, it.entry, destination, it.name); err != nil {
+				if err := writeEntry(objects, it.entry, root, it.name); err != nil {
 					return err
 				}
 			}
@@ -206,14 +212,17 @@ func (r *serializedObjectReader) blobBytes(hash plumbing.Hash, name string) ([]b
 // in parallel. The walker pre-created the parent dir, so we don't
 // MkdirAll here. The executable bit is preserved from
 // filemode.Executable.
-func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root *os.Root, name string) error {
-	dst := filepath.FromSlash(name)
+func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, name string) error {
+	dst, err := safepath.SafeJoin(root, name, true)
+	if err != nil {
+		return err
+	}
 	if entry.Mode == filemode.Symlink {
 		target, err := objects.blobBytes(entry.Hash, name)
 		if err != nil {
 			return fmt.Errorf("read symlink target for %q: %w", name, err)
 		}
-		if err := root.Symlink(string(target), dst); err != nil {
+		if err := os.Symlink(string(target), dst); err != nil {
 			return fmt.Errorf("symlink %s -> %s: %w", dst, target, err)
 		}
 		return nil
@@ -227,9 +236,12 @@ func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root *o
 	if err != nil {
 		return err
 	}
-	// Root confines writes even when a destination ancestor is a symlink.
-	if err := root.WriteFile(dst, data, perm); err != nil {
-		return fmt.Errorf("write %s: %w", dst, err)
+	// The walker validated every parent. O_EXCL refuses symlink leaves and
+	// duplicate tree destinations instead of following or replacing them.
+	file, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm) //nolint:gosec // SafeJoin confines dst; validated directories and O_EXCL reject symlink writes.
+	if err != nil {
+		return fmt.Errorf("create %s: %w", dst, err)
 	}
-	return nil
+	_, writeErr := file.Write(data)
+	return errors.Join(writeErr, file.Close())
 }

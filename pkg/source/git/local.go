@@ -36,6 +36,9 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 	resolved := make(map[manifest.GitRepositoryRef]resolution)
 	artifacts := make(map[manifest.NamedResource]*store.SourceArtifact, len(repositories))
 	for _, repository := range repositories {
+		if repository == nil {
+			return nil, fmt.Errorf("%w: local GitRepository is nil", manifest.ErrInput)
+		}
 		ref := effectiveRef(repository.Reference)
 		if manifest.GitRefString(ref) == "" {
 			continue

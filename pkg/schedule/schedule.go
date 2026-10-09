@@ -80,6 +80,9 @@ const (
 // Dispatcher runs a node's reconcile body. The orchestrator supplies the
 // concrete implementation, closing over the store and the three controllers;
 // the scheduler never sees a store or controller type.
+// The returned blocked slice MUST NOT be mutated by the dispatcher after return;
+// the scheduler retains it until the node's next completion with a different
+// blocker set.
 type Dispatcher interface {
 	// Dispatch invokes id's reconcile body synchronously on the calling
 	// goroutine (a task.Service worker) and reports back:

@@ -279,6 +279,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 		{name: "overwritten data", blockers: [][]NodeID{{a}, nil}, event: "data", overwrite: true},
 		{name: "overwritten unknown Ready", blockers: [][]NodeID{{a}, nil}, event: "ready", overwrite: true},
 		{name: "existing Ready survives overwrite", blockers: [][]NodeID{{a}, nil}, event: "ready", existing: true, overwrite: true, charges: 1},
+		{name: "overwritten Ready after consumed free retry", blockers: [][]NodeID{{a}, {a}, nil}, event: "ready", overwrite: true, charges: 1},
 		{name: "several precise blockers", blockers: [][]NodeID{{a, b}, nil}, event: "ready", charges: 1},
 		{name: "continuous unrelated feedback", blockers: [][]NodeID{{a, b}, {a, b}}, event: "unrelated"},
 		{name: "reordered blockers", blockers: [][]NodeID{{a, b}, {b, a}}, event: "unrelated"},

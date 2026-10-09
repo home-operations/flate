@@ -1,26 +1,64 @@
 package sourceignore
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
+)
 
 func TestNew_PatternDefaults(t *testing.T) {
-	extra := "*.tmp\n"
+	defaultMatches := []string{".git/HEAD", ".github/workflows/ci.yml", "app/icons/logo.png", "app/.sops.yaml"}
+	defaultKeeps := []string{"app/keep.yaml", "app/cache.tmp", "other/cache.tmp"}
+	patternKeeps := []string{"app/keep.yaml", ".github/workflows/ci.yml", "app/icons/logo.png", "app/.sops.yaml"}
 	cases := []struct {
 		name         string
 		files        map[string]string
 		extra        *string
 		withDefaults bool
-		wantDefaults bool
-		wantVCS      bool
-		wantTemp     bool
+		match        []string
+		keep         []string
 	}{
-		{name: "no sourceignore", withDefaults: true, wantDefaults: true, wantVCS: true},
-		{name: "empty sourceignore", files: map[string]string{".sourceignore": ""}, withDefaults: true, wantDefaults: true, wantVCS: true},
-		{name: "comments only", files: map[string]string{".sourceignore": "# comment\n\n"}, withDefaults: true, wantDefaults: true, wantVCS: true},
-		{name: "root patterns", files: map[string]string{".sourceignore": "*.tmp\n"}, withDefaults: true, wantVCS: true, wantTemp: true},
-		{name: "nested patterns", files: map[string]string{"app/.sourceignore": "*.tmp\n"}, withDefaults: true, wantVCS: true, wantTemp: true},
-		{name: "extra patterns", extra: &extra, withDefaults: true, wantVCS: true, wantTemp: true},
-		{name: "defaults disabled"},
-		{name: "patterns without defaults", files: map[string]string{".sourceignore": "*.tmp\n"}, wantTemp: true},
+		{name: "no sourceignore", withDefaults: true, match: defaultMatches, keep: defaultKeeps},
+		{name: "empty field", extra: new(""), withDefaults: true, match: defaultMatches, keep: defaultKeeps},
+		{name: "empty sourceignore", files: map[string]string{".sourceignore": ""}, withDefaults: true, match: defaultMatches, keep: defaultKeeps},
+		{name: "empty sourceignore and field", files: map[string]string{".sourceignore": ""}, extra: new(""), withDefaults: true, match: defaultMatches, keep: defaultKeeps},
+		{name: "whitespace sourceignore", files: map[string]string{".sourceignore": " \t\n\n"}, withDefaults: true, match: defaultMatches, keep: defaultKeeps},
+		{name: "whitespace sourceignore and empty field", files: map[string]string{".sourceignore": " \t\n\n"}, extra: new(""), withDefaults: true, match: defaultMatches, keep: defaultKeeps},
+		{name: "comments only", files: map[string]string{".sourceignore": "# comment\n\n"}, withDefaults: true, match: defaultMatches, keep: defaultKeeps},
+		{name: "comments only and empty field", files: map[string]string{".sourceignore": "# comment\n\n"}, extra: new(""), withDefaults: true, match: defaultMatches, keep: defaultKeeps},
+		{
+			name: "root patterns", files: map[string]string{".sourceignore": "*.tmp\n"}, withDefaults: true,
+			match: []string{".git/HEAD", "app/cache.tmp", "other/cache.tmp"}, keep: patternKeeps,
+		},
+		{
+			name: "nested patterns", files: map[string]string{"app/.sourceignore": "*.tmp\n"}, withDefaults: true,
+			match: []string{".git/HEAD", "app/cache.tmp"}, keep: append([]string{"other/cache.tmp"}, patternKeeps...),
+		},
+		{
+			name: "field patterns", extra: new("*.tmp\n"), withDefaults: true,
+			match: []string{".git/HEAD", "app/cache.tmp", "other/cache.tmp"}, keep: patternKeeps,
+		},
+		{
+			name: "field negates file pattern", files: map[string]string{".sourceignore": "*.tmp\n"},
+			extra: new("!app/keep.tmp\n"), withDefaults: true,
+			match: []string{".git/HEAD", "app/cache.tmp", "other/cache.tmp"}, keep: append([]string{"app/keep.tmp"}, patternKeeps...),
+		},
+		{
+			name: "defaults disabled",
+			keep: append([]string{".git/HEAD", "app/cache.tmp", "other/cache.tmp"}, patternKeeps...),
+		},
+		{
+			name: "empty field without defaults", extra: new(""),
+			keep: append([]string{".git/HEAD", "app/cache.tmp", "other/cache.tmp"}, patternKeeps...),
+		},
+		{
+			name: "file patterns without defaults", files: map[string]string{".sourceignore": "*.tmp\n"},
+			match: []string{"app/cache.tmp", "other/cache.tmp"}, keep: append([]string{".git/HEAD"}, patternKeeps...),
+		},
+		{
+			name: "field patterns without defaults", extra: new("*.tmp\n"),
+			match: []string{"app/cache.tmp", "other/cache.tmp"}, keep: append([]string{".git/HEAD"}, patternKeeps...),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -32,19 +70,15 @@ func TestNew_PatternDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			for _, rel := range []string{"app/icons/logo.png", ".github/workflows/ci.yml", "app/.sops.yaml"} {
-				if got := matcher.Match(rel, false); got != tc.wantDefaults {
-					t.Errorf("Match(%q) = %v, want %v", rel, got, tc.wantDefaults)
-				}
+			for _, rel := range tc.match {
+				t.Run("match/"+rel, func(t *testing.T) {
+					assert.Equal(t, matcher.Match(rel, false), true)
+				})
 			}
-			if got := matcher.Match(".git/HEAD", false); got != tc.wantVCS {
-				t.Errorf("Match(.git/HEAD) = %v, want %v", got, tc.wantVCS)
-			}
-			if got := matcher.Match("app/cache.tmp", false); got != tc.wantTemp {
-				t.Errorf("Match(app/cache.tmp) = %v, want %v", got, tc.wantTemp)
-			}
-			if matcher.Match("app/keep.yaml", false) {
-				t.Error("unmatched manifest must remain visible")
+			for _, rel := range tc.keep {
+				t.Run("keep/"+rel, func(t *testing.T) {
+					assert.Equal(t, matcher.Match(rel, false), false)
+				})
 			}
 		})
 	}

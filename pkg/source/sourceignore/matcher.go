@@ -1,9 +1,7 @@
 // Package sourceignore builds the file-exclusion matcher Flux's
 // source-controller applies when it packages a GitRepository/OCIRepository
 // artifact: VCS exclusions plus any in-tree .sourceignore files and
-// caller-supplied spec.ignore patterns. When no user patterns are loaded,
-// Flux's default exclusions also apply (.github/, *.jpg/png/zip, .sops.yaml,
-// .flux.yaml, .goreleaser.yml, …).
+// caller-supplied spec.ignore patterns, with defaults selected by [New].
 //
 // It is a leaf package — it depends only on the vendored fluxcd/go-git
 // ignore primitives, never on pkg/source or pkg/kustomize — so BOTH the
@@ -35,8 +33,8 @@ type Matcher struct {
 
 // New builds a Matcher for the tree rooted at root.
 //
-// withDefaults adds Flux's VCS patterns and, when no user patterns are loaded,
-// its ExcludeExt/CI/Extra patterns for GitRepository/OCIRepository sources.
+// Flux default exclusions apply when withDefaults is true and no user patterns
+// were parsed from files or extra. withDefaults always adds VCS patterns.
 // Pass false for the Bucket flavor (in-tree .sourceignore + extra only).
 // extra, when non-empty, appends caller patterns (a source's spec.ignore).
 func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
@@ -54,13 +52,16 @@ func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 		patterns = append(patterns, flux.ReadPatterns(strings.NewReader(*extra), domain)...)
 	}
 
-	if withDefaults {
-		if len(patterns) == 0 {
-			return &Matcher{matcher: flux.NewDefaultMatcher(patterns, domain), domain: domain}, nil
+	var matcher gitignore.Matcher
+	if withDefaults && len(patterns) == 0 {
+		matcher = flux.NewDefaultMatcher(patterns, domain)
+	} else {
+		if withDefaults {
+			patterns = append(flux.VCSPatterns(domain), patterns...)
 		}
-		patterns = append(flux.VCSPatterns(domain), patterns...)
+		matcher = flux.NewMatcher(patterns)
 	}
-	return &Matcher{matcher: flux.NewMatcher(patterns), domain: domain}, nil
+	return &Matcher{matcher: matcher, domain: domain}, nil
 }
 
 // Match reports whether rel (a path relative to the matcher's root, using the

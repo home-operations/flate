@@ -20,6 +20,9 @@ const resolveCachePrefix = "resolve:"
 // slot without losing the at-a-glance ref.
 const cacheOptsSep = "#opts:"
 
+// sourceignoreRulesVersion must be bumped with the pkg/source/git token.
+const sourceignoreRulesVersion = "sourceignore-v1"
+
 // ociArtifact is the single SourceArtifact-construction helper used by both the
 // cache-hit and successful-pull paths. Lifting the literal out keeps the two
 // paths from drifting (the pre-helper code dropped Size on the cache-hit path),
@@ -38,13 +41,13 @@ func ociArtifact(repo *manifest.OCIRepository, localPath string, ref manifest.OC
 // ociResolveCacheKey keys the tag→digest resolve cache (a tiny slot holding
 // just the resolved digest in its meta sidecar, no artifact).
 func ociResolveCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) string {
-	return resolveCachePrefix + ociCacheKey(repo, ref, "")
+	return resolveCachePrefix + ociCacheKey(repo, ref, "", sourceignoreRulesVersion)
 }
 
 // ociCacheKey is the artifact slot key: the concrete ref (resolved digest, or
 // tag, or "latest") plus a short hash of every input that changes the produced
 // bytes — layer media type, layer operation, and the ignore pattern.
-func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, resolvedDigest string) string {
+func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, resolvedDigest, rulesVersion string) string {
 	var ignore string
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
@@ -54,11 +57,13 @@ func ociCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef, re
 		LayerMediaType string `json:"layerMediaType,omitempty"`
 		LayerOperation string `json:"layerOperation,omitempty"`
 		Ignore         string `json:"ignore,omitempty"`
+		RulesVersion   string `json:"rulesVersion"`
 	}{
 		Ref:            cmp.Or(resolvedDigest, versionTag(ref), latestTag),
 		LayerMediaType: layerMediaType(repo.LayerSelector),
 		LayerOperation: effectiveLayerOperation(repo.LayerSelector),
 		Ignore:         ignore,
+		RulesVersion:   rulesVersion,
 	}
 	h, _ := source.CacheKeyHash(payload, 8)
 	return payload.Ref + cacheOptsSep + h

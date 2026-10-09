@@ -67,7 +67,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 
 	versioned := versionedURL(repo.URL, ref)
-	slotRef := ociCacheKey(repo, ref, resolvedDigest)
+	slotRef := ociCacheKey(repo, ref, resolvedDigest, sourceignoreRulesVersion)
 	if resolvedDigest == "" {
 		slotRef = source.MutableCacheKey(slotRef)
 	}

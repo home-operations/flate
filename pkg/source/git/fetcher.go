@@ -140,7 +140,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	if repo.Reference != nil {
 		refLabel = cmp.Or(gitRefLabel(*repo.Reference), refLabel)
 	}
-	slotRef := gitCacheKey(repo, refLabel)
+	slotRef := gitCacheKey(repo, refLabel, sourceignoreRulesVersion)
 	mutableRef := !canUseCachedGitSlot(repo.Reference)
 
 	authID := authIdentity(repo)
@@ -287,7 +287,10 @@ func gitRefLabel(ref manifest.GitRepositoryRef) string {
 	return manifest.GitRefString(ref)
 }
 
-func gitCacheKey(repo *manifest.GitRepository, refLabel string) string {
+// sourceignoreRulesVersion must be bumped with the pkg/source/oci token.
+const sourceignoreRulesVersion = "sourceignore-v1"
+
+func gitCacheKey(repo *manifest.GitRepository, refLabel, rulesVersion string) string {
 	ignore := ""
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
@@ -297,11 +300,13 @@ func gitCacheKey(repo *manifest.GitRepository, refLabel string) string {
 		Ignore            string   `json:"ignore,omitempty"`
 		SparseCheckout    []string `json:"sparseCheckout,omitempty"`
 		RecurseSubmodules bool     `json:"recurseSubmodules,omitempty"`
+		RulesVersion      string   `json:"rulesVersion"`
 	}{
 		Ref:               refLabel,
 		Ignore:            ignore,
 		SparseCheckout:    repo.SparseCheckout,
 		RecurseSubmodules: repo.RecurseSubmodules,
+		RulesVersion:      rulesVersion,
 	}
 	h, _ := source.CacheKeyHash(payload, 8)
 	return refLabel + "#opts:" + h

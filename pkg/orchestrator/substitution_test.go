@@ -237,7 +237,7 @@ spec:
 }
 
 func TestBootstrap_SubstitutionCollisions(t *testing.T) {
-	for _, kind := range []string{"stored", "indexed file", "known Kustomization producer", "known Secret producer"} {
+	for _, kind := range []string{"stored", "indexed file", "known Kustomization producer", "known Secret producer", "known Secret producer without declared keys"} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			writeSubstitutionCluster(t, root, "external", "${VALUE}")
@@ -253,13 +253,18 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 				testutil.WriteFile(t, root, "producer/kustomization.yaml", "namespace: apps\nresources: [input.yaml]\n")
 				testutil.WriteFile(t, root, "producer/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: external}\ndata: {VALUE: repository}\n")
 			}
-			if kind == "known Secret producer" {
+			if kind == "known Secret producer" || kind == "known Secret producer without declared keys" {
 				testutil.WriteFile(t, root, "producer.yaml", substitutionKS("producer", "producer", ""))
 				testutil.WriteFile(t, root, "producer/kustomization.yaml", "resources: [external-secret.yaml]\n")
 				testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", "  postBuild:\n    substituteFrom: [{kind: Secret, name: external}]\n"))
-				testutil.WriteFile(t, root, "producer/external-secret.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: apps}\nspec:\n  target: {name: external}\n  data:\n    - secretKey: VALUE\n      remoteRef: {key: fixture}\n")
-				input.Object = &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "private-fixture-value"}}
+				data := "  data:\n    - secretKey: VALUE\n      remoteRef: {key: fixture}\n"
 				want = "..PLACEHOLDER_VALUE.."
+				if kind == "known Secret producer without declared keys" {
+					data = "  dataFrom:\n    - extract: {key: fixture}\n"
+					want = ""
+				}
+				testutil.WriteFile(t, root, "producer/external-secret.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: apps}\nspec:\n  target: {name: external}\n"+data)
+				input.Object = &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "private-fixture-value"}}
 			}
 			var log bytes.Buffer
 			previous := slog.Default()
@@ -275,6 +280,12 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 			}
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
+			}
+			if kind == "known Secret producer without declared keys" {
+				id := input.Object.Named()
+				if _, produced := o.producers.Producer(id); !produced || o.store.GetObject(id) != nil {
+					t.Fatal("test requires a known producer without a synthesized Secret")
+				}
 			}
 			if o.substitutionSources[input.Object.Named()] != nil {
 				t.Fatal("bootstrap collision accepted supplied source")

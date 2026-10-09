@@ -60,6 +60,7 @@ func copySubstitutionData(data map[string]any) map[string]any {
 	return owned
 }
 
+// freezeSubstitutions runs once from Bootstrap before Run because the producer index gains render-time writers.
 func (o *Orchestrator) freezeSubstitutions() {
 	if len(o.cfg.SubstituteFrom) == 0 {
 		return

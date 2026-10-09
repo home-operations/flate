@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"slices"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -539,6 +540,94 @@ func (o *Orchestrator) WithFetcher(kind string, f source.Fetcher) *Orchestrator 
 
 // Filter returns the change filter (may be nil-but-non-active).
 func (o *Orchestrator) Filter() *change.Filter { return o.filter }
+
+// ParentOf returns the structural parent, falling back to rendered ownership.
+// Bootstrap must have completed; structural ownership is immutable thereafter.
+func (o *Orchestrator) ParentOf(id manifest.NamedResource) (manifest.NamedResource, bool) {
+	if parent, ok := o.parentOf[id]; ok {
+		return parent, true
+	}
+	return o.rendered.ParentOf(id)
+}
+
+// ChildrenByParent returns structural and rendered ownership, including children
+// whose structural parents failed before emission. Bootstrap must have completed
+// and Render must have returned; do not call concurrently with either. Returned
+// maps and sorted, deduplicated slices are independent of orchestrator state.
+func (o *Orchestrator) ChildrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
+	children := map[manifest.NamedResource][]manifest.NamedResource{}
+	for child, parent := range o.parentOf {
+		children[parent] = append(children[parent], child)
+	}
+	for child, parent := range o.rendered.parents {
+		children[parent] = append(children[parent], child)
+	}
+	for parent, ids := range children {
+		slices.SortFunc(ids, manifest.NamedResource.Compare)
+		children[parent] = slices.Compact(ids)
+	}
+	return children
+}
+
+// RequiredDataDependencies returns authored HR/KS inputs and their known
+// producers and owners, including optional or unavailable inputs. Bootstrap
+// must have completed and Render must have returned; do not call concurrently
+// with either. The sorted, deduplicated slice is independent of stored state.
+func (o *Orchestrator) RequiredDataDependencies(consumer manifest.NamedResource) []manifest.NamedResource {
+	deps := map[manifest.NamedResource]struct{}{}
+	addOwners := func(id manifest.NamedResource) {
+		for _, owner := range o.selfProduce.ProducedBy(id) {
+			deps[owner] = struct{}{}
+		}
+		for _, owner := range o.selfProduce.OwnersOfProducer(id) {
+			deps[owner] = struct{}{}
+		}
+		if parent, ok := o.parentOf[id]; ok {
+			deps[parent] = struct{}{}
+		}
+		if parent, ok := o.rendered.ParentOf(id); ok {
+			deps[parent] = struct{}{}
+		}
+		file, ok := o.sourceFiles[id]
+		if !ok {
+			id.Namespace = ""
+			file = o.sourceFiles[id]
+		}
+		if file != "" {
+			for _, owner := range o.selfProduce.OwnersOfFile(file) {
+				deps[owner] = struct{}{}
+			}
+		}
+	}
+	addInput := func(kind, name string) {
+		if name == "" {
+			return
+		}
+		id := manifest.NamedResource{Kind: kind, Namespace: consumer.Namespace, Name: name}
+		deps[id] = struct{}{}
+		addOwners(id)
+		if producer, ok := o.producers.Producer(id); ok {
+			deps[producer] = struct{}{}
+			addOwners(producer)
+		}
+		for _, producer := range o.filter.ProducersFor(id) {
+			deps[producer] = struct{}{}
+		}
+	}
+	switch obj := o.store.GetObject(consumer).(type) {
+	case *manifest.HelmRelease:
+		for _, ref := range obj.ValuesFrom {
+			addInput(ref.Kind, ref.Name)
+		}
+	case *manifest.Kustomization:
+		for _, ref := range obj.PostBuildSubstituteFrom {
+			addInput(ref.Kind, ref.Name)
+		}
+	}
+	out := slices.Collect(maps.Keys(deps))
+	slices.SortFunc(out, manifest.NamedResource.Compare)
+	return out
+}
 
 // Bootstrap discovers manifests, applies namespace inheritance, primes
 // existence-only sources Ready, and prepares the change filter.

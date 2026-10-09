@@ -56,6 +56,8 @@ flate test all     --path ./kubernetes
 
 The `[name]` positional on `get ks/hr` and `build`/`diff`/`test ks/hr` is matched against the resource's bare name (`metadata.name`), not `namespace/name`. Use `-n / --namespace` to scope.
 
+Named builds base their exit status on the selected objects and their required dependencies.
+
 Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag. `get`, `build`, `diff`, and `test` all run the same offline reconcile pipeline before producing output, so referenced Git, OCI, Helm, Bucket, or remote kustomize sources must be reachable. Source caches respect Flux intervals: immutable pins reuse cache; mutable refs refresh when their interval expires.
 
 | Verb    | Targets                     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |

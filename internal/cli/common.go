@@ -685,45 +685,15 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...fun
 	return o, res, err
 }
 
-func scopedRunError(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, runErr error) error {
-	if runErr == nil {
-		return nil
-	}
-	if o == nil || res == nil {
+func scopedRunError(scope failureScope, runErr error) error {
+	if runErr == nil || scope.failed == nil {
 		return runErr
 	}
 	extras := nonResourceRunErrors(runErr)
-	failed, blocked := scopedFailures(o, res, c)
-	if len(failed) == 0 {
+	if len(scope.failed) == 0 {
 		return errors.Join(extras...)
 	}
-	return errors.Join(aggregateScopedFailures(failed, blocked), errors.Join(extras...))
-}
-
-// scopedFailures projects res.Failed (and the matching res.Blocked subset) onto
-// c's namespace scope. Single-sourced so the machine-error builder
-// (aggregateScopedFailures) and the rendered report (reportFailures) can't drift
-// on what counts as in scope. Returns empty (non-nil) maps when there is no
-// orchestrator/result or nothing in scope.
-func scopedFailures(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags) (
-	map[manifest.NamedResource]store.StatusInfo,
-	map[manifest.NamedResource][]manifest.NamedResource,
-) {
-	failed := map[manifest.NamedResource]store.StatusInfo{}
-	blocked := map[manifest.NamedResource][]manifest.NamedResource{}
-	if o == nil || res == nil {
-		return failed, blocked
-	}
-	for id, info := range res.Failed {
-		if c != nil && !c.includeNamespace(o.Filter(), id.Namespace) {
-			continue
-		}
-		failed[id] = info
-		if b := res.Blocked[id]; len(b) > 0 {
-			blocked[id] = b
-		}
-	}
-	return failed, blocked
+	return errors.Join(aggregateScopedFailures(scope.failed, scope.blocked), errors.Join(extras...))
 }
 
 // scopedWarnings projects Result.Warnings onto c's namespace filter: a
@@ -749,8 +719,8 @@ func scopedWarnings(o *orchestrator.Orchestrator, res *orchestrator.Result, c *c
 // partial render still surfaces both the IO/format failure and any
 // per-resource reconcile failures. A nil emitErr collapses to just the run
 // error (and both nil to nil) via errors.Join's nil handling.
-func emitResult(emitErr error, o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, runErr error) error {
-	return errors.Join(emitErr, scopedRunError(o, res, c, runErr))
+func emitResult(emitErr error, scope failureScope, runErr error) error {
+	return errors.Join(emitErr, scopedRunError(scope, runErr))
 }
 
 // logBuffer is the process-wide deferred-log sink installed by setLogLevel; the
@@ -774,22 +744,22 @@ type reportedError struct{ err error }
 func (e reportedError) Error() string { return e.err.Error() }
 func (e reportedError) Unwrap() error { return e.err }
 
-// reportFailures renders the styled root-cause report — real errors shown once,
-// cascaded failures folded under the root that caused them — to w, scoped to c's
-// namespace filter. Advisories (warnings) and deferred operational logs (notes)
-// are deliberately NOT rendered here: they belong to `flate test`, the
-// diagnostic command. A data-producing `flate build` stays quiet but for the
-// failure report it must surface — CI relies on the non-zero exit and the cause.
-// When something rendered and err is non-nil, err is wrapped as reportedError so
-// the caller still exits non-zero while run avoids printing it twice; otherwise
-// err passes through.
-func reportFailures(w io.Writer, o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, err error, elapsed time.Duration) error {
-	failed, blocked := scopedFailures(o, res, c)
-	m := report.Build(failed, blocked, nil, nil)
+// reportFailures renders fatal causes and unrelated resource warnings from the
+// same projection as the machine error. Non-resource errors need their own
+// diagnostic before reportedError suppresses the top-level printer.
+func reportFailures(w io.Writer, scope failureScope, err error) error {
+	m := failureReport(scope)
 	if m.Empty() {
 		return err
 	}
-	_ = m.Write(w, style.ColorEnabled(w), elapsed)
+	if writeErr := m.Write(w, style.ColorEnabled(w), 0); writeErr != nil {
+		return errors.Join(writeErr, err)
+	}
+	if extras := errors.Join(nonResourceRunErrors(err)...); extras != nil {
+		if _, writeErr := fmt.Fprintln(w, "flate error:", extras); writeErr != nil {
+			return errors.Join(writeErr, err)
+		}
+	}
 	if err == nil {
 		return nil
 	}
@@ -808,24 +778,49 @@ func aggregateScopedFailures(
 	failed map[manifest.NamedResource]store.StatusInfo,
 	blocked map[manifest.NamedResource][]manifest.NamedResource,
 ) error {
-	msgs := make([]string, 0, len(failed))
-	nBlocked := 0
-	for id, info := range failed {
-		if len(blocked[id]) > 0 {
-			nBlocked++
-			continue
-		}
-		msgs = append(msgs, fmt.Sprintf("%s: %s", id, info.Message))
+	model := failureReport(failureScope{failed: failed, blocked: blocked})
+	msgs := make([]string, 0, len(model.Primary)+len(model.Missing))
+	for _, root := range model.Primary {
+		msgs = append(msgs, fmt.Sprintf("%s: %s", root.ID, root.Msg))
+	}
+	for _, root := range model.Missing {
+		msgs = append(msgs, fmt.Sprintf("%s: not found", root.ID))
 	}
 	slices.Sort(msgs)
 	msg := fmt.Sprintf("reconcile completed with %d failure(s)", len(msgs))
 	if len(msgs) > 0 {
 		msg += ":\n  " + strings.Join(msgs, "\n  ")
 	}
-	if nBlocked > 0 {
-		msg += fmt.Sprintf("\n  (+%d blocked by failed/missing dependencies)", nBlocked)
+	if model.Blocked > 0 {
+		msg += fmt.Sprintf("\n  (+%d blocked by failed/missing dependencies)", model.Blocked)
 	}
 	return &orchestrator.FailuresError{Message: msg}
+}
+
+// Closed blocker cycles have no report roots; retain their individual failures
+// in both the footer and the machine error, with consistent fatal counts.
+func failureReport(scope failureScope) report.Model {
+	model := report.Build(scope.failed, scope.blocked, scope.warnings, nil)
+	covered := map[manifest.NamedResource]bool{}
+	for _, root := range model.Primary {
+		covered[root.ID] = true
+		for _, id := range root.Blocks {
+			covered[id] = true
+		}
+	}
+	for _, root := range model.Missing {
+		for _, id := range root.RequiredBy {
+			covered[id] = true
+		}
+	}
+	for id, info := range scope.failed {
+		if !covered[id] {
+			model.Primary = append(model.Primary, report.Primary{ID: id, Msg: info.Message})
+			model.Blocked--
+		}
+	}
+	slices.SortFunc(model.Primary, func(a, b report.Primary) int { return a.ID.Compare(b.ID) })
+	return model
 }
 
 func nonResourceRunErrors(err error) []error {

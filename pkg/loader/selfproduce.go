@@ -38,6 +38,8 @@ type SelfProduceIndex struct {
 	// actual resources:/components: graph, so it also covers a
 	// resources: escape outside every claimed spec.path. See OwnersOfFile.
 	filesByKS map[string][]manifest.NamedResource
+	// Declaration owners survive failed renders that never emit the producer.
+	producerOwners map[manifest.NamedResource][]manifest.NamedResource
 }
 
 // ProducedBy returns the Kustomizations whose render subtree emits cm.
@@ -48,6 +50,18 @@ func (i *SelfProduceIndex) ProducedBy(cm manifest.NamedResource) []manifest.Name
 		return nil
 	}
 	return i.byID[cm]
+}
+
+// OwnersOfProducer returns the Kustomizations whose render subtrees contain
+// the indexed producer declaration, even when those renders fail before emission.
+// Bootstrap must have completed. The returned slice is independent; nil-safe.
+func (i *SelfProduceIndex) OwnersOfProducer(producer manifest.NamedResource) []manifest.NamedResource {
+	if i == nil {
+		return nil
+	}
+	owners := slices.Clone(i.producerOwners[producer])
+	slices.SortFunc(owners, manifest.NamedResource.Compare)
+	return owners
 }
 
 // OwnersOfFile returns the top-level Kustomization(s) whose render
@@ -317,7 +331,7 @@ func (b *selfProduceBuilder) recordProduced(relFile, baseNS, rootNS string, ks m
 			case *manifest.Kustomization:
 				b.recordEmittedKS(relFile, ks)
 			case *manifest.RawObject:
-				b.recordProducer(o, baseNS, rootNS)
+				b.recordProducer(o, baseNS, rootNS, ks)
 			}
 		})
 }
@@ -381,8 +395,8 @@ func (b *selfProduceBuilder) recordEmittedKS(relFile string, ks manifest.NamedRe
 // ExternalSecret / SealedSecret materializes, or the Secret + ConfigMap an
 // ObjectBucketClaim's provisioner creates — each re-keyed under the producer's
 // effective namespace so it matches a consumer's same-namespace lookup.
-// Non-producer kinds and a nil index are no-ops.
-func (b *selfProduceBuilder) recordProducer(raw *manifest.RawObject, baseNS, rootNS string) {
+// Non-producer kinds are no-ops. Ownership is recorded before rendering.
+func (b *selfProduceBuilder) recordProducer(raw *manifest.RawObject, baseNS, rootNS string, ks manifest.NamedResource) {
 	for _, target := range manifest.ProducerTargets(raw) {
 		ns := cmp.Or(baseNS, target.Namespace, rootNS)
 		if ns == "" {
@@ -390,6 +404,13 @@ func (b *selfProduceBuilder) recordProducer(raw *manifest.RawObject, baseNS, roo
 		}
 		target.Namespace = ns
 		b.producers.Record(target.NamedResource, raw.Named())
+		if b.idx.producerOwners == nil {
+			b.idx.producerOwners = map[manifest.NamedResource][]manifest.NamedResource{}
+		}
+		producer := raw.Named()
+		b.idx.producerOwners[producer] = appendUniqueProducer(b.idx.producerOwners[producer], ks)
+		producer.Namespace = ns
+		b.idx.producerOwners[producer] = appendUniqueProducer(b.idx.producerOwners[producer], ks)
 		if len(target.DeclaredKeys) > 0 && target.Kind == manifest.KindSecret {
 			b.synthesizePlaceholderSecret(target.NamedResource, target.DeclaredKeys)
 		}

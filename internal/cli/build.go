@@ -83,6 +83,7 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			if o == nil {
 				return runErr
 			}
+			scope := scopedFailures(o, res, c, manifest.NamedResource{Kind: kinds[0], Name: name})
 			var emitErr error
 			if se != nil {
 				emitErr = se.finish(res)
@@ -106,7 +107,7 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			// emitResult surfaces both an emit-time IO failure AND the
 			// partial-failure list — previously the emit error masked
 			// the run failures, so CI fixed the wrong thing.
-			return reportFailures(cmd.ErrOrStderr(), o, res, c, emitResult(emitErr, o, res, c, runErr), 0)
+			return reportFailures(cmd.ErrOrStderr(), scope, emitResult(emitErr, scope, runErr))
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)

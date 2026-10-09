@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/internal/report"
+	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -104,11 +106,13 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 	if orig.O == nil || current.O == nil {
 		return runErr
 	}
+	orig.Failures = scopedFailures(orig.O, orig.Res, c, manifest.NamedResource{})
+	current.Failures = scopedFailures(current.O, current.Res, c, manifest.NamedResource{})
 	imgs := imageSetDiff(collectImages(orig.O, orig.Res, c), collectImages(current.O, current.Res, c), includeRemoved)
 	if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
-		return errors.Join(err, scopedDiffRunError(orig, current, c, runErr))
+		return errors.Join(err, scopedDiffRunError(orig, current, runErr))
 	}
-	return scopedDiffRunError(orig, current, c, runErr)
+	return scopedDiffRunError(orig, current, runErr)
 }
 
 // imageSetDiff returns the sorted images added in current; when
@@ -165,7 +169,21 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	}
 	origDocs, origMatched := gatherAllArtifacts(orig.O, orig.Res, kind, name, c)
 	currentDocs, currentMatched := gatherAllArtifacts(current.O, current.Res, kind, name, c)
-	diffRunErr := scopedDiffRunError(orig, current, c, runErr)
+	orig.Failures = scopedFailures(orig.O, orig.Res, c, manifest.NamedResource{Kind: kind, Name: name})
+	current.Failures = scopedFailures(current.O, current.Res, c, manifest.NamedResource{Kind: kind, Name: name})
+	diffRunErr := scopedDiffRunError(orig, current, runErr)
+	for _, side := range []struct {
+		label string
+		scope failureScope
+	}{{"orig", orig.Failures}, {"current", current.Failures}} {
+		if len(side.scope.warnings) == 0 {
+			continue
+		}
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%s snapshot:%s", side.label,
+			report.Document(report.WarningsBlock(side.scope.warnings, style.ColorEnabled(cmd.ErrOrStderr())))); err != nil {
+			return errors.Join(err, diffRunErr)
+		}
+	}
 	if err := reportExternalDiffSkips(cmd.ErrOrStderr(), orig, c.baselineRoot(), "orig", c, kind, name); err != nil {
 		return errors.Join(err, diffRunErr)
 	}
@@ -179,11 +197,9 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	// A producer that failed on one side only has nothing to pair against, so
 	// its healthy-side output would read as a wholesale add or delete. Withhold
 	// it and let the formats disclose the suppression instead (#938).
-	origFailed, _ := scopedFailures(orig.O, orig.Res, c)
-	currentFailed, _ := scopedFailures(current.O, current.Res, c)
 	var suppressed []diff.Suppression
 	origDocs, currentDocs, suppressed = diff.SuppressFailed(origDocs, currentDocs,
-		failureReasons(origFailed), failureReasons(currentFailed))
+		failureReasons(orig.Failures.failed), failureReasons(current.Failures.failed))
 
 	out := diff.Format(c.output)
 	formatted, err := diff.RenderDocs(origDocs, currentDocs, diff.Options{
@@ -198,7 +214,9 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	// Surface the failure summary BEFORE the diff body so a reader scanning a
 	// CI log meets the cause first; run() then skips its trailing reprint.
 	if diffRunErr != nil {
-		_, _ = io.WriteString(cmd.ErrOrStderr(), "flate error: "+diffRunErr.Error()+"\n")
+		if _, err := io.WriteString(cmd.ErrOrStderr(), "flate error: "+diffRunErr.Error()+"\n"); err != nil {
+			return errors.Join(err, diffRunErr)
+		}
 	}
 	if _, err := cmd.OutOrStdout().Write(formatted); err != nil {
 		return errors.Join(err, diffRunErr)
@@ -250,9 +268,10 @@ func failureReasons(failed map[manifest.NamedResource]store.StatusInfo) map[mani
 // commands need both — orchestrator for filter/object lookup, Result
 // for the rendered docs feeding the diff.
 type diffSide struct {
-	O   *orchestrator.Orchestrator
-	Res *orchestrator.Result
-	Err error
+	O        *orchestrator.Orchestrator
+	Res      *orchestrator.Result
+	Err      error
+	Failures failureScope
 }
 
 // runDiffOrchestrators resolves the baseline, then hands the
@@ -302,13 +321,13 @@ func joinRunErrors(orig, curr error) error {
 	return nil
 }
 
-func scopedDiffRunError(orig, current diffSide, c *commonFlags, runErr error) error {
+func scopedDiffRunError(orig, current diffSide, runErr error) error {
 	if runErr == nil {
 		return nil
 	}
 	return joinRunErrors(
-		scopedRunError(orig.O, orig.Res, c, orig.Err),
-		scopedRunError(current.O, current.Res, c, current.Err),
+		scopedRunError(orig.Failures, orig.Err),
+		scopedRunError(current.Failures, current.Err),
 	)
 }
 

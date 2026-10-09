@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // buildChangeFilter computes the file-level change set (if changed-only
@@ -31,7 +32,45 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	// index — same exclusion the loader applies to the parent index via
 	// KSPathPrefixesLocalOnly (a `path: ./` on an OCI-sourced KS would
 	// otherwise own the repo root and cascade into every resolve).
-	f := change.NewFilterWithCache(changes, o.sourceFiles, repoRoot, o.store, o.componentCache, o.sourceRefs, loader.ExternalSourcedKSIDs(o.store, repoRoot), o.selfProduce.OwnersOfFile)
+	excluded := loader.ExternalSourcedKSIDs(o.store, repoRoot)
+	pinned := false
+	for id, refs := range o.sourceRefs {
+		if id.Kind != manifest.KindKustomization {
+			continue
+		}
+		for _, ref := range refs {
+			if art, ok := o.store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+				excluded[id] = struct{}{}
+				pinned = true
+				break
+			}
+		}
+	}
+	fileOwners := o.selfProduce.OwnersOfFile
+	if pinned {
+		// Local pins own working-tree paths, but render committed inputs.
+		fileOwners = func(file string) []manifest.NamedResource {
+			owners := o.selfProduce.OwnersOfFile(file)
+			filtered := false
+			for _, owner := range owners {
+				if _, skip := excluded[owner]; skip {
+					filtered = true
+					break
+				}
+			}
+			if !filtered {
+				return owners
+			}
+			var inputs []manifest.NamedResource
+			for _, owner := range owners {
+				if _, skip := excluded[owner]; !skip {
+					inputs = append(inputs, owner)
+				}
+			}
+			return inputs
+		}
+	}
+	f := change.NewFilterWithCache(changes, o.sourceFiles, repoRoot, o.store, o.componentCache, o.sourceRefs, excluded, fileOwners)
 	// Wire OnAdd so a runtime keep-set extension (KS controller's
 	// emitRenderedChildren → keepEmitted) refires any source whose
 	// listener already short-circuited via PreGate before the

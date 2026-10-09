@@ -37,9 +37,9 @@ type KSPathPrefix struct {
 //
 // flate renders the local tree. A KS sourced from the bootstrap/self source (or
 // a bare sourceRef, which anchors on the seeded BootstrapSourceID) renders that
-// local tree, so its spec.path legitimately claims local prefixes. But a KS
-// sourced from an in-tree GitRepository/OCIRepository CR that was NOT aliased to
-// the working tree — a private side-repo synced into the cluster, e.g.
+// local tree, so its spec.path legitimately claims local prefixes. A local pin
+// renders its committed tree while retaining those claims. But a KS sourced
+// from an in-tree GitRepository/OCIRepository CR outside that repository, e.g.
 // `shelly-fleet` (ssh://…/shelly-fleet.git) with `path: ./kubernetes` — renders
 // THAT repo's tree, which flate can't see. Letting such a KS claim local
 // prefixes makes it the false structural parent/producer of everything beneath a
@@ -49,9 +49,10 @@ type KSPathPrefix struct {
 //
 // A source is "local" — excluded from the result — when: the sourceRef is bare
 // (→ BootstrapSourceID), the id IS BootstrapSourceID, the source carries a
-// working-tree artifact (aliased by discovery, LocalPath == repoRoot), or no
+// working-tree artifact (LocalPath == repoRoot), a committed artifact resolved
+// from that working tree's repository (LocalRoot == repoRoot), or no
 // source object exists yet (a missing sourceRef that bootstrap aliasing
-// resolves). Only an in-tree, non-bootstrap, non-aliased source CR is external.
+// resolves). Only an in-tree source CR without working-tree ownership is external.
 func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedResource]struct{} {
 	out := map[manifest.NamedResource]struct{}{}
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
@@ -62,7 +63,8 @@ func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedRes
 		if src == manifest.BootstrapSourceID {
 			continue
 		}
-		if art, ok := s.GetArtifact(src).(*store.SourceArtifact); ok && art.LocalPath == repoRoot {
+		if art, ok := s.GetArtifact(src).(*store.SourceArtifact); ok &&
+			(art.LocalPath == repoRoot || art.LocalRoot != "" && art.LocalRoot == repoRoot) {
 			continue
 		}
 		if s.GetObject(src) == nil {

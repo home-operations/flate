@@ -118,6 +118,36 @@ func TestKSPathPrefixesLocalOnly_DropsExternalSourced(t *testing.T) {
 	}
 }
 
+func TestExternalSourcedKSIDs_LocalRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name, repoRoot, localRoot string
+		external                  bool
+	}{
+		{name: "own-repository", repoRoot: "/repo", localRoot: "/repo"},
+		{name: "another-repository", repoRoot: "/repo", localRoot: "/other", external: true},
+		{name: "unset-local-root", repoRoot: "/repo", external: true},
+		{name: "unset-roots", external: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New()
+			repo := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
+			ks := &manifest.Kustomization{
+				Name: "apps", Namespace: repo.Namespace, Path: "./apps",
+				SourceKind: manifest.KindGitRepository, SourceName: repo.Name, SourceNamespace: repo.Namespace,
+			}
+			st.AddObject(repo)
+			st.AddObject(ks)
+			st.SetArtifact(repo.Named(), &store.SourceArtifact{
+				Kind: manifest.KindGitRepository, LocalPath: "/cache", LocalRoot: tc.localRoot,
+			})
+			_, external := ExternalSourcedKSIDs(st, tc.repoRoot)[ks.Named()]
+			if external != tc.external {
+				t.Fatalf("external = %v, want %v", external, tc.external)
+			}
+		})
+	}
+}
+
 func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
 	// cluster-apps is the root with spec.path=./kubernetes/apps/main.
 	// karma lives at apps/main/observability/karma.yaml — under

@@ -171,6 +171,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 				continue
 			}
 			if artifact.LocalPath != repoRoot {
+				artifact.LocalRoot = repoRoot
 				d.cfg.Store.SetArtifact(id, artifact)
 				d.cfg.Store.UpdateStatus(id, store.StatusReady, "local committed source artifact")
 				continue

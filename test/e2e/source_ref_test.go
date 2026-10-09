@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
@@ -27,6 +29,89 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 		"--concurrency", "2", "--cache-dir", t.TempDir())
 	if !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: v2.0.0") {
 		t.Fatalf("expected pinned v1.0.0 content:\n%s\nstderr:\n%s", out, stderr)
+	}
+}
+
+func TestE2E_SourceRef_PinnedPathOwnsWorkingTreeReleases(t *testing.T) {
+	root, repo, older, head := sourceRefFixture(t)
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hash := range []plumbing.Hash{older, head} {
+		if err := wt.Checkout(&gogit.CheckoutOptions{Hash: hash}); err != nil {
+			t.Fatal(err)
+		}
+		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources:\n- cm.yaml\n- release.yaml\n")
+		testutil.WriteFile(t, root, "apps/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: existing, namespace: apps}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
+  values: {greeting: pinned}
+`)
+		testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+		testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-cm
+  namespace: {{ .Release.Namespace }}
+data:
+  greeting: {{ .Values.greeting | quote }}
+`)
+		if hash == older {
+			gitCommitAll(t, repo)
+			ref, err := repo.Head()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash())); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	loader := installSourceRefTransport(t, repo.Storer)
+	mutateFile(t, filepath.Join(root, "apps/release.yaml"), "greeting: pinned", "greeting: dirty")
+	release, err := os.ReadFile(filepath.Join(root, "apps/release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, root, "apps/added.yaml", strings.Replace(string(release), "name: existing", "name: added", 1))
+	mutateFile(t, filepath.Join(root, "apps/kustomization.yaml"), "- release.yaml\n", "- release.yaml\n- added.yaml\n")
+	out, _ := requireCLIOK(t, "build", "all", "--path", root,
+		"--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "json")
+	if loader.calls.Load() != 0 {
+		t.Fatalf("local pin accessed transport %d times", loader.calls.Load())
+	}
+	var docs []struct {
+		Kind     string
+		Metadata struct{ Name, Namespace string }
+		Data     map[string]string
+		Spec     struct{ Values map[string]string }
+	}
+	if err := json.Unmarshal([]byte(out), &docs); err != nil {
+		t.Fatal(err)
+	}
+	ids := make(map[manifest.NamedResource]int)
+	for _, doc := range docs {
+		ids[manifest.NamedResource{Kind: doc.Kind, Namespace: doc.Metadata.Namespace, Name: doc.Metadata.Name}]++
+		if doc.Kind == manifest.KindHelmRelease && doc.Spec.Values["greeting"] != "pinned" ||
+			doc.Kind == manifest.KindConfigMap && doc.Metadata.Name == "existing-cm" && doc.Data["greeting"] != "pinned" ||
+			doc.Metadata.Name == "hello" && doc.Data["value"] != "v1.0.0" {
+			t.Fatalf("expected pinned content:\n%s", out)
+		}
+	}
+	want := map[manifest.NamedResource]int{
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}:       1,
+		{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "existing"}:  1,
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "existing-cm"}: 1,
+	}
+	if diff := cmp.Diff(want, ids); diff != "" {
+		t.Fatalf("pinned object ids (-want +got):\n%s\n%s", diff, out)
 	}
 }
 

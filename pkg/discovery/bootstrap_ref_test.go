@@ -16,6 +16,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -108,6 +109,57 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			}
 			if logs.Len() != 0 {
 				t.Fatalf("materialization/HEAD unexpectedly warns: %s", logs.String())
+			}
+		})
+	}
+}
+
+func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, url string
+		local           bool
+	}{
+		{name: "pinned-local", kind: manifest.KindGitRepository, url: "git://fixture.invalid/cluster", local: true},
+		{name: "external-git", kind: manifest.KindGitRepository, url: "git://fixture.invalid/other"},
+		{name: "external-oci", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/cluster"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := discoveryRefFixture(t)
+			st := store.New()
+			id := manifest.NamedResource{Kind: tc.kind, Namespace: "flux-system", Name: "cluster"}
+			if tc.kind == manifest.KindGitRepository {
+				st.AddObject(&manifest.GitRepository{
+					Name: id.Name, Namespace: id.Namespace, URL: tc.url,
+					Reference: &manifest.GitRepositoryRef{Tag: "v1.0.0"},
+				})
+			} else {
+				st.AddObject(&manifest.OCIRepository{Name: id.Name, Namespace: id.Namespace, URL: tc.url})
+			}
+			ks := &manifest.Kustomization{
+				Name: "apps", Namespace: id.Namespace, Path: "./apps",
+				SourceKind: id.Kind, SourceName: id.Name, SourceNamespace: id.Namespace,
+			}
+			st.AddObject(ks)
+			d := discoverer{cfg: Config{
+				Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
+				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
+			}}
+			if err := d.aliasBootstrapSources(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
+			if tc.local {
+				artifact := st.GetArtifact(id).(*store.SourceArtifact)
+				if artifact.LocalPath == root {
+					t.Fatal("pinned source must render its committed tree")
+				}
+			} else {
+				st.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, URL: tc.url, LocalPath: t.TempDir()})
+			}
+			prefixes := loader.KSPathPrefixesLocalOnly(st, root, nil)
+			child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "release"}
+			parent, owned := loader.LongestParent(prefixes, "apps/release.yaml", child)
+			if owned != tc.local || owned && parent != ks.Named() {
+				t.Fatalf("local path ownership = %v, %v; want local=%v", parent, owned, tc.local)
 			}
 		})
 	}

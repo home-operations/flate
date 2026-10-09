@@ -22,7 +22,11 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				if fp := helmReleaseFingerprint(hr, tc.source); fp == "" {
+				var identity string
+				if tc.source != nil {
+					identity = tc.source.Digest + "\x00" + tc.source.Revision
+				}
+				if fp := helmReleaseFingerprint(hr, identity); fp == "" {
 					b.Fatal("empty fingerprint")
 				}
 			}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -36,15 +35,9 @@ import (
 func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, opts Options) (string, error) {
 	loaded, err := c.LoadChart(ctx, hr)
 	if err != nil {
-		if hr.ChartRef != nil && hr.ChartRef.Kind == manifest.KindOCIRepository {
-			if _, ok := errors.AsType[chart.ValidationError](err); ok {
-				return "", fmt.Errorf("load oci chart: %w: %w", manifest.ErrInput, err)
-			}
-		}
 		return "", err
 	}
-	var sourceIdentity string
-	if hr.ChartRef != nil && hr.ChartRef.Kind == manifest.KindOCIRepository {
+	if hr.UsesDirectOCIRepository() {
 		art := c.resolveLocalSource(hr)
 		if art == nil {
 			return "", fmt.Errorf("track oci chart version: %w: OCIRepository %s artifact not available",
@@ -52,17 +45,12 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 		version, err := ociChartVersion(loaded.Chart.Metadata.Version, art.Revision)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("track oci chart version: %w", err)
 		}
 		if !opts.DisableChartDigestTracking {
 			loaded.Chart.Metadata.Version = version
 		}
-		if c.templateCache != nil {
-			loaded.Fingerprint = manifest.SHA256Hex([]byte(loaded.Fingerprint + "\x00" + art.Digest + "\x00" + art.Revision + "\x00" + version))
-		}
-		if len(hr.ChartValuesFiles) > 0 {
-			sourceIdentity = art.Digest + "\x00" + art.Revision
-		}
+		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art.Digest+"\x00"+art.Revision, opts.DisableChartDigestTracking)
 	}
 	caps, err := opts.capabilities()
 	if err != nil {
@@ -99,7 +87,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	// (handled internally by helm) → chart-named valuesFiles → HR.Values.
 	finalValues := hrValues
 	if len(hr.ChartValuesFiles) > 0 {
-		base, err := c.mergeChartValuesFiles(loaded.Chart, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles, sourceIdentity)
+		base, err := c.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		if err != nil {
 			return "", fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
 		}
@@ -243,15 +231,15 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 // HRs with the same (chart, valuesFiles) but different policies must
 // not share — a missing file is an error in one and skipped in the
 // other.
-func (c *Client) mergeChartValuesFiles(ch *chart.Chart, names []string, ignoreMissing bool, sourceIdentity string) (map[string]any, error) {
-	key := chartValuesCacheKey(ch, names, ignoreMissing, sourceIdentity)
+func (c *Client) mergeChartValuesFiles(loaded ChartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
+	key := chartValuesCacheKey(loaded.Fingerprint, names, ignoreMissing)
 	c.chartMu.RLock()
 	cached, ok := c.chartValuesCache[key]
 	c.chartMu.RUnlock()
 	if ok {
 		return manifest.DeepCopyMap(cached), nil
 	}
-	merged, err := mergeChartValuesFilesUncached(ch, names, ignoreMissing)
+	merged, err := mergeChartValuesFilesUncached(loaded.Chart, names, ignoreMissing)
 	if err != nil {
 		return nil, err
 	}
@@ -267,25 +255,13 @@ func (c *Client) mergeChartValuesFiles(ch *chart.Chart, names []string, ignoreMi
 	return manifest.DeepCopyMap(merged), nil
 }
 
-// chartValuesCacheKey builds the cache key for a (chart, valuesFiles,
-// ignoreMissing) tuple. The hash input is delimited so a chart named
-// "a-b" with version "c" hashes distinctly from a chart named "a"
-// with version "b-c". The trailing ignoreMissing byte separates the
-// two policy variants.
-func chartValuesCacheKey(ch *chart.Chart, names []string, ignoreMissing bool, sourceIdentity string) string {
+// chartValuesCacheKey separates ordered filenames and the missing-file policy.
+func chartValuesCacheKey(fingerprint string, names []string, ignoreMissing bool) string {
 	// hash.Hash.Write never returns an error per its contract; drain
 	// the (int, error) tuple so gosec G104 stays quiet.
 	h := sha256.New()
-	if ch != nil && ch.Metadata != nil {
-		_, _ = h.Write([]byte(ch.Metadata.Name))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(ch.Metadata.Version))
-	}
+	_, _ = h.Write([]byte(fingerprint))
 	_, _ = h.Write([]byte{0})
-	if sourceIdentity != "" {
-		_, _ = h.Write([]byte(sourceIdentity))
-		_, _ = h.Write([]byte{0})
-	}
 	for _, n := range names {
 		_, _ = h.Write([]byte(n))
 		_, _ = h.Write([]byte{0})

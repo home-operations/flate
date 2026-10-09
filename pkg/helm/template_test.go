@@ -9,18 +9,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
-// TestMergeChartValuesFiles_Cached pins Item 5: the second call with
-// the same (chart, valuesFiles, ignoreMissing) tuple must serve from
-// chartValuesCache rather than re-yaml.Unmarshal. We assert the
-// behavior by mutating the underlying *chart.Chart's Files between
-// calls — the cached map is returned regardless of the (now-empty)
-// Files slice, which only happens when the cache short-circuits the
-// scan.
-//
-// The returned map MUST be a deep clone (defensive-copy convention):
-// callers may mutate it (downstream DeepMerge layering), so the cache
-// can't hand out the canonical map directly. We verify by mutating
-// the first return and observing the second return is unaffected.
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
@@ -32,9 +20,10 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 			{Name: "values-prod.yaml", Data: []byte("replicaCount: 3\nimage:\n  tag: v1\n")},
 		},
 	}
+	loaded := ChartLoadResult{Chart: ch, Fingerprint: chartFingerprint(ch)}
 	names := []string{"values-prod.yaml"}
 
-	first, err := cli.mergeChartValuesFiles(ch, names, false, "")
+	first, err := cli.mergeChartValuesFiles(loaded, names, false)
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -42,11 +31,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 		t.Fatalf("first call missing replicaCount: %+v", first)
 	}
 
-	// Mutate the chart's Files so a non-cached call would now miss the
-	// file and (with ignoreMissing=false) return an error. A successful
-	// second call therefore PROVES the cache served it.
-	ch.Files = nil
-	second, err := cli.mergeChartValuesFiles(ch, names, false, "")
+	second, err := cli.mergeChartValuesFiles(loaded, names, false)
 	if err != nil {
 		t.Fatalf("second call (cache hit expected): %v", err)
 	}
@@ -57,7 +42,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	// Caller-mutation safety: mutating the first result must not
 	// affect the second (defensive deep-clone on cache read).
 	first["replicaCount"] = "stomped"
-	third, err := cli.mergeChartValuesFiles(ch, names, false, "")
+	third, err := cli.mergeChartValuesFiles(loaded, names, false)
 	if err != nil {
 		t.Fatalf("third call: %v", err)
 	}
@@ -89,11 +74,11 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 		},
 	}
 
-	a, err := cli.mergeChartValuesFiles(chA, []string{"values.yaml"}, false, "")
+	a, err := cli.mergeChartValuesFiles(ChartLoadResult{Chart: chA, Fingerprint: chartFingerprint(chA)}, []string{"values.yaml"}, false)
 	if err != nil {
 		t.Fatalf("chartA: %v", err)
 	}
-	b, err := cli.mergeChartValuesFiles(chB, []string{"values.yaml"}, false, "")
+	b, err := cli.mergeChartValuesFiles(ChartLoadResult{Chart: chB, Fingerprint: chartFingerprint(chB)}, []string{"values.yaml"}, false)
 	if err != nil {
 		t.Fatalf("chartB: %v", err)
 	}

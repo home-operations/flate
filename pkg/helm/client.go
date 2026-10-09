@@ -55,7 +55,7 @@ type Client struct {
 	chartLoadLocks *keylock.KeyMap[string]
 
 	// chartValuesCache memoizes mergeChartValuesFiles output keyed by
-	// (chart name + version + joined valuesFiles list). Multiple HRs
+	// (loaded fingerprint, ordered valuesFiles, missing-file policy). Multiple HRs
 	// sharing a base chart and the same spec.chart.spec.valuesFiles
 	// stack (common: bjw-s app-template with a fixed set of layered
 	// values-*.yaml files) re-yaml.Unmarshal'd the same bytes once per
@@ -348,17 +348,15 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 		// re-error here on every subsequent run. Removing the file
 		// lets the next reconcile re-pull cleanly.
 		_ = os.Remove(path)
+		if _, ok := errors.AsType[chart.ValidationError](err); ok {
+			err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
+		}
 		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", path, err)
 	}
 	// Compute the chart fingerprint once per cache-fill so every
 	// subsequent Template call against this path participates in the
-	// template-output cache without re-walking the chart. Skipped
-	// when the template cache is disabled to avoid the (cheap but
-	// nonzero) digest cost for embedders that opted out.
-	var fingerprint string
-	if c.templateCache != nil {
-		fingerprint = chartFingerprint(ch)
-	}
+	// template and values caches without re-walking the chart.
+	fingerprint := chartFingerprint(ch)
 	if mtime, size, ok := chartCacheFingerprint(path); ok {
 		c.chartMu.Lock()
 		c.chartCache[path] = chartCacheEntry{
@@ -430,7 +428,7 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 // The second return is the chart's content-addressed fingerprint
 // (computed once at cache fill); the template-output cache mixes
 // it into its own key so a stale chart never serves a different
-// chart's render. Empty when the template cache is disabled.
+// chart's render.
 func (c *Client) lookupCachedChart(path string) (*chart.Chart, string, bool) {
 	c.chartMu.RLock()
 	entry, ok := c.chartCache[path]

@@ -27,6 +27,51 @@ func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain int) (Outco
 	return f(ctx, id, drain)
 }
 
+func TestEdgeIdx_AddAndDelete(t *testing.T) {
+	dep, otherDep, first, second := id("dep"), id("other-dep"), id("first"), id("second")
+	for _, tc := range []struct {
+		name string
+		add  [][2]NodeID
+		del  [][2]NodeID
+		want edgeIdx
+	}{
+		{
+			name: "duplicate adds",
+			add:  [][2]NodeID{{dep, first}, {dep, first}},
+			want: edgeIdx{dep: {first: {}}},
+		},
+		{
+			name: "missing deletes",
+			add:  [][2]NodeID{{dep, first}},
+			del:  [][2]NodeID{{dep, second}, {otherDep, first}},
+			want: edgeIdx{dep: {first: {}}},
+		},
+		{
+			name: "shared consumers",
+			add:  [][2]NodeID{{dep, first}, {dep, second}},
+			del:  [][2]NodeID{{dep, first}},
+			want: edgeIdx{dep: {second: {}}},
+		},
+		{
+			name: "last consumer prunes only its dependency",
+			add:  [][2]NodeID{{dep, first}, {dep, second}, {otherDep, first}},
+			del:  [][2]NodeID{{dep, first}, {dep, second}},
+			want: edgeIdx{otherDep: {first: {}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := edgeIdx{}
+			for _, edge := range tc.add {
+				e.add(edge[0], edge[1])
+			}
+			for _, edge := range tc.del {
+				e.del(edge[0], edge[1])
+			}
+			assert.Diff(t, e, tc.want)
+		})
+	}
+}
+
 func TestScheduler_RunCancellationBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		name           string

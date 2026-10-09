@@ -103,7 +103,8 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 				return fmt.Errorf("walk tree: %w", werr)
 			}
 			if entry.Name == "" || entry.Name == "." || entry.Name == ".." ||
-				strings.ContainsAny(entry.Name, "/\\\x00") {
+				strings.ContainsAny(entry.Name, "/\x00") ||
+				(os.PathSeparator == '\\' && strings.ContainsRune(entry.Name, '\\')) {
 				return fmt.Errorf("malformed tree entry name %q", entry.Name)
 			}
 			if entry.Mode == filemode.Submodule {

@@ -107,7 +107,11 @@ func mustInit(t *testing.T, dir string) *git.Repository {
 }
 
 func TestMaterialize_RejectsMalformedEntries(t *testing.T) {
-	for _, name := range []string{"..", "../escape", "/escape", "a/b", `a\b`, "."} {
+	names := []string{"..", "../escape", "/escape", "a/b", "."}
+	if os.PathSeparator == '\\' {
+		names = append(names, `a\b`)
+	}
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			repo := mustInit(t, t.TempDir())
 			parent := t.TempDir()
@@ -123,6 +127,23 @@ func TestMaterialize_RejectsMalformedEntries(t *testing.T) {
 			}
 			if _, err := os.Stat(filepath.Join(parent, "escape")); !os.IsNotExist(err) {
 				t.Fatalf("write escaped staging: %v", err)
+			}
+		})
+	}
+	if os.PathSeparator != '\\' {
+		t.Run(`a\b`, func(t *testing.T) {
+			repo := mustInit(t, t.TempDir())
+			hash := craftedCommit(t, repo, object.TreeEntry{Name: `a\b`, Mode: filemode.Regular})
+			root := t.TempDir()
+			if err := Materialize(t.Context(), repo, hash, root, Options{Workers: 2}); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, `a\b`)
+			if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+				t.Fatalf("backslash entry is not a regular file: %v, %v", info, err)
+			}
+			if content, err := os.ReadFile(path); err != nil || string(content) != "malicious" {
+				t.Fatalf("backslash file content = %q, %v", content, err)
 			}
 		})
 	}

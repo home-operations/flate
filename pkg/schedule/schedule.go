@@ -108,8 +108,11 @@ type node struct {
 	state        nodeState
 	blockedOn    []NodeID // deps recorded at the last OutcomeBlocked
 	redispatches int
-	failedOn     []NodeID
+	failedOn     []NodeID // unique dependencies; borrowed dispatcher slices MUST stay immutable
 	startedAt    uint64
+	readyAt      uint64
+	// Unrelated progress permits only one free retry per unchanged blocker set.
+	conservativeUsed bool
 	// rerunRequested is set when a wake arrives while the node is running, so
 	// complete() re-queues it once instead of dropping the wake (the re-run
 	// re-reads the store and re-evaluates its gate against current state).
@@ -127,10 +130,6 @@ type node struct {
 	rerun bool
 }
 
-type progress struct {
-	generation uint64
-}
-
 // Scheduler is a re-entrant fixpoint reconcile driver. Construct with New,
 // Seed the initial node set, wire store events to OnArrival/OnStatusWake,
 // then call Run.
@@ -138,18 +137,20 @@ type Scheduler struct {
 	tasks *task.Service
 	disp  Dispatcher
 
-	mu         sync.Mutex
-	cond       *sync.Cond
-	nodes      map[NodeID]*node
-	runq       []NodeID
-	parkedIdx  map[NodeID]map[NodeID]struct{} // dep id -> set of nodes parked on it
-	failedIdx  map[NodeID]map[NodeID]struct{} // dep id -> terminal dependency failures
-	progress   map[NodeID]progress
-	generation uint64
-	inFlight   int // count of stateRunning nodes (EXCLUDES parked)
-	draining   int // DrainNone/DrainCascade/DrainForce
-	canceled   bool
-	err        error
+	mu        sync.Mutex
+	cond      *sync.Cond
+	nodes     map[NodeID]*node
+	runq      []NodeID
+	parkedIdx map[NodeID]map[NodeID]struct{} // dep id -> set of nodes parked on it
+	failedIdx map[NodeID]map[NodeID]struct{} // dep id -> terminal dependency failures
+	// One overwriteable witness preserves unknown-ID registration evidence.
+	untracked   NodeID
+	untrackedAt uint64
+	generation  uint64
+	inFlight    int // count of stateRunning nodes (EXCLUDES parked)
+	draining    int // DrainNone/DrainCascade/DrainForce
+	canceled    bool
+	err         error
 	// dirty records that an object arrived since the last quiescence sweep. A
 	// rerun node re-expands at the structural fixpoint only when the store has
 	// grown since it last ran; the sweep clears dirty, so a sweep that produces
@@ -306,9 +307,15 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	defer s.cond.Broadcast()
 	n := s.nodes[id]
 	s.inFlight--
-	s.clearFailedLocked(n)
+	sameFailed := out == OutcomeDependencyFailed && s.sameFailedLocked(n, blocked)
+	if !sameFailed {
+		n.conservativeUsed = false
+		s.clearFailedLocked(n)
+	}
 	if s.err != nil || s.canceled {
+		s.clearFailedLocked(n)
 		n.state = stateTerminal
+		n.conservativeUsed = false
 		return
 	}
 	// Record the node's rerun intent, re-evaluated at each dispatch. The value
@@ -317,21 +324,43 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	// requeueRerunLocked at the fixpoint.
 	n.rerun = rerun
 	if out == OutcomeDependencyFailed {
-		n.failedOn = blocked
-		for _, dep := range blocked {
-			set := s.failedIdx[dep]
-			if set == nil {
-				set = map[NodeID]struct{}{}
-				s.failedIdx[dep] = set
+		if !sameFailed {
+			n.failedOn = blocked
+			duplicate := false
+			for _, dep := range blocked {
+				set := s.failedIdx[dep]
+				if set == nil {
+					set = map[NodeID]struct{}{}
+					s.failedIdx[dep] = set
+				}
+				before := len(set)
+				set[id] = struct{}{}
+				duplicate = duplicate || len(set) == before
 			}
-			set[id] = struct{}{}
-			// A dependency can recover after Dispatch reads its failure but
-			// before this reverse edge exists. Compare under the same lock
-			// that records Ready progress, without querying the store here.
-			if p := s.progress[dep]; p.generation > n.startedAt {
-				n.productive = true
-				n.rerunRequested = true
+			if duplicate {
+				// Dispatcher slices may be shared; only a private copy is compacted.
+				n.failedOn = make([]NodeID, 0, len(blocked))
+				for i, dep := range blocked {
+					if !slices.Contains(blocked[:i], dep) {
+						n.failedOn = append(n.failedOn, dep)
+					}
+				}
 			}
+		}
+		// Only progress after dispatch start can race failed-edge registration.
+		if s.generation > n.startedAt {
+			for _, dep := range blocked {
+				d := s.nodes[dep]
+				if (d != nil && d.readyAt > n.startedAt) || (dep == s.untracked && s.untrackedAt > n.startedAt) {
+					n.productive = true
+					n.rerunRequested = true
+					break
+				}
+			}
+		}
+		if !n.rerunRequested && !n.conservativeUsed && s.generation > n.startedAt {
+			n.conservativeUsed = true
+			n.rerunRequested = true
 		}
 	}
 	n.productive = n.productive || rerun && out == OutcomeTerminal
@@ -414,6 +443,22 @@ func (s *Scheduler) unparkLocked(n *node) {
 	s.redispatchLocked(n)
 }
 
+func (s *Scheduler) sameFailedLocked(n *node, blocked []NodeID) bool {
+	if slices.Equal(n.failedOn, blocked) {
+		return true
+	}
+	count := 0
+	for i, dep := range blocked {
+		if _, ok := s.failedIdx[dep][n.id]; !ok {
+			return false
+		}
+		if !slices.Contains(blocked[:i], dep) {
+			count++
+		}
+	}
+	return count == len(n.failedOn)
+}
+
 func (s *Scheduler) clearFailedLocked(n *node) {
 	for _, dep := range n.failedOn {
 		if set := s.failedIdx[dep]; set != nil {
@@ -426,26 +471,19 @@ func (s *Scheduler) clearFailedLocked(n *node) {
 	n.failedOn = nil
 }
 
+// Callers bypass idle events to keep the non-inlineable waiter wake path off arrivals.
 func (s *Scheduler) recordProgressLocked(id NodeID) {
-	// Idle wakes have no consumer; keep this guard inlineable.
-	if s.inFlight == 0 && len(s.failedIdx) == 0 {
-		return
-	}
-	s.advanceProgressLocked(id)
-}
-
-func (s *Scheduler) advanceProgressLocked(id NodeID) {
-	set := s.failedIdx[id]
-	// Only active dispatches can race failed-edge registration. With no
-	// active dispatch or recorded waiter, progress cannot recover a node.
-	if s.inFlight == 0 && len(set) == 0 {
+	if s.inFlight == 0 && (len(s.failedIdx) == 0 || len(s.failedIdx[id]) == 0) {
 		return
 	}
 	s.generation++
-	if s.progress == nil {
-		s.progress = map[NodeID]progress{}
+	if n := s.nodes[id]; n != nil {
+		n.readyAt = s.generation
+	} else {
+		s.untracked = id
+		s.untrackedAt = s.generation
 	}
-	s.progress[id] = progress{generation: s.generation}
+	set := s.failedIdx[id]
 	if len(set) == 0 {
 		return
 	}
@@ -457,7 +495,7 @@ func (s *Scheduler) advanceProgressLocked(id NodeID) {
 	for _, waiter := range waiters {
 		n := s.nodes[waiter]
 		switch n.state {
-		case stateTerminal:
+		case stateTerminal, stateRunnable:
 			n.productive = true
 			if !s.redispatchLocked(n) {
 				return
@@ -486,7 +524,7 @@ func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 	// An arrival can change a rerun node's resolved input set; mark the store
 	// dirty so the next quiescence sweep re-expands rerun nodes.
 	s.dirty = true
-	if !schedulable {
+	if !schedulable && (s.inFlight > 0 || len(s.failedIdx) > 0) {
 		s.recordProgressLocked(id)
 	}
 	if n := s.nodes[id]; n == nil {
@@ -525,7 +563,7 @@ func (s *Scheduler) OnStatusWake(id NodeID, ready, failed bool) {
 	if s.err != nil || s.canceled {
 		return
 	}
-	if ready {
+	if ready && (s.inFlight > 0 || len(s.failedIdx) > 0) {
 		s.recordProgressLocked(id)
 	}
 	s.wakeWaitersLocked(id)
@@ -605,6 +643,9 @@ func (s *Scheduler) redispatchLocked(n *node) bool {
 		}
 		n.redispatches++
 		n.queuedCharged = true
+	}
+	if n.productive {
+		n.conservativeUsed = false
 	}
 	n.contentRequested = false
 	n.productive = false

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/task"
 )
 
@@ -429,4 +430,155 @@ func TestRedispatch_ContentAndStatusCoalesce(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestProgress_RunnableUpgrade(t *testing.T) {
+	for _, charged := range []bool{false, true} {
+		for _, atCap := range []bool{false, true} {
+			t.Run(fmt.Sprintf("charged_%v/cap_%v", charged, atCap), func(t *testing.T) {
+				s := New(task.NewBounded(2), nil)
+				dep, nid := id("dependency"), id("consumer")
+				n := &node{id: nid, state: stateRunning}
+				s.nodes[nid], s.inFlight = n, 1
+				s.OnArrival(id("unrelated"), false)
+				s.complete(nid, OutcomeDependencyFailed, []NodeID{dep}, false)
+				assert.Equal(t, n.conservativeUsed, true)
+				assert.Equal(t, n.redispatches, 0)
+				assert.Equal(t, n.state, stateRunnable)
+				n.queuedCharged = charged
+				if atCap {
+					n.redispatches = maxRedispatches
+				}
+				for range 3 {
+					s.OnStatusWake(dep, true, false)
+				}
+				assert.Equal(t, len(s.runq), 1)
+				assert.Equal(t, s.err != nil, atCap && !charged)
+				want := 1
+				if charged {
+					want = 0
+				}
+				if atCap {
+					want = maxRedispatches
+				}
+				assert.Equal(t, n.redispatches, want)
+				if s.err == nil {
+					assert.Equal(t, n.queuedCharged, true)
+					assert.Equal(t, n.conservativeUsed, false)
+				}
+			})
+		}
+	}
+}
+
+func TestProgress_ChargedEpisodeRearms(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			dep, consumer, producer := id("dependency"), id("consumer"), id("producer")
+			requested, applied := make(chan struct{}), make(chan struct{})
+			var runs, active atomic.Int64
+			var s *Scheduler
+			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+				if nid == producer {
+					for round := range 4 {
+						if !awaitSignal(ctx, requested) {
+							return OutcomeTerminal, nil
+						}
+						if round == 1 {
+							s.OnStatusWake(dep, true, false)
+						} else {
+							s.OnArrival(id("unrelated"), false)
+						}
+						select {
+						case applied <- struct{}{}:
+						case <-ctx.Done():
+							return OutcomeTerminal, nil
+						}
+					}
+					return OutcomeTerminal, nil
+				}
+				assert.Equal(t, active.Add(1), int64(1))
+				defer active.Add(-1)
+				runs.Add(1)
+				select {
+				case requested <- struct{}{}:
+				case <-ctx.Done():
+					return OutcomeTerminal, nil
+				}
+				awaitSignal(ctx, applied)
+				return OutcomeDependencyFailed, []NodeID{dep}
+			}))
+			s.Seed([]NodeID{consumer, producer})
+			if err := s.Run(ctx); err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, runs.Load(), int64(4))
+			assert.Equal(t, s.nodes[consumer].redispatches, 1)
+			assert.Equal(t, s.nodes[consumer].conservativeUsed, true)
+		})
+	}
+}
+
+func TestProgress_RunnableUpgradeExecution(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			tasks := task.NewBounded(workers)
+			upgraded, entered, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			dep, consumer := id("dependency"), id("consumer")
+			var active, runs atomic.Int64
+			s := New(tasks, dispatchFunc(func(ctx context.Context, _ NodeID, _ int) (Outcome, []NodeID) {
+				assert.Equal(t, active.Load(), int64(1))
+				runs.Add(1)
+				close(entered)
+				awaitSignal(ctx, release)
+				return OutcomeTerminal, nil
+			}))
+			n := &node{id: consumer, state: stateRunning}
+			s.nodes[consumer], s.inFlight = n, 1
+			s.OnArrival(id("unrelated"), false)
+			s.complete(consumer, OutcomeDependencyFailed, []NodeID{dep}, false)
+			tasks.Go(ctx, "producer", func(ctx context.Context) {
+				active.Add(1)
+				defer active.Add(-1)
+				for range 3 {
+					s.OnStatusWake(dep, true, false)
+				}
+				close(upgraded)
+				awaitSignal(ctx, entered)
+				close(release)
+			})
+			if !awaitSignal(ctx, upgraded) {
+				t.Fatal(ctx.Err())
+			}
+			assert.Equal(t, n.redispatches, 1)
+			assert.Equal(t, len(s.runq), 1)
+			if err := s.Run(ctx); err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, runs.Load(), int64(1))
+			assert.Equal(t, len(s.failedIdx), 0)
+		})
+	}
+}
+
+func TestProgress_ContentPreservesConservativeRetry(t *testing.T) {
+	s := New(task.NewBounded(2), nil)
+	dep, consumer := id("dependency"), id("consumer")
+	n := &node{id: consumer, state: stateRunning}
+	s.nodes[consumer], s.inFlight = n, 1
+	s.OnArrival(consumer, true)
+	s.OnArrival(id("unrelated"), false)
+	s.complete(consumer, OutcomeDependencyFailed, []NodeID{dep}, false)
+	assert.Equal(t, n.conservativeUsed, false)
+	assert.Equal(t, n.redispatches, 1)
+	n.state, n.startedAt, n.queuedCharged = stateRunning, s.generation, false
+	s.inFlight = 1
+	s.OnArrival(id("unrelated"), false)
+	s.complete(consumer, OutcomeDependencyFailed, []NodeID{dep}, false)
+	assert.Equal(t, n.conservativeUsed, true)
+	assert.Equal(t, n.redispatches, 1)
 }

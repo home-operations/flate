@@ -27,6 +27,9 @@ import (
 // whole postBuild rather than silently substituting nothing.
 var varsubRegex = regexp.MustCompile(`^[_a-zA-Z][_a-zA-Z0-9]*$`)
 
+// ValidSubstitutionName reports whether name follows Flux's variable-name rule.
+func ValidSubstitutionName(name string) bool { return varsubRegex.MatchString(name) }
+
 // Provider exposes the ConfigMap/Secret lookups needed for value
 // reference expansion. The controllers implement it against the central
 // store (see NewStoreProvider); tests use SliceProvider.
@@ -627,10 +630,16 @@ func stripMatchingQuotes(value string) (string, bool) {
 // Contents). Missing references are logged (Secrets silently) and the
 // substitution proceeds with what's available.
 func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) error {
-	if ks == nil || len(ks.PostBuildSubstituteFrom) == 0 {
+	return ExpandPostBuildSubstituteReferenceWithSubstitutions(ks, p, nil)
+}
+
+// ExpandPostBuildSubstituteReferenceWithSubstitutions applies overlay after
+// referenced and inline values. An overlay never enables absent postBuild.
+func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomization, p Provider, overlay map[string]string) error {
+	if ks == nil || (len(ks.PostBuildSubstituteFrom) == 0 && (ks.PostBuild == nil || len(overlay) == 0)) {
 		return nil
 	}
-	if ks.Namespace == "" {
+	if len(ks.PostBuildSubstituteFrom) > 0 && ks.Namespace == "" {
 		return fmt.Errorf("%w: Kustomization with substituteFrom has no namespace", manifest.ErrInvalidSubstituteReference)
 	}
 
@@ -671,6 +680,11 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 	// Layer inline spec.postBuild.substitute on top — inline wins on
 	// key collision per upstream LoadVariables order.
 	maps.Copy(values, ks.PostBuildSubstitute)
+	if ks.PostBuild != nil {
+		for name, value := range overlay {
+			values[name] = value
+		}
+	}
 
 	// Reject invalid var names — matches upstream fluxcd/pkg/kustomize
 	// varSubstitution which fails the whole postBuild on any name that

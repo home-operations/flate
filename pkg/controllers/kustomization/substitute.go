@@ -25,7 +25,7 @@ import (
 // position (e.g. `${OP_VAULT}: 1`) substitutes just like one in value
 // position. Gating on values alone would skip a key-only reference and
 // leave the var literal — a flate-only divergence from Flux.
-func substituteDoc(doc map[string]any, vars map[string]string) (map[string]any, error) {
+func substituteDoc(doc map[string]any, vars map[string]string, strict bool) (map[string]any, error) {
 	if !manifest.AnyStringNode(doc, func(s string) bool { return strings.Contains(s, "${") }) {
 		return doc, nil
 	}
@@ -33,7 +33,11 @@ func substituteDoc(doc map[string]any, vars map[string]string) (map[string]any, 
 	if err != nil {
 		return nil, fmt.Errorf("substitute: marshal doc: %w", err)
 	}
-	out, err := kustomize.Substitute(raw, vars)
+	substitute := kustomize.Substitute
+	if strict {
+		substitute = kustomize.SubstituteStrict
+	}
+	out, err := substitute(raw, vars)
 	if err != nil {
 		return nil, err
 	}

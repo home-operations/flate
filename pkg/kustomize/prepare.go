@@ -32,8 +32,14 @@ import (
 // large shared CM — sub-millisecond aggregate across a big repo — so
 // threading a cache here would add wiring for no measurable gain.
 func Prepare(ks *manifest.Kustomization, provider values.Provider) (*manifest.Kustomization, error) {
+	return PrepareWithSubstitutions(ks, provider, nil)
+}
+
+// PrepareWithSubstitutions clones ks and applies overlay after its referenced
+// and inline substitution values, before rendering or fingerprinting.
+func PrepareWithSubstitutions(ks *manifest.Kustomization, provider values.Provider, overlay map[string]string) (*manifest.Kustomization, error) {
 	ks = ks.Clone()
-	if err := values.ExpandPostBuildSubstituteReference(ks, provider); err != nil {
+	if err := values.ExpandPostBuildSubstituteReferenceWithSubstitutions(ks, provider, overlay); err != nil {
 		return nil, err
 	}
 	return ks, nil

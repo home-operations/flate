@@ -45,6 +45,16 @@ func applyEnvVars(cmd *cobra.Command) error {
 		if !ok {
 			return
 		}
+		if f.Name == "substitute-from" || f.Name == "substitute" {
+			entries, err := substitutionEnv(f.Name, v)
+			if err != nil {
+				firstErr = err
+				return
+			}
+			firstErr = f.Value.(pflag.SliceValue).Replace(entries)
+			f.Changed = firstErr == nil
+			return
+		}
 		if err := f.Value.Set(v); err != nil {
 			firstErr = fmt.Errorf("invalid %s %q: %w", key, v, err)
 			return

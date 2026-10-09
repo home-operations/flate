@@ -43,6 +43,13 @@ func isReconcilableKind(kind string) bool {
 	return kind == manifest.KindKustomization || kind == manifest.KindHelmRelease
 }
 
+// SubstitutionSource supplies a ConfigMap or Secret only for postBuild references.
+// Path identifies its input file in collision diagnostics; empty denotes SDK input.
+type SubstitutionSource struct {
+	Object manifest.BaseManifest
+	Path   string
+}
+
 // Config carries everything the orchestrator needs.
 type Config struct {
 	// Path is the directory to scan for Flux objects (the scan entry
@@ -79,6 +86,12 @@ type Config struct {
 	// resources mark Ready with a "skipped:" reason; omitted valuesFrom
 	// refs let HelmReleases render with the remaining values.
 	AllowMissingSecrets bool
+	// SubstituteFrom contains CI-side postBuild sources, never stored or emitted.
+	SubstituteFrom []SubstitutionSource
+	// Substitute overrides referenced and inline values when postBuild is present.
+	Substitute map[string]string
+	// StrictSubstitutions fails undefined postBuild variables without defaults.
+	StrictSubstitutions bool
 
 	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
 	// because the cluster installs them at runtime, and reports each missing CRD
@@ -189,6 +202,8 @@ type Orchestrator struct {
 	filter *change.Filter
 	// Backing storage keeps the effective option owned without a separate allocation.
 	disableChartDigestTracking bool
+	// Accepted identities are immutable after bootstrap, including for late consumers.
+	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
 
 	// repoRoot is the resolved .git ancestor of cfg.Path (or
 	// cfg.Path when no .git exists). Populated during Bootstrap from
@@ -370,12 +385,16 @@ type Result struct {
 
 // New constructs an Orchestrator. It allocates the Store and TaskService
 // but does not yet start any reconciliation — call Bootstrap then Run.
+// Substitution inputs are copied; callers MUST NOT mutate them during New.
 func New(cfg Config) (*Orchestrator, error) {
 	if cfg.Path == "" {
 		return nil, errors.New("orchestrator: path is required")
 	}
 
 	disabled := cfg.HelmOptions.DisableChartDigestTracking != nil && *cfg.HelmOptions.DisableChartDigestTracking
+	if err := snapshotSubstitutions(&cfg); err != nil {
+		return nil, err
+	}
 
 	// Arm (or disarm) the process-global SSRF egress guard before any fetcher
 	// transport dials. Inert by default; see Config.RestrictEgress.
@@ -585,6 +604,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.producers = res.Producers
 	o.existence = res.Existence
 
+	o.freezeSubstitutions()
 	o.failDependsOnCycles()
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err

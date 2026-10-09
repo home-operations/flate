@@ -39,7 +39,11 @@ type Controller struct {
 	// given ConfigMap (see Options.SelfProduces). collectDeps consults it
 	// to drop a self-produced substituteFrom CM from the dep set. Nil when
 	// unset (tests / no repoRoot) → edge always added.
-	selfProduces func(cm, consumer manifest.NamedResource) bool
+	selfProduces         func(cm, consumer manifest.NamedResource) bool
+	substitutionSources  map[manifest.NamedResource]manifest.BaseManifest
+	substitutionProvider values.Provider
+	substitute           map[string]string
+	strictSubstitutions  bool
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto the
@@ -55,6 +59,12 @@ type Options struct {
 	// full mode (graph-aware index), unlike the changed-only producer
 	// skip. Nil → the edge is always added (pre-index behavior).
 	SelfProduces func(cm, consumer manifest.NamedResource) bool
+	// SubstituteFrom is the immutable bootstrap-approved postBuild source snapshot.
+	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
+	// Substitute layers over referenced and inline postBuild values.
+	Substitute map[string]string
+	// StrictSubstitutions rejects undefined variables without defaults.
+	StrictSubstitutions bool
 }
 
 // New constructs a Kustomization controller.
@@ -72,6 +82,15 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 func (c *Controller) Configure(opts Options) {
 	c.Controller.Configure(opts.Options)
 	c.selfProduces = opts.SelfProduces
+	c.substitutionSources = opts.SubstituteFrom
+	c.substitute = opts.Substitute
+	c.strictSubstitutions = opts.StrictSubstitutions
+	c.substitutionProvider = values.NewStoreProvider(c.Store)
+	if len(opts.SubstituteFrom) > 0 {
+		c.substitutionProvider = &substitutionProvider{
+			sources: opts.SubstituteFrom, fallback: c.substitutionProvider,
+		}
+	}
 }
 
 // Start wires lifecycle state. The scheduler owns dispatch (via ReconcileNode)
@@ -139,8 +158,11 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 	// the same pre-render dance an embedder calling RenderFlux directly
 	// would perform. Keeping one canonical implementation here means
 	// changes to the contract only land in one place. Mirrors helm.Prepare.
-	provider := values.NewStoreProvider(c.Store)
-	ks, err = kustomize.Prepare(ks, provider)
+	provider := c.substitutionProvider
+	if provider == nil {
+		provider = values.NewStoreProvider(c.Store)
+	}
+	ks, err = kustomize.PrepareWithSubstitutions(ks, provider, c.substitute)
 	if err != nil {
 		return err
 	}
@@ -204,9 +226,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 			if manifest.HasSubstituteDisabled(doc) {
 				continue
 			}
-			substituted, sErr := substituteDoc(doc, vars)
+			substituted, sErr := substituteDoc(doc, vars, c.strictSubstitutions)
 			if sErr != nil {
-				return sErr
+				return fmt.Errorf("%w: Kustomization %s: %w", manifest.ErrInvalidSubstituteReference, id.NamespacedName(), sErr)
 			}
 			docs[i] = substituted
 		}
@@ -274,6 +296,9 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 			continue
 		}
 		depID := manifest.NamedResource{Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name}
+		if c.substitutionSources[depID] != nil {
+			continue
+		}
 		// Drop the hard CM edge ONLY when THIS KS's own render subtree
 		// emits it (the bjw-s/onedr0p self-substitute: cluster-apps' bare-
 		// dir render produces ConfigMap/flux-system/cluster-settings via a

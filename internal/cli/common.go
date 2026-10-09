@@ -46,6 +46,11 @@ type commonFlags struct {
 	namespace            string
 	skipCRDs             bool
 	skipSecrets          bool
+	substituteFrom       []string
+	substitute           []string
+	strictSubstitutions  bool
+	substitutionSources  []orchestrator.SubstitutionSource
+	substitutionValues   map[string]string
 	allowMissingSecrets  bool
 	allowMissingCRDs     bool
 	forceGenericProvider bool
@@ -119,6 +124,12 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
 	fs.BoolVar(&f.allowMissingCRDs, "allow-missing-crds", false,
 		"accept CRD dependencies absent from the offline inputs because the cluster installs them at runtime")
+	fs.StringArrayVar(&f.substituteFrom, "substitute-from", nil,
+		"ConfigMap/Secret YAML file for postBuild references (repeatable; later identities replace earlier ones)")
+	fs.StringArrayVar(&f.substitute, "substitute", nil,
+		"postBuild KEY=VALUE override (repeatable; applied after references and inline values)")
+	fs.BoolVar(&f.strictSubstitutions, "strict-substitutions", false,
+		"fail postBuild expansion on undefined variables without defaults")
 	fs.BoolVar(&f.allowMissingSecrets, "allow-missing-secrets", false,
 		"soft-skip ALL source auth Secrets and HelmRelease valuesFrom Secret/ConfigMap refs "+
 			"that only materialize in the live cluster. Usually unnecessary: a missing Secret "+
@@ -479,6 +490,9 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 			Jitter:   c.sourceRetryJitter,
 		},
 		GitDepth:                  c.gitDepth,
+		SubstituteFrom:            c.substitutionSources,
+		Substitute:                c.substitutionValues,
+		StrictSubstitutions:       c.strictSubstitutions,
 		AllowMissingSecrets:       c.allowMissingSecrets,
 		AllowMissingCRDs:          c.allowMissingCRDs,
 		ForceGenericProvider:      c.forceGenericProvider,
@@ -519,6 +533,9 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags, pre ...fun
 	// Cleanup is deferred (not bound to ctx) so the tempdir survives
 	// SIGINT until the orchestrator's read paths have actually
 	// unwound.
+	if err := c.loadSubstitutions(ctx); err != nil {
+		return nil, nil, err
+	}
 	cleanup, err := resolveBaseline(ctx, &c, false)
 	if err != nil {
 		return nil, nil, err

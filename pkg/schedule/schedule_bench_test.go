@@ -155,15 +155,30 @@ func BenchmarkComplete_Failed(b *testing.B) {
 		for i := range previous {
 			previous[i] = id(fmt.Sprintf("blocker-%02d", i))
 		}
-		for _, mode := range []string{"Unchanged", "Reordered", "Replaced"} {
+		for _, tc := range []struct {
+			mode        string
+			replacement int
+		}{
+			{mode: "Unchanged"},
+			{mode: "Reordered"},
+			{mode: "Replaced", replacement: 0},
+			{mode: "Replaced", replacement: fanIn - 1},
+		} {
+			mode := tc.mode
+			name := mode
 			blocked := slices.Clone(previous)
 			if mode == "Reordered" {
 				slices.Reverse(blocked)
 			}
 			if mode == "Replaced" {
-				blocked[0] = id("replacement")
+				blocked[tc.replacement] = id("replacement")
+				position := "First"
+				if tc.replacement == fanIn-1 {
+					position = "Last"
+				}
+				name += "/" + position
 			}
-			b.Run(fmt.Sprintf("FanIn=%d/%s", fanIn, mode), func(b *testing.B) {
+			b.Run(fmt.Sprintf("FanIn=%d/%s", fanIn, name), func(b *testing.B) {
 				next := blocked
 				s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, int) (Outcome, []NodeID) {
 					return OutcomeDependencyFailed, next
@@ -171,20 +186,18 @@ func BenchmarkComplete_Failed(b *testing.B) {
 				nid := id("consumer")
 				n := &node{id: nid}
 				s.nodes[nid] = n
-				n.failedOn = previous
 				for _, dep := range append(slices.Clone(previous), blocked...) {
 					s.failedIdx[dep] = map[NodeID]struct{}{id("other"): {}}
 				}
-				for _, dep := range previous {
-					s.failedIdx[dep][nid] = struct{}{}
-				}
+				s.inFlight = 1
+				s.complete(nid, OutcomeDependencyFailed, previous, false)
 				b.ReportAllocs()
 				for b.Loop() {
 					n.state = stateRunning
 					s.inFlight = 1
 					out, failed := s.disp.Dispatch(b.Context(), nid, DrainNone)
 					s.complete(nid, out, failed, false)
-					if mode != "Unchanged" {
+					if mode == "Replaced" {
 						if &next[0] == &blocked[0] {
 							next = previous
 						} else {

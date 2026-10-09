@@ -306,8 +306,8 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	}
 	l.IgnoreFile = ""
 	// Pins resolve on final namespace ids. Extra inheritance passes are needed
-	// only when an authored GitRepository ref makes a pin possible; unpinned
-	// followed paths must wait for the complete Kustomization set in Run.
+	// only when both an authored ref and a self-matching URL make a pin possible;
+	// unpinned followed paths must wait for the complete Kustomization set in Run.
 	d.applyNamespaces(repoRoot)
 	namespaced := total
 
@@ -331,8 +331,10 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				}
 				repo, ok := d.cfg.Store.Get[*manifest.GitRepository](id)
 				if ok && repo.Reference != nil && manifest.GitRefString(*repo.Reference) != "" {
-					d.applyNamespaces(repoRoot)
-					break
+					if _, match := d.selfRemotes(repoRoot)[normalizeGitURL(repo.URL)]; match {
+						d.applyNamespaces(repoRoot)
+						break
+					}
 				}
 			}
 			namespaced = total

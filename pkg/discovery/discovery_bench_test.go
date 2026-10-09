@@ -5,6 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -22,34 +27,75 @@ func BenchmarkRunParentGates(b *testing.B) {
 	}
 }
 
-func BenchmarkRun_UnpinnedFollowedChain(b *testing.B) {
-	root := b.TempDir()
-	const depth, width = 8, 40
-	testutil.WriteFile(b, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+func BenchmarkRun_FollowedChain(b *testing.B) {
+	for _, repo := range []struct {
+		name, url string
+	}{
+		{"unpinned", ""},
+		{"non_matching_ref", "https://example.invalid/other.git"},
+		{"pinned", "https://example.invalid/self.git"},
+	} {
+		b.Run(repo.name, func(b *testing.B) {
+			root := b.TempDir()
+			const depth, width = 8, 40
+			testutil.WriteFile(b, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: top, namespace: flux-system}
 spec: {path: ./level0, sourceRef: {kind: GitRepository, name: flux-system}}
 `)
-	for level := range depth {
-		var resources strings.Builder
-		for child := range width {
-			name := fmt.Sprintf("ks%d-%d", level, child)
-			fmt.Fprintf(&resources, "  - %s.yaml\n", name)
-			testutil.WriteFile(b, root, fmt.Sprintf("level%d/%s.yaml", level, name), fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+			for level := range depth {
+				var resources strings.Builder
+				for child := range width {
+					name := fmt.Sprintf("ks%d-%d", level, child)
+					fmt.Fprintf(&resources, "  - %s.yaml\n", name)
+					testutil.WriteFile(b, root, fmt.Sprintf("level%d/%s.yaml", level, name), fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: %s}
 spec: {path: ./level%d, sourceRef: {kind: GitRepository, name: flux-system}}
 `, name, level+1))
-		}
-		testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", level),
-			"namespace: flux-system\nresources:\n"+resources.String())
-	}
-	testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", depth), "resources: []\n")
-	b.ReportAllocs()
-	for b.Loop() {
-		if _, err := Run(b.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: store.New(), WipeSecrets: true}); err != nil {
-			b.Fatal(err)
-		}
+				}
+				testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", level),
+					"namespace: flux-system\nresources:\n"+resources.String())
+			}
+			testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", depth), "resources: []\n")
+			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, WipeSecrets: true}
+			if repo.url != "" {
+				testutil.WriteFile(b, root, "flux/repo.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  url: %s
+  ref: {branch: main}
+`, repo.url))
+				cfg.SelfURLs = []string{"https://example.invalid/self.git"}
+			}
+			if repo.name == "pinned" {
+				r, err := git.PlainInit(root, false)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if err := r.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))); err != nil {
+					b.Fatal(err)
+				}
+				w, err := r.Worktree()
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := w.Add("."); err != nil {
+					b.Fatal(err)
+				}
+				if _, err := w.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "b", Email: "b@e", When: time.Unix(0, 0)}}); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				cfg.Store = store.New()
+				if _, err := Run(b.Context(), cfg); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

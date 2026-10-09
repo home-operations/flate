@@ -97,39 +97,57 @@ spec:
 
 func TestRun_NamespaceIndependentOfDiscoveryDepth(t *testing.T) {
 	t.Parallel()
-	for _, placement := range []string{"deep", "clusters"} {
-		t.Run(placement, func(t *testing.T) {
-			root := t.TempDir()
-			if _, err := git.PlainInit(root, false); err != nil {
-				t.Fatal(err)
-			}
-			for _, file := range []struct {
-				path, name, namespace, target, extra string
-			}{
-				{"flux/a.yaml", "a", ", namespace: flux-system", "./apps", ""},
-				{"flux/c.yaml", "c", ", namespace: flux-system", "./clusters", ""},
-				{"apps/team/x.yaml", "x", "", "./xout", ""},
-				{"clusters/c2.yaml", "c2", ", namespace: flux-system", "./deep", ""},
-				{placement + "/b.yaml", "b", ", namespace: flux-system", "./apps/team", "  targetNamespace: team\n"},
-			} {
-				testutil.WriteFile(t, root, file.path, fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+	for _, repo := range []struct {
+		name, ref string
+	}{
+		{"none", ""},
+		{"no_ref", ""},
+		{"non_matching_ref", "  ref: {branch: main}\n"},
+	} {
+		t.Run(repo.name, func(t *testing.T) {
+			for _, placement := range []string{"deep", "clusters"} {
+				t.Run(placement, func(t *testing.T) {
+					root := t.TempDir()
+					if _, err := git.PlainInit(root, false); err != nil {
+						t.Fatal(err)
+					}
+					for _, file := range []struct {
+						path, name, namespace, target, extra string
+					}{
+						{"flux/a.yaml", "a", ", namespace: flux-system", "./apps", ""},
+						{"flux/c.yaml", "c", ", namespace: flux-system", "./clusters", ""},
+						{"apps/team/x.yaml", "x", "", "./xout", ""},
+						{"clusters/c2.yaml", "c2", ", namespace: flux-system", "./deep", ""},
+						{placement + "/b.yaml", "b", ", namespace: flux-system", "./apps/team", "  targetNamespace: team\n"},
+					} {
+						testutil.WriteFile(t, root, file.path, fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: %s%s}
 spec:
   path: %s
 %s  sourceRef: {kind: GitRepository, name: flux-system}
 `, file.name, file.namespace, file.target, file.extra))
+					}
+					if repo.name != "none" {
+						testutil.WriteFile(t, root, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  url: https://example.invalid/x.git
+`+repo.ref)
+					}
+					st := store.New()
+					if _, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), Store: st}); err != nil {
+						t.Fatal(err)
+					}
+					var ids []string
+					for _, ks := range st.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+						ids = append(ids, ks.Named().NamespacedName())
+					}
+					slices.Sort(ids)
+					assert.Diff(t, ids, []string{"flux-system/a", "flux-system/b", "flux-system/c", "flux-system/c2", "team/x"})
+				})
 			}
-			st := store.New()
-			if _, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), Store: st}); err != nil {
-				t.Fatal(err)
-			}
-			var ids []string
-			for _, ks := range st.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-				ids = append(ids, ks.Named().NamespacedName())
-			}
-			slices.Sort(ids)
-			assert.Diff(t, ids, []string{"flux-system/a", "flux-system/b", "flux-system/c", "flux-system/c2", "team/x"})
 		})
 	}
 }

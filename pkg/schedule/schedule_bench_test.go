@@ -173,7 +173,10 @@ func BenchmarkComplete_Failed(b *testing.B) {
 				s.nodes[nid] = n
 				n.failedOn = previous
 				for _, dep := range append(slices.Clone(previous), blocked...) {
-					s.failedIdx[dep] = map[NodeID]struct{}{nid: {}, id("other"): {}}
+					s.failedIdx[dep] = map[NodeID]struct{}{id("other"): {}}
+				}
+				for _, dep := range previous {
+					s.failedIdx[dep][nid] = struct{}{}
 				}
 				b.ReportAllocs()
 				for b.Loop() {

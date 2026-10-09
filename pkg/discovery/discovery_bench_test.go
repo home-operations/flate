@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -67,22 +66,22 @@ spec:
 	for _, observe := range []bool{false, true} {
 		b.Run(fmt.Sprintf("observe_%t", observe), func(b *testing.B) {
 			cfg := Config{Path: root, RepoRoot: root, WipeSecrets: true}
-			var disabled bool
+			var seen int
 			if observe {
-				cfg.OnHelmRelease = func(hr *manifest.HelmRelease) {
-					disabled = disabled || helm.DisablesChartDigestTracking(hr)
+				cfg.OnHelmRelease = func(*manifest.HelmRelease) {
+					seen++
 				}
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				disabled = false
+				seen = 0
 				cfg.Store = store.New()
 				if _, err := Run(b.Context(), cfg); err != nil {
 					b.Fatal(err)
 				}
 			}
-			if observe && !disabled {
-				b.Fatal("gate was not detected")
+			if observe && seen == 0 {
+				b.Fatal("no release observed")
 			}
 		})
 	}

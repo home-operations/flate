@@ -87,6 +87,7 @@ type Config struct {
 	// discovery admission, including Kustomization-owned releases. Nil disables
 	// observation. Callbacks must not retain or mutate releases, touch the store,
 	// or allocate. Separate Load roots may parse and observe a file again.
+	// The callback MUST be invoked from a single goroutine.
 	OnHelmRelease func(*manifest.HelmRelease)
 	// Path is the scan entry point — the directory the file walker
 	// starts at (a Flux cluster's entry, e.g. kubernetes/flux/cluster).

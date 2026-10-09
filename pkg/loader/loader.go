@@ -44,6 +44,7 @@ type Options struct {
 	// before admission checks. Nil disables observation. Callbacks must not
 	// retain or mutate the release, touch the store, or allocate. Independent
 	// Load calls can parse the same file again and invoke the callback again.
+	// The callback MUST be invoked from a single goroutine.
 	OnHelmRelease func(*manifest.HelmRelease)
 	// WipeSecrets controls Secret cleartext replacement. Default true.
 	WipeSecrets bool

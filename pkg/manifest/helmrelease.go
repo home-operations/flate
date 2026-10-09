@@ -186,6 +186,11 @@ func (h *HelmRelease) Named() NamedResource {
 	return NamedResource{Kind: KindHelmRelease, Namespace: h.Namespace, Name: h.Name}
 }
 
+// UsesDirectOCIRepository reports whether chartRef directly names an OCIRepository.
+func (h *HelmRelease) UsesDirectOCIRepository() bool {
+	return h.ChartRef != nil && h.ChartRef.Kind == KindOCIRepository
+}
+
 // Clone returns a copy of h safe for in-place mutation during a single
 // reconcile pass. Deep-copies every mutable reference field —
 // reconcile bodies, prepare passes, and orchestrator stamping all

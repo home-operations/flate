@@ -62,36 +62,6 @@ func TestOCIChartVersion_RevisionSemantics(t *testing.T) {
 	}
 }
 
-func ociRenderFixture(t *testing.T) (*store.Store, *manifest.HelmRelease, string) {
-	t.Helper()
-	dir := t.TempDir()
-	writeChartFiles(t, dir, "podinfo", "6.15.0")
-	testutil.WriteFile(t, dir, "values.yaml", "marker: default\n")
-	testutil.WriteFile(t, dir, "prod.yaml", "marker: original\n")
-	testutil.WriteFile(t, dir, "charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.2.3+child\n")
-	testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .Release.Name }}
-  labels:
-    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | quote }}
-data:
-  version: {{ .Chart.Version | quote }}
-  marker: {{ .Values.marker | quote }}
-`)
-	st := store.New()
-	src := &manifest.OCIRepository{Name: "podinfo", Namespace: "apps", URL: "oci://example.test/podinfo"}
-	st.AddObject(src)
-	hr := &manifest.HelmRelease{
-		Name: "podinfo", Namespace: "apps",
-		ChartRef:         &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: src.Name},
-		Chart:            manifest.HelmChart{RepoKind: manifest.KindOCIRepository, RepoNamespace: src.Namespace, RepoName: src.Name},
-		ChartValuesFiles: []string{"prod.yaml"},
-	}
-	st.AddObject(hr)
-	return st, hr, dir
-}
-
 func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 	for _, mode := range []struct {
 		name    string
@@ -134,7 +104,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 							errs[i] = ctx.Err()
 							return
 						}
-						output[i], errs[i] = cli.Template(ctx, release, nil, Options{DisableChartDigestTracking: mode.disable})
+						output[i], errs[i] = cli.Template(ctx, release, nil, Options{DisableChartDigestTracking: &mode.disable})
 					})
 				}
 				<-entered
@@ -188,11 +158,11 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 				t.Fatal(err)
 			}
 			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: mode.disable}); err != nil {
+			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: &mode.disable}); err != nil {
 				t.Fatal(err)
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
-			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: mode.disable}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: &mode.disable}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("invalid chart version bypassed validation: %v", err)
 			}
 
@@ -440,7 +410,7 @@ func setupOCIChartTest(t *testing.T, slot, label string) (*Client, *manifest.Hel
 // writeChartFiles drops a minimal helm chart at root/<name-from-Chart.yaml-dir>
 // — used for the "extract" layout test where source.oci leaves chart
 // files at slot root.
-func writeChartFiles(t *testing.T, root, name, version string) {
+func writeChartFiles(t testing.TB, root, name, version string) {
 	t.Helper()
 	testutil.WriteFile(t, root, "Chart.yaml",
 		"apiVersion: v2\nname: "+name+"\nversion: "+version+"\n")

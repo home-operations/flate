@@ -1,4 +1,4 @@
-package helm
+package orchestrator
 
 import (
 	"slices"
@@ -34,24 +34,25 @@ func TestDisablesChartDigestTracking_Values(t *testing.T) {
 		{name: "exact target", values: digestTrackingValues([]any{targeted}), want: true},
 		{name: "other controller", values: digestTrackingValues([]any{map[string]any{"patch": gate["patch"], "target": map[string]any{"name": "source-controller"}}})},
 		{name: "regex target", values: digestTrackingValues([]any{map[string]any{"patch": gate["patch"], "target": map[string]any{"name": "helm-.*"}}})},
-		{name: "missing target name", values: digestTrackingValues([]any{map[string]any{"patch": gate["patch"], "target": map[string]any{"kind": "Deployment"}}})},
+		{name: "kind-only target", values: digestTrackingValues([]any{map[string]any{"patch": gate["patch"], "target": map[string]any{"kind": "Deployment"}}})},
 		{name: "malformed target name", values: digestTrackingValues([]any{map[string]any{"patch": gate["patch"], "target": map[string]any{"name": []any{"helm-controller"}}}})},
 		{name: "malformed target", values: digestTrackingValues([]any{map[string]any{"patch": gate["patch"], "target": "helm-controller"}})},
 		{name: "null target", values: digestTrackingValues([]any{map[string]any{"patch": gate["patch"], "target": nil}})},
 		{name: "false only", values: digestTrackingValues([]any{falseGate})},
 		{name: "true then false", values: digestTrackingValues([]any{targeted, falseGate}), want: true},
 		{name: "false then true", values: digestTrackingValues([]any{falseGate, targeted}), want: true},
+		{name: "comment text", values: digestTrackingValues([]any{map[string]any{"patch": "# DisableChartDigestTracking=true"}}), want: true},
 		{name: "combined text", values: digestTrackingValues([]any{map[string]any{"patch": "DisableChartDigestTracking=false,DisableChartDigestTracking=true"}}), want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hr := &manifest.HelmRelease{Values: tc.values}
 			original := hr.Clone()
-			assert.Equal(t, DisablesChartDigestTracking(hr), tc.want)
+			assert.Equal(t, disablesChartDigestTracking(hr), tc.want)
 			assert.Diff(t, hr, original)
-			assert.Equal(t, testing.AllocsPerRun(100, func() { DisablesChartDigestTracking(hr) }), 0.0)
+			assert.Equal(t, testing.AllocsPerRun(100, func() { disablesChartDigestTracking(hr) }), 0.0)
 		})
 	}
-	assert.Equal(t, DisablesChartDigestTracking(nil), false)
+	assert.Equal(t, disablesChartDigestTracking(nil), false)
 }
 
 func TestDisablesChartDigestTracking_InputOrder(t *testing.T) {
@@ -60,7 +61,7 @@ func TestDisablesChartDigestTracking_InputOrder(t *testing.T) {
 	for range 2 {
 		disabled := false
 		for _, hr := range releases {
-			disabled = disabled || DisablesChartDigestTracking(hr)
+			disabled = disabled || disablesChartDigestTracking(hr)
 		}
 		assert.Equal(t, disabled, true)
 		slices.Reverse(releases)

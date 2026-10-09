@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,8 +11,6 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/google/go-cmp/cmp"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
@@ -24,198 +23,190 @@ import (
 )
 
 func TestTemplateCache_OCIIdentity(t *testing.T) {
-	for _, tc := range []struct {
+	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+	const next = "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+	shared := digest[:len(digest)-1] + "9"
+	initial := store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest}
+	for _, cache := range []struct {
 		name         string
 		memory, disk bool
-		disable      bool
 	}{
-		{"disabled", false, false, false},
-		{"memory", true, false, false},
-		{"disk only", false, true, false},
-		{"memory and disk", true, true, false},
-		{"tracking off uncached", false, false, true},
-		{"tracking off memory", true, false, true},
-		{"tracking off disk", false, true, true},
-		{"tracking off memory and disk", true, true, true},
+		{"disabled", false, false}, {"memory", true, false}, {"disk", false, true}, {"memory and disk", true, true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			st, hr, dir := ociRenderFixture(t)
-			original := hr.Clone()
-			layout := cacheroot.New(t.TempDir())
-			opts := ClientOptions{}
-			if tc.memory {
-				opts.TemplateCacheBytes = 1 << 20
-			}
-			if tc.disk {
-				opts.RenderCacheBytes = 1 << 20
-				opts.RenderCacheRoot = layout.RenderHelmCache()
-			}
-			newClient := func() *Client {
-				cli, err := NewClientWithOptions(layout, opts)
-				if err != nil {
-					t.Fatal(err)
-				}
-				cli.SetSourceResolver(NewStoreSourceResolver(st))
-				return cli
-			}
-			cli := newClient()
-			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-			setIdentity := func(digest, revision string) {
-				st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
-					&store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Digest: digest, Revision: revision})
-			}
-			render := func(t *testing.T, hr *manifest.HelmRelease) string {
-				t.Helper()
-				out, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: tc.disable})
-				if err != nil {
-					t.Fatal(err)
-				}
-				return out
-			}
-			setIdentity(digest, "6.15.0@"+digest)
-			first := render(t, hr)
-			version := "6.15.0"
-			if !tc.disable {
-				version += "+ff3d3e14728f"
-			}
-			if !strings.Contains(first, `version: "`+version+`"`) || !strings.Contains(first, `marker: "original"`) {
-				t.Fatalf("missing tracked identity or values file:\n%s", first)
-			}
-			if !strings.Contains(first, `helm.sh/chart: "podinfo-`+strings.ReplaceAll(version, "+", "_")+`"`) {
-				t.Fatalf("missing chart label:\n%s", first)
-			}
-			if got := render(t, hr); got != first {
-				t.Fatal("repeat render changed bytes")
-			}
-			if cli.templateCache != nil {
-				keys := templateCacheKeys(t, cli, opts.RenderCacheRoot)
-				if len(keys) != 1 {
-					t.Fatalf("cache entries = %v, want one", keys)
-				}
-				const proof = "cached render proof"
-				cli.templateCache.Put(keys[0], proof)
-				if got := render(t, hr); got != proof {
-					t.Fatal("identical identity did not reuse rendered output")
-				}
-				if tc.disk {
-					cli = newClient()
-					if got := render(t, hr); got != proof {
-						t.Fatal("fresh client did not reuse persisted render")
+		for _, disable := range []bool{false, true} {
+			for _, tc := range []struct {
+				name                                   string
+				initial, next                          store.SourceArtifact
+				wantSameOutput, wantFingerprintChanged bool
+				marker                                 string
+			}{
+				{name: "unchanged", initial: initial, next: initial, wantSameOutput: true},
+				{name: "same suffix", initial: initial, next: store.SourceArtifact{Digest: shared, Revision: "6.15.0@" + shared}, wantSameOutput: true, wantFingerprintChanged: true},
+				{name: "digest only", initial: initial, next: store.SourceArtifact{Digest: shared, Revision: initial.Revision}, wantSameOutput: true, wantFingerprintChanged: true},
+				{name: "revision only", initial: initial, next: store.SourceArtifact{Digest: digest, Revision: "latest@" + digest}, wantSameOutput: true, wantFingerprintChanged: true},
+				{name: "changed suffix", initial: initial, next: store.SourceArtifact{Digest: next, Revision: "6.15.0@" + next}, wantSameOutput: disable, wantFingerprintChanged: true},
+				{name: "new values", initial: initial, next: store.SourceArtifact{Digest: shared, Revision: "6.15.0@" + shared}, marker: "updated", wantFingerprintChanged: true},
+			} {
+				t.Run(fmt.Sprintf("%s/disabled_%t/%s", cache.name, disable, tc.name), func(t *testing.T) {
+					st, hr, dir := ociRenderFixture(t)
+					original := hr.Clone()
+					layout := cacheroot.New(t.TempDir())
+					clientOpts := ClientOptions{}
+					if cache.memory {
+						clientOpts.TemplateCacheBytes = 1 << 20
 					}
-				}
-				cli.templateCache.Put(keys[0], first)
-				if got := render(t, hr); got != first {
-					t.Fatal("cached output changed bytes")
-				}
-			}
-			// Poison only the completed identity's entries: a fresh identity
-			// must parse its own values and render even with an identical suffix.
-			for key := range cli.chartValuesCache {
-				cli.chartValuesCache[key] = map[string]any{"marker": "stale values"}
-			}
-			if cli.templateCache != nil {
-				for _, key := range templateCacheKeys(t, cli, opts.RenderCacheRoot) {
-					cli.templateCache.Put(key, "stale render")
-				}
-			}
-			sharedPrefix := digest[:len(digest)-1] + "9"
-			setIdentity(sharedPrefix, "6.15.0@"+sharedPrefix)
-			if got := render(t, hr); got != first {
-				t.Fatalf("full digest did not invalidate caches:\n%s", got)
-			}
-			if got := len(cli.chartValuesCache); got != 2 {
-				t.Fatalf("values cache identities = %d, want 2", got)
-			}
-			for key := range cli.chartValuesCache {
-				cli.chartValuesCache[key] = map[string]any{"marker": "stale values"}
-			}
-			if cli.templateCache != nil {
-				for _, key := range templateCacheKeys(t, cli, opts.RenderCacheRoot) {
-					cli.templateCache.Put(key, "stale render")
-				}
-			}
-			// Digest and revision are independent fields in SourceArtifact.
-			setIdentity(digest, "6.15.0@"+sharedPrefix)
-			if got := render(t, hr); got != first {
-				t.Fatalf("digest-only change did not invalidate caches:\n%s", got)
-			}
-			if got := len(cli.chartValuesCache); got != 3 {
-				t.Fatalf("values cache ignored full artifact digest: identities = %d", got)
-			}
-			const next = "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-			setIdentity(next, "6.15.0@"+next)
-			changed := render(t, hr)
-			version = "6.15.0"
-			if !tc.disable {
-				version += "+abcdef123456"
-			}
-			if !strings.Contains(changed, `version: "`+version+`"`) || !strings.Contains(changed, `marker: "original"`) {
-				t.Fatalf("changed digest did not render new identity:\n%s", changed)
-			}
-			if got := render(t, hr); got != changed {
-				t.Fatal("changed identity did not repeat byte-identically")
-			}
-			for _, revision := range []string{"6.14.0@" + next, "invalid"} {
-				setIdentity(next, revision)
-				if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: tc.disable}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
-					t.Fatalf("invalid changed revision %q was replayed: %v", revision, err)
-				}
-			}
-			setIdentity(next, "6.15.0@"+next)
-			for _, kind := range []string{manifest.KindOCIRepository, manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact, manifest.KindHelmChart} {
-				t.Run(kind, func(t *testing.T) {
-					indirect := hr.Clone()
-					indirect.ChartRef = nil
-					indirect.Chart.RepoKind = kind
-					if kind == manifest.KindHelmChart {
-						st.AddObject(&manifest.HelmRepository{Name: "registry", Namespace: "apps", Type: manifest.RepoTypeOCI, URL: "oci://example.test/charts"})
-						st.AddObject(&manifest.HelmChartSource{Name: "podinfo", Namespace: "apps", Chart: "podinfo", Version: "6.15.0",
-							SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: "registry"}})
-						indirect.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "podinfo"}
+					if cache.disk {
+						clientOpts.RenderCacheBytes = 1 << 20
+						clientOpts.RenderCacheRoot = layout.RenderHelmCache()
 					}
-					st.SetArtifact(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "podinfo"},
-						&store.SourceArtifact{Kind: kind, LocalPath: dir, Digest: next, Revision: "6.15.0@" + next})
-					out := render(t, indirect)
-					if !strings.Contains(out, `version: "6.15.0"`) || !strings.Contains(out, `marker: "original"`) {
-						t.Fatalf("indirect source changed chart identity:\n%s", out)
+					newClient := func() *Client {
+						cli, err := NewClientWithOptions(layout, clientOpts)
+						if err != nil {
+							t.Fatal(err)
+						}
+						cli.SetSourceResolver(NewStoreSourceResolver(st))
+						return cli
+					}
+					cli := newClient()
+					opts := Options{DisableChartDigestTracking: &disable}
+					render := func(identity store.SourceArtifact) (string, string, string, string) {
+						t.Helper()
+						identity.Kind, identity.LocalPath = manifest.KindOCIRepository, dir
+						st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &identity)
+						out, err := cli.Template(t.Context(), hr, nil, opts)
+						if err != nil {
+							t.Fatal(err)
+						}
+						loaded, err := cli.LoadChart(t.Context(), hr)
+						if err != nil {
+							t.Fatal(err)
+						}
+						assert.Equal(t, loaded.Chart.Metadata.Version, "6.15.0")
+						assert.Equal(t, loaded.Chart.Dependencies()[0].Metadata.Version, "1.2.3+child")
+						if loaded.Fingerprint == "" {
+							t.Fatal("missing chart content fingerprint")
+						}
+						fp := ociChartFingerprint(loaded.Fingerprint, &identity, disable)
+						valuesKey := chartValuesCacheKey(fp, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+						merged, ok := cli.chartValuesCache[valuesKey]
+						if !ok {
+							t.Fatal("render did not cache values under its loaded fingerprint")
+						}
+						key := computeTemplateKey(fp, loaded.Chart, merged, opts, hr)
+						if cli.templateCache != nil {
+							cached, ok := cli.templateCache.Get(key)
+							if !ok || cached != out {
+								t.Fatal("render was not cached under its effective key")
+							}
+						}
+						repeated, err := cli.Template(t.Context(), hr, nil, opts)
+						if err != nil || repeated != out {
+							t.Fatalf("repeat render differs: %v", err)
+						}
+						return out, fp, key, valuesKey
+					}
+					first, fp, key, valuesKey := render(tc.initial)
+					if !strings.Contains(first, `marker: "original"`) {
+						t.Fatal(first)
+					}
+					const sentinel = "cached render proof"
+					if cli.templateCache != nil {
+						cli.templateCache.Put(key, sentinel)
+					}
+					if tc.marker != "" {
+						template, err := os.ReadFile(filepath.Join(dir, "templates/cm.yaml"))
+						if err != nil {
+							t.Fatal(err)
+						}
+						dir = t.TempDir()
+						writeChartFiles(t, dir, "podinfo", "6.15.0")
+						testutil.WriteFile(t, dir, "values.yaml", "marker: default\n")
+						testutil.WriteFile(t, dir, "prod.yaml", "marker: "+tc.marker+"\n")
+						testutil.WriteFile(t, dir, "charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.2.3+child\n")
+						testutil.WriteFile(t, dir, "templates/cm.yaml", string(template))
+					}
+					second, nextFP, nextKey, nextValuesKey := render(tc.next)
+					assert.Equal(t, second == sentinel, cli.templateCache != nil && !tc.wantFingerprintChanged)
+					if cache.disk {
+						fresh := newClient()
+						assert.Equal(t, fresh.templateCache.Len(), 0)
+						persisted, err := fresh.Template(t.Context(), hr, nil, opts)
+						if err != nil {
+							t.Fatal(err)
+						}
+						assert.Equal(t, persisted, second)
+						assert.Equal(t, persisted == sentinel, !tc.wantFingerprintChanged)
+					}
+					if cli.templateCache != nil {
+						cli.templateCache.Put(key, first)
+						if !tc.wantFingerprintChanged {
+							second, _, _, _ = render(tc.next)
+						}
+					}
+					assert.Equal(t, first == second, tc.wantSameOutput)
+					assert.Equal(t, fp != nextFP, tc.wantFingerprintChanged)
+					assert.Equal(t, key != nextKey, tc.wantFingerprintChanged)
+					assert.Equal(t, valuesKey != nextValuesKey, tc.wantFingerprintChanged)
+					if tc.marker != "" && !strings.Contains(second, `marker: "`+tc.marker+`"`) {
+						t.Fatal(second)
+					}
+					assert.Diff(t, hr, original)
+					for _, revision := range []string{"6.14.0@" + next, "invalid"} {
+						st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Digest: next, Revision: revision})
+						if _, err := cli.Template(t.Context(), hr, nil, opts); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+							t.Fatalf("invalid revision bypassed validation: %v", err)
+						}
 					}
 				})
 			}
-			if diff := cmp.Diff(original, hr); diff != "" {
-				t.Fatalf("stored release mutated (-want +got):\n%s", diff)
-			}
-			canonical := cli.chartCache[dir].chart
-			if canonical.Metadata.Version != "6.15.0" || canonical.Dependencies()[0].Metadata.Version != "1.2.3+child" {
-				t.Fatal("canonical chart or subchart metadata mutated")
-			}
-		})
+		}
 	}
 }
 
-func templateCacheKeys(t *testing.T, cli *Client, root string) []string {
-	t.Helper()
-	if root == "" {
-		var keys []string
-		for key := range cli.templateCache.index {
-			keys = append(keys, key)
-		}
-		return keys
+func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact, manifest.KindHelmChart} {
+		t.Run(kind, func(t *testing.T) {
+			st, hr, dir := ociRenderFixture(t)
+			hr = hr.Clone()
+			hr.ChartRef = nil
+			hr.Chart.RepoKind = kind
+			if kind == manifest.KindHelmChart {
+				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: kind, Name: "podinfo"}
+			}
+			st.SetArtifact(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, LocalPath: dir})
+			cli, err := NewClient(cacheroot.New(t.TempDir()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cli.SetSourceResolver(NewStoreSourceResolver(st))
+			var first, key string
+			for _, disabled := range []*bool{nil, new(false), new(true)} {
+				opts := Options{DisableChartDigestTracking: disabled}
+				out, err := cli.Template(t.Context(), hr, nil, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				loaded, err := cli.LoadChart(t.Context(), hr)
+				if err != nil {
+					t.Fatal(err)
+				}
+				merged, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+				if err != nil {
+					t.Fatal(err)
+				}
+				nextKey := computeTemplateKey(loaded.Fingerprint, loaded.Chart, merged, opts, hr)
+				if first != "" {
+					assert.Equal(t, out, first)
+					assert.Equal(t, nextKey, key)
+				}
+				if !strings.Contains(out, `version: "6.15.0"`) {
+					t.Fatal(out)
+				}
+				first, key = out, nextKey
+			}
+			assert.Equal(t, cli.templateCache.Len(), 1)
+		})
 	}
-	var keys []string
-	shards, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, shard := range shards {
-		entries, err := os.ReadDir(filepath.Join(root, shard.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, entry := range entries {
-			keys = append(keys, entry.Name())
-		}
-	}
-	return keys
 }
 
 // TestTemplateCache_GetMissReturnsFalse pins the trivial-but-load-bearing
@@ -446,9 +437,9 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 
 	t.Run("OptsDisableChartDigestTracking", func(t *testing.T) {
 		alt := baseOpts
-		alt.DisableChartDigestTracking = true
-		if got := computeTemplateKey("fp", baseChart, baseValues, alt, baseHR); got == baseKey {
-			t.Error("different digest tracking option did not change the key")
+		alt.DisableChartDigestTracking = new(true)
+		if got := computeTemplateKey("fp", baseChart, baseValues, alt, baseHR); got != baseKey {
+			t.Error("digest tracking option changed a non-OCI key")
 		}
 	})
 
@@ -796,23 +787,23 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 		return cli
 	}
 	cli := newClient()
-	for _, disable := range []bool{true, false, true, false} {
+	for _, disable := range []*bool{nil, new(false), new(true), nil, new(true), new(false)} {
 		opts := Options{DisableChartDigestTracking: disable}
 		out, err := cli.Template(t.Context(), hr, nil, opts)
 		if err != nil {
 			t.Fatal(err)
 		}
 		version := "6.15.0"
-		if !disable {
+		if disable == nil || !*disable {
 			version += "+ff3d3e14728f"
 		}
 		if !strings.Contains(out, `version: "`+version+`"`) {
-			t.Fatalf("disable=%t returned incompatible cached output:\n%s", disable, out)
+			t.Fatalf("disable=%v returned incompatible cached output:\n%s", disable, out)
 		}
 		fresh := newClient()
 		persisted, err := fresh.Template(t.Context(), hr, nil, opts)
 		if err != nil || persisted != out {
-			t.Fatalf("persisted disable=%t result differs: err=%v output=%s", disable, err, persisted)
+			t.Fatalf("persisted disable=%v result differs: err=%v output=%s", disable, err, persisted)
 		}
 	}
 	assert.Equal(t, cli.templateCache.Len(), 2)

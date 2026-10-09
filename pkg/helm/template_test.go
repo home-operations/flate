@@ -6,21 +6,11 @@ import (
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/store"
 )
 
-// TestMergeChartValuesFiles_Cached pins Item 5: the second call with
-// the same (chart, valuesFiles, ignoreMissing) tuple must serve from
-// chartValuesCache rather than re-yaml.Unmarshal. We assert the
-// behavior by mutating the underlying *chart.Chart's Files between
-// calls — the cached map is returned regardless of the (now-empty)
-// Files slice, which only happens when the cache short-circuits the
-// scan.
-//
-// The returned map MUST be a deep clone (defensive-copy convention):
-// callers may mutate it (downstream DeepMerge layering), so the cache
-// can't hand out the canonical map directly. We verify by mutating
-// the first return and observing the second return is unaffected.
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
@@ -32,9 +22,10 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 			{Name: "values-prod.yaml", Data: []byte("replicaCount: 3\nimage:\n  tag: v1\n")},
 		},
 	}
+	loaded := ChartLoadResult{Chart: ch, Fingerprint: chartFingerprint(ch)}
 	names := []string{"values-prod.yaml"}
 
-	first, err := cli.mergeChartValuesFiles(ch, names, false, "")
+	first, err := cli.mergeChartValuesFiles(loaded, names, false)
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -42,11 +33,8 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 		t.Fatalf("first call missing replicaCount: %+v", first)
 	}
 
-	// Mutate the chart's Files so a non-cached call would now miss the
-	// file and (with ignoreMissing=false) return an error. A successful
-	// second call therefore PROVES the cache served it.
-	ch.Files = nil
-	second, err := cli.mergeChartValuesFiles(ch, names, false, "")
+	loaded.Chart.Files = nil
+	second, err := cli.mergeChartValuesFiles(loaded, names, false)
 	if err != nil {
 		t.Fatalf("second call (cache hit expected): %v", err)
 	}
@@ -57,13 +45,15 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	// Caller-mutation safety: mutating the first result must not
 	// affect the second (defensive deep-clone on cache read).
 	first["replicaCount"] = "stomped"
-	third, err := cli.mergeChartValuesFiles(ch, names, false, "")
+	first["image"].(map[string]any)["tag"] = "stomped"
+	third, err := cli.mergeChartValuesFiles(loaded, names, false)
 	if err != nil {
 		t.Fatalf("third call: %v", err)
 	}
 	if third["replicaCount"] != float64(3) {
 		t.Errorf("cache aliased prior call's map: %+v", third)
 	}
+	assert.Equal(t, third["image"].(map[string]any)["tag"], "v1")
 }
 
 // TestMergeChartValuesFiles_DifferentKeysDontShare pins that the key
@@ -89,15 +79,113 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 		},
 	}
 
-	a, err := cli.mergeChartValuesFiles(chA, []string{"values.yaml"}, false, "")
+	a, err := cli.mergeChartValuesFiles(ChartLoadResult{Chart: chA, Fingerprint: chartFingerprint(chA)}, []string{"values.yaml"}, false)
 	if err != nil {
 		t.Fatalf("chartA: %v", err)
 	}
-	b, err := cli.mergeChartValuesFiles(chB, []string{"values.yaml"}, false, "")
+	b, err := cli.mergeChartValuesFiles(ChartLoadResult{Chart: chB, Fingerprint: chartFingerprint(chB)}, []string{"values.yaml"}, false)
 	if err != nil {
 		t.Fatalf("chartB: %v", err)
 	}
 	if a["kind"] != "chartA" || b["kind"] != "chartB" {
 		t.Errorf("distinct-chart cache aliased: a=%v b=%v", a, b)
+	}
+}
+
+func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
+	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := &chart.Chart{Metadata: &chart.Metadata{Name: "fixture", Version: "1.0.0"}, Files: []*chartcommon.File{
+		{Name: "first.yaml", Data: []byte("marker: first\n")},
+		{Name: "second.yaml", Data: []byte("marker: second\n")},
+	}}
+	loaded := ChartLoadResult{Chart: ch, Fingerprint: chartFingerprint(ch)}
+	for _, tc := range []struct {
+		name   string
+		files  []string
+		ignore bool
+		want   string
+	}{
+		{"ordered", []string{"first.yaml", "second.yaml"}, false, "second"},
+		{"reversed", []string{"second.yaml", "first.yaml"}, false, "first"},
+		{"ignore missing", []string{"first.yaml", "missing.yaml"}, true, "first"},
+		{"require missing", []string{"first.yaml", "missing.yaml"}, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			merged, err := cli.mergeChartValuesFiles(loaded, tc.files, tc.ignore)
+			if tc.want == "" {
+				if err == nil {
+					t.Fatal("required missing file was served from cache")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if merged["marker"] != tc.want {
+				t.Fatalf("marker = %v, want %s", merged["marker"], tc.want)
+			}
+		})
+	}
+}
+
+func TestChartValuesCacheKey_DistinctInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		first, second string
+	}{
+		{
+			"name boundaries",
+			chartValuesCacheKey("f", []string{"ab"}, false),
+			chartValuesCacheKey("f", []string{"a", "b"}, false),
+		},
+		{
+			"empty trailing name",
+			chartValuesCacheKey("f", []string{"a", ""}, false),
+			chartValuesCacheKey("f", []string{"a"}, false),
+		},
+		{
+			"missing file policy",
+			chartValuesCacheKey("f", []string{"a"}, true),
+			chartValuesCacheKey("f", []string{"a"}, false),
+		},
+		{
+			"name order",
+			chartValuesCacheKey("f", []string{"a", "b"}, false),
+			chartValuesCacheKey("f", []string{"b", "a"}, false),
+		},
+		{
+			"chart fingerprint",
+			chartValuesCacheKey("f", []string{"a"}, false),
+			chartValuesCacheKey("g", []string{"a"}, false),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.first != tc.second, true)
+		})
+	}
+}
+
+func TestOCIChartFingerprint_DistinctInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		first, second string
+	}{
+		{
+			"digest revision boundary",
+			ociChartFingerprint("f", &store.SourceArtifact{Digest: "xy", Revision: "z"}, false),
+			ociChartFingerprint("f", &store.SourceArtifact{Digest: "x", Revision: "yz"}, false),
+		},
+		{
+			"digest tracking mode",
+			ociChartFingerprint("f", &store.SourceArtifact{Digest: "xy", Revision: "z"}, true),
+			ociChartFingerprint("f", &store.SourceArtifact{Digest: "xy", Revision: "z"}, false),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.first != tc.second, true)
+		})
 	}
 }

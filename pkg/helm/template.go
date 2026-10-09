@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -36,15 +35,9 @@ import (
 func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, opts Options) (string, error) {
 	loaded, err := c.LoadChart(ctx, hr)
 	if err != nil {
-		if hr.ChartRef != nil && hr.ChartRef.Kind == manifest.KindOCIRepository {
-			if _, ok := errors.AsType[chart.ValidationError](err); ok {
-				return "", fmt.Errorf("load oci chart: %w: %w", manifest.ErrInput, err)
-			}
-		}
 		return "", err
 	}
-	var sourceIdentity string
-	if hr.ChartRef != nil && hr.ChartRef.Kind == manifest.KindOCIRepository {
+	if hr.UsesDirectOCIRepository() {
 		art := c.resolveLocalSource(hr)
 		if art == nil {
 			return "", fmt.Errorf("track oci chart version: %w: OCIRepository %s artifact not available",
@@ -52,17 +45,13 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 		version, err := ociChartVersion(loaded.Chart.Metadata.Version, art.Revision)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("track oci chart version: %w", err)
 		}
-		if !opts.DisableChartDigestTracking {
+		disabled := opts.DisableChartDigestTracking != nil && *opts.DisableChartDigestTracking
+		if !disabled {
 			loaded.Chart.Metadata.Version = version
 		}
-		if c.templateCache != nil {
-			loaded.Fingerprint = manifest.SHA256Hex([]byte(loaded.Fingerprint + "\x00" + art.Digest + "\x00" + art.Revision + "\x00" + version))
-		}
-		if len(hr.ChartValuesFiles) > 0 {
-			sourceIdentity = art.Digest + "\x00" + art.Revision
-		}
+		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art, disabled)
 	}
 	caps, err := opts.capabilities()
 	if err != nil {
@@ -99,7 +88,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	// (handled internally by helm) → chart-named valuesFiles → HR.Values.
 	finalValues := hrValues
 	if len(hr.ChartValuesFiles) > 0 {
-		base, err := c.mergeChartValuesFiles(loaded.Chart, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles, sourceIdentity)
+		base, err := c.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		if err != nil {
 			return "", fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
 		}
@@ -229,29 +218,18 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	return inst, disableHooks, nil
 }
 
-// mergeChartValuesFiles is the cache-aware entry point: it consults
-// Client.chartValuesCache before re-parsing and stores the canonical
-// merged map on miss. Callers receive a deep clone — downstream
-// layering DeepMerges the result, which may mutate intermediate
-// sub-maps.
-//
-// Cache key = sha256(chart.Name || chart.Version || source identity || joined valuesFiles
-// list || ignoreMissing bit). Distinct chart identities (different
-// name or version, e.g. a chart upgrade landing under the same path)
-// produce distinct keys, so a stale entry never serves a different
-// chart's values. ignoreMissing is folded into the key because two
-// HRs with the same (chart, valuesFiles) but different policies must
-// not share — a missing file is an error in one and skipped in the
-// other.
-func (c *Client) mergeChartValuesFiles(ch *chart.Chart, names []string, ignoreMissing bool, sourceIdentity string) (map[string]any, error) {
-	key := chartValuesCacheKey(ch, names, ignoreMissing, sourceIdentity)
+// mergeChartValuesFiles caches by loaded content and ordered filenames. Returned
+// maps MUST be cloned because downstream values layering mutates them. The
+// missing-file policy separates requests that skip files from those that fail.
+func (c *Client) mergeChartValuesFiles(loaded ChartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
+	key := chartValuesCacheKey(loaded.Fingerprint, names, ignoreMissing)
 	c.chartMu.RLock()
 	cached, ok := c.chartValuesCache[key]
 	c.chartMu.RUnlock()
 	if ok {
 		return manifest.DeepCopyMap(cached), nil
 	}
-	merged, err := mergeChartValuesFilesUncached(ch, names, ignoreMissing)
+	merged, err := mergeChartValuesFilesUncached(loaded.Chart, names, ignoreMissing)
 	if err != nil {
 		return nil, err
 	}
@@ -267,35 +245,22 @@ func (c *Client) mergeChartValuesFiles(ch *chart.Chart, names []string, ignoreMi
 	return manifest.DeepCopyMap(merged), nil
 }
 
-// chartValuesCacheKey builds the cache key for a (chart, valuesFiles,
-// ignoreMissing) tuple. The hash input is delimited so a chart named
-// "a-b" with version "c" hashes distinctly from a chart named "a"
-// with version "b-c". The trailing ignoreMissing byte separates the
-// two policy variants.
-func chartValuesCacheKey(ch *chart.Chart, names []string, ignoreMissing bool, sourceIdentity string) string {
-	// hash.Hash.Write never returns an error per its contract; drain
-	// the (int, error) tuple so gosec G104 stays quiet.
-	h := sha256.New()
-	if ch != nil && ch.Metadata != nil {
-		_, _ = h.Write([]byte(ch.Metadata.Name))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(ch.Metadata.Version))
-	}
-	_, _ = h.Write([]byte{0})
-	if sourceIdentity != "" {
-		_, _ = h.Write([]byte(sourceIdentity))
-		_, _ = h.Write([]byte{0})
-	}
+// chartValuesCacheKey separates ordered filenames and the missing-file policy.
+func chartValuesCacheKey(fingerprint string, names []string, ignoreMissing bool) string {
+	var buf [512]byte
+	data := append(buf[:0], fingerprint...)
+	data = append(data, 0)
 	for _, n := range names {
-		_, _ = h.Write([]byte(n))
-		_, _ = h.Write([]byte{0})
+		data = append(data, n...)
+		data = append(data, 0)
 	}
 	if ignoreMissing {
-		_, _ = h.Write([]byte{1})
+		data = append(data, 1)
 	} else {
-		_, _ = h.Write([]byte{0})
+		data = append(data, 0)
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // mergeChartValuesFilesUncached merges the named values files (relative

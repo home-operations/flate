@@ -55,7 +55,7 @@ type Client struct {
 	chartLoadLocks *keylock.KeyMap[string]
 
 	// chartValuesCache memoizes mergeChartValuesFiles output keyed by
-	// (chart name + version + joined valuesFiles list). Multiple HRs
+	// (loaded fingerprint, ordered valuesFiles, missing-file policy). Multiple HRs
 	// sharing a base chart and the same spec.chart.spec.valuesFiles
 	// stack (common: bjw-s app-template with a fixed set of layered
 	// values-*.yaml files) re-yaml.Unmarshal'd the same bytes once per
@@ -125,7 +125,7 @@ func (c *Client) envSettings() *cli.EnvSettings {
 // means the file was overwritten (mutable tag re-push, manual
 // edit) and the cache entry is stale.
 //
-// fingerprint, when non-empty, is the content-addressed digest of
+// fingerprint is the content-addressed digest of
 // the chart's loader.Load inputs — computed once at cache-fill
 // time and reused on every subsequent LoadChart hit. The template-
 // output cache mixes it into its own key so a stale chart never
@@ -319,7 +319,8 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	// same name-version land via writeAtomic at the same path, so the
 	// path is a stable string but the underlying bytes may have
 	// changed; without the stat check we'd serve the stale chart.
-	if ch, fp, ok := c.lookupCachedChart(path); ok {
+	needsFingerprint := c.templateCache != nil || len(hr.ChartValuesFiles) > 0
+	if ch, fp, ok := c.lookupCachedChart(path); ok && (!needsFingerprint || fp != "") {
 		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
@@ -335,11 +336,14 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 
 	// Re-check under the per-path lock — another goroutine may have
 	// populated the cache while we waited.
-	if ch, fp, ok := c.lookupCachedChart(path); ok {
+	ch, fp, cached := c.lookupCachedChart(path)
+	if cached && (!needsFingerprint || fp != "") {
 		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
-	ch, err := loader.Load(path)
+	if !cached {
+		ch, err = loader.Load(path)
+	}
 	if err != nil {
 		// A truncated/corrupt chart tgz left on disk (process killed
 		// mid-download, fs fault, manual delete-then-recreate) would
@@ -348,15 +352,15 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 		// re-error here on every subsequent run. Removing the file
 		// lets the next reconcile re-pull cleanly.
 		_ = os.Remove(path)
+		if _, ok := errors.AsType[chart.ValidationError](err); ok {
+			err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
+		}
 		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", path, err)
 	}
-	// Compute the chart fingerprint once per cache-fill so every
-	// subsequent Template call against this path participates in the
-	// template-output cache without re-walking the chart. Skipped
-	// when the template cache is disabled to avoid the (cheap but
-	// nonzero) digest cost for embedders that opted out.
+	// Fingerprinting is needed only for template or values caching. A shared
+	// chart loaded without either can acquire its fingerprint under this path lock.
 	var fingerprint string
-	if c.templateCache != nil {
+	if needsFingerprint {
 		fingerprint = chartFingerprint(ch)
 	}
 	if mtime, size, ok := chartCacheFingerprint(path); ok {
@@ -430,7 +434,7 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 // The second return is the chart's content-addressed fingerprint
 // (computed once at cache fill); the template-output cache mixes
 // it into its own key so a stale chart never serves a different
-// chart's render. Empty when the template cache is disabled.
+// chart's render.
 func (c *Client) lookupCachedChart(path string) (*chart.Chart, string, bool) {
 	c.chartMu.RLock()
 	entry, ok := c.chartCache[path]

@@ -352,7 +352,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			// A source discovered through a followed path can pin an expanded consumer.
 			for _, ks := range kustomizations {
 				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-				if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot && art.LocalPath != repoRoot {
+				if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
 					delete(ksExpanded, ks.Named())
 				}
 			}

@@ -8,7 +8,6 @@
 package resourceset
 
 import (
-	"cmp"
 	"context"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -186,29 +185,43 @@ func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publ
 // drain-rerun mechanism (WantsDrainRerun) re-expands the RS at the
 // structural fixpoint instead.
 func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.DependencyRef {
-	deps := make([]manifest.DependencyRef, 0, len(rs.DependsOn)+len(rs.InputsFrom)+1)
-	for _, dep := range rs.DependsOn {
-		deps = append(deps, manifest.DependencyRef{
-			Kind: dep.Kind, Namespace: cmp.Or(dep.Namespace, rs.Namespace), Name: dep.Name,
-			ReadyExpr: dep.ReadyExpr,
-		})
+	parent, hasParent := c.LookupParent(rs.Named())
+	capacity := len(rs.DependsOn) + len(rs.InputsFrom)
+	if hasParent {
+		capacity++
 	}
+	deps := make([]manifest.DependencyRef, capacity)
+	for i, dep := range rs.DependsOn {
+		ns := dep.Namespace
+		if manifest.IsClusterScopedKind(dep.Kind) {
+			ns = ""
+		} else if ns == "" {
+			ns = rs.Namespace
+		}
+		deps[i] = manifest.DependencyRef{
+			Kind: dep.Kind, Namespace: ns, Name: dep.Name,
+			ReadyExpr: dep.ReadyExpr,
+		}
+	}
+	n := len(rs.DependsOn)
 	for _, ref := range rs.InputsFrom {
 		if ref.Name == "" {
 			continue // selector-only: no nameable RSIP to park on
 		}
 		// InputProviderReference is same-namespace by spec — RSIPs live in
 		// the ResourceSet's own namespace.
-		deps = append(deps, manifest.DependencyRef{
+		deps[n].NamedResource = manifest.NamedResource{
 			Kind:      manifest.KindResourceSetInputProvider,
 			Namespace: rs.Namespace,
 			Name:      ref.Name,
-		})
+		}
+		n++
 	}
-	if parent, ok := c.LookupParent(rs.Named()); ok {
-		deps = append(deps, manifest.DependencyRef{NamedResource: parent})
+	if hasParent {
+		deps[n].NamedResource = parent
+		n++
 	}
-	return deps
+	return deps[:n]
 }
 
 // WantsDrainRerun reports whether the ResourceSet id has a selector-only

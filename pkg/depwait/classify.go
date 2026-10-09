@@ -74,6 +74,9 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel int) Classifica
 		}
 		if !w.depExists(id) {
 			if drainLevel >= drainCascade {
+				if w.AllowMissingCRDs && id.Kind == manifest.KindCustomResourceDefinition {
+					return Classification{Kind: ClassReady}
+				}
 				return Classification{Kind: ClassFailed, Message: "dependency not found"}
 			}
 			return Classification{Kind: ClassBlocked}

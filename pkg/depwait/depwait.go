@@ -61,6 +61,10 @@ type Waiter struct {
 	// the ReadyExpr (additive mode).
 	AdditiveReadyExpr bool
 
+	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
+	// because the cluster installs them at runtime.
+	AllowMissingCRDs bool
+
 	// Existence, when non-nil, lets Classify lazy-promote a missing dep
 	// from the loader's file-existence index before deciding it is
 	// absent. The orchestrator wires this against the ExistenceIndex;

@@ -46,6 +46,7 @@ type commonFlags struct {
 	skipCRDs             bool
 	skipSecrets          bool
 	allowMissingSecrets  bool
+	allowMissingCRDs     bool
 	forceGenericProvider bool
 	restrictEgress       bool
 	skipKinds            []string
@@ -115,6 +116,8 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 		"limit to this namespace (default: every namespace, or just the changed ones when --path-orig is set)")
 	fs.BoolVar(&f.skipCRDs, "skip-crds", true, "exclude CRD objects from rendered output")
 	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
+	fs.BoolVar(&f.allowMissingCRDs, "allow-missing-crds", false,
+		"accept CRD dependencies absent from the offline inputs because the cluster installs them at runtime")
 	fs.BoolVar(&f.allowMissingSecrets, "allow-missing-secrets", false,
 		"soft-skip ALL source auth Secrets and HelmRelease valuesFrom Secret/ConfigMap refs "+
 			"that only materialize in the live cluster. Usually unnecessary: a missing Secret "+
@@ -472,6 +475,7 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		},
 		GitDepth:                  c.gitDepth,
 		AllowMissingSecrets:       c.allowMissingSecrets,
+		AllowMissingCRDs:          c.allowMissingCRDs,
 		ForceGenericProvider:      c.forceGenericProvider,
 		RestrictEgress:            c.restrictEgress,
 		CacheDir:                  c.resolveCacheRoot(),

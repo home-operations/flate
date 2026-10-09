@@ -34,6 +34,9 @@ type Warning struct {
 
 // Warning category codes. Stable identifiers a consumer filters on.
 const (
+	// WarnMissingCRD: an absent CRD dependency was accepted for a final Ready
+	// ResourceSet with an artifact. Message names its distinct dependents.
+	WarnMissingCRD = "MissingCRD"
 	// WarnStaleValues: a HelmRelease sets top-level values no chart template
 	// references (#744). Detail = the unused keys.
 	WarnStaleValues = "StaleValues"

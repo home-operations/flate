@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 
@@ -84,6 +85,7 @@ func (o *Orchestrator) finalize() error {
 	failed := o.store.FailedResources()
 	ksCount, hrCount := o.cascadeParentFailures(failed)
 	o.demoteOrphans(failed)
+	o.warnMissingCRDs()
 	o.logSummary(failed, ksCount, hrCount)
 	o.logResourceFailures(failed)
 
@@ -104,6 +106,58 @@ func (o *Orchestrator) finalize() error {
 		return errors.Join(o.aggregateFailures(failed), panicErr)
 	}
 	return o.aggregateFailures(failed)
+}
+
+// warnMissingCRDs uses only final canonical references and Ready/artifact
+// eligibility; retained output does not establish which revision passed a gate.
+func (o *Orchestrator) warnMissingCRDs() {
+	if !o.cfg.AllowMissingCRDs {
+		return
+	}
+	missing := make(map[manifest.NamedResource]map[manifest.NamedResource]struct{})
+	for _, obj := range o.store.ListObjects(manifest.KindResourceSet) {
+		rs, ok := obj.(*manifest.ResourceSet)
+		if !ok {
+			continue
+		}
+		id := rs.Named()
+		info, ok := o.store.GetStatus(id)
+		if !ok || info.Status != store.StatusReady {
+			continue
+		}
+		if _, ok := o.store.GetArtifact(id).(*store.ResourceSetArtifact); !ok {
+			continue
+		}
+		for _, dep := range rs.DependsOn {
+			if dep.Kind != manifest.KindCustomResourceDefinition {
+				continue
+			}
+			crd := manifest.NamedResource{Kind: dep.Kind, Name: dep.Name}
+			if o.store.GetObject(crd) != nil {
+				continue
+			}
+			if _, ok := o.store.GetStatus(crd); ok {
+				continue
+			}
+			if missing[crd] == nil {
+				missing[crd] = make(map[manifest.NamedResource]struct{})
+			}
+			missing[crd][id] = struct{}{}
+		}
+	}
+	for _, crd := range slices.SortedFunc(maps.Keys(missing), manifest.NamedResource.Compare) {
+		dependents := slices.SortedFunc(maps.Keys(missing[crd]), manifest.NamedResource.Compare)
+		names := make([]string, len(dependents))
+		for i, id := range dependents {
+			names[i] = id.String()
+		}
+		o.store.AddWarning(manifest.Warning{
+			Resource: crd,
+			Category: manifest.WarnMissingCRD,
+			Count:    1,
+			Message:  fmt.Sprintf("CRD %s absent from offline inputs; accepted for %s", crd.String(), strings.Join(names, ", ")),
+		})
+	}
 }
 
 // cascadeParentFailures downgrades render-emitted children whose

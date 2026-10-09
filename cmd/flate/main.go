@@ -37,7 +37,8 @@ func versionString() string {
 // batch runs. A cold reconcile churns hundreds of GC cycles at the
 // default GOGC=100; a higher target trades transient memory (bounded at
 // ~4x the live set) for fewer collections, measurably cutting cold-start
-// CPU. Skipped when the operator set GOGC or GOMEMLIMIT explicitly so
+// CPU. It also derives a soft memory limit from the cgroup limit.
+// Skipped when the operator set GOGC or GOMEMLIMIT explicitly so
 // their tuning always wins.
 func tuneGC(setMemoryLimit func(...memlimit.Option) (int64, error)) {
 	if os.Getenv("GOGC") == "" && os.Getenv("GOMEMLIMIT") == "" {

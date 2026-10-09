@@ -7,7 +7,9 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -256,4 +258,26 @@ func TestOrchestrator_RequiredDataDependencies_Parents(t *testing.T) {
 	if got := o.RequiredDataDependencies(hr.Named()); !slices.Equal(got, want) {
 		t.Fatalf("input lost a known parent: want %v, got %v", want, got)
 	}
+}
+
+func TestOrchestrator_RequiredDataDependencies_ChangedOnlyProducers(t *testing.T) {
+	root := t.TempDir()
+	o, err := New(Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "./values"}
+	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+	hr.ValuesFrom = []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "input", Optional: true}}
+	o.store.AddObject(owner)
+	o.store.AddObject(hr)
+	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+	testutil.WriteFile(t, root, "values/kustomization.yaml", "resources: [input.yaml]\n")
+	testutil.WriteFile(t, root, "values/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {values.yaml: 'greeting: hello'}\n")
+	// The change filter can retain file ownership absent from the canonical indexes.
+	o.filter = change.NewFilter(change.NewSet([]string{"consumer.yaml"}), map[manifest.NamedResource]string{input: "values/input.yaml", hr.Named(): "consumer.yaml"}, root, o.store)
+	assert.Diff(t, o.filter.ProducersFor(input), []manifest.NamedResource{owner.Named()})
+	want := []manifest.NamedResource{input, owner.Named()}
+	slices.SortFunc(want, manifest.NamedResource.Compare)
+	assert.Diff(t, o.RequiredDataDependencies(hr.Named()), want)
 }

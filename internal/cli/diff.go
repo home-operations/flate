@@ -214,7 +214,7 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	// Surface the failure summary BEFORE the diff body so a reader scanning a
 	// CI log meets the cause first; run() then skips its trailing reprint.
 	if diffRunErr != nil {
-		if _, err := io.WriteString(cmd.ErrOrStderr(), "flate error: "+diffRunErr.Error()+"\n"); err != nil {
+		if _, err := io.WriteString(cmd.ErrOrStderr(), "flate error: "+diffRunErr.Error()+"\n"); err != nil && name != "" {
 			return errors.Join(err, diffRunErr)
 		}
 	}

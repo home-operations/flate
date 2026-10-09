@@ -104,11 +104,6 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if report.AnyFailed() {
 				final = errors.Join(errors.New("test failures detected"), runErr)
 			}
-			if name == "" {
-				if extras := errors.Join(nonResourceRunErrors(runErr)...); extras != nil {
-					return extras
-				}
-			}
 			// The report is rendered; wrap so run's top-level printer doesn't
 			// reprint the error.
 			if final != nil {

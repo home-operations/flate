@@ -174,7 +174,7 @@ func TestScopedRunError_FiltersOutsideNamespace(t *testing.T) {
 		},
 	}}
 
-	got := scopedRunError(scopedFailures(o, res, &commonFlags{namespace: "media"}, manifest.NamedResource{}), aggregateScopedFailures(res.Failed, nil))
+	got := scopedRunError(scopedFailures(o, res, &commonFlags{namespace: "media"}, manifest.NamedResource{}), aggregateScopedFailures(failureScope{failed: res.Failed}))
 	if got == nil {
 		t.Fatal("expected scoped failure")
 	}
@@ -198,7 +198,7 @@ func TestScopedRunError_ReturnsNilWhenOnlyOutsideNamespaceFailed(t *testing.T) {
 		},
 	}}
 
-	if got := scopedRunError(scopedFailures(o, res, &commonFlags{namespace: "media"}, manifest.NamedResource{}), aggregateScopedFailures(res.Failed, nil)); got != nil {
+	if got := scopedRunError(scopedFailures(o, res, &commonFlags{namespace: "media"}, manifest.NamedResource{}), aggregateScopedFailures(failureScope{failed: res.Failed})); got != nil {
 		t.Fatalf("scopedRunError = %v, want nil", got)
 	}
 }
@@ -215,7 +215,7 @@ func TestScopedRunError_PreservesUnattributedRunError(t *testing.T) {
 		},
 	}}
 	panicErr := errors.New("1 task(s) panicked without per-resource attribution; check logs")
-	runErr := errors.Join(aggregateScopedFailures(res.Failed, nil), panicErr)
+	runErr := errors.Join(aggregateScopedFailures(failureScope{failed: res.Failed}), panicErr)
 
 	got := scopedRunError(scopedFailures(o, res, &commonFlags{namespace: "media"}, manifest.NamedResource{}), runErr)
 	if got == nil {
@@ -240,7 +240,7 @@ func TestScopedRunError_CancellationStillFiltersHiddenFailures(t *testing.T) {
 			Message: "default failed",
 		},
 	}}
-	runErr := errors.Join(aggregateScopedFailures(res.Failed, nil), context.Canceled)
+	runErr := errors.Join(aggregateScopedFailures(failureScope{failed: res.Failed}), context.Canceled)
 
 	got := scopedRunError(scopedFailures(o, res, &commonFlags{namespace: "media"}, manifest.NamedResource{}), runErr)
 	if !errors.Is(got, context.Canceled) {
@@ -267,7 +267,7 @@ func TestScopedRunError_JoinsScopedAndUnattributed(t *testing.T) {
 		},
 	}}
 	panicErr := errors.New("1 task(s) panicked without per-resource attribution; check logs")
-	runErr := errors.Join(aggregateScopedFailures(res.Failed, nil), panicErr)
+	runErr := errors.Join(aggregateScopedFailures(failureScope{failed: res.Failed}), panicErr)
 
 	got := scopedRunError(scopedFailures(o, res, &commonFlags{namespace: "media"}, manifest.NamedResource{}), runErr)
 	if got == nil {
@@ -320,7 +320,7 @@ func TestAggregateScopedFailures_FoldsBlocked(t *testing.T) {
 	}
 	blocked := map[manifest.NamedResource][]manifest.NamedResource{child: {root}}
 
-	err := aggregateScopedFailures(failed, blocked)
+	err := aggregateScopedFailures(failureScope{named: false, failed: failed, blocked: blocked})
 	msg := err.Error()
 	if !strings.Contains(msg, "cluster-apps") || !strings.Contains(msg, "kustomize build boom") {
 		t.Errorf("primary failure should be enumerated: %q", msg)

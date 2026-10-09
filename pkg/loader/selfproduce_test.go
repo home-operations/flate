@@ -467,11 +467,14 @@ func TestBuildSelfProduceIndex_ProducerOwners(t *testing.T) {
 			for _, ns := range []string{namespace, "effective"} {
 				id := manifest.NamedResource{Kind: "ExternalSecret", Namespace: ns, Name: "producer"}
 				got := idx.OwnersOfProducer(id)
+				slices.SortFunc(got, manifest.NamedResource.Compare)
 				if !slices.Equal(got, want) {
 					t.Fatalf("declaration %s owners = %v, want %v", id, got, want)
 				}
 				got[0] = manifest.NamedResource{}
-				if !slices.Equal(idx.OwnersOfProducer(id), want) {
+				fresh := idx.OwnersOfProducer(id)
+				slices.SortFunc(fresh, manifest.NamedResource.Compare)
+				if !slices.Equal(fresh, want) {
 					t.Fatal("caller mutated index")
 				}
 			}
@@ -480,6 +483,33 @@ func TestBuildSelfProduceIndex_ProducerOwners(t *testing.T) {
 			}
 			if got := idx.ProducedBy(manifest.NamedResource{Kind: "ConfigMap", Namespace: "effective", Name: "values"}); len(got) != 0 {
 				t.Fatalf("producer ownership changed self-substitution admission: %v", got)
+			}
+		})
+	}
+}
+
+func TestBuildSelfProduceIndex_ProducerOwnersMultipleTargets(t *testing.T) {
+	for _, namespace := range []string{"", "apps"} {
+		t.Run("namespace_"+namespace, func(t *testing.T) {
+			root := t.TempDir()
+			s := store.New()
+			ks := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "./values"}
+			s.AddObject(ks)
+			testutil.WriteFile(t, root, "values/kustomization.yaml", "namespace: apps\nresources: [bucket.yaml]\n")
+			testutil.WriteFile(t, root, "values/bucket.yaml", "apiVersion: objectbucket.io/v1alpha1\nkind: ObjectBucketClaim\nmetadata: {name: bucket, namespace: '"+namespace+"'}\nspec: {generateBucketName: bucket, storageClassName: bucket}\n")
+			producers := &manifest.ProducerIndex{}
+			idx := BuildSelfProduceIndex(s, root, producers, false)
+			for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+				target := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "bucket"}
+				if _, ok := producers.Producer(target); !ok {
+					t.Fatalf("missing %s target", kind)
+				}
+			}
+			for _, ns := range []string{namespace, "apps"} {
+				producer := manifest.NamedResource{Kind: "ObjectBucketClaim", Namespace: ns, Name: "bucket"}
+				if got := idx.OwnersOfProducer(producer); !slices.Equal(got, []manifest.NamedResource{ks.Named()}) {
+					t.Fatalf("repeated targets duplicate declaration owner: %v", got)
+				}
 			}
 		})
 	}

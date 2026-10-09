@@ -693,7 +693,7 @@ func scopedRunError(scope failureScope, runErr error) error {
 	if len(scope.failed) == 0 {
 		return errors.Join(extras...)
 	}
-	return errors.Join(aggregateScopedFailures(scope.failed, scope.blocked), errors.Join(extras...))
+	return errors.Join(aggregateScopedFailures(scope), errors.Join(extras...))
 }
 
 // scopedWarnings projects Result.Warnings onto c's namespace filter: a
@@ -745,17 +745,22 @@ func (e reportedError) Error() string { return e.err.Error() }
 func (e reportedError) Unwrap() error { return e.err }
 
 // reportFailures renders fatal causes and unrelated resource warnings from the
-// same projection as the machine error. Non-resource errors need their own
+// same projection as the machine error. Named runs need a non-resource error
 // diagnostic before reportedError suppresses the top-level printer.
 func reportFailures(w io.Writer, scope failureScope, err error) error {
-	m := failureReport(scope)
+	var m report.Model
+	if scope.named {
+		m = failureReport(scope)
+	} else {
+		m = report.Build(scope.failed, scope.blocked, scope.warnings, nil)
+	}
 	if m.Empty() {
 		return err
 	}
-	if writeErr := m.Write(w, style.ColorEnabled(w), 0); writeErr != nil {
+	if writeErr := m.Write(w, style.ColorEnabled(w), 0); writeErr != nil && scope.named {
 		return errors.Join(writeErr, err)
 	}
-	if extras := errors.Join(nonResourceRunErrors(err)...); extras != nil {
+	if extras := errors.Join(nonResourceRunErrors(err)...); scope.named && extras != nil {
 		if _, writeErr := fmt.Fprintln(w, "flate error:", extras); writeErr != nil {
 			return errors.Join(writeErr, err)
 		}
@@ -774,11 +779,19 @@ func reportFailures(w io.Writer, scope failureScope, err error) error {
 // summary. build/test additionally render the styled report (see
 // reportFailures). Typed as *orchestrator.FailuresError so scopedRunError can
 // recognize and re-scope an aggregate that arrives as the run error.
-func aggregateScopedFailures(
-	failed map[manifest.NamedResource]store.StatusInfo,
-	blocked map[manifest.NamedResource][]manifest.NamedResource,
-) error {
-	model := failureReport(failureScope{failed: failed, blocked: blocked})
+func aggregateScopedFailures(scope failureScope) error {
+	var model report.Model
+	if scope.named {
+		model = failureReport(scope)
+	} else {
+		for id, info := range scope.failed {
+			if len(scope.blocked[id]) > 0 {
+				model.Blocked++
+				continue
+			}
+			model.Primary = append(model.Primary, report.Primary{ID: id, Msg: info.Message})
+		}
+	}
 	msgs := make([]string, 0, len(model.Primary)+len(model.Missing))
 	for _, root := range model.Primary {
 		msgs = append(msgs, fmt.Sprintf("%s: %s", root.ID, root.Msg))

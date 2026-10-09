@@ -54,14 +54,12 @@ func (i *SelfProduceIndex) ProducedBy(cm manifest.NamedResource) []manifest.Name
 
 // OwnersOfProducer returns the Kustomizations whose render subtrees contain
 // the indexed producer declaration, even when those renders fail before emission.
-// Bootstrap must have completed. The returned slice is independent; nil-safe.
+// Bootstrap must have completed. The returned slice is independent and unordered; nil-safe.
 func (i *SelfProduceIndex) OwnersOfProducer(producer manifest.NamedResource) []manifest.NamedResource {
 	if i == nil {
 		return nil
 	}
-	owners := slices.Clone(i.producerOwners[producer])
-	slices.SortFunc(owners, manifest.NamedResource.Compare)
-	return owners
+	return slices.Clone(i.producerOwners[producer])
 }
 
 // OwnersOfFile returns the top-level Kustomization(s) whose render

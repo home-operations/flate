@@ -91,3 +91,15 @@ func (r *renderedSet) ParentOf(id manifest.NamedResource) (manifest.NamedResourc
 	parent, ok := r.parents[id]
 	return parent, ok
 }
+
+// ChildrenByParent snapshots rendered ownership under the existing mutex.
+// The returned map and slices are independent of rendered state.
+func (r *renderedSet) ChildrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	children := map[manifest.NamedResource][]manifest.NamedResource{}
+	for child, parent := range r.parents {
+		children[parent] = append(children[parent], child)
+	}
+	return children
+}

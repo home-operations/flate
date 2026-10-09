@@ -11,6 +11,7 @@ import (
 )
 
 type failureScope struct {
+	named    bool
 	failed   map[manifest.NamedResource]store.StatusInfo
 	blocked  map[manifest.NamedResource][]manifest.NamedResource
 	warnings []manifest.Warning
@@ -21,10 +22,11 @@ type failureScope struct {
 // and owned descendants remain in scope across namespaces. An empty name
 // preserves namespace scoping.
 func scopedFailures(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, selected manifest.NamedResource) failureScope {
-	if o == nil || res == nil {
+	if o == nil || res == nil || len(res.Failed) == 0 {
 		return failureScope{}
 	}
 	scope := failureScope{
+		named:   selected.Name != "",
 		failed:  map[manifest.NamedResource]store.StatusInfo{},
 		blocked: map[manifest.NamedResource][]manifest.NamedResource{},
 	}
@@ -60,9 +62,6 @@ func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *
 	seen := map[manifest.NamedResource]struct{}{}
 	var work []manifest.NamedResource
 	add := func(id manifest.NamedResource) {
-		if id.Name == "" {
-			return
-		}
 		if _, ok := seen[id]; !ok {
 			seen[id] = struct{}{}
 			work = append(work, id)
@@ -91,9 +90,6 @@ func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *
 	for len(work) > 0 {
 		id := work[len(work)-1]
 		work = work[:len(work)-1]
-		if parent, ok := o.ParentOf(id); ok {
-			add(parent)
-		}
 		for _, dep := range res.DependsOn[id] {
 			add(dep)
 		}
@@ -101,20 +97,6 @@ func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *
 			add(dep)
 		}
 		switch obj := o.Store().GetObject(id).(type) {
-		case *manifest.HelmRelease:
-			if ref := obj.ChartRef; ref != nil {
-				add(manifest.NamedResource{Kind: ref.Kind, Namespace: cmp.Or(ref.Namespace, id.Namespace), Name: ref.Name})
-			} else {
-				add(manifest.NamedResource{Kind: obj.Chart.RepoKind, Namespace: cmp.Or(obj.Chart.RepoNamespace, id.Namespace), Name: obj.Chart.RepoName})
-			}
-			for _, dep := range obj.DependsOn {
-				add(dep.NamedResource)
-			}
-		case *manifest.Kustomization:
-			add(manifest.NamedResource{Kind: obj.SourceKind, Namespace: cmp.Or(obj.SourceNamespace, id.Namespace), Name: obj.SourceName})
-			for _, dep := range obj.DependsOn {
-				add(dep.NamedResource)
-			}
 		case *manifest.ResourceSet:
 			for _, dep := range obj.DependsOn {
 				add(manifest.NamedResource{Kind: dep.Kind, Namespace: cmp.Or(dep.Namespace, id.Namespace), Name: dep.Name})
@@ -122,8 +104,6 @@ func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *
 			for _, ref := range obj.InputsFrom {
 				add(manifest.NamedResource{Kind: manifest.KindResourceSetInputProvider, Namespace: id.Namespace, Name: ref.Name})
 			}
-		case *manifest.HelmChartSource:
-			add(manifest.NamedResource{Kind: obj.SourceRef.Kind, Namespace: id.Namespace, Name: obj.SourceRef.Name})
 		}
 		if id.Kind == manifest.KindHelmRelease || id.Kind == manifest.KindKustomization {
 			for _, dep := range o.RequiredDataDependencies(id) {

@@ -555,11 +555,8 @@ func (o *Orchestrator) ParentOf(id manifest.NamedResource) (manifest.NamedResour
 // and Render must have returned; do not call concurrently with either. Returned
 // maps and sorted, deduplicated slices are independent of orchestrator state.
 func (o *Orchestrator) ChildrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
-	children := map[manifest.NamedResource][]manifest.NamedResource{}
+	children := o.rendered.ChildrenByParent()
 	for child, parent := range o.parentOf {
-		children[parent] = append(children[parent], child)
-	}
-	for child, parent := range o.rendered.parents {
 		children[parent] = append(children[parent], child)
 	}
 	for parent, ids := range children {

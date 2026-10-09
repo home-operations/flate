@@ -188,12 +188,8 @@ func resolveSemver(repo *git.Repository, expr string) (plumbing.Hash, error) {
 		if !constraint.Check(v) {
 			return nil
 		}
-		hash, err := peelCommit(repo, ref.Hash())
-		if err != nil {
-			return err
-		}
 		if best == nil || v.GreaterThan(best) || (v.Equal(best) && name < bestName) {
-			best, bestHash, bestName = v, hash, name
+			best, bestHash, bestName = v, ref.Hash(), name
 		}
 		return nil
 	}); err != nil {
@@ -202,5 +198,5 @@ func resolveSemver(repo *git.Repository, expr string) (plumbing.Hash, error) {
 	if best == nil {
 		return plumbing.ZeroHash, fmt.Errorf("%w: no tag satisfies semver %q", errRefUnavailable, expr)
 	}
-	return bestHash, nil
+	return peelCommit(repo, bestHash)
 }

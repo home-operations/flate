@@ -340,6 +340,21 @@ func TestCheckoutRef_PreservesOriginFirstBranchLookup(t *testing.T) {
 	}
 }
 
+func TestResolveSemver_IgnoresUnusableLowerTag(t *testing.T) {
+	_, repo, a, b := localFixture(t)
+	commit, err := repo.CommitObject(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), commit.TreeHash)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveSemver(repo, "*")
+	if err != nil || got != b {
+		t.Fatalf("higher usable tag = %s, %v, want %s", got, err, b)
+	}
+}
+
 func TestResolveSemver_DeterministicTiesAndReadErrors(t *testing.T) {
 	_, repo, a, b := localFixture(t)
 	for name, hash := range map[string]plumbing.Hash{"1.0.0": a, "v1.0.0": b} {

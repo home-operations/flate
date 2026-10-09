@@ -108,6 +108,34 @@ func TestValidateCommitBranch_UnavailableCommit(t *testing.T) {
 	}
 }
 
+func TestResolveLocal_IncompleteHistory(t *testing.T) {
+	root, repo, a, b := localFixture(t)
+	commit, err := repo.CommitObject(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit.ParentHashes = []plumbing.Hash{plumbing.NewHash(strings.Repeat("f", 40))}
+	encoded := repo.Storer.NewEncodedObject()
+	if err := commit.Encode(encoded); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := repo.Storer.SetEncodedObject(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("master"), hash)); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCommitBranch(repo, a, "master"); !errors.Is(err, errRefUnavailable) {
+		t.Errorf("incomplete history did not become unavailable: %v", err)
+	}
+	repository := localSource(manifest.GitRepositoryRef{Commit: a.String(), Branch: "master"})
+	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, nil)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("incomplete history did not fall back: %v, %v", got, err)
+	}
+}
+
 func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 	for _, ref := range []manifest.GitRepositoryRef{
 		{Commit: "abc"}, {Name: "bad name"}, {Tag: "bad tag"}, {Branch: "bad branch"}, {SemVer: "invalid"},

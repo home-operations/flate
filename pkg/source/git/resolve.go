@@ -95,6 +95,9 @@ func validateCommitBranch(repo *git.Repository, commit plumbing.Hash, branch str
 	}
 	reachable, err := commitObj.IsAncestor(branchObj)
 	if err != nil {
+		if errors.Is(err, plumbing.ErrObjectNotFound) {
+			return fmt.Errorf("%w: incomplete history for commit %s from branch %q", errRefUnavailable, commit, branch)
+		}
 		return fmt.Errorf("check commit %s reachability from branch %q: %w", commit, branch, err)
 	}
 	if !reachable {

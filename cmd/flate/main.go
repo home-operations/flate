@@ -38,14 +38,14 @@ func versionString() string {
 // default GOGC=100; a higher target trades transient memory (bounded at
 // ~4x the live set) for fewer collections, measurably cutting cold-start
 // CPU. It also derives a soft memory limit from the cgroup limit.
-// Skipped when the operator set GOGC or GOMEMLIMIT explicitly so
-// their tuning always wins.
+// GOGC overrides the GC target; GOMEMLIMIT or AUTOMEMLIMIT=off overrides
+// the soft memory limit.
 func tuneGC(setMemoryLimit func(...memlimit.Option) (int64, error)) {
-	if os.Getenv("GOGC") == "" && os.Getenv("GOMEMLIMIT") == "" {
+	if os.Getenv("GOGC") == "" {
 		debug.SetGCPercent(400)
-		// Cgroup detection is best effort, including on unsupported platforms.
-		_, _ = setMemoryLimit(memlimit.WithProvider(memlimit.FromCgroup), memlimit.WithRatio(0.8), memlimit.WithLogger(nil))
 	}
+	// Cgroup detection is best effort, including on unsupported platforms.
+	_, _ = setMemoryLimit(memlimit.WithProvider(memlimit.FromCgroup), memlimit.WithRatio(0.8), memlimit.WithLogger(nil))
 }
 
 func resolvedVersion() string {

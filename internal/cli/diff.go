@@ -169,8 +169,22 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	}
 	origDocs, origMatched := gatherAllArtifacts(orig.O, orig.Res, kind, name, c)
 	currentDocs, currentMatched := gatherAllArtifacts(current.O, current.Res, kind, name, c)
-	orig.Failures = scopedFailures(orig.O, orig.Res, c, manifest.NamedResource{Kind: kind, Name: name})
-	current.Failures = scopedFailures(current.O, current.Res, c, manifest.NamedResource{Kind: kind, Name: name})
+	for _, pair := range []struct{ side, other *diffSide }{{&orig, &current}, {&current, &orig}} {
+		selection := []manifest.NamedResource{{Kind: kind, Name: name}}
+		if name != "" {
+			// A release missing on one side can still have a failing owner there.
+			for _, obj := range pair.other.O.Store().ListObjects(kind) {
+				id := obj.Named()
+				if id.Name == name && c.includeNamespace(pair.other.O.Filter(), id.Namespace) && pair.side.O.Store().GetObject(id) == nil {
+					if _, known := pair.side.O.ParentOf(id); known && c.includeNamespace(pair.side.O.Filter(), id.Namespace) {
+						continue
+					}
+					selection = append(selection, id)
+				}
+			}
+		}
+		pair.side.Failures = scopedFailures(pair.side.O, pair.side.Res, c, selection...)
+	}
 	diffRunErr := scopedDiffRunError(orig, current, runErr)
 	for _, side := range []struct {
 		label string

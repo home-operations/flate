@@ -805,6 +805,82 @@ func TestRun_NamedScope_DiffFatalWriteError(t *testing.T) {
 	}
 }
 
+func TestRun_NamedScope_DiffOwningKustomizationFails(t *testing.T) {
+	for _, tc := range []struct {
+		name, failingSide string
+		editRelease       bool
+	}{
+		{"current_edited", "current", true},
+		{"current_untouched", "current", false},
+		{"orig_edited", "orig", true},
+	} {
+		for _, workers := range []string{"2", "4"} {
+			t.Run(tc.name+"/"+workers, func(t *testing.T) {
+				root, orig := t.TempDir(), t.TempDir()
+				for _, dir := range []string{root, orig} {
+					if _, err := git.PlainInit(dir, false); err != nil {
+						t.Fatal(err)
+					}
+					testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
+					testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: hello}\n")
+					testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
+					testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: selected, namespace: apps}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ./charts/app
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+					for _, name := range []string{"apps", "other"} {
+						testutil.WriteFile(t, dir, "flux/"+name+".yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: %s, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./%s
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`, name, name))
+					}
+					testutil.WriteFile(t, dir, "other/kustomization.yaml", "resources: [cm.yaml]\n")
+					testutil.WriteFile(t, dir, "other/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other, namespace: apps}\n")
+				}
+				if tc.editRelease {
+					appendScopeSpec(t, root, "apps/hr.yaml", "  values: {greeting: changed}\n")
+				}
+				failing := root
+				if tc.failingSide == "orig" {
+					failing = orig
+				}
+				appendScopeSpec(t, failing, "flux/apps.yaml", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: nope}]}\n")
+				flags := []string{"--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--cache-dir", t.TempDir(), "--concurrency", workers}
+				_, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
+				_, block, ok := strings.Cut(stderr, tc.failingSide+" snapshot:")
+				if code != 1 || !ok || !strings.Contains(block, "reconcile completed with 1 failure(s):") || !strings.Contains(block, "ConfigMap/flux-system/nope: not found") {
+					t.Fatalf("owning Kustomization failure hidden: %d %s", code, stderr)
+				}
+				_, stderr, code = runCLI(t, append([]string{"diff", "ks", "other"}, flags...)...)
+				if code != 0 {
+					t.Fatalf("unrelated owning Kustomization became fatal: %d %s", code, stderr)
+				}
+			})
+		}
+	}
+}
+
+func TestScopedFailures_EmptyResult(t *testing.T) {
+	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := scopedFailures(o, &orchestrator.Result{}, &commonFlags{}, manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "selected"})
+	if scope.failed != nil || scope.warnings != nil || scope.named {
+		t.Fatalf("successful result acquired a failure scope: %+v", scope)
+	}
+}
+
 func TestScopedFailures_DependsOn(t *testing.T) {
 	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
 	if err != nil {

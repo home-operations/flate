@@ -20,11 +20,14 @@ type failureScope struct {
 // scopedFailures is the single post-run projection used by errors, reports and
 // diff suppression. Namespace selection applies to roots; their prerequisites
 // and owned descendants remain in scope across namespaces. An empty name
-// preserves namespace scoping.
-func scopedFailures(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, selected manifest.NamedResource) failureScope {
+// preserves namespace scoping. The first selection is the kind/name filter;
+// additional identities seed objects absent from this diff snapshot.
+func scopedFailures(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, selection ...manifest.NamedResource) failureScope {
 	if o == nil || res == nil || len(res.Failed) == 0 {
 		return failureScope{}
 	}
+
+	selected := selection[0]
 	scope := failureScope{
 		named:   selected.Name != "",
 		failed:  map[manifest.NamedResource]store.StatusInfo{},
@@ -32,7 +35,7 @@ func scopedFailures(o *orchestrator.Orchestrator, res *orchestrator.Result, c *c
 	}
 	var required map[manifest.NamedResource]struct{}
 	if selected.Name != "" {
-		required = requiredClosure(o, res, c, selected)
+		required = requiredClosure(o, res, c, selection...)
 	}
 	unrelated := map[manifest.NamedResource]store.StatusInfo{}
 	for id, info := range res.Failed {
@@ -58,7 +61,8 @@ func scopedFailures(o *orchestrator.Orchestrator, res *orchestrator.Result, c *c
 	return scope
 }
 
-func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, selected manifest.NamedResource) map[manifest.NamedResource]struct{} {
+func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, selection ...manifest.NamedResource) map[manifest.NamedResource]struct{} {
+	selected := selection[0]
 	seen := map[manifest.NamedResource]struct{}{}
 	var work []manifest.NamedResource
 	add := func(id manifest.NamedResource) {
@@ -79,9 +83,17 @@ func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *
 	for id := range res.Failed {
 		seed(id)
 	}
+	for _, id := range selection[1:] {
+		add(id)
+	}
+	children := o.ChildrenByParent()
+	for _, kids := range children {
+		for _, id := range kids {
+			seed(id)
+		}
+	}
 	// Only selected roots and their owned descendants expand downward;
 	// prerequisites must not bring unrelated siblings into the selection.
-	children := o.ChildrenByParent()
 	for i := 0; i < len(work); i++ { //nolint:intrange // Appending descendants must extend the traversal.
 		for _, child := range children[work[i]] {
 			add(child)
@@ -90,6 +102,9 @@ func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *
 	for len(work) > 0 {
 		id := work[len(work)-1]
 		work = work[:len(work)-1]
+		if parent, ok := o.ParentOf(id); ok {
+			add(parent)
+		}
 		for _, dep := range res.DependsOn[id] {
 			add(dep)
 		}

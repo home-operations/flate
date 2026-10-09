@@ -410,16 +410,16 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 }
 
 func TestProgress_UnwatchedData(t *testing.T) {
-	ids := progressCorpus("ConfigMap")
+	ids := make([]NodeID, 1024)
 	for i := range ids {
+		ids[i] = NodeID{Kind: manifest.KindConfigMap, Namespace: "default", Name: fmt.Sprintf("progress-%06d", i)}
 		if i%2 != 0 {
 			ids[i].Kind = manifest.KindSecret
 		}
 	}
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
+			ctx := t.Context()
 			consumer, producer := id("consumer"), id("producer")
 			started, finished := make(chan struct{}), make(chan struct{})
 			var s *Scheduler

@@ -298,6 +298,13 @@ func TestStore_ReadableByStockDecoder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var header zstd.Header
+	if err := header.Decode(raw); err != nil {
+		t.Fatal(err)
+	}
+	if header.SingleSegment || header.WindowSize != 1<<20 {
+		t.Fatalf("frame window: single segment = %t, size = %d; want false, %d", header.SingleSegment, header.WindowSize, 1<<20)
+	}
 	dec, err := zstd.NewReader(nil)
 	if err != nil {
 		t.Fatal(err)

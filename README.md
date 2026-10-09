@@ -69,6 +69,20 @@ Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig
 
 `--allow-missing-crds` (default off; `FLATE_ALLOW_MISSING_CRDS`) accepts CRD dependencies that are absent from the offline inputs because the cluster installs them at runtime.
 
+**Build substitution inputs.** These options also work with `get`, `test`, and both sides of `diff`.
+
+| Flag                                    | Environment                                    | Behavior                                                                                                                                          |
+| --------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--substitute-from <file>` (repeatable) | `FLATE_SUBSTITUTE_FROM`: colon-separated paths | Supply ConfigMap/Secret values for exact `postBuild.substituteFrom` identities; bootstrap-known repository objects and producers take precedence. |
+| `--substitute KEY=VALUE` (repeatable)   | `FLATE_SUBSTITUTE`: CSV comma-separated pairs  | Override referenced values and authored inline substitutions, in that order, whenever `postBuild` is present.                                     |
+| `--strict-substitutions`                | `FLATE_STRICT_SUBSTITUTIONS`: boolean          | Fail undefined variables without defaults; disabled by default.                                                                                   |
+
+Explicit flags replace the corresponding environment input, including `--strict-substitutions=false`. File paths are relative to the invocation's working directory. Files accept multiple YAML documents, each a core `v1` ConfigMap or Secret with explicit name and namespace; empty/null documents are skipped. Later files/documents replace duplicate kind/namespace/name identities as whole objects. Later overlay pairs replace earlier keys; empty values and embedded equals signs are valid. CLI pairs retain commas; use CSV quoting for commas within environment values.
+
+Supplied manifests contain CI-side test values, satisfy only matching postBuild references, and are never emitted, diffed, or used to select changed-only consumers. They cannot supply Helm values, source authentication, certificates, or proxies. Supplied Secrets bypass SOPS processing and placeholder wiping. Required references still need matching objects; an overlay cannot satisfy them or enable substitution without `postBuild`.
+
+Repository precedence is frozen after discovery and before parallel reconciliation. A known collision logs one warning with its input file and identity. A producer discovered only during rendering does not replace an accepted supplied source, including for consumers discovered later. Strict expansion uses Flux's engine: defined empty values, `${VAR:=default}`, `${VAR:-default}`, and escaped `$${VAR}` keep their usual behavior. Resources with the `kustomize.toolkit.fluxcd.io/substitute: disabled` annotation or label bypass expansion.
+
 **Default output filters.** `--skip-secrets` and `--skip-crds` both default to `true` — `build` and `diff` strip rendered `Secret` and `CustomResourceDefinition` objects from manifest output. Pass `--skip-secrets=false` / `--skip-crds=false` to include them; `--skip-kinds <kind>` (repeatable) drops additional kinds. These are output-stream filters, distinct from `--allow-missing-secrets`, which gates source auth and generated HR values Secret readiness.
 
 **Scoping the scan.** A gitignore-syntax `.krmignore` at `--path` filters which files the scan loads (`!` re-includes work, so an allowlist like `/*`, `!/common/**`, `!/environments/production/**` mirrors a `GitRepository` `spec.ignore`). `--krmignore <file>` (`FLATE_KRMIGNORE`) reads that file in place of `<path>/.krmignore`, with patterns still relative to `--path`, so one checkout can keep a `.krmignore.staging` and a `.krmignore.production` and pick one per run.

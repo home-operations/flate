@@ -97,6 +97,42 @@ func TestMaterialize_RespectsCtxCancel(t *testing.T) {
 	}
 }
 
+func TestMaterialize_PreCancelledContextAvoidsRootAccess(t *testing.T) {
+	src := t.TempDir()
+	repo := mustInit(t, src)
+	testutil.WriteFile(t, src, "value", "committed")
+	hash := mustCommit(t, repo, src)
+	for _, tt := range []struct {
+		name   string
+		exists bool
+	}{
+		{name: "existing", exists: true},
+		{name: "missing"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "staging")
+			if tt.exists {
+				if err := os.Mkdir(root, 0o750); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			if err := Materialize(ctx, repo, hash, root, Options{Workers: 2}); !errors.Is(err, context.Canceled) {
+				t.Fatalf("pre-cancelled materialization = %v, want context.Canceled", err)
+			}
+			entries, err := os.ReadDir(root)
+			if tt.exists {
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("cancelled root changed: %v, %v", entries, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("cancelled materialization created root: %v", err)
+			}
+		})
+	}
+}
+
 func mustInit(t *testing.T, dir string) *git.Repository {
 	t.Helper()
 	r, err := git.PlainInit(dir, false)

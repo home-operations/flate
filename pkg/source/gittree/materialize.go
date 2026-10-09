@@ -133,9 +133,6 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 				continue
 			}
 
-			if !entry.Mode.IsFile() {
-				return fmt.Errorf("malformed tree entry mode %s for %q", entry.Mode, name)
-			}
 			select {
 			case entries <- item{name, entry}:
 			case <-gctx.Done():

@@ -37,6 +37,11 @@ func resolveRefHash(repo *git.Repository, ref *manifest.GitRepositoryRef) (plumb
 			}
 			hash := plumbing.NewHash(ref.Commit)
 			if _, err := readCommit(repo, hash); err != nil {
+				if errors.Is(err, plumbing.ErrObjectNotFound) {
+					if _, objectErr := repo.Object(plumbing.AnyObject, hash); errors.Is(objectErr, plumbing.ErrObjectNotFound) {
+						return plumbing.ZeroHash, fmt.Errorf("%w: commit %s", errRefUnavailable, hash)
+					}
+				}
 				return plumbing.ZeroHash, err
 			}
 			if err := validateCommitBranch(repo, hash, ref.Branch); err != nil {
@@ -77,6 +82,11 @@ func validateCommitBranch(repo *git.Repository, commit plumbing.Hash, branch str
 	}
 	commitObj, err := readCommit(repo, commit)
 	if err != nil {
+		if errors.Is(err, plumbing.ErrObjectNotFound) {
+			if _, objectErr := repo.Object(plumbing.AnyObject, commit); errors.Is(objectErr, plumbing.ErrObjectNotFound) {
+				return fmt.Errorf("%w: commit %s", errRefUnavailable, commit)
+			}
+		}
 		return fmt.Errorf("commit %s not found: %w", commit, err)
 	}
 	branchObj, err := readCommit(repo, branchHash)

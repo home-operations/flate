@@ -43,7 +43,8 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 		{name: "sparse", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}, sparse: true, fallback: true},
 		{name: "submodules", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}, submodules: true, fallback: true},
 		{name: "head-sparse", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true, head: true},
-		{name: "corrupt-target", ref: &manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, sparse: true, fail: true},
+		{name: "missing-commit", ref: &manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, sparse: true, fallback: true},
+		{name: "missing-commit-branch", ref: &manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40), Branch: "master"}, fallback: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := discoveryRefFixture(t)

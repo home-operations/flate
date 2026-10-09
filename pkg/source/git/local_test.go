@@ -67,7 +67,8 @@ func TestResolveLocal_References(t *testing.T) {
 		{"invalid-semver", manifest.GitRepositoryRef{SemVer: "invalid"}, plumbing.ZeroHash, true},
 		{"short-commit", manifest.GitRepositoryRef{Commit: a.String()[:12]}, plumbing.ZeroHash, true},
 		{"nonhex-commit", manifest.GitRepositoryRef{Commit: strings.Repeat("g", 40)}, plumbing.ZeroHash, true},
-		{"missing-commit", manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, plumbing.ZeroHash, true},
+		{"missing-commit", manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, plumbing.ZeroHash, false},
+		{"missing-commit-branch", manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40), Branch: "master"}, plumbing.ZeroHash, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repository := localSource(tc.ref)
@@ -96,6 +97,14 @@ func TestResolveLocal_References(t *testing.T) {
 				t.Fatalf("unexpected artifact path %q", artifact.LocalPath)
 			}
 		})
+	}
+}
+
+func TestValidateCommitBranch_UnavailableCommit(t *testing.T) {
+	_, repo, _, _ := localFixture(t)
+	missing := plumbing.NewHash(strings.Repeat("f", 40))
+	if err := validateCommitBranch(repo, missing, "master"); !errors.Is(err, errRefUnavailable) {
+		t.Fatalf("missing commit did not become unavailable: %v", err)
 	}
 }
 

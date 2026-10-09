@@ -99,9 +99,10 @@ type Controller struct {
 	// Shared KS/HR depwait and preflight state. Set via SetDepwait,
 	// SetPreflight, SetParentOf. The source controller leaves these nil;
 	// KS and HR configure them before Start via their Configure methods.
-	existence depwait.ExistenceLookup
-	preflight func(manifest.NamedResource) (string, bool)
-	parentOf  func(manifest.NamedResource) (manifest.NamedResource, bool)
+	existence        depwait.ExistenceLookup
+	allowMissingCRDs bool
+	preflight        func(manifest.NamedResource) (string, bool)
+	parentOf         func(manifest.NamedResource) (manifest.NamedResource, bool)
 
 	// renderTracker receives every reconcilable/source child a render
 	// emits. Set via SetRenderTracker before Start; read-only after.
@@ -199,6 +200,8 @@ type Options struct {
 	// file-indexed deps and to distinguish a render-only dep still in flight
 	// from a typo'd one. See depwait.ExistenceLookup.
 	Existence depwait.ExistenceLookup
+	// AllowMissingCRDs accepts absent CRD dependencies at structural drain.
+	AllowMissingCRDs bool
 	// PreflightFailure reports dependency-graph errors discovered before
 	// reconcile; when set for an id the controller marks it Failed and renders
 	// nothing.
@@ -215,6 +218,7 @@ func (c *Controller) Configure(opts Options) {
 	c.SetPreflight(opts.PreflightFailure)
 	c.SetParentOf(opts.ParentOf)
 	c.SetRenderTracker(opts.RenderTracker)
+	c.allowMissingCRDs = opts.AllowMissingCRDs
 }
 
 // KeepEmitted extends the change filter's keep set so render-emitted
@@ -331,10 +335,11 @@ func (c *Controller) FingerprintDedup(id manifest.NamedResource, fp string, emit
 // Configure and flows through automatically.
 func (c *Controller) NewWaiter(id manifest.NamedResource, timeout *metav1.Duration) *depwait.Waiter {
 	return &depwait.Waiter{
-		Store:     c.Store,
-		Parent:    id,
-		Timeout:   depwait.TimeoutFromSpec(timeout),
-		Existence: c.existence,
+		Store:            c.Store,
+		Parent:           id,
+		Timeout:          depwait.TimeoutFromSpec(timeout),
+		Existence:        c.existence,
+		AllowMissingCRDs: c.allowMissingCRDs,
 	}
 }
 

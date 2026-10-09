@@ -84,6 +84,10 @@ type Config struct {
 	// refs let HelmReleases render with the remaining values.
 	AllowMissingSecrets bool
 
+	// AllowMissingCRDs accepts absent CRD dependencies at structural drain and
+	// reports final Ready ResourceSets with artifacts that reference them.
+	AllowMissingCRDs bool
+
 	// ForceGenericProvider sends non-generic spec.provider sources
 	// (GitRepository, OCIRepository, Bucket) down the generic SecretRef path
 	// instead of rejecting them up front. That path works offline when static

@@ -148,6 +148,7 @@ func (o *Orchestrator) configureControllers() {
 		RenderTracker:    o.rendered,
 		Existence:        existence,
 		PreflightFailure: o.preflightFailure,
+		AllowMissingCRDs: o.cfg.AllowMissingCRDs,
 	}
 	o.ksc.Configure(kustomization.Options{Options: common, SelfProduces: selfProduces})
 	o.hrc.Configure(helmrelease.ReconcileOptions{

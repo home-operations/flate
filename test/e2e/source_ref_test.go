@@ -20,7 +20,11 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
@@ -29,6 +33,103 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 		"--concurrency", "2", "--cache-dir", t.TempDir())
 	if !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: v2.0.0") {
 		t.Fatalf("expected pinned v1.0.0 content:\n%s\nstderr:\n%s", out, stderr)
+	}
+}
+
+func TestE2E_SourceRef_PinnedSourceDiscoveredAfterConsumer(t *testing.T) {
+	for _, tt := range []struct{ name, appsFile, sourcesFile, sourcesName string }{
+		{name: "apps_first", appsFile: "a.yaml", sourcesFile: "z.yaml", sourcesName: "z-sources"},
+		{name: "sources_first", appsFile: "z.yaml", sourcesFile: "a.yaml", sourcesName: "a-sources"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			repo := gitInit(t, root)
+			if _, err := repo.CreateRemote(&config.RemoteConfig{
+				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFile(t, root, "flux/"+tt.appsFile, `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: pinned, namespace: flux-system}
+`)
+			testutil.WriteFile(t, root, "flux/"+tt.sourcesFile, `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: `+tt.sourcesName+`, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./sources
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
+			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: pinned, namespace: flux-system}
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+  ref: {tag: v1.0.0}
+`)
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, deleted.yaml]\n")
+			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
+			testutil.WriteFile(t, root, "apps/deleted.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: deleted, namespace: apps}\ndata: {value: pinned-deleted}\n")
+			gitCommitAll(t, repo)
+			head, err := repo.Head()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(root, "apps/deleted.yaml")); err != nil {
+				t.Fatal(err)
+			}
+			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
+			gitCommitAll(t, repo)
+			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
+			transport := installSourceRefTransport(t, repo.Storer)
+			var previous string
+			for _, concurrency := range []string{"2", "8"} {
+				t.Run("concurrency_"+concurrency, func(t *testing.T) {
+					out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
+						"--concurrency", concurrency, "--cache-dir", t.TempDir())
+					if code != 0 || !strings.Contains(out, "value: pinned") || !strings.Contains(out, "value: pinned-deleted") ||
+						strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer") || transport.calls.Load() != 0 {
+						t.Fatalf("late source pin: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+					}
+					if previous != "" && out != previous {
+						t.Fatalf("output differs across concurrency levels (-want +got):\n%s", cmp.Diff(previous, out))
+					}
+					previous = out
+				})
+			}
+			st := store.New()
+			res, err := discovery.Run(t.Context(), discovery.Config{
+				Path: filepath.Join(root, "flux"), Store: st,
+				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			artifact, ok := st.GetArtifact(manifest.NamedResource{
+				Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "pinned",
+			}).(*store.SourceArtifact)
+			if !ok || artifact.LocalPath == root {
+				t.Fatalf("expected committed source artifact, got %+v", artifact)
+			}
+			for _, file := range []struct{ name, path string }{{"hello", "cm.yaml"}, {"deleted", "deleted.yaml"}} {
+				id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: file.name}
+				path, indexed := res.Existence.Get(id)
+				if !indexed || path != filepath.Join(artifact.LocalPath, "apps", file.path) ||
+					filepath.Join(root, filepath.FromSlash(res.SourceFiles[id])) != path {
+					t.Fatalf("pinned discovery metadata for %s: indexed=%t path=%q source=%q", id, indexed, path, res.SourceFiles[id])
+				}
+			}
+		})
 	}
 }
 

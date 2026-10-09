@@ -393,6 +393,10 @@ func (s *Store) AddRendered(obj manifest.BaseManifest) {
 	dispatch()
 }
 
+// renderedEqual MUST compare every RawObject field: Kind, APIVersion, Name,
+// Namespace and Spec. The interface-identity shortcut assumes pointer
+// implementations of BaseManifest. Reflection handles other typed manifests,
+// which are not the dominant AddRendered payload.
 func renderedEqual(a, b manifest.BaseManifest) bool {
 	if a == b {
 		return true

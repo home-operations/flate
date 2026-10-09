@@ -120,20 +120,10 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet) er
 		return err
 	}
 
-	// Fingerprint dedup: skip the re-render when the resolved inputs are
-	// byte-identical to the cached artifact. The common trigger is the
-	// drain-rerun the scheduler fires at the structural fixpoint for a
-	// selector-inputsFrom RS — it re-dispatches once because the RS's own
-	// fresh-render emissions bumped the arrival generation. That re-run
-	// MUST be a true no-op: unlike KS/HR, the RS does NOT replay emit on a
-	// dedup hit. Replaying would re-call emit.Children, whose AddRendered
-	// of each RawObject child fires EventObjectAdded unconditionally
-	// (AddRendered has no content dedup), bumping the generation again and
-	// re-arming the drain-rerun forever. The first render's idempotent
-	// bookkeeping (KeepEmitted / ReportRendered / rawSink) already ran and
-	// is cumulative, so a no-op dedup hit loses nothing. A genuine spec
-	// change re-reads a different fingerprint and re-renders below. fp is
-	// reused for SetArtifact.
+	// A fingerprint hit MUST not replay emission: KeepEmitted / ReportRendered /
+	// rawSink bookkeeping is cumulative and already complete. AddRendered
+	// independently suppresses equal RawObject arrivals. Changed inputs require
+	// a fresh render; fp is reused for SetArtifact.
 	fp := resourceSetFingerprint(rs, c.Store)
 	if handled, err := c.FingerprintDedup(id, fp, func([]map[string]any) {}); handled {
 		return err

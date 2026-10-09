@@ -100,9 +100,8 @@ const (
 	stateTerminal
 )
 
-// Existing scheduler fixtures need at most three dispatches per node under
-// -race. Allow 32 content-driven redispatches, excluding dependency retries,
-// to leave ample room for healthy propagation while bounding feedback loops.
+// Bound content-driven feedback per node while leaving dependency retries free
+// to propagate through arbitrarily long dependency chains.
 const maxRedispatches = 32
 
 type edgeIdx map[NodeID]map[NodeID]struct{}

@@ -442,25 +442,20 @@ func TestRedispatchLimit(t *testing.T) {
 	for _, mode := range []string{"running arrival", "terminal arrival", "drain replay"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
 			var s *Scheduler
+			var helpers sync.WaitGroup
 			var runs atomic.Int64
+			terminal, arrived := make(chan struct{}), make(chan struct{})
 			victim := id("feedback")
 			producer := id("producer")
 			disp := dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
 				if nid == producer {
-					for ctx.Err() == nil {
-						s.mu.Lock()
-						terminal := s.nodes[victim].state == stateTerminal
-						err := s.err
-						s.mu.Unlock()
-						if err != nil {
-							break
-						}
-						if terminal {
-							s.OnArrival(victim, true)
-						} else {
-							runtime.Gosched()
+					for awaitSignal(ctx, terminal) {
+						s.OnArrival(victim, true)
+						select {
+						case arrived <- struct{}{}:
+						case <-ctx.Done():
+							return OutcomeTerminal, nil
 						}
 					}
 					return OutcomeTerminal, nil
@@ -475,10 +470,38 @@ func TestRedispatchLimit(t *testing.T) {
 				return OutcomeTerminal, nil
 			})
 			s = New(task.NewBounded(2), disp)
+			defer func() {
+				cancel()
+				s.mu.Lock()
+				s.cond.Broadcast()
+				s.mu.Unlock()
+				helpers.Wait()
+			}()
 			s.SetRerunAtDrain(func(NodeID) bool { return mode == "drain replay" })
 			s.Seed([]NodeID{victim})
 			if mode == "terminal arrival" {
 				s.Seed([]NodeID{producer})
+				helpers.Go(func() {
+					for {
+						s.mu.Lock()
+						for s.nodes[victim].state != stateTerminal && s.err == nil && ctx.Err() == nil {
+							s.cond.Wait()
+						}
+						stopped := s.err != nil || ctx.Err() != nil
+						s.mu.Unlock()
+						if stopped {
+							return
+						}
+						select {
+						case terminal <- struct{}{}:
+						case <-ctx.Done():
+							return
+						}
+						if !awaitSignal(ctx, arrived) {
+							return
+						}
+					}
+				})
 			}
 			err := s.Run(ctx)
 			if err == nil || !strings.Contains(err.Error(), victim.String()) || !strings.Contains(err.Error(), "exceeded 32 redispatches") {

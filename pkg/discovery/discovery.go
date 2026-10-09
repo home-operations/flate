@@ -305,9 +305,9 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		return err
 	}
 	l.IgnoreFile = ""
-	// Pins and artifact lookups require final namespace ids. Apply inheritance
-	// before the first pass and after each pass that loads new manifests;
-	// these passes are bounded by spec.path nesting depth, not KS count.
+	// Pins resolve on final namespace ids. Extra inheritance passes are needed
+	// only when an authored GitRepository ref makes a pin possible; unpinned
+	// followed paths must wait for the complete Kustomization set in Run.
 	d.applyNamespaces(repoRoot)
 	namespaced := total
 
@@ -325,7 +325,16 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	var aliased []manifest.NamedResource
 	for {
 		if total != namespaced {
-			d.applyNamespaces(repoRoot)
+			for id := range d.sourceFiles {
+				if id.Kind != manifest.KindGitRepository {
+					continue
+				}
+				repo, ok := d.cfg.Store.Get[*manifest.GitRepository](id)
+				if ok && repo.Reference != nil && manifest.GitRefString(*repo.Reference) != "" {
+					d.applyNamespaces(repoRoot)
+					break
+				}
+			}
 			namespaced = total
 		}
 		overridden, err := d.overrideSelfReferentialGitRepositories(ctx, repoRoot)

@@ -3,10 +3,8 @@ package schedule
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"slices"
 	"testing"
-	"unsafe"
 
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -166,7 +164,10 @@ func BenchmarkComplete_Failed(b *testing.B) {
 				blocked[0] = id("replacement")
 			}
 			b.Run(fmt.Sprintf("FanIn=%d/%s", fanIn, mode), func(b *testing.B) {
-				s := New(task.NewBounded(2), nil)
+				next := blocked
+				s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, int) (Outcome, []NodeID) {
+					return OutcomeDependencyFailed, next
+				}))
 				nid := id("consumer")
 				n := &node{id: nid}
 				s.nodes[nid] = n
@@ -174,19 +175,12 @@ func BenchmarkComplete_Failed(b *testing.B) {
 				for _, dep := range append(slices.Clone(previous), blocked...) {
 					s.failedIdx[dep] = map[NodeID]struct{}{nid: {}, id("other"): {}}
 				}
-				consumed := new(bool)
-				// Resolve the candidate's private episode field outside timing;
-				// both implementations execute the same completion workload.
-				if field, ok := reflect.TypeFor[node]().FieldByName("conservativeUsed"); ok {
-					consumed = (*bool)(unsafe.Add(unsafe.Pointer(n), field.Offset))
-				}
-				next := blocked
 				b.ReportAllocs()
 				for b.Loop() {
-					*consumed = true
 					n.state = stateRunning
 					s.inFlight = 1
-					s.complete(nid, OutcomeDependencyFailed, next, false)
+					out, failed := s.disp.Dispatch(b.Context(), nid, DrainNone)
+					s.complete(nid, out, failed, false)
 					if mode != "Unchanged" {
 						if &next[0] == &blocked[0] {
 							next = previous
@@ -198,18 +192,4 @@ func BenchmarkComplete_Failed(b *testing.B) {
 			})
 		}
 	}
-}
-
-func TestProgress_EvidenceSnapshot(t *testing.T) {
-	s := New(task.NewBounded(2), nil)
-	s.inFlight = 1
-	ids := progressCorpus("ConfigMap")
-	for _, nid := range ids {
-		s.OnArrival(nid, false)
-	}
-	retained := 0
-	if history := reflect.ValueOf(s).Elem().FieldByName("progress"); history.IsValid() {
-		retained = history.Len()
-	}
-	t.Logf("arrivals=%d history_entries=%d nodes=%d failed_ids=%d parked_ids=%d node_bytes=%d scheduler_bytes=%d", len(ids), retained, len(s.nodes), len(s.failedIdx), len(s.parkedIdx), unsafe.Sizeof(node{}), unsafe.Sizeof(Scheduler{}))
 }

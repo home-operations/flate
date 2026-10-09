@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 )
 
 func TestResolveLocal_References(t *testing.T) {
@@ -199,6 +200,93 @@ func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 	if err != nil || moved[first.Named()].LocalPath != root || moved[first.Named()].Revision != b.String() {
 		t.Fatalf("moved tag used stale resolution: %v, %v", moved, err)
 	}
+}
+
+func TestResolveLocal_CacheKeyRulesVersion(t *testing.T) {
+	root, _, revision, _ := localFixture(t)
+	repository := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
+	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	artifacts, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name, version string
+		want          bool
+	}{
+		{name: "current", version: sourceignore.RulesVersion, want: true},
+		{name: "other", version: sourceignore.RulesVersion + "-other"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			slot, err := cache.Slot(t.Context(), "local-tree://"+identity, gitCacheKey(repository, revision.String(), tt.version), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer slot.Release()
+			if slot.Exists != tt.want {
+				t.Fatalf("rules version %q: Exists = %v, want %v", tt.version, slot.Exists, tt.want)
+			}
+			if tt.want && slot.Path != artifacts[repository.Named()].LocalPath {
+				t.Fatalf("resolved artifact %q differs from slot %q", artifacts[repository.Named()].LocalPath, slot.Path)
+			}
+		})
+	}
+}
+
+func TestResolveLocal_AnnotatedSemverWinner(t *testing.T) {
+	root, repo, revision, _ := localFixture(t)
+	if _, err := repo.CreateTag("v1.5.0", revision, &git.CreateTagOptions{
+		Tagger: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}, Message: "pin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	repository := localSource(manifest.GitRepositoryRef{SemVer: ">=1.0.0 <2.0.0"})
+	artifacts, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, source.NewCache(cacheroot.New(t.TempDir())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact := artifacts[repository.Named()]; artifact == nil || artifact.Revision != revision.String() {
+		t.Fatalf("annotated semver winner = %+v, want revision %s", artifact, revision)
+	}
+}
+
+func TestResolveSemver_EqualVersionCreationOrder(t *testing.T) {
+	for _, names := range [][]string{{"v1.0.0", "1.0.0"}, {"1.0.0", "v1.0.0"}} {
+		t.Run(strings.Join(names, "_"), func(t *testing.T) {
+			_, repo, a, b := localFixture(t)
+			hashes := map[string]plumbing.Hash{"1.0.0": a, "v1.0.0": b}
+			var refs []*plumbing.Reference
+			for _, name := range names {
+				ref := plumbing.NewHashReference(plumbing.NewTagReferenceName(name), hashes[name])
+				if err := repo.Storer.SetReference(ref); err != nil {
+					t.Fatal(err)
+				}
+				refs = append(refs, ref)
+			}
+			// Filesystem ref iteration can sort away creation order; force both
+			// orders so tie resolution cannot rely on the storage backend.
+			repo.Storer = &orderedTagStore{Storer: repo.Storer, refs: refs}
+			for range 10 {
+				got, err := resolveSemver(repo, ">=1.0.0 <2.0.0")
+				if err != nil || got != a {
+					t.Fatalf("equal-version winner = %s, %v, want %s", got, err, a)
+				}
+			}
+		})
+	}
+}
+
+type orderedTagStore struct {
+	storage.Storer
+	refs []*plumbing.Reference
+}
+
+func (s *orderedTagStore) IterReferences() (storer.ReferenceIter, error) {
+	return storer.NewReferenceSliceIter(s.refs), nil
 }
 
 func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {

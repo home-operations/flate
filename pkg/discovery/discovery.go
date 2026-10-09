@@ -315,8 +315,9 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	// stamps every loop-discovered object correctly in one walk.
 	d.applyNamespaces(repoRoot)
 
-	// Resolve authored sources before following any spec.path; sources found
-	// by a followed path must be resolved before the next expansion pass.
+	// Pins must be resolved before any spec.path is followed so a pinned
+	// Kustomization's subtree comes from its committed artifact, never the
+	// working tree. Sources found through followed paths resolve on the next pass.
 	// PreferExisting lets repeated AddObject re-emission
 	// be a no-op so the loop terminates on convergence (no new objects
 	// added). ResourceSets that emit child Kustomizations referencing new

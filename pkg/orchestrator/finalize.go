@@ -132,7 +132,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 			if dep.Kind != manifest.KindCustomResourceDefinition {
 				continue
 			}
-			crd := manifest.NamedResource{Kind: dep.Kind, Namespace: dep.Namespace, Name: dep.Name}
+			crd := manifest.NamedResource{Kind: dep.Kind, Name: dep.Name}
 			if o.store.GetObject(crd) != nil {
 				continue
 			}

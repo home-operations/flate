@@ -2,8 +2,13 @@ package orchestrator
 
 import (
 	"fmt"
+	"slices"
+	"strings"
+	"testing"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	gogit "github.com/go-git/go-git/v5"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -12,9 +17,6 @@ import (
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"slices"
-	"strings"
-	"testing"
 )
 
 const issueResourceSet = `apiVersion: fluxcd.controlplane.io/v1
@@ -99,13 +101,19 @@ func crdFixture(t *testing.T, mode string) string {
 		if mode == "indexed" {
 			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n- ../indexed/crd.yaml\n")
 		}
-	case "produced":
-		testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", "crds")+"---\n"+ksYAML("crds", "crds", ""))
+	case "produced", "unordered", "sibling ks":
+		dependency := ""
+		if mode == "produced" {
+			dependency = "crds"
+		}
+		testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", dependency)+"---\n"+ksYAML("crds", "crds", ""))
 		testutil.WriteFile(t, dir, "crds/kustomization.yaml", "resources:\n- crd.yaml\n")
 		testutil.WriteFile(t, dir, "crds/crd.yaml", helmReleaseCRD)
-	case "helm produced":
+	case "helm produced", "sibling hr":
 		testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
-		rs = strings.Replace(rs, "  dependsOn:\n", "  dependsOn:\n    - apiVersion: helm.toolkit.fluxcd.io/v2\n      kind: HelmRelease\n      name: crd-producer\n", 1)
+		if mode == "helm produced" {
+			rs = strings.Replace(rs, "  dependsOn:\n", "  dependsOn:\n    - apiVersion: helm.toolkit.fluxcd.io/v2\n      kind: HelmRelease\n      name: crd-producer\n", 1)
+		}
 		testutil.WriteFile(t, dir, "apps/rs.yaml", rs)
 		testutil.WriteFile(t, dir, "apps/producer.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -162,7 +170,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		for _, enabled := range []bool{false, true} {
-			for _, mode := range []string{"absent", "supplied", "indexed", "produced", "helm produced", "unreferenced"} {
+			for _, mode := range []string{"absent", "supplied", "indexed", "produced", "helm produced", "unreferenced", "unordered", "sibling ks", "sibling hr"} {
 				t.Run(fmt.Sprintf("workers_%d/enabled_%t/%s", workers, enabled, mode), func(t *testing.T) {
 					dir := crdFixture(t, mode)
 					o, err := New(Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: workers, AllowMissingCRDs: enabled})
@@ -206,7 +214,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	s := store.New()
 	o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}
 	crdA := manifest.NamedResource{Kind: manifest.KindCustomResourceDefinition, Name: "a.example.com"}
-	crdB := manifest.NamedResource{Kind: manifest.KindCustomResourceDefinition, Namespace: "explicit", Name: "a.example.com"}
+	crdB := manifest.NamedResource{Kind: manifest.KindCustomResourceDefinition, Name: "b.example.com"}
 	for _, tc := range []struct {
 		name                string
 		status              store.Status
@@ -215,7 +223,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 		{"z", store.StatusReady, true, true}, {"a", store.StatusReady, true, true}, {"failed", store.StatusFailed, true, true},
 		{"pending", store.StatusPending, true, true}, {"no status", store.StatusReady, false, true}, {"no artifact", store.StatusReady, true, false},
 	} {
-		rs := &manifest.ResourceSet{Name: tc.name, Namespace: "ns", DependsOn: []fluxopv1.Dependency{{Kind: crdB.Kind, Name: crdB.Name, Namespace: crdB.Namespace}, {Kind: crdA.Kind, Name: crdA.Name}, {Kind: crdA.Kind, Name: crdA.Name}, {Kind: manifest.KindConfigMap, Name: "missing"}}}
+		rs := &manifest.ResourceSet{Name: tc.name, Namespace: "ns", DependsOn: []fluxopv1.Dependency{{Kind: crdB.Kind, Name: crdB.Name, Namespace: "explicit"}, {Kind: crdA.Kind, Name: crdA.Name}, {Kind: crdA.Kind, Name: crdA.Name, Namespace: "explicit"}, {Kind: manifest.KindConfigMap, Name: "missing"}}}
 		s.AddObject(rs)
 		if tc.hasStatus {
 			s.UpdateStatus(rs.Named(), tc.status, "")
@@ -233,7 +241,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	for _, state := range []string{"object", "ready", "pending", "failed", "disabled"} {
 		t.Run(state, func(t *testing.T) {
 			st := store.New()
-			rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{Kind: crdA.Kind, Name: crdA.Name}}}
+			rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{Kind: crdA.Kind, Name: crdA.Name, Namespace: "explicit"}}}
 			st.AddObject(rs)
 			st.UpdateStatus(rs.Named(), store.StatusReady, "")
 			st.SetArtifact(rs.Named(), &store.ResourceSetArtifact{})

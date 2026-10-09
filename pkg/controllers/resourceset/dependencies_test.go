@@ -2,19 +2,22 @@ package resourceset
 
 import (
 	"fmt"
+	"testing"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"testing"
 )
 
 func TestCollectDeps_ScopeAndImmutability(t *testing.T) {
 	c, s := newController(t)
 	for _, tc := range []struct{ kind, namespace, want string }{
 		{manifest.KindCustomResourceDefinition, "", ""}, {"ClusterRole", "", ""}, {"Namespace", "", ""},
-		{manifest.KindCustomResourceDefinition, "explicit", "explicit"}, {manifest.KindConfigMap, "", "apps"},
+		{manifest.KindCustomResourceDefinition, "explicit", ""}, {"ClusterRole", "explicit", ""}, {"Namespace", "explicit", ""},
+		{manifest.KindConfigMap, "", "apps"}, {"Widget", "other", "other"},
 		{manifest.KindSecret, "", "apps"}, {"Widget", "", "apps"}, {manifest.KindConfigMap, "other", "other"},
 	} {
 		t.Run(tc.kind+"/"+tc.namespace, func(t *testing.T) {

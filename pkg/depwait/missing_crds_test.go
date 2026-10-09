@@ -2,11 +2,12 @@ package depwait
 
 import (
 	"fmt"
+	"strings"
+	"testing"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"strings"
-	"testing"
 )
 
 type crdPromotion struct {
@@ -28,7 +29,7 @@ func (e *crdPromotion) Promote(id manifest.NamedResource) bool {
 func TestClassify_MissingCRDs(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		for _, drain := range []int{drainNone, drainCascade, drainForce} {
-			for _, state := range []string{"absent", "explicit namespace", "object", "ready status", "pending status", "failed status", "promoted", "promotion miss", "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList", "invalid expression", "present invalid expression"} {
+			for _, state := range []string{"absent", "explicit namespace", "object", "ready status", "pending status", "failed status", "promoted", "promotion miss", "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList", "valid expression", "invalid expression", "present invalid expression"} {
 				t.Run(fmt.Sprintf("enabled_%t/drain_%d/%s", enabled, drain, state), func(t *testing.T) {
 					s := store.New()
 					ref := manifest.DependencyRef{Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
@@ -44,6 +45,8 @@ func TestClassify_MissingCRDs(t *testing.T) {
 					}
 					var e *crdPromotion
 					switch state {
+					case "valid expression":
+						ref.ReadyExpr = "false"
 					case "explicit namespace":
 						ref.Namespace = "explicit"
 					case "object", "present invalid expression":

@@ -2,11 +2,13 @@ package e2e
 
 import (
 	"fmt"
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/manifest"
 	"strings"
 	"testing"
+
+	gogit "github.com/go-git/go-git/v5"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 const issueResourceSet = `apiVersion: fluxcd.controlplane.io/v1
@@ -107,13 +109,17 @@ func suspendedIssueResourceSet() string {
 func TestE2E_MissingCRDs_Policy(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		for _, tc := range []struct {
-			name, kind, supplied string
-			enabled, success     bool
+			name, kind, supplied, namespace string
+			enabled, success                bool
 		}{
 			{name: "strict absent", kind: "CustomResourceDefinition"},
 			{name: "allowed absent", kind: "CustomResourceDefinition", enabled: true, success: true},
 			{name: "supplied CRD", kind: "CustomResourceDefinition", supplied: helmReleaseCRD, success: true},
 			{name: "supplied CRD opt in", kind: "CustomResourceDefinition", supplied: helmReleaseCRD, enabled: true, success: true},
+			{name: "strict absent explicit CRD", kind: "CustomResourceDefinition", namespace: "flux-system"},
+			{name: "allowed absent explicit CRD", kind: "CustomResourceDefinition", namespace: "flux-system", enabled: true, success: true},
+			{name: "supplied explicit CRD", kind: "CustomResourceDefinition", namespace: "flux-system", supplied: helmReleaseCRD, success: true},
+			{name: "supplied explicit CRD opt in", kind: "CustomResourceDefinition", namespace: "flux-system", supplied: helmReleaseCRD, enabled: true, success: true},
 			{name: "missing ConfigMap", kind: "ConfigMap", enabled: true},
 			{name: "missing Secret", kind: "Secret", enabled: true},
 			{name: "missing Widget", kind: "Widget", enabled: true},
@@ -121,6 +127,9 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 		} {
 			t.Run(fmt.Sprintf("workers_%d/%s", workers, tc.name), func(t *testing.T) {
 				rs := strings.Replace(suspendedIssueResourceSet(), "kind: CustomResourceDefinition", "kind: "+tc.kind, 1)
+				if tc.namespace != "" {
+					rs = strings.Replace(rs, "      kind: "+tc.kind+"\n", "      kind: "+tc.kind+"\n      namespace: "+tc.namespace+"\n", 1)
+				}
 				dir := missingCRDRepo(t, rs)
 				if tc.supplied != "" {
 					testutil.WriteFile(t, dir, "apps/dependency.yaml", tc.supplied)
@@ -146,8 +155,12 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 				if got := strings.Count(diagnostics, "absent from offline inputs; accepted for"); got != wantWarning {
 					t.Fatalf("warning count=%d want %d: %s", got, wantWarning, diagnostics)
 				}
-				if wantWarning == 1 && !strings.Contains(diagnostics, "ResourceSet/flux-system/flux-operator") {
-					t.Fatalf("dependent absent: %s", diagnostics)
+				if wantWarning == 1 {
+					crd := manifest.NamedResource{Kind: manifest.KindCustomResourceDefinition, Name: "helmreleases.helm.toolkit.fluxcd.io"}
+					want := "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet/flux-system/flux-operator"
+					if !strings.Contains(diagnostics, want) {
+						t.Fatalf("canonical warning absent: %s", diagnostics)
+					}
 				}
 				if !tc.success {
 					if !strings.Contains(diagnostics, "not found") {

@@ -193,7 +193,9 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 	deps := make([]manifest.DependencyRef, capacity)
 	for i, dep := range rs.DependsOn {
 		ns := dep.Namespace
-		if ns == "" && !manifest.IsClusterScopedKind(dep.Kind) {
+		if manifest.IsClusterScopedKind(dep.Kind) {
+			ns = ""
+		} else if ns == "" {
 			ns = rs.Namespace
 		}
 		deps[i] = manifest.DependencyRef{

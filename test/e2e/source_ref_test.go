@@ -33,9 +33,11 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 }
 
 func TestE2E_SourceRef_PinnedFollowedSourceInheritsNamespace(t *testing.T) {
-	for _, tt := range []struct{ name, namespace string }{
-		{name: "explicit", namespace: ", namespace: flux-system"},
-		{name: "omitted"},
+	for _, tt := range []struct{ name, namespace, sourceDir string }{
+		{name: "explicit", namespace: ", namespace: flux-system", sourceDir: "clusters"},
+		{name: "omitted", sourceDir: "clusters"},
+		{name: "second_explicit", namespace: ", namespace: flux-system", sourceDir: "sub"},
+		{name: "second_omitted", sourceDir: "sub"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -53,8 +55,19 @@ spec:
   path: ./clusters
   sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}
 `)
-			testutil.WriteFile(t, root, "clusters/kustomization.yaml", "namespace: flux-system\nresources: [repo.yaml, apps.yaml]\n")
-			testutil.WriteFile(t, root, "clusters/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+			if tt.sourceDir == "sub" {
+				testutil.WriteFile(t, root, "clusters/kustomization.yaml", "namespace: flux-system\nresources: [ks2.yaml]\n")
+				testutil.WriteFile(t, root, "clusters/ks2.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: sub}
+spec:
+  interval: 10m
+  path: ./sub
+  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}
+`)
+			}
+			testutil.WriteFile(t, root, tt.sourceDir+"/kustomization.yaml", "namespace: flux-system\nresources: [repo.yaml, apps.yaml]\n")
+			testutil.WriteFile(t, root, tt.sourceDir+"/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: cluster}
 spec:
@@ -62,7 +75,7 @@ spec:
   url: git://fixture.invalid/cluster
   ref: {tag: v1.0.0}
 `)
-			testutil.WriteFile(t, root, "clusters/apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+			testutil.WriteFile(t, root, tt.sourceDir+"/apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: apps}
 spec:
@@ -84,10 +97,12 @@ spec:
 			}
 			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
 			transport := installSourceRefTransport(t, repo.Storer)
-			out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
-				"--concurrency", "2", "--cache-dir", t.TempDir())
-			if code != 0 || !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") || transport.calls.Load() != 0 {
-				t.Fatalf("followed source pin: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+			for _, concurrency := range []string{"1", "2", "8"} {
+				out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
+					"--concurrency", concurrency, "--cache-dir", t.TempDir())
+				if code != 0 || !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") || transport.calls.Load() != 0 {
+					t.Fatalf("followed source pin: concurrency=%s exit=%d transport=%d\n%s\nstderr:\n%s", concurrency, code, transport.calls.Load(), out, stderr)
+				}
 			}
 		})
 	}

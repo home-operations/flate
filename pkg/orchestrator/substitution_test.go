@@ -158,6 +158,84 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 	}
 }
 
+func TestRender_SubstitutionSuppliedSecretDoesNotRescueHelmRelease(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  url: https://example.test/cluster.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substitute: {KEEP: "ok"}
+    substituteFrom:
+      - kind: Secret
+        name: missing
+`)
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./hr.yaml\n")
+			testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: apps}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/req
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  values:
+    greeting: "${MISSING}"
+`)
+			testutil.WriteFile(t, dir, "charts/req/Chart.yaml", "apiVersion: v2\nname: req\nversion: 0.1.0\n")
+			testutil.WriteFile(t, dir, "charts/req/templates/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
+
+			o, err := New(Config{
+				Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers,
+				SubstituteFrom: []SubstitutionSource{{
+					Object: &manifest.Secret{Name: "missing", Namespace: "flux-system", StringData: map[string]any{"OTHER": "unrelated"}},
+					Path:   "ci.yaml",
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(o.Stop)
+			res, err := o.Render(t.Context())
+			if _, ok := errors.AsType[*FailuresError](err); !ok {
+				t.Errorf("expected reconcile failure, got %v", err)
+			}
+			if res == nil {
+				t.Fatal("missing render result")
+			}
+			demo := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+			if _, failed := res.Failed[demo]; !failed {
+				t.Error("chart with an unrelated missing value must fail")
+			}
+			for id, docs := range res.Manifests {
+				for _, doc := range docs {
+					if manifest.ContainsValuePlaceholder(doc) {
+						t.Errorf("unexpected rescue placeholder in %s: %v", id, doc)
+					}
+				}
+			}
+			for _, warning := range res.Warnings {
+				if warning.Resource == demo && warning.Category == manifest.WarnUnresolvedSubstitution && slices.Contains(warning.Detail, "greeting") {
+					t.Errorf("unexpected rescue warning: %+v", warning)
+				}
+			}
+		})
+	}
+}
+
 func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 	for _, kind := range []string{"stored", "indexed file", "known Kustomization producer", "known Secret producer"} {
 		t.Run(kind, func(t *testing.T) {

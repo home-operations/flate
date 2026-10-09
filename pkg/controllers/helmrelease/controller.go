@@ -39,6 +39,7 @@ type Controller struct {
 	// allowMissingSecrets extends the source-controller flag to
 	// HelmRelease valuesFrom refs that cannot be resolved offline.
 	allowMissingSecrets bool
+	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
 
 	// producers is the orchestrator-owned producer index, shared with the
 	// source controller. It maps a target Secret to the in-repo
@@ -57,7 +58,7 @@ type Controller struct {
 // controller (Filter / ParentOf — here resolving each HR to its enclosing KS,
 // which reconcile depwaits on so cluster-KS spec patches land before the first
 // helm.Template call — RenderTracker / Existence / PreflightFailure);
-// AllowMissingSecrets and Producers are HelmRelease-specific.
+// AllowMissingSecrets, Producers and SubstituteFrom are HelmRelease-specific.
 type ReconcileOptions struct {
 	base.Options
 	// AllowMissingSecrets omits non-optional valuesFrom refs that point
@@ -68,6 +69,8 @@ type ReconcileOptions struct {
 	// valuesFrom Secret with a declared producer is omitted even without
 	// AllowMissingSecrets. Nil is OK — no producer is ever known.
 	Producers *manifest.ProducerIndex
+	// SubstituteFrom is the immutable bootstrap-approved postBuild source snapshot.
+	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
 }
 
 // New constructs a HelmRelease controller.
@@ -87,6 +90,7 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 	c.Controller.Configure(opts.Options)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
 	c.producers = opts.Producers
+	c.substitutionSources = opts.SubstituteFrom
 }
 
 // Start registers the listeners. The controller runs until Close.
@@ -371,6 +375,13 @@ func (c *Controller) parentReadsUnreadableSecret(id manifest.NamedResource) bool
 	ks, ok := c.Store.GetObject(parent).(*manifest.Kustomization)
 	if !ok {
 		return false
+	}
+	if len(c.substitutionSources) > 0 {
+		owned := *ks
+		owned.PostBuildSubstituteFrom = slices.DeleteFunc(slices.Clone(ks.PostBuildSubstituteFrom), func(ref manifest.SubstituteReference) bool {
+			return c.substitutionSources[manifest.NamedResource{Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name}] != nil
+		})
+		ks = &owned
 	}
 	return len(values.UnreadableSubstituteSecrets(ks, values.NewStoreProvider(c.Store))) > 0
 }

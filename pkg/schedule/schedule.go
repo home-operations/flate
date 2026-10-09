@@ -23,7 +23,6 @@ package schedule
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -160,7 +159,6 @@ type Scheduler struct {
 	generation  uint64
 	inFlight    int // count of stateRunning nodes (EXCLUDES parked)
 	draining    int // DrainNone/DrainCascade/DrainForce
-	canceled    bool
 	err         error
 	// dirty records that an object arrived since the last quiescence sweep. A
 	// rerun node re-expands at the structural fixpoint only when the store has
@@ -225,7 +223,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			s.mu.Lock()
-			s.canceled = true
+			if s.err == nil {
+				s.err = ctx.Err()
+			}
 			s.cond.Broadcast()
 			s.mu.Unlock()
 		case <-stop:
@@ -233,9 +233,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}()
 
 	s.mu.Lock()
-	for !s.canceled && s.err == nil {
+	for s.err == nil {
 		// 1. Dispatch the runnable frontier onto the bounded pool.
-		for len(s.runq) > 0 && !s.canceled && s.err == nil {
+		for len(s.runq) > 0 && s.err == nil {
 			id := s.runq[0]
 			s.runq = s.runq[1:]
 			n := s.nodes[id]
@@ -256,7 +256,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			})
 			s.mu.Lock()
 		}
-		if s.err != nil || s.canceled {
+		if s.err != nil {
 			break
 		}
 		// 2. Frontier empty. If nothing is in flight, we are at a fixpoint:
@@ -296,14 +296,22 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		// 3. Work in flight, frontier empty: wait for a completion or arrival.
 		s.cond.Wait()
 	}
-	if !s.canceled && s.err == nil {
+	if s.err == nil {
+		s.err = ctx.Err()
+	}
+	if s.err == nil {
 		s.finalSweepLocked()
 	}
-	err := s.err
 	s.mu.Unlock()
 	cancel()
 	s.tasks.BlockTillDone()
-	return errors.Join(err, ctx.Err())
+	s.mu.Lock()
+	if s.err == nil {
+		s.err = ctx.Err()
+	}
+	err := s.err
+	s.mu.Unlock()
+	return err
 }
 
 // complete records the result of one Dispatch. Runs on the worker goroutine;
@@ -325,7 +333,7 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 			s.clearFailedLocked(n)
 		}
 	}
-	if s.err != nil || s.canceled {
+	if s.err != nil {
 		s.clearFailedLocked(n)
 		n.state = stateTerminal
 		n.conservativeUsed = false
@@ -631,7 +639,7 @@ func (s *Scheduler) recordProgressLocked(id NodeID) {
 func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.err != nil || s.canceled {
+	if s.err != nil {
 		return
 	}
 	// An arrival can change a rerun node's resolved input set; mark the store
@@ -673,7 +681,7 @@ func (s *Scheduler) OnStatusWake(id NodeID, ready, failed bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.err != nil || s.canceled {
+	if s.err != nil {
 		return
 	}
 	if ready && (s.inFlight > 0 || len(s.failedIdx) > 0) {
@@ -746,7 +754,7 @@ func (s *Scheduler) requeueRerunLocked() bool {
 }
 
 func (s *Scheduler) redispatchLocked(n *node) bool {
-	if s.err != nil || s.canceled {
+	if s.err != nil {
 		return false
 	}
 	if (n.contentRequested || n.productive) && !n.queuedCharged {

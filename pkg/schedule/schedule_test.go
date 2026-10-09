@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -24,6 +25,132 @@ type dispatchFunc func(context.Context, NodeID, int) (Outcome, []NodeID)
 
 func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain int) (Outcome, []NodeID) {
 	return f(ctx, id, drain)
+}
+
+func TestScheduler_RunCancellationBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		seed           bool
+		cancelBefore   bool
+		cancelDispatch bool
+	}{
+		{name: "canceled empty", cancelBefore: true},
+		{name: "final dispatch cancellation", seed: true, cancelDispatch: true},
+		{name: "clean completion", seed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, int) (Outcome, []NodeID) {
+				if tc.cancelDispatch {
+					cancel()
+				}
+				return OutcomeTerminal, nil
+			}))
+			if tc.seed {
+				s.Seed([]NodeID{id("last")})
+			}
+			if tc.cancelBefore {
+				cancel()
+			}
+			err := s.Run(ctx)
+			if tc.cancelBefore || tc.cancelDispatch {
+				assert.Equal(t, errors.Is(err, context.Canceled), true)
+			} else {
+				assert.Equal(t, err, nil)
+			}
+		})
+	}
+}
+
+func TestScheduler_RunStopDrains(t *testing.T) {
+	for _, capFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cap_first=%t", capFirst), func(t *testing.T) {
+			checkCtx, stopChecks := context.WithTimeout(t.Context(), 5*time.Second)
+			defer stopChecks()
+			ctx, cancel := context.WithCancel(checkCtx)
+			var run sync.WaitGroup
+			defer run.Wait()
+			started, stopping := make(chan struct{}, 2), make(chan struct{}, 2)
+			fail, release := make(chan struct{}), make(chan struct{})
+			releaseBodies := sync.OnceFunc(func() { close(release) })
+			defer releaseBodies()
+			defer cancel()
+			victim, held := id("feedback"), id("held")
+			var active, runs atomic.Int64
+			var s *Scheduler
+			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+				active.Add(1)
+				defer active.Add(-1)
+				runs.Add(1)
+				started <- struct{}{}
+				if capFirst && nid == victim {
+					if awaitSignal(ctx, fail) {
+						s.OnArrival(victim, true)
+					}
+					return OutcomeTerminal, nil
+				}
+				<-ctx.Done()
+				stopping <- struct{}{}
+				awaitSignal(checkCtx, release)
+				return OutcomeTerminal, nil
+			}))
+			s.Seed([]NodeID{victim, held})
+			if capFirst {
+				s.nodes[victim].redispatches = maxRedispatches
+			}
+			done := make(chan error, 1)
+			run.Go(func() { done <- s.Run(ctx) })
+			for range 2 {
+				if !awaitSignal(checkCtx, started) {
+					t.Fatal("two worker bodies did not start")
+				}
+			}
+			assert.Equal(t, active.Load(), int64(2))
+			wantStopping := 2
+			if capFirst {
+				close(fail)
+				wantStopping = 1
+			} else {
+				cancel()
+			}
+			for range wantStopping {
+				if !awaitSignal(checkCtx, stopping) {
+					t.Fatal("bodies did not observe the stop")
+				}
+			}
+			s.mu.Lock()
+			for s.err == nil {
+				s.cond.Wait()
+			}
+			recorded := s.err
+			s.mu.Unlock()
+			cancel()
+			s.OnArrival(id("late"), true)
+			select {
+			case err := <-done:
+				t.Fatalf("Run returned before body drain: %v", err)
+			default:
+			}
+			releaseBodies()
+			select {
+			case err := <-done:
+				if capFirst {
+					assert.Equal(t, errors.Is(err, context.Canceled), false)
+					assert.Equal(t, strings.Contains(err.Error(), victim.String()), true)
+					assert.Equal(t, strings.Contains(err.Error(), "exceeded 32 redispatches"), true)
+				} else {
+					assert.Equal(t, errors.Is(err, context.Canceled), true)
+				}
+				assert.Equal(t, err, recorded)
+			case <-checkCtx.Done():
+				t.Fatal("Run did not finish after body drain")
+			}
+			assert.Equal(t, active.Load(), int64(0))
+			assert.Equal(t, runs.Load(), int64(2))
+			assert.Equal(t, len(s.nodes), 2)
+		})
+	}
 }
 
 func TestScheduler_FailedBlockerSets(t *testing.T) {

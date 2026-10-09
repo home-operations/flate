@@ -27,7 +27,13 @@ var clusterScopedKinds = map[string]struct{}{
 // IsClusterScoped reports whether doc's kind is a well-known cluster-scoped
 // kind that must not carry a metadata.namespace.
 func IsClusterScoped(doc map[string]any) bool {
-	_, ok := clusterScopedKinds[DocKind(doc)]
+	return IsClusterScopedKind(DocKind(doc))
+}
+
+// IsClusterScopedKind reports whether kind is a known cluster-scoped kind.
+// Unknown kinds are treated as namespaced because offline rendering has no RESTMapper.
+func IsClusterScopedKind(kind string) bool {
+	_, ok := clusterScopedKinds[kind]
 	return ok
 }
 

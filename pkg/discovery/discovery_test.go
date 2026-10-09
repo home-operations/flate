@@ -7,6 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -440,14 +445,18 @@ func TestRun_AliasesURLMatchedInTreeGitRepository(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// Stand up a minimal .git/config so PlainOpen sees a repo and
-	// readWorkingTreeRemotes returns one remote.
-	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "config"), `[core]
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, dir, ".git/config", `[core]
 	repositoryformatversion = 0
 [remote "origin"]
 	url = git@github.com:Example/home-ops.git
 `)
-	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+	if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))); err != nil {
+		t.Fatal(err)
+	}
 
 	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "flux", "cluster.yaml"), `---
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -475,6 +484,17 @@ spec:
   interval: 1h
 `)
 	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}}); err != nil {
+		t.Fatal(err)
+	}
 
 	st := store.New()
 	if _, err := discovery.Run(context.Background(), discovery.Config{

@@ -179,14 +179,15 @@ type Config struct {
 
 // Orchestrator wires controllers and drives reconciliation.
 type Orchestrator struct {
-	cfg    Config
-	store  *store.Store
-	tasks  *task.Service
-	src    *sourcectrl.Controller
-	ksc    *kustomization.Controller
-	hrc    *helmrelease.Controller
-	rsc    *resourcesetctrl.Controller
-	filter *change.Filter
+	cfg         Config
+	store       *store.Store
+	tasks       *task.Service
+	src         *sourcectrl.Controller
+	ksc         *kustomization.Controller
+	hrc         *helmrelease.Controller
+	rsc         *resourcesetctrl.Controller
+	filter      *change.Filter
+	sourceCache *source.Cache
 	// Backing storage keeps the effective option owned without a separate allocation.
 	disableChartDigestTracking bool
 
@@ -489,6 +490,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 	o := &Orchestrator{
 		cfg:                        cfg,
+		sourceCache:                cache,
 		store:                      st,
 		tasks:                      ts,
 		src:                        srcCtrl,
@@ -567,6 +569,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		KRMIgnoreFile: o.cfg.KRMIgnoreFile,
 		Store:         o.store, WipeSecrets: o.cfg.WipeSecrets,
 		ComponentCache: o.componentCache,
+		SourceCache:    o.sourceCache,
 	}
 	if o.cfg.HelmOptions.DisableChartDigestTracking == nil {
 		discoveryCfg.OnHelmRelease = func(hr *manifest.HelmRelease) {

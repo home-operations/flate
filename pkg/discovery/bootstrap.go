@@ -1,9 +1,11 @@
 package discovery
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -55,35 +57,18 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 	return root, nil
 }
 
-// aliasBootstrapSources resolves sources that real Flux would fetch
-// remotely but flate must satisfy from the working tree. Two passes:
-//
-//  1. aliasMissingKustomizationSources — for every Kustomization
-//     whose sourceRef points at a Git/OCIRepository CR that isn't in
-//     the tree (the `flux bootstrap` and flux-operator FluxInstance
-//     pattern: the cluster's root source is created out-of-band), seed
-//     a synthetic CR + artifact so depwait resolves it.
-//  2. overrideSelfReferentialGitRepositories — for every in-tree
-//     GitRepository whose spec.url matches the working tree's own git
-//     remote (the Zariel/home-ops pattern: the cluster pulls itself),
-//     override the artifact to the local checkout so the SOPS-decrypted
-//     remote fetch is avoided.
-//
-// Both passes alias to the same working tree, so the combined result
-// is logged at WARN when more than one source is aliased — multiple
-// remote shared-infra repos would silently render against the same
-// (wrong) tree.
-//
-// All namespaces are aliased, not just `flux-system` (#199): the
-// convention of running Flux in a non-default namespace (e.g.
-// `gitops-system`) is widespread and the bootstrap-source-points-at-
-// the-local-tree property is identical regardless. A typo'd sourceRef
-// silently renders against the working tree instead of failing fast —
-// trade-off inherited from the original `flux-system` path.
-func (d *discoverer) aliasBootstrapSources(repoRoot string) {
+// aliasBootstrapSources seeds missing-source working-tree aliases and resolves
+// matching authored GitRepositories according to their refs. Only working-tree
+// aliases contribute to the warning about multiple sources using the same tree.
+func (d *discoverer) aliasBootstrapSources(ctx context.Context, repoRoot string) error {
 	aliased := d.aliasMissingKustomizationSources(repoRoot)
-	aliased = append(aliased, d.overrideSelfReferentialGitRepositories(repoRoot)...)
+	overridden, err := d.overrideSelfReferentialGitRepositories(ctx, repoRoot)
+	if err != nil {
+		return err
+	}
+	aliased = append(aliased, overridden...)
 	warnIfMultipleBootstrapAliases(aliased, repoRoot)
+	return nil
 }
 
 // aliasMissingKustomizationSources is pass 1. It walks every loaded
@@ -117,24 +102,35 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 }
 
 // overrideSelfReferentialGitRepositories is pass 2. It rewrites the
-// artifact of any file-loaded GitRepository whose spec.url matches the
-// working tree's own git remote — the cluster pulling itself. Real
-// Flux fetches that URL with a SOPS-decrypted deploy key; flate runs
-// offline so we substitute the local checkout. Returns the IDs
-// overridden so the multi-alias footgun check sees them.
+// artifact of matching file-loaded GitRepositories according to their
+// declared refs. Returns only working-tree aliases for the multi-alias warning.
 //
 // No alreadyAliased skip-set needed: pass 1 publishes synthetic URLs
 // (file:// or oci://flate-bootstrap-alias/...) that normalizeGitURL
 // always rejects. A pass-1 alias can never URL-match a working-tree
 // remote, so the URL-match filter below is the natural guard.
-func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string) []manifest.NamedResource {
+func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context, repoRoot string) ([]manifest.NamedResource, error) {
 	remotes := d.selfRemotes(repoRoot)
 	debugLogRemotes(remotes)
 	if len(remotes) == 0 {
-		return nil
+		return nil, nil
 	}
 	var overridden []manifest.NamedResource
-	for _, repo := range d.cfg.Store.ListAs[*manifest.GitRepository](manifest.KindGitRepository) {
+	repositories := d.cfg.Store.ListAs[*manifest.GitRepository](manifest.KindGitRepository)
+	var pinned []*manifest.GitRepository
+	for _, repo := range repositories {
+		if repo.Named() == manifest.BootstrapSourceID || repo.Reference == nil || manifest.GitRefString(*repo.Reference) == "" {
+			continue
+		}
+		if _, match := remotes[normalizeGitURL(repo.URL)]; match {
+			pinned = append(pinned, repo)
+		}
+	}
+	artifacts, err := git.ResolveLocal(ctx, repoRoot, pinned, d.cfg.SourceCache)
+	if err != nil {
+		return nil, err
+	}
+	for _, repo := range repositories {
 		id := repo.Named()
 		normalized := normalizeGitURL(repo.URL)
 		if normalized == "" {
@@ -142,6 +138,20 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string) []m
 		}
 		if _, match := remotes[normalized]; !match {
 			continue
+		}
+		if id != manifest.BootstrapSourceID && repo.Reference != nil && manifest.GitRefString(*repo.Reference) != "" {
+			artifact := artifacts[id]
+			if artifact == nil {
+				slog.Warn("discovery: declared source ref cannot be satisfied locally; using normal source fetch",
+					"id", id.String(), "ref", manifest.GitRefString(*repo.Reference),
+					"reason", "ref unavailable in this tree's repository or checkout options require fetching")
+				continue
+			}
+			if artifact.LocalPath != repoRoot {
+				d.cfg.Store.SetArtifact(id, artifact)
+				d.cfg.Store.UpdateStatus(id, store.StatusReady, "local committed source artifact")
+				continue
+			}
 		}
 		d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
 			Kind: manifest.KindGitRepository,
@@ -152,7 +162,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string) []m
 			"id", id.String(), "url", repo.URL, "normalizedKey", normalized, "localPath", repoRoot)
 		overridden = append(overridden, id)
 	}
-	return overridden
+	return overridden, nil
 }
 
 // publishBootstrapAlias inserts a synthetic source CR plus its

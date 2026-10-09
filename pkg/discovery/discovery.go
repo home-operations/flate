@@ -4,6 +4,7 @@
 // computing the structural-parent index. The output is everything the
 // reconcile phase needs to start firing controllers — repo root,
 // per-object source files, and the parent index.
+// Source aliasing uses file-loaded URL/ref values before rendering and does not follow parent-render transformations.
 //
 // Splitting this out of the orchestrator turns a 750-line god-object
 // into two ~350-line files with one clean interface between them. The
@@ -23,6 +24,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -100,10 +102,8 @@ type Config struct {
 	// behavior. Path must sit at or under RepoRoot.
 	RepoRoot string
 	// SelfURLs are the remote URL(s) this tree represents. A user-authored
-	// GitRepository whose spec.url matches one of these is the cluster
-	// pulling itself; its artifact is aliased to the local tree
-	// (overrideSelfReferentialGitRepositories) so the offline render
-	// resolves it. Supplied explicitly by SDK consumers rendering
+	// GitRepository whose spec.url matches one of these is eligible for
+	// local resolution according to its declared ref. Supplied by SDK consumers rendering
 	// extracted trees (no .git/config to read); empty ⇒ fall back to the
 	// working tree's .git remotes, preserving local behavior.
 	SelfURLs []string
@@ -124,6 +124,9 @@ type Config struct {
 	// Bootstrap; pass nil for standalone discovery callers (tests,
 	// embedders) that don't need cross-consumer sharing.
 	ComponentCache *manifest.ComponentCache
+	// SourceCache stores committed local source artifacts. Nil lazily uses
+	// the default cache only when a non-HEAD materialization is required.
+	SourceCache *source.Cache
 }
 
 // Run performs the full discovery phase against cfg and writes results
@@ -163,7 +166,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
-	d.aliasBootstrapSources(repoRoot)
+	if err := d.aliasBootstrapSources(ctx, repoRoot); err != nil {
+		return nil, err
+	}
 	d.applyNamespaces(repoRoot)
 	// Resolve bare ${VAR} in Kustomization dependsOn against the
 	// cluster's postBuild substitute values, now that the full KS set is

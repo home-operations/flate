@@ -33,6 +33,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 		t.Fatalf("first call missing replicaCount: %+v", first)
 	}
 
+	loaded.Chart.Files = nil
 	second, err := cli.mergeChartValuesFiles(loaded, names, false)
 	if err != nil {
 		t.Fatalf("second call (cache hit expected): %v", err)
@@ -44,6 +45,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	// Caller-mutation safety: mutating the first result must not
 	// affect the second (defensive deep-clone on cache read).
 	first["replicaCount"] = "stomped"
+	first["image"].(map[string]any)["tag"] = "stomped"
 	third, err := cli.mergeChartValuesFiles(loaded, names, false)
 	if err != nil {
 		t.Fatalf("third call: %v", err)
@@ -51,6 +53,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	if third["replicaCount"] != float64(3) {
 		t.Errorf("cache aliased prior call's map: %+v", third)
 	}
+	assert.Equal(t, third["image"].(map[string]any)["tag"], "v1")
 }
 
 // TestMergeChartValuesFiles_DifferentKeysDontShare pins that the key

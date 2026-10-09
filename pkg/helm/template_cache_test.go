@@ -99,10 +99,6 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 								t.Fatal("render was not cached under its effective key")
 							}
 						}
-						persisted, err := newClient().Template(t.Context(), hr, nil, opts)
-						if err != nil || persisted != out {
-							t.Fatalf("fresh-client render differs: %v", err)
-						}
 						repeated, err := cli.Template(t.Context(), hr, nil, opts)
 						if err != nil || repeated != out {
 							t.Fatalf("repeat render differs: %v", err)
@@ -112,6 +108,10 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					first, fp, key, valuesKey := render(tc.initial)
 					if !strings.Contains(first, `marker: "original"`) {
 						t.Fatal(first)
+					}
+					const sentinel = "cached render proof"
+					if cli.templateCache != nil {
+						cli.templateCache.Put(key, sentinel)
 					}
 					if tc.marker != "" {
 						template, err := os.ReadFile(filepath.Join(dir, "templates/cm.yaml"))
@@ -126,6 +126,23 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 						testutil.WriteFile(t, dir, "templates/cm.yaml", string(template))
 					}
 					second, nextFP, nextKey, nextValuesKey := render(tc.next)
+					assert.Equal(t, second == sentinel, cli.templateCache != nil && !tc.wantFingerprintChanged)
+					if cache.disk {
+						fresh := newClient()
+						assert.Equal(t, fresh.templateCache.Len(), 0)
+						persisted, err := fresh.Template(t.Context(), hr, nil, opts)
+						if err != nil {
+							t.Fatal(err)
+						}
+						assert.Equal(t, persisted, second)
+						assert.Equal(t, persisted == sentinel, !tc.wantFingerprintChanged)
+					}
+					if cli.templateCache != nil {
+						cli.templateCache.Put(key, first)
+						if !tc.wantFingerprintChanged {
+							second, _, _, _ = render(tc.next)
+						}
+					}
 					assert.Equal(t, first == second, tc.wantSameOutput)
 					assert.Equal(t, fp != nextFP, tc.wantFingerprintChanged)
 					assert.Equal(t, key != nextKey, tc.wantFingerprintChanged)

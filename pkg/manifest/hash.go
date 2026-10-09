@@ -16,7 +16,9 @@ import (
 // callers keep their own hasher.
 func SHA256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	var encoded [sha256.Size * 2]byte
+	hex.Encode(encoded[:], sum[:])
+	return string(encoded[:])
 }
 
 // Fingerprint returns a stable content hash of payload — json.Marshal

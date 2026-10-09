@@ -16,3 +16,14 @@ func TestSHA256Hex(t *testing.T) {
 		t.Errorf("not deterministic: %q != %q", a, b)
 	}
 }
+
+func TestSHA256Hex_Allocations(t *testing.T) {
+	var fingerprint string
+	allocs := testing.AllocsPerRun(100, func() { fingerprint = SHA256Hex([]byte("abc")) })
+	if allocs != 1 {
+		t.Fatalf("SHA256Hex allocated %v times, want 1", allocs)
+	}
+	if fingerprint != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+		t.Fatalf("unexpected fingerprint %q", fingerprint)
+	}
+}

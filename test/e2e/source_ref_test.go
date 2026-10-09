@@ -32,6 +32,45 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 	}
 }
 
+func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
+	root, repo, older, head := sourceRefFixture(t)
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hash := range []plumbing.Hash{older, head} {
+		if err := wt.Checkout(&gogit.CheckoutOptions{Hash: hash}); err != nil {
+			t.Fatal(err)
+		}
+		mutateFile(t, filepath.Join(root, "flux/entry.yaml"), "path: ./apps", "path: ./")
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [apps, flux/entry.yaml]\n")
+		gitCommitAll(t, repo)
+		if hash == older {
+			ref, err := repo.Head()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash())); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
+	transport := installSourceRefTransport(t, repo.Storer)
+	for _, scope := range []string{"flux", "."} {
+		t.Run(scope, func(t *testing.T) {
+			out, _ := requireCLIOK(t, "build", "all", "--path", filepath.Join(root, scope),
+				"--concurrency", "2", "--cache-dir", t.TempDir())
+			if !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") || strings.Contains(out, "value: v2.0.0") {
+				t.Fatalf("pinned root rendered the working tree:\n%s", out)
+			}
+			if transport.calls.Load() != 0 {
+				t.Fatalf("local pin accessed transport %d times", transport.calls.Load())
+			}
+		})
+	}
+}
+
 func TestE2E_SourceRef_PinnedPathIgnoresAddedDiscoveryObjects(t *testing.T) {
 	original, _, _, _ := sourceRefFixture(t)
 	current, _, _, _ := sourceRefFixture(t)

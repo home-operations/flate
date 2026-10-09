@@ -385,14 +385,18 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 
 // A broad --path scan can overlap a pinned subtree. Its working-tree objects
 // must be discarded before the committed subtree supplies discovery metadata.
+// Resolved sources must retain their objects and artifacts so a pinned root
+// claim cannot replace its own source with a working-tree alias.
 func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	var prefixes []loader.KSPathPrefix
+	pinnedSources := make(map[manifest.NamedResource]struct{})
 	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 		art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact)
 		if !ok || art.LocalRoot != repoRoot {
 			continue
 		}
+		pinnedSources[ref] = struct{}{}
 		for _, claim := range manifest.BuildKSClaims([]*manifest.Kustomization{ks}, art.LocalPath, d.cfg.ComponentCache) {
 			prefixes = append(prefixes, loader.KSPathPrefix{ID: claim.ID, Prefix: claim.Prefix})
 		}
@@ -401,6 +405,12 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 		return
 	}
 	for id, file := range d.sourceFiles {
+		if _, resolved := d.resolvedSources[id]; resolved {
+			continue
+		}
+		if _, pinned := pinnedSources[id]; pinned {
+			continue
+		}
 		if !pathUnderRoot(filepath.Join(repoRoot, filepath.FromSlash(file)), repoRoot) {
 			continue
 		}

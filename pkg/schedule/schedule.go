@@ -317,9 +317,6 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		s.cond.Wait()
 	}
 	if s.err == nil {
-		s.err = ctx.Err()
-	}
-	if s.err == nil {
 		s.finalSweepLocked()
 	}
 	s.mu.Unlock()

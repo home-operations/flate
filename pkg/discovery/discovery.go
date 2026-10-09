@@ -305,15 +305,11 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		return err
 	}
 	l.IgnoreFile = ""
-	// Apply namespaces once over the initially-scanned set so the
-	// bootstrap-source alias and the first expansion pass see populated
-	// namespaces. The fixed-point loop below intentionally does NOT
-	// re-run applyNamespaces per discovered spec.path — that was an
-	// O(N²) full-store rebuild on every newly-loaded KS. Namespace
-	// inheritance is idempotent and order-independent, so the single
-	// post-loop pass in Run (after the complete KS set is discovered)
-	// stamps every loop-discovered object correctly in one walk.
+	// Pins and artifact lookups require final namespace ids. Apply inheritance
+	// before the first pass and after each pass that loads new manifests;
+	// these passes are bounded by spec.path nesting depth, not KS count.
 	d.applyNamespaces(repoRoot)
+	namespaced := total
 
 	// Pins must be resolved before any spec.path is followed so a pinned
 	// Kustomization's subtree comes from its committed artifact, never the
@@ -328,6 +324,10 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	ksExpanded := map[manifest.NamedResource]struct{}{}
 	var aliased []manifest.NamedResource
 	for {
+		if total != namespaced {
+			d.applyNamespaces(repoRoot)
+			namespaced = total
+		}
 		overridden, err := d.overrideSelfReferentialGitRepositories(ctx, repoRoot)
 		if err != nil {
 			return err

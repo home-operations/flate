@@ -32,6 +32,67 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 	}
 }
 
+func TestE2E_SourceRef_PinnedFollowedSourceInheritsNamespace(t *testing.T) {
+	for _, tt := range []struct{ name, namespace string }{
+		{name: "explicit", namespace: ", namespace: flux-system"},
+		{name: "omitted"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			repo := gitInit(t, root)
+			if _, err := repo.CreateRemote(&config.RemoteConfig{
+				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: meta, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./clusters
+  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}
+`)
+			testutil.WriteFile(t, root, "clusters/kustomization.yaml", "namespace: flux-system\nresources: [repo.yaml, apps.yaml]\n")
+			testutil.WriteFile(t, root, "clusters/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: cluster}
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+  ref: {tag: v1.0.0}
+`)
+			testutil.WriteFile(t, root, "clusters/apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps}
+spec:
+  interval: 10m
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: cluster`+tt.namespace+`}
+`)
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+			for _, version := range []string{"v1.0.0", "v2.0.0"} {
+				testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata:\n  value: "+version+"\n")
+				gitCommitAll(t, repo)
+				head, err := repo.Head()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(version), head.Hash())); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
+			transport := installSourceRefTransport(t, repo.Storer)
+			out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
+				"--concurrency", "2", "--cache-dir", t.TempDir())
+			if code != 0 || !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") || transport.calls.Load() != 0 {
+				t.Fatalf("followed source pin: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+			}
+		})
+	}
+}
+
 func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
 	root, repo, older, head := sourceRefFixture(t)
 	wt, err := repo.Worktree()

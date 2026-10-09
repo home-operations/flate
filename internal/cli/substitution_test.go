@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -160,6 +161,14 @@ func TestLoadSubstitutions_InputValidation(t *testing.T) {
 			t.Fatalf("expected input error: %v", err)
 		}
 	})
+	t.Run("canceled before unreadable file", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		c := commonFlags{substituteFrom: []string{filepath.Join(t.TempDir(), "absent.yaml")}}
+		if err := c.loadSubstitutions(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected cancellation before file I/O: %v", err)
+		}
+	})
 	t.Run("empty and null", func(t *testing.T) {
 		c := commonFlags{substituteFrom: []string{substitutionInput(t, "---\nnull\n---\n\n")}}
 		if err := c.loadSubstitutions(t.Context()); err != nil || len(c.substitutionSources) != 0 {
@@ -193,6 +202,7 @@ func TestRun_SubstitutionEnvironment(t *testing.T) {
 		{name: "colon file list", files: input + ":" + second, strict: "true", want: "last"},
 		{name: "CSV pairs", files: input, pairs: `"VALUE=left,right=tail",VALUE=final`, strict: "1", want: "final"},
 		{name: "quoted CSV value", files: input, pairs: `"VALUE=left,right=tail"`, want: "left,right=tail"},
+		{name: "quoted CSV newline", files: input, pairs: "\"VALUE=left\nright\"", want: "leftright"},
 		{name: "empty env lists", want: "", flags: []string{"--substitute-from", input, "--substitute", "VALUE="}},
 		{name: "file flags override invalid env", files: ":", strict: "true", want: "supplied", flags: []string{"--substitute-from", input}},
 		{name: "pair flags override invalid env", files: input, pairs: `"private-fixture-value`, want: "flag", flags: []string{"--substitute", "VALUE=flag"}},
@@ -226,6 +236,7 @@ func TestRun_SubstitutionDiagnosticsRedacted(t *testing.T) {
 		{"empty name flag", "", "=private-fixture-value", "--substitute", "pair 1"},
 		{"invalid env pair", "VALUE=private-fixture-value,bad", "", "FLATE_SUBSTITUTE", "pair 2"},
 		{"malformed CSV", `VALUE=ok,"private-fixture-value`, "", "FLATE_SUBSTITUTE", "pair 2"},
+		{"multiple CSV records", "VALUE=one\nVALUE=two", "", "FLATE_SUBSTITUTE", "pair 2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("FLATE_SUBSTITUTE", tc.env)
@@ -235,7 +246,7 @@ func TestRun_SubstitutionDiagnosticsRedacted(t *testing.T) {
 				args = append(args, "--substitute", tc.flag)
 			}
 			_, diagnostic, code := runCLI(t, args...)
-			if code != 1 || !strings.Contains(diagnostic, tc.origin) || !strings.Contains(diagnostic, tc.position) || strings.Contains(diagnostic, "private-fixture-value") {
+			if code != 1 || !strings.Contains(diagnostic, tc.origin) || !strings.Contains(diagnostic, tc.position) || strings.Contains(diagnostic, "private-fixture-value") || strings.Contains(diagnostic, "VALUE=one") || strings.Contains(diagnostic, "VALUE=two") {
 				t.Fatalf("unredacted or incomplete diagnostic: %s", diagnostic)
 			}
 		})
@@ -431,5 +442,51 @@ func TestRun_StrictSubstitutionCachedRender(t *testing.T) {
 	last, diagnostic, code := runCLI(t, args...)
 	if code != 0 || first != last {
 		t.Fatalf("strict run changed cached default output: %s", diagnostic)
+	}
+}
+
+func TestRun_SubstitutionCachedInputChanges(t *testing.T) {
+	for _, tc := range []struct{ name, kind, input string }{
+		{"ConfigMap", "ConfigMap", externalCM},
+		{"Secret", "Secret", externalSecret},
+		{"overlay", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			postBuild := "  postBuild: {}\n"
+			if tc.kind != "" {
+				postBuild = substitutionReference(tc.kind, false)
+			}
+			root := substitutionFixture(t, postBuild, "${VALUE}")
+			cache, inputs := t.TempDir(), t.TempDir()
+			var firstConcurrency []string
+			for _, workers := range []int{2, 4} {
+				var outputs []string
+				for i, value := range []string{"first", "second", "second", "first"} {
+					args := []string{"build", "all", "--path", root, "--cache-dir", cache, "--concurrency", fmt.Sprint(workers), "--strict-substitutions"}
+					if tc.kind == "" {
+						args = append(args, "--substitute", "VALUE="+value)
+					} else {
+						testutil.WriteFile(t, inputs, "values.yaml", strings.Replace(tc.input, "supplied", value, 1))
+						args = append(args, "--substitute-from", filepath.Join(inputs, "values.yaml"))
+					}
+					out, diagnostic, code := runCLI(t, args...)
+					if code != 0 {
+						t.Fatal(diagnostic)
+					}
+					if got := substitutionOutput(t, out); got != value {
+						t.Fatalf("workers=%d run=%d: cached value %q, want %q", workers, i, got, value)
+					}
+					outputs = append(outputs, out)
+				}
+				if outputs[1] != outputs[2] || outputs[0] != outputs[3] {
+					t.Fatal("identical inputs changed warm-cache output bytes")
+				}
+				if workers == 2 {
+					firstConcurrency = outputs
+				} else if !slices.Equal(firstConcurrency, outputs) {
+					t.Fatal("warm-cache output varies with concurrency")
+				}
+			}
+		})
 	}
 }

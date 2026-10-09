@@ -57,9 +57,28 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 	return root, nil
 }
 
-// aliasBootstrapSources seeds missing-source working-tree aliases and resolves
-// matching authored GitRepositories according to their refs. Only working-tree
-// aliases contribute to the warning about multiple sources using the same tree.
+// aliasBootstrapSources resolves sources that real Flux would fetch
+// remotely but flate must satisfy offline. Two passes:
+//
+//  1. aliasMissingKustomizationSources: for every Kustomization whose
+//     sourceRef points at a Git/OCIRepository CR absent from the tree,
+//     seed a synthetic CR and working-tree artifact. Flux bootstrap and
+//     flux-operator FluxInstance create the cluster's source out of band.
+//  2. overrideSelfReferentialGitRepositories: for every authored
+//     GitRepository matching a working-tree remote, use the working tree
+//     for no ref or HEAD, a cached committed artifact for another local
+//     ref, or warned normal fetching when local resolution is unavailable
+//     or checkout options require it.
+//
+// Only working-tree aliases contribute to the combined multi-source
+// warning: remote shared-infra repos can otherwise render against the
+// same wrong tree without a diagnostic.
+//
+// All namespaces are aliased, not just flux-system (#199): clusters
+// commonly run Flux in another namespace, and the bootstrap source's
+// local-tree identity is independent of namespace. A typo'd sourceRef
+// silently renders against the working tree instead of failing fast;
+// this trade-off permits sources created out of band.
 func (d *discoverer) aliasBootstrapSources(ctx context.Context, repoRoot string) error {
 	aliased := d.aliasMissingKustomizationSources(repoRoot)
 	overridden, err := d.overrideSelfReferentialGitRepositories(ctx, repoRoot)
@@ -102,8 +121,12 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 }
 
 // overrideSelfReferentialGitRepositories is pass 2. It rewrites the
-// artifact of matching file-loaded GitRepositories according to their
-// declared refs. Returns only working-tree aliases for the multi-alias warning.
+// artifact of matching file-loaded GitRepositories: the cluster pulling
+// itself. Real Flux fetches that URL with a SOPS-decrypted deploy key;
+// flate runs offline, so no ref or HEAD uses the checkout and another
+// locally available ref uses a cached committed artifact. Unavailable
+// refs or non-HEAD sparse/submodule options warn and use normal fetching.
+// Returns only working-tree aliases for the multi-alias warning.
 //
 // No alreadyAliased skip-set needed: pass 1 publishes synthetic URLs
 // (file:// or oci://flate-bootstrap-alias/...) that normalizeGitURL

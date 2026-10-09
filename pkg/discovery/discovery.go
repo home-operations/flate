@@ -4,7 +4,9 @@
 // computing the structural-parent index. The output is everything the
 // reconcile phase needs to start firing controllers — repo root,
 // per-object source files, and the parent index.
-// Source aliasing uses file-loaded URL/ref values before rendering and does not follow parent-render transformations.
+//
+// Source aliasing uses file-loaded URL/ref values before rendering and
+// does not follow parent-render transformations.
 //
 // Splitting this out of the orchestrator turns a 750-line god-object
 // into two ~350-line files with one clean interface between them. The
@@ -102,10 +104,11 @@ type Config struct {
 	// behavior. Path must sit at or under RepoRoot.
 	RepoRoot string
 	// SelfURLs are the remote URL(s) this tree represents. A user-authored
-	// GitRepository whose spec.url matches one of these is eligible for
-	// local resolution according to its declared ref. Supplied by SDK consumers rendering
-	// extracted trees (no .git/config to read); empty ⇒ fall back to the
-	// working tree's .git remotes, preserving local behavior.
+	// GitRepository matching one is the cluster pulling itself: no ref or
+	// HEAD uses the working tree, another local ref uses a cached committed
+	// artifact, and unavailable refs or non-HEAD sparse/submodule options
+	// warn and fetch normally. SDK consumers supply these for extracted
+	// trees with no .git/config; empty uses the working tree's git remotes.
 	SelfURLs []string
 	// KRMIgnoreFile, when non-empty, is read in place of <Path>/.krmignore
 	// for the initial scan; spec.path targets followed afterwards keep

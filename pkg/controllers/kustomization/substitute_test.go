@@ -55,7 +55,7 @@ func TestSubstituteDoc_NoSubstitutionShortCircuits(t *testing.T) {
 		"metadata":   map[string]any{"name": "cm"},
 		"data":       map[string]any{"key": "literal"},
 	}
-	out, err := substituteDoc(doc, map[string]string{"VAR": "x"})
+	out, err := substituteDoc(doc, map[string]string{"VAR": "x"}, false)
 	if err != nil {
 		t.Fatalf("substituteDoc: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestSubstituteDoc_SubstitutesMapKey(t *testing.T) {
 			},
 		},
 	}
-	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"})
+	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"}, false)
 	if err != nil {
 		t.Fatalf("substituteDoc: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestSubstituteDoc_EscapedDollarKey(t *testing.T) {
 	doc := map[string]any{
 		"data": map[string]any{"$${OP_VAULT}": 1},
 	}
-	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"})
+	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"}, false)
 	if err != nil {
 		t.Fatalf("substituteDoc: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestSubstituteDoc_KeyCollisionErrors(t *testing.T) {
 	doc := map[string]any{
 		"data": map[string]any{"${OP_VAULT}": 1, "homelab": 2},
 	}
-	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"})
+	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"}, false)
 	if err == nil {
 		t.Fatalf("expected a duplicate-key error on collision; got out=%#v", out)
 	}
@@ -154,7 +154,7 @@ func TestSubstituteDoc_PreservesYAMLTypeCoercion(t *testing.T) {
 		"kind":       "Deployment",
 		"spec":       map[string]any{"replicas": "${REPLICAS}"},
 	}
-	out, err := substituteDoc(doc, map[string]string{"REPLICAS": "3"})
+	out, err := substituteDoc(doc, map[string]string{"REPLICAS": "3"}, false)
 	if err != nil {
 		t.Fatalf("substituteDoc: %v", err)
 	}

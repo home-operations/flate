@@ -25,7 +25,21 @@ import (
 //     with what real Flux renders against an incomplete substitute
 //     map.
 func Substitute(data []byte, vars map[string]string) ([]byte, error) {
+	return substitute(data, vars, false)
+}
+
+// SubstituteStrict rejects variables absent from vars unless the expansion
+// supplies a default. Defined empty values and escaping follow Flux's engine.
+func SubstituteStrict(data []byte, vars map[string]string) ([]byte, error) {
+	return substitute(data, vars, true)
+}
+
+func substitute(data []byte, vars map[string]string, strict bool) ([]byte, error) {
 	out, err := envsubst.Eval(string(data), func(s string) (string, bool) {
+		if strict {
+			value, exists := vars[s]
+			return value, exists
+		}
 		return vars[s], true
 	})
 	if err != nil {

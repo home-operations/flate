@@ -150,7 +150,11 @@ func (o *Orchestrator) configureControllers() {
 		PreflightFailure: o.preflightFailure,
 		AllowMissingCRDs: o.cfg.AllowMissingCRDs,
 	}
-	o.ksc.Configure(kustomization.Options{Options: common, SelfProduces: selfProduces})
+	o.ksc.Configure(kustomization.Options{
+		Options: common, SelfProduces: selfProduces,
+		SubstituteFrom: o.substitutionSources, Substitute: o.cfg.Substitute,
+		StrictSubstitutions: o.cfg.StrictSubstitutions,
+	})
 	o.hrc.Configure(helmrelease.ReconcileOptions{
 		Options:             common,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,

@@ -3,6 +3,8 @@ package kustomization
 import (
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -60,5 +62,24 @@ func TestKustomizationFingerprint_SourceRootInputs(t *testing.T) {
 	}
 	if a, b := kustomizationFingerprint(ks, "/repo-a"), kustomizationFingerprint(ks, "/repo-b"); a == b {
 		t.Errorf("fingerprint must differ across distinct sourceRoots; both = %q", a)
+	}
+}
+
+func TestKustomizationFingerprint_PreparedOverlay(t *testing.T) {
+	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+	ks.PostBuild = &kustomizev1.PostBuild{}
+	first, err := kustomize.PrepareWithSubstitutions(ks, nil, map[string]string{"VALUE": "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := kustomize.PrepareWithSubstitutions(ks, nil, map[string]string{"VALUE": "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kustomizationFingerprint(first, "/repo") == kustomizationFingerprint(second, "/repo") {
+		t.Fatal("effective overlay missing from dedup fingerprint")
+	}
+	if len(ks.PostBuildSubstitute) != 0 {
+		t.Fatal("fingerprinting preparation mutated canonical manifest")
 	}
 }

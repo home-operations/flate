@@ -200,7 +200,8 @@ type Options struct {
 	// file-indexed deps and to distinguish a render-only dep still in flight
 	// from a typo'd one. See depwait.ExistenceLookup.
 	Existence depwait.ExistenceLookup
-	// AllowMissingCRDs accepts absent CRD dependencies at structural drain.
+	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
+	// because the cluster installs them at runtime.
 	AllowMissingCRDs bool
 	// PreflightFailure reports dependency-graph errors discovered before
 	// reconcile; when set for an id the controller marks it Failed and renders

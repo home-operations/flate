@@ -117,7 +117,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	fs.BoolVar(&f.skipCRDs, "skip-crds", true, "exclude CRD objects from rendered output")
 	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
 	fs.BoolVar(&f.allowMissingCRDs, "allow-missing-crds", false,
-		"accept CRD dependencies absent from offline inputs at structural drain")
+		"accept CRD dependencies absent from the offline inputs because the cluster installs them at runtime")
 	fs.BoolVar(&f.allowMissingSecrets, "allow-missing-secrets", false,
 		"soft-skip ALL source auth Secrets and HelmRelease valuesFrom Secret/ConfigMap refs "+
 			"that only materialize in the live cluster. Usually unnecessary: a missing Secret "+

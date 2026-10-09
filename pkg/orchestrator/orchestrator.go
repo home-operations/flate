@@ -84,8 +84,9 @@ type Config struct {
 	// refs let HelmReleases render with the remaining values.
 	AllowMissingSecrets bool
 
-	// AllowMissingCRDs accepts absent CRD dependencies at structural drain and
-	// reports final Ready ResourceSets with artifacts that reference them.
+	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
+	// because the cluster installs them at runtime, and reports each missing CRD
+	// with its dependent ResourceSets.
 	AllowMissingCRDs bool
 
 	// ForceGenericProvider sends non-generic spec.provider sources

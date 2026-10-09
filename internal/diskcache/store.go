@@ -21,10 +21,15 @@ import (
 // usage). SpeedDefault compresses flate's rendered-manifest payloads ~2x smaller
 // than gzip while compressing ~8x and decompressing ~3.5x faster, at one
 // allocation per call instead of gzip's 20-30 — see the codec benchmark in the
-// PR that introduced this. NewWriter/NewReader cannot error with nil options, so
-// the errors are discarded; both live for the process and are never closed.
+// PR that introduced this. These fixed options are valid, so constructor errors
+// are discarded. A 1 MiB window and four encoders bound retained encoder memory.
+// Both codecs live for the process and are never closed.
 var (
-	zstdEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	zstdEncoder, _ = zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.SpeedDefault),
+		zstd.WithWindowSize(1<<20),
+		zstd.WithEncoderConcurrency(4),
+	)
 	zstdDecoder, _ = zstd.NewReader(nil)
 )
 

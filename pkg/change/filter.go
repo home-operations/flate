@@ -48,6 +48,11 @@ type Filter struct {
 	// side). Nil means no exclusions.
 	externalKS map[manifest.NamedResource]struct{}
 
+	// Pinned paths render committed inputs, so dirty working-tree files
+	// must not select their owners. Ownership and producer lookup still
+	// include these Kustomizations.
+	pinnedKS map[manifest.NamedResource]struct{}
+
 	// fileOwners supplements resolve()'s prefix-claim ownership lookup —
 	// typically loader.SelfProduceIndex.OwnersOfFile. Nil disables it.
 	// See ownershipIndex.fileOwners.
@@ -179,15 +184,42 @@ func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repo
 // pulled in from outside every claimed spec.path; pass nil to disable
 // it.
 func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache, consumerRefs map[manifest.NamedResource][]manifest.NamedResource, externalKS map[manifest.NamedResource]struct{}, fileOwners FileOwnerLookup) *Filter {
+	return NewFilterWithOptions(changes, sourceFiles, objs, FilterOptions{
+		RepoRoot:       repoRoot,
+		ComponentCache: cache,
+		ConsumerRefs:   consumerRefs,
+		ExternalKS:     externalKS,
+		FileOwners:     fileOwners,
+	})
+}
+
+// FilterOptions supplies the ownership and source indexes for change selection.
+// Maps and lookups must remain immutable after construction.
+type FilterOptions struct {
+	RepoRoot       string
+	ComponentCache *manifest.ComponentCache
+	ConsumerRefs   map[manifest.NamedResource][]manifest.NamedResource
+	ExternalKS     map[manifest.NamedResource]struct{}
+	FileOwners     FileOwnerLookup
+
+	// PinnedKS excludes Kustomizations from dirty-path selection only;
+	// their ownership, producer, and consumer relationships still apply.
+	PinnedKS map[manifest.NamedResource]struct{}
+}
+
+// NewFilterWithOptions constructs a resolved Filter with ownership indexes and
+// pinned Kustomizations whose committed inputs ignore working-tree changes.
+func NewFilterWithOptions(changes *Set, sourceFiles map[manifest.NamedResource]string, objs ObjectLister, opts FilterOptions) *Filter {
 	f := &Filter{
 		changes:        changes,
 		sourceFiles:    sourceFiles,
-		repoRoot:       repoRoot,
+		repoRoot:       opts.RepoRoot,
 		objs:           objs,
-		componentCache: cache,
-		consumerRefs:   consumerRefs,
-		externalKS:     externalKS,
-		fileOwners:     fileOwners,
+		componentCache: opts.ComponentCache,
+		consumerRefs:   opts.ConsumerRefs,
+		externalKS:     opts.ExternalKS,
+		fileOwners:     opts.FileOwners,
+		pinnedKS:       opts.PinnedKS,
 	}
 	if changes == nil {
 		return f
@@ -518,6 +550,9 @@ func (f *Filter) resolve() {
 
 	for _, file := range f.changes.Paths() {
 		for _, owner := range owners.ownersOf(file) {
+			if _, pinned := f.pinnedKS[owner]; pinned {
+				continue
+			}
 			ownersHit[owner] = struct{}{}
 			enqueuePrimary(owner)
 		}
@@ -531,6 +566,9 @@ func (f *Filter) resolve() {
 		// emitted children — preventing the keep cascade where a
 		// one-file change pulls in the entire cluster.
 		for _, ancestor := range owners.ancestorsOf(file) {
+			if _, pinned := f.pinnedKS[ancestor]; pinned {
+				continue
+			}
 			enqueueAncestor(ancestor)
 		}
 	}

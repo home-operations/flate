@@ -260,6 +260,74 @@ func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
 	}
 }
 
+func TestE2E_PinnedDiff_SubstituteFromProducer(t *testing.T) {
+	var roots [2]string
+	for i, mode := range []string{"before", "after"} {
+		root, repo, older, head := sourceRefFixture(t)
+		roots[i] = root
+		wt, err := repo.Worktree()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, hash := range []plumbing.Hash{older, head} {
+			if err := wt.Checkout(&gogit.CheckoutOptions{Hash: hash}); err != nil {
+				t.Fatal(err)
+			}
+			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "name: hello, namespace: apps", "name: hello")
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources:\n- cm.yaml\n")
+			if hash == older {
+				gitCommitAll(t, repo)
+				ref, err := repo.Head()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash())); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		testutil.WriteFile(t, root, "flux/consumer.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: working, namespace: flux-system}
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: consumer, namespace: apps}
+spec:
+  interval: 10m
+  path: ./consumer
+  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}
+  postBuild:
+    substitute: {mode: `+mode+`}
+    substituteFrom:
+      - kind: ConfigMap
+        name: hello
+`)
+		testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
+		testutil.WriteFile(t, root, "consumer/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: consumer, namespace: apps}
+data:
+  value: ${value}
+  mode: ${mode}
+`)
+		out, _ := requireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+			"--concurrency", "2", "--cache-dir", t.TempDir())
+		if strings.Count(out, "value: v1.0.0") != 2 || !strings.Contains(out, "mode: "+mode) {
+			t.Fatalf("expected pinned substitution in full render:\n%s", out)
+		}
+	}
+	out, _ := requireCLIOK(t, "diff", "all", "--path", filepath.Join(roots[1], "flux"),
+		"--path-orig", filepath.Join(roots[0], "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "diff")
+	if strings.Count(out, "-  mode: before") != 1 || strings.Count(out, "+  mode: after") != 1 ||
+		!strings.Contains(out, "   value: v1.0.0") || strings.Contains(out, "${value}") || strings.Contains(out, "v2.0.0") {
+		t.Fatalf("expected consumer diff with pinned substitution on both sides:\n%s", out)
+	}
+}
+
 func TestE2E_SourceRef_PathOrigUsesOwnObjectStore(t *testing.T) {
 	for _, tt := range []struct {
 		name       string

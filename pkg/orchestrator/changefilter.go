@@ -33,44 +33,29 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	// KSPathPrefixesLocalOnly (a `path: ./` on an OCI-sourced KS would
 	// otherwise own the repo root and cascade into every resolve).
 	excluded := loader.ExternalSourcedKSIDs(o.store, repoRoot)
-	pinned := false
+	var pinned map[manifest.NamedResource]struct{}
 	for id, refs := range o.sourceRefs {
 		if id.Kind != manifest.KindKustomization {
 			continue
 		}
 		for _, ref := range refs {
 			if art, ok := o.store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
-				excluded[id] = struct{}{}
-				pinned = true
+				if pinned == nil {
+					pinned = make(map[manifest.NamedResource]struct{})
+				}
+				pinned[id] = struct{}{}
 				break
 			}
 		}
 	}
-	fileOwners := o.selfProduce.OwnersOfFile
-	if pinned {
-		// Local pins own working-tree paths, but render committed inputs.
-		fileOwners = func(file string) []manifest.NamedResource {
-			owners := o.selfProduce.OwnersOfFile(file)
-			filtered := false
-			for _, owner := range owners {
-				if _, skip := excluded[owner]; skip {
-					filtered = true
-					break
-				}
-			}
-			if !filtered {
-				return owners
-			}
-			var inputs []manifest.NamedResource
-			for _, owner := range owners {
-				if _, skip := excluded[owner]; !skip {
-					inputs = append(inputs, owner)
-				}
-			}
-			return inputs
-		}
-	}
-	f := change.NewFilterWithCache(changes, o.sourceFiles, repoRoot, o.store, o.componentCache, o.sourceRefs, excluded, fileOwners)
+	f := change.NewFilterWithOptions(changes, o.sourceFiles, o.store, change.FilterOptions{
+		RepoRoot:       repoRoot,
+		ComponentCache: o.componentCache,
+		ConsumerRefs:   o.sourceRefs,
+		ExternalKS:     excluded,
+		FileOwners:     o.selfProduce.OwnersOfFile,
+		PinnedKS:       pinned,
+	})
 	// Wire OnAdd so a runtime keep-set extension (KS controller's
 	// emitRenderedChildren → keepEmitted) refires any source whose
 	// listener already short-circuited via PreGate before the

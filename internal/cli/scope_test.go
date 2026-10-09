@@ -905,6 +905,71 @@ spec:
 	}
 }
 
+func TestRun_NamedScope_DiffDeletedReleaseSiblingFails(t *testing.T) {
+	for _, workers := range []string{"2", "4"} {
+		t.Run(workers, func(t *testing.T) {
+			root, orig := t.TempDir(), t.TempDir()
+			release := func(name, chart string) string {
+				return fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: %s, namespace: apps}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: %s
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`, name, chart)
+			}
+			for _, dir := range []string{root, orig} {
+				if _, err := git.PlainInit(dir, false); err != nil {
+					t.Fatal(err)
+				}
+				testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
+				testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-rendered', namespace: apps}\ndata: {greeting: hello}\n")
+				testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+				testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [selected.yaml, sibling.yaml]\n")
+				testutil.WriteFile(t, dir, "apps/selected.yaml", release("selected", "./charts/app"))
+				testutil.WriteFile(t, dir, "apps/sibling.yaml", release("sibling", "./charts/app"))
+			}
+			if err := os.Remove(filepath.Join(root, "apps/selected.yaml")); err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [sibling.yaml]\n")
+			testutil.WriteFile(t, root, "apps/sibling.yaml", release("sibling", "./charts/missing"))
+			flags := []string{"--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--cache-dir", t.TempDir(), "--concurrency", workers}
+			for _, tc := range []struct {
+				name string
+				code int
+			}{
+				{"selected", 0},
+				{"sibling", 1},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					out, stderr, code := runCLI(t, append([]string{"diff", "hr", tc.name}, flags...)...)
+					if code != tc.code || !strings.Contains(stderr, "sibling") || !strings.Contains(stderr, "chart not found") {
+						t.Fatalf("diff hr %s: exit %d, want %d; stderr: %s", tc.name, code, tc.code, stderr)
+					}
+					if tc.code == 0 {
+						if !strings.Contains(stderr, "warnings (1)") || strings.Contains(stderr, "reconcile completed") || !strings.Contains(out, "selected-rendered") || strings.Contains(out, "sibling") {
+							t.Fatalf("deleted release diff includes unrelated failure: stdout: %s; stderr: %s", out, stderr)
+						}
+					} else if !strings.Contains(stderr, "reconcile completed with 1 failure(s):") {
+						t.Fatalf("selected sibling failure hidden: %s", stderr)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestRun_NamedScope_DiffCounterpartSelection(t *testing.T) {
 	for _, tc := range []struct{ name, releaseName, namespace string }{
 		{"name", "other-release", "apps"},

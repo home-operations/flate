@@ -21,7 +21,7 @@ type failureScope struct {
 // diff suppression. Namespace selection applies to roots; their prerequisites
 // and owned descendants remain in scope across namespaces. An empty name
 // preserves namespace scoping. The first selection is the kind/name filter;
-// additional identities seed objects absent from this diff snapshot.
+// additional identities seed prerequisite owners absent from this diff snapshot.
 func scopedFailures(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags, selection ...manifest.NamedResource) failureScope {
 	if o == nil || res == nil || len(res.Failed) == 0 {
 		return failureScope{}
@@ -83,9 +83,6 @@ func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *
 	for id := range res.Failed {
 		seed(id)
 	}
-	for _, id := range selection[1:] {
-		add(id)
-	}
 	children := o.ChildrenByParent()
 	for _, kids := range children {
 		for _, id := range kids {
@@ -98,6 +95,9 @@ func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *
 		for _, child := range children[work[i]] {
 			add(child)
 		}
+	}
+	for _, id := range selection[1:] {
+		add(id)
 	}
 	for len(work) > 0 {
 		id := work[len(work)-1]

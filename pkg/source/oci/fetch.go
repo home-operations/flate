@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -67,7 +68,7 @@ func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, regist
 	}
 
 	versioned := versionedURL(repo.URL, ref)
-	slotRef := ociCacheKey(repo, ref, resolvedDigest)
+	slotRef := ociCacheKey(repo, ref, resolvedDigest, sourceignore.RulesVersion)
 	if resolvedDigest == "" {
 		slotRef = source.MutableCacheKey(slotRef)
 	}

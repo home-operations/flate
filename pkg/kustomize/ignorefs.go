@@ -2,9 +2,9 @@ package kustomize
 
 // ignorefs.go hides source-controller-excluded paths from the disk layer of a
 // working-tree build. A GitRepository artifact only contains the files that
-// survive source-controller's ignore matcher (its defaults plus every in-tree
-// .sourceignore), so a Kustomization whose spec.path — or whose kustomization
-// resources — resolve into an excluded directory fails on the cluster even
+// survive source-controller's ignore matcher, with defaults selected by
+// sourceignore.New, so a Kustomization whose spec.path or kustomization
+// resources resolve into an excluded directory fails on the cluster even
 // though the files exist in the checkout. Filtering at the filesystem rather
 // than in the resource scan makes every read the build performs (the spec.path
 // check, kustomize's own resource resolution, the auto-generate scan) see the

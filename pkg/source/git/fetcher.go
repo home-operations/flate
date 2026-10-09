@@ -30,6 +30,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 	"github.com/home-operations/flate/pkg/source/git/mirror"
 	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -140,7 +141,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	if repo.Reference != nil {
 		refLabel = cmp.Or(gitRefLabel(*repo.Reference), refLabel)
 	}
-	slotRef := gitCacheKey(repo, refLabel)
+	slotRef := gitCacheKey(repo, refLabel, sourceignore.RulesVersion)
 	mutableRef := !canUseCachedGitSlot(repo.Reference)
 
 	authID := authIdentity(repo)
@@ -287,7 +288,7 @@ func gitRefLabel(ref manifest.GitRepositoryRef) string {
 	return manifest.GitRefString(ref)
 }
 
-func gitCacheKey(repo *manifest.GitRepository, refLabel string) string {
+func gitCacheKey(repo *manifest.GitRepository, refLabel, rulesVersion string) string {
 	ignore := ""
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
@@ -297,11 +298,13 @@ func gitCacheKey(repo *manifest.GitRepository, refLabel string) string {
 		Ignore            string   `json:"ignore,omitempty"`
 		SparseCheckout    []string `json:"sparseCheckout,omitempty"`
 		RecurseSubmodules bool     `json:"recurseSubmodules,omitempty"`
+		RulesVersion      string   `json:"rulesVersion"`
 	}{
 		Ref:               refLabel,
 		Ignore:            ignore,
 		SparseCheckout:    repo.SparseCheckout,
 		RecurseSubmodules: repo.RecurseSubmodules,
+		RulesVersion:      rulesVersion,
 	}
 	h, _ := source.CacheKeyHash(payload, 8)
 	return refLabel + "#opts:" + h

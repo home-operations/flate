@@ -815,16 +815,23 @@ func TestRun_NamedScope_DiffOwningKustomizationFails(t *testing.T) {
 		{"orig_edited", "orig", true},
 	} {
 		for _, workers := range []string{"2", "4"} {
-			t.Run(tc.name+"/"+workers, func(t *testing.T) {
-				root, orig := t.TempDir(), t.TempDir()
-				for _, dir := range []string{root, orig} {
-					if _, err := git.PlainInit(dir, false); err != nil {
-						t.Fatal(err)
+			for _, layout := range []string{"plain", "escape"} {
+				t.Run(tc.name+"/"+workers+"/"+layout, func(t *testing.T) {
+					root, orig := t.TempDir(), t.TempDir()
+					releasePath := "apps/hr.yaml"
+					resources := "resources: [hr.yaml]\n"
+					if layout == "escape" {
+						releasePath = "shared/hr.yaml"
+						resources = "resources: [../shared/hr.yaml]\n"
 					}
-					testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-					testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: hello}\n")
-					testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
-					testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+					for _, dir := range []string{root, orig} {
+						if _, err := git.PlainInit(dir, false); err != nil {
+							t.Fatal(err)
+						}
+						testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
+						testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: hello}\n")
+						testutil.WriteFile(t, dir, "apps/kustomization.yaml", resources)
+						testutil.WriteFile(t, dir, releasePath, `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: selected, namespace: apps}
 spec:
@@ -834,8 +841,8 @@ spec:
       chart: ./charts/app
       sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
-					for _, name := range []string{"apps", "other"} {
-						testutil.WriteFile(t, dir, "flux/"+name+".yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+						for _, name := range []string{"apps", "other"} {
+							testutil.WriteFile(t, dir, "flux/"+name+".yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: %s, namespace: flux-system}
 spec:
@@ -843,27 +850,85 @@ spec:
   path: ./%s
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `, name, name))
+						}
+						testutil.WriteFile(t, dir, "other/kustomization.yaml", "resources: [cm.yaml]\n")
+						testutil.WriteFile(t, dir, "other/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other, namespace: apps}\n")
 					}
-					testutil.WriteFile(t, dir, "other/kustomization.yaml", "resources: [cm.yaml]\n")
-					testutil.WriteFile(t, dir, "other/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other, namespace: apps}\n")
+					if tc.editRelease {
+						appendScopeSpec(t, root, releasePath, "  values: {greeting: changed}\n")
+					}
+					failing := root
+					if tc.failingSide == "orig" {
+						failing = orig
+					}
+					appendScopeSpec(t, failing, "flux/apps.yaml", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: nope}]}\n")
+					flags := []string{"--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--cache-dir", t.TempDir(), "--concurrency", workers}
+					_, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
+					_, block, ok := strings.Cut(stderr, tc.failingSide+" snapshot:")
+					if code != 1 || !ok || !strings.Contains(block, "reconcile completed with 1 failure(s):") || !strings.Contains(block, "ConfigMap/flux-system/nope: not found") {
+						t.Fatalf("owning Kustomization failure hidden: %d %s", code, stderr)
+					}
+					_, stderr, code = runCLI(t, append([]string{"diff", "ks", "other"}, flags...)...)
+					if code != 0 {
+						t.Fatalf("unrelated owning Kustomization became fatal: %d %s", code, stderr)
+					}
+					if layout == "plain" && tc.editRelease {
+						baseline := orig
+						if failing == orig {
+							baseline = root
+						}
+						_, stderr, code = runCLI(t, "build", "hr", "selected", "--path", filepath.Join(failing, "flux"), "--path-orig", filepath.Join(baseline, "flux"), "--cache-dir", t.TempDir(), "--concurrency", workers)
+						if code != 1 || !strings.Contains(stderr, "1 failed") || !strings.Contains(stderr, "flux-system/nope") {
+							t.Fatalf("changed-only owning Kustomization failure hidden: %d %s", code, stderr)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestRun_NamedScope_DiffCounterpartSelection(t *testing.T) {
+	for _, tc := range []struct{ name, releaseName, namespace string }{
+		{"name", "other-release", "apps"},
+		{"namespace", "selected", "team"},
+	} {
+		for _, workers := range []string{"2", "4"} {
+			t.Run(tc.name+"/"+workers, func(t *testing.T) {
+				root, orig := writeNamedScopeFixture(t), writeNamedScopeFixture(t)
+				for _, dir := range []string{root, orig} {
+					testutil.WriteFile(t, dir, "cluster/bad.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: bad, namespace: %s}
+spec:
+  interval: 10m
+  path: ./bad
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`, tc.namespace))
+					testutil.WriteFile(t, dir, "bad/kustomization.yaml", "resources: [../shared/hr.yaml]\n")
+					testutil.WriteFile(t, dir, "shared/hr.yaml", fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: %s, namespace: %s}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ./charts/app
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`, tc.releaseName, tc.namespace))
 				}
-				if tc.editRelease {
-					appendScopeSpec(t, root, "apps/hr.yaml", "  values: {greeting: changed}\n")
+				appendScopeSpec(t, root, "cluster/hr.yaml", "  values: {greeting: changed}\n")
+				appendScopeSpec(t, root, "cluster/bad.yaml", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: nope}]}\n")
+				flags := []string{"--path", filepath.Join(root, "cluster"), "--path-orig", filepath.Join(orig, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", workers}
+				if tc.name == "namespace" {
+					flags = append(flags, "-n", "apps")
 				}
-				failing := root
-				if tc.failingSide == "orig" {
-					failing = orig
+				out, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
+				if code != 0 || strings.Contains(stderr, "reconcile completed") {
+					t.Fatalf("unselected counterpart owner became fatal: %d %s", code, stderr)
 				}
-				appendScopeSpec(t, failing, "flux/apps.yaml", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: nope}]}\n")
-				flags := []string{"--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--cache-dir", t.TempDir(), "--concurrency", workers}
-				_, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
-				_, block, ok := strings.Cut(stderr, tc.failingSide+" snapshot:")
-				if code != 1 || !ok || !strings.Contains(block, "reconcile completed with 1 failure(s):") || !strings.Contains(block, "ConfigMap/flux-system/nope: not found") {
-					t.Fatalf("owning Kustomization failure hidden: %d %s", code, stderr)
-				}
-				_, stderr, code = runCLI(t, append([]string{"diff", "ks", "other"}, flags...)...)
-				if code != 0 {
-					t.Fatalf("unrelated owning Kustomization became fatal: %d %s", code, stderr)
+				if strings.Contains(out, "other-release") || (tc.name == "namespace" && strings.Contains(out+stderr, "team")) {
+					t.Fatalf("unselected counterpart leaked into diff: %s%s", out, stderr)
 				}
 			})
 		}

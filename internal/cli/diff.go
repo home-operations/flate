@@ -172,14 +172,14 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	for _, pair := range []struct{ side, other *diffSide }{{&orig, &current}, {&current, &orig}} {
 		selection := []manifest.NamedResource{{Kind: kind, Name: name}}
 		if name != "" {
-			// A release missing on one side can still have a failing owner there.
+			// The counterpart can know an owner absent from this snapshot's path index.
 			for _, obj := range pair.other.O.Store().ListObjects(kind) {
 				id := obj.Named()
-				if id.Name == name && c.includeNamespace(pair.other.O.Filter(), id.Namespace) && pair.side.O.Store().GetObject(id) == nil {
-					if _, known := pair.side.O.ParentOf(id); known && c.includeNamespace(pair.side.O.Filter(), id.Namespace) {
-						continue
-					}
+				if id.Name == name && c.includeNamespace(pair.other.O.Filter(), id.Namespace) {
 					selection = append(selection, id)
+					if parent, ok := pair.other.O.ParentOf(id); ok {
+						selection = append(selection, parent)
+					}
 				}
 			}
 		}

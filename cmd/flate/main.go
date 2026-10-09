@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/home-operations/flate/internal/cli"
 )
 
@@ -18,7 +19,7 @@ var (
 )
 
 func main() {
-	tuneGC()
+	tuneGC(memlimit.Set)
 	os.Exit(cli.Execute(versionString()))
 }
 
@@ -38,9 +39,11 @@ func versionString() string {
 // ~4x the live set) for fewer collections, measurably cutting cold-start
 // CPU. Skipped when the operator set GOGC or GOMEMLIMIT explicitly so
 // their tuning always wins.
-func tuneGC() {
+func tuneGC(setMemoryLimit func(...memlimit.Option) (int64, error)) {
 	if os.Getenv("GOGC") == "" && os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetGCPercent(400)
+		// Cgroup detection is best effort, including on unsupported platforms.
+		_, _ = setMemoryLimit(memlimit.WithProvider(memlimit.FromCgroup), memlimit.WithRatio(0.8), memlimit.WithLogger(nil))
 	}
 }
 

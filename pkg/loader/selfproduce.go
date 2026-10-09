@@ -132,6 +132,7 @@ func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.
 	// producing local ConfigMaps/Secrets it doesn't own (and cascade its skip).
 	// See loader.ExternalSourcedKSIDs.
 	external := ExternalSourcedKSIDs(s, repoRoot)
+	var pinnedBuilders map[string]*selfProduceBuilder
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		if ks.Path == "" {
 			continue
@@ -139,7 +140,27 @@ func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.
 		if _, skip := external[ks.Named()]; skip {
 			continue
 		}
-		b.walkRoot(ks)
+		if art := localPinnedArtifact(s, ks, repoRoot); art != nil {
+			pb := pinnedBuilders[art.LocalPath]
+			if pb == nil {
+				prefix, err := filepath.Rel(repoRoot, art.LocalPath)
+				if err != nil {
+					continue
+				}
+				committed := *b
+				committed.repoRoot = art.LocalPath
+				committed.filePrefix = filepath.ToSlash(prefix)
+				committed.dirs = map[string]cachedDir{}
+				pb = &committed
+				if pinnedBuilders == nil {
+					pinnedBuilders = make(map[string]*selfProduceBuilder)
+				}
+				pinnedBuilders[art.LocalPath] = pb
+			}
+			pb.walkRoot(ks)
+		} else {
+			b.walkRoot(ks)
+		}
 	}
 	// Keep only files reached through exactly one parent — a base shared by peer
 	// overlays is ambiguous, so add no gate.
@@ -159,6 +180,8 @@ type cachedDir struct {
 
 type selfProduceBuilder struct {
 	repoRoot string
+	// filePrefix projects artifact-relative files into SourceFiles coordinates.
+	filePrefix string
 	// dirs memoizes whole-file kustomization reads (namespace / resources /
 	// components) keyed by repo-relative dir, so subtrees shared across the
 	// KS list — every app group's substitutions component, say — are read
@@ -367,6 +390,9 @@ func (b *selfProduceBuilder) recordFile(relFile string, ks manifest.NamedResourc
 	if relFile == "" {
 		return
 	}
+	if b.filePrefix != "" {
+		relFile = path.Join(b.filePrefix, relFile)
+	}
 	b.idx.filesByKS[relFile] = appendUniqueProducer(b.idx.filesByKS[relFile], ks)
 }
 
@@ -374,6 +400,9 @@ func (b *selfProduceBuilder) recordFile(relFile string, ks manifest.NamedResourc
 // defined at relFile — i.e. ks emits that cross-tree base. Accumulated per file;
 // resolved to a single-parent gate after the walk (see EmissionParentByFile).
 func (b *selfProduceBuilder) recordEmittedKS(relFile string, ks manifest.NamedResource) {
+	if b.filePrefix != "" {
+		relFile = path.Join(b.filePrefix, relFile)
+	}
 	b.emittedFiles[relFile] = appendUniqueProducer(b.emittedFiles[relFile], ks)
 }
 

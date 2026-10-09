@@ -2,6 +2,7 @@ package loader
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -130,12 +131,48 @@ func KSPathPrefixesWithCache(s *store.Store, repoRoot string, cache *manifest.Co
 	// reject/clean resolver, longest-first sort) is single-sourced there so
 	// it can't drift from change.buildOwnership. This side keeps only the
 	// KSPathPrefix shape and the LongestParent lookup semantics.
-	claims := manifest.BuildKSClaims(s.ListAs[*manifest.Kustomization](manifest.KindKustomization), repoRoot, cache)
+	kss := s.ListAs[*manifest.Kustomization](manifest.KindKustomization)
+	var pinned []*manifest.Kustomization
+	local := kss[:0]
+	for _, ks := range kss {
+		if localPinnedArtifact(s, ks, repoRoot) != nil {
+			pinned = append(pinned, ks)
+		} else {
+			local = append(local, ks)
+		}
+	}
+	claims := manifest.BuildKSClaims(local, repoRoot, cache)
+	for _, ks := range pinned {
+		art := localPinnedArtifact(s, ks, repoRoot)
+		base, err := filepath.Rel(repoRoot, art.LocalPath)
+		if err != nil {
+			continue
+		}
+		for _, claim := range manifest.BuildKSClaims([]*manifest.Kustomization{ks}, art.LocalPath, cache) {
+			// The checkout claim prevents orphan promotion; the artifact claim
+			// attributes children and generators to their committed-tree parent.
+			claims = append(claims, claim, manifest.KSClaim{
+				ID: claim.ID, Prefix: filepath.ToSlash(filepath.Join(base, claim.Prefix)) + "/",
+			})
+		}
+	}
+	if len(pinned) != 0 {
+		slices.SortStableFunc(claims, func(a, b manifest.KSClaim) int { return len(b.Prefix) - len(a.Prefix) })
+	}
 	out := make([]KSPathPrefix, len(claims))
 	for i, c := range claims {
 		out[i] = KSPathPrefix{ID: c.ID, Prefix: c.Prefix}
 	}
 	return out
+}
+
+func localPinnedArtifact(s *store.Store, ks *manifest.Kustomization, repoRoot string) *store.SourceArtifact {
+	ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+	art, ok := s.GetArtifact(ref).(*store.SourceArtifact)
+	if ok && art.LocalRoot != "" && art.LocalRoot == repoRoot {
+		return art
+	}
+	return nil
 }
 
 // LongestParent returns the deepest KS whose spec.path covers file

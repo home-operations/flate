@@ -17,11 +17,17 @@ import (
 // tree's .git remotes — byte-identical to prior behavior when SelfURLs is
 // empty.
 func (d *discoverer) selfRemotes(repoRoot string) map[string]struct{} {
+	if d.remotesLoaded {
+		return d.remotes
+	}
+	d.remotesLoaded = true
 	if len(d.cfg.SelfURLs) == 0 {
-		return readWorkingTreeRemotes(repoRoot)
+		d.remotes = readWorkingTreeRemotes(repoRoot)
+		return d.remotes
 	}
 	out := make(map[string]struct{}, len(d.cfg.SelfURLs))
 	addNormalizedRemotes(out, d.cfg.SelfURLs...)
+	d.remotes = out
 	return out
 }
 
@@ -40,7 +46,7 @@ func addNormalizedRemotes(out map[string]struct{}, urls ...string) {
 // Flux GitRepository.spec.url. Returns nil if repoRoot is not a git
 // repo or no remotes are configured.
 //
-// Consumed by aliasBootstrapSources to recognize a file-loaded
+// Consumed by overrideSelfReferentialGitRepositories to recognize a file-loaded
 // GitRepository whose URL points at the SAME repo the user is
 // running flate against — in those cases the SSH/HTTPS fetch would
 // either round-trip to a real host (slow, offline-unfriendly) or

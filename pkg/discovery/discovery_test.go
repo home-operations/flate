@@ -436,7 +436,7 @@ func TestFindRepoRoot_NoGitFallsBack(t *testing.T) {
 // SSH deploy keys; flate runs offline and can't materialize the
 // key, so the fetch fails on a placeholder credential.
 //
-// The second-pass alias in aliasBootstrapSources detects that
+// The alias in overrideSelfReferentialGitRepositories detects that
 // the URL matches the working tree's .git/config remote and
 // overrides the artifact with a working-tree alias so the
 // dependent KSes proceed against local files rather than the

@@ -57,40 +57,7 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 	return root, nil
 }
 
-// aliasBootstrapSources resolves sources that real Flux would fetch
-// remotely but flate must satisfy offline. Two passes:
-//
-//  1. aliasMissingKustomizationSources: for every Kustomization whose
-//     sourceRef points at a Git/OCIRepository CR absent from the tree,
-//     seed a synthetic CR and working-tree artifact. Flux bootstrap and
-//     flux-operator FluxInstance create the cluster's source out of band.
-//  2. overrideSelfReferentialGitRepositories: for every authored
-//     GitRepository matching a working-tree remote, use the working tree
-//     for no ref or HEAD, a cached committed artifact for another local
-//     ref, or warned normal fetching when local resolution is unavailable
-//     or checkout options require it.
-//
-// Only working-tree aliases contribute to the combined multi-source
-// warning: remote shared-infra repos can otherwise render against the
-// same wrong tree without a diagnostic.
-//
-// All namespaces are aliased, not just flux-system (#199): clusters
-// commonly run Flux in another namespace, and the bootstrap source's
-// local-tree identity is independent of namespace. A typo'd sourceRef
-// silently renders against the working tree instead of failing fast;
-// this trade-off permits sources created out of band.
-func (d *discoverer) aliasBootstrapSources(ctx context.Context, repoRoot string) error {
-	aliased := d.aliasMissingKustomizationSources(repoRoot)
-	overridden, err := d.overrideSelfReferentialGitRepositories(ctx, repoRoot)
-	if err != nil {
-		return err
-	}
-	aliased = append(aliased, overridden...)
-	warnIfMultipleBootstrapAliases(aliased, repoRoot)
-	return nil
-}
-
-// aliasMissingKustomizationSources is pass 1. It walks every loaded
+// aliasMissingKustomizationSources walks every loaded
 // Kustomization and, for any unique Git/OCIRepository sourceRef that no
 // in-tree CR satisfies, publishes a synthetic CR + working-tree
 // artifact. Without this, dependent Kustomizations would fail depwait
@@ -120,7 +87,7 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 	return aliased
 }
 
-// overrideSelfReferentialGitRepositories is pass 2. It rewrites the
+// overrideSelfReferentialGitRepositories rewrites the
 // artifact of matching file-loaded GitRepositories: the cluster pulling
 // itself. Real Flux fetches that URL with a SOPS-decrypted deploy key;
 // flate runs offline, so no ref or HEAD uses the checkout and another
@@ -142,6 +109,9 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 	repositories := d.cfg.Store.ListAs[*manifest.GitRepository](manifest.KindGitRepository)
 	var pinned []*manifest.GitRepository
 	for _, repo := range repositories {
+		if d.resolvedSources[repo.Named()] == repo {
+			continue
+		}
 		if repo.Named() == manifest.BootstrapSourceID || repo.Reference == nil || manifest.GitRefString(*repo.Reference) == "" {
 			continue
 		}
@@ -155,6 +125,9 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 	}
 	for _, repo := range repositories {
 		id := repo.Named()
+		if d.resolvedSources[id] == repo {
+			continue
+		}
 		normalized := normalizeGitURL(repo.URL)
 		if normalized == "" {
 			continue
@@ -162,6 +135,10 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 		if _, match := remotes[normalized]; !match {
 			continue
 		}
+		if d.resolvedSources == nil {
+			d.resolvedSources = make(map[manifest.NamedResource]*manifest.GitRepository)
+		}
+		d.resolvedSources[id] = repo
 		if id != manifest.BootstrapSourceID && repo.Reference != nil && manifest.GitRefString(*repo.Reference) != "" {
 			artifact := artifacts[id]
 			if artifact == nil {
@@ -171,6 +148,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 				continue
 			}
 			if artifact.LocalPath != repoRoot {
+				d.hasPins = true
 				artifact.LocalRoot = repoRoot
 				d.cfg.Store.SetArtifact(id, artifact)
 				d.cfg.Store.UpdateStatus(id, store.StatusReady, "local committed source artifact")

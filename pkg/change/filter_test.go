@@ -337,6 +337,25 @@ func TestFilter_PinnedOwnershipKeepsProducer(t *testing.T) {
 	}
 }
 
+func TestFilter_ArtifactProducerIgnoresCheckoutRootClaim(t *testing.T) {
+	root := &manifest.Kustomization{Name: "root", Namespace: "apps", Path: "."}
+	pinned := &manifest.Kustomization{Name: "pinned", Namespace: "apps", Path: "producers"}
+	cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	file := "../artifact/producers/cm.yaml"
+	f := NewFilterWithOptions(NewSet([]string{"flux/unrelated.yaml"}), map[manifest.NamedResource]string{cm: file},
+		testutil.MapLister{root.Named(): root, pinned.Named(): pinned}, FilterOptions{
+			FileOwners: func(path string) []manifest.NamedResource {
+				if path == file {
+					return []manifest.NamedResource{pinned.Named()}
+				}
+				return nil
+			},
+		})
+	if got := f.ProducersFor(cm); !slices.Equal(got, []manifest.NamedResource{pinned.Named()}) {
+		t.Fatalf("ProducersFor(%s) = %v, want [%s]", cm, got, pinned.Named())
+	}
+}
+
 // TestFilter_FileOwnerFallbackCatchesResourcesEscape reproduces #833: a
 // Kustomization's resources: entry reaches outside its own claimed
 // spec.path, so resolve() must fall back to the caller-supplied

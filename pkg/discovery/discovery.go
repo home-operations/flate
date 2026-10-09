@@ -169,9 +169,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
-	if err := d.aliasBootstrapSources(ctx, repoRoot); err != nil {
-		return nil, err
-	}
 	d.applyNamespaces(repoRoot)
 	// Resolve bare ${VAR} in Kustomization dependsOn against the
 	// cluster's postBuild substitute values, now that the full KS set is
@@ -269,10 +266,14 @@ func (d *discoverer) applyNamespaces(repoRoot string) {
 }
 
 type discoverer struct {
-	cfg         Config
-	loader      *loader.Loader
-	sourceFiles map[manifest.NamedResource]string
-	sourceRefs  map[manifest.NamedResource][]manifest.NamedResource
+	cfg             Config
+	loader          *loader.Loader
+	sourceFiles     map[manifest.NamedResource]string
+	sourceRefs      map[manifest.NamedResource][]manifest.NamedResource
+	resolvedSources map[manifest.NamedResource]*manifest.GitRepository
+	remotes         map[string]struct{}
+	remotesLoaded   bool
+	hasPins         bool
 }
 
 // loadManifests scans cfg.Path, then iteratively follows each loaded
@@ -314,8 +315,9 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	// stamps every loop-discovered object correctly in one walk.
 	d.applyNamespaces(repoRoot)
 
-	// Fixed-point expansion: each pass renders Kustomizations the prior
-	// pass discovered. PreferExisting lets repeated AddObject re-emission
+	// Resolve authored sources before following any spec.path; sources found
+	// by a followed path must be resolved before the next expansion pass.
+	// PreferExisting lets repeated AddObject re-emission
 	// be a no-op so the loop terminates on convergence (no new objects
 	// added). ResourceSets that emit child Kustomizations referencing new
 	// spec.paths are handled at run time — the RS controller emits the
@@ -323,7 +325,16 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	// discovery no longer pre-expands RSes.
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
+	var aliased []manifest.NamedResource
 	for {
+		overridden, err := d.overrideSelfReferentialGitRepositories(ctx, repoRoot)
+		if err != nil {
+			return err
+		}
+		aliased = append(aliased, overridden...)
+		if d.hasPins {
+			d.discardPinnedWorkingTreeFiles(repoRoot)
+		}
 		added := 0
 		for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 			id := ks.Named()
@@ -334,7 +345,12 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if ks.Path == "" {
 				continue
 			}
-			target := filepath.Join(repoRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
+			sourceRoot := repoRoot
+			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+			if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+				sourceRoot = art.LocalPath
+			}
+			target := filepath.Join(sourceRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
 			// Canonicalize via EvalSymlinks so two spec.paths that
 			// resolve to the same on-disk directory (one direct, one
 			// through a symlink) share a scanned-set key. Without
@@ -348,7 +364,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if _, seen := scanned[target]; seen {
 				continue
 			}
-			if !pathUnderRoot(target, repoRoot) {
+			if !pathUnderRoot(target, sourceRoot) {
 				continue
 			}
 			if err := d.loadAt(ctx, target, scanned, &total); err != nil {
@@ -361,8 +377,41 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		}
 	}
 	l.PreferExisting = false
+	aliased = append(d.aliasMissingKustomizationSources(repoRoot), aliased...)
+	warnIfMultipleBootstrapAliases(aliased, repoRoot)
 	slog.Debug("discovery: loaded objects", "count", total, "scan_root", scanRoot, "source_root", repoRoot)
 	return nil
+}
+
+// A broad --path scan can overlap a pinned subtree. Its working-tree objects
+// must be discarded before the committed subtree supplies discovery metadata.
+func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
+	var prefixes []loader.KSPathPrefix
+	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+		ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+		art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact)
+		if !ok || art.LocalRoot != repoRoot {
+			continue
+		}
+		for _, claim := range manifest.BuildKSClaims([]*manifest.Kustomization{ks}, art.LocalPath, d.cfg.ComponentCache) {
+			prefixes = append(prefixes, loader.KSPathPrefix{ID: claim.ID, Prefix: claim.Prefix})
+		}
+	}
+	if len(prefixes) == 0 {
+		return
+	}
+	for id, file := range d.sourceFiles {
+		if !pathUnderRoot(filepath.Join(repoRoot, filepath.FromSlash(file)), repoRoot) {
+			continue
+		}
+		if _, owned := loader.LongestParent(prefixes, file, id); !owned {
+			continue
+		}
+		d.cfg.Store.DeleteObject(id)
+		d.loader.Existence.Delete(id)
+		delete(d.sourceFiles, id)
+		delete(d.sourceRefs, id)
+	}
 }
 
 // loadAt scans dir if not already scanned, marks it, and accumulates

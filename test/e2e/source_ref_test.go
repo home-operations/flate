@@ -32,6 +32,83 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 	}
 }
 
+func TestE2E_SourceRef_PinnedPathIgnoresAddedDiscoveryObjects(t *testing.T) {
+	original, _, _, _ := sourceRefFixture(t)
+	current, _, _, _ := sourceRefFixture(t)
+	testutil.WriteFile(t, current, "apps/added-ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: added-ks, namespace: flux-system}
+spec:
+  path: ./apps/phantom
+  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: working, namespace: flux-system}
+spec: {url: 'git://fixture.invalid/cluster'}
+`)
+	testutil.WriteFile(t, current, "apps/added-rs.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: added-rs, namespace: flux-system}
+spec:
+  resourcesTemplate: |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: added-rs-output, namespace: apps}
+    data: {value: phantom}
+`)
+	testutil.WriteFile(t, current, "apps/phantom/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, current, "apps/phantom/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: added-ks-output, namespace: apps}\ndata: {value: phantom}\n")
+	mutateFile(t, filepath.Join(current, "apps/kustomization.yaml"), "- cm.yaml\n", "- cm.yaml\n- added-ks.yaml\n- added-rs.yaml\n")
+	for _, scope := range []string{"flux", "."} {
+		t.Run(scope, func(t *testing.T) {
+			path := filepath.Join(current, scope)
+			out, _ := requireCLIOK(t, "build", "all", "--path", path,
+				"--concurrency", "2", "--cache-dir", t.TempDir())
+			if !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "phantom") || strings.Contains(out, "added-") {
+				t.Fatalf("working-tree discovery objects escaped the pin:\n%s", out)
+			}
+			for _, paths := range [][2]string{{current, original}, {original, current}} {
+				out, _ := requireCLIOK(t, "diff", "all", "--path", filepath.Join(paths[0], scope),
+					"--path-orig", filepath.Join(paths[1], scope), "--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "diff")
+				if out != "" {
+					t.Fatalf("working-tree discovery objects changed the pinned diff:\n%s", out)
+				}
+			}
+		})
+	}
+}
+
+func TestE2E_SourceRef_PinnedPathRendersDeletedKustomization(t *testing.T) {
+	root, repo, _, _ := sourceRefFixture(t)
+	testutil.WriteFile(t, root, "apps/child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child, namespace: flux-system}
+spec:
+  path: ./leaf
+  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
+`)
+	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output, namespace: apps}\ndata: {value: pinned-child}\n")
+	gitCommitAll(t, repo)
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "apps/child.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	gitCommitAll(t, repo)
+	out, _ := requireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+		"--concurrency", "2", "--cache-dir", t.TempDir())
+	if !strings.Contains(out, "name: child-output") || !strings.Contains(out, "value: pinned-child") {
+		t.Fatalf("deleted committed child did not render:\n%s", out)
+	}
+}
+
 func TestE2E_SourceRef_PinnedPathOwnsWorkingTreeReleases(t *testing.T) {
 	root, repo, older, head := sourceRefFixture(t)
 	wt, err := repo.Worktree()
@@ -261,6 +338,15 @@ func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
 }
 
 func TestE2E_PinnedDiff_SubstituteFromProducer(t *testing.T) {
+	testPinnedProducerDiff(t, false)
+}
+
+func TestE2E_PinnedDiff_DeletedSubstituteFromProducer(t *testing.T) {
+	testPinnedProducerDiff(t, true)
+}
+
+func testPinnedProducerDiff(t *testing.T, deleted bool) {
+	t.Helper()
 	var roots [2]string
 	for i, mode := range []string{"before", "after"} {
 		root, repo, older, head := sourceRefFixture(t)
@@ -284,6 +370,11 @@ func TestE2E_PinnedDiff_SubstituteFromProducer(t *testing.T) {
 				if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash())); err != nil {
 					t.Fatal(err)
 				}
+			}
+		}
+		if deleted {
+			if err := os.Remove(filepath.Join(root, "apps/cm.yaml")); err != nil {
+				t.Fatal(err)
 			}
 		}
 		testutil.WriteFile(t, root, "flux/consumer.yaml", `apiVersion: source.toolkit.fluxcd.io/v1

@@ -73,6 +73,16 @@ func (i *ExistenceIndex) Get(id manifest.NamedResource) (string, bool) {
 	return path, ok
 }
 
+// Delete removes a file-loaded object superseded by its source artifact.
+func (i *ExistenceIndex) Delete(id manifest.NamedResource) {
+	if i == nil {
+		return
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	delete(i.entries, id)
+}
+
 // All yields a snapshot of every recorded {id, path}. The returned
 // map is a fresh copy so callers can iterate without holding the
 // lock or worrying about concurrent Record.

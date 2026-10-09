@@ -783,7 +783,10 @@ func (l *Loader) FinalizeGenerators(repoRoot string) {
 	prefixes := KSPathPrefixesWithCache(l.Store, repoRoot, l.ComponentCache)
 	seen := make(map[manifest.NamedResource]struct{}, len(records))
 	for _, r := range records {
-		parentNS := parentNamespaceFor(prefixes, l.Store, r.file, repoRoot)
+		parentNS, include := parentNamespaceFor(prefixes, l.Store, r.file, repoRoot)
+		if !include {
+			continue
+		}
 		obj := r.materialize(parentNS)
 		id := obj.Named()
 		if _, dup := seen[id]; dup {
@@ -808,25 +811,32 @@ func (l *Loader) FinalizeGenerators(repoRoot string) {
 // namespace for the file at absPath. Falls back to "" when the file
 // sits outside any KS spec.path / component — depwait's name-only
 // fallback may still match in that case.
-func parentNamespaceFor(prefixes []KSPathPrefix, s *store.Store, absPath, repoRoot string) string {
+// Working-tree generators owned by a pin must not be materialized.
+func parentNamespaceFor(prefixes []KSPathPrefix, s *store.Store, absPath, repoRoot string) (string, bool) {
 	rel, err := filepath.Rel(repoRoot, absPath)
 	if err != nil {
-		return ""
+		return "", true
 	}
 	owner, ok := LongestParent(prefixes, rel, manifest.NamedResource{})
 	if !ok {
-		return ""
+		return "", true
 	}
 	ks, _ := s.GetByName[*manifest.Kustomization](manifest.KindKustomization, owner.Namespace, owner.Name)
 	if ks == nil {
-		return ""
+		return "", true
+	}
+	if art := localPinnedArtifact(s, ks, repoRoot); art != nil {
+		file, err := filepath.Rel(art.LocalPath, absPath)
+		if err != nil || file == ".." || strings.HasPrefix(file, ".."+string(filepath.Separator)) || filepath.IsAbs(file) {
+			return "", false
+		}
 	}
 	// Flux's render-time namespace precedence: spec.targetNamespace
 	// (the resource's effective namespace post-render) wins over the
 	// KS's own namespace (where the KS CR lives). For generated CMs
 	// we want the post-render namespace because that's what
 	// substituteFrom in downstream KSes references.
-	return cmp.Or(ks.TargetNamespace, ks.Namespace)
+	return cmp.Or(ks.TargetNamespace, ks.Namespace), true
 }
 
 // recordSource maps a resource id back to the on-disk file it was

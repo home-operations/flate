@@ -42,7 +42,7 @@ func ApplyNamespaceInheritanceWithRefs(s *store.Store, sourceFiles map[manifest.
 	// namespace (targetNamespace if set, otherwise metadata.namespace,
 	// otherwise the kustomize.yaml directive that would patch the KS
 	// itself once the parent renders).
-	fluxByPath := indexFluxByPath(s, sourceFiles, kustomizeByDir)
+	fluxByPath := indexFluxByPath(s, sourceFiles, kustomizeByDir, repoRoot)
 
 	type update struct {
 		old, new manifest.NamedResource
@@ -168,7 +168,7 @@ func resolveNamespace(file string, flux, kust []pathEntry) string {
 //
 // resolveNamespace picks the longest-prefix match, so the slice can
 // stay unsorted.
-func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]string, kust []pathEntry) []pathEntry {
+func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]string, kust []pathEntry, repoRoot string) []pathEntry {
 	var out []pathEntry
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		if ks.Path == "" {
@@ -187,6 +187,11 @@ func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]stri
 			prefix: NormalizePrefix(ks.Path),
 			ns:     ns,
 		})
+		if art := localPinnedArtifact(s, ks, repoRoot); art != nil {
+			if prefix, err := filepath.Rel(repoRoot, filepath.Join(art.LocalPath, manifest.NormalizeClaimBase(ks.Path))); err == nil {
+				out = append(out, pathEntry{prefix: filepath.ToSlash(prefix) + "/", ns: ns})
+			}
+		}
 	}
 	return out
 }

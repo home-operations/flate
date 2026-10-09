@@ -24,6 +24,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
 
+// RulesVersion must change when filtering rules change to invalidate source artifact caches.
+const RulesVersion = "sourceignore-v1"
+
 // Matcher reports whether a path within a source tree rooted at a fixed
 // directory is excluded from the artifact. It is safe for concurrent reads.
 type Matcher struct {

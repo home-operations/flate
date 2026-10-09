@@ -8,6 +8,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -19,9 +20,6 @@ const resolveCachePrefix = "resolve:"
 // slot key (ref#opts:<hash>), so a layerSelector/ignore change picks a fresh
 // slot without losing the at-a-glance ref.
 const cacheOptsSep = "#opts:"
-
-// sourceignoreRulesVersion must be bumped with the pkg/source/git token.
-const sourceignoreRulesVersion = "sourceignore-v1"
 
 // ociArtifact is the single SourceArtifact-construction helper used by both the
 // cache-hit and successful-pull paths. Lifting the literal out keeps the two
@@ -41,7 +39,7 @@ func ociArtifact(repo *manifest.OCIRepository, localPath string, ref manifest.OC
 // ociResolveCacheKey keys the tag→digest resolve cache (a tiny slot holding
 // just the resolved digest in its meta sidecar, no artifact).
 func ociResolveCacheKey(repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) string {
-	return resolveCachePrefix + ociCacheKey(repo, ref, "", sourceignoreRulesVersion)
+	return resolveCachePrefix + ociCacheKey(repo, ref, "", sourceignore.RulesVersion)
 }
 
 // ociCacheKey is the artifact slot key: the concrete ref (resolved digest, or

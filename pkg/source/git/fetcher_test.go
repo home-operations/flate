@@ -8,15 +8,16 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 )
 
 func TestGitCacheKey_RulesVersion(t *testing.T) {
 	repo := &manifest.GitRepository{}
 	const ref = "branch:main"
 	const prefix = ref + "#opts:"
-	v1 := gitCacheKey(repo, ref, "sourceignore-v1")
-	assert.Equal(t, sourceignoreRulesVersion, "sourceignore-v1")
-	assert.Equal(t, v1, gitCacheKey(repo, ref, "sourceignore-v1"))
+	v1 := gitCacheKey(repo, ref, sourceignore.RulesVersion)
+	assert.Equal(t, sourceignore.RulesVersion, "sourceignore-v1")
+	assert.Equal(t, v1, gitCacheKey(repo, ref, sourceignore.RulesVersion))
 	assert.Equal(t, strings.HasPrefix(v1, prefix), true)
 	assert.Equal(t, len(v1), len(prefix)+16)
 	legacyHash, err := source.CacheKeyHash(json.RawMessage(`{"ref":"branch:main"}`), 8)
@@ -42,7 +43,7 @@ func TestGitCacheKey_RulesVersion(t *testing.T) {
 
 func TestGitCacheKey_Options(t *testing.T) {
 	const ref = "branch:main"
-	base := gitCacheKey(&manifest.GitRepository{}, ref, sourceignoreRulesVersion)
+	base := gitCacheKey(&manifest.GitRepository{}, ref, sourceignore.RulesVersion)
 	for _, tc := range []struct {
 		name     string
 		repo     *manifest.GitRepository
@@ -58,7 +59,7 @@ func TestGitCacheKey_Options(t *testing.T) {
 		{name: "ref", repo: &manifest.GitRepository{}, ref: "branch:other"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := gitCacheKey(tc.repo, tc.ref, sourceignoreRulesVersion)
+			got := gitCacheKey(tc.repo, tc.ref, sourceignore.RulesVersion)
 			assert.Equal(t, got == base, tc.wantSame)
 		})
 	}

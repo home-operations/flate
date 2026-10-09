@@ -10,15 +10,16 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 )
 
 func TestOCICacheKey_RulesVersion(t *testing.T) {
 	repo := &manifest.OCIRepository{}
 	ref := manifest.OCIRepositoryRef{Tag: "v1"}
 	const prefix = "v1#opts:"
-	v1 := ociCacheKey(repo, ref, "", "sourceignore-v1")
-	assert.Equal(t, sourceignoreRulesVersion, "sourceignore-v1")
-	assert.Equal(t, v1, ociCacheKey(repo, ref, "", "sourceignore-v1"))
+	v1 := ociCacheKey(repo, ref, "", sourceignore.RulesVersion)
+	assert.Equal(t, sourceignore.RulesVersion, "sourceignore-v1")
+	assert.Equal(t, v1, ociCacheKey(repo, ref, "", sourceignore.RulesVersion))
 	assert.Equal(t, strings.HasPrefix(v1, prefix), true)
 	assert.Equal(t, len(v1), len(prefix)+16)
 	assert.Equal(t, ociResolveCacheKey(repo, ref), resolveCachePrefix+v1)
@@ -45,7 +46,7 @@ func TestOCICacheKey_RulesVersion(t *testing.T) {
 
 func TestOCICacheKey_Options(t *testing.T) {
 	ref := manifest.OCIRepositoryRef{Tag: "v1"}
-	base := ociCacheKey(&manifest.OCIRepository{}, ref, "", sourceignoreRulesVersion)
+	base := ociCacheKey(&manifest.OCIRepository{}, ref, "", sourceignore.RulesVersion)
 	for _, tc := range []struct {
 		name     string
 		repo     *manifest.OCIRepository
@@ -67,7 +68,7 @@ func TestOCICacheKey_Options(t *testing.T) {
 		{name: "resolved digest", repo: &manifest.OCIRepository{}, ref: ref, resolved: fullDigest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ociCacheKey(tc.repo, tc.ref, tc.resolved, sourceignoreRulesVersion)
+			got := ociCacheKey(tc.repo, tc.ref, tc.resolved, sourceignore.RulesVersion)
 			assert.Equal(t, got == base, tc.wantSame)
 		})
 	}

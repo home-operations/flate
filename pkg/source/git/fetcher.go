@@ -30,6 +30,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 	"github.com/home-operations/flate/pkg/source/git/mirror"
 	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -140,7 +141,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	if repo.Reference != nil {
 		refLabel = cmp.Or(gitRefLabel(*repo.Reference), refLabel)
 	}
-	slotRef := gitCacheKey(repo, refLabel, sourceignoreRulesVersion)
+	slotRef := gitCacheKey(repo, refLabel, sourceignore.RulesVersion)
 	mutableRef := !canUseCachedGitSlot(repo.Reference)
 
 	authID := authIdentity(repo)
@@ -286,9 +287,6 @@ func gitRefLabel(ref manifest.GitRepositoryRef) string {
 	}
 	return manifest.GitRefString(ref)
 }
-
-// sourceignoreRulesVersion must be bumped with the pkg/source/oci token.
-const sourceignoreRulesVersion = "sourceignore-v1"
 
 func gitCacheKey(repo *manifest.GitRepository, refLabel, rulesVersion string) string {
 	ignore := ""

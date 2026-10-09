@@ -37,9 +37,11 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 }
 
 func TestE2E_SourceRef_PinnedSourceDiscoveredAfterConsumer(t *testing.T) {
-	for _, tt := range []struct{ name, appsFile, sourcesFile, sourcesName string }{
-		{name: "apps_first", appsFile: "a.yaml", sourcesFile: "z.yaml", sourcesName: "z-sources"},
-		{name: "sources_first", appsFile: "z.yaml", sourcesFile: "a.yaml", sourcesName: "a-sources"},
+	for _, tt := range []struct{ name, appsFile, sourcesFile, sourcesName, sourceRefName string }{
+		{name: "apps_first/flux-system", appsFile: "a.yaml", sourcesFile: "z.yaml", sourcesName: "z-sources", sourceRefName: "flux-system"},
+		{name: "apps_first/cluster", appsFile: "a.yaml", sourcesFile: "z.yaml", sourcesName: "z-sources", sourceRefName: "cluster"},
+		{name: "sources_first/flux-system", appsFile: "z.yaml", sourcesFile: "a.yaml", sourcesName: "a-sources", sourceRefName: "flux-system"},
+		{name: "sources_first/cluster", appsFile: "z.yaml", sourcesFile: "a.yaml", sourcesName: "a-sources", sourceRefName: "cluster"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -63,7 +65,7 @@ metadata: {name: `+tt.sourcesName+`, namespace: flux-system}
 spec:
   interval: 10m
   path: ./sources
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  sourceRef: {kind: GitRepository, name: `+tt.sourceRefName+`, namespace: flux-system}
 `)
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
 			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1

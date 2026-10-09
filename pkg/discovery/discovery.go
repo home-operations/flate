@@ -322,6 +322,8 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	// discovery no longer pre-expands RSes.
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
+	var pending []*manifest.Kustomization
+	followMissing := false
 	var aliased []manifest.NamedResource
 	for {
 		if total != namespaced {
@@ -348,12 +350,30 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			d.discardPinnedWorkingTreeFiles(repoRoot)
 		}
 		added := 0
-		for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-			id := ks.Named()
-			if _, seen := ksExpanded[id]; seen {
+		if !followMissing {
+			kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
+			pending = kustomizations[:0]
+			for _, ks := range kustomizations {
+				if _, seen := ksExpanded[ks.Named()]; !seen {
+					pending = append(pending, ks)
+				}
+			}
+		}
+		// Sources must exist before this pass's path scans, so any local pin
+		// has been resolved before its consumer becomes eligible.
+		for _, ks := range pending {
+			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+			if followMissing || ks.Path == "" || d.cfg.Store.GetObject(ref) != nil {
+				ksExpanded[ks.Named()] = struct{}{}
+			}
+		}
+		kustomizations := pending
+		pending = pending[:0]
+		for _, ks := range kustomizations {
+			if _, ready := ksExpanded[ks.Named()]; !ready {
+				pending = append(pending, ks)
 				continue
 			}
-			ksExpanded[id] = struct{}{}
 			if ks.Path == "" {
 				continue
 			}
@@ -385,7 +405,13 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			added++
 		}
 		if added == 0 {
-			break
+			if len(pending) == 0 {
+				break
+			}
+			// At the fixpoint, missing sources retain working-tree fallback.
+			followMissing = true
+		} else {
+			followMissing = false
 		}
 	}
 	l.PreferExisting = false

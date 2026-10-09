@@ -159,10 +159,54 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 }
 
 func TestRender_SubstitutionSuppliedSecretDoesNotRescueHelmRelease(t *testing.T) {
-	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
-			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+	tests := []struct {
+		name          string
+		references    string
+		sources       []SubstitutionSource
+		missingSecret string
+	}{
+		{
+			name:       "unrelated supplied Secret",
+			references: "[{kind: Secret, name: absent}]",
+			sources: []SubstitutionSource{{
+				Object: &manifest.Secret{Name: "missing", Namespace: "flux-system", StringData: map[string]any{"OTHER": "unrelated"}},
+				Path:   "ci.yaml",
+			}},
+			missingSecret: "absent",
+		},
+		{
+			name:       "same name in another namespace",
+			references: "[{kind: Secret, name: missing}]",
+			sources: []SubstitutionSource{{
+				Object: &manifest.Secret{Name: "missing", Namespace: "elsewhere", StringData: map[string]any{"OTHER": "unrelated"}},
+				Path:   "ci.yaml",
+			}},
+			missingSecret: "missing",
+		},
+		{
+			name:       "supplied and missing references",
+			references: "[{kind: Secret, name: given}, {kind: Secret, name: missing}]",
+			sources: []SubstitutionSource{{
+				Object: &manifest.Secret{Name: "given", Namespace: "flux-system", StringData: map[string]any{"OTHER": "unrelated"}},
+				Path:   "ci.yaml",
+			}},
+			missingSecret: "missing",
+		},
+		{
+			name:       "only supplied reference",
+			references: "[{kind: Secret, name: missing}]",
+			sources: []SubstitutionSource{{
+				Object: &manifest.Secret{Name: "missing", Namespace: "flux-system", StringData: map[string]any{"OTHER": "unrelated"}},
+				Path:   "ci.yaml",
+			}},
+		},
+	}
+	for _, tt := range tests {
+		for _, workers := range []int{2, 4} {
+			t.Run(fmt.Sprintf("%s/workers_%d", tt.name, workers), func(t *testing.T) {
+				rescued := tt.missingSecret != ""
+				dir := t.TempDir()
+				testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec:
@@ -176,13 +220,10 @@ spec:
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substitute: {KEEP: "ok"}
-    substituteFrom:
-      - kind: Secret
-        name: missing
-`)
-			testutil.WriteFile(t, dir, "apps/kustomization.yaml",
-				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./hr.yaml\n")
-			testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+    substituteFrom: `+tt.references+"\n")
+				testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+					"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./hr.yaml\n")
+				testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: demo, namespace: apps}
 spec:
@@ -194,45 +235,64 @@ spec:
   values:
     greeting: "${MISSING}"
 `)
-			testutil.WriteFile(t, dir, "charts/req/Chart.yaml", "apiVersion: v2\nname: req\nversion: 0.1.0\n")
-			testutil.WriteFile(t, dir, "charts/req/templates/cm.yaml",
-				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
+				testutil.WriteFile(t, dir, "charts/req/Chart.yaml", "apiVersion: v2\nname: req\nversion: 0.1.0\n")
+				testutil.WriteFile(t, dir, "charts/req/templates/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
 
-			o, err := New(Config{
-				Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers,
-				SubstituteFrom: []SubstitutionSource{{
-					Object: &manifest.Secret{Name: "missing", Namespace: "flux-system", StringData: map[string]any{"OTHER": "unrelated"}},
-					Path:   "ci.yaml",
-				}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(o.Stop)
-			res, err := o.Render(t.Context())
-			if _, ok := errors.AsType[*FailuresError](err); !ok {
-				t.Errorf("expected reconcile failure, got %v", err)
-			}
-			if res == nil {
-				t.Fatal("missing render result")
-			}
-			demo := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
-			if _, failed := res.Failed[demo]; !failed {
-				t.Error("chart with an unrelated missing value must fail")
-			}
-			for id, docs := range res.Manifests {
-				for _, doc := range docs {
-					if manifest.ContainsValuePlaceholder(doc) {
-						t.Errorf("unexpected rescue placeholder in %s: %v", id, doc)
+				o, err := New(Config{
+					Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers,
+					SubstituteFrom: tt.sources,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(o.Stop)
+				res, err := o.Render(t.Context())
+				if rescued {
+					if err != nil {
+						t.Errorf("expected rescued render, got %v", err)
+					}
+				} else if _, ok := errors.AsType[*FailuresError](err); !ok {
+					t.Errorf("expected reconcile failure, got %v", err)
+				}
+				if res == nil {
+					t.Fatal("missing render result")
+				}
+				demo := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+				if _, failed := res.Failed[demo]; failed == rescued {
+					t.Errorf("HelmRelease failed = %v, want %v", failed, !rescued)
+				}
+				placeholder := false
+				for id, docs := range res.Manifests {
+					for _, doc := range docs {
+						if manifest.ContainsValuePlaceholder(doc) {
+							placeholder = true
+							if !rescued {
+								t.Errorf("unexpected rescue placeholder in %s: %v", id, doc)
+							}
+						}
 					}
 				}
-			}
-			for _, warning := range res.Warnings {
-				if warning.Resource == demo && warning.Category == manifest.WarnUnresolvedSubstitution && slices.Contains(warning.Detail, "greeting") {
-					t.Errorf("unexpected rescue warning: %+v", warning)
+				if rescued && !placeholder {
+					t.Error("rescued render must contain a value placeholder")
 				}
-			}
-		})
+				rescueWarning, missingWarning := false, false
+				for _, warning := range res.Warnings {
+					if warning.Resource == demo && warning.Category == manifest.WarnUnresolvedSubstitution && slices.Contains(warning.Detail, "greeting") {
+						rescueWarning = true
+						if !rescued {
+							t.Errorf("unexpected rescue warning: %+v", warning)
+						}
+					}
+					if warning.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(warning.Message, fmt.Sprintf("Secret %q", tt.missingSecret)) {
+						missingWarning = true
+					}
+				}
+				if rescued && (!rescueWarning || !missingWarning) {
+					t.Errorf("missing unresolved-substitution warnings: rescue = %v, missing Secret = %v", rescueWarning, missingWarning)
+				}
+			})
+		}
 	}
 }
 

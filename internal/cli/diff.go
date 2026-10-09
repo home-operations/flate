@@ -175,8 +175,7 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 			// The counterpart can know an owner absent from this snapshot's path index.
 			for _, obj := range pair.other.O.Store().ListObjects(kind) {
 				id := obj.Named()
-				if id.Name == name && c.includeNamespace(pair.other.O.Filter(), id.Namespace) {
-					selection = append(selection, id)
+				if id.Name == name && c.includeNamespace(pair.other.O.Filter(), id.Namespace) && pair.side.O.Store().GetObject(id) == nil {
 					if parent, ok := pair.other.O.ParentOf(id); ok {
 						selection = append(selection, parent)
 					}

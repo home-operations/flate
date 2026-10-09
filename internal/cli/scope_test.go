@@ -813,9 +813,10 @@ func TestRun_NamedScope_DiffOwningKustomizationFails(t *testing.T) {
 		{"current_edited", "current", true},
 		{"current_untouched", "current", false},
 		{"orig_edited", "orig", true},
+		{"orig_untouched", "orig", false},
 	} {
 		for _, workers := range []string{"2", "4"} {
-			for _, layout := range []string{"plain", "escape"} {
+			for _, layout := range []string{"plain", "escape", "moved"} {
 				t.Run(tc.name+"/"+workers+"/"+layout, func(t *testing.T) {
 					root, orig := t.TempDir(), t.TempDir()
 					releasePath := "apps/hr.yaml"
@@ -857,6 +858,14 @@ spec:
 					if tc.editRelease {
 						appendScopeSpec(t, root, releasePath, "  values: {greeting: changed}\n")
 					}
+					if layout == "moved" {
+						if err := os.Rename(filepath.Join(root, releasePath), filepath.Join(root, "other/hr.yaml")); err != nil {
+							t.Fatal(err)
+						}
+						testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+						testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: apps, namespace: apps}\n")
+						testutil.WriteFile(t, root, "other/kustomization.yaml", "resources: [cm.yaml, hr.yaml]\n")
+					}
 					failing := root
 					if tc.failingSide == "orig" {
 						failing = orig
@@ -865,7 +874,15 @@ spec:
 					flags := []string{"--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--cache-dir", t.TempDir(), "--concurrency", workers}
 					_, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
 					_, block, ok := strings.Cut(stderr, tc.failingSide+" snapshot:")
-					if code != 1 || !ok || !strings.Contains(block, "reconcile completed with 1 failure(s):") || !strings.Contains(block, "ConfigMap/flux-system/nope: not found") {
+					if layout == "moved" && tc.failingSide == "current" {
+						if code != 0 || !ok || !strings.Contains(block, "warnings (1)") || !strings.Contains(block, "ConfigMap flux-system/nope: not found") || strings.Contains(stderr, "reconcile completed") {
+							t.Fatalf("former owning Kustomization became fatal: %d %s", code, stderr)
+						}
+						_, stderr, code = runCLI(t, "build", "hr", "selected", "--path", filepath.Join(root, "flux"), "--cache-dir", t.TempDir(), "--concurrency", workers)
+						if code != 0 {
+							t.Fatalf("former owning Kustomization became fatal in build: %d %s", code, stderr)
+						}
+					} else if code != 1 || !ok || !strings.Contains(block, "reconcile completed with 1 failure(s):") || !strings.Contains(block, "ConfigMap/flux-system/nope: not found") {
 						t.Fatalf("owning Kustomization failure hidden: %d %s", code, stderr)
 					}
 					_, stderr, code = runCLI(t, append([]string{"diff", "ks", "other"}, flags...)...)

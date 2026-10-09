@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/go-git/go-git/v5"
@@ -21,6 +22,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
 // Options tunes Materialize.
@@ -40,9 +43,8 @@ type Options struct {
 }
 
 // Materialize walks the tree at hash and writes every blob into root.
-// Symlinks land as real OS symlinks (not collapsed to text files);
-// non-file modes (tree entries, etc.) are silently skipped — the
-// per-blob write MkdirAll's parents on demand. Submodule entries are
+// Symlinks land as real OS symlinks; all writes are confined to root.
+// Malformed tree entries fail. Submodule entries are
 // reported via opts.OnSubmodule and skipped.
 //
 // Writes run concurrently across opts.Workers goroutines; the walker
@@ -50,6 +52,14 @@ type Options struct {
 // even on monorepos with 50k+ blobs. ctx cancellation propagates to
 // every in-flight worker.
 func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, root string, opts Options) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	destination, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("open materialization root: %w", err)
+	}
+	defer func() { _ = destination.Close() }()
 	if opts.Workers <= 0 {
 		opts.Workers = runtime.NumCPU()
 	}
@@ -93,6 +103,13 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 			if werr != nil {
 				return fmt.Errorf("walk tree: %w", werr)
 			}
+			if entry.Name == "" || entry.Name == "." || entry.Name == ".." ||
+				strings.ContainsAny(entry.Name, "/\\\x00") {
+				return fmt.Errorf("malformed tree entry name %q", entry.Name)
+			}
+			if _, err := safepath.SafeJoin(root, name, true); err != nil {
+				return err
+			}
 			if entry.Mode == filemode.Submodule {
 				opts.OnSubmodule(name)
 				continue
@@ -104,16 +121,13 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 				// 50k-file monorepo with 5k unique dirs, that's 10×
 				// the syscalls. Walker is single-threaded so each
 				// unique dir is created once.
-				dir := filepath.Join(root, filepath.FromSlash(name))
-				if err := os.MkdirAll(dir, 0o750); err != nil {
-					return fmt.Errorf("mkdir %s: %w", dir, err)
+				if err := destination.MkdirAll(filepath.FromSlash(name), 0o750); err != nil {
+					return fmt.Errorf("mkdir %s: %w", name, err)
 				}
 				continue
 			}
-			// IsFile is true for regular, executable, and symlink modes;
-			// every other mode (e.g. the Empty placeholder) is skipped.
 			if !entry.Mode.IsFile() {
-				continue
+				return fmt.Errorf("malformed tree entry mode %s for %q", entry.Mode, name)
 			}
 			select {
 			case entries <- item{name, entry}:
@@ -125,7 +139,10 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 	for range opts.Workers {
 		g.Go(func() error {
 			for it := range entries {
-				if err := writeEntry(objects, it.entry, root, it.name); err != nil {
+				if err := gctx.Err(); err != nil {
+					return err
+				}
+				if err := writeEntry(objects, it.entry, destination, it.name); err != nil {
 					return err
 				}
 			}
@@ -143,7 +160,14 @@ type serializedObjectReader struct {
 func (r *serializedObjectReader) nextTreeEntry(walker *object.TreeWalker) (string, object.TreeEntry, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return walker.Next()
+	name, entry, err := walker.Next()
+	// TreeWalker reports an unreadable directory object as EOF. It must
+	// fail materialization instead of publishing a truncated artifact.
+	if errors.Is(err, io.EOF) && entry.Mode == filemode.Dir {
+		_, err := r.repo.TreeObject(entry.Hash)
+		return name, entry, fmt.Errorf("load directory %q: %w", entry.Name, err)
+	}
+	return name, entry, err
 }
 
 // blobBytes returns a blob's full contents. The go-git read (BlobObject
@@ -182,14 +206,14 @@ func (r *serializedObjectReader) blobBytes(hash plumbing.Hash, name string) ([]b
 // in parallel. The walker pre-created the parent dir, so we don't
 // MkdirAll here. The executable bit is preserved from
 // filemode.Executable.
-func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, name string) error {
-	dst := filepath.Join(root, filepath.FromSlash(name))
+func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root *os.Root, name string) error {
+	dst := filepath.FromSlash(name)
 	if entry.Mode == filemode.Symlink {
 		target, err := objects.blobBytes(entry.Hash, name)
 		if err != nil {
 			return fmt.Errorf("read symlink target for %q: %w", name, err)
 		}
-		if err := os.Symlink(string(target), dst); err != nil {
+		if err := root.Symlink(string(target), dst); err != nil {
 			return fmt.Errorf("symlink %s -> %s: %w", dst, target, err)
 		}
 		return nil
@@ -203,7 +227,8 @@ func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, n
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(dst, data, perm); err != nil { //nolint:gosec // dst is built from the tree's commit object under the caller's root
+	// Root confines writes even when a destination ancestor is a symlink.
+	if err := root.WriteFile(dst, data, perm); err != nil {
 		return fmt.Errorf("write %s: %w", dst, err)
 	}
 	return nil

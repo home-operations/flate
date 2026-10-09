@@ -9,7 +9,10 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
+
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 // TestMaterialize_ParallelWritesPreserveContent: seed a repo with N
@@ -100,6 +103,125 @@ func mustInit(t *testing.T, dir string) *git.Repository {
 		t.Fatalf("PlainInit: %v", err)
 	}
 	return r
+}
+
+func TestMaterialize_RejectsMalformedEntries(t *testing.T) {
+	for _, name := range []string{"..", "../escape", "/escape", "a/b", `a\b`, "."} {
+		t.Run(name, func(t *testing.T) {
+			repo := mustInit(t, t.TempDir())
+			parent := t.TempDir()
+			root := filepath.Join(parent, "staging")
+			if err := os.Mkdir(root, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			for _, mode := range []filemode.FileMode{filemode.Regular, filemode.Dir} {
+				hash := craftedCommit(t, repo, object.TreeEntry{Name: name, Mode: mode})
+				if err := Materialize(t.Context(), repo, hash, root, Options{Workers: 2}); err == nil {
+					t.Fatalf("accepted malformed %s entry %q", mode, name)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(parent, "escape")); !os.IsNotExist(err) {
+				t.Fatalf("write escaped staging: %v", err)
+			}
+		})
+	}
+}
+
+func TestMaterialize_RejectsSymlinkDestinations(t *testing.T) {
+	for _, target := range []string{"dir", "dir/file", "file"} {
+		t.Run(target, func(t *testing.T) {
+			src := t.TempDir()
+			repo := mustInit(t, src)
+			testutil.WriteFile(t, src, target+"/value", "committed")
+			hash := mustCommit(t, repo, src)
+			root, outside := t.TempDir(), t.TempDir()
+			if err := os.Symlink(outside, filepath.Join(root, "dir")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(root, "file")); err != nil {
+				t.Fatal(err)
+			}
+			if err := Materialize(t.Context(), repo, hash, root, Options{Workers: 4}); err == nil {
+				t.Fatal("accepted a symlink ancestor outside staging")
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("outside tree changed: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestMaterialize_PreservesSymlinksAndExecutableModes(t *testing.T) {
+	src := t.TempDir()
+	repo := mustInit(t, src)
+	testutil.WriteFile(t, src, "bin/script", "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(src, "bin/script"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("bin/script", filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	hash := mustCommit(t, repo, src)
+	root := t.TempDir()
+	if err := Materialize(t.Context(), repo, hash, root, Options{Workers: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(filepath.Join(root, "link")); err != nil || target != "bin/script" {
+		t.Fatalf("symlink = %q, %v", target, err)
+	}
+	if info, err := os.Stat(filepath.Join(root, "bin/script")); err != nil || info.Mode()&0o100 == 0 {
+		t.Fatalf("executable mode lost: %v, %v", info, err)
+	}
+}
+
+func craftedCommit(t *testing.T, repo *git.Repository, entry object.TreeEntry) plumbing.Hash {
+	t.Helper()
+	blob := repo.Storer.NewEncodedObject()
+	blob.SetType(plumbing.BlobObject)
+	w, err := blob.Writer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("malicious")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	entry.Hash, err = repo.Storer.SetEncodedObject(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Mode == filemode.Dir {
+		child := repo.Storer.NewEncodedObject()
+		if err := (&object.Tree{}).Encode(child); err != nil {
+			t.Fatal(err)
+		}
+		entry.Hash, err = repo.Storer.SetEncodedObject(child)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	tree := &object.Tree{Entries: []object.TreeEntry{entry}}
+	encoded := repo.Storer.NewEncodedObject()
+	if err := tree.Encode(encoded); err != nil {
+		t.Fatal(err)
+	}
+	treeHash, err := repo.Storer.SetEncodedObject(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := &object.Commit{TreeHash: treeHash, Author: object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}}
+	encoded = repo.Storer.NewEncodedObject()
+	if err := commit.Encode(encoded); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := repo.Storer.SetEncodedObject(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
 }
 
 func mustCommit(t *testing.T, repo *git.Repository, dir string) plumbing.Hash {

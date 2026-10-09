@@ -98,11 +98,11 @@ spec:
 func TestRun_NamespaceIndependentOfDiscoveryDepth(t *testing.T) {
 	t.Parallel()
 	for _, repo := range []struct {
-		name, ref string
+		name, url, ref string
 	}{
-		{"none", ""},
-		{"no_ref", ""},
-		{"non_matching_ref", "  ref: {branch: main}\n"},
+		{"none", "", ""},
+		{"no_ref", "https://example.invalid/self.git", ""},
+		{"non_matching_ref", "https://example.invalid/x.git", "  ref: {branch: main}\n"},
 	} {
 		t.Run(repo.name, func(t *testing.T) {
 			for _, placement := range []string{"deep", "clusters"} {
@@ -129,15 +129,18 @@ spec:
 `, file.name, file.namespace, file.target, file.extra))
 					}
 					if repo.name != "none" {
-						testutil.WriteFile(t, root, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+						testutil.WriteFile(t, root, "flux/repo.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec:
-  url: https://example.invalid/x.git
-`+repo.ref)
+  url: %s
+%s`, repo.url, repo.ref))
 					}
 					st := store.New()
-					if _, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), Store: st}); err != nil {
+					if _, err := discovery.Run(t.Context(), discovery.Config{
+						Path: filepath.Join(root, "flux"), Store: st,
+						SelfURLs: []string{"https://example.invalid/self.git"},
+					}); err != nil {
 						t.Fatal(err)
 					}
 					var ids []string

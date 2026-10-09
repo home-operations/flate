@@ -68,7 +68,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 						return cli
 					}
 					cli := newClient()
-					opts := Options{DisableChartDigestTracking: disable}
+					opts := Options{DisableChartDigestTracking: &disable}
 					render := func(identity store.SourceArtifact) (string, string, string, string) {
 						t.Helper()
 						identity.Kind, identity.LocalPath = manifest.KindOCIRepository, dir
@@ -162,7 +162,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 			}
 			cli.SetSourceResolver(NewStoreSourceResolver(st))
 			var first, key string
-			for _, disabled := range []bool{false, true} {
+			for _, disabled := range []*bool{nil, new(false), new(true)} {
 				opts := Options{DisableChartDigestTracking: disabled}
 				out, err := cli.Template(t.Context(), hr, nil, opts)
 				if err != nil {
@@ -419,7 +419,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 
 	t.Run("OptsDisableChartDigestTracking", func(t *testing.T) {
 		alt := baseOpts
-		alt.DisableChartDigestTracking = true
+		alt.DisableChartDigestTracking = new(true)
 		if got := computeTemplateKey("fp", baseChart, baseValues, alt, baseHR); got != baseKey {
 			t.Error("digest tracking option changed a non-OCI key")
 		}
@@ -769,23 +769,23 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 		return cli
 	}
 	cli := newClient()
-	for _, disable := range []bool{true, false, true, false} {
+	for _, disable := range []*bool{nil, new(false), new(true), nil, new(true), new(false)} {
 		opts := Options{DisableChartDigestTracking: disable}
 		out, err := cli.Template(t.Context(), hr, nil, opts)
 		if err != nil {
 			t.Fatal(err)
 		}
 		version := "6.15.0"
-		if !disable {
+		if disable == nil || !*disable {
 			version += "+ff3d3e14728f"
 		}
 		if !strings.Contains(out, `version: "`+version+`"`) {
-			t.Fatalf("disable=%t returned incompatible cached output:\n%s", disable, out)
+			t.Fatalf("disable=%v returned incompatible cached output:\n%s", disable, out)
 		}
 		fresh := newClient()
 		persisted, err := fresh.Template(t.Context(), hr, nil, opts)
 		if err != nil || persisted != out {
-			t.Fatalf("persisted disable=%t result differs: err=%v output=%s", disable, err, persisted)
+			t.Fatalf("persisted disable=%v result differs: err=%v output=%s", disable, err, persisted)
 		}
 	}
 	assert.Equal(t, cli.templateCache.Len(), 2)

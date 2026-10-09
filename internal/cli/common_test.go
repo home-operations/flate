@@ -489,12 +489,12 @@ func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
 func TestHelmFlags_ChartDigestTrackingOverride(t *testing.T) {
 	const key = "FLATE_DISABLE_CHART_DIGEST_TRACKING"
 	for _, tc := range []struct {
-		name                             string
-		args                             []string
-		env                              string
-		setEnv, detect, disable, invalid bool
+		name                           string
+		args                           []string
+		env                            string
+		setEnv, auto, disable, invalid bool
 	}{
-		{name: "absent", detect: true},
+		{name: "absent", auto: true},
 		{name: "bare", args: []string{"--disable-chart-digest-tracking"}, disable: true},
 		{name: "explicit true", args: []string{"--disable-chart-digest-tracking=true"}, disable: true},
 		{name: "explicit false", args: []string{"--disable-chart-digest-tracking=false"}},
@@ -536,39 +536,14 @@ func TestHelmFlags_ChartDigestTrackingOverride(t *testing.T) {
 			if err != nil || !ran {
 				t.Fatalf("command result: err=%v ran=%t", err, ran)
 			}
-			assert.Equal(t, got.DetectChartDigestTracking, tc.detect)
-			assert.Equal(t, got.HelmOptions.DisableChartDigestTracking, tc.disable)
-			assert.Equal(t, h.digestTrackingFlag.Changed, !tc.detect)
+			assert.Equal(t, got.HelmOptions.DisableChartDigestTracking == nil, tc.auto)
+			if !tc.auto {
+				assert.Equal(t, *got.HelmOptions.DisableChartDigestTracking, tc.disable)
+			}
 		})
 	}
 	got := buildOrchCfg(commonFlags{}, helmFlags{})
-	assert.Equal(t, got.DetectChartDigestTracking, true)
-	assert.Equal(t, got.HelmOptions.DisableChartDigestTracking, false)
-	got = buildOrchCfg(commonFlags{}, helmFlags{disableChartDigestTracking: true})
-	assert.Equal(t, got.HelmOptions.DisableChartDigestTracking, true)
-}
-
-func TestHelmFlags_ChartDigestTrackingBindings(t *testing.T) {
-	root := New("test")
-	for _, verb := range []string{"build", "get", "diff", "test"} {
-		kinds := []string{"ks", "hr", "all"}
-		if verb == "get" || verb == "diff" {
-			kinds = append(kinds, "images")
-		}
-		for _, kind := range kinds {
-			t.Run(verb+" "+kind, func(t *testing.T) {
-				cmd, _, err := root.Find([]string{verb, kind})
-				if err != nil {
-					t.Fatal(err)
-				}
-				flag := cmd.Flags().Lookup("disable-chart-digest-tracking")
-				if flag == nil || flag.Value.Type() != "bool" || flag.NoOptDefVal != "true" {
-					t.Fatal("missing boolean override binding")
-				}
-				if !strings.Contains(flag.Usage, envKey("disable-chart-digest-tracking")) {
-					t.Fatal("missing environment usage")
-				}
-			})
-		}
-	}
+	assert.Equal(t, got.HelmOptions.DisableChartDigestTracking == nil, true)
+	got = buildOrchCfg(commonFlags{}, helmFlags{disableChartDigestTracking: new(true)})
+	assert.Equal(t, *got.HelmOptions.DisableChartDigestTracking, true)
 }

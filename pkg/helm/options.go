@@ -8,10 +8,11 @@ import (
 
 // Options collects the helm template flags flate supports.
 type Options struct {
-	// DisableChartDigestTracking preserves the chart version for direct
-	// OCIRepository references. The false zero value enables digest tracking;
-	// artifact revision validation and full source cache identity always apply.
-	DisableChartDigestTracking bool
+	// DisableChartDigestTracking preserves direct OCI chart versions when true.
+	// Nil selects automatic detection during orchestrator Bootstrap and enabled
+	// tracking for direct Template calls; false forces tracking on. Revision
+	// validation and full source cache identity apply in every mode.
+	DisableChartDigestTracking *bool
 	// SkipCRDs excludes CRDs from the rendered output.
 	SkipCRDs bool
 	// SkipTests excludes templates that are helm test hooks.

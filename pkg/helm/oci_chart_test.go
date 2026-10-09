@@ -104,7 +104,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 							errs[i] = ctx.Err()
 							return
 						}
-						output[i], errs[i] = cli.Template(ctx, release, nil, Options{DisableChartDigestTracking: mode.disable})
+						output[i], errs[i] = cli.Template(ctx, release, nil, Options{DisableChartDigestTracking: &mode.disable})
 					})
 				}
 				<-entered
@@ -158,11 +158,11 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 				t.Fatal(err)
 			}
 			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: mode.disable}); err != nil {
+			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: &mode.disable}); err != nil {
 				t.Fatal(err)
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
-			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: mode.disable}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: &mode.disable}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("invalid chart version bypassed validation: %v", err)
 			}
 
@@ -410,7 +410,7 @@ func setupOCIChartTest(t *testing.T, slot, label string) (*Client, *manifest.Hel
 // writeChartFiles drops a minimal helm chart at root/<name-from-Chart.yaml-dir>
 // — used for the "extract" layout test where source.oci leaves chart
 // files at slot root.
-func writeChartFiles(t *testing.T, root, name, version string) {
+func writeChartFiles(t testing.TB, root, name, version string) {
 	t.Helper()
 	testutil.WriteFile(t, root, "Chart.yaml",
 		"apiVersion: v2\nname: "+name+"\nversion: "+version+"\n")

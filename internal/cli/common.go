@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -303,9 +304,7 @@ type helmFlags struct {
 	showOnly                   []string
 	enableDNS                  bool
 	skipSchemaValidation       bool
-	disableChartDigestTracking bool
-	// The flag pointer preserves explicit CLI/environment presence in value copies.
-	digestTrackingFlag *pflag.Flag
+	disableChartDigestTracking *bool
 }
 
 func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
@@ -322,9 +321,16 @@ func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
 	fs.BoolVar(&h.enableDNS, "enable-dns", false, "enable DNS lookups during helm template")
 	fs.BoolVar(&h.skipSchemaValidation, "skip-schema-validation", false,
 		"skip helm values.schema.json validation (dominates allocation churn on big repos)")
-	fs.BoolVar(&h.disableChartDigestTracking, "disable-chart-digest-tracking", false,
-		"preserve original OCI chart versions (absent: auto-detect; =false: force digest tracking)")
-	h.digestTrackingFlag = fs.Lookup("disable-chart-digest-tracking")
+	fs.BoolFunc("disable-chart-digest-tracking",
+		"preserve original OCI chart versions (absent: auto-detect; =false: force digest tracking)",
+		func(text string) error {
+			disabled, err := strconv.ParseBool(text)
+			if err != nil {
+				return err
+			}
+			h.disableChartDigestTracking = &disabled
+			return nil
+		})
 }
 
 func (c commonFlags) helmOptions(h helmFlags) helm.Options {
@@ -460,13 +466,12 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		// (change.Detect diffs root-to-root): the materialized --base tree
 		// root, or the .git default of an explicit --path-orig. Replaces
 		// the core's old .git "widen" heuristic.
-		PathOrig:                  c.baselineRoot(),
-		KRMIgnoreFile:             c.krmIgnore,
-		HelmOptions:               c.helmOptions(h),
-		DetectChartDigestTracking: h.digestTrackingFlag == nil || !h.digestTrackingFlag.Changed,
-		WipeSecrets:               true,
-		RegistryConfig:            c.registryConfig,
-		Concurrency:               c.concurrency,
+		PathOrig:       c.baselineRoot(),
+		KRMIgnoreFile:  c.krmIgnore,
+		HelmOptions:    c.helmOptions(h),
+		WipeSecrets:    true,
+		RegistryConfig: c.registryConfig,
+		Concurrency:    c.concurrency,
 		SourceRetry: source.RetryConfig{
 			Attempts: c.sourceRetryAttempts,
 			MinWait:  c.sourceRetryMinWait,

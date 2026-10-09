@@ -719,6 +719,7 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 		{"diff", "ks"},
 		{"diff", "hr"},
 		{"diff", "all"},
+		{"diff", "images"},
 		{"get", "all"},
 		{"get", "images"},
 		{"get", "ks"},
@@ -733,6 +734,13 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 		}
 		if sub.Flags().Lookup("kube-version") == nil {
 			t.Errorf("%v: missing helm flag kube-version", argv)
+		}
+		flag := sub.Flags().Lookup("disable-chart-digest-tracking")
+		if flag == nil || flag.Value.Type() != "boolfunc" || flag.NoOptDefVal != "true" {
+			t.Fatalf("%v: missing boolean override binding", argv)
+		}
+		if !strings.Contains(flag.Usage, envKey("disable-chart-digest-tracking")) {
+			t.Errorf("%v: missing environment usage", argv)
 		}
 	}
 }

@@ -47,10 +47,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if err != nil {
 			return "", fmt.Errorf("track oci chart version: %w", err)
 		}
-		if !opts.DisableChartDigestTracking {
+		disabled := opts.DisableChartDigestTracking != nil && *opts.DisableChartDigestTracking
+		if !disabled {
 			loaded.Chart.Metadata.Version = version
 		}
-		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art.Digest+"\x00"+art.Revision, opts.DisableChartDigestTracking)
+		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art.Digest+"\x00"+art.Revision, disabled)
 	}
 	caps, err := opts.capabilities()
 	if err != nil {
@@ -217,20 +218,9 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	return inst, disableHooks, nil
 }
 
-// mergeChartValuesFiles is the cache-aware entry point: it consults
-// Client.chartValuesCache before re-parsing and stores the canonical
-// merged map on miss. Callers receive a deep clone — downstream
-// layering DeepMerges the result, which may mutate intermediate
-// sub-maps.
-//
-// Cache key = sha256(chart.Name || chart.Version || source identity || joined valuesFiles
-// list || ignoreMissing bit). Distinct chart identities (different
-// name or version, e.g. a chart upgrade landing under the same path)
-// produce distinct keys, so a stale entry never serves a different
-// chart's values. ignoreMissing is folded into the key because two
-// HRs with the same (chart, valuesFiles) but different policies must
-// not share — a missing file is an error in one and skipped in the
-// other.
+// mergeChartValuesFiles caches by loaded content and ordered filenames. Returned
+// maps MUST be cloned because downstream values layering mutates them. The
+// missing-file policy separates requests that skip files from those that fail.
 func (c *Client) mergeChartValuesFiles(loaded ChartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
 	key := chartValuesCacheKey(loaded.Fingerprint, names, ignoreMissing)
 	c.chartMu.RLock()

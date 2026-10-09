@@ -1,27 +1,25 @@
-package helm
+package orchestrator
 
 import (
 	"strings"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// DisablesChartDigestTracking reports whether inline instance kustomize patches
+// disablesChartDigestTracking reports whether inline instance kustomize patches
 // contain DisableChartDigestTracking=true for helm-controller or no target.
 // Missing or malformed values do not match. The release is never mutated.
-func DisablesChartDigestTracking(hr *manifest.HelmRelease) bool {
-	if hr == nil {
+func disablesChartDigestTracking(hr *manifest.HelmRelease) bool {
+	if hr == nil || len(hr.Values) == 0 {
 		return false
 	}
-	instance, ok := hr.Values["instance"].(map[string]any)
-	if !ok {
+	field, found, err := unstructured.NestedFieldNoCopy(hr.Values, "instance", "kustomize", "patches")
+	if err != nil || !found {
 		return false
 	}
-	kustomize, ok := instance["kustomize"].(map[string]any)
-	if !ok {
-		return false
-	}
-	patches, ok := kustomize["patches"].([]any)
+	patches, ok := field.([]any)
 	if !ok {
 		return false
 	}

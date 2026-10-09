@@ -103,12 +103,20 @@ const (
 // to leave ample room for healthy propagation while bounding feedback loops.
 const maxRedispatches = 32
 
+type failedMark struct {
+	check uint64
+	next  *failedMark
+}
+
 type node struct {
 	id           NodeID
 	state        nodeState
 	blockedOn    []NodeID // deps recorded at the last OutcomeBlocked
 	redispatches int
 	failedOn     []NodeID // unique dependencies; borrowed dispatcher slices MUST stay immutable
+	failedSeen   map[NodeID]*failedMark
+	failedFree   *failedMark
+	failedCheck  uint64
 	startedAt    uint64
 	readyAt      uint64
 	// Unrelated progress permits only one free retry per unchanged blocker set.
@@ -310,7 +318,9 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	sameFailed := out == OutcomeDependencyFailed && s.sameFailedLocked(n, blocked)
 	if !sameFailed {
 		n.conservativeUsed = false
-		s.clearFailedLocked(n)
+		if out != OutcomeDependencyFailed {
+			s.clearFailedLocked(n)
+		}
 	}
 	if s.err != nil || s.canceled {
 		s.clearFailedLocked(n)
@@ -325,24 +335,91 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	n.rerun = rerun
 	if out == OutcomeDependencyFailed {
 		if !sameFailed {
+			previous := n.failedOn
 			n.failedOn = blocked
-			duplicate := false
-			for _, dep := range blocked {
-				set := s.failedIdx[dep]
-				if set == nil {
-					set = map[NodeID]struct{}{}
-					s.failedIdx[dep] = set
+			if len(previous) <= 2 && len(blocked) <= 2 {
+				if len(blocked) > 1 && blocked[0] == blocked[1] {
+					n.failedOn = slices.Clone(blocked[:1])
 				}
-				before := len(set)
-				set[id] = struct{}{}
-				duplicate = duplicate || len(set) == before
-			}
-			if duplicate {
-				// Dispatcher slices may be shared; only a private copy is compacted.
-				n.failedOn = make([]NodeID, 0, len(blocked))
+				for _, dep := range n.failedOn {
+					if len(previous) > 0 && (dep == previous[0] || len(previous) == 2 && dep == previous[1]) {
+						continue
+					}
+					set := s.failedIdx[dep]
+					if set == nil {
+						set = map[NodeID]struct{}{}
+						s.failedIdx[dep] = set
+					}
+					set[id] = struct{}{}
+				}
+				for _, dep := range previous {
+					if len(n.failedOn) > 0 && (dep == n.failedOn[0] || len(n.failedOn) == 2 && dep == n.failedOn[1]) {
+						continue
+					}
+					set := s.failedIdx[dep]
+					delete(set, id)
+					if len(set) == 0 {
+						delete(s.failedIdx, dep)
+					}
+				}
+				n.failedSeen, n.failedFree = nil, nil
+			} else {
+				if n.failedSeen == nil {
+					n.failedSeen = make(map[NodeID]*failedMark, max(len(previous), len(blocked)))
+					marks := make([]failedMark, max(len(previous), len(blocked))+1)
+					for i := range marks {
+						marks[i].next = n.failedFree
+						n.failedFree = &marks[i]
+					}
+					for _, dep := range previous {
+						n.failedSeen[dep] = n.failedFree
+						n.failedFree = n.failedFree.next
+					}
+				}
+				n.failedCheck++
+				duplicate := false
 				for i, dep := range blocked {
-					if !slices.Contains(blocked[:i], dep) {
+					mark := n.failedSeen[dep]
+					if mark != nil && mark.check == n.failedCheck {
+						if !duplicate {
+							// Dispatcher slices may be shared; only a private copy is compacted.
+							n.failedOn = make([]NodeID, i, len(blocked))
+							copy(n.failedOn, blocked[:i])
+							duplicate = true
+						}
+						continue
+					}
+					if mark == nil {
+						if n.failedFree == nil {
+							mark = &failedMark{}
+						} else {
+							mark = n.failedFree
+							n.failedFree = mark.next
+						}
+						n.failedSeen[dep] = mark
+						set := s.failedIdx[dep]
+						if set == nil {
+							set = map[NodeID]struct{}{}
+							s.failedIdx[dep] = set
+						}
+						set[id] = struct{}{}
+					}
+					mark.check = n.failedCheck
+					if duplicate {
 						n.failedOn = append(n.failedOn, dep)
+					}
+				}
+				for _, dep := range previous {
+					mark := n.failedSeen[dep]
+					if mark.check != n.failedCheck {
+						set := s.failedIdx[dep]
+						delete(set, id)
+						if len(set) == 0 {
+							delete(s.failedIdx, dep)
+						}
+						delete(n.failedSeen, dep)
+						mark.next = n.failedFree
+						n.failedFree = mark
 					}
 				}
 			}
@@ -444,16 +521,48 @@ func (s *Scheduler) unparkLocked(n *node) {
 }
 
 func (s *Scheduler) sameFailedLocked(n *node, blocked []NodeID) bool {
-	if slices.Equal(n.failedOn, blocked) {
-		return true
+	if len(blocked) < len(n.failedOn) {
+		return false
+	}
+	if len(blocked) == len(n.failedOn) {
+		equal := true
+		for i, dep := range blocked {
+			if dep != n.failedOn[i] {
+				// A replacement can follow a long unchanged prefix; check its edge first.
+				if _, ok := s.failedIdx[dep][n.id]; !ok {
+					return false
+				}
+				equal = false
+				break
+			}
+		}
+		if equal {
+			return true
+		}
 	}
 	count := 0
-	for i, dep := range blocked {
+	n.failedCheck++
+	var seen uint8
+	for _, dep := range blocked {
 		if _, ok := s.failedIdx[dep][n.id]; !ok {
 			return false
 		}
-		if !slices.Contains(blocked[:i], dep) {
-			count++
+		if len(n.failedOn) <= 2 {
+			bit := uint8(1)
+			if dep != n.failedOn[0] {
+				bit = 2
+			}
+			if seen&bit == 0 {
+				seen |= bit
+				count++
+			}
+		} else {
+			// Only registered marks are updated, so duplicate checks never allocate.
+			mark := n.failedSeen[dep]
+			if mark.check != n.failedCheck {
+				mark.check = n.failedCheck
+				count++
+			}
 		}
 	}
 	return count == len(n.failedOn)
@@ -469,6 +578,7 @@ func (s *Scheduler) clearFailedLocked(n *node) {
 		}
 	}
 	n.failedOn = nil
+	n.failedSeen, n.failedFree = nil, nil
 }
 
 // Callers bypass idle events to keep the non-inlineable waiter wake path off arrivals.

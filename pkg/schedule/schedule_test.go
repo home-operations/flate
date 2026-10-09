@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -23,6 +24,97 @@ type dispatchFunc func(context.Context, NodeID, int) (Outcome, []NodeID)
 
 func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain int) (Outcome, []NodeID) {
 	return f(ctx, id, drain)
+}
+
+func TestScheduler_FailedBlockerSets(t *testing.T) {
+	a, b, c, d := id("a"), id("b"), id("c"), id("d")
+	for _, tc := range []struct {
+		name    string
+		blocked []NodeID
+		want    bool
+	}{
+		{name: "unchanged", blocked: []NodeID{a, b, c}, want: true},
+		{name: "reordered", blocked: []NodeID{c, a, b}, want: true},
+		{name: "nonadjacent duplicates", blocked: []NodeID{c, a, c, b, a}, want: true},
+		{name: "duplicates hide removal", blocked: []NodeID{a, b, a}},
+		{name: "fewer blockers", blocked: []NodeID{a, b}},
+		{name: "replacement", blocked: []NodeID{a, b, d}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(task.NewBounded(2), nil)
+			n := &node{id: id("consumer"), state: stateRunning}
+			s.nodes[n.id], s.inFlight = n, 1
+			s.complete(n.id, OutcomeDependencyFailed, []NodeID{a, b, c}, false)
+			var got bool
+			allocs := testing.AllocsPerRun(100, func() {
+				got = s.sameFailedLocked(n, tc.blocked)
+			})
+			assert.Equal(t, got, tc.want)
+			assert.Equal(t, allocs, float64(0))
+			assert.Diff(t, n.failedOn, []NodeID{a, b, c})
+			for _, dep := range n.failedOn {
+				_, retained := s.failedIdx[dep][n.id]
+				assert.Equal(t, retained, true)
+			}
+		})
+	}
+}
+
+func TestScheduler_FailedReplacementPreservesOtherConsumers(t *testing.T) {
+	for _, fanIn := range []int{2, 32} {
+		for _, position := range []int{0, fanIn - 1} {
+			t.Run(fmt.Sprintf("fanin_%d/position_%d", fanIn, position), func(t *testing.T) {
+				s := New(task.NewBounded(2), nil)
+				n := &node{id: id("consumer"), state: stateRunning}
+				s.nodes[n.id], s.inFlight = n, 1
+				previous, blocked := make([]NodeID, fanIn), make([]NodeID, fanIn)
+				other := id("other")
+				for i := range previous {
+					previous[i] = id(fmt.Sprintf("blocker-%02d", i))
+					blocked[i] = previous[i]
+					s.failedIdx[previous[i]] = map[NodeID]struct{}{other: {}}
+				}
+				s.complete(n.id, OutcomeDependencyFailed, previous, false)
+				blocked[position] = id("replacement")
+				n.state, s.inFlight = stateRunning, 1
+				s.complete(n.id, OutcomeDependencyFailed, blocked, false)
+				assert.Diff(t, n.failedOn, blocked)
+				for i, dep := range previous {
+					_, retained := s.failedIdx[dep][n.id]
+					assert.Equal(t, retained, i != position)
+					_, retained = s.failedIdx[dep][other]
+					assert.Equal(t, retained, true)
+				}
+				_, retained := s.failedIdx[blocked[position]][n.id]
+				assert.Equal(t, retained, true)
+			})
+		}
+	}
+}
+
+func TestScheduler_FailedBlockerWidthChanges(t *testing.T) {
+	s := New(task.NewBounded(2), nil)
+	n := &node{id: id("consumer")}
+	s.nodes[n.id] = n
+	a, b, c := id("a"), id("b"), id("c")
+	complete := func(out Outcome, blocked, want []NodeID) {
+		t.Helper()
+		n.state, s.inFlight = stateRunning, 1
+		s.complete(n.id, out, blocked, false)
+		assert.Diff(t, n.failedOn, want)
+		assert.Equal(t, len(s.failedIdx), len(want))
+		for _, dep := range want {
+			_, retained := s.failedIdx[dep][n.id]
+			assert.Equal(t, retained, true)
+		}
+	}
+	complete(OutcomeDependencyFailed, []NodeID{a, b, c}, []NodeID{a, b, c})
+	complete(OutcomeDependencyFailed, []NodeID{b, a}, []NodeID{b, a})
+	complete(OutcomeDependencyFailed, []NodeID{a, a}, []NodeID{a})
+	complete(OutcomeDependencyFailed, []NodeID{b, a, b, c, a}, []NodeID{b, a, c})
+	complete(OutcomeDependencyFailed, []NodeID{c, a, b, c, a}, []NodeID{b, a, c})
+	complete(OutcomeTerminal, nil, nil)
+	complete(OutcomeDependencyFailed, []NodeID{a, b, c}, []NodeID{a, b, c})
 }
 
 func TestRedispatchLimit(t *testing.T) {

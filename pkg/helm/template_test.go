@@ -6,7 +6,9 @@ import (
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
@@ -122,6 +124,65 @@ func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 			if merged["marker"] != tc.want {
 				t.Fatalf("marker = %v, want %s", merged["marker"], tc.want)
 			}
+		})
+	}
+}
+
+func TestChartValuesCacheKey_DistinctInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		first, second string
+	}{
+		{
+			"name boundaries",
+			chartValuesCacheKey("f", []string{"ab"}, false),
+			chartValuesCacheKey("f", []string{"a", "b"}, false),
+		},
+		{
+			"empty trailing name",
+			chartValuesCacheKey("f", []string{"a", ""}, false),
+			chartValuesCacheKey("f", []string{"a"}, false),
+		},
+		{
+			"missing file policy",
+			chartValuesCacheKey("f", []string{"a"}, true),
+			chartValuesCacheKey("f", []string{"a"}, false),
+		},
+		{
+			"name order",
+			chartValuesCacheKey("f", []string{"a", "b"}, false),
+			chartValuesCacheKey("f", []string{"b", "a"}, false),
+		},
+		{
+			"chart fingerprint",
+			chartValuesCacheKey("f", []string{"a"}, false),
+			chartValuesCacheKey("g", []string{"a"}, false),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.first != tc.second, true)
+		})
+	}
+}
+
+func TestOCIChartFingerprint_DistinctInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		first, second string
+	}{
+		{
+			"digest revision boundary",
+			ociChartFingerprint("f", &store.SourceArtifact{Digest: "xy", Revision: "z"}, false),
+			ociChartFingerprint("f", &store.SourceArtifact{Digest: "x", Revision: "yz"}, false),
+		},
+		{
+			"digest tracking mode",
+			ociChartFingerprint("f", &store.SourceArtifact{Digest: "xy", Revision: "z"}, true),
+			ociChartFingerprint("f", &store.SourceArtifact{Digest: "xy", Revision: "z"}, false),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.first != tc.second, true)
 		})
 	}
 }

@@ -87,9 +87,10 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 							t.Fatal("missing chart content fingerprint")
 						}
 						fp := ociChartFingerprint(loaded.Fingerprint, identity.Digest+"\x00"+identity.Revision, disable)
-						merged, err := cli.mergeChartValuesFiles(ChartLoadResult{Chart: loaded.Chart, Fingerprint: fp}, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
-						if err != nil {
-							t.Fatal(err)
+						valuesKey := chartValuesCacheKey(fp, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+						merged, ok := cli.chartValuesCache[valuesKey]
+						if !ok {
+							t.Fatal("render did not cache values under its loaded fingerprint")
 						}
 						key := computeTemplateKey(fp, loaded.Chart, merged, opts, hr)
 						if cli.templateCache != nil {
@@ -106,7 +107,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 						if err != nil || repeated != out {
 							t.Fatalf("repeat render differs: %v", err)
 						}
-						return out, fp, key, chartValuesCacheKey(fp, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+						return out, fp, key, valuesKey
 					}
 					first, fp, key, valuesKey := render(tc.initial)
 					if !strings.Contains(first, `marker: "original"`) {

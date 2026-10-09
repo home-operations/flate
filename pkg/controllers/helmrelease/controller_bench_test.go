@@ -20,12 +20,12 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 		{"direct OCI", &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest}},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
+			var identity string
+			if tc.source != nil {
+				identity = tc.source.Digest + "\x00" + tc.source.Revision
+			}
 			b.ReportAllocs()
 			for b.Loop() {
-				var identity string
-				if tc.source != nil {
-					identity = tc.source.Digest + "\x00" + tc.source.Revision
-				}
 				if fp := helmReleaseFingerprint(hr, identity); fp == "" {
 					b.Fatal("empty fingerprint")
 				}

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func ociRenderFixture(t *testing.T) (*store.Store, *manifest.HelmRelease, string) {
+func ociRenderFixture(t testing.TB) (*store.Store, *manifest.HelmRelease, string) {
 	t.Helper()
 	dir := t.TempDir()
 	writeChartFiles(t, dir, "podinfo", "6.15.0")

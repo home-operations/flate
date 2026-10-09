@@ -125,7 +125,7 @@ func (c *Client) envSettings() *cli.EnvSettings {
 // means the file was overwritten (mutable tag re-push, manual
 // edit) and the cache entry is stale.
 //
-// fingerprint, when non-empty, is the content-addressed digest of
+// fingerprint is the content-addressed digest of
 // the chart's loader.Load inputs — computed once at cache-fill
 // time and reused on every subsequent LoadChart hit. The template-
 // output cache mixes it into its own key so a stale chart never

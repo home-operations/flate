@@ -86,3 +86,42 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 		t.Errorf("distinct-chart cache aliased: a=%v b=%v", a, b)
 	}
 }
+
+func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
+	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := &chart.Chart{Metadata: &chart.Metadata{Name: "fixture", Version: "1.0.0"}, Files: []*chartcommon.File{
+		{Name: "first.yaml", Data: []byte("marker: first\n")},
+		{Name: "second.yaml", Data: []byte("marker: second\n")},
+	}}
+	loaded := ChartLoadResult{Chart: ch, Fingerprint: chartFingerprint(ch)}
+	for _, tc := range []struct {
+		name   string
+		files  []string
+		ignore bool
+		want   string
+	}{
+		{"ordered", []string{"first.yaml", "second.yaml"}, false, "second"},
+		{"reversed", []string{"second.yaml", "first.yaml"}, false, "first"},
+		{"ignore missing", []string{"first.yaml", "missing.yaml"}, true, "first"},
+		{"require missing", []string{"first.yaml", "missing.yaml"}, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			merged, err := cli.mergeChartValuesFiles(loaded, tc.files, tc.ignore)
+			if tc.want == "" {
+				if err == nil {
+					t.Fatal("required missing file was served from cache")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if merged["marker"] != tc.want {
+				t.Fatalf("marker = %v, want %s", merged["marker"], tc.want)
+			}
+		})
+	}
+}

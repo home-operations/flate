@@ -3,7 +3,10 @@ package schedule
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"slices"
 	"testing"
+	"unsafe"
 
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -52,4 +55,161 @@ func BenchmarkOnStatusWake(b *testing.B) {
 	for b.Loop() {
 		s.OnStatusWake(dep, true, false)
 	}
+}
+
+const progressCorpusSize = 1_000_000
+
+func progressCorpus(kind string) []NodeID {
+	ids := make([]NodeID, progressCorpusSize)
+	for i := range ids {
+		ids[i] = NodeID{Kind: kind, Namespace: "default", Name: fmt.Sprintf("progress-%06d", i)}
+	}
+	return ids
+}
+
+func BenchmarkOnArrival_Data(b *testing.B) {
+	for _, kind := range []string{"ConfigMap", "Secret"} {
+		ids := progressCorpus(kind)
+		for _, active := range []bool{false, true} {
+			for _, distinct := range []bool{false, true} {
+				mode := "Reused"
+				if distinct {
+					mode = "Distinct"
+				}
+				b.Run(fmt.Sprintf("%s/%s/Active=%v", mode, kind, active), func(b *testing.B) {
+					benchmarkProgress(b, ids, progressWorkload{active: active, distinct: distinct})
+				})
+			}
+		}
+	}
+}
+
+func BenchmarkOnStatusWake_Progress(b *testing.B) {
+	ids := progressCorpus("Kustomization")
+	for _, existing := range []bool{false, true} {
+		for _, active := range []bool{false, true} {
+			for _, distinct := range []bool{false, true} {
+				mode := "Reused"
+				if distinct {
+					mode = "Distinct"
+				}
+				b.Run(fmt.Sprintf("%s/Existing=%v/Active=%v", mode, existing, active), func(b *testing.B) {
+					var nodes map[NodeID]*node
+					if existing {
+						count := 1
+						if distinct {
+							count = len(ids)
+						}
+						nodes = make(map[NodeID]*node, count)
+						for _, nid := range ids[:count] {
+							nodes[nid] = &node{id: nid, state: stateTerminal}
+						}
+					}
+					benchmarkProgress(b, ids, progressWorkload{active: active, distinct: distinct, ready: true, nodes: nodes})
+				})
+			}
+		}
+	}
+}
+
+type progressWorkload struct {
+	active, distinct, ready bool
+	nodes                   map[NodeID]*node
+}
+
+func benchmarkProgress(b *testing.B, ids []NodeID, workload progressWorkload) {
+	b.Helper()
+	newScheduler := func() *Scheduler {
+		s := New(task.NewBounded(2), nil)
+		if workload.active {
+			s.inFlight = 1
+		}
+		if workload.nodes != nil {
+			s.nodes = workload.nodes
+		}
+		return s
+	}
+	s := newScheduler()
+	i := 0
+	b.ReportAllocs()
+	for b.Loop() {
+		if workload.distinct && i == len(ids) {
+			// Every distinct batch starts without warmed recovery history.
+			b.StopTimer()
+			s = newScheduler()
+			i = 0
+			b.StartTimer()
+		}
+		if workload.ready {
+			s.OnStatusWake(ids[i], true, false)
+		} else {
+			s.OnArrival(ids[i], false)
+		}
+		if workload.distinct {
+			i++
+		}
+	}
+}
+
+func BenchmarkComplete_Failed(b *testing.B) {
+	for _, fanIn := range []int{2, 32} {
+		previous := make([]NodeID, fanIn)
+		for i := range previous {
+			previous[i] = id(fmt.Sprintf("blocker-%02d", i))
+		}
+		for _, mode := range []string{"Unchanged", "Reordered", "Replaced"} {
+			blocked := slices.Clone(previous)
+			if mode == "Reordered" {
+				slices.Reverse(blocked)
+			}
+			if mode == "Replaced" {
+				blocked[0] = id("replacement")
+			}
+			b.Run(fmt.Sprintf("FanIn=%d/%s", fanIn, mode), func(b *testing.B) {
+				s := New(task.NewBounded(2), nil)
+				nid := id("consumer")
+				n := &node{id: nid}
+				s.nodes[nid] = n
+				n.failedOn = previous
+				for _, dep := range append(slices.Clone(previous), blocked...) {
+					s.failedIdx[dep] = map[NodeID]struct{}{nid: {}, id("other"): {}}
+				}
+				consumed := new(bool)
+				// Resolve the candidate's private episode field outside timing;
+				// both implementations execute the same completion workload.
+				if field, ok := reflect.TypeFor[node]().FieldByName("conservativeUsed"); ok {
+					consumed = (*bool)(unsafe.Add(unsafe.Pointer(n), field.Offset))
+				}
+				next := blocked
+				b.ReportAllocs()
+				for b.Loop() {
+					*consumed = true
+					n.state = stateRunning
+					s.inFlight = 1
+					s.complete(nid, OutcomeDependencyFailed, next, false)
+					if mode != "Unchanged" {
+						if &next[0] == &blocked[0] {
+							next = previous
+						} else {
+							next = blocked
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestProgress_EvidenceSnapshot(t *testing.T) {
+	s := New(task.NewBounded(2), nil)
+	s.inFlight = 1
+	ids := progressCorpus("ConfigMap")
+	for _, nid := range ids {
+		s.OnArrival(nid, false)
+	}
+	retained := 0
+	if history := reflect.ValueOf(s).Elem().FieldByName("progress"); history.IsValid() {
+		retained = history.Len()
+	}
+	t.Logf("arrivals=%d history_entries=%d nodes=%d failed_ids=%d parked_ids=%d node_bytes=%d scheduler_bytes=%d", len(ids), retained, len(s.nodes), len(s.failedIdx), len(s.parkedIdx), unsafe.Sizeof(node{}), unsafe.Sizeof(Scheduler{}))
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +49,65 @@ func TestStore_RoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("Get returned different bytes than Put:\nwant: %q\ngot:  %q", payload, got)
+	}
+}
+
+func TestStore_RoundTripPayloadLargerThanWindow(t *testing.T) {
+	s := NewStore(t.TempDir(), 32<<20)
+	t.Cleanup(s.sweepBlocking)
+	payload := mixedWindowPayload(1)
+	if len(payload) <= 1<<20 {
+		t.Fatal("payload must span multiple encoder windows")
+	}
+	key := strings.Repeat("a", 64)
+	s.Put(key, payload)
+	got, ok := s.Get(key)
+	if !ok {
+		t.Fatal("Get after Put should hit")
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("multi-window payload returned different bytes")
+	}
+}
+
+func TestStore_PutManyConcurrent(t *testing.T) {
+	const callers = 64
+	s := NewStore(t.TempDir(), 1<<30)
+	t.Cleanup(s.sweepBlocking)
+	keys := make([]string, callers)
+	payloads := make([][]byte, callers)
+	for i := range callers {
+		keys[i] = fmt.Sprintf("%064x", i)
+		payloads[i] = mixedWindowPayload(uint64(i + 1))
+	}
+
+	ctx := t.Context()
+	start := make(chan struct{})
+	var ready, workers sync.WaitGroup
+	ready.Add(callers)
+	for i := range callers {
+		workers.Go(func() {
+			ready.Done()
+			select {
+			case <-start:
+				s.Put(keys[i], payloads[i])
+			case <-ctx.Done():
+			}
+		})
+	}
+	ready.Wait()
+	close(start)
+	workers.Wait()
+
+	for i, key := range keys {
+		got, ok := s.Get(key)
+		if !ok {
+			t.Errorf("Get %s after concurrent Put should hit", key)
+			continue
+		}
+		if !bytes.Equal(got, payloads[i]) {
+			t.Errorf("concurrent Put %s returned different bytes", key)
+		}
 	}
 }
 
@@ -200,30 +260,55 @@ func TestStore_GetBumpsMtime(t *testing.T) {
 // is zstd(payload), nothing more.
 func TestStore_ReadsExternallyWrittenZstd(t *testing.T) {
 	dir := t.TempDir()
-	s := NewStore(dir, 1<<20)
+	s := NewStore(dir, 32<<20)
+	t.Cleanup(s.sweepBlocking)
 	key := strings.Repeat("f", 64)
-	payload := []byte("hello: world\n")
+	payload := mixedWindowPayload(1)
 
 	// Write zstd(payload) by hand at the sharded path — no Store.Put involved.
 	p := s.pathFor(key)
 	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	enc, err := zstd.NewWriter(nil)
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 	if err := os.WriteFile(p, enc.EncodeAll(payload, nil), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_ = enc.Close()
 
 	got, ok := s.Get(key)
 	if !ok {
 		t.Fatalf("Store must read an externally-written zstd(payload) entry")
 	}
 	if !bytes.Equal(got, payload) {
-		t.Fatalf("wire-format read mismatch:\nwant: %q\ngot:  %q", payload, got)
+		t.Fatal("wire-format read mismatch")
+	}
+}
+
+func TestStore_ReadableByStockDecoder(t *testing.T) {
+	s := NewStore(t.TempDir(), 32<<20)
+	t.Cleanup(s.sweepBlocking)
+	key := strings.Repeat("f", 64)
+	payload := mixedWindowPayload(1)
+	s.Put(key, payload)
+	raw, err := os.ReadFile(s.pathFor(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(dec.Close)
+	got, err := dec.DecodeAll(raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("stock decoder returned different bytes")
 	}
 }
 
@@ -258,6 +343,16 @@ func incompressible(n int, seed uint64) []byte {
 		b[i] = byte(x >> 56)
 	}
 	return b
+}
+
+func mixedWindowPayload(seed uint64) []byte {
+	payload := incompressible(4<<20, seed)
+	manifests := syntheticManifests(200)
+	const segment = 64 << 10
+	for offset := 0; offset < len(payload); offset += 2 * segment {
+		copy(payload[offset:offset+segment], manifests)
+	}
+	return payload
 }
 
 // syntheticManifests returns a payload shaped like flate's real cache values:
@@ -314,4 +409,38 @@ func BenchmarkStore_Get(b *testing.B) {
 			b.Fatal("expected hit")
 		}
 	}
+}
+
+// Each operation is an eight-write batch; keys are reused to bound disk occupancy.
+func BenchmarkStore_PutParallel(b *testing.B) {
+	const callers = 8
+	s := NewStore(b.TempDir(), 1<<30)
+	b.Cleanup(s.sweepBlocking)
+	keys := make([]string, callers)
+	payloads := make([][]byte, callers)
+	var batchBytes int64
+	for i := range callers {
+		keys[i] = fmt.Sprintf("%064x", i)
+		payloads[i] = mixedWindowPayload(uint64(i + 1))
+		batchBytes += int64(len(payloads[i]))
+	}
+	b.SetBytes(batchBytes)
+	b.ReportAllocs()
+	for b.Loop() {
+		start := make(chan struct{})
+		var ready, workers sync.WaitGroup
+		ready.Add(callers)
+		for i := range callers {
+			workers.Go(func() {
+				ready.Done()
+				<-start
+				s.Put(keys[i], payloads[i])
+			})
+		}
+		ready.Wait()
+		close(start)
+		workers.Wait()
+	}
+	b.ReportMetric(callers, "writes/op")
+	s.sweepBlocking()
 }

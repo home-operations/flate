@@ -1,9 +1,10 @@
 package depwait
 
 import (
+	"testing"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"testing"
 )
 
 func BenchmarkClassify_Dependency(b *testing.B) {

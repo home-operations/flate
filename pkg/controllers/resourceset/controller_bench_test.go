@@ -2,12 +2,14 @@ package resourceset
 
 import (
 	"fmt"
+	"testing"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"testing"
 )
 
 func BenchmarkCollectDeps_Scope(b *testing.B) {

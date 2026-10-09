@@ -2,9 +2,10 @@ package manifest
 
 import (
 	"fmt"
-	"github.com/home-operations/flate/internal/assert"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 func TestIsClusterScopedKind_Scope(t *testing.T) {

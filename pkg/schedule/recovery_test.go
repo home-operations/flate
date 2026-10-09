@@ -312,6 +312,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 					active.Add(1)
 					defer active.Add(-1)
 					if nid == producer {
+						defer close(applied)
 						for round, blockers := range blockerRounds {
 							select {
 							case got := <-requested:
@@ -327,7 +328,6 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 									s.cond.Wait()
 								}
 								s.mu.Unlock()
-								close(applied)
 								return OutcomeTerminal, nil
 							}
 							if len(blockers) > 0 {

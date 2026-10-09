@@ -17,16 +17,15 @@ func TestDisablesChartDigestTracking_Values(t *testing.T) {
 	targeted := map[string]any{"patch": gate["patch"], "target": map[string]any{"name": "helm-controller"}}
 	falseGate := map[string]any{"patch": "DisableChartDigestTracking=false"}
 	for _, tc := range []struct {
-		name          string
-		values        map[string]any
-		want          bool
-		accessorError bool
+		name   string
+		values map[string]any
+		want   bool
 	}{
 		{name: "empty"},
 		{name: "unrelated", values: map[string]any{"other": true}},
-		{name: "malformed instance", accessorError: true, values: map[string]any{"instance": []any{}}},
+		{name: "malformed instance", values: map[string]any{"instance": []any{}}},
 		{name: "missing kustomize", values: map[string]any{"instance": map[string]any{}}},
-		{name: "malformed kustomize", accessorError: true, values: map[string]any{"instance": map[string]any{"kustomize": "patches"}}},
+		{name: "malformed kustomize", values: map[string]any{"instance": map[string]any{"kustomize": "patches"}}},
 		{name: "missing patches", values: map[string]any{"instance": map[string]any{"kustomize": map[string]any{}}}},
 		{name: "malformed patches", values: digestTrackingValues("DisableChartDigestTracking=true")},
 		{name: "malformed entries", values: digestTrackingValues([]any{nil, "patch", map[string]any{}, map[string]any{"patch": true}})},
@@ -50,9 +49,7 @@ func TestDisablesChartDigestTracking_Values(t *testing.T) {
 			original := hr.Clone()
 			assert.Equal(t, disablesChartDigestTracking(hr), tc.want)
 			assert.Diff(t, hr, original)
-			if !tc.accessorError {
-				assert.Equal(t, testing.AllocsPerRun(100, func() { disablesChartDigestTracking(hr) }), 0.0)
-			}
+			assert.Equal(t, testing.AllocsPerRun(100, func() { disablesChartDigestTracking(hr) }), 0.0)
 		})
 	}
 	assert.Equal(t, disablesChartDigestTracking(nil), false)

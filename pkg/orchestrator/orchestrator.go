@@ -187,6 +187,8 @@ type Orchestrator struct {
 	hrc    *helmrelease.Controller
 	rsc    *resourcesetctrl.Controller
 	filter *change.Filter
+	// Backing storage keeps the effective option owned without a separate allocation.
+	disableChartDigestTracking bool
 
 	// repoRoot is the resolved .git ancestor of cfg.Path (or
 	// cfg.Path when no .git exists). Populated during Bootstrap from
@@ -373,10 +375,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		return nil, errors.New("orchestrator: path is required")
 	}
 
-	if requested := cfg.HelmOptions.DisableChartDigestTracking; requested != nil {
-		disabled := *requested
-		cfg.HelmOptions.DisableChartDigestTracking = &disabled
-	}
+	disabled := cfg.HelmOptions.DisableChartDigestTracking != nil && *cfg.HelmOptions.DisableChartDigestTracking
 
 	// Arm (or disarm) the process-global SSRF egress guard before any fetcher
 	// transport dials. Inert by default; see Config.RestrictEgress.
@@ -489,16 +488,21 @@ func New(cfg Config) (*Orchestrator, error) {
 		srcCtrl.Fetchers[kind] = source.WithRetry(f, cfg.SourceRetry)
 	}
 	o := &Orchestrator{
-		cfg:            cfg,
-		store:          st,
-		tasks:          ts,
-		src:            srcCtrl,
-		ksc:            kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
-		hrc:            helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
-		rsc:            resourcesetctrl.New(st, ts, cfg.WipeSecrets),
-		rendered:       newRenderedSet(),
-		componentCache: manifest.NewComponentCache(),
-		depGraph:       newDependencyGraph(),
+		cfg:                        cfg,
+		store:                      st,
+		tasks:                      ts,
+		src:                        srcCtrl,
+		ksc:                        kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
+		hrc:                        helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		rsc:                        resourcesetctrl.New(st, ts, cfg.WipeSecrets),
+		rendered:                   newRenderedSet(),
+		componentCache:             manifest.NewComponentCache(),
+		depGraph:                   newDependencyGraph(),
+		disableChartDigestTracking: disabled,
+	}
+	if cfg.HelmOptions.DisableChartDigestTracking != nil {
+		o.cfg.HelmOptions.DisableChartDigestTracking = &o.disableChartDigestTracking
+		o.hrc.Options.DisableChartDigestTracking = &o.disableChartDigestTracking
 	}
 	return o, nil
 }
@@ -585,7 +589,8 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err
 	}
-	o.hrc.Options.DisableChartDigestTracking = &disableChartDigestTracking
+	o.disableChartDigestTracking = disableChartDigestTracking
+	o.hrc.Options.DisableChartDigestTracking = &o.disableChartDigestTracking
 	o.bootstrapped = true
 	return nil
 }

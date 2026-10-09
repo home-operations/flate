@@ -11,6 +11,8 @@ func BenchmarkDisablesChartDigestTracking_Values(b *testing.B) {
 		name string
 		hr   *manifest.HelmRelease
 	}{
+		{name: "no instance", hr: &manifest.HelmRelease{Values: map[string]any{"other": true}}},
+		{name: "no kustomize", hr: &manifest.HelmRelease{Values: map[string]any{"instance": map[string]any{}}}},
 		{name: "malformed instance", hr: &manifest.HelmRelease{Values: map[string]any{"instance": []any{}}}},
 		{name: "malformed kustomize", hr: &manifest.HelmRelease{Values: map[string]any{"instance": map[string]any{"kustomize": "patches"}}}},
 		{name: "empty", hr: &manifest.HelmRelease{}},

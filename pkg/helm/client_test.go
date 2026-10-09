@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
+	"sync"
 	"testing"
 )
 
@@ -66,4 +67,42 @@ func TestLoadChart_ValuesContentWithoutTemplateCache(t *testing.T) {
 		assert.Equal(t, merged["marker"], any([]string{"original", "second"}[i]))
 		previous = loaded.Fingerprint
 	}
+}
+
+func TestLoadChart_SharedChartAcquiresValuesFingerprint(t *testing.T) {
+	st, hr, dir := ociRenderFixture(t)
+	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir})
+	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetSourceResolver(NewStoreSourceResolver(st))
+	withoutFiles := hr.Clone()
+	withoutFiles.ChartValuesFiles = nil
+	loaded, err := cli.LoadChart(t.Context(), withoutFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, loaded.Fingerprint, "")
+	var results [2]ChartLoadResult
+	var failures [2]error
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Go(func() {
+			results[i], failures[i] = cli.LoadChart(t.Context(), hr)
+		})
+	}
+	wg.Wait()
+	for i, result := range results {
+		if failures[i] != nil {
+			t.Fatal(failures[i])
+		}
+		assert.Equal(t, result.Fingerprint, chartFingerprint(result.Chart))
+	}
+	loaded = results[0]
+	merged, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, merged["marker"], any("original"))
 }

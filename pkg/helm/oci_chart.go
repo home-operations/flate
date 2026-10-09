@@ -11,6 +11,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // ociChartVersion matches Flux's source revision semantics, replacing build
@@ -55,18 +56,21 @@ func splitOCIRevision(revision string) (*semver.Version, string, error) {
 	return tagVer, suffix[:12], nil
 }
 
-func ociChartFingerprint(fingerprint, sourceIdentity string, disabled bool) string {
-	h := sha256.New()
-	_, _ = h.Write([]byte(fingerprint))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(sourceIdentity))
-	_, _ = h.Write([]byte{0})
+func ociChartFingerprint(fingerprint string, source *store.SourceArtifact, disabled bool) string {
+	var buf [512]byte
+	data := append(buf[:0], fingerprint...)
+	data = append(data, 0)
+	data = append(data, source.Digest...)
+	data = append(data, 0)
+	data = append(data, source.Revision...)
+	data = append(data, 0)
 	if disabled {
-		_, _ = h.Write([]byte{1})
+		data = append(data, 1)
 	} else {
-		_, _ = h.Write([]byte{0})
+		data = append(data, 0)
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // locateOCIChart resolves a chart whose source is an OCIRepository. The

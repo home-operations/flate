@@ -86,7 +86,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 						if loaded.Fingerprint == "" {
 							t.Fatal("missing chart content fingerprint")
 						}
-						fp := ociChartFingerprint(loaded.Fingerprint, identity.Digest+"\x00"+identity.Revision, disable)
+						fp := ociChartFingerprint(loaded.Fingerprint, &identity, disable)
 						valuesKey := chartValuesCacheKey(fp, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 						merged, ok := cli.chartValuesCache[valuesKey]
 						if !ok {

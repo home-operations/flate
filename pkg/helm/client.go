@@ -319,7 +319,8 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	// same name-version land via writeAtomic at the same path, so the
 	// path is a stable string but the underlying bytes may have
 	// changed; without the stat check we'd serve the stale chart.
-	if ch, fp, ok := c.lookupCachedChart(path); ok {
+	needsFingerprint := c.templateCache != nil || len(hr.ChartValuesFiles) > 0
+	if ch, fp, ok := c.lookupCachedChart(path); ok && (!needsFingerprint || fp != "") {
 		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
@@ -335,11 +336,14 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 
 	// Re-check under the per-path lock — another goroutine may have
 	// populated the cache while we waited.
-	if ch, fp, ok := c.lookupCachedChart(path); ok {
+	ch, fp, cached := c.lookupCachedChart(path)
+	if cached && (!needsFingerprint || fp != "") {
 		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
-	ch, err := loader.Load(path)
+	if !cached {
+		ch, err = loader.Load(path)
+	}
 	if err != nil {
 		// A truncated/corrupt chart tgz left on disk (process killed
 		// mid-download, fs fault, manual delete-then-recreate) would
@@ -353,10 +357,12 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 		}
 		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", path, err)
 	}
-	// Compute the chart fingerprint once per cache-fill so every
-	// subsequent Template call against this path participates in the
-	// template and values caches without re-walking the chart.
-	fingerprint := chartFingerprint(ch)
+	// Fingerprinting is needed only for template or values caching. A shared
+	// chart loaded without either can acquire its fingerprint under this path lock.
+	var fingerprint string
+	if needsFingerprint {
+		fingerprint = chartFingerprint(ch)
+	}
 	if mtime, size, ok := chartCacheFingerprint(path); ok {
 		c.chartMu.Lock()
 		c.chartCache[path] = chartCacheEntry{

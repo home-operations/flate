@@ -51,7 +51,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if !disabled {
 			loaded.Chart.Metadata.Version = version
 		}
-		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art.Digest+"\x00"+art.Revision, disabled)
+		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art, disabled)
 	}
 	caps, err := opts.capabilities()
 	if err != nil {
@@ -247,21 +247,20 @@ func (c *Client) mergeChartValuesFiles(loaded ChartLoadResult, names []string, i
 
 // chartValuesCacheKey separates ordered filenames and the missing-file policy.
 func chartValuesCacheKey(fingerprint string, names []string, ignoreMissing bool) string {
-	// hash.Hash.Write never returns an error per its contract; drain
-	// the (int, error) tuple so gosec G104 stays quiet.
-	h := sha256.New()
-	_, _ = h.Write([]byte(fingerprint))
-	_, _ = h.Write([]byte{0})
+	var buf [512]byte
+	data := append(buf[:0], fingerprint...)
+	data = append(data, 0)
 	for _, n := range names {
-		_, _ = h.Write([]byte(n))
-		_, _ = h.Write([]byte{0})
+		data = append(data, n...)
+		data = append(data, 0)
 	}
 	if ignoreMissing {
-		_, _ = h.Write([]byte{1})
+		data = append(data, 1)
 	} else {
-		_, _ = h.Write([]byte{0})
+		data = append(data, 0)
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // mergeChartValuesFilesUncached merges the named values files (relative

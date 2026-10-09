@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -165,7 +166,7 @@ func materializeLocal(ctx context.Context, repo *git.Repository, cache *source.C
 		return nil, err
 	}
 	revision := local.hash.String()
-	slot, err := cache.Slot(ctx, "local-tree://"+identity, gitCacheKey(local.repository, revision), "")
+	slot, err := cache.Slot(ctx, "local-tree://"+identity, gitCacheKey(local.repository, revision, sourceignore.RulesVersion), "")
 	if err != nil {
 		return nil, err
 	}

@@ -72,6 +72,155 @@ func TestEdgeIdx_AddAndDelete(t *testing.T) {
 	}
 }
 
+func TestScheduler_WakeOrder(t *testing.T) {
+	ordered := []NodeID{
+		{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "a"},
+		{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"},
+		{Kind: manifest.KindHelmRelease, Namespace: "b", Name: "a"},
+		{Kind: manifest.KindKustomization, Namespace: "a", Name: "a"},
+	}
+	for _, path := range []string{"parked", "failed"} {
+		for _, tc := range []struct {
+			name  string
+			order []NodeID
+			want  []NodeID
+		}{
+			{name: "empty"},
+			{name: "singleton", order: ordered[:1], want: ordered[:1]},
+			{name: "multiple sorted", order: ordered, want: ordered},
+			{name: "multiple reversed", order: []NodeID{ordered[3], ordered[2], ordered[1], ordered[0]}, want: ordered},
+			{name: "multiple permuted", order: []NodeID{ordered[2], ordered[0], ordered[3], ordered[1]}, want: ordered},
+		} {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				for range 64 {
+					s := New(task.NewBounded(2), nil)
+					dep, otherDep, prefix := id("dependency"), id("other-dependency"), id("queued")
+					s.runq = []NodeID{prefix}
+					for _, nid := range tc.order {
+						n := &node{id: nid, state: stateParked, blockedOn: []NodeID{dep, otherDep}}
+						idx := s.parkedIdx
+						if path == "failed" {
+							n.state, n.blockedOn, n.failedOn = stateTerminal, nil, []NodeID{dep, otherDep}
+							idx = s.failedIdx
+						}
+						s.nodes[nid] = n
+						idx.add(dep, nid)
+						idx.add(otherDep, nid)
+					}
+					s.mu.Lock()
+					if path == "parked" {
+						s.wakeWaitersLocked(dep)
+					} else {
+						s.recordProgressLocked(dep)
+					}
+					s.mu.Unlock()
+					assert.Diff(t, s.runq, append([]NodeID{prefix}, tc.want...))
+					for _, nid := range tc.order {
+						n := s.nodes[nid]
+						assert.Equal(t, n.state, stateRunnable)
+						assert.Equal(t, len(n.blockedOn), 0)
+						if path == "parked" {
+							assert.Equal(t, n.redispatches, 0)
+						} else {
+							assert.Equal(t, n.redispatches, 1)
+							for _, blocker := range []NodeID{dep, otherDep} {
+								_, retained := s.failedIdx[blocker][nid]
+								assert.Equal(t, retained, true)
+							}
+							s.mu.Lock()
+							n.state = stateRunning
+							s.inFlight++
+							s.mu.Unlock()
+							s.complete(nid, OutcomeTerminal, nil, false)
+						}
+					}
+					assert.Equal(t, len(s.parkedIdx), 0)
+					assert.Equal(t, len(s.failedIdx), 0)
+				}
+			})
+		}
+	}
+}
+
+func TestScheduler_WakeAllocations(t *testing.T) {
+	for _, path := range []string{"parked", "failed"} {
+		for _, count := range []int{0, 1, 4} {
+			t.Run(fmt.Sprintf("%s/waiters=%d", path, count), func(t *testing.T) {
+				s := New(task.NewBounded(2), nil)
+				dep := id("dependency")
+				idx := s.parkedIdx
+				if path == "failed" {
+					idx = s.failedIdx
+				}
+				for i := range count {
+					nid := id(fmt.Sprintf("waiter-%d", i))
+					s.nodes[nid] = &node{id: nid, state: stateRunning}
+					idx.add(dep, nid)
+				}
+				allocs := testing.AllocsPerRun(100, func() {
+					s.mu.Lock()
+					defer s.mu.Unlock()
+					if path == "parked" {
+						s.wakeWaitersLocked(dep)
+					} else {
+						s.recordProgressLocked(dep)
+					}
+				})
+				assert.Equal(t, allocs, float64(0))
+			})
+		}
+	}
+}
+
+func TestScheduler_WakeRunningWaiter(t *testing.T) {
+	for _, path := range []string{"parked", "failed"} {
+		t.Run(path, func(t *testing.T) {
+			s := New(task.NewBounded(2), nil)
+			dep, nid := id("dependency"), id("running")
+			n := &node{id: nid, state: stateRunning}
+			s.nodes[nid], s.inFlight = n, 1
+			idx := s.parkedIdx
+			if path == "failed" {
+				n.failedOn = []NodeID{dep}
+				idx = s.failedIdx
+			} else {
+				n.blockedOn = []NodeID{dep}
+			}
+			idx.add(dep, nid)
+			s.mu.Lock()
+			if path == "parked" {
+				s.wakeWaitersLocked(dep)
+			} else {
+				s.recordProgressLocked(dep)
+			}
+			s.mu.Unlock()
+			assert.Equal(t, n.rerunRequested, true)
+			assert.Equal(t, n.productive, path == "failed")
+			assert.Equal(t, n.state, stateRunning)
+			assert.Equal(t, len(s.runq), 0)
+			_, retained := idx[dep][nid]
+			assert.Equal(t, retained, true)
+		})
+	}
+}
+
+func TestScheduler_FailedWakeStopsAtCap(t *testing.T) {
+	s := New(task.NewBounded(2), nil)
+	dep, first, second := id("dependency"), id("a"), id("b")
+	for _, nid := range []NodeID{second, first} {
+		s.nodes[nid] = &node{id: nid, state: stateTerminal, failedOn: []NodeID{dep}}
+		s.failedIdx.add(dep, nid)
+	}
+	s.nodes[first].redispatches = maxRedispatches
+	s.mu.Lock()
+	s.recordProgressLocked(dep)
+	s.mu.Unlock()
+	assert.Equal(t, strings.Contains(s.err.Error(), first.String()), true)
+	assert.Equal(t, len(s.runq), 0)
+	assert.Equal(t, s.nodes[second].productive, false)
+	assert.Equal(t, len(s.failedIdx[dep]), 2)
+}
+
 func TestScheduler_RunCancellationBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		name           string

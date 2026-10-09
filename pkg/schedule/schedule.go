@@ -166,10 +166,12 @@ type Scheduler struct {
 	tasks *task.Service
 	disp  Dispatcher
 
-	mu        sync.Mutex
-	cond      *sync.Cond
-	nodes     map[NodeID]*node
-	runq      []NodeID
+	mu    sync.Mutex
+	cond  *sync.Cond
+	nodes map[NodeID]*node
+	runq  []NodeID
+	// Wake snapshots are shared only while mu is held.
+	waiters   []NodeID
 	parkedIdx edgeIdx // dep id -> set of nodes parked on it
 	failedIdx edgeIdx // dep id -> terminal dependency failures
 	// One overwriteable witness preserves unknown-ID registration evidence.
@@ -502,10 +504,7 @@ func (s *Scheduler) wakeWaitersLocked(depID NodeID) {
 	if len(set) == 0 {
 		return
 	}
-	waiters := make([]NodeID, 0, len(set))
-	for w := range set {
-		waiters = append(waiters, w)
-	}
+	waiters := s.sortedWaiters(set)
 	for _, w := range waiters {
 		n := s.nodes[w]
 		if n == nil {
@@ -518,6 +517,19 @@ func (s *Scheduler) wakeWaitersLocked(depID NodeID) {
 			n.rerunRequested = true
 		}
 	}
+}
+
+// Caller holds mu; the next wake batch invalidates the snapshot.
+func (s *Scheduler) sortedWaiters(set map[NodeID]struct{}) []NodeID {
+	waiters := slices.Grow(s.waiters[:0], len(set))
+	for waiter := range set {
+		waiters = append(waiters, waiter)
+	}
+	if len(waiters) > 1 {
+		slices.SortFunc(waiters, func(a, b NodeID) int { return a.Compare(b) })
+	}
+	s.waiters = waiters
+	return waiters
 }
 
 // unparkLocked moves a parked node to runnable and removes it from every
@@ -599,11 +611,7 @@ func (s *Scheduler) recordProgressLocked(id NodeID) {
 	if len(set) == 0 {
 		return
 	}
-	waiters := make([]NodeID, 0, len(set))
-	for waiter := range set {
-		waiters = append(waiters, waiter)
-	}
-	slices.SortFunc(waiters, func(a, b NodeID) int { return a.Compare(b) })
+	waiters := s.sortedWaiters(set)
 	for _, waiter := range waiters {
 		n := s.nodes[waiter]
 		switch n.state {

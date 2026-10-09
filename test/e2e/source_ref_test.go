@@ -437,6 +437,90 @@ func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
 	}
 }
 
+func TestE2E_PinnedDiff_RootPin(t *testing.T) {
+	current, repo, older, head := sourceRefFixture(t)
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hash := range []plumbing.Hash{older, head} {
+		if err := wt.Checkout(&gogit.CheckoutOptions{Hash: hash}); err != nil {
+			t.Fatal(err)
+		}
+		testutil.WriteFile(t, current, "flux/entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./
+  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
+`)
+		testutil.WriteFile(t, current, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: cluster, namespace: flux-system}
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+  ref: {tag: v1.0.0}
+  ignore: '/ignored.txt'
+`)
+		testutil.WriteFile(t, current, "kustomization.yaml", "resources: [apps, flux/entry.yaml, flux/repo.yaml]\n")
+		gitCommitAll(t, repo)
+		if hash == older {
+			ref, err := repo.Head()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash())); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	original := copyTree(t, current)
+	transport := installSourceRefTransport(t, repo.Storer)
+	mutateFile(t, filepath.Join(current, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
+	for _, stage := range []string{"dirty-only", "tag-change"} {
+		t.Run(stage, func(t *testing.T) {
+			if stage == "tag-change" {
+				mutateFile(t, filepath.Join(current, "flux/repo.yaml"), "tag: v1.0.0", "tag: v2.0.0")
+			}
+			for _, scope := range []string{"flux", "."} {
+				t.Run(scope, func(t *testing.T) {
+					for _, side := range []struct{ name, current, original, before, after string }{
+						{"forward", current, original, "v1.0.0", "v2.0.0"},
+						{"reverse", original, current, "v2.0.0", "v1.0.0"},
+					} {
+						t.Run(side.name, func(t *testing.T) {
+							args := []string{"diff", "all", "--path", filepath.Join(side.current, scope),
+								"--path-orig", filepath.Join(side.original, scope), "--concurrency", "2", "--cache-dir", t.TempDir()}
+							out, _ := requireCLIOK(t, append(args, "-o", "diff")...)
+							if stage == "dirty-only" {
+								if out != "" {
+									t.Fatalf("dirty content changed the root-pin diff:\n%s", out)
+								}
+							} else {
+								assertSourceValueDiff(t, out, side.before, side.after)
+							}
+							args[0] = "build"
+							out, _ = requireCLIOK(t, args...)
+							if stage == "dirty-only" {
+								if out != "" {
+									t.Fatalf("dirty content selected the pinned root:\n%s", out)
+								}
+							} else if !strings.Contains(out, "value: "+side.after) || strings.Contains(out, "value: dirty") {
+								t.Fatalf("tag change did not select the pinned root:\n%s", out)
+							}
+							if transport.calls.Load() != 0 {
+								t.Fatalf("root pin accessed transport %d times", transport.calls.Load())
+							}
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestE2E_PinnedDiff_SubstituteFromProducer(t *testing.T) {
 	testPinnedProducerDiff(t, false)
 }

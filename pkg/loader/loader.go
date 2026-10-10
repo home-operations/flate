@@ -463,13 +463,9 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomization, kpath string)
 			if !ok {
 				continue
 			}
-			// A genuine bootstrap entry KS always carries a spec.path (and a
-			// sourceRef). A kind: Kustomization with neither is a kustomize
-			// patch fragment — a patch.yaml referenced via `patches:` whose
-			// body happens to use the Flux Kustomization GVK as the patch
-			// target — never a reconcilable Flux Kustomization. Skipping it
-			// is order-independent (it reads only the parsed object), unlike
-			// the dir-coverage guard above.
+			// A Flux-GVK patch fragment with neither spec.path nor sourceRef
+			// must never become a reconcilable Kustomization. A sourceRef alone
+			// is sufficient for a bootstrap entry that renders the source root.
 			if ks.Path == "" && ks.SourceKind == "" && ks.SourceName == "" {
 				continue
 			}
@@ -504,7 +500,7 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 	}
 	dirRel := filepath.ToSlash(rel) + "/"
 	for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		if ks.Path == "" {
+		if ks.Path == "" && ks.SourceName == "" {
 			continue
 		}
 		if strings.HasPrefix(dirRel, NormalizePrefix(ks.Path)) {

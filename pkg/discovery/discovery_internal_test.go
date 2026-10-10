@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -81,6 +82,51 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: other}}
 			}
 			if st.GetObject(repository.Named()) != repository || st.GetArtifact(repository.Named()) != artifact {
 				t.Fatal("committed subtree replaced the resolved source")
+			}
+		})
+	}
+}
+
+func TestCheckFollowErrors_EmptyPathReadsSourceRoot(t *testing.T) {
+	for _, source := range []string{"stub", "missing", "working_tree", "external", "pinned"} {
+		t.Run(source, func(t *testing.T) {
+			for _, path := range []string{"", "./"} {
+				t.Run("path_"+path, func(t *testing.T) {
+					root := t.TempDir()
+					root, err := filepath.EvalSymlinks(root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					st := store.New()
+					repo := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
+					ks := &manifest.Kustomization{
+						Name: "root", Namespace: "flux-system", Path: path,
+						SourceKind: manifest.KindGitRepository, SourceName: repo.Name, SourceNamespace: repo.Namespace,
+					}
+					if source == "stub" {
+						ks.SourceKind, ks.SourceName, ks.SourceNamespace = "", "", ""
+					}
+					st.AddObject(ks)
+					if source != "missing" && source != "stub" {
+						st.AddObject(repo)
+					}
+					switch source {
+					case "working_tree":
+						st.SetArtifact(repo.Named(), &store.SourceArtifact{LocalPath: root})
+					case "pinned":
+						st.SetArtifact(repo.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: t.TempDir()})
+					}
+					want := manifest.ErrInput
+					d := discoverer{cfg: Config{Store: st}, followErrors: map[string]error{root: want}}
+					got := d.checkFollowErrors(root)
+					if source == "external" || source == "pinned" || (source == "stub" && path == "") {
+						if got != nil {
+							t.Fatalf("non-working-tree reader retained root error: %v", got)
+						}
+					} else if !errors.Is(got, want) {
+						t.Fatalf("source-root reader lost held error: %v", got)
+					}
+				})
 			}
 		})
 	}

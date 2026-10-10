@@ -13,6 +13,32 @@ import (
 
 var writeFile = testutil.WriteFile
 
+func TestIndexFluxByPath_EmptyPathRequiresSource(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, source string
+		wantEntries        int
+	}{
+		{name: "stub"},
+		{name: "source_root", source: "flux-system", wantEntries: 1},
+		{name: "explicit_root", path: "./", wantEntries: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New()
+			st.AddObject(&manifest.Kustomization{
+				Name: "root", Namespace: "flux-system", Path: tc.path, SourceName: tc.source,
+				TargetNamespace: "apps",
+			})
+			entries := indexFluxByPath(st, nil, nil, "")
+			if len(entries) != tc.wantEntries {
+				t.Fatalf("namespace entries = %v, want %d entries", entries, tc.wantEntries)
+			}
+			if len(entries) != 0 && entries[0] != (pathEntry{prefix: NormalizePrefix(tc.path), ns: "apps"}) {
+				t.Fatalf("namespace entries = %v, want source-root entry for apps", entries)
+			}
+		})
+	}
+}
+
 func TestApplyNamespaceInheritance_FluxTargetNamespaceWins(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "apps/plex/kustomization.yaml", "namespace: should-be-overridden\n")

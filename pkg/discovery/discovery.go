@@ -369,7 +369,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				continue
 			}
 			ksExpanded[id] = struct{}{}
-			if ks.Path == "" {
+			if ks.Path == "" && ks.SourceName == "" {
 				continue
 			}
 			sourceRoot := repoRoot
@@ -433,7 +433,7 @@ func (d *discoverer) checkFollowErrors(repoRoot string) error {
 	kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
 	for _, dir := range slices.Sorted(maps.Keys(d.followErrors)) {
 		for _, ks := range kustomizations {
-			if ks.Path == "" {
+			if ks.Path == "" && ks.SourceName == "" {
 				continue
 			}
 			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}

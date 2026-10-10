@@ -57,7 +57,7 @@ type KSPathPrefix struct {
 func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedResource]struct{} {
 	out := map[manifest.NamedResource]struct{}{}
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		if ks.Path == "" || ks.SourceName == "" {
+		if ks.SourceName == "" {
 			continue
 		}
 		src := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
@@ -96,7 +96,8 @@ func KSPathPrefixesLocalOnly(s *store.Store, repoRoot string, cache *manifest.Co
 }
 
 // KSPathPrefixesWithCache returns one or more entries per loaded
-// Kustomization with a non-empty spec.path. Each KS contributes:
+// Kustomization with a path or a named source. An empty spec.path claims the
+// named source's root. Each KS contributes:
 //
 //  1. Its spec.path (always).
 //  2. Each spec.components entry (when present, resolved against

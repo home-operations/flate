@@ -57,15 +57,13 @@ func (d diskInput) Stat(name string) (fs.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() && !info.IsDir() {
+	if !archived(info.Mode()) {
 		return nil, notExist("stat", name)
 	}
 	if ig, ok := d.FileSystem.(ignoreFS); ok && ig.hidden(abs, info.IsDir()) {
 		return nil, notExist("stat", name)
 	}
-	if d.info != nil {
-		d.info[name] = info
-	}
+	d.info[name] = info
 	return info, nil
 }
 
@@ -88,7 +86,7 @@ func (d diskInput) ReadDir(name string) ([]fs.DirEntry, error) {
 	ig, ignored := d.FileSystem.(ignoreFS)
 	kept := entries[:0]
 	for _, e := range entries {
-		if !e.Type().IsRegular() && !e.IsDir() {
+		if !archived(e.Type()) {
 			continue
 		}
 		if ignored && ig.hidden(abs+string(filepath.Separator)+e.Name(), e.IsDir()) {
@@ -97,4 +95,8 @@ func (d diskInput) ReadDir(name string) ([]fs.DirEntry, error) {
 		kept = append(kept, e)
 	}
 	return kept, nil
+}
+
+func archived(mode fs.FileMode) bool {
+	return mode.IsRegular() || mode.IsDir()
 }

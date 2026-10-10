@@ -3,12 +3,11 @@ package kustomize
 // readset.go records exactly which on-disk inputs a single RenderFlux build
 // reads, so a later run can validate a cached render by replaying those reads:
 // if every recorded file's content, every listed directory's entries, and every
-// probed path's node kind still match, the inputs
-// are unchanged and the cached output is still valid. The input set is captured
-// from the build's *actual* reads (not guessed from the spec), it is sound
-// across the cases a naive subtree hash misses — `..`-escaping resources,
-// transitive components, and files added to or removed from an auto-scanned
-// directory.
+// probed path's node kind still match, the inputs are unchanged and the cached
+// output is still valid. Because the input set is captured from the build's
+// actual reads (not guessed from the spec), it is sound across the cases a naive
+// subtree hash misses: `..`-escaping resources, transitive components, and files
+// added to or removed from an auto-scanned directory.
 //
 // Only disk-layer reads are recorded. The in-memory overlay holds the generated
 // kustomization.yaml — already captured by the cache key, which hashes the Flux
@@ -19,6 +18,7 @@ package kustomize
 
 import (
 	"cmp"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -50,7 +50,7 @@ func diskKind(exists, isDir bool) nodeKind {
 }
 
 // hashEntries is the order-independent digest of a directory's child names. The
-// record side (recordDir) and the validate side (stillValid) must agree
+// record side (recordDir) and the validate side (stillValidFS) must agree
 // byte-for-byte, so both go through this one definition.
 func hashEntries(entries []string) string {
 	sorted := slices.Clone(entries)
@@ -191,19 +191,11 @@ func (rs *readSet) snapshot() readSetSnapshot {
 	return snap
 }
 
-// diskReader is the read subset of filesys.FileSystem a snapshot replays
-// against to validate a cached render.
-type diskReader interface {
-	ReadFile(path string) ([]byte, error)
-	ReadDir(path string) ([]string, error)
-	Exists(path string) bool
-	IsDir(path string) bool
-}
-
-// stillValid validates recorded content and node kinds against the source view.
-func (snap readSetSnapshot) stillValid(disk diskReader, root string) bool {
+// stillValidFS replays recorded reads against the same filtered source view.
+// Matching every observed input means a hit reproduces the cached output.
+func (snap readSetSnapshot) stillValidFS(lower fs.FS) bool {
 	for _, f := range snap.Files {
-		b, err := disk.ReadFile(filepath.Join(root, filepath.FromSlash(f.Path)))
+		b, err := fs.ReadFile(lower, f.Path)
 		if (err != nil) != (f.Hash == "") {
 			return false // file appeared or vanished since recording
 		}
@@ -212,17 +204,17 @@ func (snap readSetSnapshot) stillValid(disk diskReader, root string) bool {
 		}
 	}
 	for _, d := range snap.Dirs {
-		entries, err := disk.ReadDir(filepath.Join(root, filepath.FromSlash(d.Path)))
+		entries, err := fs.ReadDir(lower, d.Path)
 		if err != nil {
 			return false
 		}
-		if hashEntries(entries) != d.Hash {
+		if hashEntries(entryNames(entries)) != d.Hash {
 			return false // a child was added or removed
 		}
 	}
 	for _, n := range snap.Nodes {
-		abs := filepath.Join(root, filepath.FromSlash(n.Path))
-		if diskKind(disk.Exists(abs), disk.IsDir(abs)) != n.Kind {
+		info, err := fs.Stat(lower, n.Path)
+		if diskKind(err == nil, err == nil && info.IsDir()) != n.Kind {
 			return false // a probed path appeared, vanished, or changed file↔dir
 		}
 	}

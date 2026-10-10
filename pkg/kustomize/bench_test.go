@@ -47,6 +47,44 @@ data:
 	}
 }
 
+// BenchmarkRenderFlux_CacheHit measures read-set replay on a warm disk render cache.
+func BenchmarkRenderFlux_CacheHit(b *testing.B) {
+	src := b.TempDir()
+	resources := make([]string, 0, 20)
+	for i := range 20 {
+		name := fmt.Sprintf("cm-%d", i)
+		resources = append(resources, name+".yaml")
+		testutil.WriteFile(b, src, "app/"+name+".yaml", cmYAML(name))
+	}
+	testutil.WriteFile(b, src, "app/kustomization.yaml", existingKustomization(resources...))
+	cache := NewTreeCache()
+	cache.SetRenderCache(b.TempDir(), 1<<30)
+	req := RenderRequest{
+		Label:   src,
+		SubPath: "app",
+		Spec: map[string]any{
+			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+			"kind":       "Kustomization",
+			"metadata":   map[string]any{"name": "cached", "namespace": "ns"},
+			"spec":       map[string]any{"path": "./app"},
+		},
+	}
+	ctx := b.Context()
+	if _, err := RenderFlux(ctx, cache, req); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		out, err := RenderFlux(ctx, cache, req)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(out) == 0 {
+			b.Fatal("empty render")
+		}
+	}
+}
+
 // BenchmarkRenderFlux_DeepComponentStack measures RenderFlux against a
 // KS whose kustomize tree pulls in 5 nested Components — the real cost
 // pattern when a flux-system overlay stacks multiple shared component

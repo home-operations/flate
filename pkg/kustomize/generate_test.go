@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ func testTreeFS(t *testing.T, root string) filesys.FileSystem {
 	if err != nil {
 		t.Fatalf("secure fs: %v", err)
 	}
-	return newTreeFS(diskInput{FileSystem: disk, root: root}, root, nil)
+	return newTreeFS(diskInput{FileSystem: disk, root: root, info: make(map[string]fs.FileInfo)}, root, nil)
 }
 
 // testIgnoreTreeFS is testTreeFS with the source-controller ignore
@@ -40,7 +41,7 @@ func testIgnoreTreeFS(t *testing.T, root string) filesys.FileSystem {
 	if err != nil {
 		t.Fatalf("matcher: %v", err)
 	}
-	return newTreeFS(diskInput{FileSystem: newIgnoreFS(disk, root, matcher), root: root}, root, nil)
+	return newTreeFS(diskInput{FileSystem: newIgnoreFS(disk, root, matcher), root: root, info: make(map[string]fs.FileInfo)}, root, nil)
 }
 
 // These tests pin flate's in-memory generateManifest to flux's real on-disk

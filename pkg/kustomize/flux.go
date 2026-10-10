@@ -107,15 +107,12 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 			key = manifest.Fingerprint([]string{key, req.Source.Key, "render-fs-v2"})
 		}
 	}
-	// Keep parent components unresolved until the filesystem follows links.
-	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	if rc := cache.render; rc != nil && key != "" {
 		if snap, output, ok := rc.get(key); ok {
 			if disk == nil {
 				return output, nil
 			}
-			input := newTreeFS(lower, root, nil)
-			if input.IsDir(subDir) && snap.stillValid(input, root) {
+			if snap.stillValidFS(lower) {
 				return output, nil
 			}
 		}
@@ -129,6 +126,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 		diskRec = rec
 	}
 	memFS := newTreeFS(lower, root, diskRec)
+	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	canonicalDir, file, err := memFS.CleanedAbs(subDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s: %w", manifest.ErrInput, req.SubPath, err)

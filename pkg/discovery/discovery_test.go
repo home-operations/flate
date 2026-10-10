@@ -5,8 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -86,6 +92,66 @@ spec:
 	bootstrap := manifest.BootstrapSourceID
 	if st.GetObject(bootstrap) == nil {
 		t.Errorf("bootstrap GitRepository not seeded")
+	}
+}
+
+func TestRun_NamespaceIndependentOfDiscoveryDepth(t *testing.T) {
+	t.Parallel()
+	for _, repo := range []struct {
+		name, url, ref string
+	}{
+		{"none", "", ""},
+		{"no_ref", "https://example.invalid/self.git", ""},
+		{"non_matching_ref", "https://example.invalid/x.git", "  ref: {branch: main}\n"},
+	} {
+		t.Run(repo.name, func(t *testing.T) {
+			for _, placement := range []string{"deep", "clusters"} {
+				t.Run(placement, func(t *testing.T) {
+					root := t.TempDir()
+					if _, err := git.PlainInit(root, false); err != nil {
+						t.Fatal(err)
+					}
+					for _, file := range []struct {
+						path, name, namespace, target, extra string
+					}{
+						{"flux/a.yaml", "a", ", namespace: flux-system", "./apps", ""},
+						{"flux/c.yaml", "c", ", namespace: flux-system", "./clusters", ""},
+						{"apps/team/x.yaml", "x", "", "./xout", ""},
+						{"clusters/c2.yaml", "c2", ", namespace: flux-system", "./deep", ""},
+						{placement + "/b.yaml", "b", ", namespace: flux-system", "./apps/team", "  targetNamespace: team\n"},
+					} {
+						testutil.WriteFile(t, root, file.path, fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: %s%s}
+spec:
+  path: %s
+%s  sourceRef: {kind: GitRepository, name: flux-system}
+`, file.name, file.namespace, file.target, file.extra))
+					}
+					if repo.name != "none" {
+						testutil.WriteFile(t, root, "flux/repo.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  url: %s
+%s`, repo.url, repo.ref))
+					}
+					st := store.New()
+					if _, err := discovery.Run(t.Context(), discovery.Config{
+						Path: filepath.Join(root, "flux"), Store: st,
+						SelfURLs: []string{"https://example.invalid/self.git"},
+					}); err != nil {
+						t.Fatal(err)
+					}
+					var ids []string
+					for _, ks := range st.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+						ids = append(ids, ks.Named().NamespacedName())
+					}
+					slices.Sort(ids)
+					assert.Diff(t, ids, []string{"flux-system/a", "flux-system/b", "flux-system/c", "flux-system/c2", "team/x"})
+				})
+			}
+		})
 	}
 }
 
@@ -431,7 +497,7 @@ func TestFindRepoRoot_NoGitFallsBack(t *testing.T) {
 // SSH deploy keys; flate runs offline and can't materialize the
 // key, so the fetch fails on a placeholder credential.
 //
-// The second-pass alias in aliasBootstrapSources detects that
+// The alias in overrideSelfReferentialGitRepositories detects that
 // the URL matches the working tree's .git/config remote and
 // overrides the artifact with a working-tree alias so the
 // dependent KSes proceed against local files rather than the
@@ -440,14 +506,18 @@ func TestRun_AliasesURLMatchedInTreeGitRepository(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// Stand up a minimal .git/config so PlainOpen sees a repo and
-	// readWorkingTreeRemotes returns one remote.
-	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "config"), `[core]
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, dir, ".git/config", `[core]
 	repositoryformatversion = 0
 [remote "origin"]
 	url = git@github.com:Example/home-ops.git
 `)
-	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+	if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))); err != nil {
+		t.Fatal(err)
+	}
 
 	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "flux", "cluster.yaml"), `---
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -475,6 +545,17 @@ spec:
   interval: 1h
 `)
 	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}}); err != nil {
+		t.Fatal(err)
+	}
 
 	st := store.New()
 	if _, err := discovery.Run(context.Background(), discovery.Config{

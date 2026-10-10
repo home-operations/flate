@@ -263,6 +263,100 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 	}
 }
 
+func TestFilter_PinnedOwnershipKeepsProducer(t *testing.T) {
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "producers"}
+	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "producers/child"}
+	consumer := &manifest.Kustomization{
+		Name: "consumer", Namespace: "apps", Path: "consumers",
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
+	}
+	cm := &manifest.ConfigMap{Name: "settings"}
+	files := map[manifest.NamedResource]string{
+		producer.Named(): "flux/producer.yaml",
+		child.Named():    "flux/child.yaml",
+		consumer.Named(): "flux/consumer.yaml",
+		cm.Named():       "producers/cm.yaml",
+	}
+	objs := testutil.MapLister{
+		producer.Named(): producer,
+		child.Named():    child,
+		consumer.Named(): consumer,
+		cm.Named():       cm,
+	}
+	for _, tt := range []struct {
+		name         string
+		changed      string
+		wantProducer bool
+		wantConsumer bool
+		wantChild    bool
+	}{
+		{name: "dirty-path", changed: "producers/cm.yaml"},
+		{name: "dirty-ancestor", changed: "producers/child/dirty.yaml", wantChild: true},
+		{name: "dirty-resources-reference", changed: "shared/cm.yaml"},
+		{name: "consumer-dependency", changed: "flux/consumer.yaml", wantProducer: true, wantConsumer: true},
+		{name: "authored-pin", changed: "flux/producer.yaml", wantProducer: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := NewFilterWithOptions(NewSet([]string{tt.changed}), files, objs, FilterOptions{
+				PinnedKS: map[manifest.NamedResource]struct{}{producer.Named(): {}},
+				FileOwners: func(file string) []manifest.NamedResource {
+					if file == "shared/cm.yaml" {
+						return []manifest.NamedResource{producer.Named()}
+					}
+					return nil
+				},
+			})
+			for _, id := range []manifest.NamedResource{
+				cm.Named(),
+				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},
+			} {
+				if got := f.ProducersFor(id); !slices.Equal(got, []manifest.NamedResource{producer.Named()}) {
+					t.Errorf("ProducersFor(%s) = %v, want [%s]", id, got, producer.Named())
+				}
+			}
+			for _, want := range []struct {
+				id   manifest.NamedResource
+				keep bool
+			}{
+				{producer.Named(), tt.wantProducer},
+				{consumer.Named(), tt.wantConsumer},
+				{child.Named(), tt.wantChild},
+			} {
+				if got := f.ShouldReconcile(want.id); got != want.keep {
+					t.Errorf("ShouldReconcile(%s) = %v, want %v; keep=%v", want.id, got, want.keep, f.KeepNames())
+				}
+			}
+			if tt.wantConsumer {
+				sentinel := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "sentinel"}
+				f.AddEmitted(producer.Named(), refObj(sentinel))
+				if f.ShouldReconcile(sentinel) {
+					t.Fatal("dependency-only pinned producer selected an unrelated child")
+				}
+			}
+		})
+	}
+}
+
+func TestFilter_ArtifactProducerIgnoresCheckoutRootClaim(t *testing.T) {
+	root := &manifest.Kustomization{Name: "root", Namespace: "apps", Path: "./"}
+	pinned := &manifest.Kustomization{Name: "pinned", Namespace: "apps", Path: "producers"}
+	cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	file := "../artifact/producers/cm.yaml"
+	f := NewFilterWithOptions(NewSet([]string{"flux/unrelated.yaml"}), map[manifest.NamedResource]string{cm: file},
+		testutil.MapLister{root.Named(): root, pinned.Named(): pinned}, FilterOptions{
+			RepoRoot: t.TempDir(),
+			FileOwners: func(path string) []manifest.NamedResource {
+				if path == file {
+					return []manifest.NamedResource{pinned.Named()}
+				}
+				return nil
+			},
+		})
+	if got := f.ProducersFor(cm); !slices.Equal(got, []manifest.NamedResource{pinned.Named()}) {
+		t.Fatalf("ProducersFor(%s) = %v, want [%s]", cm, got, pinned.Named())
+	}
+}
+
 // TestFilter_FileOwnerFallbackCatchesResourcesEscape reproduces #833: a
 // Kustomization's resources: entry reaches outside its own claimed
 // spec.path, so resolve() must fall back to the caller-supplied

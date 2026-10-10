@@ -45,6 +45,10 @@ type SourceArtifact struct {
 	Digest    string
 	Size      int64
 	Metadata  map[string]string
+
+	// LocalRoot is the working tree whose repository resolved this artifact.
+	// Its Kustomizations retain ownership there even when LocalPath is cached.
+	LocalRoot string
 }
 
 func (*SourceArtifact) artifact() {}

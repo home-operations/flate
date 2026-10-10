@@ -123,6 +123,11 @@ func memoize(cache map[string][]manifest.NamedResource, file string, compute fun
 // share file's backing array, so no per-probe allocation.
 func (idx ownershipIndex) matchingPrefixes(file string) iter.Seq[[]manifest.NamedResource] {
 	return func(yield func(ids []manifest.NamedResource) bool) {
+		// Committed artifact files outside the checkout are attributed by
+		// fileOwners; a local root claim must never capture them.
+		if file == ".." || strings.HasPrefix(file, "../") {
+			return
+		}
 		prefixed := file + "/"
 		// Candidate prefixes are prefixed[:k] for every k where prefixed[k-1]
 		// is '/', longest first. The full prefixed (k==len, a claim on file's

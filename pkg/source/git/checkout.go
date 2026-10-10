@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -35,14 +36,20 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 	// resolved hash. The bool reports whether rev resolved so callers can
 	// fall through to an alternate lookup when it didn't.
 	tryCheckoutRevision := func(rev plumbing.Revision) (bool, error) {
-		h, err := repo.ResolveRevision(rev)
-		if err != nil {
+		h, err := lookupReference(repo, plumbing.ReferenceName(rev))
+		if errors.Is(err, errRefUnavailable) {
 			return false, nil
 		}
-		return true, checkoutHash(*h)
+		if err != nil {
+			return true, err
+		}
+		return true, checkoutHash(h)
 	}
 	switch {
 	case ref.Commit != "":
+		if !plumbing.IsHash(ref.Commit) {
+			return fmt.Errorf("%w: invalid full commit hash %q", manifest.ErrInput, ref.Commit)
+		}
 		hash := plumbing.NewHash(ref.Commit)
 		if err := validateCommitBranch(repo, hash, ref.Branch); err != nil {
 			return err

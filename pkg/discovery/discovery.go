@@ -5,6 +5,9 @@
 // reconcile phase needs to start firing controllers — repo root,
 // per-object source files, and the parent index.
 //
+// Source aliasing uses file-loaded URL/ref values before rendering and
+// does not follow parent-render transformations.
+//
 // Splitting this out of the orchestrator turns a 750-line god-object
 // into two ~350-line files with one clean interface between them. The
 // load phase is independently testable (no controller wiring or
@@ -20,9 +23,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -100,12 +105,11 @@ type Config struct {
 	// behavior. Path must sit at or under RepoRoot.
 	RepoRoot string
 	// SelfURLs are the remote URL(s) this tree represents. A user-authored
-	// GitRepository whose spec.url matches one of these is the cluster
-	// pulling itself; its artifact is aliased to the local tree
-	// (overrideSelfReferentialGitRepositories) so the offline render
-	// resolves it. Supplied explicitly by SDK consumers rendering
-	// extracted trees (no .git/config to read); empty ⇒ fall back to the
-	// working tree's .git remotes, preserving local behavior.
+	// GitRepository matching one is the cluster pulling itself: no ref or
+	// HEAD uses the working tree, another local ref uses a cached committed
+	// artifact, and unavailable refs or non-HEAD sparse/submodule options
+	// warn and fetch normally. SDK consumers supply these for extracted
+	// trees with no .git/config; empty uses the working tree's git remotes.
 	SelfURLs []string
 	// KRMIgnoreFile, when non-empty, is read in place of <Path>/.krmignore
 	// for the initial scan; spec.path targets followed afterwards keep
@@ -124,6 +128,9 @@ type Config struct {
 	// Bootstrap; pass nil for standalone discovery callers (tests,
 	// embedders) that don't need cross-consumer sharing.
 	ComponentCache *manifest.ComponentCache
+	// SourceCache stores committed local source artifacts. Nil lazily uses
+	// the default cache only when a non-HEAD materialization is required.
+	SourceCache *source.Cache
 }
 
 // Run performs the full discovery phase against cfg and writes results
@@ -163,8 +170,10 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
-	d.aliasBootstrapSources(repoRoot)
 	d.applyNamespaces(repoRoot)
+	if err := d.checkFollowErrors(repoRoot); err != nil {
+		return nil, err
+	}
 	// Resolve bare ${VAR} in Kustomization dependsOn against the
 	// cluster's postBuild substitute values, now that the full KS set is
 	// discovered (so the substitute union is complete and its conflict
@@ -261,10 +270,15 @@ func (d *discoverer) applyNamespaces(repoRoot string) {
 }
 
 type discoverer struct {
-	cfg         Config
-	loader      *loader.Loader
-	sourceFiles map[manifest.NamedResource]string
-	sourceRefs  map[manifest.NamedResource][]manifest.NamedResource
+	cfg             Config
+	loader          *loader.Loader
+	sourceFiles     map[manifest.NamedResource]string
+	sourceRefs      map[manifest.NamedResource][]manifest.NamedResource
+	resolvedSources map[manifest.NamedResource]*manifest.GitRepository
+	followErrors    map[string]error
+	remotes         map[string]struct{}
+	remotesLoaded   bool
+	hasPins         bool
 }
 
 // loadManifests scans cfg.Path, then iteratively follows each loaded
@@ -296,18 +310,16 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		return err
 	}
 	l.IgnoreFile = ""
-	// Apply namespaces once over the initially-scanned set so the
-	// bootstrap-source alias and the first expansion pass see populated
-	// namespaces. The fixed-point loop below intentionally does NOT
-	// re-run applyNamespaces per discovered spec.path — that was an
-	// O(N²) full-store rebuild on every newly-loaded KS. Namespace
-	// inheritance is idempotent and order-independent, so the single
-	// post-loop pass in Run (after the complete KS set is discovered)
-	// stamps every loop-discovered object correctly in one walk.
+	// Pins resolve on final namespace ids. Extra inheritance passes are needed
+	// only when both an authored ref and a self-matching URL make a pin possible;
+	// unpinned followed paths must wait for the complete Kustomization set in Run.
 	d.applyNamespaces(repoRoot)
+	namespaced := total
 
-	// Fixed-point expansion: each pass renders Kustomizations the prior
-	// pass discovered. PreferExisting lets repeated AddObject re-emission
+	// Pins must be resolved before any spec.path is followed so a pinned
+	// Kustomization's subtree comes from its committed artifact, never the
+	// working tree. Sources found through followed paths resolve on the next pass.
+	// PreferExisting lets repeated AddObject re-emission
 	// be a no-op so the loop terminates on convergence (no new objects
 	// added). ResourceSets that emit child Kustomizations referencing new
 	// spec.paths are handled at run time — the RS controller emits the
@@ -315,9 +327,43 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	// discovery no longer pre-expands RSes.
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
+	var aliased []manifest.NamedResource
 	for {
+		if total != namespaced {
+			for id := range d.sourceFiles {
+				if id.Kind != manifest.KindGitRepository {
+					continue
+				}
+				repo, ok := d.cfg.Store.Get[*manifest.GitRepository](id)
+				if ok && repo.Reference != nil && manifest.GitRefString(*repo.Reference) != "" {
+					if _, match := d.selfRemotes(repoRoot)[normalizeGitURL(repo.URL)]; match {
+						d.applyNamespaces(repoRoot)
+						break
+					}
+				}
+			}
+			namespaced = total
+		}
+		overridden, err := d.overrideSelfReferentialGitRepositories(ctx, repoRoot)
+		if err != nil {
+			return err
+		}
+		aliased = append(aliased, overridden...)
+		if d.hasPins {
+			d.discardPinnedWorkingTreeFiles(repoRoot)
+		}
+		kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
+		if d.hasPins {
+			// A source discovered through a followed path can pin an expanded consumer.
+			for _, ks := range kustomizations {
+				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+				if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+					delete(ksExpanded, ks.Named())
+				}
+			}
+		}
 		added := 0
-		for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+		for _, ks := range kustomizations {
 			id := ks.Named()
 			if _, seen := ksExpanded[id]; seen {
 				continue
@@ -326,7 +372,12 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if ks.Path == "" {
 				continue
 			}
-			target := filepath.Join(repoRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
+			sourceRoot := repoRoot
+			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+			if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+				sourceRoot = art.LocalPath
+			}
+			target := filepath.Join(sourceRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
 			// Canonicalize via EvalSymlinks so two spec.paths that
 			// resolve to the same on-disk directory (one direct, one
 			// through a symlink) share a scanned-set key. Without
@@ -340,11 +391,26 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if _, seen := scanned[target]; seen {
 				continue
 			}
-			if !pathUnderRoot(target, repoRoot) {
+			if !pathUnderRoot(target, sourceRoot) {
 				continue
 			}
 			if err := d.loadAt(ctx, target, scanned, &total); err != nil {
-				return err
+				if ks.SourceKind != manifest.KindGitRepository || !errors.Is(err, manifest.ErrInput) {
+					return err
+				}
+				if repo, ok := d.cfg.Store.Get[*manifest.GitRepository](ref); ok {
+					if d.resolvedSources[ref] == repo {
+						return err
+					}
+					if _, local := d.selfRemotes(repoRoot)[normalizeGitURL(repo.URL)]; !local {
+						return err
+					}
+				}
+				// A late source pin replaces this working-tree walk with its committed tree.
+				if d.followErrors == nil {
+					d.followErrors = make(map[string]error)
+				}
+				d.followErrors[target] = err
 			}
 			added++
 		}
@@ -353,8 +419,85 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		}
 	}
 	l.PreferExisting = false
+	aliased = append(d.aliasMissingKustomizationSources(repoRoot), aliased...)
+	warnIfMultipleBootstrapAliases(aliased, repoRoot)
 	slog.Debug("discovery: loaded objects", "count", total, "scan_root", scanRoot, "source_root", repoRoot)
 	return nil
+}
+
+func (d *discoverer) checkFollowErrors(repoRoot string) error {
+	if len(d.followErrors) == 0 {
+		return nil
+	}
+	// Only a surviving working-tree reader with its final source identity keeps a failed walk relevant.
+	kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
+	for _, dir := range slices.Sorted(maps.Keys(d.followErrors)) {
+		for _, ks := range kustomizations {
+			if ks.Path == "" {
+				continue
+			}
+			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+			sourceRoot := repoRoot
+			if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok {
+				if art.LocalRoot == repoRoot {
+					continue
+				}
+				sourceRoot = art.LocalPath
+			} else if d.cfg.Store.GetObject(ref) != nil {
+				// Declared external sources cannot read this tree; missing sources alias it.
+				continue
+			}
+			target := filepath.Join(sourceRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
+			if resolved, err := filepath.EvalSymlinks(target); err == nil {
+				target = resolved
+			}
+			if target == dir {
+				return d.followErrors[dir]
+			}
+		}
+	}
+	return nil
+}
+
+// A broad --path scan can overlap a pinned subtree. Its working-tree objects
+// must be discarded before the committed subtree supplies discovery metadata.
+// Resolved sources must retain their objects and artifacts so a pinned root
+// claim cannot replace its own source with a working-tree alias.
+func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
+	var prefixes []loader.KSPathPrefix
+	pinnedSources := make(map[manifest.NamedResource]struct{})
+	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+		ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+		art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact)
+		if !ok || art.LocalRoot != repoRoot {
+			continue
+		}
+		pinnedSources[ref] = struct{}{}
+		for _, claim := range manifest.BuildKSClaims([]*manifest.Kustomization{ks}, art.LocalPath, d.cfg.ComponentCache) {
+			prefixes = append(prefixes, loader.KSPathPrefix{ID: claim.ID, Prefix: claim.Prefix})
+		}
+	}
+	if len(prefixes) == 0 {
+		return
+	}
+	for id, file := range d.sourceFiles {
+		if _, resolved := d.resolvedSources[id]; resolved {
+			continue
+		}
+		if _, pinned := pinnedSources[id]; pinned {
+			continue
+		}
+		if !pathUnderRoot(filepath.Join(repoRoot, filepath.FromSlash(file)), repoRoot) {
+			continue
+		}
+		if _, owned := loader.LongestParent(prefixes, file, id); !owned {
+			continue
+		}
+		d.cfg.Store.DeleteObject(id)
+		d.loader.Existence.Delete(id)
+		delete(d.sourceFiles, id)
+		delete(d.sourceRefs, id)
+	}
 }
 
 // loadAt scans dir if not already scanned, marks it, and accumulates

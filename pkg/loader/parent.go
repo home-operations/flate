@@ -2,6 +2,7 @@ package loader
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -37,9 +38,9 @@ type KSPathPrefix struct {
 //
 // flate renders the local tree. A KS sourced from the bootstrap/self source (or
 // a bare sourceRef, which anchors on the seeded BootstrapSourceID) renders that
-// local tree, so its spec.path legitimately claims local prefixes. But a KS
-// sourced from an in-tree GitRepository/OCIRepository CR that was NOT aliased to
-// the working tree — a private side-repo synced into the cluster, e.g.
+// local tree, so its spec.path legitimately claims local prefixes. A local pin
+// renders its committed tree while retaining those claims. But a KS sourced
+// from an in-tree GitRepository/OCIRepository CR outside that repository, e.g.
 // `shelly-fleet` (ssh://…/shelly-fleet.git) with `path: ./kubernetes` — renders
 // THAT repo's tree, which flate can't see. Letting such a KS claim local
 // prefixes makes it the false structural parent/producer of everything beneath a
@@ -49,9 +50,10 @@ type KSPathPrefix struct {
 //
 // A source is "local" — excluded from the result — when: the sourceRef is bare
 // (→ BootstrapSourceID), the id IS BootstrapSourceID, the source carries a
-// working-tree artifact (aliased by discovery, LocalPath == repoRoot), or no
+// working-tree artifact (LocalPath == repoRoot), a committed artifact resolved
+// from that working tree's repository (LocalRoot == repoRoot), or no
 // source object exists yet (a missing sourceRef that bootstrap aliasing
-// resolves). Only an in-tree, non-bootstrap, non-aliased source CR is external.
+// resolves). Only an in-tree source CR without working-tree ownership is external.
 func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedResource]struct{} {
 	out := map[manifest.NamedResource]struct{}{}
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
@@ -62,7 +64,8 @@ func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedRes
 		if src == manifest.BootstrapSourceID {
 			continue
 		}
-		if art, ok := s.GetArtifact(src).(*store.SourceArtifact); ok && art.LocalPath == repoRoot {
+		if art, ok := s.GetArtifact(src).(*store.SourceArtifact); ok &&
+			(art.LocalPath == repoRoot || art.LocalRoot != "" && art.LocalRoot == repoRoot) {
 			continue
 		}
 		if s.GetObject(src) == nil {
@@ -128,12 +131,48 @@ func KSPathPrefixesWithCache(s *store.Store, repoRoot string, cache *manifest.Co
 	// reject/clean resolver, longest-first sort) is single-sourced there so
 	// it can't drift from change.buildOwnership. This side keeps only the
 	// KSPathPrefix shape and the LongestParent lookup semantics.
-	claims := manifest.BuildKSClaims(s.ListAs[*manifest.Kustomization](manifest.KindKustomization), repoRoot, cache)
+	kss := s.ListAs[*manifest.Kustomization](manifest.KindKustomization)
+	var pinned []*manifest.Kustomization
+	local := kss[:0]
+	for _, ks := range kss {
+		if localPinnedArtifact(s, ks, repoRoot) != nil {
+			pinned = append(pinned, ks)
+		} else {
+			local = append(local, ks)
+		}
+	}
+	claims := manifest.BuildKSClaims(local, repoRoot, cache)
+	for _, ks := range pinned {
+		art := localPinnedArtifact(s, ks, repoRoot)
+		base, err := filepath.Rel(repoRoot, art.LocalPath)
+		if err != nil {
+			continue
+		}
+		for _, claim := range manifest.BuildKSClaims([]*manifest.Kustomization{ks}, art.LocalPath, cache) {
+			// The checkout claim prevents orphan promotion; the artifact claim
+			// attributes children and generators to their committed-tree parent.
+			claims = append(claims, claim, manifest.KSClaim{
+				ID: claim.ID, Prefix: filepath.ToSlash(filepath.Join(base, claim.Prefix)) + "/",
+			})
+		}
+	}
+	if len(pinned) != 0 {
+		slices.SortStableFunc(claims, func(a, b manifest.KSClaim) int { return len(b.Prefix) - len(a.Prefix) })
+	}
 	out := make([]KSPathPrefix, len(claims))
 	for i, c := range claims {
 		out[i] = KSPathPrefix{ID: c.ID, Prefix: c.Prefix}
 	}
 	return out
+}
+
+func localPinnedArtifact(s *store.Store, ks *manifest.Kustomization, repoRoot string) *store.SourceArtifact {
+	ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+	art, ok := s.GetArtifact(ref).(*store.SourceArtifact)
+	if ok && art.LocalRoot != "" && art.LocalRoot == repoRoot {
+		return art
+	}
+	return nil
 }
 
 // LongestParent returns the deepest KS whose spec.path covers file

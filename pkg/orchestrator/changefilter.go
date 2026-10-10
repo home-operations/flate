@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // buildChangeFilter computes the file-level change set (if changed-only
@@ -31,7 +32,30 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	// index — same exclusion the loader applies to the parent index via
 	// KSPathPrefixesLocalOnly (a `path: ./` on an OCI-sourced KS would
 	// otherwise own the repo root and cascade into every resolve).
-	f := change.NewFilterWithCache(changes, o.sourceFiles, repoRoot, o.store, o.componentCache, o.sourceRefs, loader.ExternalSourcedKSIDs(o.store, repoRoot), o.selfProduce.OwnersOfFile)
+	excluded := loader.ExternalSourcedKSIDs(o.store, repoRoot)
+	var pinned map[manifest.NamedResource]struct{}
+	for id, refs := range o.sourceRefs {
+		if id.Kind != manifest.KindKustomization {
+			continue
+		}
+		for _, ref := range refs {
+			if art, ok := o.store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+				if pinned == nil {
+					pinned = make(map[manifest.NamedResource]struct{})
+				}
+				pinned[id] = struct{}{}
+				break
+			}
+		}
+	}
+	f := change.NewFilterWithOptions(changes, o.sourceFiles, o.store, change.FilterOptions{
+		RepoRoot:       repoRoot,
+		ComponentCache: o.componentCache,
+		ConsumerRefs:   o.sourceRefs,
+		ExternalKS:     excluded,
+		FileOwners:     o.selfProduce.OwnersOfFile,
+		PinnedKS:       pinned,
+	})
 	// Wire OnAdd so a runtime keep-set extension (KS controller's
 	// emitRenderedChildren → keepEmitted) refires any source whose
 	// listener already short-circuited via PreGate before the

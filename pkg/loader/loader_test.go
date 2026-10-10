@@ -14,6 +14,33 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+func TestFinalizeGenerators_ExcludesWorkingTreeUnderPinnedClaim(t *testing.T) {
+	root, artifactDir := t.TempDir(), t.TempDir()
+	s := store.New()
+	sourceID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+	s.AddObject(&manifest.Kustomization{
+		Name: "pinned", Namespace: "flux-system", TargetNamespace: "apps", Path: "./apps",
+		SourceKind: sourceID.Kind, SourceName: sourceID.Name, SourceNamespace: sourceID.Namespace,
+	})
+	s.SetArtifact(sourceID, &store.SourceArtifact{LocalRoot: root, LocalPath: artifactDir})
+	l := New(s)
+	l.SourceRoot = root
+	l.SourceFiles = make(map[manifest.NamedResource]string)
+	l.generators = []generatorRecord{
+		{file: filepath.Join(root, "apps/kustomization.yaml"), isConfigMap: true, name: "dirty", literals: []string{"value=dirty"}},
+		{file: filepath.Join(artifactDir, "apps/kustomization.yaml"), isConfigMap: true, name: "pinned", literals: []string{"value=pinned"}},
+	}
+	l.FinalizeGenerators(root)
+	objects := s.ListAs[*manifest.ConfigMap](manifest.KindConfigMap)
+	if len(objects) != 1 || objects[0].Name != "pinned" || objects[0].Namespace != "apps" || objects[0].Data["value"] != "pinned" {
+		t.Fatalf("expected only the artifact generator: %+v", objects)
+	}
+	want, err := filepath.Rel(root, filepath.Join(artifactDir, "apps/kustomization.yaml"))
+	if got := l.SourceFiles[objects[0].Named()]; err != nil || got != filepath.ToSlash(want) {
+		t.Fatalf("artifact generator source = %q, want %q: %v", got, want, err)
+	}
+}
+
 // TestLoader_DiscoveryOnlyBootstrapScanSkipsCoveredDir pins the coverage guard
 // on the bootstrap-sibling scan: a Flux Kustomization authored as a sibling of
 // a kustomization.yaml but excluded from its `resources:` is a bootstrap entry

@@ -301,7 +301,6 @@ kind: GitRepository
 metadata: {name: cluster, namespace: flux-system}
 spec:
   url: ssh://git@github.com/example/cluster.git
-  ref: {branch: main}
   secretRef: {name: deploy-key}
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1

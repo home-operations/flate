@@ -58,6 +58,22 @@ func TestTree_FSContract(t *testing.T) {
 	must(t, fstest.TestFS(build(t, tree.NewBuilder(nil))))
 }
 
+func TestTree_PlainPathsDoNotAllocateMetadata(t *testing.T) {
+	b := tree.NewBuilder(nil)
+	must(t, b.AddFile("dir/real.yaml", []byte("x"), 0o644))
+	must(t, b.AddSymlink("alias", "dir/real.yaml"))
+	tr := build(t, b)
+	for name, run := range map[string]func(){
+		"stat-file":  func() { _, _ = tr.Stat("dir/real.yaml") },
+		"stat-dir":   func() { _, _ = tr.Stat("dir") },
+		"stat-root":  func() { _, _ = tr.Stat(".") },
+		"lstat-link": func() { _, _ = tr.Lstat("alias") },
+		"readlink":   func() { _, _ = tr.ReadLink("alias") },
+	} {
+		t.Run(name, func(t *testing.T) { assert.Equal(t, testing.AllocsPerRun(100, run), 0.0) })
+	}
+}
+
 func TestTree_OpenIndependentHandles(t *testing.T) {
 	tr := fixture(t)
 	a, err := tr.Open("alias")

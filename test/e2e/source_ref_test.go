@@ -20,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
@@ -441,6 +442,59 @@ spec:
 			}
 		})
 	}
+}
+
+func TestE2E_SourceRef_HeldErrorIgnoresEmptyPath(t *testing.T) {
+	root := t.TempDir()
+	repo := gitInit(t, root)
+	if _, err := repo.CreateRemote(&config.RemoteConfig{
+		Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeKS := func(file, name, path, sourceName string) {
+		t.Helper()
+		pathField := ""
+		if path != "" {
+			pathField = "  path: " + path + "\n"
+		}
+		testutil.WriteFile(t, root, "flux/"+file, `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: `+name+`, namespace: flux-system}
+spec:
+  interval: 10m
+`+pathField+`  sourceRef: {kind: GitRepository, name: `+sourceName+`, namespace: flux-system}
+`)
+	}
+	writeKS("a-x.yaml", "a-x", "./", "pinned")
+	writeKS("b-z.yaml", "b-z", "", "flux-system")
+	writeKS("z-sources.yaml", "z-sources", "./sources", "flux-system")
+	testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
+	testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: pinned, namespace: flux-system}
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+  ref: {tag: v1.0.0}
+`)
+	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
+	gitCommitAll(t, repo)
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+		t.Fatal(err)
+	}
+	mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
+	gitCommitAll(t, repo)
+	testutil.WriteFile(t, root, "apps/cm.yaml", "metadata: {name: broken\n")
+	_, err = discovery.Run(t.Context(), discovery.Config{
+		Path: filepath.Join(root, "flux"), Store: store.New(),
+		SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
+	})
+	assert.Equal[error](t, err, nil)
 }
 
 func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {

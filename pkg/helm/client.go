@@ -357,9 +357,6 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 		}
 		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", path, err)
 	}
-	if !cached {
-		trimChart(ch)
-	}
 	// Fingerprinting is needed only for template or values caching. A shared
 	// chart loaded without either can acquire its fingerprint under this path lock.
 	var fingerprint string

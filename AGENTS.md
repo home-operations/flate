@@ -26,7 +26,7 @@ point of the project: changed-only renders, a bounded parallel DAG, aggressive d
 and `slog.SetDefault`. Everything else is `pkg/`. Dependencies flow one way:
 `manifest` <- `store` <- {`loader`, `values`, `depwait`, `change`, `source`} <- {`kustomize`,
 `helm`, `discovery`} <- `controllers/base` <- `controllers/*` <- `orchestrator` <- `internal/cli`.
-Leaf packages stay leaf: `manifest`, `task`, `schedule` (store and controllers only behind its
+Leaf packages stay leaf: `tree` (stdlib only), `manifest`, `task`, `schedule` (store and controllers only behind its
 `Dispatcher` seam), `source/{atomic,cacheroot,safepath,sourceignore,ssrfguard}`,
 `internal/assert`. Never add an upward import.
 

@@ -221,3 +221,130 @@ func TestOverlay_ConcurrentBuilders(t *testing.T) {
 		})
 	}
 }
+
+func TestOverlay_RemoveAllIsExact(t *testing.T) {
+	for _, overlay := range []bool{false, true} {
+		name := map[bool]string{false: "source", true: "overlay"}[overlay]
+		t.Run(name, func(t *testing.T) {
+			var b *tree.Builder
+			if overlay {
+				b = tree.NewBuilder(fixture(t))
+			} else {
+				b = tree.NewBuilder(nil)
+				must(t, b.AddDir("empty", 0o750))
+			}
+			must(t, b.AddFile("dir/a", []byte("a"), 0o600))
+			must(t, b.AddFile("dir2/b", []byte("b"), 0o600))
+			must(t, b.AddFile("dir.yaml", []byte("y"), 0o600))
+			must(t, b.RemoveAll("dir"))
+			for p, want := range map[string]string{"dir2/b": "b", "dir.yaml": "y"} {
+				data, err := b.ReadFile(p)
+				must(t, err)
+				assert.Equal(t, string(data), want)
+			}
+			_, err := b.Stat("dir/a")
+			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+			must(t, b.RemoveAll("empty"))
+			if overlay {
+				must(t, b.RemoveAll("alias"))
+			}
+			entries, err := b.ReadDir(".")
+			must(t, err)
+			for _, e := range entries {
+				assert.Equal(t, e.Name() != "dir" && e.Name() != "empty", true)
+			}
+			var visited []string
+			must(t, b.WalkRaw(".", func(p string, _ fs.DirEntry, err error) error {
+				visited = append(visited, p)
+				return err
+			}))
+			for _, p := range visited {
+				assert.Equal(t, p != "dir" && p != "empty", true)
+			}
+			must(t, fstest.TestFS(build(t, b), "dir2/b", "dir.yaml"))
+		})
+	}
+}
+
+func TestOverlay_RemoveAllRootKeepsRoot(t *testing.T) {
+	for _, overlay := range []bool{false, true} {
+		name := map[bool]string{false: "source", true: "overlay"}[overlay]
+		t.Run(name, func(t *testing.T) {
+			var b *tree.Builder
+			if overlay {
+				b = tree.NewBuilder(fixture(t))
+			} else {
+				b = tree.NewBuilder(nil)
+			}
+			must(t, b.AddFile("upper/file", []byte("u"), 0o600))
+			must(t, b.AddDir("d", 0o700))
+			must(t, b.RemoveAll("."))
+			info, err := b.Stat(".")
+			must(t, err)
+			assert.Equal(t, info.IsDir(), true)
+			entries, err := b.ReadDir(".")
+			must(t, err)
+			assert.Equal(t, len(entries), 0)
+			for _, p := range []string{"upper/file", "upper", "d"} {
+				_, err := b.Stat(p)
+				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+			}
+			must(t, fstest.TestFS(build(t, b)))
+		})
+	}
+}
+
+func TestBuilder_RejectsMalformedKinds(t *testing.T) {
+	b := tree.NewBuilder(nil)
+	for name, err := range map[string]error{
+		"file-dir-bit":       b.AddFile("f", nil, fs.ModeDir|0o755),
+		"file-symlink-bit":   b.AddFile("f", nil, fs.ModeSymlink|0o777),
+		"dir-symlink-bit":    b.AddDir("d", fs.ModeSymlink|0o755),
+		"dir-file-bit":       b.AddDir("d", fs.ModeDevice|0o755),
+		"symlink-root":       b.AddSymlink(".", "x"),
+		"symlink-nul":        b.AddSymlink("l", "a\x00b"),
+		"symlink-empty-name": b.AddSymlink("", "x"),
+	} {
+		t.Run(name, func(t *testing.T) { assert.Equal(t, errors.Is(err, fs.ErrInvalid), true) })
+	}
+	_, err := b.Stat("f")
+	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+}
+
+func TestBuilder_Metadata(t *testing.T) {
+	b := tree.NewBuilder(nil)
+	must(t, b.AddDir("empty", 0o750))
+	must(t, b.AddFile("implicit/file", []byte("x"), 0o600))
+	must(t, b.AddFile("later/file", []byte("x"), 0o600))
+	must(t, b.AddDir("later", 0o700))
+	must(t, b.AddSymlink("link", "implicit/file"))
+	lower := build(t, b)
+	check := func(t *testing.T, tr *tree.Tree) {
+		t.Helper()
+		for p, want := range map[string]fs.FileMode{
+			"empty": fs.ModeDir | 0o750, "implicit": fs.ModeDir | 0o755, "later": fs.ModeDir | 0o700,
+		} {
+			info, err := tr.Stat(p)
+			must(t, err)
+			assert.Equal(t, info.Mode(), want)
+		}
+		info, err := tr.Lstat("link")
+		must(t, err)
+		assert.Equal(t, info.Mode(), fs.ModeSymlink|0o777)
+		assert.Equal(t, info.Size(), int64(len("implicit/file")))
+	}
+	check(t, lower)
+	o := tree.NewBuilder(lower)
+	must(t, o.AddDir("empty", 0o700))
+	must(t, o.AddDir("implicit", 0o710))
+	over := build(t, o)
+	info, err := over.Stat("empty")
+	must(t, err)
+	assert.Equal(t, info.Mode(), fs.ModeDir|0o700)
+	info, err = over.Stat("implicit")
+	must(t, err)
+	assert.Equal(t, info.Mode(), fs.ModeDir|0o710)
+	_, err = over.Stat("implicit/file")
+	must(t, err)
+	check(t, lower)
+}

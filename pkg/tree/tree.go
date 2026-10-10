@@ -150,12 +150,17 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 }
 
 func (t *view) readNode(op, name string, follow bool) (*node, error) {
-	if !fs.ValidPath(name) || strings.ContainsRune(name, 0) {
+	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: op, Path: name, Err: fs.ErrInvalid}
 	}
-	_, n, err := t.resolve(name, follow)
+	p, n, err := t.resolve(name, follow)
 	if err != nil {
 		return nil, &fs.PathError{Op: op, Path: name, Err: err}
+	}
+	if p != name {
+		info := *n
+		info.name = path.Base(name)
+		n = &info
 	}
 	return n, nil
 }

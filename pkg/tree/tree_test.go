@@ -363,3 +363,141 @@ func TestTree_ReturnedSlicesAreCallerOwned(t *testing.T) {
 		})
 	}
 }
+
+func TestTree_ResolveRejectsAbsoluteEmptyAndNUL(t *testing.T) {
+	tr := fixture(t)
+	for name, want := range map[string]error{
+		"/dir": tree.ErrEscape, "/": tree.ErrEscape, "": fs.ErrInvalid, "dir/\x00": fs.ErrInvalid,
+	} {
+		t.Run(fmt.Sprintf("%q", name), func(t *testing.T) {
+			_, err := tr.Resolve(name)
+			assert.Equal(t, errors.Is(err, want), true)
+		})
+	}
+}
+
+func TestTree_SymlinkToParent(t *testing.T) {
+	b := tree.NewBuilder(nil)
+	must(t, b.AddFile("file", []byte("root"), 0o600))
+	must(t, b.AddFile("d/sub/leaf", []byte("leaf"), 0o600))
+	must(t, b.AddSymlink("d/up", ".."))
+	must(t, b.AddSymlink("d/sub/up2", "../.."))
+	must(t, b.AddSymlink("d/self", "sub/.."))
+	tr := build(t, b)
+	for link, want := range map[string]string{"d/up": ".", "d/sub/up2": ".", "d/self": "d"} {
+		p, err := tr.Resolve(link)
+		must(t, err)
+		assert.Equal(t, p, want)
+		info, err := tr.Stat(link)
+		must(t, err)
+		assert.Equal(t, info.IsDir(), true)
+		want, err := tr.Stat(want)
+		must(t, err)
+		entries, err := tr.ReadDir(link)
+		must(t, err)
+		wantEntries, err := tr.ReadDir(p)
+		must(t, err)
+		assert.Equal(t, len(entries), len(wantEntries))
+		assert.Equal(t, info.Mode(), want.Mode())
+	}
+	data, err := tr.ReadFile("d/up/file")
+	must(t, err)
+	assert.Equal(t, string(data), "root")
+}
+
+func TestTree_WalkRawMatchesWalkDirSkips(t *testing.T) {
+	ref := fstest.MapFS{
+		"a/f1": &fstest.MapFile{Data: []byte("1")}, "a/f2": &fstest.MapFile{Data: []byte("2")},
+		"a/f3": &fstest.MapFile{Data: []byte("3")}, "b/g1": &fstest.MapFile{Data: []byte("4")},
+		"b/g2": &fstest.MapFile{Data: []byte("5")}, "c": &fstest.MapFile{Data: []byte("6")},
+	}
+	b := tree.NewBuilder(nil)
+	for name, f := range ref {
+		must(t, b.AddFile(name, f.Data, 0o644))
+	}
+	tr := build(t, b)
+	stop := errors.New("stop")
+	for name, trigger := range map[string]struct {
+		at  string
+		ret error
+	}{
+		"skipdir-on-file": {at: "a/f1", ret: fs.SkipDir},
+		"skipdir-on-dir":  {at: "b", ret: fs.SkipDir},
+		"skipall-on-file": {at: "a/f2", ret: fs.SkipAll},
+		"skipall-on-dir":  {at: "b", ret: fs.SkipAll},
+		"error":           {at: "b/g1", ret: stop},
+	} {
+		t.Run(name, func(t *testing.T) {
+			walk := func(w func(fs.WalkDirFunc) error) ([]string, error) {
+				var visited []string
+				err := w(func(p string, _ fs.DirEntry, err error) error {
+					visited = append(visited, p)
+					if p == trigger.at {
+						return trigger.ret
+					}
+					return err
+				})
+				return visited, err
+			}
+			want, wantErr := walk(func(fn fs.WalkDirFunc) error { return fs.WalkDir(ref, ".", fn) })
+			got, gotErr := walk(func(fn fs.WalkDirFunc) error { return tr.WalkRaw(".", fn) })
+			assert.Diff(t, got, want)
+			assert.Equal(t, gotErr, wantErr)
+		})
+	}
+}
+
+func TestTree_StatNamesFollowedLinks(t *testing.T) {
+	b := tree.NewBuilder(nil)
+	must(t, b.AddFile("dir/real.yaml", []byte("x"), 0o644))
+	links := map[string]string{
+		"alias": "dir/real.yaml", "dalias": "dir", "dir/nested-alias": "real.yaml", "root-link": ".",
+	}
+	ref := fstest.MapFS{
+		".":             &fstest.MapFile{Mode: fs.ModeDir | 0o755},
+		"dir":           &fstest.MapFile{Mode: fs.ModeDir | 0o755},
+		"dir/real.yaml": &fstest.MapFile{Data: []byte("x"), Mode: 0o644},
+	}
+	for name, target := range links {
+		must(t, b.AddSymlink(name, target))
+		ref[name] = &fstest.MapFile{Data: []byte(target), Mode: fs.ModeSymlink | 0o777}
+	}
+	tr := build(t, b)
+	for name := range links {
+		t.Run(name, func(t *testing.T) {
+			want, err := fs.Stat(ref, name)
+			must(t, err)
+			assert.Equal(t, want.Name(), path.Base(name))
+			info, err := fs.Stat(tr, name)
+			must(t, err)
+			assert.Equal(t, info.Name(), want.Name())
+			assert.Equal(t, info.Mode(), want.Mode())
+			assert.Equal(t, info.Size(), want.Size())
+			f, err := tr.Open(name)
+			must(t, err)
+			defer f.Close()
+			info, err = f.Stat()
+			must(t, err)
+			assert.Equal(t, info.Name(), want.Name())
+			assert.Equal(t, info.Mode(), want.Mode())
+			var root string
+			must(t, fs.WalkDir(tr, name, func(p string, d fs.DirEntry, err error) error {
+				if p == name && err == nil {
+					root = d.Name()
+					entryInfo, err := d.Info()
+					must(t, err)
+					assert.Equal(t, entryInfo.Name(), want.Name())
+				}
+				return err
+			}))
+			assert.Equal(t, root, want.Name())
+		})
+	}
+	for _, name := range []string{".", "dir", "dir/real.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			info, err := tr.Stat(name)
+			must(t, err)
+			assert.Equal(t, info.Name(), path.Base(name))
+		})
+	}
+}

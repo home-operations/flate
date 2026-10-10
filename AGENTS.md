@@ -17,8 +17,10 @@ point of the project: changed-only renders, a bounded parallel DAG, aggressive d
 - Never touch secrets or gitignored files. Verify library APIs against the module cache or
   pkg.go.dev, not memory.
 - Solve the stated problem with the smallest diff: no speculative abstractions, no interface
-  or options struct with one caller, no new flags, no new dependencies, no drive-by refactors.
-  Remove what your change orphans; leave pre-existing dead code and mention it.
+  or options struct with one caller, no new flags, no new dependencies. No drive-by refactors
+  of unrelated code. Remove what your change orphans; clean up touched code in the same files
+  and nearby functions within the same concern: simplify it, delete dead code, fix stale comments.
+  Leave other pre-existing dead code and mention it.
 
 ## Layout
 
@@ -91,6 +93,10 @@ Leaf packages stay leaf: `tree` (stdlib only), `manifest`, `task`, `schedule` (s
   constraints and rationale (MUST, never, invariant), not narration, and never reference past
   behavior or the current change.
 - `CGO_ENABLED=0`; no cgo, ever.
+- Write elegant code: names that state intent, small functions with one job and straight-line
+  flow, types that make wrong states unrepresentable, no wrappers, single-use helpers or
+  pass-through types, one obvious way consistent with the surrounding code. Working but
+  convoluted, repetitive or clever code is a review finding.
 
 ## Tests
 

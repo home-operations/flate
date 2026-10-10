@@ -142,6 +142,8 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.recorded, Name: "target"}
 			if tc.raw {
 				idx.Index.Records[id] = manifest.DiscoveryRecord{Path: "target.yaml"}
+			} else {
+				idx.Index.Records[id] = manifest.DiscoveryRecord{File: "target.yaml"}
 			}
 			e := &orchestratorExistence{store: idx.Store, index: idx.Index}
 			id.Namespace = tc.requested

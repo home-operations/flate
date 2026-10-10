@@ -2,7 +2,7 @@
 // for the dag scheduler: Classify decides, WITHOUT blocking, whether
 // each dep is Ready, terminally Failed, or still blocked (parkable).
 // The shared readiness predicates (readyNow, depExists, the ReadyExpr
-// evaluator, Existence-index promotion) live here so the gate semantics
+// evaluator, discovery-record promotion) live here so the gate semantics
 // are single-sourced.
 package depwait
 
@@ -31,8 +31,8 @@ type Waiter struct {
 	AllowMissingCRDs bool
 
 	// Existence, when non-nil, lets Classify lazy-promote a missing dep
-	// from the loader's file-existence index before deciding it is
-	// absent. The orchestrator wires this against the ExistenceIndex;
+	// from the loader's discovery records before deciding it is
+	// absent. The orchestrator wires this against the discovery index;
 	// tests supply stubs. When nil, an absent dep is simply absent.
 	//
 	// See ExistenceLookup for the decision matrix.
@@ -45,16 +45,16 @@ type Waiter struct {
 // controller Options pipe instead of two parallel closures.
 //
 // The orchestrator's implementation reads from the loader's
-// ExistenceIndex — file-indexed objects (CMs/Secrets/HRs the
+// discovery index — file-indexed objects (CMs/Secrets/HRs the
 // DiscoveryOnly loader kept out of the Store) get lazy-promoted
 // the moment a depwait edge needs them, while render-only ids
 // (no file record) stay absent until a parent render's
 // emitRenderedChildren chain produces them.
 type ExistenceLookup interface {
-	// IsFileIndexed reports whether id has a file-existence record.
+	// IsFileIndexed reports whether id has a raw-file discovery record.
 	IsFileIndexed(id manifest.NamedResource) bool
 	// Promote attempts to materialize id into the Store from the
-	// file-existence index. Returns true when promotion succeeded
+	// discovery index. Returns true when promotion succeeded
 	// and id is now reachable via store.GetObject.
 	Promote(id manifest.NamedResource) bool
 }

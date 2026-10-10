@@ -117,12 +117,12 @@ data:
 	}
 }
 
-// TestExistenceIndex_PromoteUnknownIDReturnsFalse covers the path
+// TestPromote_UnknownIDReturnsFalse covers the path
 // where depwait's missing-dep fallback asks for a CM that never
 // reached file-load: existence index has no entry, so Promote bails
 // out cleanly and the depwait surfaces "dependency not found" as
 // intended.
-func TestExistenceIndex_PromoteUnknownIDReturnsFalse(t *testing.T) {
+func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 	idx := loaderFixture(store.New(), nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
 	if got := Promote(idx.Store, id, idx.Index.Records[id].Path, PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
@@ -130,13 +130,13 @@ func TestExistenceIndex_PromoteUnknownIDReturnsFalse(t *testing.T) {
 	}
 }
 
-// TestExistenceIndex_PromoteFileRemovedBetweenRecordAndPromote
+// TestPromote_FileRemovedBetweenRecordAndPromote
 // exercises the race where the indexed file was deleted (or
 // permission-stripped) between the file walk and the lazy lookup.
 // Promote should fail gracefully (return false), not panic, so the
 // depwait surfaces "dependency not found" instead of crashing the
 // orchestrator.
-func TestExistenceIndex_PromoteFileRemovedBetweenRecordAndPromote(t *testing.T) {
+func TestPromote_FileRemovedBetweenRecordAndPromote(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "cm.yaml", `
 apiVersion: v1
@@ -166,12 +166,12 @@ data:
 	}
 }
 
-// TestExistenceIndex_PromoteMultiDocLoadsSiblings pins the
+// TestPromote_MultiDocLoadsSiblings pins the
 // "whole-file parse" contract documented on Promote: a YAML file
 // packing CM + Secret + HR together promotes ALL three when ANY one
 // is requested. This is what allows depwait to avoid re-opening the
 // same file once per dep in the common multi-doc fixture pattern.
-func TestExistenceIndex_PromoteMultiDocLoadsSiblings(t *testing.T) {
+func TestPromote_MultiDocLoadsSiblings(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "bundle.yaml", `
 apiVersion: v1
@@ -210,7 +210,7 @@ data:
 	}
 }
 
-func TestExistenceIndex_PromoteAdmissionAndPreferExisting(t *testing.T) {
+func TestPromote_AdmissionAndPreferExisting(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		secret   bool

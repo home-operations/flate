@@ -57,14 +57,14 @@ func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
 	}
 }
 
-// TestKSPathPrefixesLocalOnly_DropsExternalSourced pins issue #752
+// TestClaims_DropsExternalSourced pins issue #752
 // (lunevans/talos-cluster): a Kustomization sourced from a genuine external repo
 // (an in-tree GitRepository with no working-tree artifact) must not claim
 // local-tree path prefixes, even with a wide spec.path like ./kubernetes —
 // otherwise it becomes the false structural parent of the whole cluster and its
 // skip cascades. A bootstrap-sourced KS and an aliased (working-tree) source
 // keep their claims.
-func TestKSPathPrefixesLocalOnly_DropsExternalSourced(t *testing.T) {
+func TestClaims_DropsExternalSourced(t *testing.T) {
 	repoRoot := "/repo" // no on-disk component reads will resolve; that's fine
 	s := store.New()
 
@@ -112,7 +112,7 @@ func TestKSPathPrefixesLocalOnly_DropsExternalSourced(t *testing.T) {
 	}
 }
 
-func TestExternalSourcedKSIDs_LocalRoot(t *testing.T) {
+func TestSourceView_LocalRoot(t *testing.T) {
 	for _, tc := range []struct {
 		name, repoRoot, localRoot string
 		external                  bool
@@ -323,12 +323,12 @@ func TestBuildParentIndex_NoSourceFileSkipped(t *testing.T) {
 	}
 }
 
-// TestKSPathPrefixes_SortsLongestFirst pins the contract documented
-// on KSPathPrefixesWithCache: prefixes come back sorted by length descending
+// TestClaims_SortsLongestFirst pins the contract documented
+// on Claims: prefixes come back sorted by length descending
 // so the first HasPrefix match on a given file is the deepest
 // (most-specific) structural parent. Both BuildParentIndex and the
 // orchestrator's detectOrphans rely on this for correctness.
-func TestKSPathPrefixes_SortsLongestFirst(t *testing.T) {
+func TestClaims_SortsLongestFirst(t *testing.T) {
 	s := store.New()
 	root := &manifest.Kustomization{
 		Name: "root", Namespace: "flux-system",
@@ -356,7 +356,7 @@ func TestKSPathPrefixes_SortsLongestFirst(t *testing.T) {
 	}
 }
 
-func TestKSPathPrefixes_EmptyPathClaimsRoot(t *testing.T) {
+func TestClaims_EmptyPathClaimsRoot(t *testing.T) {
 	s := store.New()
 	with := &manifest.Kustomization{
 		Name: "with", Namespace: "flux-system",
@@ -378,7 +378,7 @@ func TestKSPathPrefixes_EmptyPathClaimsRoot(t *testing.T) {
 	}
 }
 
-func TestKSPathPrefixesLocalOnly_EmptyExternalPath(t *testing.T) {
+func TestClaims_EmptyExternalPath(t *testing.T) {
 	s := store.New()
 	repo := &manifest.GitRepository{Name: "external", Namespace: "flux-system"}
 	external := &manifest.Kustomization{
@@ -395,28 +395,28 @@ func TestKSPathPrefixesLocalOnly_EmptyExternalPath(t *testing.T) {
 	}
 }
 
-// TestLongestParent_SkipsSelf locks the self-exclusion contract:
+// TestStrictParent_SkipsSelf locks the self-exclusion contract:
 // a KS sitting on its own spec.path (rare but possible — a KS whose
 // definition file lives at the same prefix it renders) must not be
 // returned as its own parent.
-func TestLongestParent_SkipsSelf(t *testing.T) {
+func TestStrictParent_SkipsSelf(t *testing.T) {
 	prefixes := []manifest.KSClaim{
 		{ID: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "self"}, Prefix: "apps/team-a/"},
 	}
 	self := prefixes[0].ID
 	if _, ok := manifest.StrictParent(prefixes, "apps/team-a/ks.yaml", self, nil); ok {
-		t.Errorf("LongestParent must skip self matches")
+		t.Errorf("StrictParent must skip self matches")
 	}
 }
 
-// TestKSPathPrefixes_IncludesSpecComponents pins the components fold:
+// TestClaims_IncludesSpecComponents pins the components fold:
 // a KS that lists a relative spec.components path should claim that
 // component subtree in the prefix set, so a child file living under
 // the component dir attributes back to the parent. Without this,
 // discovery's parent index treats the child as orphan and the
 // change-mode index's already-correct attribution diverges — exactly
 // the false-positive the audit's 9.1 finding called out.
-func TestKSPathPrefixes_IncludesSpecComponents(t *testing.T) {
+func TestClaims_IncludesSpecComponents(t *testing.T) {
 	s := store.New()
 	parent := &manifest.Kustomization{
 		Name: "parent", Namespace: "flux-system",
@@ -447,23 +447,23 @@ func TestKSPathPrefixes_IncludesSpecComponents(t *testing.T) {
 		t.Errorf("expected prefix for resolved spec.components entry; got %+v", prefixes)
 	}
 
-	// Integration: LongestParent over a file under the component dir
+	// Integration: StrictParent over a file under the component dir
 	// must attribute to the parent KS.
 	got, ok := manifest.StrictParent(prefixes, "apps/shared/observability/karma.yaml", manifest.NamedResource{}, nil)
 	if !ok {
-		t.Fatalf("LongestParent missed component-dir child — components fold regression")
+		t.Fatalf("StrictParent missed component-dir child — components fold regression")
 	}
 	if got.Name != "parent" {
-		t.Errorf("LongestParent = %q, want 'parent' (component-dir child should attribute to its containing KS)", got.Name)
+		t.Errorf("StrictParent = %q, want 'parent' (component-dir child should attribute to its containing KS)", got.Name)
 	}
 }
 
-// TestLongestParent_DeepestMatchWins exercises the typical case:
+// TestStrictParent_DeepestMatchWins exercises the typical case:
 // a file under apps/team-a/web/ should attribute to the deepest
 // covering KS, not the shallower one — which is what
-// KSPathPrefixesWithCache's descending-length sort enables. Pins the
+// the descending-length sort in Claims enables. Pins the
 // integration of the two helpers.
-func TestLongestParent_DeepestMatchWins(t *testing.T) {
+func TestStrictParent_DeepestMatchWins(t *testing.T) {
 	s := store.New()
 	root := &manifest.Kustomization{
 		Name: "root", Namespace: "flux-system",
@@ -485,12 +485,12 @@ func TestLongestParent_DeepestMatchWins(t *testing.T) {
 	}
 }
 
-// TestLongestParent_AbsoluteSpecPath is the #920 regression: a Kustomization
+// TestStrictParent_AbsoluteSpecPath is the #920 regression: a Kustomization
 // whose spec.path carries a leading slash (accepted by Flux, which resolves it
 // against the artifact root) must still be found as the parent of the files
 // under that directory. Before the fix its claim prefix kept the slash, so no
 // repo-relative source file ever matched and every child was orphaned.
-func TestLongestParent_AbsoluteSpecPath(t *testing.T) {
+func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
 	s := store.New()
 	ks := &manifest.Kustomization{
 		Name: "flux-instance", Namespace: "flux-system",

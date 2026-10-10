@@ -264,6 +264,34 @@ func TestApplyNamespaceInheritanceWithRefs_ResolvesOmittedChartRefNamespace(t *t
 	if got := sourceRefs[grafana][0].Namespace; got != "flux-system" {
 		t.Errorf("explicit chartRef namespace = %q, want flux-system (must be untouched)", got)
 	}
+
+	ks := &manifest.Kustomization{
+		Name: "workload",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "repo",
+		},
+		SourceKind: manifest.KindGitRepository,
+		SourceName: "repo",
+	}
+	s.AddObject(ks)
+	raw := ks.Named()
+	l := loaderFixture(s, map[manifest.NamedResource]string{raw: "apps/plex/ks.yaml"})
+	l.Index.Records[raw] = manifest.DiscoveryRecord{
+		File: "apps/plex/ks.yaml",
+		Refs: []manifest.NamedResource{{Kind: manifest.KindGitRepository, Name: "repo"}},
+	}
+	l.applyNamespaceInheritance(root)
+
+	inherited := raw
+	inherited.Namespace = "media"
+	record, ok := l.Index.Records[inherited]
+	want := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "media", Name: "repo"}
+	if !ok || len(record.Refs) != 1 || record.Refs[0] != want {
+		t.Fatalf("inherited consumer refs = %v, present = %t, want [%s]", record.Refs, ok, want)
+	}
+	if _, ok := l.Index.Records[raw]; ok {
+		t.Fatal("raw consumer record must be absent after namespace inheritance")
+	}
 }
 
 func TestApplyNamespaceInheritance_FluxOperatorAndHelmChartSource(t *testing.T) {

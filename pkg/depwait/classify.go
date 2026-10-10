@@ -53,7 +53,7 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, level manifest.DrainLevel)
 		}
 	}
 
-	// 3. Absent: try a lazy promote from the file-existence index (the bjw-s
+	// 3. Absent: try a lazy promote from the discovery index (the bjw-s
 	//    same-path substituteFrom-CM pattern), else block — or fail
 	//    "dependency not found" once draining, since an absent dep with no
 	//    in-flight producer can never appear.

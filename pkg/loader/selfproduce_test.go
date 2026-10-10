@@ -14,7 +14,7 @@ func cmID(ns string) manifest.NamedResource {
 	return manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ns, Name: "cluster-settings"}
 }
 
-func TestBuildSelfProduceIndex_EmptyPathRequiresSource(t *testing.T) {
+func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, source string
 		produces           bool
@@ -55,7 +55,7 @@ func TestBuildSelfProduceIndex_EmptyPathRequiresSource(t *testing.T) {
 // EACH group's resolved namespace — back to the root KS whose own render
 // emits it, resolving the bare-dir → subdir-base → component → namespace
 // chain that no path-prefix index can see.
-func TestBuildSelfProduceIndex_BareDirComponentNamespace(t *testing.T) {
+func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\ncomponents:\n  - ../../components/substitutions\n")
@@ -94,7 +94,7 @@ func TestBuildSelfProduceIndex_BareDirComponentNamespace(t *testing.T) {
 // dependency edge survives and a real failure stays loud. Here the root KS's
 // spec.path holds only its own kustomization with no component, so it produces
 // nothing.
-func TestBuildSelfProduceIndex_NonProducerNotAttributed(t *testing.T) {
+func TestFinalizeIndex_NonProducerNotAttributed(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources: []\n")
@@ -115,7 +115,7 @@ func TestBuildSelfProduceIndex_NonProducerNotAttributed(t *testing.T) {
 
 // Nil index is safe — collectDeps falls back to always-add (the pre-index
 // behavior) when no repoRoot produced an index.
-func TestSelfProduceIndex_NilSafe(t *testing.T) {
+func TestDiscoveryIndex_NilSafe(t *testing.T) {
 	var idx *manifest.DiscoveryIndex
 	if got := declarationOwnersForTest(idx, manifest.NamedResource{}); got != nil {
 		t.Errorf("nil index OwnersOfProducer = %v, want nil", got)
@@ -131,12 +131,12 @@ func TestSelfProduceIndex_NilSafe(t *testing.T) {
 	}
 }
 
-// TestBuildSelfProduceIndex_OwnersOfFileResourcesEscape reproduces #833: an
+// TestFinalizeIndex_OwnersOfFileResourcesEscape reproduces #833: an
 // overlay's kustomization.yaml pulls a resource in from outside its own
 // spec.path via a `resources:` entry. OwnersOfFile must attribute every
 // file the walk reads — both kustomization.yamls and the leaf resource —
 // back to the owning top-level Kustomization.
-func TestBuildSelfProduceIndex_OwnersOfFileResourcesEscape(t *testing.T) {
+func TestFinalizeIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
@@ -162,12 +162,12 @@ func TestBuildSelfProduceIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 	}
 }
 
-// TestBuildSelfProduceIndex_OwnersOfFileDirectFileEscape: an overlay lists an
+// TestFinalizeIndex_OwnersOfFileDirectFileEscape: an overlay lists an
 // existing resource file directly, by a path escaping its own directory. Even
 // though the escape-rejecting policy keeps it from being opened, it must still
 // be attributed to the owning KS — the direct-file twin of the dir escape in
 // #833. Otherwise changed-only mode omits the KS when that file is the only edit.
-func TestBuildSelfProduceIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
+func TestFinalizeIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres/cluster.yaml\n")
@@ -185,12 +185,12 @@ func TestBuildSelfProduceIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
 	}
 }
 
-// TestBuildSelfProduceIndex_OwnersOfFileDanglingResource: a resources: entry
+// TestFinalizeIndex_OwnersOfFileDanglingResource: a resources: entry
 // whose file is missing from this tree (deleted, entry left behind) must
 // still be attributed to the Kustomization that references it. Otherwise
 // changed-only mode finds no owner for the deleted path and silently skips
 // the broken reference instead of rendering it and failing loud.
-func TestBuildSelfProduceIndex_OwnersOfFileDanglingResource(t *testing.T) {
+func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
@@ -208,12 +208,12 @@ func TestBuildSelfProduceIndex_OwnersOfFileDanglingResource(t *testing.T) {
 	}
 }
 
-// TestBuildSelfProduceIndex_OwnersOfFileDanglingDirectory: the directory
+// TestFinalizeIndex_OwnersOfFileDanglingDirectory: the directory
 // form of the dangling case. A resources: entry pointing at a directory
 // that no longer exists records only the directory path, but change
 // detection reports the deleted files individually — OwnersOfFile must
 // resolve them through the recorded parent directory.
-func TestBuildSelfProduceIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
+func TestFinalizeIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
@@ -251,7 +251,7 @@ func TestBuildSelfProduceIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
 // one parent's render subtree (apps/base/app-a/ks.yaml pulled in via
 // apps/test/app-a -> ../../base/app-a, applied by cluster-apps) — the #777 gate
 // signal. A base shared by two distinct parents is ambiguous and omitted.
-func TestBuildSelfProduceIndex_EmissionParentByFile(t *testing.T) {
+func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 	dir := t.TempDir()
 
 	// app-a: pulled by exactly one parent (cluster-apps). ${VAR} path so the
@@ -300,7 +300,7 @@ func secretID(ns, name string) manifest.NamedResource {
 // ExternalSecret / SealedSecret under a KS spec.path is recorded as
 // target-Secret → producer, with the SAME effective-namespace resolution the
 // ConfigMap path uses — an enclosing `namespace:` wins over the file's own.
-func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
+func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./es.yaml\n  - ./sealed.yaml\n  - ./explicit.yaml\n  - ./obc.yaml\n")
@@ -353,7 +353,7 @@ func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
 // directives), so a prefixed target is recorded — and would be looked up —
 // under the un-prefixed name. Producer-inference then misses the real
 // (prefixed) Secret and the consumer falls back to fail-loud / the flag.
-func TestBuildSelfProduceIndex_NamePrefixNotFollowed(t *testing.T) {
+func TestFinalizeIndex_NamePrefixNotFollowed(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nnamePrefix: prod-\nresources:\n  - ./es.yaml\n")
@@ -386,7 +386,7 @@ func TestBuildSelfProduceIndex_NamePrefixNotFollowed(t *testing.T) {
 // but whose values are not. The scan never clobbers a real Secret already
 // occupying the target id; a dataFrom-only producer declares nothing, so none is
 // synthesized and it stays genuinely unreadable.
-func TestBuildSelfProduceIndex_SynthesizesPlaceholderSecret(t *testing.T) {
+func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./declared.yaml\n  - ./datafrom.yaml\n  - ./preexisting.yaml\n")
@@ -433,7 +433,7 @@ func TestBuildSelfProduceIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 // cluster-secrets-in-a-substitutions-component self-produce pattern) resolves it
 // at Prepare instead of seeing it absent and flagging it unreadable. A cleartext
 // Secret carries no placeholders and is left alone.
-func TestBuildSelfProduceIndex_MaterializesSopsSecret(t *testing.T) {
+func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./secret.sops.yaml\n  - ./plain.yaml\n")
@@ -467,7 +467,7 @@ func TestBuildSelfProduceIndex_MaterializesSopsSecret(t *testing.T) {
 // The placeholder Secret is a wipe-mode stand-in (a stand-in for a value flate
 // can't read), so --no-wipe-secrets suppresses synthesis entirely — the secret
 // is left genuinely absent, exactly as it was before this feature.
-func TestBuildSelfProduceIndex_NoSynthesisWithoutWipe(t *testing.T) {
+func TestFinalizeIndex_NoSynthesisWithoutWipe(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./es.yaml\n")
@@ -487,7 +487,7 @@ func TestBuildSelfProduceIndex_NoSynthesisWithoutWipe(t *testing.T) {
 	}
 }
 
-func TestBuildSelfProduceIndex_ProducerOwners(t *testing.T) {
+func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 	for _, namespace := range []string{"", "authored"} {
 		t.Run("namespace_"+namespace, func(t *testing.T) {
 			root := t.TempDir()
@@ -528,7 +528,7 @@ func TestBuildSelfProduceIndex_ProducerOwners(t *testing.T) {
 	}
 }
 
-func TestBuildSelfProduceIndex_ProducerOwnersMultipleTargets(t *testing.T) {
+func TestFinalizeIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 	for _, namespace := range []string{"", "apps"} {
 		t.Run("namespace_"+namespace, func(t *testing.T) {
 			root := t.TempDir()

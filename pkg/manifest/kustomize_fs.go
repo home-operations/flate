@@ -75,7 +75,7 @@ func StrictParent(claims []KSClaim, file string, self NamedResource, selfPrefixe
 // NormalizeClaimBase turns a Kustomization spec.path into a clean,
 // slash-separated, repo-relative base with no trailing slash. ToSlash is
 // applied so Windows-style spec.path values (rare, but unconstrained by the
-// Flux CRD) normalize to the same shape as SourceFiles keys. A leading slash
+// Flux CRD) normalize to the same shape as discovery file coordinates. A leading slash
 // is dropped: kustomize-controller resolves spec.path with SecureJoin, which
 // treats an absolute path as relative to the artifact root, so
 // `/kubernetes/apps` claims the same files as `./kubernetes/apps`.

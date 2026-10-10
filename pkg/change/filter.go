@@ -66,8 +66,7 @@ type Filter struct {
 
 type nameKey struct{ kind, name string }
 
-// keyOf is the (Kind, Name) namespace-agnostic key for id, used by the
-// empty-namespace fallback indexes (keepByName, producersByName).
+// keyOf is the namespace-agnostic key for the keepByName fallback index.
 func keyOf(id manifest.NamedResource) nameKey {
 	return nameKey{id.Kind, id.Name}
 }
@@ -508,9 +507,9 @@ func (f *Filter) resolve() {
 			// case (a KS that produces its own substituteFrom CM —
 			// bjw-s self-substitute pattern). See #418.
 			//
-			// Read producersByID/producersByName directly via the
-			// unlocked producersFor: resolve() runs pre-publication
-			// (f.keep / f.primary not yet set), so the public
+			// Read discovery data owners via the unlocked producersFor:
+			// resolve() runs pre-publication (f.keep / f.primary not yet set),
+			// so the public
 			// ProducersFor's RLock contract is not established here.
 			for _, producer := range f.producersFor(d) {
 				if producer == queue[head] {

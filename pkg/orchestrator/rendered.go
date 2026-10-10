@@ -9,7 +9,7 @@ import (
 // renderedSet tracks IDs emitted by a parent Kustomization's render
 // output AND records which parent emitted each one. The parent
 // linkage is the foundation for render-driven discovery — consumers
-// that today rely on `sourceFiles[id]` for file-loaded resources
+// that query discovery file records for file-loaded resources
 // (parent index, change filter, orphan detection, RS extension
 // attribution) can query ParentOf for resources that arrive via a
 // KS render instead.
@@ -40,7 +40,7 @@ func newRenderedSet() *renderedSet {
 // edges are dropped (a KS whose spec.path covers its own definition
 // file — the Zariel/home-ops cluster KS pattern — emits itself during
 // render; the file-loaded path-prefix index already excludes self in
-// loader.LongestParent), first-write-wins on duplicates. No-op for an
+// manifest.StrictParent), first-write-wins on duplicates. No-op for an
 // empty children slice.
 func (r *renderedSet) MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
 	if len(children) == 0 {

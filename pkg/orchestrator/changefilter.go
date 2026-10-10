@@ -11,7 +11,7 @@ import (
 
 // buildChangeFilter computes the file-level change set (if changed-only
 // mode is requested) and constructs the immutable change.Filter from
-// (changes, sourceFiles, repoRoot, store), then wires it onto every
+// (changes, discovery index, store), then wires it onto every
 // controller. When changed-only mode is off the filter remains nil and
 // controllers reconcile everything.
 func (o *Orchestrator) buildChangeFilter(repoRoot string) error {

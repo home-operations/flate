@@ -384,7 +384,7 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomizationDocument, kpath
 	// sibling KS left out of them is a disabled app, not a bootstrap entry.
 	// Surfacing it here is a false positive. Skip the scan when dir is already
 	// claimed by another loaded KS's spec.path — the same coverage predicate
-	// promoteOrphans applies via LongestParent.
+	// promoteOrphans applies via manifest.StrictParent.
 	if w.loader.dirCoveredByOtherKS(dir) {
 		return 0
 	}

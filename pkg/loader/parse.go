@@ -38,7 +38,7 @@ func parseFile(path string, opts manifest.ParseDocOptions) ([]manifest.BaseManif
 // Per-doc parse errors carry path in their log fields; file-level errors (open,
 // decode) surface to the caller with the path baked into the wrap.
 func decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(manifest.BaseManifest)) error {
-	f, err := os.Open(path) //nolint:gosec // path came from a tree-walk under the scan root or the ExistenceIndex
+	f, err := os.Open(path) //nolint:gosec // path came from a tree-walk under the scan root or a raw-file discovery record
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}

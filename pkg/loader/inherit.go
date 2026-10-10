@@ -166,8 +166,8 @@ func (l *Loader) indexFluxByPath(kust []pathEntry, repoRoot string) []pathEntry 
 
 // indexKustomizeNamespaces reads every ancestor kustomization.yaml of
 // each source file and returns one pathEntry per `namespace:`
-// directive. Slash-normalized dir keys match the sourceFiles
-// coordinate; repoRoot anchors the on-disk reads.
+// directive. Slash-normalized dir keys match discovery file
+// coordinates; repoRoot anchors the on-disk reads.
 func (l *Loader) indexKustomizeNamespaces(repoRoot string) []pathEntry {
 	dirs := map[string]struct{}{}
 	for _, record := range l.Index.Files() {

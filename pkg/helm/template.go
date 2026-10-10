@@ -159,15 +159,11 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	// chart resolution) but fails in cluster, or vice versa.
 	inst.Devel = true
 	inst.IncludeCRDs = !opts.SkipCRDs
-	// HR-scoped policy wins: spec.install.crds / spec.upgrade.crds set
-	// to "Skip" suppresses CRDs even when the CLI requests them.
-	// "Create" / "CreateReplace" force them on. An empty policy lets
-	// the CLI flag decide.
-	switch hr.CRDsPolicy {
-	case "Skip":
+	// The CLI skip flag suppresses CRDs regardless of HR policy.
+	// spec.install.crds / spec.upgrade.crds set to "Skip" also suppresses
+	// CRDs when the CLI requests them.
+	if hr.CRDsPolicy == "Skip" {
 		inst.IncludeCRDs = false
-	case "Create", "CreateReplace":
-		inst.IncludeCRDs = true
 	}
 	// HR-scoped install/upgrade.disableHooks OR'd with the CLI flag,
 	// mirroring helm-controller. Either side forces hooks off — and

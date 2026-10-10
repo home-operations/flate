@@ -499,12 +499,14 @@ spec:
 
 func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {
 	for _, tt := range []struct {
-		name, namespace, wantNamespace string
-		pinned                         bool
+		name, namespace, wantNamespace        string
+		pinned, external, namespaceFreeSource bool
 	}{
 		{name: "explicit_source_namespace", namespace: ", namespace: flux-system", wantNamespace: "flux-system"},
 		{name: "implicit_source_namespace", wantNamespace: "shifted"},
 		{name: "pinned_inherited_namespace", wantNamespace: "shifted", pinned: true},
+		{name: "external_source_in_other_inherited_namespace", wantNamespace: "shifted", external: true, namespaceFreeSource: true},
+		{name: "pinned_namespace_free_source", wantNamespace: "shifted", pinned: true, namespaceFreeSource: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -539,13 +541,20 @@ spec:
   sourceRef: {kind: GitRepository, name: unknown`+tt.namespace+`}
 `)
 			testutil.WriteFile(t, root, "stage/kustomization.yaml", "resources: [sources.yaml]\n")
+			sourceTargetNamespace := ""
+			if tt.namespaceFreeSource {
+				sourceTargetNamespace = "  targetNamespace: beta\n"
+				if tt.pinned {
+					sourceTargetNamespace = "  targetNamespace: shifted\n"
+				}
+			}
 			testutil.WriteFile(t, root, "stage/sources.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: z-sources, namespace: flux-system}
 spec:
   interval: 10m
   path: ./sources
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`+sourceTargetNamespace+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [claim.yaml, repo.yaml]\n")
 			testutil.WriteFile(t, root, "sources/claim.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -557,18 +566,23 @@ spec:
   targetNamespace: shifted
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
-			sourceName, sourceNamespace := "pulse", "flux-system"
-			if tt.pinned {
-				sourceName, sourceNamespace = "unknown", "shifted"
+			sourceName, sourceMetadataNamespace := "pulse", ", namespace: flux-system"
+			if tt.pinned || tt.external {
+				sourceName, sourceMetadataNamespace = "unknown", ", namespace: shifted"
+			}
+			if tt.namespaceFreeSource {
+				sourceMetadataNamespace = ""
+			}
+			url, ref := "git://fixture.invalid/cluster", "  ref: {branch: master}\n"
+			if tt.external {
+				url, ref = "git://fixture.invalid/external", ""
 			}
 			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
-metadata: {name: `+sourceName+`, namespace: `+sourceNamespace+`}
+metadata: {name: `+sourceName+sourceMetadataNamespace+`}
 spec:
   interval: 10m
-  url: git://fixture.invalid/cluster
-  ref: {branch: master}
-`)
+  url: `+url+"\n"+ref)
 			testutil.WriteFile(t, root, "ok/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "ok/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ok, namespace: apps}\n")
 			testutil.WriteFile(t, root, "held/kustomization.yaml", "resources: [broken.yaml]\n")
@@ -582,7 +596,9 @@ spec:
 				testutil.WriteFile(t, root, "extra.txt", "second commit\n")
 				gitCommitAll(t, repo)
 			}
-			mutateFile(t, filepath.Join(root, "sources/repo.yaml"), "{branch: master}", "{commit: "+head.Hash().String()+"}")
+			if !tt.external {
+				mutateFile(t, filepath.Join(root, "sources/repo.yaml"), "{branch: master}", "{commit: "+head.Hash().String()+"}")
+			}
 			testutil.WriteFile(t, root, "held/broken.yaml", "metadata: {name: held\n")
 			_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "held"))
 			if !errors.Is(heldError, manifest.ErrInput) {

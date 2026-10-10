@@ -26,7 +26,7 @@ func testIgnoreFS(t *testing.T, root string) ignoreFS {
 	if err != nil {
 		t.Fatalf("matcher: %v", err)
 	}
-	disk := testOverlayFS(t, root).(*treeFS).lower.(diskInput).FileSystem
+	disk := testTreeFS(t, root).(*treeFS).lower.(diskInput).FileSystem
 	return newIgnoreFS(disk, root, matcher).(ignoreFS)
 }
 

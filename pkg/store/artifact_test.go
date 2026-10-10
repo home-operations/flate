@@ -29,3 +29,18 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 		t.Fatalf("changed Key did not fire: %d", events)
 	}
 }
+
+func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
+	s := New()
+	id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
+	events := 0
+	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
+	s.SetArtifact(id, &SourceArtifact{LocalPath: "label", Key: "pin", FS: &hookFS{}})
+	s.SetArtifact(id, &SourceArtifact{LocalPath: "label", Key: "pin"})
+	if got := s.GetArtifact(id).(*SourceArtifact); got.FS != nil {
+		t.Fatal("republish without a payload kept the previous payload")
+	}
+	if events != 2 {
+		t.Fatalf("dropped payload did not fire the artifact event: %d", events)
+	}
+}

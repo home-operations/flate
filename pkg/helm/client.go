@@ -274,7 +274,7 @@ func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtif
 	return r.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
-// LocateChart returns the chart path referenced by hr.
+// LocateChart returns a filesystem path to the chart referenced by hr.
 // The caller is responsible for cleanup (chart paths inside the cache
 // are reused across calls; paths inside the tmp dir are not).
 func (c *Client) LocateChart(hr *manifest.HelmRelease) (string, error) {
@@ -310,10 +310,7 @@ func (c *Client) LocateChart(hr *manifest.HelmRelease) (string, error) {
 // tarballs, a ref-keyed slot for OCI) and is stable across reconciles; the
 // per-path (mtime,size) re-check below guards a mutable OCI re-push.
 func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (ChartLoadResult, error) {
-	if hr == nil {
-		return ChartLoadResult{}, fmt.Errorf("%w: nil HelmRelease", manifest.ErrInput)
-	}
-	chartPath, err := c.LocateChart(hr)
+	path, err := c.LocateChart(hr)
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
@@ -323,15 +320,15 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	// path is a stable string but the underlying bytes may have
 	// changed; without the stat check we'd serve the stale chart.
 	needsFingerprint := c.templateCache != nil || len(hr.ChartValuesFiles) > 0
-	if ch, fp, ok := c.lookupCachedChart(chartPath); ok && (!needsFingerprint || fp != "") {
-		return ChartLoadResult{Path: chartPath, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
+	if ch, fp, ok := c.lookupCachedChart(path); ok && (!needsFingerprint || fp != "") {
+		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
 	// Coalesce parallel first-loads of the same chart so N concurrent
 	// reconciles of the same base chart (bjw-s app-template referenced
 	// by 30+ HRs, podinfo across multiple test envs) issue exactly one
 	// loader.Load instead of N. Distinct paths still parse in parallel.
-	release, err := c.chartLoadLocks.Acquire(ctx, chartPath)
+	release, err := c.chartLoadLocks.Acquire(ctx, path)
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
@@ -339,13 +336,13 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 
 	// Re-check under the per-path lock — another goroutine may have
 	// populated the cache while we waited.
-	ch, fp, cached := c.lookupCachedChart(chartPath)
+	ch, fp, cached := c.lookupCachedChart(path)
 	if cached && (!needsFingerprint || fp != "") {
-		return ChartLoadResult{Path: chartPath, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
+		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
 	if !cached {
-		ch, err = loader.Load(chartPath)
+		ch, err = loader.Load(path)
 	}
 	if err != nil {
 		// A truncated/corrupt chart tgz left on disk (process killed
@@ -354,11 +351,11 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 		// checks in LocateChart see the file, return its path, and we
 		// re-error here on every subsequent run. Removing the file
 		// lets the next reconcile re-pull cleanly.
-		_ = os.Remove(chartPath)
+		_ = os.Remove(path)
 		if _, ok := errors.AsType[chart.ValidationError](err); ok {
 			err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
 		}
-		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", chartPath, err)
+		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", path, err)
 	}
 	if !cached {
 		trimChart(ch)
@@ -369,10 +366,9 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	if needsFingerprint {
 		fingerprint = chartFingerprint(ch)
 	}
-	mtime, size, ok := chartCacheFingerprint(chartPath)
-	if ok {
+	if mtime, size, ok := chartCacheFingerprint(path); ok {
 		c.chartMu.Lock()
-		c.chartCache[chartPath] = chartCacheEntry{
+		c.chartCache[path] = chartCacheEntry{
 			chart:       ch,
 			mtime:       mtime,
 			size:        size,
@@ -384,7 +380,7 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	// chartutil.ProcessDependencies which mutates Chart.Values and the
 	// per-Dependency Enabled flags. Sharing the cached pointer races
 	// across concurrent renders.
-	return ChartLoadResult{Path: chartPath, Chart: cloneChartForRender(ch), Fingerprint: fingerprint}, nil
+	return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fingerprint}, nil
 }
 
 // cloneChartForRender returns a shallow copy of src with the fields
@@ -406,14 +402,9 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 	if src == nil {
 		return nil
 	}
-	// Chart and metadata share one allocation; each render owns both copies.
-	out := struct {
-		chart.Chart
-		metadata chart.Metadata
-	}{Chart: *src}
+	out := *src
 	if src.Metadata != nil {
-		md := &out.metadata
-		*md = *src.Metadata
+		md := *src.Metadata
 		if len(src.Metadata.Dependencies) > 0 {
 			md.Dependencies = make([]*chart.Dependency, len(src.Metadata.Dependencies))
 			for i, d := range src.Metadata.Dependencies {
@@ -424,7 +415,7 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 				md.Dependencies[i] = &dc
 			}
 		}
-		out.Metadata = md
+		out.Metadata = &md
 	}
 	out.Values = manifest.DeepCopyMap(src.Values)
 	if subs := src.Dependencies(); len(subs) > 0 {
@@ -434,7 +425,7 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 		}
 		out.SetDependencies(clones...)
 	}
-	return &out.Chart
+	return &out
 }
 
 // lookupCachedChart returns the cached chart only when the on-disk

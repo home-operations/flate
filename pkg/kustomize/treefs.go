@@ -111,12 +111,6 @@ func (t *treeFS) raw(name string) (string, error) {
 	if err != nil {
 		return "", treeError("resolve", name, err)
 	}
-	if leaf == "" || leaf == "." {
-		return parent, nil
-	}
-	if leaf == ".." {
-		return t.resolve(name)
-	}
 	if parent == "." {
 		return leaf, nil
 	}
@@ -403,12 +397,8 @@ func (f *writeFile) Read(data []byte) (int, error) {
 }
 
 func (t *treeFS) Create(name string) (filesys.File, error) {
-	rel, err := t.writePath(name)
-	if err != nil {
+	if _, err := t.writePath(name); err != nil {
 		return nil, err
-	}
-	if info, err := t.upper.Stat(path.Clean(rel)); err == nil && info.IsDir() {
-		return nil, fs.ErrInvalid
 	}
 	return &writeFile{tree: t, name: name}, nil
 }

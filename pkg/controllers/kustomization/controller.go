@@ -324,8 +324,19 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	return deps
 }
 
-// resolveSource preserves the authoritative FS and ownership metadata. Only
-// path-only working-tree aliases need source-controller exclusions at render.
+// resolveSource returns the source artifact and whether
+// source-controller's default file exclusions must be applied when the tree is
+// materialized for the build.
+//
+// applyIgnore is true exactly for working-tree / self-referential sources:
+// the bootstrap GitRepository alias and overrideSelfReferentialGitRepositories,
+// which expose the user's raw working tree and never passed through a fetcher's
+// artifact filtering. Every real fetcher (git, OCI, bucket) already ran
+// source.ApplyIgnore on the LocalPath it publishes and records a Revision or
+// Digest, so those are materialized as-is (applyIgnore=false); re-filtering them
+// would be redundant and, for buckets, wrong (defaults vs no-defaults). The
+// working-tree aliases are the only artifacts that set neither Revision nor
+// Digest, which is precisely the signal.
 func (c *Controller) resolveSource(ks *manifest.Kustomization) (*store.SourceArtifact, bool, error) {
 	srcID := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 	if ks.SourceKind == "" || ks.SourceName == "" {

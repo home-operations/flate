@@ -7,21 +7,15 @@ import (
 	"testing"
 )
 
-// TestOverlayFS_WalkPropagatesSkipDir pins the contract that a directory the
-// caller SkipDirs during the memory-layer walk is NOT re-descended on the disk
-// layer. Regression for the cnpg-system bug (issue: a kustomization.yaml decoded
-// as a resource): preflight populates the memory layer under an app subdir,
-// scanManifests SkipDirs that subdir (adding it once as a kustomize package),
-// and the disk walk must then skip its subtree too — otherwise it picks up the
-// subdir's kustomization.yaml as a stray resource. The walk must still surface
-// disk-only children of directories that were NOT skipped (no over-skip).
-func TestOverlayFS_WalkPropagatesSkipDir(t *testing.T) {
+// SkipDir must suppress both layers' children while other merged directories
+// still expose disk-only entries to scanManifests.
+func TestTreeFS_WalkPropagatesSkipDir(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/kustomization.yaml": existingKustomization("./inner.yaml"),
 		"app/inner.yaml":         cmYAML("inner"),
 		"lib/disk.yaml":          cmYAML("libdisk"),
 	})
-	fsys := testOverlayFS(t, root)
+	fsys := testTreeFS(t, root)
 	// Mirror preflightRemoteResources: a rewritten file under app/ (so app/
 	// exists in BOTH layers and is walked from memory) and one under lib/.
 	for _, rel := range []string{"app/mem.yaml", "lib/mem.yaml"} {

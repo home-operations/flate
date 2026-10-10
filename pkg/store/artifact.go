@@ -189,7 +189,7 @@ func sameArtifact(prev, next Artifact) bool {
 	if !aok || !bok || (a.FS == nil && b.FS == nil) {
 		return reflect.DeepEqual(prev, next)
 	}
-	if (a.FS == nil) != (b.FS == nil) || a.Key != b.Key {
+	if (a.FS == nil) != (b.FS == nil) {
 		return false
 	}
 	ac, bc := *a, *b

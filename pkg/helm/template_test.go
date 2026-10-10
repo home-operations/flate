@@ -3,13 +3,101 @@ package helm
 import (
 	"testing"
 
+	"helm.sh/helm/v4/pkg/action"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestTemplate_CRDsPolicy(t *testing.T) {
+	const crd = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    plural: widgets
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`
+	const cm = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-cm
+  namespace: default
+data:
+  greeting: hello
+`
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/crds/widgets.yaml", crd)
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
+	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{TemplateCacheBytes: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	wantAll, err := manifest.SplitDocs([]byte(crd + "---\n" + cm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name        string
+		policy      string
+		skip        bool
+		wantInclude bool
+	}{
+		{"Create skip", "Create", true, false},
+		{"Create include", "Create", false, true},
+		{"CreateReplace skip", "CreateReplace", true, false},
+		{"CreateReplace include", "CreateReplace", false, true},
+		{"Skip skip", "Skip", true, false},
+		{"Skip include", "Skip", false, false},
+		{"unset skip", "", true, false},
+		{"unset include", "", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hr := &manifest.HelmRelease{
+				Name: "demo", Namespace: "default", CRDsPolicy: tc.policy,
+				Chart: manifest.HelmChart{
+					Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+				},
+			}
+			opts := Options{SkipCRDs: tc.skip}
+			inst, _, err := newInstallAction(new(action.Configuration), hr, opts, chartcommon.DefaultCapabilities.Copy())
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, inst.IncludeCRDs, tc.wantInclude)
+			docs, err := cli.TemplateDocs(t.Context(), hr, nil, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := wantAll
+			if !tc.wantInclude {
+				want = wantAll[1:]
+			}
+			assert.Diff(t, docs, want)
+			if tc.skip {
+				want = wantAll[1:]
+			}
+			assert.Diff(t, manifest.DropKinds(docs, opts.SkipResourceKinds()), want)
+		})
+	}
+}
 
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	cli, err := NewClient(cacheroot.New(t.TempDir()))

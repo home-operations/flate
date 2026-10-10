@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"fmt"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/helm"
 	"testing"
 )
 
@@ -26,7 +25,7 @@ spec:
 		b.Run(fmt.Sprintf("auto_%t", auto), func(b *testing.B) {
 			cfg := Config{Path: root, RepoRoot: root, CacheDir: b.TempDir(), Concurrency: 2}
 			if !auto {
-				cfg.HelmOptions = helm.Options{DisableChartDigestTracking: new(false)}
+				cfg.DisableChartDigestTracking = new(false)
 			}
 			b.ReportAllocs()
 			for b.Loop() {
@@ -39,7 +38,7 @@ spec:
 				if err != nil {
 					b.Fatal(err)
 				}
-				if *o.hrc.Options.DisableChartDigestTracking != auto {
+				if o.hrc.Options.DisableChartDigestTracking != auto {
 					b.Fatal("incorrect detection result")
 				}
 			}

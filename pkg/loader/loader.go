@@ -40,12 +40,6 @@ import (
 
 // Options tunes the Loader.
 type Options struct {
-	// OnHelmRelease observes each newly file-parsed release synchronously,
-	// before admission checks. Nil disables observation. Callbacks must not
-	// retain or mutate the release, touch the store, or allocate. Independent
-	// Load calls can parse the same file again and invoke the callback again.
-	// The callback MUST be invoked from a single goroutine.
-	OnHelmRelease func(*manifest.HelmRelease)
 	// WipeSecrets controls Secret cleartext replacement. Default true.
 	WipeSecrets bool
 
@@ -72,6 +66,9 @@ type Options struct {
 type Loader struct {
 	Store   *store.Store
 	Options Options
+	// DisableChartDigestTracking records inline instance patches before admission.
+	// Load calls sharing a Loader MUST be sequential.
+	DisableChartDigestTracking bool
 
 	// SourceRoot, when non-empty, is the directory used as the
 	// reference point for SourceFiles. Paths recorded there are
@@ -663,10 +660,8 @@ func (l *Loader) loadFile(path string) (int, error) {
 	}
 	count := 0
 	for _, obj := range objs {
-		if l.Options.OnHelmRelease != nil {
-			if hr, ok := obj.(*manifest.HelmRelease); ok {
-				l.Options.OnHelmRelease(hr)
-			}
+		if hr, ok := obj.(*manifest.HelmRelease); ok {
+			l.DisableChartDigestTracking = l.DisableChartDigestTracking || disablesChartDigestTracking(hr)
 		}
 		id := obj.Named()
 		if l.skipExisting(id) {

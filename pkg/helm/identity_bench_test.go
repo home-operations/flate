@@ -64,7 +64,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 					b.Fatal(err)
 				}
 				cli.SetSourceResolver(NewStoreSourceResolver(st))
-				opts := Options{DisableChartDigestTracking: &disabled}
+				opts := Options{DisableChartDigestTracking: disabled}
 				if _, err := cli.Template(b.Context(), hr, nil, opts); err != nil {
 					b.Fatal(err)
 				}

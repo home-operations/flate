@@ -24,7 +24,7 @@ func TestReconcile_OCIChartDigestTracking(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, st := newTestController(t, nil)
-			c.Options.DisableChartDigestTracking = &tc.disable
+			c.Options.DisableChartDigestTracking = tc.disable
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: podinfo\nversion: 6.15.0\n")
 			testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1

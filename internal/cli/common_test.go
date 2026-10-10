@@ -536,14 +536,14 @@ func TestHelmFlags_ChartDigestTrackingOverride(t *testing.T) {
 			if err != nil || !ran {
 				t.Fatalf("command result: err=%v ran=%t", err, ran)
 			}
-			assert.Equal(t, got.HelmOptions.DisableChartDigestTracking == nil, tc.auto)
+			assert.Equal(t, got.DisableChartDigestTracking == nil, tc.auto)
 			if !tc.auto {
-				assert.Equal(t, *got.HelmOptions.DisableChartDigestTracking, tc.disable)
+				assert.Equal(t, *got.DisableChartDigestTracking, tc.disable)
 			}
 		})
 	}
 	got := buildOrchCfg(commonFlags{}, helmFlags{})
-	assert.Equal(t, got.HelmOptions.DisableChartDigestTracking == nil, true)
+	assert.Equal(t, got.DisableChartDigestTracking == nil, true)
 	got = buildOrchCfg(commonFlags{}, helmFlags{disableChartDigestTracking: new(true)})
-	assert.Equal(t, *got.HelmOptions.DisableChartDigestTracking, true)
+	assert.Equal(t, *got.DisableChartDigestTracking, true)
 }

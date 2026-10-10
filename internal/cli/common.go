@@ -346,18 +346,17 @@ func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
 
 func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	return helm.Options{
-		SkipCRDs:                   c.skipCRDs,
-		SkipSecrets:                c.skipSecrets,
-		SkipKinds:                  c.skipKinds,
-		KubeVersion:                h.kubeVersion,
-		APIVersions:                h.apiVersions,
-		IsUpgrade:                  h.isUpgrade,
-		NoHooks:                    h.noHooks,
-		ShowOnly:                   h.showOnly,
-		EnableDNS:                  h.enableDNS,
-		SkipSchemaValidation:       h.skipSchemaValidation,
-		DisableChartDigestTracking: h.disableChartDigestTracking,
-		SkipTests:                  true,
+		SkipCRDs:             c.skipCRDs,
+		SkipSecrets:          c.skipSecrets,
+		SkipKinds:            c.skipKinds,
+		KubeVersion:          h.kubeVersion,
+		APIVersions:          h.apiVersions,
+		IsUpgrade:            h.isUpgrade,
+		NoHooks:              h.noHooks,
+		ShowOnly:             h.showOnly,
+		EnableDNS:            h.enableDNS,
+		SkipSchemaValidation: h.skipSchemaValidation,
+		SkipTests:            true,
 	}
 }
 
@@ -477,12 +476,13 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		// (change.Detect diffs root-to-root): the materialized --base tree
 		// root, or the .git default of an explicit --path-orig. Replaces
 		// the core's old .git "widen" heuristic.
-		PathOrig:       c.baselineRoot(),
-		KRMIgnoreFile:  c.krmIgnore,
-		HelmOptions:    c.helmOptions(h),
-		WipeSecrets:    true,
-		RegistryConfig: c.registryConfig,
-		Concurrency:    c.concurrency,
+		PathOrig:                   c.baselineRoot(),
+		KRMIgnoreFile:              c.krmIgnore,
+		HelmOptions:                c.helmOptions(h),
+		DisableChartDigestTracking: h.disableChartDigestTracking,
+		WipeSecrets:                true,
+		RegistryConfig:             c.registryConfig,
+		Concurrency:                c.concurrency,
 		SourceRetry: source.RetryConfig{
 			Attempts: c.sourceRetryAttempts,
 			MinWait:  c.sourceRetryMinWait,

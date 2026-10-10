@@ -256,7 +256,6 @@ func chartFingerprint(ch *chart.Chart) string {
 // avoids.
 func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]any, opts Options, hr *manifest.HelmRelease) string {
 	h := sha256.New()
-	_, _ = h.Write([]byte("template:v2\x00"))
 
 	// Chart fingerprint. Precomputed at LoadChart time when the
 	// template cache is enabled — fall back to a fresh walk when

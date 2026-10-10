@@ -2,7 +2,6 @@ package change
 
 import (
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -95,22 +94,30 @@ func seedKSStore(n int) (*store.Store, map[manifest.NamedResource]string) {
 	return s, sourceFiles
 }
 
-func BenchmarkDetectViaGit(b *testing.B) {
-	if _, err := exec.LookPath("git"); err != nil {
-		b.Skip("git not on PATH")
-	}
-	for _, name := range []string{"separate", "nested"} {
+func BenchmarkDetect(b *testing.B) {
+	for _, name := range []string{"separate", "nested", "large", "vendor"} {
 		b.Run(name, func(b *testing.B) {
 			after := b.TempDir()
 			before := b.TempDir()
 			if name == "nested" {
 				before = filepath.Join(after, ".cache", "baselines", "base")
 			}
+			if name == "large" || name == "vendor" {
+				prefix := "apps"
+				if name == "vendor" {
+					prefix = "vendor"
+				}
+				for i := range 12000 {
+					rel := fmt.Sprintf("%s/app-%d/file-%d.yaml", prefix, i/8, i)
+					testutil.WriteFile(b, before, rel, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: example}\n")
+					testutil.WriteFile(b, after, rel, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: example}\n")
+				}
+			}
 			testutil.WriteFile(b, before, "mod.yaml", "AAA")
 			testutil.WriteFile(b, after, "mod.yaml", "BBB")
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := detectViaGit(before, after); err != nil {
+				if _, err := Detect(before, after); err != nil {
 					b.Fatal(err)
 				}
 			}

@@ -249,8 +249,9 @@ func scanTree(root, opposite string) (map[string]fileMeta, error) {
 }
 
 // Symlinks are compared without following them because flate renders in-root
-// links. Flux's artifact Storage.Archive omits non-regular files; changing that
-// render-parity gap must also change detection's treatment of links.
+// links. github.com/fluxcd/pkg/artifact v0.18.3 storage.Storage.Archive
+// (storage/archive.go) omits non-regular files; changing that render-parity gap
+// must also change detection's treatment of links.
 func hashEntry(path string, isSymlink bool) (string, error) {
 	if isSymlink {
 		target, err := os.Readlink(path)

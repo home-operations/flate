@@ -206,16 +206,8 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 		"size of the persistent on-disk kustomize render cache in megabytes (0 disables)")
 }
 
-// skipResourceKinds delegates to helm.Options.SkipResourceKinds so
-// the CLI write paths (build/diff emit) and the orchestrator's
-// in-controller filtering use one canonical union of canonical
-// kinds (CRDs + Secrets when their flags are set) plus any
-// user-supplied `--skip-kinds` entries. KS-rendered docs reach the
-// Store unfiltered (downstream HRs need them for valuesFrom /
-// substituteFrom resolution); HR-rendered docs are pre-filtered
-// inside the controller via helm.TemplateDocs. The CLI applies
-// this union at emit time so the user sees consistent filtering
-// regardless of which controller produced the resource.
+// skipResourceKinds combines the canonical skipped kinds with --skip-kinds.
+// The stream emitter needs this union for raw artifacts before Result filtering.
 func (c *commonFlags) skipResourceKinds() []string {
 	return helm.Options{
 		SkipCRDs:    c.skipCRDs,

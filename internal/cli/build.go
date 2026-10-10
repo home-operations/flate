@@ -148,6 +148,7 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 		if !ok {
 			continue
 		}
+		// Result.Manifests is already filtered.
 		docs := emissionDocs(mans, b, nil)
 		if len(docs) == 0 {
 			continue
@@ -163,13 +164,9 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 	return out, nil
 }
 
-// emissionDocs turns one resource's rendered manifests into its
-// emission-ready doc batch: clone-and-sort so output is byte-stable across
-// runs even when a Helm chart uses `range $name, $svc := .Values` (Go map
-// iteration is randomized — the chart still emits the same set but in
-// arbitrary order; sort by kind/ns/name), then apply --only-crds or the
-// skip-kinds drop. Shared by the buffered collect and the --stream emitter
-// so the two paths cannot drift. May return an empty slice.
+// emissionDocs sorts a cloned batch so chart map iteration cannot affect output.
+// --only-crds takes precedence over skipKinds. Raw stream artifacts bypass
+// Result filtering and need skipKinds; collectRendered passes nil for Result batches.
 func emissionDocs(mans []map[string]any, b *buildFlags, skipKinds []string) []map[string]any {
 	if len(mans) == 0 {
 		return nil

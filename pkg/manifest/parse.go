@@ -54,13 +54,9 @@ func DocAPIVersion(doc map[string]any) string {
 	return v
 }
 
-// DropKinds returns docs with every entry whose `kind` appears in drop
-// removed. drop=nil is a no-op (returns docs unchanged). Used by the
-// orchestrator's Render and the CLI's build/diff paths to honor
-// --skip-secrets / --skip-crds / --skip-kinds against both
-// HelmRelease and Kustomization sources uniformly. helm.TemplateDocs
-// already filters HR output upstream; this is the canonical helper
-// for downstream code that needs the same operation.
+// DropKinds returns docs with every entry whose kind appears in drop removed.
+// drop=nil returns docs unchanged. Orchestrator Render and the stream emitter
+// use it to apply skipped kinds to HelmRelease and Kustomization output.
 func DropKinds(docs []map[string]any, drop []string) []map[string]any {
 	if len(drop) == 0 || len(docs) == 0 {
 		return docs

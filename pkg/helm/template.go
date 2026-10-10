@@ -162,11 +162,8 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	// The CLI skip flag suppresses CRDs regardless of HR policy.
 	// spec.install.crds / spec.upgrade.crds set to "Skip" also suppresses
 	// CRDs when the CLI requests them.
-	switch hr.CRDsPolicy {
-	case "Skip":
+	if hr.CRDsPolicy == "Skip" {
 		inst.IncludeCRDs = false
-	case "Create", "CreateReplace":
-		inst.IncludeCRDs = !opts.SkipCRDs
 	}
 	// HR-scoped install/upgrade.disableHooks OR'd with the CLI flag,
 	// mirroring helm-controller. Either side forces hooks off — and

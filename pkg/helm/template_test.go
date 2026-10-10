@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"errors"
 	"testing"
 
 	"helm.sh/helm/v4/pkg/action"
@@ -95,6 +96,49 @@ data:
 				want = wantAll[1:]
 			}
 			assert.Diff(t, manifest.DropKinds(docs, opts.SkipResourceKinds()), want)
+		})
+	}
+}
+
+func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
+	const cm = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-cm\n"
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/crds/bad.yaml", "apiVersion: [\n")
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
+	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{TemplateCacheBytes: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	want, err := manifest.SplitDocs([]byte(cm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		policy string
+		skip   bool
+	}{
+		{"Create skip", "Create", true},
+		{"Create include", "Create", false},
+		{"CreateReplace skip", "CreateReplace", true},
+		{"CreateReplace include", "CreateReplace", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hr := newHR()
+			hr.CRDsPolicy = tc.policy
+			docs, err := cli.TemplateDocs(t.Context(), hr, nil, Options{SkipCRDs: tc.skip})
+			if !tc.skip {
+				if !errors.Is(err, manifest.ErrInput) {
+					t.Fatalf("got %v, want malformed CRD input error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, docs, want)
 		})
 	}
 }

@@ -392,7 +392,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				continue
 			}
 			if err := d.loadAt(ctx, target, scanned, &total); err != nil {
-				if ks.SourceKind != manifest.KindGitRepository || !errors.Is(err, manifest.ErrInput) || d.cfg.Store.GetArtifact(ref) != nil {
+				if ks.SourceKind != manifest.KindGitRepository || !errors.Is(err, manifest.ErrInput) {
 					return err
 				}
 				if repo, ok := d.cfg.Store.Get[*manifest.GitRepository](ref); ok {
@@ -417,11 +417,13 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	}
 	if len(followErrors) != 0 {
 		for _, id := range slices.SortedFunc(maps.Keys(followErrors), manifest.NamedResource.Compare) {
-			if ks, ok := d.cfg.Store.Get[*manifest.Kustomization](id); ok {
-				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-				if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
-					continue
-				}
+			ks, ok := d.cfg.Store.Get[*manifest.Kustomization](id)
+			if !ok {
+				continue
+			}
+			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+			if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+				continue
 			}
 			return followErrors[id]
 		}

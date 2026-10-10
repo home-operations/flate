@@ -263,6 +263,7 @@ func Run(j Job) Report {
 	}
 	slices.SortFunc(extra, func(a, b manifest.NamedResource) int { return a.Compare(b) })
 	for _, id := range extra {
+		seen[id] = true
 		rep.Matched++
 		info, ok := j.Store.GetStatus(id)
 		c := classify(id, info, ok)
@@ -273,7 +274,7 @@ func Run(j Job) Report {
 		rep.Failed++
 		rep.Cases = append(rep.Cases, c)
 	}
-	rep.Blocked = blockedCases(j.Store, blocked)
+	rep.Blocked = blockedCases(j.Store, blocked, seen)
 	return rep
 }
 
@@ -284,7 +285,7 @@ func Run(j Job) Report {
 // victim's reason names its root cause(s) via report.RootsOf; a victim whose
 // blockers form a closed cycle reaches no root, so it falls back to naming its
 // immediate blockers rather than vanishing from the report.
-func blockedCases(s *store.Store, blocked map[manifest.NamedResource][]manifest.NamedResource) []Case {
+func blockedCases(s *store.Store, blocked map[manifest.NamedResource][]manifest.NamedResource, seen map[manifest.NamedResource]bool) []Case {
 	cases := make([]Case, 0, len(blocked))
 	for victim, blockers := range blocked {
 		roots := report.RootsOf(victim, blocked)
@@ -292,7 +293,7 @@ func blockedCases(s *store.Store, blocked map[manifest.NamedResource][]manifest.
 			roots = slices.Clone(blockers)
 		}
 		slices.SortFunc(roots, manifest.NamedResource.Compare)
-		cases = append(cases, Case{ID: victim, Outcome: OutcomeBlocked, Reason: blockedReason(s, roots)})
+		cases = append(cases, Case{ID: victim, Outcome: OutcomeBlocked, Reason: blockedReason(s, roots, seen)})
 	}
 	slices.SortFunc(cases, func(a, b Case) int { return a.ID.Compare(b.ID) })
 	return cases
@@ -300,14 +301,15 @@ func blockedCases(s *store.Store, blocked map[manifest.NamedResource][]manifest.
 
 // blockedReason names the root cause(s) a victim traces to, tagging any the
 // store never loaded — a dependency that does not exist — as "(not found)" to
-// set it apart from a root that failed on its own roster row.
-func blockedReason(s *store.Store, roots []manifest.NamedResource) string {
+// set it apart from a root that failed on its own roster row. Roots without a
+// reported row must include their failure message in the victim's reason.
+func blockedReason(s *store.Store, roots []manifest.NamedResource, seen map[manifest.NamedResource]bool) string {
 	names := make([]string, len(roots))
 	for i, r := range roots {
 		names[i] = r.NamespacedName()
 		if info, known := s.GetStatus(r); !known {
 			names[i] += " (not found)"
-		} else if r.Kind == manifest.KindHelmChart && info.Status == store.StatusFailed {
+		} else if !seen[r] && info.Status == store.StatusFailed {
 			names[i] += ": " + manifest.TrimSentinelPrefix(info.Message)
 		}
 	}

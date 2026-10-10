@@ -1,10 +1,12 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -119,6 +121,28 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		return "", fmt.Errorf("helm template %s/%s: unexpected release type %T", hr.Namespace, hr.Name, rel)
 	}
 
+	// Disabled dependencies must be pruned before validating their CRDs.
+	if opts.SkipCRDs && hr.CRDsPolicy != "Skip" {
+		crds := loaded.Chart.CRDObjects()
+		for _, crd := range crds {
+			docs, err := manifest.DecodeDocs(crdReader(crd))
+			for _, doc := range docs {
+				manifest.ReleaseDoc(doc)
+			}
+			if err != nil {
+				// Full-stream diagnostics preserve Helm's line numbers across CRD files.
+				readers := make([]io.Reader, len(crds))
+				for i, crd := range crds {
+					readers[i] = crdReader(crd)
+				}
+				if _, fullErr := manifest.DecodeDocs(io.MultiReader(readers...)); fullErr != nil {
+					err = fullErr
+				}
+				return "", err
+			}
+		}
+	}
+
 	// spec.test.enable defaults to false; tests only land in the
 	// rendered output when the HR explicitly enables them or the
 	// CLI overrides. CLI --skip-tests always wins.
@@ -128,6 +152,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		c.templateCache.Put(key, out)
 	}
 	return out, nil
+}
+
+func crdReader(crd chart.CRD) io.Reader {
+	return io.MultiReader(strings.NewReader("---\n# Source: "+crd.Filename+"\n"),
+		bytes.NewReader(crd.File.Data), strings.NewReader("\n"))
 }
 
 // schemaValidationSkipped reports whether to bypass helm's values.schema.json

@@ -108,6 +108,50 @@ func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 	}
 }
 
+func BenchmarkTemplate_CRDsValidation(b *testing.B) {
+	const crd = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    plural: widgets
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`
+	for _, count := range []int{1, 10} {
+		for _, policy := range []string{"Create", "Skip"} {
+			b.Run(fmt.Sprintf("%d/%s", count, policy), func(b *testing.B) {
+				dir := stageBenchChartDir(b)
+				for i := range count {
+					testutil.WriteFile(b, dir, fmt.Sprintf("mychart/crds/%d.yaml", i), crd)
+				}
+				cli, err := NewClientWithOptions(cacheroot.New(b.TempDir()), ClientOptions{TemplateCacheBytes: 0})
+				if err != nil {
+					b.Fatal(err)
+				}
+				cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", dir))
+				hr := newHR()
+				hr.CRDsPolicy = policy
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := cli.Template(b.Context(), hr, nil, Options{SkipCRDs: true}); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
 // BenchmarkTemplate_CommonMetadataVariants renders the same chart +
 // values + release through one warm cache while varying ONLY
 // hr.CommonMetadata each iteration. CommonMetadata is applied downstream

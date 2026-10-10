@@ -168,6 +168,29 @@ func TestE2E_BuildHR(t *testing.T) {
 	}
 }
 
+func TestE2E_MalformedChartCRD(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		skip string
+	}{
+		{"omitted", "true"},
+		{"included", "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := copyTree(t, testdataPath(t, "simple"))
+			testutil.WriteFile(t, dir, "charts/mychart/crds/bad.yaml", "apiVersion: [\n")
+			out, code := runCLIExpectErr(t, "build", "all", "--path", dir,
+				"--skip-crds="+tc.skip, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			if code != 1 {
+				t.Fatalf("got exit %d, want 1:\n%s", code, out)
+			}
+			if !strings.Contains(out, "did not find expected node content") {
+				t.Errorf("missing malformed CRD parser error:\n%s", out)
+			}
+		})
+	}
+}
+
 // build hr emits identical bytes on repeated runs against the same
 // tree. Pins the per-artifact sort that's needed because some Helm
 // charts use `range $name, $v := .Values.*` which iterates Go maps

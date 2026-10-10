@@ -10,11 +10,9 @@
 //
 // Three event types are dispatched as state evolves: ObjectAdded,
 // StatusUpdated, ArtifactUpdated. Callers subscribe via AddListener (sync,
-// returns an unsubscribe function) or block on the high-level Watch*
-// helpers, which return a single value once the awaited state is reached.
+// returns an unsubscribe function).
 //
 // Store is safe for concurrent use. Listeners run inline on the goroutine
-// that triggered the event — they MUST NOT block on Store operations, or
-// they'll deadlock. The Watch* helpers handle this correctly by sending to
-// a buffered channel from inside the listener.
+// that triggered the event; they MUST NOT block waiting for another Store
+// event on that goroutine.
 package store

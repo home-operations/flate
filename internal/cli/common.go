@@ -660,8 +660,8 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...fun
 		// above the frame via barSink, while dependency fd chatter stays off the
 		// clean bar unless --log-level debug asks for it.
 		restoreStderr := captureStderr(func(line string) { slog.Debug(line) })
-		unsub := o.Store().OnStatus(func(id manifest.NamedResource, info store.StatusInfo) {
-			p.Send(statusMsg{id: id, info: info})
+		unsub := o.Store().AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+			p.Send(statusMsg{id: id, info: payload.(store.StatusInfo)})
 		}, false)
 		defer func() {
 			unsub()

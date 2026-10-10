@@ -68,7 +68,9 @@ func newStreamEmitter(out, errOut io.Writer, o *orchestrator.Orchestrator, kinds
 // attach subscribes the emitter to s's status events; call before Render so
 // terminal statuses observed during the run stream immediately.
 func (se *streamEmitter) attach(s *store.Store) store.Unsubscribe {
-	return s.OnStatus(se.onStatus, false)
+	return s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		se.onStatus(id, payload.(store.StatusInfo))
+	}, false)
 }
 
 func (se *streamEmitter) onStatus(id manifest.NamedResource, info store.StatusInfo) {

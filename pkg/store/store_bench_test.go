@@ -8,6 +8,26 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func BenchmarkListenerFire_ChangedWrite(b *testing.B) {
+	for _, listeners := range []int{0, 1, 50} {
+		b.Run(fmt.Sprintf("listeners=%d", listeners), func(b *testing.B) {
+			s := New()
+			for range listeners {
+				s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) {}, false)
+			}
+			objects := [2]*manifest.RawObject{
+				{APIVersion: "v1", Kind: "ConfigMap", Name: "app", Spec: map[string]any{"data": "first"}},
+				{APIVersion: "v1", Kind: "ConfigMap", Name: "app", Spec: map[string]any{"data": "second"}},
+			}
+			var i int
+			for b.Loop() {
+				s.AddRendered(objects[i%len(objects)])
+				i++
+			}
+		})
+	}
+}
+
 func BenchmarkAddRendered(b *testing.B) {
 	for _, listeners := range []bool{false, true} {
 		b.Run(fmt.Sprintf("listeners=%t", listeners), func(b *testing.B) {

@@ -692,49 +692,88 @@ func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
 	}
 }
 
-// TestStore_ListenerSnapshotPool_NoLostEvents stresses the pooled
-// listener-snapshot path under concurrent fires. With 10 goroutines
-// firing 100 events each against a 50-listener set, every listener
-// must observe every event — losing one means the pool aliasing
-// is wrong (the dispatcher iterated a slice that had already been
-// released and recycled by another fire). Run under -race for the
-// full guarantee.
-func TestStore_ListenerSnapshotPool_NoLostEvents(t *testing.T) {
-	s := New()
-	const (
-		numListeners = 50
-		numFirers    = 10
-		eventsPer    = 100
-	)
-	totalEvents := int64(numFirers * eventsPer)
-	wantPerListener := totalEvents
+func TestStore_ListenerSnapshots(t *testing.T) {
+	t.Run("concurrent delivery", func(t *testing.T) {
+		s := New()
+		const (
+			numListeners = 50
+			numFirers    = 10
+			eventsPer    = 100
+		)
+		totalEvents := int64(numFirers * eventsPer)
+		wantPerListener := totalEvents
 
-	counts := make([]atomic.Int64, numListeners)
-	for i := range numListeners {
-		s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-			counts[i].Add(1)
-		}, false)
-	}
-
-	var wg sync.WaitGroup
-	for g := range numFirers {
-		wg.Go(func() {
-			for n := range eventsPer {
-				// Distinct names per (goroutine, event) so the
-				// AddObject dedup never short-circuits — each call
-				// must fire EventObjectAdded.
-				name := fmt.Sprintf("g%d-n%d", g, n)
-				s.AddObject(newCM(name, "ns"))
-			}
-		})
-	}
-	wg.Wait()
-
-	for i := range numListeners {
-		if got := counts[i].Load(); got != wantPerListener {
-			t.Errorf("listener[%d] observed %d events, want %d (pool aliasing dropped a fire?)", i, got, wantPerListener)
+		counts := make([]atomic.Int64, numListeners)
+		for i := range numListeners {
+			s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+				counts[i].Add(1)
+			}, false)
 		}
-	}
+
+		var wg sync.WaitGroup
+		for g := range numFirers {
+			wg.Go(func() {
+				for n := range eventsPer {
+					// Distinct names per (goroutine, event) so the
+					// AddObject dedup never short-circuits — each call
+					// must fire EventObjectAdded.
+					name := fmt.Sprintf("g%d-n%d", g, n)
+					s.AddObject(newCM(name, "ns"))
+				}
+			})
+		}
+		wg.Wait()
+
+		for i := range numListeners {
+			if got := counts[i].Load(); got != wantPerListener {
+				t.Errorf("listener[%d] observed %d events, want %d (listener snapshot lost an event?)", i, got, wantPerListener)
+			}
+		}
+	})
+	t.Run("mutation during captured dispatch", func(t *testing.T) {
+		s := New()
+		paused := make(chan struct{})
+		resume := make(chan struct{})
+		var seen []int
+		var first, fifth Unsubscribe
+		first = s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+			close(paused)
+			<-resume
+			seen = append(seen, 1)
+			first()
+			fifth = s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+				seen = append(seen, 5)
+			}, false)
+		}, false)
+		second := s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+			seen = append(seen, 2)
+		}, false)
+		third := s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+			seen = append(seen, 3)
+		}, false)
+
+		var wg sync.WaitGroup
+		wg.Go(func() { s.AddObject(newCM("captured", "ns")) })
+		<-paused
+		second()
+		second()
+		fourth := s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
+			seen = append(seen, 4)
+		}, false)
+		close(resume)
+		wg.Wait()
+		assert.Diff(t, seen, []int{1, 2, 3})
+
+		seen = nil
+		s.AddObject(newCM("future", "ns"))
+		assert.Diff(t, seen, []int{3, 4, 5})
+		third()
+		fourth()
+		fifth()
+		seen = nil
+		s.AddObject(newCM("empty", "ns"))
+		assert.Equal(t, len(seen), 0)
+	})
 }
 
 // TestStore_SetConditionLocked_StableSliceLength asserts the in-place

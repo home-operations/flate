@@ -1049,24 +1049,21 @@ func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 	return out
 }
 
-// TestOrchestrator_TypedListener verifies Store.OnStatus delivers a
-// typed StatusInfo payload (no `any` type-switching needed by the
-// embedder).
-func TestOrchestrator_TypedListener(t *testing.T) {
+func TestOrchestrator_StatusListener(t *testing.T) {
 	s := store.New()
 	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "k"}
 
 	var seen store.StatusInfo
-	unsub := s.OnStatus(func(other manifest.NamedResource, info store.StatusInfo) {
+	unsub := s.AddListener(store.EventStatusUpdated, func(other manifest.NamedResource, payload any) {
 		if other == id {
-			seen = info
+			seen = payload.(store.StatusInfo)
 		}
 	}, false)
 	defer unsub()
 
 	s.UpdateStatus(id, store.StatusFailed, "boom")
 	if seen.Status != store.StatusFailed || seen.Message != "boom" {
-		t.Errorf("typed listener did not receive payload: %+v", seen)
+		t.Errorf("status listener did not receive payload: %+v", seen)
 	}
 }
 

@@ -194,6 +194,62 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 	}
 }
 
+func TestTemplate_MalformedDisabledSubchartCRDs(t *testing.T) {
+	const cm = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-cm\n"
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
+name: mychart
+version: 0.1.0
+dependencies:
+  - name: child
+    version: 0.1.0
+    condition: child.enabled
+`)
+	testutil.WriteFile(t, dir, "mychart/values.yaml", "child:\n  enabled: false\n")
+	testutil.WriteFile(t, dir, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", "apiVersion: [\n")
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	want, err := manifest.SplitDocs([]byte(cm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		policy  string
+		enabled bool
+	}{
+		{"disabled unset", "", false},
+		{"disabled Create", "Create", false},
+		{"enabled unset", "", true},
+		{"enabled Create", "Create", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hr := newHR()
+			hr.CRDsPolicy = tc.policy
+			values := map[string]any{"child": map[string]any{"enabled": tc.enabled}}
+			included, wantErr := cli.TemplateDocs(t.Context(), hr, values, Options{})
+			docs, err := cli.TemplateDocs(t.Context(), hr, values, Options{SkipCRDs: true})
+			if tc.enabled {
+				if !errors.Is(wantErr, manifest.ErrInput) || !errors.Is(err, manifest.ErrInput) {
+					t.Fatalf("included: %v, omitted: %v; want malformed CRD input errors", wantErr, err)
+				}
+				assert.Equal(t, err.Error(), wantErr.Error())
+				return
+			}
+			if wantErr != nil || err != nil {
+				t.Fatalf("included: %v, omitted: %v; want success", wantErr, err)
+			}
+			assert.Diff(t, included, want)
+			assert.Diff(t, docs, want)
+		})
+	}
+}
+
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {

@@ -112,6 +112,16 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 	}
 
+	rel, err := inst.RunWithContext(ctx, loaded.Chart, finalValues)
+	if err != nil {
+		return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
+	}
+	relV1, ok := rel.(*release.Release)
+	if !ok {
+		return "", fmt.Errorf("helm template %s/%s: unexpected release type %T", hr.Namespace, hr.Name, rel)
+	}
+
+	// Disabled dependencies must be pruned before validating their CRDs.
 	if opts.SkipCRDs && hr.CRDsPolicy != "Skip" {
 		crds := loaded.Chart.CRDObjects()
 		for _, crd := range crds {
@@ -131,15 +141,6 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 				return "", err
 			}
 		}
-	}
-
-	rel, err := inst.RunWithContext(ctx, loaded.Chart, finalValues)
-	if err != nil {
-		return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
-	}
-	relV1, ok := rel.(*release.Release)
-	if !ok {
-		return "", fmt.Errorf("helm template %s/%s: unexpected release type %T", hr.Namespace, hr.Name, rel)
 	}
 
 	// spec.test.enable defaults to false; tests only land in the

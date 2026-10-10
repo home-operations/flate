@@ -309,7 +309,19 @@ func (t *treeFS) WriteFile(name string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := t.upper.AddFile(rel, data, 0o644); err != nil {
+	err = t.upper.AddFile(rel, data, 0o644)
+	if errors.Is(err, tree.ErrConflict) {
+		info, statErr := t.upper.Lstat(rel)
+		if statErr != nil || info.Mode()&fs.ModeSymlink == 0 {
+			return treeError("write", name, err)
+		}
+		// Replace the final link privately; its source target must stay intact.
+		if err := t.upper.RemoveAll(rel); err != nil {
+			return treeError("write", name, err)
+		}
+		err = t.upper.AddFile(rel, data, 0o644)
+	}
+	if err != nil {
 		return treeError("write", name, err)
 	}
 	t.mark(path.Clean(rel))

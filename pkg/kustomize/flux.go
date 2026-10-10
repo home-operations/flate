@@ -106,9 +106,17 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 			key = manifest.Fingerprint([]string{key, req.Source.Key, "render-fs-v2"})
 		}
 	}
+	// Keep parent components unresolved until the filesystem follows links.
+	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	if rc := cache.render; rc != nil && key != "" {
-		if snap, output, ok := rc.get(key); ok && (disk == nil || snap.stillValid(disk, root)) {
-			return output, nil
+		if snap, output, ok := rc.get(key); ok {
+			if disk == nil {
+				return output, nil
+			}
+			dir, file, err := disk.CleanedAbs(subDir)
+			if err == nil && file == "" && dir.String() == snap.BuildDir && snap.stillValid(disk, root) {
+				return output, nil
+			}
 		}
 	}
 	var rec *readSet
@@ -120,9 +128,6 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 		diskRec = rec
 	}
 	memFS := newTreeFS(lower, root, diskRec)
-	// Preserve unresolved parent components until the common resolver follows
-	// intermediate links; filepath.Join would clean them too early.
-	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	canonicalDir, file, err := memFS.CleanedAbs(subDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s: %w", manifest.ErrInput, req.SubPath, err)
@@ -188,7 +193,9 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	// read-set can't validate: pre-fetched remote content (injected) or an
 	// unrepresentable read such as a Glob (rec.bypassed).
 	if rec != nil && !injected && !rec.bypassed() {
-		cache.render.put(key, rec.snapshot(), out)
+		snap := rec.snapshot()
+		snap.BuildDir = subDir
+		cache.render.put(key, snap, out)
 	}
 	return out, nil
 }

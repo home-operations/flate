@@ -2,9 +2,9 @@ package kustomize
 
 // readset.go records exactly which on-disk inputs a single RenderFlux build
 // reads, so a later run can validate a cached render by replaying those reads:
-// if every recorded file's content, every listed directory's entries, and every
-// probed path's node kind still match, the build's inputs are unchanged and the
-// cached output is still valid. Because the transitive input set is captured
+// if the resolved build directory, every recorded file's content, every listed
+// directory's entries, and every probed path's node kind still match, the inputs
+// are unchanged and the cached output is still valid. The input set is captured
 // from the build's *actual* reads (not guessed from the spec), it is sound
 // across the cases a naive subtree hash misses — `..`-escaping resources,
 // transitive components, and files added to or removed from an auto-scanned
@@ -152,11 +152,12 @@ type nodeEntry struct {
 	Kind nodeKind `json:"k"`
 }
 
-// readSetSnapshot is the cache-stored, deterministic form of a readSet.
+// readSetSnapshot pins the build directory and the deterministic read set.
 type readSetSnapshot struct {
-	Files []fileEntry `json:"files"`
-	Dirs  []fileEntry `json:"dirs"`
-	Nodes []nodeEntry `json:"nodes"`
+	BuildDir string      `json:"buildDir"`
+	Files    []fileEntry `json:"files"`
+	Dirs     []fileEntry `json:"dirs"`
+	Nodes    []nodeEntry `json:"nodes"`
 }
 
 // snapshot freezes the recorder into its deterministic serialized form.
@@ -200,11 +201,8 @@ type diskReader interface {
 	IsDir(path string) bool
 }
 
-// stillValid replays the snapshot against the live disk under root: a cache HIT
-// iff every recorded file still hashes the same, every recorded directory still
-// lists the same children, and every probed path is still the same kind. Any
-// edit, add, or delete krusty would have observed flips one of these, forcing a
-// re-render — so a HIT provably reproduces the cached output.
+// stillValid validates recorded content and node kinds against the live disk.
+// The caller MUST also verify BuildDir before accepting a disk cache hit.
 func (snap readSetSnapshot) stillValid(disk diskReader, root string) bool {
 	for _, f := range snap.Files {
 		b, err := disk.ReadFile(filepath.Join(root, filepath.FromSlash(f.Path)))

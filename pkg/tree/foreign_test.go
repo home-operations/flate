@@ -130,10 +130,14 @@ func TestBuilder_SealedForeignOverlayConcurrentReads(t *testing.T) {
 	lower := fstest.MapFS{}
 	for i := range 64 {
 		lower[fmt.Sprintf("d%d/f", i)] = &fstest.MapFile{Data: []byte("x")}
+		lower[fmt.Sprintf("d%d/gone", i)] = &fstest.MapFile{Data: []byte("gone")}
 	}
 	b := tree.NewBuilder(lower)
+	for i := range 64 {
+		must(t, b.RemoveAll(fmt.Sprintf("d%d/gone", i)))
+	}
 	must(t, b.AddFile("upper/f", []byte("u"), 0o644))
-	sealed := build(t, b)
+	sealed := build(t, tree.NewBuilder(build(t, b)))
 	var wg sync.WaitGroup
 	for g := range 4 {
 		wg.Go(func() {
@@ -141,11 +145,79 @@ func TestBuilder_SealedForeignOverlayConcurrentReads(t *testing.T) {
 				if _, err := fs.ReadFile(sealed, fmt.Sprintf("d%d/f", (i+g)%64)); err != nil {
 					t.Error(err)
 				}
-				if _, err := fs.ReadDir(sealed, fmt.Sprintf("d%d", i)); err != nil {
-					t.Error(err)
+				entries, err := fs.ReadDir(sealed, fmt.Sprintf("d%d", i))
+				if err != nil || len(entries) != 1 || entries[0].Name() != "f" {
+					t.Errorf("stacked foreign listing: %v, %v", entries, err)
 				}
 			}
 		})
 	}
 	wg.Wait()
+}
+
+func TestBuilder_StackedForeignRemovals(t *testing.T) {
+	b := tree.NewBuilder(fstest.MapFS{
+		"d/a":     {Data: []byte("a")},
+		"d/b":     {Data: []byte("b")},
+		"d/sub/c": {Data: []byte("c")},
+	})
+	must(t, b.RemoveAll("d/a"))
+	must(t, b.RemoveAll("d/sub"))
+	lower := build(t, b)
+	for _, added := range []bool{false, true} {
+		t.Run(fmt.Sprintf("added=%v", added), func(t *testing.T) {
+			upper := tree.NewBuilder(lower)
+			want := []string{"b"}
+			if added {
+				must(t, upper.AddFile("d/z", []byte("z"), 0o644))
+				want = append(want, "z")
+			}
+			for _, sealed := range []bool{false, true} {
+				t.Run(fmt.Sprintf("sealed=%v", sealed), func(t *testing.T) {
+					var view fs.FS = upper
+					if sealed {
+						view = build(t, upper)
+					}
+					for _, name := range []string{"d/a", "d/sub/c"} {
+						if _, err := fs.Stat(view, name); !errors.Is(err, fs.ErrNotExist) {
+							t.Fatalf("removed path %s: %v", name, err)
+						}
+					}
+					entries, err := fs.ReadDir(view, "d")
+					must(t, err)
+					var names []string
+					for _, entry := range entries {
+						names = append(names, entry.Name())
+					}
+					if !slices.Equal(names, want) {
+						t.Fatalf("stacked listing = %v, want %v", names, want)
+					}
+					dir, err := view.Open("d")
+					must(t, err)
+					defer dir.Close()
+					reader, ok := dir.(fs.ReadDirFile)
+					if !ok {
+						t.Fatal("directory handle does not implement fs.ReadDirFile")
+					}
+					entries, err = reader.ReadDir(-1)
+					must(t, err)
+					names = nil
+					for _, entry := range entries {
+						names = append(names, entry.Name())
+					}
+					if !slices.Equal(names, want) {
+						t.Fatalf("directory handle = %v, want %v", names, want)
+					}
+					var visited []string
+					must(t, fs.WalkDir(view, "d", func(name string, _ fs.DirEntry, err error) error {
+						visited = append(visited, name)
+						return err
+					}))
+					if len(visited) != len(want)+1 {
+						t.Fatalf("walk = %v", visited)
+					}
+				})
+			}
+		})
+	}
 }

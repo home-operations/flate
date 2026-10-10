@@ -301,6 +301,9 @@ func (t *view) entries(n *node) ([]fs.DirEntry, error) {
 	if n.foreign == nil || (!n.foreign.upper && n.children != nil) {
 		return n.children, nil
 	}
+	if t.lower != nil && t.nodes[n.foreign.path] == nil {
+		return t.lower.entries(n)
+	}
 	var memo map[string]*node
 	if t.input != nil {
 		memo = t.input.memo

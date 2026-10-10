@@ -17,8 +17,9 @@ point of the project: changed-only renders, a bounded parallel DAG, aggressive d
 - Never touch secrets or gitignored files. Verify library APIs against the module cache or
   pkg.go.dev, not memory.
 - Solve the stated problem with the smallest diff: no speculative abstractions, no interface
-  or options struct with one caller, no new flags, no new dependencies, no drive-by refactors.
-  Remove what your change orphans; leave pre-existing dead code and mention it.
+  or options struct with one caller, no new flags, no new dependencies. No drive-by refactors
+  of unrelated code. Remove what your change orphans; clean up touched code in the same files
+  and nearby functions within the same concern: simplify it, delete dead code, fix stale comments.
 
 ## Layout
 

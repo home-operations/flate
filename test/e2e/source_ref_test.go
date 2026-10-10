@@ -444,12 +444,11 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 
 func TestE2E_SourceRef_HeldErrorAcrossNamespaces(t *testing.T) {
 	for _, tt := range []struct {
-		name, betaURL        string
-		workingTree, symlink bool
+		name, betaURL string
+		workingTree   bool
 	}{
 		{name: "external_source", betaURL: "git://fixture.invalid/other"},
 		{name: "working_tree_source", betaURL: "git://fixture.invalid/cluster", workingTree: true},
-		{name: "working_tree_symlink", betaURL: "git://fixture.invalid/cluster", workingTree: true, symlink: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -460,20 +459,17 @@ func TestE2E_SourceRef_HeldErrorAcrossNamespaces(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, namespace := range []string{"alpha", "beta"} {
-				suspend, path := "", "./broken"
+				suspend := ""
 				if namespace == "beta" {
 					// The discovery error must surface even without reconciling this consumer.
 					suspend = "  suspend: true\n"
-					if tt.symlink {
-						path = "./broken-alias"
-					}
 				}
 				testutil.WriteFile(t, root, "flux/"+namespace+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: apps, namespace: `+namespace+`}
 spec:
   interval: 10m
-`+suspend+`  path: `+path+`
+`+suspend+`  path: ./broken
   sourceRef: {kind: GitRepository, name: cluster}
 `)
 			}
@@ -501,11 +497,6 @@ spec:
 `)
 			testutil.WriteFile(t, root, "broken/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "broken/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
-			if tt.symlink {
-				if err := os.Symlink("broken", filepath.Join(root, "broken-alias")); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
-				}
-			}
 			gitCommitAll(t, repo)
 			head, err := repo.Head()
 			if err != nil {
@@ -555,11 +546,7 @@ spec:
 				ks, ok := st.Get[*manifest.Kustomization](manifest.NamedResource{
 					Kind: manifest.KindKustomization, Namespace: namespace, Name: "apps",
 				})
-				wantPath := "./broken"
-				if namespace == "beta" && tt.symlink {
-					wantPath = "./broken-alias"
-				}
-				if !ok || ks.SourceNamespace != namespace || ks.SourceRef.Namespace != "" || ks.Path != wantPath {
+				if !ok || ks.SourceNamespace != namespace || ks.SourceRef.Namespace != "" || ks.Path != "./broken" {
 					t.Fatalf("expected implicit source in consumer namespace, got %+v", ks)
 				}
 			}

@@ -121,7 +121,7 @@ func (t *view) masked(name string) bool {
 
 // Resolve follows links before subsequent parent components and returns a
 // canonical slash path. Unlike the io/fs methods, it accepts unclean relative
-// paths. Memory links stay confined; disk adapters retain their native rules.
+// paths. Links stay confined to the tree.
 func (t *view) Resolve(name string) (string, error) {
 	p, _, err := t.resolve(name, true)
 	if err != nil {
@@ -141,22 +141,6 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 	if fs.ValidPath(name) {
 		if n := t.nodes[name]; n != nil && (!follow || n.mode&fs.ModeSymlink == 0) {
 			return name, n, nil
-		}
-	}
-	// Secure disk adapters retain their native link rules, including in-root
-	// absolute targets.
-	if t.lower == nil && t.input != nil && follow {
-		if lower, ok := t.input.lower.(interface{ Resolve(string) (string, error) }); ok {
-			if _, upper := t.nodes[name]; !upper {
-				p, err := lower.Resolve(name)
-				if err == nil {
-					n, err := t.lookup(p)
-					return p, n, err
-				}
-				if !errors.Is(err, fs.ErrNotExist) {
-					return "", nil, err
-				}
-			}
 		}
 	}
 	// Construction never creates descendants of links. An indexed node cannot

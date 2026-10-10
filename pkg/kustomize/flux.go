@@ -3,6 +3,7 @@ package kustomize
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"maps"
 	"path/filepath"
 	"strings"
@@ -88,7 +89,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 			}
 			disk, ignoreKey = ig.fs, ig.key
 		}
-		lower = diskInput{FileSystem: disk, root: root, resolved: make(map[string]diskResolved)}
+		lower = diskInput{FileSystem: disk, root: root, info: make(map[string]fs.FileInfo)}
 	} else {
 		if root == "" {
 			root = string(filepath.Separator) + "flate-source"
@@ -113,8 +114,8 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 			if disk == nil {
 				return output, nil
 			}
-			dir, file, err := disk.CleanedAbs(subDir)
-			if err == nil && file == "" && dir.String() == snap.BuildDir && snap.stillValid(disk, root) {
+			input := newTreeFS(lower, root, nil)
+			if input.IsDir(subDir) && snap.stillValid(input, root) {
 				return output, nil
 			}
 		}
@@ -193,9 +194,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	// read-set can't validate: pre-fetched remote content (injected) or an
 	// unrepresentable read such as a Glob (rec.bypassed).
 	if rec != nil && !injected && !rec.bypassed() {
-		snap := rec.snapshot()
-		snap.BuildDir = subDir
-		cache.render.put(key, snap, out)
+		cache.render.put(key, rec.snapshot(), out)
 	}
 	return out, nil
 }

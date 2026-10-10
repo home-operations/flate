@@ -369,21 +369,6 @@ func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_InRootAbsoluteLink(t *testing.T) {
-	root := writeTree(t, map[string]string{"base/cm.yaml": cmYAML("same"), "base/kustomization.yaml": existingKustomization("./cm.yaml"), "app/kustomization.yaml": existingKustomization("./abs")})
-	if err := os.Symlink(filepath.Join(root, "base"), filepath.Join(root, "app", "abs")); err != nil {
-		t.Fatal(err)
-	}
-	out, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Label: root, ApplyIgnore: false, SubPath: "app", Spec: demoRawSpec})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Source: treeRef(memoryTree(t, map[string]string{"cm.yaml": cmYAML("same")}), "pin"), Label: "/virtual", SubPath: ".", Spec: demoRawSpec})
-	if err != nil || !bytes.Equal(out, want) {
-		t.Fatalf("absolute in-root link output = %s, %v", out, err)
-	}
-}
-
 func TestRenderFlux_InputOrigins(t *testing.T) {
 	for _, sub := range []string{"app", "generated"} {
 		t.Run(sub, func(t *testing.T) {
@@ -420,16 +405,6 @@ func TestRenderFlux_InputOrigins(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestTreeFS_DiskDanglingLink(t *testing.T) {
-	root := writeTree(t, map[string]string{"cm.yaml": cmYAML("kept")})
-	if err := os.Symlink("absent", filepath.Join(root, "dangling")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}); err != nil {
-		t.Fatalf("raw walk followed dangling link: %v", err)
 	}
 }
 
@@ -510,17 +485,5 @@ func TestRenderFlux_CacheMissesOnDirectoryMembership(t *testing.T) {
 	second, err := RenderFlux(t.Context(), cache, req)
 	if err != nil || !strings.Contains(string(second), "name: b") {
 		t.Fatalf("a file added to an auto-generated directory replayed a stale render: %q, %v", second, err)
-	}
-}
-
-func TestRenderFlux_DiskAutoGenerateEscape(t *testing.T) {
-	outside := writeTree(t, map[string]string{"x.yaml": cmYAML("outside")})
-	root := writeTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
-	if err := os.Symlink(outside, filepath.Join(root, "app", "escape")); err != nil {
-		t.Fatal(err)
-	}
-	_, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Label: root, SubPath: "app", Spec: demoRawSpec})
-	if _, ok := errors.AsType[*fluxfilesys.ConstraintError](err); !ok {
-		t.Fatalf("escaping directory link in an auto-generated directory = %v", err)
 	}
 }

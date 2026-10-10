@@ -127,6 +127,11 @@ func newDependencyFailure(err error) *dependencyFailure {
 	return &dependencyFailure{ids: ids, fingerprint: manifest.SHA256Hex(data)}
 }
 
+// same reports whether f and o record the same failed dependencies; nil means none.
+func (f *dependencyFailure) same(o *dependencyFailure) bool {
+	return f == o || f != nil && o != nil && f.fingerprint == o.fingerprint
+}
+
 // Condition is an alias for k8s metav1.Condition. flate stores
 // per-resource conditions so SOPS-encrypted-secret detection,
 // health-check rollups, and Flux's dependsOn ReadyExpr CEL evaluation
@@ -261,12 +266,9 @@ func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure 
 // without reassigning the map entry, preserving the allocation-free hot path.
 func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, failure *dependencyFailure) (conditionRecord, bool) {
 	record := sh.conditions[id]
-	failureChanged := false
-	if cond.Type == ConditionReady && record.failure != failure {
-		failureChanged = record.failure == nil || failure == nil || record.failure.fingerprint != failure.fingerprint
-		if failureChanged {
-			record.failure = failure
-		}
+	failureChanged := cond.Type == ConditionReady && !record.failure.same(failure)
+	if failureChanged {
+		record.failure = failure
 	}
 	for i := range record.conditions {
 		if record.conditions[i].Type != cond.Type {
@@ -292,9 +294,6 @@ func (s *Store) GetStatus(id manifest.NamedResource) (StatusInfo, bool) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	if len(sh.conditions) == 0 {
-		return StatusInfo{}, false
-	}
 	return sh.conditions[id].statusInfo()
 }
 

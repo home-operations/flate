@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -96,6 +97,18 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 		// source.WithRetry wrapper around THIS fetcher — the inner OCI
 		// fetcher is bare (not separately wrapped).
 		art, err := f.oci.Fetch(ctx, synthesizeOCIRepository(r, hc.Chart, hc.Version))
+		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryWithRegistryConfig != nil {
+			retry := missing.RetryWithRegistryConfig
+			wrapped := *missing
+			wrapped.RetryWithRegistryConfig = func(ctx context.Context, configPath string) (*store.SourceArtifact, error) {
+				art, err := retry(ctx, configPath)
+				if art != nil {
+					art.Kind = manifest.KindHelmChart
+				}
+				return art, err
+			}
+			return nil, &wrapped
+		}
 		if err != nil {
 			return nil, err
 		}

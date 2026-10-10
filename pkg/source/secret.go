@@ -1,10 +1,12 @@
 package source
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // MissingSecretError reports that a source's auth SecretRef couldn't be
@@ -21,6 +23,13 @@ type MissingSecretError struct {
 	Secret manifest.NamedResource
 	// Detail is the human reason ("not found", "missing username/password").
 	Detail string
+	// RegistryConfig is the global credential path for an eligible retry;
+	// empty selects Docker's default config.
+	RegistryConfig string
+	// RetryWithRegistryConfig retries using global credentials or reports a
+	// config error. Nil means no matching credential. Call only after rendered
+	// Secrets are exhausted.
+	RetryWithRegistryConfig func(context.Context, string) (*store.SourceArtifact, error)
 }
 
 // Error renders the same string the previous fmt.Errorf form produced, so the

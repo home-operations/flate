@@ -161,7 +161,7 @@ func TestWithRetry_DisabledIsNoOp(t *testing.T) {
 	// Attempts <= 1 must not wrap: a transient error returns after one call.
 	inner := &fakeFetcher{errs: repeatErr(connReset(), 5)}
 	got := WithRetry(inner, RetryConfig{Attempts: 1})
-	if _, err := got.Fetch(context.Background(), testObj()); !errors.Is(err, syscall.ECONNRESET) {
+	if _, err := got.Fetch(t.Context(), testObj()); !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("err = %v, want ECONNRESET", err)
 	}
 	if inner.calls != 1 {
@@ -173,7 +173,7 @@ func TestRetryFetcher_RetriesThenSucceeds(t *testing.T) {
 	t.Parallel()
 	want := &store.SourceArtifact{}
 	inner := &fakeFetcher{errs: []error{connReset(), connReset()}, art: want}
-	art, err := WithRetry(inner, fastRetry(4)).Fetch(context.Background(), testObj())
+	art, err := WithRetry(inner, fastRetry(4)).Fetch(t.Context(), testObj())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestRetryFetcher_FailFastOnPermanent(t *testing.T) {
 	// never retried — the exact concern this design guards against.
 	permanent := fmt.Errorf("%w: no OCIRepository named %q", manifest.ErrInput, "typo")
 	inner := &fakeFetcher{errs: repeatErr(permanent, 5)}
-	_, err := WithRetry(inner, fastRetry(4)).Fetch(context.Background(), testObj())
+	_, err := WithRetry(inner, fastRetry(4)).Fetch(t.Context(), testObj())
 	if !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("err = %v, want ErrInput", err)
 	}
@@ -203,7 +203,7 @@ func TestRetryFetcher_FailFastOnPermanent(t *testing.T) {
 func TestRetryFetcher_ExhaustsAttempts(t *testing.T) {
 	t.Parallel()
 	inner := &fakeFetcher{errs: repeatErr(connReset(), 10)}
-	_, err := WithRetry(inner, fastRetry(4)).Fetch(context.Background(), testObj())
+	_, err := WithRetry(inner, fastRetry(4)).Fetch(t.Context(), testObj())
 	if !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("err = %v, want ECONNRESET", err)
 	}
@@ -214,7 +214,7 @@ func TestRetryFetcher_ExhaustsAttempts(t *testing.T) {
 
 func TestRetryFetcher_ContextCancelStops(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // already cancelled before the first attempt completes
 	inner := &fakeFetcher{errs: repeatErr(connReset(), 10)}
 	// Huge MinWait: if cancellation weren't honored the test would hang.
@@ -225,5 +225,35 @@ func TestRetryFetcher_ContextCancelStops(t *testing.T) {
 	}
 	if inner.calls != 1 {
 		t.Errorf("calls = %d, want 1 (ctx cancel stops the backoff)", inner.calls)
+	}
+}
+
+func TestRetryFetcher_RegistryConfigRetry(t *testing.T) {
+	t.Parallel()
+	want := &store.SourceArtifact{Kind: manifest.KindHelmChart}
+	fallback := &fakeFetcher{errs: []error{connReset()}, art: want}
+	missing, _ := errors.AsType[*MissingSecretError](MissingSecretErr(manifest.KindOCIRepository, "ns", "r", "creds", "not found"))
+	missing.RegistryConfig = "/registry/config.json"
+	missing.RetryWithRegistryConfig = func(ctx context.Context, configPath string) (*store.SourceArtifact, error) {
+		if configPath != missing.RegistryConfig {
+			t.Errorf("config path = %q, want %q", configPath, missing.RegistryConfig)
+		}
+		return fallback.Fetch(ctx, testObj())
+	}
+	inner := &fakeFetcher{errs: []error{missing}}
+	_, err := WithRetry(inner, fastRetry(2)).Fetch(t.Context(), testObj())
+	retry, ok := errors.AsType[*MissingSecretError](err)
+	if !ok || retry.RetryWithRegistryConfig == nil {
+		t.Fatalf("Fetch err = %v, want missing Secret with registry retry", err)
+	}
+	if fallback.calls != 0 || inner.calls != 1 {
+		t.Fatalf("fetch calls = %d, fallback calls = %d, want 1 and 0 before explicit retry", inner.calls, fallback.calls)
+	}
+	art, err := retry.RetryWithRegistryConfig(t.Context(), retry.RegistryConfig)
+	if err != nil || art != want || fallback.calls != 2 {
+		t.Fatalf("fallback = (%v, %v), calls = %d, want success after transient retry", art, err, fallback.calls)
+	}
+	if missing.RetryWithRegistryConfig == nil || retry == missing {
+		t.Fatal("retry wrapper must preserve the fetcher's error")
 	}
 }

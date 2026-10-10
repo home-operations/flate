@@ -180,7 +180,7 @@ func TestE2E_MalformedChartCRD(t *testing.T) {
 			dir := copyTree(t, testdataPath(t, "simple"))
 			testutil.WriteFile(t, dir, "charts/mychart/crds/bad.yaml", "apiVersion: [\n")
 			out, code := runCLIExpectErr(t, "build", "all", "--path", dir,
-				"--skip-crds="+tc.skip, "--concurrency", "2", "--no-progress")
+				"--skip-crds="+tc.skip, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 			if code != 1 {
 				t.Fatalf("got exit %d, want 1:\n%s", code, out)
 			}

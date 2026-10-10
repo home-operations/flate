@@ -16,7 +16,7 @@ var ErrConflict = errors.New("file/directory conflict")
 var ErrSealed = errors.New("builder is sealed")
 
 // Builder owns mutable construction state and must not be copied or shared
-// between renders or source producers. Its reads use the sealed Tree's resolver.
+// between renders or source producers. Reads can memoize lower metadata.
 type Builder struct {
 	view
 	sealed bool
@@ -24,13 +24,16 @@ type Builder struct {
 
 // NewBuilder creates a private overlay over lower, or an empty source builder
 // when lower is nil. Only upper directory indexes and inserted bytes are copied.
-func NewBuilder(lower *Tree) *Builder {
+func NewBuilder(lower fs.FS) *Builder {
+	indexed, isTree := lower.(*Tree)
 	b := &Builder{
 		nodes:   make(map[string]*node),
-		lower:   lower,
+		lower:   indexed,
 		removed: make(map[string]struct{})}
-	if lower == nil {
+	if lower == nil || (isTree && indexed == nil) {
 		b.nodes["."] = &node{name: ".", mode: fs.ModeDir | 0o755}
+	} else if indexed == nil || indexed.input != nil {
+		b.input = &foreignInput{lower: lower, memo: make(map[string]*node)}
 	}
 	return b
 }
@@ -54,12 +57,19 @@ func (b *Builder) directory(name string) (*node, error) {
 		return n, nil
 	}
 	n := &node{name: path.Base(name), mode: fs.ModeDir | 0o755}
-	if lower := b.lookup(name); lower != nil {
+	if lower, err := b.lookup(name); err == nil {
 		if !lower.IsDir() {
 			return nil, ErrConflict
 		}
 		*n = *lower
-		n.children = slices.Clone(lower.children)
+		if lower.foreign != nil {
+			n.foreign = &foreignNode{source: b.input.lower, path: name, info: lower, upper: true}
+			n.children = nil
+		} else {
+			n.children = slices.Clone(lower.children)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
 	}
 	if err := b.put(name, n); err != nil {
 		return nil, err
@@ -73,9 +83,7 @@ func (b *Builder) put(name string, n *node) error {
 		if err != nil {
 			return err
 		}
-		i, exists := slices.BinarySearchFunc(parent.children, n.name, func(e fs.DirEntry, name string) int {
-			return strings.Compare(e.Name(), name)
-		})
+		i, exists := slices.BinarySearchFunc(parent.children, n.name, compareEntry)
 		if exists {
 			parent.children[i] = n
 		} else {
@@ -114,8 +122,10 @@ func (b *Builder) AddFile(name string, data []byte, mode fs.FileMode) error {
 	if p == "." || mode.Type() != 0 {
 		return &fs.PathError{Op: "addfile", Path: name, Err: fs.ErrInvalid}
 	}
-	if n := b.lookup(p); n != nil && n.mode.Type() != 0 {
+	if n, err := b.lookup(p); err == nil && n.mode.Type() != 0 {
 		return &fs.PathError{Op: "addfile", Path: name, Err: ErrConflict}
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
 	n := &node{name: path.Base(p), mode: mode, data: bytes.Clone(data)}
 	if err := b.put(p, n); err != nil {
@@ -134,8 +144,10 @@ func (b *Builder) AddSymlink(name, target string) error {
 	if p == "." || strings.ContainsRune(target, 0) {
 		return &fs.PathError{Op: "addsymlink", Path: name, Err: fs.ErrInvalid}
 	}
-	if n := b.lookup(p); n != nil && n.mode&fs.ModeSymlink == 0 {
+	if n, err := b.lookup(p); err == nil && n.mode&fs.ModeSymlink == 0 {
 		return &fs.PathError{Op: "addsymlink", Path: name, Err: ErrConflict}
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
 	n := &node{name: path.Base(p), mode: fs.ModeSymlink | 0o777, target: target}
 	if err := b.put(p, n); err != nil {
@@ -162,16 +174,16 @@ func (b *Builder) RemoveAll(name string) error {
 		return nil
 	}
 	parentPath := path.Dir(p)
-	if n := b.lookup(parentPath); n == nil || !n.IsDir() {
+	if n, err := b.lookup(parentPath); errors.Is(err, fs.ErrNotExist) || (err == nil && !n.IsDir()) {
 		return nil
+	} else if err != nil {
+		return err
 	}
 	parent, err := b.directory(parentPath)
 	if err != nil {
 		return &fs.PathError{Op: "removeall", Path: name, Err: err}
 	}
-	i, exists := slices.BinarySearchFunc(parent.children, path.Base(p), func(e fs.DirEntry, name string) int {
-		return strings.Compare(e.Name(), name)
-	})
+	i, exists := slices.BinarySearchFunc(parent.children, path.Base(p), compareEntry)
 	if exists {
 		parent.children = slices.Delete(parent.children, i, i+1)
 	}
@@ -184,6 +196,9 @@ func (b *Builder) Build() (*Tree, error) {
 		return nil, &fs.PathError{Op: "build", Path: ".", Err: ErrSealed}
 	}
 	b.sealed = true
+	if b.input != nil {
+		b.input.memo = nil
+	}
 	t := &Tree{view: b.view}
 	b.view = view{}
 	return t, nil

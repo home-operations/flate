@@ -20,14 +20,23 @@ var ErrEscape = errors.New("path escapes tree")
 // ErrLoop identifies resolution exceeding eight symlink traversals.
 var ErrLoop = errors.New("too many symlinks")
 
-// Tree is a sealed filesystem. Its bytes and directory indexes are immutable,
-// so readers may share it without synchronization. Public slices are copies.
+// Tree is a sealed filesystem. An immutable lower permits concurrent readers
+// without synchronization. Lower filesystems MUST remain read-only for the
+// tree lifetime. Public slices are copies.
 type Tree struct{ view }
 
 type view struct {
 	nodes   map[string]*node
 	lower   *Tree
 	removed map[string]struct{}
+	input   *foreignInput
+}
+
+// An extra indirection keeps foreign I/O escape analysis off indexed maps.
+// Only private builders memoize metadata; sealed reads never mutate it.
+type foreignInput struct {
+	lower fs.FS
+	memo  map[string]*node
 }
 
 type node struct {
@@ -36,43 +45,83 @@ type node struct {
 	data     []byte
 	target   string
 	children []fs.DirEntry
+	foreign  *foreignNode
 }
 
-func (n *node) Name() string               { return n.name }
-func (n *node) Mode() fs.FileMode          { return n.mode }
-func (n *node) Type() fs.FileMode          { return n.mode.Type() }
-func (n *node) IsDir() bool                { return n.mode.IsDir() }
-func (n *node) ModTime() time.Time         { return time.Time{} }
+type foreignNode struct {
+	source fs.FS
+	path   string
+	info   fs.FileInfo
+	upper  bool
+}
+
+func (n *node) Name() string      { return n.name }
+func (n *node) Mode() fs.FileMode { return n.mode }
+func (n *node) Type() fs.FileMode { return n.mode.Type() }
+func (n *node) IsDir() bool       { return n.mode.IsDir() }
+func (n *node) ModTime() time.Time {
+	if n.foreign != nil {
+		return n.foreign.info.ModTime()
+	}
+	return time.Time{}
+}
 func (n *node) Sys() any                   { return nil }
 func (n *node) Info() (fs.FileInfo, error) { return n, nil }
 func (n *node) Size() int64 {
+	if n.foreign != nil {
+		return n.foreign.info.Size()
+	}
 	if n.mode&fs.ModeSymlink != 0 {
 		return int64(len(n.target))
 	}
 	return int64(len(n.data))
 }
 
-func (t *view) lookup(name string) *node {
+func (t *view) lookup(name string) (*node, error) {
 	if n := t.nodes[name]; n != nil {
-		return n
+		return n, nil
 	}
-	if t.lower == nil {
-		return nil
+	if t.lower == nil && t.input == nil {
+		return nil, fs.ErrNotExist
 	}
+	if t.masked(name) {
+		return nil, fs.ErrNotExist
+	}
+	if t.lower != nil {
+		return t.lower.lookup(name)
+	}
+	if n := t.input.memo[name]; n != nil {
+		return n, nil
+	}
+	info, err := fs.Lstat(t.input.lower, name)
+	if err != nil {
+		return nil, err
+	}
+	n := &node{name: path.Base(name), mode: info.Mode(), foreign: &foreignNode{source: t.input.lower, path: name, info: info}}
+	if n.mode&fs.ModeSymlink != 0 {
+		n.target, err = fs.ReadLink(t.input.lower, name)
+	}
+	if err == nil && t.input.memo != nil {
+		t.input.memo[name] = n
+	}
+	return n, err
+}
+
+func (t *view) masked(name string) bool {
 	for p := name; ; p = path.Dir(p) {
 		if _, ok := t.removed[p]; ok {
-			return nil
+			return true
 		}
 		if p == "." {
 			break
 		}
 	}
-	return t.lower.lookup(name)
+	return false
 }
 
 // Resolve follows links before subsequent parent components and returns a
 // canonical slash path. Unlike the io/fs methods, it accepts unclean relative
-// paths. It never consults the host filesystem.
+// paths. Memory links stay confined; disk adapters retain their native rules.
 func (t *view) Resolve(name string) (string, error) {
 	p, _, err := t.resolve(name, true)
 	if err != nil {
@@ -88,15 +137,45 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 	if path.IsAbs(name) {
 		return "", nil, ErrEscape
 	}
-	// Construction never creates descendants of links. An indexed node cannot
-	// have an unresolved intermediate link, even in a merged overlay.
+	// Indexed memory nodes cannot have unresolved intermediate links.
 	if fs.ValidPath(name) {
-		if n := t.lookup(name); n != nil && (!follow || n.mode&fs.ModeSymlink == 0) {
+		if n := t.nodes[name]; n != nil && (!follow || n.mode&fs.ModeSymlink == 0) {
 			return name, n, nil
 		}
 	}
+	// Secure disk adapters retain their native link rules, including in-root
+	// absolute targets. Canonical targets still pass through the upper masks.
+	if t.lower == nil && t.input != nil && follow {
+		if lower, ok := t.input.lower.(interface{ Resolve(string) (string, error) }); ok {
+			if _, upper := t.nodes[name]; !upper {
+				p, err := lower.Resolve(name)
+				if err == nil {
+					if t.masked(name) {
+						return "", nil, fs.ErrNotExist
+					}
+					n, err := t.lookup(p)
+					return p, n, err
+				}
+				if !errors.Is(err, fs.ErrNotExist) {
+					return "", nil, err
+				}
+			}
+		}
+	}
+	// Construction never creates descendants of links. An indexed node cannot
+	// have an unresolved intermediate link, even in a merged overlay.
+	if fs.ValidPath(name) && (t.lower != nil || t.input == nil) {
+		if n, err := t.lookup(name); err == nil && (!follow || n.mode&fs.ModeSymlink == 0) {
+			return name, n, nil
+		} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", nil, err
+		}
+	}
 	current := "."
-	n := t.lookup(current)
+	n, err := t.lookup(current)
+	if err != nil {
+		return "", nil, err
+	}
 	hops := 0
 	for remaining := name; remaining != ""; {
 		part, rest, slash := strings.Cut(remaining, "/")
@@ -109,16 +188,19 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 				return "", nil, ErrEscape
 			}
 			current = path.Dir(current)
-			n = t.lookup(current)
+			n, err = t.lookup(current)
+			if err != nil {
+				return "", nil, err
+			}
 			continue
 		}
 		next := part
 		if current != "." {
 			next = current + "/" + part
 		}
-		n = t.lookup(next)
-		if n == nil {
-			return "", nil, fs.ErrNotExist
+		n, err = t.lookup(next)
+		if err != nil {
+			return "", nil, err
 		}
 		if n.mode&fs.ModeSymlink != 0 && (follow || slash) {
 			if path.IsAbs(n.target) {
@@ -135,7 +217,10 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 			if n.target == "" {
 				return "", nil, fs.ErrNotExist
 			}
-			n = t.lookup(current)
+			n, err = t.lookup(current)
+			if err != nil {
+				return "", nil, err
+			}
 			continue
 		}
 		if slash && !n.IsDir() {
@@ -171,6 +256,23 @@ func (t *view) Open(name string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	if n.foreign != nil {
+		if !n.IsDir() {
+			f, err := n.foreign.source.Open(n.foreign.path)
+			if err != nil {
+				return nil, err
+			}
+			return &foreignFile{File: f, node: n}, nil
+		}
+		entries, err := t.entries(n)
+		if err != nil {
+			return nil, err
+		}
+		opened := *n
+		opened.children = entries
+		opened.foreign = nil
+		n = &opened
+	}
 	return &file{node: n, name: name, reader: *bytes.NewReader(n.data)}, nil
 }
 
@@ -182,6 +284,9 @@ func (t *view) ReadFile(name string) ([]byte, error) {
 	}
 	if n.IsDir() {
 		return nil, &fs.PathError{Op: "readfile", Path: name, Err: fs.ErrInvalid}
+	}
+	if n.foreign != nil {
+		return fs.ReadFile(n.foreign.source, n.foreign.path)
 	}
 	return bytes.Clone(n.data), nil
 }
@@ -195,8 +300,50 @@ func (t *view) ReadDir(name string) ([]fs.DirEntry, error) {
 	if !n.IsDir() {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
 	}
-	return slices.Clone(n.children), nil
+	entries, err := t.entries(n)
+	return slices.Clone(entries), err
 }
+
+func (t *view) entries(n *node) ([]fs.DirEntry, error) {
+	if n.foreign == nil || (!n.foreign.upper && n.children != nil) {
+		return n.children, nil
+	}
+	var memo map[string]*node
+	if t.input != nil {
+		memo = t.input.memo
+	}
+	var entries []fs.DirEntry
+	if cached := memo[n.foreign.path]; cached != nil {
+		entries = cached.children
+	}
+	if entries == nil {
+		var err error
+		entries, err = fs.ReadDir(n.foreign.source, n.foreign.path)
+		if err != nil {
+			return nil, err
+		}
+		if cached := memo[n.foreign.path]; cached != nil {
+			cached.children = entries
+		}
+	}
+	if !n.foreign.upper {
+		return entries, nil
+	}
+	merged := make([]fs.DirEntry, 0, len(entries)+len(n.children))
+	for _, e := range entries {
+		if len(t.removed) != 0 && t.masked(path.Join(n.foreign.path, e.Name())) {
+			continue
+		}
+		if _, exists := slices.BinarySearchFunc(n.children, e.Name(), compareEntry); !exists {
+			merged = append(merged, e)
+		}
+	}
+	merged = append(merged, n.children...)
+	slices.SortFunc(merged, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return merged, nil
+}
+
+func compareEntry(e fs.DirEntry, name string) int { return strings.Compare(e.Name(), name) }
 
 // Stat follows the final link.
 func (t *view) Stat(name string) (fs.FileInfo, error) {
@@ -269,12 +416,31 @@ func (t *view) walk(name string, n *node, fn fs.WalkDirFunc) error {
 		}
 		return err
 	}
-	for _, entry := range n.children {
+	entries := n.children
+	if n.foreign != nil {
+		var err error
+		entries, err = t.entries(n)
+		if err != nil {
+			return fn(name, n, err)
+		}
+	}
+	for _, entry := range entries {
 		p := entry.Name()
 		if name != "." {
 			p = name + "/" + p
 		}
-		if err := t.walk(p, entry.(*node), fn); err != nil {
+		child, ok := entry.(*node)
+		if !ok {
+			var err error
+			child, err = t.lookup(p)
+			if err != nil {
+				if err := fn(p, entry, err); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		if err := t.walk(p, child, fn); err != nil {
 			if err == fs.SkipDir {
 				break
 			}

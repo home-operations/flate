@@ -57,3 +57,33 @@ func (f *file) Close() error {
 	f.closed = true
 	return nil
 }
+
+type foreignFile struct {
+	fs.File
+	node *node
+}
+
+func (f *foreignFile) Stat() (fs.FileInfo, error) {
+	if f.File == nil {
+		return nil, fs.ErrClosed
+	}
+	if _, err := f.File.Stat(); err != nil {
+		return nil, err
+	}
+	return f.node, nil
+}
+func (f *foreignFile) Read(p []byte) (int, error) {
+	if f.File == nil {
+		return 0, fs.ErrClosed
+	}
+	return f.File.Read(p)
+}
+func (f *foreignFile) Close() error {
+	if f.File == nil {
+		return fs.ErrClosed
+	}
+	err := f.File.Close()
+	f.File = nil
+	f.node = nil
+	return err
+}

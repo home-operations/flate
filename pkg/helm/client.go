@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 
-	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/cli"
@@ -276,22 +274,12 @@ func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtif
 	return r.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
-// LocateChart returns the chart path or ownership label referenced by hr.
+// LocateChart returns the chart path referenced by hr.
 // The caller is responsible for cleanup (chart paths inside the cache
 // are reused across calls; paths inside the tmp dir are not).
 func (c *Client) LocateChart(hr *manifest.HelmRelease) (string, error) {
 	if hr == nil {
 		return "", errors.New("nil HelmRelease")
-	}
-	if art := c.resolveLocalSource(hr); art != nil && (art.FS != nil || art.Key != "") {
-		if art.FS == nil || art.Key == "" {
-			return "", fmt.Errorf("%w: source artifact content or identity unavailable", manifest.ErrInput)
-		}
-		name, err := memoryChartPath(art.FS, hr)
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(art.LocalPath, filepath.FromSlash(name)), nil
 	}
 	switch hr.Chart.RepoKind {
 	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact:
@@ -325,21 +313,7 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	if hr == nil {
 		return ChartLoadResult{}, fmt.Errorf("%w: nil HelmRelease", manifest.ErrInput)
 	}
-	var input fs.FS
-	var name, chartPath, cacheKey string
-	var err error
-	if art := c.resolveLocalSource(hr); art != nil && (art.FS != nil || art.Key != "") {
-		if art.FS == nil || art.Key == "" {
-			return ChartLoadResult{}, fmt.Errorf("%w: source artifact content or identity unavailable", manifest.ErrInput)
-		}
-		input = art.FS
-		name, err = memoryChartPath(input, hr)
-		chartPath = filepath.Join(art.LocalPath, filepath.FromSlash(name))
-		cacheKey = art.Key + "\x00" + name
-	} else {
-		chartPath, err = c.LocateChart(hr)
-		cacheKey = chartPath
-	}
+	chartPath, err := c.LocateChart(hr)
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
@@ -349,7 +323,7 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	// path is a stable string but the underlying bytes may have
 	// changed; without the stat check we'd serve the stale chart.
 	needsFingerprint := c.templateCache != nil || len(hr.ChartValuesFiles) > 0
-	if ch, fp, ok := c.lookupChart(cacheKey, input); ok && (!needsFingerprint || fp != "") {
+	if ch, fp, ok := c.lookupCachedChart(chartPath); ok && (!needsFingerprint || fp != "") {
 		return ChartLoadResult{Path: chartPath, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
@@ -357,7 +331,7 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	// reconciles of the same base chart (bjw-s app-template referenced
 	// by 30+ HRs, podinfo across multiple test envs) issue exactly one
 	// loader.Load instead of N. Distinct paths still parse in parallel.
-	release, err := c.chartLoadLocks.Acquire(ctx, cacheKey)
+	release, err := c.chartLoadLocks.Acquire(ctx, chartPath)
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
@@ -365,17 +339,13 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 
 	// Re-check under the per-path lock — another goroutine may have
 	// populated the cache while we waited.
-	ch, fp, cached := c.lookupChart(cacheKey, input)
+	ch, fp, cached := c.lookupCachedChart(chartPath)
 	if cached && (!needsFingerprint || fp != "") {
 		return ChartLoadResult{Path: chartPath, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
 	if !cached {
-		if input != nil {
-			ch, err = loadChartFS(ctx, input, name)
-		} else {
-			ch, err = loadDiskChart(ctx, chartPath)
-		}
+		ch, err = loader.Load(chartPath)
 	}
 	if err != nil {
 		// A truncated/corrupt chart tgz left on disk (process killed
@@ -384,9 +354,7 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 		// checks in LocateChart see the file, return its path, and we
 		// re-error here on every subsequent run. Removing the file
 		// lets the next reconcile re-pull cleanly.
-		if input == nil {
-			_ = os.Remove(chartPath)
-		}
+		_ = os.Remove(chartPath)
 		if _, ok := errors.AsType[chart.ValidationError](err); ok {
 			err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
 		}
@@ -401,13 +369,10 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	if needsFingerprint {
 		fingerprint = chartFingerprint(ch)
 	}
-	mtime, size, ok := int64(0), int64(0), true
-	if input == nil {
-		mtime, size, ok = chartCacheFingerprint(chartPath)
-	}
+	mtime, size, ok := chartCacheFingerprint(chartPath)
 	if ok {
 		c.chartMu.Lock()
-		c.chartCache[cacheKey] = chartCacheEntry{
+		c.chartCache[chartPath] = chartCacheEntry{
 			chart:       ch,
 			mtime:       mtime,
 			size:        size,
@@ -441,9 +406,14 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 	if src == nil {
 		return nil
 	}
-	out := *src
+	// Chart and metadata share one allocation; each render owns both copies.
+	out := struct {
+		chart.Chart
+		metadata chart.Metadata
+	}{Chart: *src}
 	if src.Metadata != nil {
-		md := *src.Metadata
+		md := &out.metadata
+		*md = *src.Metadata
 		if len(src.Metadata.Dependencies) > 0 {
 			md.Dependencies = make([]*chart.Dependency, len(src.Metadata.Dependencies))
 			for i, d := range src.Metadata.Dependencies {
@@ -454,7 +424,7 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 				md.Dependencies[i] = &dc
 			}
 		}
-		out.Metadata = &md
+		out.Metadata = md
 	}
 	out.Values = manifest.DeepCopyMap(src.Values)
 	if subs := src.Dependencies(); len(subs) > 0 {
@@ -464,7 +434,7 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 		}
 		out.SetDependencies(clones...)
 	}
-	return &out
+	return &out.Chart
 }
 
 // lookupCachedChart returns the cached chart only when the on-disk
@@ -514,37 +484,4 @@ func chartCacheFingerprint(path string) (mtime, size int64, ok bool) {
 		return 0, 0, false
 	}
 	return cy.ModTime().UnixNano(), cy.Size(), true
-}
-
-func (c *Client) lookupChart(key string, input fs.FS) (*chart.Chart, string, bool) {
-	if input == nil {
-		return c.lookupCachedChart(key)
-	}
-	c.chartMu.RLock()
-	e, ok := c.chartCache[key]
-	c.chartMu.RUnlock()
-	return e.chart, e.fingerprint, ok
-}
-
-func loadDiskChart(ctx context.Context, name string) (*chart.Chart, error) {
-	info, err := os.Stat(name)
-	if err != nil {
-		return nil, err
-	}
-	if info.IsDir() {
-		return loader.LoadDir(name)
-	}
-	f, err := os.Open(name) //nolint:gosec // SDK disk inputs are explicit chart paths.
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	if err := archive.EnsureArchive(name, f); err != nil {
-		return nil, err
-	}
-	files, err := archiveFiles(ctx, f)
-	if err != nil {
-		return nil, err
-	}
-	return loader.LoadFiles(files)
 }

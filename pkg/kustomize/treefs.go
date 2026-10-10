@@ -1,8 +1,8 @@
 package kustomize
 
 import (
+	"bytes"
 	"errors"
-	"io"
 	"io/fs"
 	"path"
 	"path/filepath"
@@ -22,7 +22,6 @@ type treeFS struct {
 	lower   fs.FS
 	root    string
 	rec     *readSet
-	bypass  bool
 	changed map[string]struct{}
 }
 
@@ -274,7 +273,6 @@ func (t *treeFS) ReadDir(name string) ([]string, error) {
 }
 
 func (t *treeFS) Glob(pattern string) ([]string, error) {
-	t.bypass = true
 	if t.rec != nil {
 		t.rec.markBypass()
 	}
@@ -359,8 +357,7 @@ func (t *treeFS) RemoveAll(name string) error {
 }
 
 type writeFile struct {
-	data   []byte
-	offset int
+	data   bytes.Buffer
 	tree   *treeFS
 	name   string
 	closed bool
@@ -371,7 +368,7 @@ func (f *writeFile) Close() error {
 		return fs.ErrClosed
 	}
 	f.closed = true
-	return f.tree.WriteFile(f.name, f.data)
+	return f.tree.WriteFile(f.name, f.data.Bytes())
 }
 
 type writeInfo struct {
@@ -390,30 +387,19 @@ func (f *writeFile) Stat() (fs.FileInfo, error) {
 	if f.closed {
 		return nil, fs.ErrClosed
 	}
-	return writeInfo{name: filepath.Base(f.name), size: int64(len(f.data))}, nil
+	return writeInfo{name: filepath.Base(f.name), size: int64(f.data.Len())}, nil
 }
 func (f *writeFile) Write(data []byte) (int, error) {
 	if f.closed {
 		return 0, fs.ErrClosed
 	}
-	end := f.offset + len(data)
-	if end > len(f.data) {
-		f.data = append(f.data, make([]byte, end-len(f.data))...)
-	}
-	copy(f.data[f.offset:], data)
-	f.offset = end
-	return len(data), nil
+	return f.data.Write(data)
 }
 func (f *writeFile) Read(data []byte) (int, error) {
 	if f.closed {
 		return 0, fs.ErrClosed
 	}
-	if f.offset == len(f.data) {
-		return 0, io.EOF
-	}
-	n := copy(data, f.data[f.offset:])
-	f.offset += n
-	return n, nil
+	return f.data.Read(data)
 }
 
 func (t *treeFS) Create(name string) (filesys.File, error) {

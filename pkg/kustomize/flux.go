@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
@@ -121,7 +122,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	memFS := newTreeFS(lower, root, diskRec)
 	// Preserve unresolved parent components until the common resolver follows
 	// intermediate links; filepath.Join would clean them too early.
-	subDir := root + string(filepath.Separator) + req.SubPath
+	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	canonicalDir, file, err := memFS.CleanedAbs(subDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s: %w", manifest.ErrInput, req.SubPath, err)
@@ -186,7 +187,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	// Persist for the next run, unless the build consumed inputs the disk
 	// read-set can't validate: pre-fetched remote content (injected) or an
 	// unrepresentable read such as a Glob (rec.bypassed).
-	if rec != nil && !injected && !rec.bypassed() && !memFS.bypass {
+	if rec != nil && !injected && !rec.bypassed() {
 		cache.render.put(key, rec.snapshot(), out)
 	}
 	return out, nil

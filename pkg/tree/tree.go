@@ -144,15 +144,12 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 		}
 	}
 	// Secure disk adapters retain their native link rules, including in-root
-	// absolute targets. Canonical targets still pass through the upper masks.
+	// absolute targets.
 	if t.lower == nil && t.input != nil && follow {
 		if lower, ok := t.input.lower.(interface{ Resolve(string) (string, error) }); ok {
 			if _, upper := t.nodes[name]; !upper {
 				p, err := lower.Resolve(name)
 				if err == nil {
-					if t.masked(name) {
-						return "", nil, fs.ErrNotExist
-					}
 					n, err := t.lookup(p)
 					return p, n, err
 				}
@@ -258,11 +255,7 @@ func (t *view) Open(name string) (fs.File, error) {
 	}
 	if n.foreign != nil {
 		if !n.IsDir() {
-			f, err := n.foreign.source.Open(n.foreign.path)
-			if err != nil {
-				return nil, err
-			}
-			return &foreignFile{File: f, node: n}, nil
+			return n.foreign.source.Open(n.foreign.path)
 		}
 		entries, err := t.entries(n)
 		if err != nil {

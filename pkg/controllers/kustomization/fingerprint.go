@@ -4,6 +4,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // kustomizationFingerprint produces a stable hash of the post-Prepare
@@ -29,4 +30,11 @@ func kustomizationFingerprint(ks *manifest.Kustomization, sourceRoot string) str
 		PostBuildSubstitute: ks.PostBuildSubstitute,
 		Spec:                ks.KustomizationSpec,
 	})
+}
+
+func fingerprintSource(source *store.SourceArtifact) string {
+	if source.Key != "" {
+		return source.LocalPath + "\x00" + source.Key
+	}
+	return source.LocalPath
 }

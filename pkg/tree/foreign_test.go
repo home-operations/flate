@@ -2,8 +2,10 @@ package tree_test
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"slices"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -104,4 +106,46 @@ func TestBuilder_ForeignDirectoriesStayLazy(t *testing.T) {
 	if !slices.Equal(names, []string{"file", "generated", "later"}) {
 		t.Fatalf("stacked foreign listing: %v", names)
 	}
+}
+
+func TestBuilder_RemoveAllMasksForeignListing(t *testing.T) {
+	b := tree.NewBuilder(fstest.MapFS{"d/a": {Data: []byte("a")}, "d/b": {Data: []byte("b")}, "d/sub/c": {Data: []byte("c")}})
+	must(t, b.RemoveAll("d/a"))
+	must(t, b.RemoveAll("d/sub"))
+	must(t, b.AddFile("d/z", []byte("z"), 0o644))
+	entries, err := b.ReadDir("d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if !slices.Equal(names, []string{"b", "z"}) {
+		t.Fatalf("removed lower children listed: %v", names)
+	}
+}
+
+func TestBuilder_SealedForeignOverlayConcurrentReads(t *testing.T) {
+	lower := fstest.MapFS{}
+	for i := range 64 {
+		lower[fmt.Sprintf("d%d/f", i)] = &fstest.MapFile{Data: []byte("x")}
+	}
+	b := tree.NewBuilder(lower)
+	must(t, b.AddFile("upper/f", []byte("u"), 0o644))
+	sealed := build(t, b)
+	var wg sync.WaitGroup
+	for g := range 4 {
+		wg.Go(func() {
+			for i := range 64 {
+				if _, err := fs.ReadFile(sealed, fmt.Sprintf("d%d/f", (i+g)%64)); err != nil {
+					t.Error(err)
+				}
+				if _, err := fs.ReadDir(sealed, fmt.Sprintf("d%d", i)); err != nil {
+					t.Error(err)
+				}
+			}
+		})
+	}
+	wg.Wait()
 }

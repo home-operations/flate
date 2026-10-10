@@ -15,6 +15,8 @@ import (
 
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/tree"
 )
@@ -367,7 +369,7 @@ func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_AbsoluteInRootLinkRewritten(t *testing.T) {
+func TestRenderFlux_InRootAbsoluteLink(t *testing.T) {
 	root := writeTree(t, map[string]string{"base/cm.yaml": cmYAML("same"), "base/kustomization.yaml": existingKustomization("./cm.yaml"), "app/kustomization.yaml": existingKustomization("./abs")})
 	if err := os.Symlink(filepath.Join(root, "base"), filepath.Join(root, "app", "abs")); err != nil {
 		t.Fatal(err)
@@ -440,5 +442,85 @@ func TestRenderFlux_ArtifactIdentity(t *testing.T) {
 		if err != nil || !strings.Contains(string(out), "name: "+pin) {
 			t.Fatalf("artifact key reused stale render: %s %v", out, err)
 		}
+	}
+}
+
+func TestRenderFlux_SubPathLeadingSlash(t *testing.T) {
+	files := map[string]string{"app/cm.yaml": cmYAML("x"), "app/kustomization.yaml": existingKustomization("./cm.yaml")}
+	root := writeTree(t, files)
+	want, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Label: root, SubPath: "app", Spec: demoRawSpec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, subPath := range []string{"/app", "//app", "/./app"} {
+		t.Run(subPath, func(t *testing.T) {
+			got, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Label: root, SubPath: subPath, Spec: demoRawSpec})
+			if err != nil || string(got) != string(want) {
+				t.Fatalf("disk render = %q, %v", got, err)
+			}
+			source := treeRef(memoryTree(t, files), "pin")
+			got, err = RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Source: source, Label: "/virtual", SubPath: subPath, Spec: demoRawSpec})
+			if err != nil || string(got) != string(want) {
+				t.Fatalf("memory render = %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestRenderFlux_SubPathMustBeDirectory(t *testing.T) {
+	files := map[string]string{"app/cm.yaml": cmYAML("x"), "app/kustomization.yaml": existingKustomization("./cm.yaml")}
+	root := writeTree(t, files)
+	for name, req := range map[string]RenderRequest{
+		"disk":   {Label: root, SubPath: "app/cm.yaml", Spec: demoRawSpec},
+		"memory": {Source: treeRef(memoryTree(t, files), "pin"), Label: "/virtual", SubPath: "app/cm.yaml", Spec: demoRawSpec},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := RenderFlux(t.Context(), NewTreeCache(), req); !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("file spec.path = %v", err)
+			}
+		})
+	}
+}
+
+func TestRenderFlux_ArtifactWithoutPayloadOrIdentityRejected(t *testing.T) {
+	label := writeTree(t, map[string]string{"cm.yaml": cmYAML("host")})
+	for name, source := range map[string]*store.SourceArtifact{
+		"released":     {LocalPath: label, Key: "pin"},
+		"unidentified": {LocalPath: label, FS: memoryTree(t, map[string]string{"cm.yaml": cmYAML("memory")})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Source: source, SubPath: ".", Spec: demoRawSpec})
+			if !errors.Is(err, manifest.ErrInput) || strings.Contains(string(out), "host") {
+				t.Fatalf("render = %q, %v", out, err)
+			}
+		})
+	}
+}
+
+func TestRenderFlux_CacheMissesOnDirectoryMembership(t *testing.T) {
+	root := writeTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
+	cache := NewTreeCache()
+	cache.SetRenderCache(t.TempDir(), 1<<20)
+	req := RenderRequest{Label: root, SubPath: "app", Spec: demoRawSpec}
+	first, err := RenderFlux(t.Context(), cache, req)
+	if err != nil || !strings.Contains(string(first), "name: a") {
+		t.Fatalf("first = %q, %v", first, err)
+	}
+	testutil.WriteFile(t, root, "app/b.yaml", cmYAML("b"))
+	second, err := RenderFlux(t.Context(), cache, req)
+	if err != nil || !strings.Contains(string(second), "name: b") {
+		t.Fatalf("a file added to an auto-generated directory replayed a stale render: %q, %v", second, err)
+	}
+}
+
+func TestRenderFlux_DiskAutoGenerateEscape(t *testing.T) {
+	outside := writeTree(t, map[string]string{"x.yaml": cmYAML("outside")})
+	root := writeTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
+	if err := os.Symlink(outside, filepath.Join(root, "app", "escape")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Label: root, SubPath: "app", Spec: demoRawSpec})
+	if _, ok := errors.AsType[*fluxfilesys.ConstraintError](err); !ok {
+		t.Fatalf("escaping directory link in an auto-generated directory = %v", err)
 	}
 }

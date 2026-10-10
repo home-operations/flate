@@ -155,3 +155,16 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestKustomizationFingerprint_ArtifactKey(t *testing.T) {
+	ks := &manifest.Kustomization{Path: "app"}
+	first := &store.SourceArtifact{LocalPath: "/label", Key: "one"}
+	second := &store.SourceArtifact{LocalPath: "/label", Key: "two"}
+	if kustomizationFingerprint(ks, fingerprintSource(first)) == kustomizationFingerprint(ks, fingerprintSource(second)) {
+		t.Fatal("changed artifact key did not change the render fingerprint")
+	}
+	first.Key = ""
+	if got := fingerprintSource(first); got != first.LocalPath {
+		t.Fatalf("disk fingerprint source = %q, want %q", got, first.LocalPath)
+	}
+}

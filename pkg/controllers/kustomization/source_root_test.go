@@ -43,8 +43,8 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
-	if got != "/repo" {
-		t.Errorf("resolveSourceRoot=%q, want %q (bootstrap LocalPath)", got, "/repo")
+	if got.LocalPath != "/repo" {
+		t.Errorf("resolveSourceRoot=%q, want %q (bootstrap LocalPath)", got.LocalPath, "/repo")
 	}
 }
 
@@ -82,8 +82,8 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
-	if got != "/external" {
-		t.Errorf("resolveSourceRoot=%q, want %q (explicit ref)", got, "/external")
+	if got.LocalPath != "/external" {
+		t.Errorf("resolveSourceRoot=%q, want %q (explicit ref)", got.LocalPath, "/external")
 	}
 }
 

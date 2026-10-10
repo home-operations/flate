@@ -24,7 +24,7 @@ func testOverlayFS(t *testing.T, root string) filesys.FileSystem {
 	if err != nil {
 		t.Fatalf("secure fs: %v", err)
 	}
-	return newOverlayFS(disk, nil)
+	return newTreeFS(diskInput{FileSystem: disk, root: root}, root, nil)
 }
 
 // testIgnoreOverlayFS is testOverlayFS with the source-controller ignore
@@ -40,7 +40,7 @@ func testIgnoreOverlayFS(t *testing.T, root string) filesys.FileSystem {
 	if err != nil {
 		t.Fatalf("matcher: %v", err)
 	}
-	return newOverlayFS(newIgnoreFS(disk, root, matcher), nil)
+	return newTreeFS(diskInput{FileSystem: newIgnoreFS(disk, root, matcher), root: root}, root, nil)
 }
 
 // These tests pin flate's in-memory generateManifest to flux's real on-disk
@@ -412,15 +412,8 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 	}
 }
 
-// TestFindOrGenerate_MemoryPopulatedSubdirNotDescended is the zariel cnpg-system
-// regression. An auto-generated parent (no kustomization.yaml) over a subdir
-// that DOES carry a kustomization.yaml must list the subdir (./cnpg) as a
-// resource and never the subdir's kustomization.yaml file — even when preflight
-// has rewritten a remote resource under that subdir into the memory layer. That
-// memory write makes the subdir exist in both overlay layers; before the
-// overlayFS.Walk SkipDir fix, the disk walk re-descended the SkipDir'd subdir
-// and added ./cnpg/kustomization.yaml as a stray resource (which kustomize then
-// failed to decode: "missing metadata.name").
+// SkipDir must prune a subpackage from both layers after preflight writes into
+// it. The parent lists the subpackage once, never its kustomization.yaml.
 func TestFindOrGenerate_MemoryPopulatedSubdirNotDescended(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		// Parent dir intentionally has NO kustomization.yaml -> auto-generate.

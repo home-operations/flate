@@ -19,7 +19,7 @@ func TestRenderFlux_MisnamedKustomization(t *testing.T) {
 	testutil.WriteFile(t, root, "app/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata: {k: v}\n")
 
-	_, err := RenderFlux(context.Background(), NewTreeCache(), root, false, "app", fluxKS())
+	_, err := RenderFlux(context.Background(), NewTreeCache(), RenderRequest{Label: root, ApplyIgnore: false, SubPath: "app", Spec: fluxKS()})
 	if err == nil {
 		t.Fatal("expected an error for the misnamed kustomization file")
 	}

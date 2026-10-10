@@ -37,7 +37,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, src, false, ".", rawSpec)
+		out, err := RenderFlux(ctx, cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec})
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -98,7 +98,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, src, false, ".", rawSpec)
+		out, err := RenderFlux(ctx, cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec})
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -137,7 +137,7 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			sub := fmt.Sprintf("apps/app-%d", int(ctr.Add(1))%apps)
-			out, err := RenderFlux(ctx, cache, src, false, sub, rawSpec)
+			out, err := RenderFlux(ctx, cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec})
 			if err != nil {
 				b.Fatalf("RenderFlux: %v", err)
 			}

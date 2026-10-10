@@ -2,7 +2,6 @@ package kustomize
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // BuildMutex serializes every krusty/kustomize build flate runs in a
@@ -31,102 +31,106 @@ import (
 // invocation MUST hold this lock.
 var BuildMutex sync.Mutex
 
-// RenderFlux renders a Flux kustomize.toolkit.fluxcd.io Kustomization
-// entirely in memory, using the same merge + build the kustomize-controller
-// performs.
-//
-// sourceRoot is resolved and wrapped in a secure on-disk FS once per root
-// (memoized in cache.diskRootFor); each render derives its own private
-// memory-over-disk overlay from that shared disk FS, writes the merged
-// kustomization.yaml + any pre-fetched remote resources into the overlay's
-// in-memory layer, and builds with fluxkustomize.Build. The source tree is
-// never copied or mutated and no two renders share mutable state, so renders
-// run fully parallel with no staging lock. The secure disk layer confines reads
-// to the root (a path escaping it simply does not resolve), giving
-// SecureBuild's security posture for free.
-//
-// applyIgnore selects whether source-controller's file exclusions (VCS plus
-// every in-tree .sourceignore, or defaults when no user patterns are loaded)
-// are hidden from the build's disk layer: true for working-tree / self-referential
-// sources that never passed through a fetcher's artifact filtering, false for
-// already-filtered fetched artifacts. With the filter in place a spec.path or
-// kustomization resource that only exists outside the artifact fails to
-// resolve here as it would in-cluster. spec.commonMetadata is applied post-build
-// (the Generator does not handle it, mirroring kustomize-controller's
-// apply-time pass).
-//
-// ctx is honored at coarse boundaries (entry, before build) because
-// fluxkustomize.Build does not itself accept a ctx.
-func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyIgnore bool, subPath string, rawSpec map[string]any) ([]byte, error) {
-	if cache == nil {
-		return nil, errors.New("kustomize: nil tree cache")
-	}
-	if sourceRoot == "" {
-		return nil, fmt.Errorf("%w: empty source root", manifest.ErrInput)
-	}
-	if rawSpec == nil {
-		return nil, fmt.Errorf("%w: nil flux Kustomization spec", manifest.ErrInput)
+// RenderRequest carries the authoritative source and its mount label. Label is
+// metadata and need not name an existing host path.
+type RenderRequest struct {
+	// Source is authoritative; nil selects the disk input at Label.
+	Source *store.SourceArtifact
+	// ApplyIgnore filters path-only aliases with source-controller exclusions.
+	ApplyIgnore bool
+	// Label mounts source content in kyaml; empty uses Source.LocalPath.
+	Label string
+	// SubPath selects the source directory for this Kustomization.
+	SubPath string
+	// Spec is the complete Flux Kustomization document.
+	Spec map[string]any
+}
+
+// RenderFlux builds through one common filesystem and a private render overlay.
+// Generated files never mutate the source. Cancellation is checked around the
+// upstream build, which does not accept a context.
+func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byte, error) {
+	if cache == nil || req.Spec == nil {
+		return nil, fmt.Errorf("%w: incomplete render request", manifest.ErrInput)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
-	// Resolve the source root and build its secure on-disk FS once per root.
-	// Both are pure functions of sourceRoot and the secure FS is an immutable,
-	// goroutine-safe value, so cache.diskRootFor memoizes them across every KS
-	// that shares this root — sparing each render a duplicate EvalSymlinks +
-	// CleanedAbs syscall pair.
-	dr, err := cache.diskRootFor(sourceRoot)
-	if err != nil {
-		return nil, err
+	if req.Source == nil {
+		req.Source = &store.SourceArtifact{LocalPath: req.Label}
 	}
-	sourceRoot = dr.root
-
-	// Working-tree sources read through the source-controller-filtered view of
-	// the disk (see ignorefs.go); the cache key carries the .sourceignore
-	// fingerprint because those files are loaded off-overlay, invisible to the
-	// read-set, so an in-place edit must miss by key instead.
-	diskFS, ignoreKey := dr.diskFS, ""
-	if applyIgnore {
-		ig, ierr := dr.ignored()
-		if ierr != nil {
-			return nil, ierr
+	if req.Source.FS == nil && req.Source.Key != "" {
+		return nil, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
+	}
+	if req.Source.FS != nil && req.Source.Key == "" {
+		return nil, fmt.Errorf("%w: source artifact has no identity", manifest.ErrInput)
+	}
+	lower, root := req.Source.FS, req.Label
+	if root == "" {
+		root = req.Source.LocalPath
+	}
+	var disk filesys.FileSystem
+	ignoreKey := ""
+	if lower == nil {
+		if root == "" {
+			return nil, fmt.Errorf("%w: empty source root", manifest.ErrInput)
 		}
-		diskFS, ignoreKey = ig.fs, ig.key
+		dr, err := cache.diskRootFor(root)
+		if err != nil {
+			return nil, err
+		}
+		disk, root = dr.diskFS, dr.root
+		if req.ApplyIgnore {
+			ig, err := dr.ignored()
+			if err != nil {
+				return nil, err
+			}
+			disk, ignoreKey = ig.fs, ig.key
+		}
+		lower = diskInput{FileSystem: disk, root: root, resolved: make(map[string]diskResolved)}
+	} else {
+		if root == "" {
+			root = string(filepath.Separator) + "flate-source"
+		}
+		var err error
+		root, err = filepath.Abs(root)
+		if err != nil {
+			return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
+		}
 	}
-
-	// Cross-run render cache: a stored render whose recorded disk inputs still
-	// validate against the live tree reproduces the output exactly, so krusty is
-	// skipped entirely. The readSet (see readset.go) makes a hit sound even for
-	// `..`-escaping / transitive inputs a spec hash alone would miss. Validation
-	// replays against the same (possibly filtered) disk view the build read.
-	key := renderKey(rawSpec, dr.root, subPath, ignoreKey)
+	key := ""
+	if cache.render != nil {
+		key = renderKey(req.Spec, root, req.SubPath, ignoreKey)
+		if req.Source.Key != "" {
+			key = manifest.Fingerprint([]string{key, req.Source.Key, "render-fs-v2"})
+		}
+	}
 	if rc := cache.render; rc != nil && key != "" {
-		if snap, output, ok := rc.get(key); ok && snap.stillValid(diskFS, dr.root) {
+		if snap, output, ok := rc.get(key); ok && (disk == nil || snap.stillValid(disk, root)) {
 			return output, nil
 		}
 	}
-	// On a miss, record this build's disk reads so the next run can validate it.
-	// A nil recorder (cache disabled or unkeyable) keeps the overlay byte-identical.
 	var rec *readSet
 	if cache.render != nil && key != "" {
-		rec = newReadSet(dr.root)
+		rec = newReadSet(root)
 	}
-
-	// Memory-over-disk overlay: source files are read from the secure on-disk
-	// FS rooted at sourceRoot (no real-FS reach beyond root; symlinks
-	// evaluated), while the merged kustomization.yaml + any pre-fetched remote
-	// resources are written to an in-memory layer that shadows disk. The source
-	// tree is never copied or mutated, and renders stay fully parallel (each
-	// gets its own overlay). Reading source from disk also sidesteps the
-	// in-memory fs's filename restriction, so trees with exotic names (spaces,
-	// etc.) render.
-	memFS := newOverlayFS(diskFS, rec)
-
-	subDir := filepath.Join(sourceRoot, subPath)
-	if !memFS.IsDir(subDir) {
-		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s", manifest.ErrInput, subPath)
+	var diskRec *readSet
+	if disk != nil {
+		diskRec = rec
 	}
+	memFS := newTreeFS(lower, root, diskRec)
+	// Preserve unresolved parent components until the common resolver follows
+	// intermediate links; filepath.Join would clean them too early.
+	subDir := root + string(filepath.Separator) + req.SubPath
+	canonicalDir, file, err := memFS.CleanedAbs(subDir)
+	if err != nil {
+		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s: %w", manifest.ErrInput, req.SubPath, err)
+	}
+	if file != "" {
+		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s", manifest.ErrInput, req.SubPath)
+	}
+	subDir = canonicalDir.String()
+	rawSpec, subPath := req.Spec, req.SubPath
 
 	// Pre-fetch any HTTP/HTTPS entries and remote git bases in kustomization
 	// resources: into the memory layer so the build only ever sees local files
@@ -182,20 +186,14 @@ func RenderFlux(ctx context.Context, cache *TreeCache, sourceRoot string, applyI
 	// Persist for the next run, unless the build consumed inputs the disk
 	// read-set can't validate: pre-fetched remote content (injected) or an
 	// unrepresentable read such as a Glob (rec.bypassed).
-	if rec != nil && !injected && !rec.bypassed() {
+	if rec != nil && !injected && !rec.bypassed() && !memFS.bypass {
 		cache.render.put(key, rec.snapshot(), out)
 	}
 	return out, nil
 }
 
-// renderKey is the cross-run render-cache lookup key for a RenderFlux call: a
-// stable fingerprint of everything that determines the output BEFORE the source
-// tree's content is consulted (the read-set validates that content). The full
-// rawSpec is hashed — generateManifest's merge and the post-build
-// applyOwnerLabels/applyCommonMetadata all derive from it. ignoreKey is the
-// source root's .sourceignore fingerprint for a working-tree render, "" for a
-// fetched artifact. Empty (caching off for this render) when the spec can't be
-// hashed.
+// renderKey includes source options and the immutable content pin. Alias
+// content is validated by the read set rather than a whole-checkout hash.
 func renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) string {
 	return manifest.Fingerprint(struct {
 		Spec       map[string]any

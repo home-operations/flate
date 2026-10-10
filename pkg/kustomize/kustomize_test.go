@@ -21,12 +21,12 @@ func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := RenderFlux(ctx, cache, t.TempDir(), false, ".", map[string]any{
+	_, err := RenderFlux(ctx, cache, RenderRequest{Label: t.TempDir(), ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
 		"spec":       map[string]any{"path": "./"},
-	})
+	}})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
@@ -129,7 +129,7 @@ func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 
 	cache := NewTreeCache()
 
-	out, err := RenderFlux(context.Background(), cache, src, false, ".", map[string]any{
+	out, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
@@ -140,7 +140,7 @@ func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 				"annotations": map[string]any{"managed-by": "flate"},
 			},
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestRenderFlux_CommonMetadataOverridesOwnerLabels(t *testing.T) {
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 	cache := NewTreeCache()
 
-	out, err := RenderFlux(context.Background(), cache, src, false, ".", map[string]any{
+	out, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "owner-name", "namespace": "owner-ns"},
@@ -202,7 +202,7 @@ func TestRenderFlux_CommonMetadataOverridesOwnerLabels(t *testing.T) {
 				},
 			},
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -233,12 +233,12 @@ func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 	cache := NewTreeCache()
 
-	out, err := RenderFlux(context.Background(), cache, src, false, ".", map[string]any{
+	out, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "infra", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "./"},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}

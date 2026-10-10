@@ -1,6 +1,7 @@
 package store
 
 import (
+	"io/fs"
 	"reflect"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -49,6 +50,12 @@ type SourceArtifact struct {
 	// LocalRoot is the working tree whose repository resolved this artifact.
 	// Its Kustomizations retain ownership there even when LocalPath is cached.
 	LocalRoot string
+
+	// Key identifies pinned content, source options, authentication and shaping rules.
+	// A nonempty Key without FS denotes unavailable content, never a disk input.
+	Key string
+	// FS is immutable source content. When set, LocalPath is only an ownership label.
+	FS fs.FS
 }
 
 func (*SourceArtifact) artifact() {}

@@ -166,12 +166,12 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		"child/kustomization.yaml": child,
 	})
 
-	_, err := RenderFlux(context.Background(), NewTreeCache(), src, false, ".", map[string]any{
+	_, err := RenderFlux(context.Background(), NewTreeCache(), RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}

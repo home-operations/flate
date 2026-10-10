@@ -1,13 +1,9 @@
 // Package kustomize wraps sigs.k8s.io/kustomize/api so the rest of
 // flate never invokes the `kustomize` CLI. It provides:
 //
-//   - RenderFlux: render a Flux Kustomization to YAML documents entirely
-//     in memory. It reproduces the kustomize-controller's spec merge
-//     (generate.go) and builds against a memory-over-disk overlay
-//     (overlayfs.go) rooted at the source — source files are read from a
-//     secure on-disk FS, the merged kustomization.yaml + any pre-fetched
-//     remote resources are written to an in-memory layer, and the source
-//     tree is never copied or mutated.
+//   - RenderFlux: render disk inputs through Flux's secure FS,
+//     or immutable source artifacts through their authoritative fs.FS. Generated
+//     files use one private overlay; artifact labels need not exist on disk.
 //   - Prepare: the standard pre-render dance (Clone + expand
 //     postBuild.substituteFrom) for embedders rendering a single
 //     Kustomization. Symmetric to helm.Prepare for HelmReleases, minus

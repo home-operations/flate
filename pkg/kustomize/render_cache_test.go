@@ -30,7 +30,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 	cache.SetRenderCache(t.TempDir(), 1<<30)
 	ctx := context.Background()
 
-	out1, err := RenderFlux(ctx, cache, root, false, ".", demoRawSpec)
+	out1, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("first render: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 		t.Fatal("first render did not populate the cache")
 	}
 	cache.render.put(key, snap, []byte("SENTINEL\n"))
-	out2, err := RenderFlux(ctx, cache, root, false, ".", demoRawSpec)
+	out2, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 		[]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out3, err := RenderFlux(ctx, cache, root, false, ".", demoRawSpec)
+	out3, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("post-edit render: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	cache.SetRenderCache(cacheDir, 1<<30)
 	ctx := context.Background()
 
-	out1, err := RenderFlux(ctx, cache, root, true /* applyIgnore */, ".", demoRawSpec)
+	out1, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("first render: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 
 	cache = NewTreeCache()
 	cache.SetRenderCache(cacheDir, 1<<30)
-	out2, err := RenderFlux(ctx, cache, root, true, ".", demoRawSpec)
+	out2, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestRenderFlux_DisabledCacheUnchanged(t *testing.T) {
 
 	rootA := writeTree(t, files)
 	plain := NewTreeCache()
-	outPlain, err := RenderFlux(ctx, plain, rootA, false, ".", demoRawSpec)
+	outPlain, err := RenderFlux(ctx, plain, RenderRequest{Label: rootA, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("plain render: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestRenderFlux_DisabledCacheUnchanged(t *testing.T) {
 	rootB := writeTree(t, files)
 	cached := NewTreeCache()
 	cached.SetRenderCache(t.TempDir(), 1<<30)
-	outCached, err := RenderFlux(ctx, cached, rootB, false, ".", demoRawSpec)
+	outCached, err := RenderFlux(ctx, cached, RenderRequest{Label: rootB, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("cached render: %v", err)
 	}

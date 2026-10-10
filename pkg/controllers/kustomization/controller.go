@@ -25,9 +25,7 @@ import (
 type Controller struct {
 	*base.Controller
 
-	// Trees is the per-run in-memory render cache: it captures each source
-	// root once into an immutable byte snapshot from which every render
-	// derives a private in-memory filesystem (see kustomize.RenderFlux).
+	// Trees shares secure disk roots, remote fetches and persisted renders.
 	Trees *kustomize.TreeCache
 
 	// WipeSecrets controls whether Secret cleartext is wiped when
@@ -147,11 +145,12 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	}
 
 	c.SetPendingUnlessReady(id, "resolving source artifact")
-	sourceRoot, applyIgnore, err := c.resolveSource(ks)
+	source, applyIgnore, err := c.resolveSource(ks)
 	if err != nil {
 		return err
 	}
 
+	sourceRoot := source.LocalPath
 	c.SetPendingUnlessReady(id, "expanding substitutions")
 	// kustomize.Prepare clones ks and expands postBuild.substituteFrom —
 	// the same pre-render dance an embedder calling RenderFlux directly
@@ -190,7 +189,11 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	// post-Prepare inputs are byte-identical to the cached artifact. The
 	// shared helper publishes nothing (publish=false) — see its doc for the
 	// churn/quiescence rationale (#657–#660). fp is reused for SetArtifact below.
-	fp := kustomizationFingerprint(ks, sourceRoot)
+	fingerprintSource := sourceRoot
+	if source.Key != "" {
+		fingerprintSource += "\x00" + source.Key
+	}
+	fp := kustomizationFingerprint(ks, fingerprintSource)
 	if handled, err := c.FingerprintDedup(id, fp, func(docs []map[string]any) {
 		c.emitRenderedChildren(id, docs, false)
 	}); handled {
@@ -201,7 +204,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	data, err := kustomize.RenderFlux(ctx, c.Trees, sourceRoot, applyIgnore, ks.Path, ks.Contents)
+	data, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks.Contents})
 	if err != nil {
 		return err
 	}
@@ -325,20 +328,9 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	return deps
 }
 
-// resolveSource returns the source's on-disk root and whether
-// source-controller's default file exclusions must be applied when the tree is
-// materialized for the build.
-//
-// applyIgnore is true exactly for working-tree / self-referential sources — the
-// bootstrap GitRepository alias and overrideSelfReferentialGitRepositories —
-// which expose the user's raw working tree and never passed through a fetcher's
-// artifact filtering. Every real fetcher (git, OCI, bucket) already ran
-// source.ApplyIgnore on the LocalPath it publishes and records a Revision or
-// Digest, so those are materialized as-is (applyIgnore=false); re-filtering them
-// would be redundant and, for buckets, wrong (defaults vs no-defaults). The
-// working-tree aliases are the only artifacts that set neither Revision nor
-// Digest, which is precisely the signal.
-func (c *Controller) resolveSource(ks *manifest.Kustomization) (sourceRoot string, applyIgnore bool, err error) {
+// resolveSource preserves the authoritative FS and ownership metadata. Only
+// path-only working-tree aliases need source-controller exclusions at render.
+func (c *Controller) resolveSource(ks *manifest.Kustomization) (*store.SourceArtifact, bool, error) {
 	srcID := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 	if ks.SourceKind == "" || ks.SourceName == "" {
 		// Child Kustomizations that inherit sourceRef from a parent's
@@ -347,7 +339,7 @@ func (c *Controller) resolveSource(ks *manifest.Kustomization) (sourceRoot strin
 		// working tree) so the first reconcile resolves to the repo
 		// root instead of doubling ks.Path against itself (#105).
 		if ks.Path == "" {
-			return "", false, fmt.Errorf("%w: kustomization %s has no path and no source",
+			return nil, false, fmt.Errorf("%w: kustomization %s has no path and no source",
 				manifest.ErrInput, ks.Named().NamespacedName())
 		}
 		srcID = manifest.BootstrapSourceID
@@ -359,13 +351,13 @@ func (c *Controller) resolveSource(ks *manifest.Kustomization) (sourceRoot strin
 		// that as a typed skip so the caller can mark the KS skipped too
 		// rather than reporting a generic "artifact not found" failure.
 		if err := c.SourceSkipped(srcID, "source"); err != nil {
-			return "", false, err
+			return nil, false, err
 		}
-		return "", false, fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
+		return nil, false, fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
 	}
 	if sa, ok := art.(*store.SourceArtifact); ok {
-		return sa.LocalPath, sa.Digest == "" && sa.Revision == "", nil
+		return sa, sa.Digest == "" && sa.Revision == "", nil
 	}
-	return "", false, fmt.Errorf("%w: unsupported source artifact type %T for %s",
+	return nil, false, fmt.Errorf("%w: unsupported source artifact type %T for %s",
 		manifest.ErrFlux, art, srcID.String())
 }

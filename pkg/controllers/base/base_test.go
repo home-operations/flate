@@ -297,9 +297,11 @@ func TestDispatchNode(t *testing.T) {
 
 	var ran atomic.Int64
 	suspended := func(hr *manifest.HelmRelease) bool { return hr.Name == "suspended" }
-	reconcile := func(_ context.Context, _ *manifest.HelmRelease) error { ran.Add(1); return nil }
+	reconcile := func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error { ran.Add(1); return nil }
 	dispatch := func(id manifest.NamedResource) {
-		c.DispatchNode(t.Context(), id, 0, suspended, reconcile)
+		c.DispatchNode(t.Context(), id, manifest.DrainNone, base.Dispatch[*manifest.HelmRelease]{
+			Suspended: suspended, Reconcile: reconcile,
+		})
 	}
 
 	// Suspended → PreGate bails to Ready/"suspended", no reconcile.

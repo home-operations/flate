@@ -65,7 +65,7 @@ data: {greeting: hi}
 // AddObject→listener→status-poll dispatch in unit tests.
 func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
 	t.Helper()
-	for _, drain := range []int{0, 1, 2} {
+	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
 		if blocked := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
 			break
 		}

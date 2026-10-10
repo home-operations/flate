@@ -144,9 +144,9 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 			return sh.objects
 		}, func(obj manifest.BaseManifest) (any, bool) { return obj, true })
 	case EventStatusUpdated:
-		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource][]Condition {
+		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]conditionRecord {
 			return sh.conditions
-		}, func(conds []Condition) (any, bool) { return statusInfoFromConditions(conds) })
+		}, func(record conditionRecord) (any, bool) { return record.statusInfo() })
 	case EventArtifactUpdated:
 		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]Artifact {
 			return sh.artifacts

@@ -13,7 +13,6 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/helmchart"
@@ -108,12 +107,13 @@ func (c *Controller) Start(_ context.Context) {
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
-// dependency set (nil = terminalized) and whether id ended Ready. The
+// dependency set (nil = terminalized). The
 // orchestrator's scheduler Dispatcher calls this for HelmRelease nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, drainLevel,
-		func(hr *manifest.HelmRelease) bool { return hr.Suspend },
-		c.reconcile)
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
+	return c.DispatchNode(ctx, id, level, base.Dispatch[*manifest.HelmRelease]{
+		Suspended: func(hr *manifest.HelmRelease) bool { return hr.Suspend },
+		Reconcile: c.reconcile,
+	})
 }
 
 // onRawProducerAdded returns a listener that indexes RawObject producers
@@ -137,7 +137,7 @@ func (c *Controller) onRawProducerAdded() store.Listener {
 	}
 }
 
-func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) error {
+func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
 	id := hr.Named()
 	if err := c.PreflightError(id); err != nil {
 		return err
@@ -154,18 +154,13 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// driftDetection / install.crds / upgrade strategy / rollback to
 	// every HR, so all of them were hit by this).
 	if parent, ok := c.LookupParent(id); ok {
+		c.Store.UpdateStatus(id, store.StatusPending, "waiting for parent KS")
 		// The parent's render may have replaced this HR in the store
 		// with a patched copy; re-read so the rest of reconcile uses
 		// the canonical spec instead of the pre-patch snapshot we
 		// were dispatched with.
 		fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](
-			ctx, id, hr.Timeout,
-			[]manifest.DependencyRef{{NamedResource: parent}},
-			"waiting for parent KS",
-			func(sum depwait.Summary) error {
-				return fmt.Errorf("%w: parent Kustomization %s not ready: %s",
-					manifest.ErrObjectNotFound, parent.String(), sum.Messages[parent])
-			})
+			ctx, id, []manifest.DependencyRef{{NamedResource: parent}}, level)
 		if err != nil {
 			return err
 		}
@@ -179,7 +174,8 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
-	if deps := c.collectHRDeps(hr); len(deps) > 0 {
+	if deps := c.OrderingDeps(hr.DependsOn); len(deps) > 0 {
+		c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
 		// RequireRefresh fuses the dependsOn gate with the load-bearing
 		// re-read: the parent KS may have re-rendered (e.g. its own
 		// dependsOn cleared in the meantime, freeing up parent-render-time
@@ -188,8 +184,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		// whose parent re-emitted us after the parent-gate cleared — keeps
 		// the pre-mutation snapshot through chart resolution.
 		fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](
-			ctx, id, hr.Timeout, deps,
-			"resolving dependencies", base.DepFailed(id))
+			ctx, id, deps, level)
 		if err != nil {
 			return err
 		}
@@ -201,7 +196,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return err
 	}
 
-	hr, err := c.resolvePreRenderValuesFrom(ctx, id, hr)
+	hr, err := c.resolvePreRenderValuesFrom(ctx, hr, level)
 	if err != nil {
 		return err
 	}
@@ -231,7 +226,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// dedup gate (a re-emit that finds the prior fingerprint cached must not
 	// replay stale docs over a source that has since failed or soft-skipped
 	// via --allow-missing-secrets).
-	if err := c.awaitChartSource(ctx, id, hr); err != nil {
+	if err := c.awaitChartSource(ctx, hr, level); err != nil {
 		return err
 	}
 	// A HelmRepository is just a registry/index base — its chart has no
@@ -244,7 +239,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// dance.
 	hr, repointed := c.materializeHelmChartSource(id, hr)
 	if repointed {
-		if err := c.awaitChartSource(ctx, id, hr); err != nil {
+		if err := c.awaitChartSource(ctx, hr, level); err != nil {
 			return err
 		}
 	}
@@ -404,22 +399,12 @@ func chartSourceID(hr *manifest.HelmRelease) manifest.NamedResource {
 // gated via Require: an unready source classifies as blocked, so the scheduler
 // parks this node and re-runs it when the fetch completes — a slow fetch is
 // waited for by OUTCOME instead of dropped.
-func (c *Controller) awaitChartSource(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease) error {
+func (c *Controller) awaitChartSource(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
 	srcID := chartSourceID(hr)
-	if err := c.Require(ctx, id, hr.Timeout,
-		[]manifest.DependencyRef{{NamedResource: srcID}},
-		"", // status already set by the caller
-		func(sum depwait.Summary) error {
-			return fmt.Errorf("%w: chart source %s not ready: %s",
-				manifest.ErrObjectNotFound, srcID.String(), sum.Messages[srcID])
-		}); err != nil {
+	if err := c.Require(ctx, hr.Named(), []manifest.DependencyRef{{NamedResource: srcID}}, level); err != nil {
 		return err
 	}
-	if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
-		return fmt.Errorf("%w: chart source %s %s",
-			manifest.ErrSourceSkipped, srcID.String(), info.Message)
-	}
-	return nil
+	return c.SourceSkipped(srcID, "chart source")
 }
 
 // materializeHelmChartSource handles a HelmRelease whose chart source is a
@@ -539,24 +524,6 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 		}
 	}
 	c.ReportRendered(id, rendered)
-}
-
-// collectHRDeps returns hr's typed dependsOn entries (carrying any
-// ReadyExpr) for the depwait Waiter. dependsOn on a HelmRelease
-// references other HelmReleases only (per Flux spec).
-func (c *Controller) collectHRDeps(hr *manifest.HelmRelease) []manifest.DependencyRef {
-	if len(hr.DependsOn) == 0 {
-		return nil
-	}
-	deps := slices.Clone(hr.DependsOn)
-	// Unknown targets retain missing-dependency diagnosis even outside keep.
-	if f := c.Filter(); f != nil && f.Enabled() {
-		deps = slices.DeleteFunc(deps, func(d manifest.DependencyRef) bool {
-			return !f.ShouldReconcile(d.NamedResource) &&
-				(c.IsFileIndexed(d.NamedResource) || c.Store.GetObject(d.NamedResource) != nil)
-		})
-	}
-	return deps
 }
 
 // preparePrereqs collects refs that helm.Prepare reads from the live

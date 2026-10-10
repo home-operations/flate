@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
 )
 
@@ -14,7 +15,7 @@ func BenchmarkScheduler_Run(b *testing.B) {
 	for i := range ids {
 		ids[i] = id(fmt.Sprintf("node-%02d", i))
 	}
-	d := dispatchFunc(func(context.Context, NodeID, int) (Outcome, []NodeID) { return OutcomeTerminal, nil })
+	d := dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID) { return OutcomeTerminal, nil })
 	b.ReportAllocs()
 	for b.Loop() {
 		s := New(task.NewBounded(4), d)
@@ -31,7 +32,7 @@ func BenchmarkScheduler_ContentRedispatch(b *testing.B) {
 	for b.Loop() {
 		var s *Scheduler
 		runs := 0
-		s = New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, int) (Outcome, []NodeID) {
+		s = New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID) {
 			runs++
 			if runs <= maxRedispatches {
 				s.OnArrival(nid, true)
@@ -180,7 +181,7 @@ func BenchmarkComplete_Failed(b *testing.B) {
 			}
 			b.Run(fmt.Sprintf("FanIn=%d/%s", fanIn, name), func(b *testing.B) {
 				next := blocked
-				s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, int) (Outcome, []NodeID) {
+				s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID) {
 					return OutcomeDependencyFailed, next
 				}))
 				nid := id("consumer")
@@ -195,7 +196,7 @@ func BenchmarkComplete_Failed(b *testing.B) {
 				for b.Loop() {
 					n.state = stateRunning
 					s.inFlight = 1
-					out, failed := s.disp.Dispatch(b.Context(), nid, DrainNone)
+					out, failed := s.disp.Dispatch(b.Context(), nid, manifest.DrainNone)
 					s.complete(nid, out, failed, false)
 					if mode == "Replaced" {
 						if &next[0] == &blocked[0] {

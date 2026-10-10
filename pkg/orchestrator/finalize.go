@@ -201,10 +201,11 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 		if !hasFailed {
 			return
 		}
-		msg := fmt.Sprintf("parent %s failed: %s", parent.String(), parentInfo.Message)
-		o.store.UpdateStatus(child, store.StatusFailed, msg)
-		o.store.SetBlocked(child, []manifest.NamedResource{parent})
-		failed[child] = store.StatusInfo{Status: store.StatusFailed, Message: msg}
+		o.store.UpdateFailure(child, &manifest.DependencyFailedError{
+			Parent: child, Failed: []manifest.NamedResource{parent},
+			Reasons: map[manifest.NamedResource]string{parent: parentInfo.Message},
+		})
+		failed[child], _ = o.store.GetStatus(child)
 		slog.Debug("cascaded parent failure to child",
 			"child", child.String(),
 			"parent", parent.String(),

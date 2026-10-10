@@ -28,14 +28,14 @@ func (e *crdPromotion) Promote(id manifest.NamedResource) bool {
 
 func TestClassify_MissingCRDs(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
-		for _, drain := range []int{drainNone, drainCascade, drainForce} {
+		for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
 			for _, state := range []string{"absent", "explicit namespace", "object", "ready status", "pending status", "failed status", "promoted", "promotion miss", "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList", "valid expression", "invalid expression", "present invalid expression"} {
 				t.Run(fmt.Sprintf("enabled_%t/drain_%d/%s", enabled, drain, state), func(t *testing.T) {
 					s := store.New()
 					ref := manifest.DependencyRef{Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
 					want := ClassBlocked
 					msg := ""
-					if drain >= drainCascade {
+					if drain >= manifest.DrainCascade {
 						want = ClassFailed
 						msg = "dependency not found"
 						if enabled {
@@ -78,7 +78,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 						ref.Namespace = "apps"
 						want = ClassBlocked
 						msg = ""
-						if drain >= drainCascade {
+						if drain >= manifest.DrainCascade {
 							want = ClassFailed
 							msg = "dependency not found"
 						}
@@ -120,7 +120,7 @@ func TestClassify_MissingCRDs_NoAllocations(t *testing.T) {
 	ref := manifest.DependencyRef{Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
 	for _, enabled := range []bool{false, true} {
 		w := &Waiter{Store: s, AllowMissingCRDs: enabled}
-		if got := testing.AllocsPerRun(100, func() { w.Classify(ref, drainCascade) }); got != 0 {
+		if got := testing.AllocsPerRun(100, func() { w.Classify(ref, manifest.DrainCascade) }); got != 0 {
 			t.Fatalf("enabled=%t allocations=%v", enabled, got)
 		}
 	}

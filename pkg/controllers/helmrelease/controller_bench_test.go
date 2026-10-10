@@ -60,6 +60,6 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	c.SetFilter(change.NewFilter(change.NewSet([]string{"target.yaml"}), map[manifest.NamedResource]string{id: "target.yaml"}, "", st))
 	b.ReportAllocs()
 	for b.Loop() {
-		c.collectHRDeps(hr)
+		c.OrderingDeps(hr.DependsOn)
 	}
 }

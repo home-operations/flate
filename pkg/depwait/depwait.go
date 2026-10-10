@@ -8,50 +8,15 @@ package depwait
 
 import (
 	"errors"
-	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// DefaultTimeout is the per-dep timeout when not specified. The
-// upstream Flux controllers default to several minutes since they
-// wait for in-cluster reconciliation; flate is purely offline, so
-// waits past a few seconds almost always indicate a misconfigured
-// reference. Keep this short so typos in dependsOn / sourceRef
-// surface immediately instead of stalling a render.
-const DefaultTimeout = 30 * time.Second
-
-// TimeoutFromSpec resolves a Flux spec.timeout (`*metav1.Duration` —
-// the shape used by both Kustomization and HelmRelease) into the
-// effective per-dep wait. Honors a user-supplied value when set; falls
-// back to flate's offline-tuned DefaultTimeout otherwise. Matches the
-// principle that a real Flux reconcile would respect spec.timeout.
-func TimeoutFromSpec(d *metav1.Duration) time.Duration {
-	if d == nil || d.Duration <= 0 {
-		return DefaultTimeout
-	}
-	return d.Duration
-}
-
-// Summary tallies the failed dependencies of a Require gate. base.Require
-// appends each terminally-failed dep and its reason; base.DepFailed folds the
-// result into a manifest.DependencyFailedError.
-type Summary struct {
-	Failed   []manifest.NamedResource
-	Messages map[manifest.NamedResource]string
-}
-
-// AnyFailed reports whether at least one dependency ended in failure.
-func (s Summary) AnyFailed() bool { return len(s.Failed) > 0 }
-
 // Waiter holds the parameters for one dependency-classification operation.
 type Waiter struct {
-	Store   *store.Store
-	Parent  manifest.NamedResource
-	Timeout time.Duration
+	Store  *store.Store
+	Parent manifest.NamedResource
 
 	// AdditiveReadyExpr toggles Flux's AdditiveCELDependencyCheck
 	// feature gate. When false (the default, matching Flux), a

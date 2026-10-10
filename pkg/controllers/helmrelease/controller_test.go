@@ -2,6 +2,7 @@ package helmrelease
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -63,7 +65,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				st.UpdateStatus(target.Named(), tc.status, "fixture")
 			}
 			size := filter.Size()
-			deps := c.collectHRDeps(hr)
+			deps := c.OrderingDeps(hr.DependsOn)
 			if got := slices.Contains(deps, hr.DependsOn[0]); got != tc.retain {
 				t.Errorf("ordering edge retained = %v, want %v; deps = %v", got, tc.retain, deps)
 			}
@@ -118,7 +120,7 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 // AddObject→listener→status-poll dispatch in unit tests.
 func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
 	t.Helper()
-	for _, drain := range []int{0, 1, 2} {
+	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
 		if blocked := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
 			break
 		}
@@ -428,6 +430,33 @@ data:
 	}
 	if got := renderedConfigMapValue(art.Manifests, "fallback"); got != "fallback" {
 		t.Fatalf("rendered fallback = %q, want fallback", got)
+	}
+}
+
+func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
+	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
+	st.AddObject(chart)
+	st.UpdateStatus(chart.Named(), store.StatusFailed, "chart failed")
+	hr := &manifest.HelmRelease{
+		Name: "consumer", Namespace: "apps",
+		Chart:      manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: chart.Name},
+		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "values"}},
+	}
+	st.AddObject(hr)
+	values := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
+	_, err := c.resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainNone)
+	blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+	if !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{values}) {
+		t.Fatalf("mixed gate = %v, want blocked values reference", err)
+	}
+	_, err = c.resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainCascade)
+	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+	if !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{chart.Named()}) || failed.Reasons[chart.Named()] != "chart failed" {
+		t.Fatalf("drained gate = %v, want chart failure after values omission", err)
+	}
+	if len(hr.ValuesFrom) != 1 || hr.ValuesFrom[0].Name != values.Name {
+		t.Fatal("omission mutated stored valuesFrom")
 	}
 }
 
@@ -1011,14 +1040,14 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 			{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "other"},
 		},
 	}
-	got := c.collectHRDeps(hr)
+	got := c.OrderingDeps(hr.DependsOn)
 	if len(got) != 1 || got[0].Name != "other" {
-		t.Fatalf("collectHRDeps = %+v", got)
+		t.Fatalf("OrderingDeps = %+v", got)
 	}
 	// Mutating the returned slice must not affect hr.DependsOn.
 	got[0].Name = "mutated"
 	if hr.DependsOn[0].Name == "mutated" {
-		t.Errorf("collectHRDeps did not return a defensive copy")
+		t.Errorf("OrderingDeps did not return a defensive copy")
 	}
 }
 
@@ -1043,15 +1072,15 @@ func TestController_CollectHRDepsPrunesUnchangedDeps(t *testing.T) {
 		Name: "lidarr", Namespace: "downloads",
 		DependsOn: []manifest.DependencyRef{{NamedResource: qbit}, {NamedResource: prowlarr}},
 	}
-	got := c.collectHRDeps(hr)
+	got := c.OrderingDeps(hr.DependsOn)
 	if len(got) != 1 || got[0].NamedResource != qbit {
-		t.Fatalf("collectHRDeps = %+v; want only the in-keep qbittorrent dep", got)
+		t.Fatalf("OrderingDeps = %+v; want only the in-keep qbittorrent dep", got)
 	}
 
 	// Sanity: a disabled filter (full mode) prunes nothing.
 	cFull, _ := newTestController(t, nil)
-	if got := cFull.collectHRDeps(hr); len(got) != 2 {
-		t.Errorf("disabled filter must not prune; collectHRDeps = %+v", got)
+	if got := cFull.OrderingDeps(hr.DependsOn); len(got) != 2 {
+		t.Errorf("disabled filter must not prune; OrderingDeps = %+v", got)
 	}
 }
 

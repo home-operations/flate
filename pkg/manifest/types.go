@@ -96,6 +96,18 @@ type DependencyRef struct {
 	ReadyExpr string
 }
 
+// DrainLevel controls dependency failure classification at the DAG fixpoint.
+type DrainLevel uint8
+
+const (
+	// DrainNone parks unsatisfied dependencies during normal operation.
+	DrainNone DrainLevel = iota
+	// DrainCascade fails absent dependencies and unsatisfied ready expressions.
+	DrainCascade
+	// DrainForce also fails present dependencies that remain pending.
+	DrainForce
+)
+
 // RawObject is the fallback for any Kubernetes document that doesn't
 // match a more specific type.
 type RawObject struct {

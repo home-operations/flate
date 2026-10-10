@@ -1,6 +1,7 @@
 package depwait
 
 import (
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -9,7 +10,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func classifyDep(t *testing.T, w *Waiter, ref manifest.DependencyRef, drain int) Classification {
+func classifyDep(t *testing.T, w *Waiter, ref manifest.DependencyRef, drain manifest.DrainLevel) Classification {
 	t.Helper()
 	return w.Classify(ref, drain)
 }
@@ -34,27 +35,27 @@ func TestClassify_CoreStates(t *testing.T) {
 
 	w := &Waiter{Store: s}
 
-	if got := classifyDep(t, w, ready, drainNone); got.Kind != ClassReady {
+	if got := classifyDep(t, w, ready, manifest.DrainNone); got.Kind != ClassReady {
 		t.Errorf("ready: got %+v, want ClassReady", got)
 	}
-	if got := classifyDep(t, w, failed, drainNone); got.Kind != ClassFailed || got.Message != "boom" {
+	if got := classifyDep(t, w, failed, manifest.DrainNone); got.Kind != ClassFailed || got.Message != "boom" {
 		t.Errorf("failed: got %+v, want ClassFailed 'boom'", got)
 	}
 	// Present-Pending: blocks at none/cascade, fails "not ready" only at force.
-	if got := classifyDep(t, w, pending, drainNone); got.Kind != ClassBlocked {
+	if got := classifyDep(t, w, pending, manifest.DrainNone); got.Kind != ClassBlocked {
 		t.Errorf("pending@none: got %+v, want ClassBlocked", got)
 	}
-	if got := classifyDep(t, w, pending, drainCascade); got.Kind != ClassBlocked {
+	if got := classifyDep(t, w, pending, manifest.DrainCascade); got.Kind != ClassBlocked {
 		t.Errorf("pending@cascade: got %+v, want ClassBlocked (cascade keeps Pending blocked)", got)
 	}
-	if got := classifyDep(t, w, pending, drainForce); got.Kind != ClassFailed || got.Message != "not ready" {
+	if got := classifyDep(t, w, pending, manifest.DrainForce); got.Kind != ClassFailed || got.Message != "not ready" {
 		t.Errorf("pending@force: got %+v, want ClassFailed 'not ready'", got)
 	}
 	// Absent: blocks at none, fails "dependency not found" once draining.
-	if got := classifyDep(t, w, absent, drainNone); got.Kind != ClassBlocked {
+	if got := classifyDep(t, w, absent, manifest.DrainNone); got.Kind != ClassBlocked {
 		t.Errorf("absent@none: got %+v, want ClassBlocked", got)
 	}
-	if got := classifyDep(t, w, absent, drainCascade); got.Kind != ClassFailed || got.Message != "dependency not found" {
+	if got := classifyDep(t, w, absent, manifest.DrainCascade); got.Kind != ClassFailed || got.Message != "dependency not found" {
 		t.Errorf("absent@cascade: got %+v, want ClassFailed 'dependency not found'", got)
 	}
 }
@@ -69,10 +70,10 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	dep.ReadyExpr = `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")` // not satisfied
 
 	w := &Waiter{Store: s} // AdditiveReadyExpr=false (default/reachable mode)
-	if got := classifyDep(t, w, dep, drainNone); got.Kind != ClassBlocked {
+	if got := classifyDep(t, w, dep, manifest.DrainNone); got.Kind != ClassBlocked {
 		t.Errorf("replace ReadyExpr false@none: got %+v, want ClassBlocked", got)
 	}
-	if got := classifyDep(t, w, dep, drainCascade); got.Kind != ClassFailed ||
+	if got := classifyDep(t, w, dep, manifest.DrainCascade); got.Kind != ClassFailed ||
 		got.Message != "readyExpr timeout: context deadline exceeded" {
 		t.Errorf("replace ReadyExpr false@cascade: got %+v, want ClassFailed 'readyExpr timeout: context deadline exceeded'", got)
 	}
@@ -92,7 +93,7 @@ func TestClassify_AdditiveReadyExpr(t *testing.T) {
 
 	w := &Waiter{Store: s, AdditiveReadyExpr: true}
 	// CEL is clean-false (no Healthy condition) → immediate fail, any drain level.
-	for _, drain := range []int{drainNone, drainCascade, drainForce} {
+	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
 		got := classifyDep(t, w, dep, drain)
 		if got.Kind != ClassFailed || got.Message != "readyExpr returned false" {
 			t.Errorf("additive clean-false@%d: got %+v, want ClassFailed 'readyExpr returned false'", drain, got)
@@ -100,7 +101,22 @@ func TestClassify_AdditiveReadyExpr(t *testing.T) {
 	}
 	// Now satisfy the CEL: built-in Ready AND CEL true → ClassReady.
 	s.SetCondition(dep.NamedResource, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue})
-	if got := classifyDep(t, w, dep, drainNone); got.Kind != ClassReady {
+	if got := classifyDep(t, w, dep, manifest.DrainNone); got.Kind != ClassReady {
 		t.Errorf("additive both-true: got %+v, want ClassReady", got)
+	}
+	dep.ReadyExpr = `dep.metadata.labels["missing"] == "ready"`
+	if got := classifyDep(t, w, dep, manifest.DrainCascade); got.Kind != ClassFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
+		t.Fatalf("additive evaluation failure = %+v", got)
+	}
+	s.UpdateStatus(dep.NamedResource, store.StatusPending, "working")
+	for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
+		got := classifyDep(t, w, dep, level)
+		if level == manifest.DrainForce {
+			if got.Kind != ClassFailed || got.Message != "not ready" {
+				t.Fatalf("additive pending force = %+v", got)
+			}
+		} else if got.Kind != ClassBlocked {
+			t.Fatalf("additive pending at level %d = %+v", level, got)
+		}
 	}
 }

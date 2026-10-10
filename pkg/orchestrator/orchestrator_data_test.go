@@ -207,7 +207,7 @@ spec:
 					t.Fatalf("skipped consumer lost authored refs: %v", got)
 				}
 				after, _ := o.store.GetStatus(id)
-				if before != after || o.store.GetArtifact(id) != nil {
+				if before.Status != after.Status || before.Message != after.Message || !slices.Equal(before.BlockedBy(), after.BlockedBy()) || o.store.GetArtifact(id) != nil {
 					t.Fatal("lookup activated skipped consumer")
 				}
 			})

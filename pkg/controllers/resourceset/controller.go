@@ -77,17 +77,18 @@ func (c *Controller) Start(_ context.Context) {
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the
-// blocked dependency set (nil = terminalized) and whether id ended Ready.
+// blocked dependency set (nil = terminalized).
 // The orchestrator's scheduler Dispatcher calls this for ResourceSet
 // nodes. A ResourceSet has no Suspend field, so the suspended predicate
 // is always false.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, drainLevel,
-		func(*manifest.ResourceSet) bool { return false },
-		c.reconcile)
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
+	return c.DispatchNode(ctx, id, level, base.Dispatch[*manifest.ResourceSet]{
+		Suspended: func(*manifest.ResourceSet) bool { return false },
+		Reconcile: c.reconcile,
+	})
 }
 
-func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet) error {
+func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, level manifest.DrainLevel) error {
 	id := rs.Named()
 	if err := c.PreflightError(id); err != nil {
 		return err
@@ -107,8 +108,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet) er
 		// first render would use the stale-spec snapshot. Mirrors the KS
 		// controller (#102).
 		fresh, ok, err := c.RequireRefresh[*manifest.ResourceSet](
-			ctx, id, nil, deps,
-			"", base.DepFailed(id)) // empty pendingMsg: status set above
+			ctx, id, deps, level)
 		if err != nil {
 			return err
 		}

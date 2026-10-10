@@ -117,11 +117,11 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 // ReconcileNode runs id's source fetch under the dag engine, returning the
 // blocked Secret dependencies, or nil when the fetch terminalizes. The
 // orchestrator's scheduler Dispatcher calls this for source-kind nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, drainLevel,
-		suspendedSource, func(ctx context.Context, obj manifest.BaseManifest) error {
-			return c.reconcile(ctx, obj, drainLevel > 0)
-		})
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
+	return c.DispatchNode(ctx, id, level, base.Dispatch[manifest.BaseManifest]{
+		Suspended: suspendedSource,
+		Reconcile: c.reconcile,
+	})
 }
 
 // reconcile fetches the source artifact via the registered Fetcher and
@@ -130,11 +130,9 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 // KS/HR controllers' shape. Returning ErrSourceSkipped yields a
 // Ready+"skipped: ..." status; ErrBlocked parks the fetch for a dependency
 // retry; any other error yields Failed.
-func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, draining bool) error {
+func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
 	id := obj.Named()
-	// The listener already filtered by registered Kind (see
-	// onObjectAdded), so this Fetchers lookup can't miss; it's cheap and
-	// gives us a typed reference for the rest of the function.
+	// Dispatcher ownership guarantees a fetcher for this kind.
 	fetcher := c.Fetchers[id.Kind]
 	// Existence short-circuit: a source we already fetched in this run
 	// stays fetched. Idempotent re-AddObject (e.g. a parent KS
@@ -156,11 +154,7 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, d
 	c.SetPendingUnlessReady(id, "fetching")
 	started := time.Now()
 
-	// Release the worker slot during the fetch so consumers of this
-	// source (KS/HR depwait watchers) can acquire one and make
-	// progress instead of blocking on a fetcher that's itself blocked
-	// on network I/O. Mirrors KS/HR's pattern of yielding around
-	// depwait calls.
+	// Release the worker slot during network I/O so other nodes can progress.
 	var artifact *store.SourceArtifact
 	var fetchErr error
 	c.Tasks.YieldSlot(func() {
@@ -171,11 +165,12 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, d
 	// once the scheduler reaches a fixpoint. The wait MUST precede the
 	// fallback so an in-repo Secret takes precedence over the global
 	// registry config.
-	if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok && !draining {
+	missing, isMissing := errors.AsType[*src.MissingSecretError](fetchErr)
+	if isMissing && level == manifest.DrainNone {
 		c.Store.UpdateStatus(id, store.StatusPending, "waiting for source Secret")
 		return &depwait.ErrBlocked{Deps: []manifest.NamedResource{missing.Secret}}
 	}
-	if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok && missing.RetryWithRegistryConfig != nil && !c.producerBacked(fetchErr) {
+	if isMissing && missing.RetryWithRegistryConfig != nil && !c.producerBacked(fetchErr) {
 		c.Tasks.YieldSlot(func() {
 			artifact, fetchErr = missing.RetryWithRegistryConfig(ctx, missing.RegistryConfig)
 		})

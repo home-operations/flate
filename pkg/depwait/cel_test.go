@@ -3,7 +3,6 @@ package depwait
 import (
 	"strings"
 	"testing"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -47,7 +46,7 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 		NamedResource: dep,
 		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}
-	if got := w.Classify(ref, drainNone); got.Kind != ClassReady {
+	if got := w.Classify(ref, manifest.DrainNone); got.Kind != ClassReady {
 		t.Errorf("replace ReadyExpr true over Failed built-in: got %+v, want ClassReady", got)
 	}
 }
@@ -65,7 +64,7 @@ func TestReadyExpr_CompileError(t *testing.T) {
 	}
 	w := &Waiter{Store: s}
 	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: `this isn't valid CEL`}
-	got := w.Classify(ref, drainNone)
+	got := w.Classify(ref, manifest.DrainNone)
 	if got.Kind != ClassFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
 		t.Errorf("compile error: got %+v, want ClassFailed with 'readyExpr:' prefix", got)
 	}
@@ -99,7 +98,7 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 		t.Fatalf("transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
 	}
 	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}
-	if got := w.Classify(ref, drainNone); got.Kind != ClassBlocked {
+	if got := w.Classify(ref, manifest.DrainNone); got.Kind != ClassBlocked {
 		t.Errorf("transient eval error@none: got %+v, want ClassBlocked (re-runnable, not failed)", got)
 	}
 }
@@ -155,19 +154,5 @@ func TestCompileReadyExpr_MemoizesErrors(t *testing.T) {
 	}
 	if err1 != err2 {
 		t.Errorf("compile error not memoized: %p vs %p", err1, err2)
-	}
-}
-
-// TestTimeoutFromSpec mirrors Flux KS/HR's `*metav1.Duration` shape: nil and
-// zero fall back to DefaultTimeout; user-supplied values win.
-func TestTimeoutFromSpec(t *testing.T) {
-	if got := TimeoutFromSpec(nil); got != DefaultTimeout {
-		t.Errorf("nil → %v, want DefaultTimeout (%v)", got, DefaultTimeout)
-	}
-	if got := TimeoutFromSpec(&metav1.Duration{Duration: 0}); got != DefaultTimeout {
-		t.Errorf("zero → %v, want DefaultTimeout", got)
-	}
-	if got := TimeoutFromSpec(&metav1.Duration{Duration: 5 * time.Minute}); got != 5*time.Minute {
-		t.Errorf("5m → %v", got)
 	}
 }

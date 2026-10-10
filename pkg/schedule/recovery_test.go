@@ -46,7 +46,7 @@ func TestDependencyFailureRecovery(t *testing.T) {
 				var runs, active atomic.Int64
 				var recovered atomic.Bool
 				var s *Scheduler
-				s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+				s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
 					if nid == driver {
 						if !awaitSignal(ctx, observed) {
 							return OutcomeTerminal, nil
@@ -117,7 +117,7 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 				entered, release, third := make(chan struct{}), make(chan struct{}), make(chan struct{})
 				var runs, active atomic.Int64
 				var s *Scheduler
-				s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+				s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
 					if nid == driver {
 						if !awaitTerminal(ctx, s, victim) {
 							return OutcomeTerminal, nil
@@ -206,7 +206,7 @@ func TestDependencyFailureMultiHopRecovery(t *testing.T) {
 			var readyA, readyB, readyC atomic.Bool
 			var runsB, runsC atomic.Int64
 			var s *Scheduler
-			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
 				switch nid {
 				case a:
 					return OutcomeTerminal, nil
@@ -249,7 +249,7 @@ func TestDependencyFailureRedispatchLimit(t *testing.T) {
 	var s *Scheduler
 	var runs atomic.Int64
 	dep, victim := id("dep"), id("consumer")
-	s = New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, int) (Outcome, []NodeID) {
+	s = New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID) {
 		runs.Add(1)
 		s.OnStatusWake(dep, false, false)
 		s.OnStatusWake(dep, true, false)
@@ -309,7 +309,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 				requested, applied := make(chan int), make(chan struct{})
 				var runs, self, active atomic.Int64
 				var s *Scheduler
-				s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+				s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
 					active.Add(1)
 					defer active.Add(-1)
 					if nid == producer {
@@ -424,7 +424,7 @@ func TestProgress_UnwatchedData(t *testing.T) {
 			consumer, producer := id("consumer"), id("producer")
 			started, finished := make(chan struct{}), make(chan struct{})
 			var s *Scheduler
-			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
 				if nid == consumer {
 					close(started)
 					awaitSignal(ctx, finished)

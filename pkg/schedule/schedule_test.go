@@ -21,9 +21,9 @@ func id(name string) NodeID {
 	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
-type dispatchFunc func(context.Context, NodeID, int) (Outcome, []NodeID)
+type dispatchFunc func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID)
 
-func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain int) (Outcome, []NodeID) {
+func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain manifest.DrainLevel) (Outcome, []NodeID) {
 	return f(ctx, id, drain)
 }
 
@@ -235,7 +235,7 @@ func TestScheduler_RunCancellationBoundary(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, int) (Outcome, []NodeID) {
+			s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID) {
 				if tc.cancelDispatch {
 					cancel()
 				}
@@ -273,7 +273,7 @@ func TestScheduler_RunStopDrains(t *testing.T) {
 			victim, held := id("feedback"), id("held")
 			var active, runs atomic.Int64
 			var s *Scheduler
-			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
 				active.Add(1)
 				defer active.Add(-1)
 				runs.Add(1)
@@ -448,7 +448,7 @@ func TestRedispatchLimit(t *testing.T) {
 			terminal, arrived := make(chan struct{}), make(chan struct{})
 			victim := id("feedback")
 			producer := id("producer")
-			disp := dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+			disp := dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
 				if nid == producer {
 					for awaitSignal(ctx, terminal) {
 						s.OnArrival(victim, true)
@@ -525,7 +525,7 @@ func TestRedispatchBudgetAllowsConvergence(t *testing.T) {
 			limit := maxRedispatches
 			var s *Scheduler
 			runs := 0
-			s = New(task.NewBounded(2), dispatchFunc(func(_ context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+			s = New(task.NewBounded(2), dispatchFunc(func(_ context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
 				runs++
 				if runs <= limit {
 					s.OnArrival(nid, true)
@@ -549,11 +549,11 @@ func TestRedispatchBudgetAllowsConvergence(t *testing.T) {
 //   - a dep present-and-Ready              -> satisfied
 //   - a dep present-and-Failed             -> cascade-fail this node
 //   - a dep absent (no graph node):
-//     DrainNone           -> block
-//     DrainCascade/Force  -> fail ("dependency not found")
+//     manifest.DrainNone           -> block
+//     manifest.DrainCascade/Force  -> fail ("dependency not found")
 //   - a dep present-but-Pending (a graph node not yet terminal):
-//     DrainNone/Cascade   -> block
-//     DrainForce          -> fail ("not ready")
+//     manifest.DrainNone/Cascade   -> block
+//     manifest.DrainForce          -> fail ("not ready")
 //
 // A "failing leaf" is modeled as a node depending on an id absent from the
 // graph. The fake records terminal state + per-node dispatch counts + the max
@@ -573,7 +573,7 @@ type fakeDisp struct {
 	termReady map[NodeID]bool
 	termAny   map[NodeID]bool
 	runs      map[NodeID]int
-	maxDrain  int
+	maxDrain  manifest.DrainLevel
 }
 
 func newFake(graph map[NodeID][]NodeID) *fakeDisp {
@@ -587,7 +587,7 @@ func newFake(graph map[NodeID][]NodeID) *fakeDisp {
 	}
 }
 
-func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outcome, []NodeID) {
+func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel manifest.DrainLevel) (Outcome, []NodeID) {
 	f.mu.Lock()
 	g := f.gate[nid]
 	f.mu.Unlock()
@@ -613,7 +613,7 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outc
 		}
 		if _, isNode := f.graph[d]; !isNode {
 			// absent dep
-			if drainLevel >= DrainCascade {
+			if drainLevel >= manifest.DrainCascade {
 				failed = append(failed, d)
 				continue
 			}
@@ -621,7 +621,7 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel int) (Outc
 			continue
 		}
 		// present but not yet terminal (pending)
-		if drainLevel >= DrainForce {
+		if drainLevel >= manifest.DrainForce {
 			failed = append(failed, d)
 			continue
 		}
@@ -653,7 +653,7 @@ func (f *fakeDisp) runCount(nid NodeID) int {
 	return f.runs[nid]
 }
 
-func (f *fakeDisp) maxDrainLevel() int {
+func (f *fakeDisp) maxDrainLevel() manifest.DrainLevel {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.maxDrain
@@ -704,7 +704,7 @@ func TestLinearChainReadyPropagation(t *testing.T) {
 	assertReady(t, f, "a")
 	assertReady(t, f, "b")
 	assertReady(t, f, "c")
-	if f.maxDrainLevel() != DrainNone {
+	if f.maxDrainLevel() != manifest.DrainNone {
 		t.Fatalf("a healthy chain must resolve without draining; maxDrain=%d", f.maxDrainLevel())
 	}
 }
@@ -725,7 +725,7 @@ func TestDiamondReadyPropagation(t *testing.T) {
 
 func TestDanglingChainCascadeFails(t *testing.T) {
 	// a -> b -> (absent X). Both must fail; the leaf's "dependency not found"
-	// cascades up. DrainCascade suffices (no DrainForce needed for a chain).
+	// cascades up. manifest.DrainCascade suffices (no manifest.DrainForce needed for a chain).
 	f := newFake(map[NodeID][]NodeID{
 		id("a"): {id("b")},
 		id("b"): {id("missing")}, // "missing" is absent from the graph
@@ -733,8 +733,8 @@ func TestDanglingChainCascadeFails(t *testing.T) {
 	run(t, f, 8)
 	assertFailed(t, f, "a")
 	assertFailed(t, f, "b")
-	if f.maxDrainLevel() != DrainCascade {
-		t.Fatalf("a dangling chain should drain at DrainCascade, not DrainForce; maxDrain=%d", f.maxDrainLevel())
+	if f.maxDrainLevel() != manifest.DrainCascade {
+		t.Fatalf("a dangling chain should drain at manifest.DrainCascade, not manifest.DrainForce; maxDrain=%d", f.maxDrainLevel())
 	}
 }
 
@@ -805,8 +805,8 @@ func TestLostWakeupRecheck(t *testing.T) {
 	run(t, f, 8)
 	assertReady(t, f, "a")
 	assertReady(t, f, "b")
-	if f.maxDrainLevel() != DrainNone {
-		t.Fatalf("lost-wakeup re-check should recover at DrainNone, not via draining; maxDrain=%d", f.maxDrainLevel())
+	if f.maxDrainLevel() != manifest.DrainNone {
+		t.Fatalf("lost-wakeup re-check should recover at manifest.DrainNone, not via draining; maxDrain=%d", f.maxDrainLevel())
 	}
 }
 
@@ -824,9 +824,9 @@ func TestTransitiveBlockCompareOrderCascades(t *testing.T) {
 }
 
 func TestCrossKindCycleForceDrains(t *testing.T) {
-	// a <-> b mutual dependency (no same-kind preflight here): DrainCascade
+	// a <-> b mutual dependency (no same-kind preflight here): manifest.DrainCascade
 	// cannot break it (each sees the other present-Pending and re-parks), so
-	// the scheduler must escalate to DrainForce and fail both.
+	// the scheduler must escalate to manifest.DrainForce and fail both.
 	f := newFake(map[NodeID][]NodeID{
 		id("a"): {id("b")},
 		id("b"): {id("a")},
@@ -834,8 +834,8 @@ func TestCrossKindCycleForceDrains(t *testing.T) {
 	run(t, f, 8)
 	assertFailed(t, f, "a")
 	assertFailed(t, f, "b")
-	if f.maxDrainLevel() != DrainForce {
-		t.Fatalf("a cycle must escalate to DrainForce; maxDrain=%d", f.maxDrainLevel())
+	if f.maxDrainLevel() != manifest.DrainForce {
+		t.Fatalf("a cycle must escalate to manifest.DrainForce; maxDrain=%d", f.maxDrainLevel())
 	}
 }
 
@@ -919,7 +919,7 @@ func TestRedispatch_ContentBudget(t *testing.T) {
 				var runs int
 				started, finished := make(chan struct{}), make(chan struct{})
 				victim, companion := id("content"), id("companion")
-				s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+				s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
 					if nid == companion {
 						close(started)
 						select {

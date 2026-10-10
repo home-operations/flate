@@ -233,9 +233,9 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 	maps.Copy(res.Orphans, o.orphans)
 	// Tag the derived (dependency-blocked) failures so a consumer can collapse
 	// the cascade under its root cause. A failure with no blockers is primary.
-	for id := range res.Failed {
-		if b := o.store.BlockedBy(id); len(b) > 0 {
-			res.Blocked[id] = b
+	for id, info := range res.Failed {
+		if info.IsDependencyFailure() {
+			res.Blocked[id] = info.BlockedBy()
 		}
 	}
 	return res, runErr

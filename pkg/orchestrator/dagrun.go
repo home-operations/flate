@@ -17,7 +17,7 @@ import (
 // untranslated.
 type dagDispatcher struct{ o *Orchestrator }
 
-func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel int) (schedule.Outcome, []schedule.NodeID) {
+func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID) {
 	o := d.o
 	var blocked []manifest.NamedResource
 	switch {
@@ -47,10 +47,8 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLe
 	if len(blocked) > 0 {
 		return schedule.OutcomeBlocked, blocked
 	}
-	if info, ok := o.store.GetStatus(id); ok && info.Status == store.StatusFailed {
-		if failed := o.store.BlockedBy(id); len(failed) > 0 {
-			return schedule.OutcomeDependencyFailed, failed
-		}
+	if info, _ := o.store.GetStatus(id); info.IsDependencyFailure() {
+		return schedule.OutcomeDependencyFailed, info.BlockedBy()
 	}
 	return schedule.OutcomeTerminal, nil
 }

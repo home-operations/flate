@@ -26,7 +26,7 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			}
 			st.UpdateStatus(id, store.StatusFailed, "original failure")
 			if mode != "prior primary failure" {
-				st.SetBlocked(id, []manifest.NamedResource{old})
+				st.UpdateFailure(id, &manifest.DependencyFailedError{Failed: []manifest.NamedResource{old}})
 			}
 			c := base.New(st, nil, "test")
 			if mode == "filtered" {
@@ -36,11 +36,12 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 				c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle", true })
 			}
 			ran := false
-			blocked := c.DispatchNode(t.Context(), id, 0,
-				func(*manifest.HelmRelease) bool { return mode == "suspended" },
-				func(_ context.Context, _ *manifest.HelmRelease) error {
+			blocked := c.DispatchNode(t.Context(), id, manifest.DrainNone, base.Dispatch[*manifest.HelmRelease]{
+				Suspended: func(*manifest.HelmRelease) bool { return mode == "suspended" },
+				Reconcile: func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 					ran = true
-					if got := st.BlockedBy(id); len(got) != 0 {
+					info, _ := st.GetStatus(id)
+					if got := info.BlockedBy(); len(got) != 0 {
 						t.Errorf("reconcile inherited old blockers: %v", got)
 					}
 					switch mode {
@@ -54,7 +55,8 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 						return &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
 					}
 					return nil
-				})
+				},
+			})
 			wantStatus := store.StatusReady
 			wantRan := true
 			switch mode {
@@ -76,7 +78,7 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			if mode == "new dependency failure" {
 				wantBlockers = []manifest.NamedResource{fresh}
 			}
-			if got := st.BlockedBy(id); !slices.Equal(got, wantBlockers) {
+			if got := info.BlockedBy(); !slices.Equal(got, wantBlockers) {
 				t.Fatalf("blockers=%v, want %v", got, wantBlockers)
 			}
 			if mode == "blocked" && !slices.Equal(blocked, []manifest.NamedResource{fresh}) {

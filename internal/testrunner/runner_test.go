@@ -283,8 +283,7 @@ func TestRun_BlockedByPrimaryFailure(t *testing.T) {
 	s.AddObject(&manifest.Kustomization{Name: root.Name, Namespace: root.Namespace})
 	s.AddObject(&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
 	s.UpdateStatus(root, store.StatusFailed, "kustomize build boom") // primary
-	s.UpdateStatus(child, store.StatusFailed, "dependencies failed: cluster-apps")
-	s.SetBlocked(child, []manifest.NamedResource{root})
+	s.UpdateFailure(child, &manifest.DependencyFailedError{Parent: child, Failed: []manifest.NamedResource{root}})
 
 	rep := Run(Job{Store: s})
 	if rep.Failed != 1 || len(rep.Blocked) != 1 {
@@ -359,7 +358,7 @@ func TestRun_SurfacesNonRosterFailure(t *testing.T) {
 // TestRun_SkipsSyntheticHelmChartFailure pins the dedup half of the scan: a
 // synthetic HelmChart (internal plumbing flate materializes to fetch an HR's
 // chart) is never a first-class tested kind, and its failure always re-surfaces
-// on the consuming HR's own row. Listing the hash-suffixed chart id again would
+// in the consuming HR's blocked reason. Listing the chart id again would
 // be pure duplication, so the scan skips KindHelmChart.
 func TestRun_SkipsSyntheticHelmChartFailure(t *testing.T) {
 	s := store.New()
@@ -367,12 +366,12 @@ func TestRun_SkipsSyntheticHelmChartFailure(t *testing.T) {
 	chart := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "nvidia", Name: "nvidia-gpu-operator-16d855d"}
 	s.AddObject(&manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace})
 	s.AddObject(&manifest.HelmChartSource{Name: chart.Name, Namespace: chart.Namespace})
-	s.UpdateStatus(hr, store.StatusFailed, "chart source HelmChart/nvidia/nvidia-gpu-operator-16d855d not ready: 404 Not Found")
+	s.UpdateFailure(hr, &manifest.DependencyFailedError{Parent: hr, Failed: []manifest.NamedResource{chart}, Reasons: map[manifest.NamedResource]string{chart: "download chart: 404 Not Found"}})
 	s.UpdateStatus(chart, store.StatusFailed, "download chart: 404 Not Found")
 
 	rep := Run(Job{Store: s})
-	if rep.Failed != 1 {
-		t.Fatalf("want only the HR counted as failed, got %+v", rep)
+	if rep.Matched != 1 || rep.Failed != 0 || len(rep.Blocked) != 1 || !rep.AnyFailed() {
+		t.Fatalf("want only the HR counted as blocked, got %+v", rep)
 	}
 	for _, c := range rep.Cases {
 		if c.ID.Kind == manifest.KindHelmChart {
@@ -398,8 +397,7 @@ func TestRun_BlockedByMissingDep(t *testing.T) {
 	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "volsync-system", Name: "kopiur-repository"}
 	missing := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kopiur-system", Name: "kopiur"}
 	s.AddObject(&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
-	s.UpdateStatus(child, store.StatusFailed, "dependencies failed: kopiur")
-	s.SetBlocked(child, []manifest.NamedResource{missing})
+	s.UpdateFailure(child, &manifest.DependencyFailedError{Parent: child, Failed: []manifest.NamedResource{missing}})
 
 	rep := Run(Job{Store: s})
 	if rep.Failed != 0 || len(rep.Blocked) != 1 {
@@ -431,10 +429,8 @@ func TestRun_BlockedByCycle(t *testing.T) {
 	s.AddObject(&manifest.Kustomization{Name: ks.Name, Namespace: ks.Namespace})
 	s.AddObject(&manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace})
 	// A ⇄ B: each blocked on the other, both terminally failed — a closed cycle.
-	s.UpdateStatus(ks, store.StatusFailed, "dependencies failed: hr-b")
-	s.UpdateStatus(hr, store.StatusFailed, "dependencies failed: ks-a")
-	s.SetBlocked(ks, []manifest.NamedResource{hr})
-	s.SetBlocked(hr, []manifest.NamedResource{ks})
+	s.UpdateFailure(ks, &manifest.DependencyFailedError{Parent: ks, Failed: []manifest.NamedResource{hr}})
+	s.UpdateFailure(hr, &manifest.DependencyFailedError{Parent: hr, Failed: []manifest.NamedResource{ks}})
 
 	rep := Run(Job{Store: s})
 	if rep.Failed != 0 || len(rep.Blocked) != 2 {

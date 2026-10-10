@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -101,15 +100,16 @@ func (c *Controller) Start(_ context.Context) {
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
-// dependency set (nil = terminalized) and whether id ended Ready. The
+// dependency set (nil = terminalized). The
 // orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, drainLevel int) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, drainLevel,
-		func(ks *manifest.Kustomization) bool { return ks.Suspend },
-		c.reconcile)
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
+	return c.DispatchNode(ctx, id, level, base.Dispatch[*manifest.Kustomization]{
+		Suspended: func(ks *manifest.Kustomization) bool { return ks.Suspend },
+		Reconcile: c.reconcile,
+	})
 }
 
-func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) error {
+func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, level manifest.DrainLevel) error {
 	id := ks.Named()
 	if err := c.PreflightError(id); err != nil {
 		return err
@@ -134,8 +134,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 		// duplicate renders that linger in the store with the wrong
 		// namespace. See #102.
 		fresh, ok, err := c.RequireRefresh[*manifest.Kustomization](
-			ctx, id, ks.Timeout, deps,
-			"", base.DepFailed(id)) // empty pendingMsg: status set above (kept Ready on a no-op re-run)
+			ctx, id, deps, level)
 		if err != nil {
 			return err
 		}
@@ -272,13 +271,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization) 
 // continues); adding a hard edge here would regress every offline
 // render against a Flux repo that uses secret-substitute patterns.
 func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
-	deps := slices.Clone(ks.DependsOn)
-	if f := c.Filter(); f != nil && f.Enabled() {
-		deps = slices.DeleteFunc(deps, func(d manifest.DependencyRef) bool {
-			return !f.ShouldReconcile(d.NamedResource) &&
-				(c.IsFileIndexed(d.NamedResource) || c.Store.GetObject(d.NamedResource) != nil)
-		})
-	}
+	deps := c.OrderingDeps(ks.DependsOn)
 	if ks.SourceKind != "" && ks.SourceName != "" {
 		deps = append(deps, manifest.DependencyRef{
 			Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
@@ -365,8 +358,8 @@ func (c *Controller) resolveSource(ks *manifest.Kustomization) (sourceRoot strin
 		// Ready with a "skipped:" reason but writes no artifact. Surface
 		// that as a typed skip so the caller can mark the KS skipped too
 		// rather than reporting a generic "artifact not found" failure.
-		if info, ok := c.Store.GetStatus(srcID); ok && store.IsSkipped(info) {
-			return "", false, fmt.Errorf("%w: source %s %s", manifest.ErrSourceSkipped, srcID.String(), info.Message)
+		if err := c.SourceSkipped(srcID, "source"); err != nil {
+			return "", false, err
 		}
 		return "", false, fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
 	}

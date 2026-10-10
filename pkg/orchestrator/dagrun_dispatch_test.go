@@ -36,12 +36,12 @@ data: {key: value}
 	unsub := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals.Add(1) }, false)
 	t.Cleanup(unsub)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-	out, blocked := d.Dispatch(t.Context(), rs.Named(), schedule.DrainNone)
+	out, blocked := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	if out != schedule.OutcomeTerminal || len(blocked) != 0 || arrivals.Load() != 1 {
 		t.Fatalf("fresh result=%v blocked=%v arrivals=%d", out, blocked, arrivals.Load())
 	}
 	before := s.GetArtifact(rs.Named())
-	out, blocked = d.Dispatch(t.Context(), rs.Named(), schedule.DrainNone)
+	out, blocked = d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	if out != schedule.OutcomeTerminalNoop || len(blocked) != 0 || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
 		t.Fatalf("dedup result=%v blocked=%v arrivals=%d artifact changed=%v", out, blocked, arrivals.Load(), s.GetArtifact(rs.Named()) != before)
 	}
@@ -62,7 +62,7 @@ data: {key: fixed}
 `}
 			s.AddObject(rs)
 			d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-			if out, blocked := d.Dispatch(t.Context(), rs.Named(), schedule.DrainNone); out != schedule.OutcomeTerminal || len(blocked) != 0 {
+			if out, blocked := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone); out != schedule.OutcomeTerminal || len(blocked) != 0 {
 				t.Fatalf("fresh setup failed: %v %v", out, blocked)
 			}
 			before := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
@@ -110,7 +110,7 @@ data: {key: fixed}
 			var arrivals atomic.Int64
 			unsub := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals.Add(1) }, false)
 			t.Cleanup(unsub)
-			out, blocked := d.Dispatch(t.Context(), rs.Named(), schedule.DrainNone)
+			out, blocked := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 			if out != want || (len(blocked) > 0) != (want == schedule.OutcomeBlocked) {
 				t.Fatalf("outcome=%v blocked=%v; want %v", out, blocked, want)
 			}
@@ -152,7 +152,7 @@ data: {key: initial}
 `}
 	s.AddObject(rs)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-	d.Dispatch(t.Context(), rs.Named(), schedule.DrainNone)
+	d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	s.UpdateStatus(rs.Named(), store.StatusPending, "queued")
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -173,7 +173,7 @@ data: {key: initial}
 	s.AddObject(&fresh)
 	done := make(chan schedule.Outcome, 1)
 	tasks.Go(ctx, "dispatch", func(ctx context.Context) {
-		out, _ := d.Dispatch(ctx, rs.Named(), schedule.DrainNone)
+		out, _ := d.Dispatch(ctx, rs.Named(), manifest.DrainNone)
 		done <- out
 	})
 	select {
@@ -191,10 +191,10 @@ data: {key: initial}
 		t.Fatalf("concurrent fresh render classified as %v", out)
 	}
 	tasks.BlockTillDone()
-	if out, _ := d.Dispatch(ctx, rs.Named(), schedule.DrainNone); out != schedule.OutcomeTerminal {
+	if out, _ := d.Dispatch(ctx, rs.Named(), manifest.DrainNone); out != schedule.OutcomeTerminal {
 		t.Fatalf("newest content must render conservatively: %v", out)
 	}
-	if out, _ := d.Dispatch(t.Context(), rs.Named(), schedule.DrainNone); out != schedule.OutcomeTerminalNoop {
+	if out, _ := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone); out != schedule.OutcomeTerminalNoop {
 		t.Fatalf("settled newest content must dedup: %v", out)
 	}
 	cm, ok := s.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"})

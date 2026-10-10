@@ -58,24 +58,6 @@ const (
 	OutcomeTerminalNoop
 )
 
-// Drain levels passed to Dispatcher.Dispatch. 0 is normal operation; the
-// scheduler escalates only at the structural fixpoint (nothing in flight,
-// nodes still parked).
-const (
-	// DrainNone: normal operation — an unsatisfiable dependency parks.
-	DrainNone = 0
-	// DrainCascade: an absent dependency (and a never-true ReadyExpr)
-	// terminalizes as a failure; a present-but-Pending dependency still
-	// parks, so a dangling chain fails leaf-first and each level cascades
-	// the child's real terminal message upward.
-	DrainCascade = 1
-	// DrainForce: a present-but-Pending dependency ALSO terminalizes ("not
-	// ready"). Reached only when a DrainCascade pass made no progress — i.e.
-	// a cross-kind structural cycle the same-kind preflight detector cannot
-	// represent; forcing the failure breaks it.
-	DrainForce = 2
-)
-
 // Dispatcher runs a node's reconcile body. The orchestrator supplies the
 // concrete implementation, closing over the store and the three controllers;
 // the scheduler never sees a store or controller type.
@@ -87,8 +69,8 @@ type Dispatcher interface {
 	// goroutine (a task.Service worker) and reports back:
 	//   - out: OutcomeTerminal, OutcomeTerminalNoop, OutcomeBlocked, or OutcomeDependencyFailed.
 	//   - blocked: unsatisfied or failed dependency ids for the latter two outcomes.
-	// drainLevel is one of DrainNone/DrainCascade/DrainForce.
-	Dispatch(ctx context.Context, id NodeID, drainLevel int) (out Outcome, blocked []NodeID)
+	// drainLevel is one of manifest.DrainNone/manifest.DrainCascade/manifest.DrainForce.
+	Dispatch(ctx context.Context, id NodeID, drainLevel manifest.DrainLevel) (out Outcome, blocked []NodeID)
 }
 
 type nodeState uint8
@@ -177,8 +159,8 @@ type Scheduler struct {
 	untracked   NodeID
 	untrackedAt uint64
 	generation  uint64
-	inFlight    int // count of stateRunning nodes (EXCLUDES parked)
-	draining    int // DrainNone/DrainCascade/DrainForce
+	inFlight    int                 // count of stateRunning nodes (EXCLUDES parked)
+	draining    manifest.DrainLevel // manifest.DrainNone/manifest.DrainCascade/manifest.DrainForce
 	err         error
 	// dirty records that an object arrived since the last quiescence sweep. A
 	// rerun node re-expands at the structural fixpoint only when the store has
@@ -303,10 +285,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			// mid-cascade, because a terminalize that wakes a waiter pushes it
 			// to runq before the loop re-checks inFlight — so reaching here
 			// again means the level made no progress: a cross-kind structural
-			// cycle (same-kind cycles fail earlier at preflight). DrainForce
+			// cycle (same-kind cycles fail earlier at preflight). manifest.DrainForce
 			// fails present-Pending deps, breaking the cycle the way the event
 			// engine's quiescence does; finalSweep is the last-resort backstop.
-			if s.draining >= DrainForce {
+			if s.draining >= manifest.DrainForce {
 				break
 			}
 			s.draining++
@@ -775,8 +757,8 @@ func (s *Scheduler) redispatchLocked(n *node) bool {
 	return true
 }
 
-// finalSweepLocked is a defensive backstop: after DrainForce every parked node
-// should have terminalized (DrainForce fails present-Pending deps), so nothing
+// finalSweepLocked is a defensive backstop: after manifest.DrainForce every parked node
+// should have terminalized (manifest.DrainForce fails present-Pending deps), so nothing
 // should remain parked. If a node somehow does, force it terminal so a parked
 // node can never masquerade as a clean run. Caller holds mu.
 func (s *Scheduler) finalSweepLocked() {

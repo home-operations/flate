@@ -67,7 +67,7 @@ func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts
 // and we block on its completion to keep the drive synchronous.
 func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
 	t.Helper()
-	for _, drain := range []int{0, 1, 2} {
+	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
 		if reconcileNode(t, c, id, drain) {
 			break
 		}
@@ -79,7 +79,7 @@ func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifes
 // reconcileNode runs one ReconcileNode pass for id inside a Tasks.Go worker
 // (so the body's YieldSlot has a slot to release) and reports whether the node
 // terminalized (no blocked deps).
-func reconcileNode(t *testing.T, c *Controller, id manifest.NamedResource, drain int) bool {
+func reconcileNode(t *testing.T, c *Controller, id manifest.NamedResource, drain manifest.DrainLevel) bool {
 	t.Helper()
 	var terminal bool
 	done := make(chan struct{})
@@ -464,11 +464,11 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 				t.Fatalf("fallback calls = %d while renders can still produce the Secret, want 0", f.fallbackCalls)
 			}
 
-			drain := 1
+			drain := manifest.DrainCascade
 			if tt.rendered {
 				st.AddObject(&manifest.Secret{Name: "ghcr-creds", Namespace: "ns"})
 				f.rendered = true
-				drain = 0
+				drain = manifest.DrainNone
 			}
 			if !reconcileNode(t, c, repo.Named(), drain) {
 				t.Fatal("source must terminalize")

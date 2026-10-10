@@ -28,27 +28,26 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	o.configureControllers()
 	d := dagDispatcher{o}
 	victim, ghost := ksID("consumer"), ksID("ghost")
-	out, deps := d.Dispatch(t.Context(), victim, schedule.DrainCascade)
+	out, deps := d.Dispatch(t.Context(), victim, manifest.DrainCascade)
 	if out != schedule.OutcomeDependencyFailed || !slices.Equal(deps, []manifest.NamedResource{ghost}) {
 		t.Fatalf("derived failure = %v/%v, want ghost blocker", out, deps)
 	}
 	o.store.AddObject(&manifest.Kustomization{Name: ghost.Name, Namespace: ghost.Namespace})
 	o.store.UpdateStatus(ghost, store.StatusReady, "")
-	out, deps = d.Dispatch(t.Context(), victim, schedule.DrainNone)
+	out, deps = d.Dispatch(t.Context(), victim, manifest.DrainNone)
 	info, _ := o.store.GetStatus(victim)
-	if out != schedule.OutcomeTerminal || len(deps) != 0 || info.Status != store.StatusReady || len(o.store.BlockedBy(victim)) != 0 || len(o.store.FailedResources()) != 0 {
-		t.Fatalf("recovery = %v/%v status=%+v blockers=%v failures=%v", out, deps, info, o.store.BlockedBy(victim), o.store.FailedResources())
+	if out != schedule.OutcomeTerminal || len(deps) != 0 || info.Status != store.StatusReady || len(info.BlockedBy()) != 0 || len(o.store.FailedResources()) != 0 {
+		t.Fatalf("recovery = %v/%v status=%+v blockers=%v failures=%v", out, deps, info, info.BlockedBy(), o.store.FailedResources())
 	}
 	ks, _ := o.store.Get[*manifest.Kustomization](victim)
 	ks = ks.Clone()
 	ks.Path = "./missing-directory"
 	o.store.AddObject(ks)
-	o.store.SetBlocked(victim, []manifest.NamedResource{ghost})
-	o.store.UpdateStatus(victim, store.StatusFailed, "old derived failure")
-	out, deps = d.Dispatch(t.Context(), victim, schedule.DrainNone)
+	o.store.UpdateFailure(victim, &manifest.DependencyFailedError{Parent: victim, Failed: []manifest.NamedResource{ghost}})
+	out, deps = d.Dispatch(t.Context(), victim, manifest.DrainNone)
 	info, _ = o.store.GetStatus(victim)
-	if out != schedule.OutcomeTerminal || len(deps) != 0 || info.Status != store.StatusFailed || len(o.store.BlockedBy(victim)) != 0 {
-		t.Fatalf("primary failure misclassified = %v/%v status=%+v blockers=%v", out, deps, info, o.store.BlockedBy(victim))
+	if out != schedule.OutcomeTerminal || len(deps) != 0 || info.Status != store.StatusFailed || len(info.BlockedBy()) != 0 {
+		t.Fatalf("primary failure misclassified = %v/%v status=%+v blockers=%v", out, deps, info, info.BlockedBy())
 	}
 	o.Stop()
 }

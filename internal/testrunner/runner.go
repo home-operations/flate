@@ -209,7 +209,8 @@ func Run(j Job) Report {
 				continue
 			}
 			rep.Matched++
-			c := classify(j.Store, id)
+			info, ok := j.Store.GetStatus(id)
+			c := classify(id, info, ok)
 			switch c.Outcome {
 			case OutcomePassed:
 				rep.Passed++
@@ -217,7 +218,7 @@ func Run(j Job) Report {
 				rep.Skipped++
 			case OutcomeBlocked:
 				// Resolved to its root cause(s) after the scan; see blockedCases.
-				blocked[id] = j.Store.BlockedBy(id)
+				blocked[id] = info.BlockedBy()
 				continue
 			default: // OutcomeFailed
 				rep.Failed++
@@ -247,7 +248,7 @@ func Run(j Job) Report {
 		// A synthetic HelmChart is internal plumbing flate materializes to
 		// drive an HR's chart fetch — never a first-class tested kind (absent
 		// from every `test` subcommand's roster). Its failure always re-surfaces
-		// inline on the consuming HR's row ("chart source … not ready: <err>"),
+		// in the consuming HR's blocked reason,
 		// so listing the hash-suffixed chart id again is pure duplication.
 		if id.Kind == manifest.KindHelmChart {
 			continue
@@ -263,9 +264,10 @@ func Run(j Job) Report {
 	slices.SortFunc(extra, func(a, b manifest.NamedResource) int { return a.Compare(b) })
 	for _, id := range extra {
 		rep.Matched++
-		c := classify(j.Store, id)
+		info, ok := j.Store.GetStatus(id)
+		c := classify(id, info, ok)
 		if c.Outcome == OutcomeBlocked {
-			blocked[id] = j.Store.BlockedBy(id)
+			blocked[id] = info.BlockedBy()
 			continue
 		}
 		rep.Failed++
@@ -303,15 +305,16 @@ func blockedReason(s *store.Store, roots []manifest.NamedResource) string {
 	names := make([]string, len(roots))
 	for i, r := range roots {
 		names[i] = r.NamespacedName()
-		if _, known := s.GetStatus(r); !known {
+		if info, known := s.GetStatus(r); !known {
 			names[i] += " (not found)"
+		} else if r.Kind == manifest.KindHelmChart && info.Status == store.StatusFailed {
+			names[i] += ": " + manifest.TrimSentinelPrefix(info.Message)
 		}
 	}
 	return "blocked by " + strings.Join(names, ", ")
 }
 
-func classify(s *store.Store, id manifest.NamedResource) Case {
-	info, ok := s.GetStatus(id)
+func classify(id manifest.NamedResource, info store.StatusInfo, ok bool) Case {
 	switch {
 	case !ok:
 		return Case{ID: id, Outcome: OutcomeFailed, Reason: "no status reported"}
@@ -320,7 +323,7 @@ func classify(s *store.Store, id manifest.NamedResource) Case {
 		// a failed/missing dependency, not a primary fault. Report it as blocked
 		// (resolved to its root cause(s) by blockedCases) rather than reprinting
 		// the nested "dependencies failed:" chain on its own row.
-		if len(s.BlockedBy(id)) > 0 {
+		if info.IsDependencyFailure() {
 			return Case{ID: id, Outcome: OutcomeBlocked}
 		}
 		// Strip the `flux error: input error:` sentinel chain so the

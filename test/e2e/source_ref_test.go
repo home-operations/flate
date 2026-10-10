@@ -281,9 +281,13 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 }
 
 func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {
-	for _, tt := range []struct{ name, namespace, wantNamespace string }{
+	for _, tt := range []struct {
+		name, namespace, wantNamespace string
+		pinned                         bool
+	}{
 		{name: "explicit_source_namespace", namespace: ", namespace: flux-system", wantNamespace: "flux-system"},
 		{name: "implicit_source_namespace", wantNamespace: "shifted"},
+		{name: "pinned_inherited_namespace", wantNamespace: "shifted", pinned: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -336,9 +340,13 @@ spec:
   targetNamespace: shifted
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
+			sourceName, sourceNamespace := "pulse", "flux-system"
+			if tt.pinned {
+				sourceName, sourceNamespace = "unknown", "shifted"
+			}
 			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
-metadata: {name: pulse, namespace: flux-system}
+metadata: {name: `+sourceName+`, namespace: `+sourceNamespace+`}
 spec:
   interval: 10m
   url: git://fixture.invalid/cluster
@@ -353,32 +361,49 @@ spec:
 			if err != nil {
 				t.Fatal(err)
 			}
+			if tt.pinned {
+				testutil.WriteFile(t, root, "extra.txt", "second commit\n")
+				gitCommitAll(t, repo)
+			}
 			mutateFile(t, filepath.Join(root, "sources/repo.yaml"), "{branch: master}", "{commit: "+head.Hash().String()+"}")
 			testutil.WriteFile(t, root, "held/broken.yaml", "metadata: {name: held\n")
 			_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "held"))
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected held consumer's decode error, got %v", heldError)
 			}
-			wantError := "flate error: " + heldError.Error() + "\n"
+			wantError, wantCode := "flate error: "+heldError.Error()+"\n", 1
+			if tt.pinned {
+				wantError, wantCode = "", 0
+			}
 			transport := installSourceRefTransport(t, repo.Storer)
 			for _, concurrency := range []string{"2", "8"} {
 				t.Run("concurrency_"+concurrency, func(t *testing.T) {
 					out, stderr, code := runCLIBuffers("build", "ks", "probe", "-n", "flux-system",
 						"--path", filepath.Join(root, "flux"), "--concurrency", concurrency, "--cache-dir", t.TempDir())
-					if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
+					if code != wantCode || stderr != wantError || transport.calls.Load() != 0 ||
+						(!tt.pinned && out != "") || (tt.pinned && !strings.Contains(out, "name: ok")) {
 						t.Fatalf("re-keyed held consumer: exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
 							code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
 					}
 				})
 			}
 			st := store.New()
-			_, discoveryError := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), Store: st})
+			_, discoveryError := discovery.Run(t.Context(), discovery.Config{
+				Path: filepath.Join(root, "flux"), Store: st,
+				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
+			})
 			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "shifted", Name: "a-held"}
 			ks, ok := st.Get[*manifest.Kustomization](id)
 			if !ok || ks.Path != "./held" || ks.SourceName != "unknown" || ks.SourceNamespace != tt.wantNamespace {
 				t.Fatalf("expected surviving consumer with inherited namespace and unchanged path/source, got %+v", ks)
 			}
-			if !errors.Is(discoveryError, manifest.ErrInput) {
+			if tt.pinned {
+				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+				art, ok := st.GetArtifact(ref).(*store.SourceArtifact)
+				if discoveryError != nil || !ok || art.LocalRoot != root || art.LocalPath == root {
+					t.Fatalf("expected genuine inherited source pin without a held error: error=%v artifact=%+v", discoveryError, art)
+				}
+			} else if !errors.Is(discoveryError, manifest.ErrInput) {
 				t.Fatalf("expected discovery to retain the decode error, got %v", discoveryError)
 			}
 		})
@@ -386,7 +411,10 @@ spec:
 }
 
 func TestE2E_SourceRef_PinnedTreeDiscardsHeldConsumer(t *testing.T) {
-	for _, tt := range []struct{ name, held, want string }{
+	for _, tt := range []struct {
+		name, held, want, heldSource               string
+		survivorName, survivorPath, survivorSource string
+	}{
 		{
 			name: "removed",
 			held: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: restored, namespace: apps}\ndata: {value: tagged-consumer}\n",
@@ -403,6 +431,48 @@ spec:
   sourceRef: {kind: GitRepository, name: flux-system}
 `,
 			want: "value: ok-consumer",
+		},
+		{
+			name: "different_name", heldSource: "unknown",
+			survivorName: "b-survivor", survivorPath: "./apps/broken", survivorSource: "unknown",
+			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: b-survivor, namespace: flux-system}
+spec:
+  interval: 10m
+  suspend: true
+  path: ./apps/broken
+  sourceRef: {kind: GitRepository, name: unknown}
+`,
+			want: "value: tagged",
+		},
+		{
+			name: "different_path", heldSource: "unknown",
+			survivorName: "a-held", survivorPath: "./ok", survivorSource: "unknown",
+			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: a-held, namespace: flux-system}
+spec:
+  interval: 10m
+  suspend: true
+  path: ./ok
+  sourceRef: {kind: GitRepository, name: unknown}
+`,
+			want: "value: tagged",
+		},
+		{
+			name: "different_source_ref", heldSource: "unknown",
+			survivorName: "a-held", survivorPath: "./apps/broken", survivorSource: "flux-system",
+			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: a-held, namespace: flux-system}
+spec:
+  interval: 10m
+  suspend: true
+  path: ./apps/broken
+  sourceRef: {kind: GitRepository, name: flux-system}
+`,
+			want: "value: tagged",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -463,24 +533,54 @@ spec:
 			}
 			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: tagged", "value: newer")
 			gitCommitAll(t, repo)
+			heldSource := tt.heldSource
+			if heldSource == "" {
+				heldSource = "pinned"
+			}
 			testutil.WriteFile(t, root, "apps/broken/held.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: a-held, namespace: flux-system}
 spec:
   interval: 10m
   path: ./apps/broken
-  sourceRef: {kind: GitRepository, name: pinned}
+  sourceRef: {kind: GitRepository, name: `+heldSource+`}
 `)
 			testutil.WriteFile(t, root, "apps/broken/extra.yaml", "metadata: {name: extra\n")
 			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
+			_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "apps/broken"))
+			if !errors.Is(heldError, manifest.ErrInput) {
+				t.Fatalf("expected held consumer's decode error, got %v", heldError)
+			}
 			transport := installSourceRefTransport(t, repo.Storer)
 			for _, concurrency := range []string{"2", "8"} {
 				out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
 					"--concurrency", concurrency, "--cache-dir", t.TempDir())
-				if code != 0 || !strings.Contains(out, "value: tagged") || !strings.Contains(out, tt.want) ||
+				if code != 0 || strings.Contains(stderr, heldError.Error()) ||
+					!strings.Contains(out, "value: tagged") || !strings.Contains(out, tt.want) ||
 					strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer") || transport.calls.Load() != 0 {
 					t.Fatalf("discarded held consumer: concurrency=%s exit=%d transport=%d\n%s\nstderr:\n%s",
 						concurrency, code, transport.calls.Load(), out, stderr)
+				}
+			}
+			if tt.survivorName != "" {
+				st := store.New()
+				_, err := discovery.Run(t.Context(), discovery.Config{
+					Path: filepath.Join(root, "flux"), Store: st,
+					SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
+				})
+				if err != nil {
+					t.Fatalf("expected replaced consumer's held error to be dropped, got %v", err)
+				}
+				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: tt.survivorName}
+				ks, ok := st.Get[*manifest.Kustomization](id)
+				if !ok || ks.Path != tt.survivorPath || ks.SourceName != tt.survivorSource || ks.SourceRef.Namespace != "" {
+					t.Fatalf("expected survivor with independently changed identity field, got %+v", ks)
+				}
+				if tt.survivorName != "a-held" {
+					id.Name = "a-held"
+					if _, ok := st.Get[*manifest.Kustomization](id); ok {
+						t.Fatal("held consumer survived replacement")
+					}
 				}
 			}
 		})

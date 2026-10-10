@@ -49,11 +49,10 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if err != nil {
 			return "", fmt.Errorf("track oci chart version: %w", err)
 		}
-		disabled := opts.DisableChartDigestTracking != nil && *opts.DisableChartDigestTracking
-		if !disabled {
+		if !opts.DisableChartDigestTracking {
 			loaded.Chart.Metadata.Version = version
 		}
-		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art, disabled)
+		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art, opts.DisableChartDigestTracking)
 	}
 	caps, err := opts.capabilities()
 	if err != nil {

@@ -1553,7 +1553,7 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 					}
 					writeDigestTrackingRelease(t, root, rel, strconv.FormatBool(gate))
 					o, err := New(Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2,
-						HelmOptions: helm.Options{DisableChartDigestTracking: override.value}})
+						DisableChartDigestTracking: override.value})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -1564,23 +1564,21 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 					want := gate
 					if override.value != nil {
 						want = *override.value
-						assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking == override.value, false)
-						assert.Equal(t, *o.cfg.HelmOptions.DisableChartDigestTracking, *override.value)
+						assert.Equal(t, o.cfg.DisableChartDigestTracking == override.value, false)
+						assert.Equal(t, *o.cfg.DisableChartDigestTracking, *override.value)
 					} else {
-						assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking == nil, true)
+						assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
 					}
-					assert.Equal(t, *o.hrc.Options.DisableChartDigestTracking, want)
+					assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, want)
 					id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
 					assert.Equal(t, o.store.GetObject(id) == nil, covered)
 					_, indexed := o.existence.Get(id)
 					assert.Equal(t, indexed, true)
-					resolved := o.hrc.Options.DisableChartDigestTracking
 					writeDigestTrackingRelease(t, root, rel, strconv.FormatBool(!gate))
 					if err := o.Bootstrap(t.Context()); err != nil {
 						t.Fatal(err)
 					}
-					assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, resolved)
-					assert.Equal(t, *o.hrc.Options.DisableChartDigestTracking, want)
+					assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, want)
 				})
 			}
 		}
@@ -1612,8 +1610,8 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 				t.Fatal("expected Bootstrap failure")
 			}
 			assert.Equal(t, o.bootstrapped, false)
-			assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking == nil, true)
-			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking == nil, true)
+			assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
+			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, false)
 			writeDigestTrackingRelease(t, root, "apps/hr.yaml", "false")
 			if stage == "discovery" {
 				testutil.WriteFile(t, root, "apps/broken.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: valid}\n")
@@ -1624,8 +1622,8 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			assert.Equal(t, o.bootstrapped, true)
-			assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking == nil, true)
-			assert.Equal(t, *o.hrc.Options.DisableChartDigestTracking, false)
+			assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
+			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, false)
 		})
 	}
 }
@@ -1672,7 +1670,7 @@ spec:
 				if err := o.Bootstrap(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				assert.Equal(t, *o.hrc.Options.DisableChartDigestTracking, producer == "file")
+				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, producer == "file")
 				res, err := o.Render(t.Context())
 				if err != nil {
 					t.Fatal(err)
@@ -1682,8 +1680,8 @@ spec:
 				if !ok || !disablesChartDigestTracking(hr) {
 					t.Fatal("qualifying rendered release missing")
 				}
-				assert.Equal(t, o.cfg.HelmOptions.DisableChartDigestTracking == nil, true)
-				assert.Equal(t, *o.hrc.Options.DisableChartDigestTracking, producer == "file")
+				assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
+				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, producer == "file")
 				ks := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 				docs := slices.Clone(res.Manifests[ks])
 				slices.SortFunc(docs, func(a, b map[string]any) int {
@@ -1723,13 +1721,12 @@ func TestRenderTrees_ChartDigestTrackingIndependent(t *testing.T) {
 			base, head, err := RenderTrees(t.Context(),
 				Tree{Path: filepath.Join(baseRoot, "flux"), RepoRoot: baseRoot},
 				Tree{Path: filepath.Join(headRoot, "flux"), RepoRoot: headRoot},
-				Config{CacheDir: t.TempDir(), Concurrency: 2, HelmOptions: helm.Options{DisableChartDigestTracking: tc.supplied}})
+				Config{CacheDir: t.TempDir(), Concurrency: 2, DisableChartDigestTracking: tc.supplied})
 			if err != nil {
 				t.Fatal(err)
 			}
-			assert.Equal(t, *base.hrc.Options.DisableChartDigestTracking, tc.base)
-			assert.Equal(t, *head.hrc.Options.DisableChartDigestTracking, tc.head)
-			assert.Equal(t, base.hrc.Options.DisableChartDigestTracking == head.hrc.Options.DisableChartDigestTracking, false)
+			assert.Equal(t, base.hrc.Options.DisableChartDigestTracking, tc.base)
+			assert.Equal(t, head.hrc.Options.DisableChartDigestTracking, tc.head)
 			if tc.supplied != nil {
 				assert.Equal(t, *tc.supplied, tc.base)
 			}
@@ -1745,7 +1742,7 @@ func TestOrchestrator_ChartDigestTrackingCallerOwnership(t *testing.T) {
 			writeDigestTrackingRelease(t, root, "apps/hr.yaml", strconv.FormatBool(!disabled))
 			requested := disabled
 			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2,
-				HelmOptions: helm.Options{DisableChartDigestTracking: &requested}}
+				DisableChartDigestTracking: &requested}
 			first, err := New(cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -1761,10 +1758,10 @@ func TestOrchestrator_ChartDigestTrackingCallerOwnership(t *testing.T) {
 				if err := o.Bootstrap(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				assert.Equal(t, *o.hrc.Options.DisableChartDigestTracking, disabled)
+				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, disabled)
 				assert.Equal(t, requested, !disabled)
 			}
-			assert.Equal(t, first.cfg.HelmOptions.DisableChartDigestTracking == second.cfg.HelmOptions.DisableChartDigestTracking, false)
+			assert.Equal(t, first.cfg.DisableChartDigestTracking == second.cfg.DisableChartDigestTracking, false)
 		})
 	}
 }
@@ -1785,7 +1782,7 @@ func TestOrchestrator_BootstrapChartDigestTrackingInputOrder(t *testing.T) {
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			assert.Equal(t, *o.hrc.Options.DisableChartDigestTracking, true)
+			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, true)
 		})
 	}
 }

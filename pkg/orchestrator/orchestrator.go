@@ -79,6 +79,10 @@ type Config struct {
 	// HelmOptions tunes templating (skip CRDs/secrets/tests, kube
 	// version, etc.).
 	HelmOptions helm.Options
+	// DisableChartDigestTracking overrides HelmOptions.DisableChartDigestTracking.
+	// Nil selects automatic detection from file-loaded HelmRelease values during
+	// Bootstrap; false forces tracking on. New copies the requested value.
+	DisableChartDigestTracking *bool
 	// WipeSecrets controls Secret cleartext placeholders.
 	WipeSecrets bool
 	// AllowMissingSecrets converts source auth-secret-not-found errors
@@ -202,7 +206,7 @@ type Orchestrator struct {
 	rsc         *resourcesetctrl.Controller
 	filter      *change.Filter
 	sourceCache *source.Cache
-	// Backing storage keeps the effective option owned without a separate allocation.
+	// Backing storage snapshots the override without a separate allocation.
 	disableChartDigestTracking bool
 	// Accepted identities are immutable after bootstrap, including for late consumers.
 	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
@@ -393,7 +397,6 @@ func New(cfg Config) (*Orchestrator, error) {
 		return nil, errors.New("orchestrator: path is required")
 	}
 
-	disabled := cfg.HelmOptions.DisableChartDigestTracking != nil && *cfg.HelmOptions.DisableChartDigestTracking
 	if err := snapshotSubstitutions(&cfg); err != nil {
 		return nil, err
 	}
@@ -509,22 +512,21 @@ func New(cfg Config) (*Orchestrator, error) {
 		srcCtrl.Fetchers[kind] = source.WithRetry(f, cfg.SourceRetry)
 	}
 	o := &Orchestrator{
-		cfg:                        cfg,
-		sourceCache:                cache,
-		store:                      st,
-		tasks:                      ts,
-		src:                        srcCtrl,
-		ksc:                        kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
-		hrc:                        helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
-		rsc:                        resourcesetctrl.New(st, ts, cfg.WipeSecrets),
-		rendered:                   newRenderedSet(),
-		componentCache:             manifest.NewComponentCache(),
-		depGraph:                   newDependencyGraph(),
-		disableChartDigestTracking: disabled,
+		cfg:            cfg,
+		sourceCache:    cache,
+		store:          st,
+		tasks:          ts,
+		src:            srcCtrl,
+		ksc:            kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
+		hrc:            helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		rsc:            resourcesetctrl.New(st, ts, cfg.WipeSecrets),
+		rendered:       newRenderedSet(),
+		componentCache: manifest.NewComponentCache(),
+		depGraph:       newDependencyGraph(),
 	}
-	if cfg.HelmOptions.DisableChartDigestTracking != nil {
-		o.cfg.HelmOptions.DisableChartDigestTracking = &o.disableChartDigestTracking
-		o.hrc.Options.DisableChartDigestTracking = &o.disableChartDigestTracking
+	if cfg.DisableChartDigestTracking != nil {
+		o.disableChartDigestTracking = *cfg.DisableChartDigestTracking
+		o.cfg.DisableChartDigestTracking = &o.disableChartDigestTracking
 	}
 	return o, nil
 }
@@ -666,7 +668,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		return nil
 	}
 	disableChartDigestTracking := false
-	if requested := o.cfg.HelmOptions.DisableChartDigestTracking; requested != nil {
+	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
 		disableChartDigestTracking = *requested
 	}
 	discoveryCfg := discovery.Config{
@@ -676,7 +678,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		ComponentCache: o.componentCache,
 		SourceCache:    o.sourceCache,
 	}
-	if o.cfg.HelmOptions.DisableChartDigestTracking == nil {
+	if o.cfg.DisableChartDigestTracking == nil {
 		discoveryCfg.OnHelmRelease = func(hr *manifest.HelmRelease) {
 			disableChartDigestTracking = disableChartDigestTracking || disablesChartDigestTracking(hr)
 		}
@@ -698,8 +700,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err
 	}
-	o.disableChartDigestTracking = disableChartDigestTracking
-	o.hrc.Options.DisableChartDigestTracking = &o.disableChartDigestTracking
+	o.hrc.Options.DisableChartDigestTracking = disableChartDigestTracking
 	o.bootstrapped = true
 	return nil
 }

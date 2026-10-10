@@ -20,6 +20,7 @@ point of the project: changed-only renders, a bounded parallel DAG, aggressive d
   or options struct with one caller, no new flags, no new dependencies. No drive-by refactors
   of unrelated code. Remove what your change orphans; clean up touched code in the same files
   and nearby functions within the same concern: simplify it, delete dead code, fix stale comments.
+  Leave other pre-existing dead code and mention it.
 
 ## Layout
 

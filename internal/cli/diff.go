@@ -371,14 +371,6 @@ func gatherAllArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, 
 // only to recover the producing object's spec.path (the diff header
 // shows it for KS parents).
 func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) ([]diff.Doc, int) {
-	// Defensive re-drop of --skip-secrets / --skip-crds / --skip-kinds.
-	// Orchestrator.Render already applies the same set to Result.Manifests
-	// at the embed boundary; this still pulls weight for SDK consumers who
-	// hand-build a Result and pass it through the CLI helpers in tests.
-	var skip []string
-	if c != nil {
-		skip = c.skipResourceKinds()
-	}
 	// Filter the rendered manifests down to the in-scope parents
 	// (name + namespace), then hand the submap to diff.DocsFromManifests
 	// — the shared, store-free flattener SDK consumers use too — passing a
@@ -395,7 +387,7 @@ func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 		}
 		matched++
 		if docs, ok := res.Manifests[id]; ok {
-			sub[id] = manifest.DropKinds(docs, skip)
+			sub[id] = docs
 		}
 	}
 	docs := diff.DocsFromManifests(sub, func(id manifest.NamedResource) string {

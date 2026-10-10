@@ -131,7 +131,6 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 	// (namespace, name) (store.go), so single-kind output is deterministic
 	// across runs without a re-sort here.
 	objs := o.Store().ListObjects(kind)
-	skipKinds := c.skipResourceKinds()
 	matched := 0
 	var out []map[string]any
 	for _, obj := range objs {
@@ -149,7 +148,7 @@ func collectRendered(o *orchestrator.Orchestrator, res *orchestrator.Result, kin
 		if !ok {
 			continue
 		}
-		docs := emissionDocs(mans, b, skipKinds)
+		docs := emissionDocs(mans, b, nil)
 		if len(docs) == 0 {
 			continue
 		}
@@ -180,9 +179,6 @@ func emissionDocs(mans []map[string]any, b *buildFlags, skipKinds []string) []ma
 	if b.onlyCRDs {
 		return filterCRDsOnly(docs)
 	}
-	// Defensive re-drop. Orchestrator.Render already filters
-	// Result.Manifests at the embed boundary using the same kind set, so
-	// this is a no-op for the normal CLI path.
 	return manifest.DropKinds(docs, skipKinds)
 }
 

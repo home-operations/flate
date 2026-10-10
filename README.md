@@ -89,7 +89,7 @@ Repository precedence is frozen after discovery and before parallel reconciliati
 
 **Cache.** flate persists source fetches and helm template output under an on-disk cache (honoring Flux intervals). `flate cache gc` prunes stale entries; `flate cache clear-render` drops the persistent helm template-output cache.
 
-In a container, flate sets its soft memory limit to 80% of the cgroup limit unless `GOMEMLIMIT` or `GOGC` is set (`AUTOMEMLIMIT` adjusts the ratio).
+In a container, flate sets its soft memory limit to 80% of the cgroup limit unless `GOMEMLIMIT` is set (`AUTOMEMLIMIT` adjusts the ratio; `AUTOMEMLIMIT=off` disables it).
 
 ## Changed-only mode
 

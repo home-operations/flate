@@ -281,19 +281,39 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 }
 
 func TestE2E_SourceRef_PinnedTreeDiscardsHeldConsumer(t *testing.T) {
-	root := t.TempDir()
-	repo := gitInit(t, root)
-	if _, err := repo.CreateRemote(&config.RemoteConfig{
-		Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	for _, ks := range []struct{ name, path, source string }{
-		{"a-entry", "apps", "flux-system"},
-		{"z-pinned", "apps", "pinned"},
-		{"z-stage", "stage", "flux-system"},
+	for _, tt := range []struct{ name, held, want string }{
+		{
+			name: "removed",
+			held: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: restored, namespace: apps}\ndata: {value: tagged-consumer}\n",
+			want: "value: tagged-consumer",
+		},
+		{
+			name: "replaced",
+			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: a-held, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./ok
+  sourceRef: {kind: GitRepository, name: flux-system}
+`,
+			want: "value: ok-consumer",
+		},
 	} {
-		testutil.WriteFile(t, root, "flux/"+ks.name+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			repo := gitInit(t, root)
+			if _, err := repo.CreateRemote(&config.RemoteConfig{
+				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			for _, ks := range []struct{ name, path, source string }{
+				{"a-entry", "apps", "flux-system"},
+				{"z-pinned", "apps", "pinned"},
+				{"z-stage", "stage", "flux-system"},
+			} {
+				testutil.WriteFile(t, root, "flux/"+ks.name+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: `+ks.name+`, namespace: flux-system}
 spec:
@@ -301,10 +321,10 @@ spec:
   path: ./`+ks.path+`
   sourceRef: {kind: GitRepository, name: `+ks.source+`}
 `)
-	}
-	mutateFile(t, filepath.Join(root, "flux/a-entry.yaml"), "interval: 10m", "interval: 10m\n  suspend: true")
-	testutil.WriteFile(t, root, "stage/kustomization.yaml", "resources: [ks.yaml]\n")
-	testutil.WriteFile(t, root, "stage/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+			}
+			mutateFile(t, filepath.Join(root, "flux/a-entry.yaml"), "interval: 10m", "interval: 10m\n  suspend: true")
+			testutil.WriteFile(t, root, "stage/kustomization.yaml", "resources: [ks.yaml]\n")
+			testutil.WriteFile(t, root, "stage/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: z-sources, namespace: flux-system}
 spec:
@@ -312,8 +332,8 @@ spec:
   path: ./sources
   sourceRef: {kind: GitRepository, name: flux-system}
 `)
-	testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
-	testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
+			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: pinned, namespace: flux-system}
 spec:
@@ -321,22 +341,24 @@ spec:
   url: git://fixture.invalid/cluster
   ref: {tag: v1.0.0}
 `)
-	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, broken/held.yaml]\n")
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: tagged}\n")
-	testutil.WriteFile(t, root, "apps/broken/held.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: restored, namespace: apps}\ndata: {value: tagged-consumer}\n")
-	testutil.WriteFile(t, root, "apps/broken/kustomization.yaml", "resources: [held.yaml, extra.yaml]\n")
-	testutil.WriteFile(t, root, "apps/broken/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\n")
-	gitCommitAll(t, repo)
-	head, err := repo.Head()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
-		t.Fatal(err)
-	}
-	mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: tagged", "value: newer")
-	gitCommitAll(t, repo)
-	testutil.WriteFile(t, root, "apps/broken/held.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, broken/held.yaml]\n")
+			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: tagged}\n")
+			testutil.WriteFile(t, root, "apps/broken/held.yaml", tt.held)
+			testutil.WriteFile(t, root, "ok/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "ok/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ok, namespace: apps}\ndata: {value: ok-consumer}\n")
+			testutil.WriteFile(t, root, "apps/broken/kustomization.yaml", "resources: [held.yaml, extra.yaml]\n")
+			testutil.WriteFile(t, root, "apps/broken/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\n")
+			gitCommitAll(t, repo)
+			head, err := repo.Head()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+				t.Fatal(err)
+			}
+			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: tagged", "value: newer")
+			gitCommitAll(t, repo)
+			testutil.WriteFile(t, root, "apps/broken/held.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: a-held, namespace: flux-system}
 spec:
@@ -344,17 +366,19 @@ spec:
   path: ./apps/broken
   sourceRef: {kind: GitRepository, name: pinned}
 `)
-	testutil.WriteFile(t, root, "apps/broken/extra.yaml", "metadata: {name: extra\n")
-	mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
-	transport := installSourceRefTransport(t, repo.Storer)
-	for _, concurrency := range []string{"2", "8"} {
-		out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
-			"--concurrency", concurrency, "--cache-dir", t.TempDir())
-		if code != 0 || !strings.Contains(out, "value: tagged") || !strings.Contains(out, "value: tagged-consumer") ||
-			strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer") || transport.calls.Load() != 0 {
-			t.Fatalf("discarded held consumer: concurrency=%s exit=%d transport=%d\n%s\nstderr:\n%s",
-				concurrency, code, transport.calls.Load(), out, stderr)
-		}
+			testutil.WriteFile(t, root, "apps/broken/extra.yaml", "metadata: {name: extra\n")
+			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
+			transport := installSourceRefTransport(t, repo.Storer)
+			for _, concurrency := range []string{"2", "8"} {
+				out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
+					"--concurrency", concurrency, "--cache-dir", t.TempDir())
+				if code != 0 || !strings.Contains(out, "value: tagged") || !strings.Contains(out, tt.want) ||
+					strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer") || transport.calls.Load() != 0 {
+					t.Fatalf("discarded held consumer: concurrency=%s exit=%d transport=%d\n%s\nstderr:\n%s",
+						concurrency, code, transport.calls.Load(), out, stderr)
+				}
+			}
+		})
 	}
 }
 

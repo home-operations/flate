@@ -324,7 +324,12 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
 	var aliased []manifest.NamedResource
-	var followErrors map[manifest.NamedResource]error
+	type followError struct {
+		path string
+		ref  manifest.NamedResource
+		err  error
+	}
+	var followErrors map[manifest.NamedResource]followError
 	for {
 		if total != namespaced {
 			for id := range d.sourceFiles {
@@ -405,9 +410,9 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				}
 				// A late source pin replaces this working-tree walk with its committed tree.
 				if followErrors == nil {
-					followErrors = make(map[manifest.NamedResource]error)
+					followErrors = make(map[manifest.NamedResource]followError)
 				}
-				followErrors[id] = err
+				followErrors[id] = followError{path: ks.Path, ref: ref, err: err}
 			}
 			added++
 		}
@@ -422,10 +427,14 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				continue
 			}
 			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+			held := followErrors[id]
+			if ks.Path != held.path || ref != held.ref {
+				continue
+			}
 			if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
 				continue
 			}
-			return followErrors[id]
+			return held.err
 		}
 	}
 	l.PreferExisting = false

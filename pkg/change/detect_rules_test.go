@@ -16,9 +16,10 @@ import (
 func TestDetect_FluxIgnoreRules(t *testing.T) {
 	t.Setenv("PATH", "")
 	cases := []struct {
-		name          string
-		before, after map[string]string
-		want          []string
+		name                      string
+		before, after             map[string]string
+		want                      []string
+		nestedBefore, nestedAfter bool
 	}{
 		{name: "dot_file", before: map[string]string{".envrc": "old"}, after: map[string]string{".envrc": "new"}, want: []string{".envrc"}},
 		{name: "dot_directory", before: map[string]string{"apps/.overlays/patch.yaml": "old"}, after: map[string]string{"apps/.overlays/patch.yaml": "new"}, want: []string{"apps/.overlays/patch.yaml"}},
@@ -39,11 +40,19 @@ func TestDetect_FluxIgnoreRules(t *testing.T) {
 		{name: "reinclude_via_nested_sourceignore", before: map[string]string{".sourceignore": "sub/\n", "sub/.sourceignore": "!keep.yaml\n", "sub/drop.yaml": "old", "sub/keep.yaml": "old"}, after: map[string]string{".sourceignore": "sub/\n", "sub/.sourceignore": "!keep.yaml\n", "sub/drop.yaml": "new", "sub/keep.yaml": "new"}, want: []string{"sub/keep.yaml"}},
 		{name: "nested_sourceignore", before: map[string]string{"apps/.sourceignore": "skip.yaml\n", "apps/skip.yaml": "old"}, after: map[string]string{"apps/.sourceignore": "skip.yaml\n", "apps/skip.yaml": "new"}},
 		{name: "user_patterns_replace_defaults", before: map[string]string{".sourceignore": "skip.yaml\n", ".sops.yaml": "old"}, after: map[string]string{".sourceignore": "skip.yaml\n", ".sops.yaml": "new"}, want: []string{".sops.yaml"}},
+		{name: "baseline_nested_ignore_rules", nestedBefore: true, before: map[string]string{".sourceignore": "*.tmp\n"}, after: map[string]string{"image.png": "current"}, want: []string{".sourceignore"}},
+		{name: "current_nested_ignore_rules", nestedAfter: true, before: map[string]string{"image.png": "baseline"}, after: map[string]string{".sourceignore": "*.tmp\n"}, want: []string{".sourceignore"}},
 		{name: "excluded_add_delete", before: map[string]string{".github/old.yaml": "old"}, after: map[string]string{".github/new.yaml": "new"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			before, after := t.TempDir(), t.TempDir()
+			if tc.nestedBefore {
+				before = filepath.Join(after, "baseline")
+			}
+			if tc.nestedAfter {
+				after = filepath.Join(before, "current")
+			}
 			for rel, body := range tc.before {
 				testutil.WriteFile(t, before, rel, body)
 			}

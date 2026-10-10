@@ -194,14 +194,9 @@ type fileMeta struct {
 // scanTree must descend excluded directories so deeper re-includes survive.
 // The opposite snapshot and .git metadata never belong to the artifact view.
 func scanTree(root, opposite string) (map[string]fileMeta, error) {
-	// New uses Flux's LoadIgnorePatterns, VCSPatterns, NewDefaultMatcher and
-	// NewMatcher (github.com/fluxcd/pkg/sourceignore v0.19.0).
-	matcher, err := sourceignore.New(root, nil, true)
-	if err != nil {
-		return nil, err
-	}
 	out := map[string]fileMeta{}
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	var ignoreFiles []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -213,6 +208,9 @@ func scanTree(root, opposite string) (map[string]fileMeta, error) {
 		}
 		if d.IsDir() {
 			return nil
+		}
+		if d.Name() == ".sourceignore" {
+			ignoreFiles = append(ignoreFiles, p)
 		}
 		typ := d.Type()
 		// Regular files and symlinks both participate in the diff;
@@ -226,17 +224,7 @@ func scanTree(root, opposite string) (map[string]fileMeta, error) {
 		if err != nil {
 			return err
 		}
-		if matcher.Match(rel, false) {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		// For symlinks Info() reports the link's own size (the target
-		// path length) — exactly the bytes we'll hash via readlink.
 		out[filepath.ToSlash(rel)] = fileMeta{
-			size:    info.Size(),
 			abs:     p,
 			symlink: isLink,
 		}
@@ -244,6 +232,24 @@ func scanTree(root, opposite string) (map[string]fileMeta, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Opposite-snapshot rules must not disable this side's Flux defaults.
+	matcher, err := sourceignore.NewFromFiles(root, ignoreFiles, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	for rel, meta := range out {
+		if matcher.Match(rel, false) {
+			delete(out, rel)
+			continue
+		}
+		// Lstat preserves the link's own size for comparison via readlink.
+		info, err := os.Lstat(meta.abs)
+		if err != nil {
+			return nil, err
+		}
+		meta.size = info.Size()
+		out[rel] = meta
 	}
 	return out, nil
 }

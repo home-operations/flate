@@ -93,6 +93,10 @@ Leaf packages stay leaf: `tree` (stdlib only), `manifest`, `task`, `schedule` (s
   constraints and rationale (MUST, never, invariant), not narration, and never reference past
   behavior or the current change.
 - `CGO_ENABLED=0`; no cgo, ever.
+- Write elegant code: names that state intent, small functions with one job and straight-line
+  flow, types that make wrong states unrepresentable, no wrappers, single-use helpers or
+  pass-through types, one obvious way consistent with the surrounding code. Working but
+  convoluted, repetitive or clever code is a review finding.
 
 ## Tests
 

@@ -23,6 +23,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -323,6 +324,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
 	var aliased []manifest.NamedResource
+	var followErrors map[manifest.NamedResource]error
 	for {
 		if total != namespaced {
 			for id := range d.sourceFiles {
@@ -390,12 +392,38 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				continue
 			}
 			if err := d.loadAt(ctx, target, scanned, &total); err != nil {
-				return err
+				if ks.SourceKind != manifest.KindGitRepository || !errors.Is(err, manifest.ErrInput) || d.cfg.Store.GetArtifact(ref) != nil {
+					return err
+				}
+				if repo, ok := d.cfg.Store.Get[*manifest.GitRepository](ref); ok {
+					if d.resolvedSources[ref] == repo {
+						return err
+					}
+					if _, local := d.selfRemotes(repoRoot)[normalizeGitURL(repo.URL)]; !local {
+						return err
+					}
+				}
+				// A late source pin replaces this working-tree walk with its committed tree.
+				if followErrors == nil {
+					followErrors = make(map[manifest.NamedResource]error)
+				}
+				followErrors[id] = err
 			}
 			added++
 		}
 		if added == 0 {
 			break
+		}
+	}
+	if len(followErrors) != 0 {
+		for _, id := range slices.SortedFunc(maps.Keys(followErrors), manifest.NamedResource.Compare) {
+			if ks, ok := d.cfg.Store.Get[*manifest.Kustomization](id); ok {
+				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+				if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+					continue
+				}
+			}
+			return followErrors[id]
 		}
 	}
 	l.PreferExisting = false

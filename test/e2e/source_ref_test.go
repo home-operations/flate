@@ -21,6 +21,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -37,11 +38,16 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 }
 
 func TestE2E_SourceRef_PinnedSourceDiscoveredAfterConsumer(t *testing.T) {
-	for _, tt := range []struct{ name, appsFile, sourcesFile, sourcesName, sourceRefName string }{
+	for _, tt := range []struct {
+		name, appsFile, sourcesFile, sourcesName, sourceRefName, sourceURL string
+		noRef                                                              bool
+	}{
 		{name: "apps_first/flux-system", appsFile: "a.yaml", sourcesFile: "z.yaml", sourcesName: "z-sources", sourceRefName: "flux-system"},
 		{name: "apps_first/cluster", appsFile: "a.yaml", sourcesFile: "z.yaml", sourcesName: "z-sources", sourceRefName: "cluster"},
 		{name: "sources_first/flux-system", appsFile: "z.yaml", sourcesFile: "a.yaml", sourcesName: "a-sources", sourceRefName: "flux-system"},
 		{name: "sources_first/cluster", appsFile: "z.yaml", sourcesFile: "a.yaml", sourcesName: "a-sources", sourceRefName: "cluster"},
+		{name: "unpinned/no_ref", appsFile: "a.yaml", sourcesFile: "z.yaml", sourcesName: "z-sources", sourceRefName: "flux-system", noRef: true},
+		{name: "unpinned/non_matching", appsFile: "a.yaml", sourcesFile: "z.yaml", sourcesName: "z-sources", sourceRefName: "flux-system", sourceURL: "git://fixture.invalid/other"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -68,17 +74,23 @@ spec:
   sourceRef: {kind: GitRepository, name: `+tt.sourceRefName+`, namespace: flux-system}
 `)
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
+			url, ref := tt.sourceURL, "  ref: {tag: v1.0.0}\n"
+			if url == "" {
+				url = "git://fixture.invalid/cluster"
+			}
+			if tt.noRef {
+				ref = ""
+			}
 			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: pinned, namespace: flux-system}
 spec:
   interval: 10m
-  url: git://fixture.invalid/cluster
-  ref: {tag: v1.0.0}
-`)
-			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, deleted.yaml]\n")
+  url: `+url+"\n"+ref)
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, deleted.yaml, extra.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
 			testutil.WriteFile(t, root, "apps/deleted.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: deleted, namespace: apps}\ndata: {value: pinned-deleted}\n")
+			testutil.WriteFile(t, root, "apps/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra, namespace: apps}\ndata: {value: pinned-extra}\n")
 			gitCommitAll(t, repo)
 			head, err := repo.Head()
 			if err != nil {
@@ -93,21 +105,50 @@ spec:
 			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
 			gitCommitAll(t, repo)
 			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
+			testutil.WriteFile(t, root, "apps/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra\n")
 			transport := installSourceRefTransport(t, repo.Storer)
-			var previous string
-			for _, concurrency := range []string{"2", "8"} {
-				t.Run("concurrency_"+concurrency, func(t *testing.T) {
-					out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
-						"--concurrency", concurrency, "--cache-dir", t.TempDir())
-					if code != 0 || !strings.Contains(out, "value: pinned") || !strings.Contains(out, "value: pinned-deleted") ||
-						strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer") || transport.calls.Load() != 0 {
-						t.Fatalf("late source pin: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+			var wantError string
+			if tt.noRef || tt.sourceURL != "" {
+				if _, err := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "apps")); err != nil {
+					wantError = "flate error: " + err.Error() + "\n"
+				} else {
+					t.Fatal("expected working-tree decode error")
+				}
+			}
+			for _, command := range []string{"build", "diff"} {
+				t.Run(command, func(t *testing.T) {
+					var previous string
+					for _, concurrency := range []string{"2", "8"} {
+						t.Run("concurrency_"+concurrency, func(t *testing.T) {
+							args := []string{command, "all", "--path", filepath.Join(root, "flux"),
+								"--concurrency", concurrency, "--cache-dir", t.TempDir()}
+							if command == "diff" {
+								args = append(args, "--base", "HEAD", "-o", "diff")
+							}
+							out, stderr, code := runCLIBuffers(args...)
+							if wantError != "" {
+								if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
+									t.Fatalf("unpinned decode error: exit=%d transport=%d\n%s\nstderr (-want +got):\n%s", code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
+								}
+								return
+							}
+							if code != 0 || transport.calls.Load() != 0 ||
+								(command == "build" && (!strings.Contains(out, "value: pinned") ||
+									!strings.Contains(out, "value: pinned-deleted") || !strings.Contains(out, "value: pinned-extra") ||
+									strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer"))) ||
+								(command == "diff" && out != "") {
+								t.Fatalf("late source pin: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+							}
+							if concurrency == "8" && out != previous {
+								t.Fatalf("output differs across concurrency levels (-want +got):\n%s", cmp.Diff(previous, out))
+							}
+							previous = out
+						})
 					}
-					if previous != "" && out != previous {
-						t.Fatalf("output differs across concurrency levels (-want +got):\n%s", cmp.Diff(previous, out))
-					}
-					previous = out
 				})
+			}
+			if wantError != "" {
+				return
 			}
 			st := store.New()
 			res, err := discovery.Run(t.Context(), discovery.Config{
@@ -123,7 +164,7 @@ spec:
 			if !ok || artifact.LocalPath == root {
 				t.Fatalf("expected committed source artifact, got %+v", artifact)
 			}
-			for _, file := range []struct{ name, path string }{{"hello", "cm.yaml"}, {"deleted", "deleted.yaml"}} {
+			for _, file := range []struct{ name, path string }{{"hello", "cm.yaml"}, {"deleted", "deleted.yaml"}, {"extra", "extra.yaml"}} {
 				id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: file.name}
 				path, indexed := res.Existence.Get(id)
 				if !indexed || path != filepath.Join(artifact.LocalPath, "apps", file.path) ||

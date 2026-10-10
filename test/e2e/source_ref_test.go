@@ -30,6 +30,83 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+func TestE2E_SourceRef_EmptyPathMatchesRoot(t *testing.T) {
+	fixture := func(t *testing.T, field string) (string, *store.Store, *discovery.Result) {
+		t.Helper()
+		root := t.TempDir()
+		gitInit(t, root)
+		testutil.WriteFile(t, root, "flux/root.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: root, namespace: flux-system}
+spec:
+`+field+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  targetNamespace: apps
+  postBuild: {substitute: {VALUE: source-root}}
+`)
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cm.yaml, child.yaml]\n")
+		testutil.WriteFile(t, root, "cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: root-owned}
+data: {value: '${VALUE}'}
+`)
+		testutil.WriteFile(t, root, "child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child, namespace: apps}
+spec:
+  path: ./leaf
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+		testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf-owned}\n")
+		st := store.New()
+		res, err := discovery.Run(t.Context(), discovery.Config{
+			Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return root, st, res
+	}
+	root, _, want := fixture(t, "  path: ./\n")
+	wantOutput := runCLIStdout(t, "build", "all", "--path", filepath.Join(root, "flux"),
+		"--concurrency", "2", "--cache-dir", t.TempDir())
+	for _, path := range []struct{ name, field string }{
+		{name: "explicit", field: "  path: ./\n"},
+		{name: "omitted"},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			root, st, res := fixture(t, path.field)
+			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "root"}
+			child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
+			if st.GetObject(child) == nil || res.ParentOf[child] != parent {
+				t.Fatalf("source-root child not discovered or owned by root: parents=%v", res.ParentOf)
+			}
+			claims := loader.KSPathPrefixesLocalOnly(st, root, nil)
+			owner, covered := loader.LongestParent(claims, "cm.yaml", manifest.NamedResource{})
+			if !covered || owner != parent {
+				t.Fatalf("source-root ConfigMap owner = %v, %t; want %v", owner, covered, parent)
+			}
+			assert.Diff(t, res.SourceFiles, want.SourceFiles)
+			assert.Diff(t, res.ParentOf, want.ParentOf)
+			for _, concurrency := range []string{"2", "8"} {
+				t.Run("concurrency_"+concurrency, func(t *testing.T) {
+					args := []string{"--path", filepath.Join(root, "flux"), "--concurrency", concurrency, "--cache-dir", t.TempDir()}
+					owned := runCLIStdout(t, append([]string{"build", "ks", "root"}, args...)...)
+					if !strings.Contains(owned, "name: root-owned") || !strings.Contains(owned, "value: source-root") ||
+						!strings.Contains(owned, "namespace: apps") {
+						t.Fatalf("root's rendered objects missing or untransformed:\n%s", owned)
+					}
+					out := runCLIStdout(t, append([]string{"build", "all"}, args...)...)
+					if !strings.Contains(out, "name: leaf-owned") {
+						t.Fatalf("child's rendered objects missing:\n%s", out)
+					}
+					assert.Equal(t, out, wantOutput)
+				})
+			}
+		})
+	}
+}
+
 func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 	root, _, _, _ := sourceRefFixture(t)
 	out, stderr := requireCLIOK(t, "build", "all", "--path", root+"/flux",
@@ -444,7 +521,7 @@ spec:
 	}
 }
 
-func TestE2E_SourceRef_HeldErrorIgnoresEmptyPath(t *testing.T) {
+func TestE2E_SourceRef_HeldErrorRetainedByEmptyPath(t *testing.T) {
 	root := t.TempDir()
 	repo := gitInit(t, root)
 	if _, err := repo.CreateRemote(&config.RemoteConfig{
@@ -490,11 +567,18 @@ spec:
 	mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
 	gitCommitAll(t, repo)
 	testutil.WriteFile(t, root, "apps/cm.yaml", "metadata: {name: broken\n")
+	_, wantError := loader.New(store.New()).Load(t.Context(), root)
+	if !errors.Is(wantError, manifest.ErrInput) {
+		t.Fatalf("expected a working-tree decode error, got %v", wantError)
+	}
 	_, err = discovery.Run(t.Context(), discovery.Config{
 		Path: filepath.Join(root, "flux"), Store: store.New(),
 		SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 	})
-	assert.Equal[error](t, err, nil)
+	if !errors.Is(err, manifest.ErrInput) {
+		t.Fatalf("empty-path working-tree reader lost the root error: %v", err)
+	}
+	assert.Equal(t, err.Error(), wantError.Error())
 }
 
 func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {

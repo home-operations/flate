@@ -146,9 +146,6 @@ func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.
 	external := ExternalSourcedKSIDs(s, repoRoot)
 	var pinnedBuilders map[string]*selfProduceBuilder
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		if ks.Path == "" {
-			continue
-		}
 		if _, skip := external[ks.Named()]; skip {
 			continue
 		}

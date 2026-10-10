@@ -527,13 +527,13 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 	// dependsOn is reconcile-ordering only. A change to `a` must not
 	// drag `b` into the keep set just because `a` depends on `b`.
 	a := &manifest.Kustomization{
-		Name: "a", Namespace: "flux-system",
+		Name: "a", Namespace: "flux-system", Path: "./a",
 		SourceKind: manifest.KindGitRepository, SourceName: "src", SourceNamespace: "flux-system",
 		DependsOn: []manifest.DependencyRef{{
 			Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "b",
 		}},
 	}
-	b := &manifest.Kustomization{Name: "b", Namespace: "flux-system"}
+	b := &manifest.Kustomization{Name: "b", Namespace: "flux-system", Path: "./b"}
 	aID, bID := a.Named(), b.Named()
 
 	f := NewFilter(
@@ -723,9 +723,9 @@ func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
 			Path: "kubernetes/apps/kube-system/reloader"},
 		reloaderApp: &manifest.Kustomization{Name: reloaderApp.Name, Namespace: reloaderApp.Namespace,
 			Path: "kubernetes/apps/kube-system/reloader/app"},
-		mediaSibling:    &manifest.Kustomization{Name: mediaSibling.Name, Namespace: mediaSibling.Namespace},
-		spegelSibling:   &manifest.Kustomization{Name: spegelSibling.Name, Namespace: spegelSibling.Namespace},
-		reloaderSibling: &manifest.Kustomization{Name: reloaderSibling.Name, Namespace: reloaderSibling.Namespace},
+		mediaSibling:    &manifest.Kustomization{Name: mediaSibling.Name, Namespace: mediaSibling.Namespace, Path: "kubernetes/apps/media"},
+		spegelSibling:   &manifest.Kustomization{Name: spegelSibling.Name, Namespace: spegelSibling.Namespace, Path: "kubernetes/apps/kube-system/spegel"},
+		reloaderSibling: &manifest.Kustomization{Name: reloaderSibling.Name, Namespace: reloaderSibling.Namespace, Path: "kubernetes/apps/kube-system/descheduler/app"},
 	}
 
 	f := NewFilter(

@@ -362,11 +362,7 @@ func TestKSPathPrefixes_SortsLongestFirst(t *testing.T) {
 	}
 }
 
-// TestKSPathPrefixes_SkipsEmptyPath confirms the "ks.Path == ”"
-// guard: a Kustomization without a spec.path (chart-of-charts style,
-// or chained-via-sourceRef-only) doesn't contribute a prefix that
-// would silently swallow files at the repo root.
-func TestKSPathPrefixes_SkipsEmptyPath(t *testing.T) {
+func TestKSPathPrefixes_EmptyPathClaimsRoot(t *testing.T) {
 	s := store.New()
 	with := &manifest.Kustomization{
 		Name: "with", Namespace: "flux-system",
@@ -377,8 +373,28 @@ func TestKSPathPrefixes_SkipsEmptyPath(t *testing.T) {
 	s.AddObject(without)
 
 	prefixes := KSPathPrefixesWithCache(s, "", nil)
-	if len(prefixes) != 1 || prefixes[0].ID.Name != "with" {
-		t.Errorf("expected only 'with' in prefixes; got %+v", prefixes)
+	if len(prefixes) != 2 || prefixes[0].ID != with.Named() || prefixes[1].ID != without.Named() || prefixes[1].Prefix != "" {
+		t.Fatalf("expected apps and source-root claims; got %+v", prefixes)
+	}
+	if parent, ok := LongestParent(prefixes, "root.yaml", manifest.NamedResource{}); !ok || parent != without.Named() {
+		t.Fatalf("root.yaml parent = %v, %t; want %v", parent, ok, without.Named())
+	}
+}
+
+func TestKSPathPrefixesLocalOnly_EmptyExternalPath(t *testing.T) {
+	s := store.New()
+	repo := &manifest.GitRepository{Name: "external", Namespace: "flux-system"}
+	external := &manifest.Kustomization{
+		Name: "external", Namespace: "flux-system",
+		SourceKind: manifest.KindGitRepository, SourceName: repo.Name, SourceNamespace: repo.Namespace,
+	}
+	local := &manifest.Kustomization{Name: "local", Namespace: "flux-system", Path: "./apps"}
+	s.AddObject(repo)
+	s.AddObject(external)
+	s.AddObject(local)
+	prefixes := KSPathPrefixesLocalOnly(s, t.TempDir(), nil)
+	if len(prefixes) != 1 || prefixes[0].ID != local.Named() {
+		t.Fatalf("external source root must not claim local files: %+v", prefixes)
 	}
 }
 

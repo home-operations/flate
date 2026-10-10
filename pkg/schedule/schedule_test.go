@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -24,6 +25,326 @@ type dispatchFunc func(context.Context, NodeID, int) (Outcome, []NodeID)
 
 func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain int) (Outcome, []NodeID) {
 	return f(ctx, id, drain)
+}
+
+func TestEdgeIdx_AddAndDelete(t *testing.T) {
+	dep, otherDep, first, second := id("dep"), id("other-dep"), id("first"), id("second")
+	for _, tc := range []struct {
+		name string
+		add  [][2]NodeID
+		del  [][2]NodeID
+		want edgeIdx
+	}{
+		{
+			name: "duplicate adds",
+			add:  [][2]NodeID{{dep, first}, {dep, first}},
+			want: edgeIdx{dep: {first: {}}},
+		},
+		{
+			name: "missing deletes",
+			add:  [][2]NodeID{{dep, first}},
+			del:  [][2]NodeID{{dep, second}, {otherDep, first}},
+			want: edgeIdx{dep: {first: {}}},
+		},
+		{
+			name: "shared consumers",
+			add:  [][2]NodeID{{dep, first}, {dep, second}},
+			del:  [][2]NodeID{{dep, first}},
+			want: edgeIdx{dep: {second: {}}},
+		},
+		{
+			name: "last consumer prunes only its dependency",
+			add:  [][2]NodeID{{dep, first}, {dep, second}, {otherDep, first}},
+			del:  [][2]NodeID{{dep, first}, {dep, second}},
+			want: edgeIdx{otherDep: {first: {}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := edgeIdx{}
+			for _, edge := range tc.add {
+				e.add(edge[0], edge[1])
+			}
+			for _, edge := range tc.del {
+				e.del(edge[0], edge[1])
+			}
+			assert.Diff(t, e, tc.want)
+		})
+	}
+}
+
+func TestScheduler_WakeOrder(t *testing.T) {
+	ordered := []NodeID{
+		{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "a"},
+		{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"},
+		{Kind: manifest.KindHelmRelease, Namespace: "b", Name: "a"},
+		{Kind: manifest.KindKustomization, Namespace: "a", Name: "a"},
+	}
+	for _, path := range []string{"parked", "failed"} {
+		for _, tc := range []struct {
+			name  string
+			order []NodeID
+			want  []NodeID
+		}{
+			{name: "empty"},
+			{name: "singleton", order: ordered[:1], want: ordered[:1]},
+			{name: "multiple sorted", order: ordered, want: ordered},
+			{name: "multiple reversed", order: []NodeID{ordered[3], ordered[2], ordered[1], ordered[0]}, want: ordered},
+			{name: "multiple permuted", order: []NodeID{ordered[2], ordered[0], ordered[3], ordered[1]}, want: ordered},
+		} {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				for range 64 {
+					s := New(task.NewBounded(2), nil)
+					dep, otherDep, prefix := id("dependency"), id("other-dependency"), id("queued")
+					s.runq = []NodeID{prefix}
+					for _, nid := range tc.order {
+						n := &node{id: nid, state: stateParked, blockedOn: []NodeID{dep, otherDep}}
+						idx := s.parkedIdx
+						if path == "failed" {
+							n.state, n.blockedOn, n.failedOn = stateTerminal, nil, []NodeID{dep, otherDep}
+							idx = s.failedIdx
+						}
+						s.nodes[nid] = n
+						idx.add(dep, nid)
+						idx.add(otherDep, nid)
+					}
+					s.mu.Lock()
+					if path == "parked" {
+						s.wakeWaitersLocked(dep)
+					} else {
+						s.recordProgressLocked(dep)
+					}
+					s.mu.Unlock()
+					assert.Diff(t, s.runq, append([]NodeID{prefix}, tc.want...))
+					for _, nid := range tc.order {
+						n := s.nodes[nid]
+						assert.Equal(t, n.state, stateRunnable)
+						assert.Equal(t, len(n.blockedOn), 0)
+						if path == "parked" {
+							assert.Equal(t, n.redispatches, 0)
+						} else {
+							assert.Equal(t, n.redispatches, 1)
+							for _, blocker := range []NodeID{dep, otherDep} {
+								_, retained := s.failedIdx[blocker][nid]
+								assert.Equal(t, retained, true)
+							}
+							s.mu.Lock()
+							n.state = stateRunning
+							s.inFlight++
+							s.mu.Unlock()
+							s.complete(nid, OutcomeTerminal, nil, false)
+						}
+					}
+					assert.Equal(t, len(s.parkedIdx), 0)
+					assert.Equal(t, len(s.failedIdx), 0)
+				}
+			})
+		}
+	}
+}
+
+func TestScheduler_WakeAllocations(t *testing.T) {
+	for _, path := range []string{"parked", "failed"} {
+		for _, count := range []int{0, 1, 4} {
+			t.Run(fmt.Sprintf("%s/waiters=%d", path, count), func(t *testing.T) {
+				s := New(task.NewBounded(2), nil)
+				dep := id("dependency")
+				idx := s.parkedIdx
+				if path == "failed" {
+					idx = s.failedIdx
+				}
+				for i := range count {
+					nid := id(fmt.Sprintf("waiter-%d", i))
+					s.nodes[nid] = &node{id: nid, state: stateRunning}
+					idx.add(dep, nid)
+				}
+				allocs := testing.AllocsPerRun(100, func() {
+					s.mu.Lock()
+					defer s.mu.Unlock()
+					if path == "parked" {
+						s.wakeWaitersLocked(dep)
+					} else {
+						s.recordProgressLocked(dep)
+					}
+				})
+				assert.Equal(t, allocs, float64(0))
+			})
+		}
+	}
+}
+
+func TestScheduler_WakeRunningWaiter(t *testing.T) {
+	for _, path := range []string{"parked", "failed"} {
+		t.Run(path, func(t *testing.T) {
+			s := New(task.NewBounded(2), nil)
+			dep, nid := id("dependency"), id("running")
+			n := &node{id: nid, state: stateRunning}
+			s.nodes[nid], s.inFlight = n, 1
+			idx := s.parkedIdx
+			if path == "failed" {
+				n.failedOn = []NodeID{dep}
+				idx = s.failedIdx
+			} else {
+				n.blockedOn = []NodeID{dep}
+			}
+			idx.add(dep, nid)
+			s.mu.Lock()
+			if path == "parked" {
+				s.wakeWaitersLocked(dep)
+			} else {
+				s.recordProgressLocked(dep)
+			}
+			s.mu.Unlock()
+			assert.Equal(t, n.rerunRequested, true)
+			assert.Equal(t, n.productive, path == "failed")
+			assert.Equal(t, n.state, stateRunning)
+			assert.Equal(t, len(s.runq), 0)
+			_, retained := idx[dep][nid]
+			assert.Equal(t, retained, true)
+		})
+	}
+}
+
+func TestScheduler_FailedWakeStopsAtCap(t *testing.T) {
+	s := New(task.NewBounded(2), nil)
+	dep, first, second := id("dependency"), id("a"), id("b")
+	for _, nid := range []NodeID{second, first} {
+		s.nodes[nid] = &node{id: nid, state: stateTerminal, failedOn: []NodeID{dep}}
+		s.failedIdx.add(dep, nid)
+	}
+	s.nodes[first].redispatches = maxRedispatches
+	s.mu.Lock()
+	s.recordProgressLocked(dep)
+	s.mu.Unlock()
+	assert.Equal(t, strings.Contains(s.err.Error(), first.String()), true)
+	assert.Equal(t, len(s.runq), 0)
+	assert.Equal(t, s.nodes[second].productive, false)
+	assert.Equal(t, len(s.failedIdx[dep]), 2)
+}
+
+func TestScheduler_RunCancellationBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		seed           bool
+		cancelBefore   bool
+		cancelDispatch bool
+	}{
+		{name: "canceled empty", cancelBefore: true},
+		{name: "final dispatch cancellation", seed: true, cancelDispatch: true},
+		{name: "clean completion", seed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, int) (Outcome, []NodeID) {
+				if tc.cancelDispatch {
+					cancel()
+				}
+				return OutcomeTerminal, nil
+			}))
+			if tc.seed {
+				s.Seed([]NodeID{id("last")})
+			}
+			if tc.cancelBefore {
+				cancel()
+			}
+			err := s.Run(ctx)
+			if tc.cancelBefore || tc.cancelDispatch {
+				assert.Equal(t, errors.Is(err, context.Canceled), true)
+			} else {
+				assert.Equal(t, err, nil)
+			}
+		})
+	}
+}
+
+func TestScheduler_RunStopDrains(t *testing.T) {
+	for _, capFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cap_first=%t", capFirst), func(t *testing.T) {
+			checkCtx, stopChecks := context.WithTimeout(t.Context(), 5*time.Second)
+			defer stopChecks()
+			ctx, cancel := context.WithCancel(checkCtx)
+			var run sync.WaitGroup
+			defer run.Wait()
+			started, stopping := make(chan struct{}, 2), make(chan struct{}, 2)
+			fail, release := make(chan struct{}), make(chan struct{})
+			releaseBodies := sync.OnceFunc(func() { close(release) })
+			defer releaseBodies()
+			defer cancel()
+			victim, held := id("feedback"), id("held")
+			var active, runs atomic.Int64
+			var s *Scheduler
+			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
+				active.Add(1)
+				defer active.Add(-1)
+				runs.Add(1)
+				started <- struct{}{}
+				if capFirst && nid == victim {
+					if awaitSignal(ctx, fail) {
+						s.OnArrival(victim, true)
+					}
+					return OutcomeTerminal, nil
+				}
+				<-ctx.Done()
+				stopping <- struct{}{}
+				awaitSignal(checkCtx, release)
+				return OutcomeTerminal, nil
+			}))
+			s.Seed([]NodeID{victim, held})
+			if capFirst {
+				s.nodes[victim].redispatches = maxRedispatches
+			}
+			done := make(chan error, 1)
+			run.Go(func() { done <- s.Run(ctx) })
+			for range 2 {
+				if !awaitSignal(checkCtx, started) {
+					t.Fatal("two worker bodies did not start")
+				}
+			}
+			assert.Equal(t, active.Load(), int64(2))
+			wantStopping := 2
+			if capFirst {
+				close(fail)
+				wantStopping = 1
+			} else {
+				cancel()
+			}
+			for range wantStopping {
+				if !awaitSignal(checkCtx, stopping) {
+					t.Fatal("bodies did not observe the stop")
+				}
+			}
+			s.mu.Lock()
+			for s.err == nil {
+				s.cond.Wait()
+			}
+			recorded := s.err
+			s.mu.Unlock()
+			cancel()
+			s.OnArrival(id("late"), true)
+			select {
+			case err := <-done:
+				t.Fatalf("Run returned before body drain: %v", err)
+			default:
+			}
+			releaseBodies()
+			select {
+			case err := <-done:
+				if capFirst {
+					assert.Equal(t, errors.Is(err, context.Canceled), false)
+					assert.Equal(t, strings.Contains(err.Error(), victim.String()), true)
+					assert.Equal(t, strings.Contains(err.Error(), "exceeded 32 redispatches"), true)
+				} else {
+					assert.Equal(t, errors.Is(err, context.Canceled), true)
+				}
+				assert.Equal(t, err, recorded)
+			case <-checkCtx.Done():
+				t.Fatal("Run did not finish after body drain")
+			}
+			assert.Equal(t, active.Load(), int64(0))
+			assert.Equal(t, runs.Load(), int64(2))
+			assert.Equal(t, len(s.nodes), 2)
+		})
+	}
 }
 
 func TestScheduler_FailedBlockerSets(t *testing.T) {
@@ -121,25 +442,20 @@ func TestRedispatchLimit(t *testing.T) {
 	for _, mode := range []string{"running arrival", "terminal arrival", "drain replay"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
 			var s *Scheduler
+			var helpers sync.WaitGroup
 			var runs atomic.Int64
+			terminal, arrived := make(chan struct{}), make(chan struct{})
 			victim := id("feedback")
 			producer := id("producer")
 			disp := dispatchFunc(func(ctx context.Context, nid NodeID, _ int) (Outcome, []NodeID) {
 				if nid == producer {
-					for ctx.Err() == nil {
-						s.mu.Lock()
-						terminal := s.nodes[victim].state == stateTerminal
-						err := s.err
-						s.mu.Unlock()
-						if err != nil {
-							break
-						}
-						if terminal {
-							s.OnArrival(victim, true)
-						} else {
-							runtime.Gosched()
+					for awaitSignal(ctx, terminal) {
+						s.OnArrival(victim, true)
+						select {
+						case arrived <- struct{}{}:
+						case <-ctx.Done():
+							return OutcomeTerminal, nil
 						}
 					}
 					return OutcomeTerminal, nil
@@ -154,10 +470,38 @@ func TestRedispatchLimit(t *testing.T) {
 				return OutcomeTerminal, nil
 			})
 			s = New(task.NewBounded(2), disp)
+			defer func() {
+				cancel()
+				s.mu.Lock()
+				s.cond.Broadcast()
+				s.mu.Unlock()
+				helpers.Wait()
+			}()
 			s.SetRerunAtDrain(func(NodeID) bool { return mode == "drain replay" })
 			s.Seed([]NodeID{victim})
 			if mode == "terminal arrival" {
 				s.Seed([]NodeID{producer})
+				helpers.Go(func() {
+					for {
+						s.mu.Lock()
+						for s.nodes[victim].state != stateTerminal && s.err == nil && ctx.Err() == nil {
+							s.cond.Wait()
+						}
+						stopped := s.err != nil || ctx.Err() != nil
+						s.mu.Unlock()
+						if stopped {
+							return
+						}
+						select {
+						case terminal <- struct{}{}:
+						case <-ctx.Done():
+							return
+						}
+						if !awaitSignal(ctx, arrived) {
+							return
+						}
+					}
+				})
 			}
 			err := s.Run(ctx)
 			if err == nil || !strings.Contains(err.Error(), victim.String()) || !strings.Contains(err.Error(), "exceeded 32 redispatches") {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,14 +77,14 @@ func TestStore_AddRenderedNestedContent(t *testing.T) {
 		{"nil spec", nil, false},
 		{"empty spec", map[string]any{}, false},
 	}
+	base := &manifest.RawObject{APIVersion: "example.test/v1", Kind: "Widget", Name: "app", Spec: cases[0].spec}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New()
 			seen := 0
 			s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen++ }, false)
-			obj := &manifest.RawObject{APIVersion: "example.test/v1", Kind: "Widget", Name: "app", Spec: cases[0].spec}
-			s.AddRendered(obj)
-			clone := *obj
+			s.AddRendered(base)
+			clone := *base
 			clone.Spec = tc.spec
 			s.AddRendered(&clone)
 			want := 2
@@ -93,6 +94,46 @@ func TestStore_AddRenderedNestedContent(t *testing.T) {
 			assert.Equal(t, seen, want)
 		})
 	}
+}
+
+func TestRenderedEqual_RawObjectFields(t *testing.T) {
+	rawType := reflect.TypeFor[manifest.RawObject]()
+	fields := make([]string, rawType.NumField())
+	for i := range fields {
+		fields[i] = rawType.Field(i).Name
+	}
+	assert.Diff(t, fields, []string{"Kind", "APIVersion", "Name", "Namespace", "Spec"})
+	base := &manifest.RawObject{
+		Kind: "Widget", APIVersion: "example.test/v1", Name: "app", Namespace: "ns",
+		Spec: map[string]any{"items": []any{map[string]any{"value": "same"}}},
+	}
+	assert.Equal(t, renderedEqual(base, base), true)
+	for _, tc := range []struct {
+		name   string
+		change func(*manifest.RawObject)
+		equal  bool
+	}{
+		{name: "equal distinct pointers", equal: true},
+		{name: "kind", change: func(obj *manifest.RawObject) { obj.Kind = "Other" }},
+		{name: "api version", change: func(obj *manifest.RawObject) { obj.APIVersion = "example.test/v2" }},
+		{name: "name", change: func(obj *manifest.RawObject) { obj.Name = "other" }},
+		{name: "namespace", change: func(obj *manifest.RawObject) { obj.Namespace = "other" }},
+		{name: "spec", change: func(obj *manifest.RawObject) { obj.Spec = nil }},
+		{name: "nested spec", change: func(obj *manifest.RawObject) {
+			obj.Spec["items"].([]any)[0].(map[string]any)["value"] = "changed"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := base.Clone()
+			assert.Equal(t, candidate == base, false)
+			if tc.change != nil {
+				tc.change(candidate)
+			}
+			assert.Equal(t, renderedEqual(base, candidate), tc.equal)
+			assert.Equal(t, renderedEqual(candidate, base), tc.equal)
+		})
+	}
+	assert.Diff(t, base.Spec, map[string]any{"items": []any{map[string]any{"value": "same"}}})
 }
 
 func TestStore_AddObjectIdempotent(t *testing.T) {

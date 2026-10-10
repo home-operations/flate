@@ -17,7 +17,7 @@ import (
 func awaitTerminal(ctx context.Context, s *Scheduler, nid NodeID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for s.nodes[nid].state != stateTerminal && s.err == nil && !s.canceled {
+	for s.nodes[nid].state != stateTerminal && s.err == nil {
 		s.cond.Wait()
 	}
 	return ctx.Err() == nil && s.err == nil
@@ -325,7 +325,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 							if round == 1 && tc.cancel {
 								cancel()
 								s.mu.Lock()
-								for !s.canceled {
+								for s.err == nil {
 									s.cond.Wait()
 								}
 								s.mu.Unlock()

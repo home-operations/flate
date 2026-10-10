@@ -23,7 +23,6 @@ package schedule
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -101,10 +100,28 @@ const (
 	stateTerminal
 )
 
-// Existing scheduler fixtures need at most three dispatches per node under
-// -race. Allow 32 content-driven redispatches, excluding dependency retries,
-// to leave ample room for healthy propagation while bounding feedback loops.
+// Bound content-driven feedback per node while leaving dependency retries free
+// to propagate through arbitrarily long dependency chains.
 const maxRedispatches = 32
+
+type edgeIdx map[NodeID]map[NodeID]struct{}
+
+func (e edgeIdx) add(dep, id NodeID) {
+	set := e[dep]
+	if set == nil {
+		set = map[NodeID]struct{}{}
+		e[dep] = set
+	}
+	set[id] = struct{}{}
+}
+
+func (e edgeIdx) del(dep, id NodeID) {
+	set := e[dep]
+	delete(set, id)
+	if len(set) == 0 {
+		delete(e, dep)
+	}
+}
 
 type failedMark struct {
 	check uint64
@@ -148,19 +165,20 @@ type Scheduler struct {
 	tasks *task.Service
 	disp  Dispatcher
 
-	mu        sync.Mutex
-	cond      *sync.Cond
-	nodes     map[NodeID]*node
-	runq      []NodeID
-	parkedIdx map[NodeID]map[NodeID]struct{} // dep id -> set of nodes parked on it
-	failedIdx map[NodeID]map[NodeID]struct{} // dep id -> terminal dependency failures
+	mu    sync.Mutex
+	cond  *sync.Cond
+	nodes map[NodeID]*node
+	runq  []NodeID
+	// Wake snapshots are shared only while mu is held.
+	waiters   []NodeID
+	parkedIdx edgeIdx // dep id -> set of nodes parked on it
+	failedIdx edgeIdx // dep id -> terminal dependency failures
 	// One overwriteable witness preserves unknown-ID registration evidence.
 	untracked   NodeID
 	untrackedAt uint64
 	generation  uint64
 	inFlight    int // count of stateRunning nodes (EXCLUDES parked)
 	draining    int // DrainNone/DrainCascade/DrainForce
-	canceled    bool
 	err         error
 	// dirty records that an object arrived since the last quiescence sweep. A
 	// rerun node re-expands at the structural fixpoint only when the store has
@@ -189,8 +207,8 @@ func New(tasks *task.Service, disp Dispatcher) *Scheduler {
 		tasks:     tasks,
 		disp:      disp,
 		nodes:     map[NodeID]*node{},
-		parkedIdx: map[NodeID]map[NodeID]struct{}{},
-		failedIdx: map[NodeID]map[NodeID]struct{}{},
+		parkedIdx: edgeIdx{},
+		failedIdx: edgeIdx{},
 	}
 	s.cond = sync.NewCond(&s.mu)
 	return s
@@ -225,7 +243,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			s.mu.Lock()
-			s.canceled = true
+			if s.err == nil {
+				s.err = ctx.Err()
+			}
 			s.cond.Broadcast()
 			s.mu.Unlock()
 		case <-stop:
@@ -233,9 +253,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}()
 
 	s.mu.Lock()
-	for !s.canceled && s.err == nil {
+	for s.err == nil {
 		// 1. Dispatch the runnable frontier onto the bounded pool.
-		for len(s.runq) > 0 && !s.canceled && s.err == nil {
+		for len(s.runq) > 0 && s.err == nil {
 			id := s.runq[0]
 			s.runq = s.runq[1:]
 			n := s.nodes[id]
@@ -256,7 +276,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			})
 			s.mu.Lock()
 		}
-		if s.err != nil || s.canceled {
+		if s.err != nil {
 			break
 		}
 		// 2. Frontier empty. If nothing is in flight, we are at a fixpoint:
@@ -296,14 +316,19 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		// 3. Work in flight, frontier empty: wait for a completion or arrival.
 		s.cond.Wait()
 	}
-	if !s.canceled && s.err == nil {
+	if s.err == nil {
 		s.finalSweepLocked()
 	}
-	err := s.err
 	s.mu.Unlock()
 	cancel()
 	s.tasks.BlockTillDone()
-	return errors.Join(err, ctx.Err())
+	s.mu.Lock()
+	if s.err == nil {
+		s.err = ctx.Err()
+	}
+	err := s.err
+	s.mu.Unlock()
+	return err
 }
 
 // complete records the result of one Dispatch. Runs on the worker goroutine;
@@ -325,7 +350,7 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 			s.clearFailedLocked(n)
 		}
 	}
-	if s.err != nil || s.canceled {
+	if s.err != nil {
 		s.clearFailedLocked(n)
 		n.state = stateTerminal
 		n.conservativeUsed = false
@@ -348,22 +373,13 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 					if len(previous) > 0 && (dep == previous[0] || len(previous) == 2 && dep == previous[1]) {
 						continue
 					}
-					set := s.failedIdx[dep]
-					if set == nil {
-						set = map[NodeID]struct{}{}
-						s.failedIdx[dep] = set
-					}
-					set[id] = struct{}{}
+					s.failedIdx.add(dep, id)
 				}
 				for _, dep := range previous {
 					if len(n.failedOn) > 0 && (dep == n.failedOn[0] || len(n.failedOn) == 2 && dep == n.failedOn[1]) {
 						continue
 					}
-					set := s.failedIdx[dep]
-					delete(set, id)
-					if len(set) == 0 {
-						delete(s.failedIdx, dep)
-					}
+					s.failedIdx.del(dep, id)
 				}
 				n.failedSeen, n.failedFree = nil, nil
 			} else {
@@ -400,12 +416,7 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 							n.failedFree = mark.next
 						}
 						n.failedSeen[dep] = mark
-						set := s.failedIdx[dep]
-						if set == nil {
-							set = map[NodeID]struct{}{}
-							s.failedIdx[dep] = set
-						}
-						set[id] = struct{}{}
+						s.failedIdx.add(dep, id)
 					}
 					mark.check = n.failedCheck
 					if duplicate {
@@ -415,11 +426,7 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 				for _, dep := range previous {
 					mark := n.failedSeen[dep]
 					if mark.check != n.failedCheck {
-						set := s.failedIdx[dep]
-						delete(set, id)
-						if len(set) == 0 {
-							delete(s.failedIdx, dep)
-						}
+						s.failedIdx.del(dep, id)
 						delete(n.failedSeen, dep)
 						mark.next = n.failedFree
 						n.failedFree = mark
@@ -481,12 +488,7 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 		n.state = stateParked
 		n.blockedOn = blocked
 		for _, dep := range blocked {
-			set := s.parkedIdx[dep]
-			if set == nil {
-				set = map[NodeID]struct{}{}
-				s.parkedIdx[dep] = set
-			}
-			set[id] = struct{}{}
+			s.parkedIdx.add(dep, id)
 		}
 	}
 }
@@ -498,10 +500,7 @@ func (s *Scheduler) wakeWaitersLocked(depID NodeID) {
 	if len(set) == 0 {
 		return
 	}
-	waiters := make([]NodeID, 0, len(set))
-	for w := range set {
-		waiters = append(waiters, w)
-	}
+	waiters := s.sortedWaiters(set)
 	for _, w := range waiters {
 		n := s.nodes[w]
 		if n == nil {
@@ -514,6 +513,19 @@ func (s *Scheduler) wakeWaitersLocked(depID NodeID) {
 			n.rerunRequested = true
 		}
 	}
+}
+
+// Caller holds mu; the next wake batch invalidates the snapshot.
+func (s *Scheduler) sortedWaiters(set map[NodeID]struct{}) []NodeID {
+	waiters := slices.Grow(s.waiters[:0], len(set))
+	for waiter := range set {
+		waiters = append(waiters, waiter)
+	}
+	if len(waiters) > 1 {
+		slices.SortFunc(waiters, func(a, b NodeID) int { return a.Compare(b) })
+	}
+	s.waiters = waiters
+	return waiters
 }
 
 // unparkLocked moves a parked node to runnable and removes it from every
@@ -573,12 +585,7 @@ func (s *Scheduler) sameFailedLocked(n *node, blocked []NodeID) bool {
 
 func (s *Scheduler) clearFailedLocked(n *node) {
 	for _, dep := range n.failedOn {
-		if set := s.failedIdx[dep]; set != nil {
-			delete(set, n.id)
-			if len(set) == 0 {
-				delete(s.failedIdx, dep)
-			}
-		}
+		s.failedIdx.del(dep, n.id)
 	}
 	n.failedOn = nil
 	n.failedSeen, n.failedFree = nil, nil
@@ -600,11 +607,7 @@ func (s *Scheduler) recordProgressLocked(id NodeID) {
 	if len(set) == 0 {
 		return
 	}
-	waiters := make([]NodeID, 0, len(set))
-	for waiter := range set {
-		waiters = append(waiters, waiter)
-	}
-	slices.SortFunc(waiters, func(a, b NodeID) int { return a.Compare(b) })
+	waiters := s.sortedWaiters(set)
 	for _, waiter := range waiters {
 		n := s.nodes[waiter]
 		switch n.state {
@@ -631,7 +634,7 @@ func (s *Scheduler) recordProgressLocked(id NodeID) {
 func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.err != nil || s.canceled {
+	if s.err != nil {
 		return
 	}
 	// An arrival can change a rerun node's resolved input set; mark the store
@@ -673,7 +676,7 @@ func (s *Scheduler) OnStatusWake(id NodeID, ready, failed bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.err != nil || s.canceled {
+	if s.err != nil {
 		return
 	}
 	if ready && (s.inFlight > 0 || len(s.failedIdx) > 0) {
@@ -685,6 +688,7 @@ func (s *Scheduler) OnStatusWake(id NodeID, ready, failed bool) {
 
 // unparkSelfLocked removes n from every parkedIdx set without queuing it (used
 // when forcibly terminalizing a parked node). Caller holds mu.
+// Reverse-edge deletion MUST stay inline here to bound the OnArrival stack frame.
 func (s *Scheduler) unparkSelfLocked(n *node) {
 	for _, dep := range n.blockedOn {
 		if set := s.parkedIdx[dep]; set != nil {
@@ -746,7 +750,7 @@ func (s *Scheduler) requeueRerunLocked() bool {
 }
 
 func (s *Scheduler) redispatchLocked(n *node) bool {
-	if s.err != nil || s.canceled {
+	if s.err != nil {
 		return false
 	}
 	if (n.contentRequested || n.productive) && !n.queuedCharged {

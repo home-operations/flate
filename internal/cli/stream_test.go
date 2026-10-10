@@ -171,21 +171,73 @@ func TestStreamEmitter_FinishCatchUpAndSetEquivalence(t *testing.T) {
 // ALREADY-streamed Kustomization's Result entry after the run are emitted by
 // finish — once, without re-emitting the artifact docs.
 func TestStreamEmitter_RSExtensionTail(t *testing.T) {
-	se, st, out, _ := newStreamFixture(t, []string{manifest.KindKustomization}, "")
-	id := ksApps()
-	st.SetArtifact(id, &store.KustomizationArtifact{
-		Manifests: []map[string]any{cmDoc("art")}, Fingerprint: "fp1",
-	})
-	st.UpdateStatus(id, store.StatusReady, "")
+	for _, tc := range []struct {
+		name string
+		c    commonFlags
+		b    buildFlags
+		want []string
+	}{
+		{
+			name: "all kinds",
+			want: []string{"art", "art-crd", "art-secret", "ext", "ext-crd", "ext-secret"},
+		},
+		{
+			name: "default skips",
+			c:    commonFlags{skipSecrets: true, skipCRDs: true},
+			want: []string{"art", "ext"},
+		},
+		{
+			name: "skip configmaps",
+			c:    commonFlags{skipKinds: []string{manifest.KindConfigMap}},
+			want: []string{"art-crd", "art-secret", "ext-crd", "ext-secret"},
+		},
+		{
+			name: "only crds overrides default skip",
+			c:    commonFlags{skipSecrets: true, skipCRDs: true},
+			b:    buildFlags{onlyCRDs: true},
+			want: []string{"art-crd", "ext-crd"},
+		},
+		{
+			name: "only crds with skipped configmaps",
+			c:    commonFlags{skipKinds: []string{manifest.KindConfigMap}},
+			b:    buildFlags{onlyCRDs: true},
+			want: []string{"art-crd", "ext-crd"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			se, st, out, _ := newStreamFixture(t, []string{manifest.KindKustomization}, "")
+			se.c, se.b = &tc.c, &tc.b
+			applyBuildFlags(se.c, se.b)
+			se.skipKinds = se.c.skipResourceKinds()
+			id := ksApps()
+			artifact := []map[string]any{cmDoc("art"), cmDoc("art-secret"), cmDoc("art-crd")}
+			artifact[1]["kind"] = manifest.KindSecret
+			artifact[2]["kind"] = manifest.KindCustomResourceDefinition
+			extensions := []map[string]any{cmDoc("ext"), cmDoc("ext-secret"), cmDoc("ext-crd")}
+			extensions[1]["kind"] = manifest.KindSecret
+			extensions[2]["kind"] = manifest.KindCustomResourceDefinition
+			st.SetArtifact(id, &store.KustomizationArtifact{
+				Manifests: artifact, Fingerprint: "fp1",
+			})
+			st.UpdateStatus(id, store.StatusReady, "")
 
-	res := &orchestrator.Result{Manifests: map[manifest.NamedResource][]map[string]any{
-		id: {cmDoc("art"), cmDoc("ext")}, // render() appends extensions after artifact docs
-	}}
-	if err := se.finish(res); err != nil {
-		t.Fatalf("finish: %v", err)
-	}
-	if got := docNames(t, out.String()); !slices.Equal(got, []string{"art", "ext"}) {
-		t.Fatalf("docs after finish = %v, want exactly [art ext]", got)
+			res := &orchestrator.Result{Manifests: map[manifest.NamedResource][]map[string]any{
+				id: manifest.DropKinds(slices.Concat(artifact, extensions), se.skipKinds),
+			}}
+			if err := se.finish(res); err != nil {
+				t.Fatalf("finish: %v", err)
+			}
+			if got := docNames(t, out.String()); !slices.Equal(got, tc.want) {
+				t.Fatalf("docs after finish = %v, want %v", got, tc.want)
+			}
+			var buffered bytes.Buffer
+			if err := emitDocs(&buffered, mustCollect(t, se, res), "yaml"); err != nil {
+				t.Fatalf("emitDocs: %v", err)
+			}
+			if got := docNames(t, buffered.String()); !slices.Equal(got, tc.want) {
+				t.Fatalf("buffered docs = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

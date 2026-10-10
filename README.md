@@ -115,7 +115,7 @@ flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
 | Kind               | Status         | Auth (`spec.secretRef`)                                                                                                                    |
 | ------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `GitRepository`    | `generic` only | HTTPS: `username` + `password` or `bearerToken`. SSH: `identity` (+ optional `password`, `known_hosts`). `github`/`azure`/`aws` fail loud. |
-| `OCIRepository`    | `generic` only | `.dockerconfigjson`. Falls back to `--registry-config`, then `~/.docker/config.json`. `aws`/`gcp`/`azure` fail loud.                       |
+| `OCIRepository`    | `generic` only | `.dockerconfigjson`. Unset or missing offline: `--registry-config`, then `~/.docker/config.json`. `aws`/`gcp`/`azure` fail loud.           |
 | `HelmRepository`   | full           | HTTP basic: `username` + `password`; OCI flavor routes through the OCI puller.                                                             |
 | `HelmChart`        | full           | Inline (`HR.spec.chart`) and standalone CRD.                                                                                               |
 | `Bucket`           | `generic` only | `accesskey` + `secretkey`. `aws`/`gcp`/`azure` fail loud — use static creds.                                                               |

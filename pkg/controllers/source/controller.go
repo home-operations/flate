@@ -166,14 +166,25 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, d
 	c.Tasks.YieldSlot(func() {
 		artifact, fetchErr = fetcher.Fetch(ctx, obj)
 	})
-	if fetchErr != nil {
-		// A Kustomization may still emit or patch this Secret. Wait for
-		// the rendered contents; only fail or skip for a missing Secret
-		// once the scheduler reaches a fixpoint.
-		if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok && !draining {
-			c.Store.UpdateStatus(id, store.StatusPending, "waiting for source Secret")
-			return &depwait.ErrBlocked{Deps: []manifest.NamedResource{missing.Secret}}
+	// A Kustomization may still emit or patch this Secret. Wait for the
+	// rendered contents; only fall back, fail or skip for a missing Secret
+	// once the scheduler reaches a fixpoint. The wait MUST precede the
+	// fallback so an in-repo Secret takes precedence over the global
+	// registry config.
+	if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok && !draining {
+		c.Store.UpdateStatus(id, store.StatusPending, "waiting for source Secret")
+		return &depwait.ErrBlocked{Deps: []manifest.NamedResource{missing.Secret}}
+	}
+	if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok && missing.RetryWithRegistryConfig != nil && !c.producerBacked(fetchErr) {
+		c.Tasks.YieldSlot(func() {
+			artifact, fetchErr = missing.RetryWithRegistryConfig(ctx, missing.RegistryConfig)
+		})
+		// An optional registry retry MUST preserve --allow-missing-secrets skips.
+		if fetchErr != nil && c.allowMissingSecrets {
+			fetchErr = missing
 		}
+	}
+	if fetchErr != nil {
 		c.Logger().Debug("fetch failed", "id", id.String(), "duration", time.Since(started), "err", fetchErr)
 		// Skip a missing auth Secret either when the user asked globally
 		// (--allow-missing-secrets) or when an in-repo ExternalSecret /

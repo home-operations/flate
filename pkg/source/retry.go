@@ -65,12 +65,29 @@ type retryFetcher struct {
 // deadline-exceeded ctx stops further attempts and returns the last
 // fetch result rather than masking the real cause with ctx.Err().
 func (r retryFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+	art, err := r.fetch(ctx, obj, func(ctx context.Context) (*store.SourceArtifact, error) {
+		return r.inner.Fetch(ctx, obj)
+	})
+	if missing, ok := errors.AsType[*MissingSecretError](err); ok && missing.RetryWithRegistryConfig != nil {
+		retry := missing.RetryWithRegistryConfig
+		wrapped := *missing
+		wrapped.RetryWithRegistryConfig = func(ctx context.Context, configPath string) (*store.SourceArtifact, error) {
+			return r.fetch(ctx, obj, func(ctx context.Context) (*store.SourceArtifact, error) {
+				return retry(ctx, configPath)
+			})
+		}
+		return art, &wrapped
+	}
+	return art, err
+}
+
+func (r retryFetcher) fetch(ctx context.Context, obj manifest.BaseManifest, fetch func(context.Context) (*store.SourceArtifact, error)) (*store.SourceArtifact, error) {
 	var (
 		art *store.SourceArtifact
 		err error
 	)
 	for attempt := 0; ; attempt++ {
-		art, err = r.inner.Fetch(ctx, obj)
+		art, err = fetch(ctx)
 		if err == nil || attempt >= r.cfg.Attempts-1 || !retryable(err) {
 			return art, err
 		}

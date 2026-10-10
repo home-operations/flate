@@ -191,7 +191,9 @@ type fileMeta struct {
 	symlink bool
 }
 
-// scanTree must descend excluded directories so deeper re-includes survive.
+// scanTree must descend excluded directories so deeper re-includes survive,
+// mirroring github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns,
+// which loads each directory's own file before subdirectories and skips only .git.
 // The opposite snapshot and .git metadata never belong to the artifact view.
 func scanTree(root, opposite string) (map[string]fileMeta, error) {
 	out := map[string]fileMeta{}

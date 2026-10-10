@@ -79,6 +79,7 @@ func TestNewFromFiles_Parity(t *testing.T) {
 				t.Fatal(err)
 			}
 			slices.Reverse(files)
+			orig := slices.Clone(files)
 			for _, withDefaults := range []bool{false, true} {
 				for _, extra := range []*string{nil, new("!app/keep.tmp\n")} {
 					want, err := New(root, extra, withDefaults)
@@ -88,6 +89,9 @@ func TestNewFromFiles_Parity(t *testing.T) {
 					got, err := NewFromFiles(root, files, extra, withDefaults)
 					if err != nil {
 						t.Fatal(err)
+					}
+					if !slices.Equal(files, orig) {
+						t.Fatalf("NewFromFiles reordered its input: %v, want %v", files, orig)
 					}
 					for _, rel := range paths {
 						for _, isDir := range []bool{false, true} {

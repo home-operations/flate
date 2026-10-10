@@ -55,8 +55,9 @@ func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 }
 
 // NewFromFiles builds a Matcher from absolute .sourceignore paths collected by
-// an existing tree walk. Rules load in Flux's directory traversal order, with
-// each directory's own file before its lexically ordered subdirectories.
+// an existing tree walk. Rules load in the order of
+// github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns: each directory's
+// own file before its lexically ordered subdirectories, skipping only .git.
 // Defaults and extra follow the same policy as New.
 func NewFromFiles(root string, files []string, extra *string, withDefaults bool) (*Matcher, error) {
 	abs, err := filepath.Abs(root)

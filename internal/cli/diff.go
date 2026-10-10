@@ -244,10 +244,9 @@ func reportExternalDiffSkips(w io.Writer, side diffSide, repoRoot, label string,
 	if kind != "" && kind != manifest.KindKustomization {
 		return nil
 	}
-	external := loader.ExternalSourcedKSIDs(side.O.Store(), repoRoot)
 	for _, ks := range side.O.Store().ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		id := ks.Named()
-		if _, ok := external[id]; !ok || (name != "" && id.Name != name) {
+		if _, _, external := loader.SourceView(side.O.Store(), ks, repoRoot); !external || (name != "" && id.Name != name) {
 			continue
 		}
 		// The inferred changed-only namespace scope excludes these skips;

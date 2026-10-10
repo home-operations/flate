@@ -25,8 +25,8 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "a"}
-			if o.store.GetObject(a) != nil || o.parentOf[a] != ksID("apps") {
-				t.Fatalf("raw HR arrived or parent gate missing: %s parent=%s", a, o.parentOf[a])
+			if o.store.GetObject(a) != nil || parentsForTest(o.index)[a] != ksID("apps") {
+				t.Fatalf("raw HR arrived or parent gate missing: %s parent=%s", a, parentsForTest(o.index)[a])
 			}
 			res, err := o.Render(t.Context())
 			if err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 {

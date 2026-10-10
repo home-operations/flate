@@ -159,21 +159,6 @@ func TestHashFile(t *testing.T) {
 	}
 }
 
-func TestSet_RerootPrependsPrefix(t *testing.T) {
-	s := NewSet([]string{"app/foo.yaml", "bar.yaml"})
-	r := s.Reroot("kubernetes")
-	if !r.Contains("kubernetes/app/foo.yaml") || !r.Contains("kubernetes/bar.yaml") {
-		t.Errorf("Reroot did not prepend: %v", r.Paths())
-	}
-	// Empty / "." prefix is a no-op (returns same set).
-	if got := s.Reroot(""); got != s {
-		t.Errorf("Reroot(\"\") returned a new set, want same")
-	}
-	if got := s.Reroot("."); got != s {
-		t.Errorf("Reroot(\".\") returned a new set, want same")
-	}
-}
-
 func TestDetect_Symlinks(t *testing.T) {
 	t.Setenv("PATH", "")
 	cases := []struct {

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -28,18 +27,17 @@ spec:
       sourceRef: {kind: GitRepository, name: source, namespace: apps}
 `)
 	st := store.New()
-	l := loader.New(st)
-	l.Existence = loader.NewExistenceIndex()
+	l := discoveryLoaderForTest(st)
 	self := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "self"}
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
 	for _, id := range []manifest.NamedResource{self, child} {
-		l.Existence.Record(id, filepath.Join(dir, "apps/bundle.yaml"))
+		l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "apps/bundle.yaml"), File: "apps/bundle.yaml", Deferred: true}
 	}
 	d := &discoverer{
 		cfg: Config{Store: st, WipeSecrets: true}, loader: l,
-		sourceFiles: map[manifest.NamedResource]string{self: "apps/bundle.yaml", child: "apps/bundle.yaml"},
 	}
-	d.promoteOrphans([]loader.KSPathPrefix{{ID: self, Prefix: "apps/"}}, nil, l.Existence.All(), nil)
+	l.Index.Claims = map[string][]manifest.NamedResource{"apps/": {self}}
+	d.promoteOrphans(nil)
 	if st.GetObject(self) == nil {
 		t.Error("self-excluded orphan must be admitted")
 	}
@@ -72,17 +70,17 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 		t.Fatal(err)
 	}
 	st.AddObject(ks)
-	idx := loader.BuildSelfProduceIndex(st, dir, nil, false)
+	l := discoveryLoaderForTest(st)
+	l.Options.WipeSecrets = false
+	l.FinalizeIndex(dir, nil)
 	self := ks.Named()
 	st.DeleteObject(self)
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
-	l := loader.New(st)
-	l.Existence = loader.NewExistenceIndex()
 	for _, id := range []manifest.NamedResource{self, child} {
-		l.Existence.Record(id, filepath.Join(dir, "bundle.yaml"))
+		l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml", Deferred: true}
 	}
-	d := &discoverer{cfg: Config{Store: st}, loader: l, sourceFiles: map[manifest.NamedResource]string{self: "bundle.yaml", child: "bundle.yaml"}}
-	d.promoteOrphans(nil, idx, l.Existence.All(), nil)
+	d := &discoverer{cfg: Config{Store: st}, loader: l}
+	d.promoteOrphans(nil)
 	if st.GetObject(self) == nil {
 		t.Error("self-owned Kustomization must be admitted")
 	}
@@ -96,9 +94,8 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			st := store.New()
-			l := loader.New(st)
-			l.Existence = loader.NewExistenceIndex()
-			d := &discoverer{cfg: Config{Store: st, WipeSecrets: true}, loader: l, sourceFiles: map[manifest.NamedResource]string{}}
+			l := discoveryLoaderForTest(st)
+			d := &discoverer{cfg: Config{Store: st, WipeSecrets: true}, loader: l}
 			ids := []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "secure", Name: "a"}}
 			if scenario == "siblings" {
 				ids = append(ids, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "secure", Name: "b"})
@@ -107,9 +104,11 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			var saved []*manifest.Secret
 			for _, id := range ids {
 				body += "---\napiVersion: v1\nkind: Secret\nmetadata: {name: " + id.Name + ", namespace: secure}\nstringData: {HOST: fixture-value}\n"
-				l.Existence.Record(id, filepath.Join(dir, "bundle.yaml"))
-				if scenario != "unknown-file" {
-					d.sourceFiles[id] = "bundle.yaml"
+				l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml", Deferred: true}
+				if scenario == "unknown-file" {
+					r := l.Index.Records[id]
+					r.File = ""
+					l.Index.Records[id] = r
 				}
 				value := "..PLACEHOLDER_HOST.."
 				if scenario == "preexisting" {
@@ -122,7 +121,6 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 				}
 			}
 			testutil.WriteFile(t, dir, "bundle.yaml", body)
-			var idx *loader.SelfProduceIndex
 			if scenario == "graph-owned" {
 				testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [../bundle.yaml]\n")
 				ksDoc, err := manifest.SplitDocs([]byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -138,7 +136,7 @@ spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 					t.Fatal(err)
 				}
 				st.AddObject(ks)
-				idx = loader.BuildSelfProduceIndex(st, dir, nil, true)
+				l.FinalizeIndex(dir, nil)
 			}
 			if scenario == "failed" {
 				if err := os.Remove(filepath.Join(dir, "bundle.yaml")); err != nil {
@@ -149,7 +147,7 @@ spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 			if scenario == "preexisting" || scenario == "unknown-file" {
 				candidates = nil
 			}
-			d.promoteOrphans(nil, idx, l.Existence.All(), candidates)
+			d.promoteOrphans(candidates)
 			for i, id := range ids {
 				got, ok := st.GetObject(id).(*manifest.Secret)
 				if scenario == "unknown-file" {

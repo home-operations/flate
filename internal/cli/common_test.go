@@ -11,9 +11,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/internal/testutil"
@@ -21,6 +18,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // TestBindCommon_CacheDirFlag pins that --cache-dir is wired on every
@@ -116,15 +115,7 @@ func TestScopedNamespaces_PathOrigAutoScopesToKeepSet(t *testing.T) {
 	c := &commonFlags{namespace: ""}
 	mediaHR := &manifest.HelmRelease{Name: "x", Namespace: "media"}
 	netHR := &manifest.HelmRelease{Name: "y", Namespace: "networking"}
-	f := change.NewFilter(
-		change.NewSet([]string{"media.yaml", "networking.yaml"}),
-		map[manifest.NamedResource]string{
-			mediaHR.Named(): "media.yaml",
-			netHR.Named():   "networking.yaml",
-		},
-		"",
-		testutil.EmptyLister(),
-	)
+	f := change.NewFilter(change.NewSet([]string{"media.yaml", "networking.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{mediaHR.Named(): {File: "media.yaml"}, netHR.Named(): {File: "networking.yaml"}}}, testutil.EmptyLister())
 	got := c.scopedNamespaces(f)
 	for _, want := range []string{"media", "networking"} {
 		if _, ok := got[want]; !ok {

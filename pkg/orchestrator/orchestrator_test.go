@@ -53,12 +53,12 @@ func TestDetectOrphans(t *testing.T) {
 	o := &Orchestrator{
 		store:    store.New(),
 		rendered: newRenderedSet(),
-		sourceFiles: map[manifest.NamedResource]string{
+		index: indexForTest(map[manifest.NamedResource]string{
 			parent.Named():       "kubernetes/flux/cluster/ks.yaml",
 			orphan.Named():       "kubernetes/apps/orphan/ks.yaml",
 			emittedChild.Named(): "kubernetes/apps/wired/ks.yaml",
 			root.Named():         "kubernetes/standalone/ks.yaml",
-		},
+		}),
 	}
 	for _, ks := range []*manifest.Kustomization{parent, orphan, emittedChild, root} {
 		o.store.AddObject(ks)
@@ -102,10 +102,10 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 
 	o := &Orchestrator{
 		store: store.New(),
-		sourceFiles: map[manifest.NamedResource]string{
+		index: indexForTest(map[manifest.NamedResource]string{
 			parent.Named(): "ks.yaml",
 			cm.Named():     "apps/stuck/cm.yaml",
-		},
+		}),
 	}
 	o.store.AddObject(parent)
 	o.store.AddObject(cm)
@@ -138,10 +138,10 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 	o := &Orchestrator{
 		store:    store.New(),
 		rendered: newRenderedSet(),
-		sourceFiles: map[manifest.NamedResource]string{
+		index: indexForTest(map[manifest.NamedResource]string{
 			parent.Named(): "kubernetes/flux/cluster/ks.yaml",
 			child.Named():  "kubernetes/apps/media/plex/ks.yaml",
-		},
+		}),
 	}
 	o.store.AddObject(parent)
 	o.store.AddObject(child)
@@ -1570,7 +1570,7 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 					assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, want)
 					id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
 					assert.Equal(t, o.store.GetObject(id) == nil, covered)
-					_, indexed := o.existence.Get(id)
+					_, indexed := o.index.Lookup(id)
 					assert.Equal(t, indexed, true)
 					writeDigestTrackingRelease(t, root, rel, strconv.FormatBool(!gate))
 					if err := o.Bootstrap(t.Context()); err != nil {

@@ -2,21 +2,21 @@ package orchestrator
 
 import (
 	"context"
-	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
-	"github.com/google/go-cmp/cmp"
-	"github.com/home-operations/flate/pkg/change"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	"github.com/google/go-cmp/cmp"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/resourceset"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 func TestDAGDispatch_ResourceSetDedup(t *testing.T) {
@@ -94,7 +94,7 @@ data: {key: fixed}
 			case "preflight failure":
 				opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
 			case "filter skip":
-				opts.Filter = change.NewFilter(change.NewSet(nil), nil, t.TempDir(), s)
+				opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s)
 			case "vanished":
 				s.DeleteObject(rs.Named())
 				s.SetArtifact(rs.Named(), before)

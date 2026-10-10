@@ -139,16 +139,7 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	cmObj := &manifest.ConfigMap{Name: "cluster-settings", Namespace: ""}
 	cmID := cmObj.Named()
 
-	f := change.NewFilter(
-		change.NewSet([]string{"kubernetes/apps/changed.yaml"}),
-		map[manifest.NamedResource]string{
-			consumer: "kubernetes/flux/cluster-apps.yaml",
-			producer: "kubernetes/flux/cluster-vars.yaml",
-			cmID:     "kubernetes/flux/vars/cluster-settings.yaml",
-		},
-		"",
-		testutil.MapLister{consumer: consumerObj, producer: producerObj, cmID: cmObj},
-	)
+	f := change.NewFilter(change.NewSet([]string{"kubernetes/apps/changed.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer: {File: "kubernetes/flux/cluster-apps.yaml"}, producer: {File: "kubernetes/flux/cluster-vars.yaml"}, cmID: {File: "kubernetes/flux/vars/cluster-settings.yaml", Owners: []manifest.NamedResource{producer}}}, Claims: map[string][]manifest.NamedResource{"kubernetes/apps/": {consumer}, "kubernetes/flux/vars/": {producer}}}, testutil.MapLister{consumer: consumerObj, producer: producerObj, cmID: cmObj})
 
 	c := New(store.New(), nil, nil, false)
 	c.Configure(Options{Filter: f})
@@ -192,15 +183,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	cmObj := &manifest.ConfigMap{Name: "settings", Namespace: ""}
 	cmID := cmObj.Named()
 
-	f := change.NewFilter(
-		change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}),
-		map[manifest.NamedResource]string{
-			self: "kubernetes/foo/app/ks.yaml",
-			cmID: "kubernetes/foo/app/settings.yaml",
-		},
-		"",
-		testutil.MapLister{self: selfObj, cmID: cmObj},
-	)
+	f := change.NewFilter(change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{self: {File: "kubernetes/foo/app/ks.yaml"}, cmID: {File: "kubernetes/foo/app/settings.yaml", Owners: []manifest.NamedResource{self}}}, Claims: map[string][]manifest.NamedResource{"kubernetes/foo/app/": {self}}}, testutil.MapLister{self: selfObj, cmID: cmObj})
 
 	c := New(store.New(), nil, nil, false)
 	c.Configure(Options{Filter: f})

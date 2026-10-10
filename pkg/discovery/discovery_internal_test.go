@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -34,22 +33,20 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 			cm := &manifest.ConfigMap{Name: "dirty", Namespace: "flux-system"}
 			artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalRoot: root, LocalPath: t.TempDir()}
 			d := discoverer{
-				cfg: Config{Store: st}, loader: loader.New(st),
-				sourceFiles:     map[manifest.NamedResource]string{},
-				sourceRefs:      map[manifest.NamedResource][]manifest.NamedResource{},
+				cfg: Config{Store: st}, loader: discoveryLoaderForTest(st),
 				resolvedSources: map[manifest.NamedResource]*manifest.GitRepository{other.Named(): other},
 			}
 			if tc.resolved {
 				d.resolvedSources[repository.Named()] = repository
 			}
-			d.loader.Existence = loader.NewExistenceIndex()
 			for _, obj := range []manifest.BaseManifest{repository, other, ks, cm} {
 				st.AddObject(obj)
 				file := obj.Named().Name + ".yaml"
-				d.sourceFiles[obj.Named()] = file
-				d.loader.Existence.Record(obj.Named(), filepath.Join(root, file))
+				d.loader.Index.Records[obj.Named()] = manifest.DiscoveryRecord{File: file, Path: filepath.Join(root, file)}
 			}
-			d.sourceRefs[ks.Named()] = []manifest.NamedResource{repository.Named()}
+			r := d.loader.Index.Records[ks.Named()]
+			r.Refs = []manifest.NamedResource{repository.Named()}
+			d.loader.Index.Records[ks.Named()] = r
 			for _, repo := range []*manifest.GitRepository{repository, other} {
 				st.SetArtifact(repo.Named(), artifact)
 				st.UpdateStatus(repo.Named(), store.StatusReady, "pinned")
@@ -61,14 +58,14 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 				if st.GetObject(id) != repo || st.GetArtifact(id) != artifact || !ok || status.Status != store.StatusReady {
 					t.Fatalf("source %s lost its resolved object, artifact or status", id)
 				}
-				if _, ok := d.loader.Existence.Get(id); !ok || d.sourceFiles[id] == "" {
+				if _, ok := d.loader.Index.Lookup(id); !ok || filesForTest(d.loader.Index)[id] == "" {
 					t.Fatalf("source %s lost discovery metadata", id)
 				}
 			}
-			if st.GetObject(ks.Named()) != ks || len(d.sourceRefs[ks.Named()]) != 1 {
+			if st.GetObject(ks.Named()) != ks || len(d.loader.Index.Records[ks.Named()].Refs) != 1 {
 				t.Fatal("root Kustomization lost its object or source reference")
 			}
-			if _, ok := d.loader.Existence.Get(cm.Named()); ok || st.GetObject(cm.Named()) != nil || d.sourceFiles[cm.Named()] != "" {
+			if _, ok := d.loader.Index.Lookup(cm.Named()); ok || st.GetObject(cm.Named()) != nil || filesForTest(d.loader.Index)[cm.Named()] != "" {
 				t.Fatal("working-tree object survived the pinned root claim")
 			}
 			testutil.WriteFile(t, artifact.LocalPath, "source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1

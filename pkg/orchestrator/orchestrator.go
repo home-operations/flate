@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"path"
 	"slices"
 	"sync"
 
@@ -16,7 +17,6 @@ import (
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/kustomize"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
@@ -142,7 +142,7 @@ type Config struct {
 	SourceCache *source.Cache
 	// ExternalChanges, when non-nil, supplies the file-level diff so
 	// the orchestrator skips its built-in change.Detect step. The
-	// filter is still built from this set + the loaded SourceFiles
+	// filter is still built from this set and the discovery index
 	// during Bootstrap.
 	ExternalChanges *change.Set
 
@@ -210,40 +210,12 @@ type Orchestrator struct {
 	// Accepted identities are immutable after bootstrap, including for late consumers.
 	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
 
-	// repoRoot is the resolved .git ancestor of cfg.Path (or
-	// cfg.Path when no .git exists). Populated during Bootstrap from
-	// discovery.Result.RepoRoot. Consumed by finalize.detectOrphans
-	// to feed loader.KSPathPrefixes the correct filesystem root for
-	// `components:` lookups (cfg.Path is the user-supplied --path,
-	// which may be a subdir of the actual repo root and produce
-	// wrong component prefixes — same bug fixed in pkg/discovery by
-	// PR #358).
+	// repoRoot anchors fresh claims for post-render orphan reporting, including
+	// Kustomizations admitted after static discovery is published.
 	repoRoot string
 
-	// sourceFiles tracks which file produced each loaded resource. It
-	// is populated during loadManifests and consumed once by Bootstrap
-	// to construct the immutable change.Filter.
-	sourceFiles map[manifest.NamedResource]string
-
-	// sourceRefs maps each loaded consumer (HelmRelease / Kustomization)
-	// to the source resources it references. Populated during discovery
-	// and consumed once by Bootstrap to give the change.Filter its
-	// reverse edge (changed source -> consuming HelmReleases).
-	sourceRefs map[manifest.NamedResource][]manifest.NamedResource
-
-	// parentOf is the structural-parent index Bootstrap computes after
-	// loadManifests + namespace inheritance — keyed by every
-	// reconcilable id that uses a parent gate (KS and HR). KS lookups
-	// only see KS entries and HR lookups only see HR entries because
-	// NamedResource includes Kind; the single map keeps controller
-	// wiring symmetric.
-	parentOf map[manifest.NamedResource]manifest.NamedResource
-
-	// selfProduce attributes each ConfigMap to the Kustomization(s) whose
-	// own render emits it (resolved across the bare-dir/component graph).
-	// The KS controller consults it to drop a self-produced
-	// postBuild.substituteFrom ConfigMap from the dependency set.
-	selfProduce *loader.SelfProduceIndex
+	// index is published once by Bootstrap and remains immutable during rendering.
+	index *manifest.DiscoveryIndex
 
 	// producers maps a target Secret to the in-repo ExternalSecret /
 	// SealedSecret declaring it (seeded at discovery, augmented at render).
@@ -258,26 +230,6 @@ type Orchestrator struct {
 	// failing the run. Lives here, not on Store — iter-15 carved this
 	// orchestrator-internal bookkeeping out of the data substrate.
 	rendered *renderedSet
-
-	// existence is the file-indexed bookkeeping the DiscoveryOnly
-	// loader populated. Consumed by the depwait ResolveMissing
-	// closure to lazy-promote substituteFrom CMs/Secrets and any
-	// other file-indexed dep on demand.
-	existence *loader.ExistenceIndex
-
-	// componentCache memoizes manifest.ReadKustomizeComponents reads
-	// across every Bootstrap consumer that walks the KS list: the
-	// loader's FinalizeGenerators (KSPathPrefixes), discovery's
-	// parent-index builds and orphan-promotion pass, the change
-	// filter's buildOwnership, and finalize.detectOrphans. Without
-	// the shared cache each consumer re-reads every kustomization.yaml
-	// once — N consumers × K KSes file opens per Bootstrap; with it,
-	// each (repoRoot, base) pair is read exactly once. Live for the
-	// life of the orchestrator (cleared via GC when the Orchestrator
-	// is collected), instantiated fresh per New() so test harnesses
-	// that reuse an orchestrator across re-Bootstrap cycles still pick
-	// up on-disk edits.
-	componentCache *manifest.ComponentCache
 
 	// orphans records resources Run demoted from Failed → Ready because
 	// they aren't referenced by any parent KS. Populated during Run,
@@ -511,17 +463,16 @@ func New(cfg Config) (*Orchestrator, error) {
 		srcCtrl.Fetchers[kind] = source.WithRetry(f, cfg.SourceRetry)
 	}
 	o := &Orchestrator{
-		cfg:            cfg,
-		sourceCache:    cache,
-		store:          st,
-		tasks:          ts,
-		src:            srcCtrl,
-		ksc:            kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
-		hrc:            helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
-		rsc:            resourcesetctrl.New(st, ts, cfg.WipeSecrets),
-		rendered:       newRenderedSet(),
-		componentCache: manifest.NewComponentCache(),
-		depGraph:       newDependencyGraph(),
+		cfg:         cfg,
+		sourceCache: cache,
+		store:       st,
+		tasks:       ts,
+		src:         srcCtrl,
+		ksc:         kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
+		hrc:         helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		rsc:         resourcesetctrl.New(st, ts, cfg.WipeSecrets),
+		rendered:    newRenderedSet(),
+		depGraph:    newDependencyGraph(),
 	}
 	if cfg.DisableChartDigestTracking != nil {
 		o.cfg.DisableChartDigestTracking = new(*cfg.DisableChartDigestTracking)
@@ -565,8 +516,8 @@ func (o *Orchestrator) Filter() *change.Filter { return o.filter }
 // ParentOf returns the structural parent, falling back to rendered ownership.
 // Bootstrap must have completed; structural ownership is immutable thereafter.
 func (o *Orchestrator) ParentOf(id manifest.NamedResource) (manifest.NamedResource, bool) {
-	if parent, ok := o.parentOf[id]; ok {
-		return parent, true
+	if record, _ := o.index.Lookup(id); record.Parent != (manifest.NamedResource{}) {
+		return record.Parent, true
 	}
 	return o.rendered.ParentOf(id)
 }
@@ -577,8 +528,12 @@ func (o *Orchestrator) ParentOf(id manifest.NamedResource) (manifest.NamedResour
 // maps and sorted, deduplicated slices are independent of orchestrator state.
 func (o *Orchestrator) ChildrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
 	children := o.rendered.ChildrenByParent()
-	for child, parent := range o.parentOf {
-		children[parent] = append(children[parent], child)
+	if o.index != nil {
+		for child, record := range o.index.Records {
+			if parent := record.Parent; parent != (manifest.NamedResource{}) {
+				children[parent] = append(children[parent], child)
+			}
+		}
 	}
 	for parent, ids := range children {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
@@ -594,27 +549,31 @@ func (o *Orchestrator) ChildrenByParent() map[manifest.NamedResource][]manifest.
 func (o *Orchestrator) RequiredDataDependencies(consumer manifest.NamedResource) []manifest.NamedResource {
 	deps := map[manifest.NamedResource]struct{}{}
 	addOwners := func(id manifest.NamedResource) {
-		for _, owner := range o.selfProduce.ProducedBy(id) {
+		record, _ := o.index.Lookup(id)
+		for _, owner := range record.Renderers {
 			deps[owner] = struct{}{}
 		}
-		for _, owner := range o.selfProduce.OwnersOfProducer(id) {
+		for _, owner := range record.DeclarationOwners {
 			deps[owner] = struct{}{}
 		}
-		if parent, ok := o.parentOf[id]; ok {
-			deps[parent] = struct{}{}
+		if record.Parent != (manifest.NamedResource{}) {
+			deps[record.Parent] = struct{}{}
 		}
 		if parent, ok := o.rendered.ParentOf(id); ok {
 			deps[parent] = struct{}{}
 		}
-		file, ok := o.sourceFiles[id]
+		file := record.File
+		_, ok := o.index.Lookup(id)
 		if !ok {
 			id.Namespace = ""
-			file = o.sourceFiles[id]
+			raw, _ := o.index.Lookup(id)
+			file = raw.File
 		}
-		if file != "" {
-			for _, owner := range o.selfProduce.OwnersOfFile(file) {
+		for file != "" && file != "." && file != "/" {
+			for _, owner := range o.index.Readers[file] {
 				deps[owner] = struct{}{}
 			}
+			file = path.Dir(file)
 		}
 	}
 	addInput := func(kind, name string) {
@@ -653,14 +612,7 @@ func (o *Orchestrator) RequiredDataDependencies(consumer manifest.NamedResource)
 // remainder is dependency validation + change-filter construction.
 //
 // Idempotent: a second call returns nil without re-running discovery.
-// Bootstrap mutates orchestrator state (sourceFiles, parentOf,
-// existence, depGraph, componentCache, filter); replaying it would
-// rebuild the change.Filter from scratch, dropping any OnAdd hook
-// already wired into the store's listener set. Centralizing the
-// guard here means Render, embedders, and test harnesses all get
-// the invariant for free. A partial-failure path that returns before
-// flipping bootstrapped=true leaves the orchestrator eligible for a
-// clean retry on the next call.
+// Store listeners and runtime filter state MUST survive subsequent calls.
 func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if o.bootstrapped {
 		return nil
@@ -669,19 +621,14 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
 		KRMIgnoreFile: o.cfg.KRMIgnoreFile,
 		Store:         o.store, WipeSecrets: o.cfg.WipeSecrets,
-		ComponentCache: o.componentCache,
-		SourceCache:    o.sourceCache,
+		SourceCache: o.sourceCache,
 	})
 	if err != nil {
 		return err
 	}
 	o.repoRoot = res.RepoRoot
-	o.sourceFiles = res.SourceFiles
-	o.sourceRefs = res.SourceRefs
-	o.parentOf = res.ParentOf
-	o.selfProduce = res.SelfProduce
+	o.index = res.Index
 	o.producers = res.Producers
-	o.existence = res.Existence
 
 	o.freezeSubstitutions()
 	o.failDependsOnCycles()

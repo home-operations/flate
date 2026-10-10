@@ -17,22 +17,15 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// orchestratorExistence adapts the orchestrator's
-// loader.ExistenceIndex + Store + WipeSecrets config into the
-// depwait.ExistenceLookup interface that flows through controller
-// Options into every Waiter. Bundled so controllers don't each
-// reach into the orchestrator's private fields, and so future
-// existence-related signals land on one type instead of plumbing
-// new closures through three call layers.
+// orchestratorExistence applies runtime admission to immutable discovery locations.
 type orchestratorExistence struct {
-	idx         *loader.ExistenceIndex
-	store       *store.Store
+	loader      *loader.Loader
 	wipeSecrets bool
 	filter      *change.Filter
 }
 
 func (e *orchestratorExistence) Promote(id manifest.NamedResource) bool {
-	return e.idx.Promote(e.store, id, e.wipeSecrets, e.admit)
+	return e.loader.Promote(id, e.wipeSecrets, e.admit)
 }
 
 func (e *orchestratorExistence) admit(obj manifest.BaseManifest) bool {
@@ -46,7 +39,7 @@ func (e *orchestratorExistence) admit(obj manifest.BaseManifest) bool {
 }
 
 func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
-	if _, ok := e.idx.Get(id); ok {
+	if r, ok := e.loader.Index.Lookup(id); ok && r.Deferred && r.Path != "" {
 		return true
 	}
 	if id.Namespace == "" {
@@ -54,8 +47,8 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	}
 	// Discovery retains bare identities until a parent stamps the namespace.
 	id.Namespace = ""
-	_, ok := e.idx.Get(id)
-	return ok
+	r, ok := e.loader.Index.Lookup(id)
+	return ok && r.Deferred && r.Path != ""
 }
 
 // Run starts every controller, blocks until the task service drains,
@@ -116,8 +109,7 @@ func (o *Orchestrator) configureControllers() {
 	// controllers and Waiter consume them via the single
 	// depwait.ExistenceLookup interface.
 	existence := &orchestratorExistence{
-		idx:         o.existence,
-		store:       o.store,
+		loader:      &loader.Loader{Store: o.store, Index: o.index},
 		wipeSecrets: o.cfg.WipeSecrets,
 		filter:      o.filter,
 	}
@@ -127,7 +119,8 @@ func (o *Orchestrator) configureControllers() {
 	// Nil-safe: a nil index (no repoRoot) yields false, so the edge is
 	// kept (the pre-index always-add behavior).
 	selfProduces := func(cm, consumer manifest.NamedResource) bool {
-		return slices.Contains(o.selfProduce.ProducedBy(cm), consumer)
+		record, _ := o.index.Lookup(cm)
+		return slices.Contains(record.Renderers, consumer)
 	}
 	// The reconcile-shaping config common to all three render controllers,
 	// built once; each Configure adds its controller-specific fields.

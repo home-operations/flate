@@ -50,7 +50,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 				SourceKind: manifest.KindGitRepository, SourceName: "source", SourceNamespace: "apps",
 				PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values"}},
 			}
-			filter := change.NewFilter(changes, map[manifest.NamedResource]string{consumer.Named(): "consumer.yaml", target.Named(): "target.yaml"}, "", st)
+			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, st)
 			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
 			c := New(st, nil, nil, false)
 			c.Configure(Options{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{consumer.Named(): parent})})

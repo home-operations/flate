@@ -13,7 +13,6 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -75,7 +74,7 @@ spec:
 	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"}
 	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child"}
 	for _, id := range []manifest.NamedResource{parent, child} {
-		if _, ok := res.SourceFiles[id]; !ok {
+		if _, ok := filesForTest(res.Index)[id]; !ok {
 			t.Errorf("SourceFiles missing %s", id)
 		}
 		if st.GetObject(id) == nil {
@@ -83,7 +82,7 @@ spec:
 		}
 	}
 
-	if got := res.ParentOf[child]; got != parent {
+	if got := parentsForTest(res.Index)[child]; got != parent {
 		t.Errorf("ParentOf[child] = %v, want %v", got, parent)
 	}
 
@@ -191,14 +190,14 @@ spec:
 	if st.GetObject(hr) != nil {
 		t.Fatal("parent-owned HelmRelease must wait for rendering")
 	}
-	if _, indexed := res.SourceFiles[hr]; !indexed {
+	if _, indexed := filesForTest(res.Index)[hr]; !indexed {
 		t.Fatal("HelmRelease source identity must be indexed")
 	}
-	if got := res.ParentOf[hr]; got != parent {
+	if got := parentsForTest(res.Index)[hr]; got != parent {
 		t.Errorf("ParentOf[%s] = %v, want %v", hr, got, parent)
 	}
 	orphan := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "orphan"}
-	if _, gated := res.ParentOf[orphan]; gated || st.GetObject(orphan) == nil {
+	if _, gated := parentsForTest(res.Index)[orphan]; gated || st.GetObject(orphan) == nil {
 		t.Error("standalone HelmRelease must be available without a parent gate")
 	}
 }
@@ -451,12 +450,12 @@ spec:
 
 	appA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
 	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
-	if got := res.ParentOf[appA]; got != clusterApps {
+	if got := parentsForTest(res.Index)[appA]; got != clusterApps {
 		t.Errorf("ParentOf[app-a] = %v, want cluster-apps (cross-tree emission gate)", got)
 	}
 
 	selfish := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "selfish"}
-	if got, gated := res.ParentOf[selfish]; gated {
+	if got, gated := parentsForTest(res.Index)[selfish]; gated {
 		t.Errorf("ParentOf[selfish] = %v, want absent (a self-emit must not gate on itself)", got)
 	}
 }
@@ -788,7 +787,7 @@ data: {value: fixture}
 				t.Fatal(err)
 			}
 			raw := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "demo", Namespace: tc.namespace}
-			if _, ok := res.Existence.Get(raw); !ok {
+			if _, ok := res.Index.Lookup(raw); !ok {
 				t.Error("raw release must remain indexed")
 			}
 			if st.GetObject(raw) != nil {
@@ -895,7 +894,7 @@ data: {value: fixture}
 			if err != nil {
 				t.Fatal(err)
 			}
-			owners := res.SelfProduce.OwnersOfFile("shared/cm.yaml")
+			owners := ownersForTest(res.Index, "shared/cm.yaml")
 			if scenario == "external" {
 				if len(owners) != 0 {
 					t.Errorf("external KS owns local file: %v", owners)

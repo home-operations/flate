@@ -220,31 +220,6 @@ func TestWalkerIgnoreMatches_NilMatcherShortCircuits(t *testing.T) {
 	}
 }
 
-// TestNormalizePrefix_LivesInParent is a compile-time + behavioural check
-// that NormalizePrefix is accessible from the parent.go scope (i.e. the
-// move didn't accidentally make it unexported or shadow it).
-func TestNormalizePrefix_LivesInParent(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"./apps/plex", "apps/plex/"},
-		{"apps/plex/", "apps/plex/"},
-		{"apps/plex", "apps/plex/"},
-	}
-	for _, tc := range cases {
-		if got := NormalizePrefix(tc.in); got != tc.want {
-			t.Errorf("NormalizePrefix(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
-// TestLoader_KrmignoreEnvironmentAllowlist mirrors the multi-environment
-// layout from issue #816: environments/<env>/ trees carry same-named
-// resources, so an unfiltered scan lets the alphabetically-last env
-// shadow the others in the Store. A .krmignore using the exact
-// allowlist patterns from the issue (the ones the reporter feeds to
-// GitRepository spec.ignore) must scope the walk to common/ plus one
-// environment, so the selected env's resources win.
 func TestLoader_KrmignoreEnvironmentAllowlist(t *testing.T) {
 	appID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
 	commonID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "common-settings"}
@@ -265,7 +240,7 @@ data: {env: `+env+`}
 `)
 		}
 		s := store.New()
-		if _, err := New(s).Load(t.Context(), dir); err != nil {
+		if _, err := loaderFixture(s, nil).Load(t.Context(), dir); err != nil {
 			t.Fatalf("Load: %v", err)
 		}
 		return s
@@ -337,7 +312,7 @@ data: {env: `+env+`}
 	envOf := func(t *testing.T, ignoreFile string) string {
 		t.Helper()
 		s := store.New()
-		l := New(s)
+		l := loaderFixture(s, nil)
 		l.IgnoreFile = ignoreFile
 		if _, err := l.Load(t.Context(), dir); err != nil {
 			t.Fatalf("Load: %v", err)

@@ -16,7 +16,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -139,13 +138,13 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 		if o.store.GetObject(external) != nil {
 			t.Fatal("supplied object entered store")
 		}
-		if _, ok := o.existence.Get(external); ok {
+		if _, ok := o.index.Lookup(external); ok {
 			t.Fatal("supplied object entered existence index")
 		}
-		if _, ok := o.sourceFiles[external]; ok {
+		if _, ok := filesForTest(o.index)[external]; ok {
 			t.Fatal("supplied object entered file/change index")
 		}
-		if _, ok := o.producers.Producer(external); ok || len(o.selfProduce.ProducedBy(external)) != 0 {
+		if _, ok := o.producers.Producer(external); ok || len(renderersForTest(o.index, external)) != 0 {
 			t.Fatal("supplied object entered producer indexes")
 		}
 		stored, _ := o.store.Get[*manifest.Kustomization](id)
@@ -432,7 +431,7 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 					t.Fatal(err)
 				}
 				external := source.Object.Named()
-				if o.substitutionSources[external] == nil || o.store.GetObject(external) != nil || len(o.selfProduce.ProducedBy(external)) != 0 {
+				if o.substitutionSources[external] == nil || o.store.GetObject(external) != nil || len(renderersForTest(o.index, external)) != 0 {
 					t.Fatal("test requires producer unknown at bootstrap")
 				}
 				var mu sync.Mutex
@@ -587,10 +586,10 @@ func TestFreezeSubstitutions_ExactFileIdentity(t *testing.T) {
 		t.Run("namespace_"+namespace, func(t *testing.T) {
 			source := suppliedSubstitution("external")
 			o := newSubstitutionOrchestrator(t, Config{Path: t.TempDir(), SubstituteFrom: []SubstitutionSource{source}})
-			o.existence = loader.NewExistenceIndex()
+			o.index = indexForTest(nil)
 			id := source.Object.Named()
 			id.Namespace = namespace
-			o.existence.Record(id, "repository.yaml")
+			o.index.Records[id] = manifest.DiscoveryRecord{Path: "repository.yaml"}
 			o.freezeSubstitutions()
 			if got := o.substitutionSources[source.Object.Named()] != nil; got != (namespace != "apps") {
 				t.Fatalf("accepted=%v for indexed namespace %q", got, namespace)

@@ -5,7 +5,6 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -28,11 +27,11 @@ func TestIndexFluxByPath_EmptyPathRequiresSource(t *testing.T) {
 				Name: "root", Namespace: "flux-system", Path: tc.path, SourceName: tc.source,
 				TargetNamespace: "apps",
 			})
-			entries := indexFluxByPath(st, nil, nil, "")
+			entries := loaderFixture(st, nil).indexFluxByPath(nil, "")
 			if len(entries) != tc.wantEntries {
 				t.Fatalf("namespace entries = %v, want %d entries", entries, tc.wantEntries)
 			}
-			if len(entries) != 0 && entries[0] != (pathEntry{prefix: NormalizePrefix(tc.path), ns: "apps"}) {
+			if len(entries) != 0 && entries[0] != (pathEntry{prefix: manifest.NormalizeClaimBase(tc.path) + "/", ns: "apps"}) {
 				t.Fatalf("namespace entries = %v, want source-root entry for apps", entries)
 			}
 		})
@@ -61,7 +60,7 @@ func TestApplyNamespaceInheritance_FluxTargetNamespaceWins(t *testing.T) {
 		parent.Named(): "apps/plex/ks.yaml",
 		hr.Named():     "apps/plex/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
+	inheritForTest(s, sourceFiles, nil, root)
 
 	// HR's namespace should now reflect the Flux KS targetNamespace,
 	// not the kustomize-level "should-be-overridden" directive.
@@ -90,7 +89,7 @@ func TestApplyNamespaceInheritance_KustomizeDirectiveFallback(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		hr.Named(): "apps/atuin/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
+	inheritForTest(s, sourceFiles, nil, root)
 
 	if got := s.GetObject(manifest.NamedResource{
 		Kind: manifest.KindHelmRelease, Namespace: "default", Name: "atuin",
@@ -112,7 +111,7 @@ func TestApplyNamespaceInheritance_DeepestPrefixWins(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		hr.Named(): "apps/media/plex/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
+	inheritForTest(s, sourceFiles, nil, root)
 
 	if got := s.GetObject(manifest.NamedResource{
 		Kind: manifest.KindHelmRelease, Namespace: "inner", Name: "plex",
@@ -126,7 +125,7 @@ func TestApplyNamespaceInheritance_NoSourceFilesNoop(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "x", Namespace: ""}
 	s.AddObject(hr)
 	// Empty sourceFiles must not crash and must not rewrite anything.
-	ApplyNamespaceInheritanceWithRefs(s, map[manifest.NamedResource]string{}, nil, "")
+	inheritForTest(s, map[manifest.NamedResource]string{}, nil, "")
 
 	if got := s.GetObject(manifest.NamedResource{
 		Kind: manifest.KindHelmRelease, Name: "x",
@@ -139,13 +138,13 @@ func TestReadKustomizeNamespace_AnchoredByRepoRoot(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "deep/sub/kustomization.yaml", "namespace: from-disk\n")
 
-	got := readKustomizeNamespace(root, "deep/sub")
+	got := namespaceForTest(root, "deep/sub")
 	if got != "from-disk" {
 		t.Errorf("readKustomizeNamespace=%q want %q", got, "from-disk")
 	}
 
 	// Bogus dir returns empty without erroring.
-	if got := readKustomizeNamespace(root, "no/such/dir"); got != "" {
+	if got := namespaceForTest(root, "no/such/dir"); got != "" {
 		t.Errorf("missing kustomization should return empty, got %q", got)
 	}
 }
@@ -188,7 +187,7 @@ func TestApplyNamespaceInheritance_CrossTreeBasePattern(t *testing.T) {
 		ks.Named(): "apps/main/games/romm.yaml",
 		hr.Named(): "apps/base/games/romm/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
+	inheritForTest(s, sourceFiles, nil, root)
 
 	// Both the KS and the HR should now be namespace=games — the KS
 	// from the local kustomize.yaml directive, the HR from the KS's
@@ -222,7 +221,7 @@ func TestApplyNamespaceInheritance_HRChartRepoNamespaceTracksHR(t *testing.T) {
 	sourceFiles := map[manifest.NamedResource]string{
 		hr.Named(): "apps/plex/helmrelease.yaml",
 	}
-	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
+	inheritForTest(s, sourceFiles, nil, root)
 
 	updated := s.GetObject(manifest.NamedResource{
 		Kind: manifest.KindHelmRelease, Namespace: "media", Name: "plex",
@@ -257,7 +256,7 @@ func TestApplyNamespaceInheritanceWithRefs_ResolvesOmittedChartRefNamespace(t *t
 		grafana: {explicit},
 	}
 
-	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, sourceRefs, root)
+	inheritForTest(s, sourceFiles, sourceRefs, root)
 
 	if got := sourceRefs[plex][0].Namespace; got != "media" {
 		t.Errorf("omitted chartRef namespace = %q, want media (tracks the HR's inherited ns)", got)
@@ -309,7 +308,7 @@ func TestApplyNamespaceInheritance_FluxOperatorAndHelmChartSource(t *testing.T) 
 		rsip.Named(): "apps/platform/rsip.yaml",
 		hc.Named():   "apps/platform/chart.yaml",
 	}
-	ApplyNamespaceInheritanceWithRefs(s, sourceFiles, nil, root)
+	inheritForTest(s, sourceFiles, nil, root)
 
 	for _, id := range []manifest.NamedResource{
 		{Kind: manifest.KindKustomization, Namespace: "platform", Name: "workload"},
@@ -354,7 +353,7 @@ func TestApplyDefaultNamespaces_LateFallback(t *testing.T) {
 		hc.Named():   "chart.yaml",
 	}
 
-	ApplyDefaultNamespaces(s, sourceFiles)
+	defaultNamespacesForTest(s, sourceFiles)
 
 	for _, id := range []manifest.NamedResource{
 		{Kind: manifest.KindResourceSet, Namespace: manifest.DefaultNamespace, Name: "apps"},

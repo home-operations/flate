@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -26,9 +26,9 @@ func TestOrchestrator_ParentOf(t *testing.T) {
 		{name: "precedence", structural: true, rendered: true, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			o := &Orchestrator{parentOf: map[manifest.NamedResource]manifest.NamedResource{}, rendered: newRenderedSet()}
+			o := &Orchestrator{index: indexForTest(nil), rendered: newRenderedSet()}
 			if tc.structural {
-				o.parentOf[id] = structural
+				o.index.Records[id] = manifest.DiscoveryRecord{Parent: structural}
 			}
 			if tc.rendered {
 				o.rendered.MarkRenderedBatch(rendered, []manifest.NamedResource{id})
@@ -224,7 +224,7 @@ func TestOrchestrator_ChildrenByParent(t *testing.T) {
 		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
 	}
 	parent, other, first, second := id("parent"), id("other"), id("a"), id("b")
-	o.parentOf = map[manifest.NamedResource]manifest.NamedResource{first: parent, second: parent}
+	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{first: parent, second: parent})
 	o.rendered.MarkRenderedBatch(parent, []manifest.NamedResource{second})
 	o.rendered.MarkRenderedBatch(other, []manifest.NamedResource{first})
 	got := o.ChildrenByParent()
@@ -251,7 +251,7 @@ func TestOrchestrator_RequiredDataDependencies_Parents(t *testing.T) {
 	o.store.AddObject(hr)
 	input := manifest.NamedResource{Kind: "Secret", Namespace: "apps", Name: "input"}
 	structural, rendered := ksID("structural"), ksID("rendered")
-	o.parentOf = map[manifest.NamedResource]manifest.NamedResource{input: structural}
+	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{input: structural})
 	o.rendered.MarkRenderedBatch(rendered, []manifest.NamedResource{input})
 	want := []manifest.NamedResource{input, structural, rendered}
 	slices.SortFunc(want, manifest.NamedResource.Compare)
@@ -274,8 +274,11 @@ func TestOrchestrator_RequiredDataDependencies_ChangedOnlyProducers(t *testing.T
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
 	testutil.WriteFile(t, root, "values/kustomization.yaml", "resources: [input.yaml]\n")
 	testutil.WriteFile(t, root, "values/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {values.yaml: 'greeting: hello'}\n")
-	// The change filter can retain file ownership absent from the canonical indexes.
-	o.filter = change.NewFilter(change.NewSet([]string{"consumer.yaml"}), map[manifest.NamedResource]string{input: "values/input.yaml", hr.Named(): "consumer.yaml"}, root, o.store)
+	l := loader.New(o.store)
+	l.Index = indexForTest(map[manifest.NamedResource]string{input: "values/input.yaml", hr.Named(): "consumer.yaml"})
+	l.FinalizeIndex(root, nil)
+	o.index = l.Index
+	o.filter = change.NewFilter(change.NewSet([]string{"consumer.yaml"}), o.index, o.store)
 	assert.Diff(t, o.filter.ProducersFor(input), []manifest.NamedResource{owner.Named()})
 	want := []manifest.NamedResource{input, owner.Named()}
 	slices.SortFunc(want, manifest.NamedResource.Compare)

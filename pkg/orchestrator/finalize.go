@@ -23,16 +23,8 @@ import (
 // blocked cascade victim, not an orphan — it stays failed (see below).
 func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]string {
 	out := make(map[manifest.NamedResource]string)
-	// Use repoRoot (not cfg.Path) so KSPathPrefixes' component
-	// lookups read from the actual repo root rather than a
-	// potentially-subdir --path. Same fix as PR #358 applied to
-	// the orchestrator side. Route through the shared component
-	// cache populated during Bootstrap so the per-KS component file
-	// reads are served from memory rather than re-stat'd here.
-	// Built lazily on the first failure that survives the cheap
-	// per-id guards below: a clean run (no reconcilable failures)
-	// never pays the full KS list + claim build + sort.
-	var prefixes []loader.KSPathPrefix
+	// Claims are rebuilt after drain to include runtime-created Kustomizations.
+	var prefixes []manifest.KSClaim
 	var prefixesBuilt bool
 	for id, info := range failed {
 		if !isReconcilableKind(id.Kind) {
@@ -43,21 +35,29 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		if o.rendered.has(id) {
 			continue
 		}
-		file, ok := o.sourceFiles[id]
+		record, ok := o.index.Lookup(id)
+		file := record.File
 		if !ok {
 			continue
 		}
 		if !prefixesBuilt {
-			prefixes = loader.KSPathPrefixesLocalOnly(o.store, o.repoRoot, o.componentCache)
+			prefixes = loader.New(o.store).Claims(o.repoRoot)
 			prefixesBuilt = true
 		}
-		parent, ok := loader.LongestParent(prefixes, file, id)
+		var parent manifest.NamedResource
+		for _, c := range prefixes {
+			if c.ID != id && strings.HasPrefix(file, c.Prefix) {
+				parent = c.ID
+				break
+			}
+		}
+		ok = parent != (manifest.NamedResource{})
 		if !ok {
 			// No covering spec.path parent. A Flux KS that is a stray manifest its
 			// own kustomize base excludes (apps/base/app-X/ks.yaml not listed in the
 			// dir's kustomization.yaml) is one real Flux never applies — demote it
 			// rather than hard-failing a file that isn't wired into any tree (#777).
-			if loader.IsUnreferencedKustomizeResource(o.repoRoot, file) {
+			if record.Excluded {
 				out[id] = info.Message
 			}
 			continue
@@ -243,7 +243,7 @@ func (o *Orchestrator) demoteOrphans(failed map[manifest.NamedResource]store.Sta
 	for id, msg := range o.orphans {
 		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
 		slog.Warn("resource orphaned", "id", id.String(),
-			"file", o.sourceFiles[id],
+			"file", func() string { r, _ := o.index.Lookup(id); return r.File }(),
 			"reason", msg)
 		delete(failed, id)
 	}
@@ -276,7 +276,8 @@ func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]sto
 		// stderr alongside the user-facing report and reads as
 		// "flate had an internal error" when it's just normal
 		// per-resource Flux failures the user expects to see.
-		if f := o.sourceFiles[id]; f != "" {
+		if r, _ := o.index.Lookup(id); r.File != "" {
+			f := r.File
 			slog.Debug("resource failed", "id", id.String(), "reason", info.Message, "file", f)
 		} else {
 			slog.Debug("resource failed", "id", id.String(), "reason", info.Message)
@@ -296,7 +297,8 @@ func (e *FailuresError) Error() string { return e.Message }
 func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))
 	for id, info := range sanitizeFailed(failed) {
-		if f := o.sourceFiles[id]; f != "" {
+		if r, _ := o.index.Lookup(id); r.File != "" {
+			f := r.File
 			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", id.String(), f, info.Message))
 		} else {
 			msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), info.Message))

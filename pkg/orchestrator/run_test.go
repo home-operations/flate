@@ -43,10 +43,12 @@ metadata: {name: foreign-source, namespace: apps}
 spec: {}
 `)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
-	idx := loader.NewExistenceIndex()
-	idx.Record(id, filepath.Join(dir, "bundle.yaml"))
+	idx := loader.New(store.New())
+	idx.Index = indexForTest(nil)
+	idx.Index.Records[id] = manifest.DiscoveryRecord{Deferred: true, Path: filepath.Join(dir, "bundle.yaml")}
 	st := store.New()
-	e := &orchestratorExistence{idx: idx, store: st, wipeSecrets: true}
+	idx.Store = st
+	e := &orchestratorExistence{loader: idx, wipeSecrets: true}
 	if !e.Promote(id) || st.GetObject(id) == nil {
 		t.Fatal("selected data must be admitted")
 	}
@@ -96,12 +98,14 @@ spec: {url: https://example.test/excluded.git}
 	chart := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}
 	excludedSource := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "excluded-source"}
 	files := map[manifest.NamedResource]string{hr.Named(): "consumer.yaml", selected: "bundle.yaml", excluded: "bundle.yaml", chart: "bundle.yaml", excludedSource: "bundle.yaml"}
-	filter := change.NewFilter(change.NewSet([]string{"consumer.yaml"}), files, "", st)
-	idx := loader.NewExistenceIndex()
+	filter := change.NewFilter(change.NewSet([]string{"consumer.yaml"}), indexForTest(files), st)
+	idx := loader.New(store.New())
+	idx.Index = indexForTest(nil)
 	for id := range files {
-		idx.Record(id, filepath.Join(dir, "bundle.yaml"))
+		idx.Index.Records[id] = manifest.DiscoveryRecord{Deferred: true, Path: filepath.Join(dir, "bundle.yaml")}
 	}
-	e := &orchestratorExistence{idx: idx, store: st, wipeSecrets: true, filter: filter}
+	idx.Store = st
+	e := &orchestratorExistence{loader: idx, wipeSecrets: true, filter: filter}
 	size := filter.Size()
 	if !e.Promote(selected) || st.GetObject(selected) == nil || st.GetObject(chart) == nil {
 		t.Fatal("selected values and required chart source must be admitted")
@@ -123,18 +127,21 @@ spec: {url: https://example.test/excluded.git}
 func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 	for _, tc := range []struct {
 		name, recorded, requested string
-		want                      bool
+		deferred, want            bool
 	}{
-		{"exact", "apps", "apps", true},
-		{"inherited namespace", "", "apps", true},
-		{"explicit other namespace", "other", "apps", false},
-		{"bare query cannot match explicit", "apps", "", false},
+		{"exact", "apps", "apps", true, true},
+		{"inherited namespace", "", "apps", true, true},
+		{"explicit other namespace", "other", "apps", true, false},
+		{"bare query cannot match explicit", "apps", "", true, false},
+		{"admitted object", "apps", "apps", false, false},
+		{"bare admitted object", "", "apps", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			idx := loader.NewExistenceIndex()
+			idx := loader.New(store.New())
+			idx.Index = indexForTest(nil)
 			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.recorded, Name: "target"}
-			idx.Record(id, "target.yaml")
-			e := &orchestratorExistence{idx: idx}
+			idx.Index.Records[id] = manifest.DiscoveryRecord{Deferred: tc.deferred, Path: "target.yaml"}
+			e := &orchestratorExistence{loader: idx}
 			id.Namespace = tc.requested
 			if got := e.IsFileIndexed(id); got != tc.want {
 				t.Errorf("IsFileIndexed(%s) = %v, want %v", id, got, tc.want)

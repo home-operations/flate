@@ -16,7 +16,6 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
@@ -108,8 +107,8 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 			phantom := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "phantom"}
 			cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "settings"}
 			artifact := st.GetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}).(*store.SourceArtifact)
-			if st.GetObject(phantom) != nil || st.GetObject(childID) == nil || result.ParentOf[childID] != parent {
-				t.Fatalf("pinned children: phantom=%v child=%v parent=%v", st.GetObject(phantom), st.GetObject(childID), result.ParentOf[childID])
+			if st.GetObject(phantom) != nil || st.GetObject(childID) == nil || parentsForTest(result.Index)[childID] != parent {
+				t.Fatalf("pinned children: phantom=%v child=%v parent=%v", st.GetObject(phantom), st.GetObject(childID), parentsForTest(result.Index)[childID])
 			}
 			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "generated"}
 			generatedCM, ok := st.GetObject(generated).(*manifest.ConfigMap)
@@ -117,17 +116,15 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 				t.Fatalf("pinned generators = %v", generatedCM)
 			}
 			for _, id := range []manifest.NamedResource{childID, cm, generated} {
-				file := filepath.Join(root, filepath.FromSlash(result.SourceFiles[id]))
+				file := filepath.Join(root, filepath.FromSlash(filesForTest(result.Index)[id]))
 				if !pathUnderRoot(file, artifact.LocalPath) {
 					t.Fatalf("source file for %s = %s, want under %s", id, file, artifact.LocalPath)
 				}
 			}
-			if got := result.SelfProduce.ProducedBy(cm); !slices.Equal(got, []manifest.NamedResource{parent}) {
+			if got := renderersForTest(result.Index, cm); !slices.Equal(got, []manifest.NamedResource{parent}) {
 				t.Fatalf("self-produce = %v, want [%s]", got, parent)
 			}
-			f := change.NewFilterWithOptions(change.NewSet([]string{"flux/unrelated.yaml"}), result.SourceFiles, st, change.FilterOptions{
-				RepoRoot: root, FileOwners: result.SelfProduce.OwnersOfFile,
-			})
+			f := change.NewFilter(change.NewSet([]string{"flux/unrelated.yaml"}), result.Index, st)
 			if got := f.ProducersFor(cm); !slices.Equal(got, []manifest.NamedResource{parent}) {
 				t.Fatalf("producers = %v, want [%s]", got, parent)
 			}
@@ -267,9 +264,18 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			} else {
 				st.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, URL: tc.url, LocalPath: t.TempDir()})
 			}
-			prefixes := loader.KSPathPrefixesLocalOnly(st, root, nil)
+			l := loader.New(st)
+			l.FinalizeIndex(root, nil)
 			child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "release"}
-			parent, owned := loader.LongestParent(prefixes, "apps/release.yaml", child)
+			owners, _ := l.Index.OwnersOfFile("apps/release.yaml")
+			parent := manifest.NamedResource{}
+			for _, owner := range owners {
+				if owner != child {
+					parent = owner
+					break
+				}
+			}
+			owned := parent != (manifest.NamedResource{})
 			if owned != tc.local || owned && parent != ks.Named() {
 				t.Fatalf("local path ownership = %v, %v; want local=%v", parent, owned, tc.local)
 			}

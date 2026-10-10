@@ -69,7 +69,7 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 		ks.Named(): "apps/gpu-operator/gpu-operator/ks.yaml",
 	}
 
-	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	stampForTest(s, sourceFiles, root)
 
 	got, ok := s.Get[*manifest.Kustomization](ks.Named())
 	if !ok {
@@ -103,7 +103,7 @@ resources:
 		ks.Named(): "apps/plain/app/ks.yaml",
 	}
 
-	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	stampForTest(s, sourceFiles, root)
 
 	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "" {
@@ -144,7 +144,7 @@ fieldSpecs:
 		ks.Named(): "apps/other/other/ks.yaml",
 	}
 
-	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	stampForTest(s, sourceFiles, root)
 
 	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "" {
@@ -164,7 +164,7 @@ func TestStampTransformerTargetNamespaces_ExplicitTargetNamespacePreserved(t *te
 		ks.Named(): "apps/gpu-operator/gpu-operator/ks.yaml",
 	}
 
-	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	stampForTest(s, sourceFiles, root)
 
 	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "explicit" {
@@ -205,7 +205,7 @@ resources:
 		ks.Named(): "apps/outer/inner/app/ks.yaml",
 	}
 
-	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	stampForTest(s, sourceFiles, root)
 
 	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "inner" {
@@ -241,7 +241,7 @@ func stampReplacementsKS(t *testing.T, root, overlayDir, overlayKustomization st
 	sourceFiles := map[manifest.NamedResource]string{
 		ks.Named(): overlayDir + "/app/ks.yaml",
 	}
-	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	stampForTest(s, sourceFiles, root)
 	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	return got
 }
@@ -432,7 +432,7 @@ func TestStampTransformerTargetNamespaces_NoEnclosingOverlay(t *testing.T) {
 	ks := leafKS("bare", "./apps/bare/app/workload")
 	s.AddObject(ks)
 	sourceFiles := map[manifest.NamedResource]string{ks.Named(): "apps/bare/app/ks.yaml"}
-	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	stampForTest(s, sourceFiles, root)
 	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "" {
 		t.Errorf("TargetNamespace=%q want empty (no enclosing overlay)", got.TargetNamespace)
@@ -475,14 +475,14 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 	}
 	writeFile(t, root, fmt.Sprintf("d%d/kustomization.yaml", depth), "resources:\n  - ./transformer.yaml\n")
 	writeFile(t, root, fmt.Sprintf("d%d/transformer.yaml", depth), namespaceTransformer)
-	if subtreeHasNamespaceTransformer(root, "d0", map[string]struct{}{}, 0) {
+	if (documentReader{}).subtreeHasNamespaceTransformer(root, "d0", map[string]struct{}{}, 0) {
 		t.Error("want false: NamespaceTransformer sits past transformerScanMaxDepth")
 	}
 
 	// A reference cycle a → b → a must terminate (visited set) and return false.
 	writeFile(t, root, "cyc/a/kustomization.yaml", "resources:\n  - ../b\n")
 	writeFile(t, root, "cyc/b/kustomization.yaml", "resources:\n  - ../a\n")
-	if subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}, 0) {
+	if (documentReader{}).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}, 0) {
 		t.Error("want false on a reference cycle (must not loop)")
 	}
 }
@@ -509,7 +509,7 @@ resources:
 	sourceFiles := map[manifest.NamedResource]string{
 		ks.Named(): "apps/outer/inner/app/ks.yaml",
 	}
-	StampTransformerTargetNamespaces(s, sourceFiles, root)
+	stampForTest(s, sourceFiles, root)
 	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "inner" {
 		t.Errorf("TargetNamespace=%q want inner (deepest overlay)", got.TargetNamespace)

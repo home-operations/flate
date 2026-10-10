@@ -10,14 +10,13 @@ import (
 	"testing"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type fakeFetcher struct {
@@ -530,12 +529,7 @@ func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
 
 	// Filter that marks our repo as "no changes" — should short-circuit
 	// to Ready without fetching.
-	filter := change.NewFilter(
-		change.NewSet(nil), // no changed files
-		map[manifest.NamedResource]string{},
-		"",
-		testutil.MapLister{},
-	)
+	filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{})
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindGitRepository: f},
 		FetchOptions{Filter: filter})

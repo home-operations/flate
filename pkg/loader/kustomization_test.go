@@ -1,9 +1,12 @@
 package loader
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // TestResolveDataPath covers generator-file path resolution. Rows:
@@ -63,12 +66,12 @@ func TestResolveResourcePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			abs, ok := resolveResourcePath(tc.base, tc.rel)
+			abs, ok := resolvePath(tc.base, tc.rel)
 			if ok != tc.wantOK {
-				t.Fatalf("resolveResourcePath(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
+				t.Fatalf("resolvePath(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
 			}
 			if ok && abs != tc.wantAbs {
-				t.Errorf("resolveResourcePath(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
+				t.Errorf("resolvePath(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
 			}
 		})
 	}
@@ -97,9 +100,61 @@ func TestIsUnreferencedKustomizeResource(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := IsUnreferencedKustomizeResource(dir, tc.file); got != tc.want {
+			l := loaderFixture(store.New(), nil)
+			id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "stray"}
+			l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, tc.file), File: tc.file}
+			l.FinalizeIndex(dir, nil)
+			if got := l.Index.Records[id].Excluded; got != tc.want {
 				t.Errorf("IsUnreferencedKustomizeResource(%q) = %v, want %v", tc.file, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoader_KustomizationFilenames(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		loaded int
+	}{
+		{"kustomization.yaml", 1},
+		{"kustomization.yml", 1},
+		{"Kustomization", 1},
+		{"kustomization.json", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, tc.name, "resources: [included.yaml]\nunknownDirective: ignored\n")
+			for _, file := range []string{"included.yaml", "unlisted.yaml"} {
+				testutil.WriteFile(t, root, file, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+file+"}\n")
+			}
+			if loaded, err := New(store.New()).Load(t.Context(), root); err != nil || loaded != tc.loaded {
+				t.Fatalf("Load = %d, %v; want %d objects", loaded, err, tc.loaded)
+			}
+		})
+	}
+}
+
+func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
+	r := documentReader{}
+	working := filepath.Join(t.TempDir(), "apps")
+	committed := filepath.Join(t.TempDir(), "apps")
+	testutil.WriteFile(t, working, "Kustomization", "namespace: working\n")
+	testutil.WriteFile(t, committed, "Kustomization", "namespace: committed\n")
+	first, file := r.read(working)
+	other, _ := r.read(committed)
+	if first == nil || other == nil || first.Namespace != "working" || other.Namespace != "committed" {
+		t.Fatalf("source views were mixed: working=%v committed=%v", first, other)
+	}
+	testutil.WriteFile(t, working, "Kustomization", "namespace: changed\n")
+	if got, gotFile := r.read(working); got != first || gotFile != file {
+		t.Fatal("positive result was re-read")
+	}
+	missing := t.TempDir()
+	if got, _ := r.read(missing); got != nil {
+		t.Fatal("missing kustomization was discovered")
+	}
+	testutil.WriteFile(t, missing, "kustomization.yaml", "namespace: late\n")
+	if got, _ := r.read(missing); got != nil {
+		t.Fatal("negative result was re-read")
 	}
 }

@@ -7,49 +7,30 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
-// ApplyNamespaceInheritanceWithRefs fills empty metadata.namespace fields on
-// loaded resources from the nearest enclosing namespace directive — either a
-// Flux Kustomization's spec.targetNamespace or a kustomization.yaml
-// `namespace:` field. This is the load-time analog of kustomize-controller's
-// apply-time behavior, without which the store ends up with two copies of the
-// same resource (one with the inherited namespace, one with namespace="").
-// repoRoot anchors the kustomization.yaml lookups; sourceFiles is mutated as
-// ids are rewritten.
-//
-// sourceRefs (the discovery-supplied consumer→source ref map; nil to skip) is
-// resolved in step with each consumer's inherited namespace: recordSourceRefs
-// captures those edges at PARSE time, so a chartRef/sourceRef that omits its
-// namespace carries an empty-namespace target. Render-driven HelmReleases are
-// never in the Store, so the Store-object pass below can't fix them — resolving
-// the target to the consumer's inherited namespace here (Flux semantics: an
-// omitted ref namespace tracks the consumer's namespace) keeps changed-only
-// mode's keep-set walk from missing a changed HelmRelease's chart source.
-func ApplyNamespaceInheritanceWithRefs(s *store.Store, sourceFiles map[manifest.NamedResource]string, sourceRefs map[manifest.NamedResource][]manifest.NamedResource, repoRoot string) {
-	if len(sourceFiles) == 0 {
+// ApplyNamespaces projects discovery namespaces using the shared document reader.
+func (l *Loader) ApplyNamespaces(repoRoot string) {
+	l.stampTransformerTargetNamespaces(repoRoot)
+	l.applyNamespaceInheritance(repoRoot)
+	l.applyDefaultNamespaces()
+}
+
+func (l *Loader) applyNamespaceInheritance(repoRoot string) {
+	s := l.Store
+	if l.Index == nil || len(l.Index.Records) == 0 {
 		return
 	}
-
-	// Index #1 — kustomize.yaml `namespace:` directives, keyed by
-	// the directory containing the kustomization file. Indexed first
-	// because indexFluxByPath consults it to project a Flux KS's
-	// effective namespace before the parent's render fires.
-	kustomizeByDir := indexKustomizeNamespaces(sourceFiles, repoRoot)
-
-	// Index #2 — Flux Kustomizations by spec.path → effective
-	// namespace (targetNamespace if set, otherwise metadata.namespace,
-	// otherwise the kustomize.yaml directive that would patch the KS
-	// itself once the parent renders).
-	fluxByPath := indexFluxByPath(s, sourceFiles, kustomizeByDir, repoRoot)
+	kustomizeByDir := l.indexKustomizeNamespaces(repoRoot)
+	fluxByPath := l.indexFluxByPath(kustomizeByDir, repoRoot)
 
 	type update struct {
 		old, new manifest.NamedResource
 		file     string
 	}
 	var updates []update
-	for id, file := range sourceFiles {
+	for id, record := range l.Index.Files() {
+		file := record.File
 		if id.Namespace != "" {
 			continue
 		}
@@ -62,13 +43,9 @@ func ApplyNamespaceInheritanceWithRefs(s *store.Store, sourceFiles map[manifest.
 		updates = append(updates, update{old: id, new: next, file: file})
 	}
 	for _, u := range updates {
-		// Resolve the consumer's referenced sources whose namespace was
-		// omitted — they implicitly track the consumer's inherited namespace.
-		// Done before the Store check so it also covers render-driven consumers
-		// (HelmReleases) that are absent from the Store. refs aliases the map's
-		// backing array, so the in-place edit is visible to sourceRefs; a nil
-		// sourceRefs map yields a nil slice and skips the loop.
-		refs := sourceRefs[u.old]
+		// Omitted reference namespaces track inheritance even for deferred consumers.
+		record := l.Index.Records[u.old]
+		refs := record.Refs
 		for i := range refs {
 			if refs[i].Namespace == "" {
 				refs[i].Namespace = u.new.Namespace
@@ -86,42 +63,36 @@ func ApplyNamespaceInheritanceWithRefs(s *store.Store, sourceFiles map[manifest.
 		}
 		s.DeleteObject(u.old)
 		s.AddObject(updated)
-		delete(sourceFiles, u.old)
-		sourceFiles[u.new] = u.file
+		delete(l.Index.Records, u.old)
+		if len(record.Refs) != 0 {
+			l.Index.Records[u.old] = manifest.DiscoveryRecord{Refs: record.Refs}
+			record.Refs = nil
+		}
+		record.File = u.file
+		l.Index.Records[u.new] = record
 	}
 }
 
-// ApplyDefaultNamespaces preserves flate's flux-system fallback for
-// top-level Flux Operator and HelmChart source objects after namespace
-// inheritance has had a chance to project kustomize/Flux namespaces.
-func ApplyDefaultNamespaces(s *store.Store, sourceFiles map[manifest.NamedResource]string) {
-	applyDefaultNS(s, sourceFiles, s.ListAs[*manifest.ResourceSet](manifest.KindResourceSet))
-	applyDefaultNS(s, sourceFiles, s.ListAs[*manifest.ResourceSetInputProvider](manifest.KindResourceSetInputProvider))
-	applyDefaultNS(s, sourceFiles, s.ListAs[*manifest.HelmChartSource](manifest.KindHelmChart))
+func (l *Loader) applyDefaultNamespaces() {
+	applyDefaultNS(l, l.Store.ListAs[*manifest.ResourceSet](manifest.KindResourceSet))
+	applyDefaultNS(l, l.Store.ListAs[*manifest.ResourceSetInputProvider](manifest.KindResourceSetInputProvider))
+	applyDefaultNS(l, l.Store.ListAs[*manifest.HelmChartSource](manifest.KindHelmChart))
 }
 
-// applyDefaultNS assigns manifest.DefaultNamespace to every object in objs
-// whose current namespace is empty, then reindexes it in the store. The
-// shallow copy is produced by cloneWithNamespace, which already rewrites
-// the namespace for these kinds — so the per-type copy lives in one place.
-func applyDefaultNS[T manifest.BaseManifest](s *store.Store, sourceFiles map[manifest.NamedResource]string, objs []T) {
+func applyDefaultNS[T manifest.BaseManifest](l *Loader, objs []T) {
 	for _, obj := range objs {
 		if obj.Named().Namespace != "" {
 			continue
 		}
 		if updated := cloneWithNamespace(obj, manifest.DefaultNamespace); updated != nil {
-			reindexObject(s, sourceFiles, obj.Named(), updated)
+			old := obj.Named()
+			l.Store.DeleteObject(old)
+			l.Store.AddObject(updated)
+			if record, ok := l.Index.Lookup(old); ok {
+				delete(l.Index.Records, old)
+				l.Index.Records[updated.Named()] = record
+			}
 		}
-	}
-}
-
-func reindexObject(s *store.Store, sourceFiles map[manifest.NamedResource]string, old manifest.NamedResource, obj manifest.BaseManifest) {
-	file, hasFile := sourceFiles[old]
-	s.DeleteObject(old)
-	s.AddObject(obj)
-	if hasFile {
-		delete(sourceFiles, old)
-		sourceFiles[obj.Named()] = file
 	}
 }
 
@@ -168,7 +139,8 @@ func resolveNamespace(file string, flux, kust []pathEntry) string {
 //
 // resolveNamespace picks the longest-prefix match, so the slice can
 // stay unsorted.
-func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]string, kust []pathEntry, repoRoot string) []pathEntry {
+func (l *Loader) indexFluxByPath(kust []pathEntry, repoRoot string) []pathEntry {
+	s := l.Store
 	var out []pathEntry
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		if ks.Path == "" && ks.SourceName == "" {
@@ -176,19 +148,19 @@ func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]stri
 		}
 		ns := cmp.Or(ks.TargetNamespace, ks.Namespace)
 		if ns == "" {
-			if file, ok := sourceFiles[ks.Named()]; ok {
-				ns = resolveNamespace(file, nil, kust)
+			if record, ok := l.Index.Lookup(ks.Named()); ok {
+				ns = resolveNamespace(record.File, nil, kust)
 			}
 		}
 		if ns == "" {
 			continue
 		}
 		out = append(out, pathEntry{
-			prefix: NormalizePrefix(ks.Path),
+			prefix: manifest.NormalizeClaimBase(ks.Path) + "/",
 			ns:     ns,
 		})
-		if art := localPinnedArtifact(s, ks, repoRoot); art != nil {
-			if prefix, err := filepath.Rel(repoRoot, filepath.Join(art.LocalPath, manifest.NormalizeClaimBase(ks.Path))); err == nil {
+		if root, pinned, _ := SourceView(s, ks, repoRoot); pinned {
+			if prefix, err := filepath.Rel(repoRoot, filepath.Join(root, manifest.NormalizeClaimBase(ks.Path))); err == nil {
 				out = append(out, pathEntry{prefix: filepath.ToSlash(prefix) + "/", ns: ns})
 			}
 		}
@@ -200,30 +172,27 @@ func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]stri
 // each source file and returns one pathEntry per `namespace:`
 // directive. Slash-normalized dir keys match the sourceFiles
 // coordinate; repoRoot anchors the on-disk reads.
-func indexKustomizeNamespaces(sourceFiles map[manifest.NamedResource]string, repoRoot string) []pathEntry {
+func (l *Loader) indexKustomizeNamespaces(repoRoot string) []pathEntry {
 	dirs := map[string]struct{}{}
-	for _, file := range sourceFiles {
+	for _, record := range l.Index.Files() {
+		file := record.File
 		for d := path.Dir(file); d != "." && d != "/" && d != ""; d = path.Dir(d) {
 			dirs[d] = struct{}{}
 		}
 	}
 	var out []pathEntry
 	for dir := range dirs {
-		ns := readKustomizeNamespace(repoRoot, dir)
+		k, _ := l.documents.read(filepath.Join(repoRoot, dir))
+		if k == nil {
+			continue
+		}
+		ns := k.Namespace
 		if ns == "" {
 			continue
 		}
 		out = append(out, pathEntry{prefix: strings.TrimSuffix(dir, "/") + "/", ns: ns})
 	}
 	return out
-}
-
-// readKustomizeNamespace returns the top-level `namespace:` value of
-// a kustomization.yaml in dir (resolved relative to repoRoot), or ""
-// if no kustomize file exists or the namespace key is absent.
-func readKustomizeNamespace(repoRoot, dir string) string {
-	d, _, _ := readKustomizeDirectives(repoRoot, dir)
-	return d.Namespace
 }
 
 // cloneWithNamespace returns a shallow copy of obj with metadata.namespace

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -22,27 +23,29 @@ func BenchmarkFilterResolve_LargeRepo(b *testing.B) {
 		"apps/app-42/ks.yaml",
 		"apps/app-913/ks.yaml",
 	})
-	repoRoot := "/repo"
+	index := filterFixture{files: sourceFiles, root: "/repo", objects: s}.index()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = NewFilter(changeSet, sourceFiles, repoRoot, s)
+		_ = NewFilter(changeSet, index, s)
 	}
 }
 
-// BenchmarkBuildOwnership measures the per-resolve buildOwnership
-// helper against the same 1000-KS store. resolve() runs this once at
-// the top of each Filter construction; isolating it surfaces the
-// ksClaim + slices.SortStableFunc cost.
+// BenchmarkBuildOwnership measures canonical claim grouping for 1000 Kustomizations.
+// Discovery prepares this immutable state before Filter construction.
 func BenchmarkBuildOwnership(b *testing.B) {
 	s, _ := seedKSStore(1000)
-	repoRoot := "/repo"
+	l := loader.New(s)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = buildOwnership(s, repoRoot, nil, nil, nil)
+		claims := l.Claims("/repo")
+		byPrefix := make(map[string][]manifest.NamedResource, len(claims))
+		for _, c := range claims {
+			byPrefix[c.Prefix] = append(byPrefix[c.Prefix], c.ID)
+		}
 	}
 }
 

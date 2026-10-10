@@ -33,15 +33,15 @@ func TestBuildSelfProduceIndex_EmptyPathRequiresSource(t *testing.T) {
 				SourceKind: manifest.KindGitRepository, SourceName: tc.source, SourceNamespace: "flux-system",
 			}
 			st.AddObject(ks)
-			idx := BuildSelfProduceIndex(st, root, nil, false)
+			idx := rendererFixture(st, root, nil, false)
 			var want []manifest.NamedResource
 			if tc.produces {
 				want = []manifest.NamedResource{ks.Named()}
 			}
-			if got := idx.ProducedBy(cmID("apps")); !slices.Equal(got, want) {
+			if got := renderers(idx, cmID("apps")); !slices.Equal(got, want) {
 				t.Fatalf("ProducedBy = %v, want %v", got, want)
 			}
-			if got := idx.OwnersOfFile("apps/cm.yaml"); !slices.Equal(got, want) {
+			if got := ownersForTest(idx, "apps/cm.yaml"); !slices.Equal(got, want) {
 				t.Fatalf("OwnersOfFile = %v, want %v", got, want)
 			}
 		})
@@ -74,17 +74,17 @@ func TestBuildSelfProduceIndex_BareDirComponentNamespace(t *testing.T) {
 	}
 	s.AddObject(clusterApps)
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
+	idx := rendererFixture(s, dir, nil, true)
 
 	// Produced in EVERY group's namespace (the namespace transformer stamps
 	// the component's namespace-less ConfigMap per base) — not just the first.
 	for _, ns := range []string{"flux-system", "default"} {
-		if got := idx.ProducedBy(cmID(ns)); !slices.Contains(got, clusterApps.Named()) {
+		if got := renderers(idx, cmID(ns)); !slices.Contains(got, clusterApps.Named()) {
 			t.Errorf("ProducedBy(ConfigMap/%s/cluster-settings) = %v, want to contain cluster-apps", ns, got)
 		}
 	}
 	// A namespace no base stamps is not attributed.
-	if got := idx.ProducedBy(cmID("kube-system")); len(got) != 0 {
+	if got := renderers(idx, cmID("kube-system")); len(got) != 0 {
 		t.Errorf("ProducedBy(ConfigMap/kube-system/cluster-settings) = %v, want empty", got)
 	}
 }
@@ -107,8 +107,8 @@ func TestBuildSelfProduceIndex_NonProducerNotAttributed(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
-	if got := idx.ProducedBy(cmID("flux-system")); len(got) != 0 {
+	idx := rendererFixture(s, dir, nil, true)
+	if got := renderers(idx, cmID("flux-system")); len(got) != 0 {
 		t.Errorf("ProducedBy = %v, want empty (KS produces no cluster-settings)", got)
 	}
 }
@@ -116,17 +116,17 @@ func TestBuildSelfProduceIndex_NonProducerNotAttributed(t *testing.T) {
 // Nil index is safe — collectDeps falls back to always-add (the pre-index
 // behavior) when no repoRoot produced an index.
 func TestSelfProduceIndex_NilSafe(t *testing.T) {
-	var idx *SelfProduceIndex
-	if got := idx.OwnersOfProducer(manifest.NamedResource{}); got != nil {
+	var idx *manifest.DiscoveryIndex
+	if got := declarationOwnersForTest(idx, manifest.NamedResource{}); got != nil {
 		t.Errorf("nil index OwnersOfProducer = %v, want nil", got)
 	}
-	if got := idx.ProducedBy(cmID("flux-system")); got != nil {
+	if got := renderers(idx, cmID("flux-system")); got != nil {
 		t.Errorf("nil index ProducedBy = %v, want nil", got)
 	}
-	if _, ok := idx.EmissionParentByFile("apps/base/app-a/ks.yaml"); ok {
+	if _, ok := emissionParentForTest(idx, "apps/base/app-a/ks.yaml"); ok {
 		t.Errorf("nil index EmissionParentByFile = ok, want absent")
 	}
-	if got := idx.OwnersOfFile("apps/base/postgres/cluster.yaml"); got != nil {
+	if got := ownersForTest(idx, "apps/base/postgres/cluster.yaml"); got != nil {
 		t.Errorf("nil index OwnersOfFile = %v, want nil", got)
 	}
 }
@@ -149,14 +149,14 @@ func TestBuildSelfProduceIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
 	s.AddObject(ks)
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
+	idx := rendererFixture(s, dir, nil, true)
 
 	for _, file := range []string{
 		"apps/homelab/kustomization.yaml",
 		"apps/base/postgres/kustomization.yaml",
 		"apps/base/postgres/cluster.yaml",
 	} {
-		if got := idx.OwnersOfFile(file); !slices.Contains(got, ks.Named()) {
+		if got := ownersForTest(idx, file); !slices.Contains(got, ks.Named()) {
 			t.Errorf("OwnersOfFile(%s) = %v, want to contain apps", file, got)
 		}
 	}
@@ -178,9 +178,9 @@ func TestBuildSelfProduceIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
 	s.AddObject(ks)
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
+	idx := rendererFixture(s, dir, nil, true)
 
-	if got := idx.OwnersOfFile("apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
+	if got := ownersForTest(idx, "apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
 		t.Errorf("OwnersOfFile(escaped file cluster.yaml) = %v, want to contain apps", got)
 	}
 }
@@ -201,9 +201,9 @@ func TestBuildSelfProduceIndex_OwnersOfFileDanglingResource(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
 	s.AddObject(ks)
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
+	idx := rendererFixture(s, dir, nil, true)
 
-	if got := idx.OwnersOfFile("apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
+	if got := ownersForTest(idx, "apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
 		t.Errorf("OwnersOfFile(dangling cluster.yaml) = %v, want to contain apps", got)
 	}
 }
@@ -228,21 +228,21 @@ func TestBuildSelfProduceIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
 	s.AddObject(ks)
 	s.AddObject(other)
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
+	idx := rendererFixture(s, dir, nil, true)
 
 	for _, file := range []string{
 		"apps/base/postgres/kustomization.yaml",
 		"apps/base/postgres/nested/cluster.yaml",
 	} {
-		if got := idx.OwnersOfFile(file); !slices.Contains(got, ks.Named()) {
+		if got := ownersForTest(idx, file); !slices.Contains(got, ks.Named()) {
 			t.Errorf("OwnersOfFile(%s under deleted dir) = %v, want to contain apps", file, got)
 		}
 	}
 	// Owned by both: other by its exact entry, apps through the deleted dir.
-	if got := idx.OwnersOfFile("apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) || !slices.Contains(got, other.Named()) {
+	if got := ownersForTest(idx, "apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) || !slices.Contains(got, other.Named()) {
 		t.Errorf("OwnersOfFile(deleted cluster.yaml) = %v, want to contain both apps and other", got)
 	}
-	if got := idx.OwnersOfFile("apps/base/redis/cm.yaml"); got != nil {
+	if got := ownersForTest(idx, "apps/base/redis/cm.yaml"); got != nil {
 		t.Errorf("OwnersOfFile(unrelated file) = %v, want nil", got)
 	}
 }
@@ -275,13 +275,19 @@ func TestBuildSelfProduceIndex_EmissionParentByFile(t *testing.T) {
 	s.AddObject(&manifest.Kustomization{Name: "cluster-apps2", Namespace: "flux-system",
 		Path: "./apps/test2"})
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
+	l := loaderFixture(s, nil)
+	for _, name := range []string{"app-a", "shared"} {
+		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		l.Index.Records[id] = manifest.DiscoveryRecord{File: "apps/base/" + name + "/ks.yaml"}
+	}
+	l.FinalizeIndex(dir, nil)
+	idx := l.Index
 
 	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
-	if got, ok := idx.EmissionParentByFile("apps/base/app-a/ks.yaml"); !ok || got != clusterApps {
+	if got, ok := emissionParentForTest(idx, "apps/base/app-a/ks.yaml"); !ok || got != clusterApps {
 		t.Errorf("EmissionParentByFile(app-a) = (%v, %v), want (cluster-apps, true)", got, ok)
 	}
-	if got, ok := idx.EmissionParentByFile("apps/base/shared/ks.yaml"); ok {
+	if got, ok := emissionParentForTest(idx, "apps/base/shared/ks.yaml"); ok {
 		t.Errorf("EmissionParentByFile(shared) = (%v, true), want absent (two distinct parents are ambiguous)", got)
 	}
 }
@@ -320,7 +326,7 @@ func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
 	})
 
 	producers := &manifest.ProducerIndex{}
-	BuildSelfProduceIndex(s, dir, producers, true)
+	rendererFixture(s, dir, producers, true)
 
 	want := map[manifest.NamedResource]string{ // target → producer name
 		secretID("secure", "app-values"): "app-creds",
@@ -361,7 +367,7 @@ func TestBuildSelfProduceIndex_NamePrefixNotFollowed(t *testing.T) {
 	})
 
 	producers := &manifest.ProducerIndex{}
-	BuildSelfProduceIndex(s, dir, producers, true)
+	rendererFixture(s, dir, producers, true)
 
 	if _, ok := producers.Producer(secretID("secure", "app-values")); !ok {
 		t.Error("producer not recorded under its raw target name")
@@ -402,7 +408,7 @@ func TestBuildSelfProduceIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	existing := &manifest.Secret{Name: "pre-secret", Namespace: "secure", StringData: map[string]any{"K": "real"}}
 	s.AddObject(existing)
 
-	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, true)
+	rendererFixture(s, dir, &manifest.ProducerIndex{}, true)
 
 	got, _ := s.GetObject(secretID("secure", "app-secret")).(*manifest.Secret)
 	if got == nil {
@@ -444,7 +450,7 @@ func TestBuildSelfProduceIndex_MaterializesSopsSecret(t *testing.T) {
 		Path: "./apps",
 	})
 
-	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, true)
+	rendererFixture(s, dir, &manifest.ProducerIndex{}, true)
 
 	got, _ := s.GetObject(secretID("flux-system", "cluster-secrets")).(*manifest.Secret)
 	if got == nil {
@@ -474,7 +480,7 @@ func TestBuildSelfProduceIndex_NoSynthesisWithoutWipe(t *testing.T) {
 		Path: "./apps",
 	})
 
-	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, false)
+	rendererFixture(s, dir, &manifest.ProducerIndex{}, false)
 
 	if obj := s.GetObject(secretID("secure", "app-secret")); obj != nil {
 		t.Errorf("wipeSecrets=false must suppress synthesis; got %#v", obj)
@@ -496,26 +502,26 @@ func TestBuildSelfProduceIndex_ProducerOwners(t *testing.T) {
 			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [producer.yaml]\n")
 			testutil.WriteFile(t, root, "shared/producer.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: '"+namespace+"'}\nspec:\n  target: {name: values}\n  dataFrom: [{extract: {key: values}}]\n")
 			producers := &manifest.ProducerIndex{}
-			idx := BuildSelfProduceIndex(s, root, producers, false)
+			idx := rendererFixture(s, root, producers, false)
 			slices.SortFunc(want, manifest.NamedResource.Compare)
 			for _, ns := range []string{namespace, "effective"} {
 				id := manifest.NamedResource{Kind: "ExternalSecret", Namespace: ns, Name: "producer"}
-				got := idx.OwnersOfProducer(id)
+				got := declarationOwnersForTest(idx, id)
 				slices.SortFunc(got, manifest.NamedResource.Compare)
 				if !slices.Equal(got, want) {
 					t.Fatalf("declaration %s owners = %v, want %v", id, got, want)
 				}
 				got[0] = manifest.NamedResource{}
-				fresh := idx.OwnersOfProducer(id)
+				fresh := declarationOwnersForTest(idx, id)
 				slices.SortFunc(fresh, manifest.NamedResource.Compare)
 				if !slices.Equal(fresh, want) {
 					t.Fatal("caller mutated index")
 				}
 			}
-			if len(idx.OwnersOfProducer(manifest.NamedResource{Kind: "ExternalSecret", Namespace: "foreign", Name: "producer"})) != 0 {
+			if len(declarationOwnersForTest(idx, manifest.NamedResource{Kind: "ExternalSecret", Namespace: "foreign", Name: "producer"})) != 0 {
 				t.Fatal("foreign namespace inherited declaration owners")
 			}
-			if got := idx.ProducedBy(manifest.NamedResource{Kind: "ConfigMap", Namespace: "effective", Name: "values"}); len(got) != 0 {
+			if got := renderers(idx, manifest.NamedResource{Kind: "ConfigMap", Namespace: "effective", Name: "values"}); len(got) != 0 {
 				t.Fatalf("producer ownership changed self-substitution admission: %v", got)
 			}
 		})
@@ -532,7 +538,7 @@ func TestBuildSelfProduceIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 			testutil.WriteFile(t, root, "values/kustomization.yaml", "namespace: apps\nresources: [bucket.yaml]\n")
 			testutil.WriteFile(t, root, "values/bucket.yaml", "apiVersion: objectbucket.io/v1alpha1\nkind: ObjectBucketClaim\nmetadata: {name: bucket, namespace: '"+namespace+"'}\nspec: {generateBucketName: bucket, storageClassName: bucket}\n")
 			producers := &manifest.ProducerIndex{}
-			idx := BuildSelfProduceIndex(s, root, producers, false)
+			idx := rendererFixture(s, root, producers, false)
 			for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 				target := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "bucket"}
 				if _, ok := producers.Producer(target); !ok {
@@ -541,7 +547,7 @@ func TestBuildSelfProduceIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 			}
 			for _, ns := range []string{namespace, "apps"} {
 				producer := manifest.NamedResource{Kind: "ObjectBucketClaim", Namespace: ns, Name: "bucket"}
-				if got := idx.OwnersOfProducer(producer); !slices.Equal(got, []manifest.NamedResource{ks.Named()}) {
+				if got := declarationOwnersForTest(idx, producer); !slices.Equal(got, []manifest.NamedResource{ks.Named()}) {
 					t.Fatalf("repeated targets duplicate declaration owner: %v", got)
 				}
 			}

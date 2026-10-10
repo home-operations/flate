@@ -10,10 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	yaml "go.yaml.in/yaml/v4"
-
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // transformerScanMaxDepth bounds the recursive walk that confirms a
@@ -23,42 +21,9 @@ import (
 // running away even though visited already breaks true cycles.
 const transformerScanMaxDepth = 6
 
-// StampTransformerTargetNamespaces fills empty spec.targetNamespace on
-// file-loaded Flux Kustomizations from the namespace an enclosing kustomize
-// overlay injects — via EITHER a builtin NamespaceTransformer (flatops) or a
-// `replacements:` rule copying a Namespace's name into spec.targetNamespace
-// (home-operations). (Name kept for git-history continuity though it now
-// covers both patterns; see resolveInjectedTargetNamespace.)
-//
-// flatops-style repos keep resources namespace-less "for DRYness" and
-// inject the namespace via a shared NamespaceTransformer that sets
-// spec.targetNamespace on every Kustomization (issue #528). home-operations
-// repos do the same with an overlay `namespace:` directive plus a
-// `replacements:` rule (kubernetes/components/replacements/ks.yaml). That
-// injection only happens when the overlay is kustomize-built — and when
-// the overlay is rendered by a further-up, itself render-emitted parent,
-// the injection lands *after* flate has already fired the leaf KS's
-// first reconcile. The leaf then renders its children with an empty
-// targetNamespace, producing an empty-namespace copy of each HelmRelease
-// that lingers in the store and later fails to render (no namespace to
-// resolve its chart's HelmRepository against).
-//
-// Resolving the namespace here, at load time, lets the leaf KS render
-// into the right namespace on its first pass — the load-time analog of
-// the same NamespaceTransformer kustomize would apply, mirroring how
-// ApplyNamespaceInheritanceWithRefs front-runs kustomize-controller's
-// apply-time namespace defaulting.
-//
-// Only spec.targetNamespace is set (never metadata.namespace), so the
-// KS's store id stays stable. The value reaches rendered children via
-// ks.Contents (RenderFlux feeds it to kustomize) and reaches
-// store-resident namespace-less resources under spec.path via
-// ApplyNamespaceInheritanceWithRefs's existing projection, which now sees
-// a populated targetNamespace.
-//
-// Runs before ApplyNamespaceInheritanceWithRefs (see discovery.applyNamespaces).
-func StampTransformerTargetNamespaces(s *store.Store, sourceFiles map[manifest.NamedResource]string, repoRoot string) {
-	if len(sourceFiles) == 0 {
+func (l *Loader) stampTransformerTargetNamespaces(repoRoot string) {
+	s := l.Store
+	if l.Index == nil || len(l.Index.Records) == 0 {
 		return
 	}
 	// Per-directory resolution cache: many KSes share the same overlay
@@ -69,11 +34,11 @@ func StampTransformerTargetNamespaces(s *store.Store, sourceFiles map[manifest.N
 		if ks.TargetNamespace != "" {
 			continue
 		}
-		file, ok := sourceFiles[ks.Named()]
+		record, ok := l.Index.Lookup(ks.Named())
 		if !ok {
 			continue
 		}
-		ns := resolveOverlayInjectedNamespace(repoRoot, file, cache)
+		ns := l.documents.resolveOverlayInjectedNamespace(repoRoot, record.File, cache)
 		if ns == "" {
 			continue
 		}
@@ -98,12 +63,12 @@ type nsResolution struct {
 // targetNamespace-injecting `replacements:` rule. Deepest enclosing overlay
 // wins (first hit walking up), matching kustomize's "closest overlay"
 // semantics.
-func resolveOverlayInjectedNamespace(repoRoot, file string, cache map[string]nsResolution) string {
+func (reader documentReader) resolveOverlayInjectedNamespace(repoRoot, file string, cache map[string]nsResolution) string {
 	dir := path.Dir(filepath.ToSlash(file))
 	for dir != "." && dir != "/" && dir != "" {
 		res, ok := cache[dir]
 		if !ok {
-			res = resolveInjectedTargetNamespace(repoRoot, dir)
+			res = reader.resolveInjectedTargetNamespace(repoRoot, dir)
 			cache[dir] = res
 		}
 		if res.ok {
@@ -114,27 +79,11 @@ func resolveOverlayInjectedNamespace(repoRoot, file string, cache map[string]nsR
 	return ""
 }
 
-// nsInjectionStrategies are the supported overlay-namespace detectors, tried in
-// order: a builtin NamespaceTransformer (flatops), then a `replacements:` rule
-// (home-operations). Each reports the namespace the overlay at overlayDir
-// injects onto Flux Kustomization spec.targetNamespace, or the zero nsResolution
-// when it doesn't apply. Adding a third pattern is one entry here.
-var nsInjectionStrategies = []func(repoRoot, overlayDir string) nsResolution{
-	transformerInjectedNamespace,
-	replacementInjectedNamespace,
-}
-
-// resolveInjectedTargetNamespace returns the namespace the overlay at overlayDir
-// injects onto Flux Kustomizations via the first matching strategy. Strategies
-// key on the same overlay dir, so the caller's per-dir cache and
-// deepest-overlay-wins walk are unaffected.
-func resolveInjectedTargetNamespace(repoRoot, overlayDir string) nsResolution {
-	for _, strategy := range nsInjectionStrategies {
-		if r := strategy(repoRoot, overlayDir); r.ok {
-			return r
-		}
+func (reader documentReader) resolveInjectedTargetNamespace(repoRoot, overlayDir string) nsResolution {
+	if r := reader.transformerInjectedNamespace(repoRoot, overlayDir); r.ok {
+		return r
 	}
-	return nsResolution{}
+	return reader.replacementInjectedNamespace(repoRoot, overlayDir)
 }
 
 // transformerInjectedNamespace inspects the kustomization.yaml at overlayDir.
@@ -142,9 +91,9 @@ func resolveInjectedTargetNamespace(repoRoot, overlayDir string) nsResolution {
 // `namespace:` directive and resolves to a builtin NamespaceTransformer that
 // sets Kustomization spec/targetNamespace, the directive value is the namespace
 // that transformer injects.
-func transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
-	d, _, ok := readKustomizeDirectives(repoRoot, overlayDir)
-	if !ok || len(d.Transformers) == 0 {
+func (reader documentReader) transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
+	d, _ := reader.read(filepath.Join(repoRoot, overlayDir))
+	if d == nil || len(d.Transformers) == 0 {
 		return nsResolution{}
 	}
 	for _, ref := range d.Transformers {
@@ -152,11 +101,11 @@ func transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
 		if !ok {
 			continue
 		}
-		td, _, ok := readKustomizeDirectives(repoRoot, transformerDir)
-		if !ok || td.Namespace == "" {
+		td, _ := reader.read(filepath.Join(repoRoot, transformerDir))
+		if td == nil || td.Namespace == "" {
 			continue
 		}
-		if subtreeHasNamespaceTransformer(repoRoot, transformerDir, map[string]struct{}{}, 0) {
+		if reader.subtreeHasNamespaceTransformer(repoRoot, transformerDir, map[string]struct{}{}, 0) {
 			return nsResolution{ns: td.Namespace, ok: true}
 		}
 	}
@@ -172,9 +121,9 @@ func transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
 // rule but no directive (the Namespace would keep a literal component name) is
 // left unstamped rather than guessed, and a bare `namespace:` directive with no
 // targetNamespace rule is owned by metadata.namespace inheritance, not us.
-func replacementInjectedNamespace(repoRoot, overlayDir string) nsResolution {
-	d, _, ok := readKustomizeDirectives(repoRoot, overlayDir)
-	if !ok || d.Namespace == "" || len(d.Replacements) == 0 {
+func (reader documentReader) replacementInjectedNamespace(repoRoot, overlayDir string) nsResolution {
+	d, _ := reader.read(filepath.Join(repoRoot, overlayDir))
+	if d == nil || d.Namespace == "" || len(d.Replacements) == 0 {
 		return nsResolution{}
 	}
 	for _, r := range d.Replacements {
@@ -190,7 +139,7 @@ func replacementInjectedNamespace(repoRoot, overlayDir string) nsResolution {
 // references) a builtin NamespaceTransformer that targets Kustomization
 // spec/targetNamespace. Bounded by transformerScanMaxDepth and a
 // visited set so malformed reference cycles can't loop.
-func subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]struct{}, depth int) bool {
+func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]struct{}, depth int) bool {
 	if depth > transformerScanMaxDepth {
 		return false
 	}
@@ -198,8 +147,8 @@ func subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]str
 		return false
 	}
 	visited[dir] = struct{}{}
-	d, _, ok := readKustomizeDirectives(repoRoot, dir)
-	if !ok {
+	d, _ := reader.read(filepath.Join(repoRoot, dir))
+	if d == nil {
 		return false
 	}
 	// A ref is either a file (the transformer manifest itself) or a
@@ -210,7 +159,7 @@ func subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]str
 			return false
 		}
 		return fileHasNamespaceTransformer(repoRoot, target) ||
-			subtreeHasNamespaceTransformer(repoRoot, target, visited, depth+1)
+			reader.subtreeHasNamespaceTransformer(repoRoot, target, visited, depth+1)
 	})
 }
 
@@ -281,16 +230,6 @@ func resolveRef(baseDir, ref string) (string, bool) {
 		return "", false
 	}
 	return resolved, true
-}
-
-// kustomizeDirectives is the subset of a kustomization.yaml that
-// transformer-namespace resolution and self-production attribution read.
-type kustomizeDirectives struct {
-	Namespace    string                 `yaml:"namespace"`
-	Resources    []string               `yaml:"resources"`
-	Transformers []string               `yaml:"transformers"`
-	Components   []string               `yaml:"components"`
-	Replacements []replacementDirective `yaml:"replacements"`
 }
 
 // replacementDirective captures a single `replacements:` entry. kustomize
@@ -373,25 +312,4 @@ func (r replacementDirective) copiesNamespaceNameToKustomizationTargetNamespace(
 // either side costs nothing and tolerates hand-written variants.
 func fieldMatches(single string, plural []string, want string) bool {
 	return single == want || slices.Contains(plural, want)
-}
-
-// readKustomizeDirectives reads the kustomization file in dir (resolved
-// under repoRoot) and returns its namespace/resources/transformers/
-// components/replacements fields, plus the repo-relative path of the
-// kustomization file itself. ok is false when no kustomization file is
-// present or it can't be parsed — pure best-effort, same contract as
-// readKustomizeNamespace.
-func readKustomizeDirectives(repoRoot, dir string) (kustomizeDirectives, string, bool) {
-	for _, name := range manifest.KustomizeBuilderFilenames {
-		data, err := os.ReadFile(filepath.Join(repoRoot, dir, name)) //nolint:gosec // path composed from known cluster layout
-		if err != nil {
-			continue
-		}
-		var d kustomizeDirectives
-		if err := yaml.Unmarshal(data, &d); err != nil {
-			continue
-		}
-		return d, path.Join(dir, name), true
-	}
-	return kustomizeDirectives{}, "", false
 }

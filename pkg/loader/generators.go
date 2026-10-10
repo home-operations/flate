@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"sigs.k8s.io/kustomize/api/types"
 )
 
 // generatorRecord captures one configMapGenerator or secretGenerator
@@ -22,7 +23,7 @@ import (
 type generatorRecord struct {
 	// file is the absolute path to the kustomization.yaml that
 	// declared the generator. Used by the post-walk finalizer to
-	// look up the enclosing Flux Kustomization via KSPathPrefixes.
+	// look up the enclosing Flux Kustomization via canonical claims.
 	file string
 	// kustomizationNS is the kustomization.yaml's own `namespace:`
 	// field. Empty means "inherit from the enclosing Flux KS."
@@ -41,30 +42,30 @@ type generatorRecord struct {
 // materialized (kustomize parses those at render time against the
 // caller's file system); literals are enough to make depwait happy
 // for the common cluster-settings pattern.
-func collectGeneratorRecords(k *kustomization, file string) []generatorRecord {
+func collectGeneratorRecords(k *kustomizationDocument, file string) []generatorRecord {
 	if k == nil {
 		return nil
 	}
 	out := make([]generatorRecord, 0, len(k.ConfigMapGenerator)+len(k.SecretGenerator))
-	collect := func(entries []kvPairGenerator, isConfigMap bool) {
-		for _, g := range entries {
-			if g.Name == "" {
-				continue
-			}
-			out = append(out, generatorRecord{
-				file: file, kustomizationNS: k.Namespace, entryNS: g.Namespace,
-				isConfigMap: isConfigMap, name: g.Name, literals: g.Literals,
-			})
+	collect := func(g types.GeneratorArgs, isConfigMap bool) {
+		if g.Name == "" {
+			return
 		}
+		out = append(out, generatorRecord{file: file, kustomizationNS: k.Namespace, entryNS: g.Namespace,
+			isConfigMap: isConfigMap, name: g.Name, literals: g.LiteralSources})
 	}
-	collect(k.ConfigMapGenerator, true)
-	collect(k.SecretGenerator, false)
+	for _, g := range k.ConfigMapGenerator {
+		collect(g.GeneratorArgs, true)
+	}
+	for _, g := range k.SecretGenerator {
+		collect(g.GeneratorArgs, false)
+	}
 	return out
 }
 
 // materialize builds the synthesized manifest from r. parentNS is the
 // namespace inherited from the enclosing Flux Kustomization; the
-// caller looks it up via KSPathPrefixes against r.file. Precedence
+// caller looks it up via canonical claims against r.file. Precedence
 // matches kustomize: entry.namespace > kustomization.namespace >
 // parent (Flux KS) namespace.
 //

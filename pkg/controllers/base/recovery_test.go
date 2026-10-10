@@ -30,7 +30,7 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			}
 			c := base.New(st, nil, "test")
 			if mode == "filtered" {
-				c.SetFilter(change.NewFilter(change.NewSet([]string{"other.yaml"}), map[manifest.NamedResource]string{id: "consumer.yaml"}, "", st))
+				c.SetFilter(change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}}}, st))
 			}
 			if mode == "preflight" {
 				c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle", true })

@@ -8,7 +8,6 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	gogit "github.com/go-git/go-git/v5"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -309,7 +308,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			s.AddObject(&fresh)
 			if strings.HasPrefix(state, "filter") {
 				c.Close()
-				opts.Filter = change.NewFilter(change.NewSet(nil), nil, t.TempDir(), s)
+				opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s)
 				c = resourcesetctrl.New(s, tasks, true)
 				c.Configure(opts)
 				c.Start(t.Context())

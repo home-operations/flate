@@ -10,8 +10,6 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -20,6 +18,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store.Store) {
@@ -58,7 +57,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				changes = change.NewSet(files)
 			}
 			hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []manifest.DependencyRef{{NamedResource: target.Named(), ReadyExpr: "dep.spec.suspend == false"}}}
-			filter := change.NewFilter(changes, map[manifest.NamedResource]string{hr.Named(): "consumer.yaml", target.Named(): "target.yaml"}, "", testutil.MapLister{})
+			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, testutil.MapLister{})
 			c, st := newTestControllerWithOptions(t, ReconcileOptions{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}})
 			if tc.present {
 				st.AddObject(target)
@@ -341,12 +340,7 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 }
 
 func TestController_FilterUnchangedShortCircuitsToReady(t *testing.T) {
-	filter := change.NewFilter(
-		change.NewSet(nil),
-		map[manifest.NamedResource]string{},
-		"",
-		testutil.MapLister{},
-	)
+	filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{})
 	c, st := newTestController(t, filter)
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default"}
 	st.AddObject(hr)
@@ -716,12 +710,7 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 	sourceFiles := map[manifest.NamedResource]string{
 		parent: "apps/tofu/helmrelease.yaml",
 	}
-	filter := change.NewFilter(
-		change.NewSet([]string{"apps/tofu/helmrelease.yaml"}),
-		sourceFiles,
-		"",
-		testutil.MapLister{},
-	)
+	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: sourceFiles[parent]}}}, testutil.MapLister{})
 
 	c := New(st, ts, hc, helm.Options{}, false)
 	c.Configure(ReconcileOptions{
@@ -801,12 +790,7 @@ func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 
 	tracker := &spyTracker{}
 	parent := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "tofu"}
-	filter := change.NewFilter(
-		change.NewSet([]string{"apps/tofu/helmrelease.yaml"}),
-		map[manifest.NamedResource]string{parent: "apps/tofu/helmrelease.yaml"},
-		"",
-		testutil.MapLister{},
-	)
+	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "apps/tofu/helmrelease.yaml"}}}, testutil.MapLister{})
 	c := New(st, ts, hc, helm.Options{}, false)
 	c.Configure(ReconcileOptions{Filter: filter, RenderTracker: tracker})
 	c.Start(context.Background())
@@ -1057,12 +1041,7 @@ func TestController_CollectHRDepsPrunesUnchangedDeps(t *testing.T) {
 	// prowlarr (unchanged): only the in-keep dep survives.
 	qbit := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "downloads", Name: "qbittorrent"}
 	prowlarr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "downloads", Name: "prowlarr"}
-	filter := change.NewFilter(
-		change.NewSet([]string{"qbittorrent.yaml"}),
-		map[manifest.NamedResource]string{qbit: "qbittorrent.yaml", prowlarr: "prowlarr.yaml"},
-		"",
-		testutil.MapLister{},
-	)
+	filter := change.NewFilter(change.NewSet([]string{"qbittorrent.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{qbit: {File: "qbittorrent.yaml"}, prowlarr: {File: "prowlarr.yaml"}}}, testutil.MapLister{})
 	c, st := newTestController(t, filter)
 	st.AddObject(&manifest.HelmRelease{Name: prowlarr.Name, Namespace: prowlarr.Namespace})
 	hr := &manifest.HelmRelease{

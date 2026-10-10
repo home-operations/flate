@@ -57,7 +57,7 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []manifest.DependencyRef{{NamedResource: id}}}
 	st := store.New()
 	c := &Controller{Controller: base.New(st, nil, "helmrelease")}
-	c.SetFilter(change.NewFilter(change.NewSet([]string{"target.yaml"}), map[manifest.NamedResource]string{id: "target.yaml"}, "", st))
+	c.SetFilter(change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st))
 	b.ReportAllocs()
 	for b.Loop() {
 		c.OrderingDeps(hr.DependsOn)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -78,16 +79,22 @@ spec:
 			root, st, res := fixture(t, path.field)
 			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "root"}
 			child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
-			if st.GetObject(child) == nil || res.ParentOf[child] != parent {
-				t.Fatalf("source-root child not discovered or owned by root: parents=%v", res.ParentOf)
+			record, _ := res.Index.Lookup(child)
+			if st.GetObject(child) == nil || record.Parent != parent {
+				t.Fatalf("source-root child not discovered or owned by root: parent=%v", record.Parent)
 			}
-			claims := loader.KSPathPrefixesLocalOnly(st, root, nil)
-			owner, covered := loader.LongestParent(claims, "cm.yaml", manifest.NamedResource{})
-			if !covered || owner != parent {
-				t.Fatalf("source-root ConfigMap owner = %v, %t; want %v", owner, covered, parent)
+			owners, _ := res.Index.OwnersOfFile("cm.yaml")
+			if !slices.Equal(owners, []manifest.NamedResource{parent}) {
+				t.Fatalf("source-root ConfigMap owners = %v; want [%v]", owners, parent)
 			}
-			assert.Diff(t, res.SourceFiles, want.SourceFiles)
-			assert.Diff(t, res.ParentOf, want.ParentOf)
+			for id, record := range res.Index.Files() {
+				wantRecord, ok := want.Index.Lookup(id)
+				if !ok {
+					t.Fatalf("unexpected discovered resource %s", id)
+				}
+				assert.Equal(t, record.File, wantRecord.File)
+				assert.Equal(t, record.Parent, wantRecord.Parent)
+			}
 			for _, concurrency := range []string{"2", "8"} {
 				t.Run("concurrency_"+concurrency, func(t *testing.T) {
 					args := []string{"--path", filepath.Join(root, "flux"), "--concurrency", concurrency, "--cache-dir", t.TempDir()}
@@ -321,10 +328,10 @@ spec:
 			}
 			for _, file := range []struct{ name, path string }{{"hello", "cm.yaml"}, {"deleted", "deleted.yaml"}, {"extra", "extra.yaml"}} {
 				id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: file.name}
-				path, indexed := res.Existence.Get(id)
-				if !indexed || path != filepath.Join(artifact.LocalPath, "apps", file.path) ||
-					filepath.Join(root, filepath.FromSlash(res.SourceFiles[id])) != path {
-					t.Fatalf("pinned discovery metadata for %s: indexed=%t path=%q source=%q", id, indexed, path, res.SourceFiles[id])
+				record, indexed := res.Index.Lookup(id)
+				if !indexed || record.Path != filepath.Join(artifact.LocalPath, "apps", file.path) ||
+					filepath.Join(root, filepath.FromSlash(record.File)) != record.Path {
+					t.Fatalf("pinned discovery metadata for %s: indexed=%t path=%q source=%q", id, indexed, record.Path, record.File)
 				}
 			}
 		})

@@ -30,53 +30,9 @@ import (
 // don't propagate keep to file-loaded children, which prevents a
 // one-file change from cascading the entire tree into keep.
 type Filter struct {
-	changes     *Set
-	sourceFiles map[manifest.NamedResource]string
-	repoRoot    string
-
-	// consumerRefs maps each consumer (HelmRelease / Kustomization) to
-	// the source resources it references — supplied by discovery because
-	// HelmReleases are absent from the Store at resolve() time under
-	// render-driven discovery. resolve() inverts it (source -> consumers)
-	// to drive the reverse edge. Nil disables reverse propagation.
-	consumerRefs map[manifest.NamedResource][]manifest.NamedResource
-
-	// externalKS is the set of external-sourced Kustomizations whose
-	// path claims are excluded from resolve()'s ownership index —
-	// supplied by the orchestrator from loader.ExternalSourcedKSIDs
-	// (mirroring loader.KSPathPrefixesLocalOnly on the parent-index
-	// side). Nil means no exclusions.
-	externalKS map[manifest.NamedResource]struct{}
-
-	// Pinned paths render committed inputs, so dirty working-tree files
-	// must not select their owners. Ownership and producer lookup still
-	// include these Kustomizations.
-	pinnedKS map[manifest.NamedResource]struct{}
-
-	// fileOwners supplements resolve()'s prefix-claim ownership lookup —
-	// typically loader.SelfProduceIndex.OwnersOfFile. Nil disables it.
-	// See ownershipIndex.fileOwners.
-	fileOwners FileOwnerLookup
-
-	// objs is captured from NewFilter so runtime AddEmitted can
-	// walk transitiveDeps without the caller re-supplying it. The
-	// pointer is set once at construction and never reassigned —
-	// but the underlying *store.Store IS mutated post-Bootstrap by
-	// controllers, so reads through objs.GetObject /
-	// objs.ListObjects must take the Store's own RLock (which
-	// transitiveDeps does internally).
-	objs ObjectLister
-
-	// componentCache, when non-nil, memoizes
-	// manifest.ReadKustomizeComponents reads across Filter resolution
-	// and other Bootstrap consumers (loader.KSPathPrefixes, discovery's
-	// parent-index passes). The orchestrator wires one cache per
-	// Bootstrap so the kustomization.yaml at each spec.path is read
-	// once. Supplied via the cache argument of NewFilterWithCache; the
-	// resolve()-time buildOwnership reads it once and stops using it
-	// after. nil is fine — buildOwnership falls back to a per-call
-	// cache. See manifest.ComponentCache.
-	componentCache *manifest.ComponentCache
+	changes *Set
+	index   *manifest.DiscoveryIndex
+	objs    ObjectLister
 
 	// OnAdd, when non-nil, fires for every id newly added to the
 	// keep set by AddEmitted / Add (including transitive-dep
@@ -106,18 +62,6 @@ type Filter struct {
 	// keepByName: (Kind, Name) presence set used as an O(1) fallback
 	// when either side of a lookup has an empty namespace.
 	keepByName map[nameKey]struct{}
-
-	// producersByID and producersByName map file-backed data resources
-	// (ConfigMap/Secret) to the Flux Kustomizations whose spec.path
-	// renders them. Two maps mirror the keepByName empty-namespace
-	// bridge: DiscoveryOnly indexes the raw on-disk ConfigMap before
-	// kustomize's namespace directive has rendered, but consumers wait
-	// on the namespaced form. Built once during resolve() and read-only
-	// after — so the BFS-local lookup in resolve() and the lock-held
-	// runtime lookups can both share the same maps without copying.
-	// See #418.
-	producersByID   map[manifest.NamedResource][]manifest.NamedResource
-	producersByName map[nameKey][]manifest.NamedResource
 }
 
 type nameKey struct{ kind, name string }
@@ -128,103 +72,13 @@ func keyOf(id manifest.NamedResource) nameKey {
 	return nameKey{id.Kind, id.Name}
 }
 
-// NewFilter constructs a fully-resolved Filter in one shot. It walks
-// the file-level Changes set, attributes each change to the most
-// specific Flux Kustomization that owns it, then expands transitive
-// dependencies (chart sources, sourceRef, valuesFrom). Pass a nil
-// changes argument to construct a disabled filter (ShouldReconcile
-// returns true for everything).
-//
-//  1. Every resource whose source file changed is kept.
-//  2. For each changed file, the most-specific Flux Kustomization that
-//     owns it (longest matching spec.path, including spec.components)
-//     is kept — along with every resource whose source file shares
-//     the same owner.
-//  3. Ancestor Kustomizations (shorter-prefix spec.path matches) are
-//     also kept so parent-injected patches / postBuild.substituteFrom
-//     land before the leaf renders. See #58.
-//  4. BFS over chart sources, sourceRef, and valuesFrom to pull in
-//     upstream dependencies. dependsOn is intentionally excluded.
-//  5. Reverse edge: when a changed file IS itself a source resource
-//     (OCIRepository / HelmRepository / GitRepository / Bucket /
-//     ExternalArtifact / HelmChart), every HelmRelease and
-//     Kustomization that references it is kept primary so its render
-//     re-runs against the new source spec — e.g. an OCIRepository
-//     spec.ref.tag bump pulls a different chart version. Only fires
-//     for a source whose OWN file changed (not one merely pulled in as
-//     a forward dep of step 4), so a single HR edit can't reverse-
-//     cascade into every sibling sharing its source.
-func NewFilter(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister) *Filter {
-	return NewFilterWithCache(changes, sourceFiles, repoRoot, objs, nil, nil, nil, nil)
-}
-
-// NewFilterWithCache is NewFilter with a shared
-// *manifest.ComponentCache threaded into resolve()'s buildOwnership
-// call. The orchestrator instantiates one cache per Bootstrap and
-// passes the same pointer here and to the loader so a single
-// kustomization.yaml's `components:` field is read once across the
-// entire Bootstrap (vs. once per consumer: loader's parent index,
-// discovery's orphan promotion, and the Filter's ownership index all
-// previously re-read disk). Pass nil cache to fall back to a per-resolve
-// local cache.
-//
-// consumerRefs maps each consumer (HelmRelease / Kustomization) to the
-// source resources it references; discovery supplies it because
-// HelmReleases are absent from the Store at resolve() time. It drives
-// the reverse edge (step 5 above). Pass nil to disable reverse
-// propagation (the default for tests that don't exercise it).
-//
-// externalKS is the set of external-sourced Kustomizations (from
-// loader.ExternalSourcedKSIDs) whose path claims resolve() must drop
-// from the ownership index; see buildOwnership. Pass nil for no
-// exclusions.
-//
-// fileOwners supplements resolve()'s prefix-claim ownership lookup with
-// any Kustomization that reads a file via resources: — including one
-// pulled in from outside every claimed spec.path; pass nil to disable
-// it.
-func NewFilterWithCache(changes *Set, sourceFiles map[manifest.NamedResource]string, repoRoot string, objs ObjectLister, cache *manifest.ComponentCache, consumerRefs map[manifest.NamedResource][]manifest.NamedResource, externalKS map[manifest.NamedResource]struct{}, fileOwners FileOwnerLookup) *Filter {
-	return NewFilterWithOptions(changes, sourceFiles, objs, FilterOptions{
-		RepoRoot:       repoRoot,
-		ComponentCache: cache,
-		ConsumerRefs:   consumerRefs,
-		ExternalKS:     externalKS,
-		FileOwners:     fileOwners,
-	})
-}
-
-// FilterOptions supplies the ownership and source indexes for change selection.
-// Maps and lookups must remain immutable after construction.
-type FilterOptions struct {
-	RepoRoot       string
-	ComponentCache *manifest.ComponentCache
-	ConsumerRefs   map[manifest.NamedResource][]manifest.NamedResource
-	ExternalKS     map[manifest.NamedResource]struct{}
-	FileOwners     FileOwnerLookup
-
-	// PinnedKS excludes Kustomizations from dirty-path selection only;
-	// their ownership, producer, and consumer relationships still apply.
-	PinnedKS map[manifest.NamedResource]struct{}
-}
-
-// NewFilterWithOptions constructs a resolved Filter with ownership indexes and
-// pinned Kustomizations whose committed inputs ignore working-tree changes.
-func NewFilterWithOptions(changes *Set, sourceFiles map[manifest.NamedResource]string, objs ObjectLister, opts FilterOptions) *Filter {
-	f := &Filter{
-		changes:        changes,
-		sourceFiles:    sourceFiles,
-		repoRoot:       opts.RepoRoot,
-		objs:           objs,
-		componentCache: opts.ComponentCache,
-		consumerRefs:   opts.ConsumerRefs,
-		externalKS:     opts.ExternalKS,
-		fileOwners:     opts.FileOwners,
-		pinnedKS:       opts.PinnedKS,
+// NewFilter resolves changed files through an immutable discovery index, then
+// expands content dependencies. Nil changes disables filtering.
+func NewFilter(changes *Set, index *manifest.DiscoveryIndex, objs ObjectLister) *Filter {
+	f := &Filter{changes: changes, index: index, objs: objs}
+	if changes != nil {
+		f.resolve()
 	}
-	if changes == nil {
-		return f
-	}
-	f.resolve()
 	return f
 }
 
@@ -276,25 +130,11 @@ func (f *Filter) ProducersFor(id manifest.NamedResource) []manifest.NamedResourc
 	return slices.Clone(f.producersFor(id))
 }
 
-// producersFor returns Flux Kustomizations that render the file-backed
-// data resource id. Read-only after resolve(); caller must already
-// hold f.mu (when called from runtime paths) or be inside resolve()
-// (read-only construction).
-//
-// The id-namespace asymmetry mirrors ShouldReconcile / keepByName:
-// the byName fallback fires only when the lookup id IS namespaced,
-// so a fully-namespaced producer entry can't silently match an
-// unrelated fully-namespaced consumer that happens to share
-// (Kind, Name).
 func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResource {
 	if f == nil {
 		return nil
 	}
-	out := f.producersByID[id]
-	if id.Namespace != "" {
-		out = appendUniqueProducers(out, f.producersByName[keyOf(id)])
-	}
-	return out
+	return f.index.DataOwners(id)
 }
 
 // AddEmitted extends the keep set with child when emitter is a
@@ -491,9 +331,13 @@ func (f *Filter) addDependencyOnlyRecursiveLocked(ids ...manifest.NamedResource)
 func (f *Filter) resolve() {
 	objs := f.objs
 	// Capacity hint: the final keep set is roughly proportional to the
-	// source-files map; prime both maps and the BFS queue at that size
+	// discovery record map; prime both maps and the BFS queue at that size
 	// to avoid repeated rehash/realloc on the initial resolve scan.
-	hint := len(f.sourceFiles)
+	var records map[manifest.NamedResource]manifest.DiscoveryRecord
+	if f.index != nil {
+		records = f.index.Records
+	}
+	hint := len(records)
 	keep := make(map[manifest.NamedResource]struct{}, hint)
 	primary := make(map[manifest.NamedResource]struct{}, hint)
 	queue := make([]manifest.NamedResource, 0, hint)
@@ -527,7 +371,17 @@ func (f *Filter) resolve() {
 		queue = append(queue, id)
 	}
 
-	owners := buildOwnership(objs, f.repoRoot, f.componentCache, f.externalKS, f.fileOwners)
+	type fileOwnership struct{ owners, ancestors []manifest.NamedResource }
+	ownership := map[string]fileOwnership{}
+	ownersOf := func(file string) fileOwnership {
+		if cached, ok := ownership[file]; ok {
+			return cached
+		}
+		owners, ancestors := f.index.OwnersOfFile(file)
+		result := fileOwnership{owners, ancestors}
+		ownership[file] = result
+		return result
+	}
 	// enqueueAncestorChain marks the structural parent that owns file
 	// (longest-prefix spec.path match) plus its meta-Kustomization
 	// ancestors as ancestor-only — they must render to inject patches /
@@ -536,21 +390,20 @@ func (f *Filter) resolve() {
 	// its own source file doesn't re-enqueue itself; pass the zero id
 	// when there is nothing to exclude.
 	enqueueAncestorChain := func(file string, self manifest.NamedResource) {
-		for _, owner := range owners.ownersOf(file) {
+		for _, owner := range ownersOf(file).owners {
 			if owner != self {
 				enqueueAncestor(owner)
 			}
 		}
-		for _, ancestor := range owners.ancestorsOf(file) {
+		for _, ancestor := range ownersOf(file).ancestors {
 			enqueueAncestor(ancestor)
 		}
 	}
-	f.producersByID, f.producersByName = buildProducerIndex(f.sourceFiles, owners)
 	ownersHit := make(map[manifest.NamedResource]struct{})
 
 	for _, file := range f.changes.Paths() {
-		for _, owner := range owners.ownersOf(file) {
-			if _, pinned := f.pinnedKS[owner]; pinned {
+		for _, owner := range ownersOf(file).owners {
+			if record, _ := f.index.Lookup(owner); record.Pinned {
 				continue
 			}
 			ownersHit[owner] = struct{}{}
@@ -565,20 +418,21 @@ func (f *Filter) resolve() {
 		// also NOT marked primary so AddEmitted skips their unrelated
 		// emitted children — preventing the keep cascade where a
 		// one-file change pulls in the entire cluster.
-		for _, ancestor := range owners.ancestorsOf(file) {
-			if _, pinned := f.pinnedKS[ancestor]; pinned {
+		for _, ancestor := range ownersOf(file).ancestors {
+			if record, _ := f.index.Lookup(ancestor); record.Pinned {
 				continue
 			}
 			enqueueAncestor(ancestor)
 		}
 	}
-	for id, src := range f.sourceFiles {
+	for id, record := range f.index.Files() {
+		src := record.File
 		if f.changes.Contains(src) {
 			enqueuePrimary(id)
 			continue
 		}
 		// Pull in every sibling resource that shares an affected owner.
-		for _, owner := range owners.ownersOf(src) {
+		for _, owner := range ownersOf(src).owners {
 			if _, hit := ownersHit[owner]; hit {
 				enqueuePrimary(id)
 				break
@@ -606,15 +460,17 @@ func (f *Filter) resolve() {
 	// but its own kustomize output is unchanged (the HR manifest is
 	// identical; only the downstream helm render moved), so it must not
 	// cascade unrelated siblings into keep (the #58/#204 rationale).
-	for consumer, sources := range f.consumerRefs {
+	for consumer, record := range records {
+		sources := record.Refs
 		for _, src := range sources {
-			sf, ok := f.sourceFiles[src]
+			sr, ok := f.index.Lookup(src)
+			sf := sr.File
 			if !ok || !f.changes.Contains(sf) {
 				continue
 			}
 			enqueuePrimary(consumer)
-			if cf, ok := f.sourceFiles[consumer]; ok {
-				enqueueAncestorChain(cf, manifest.NamedResource{})
+			if cr, ok := f.index.Lookup(consumer); ok {
+				enqueueAncestorChain(cr.File, manifest.NamedResource{})
 			}
 			break
 		}
@@ -634,7 +490,8 @@ func (f *Filter) resolve() {
 		// still pulls its chart source into keep; without it a one-file HR edit
 		// would leave its OCIRepository/HelmRepository unfetched.
 		deps := transitiveDeps(objs, queue[head])
-		deps = append(deps, f.consumerRefs[queue[head]]...)
+		record, _ := f.index.Lookup(queue[head])
+		deps = append(deps, record.Refs...)
 		for _, d := range deps {
 			if headPrimary {
 				enqueuePrimary(d)
@@ -673,7 +530,8 @@ func (f *Filter) resolve() {
 		if queue[head].Kind != manifest.KindKustomization {
 			continue
 		}
-		src, ok := f.sourceFiles[queue[head]]
+		record, ok := f.index.Lookup(queue[head])
+		src := record.File
 		if !ok {
 			continue
 		}
@@ -761,52 +619,6 @@ func (f *Filter) KeepNamespaces() map[string]struct{} {
 type ObjectLister interface {
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	ListObjects(kind string) []manifest.BaseManifest
-}
-
-// buildProducerIndex maps file-backed data resources to the
-// Kustomization(s) that render their files. Exact id matches cover
-// namespaced resources and finalized generators; the name map covers
-// the common kustomize-namespace case where DiscoveryOnly indexed a
-// raw ConfigMap/Secret with namespace="" but the consuming KS waits
-// on the rendered namespace.
-//
-// Indexing by name only for empty-namespace ids mirrors keepByName's
-// asymmetric rule (see ShouldReconcile / keepByName comments) —
-// without it, a producer of ConfigMap/cluster-infra/shared would
-// silently match a ConfigMap/database/shared consumer lookup. See
-// #418.
-func buildProducerIndex(sourceFiles map[manifest.NamedResource]string, owners ownershipIndex) (map[manifest.NamedResource][]manifest.NamedResource, map[nameKey][]manifest.NamedResource) {
-	byID := make(map[manifest.NamedResource][]manifest.NamedResource)
-	byName := make(map[nameKey][]manifest.NamedResource)
-	for id, file := range sourceFiles {
-		if id.Kind != manifest.KindConfigMap && id.Kind != manifest.KindSecret {
-			continue
-		}
-		producers := owners.ownersOf(file)
-		if len(producers) == 0 {
-			continue
-		}
-		byID[id] = appendUniqueProducers(byID[id], producers)
-		if id.Namespace == "" {
-			key := keyOf(id)
-			byName[key] = appendUniqueProducers(byName[key], producers)
-		}
-	}
-	return byID, byName
-}
-
-// appendUniqueProducers extends dst with the producer ids in src,
-// deduping against dst. Used during producer-index construction and
-// at producersFor merge time; the slices are short (typically a
-// single owner KS per data file) so the linear scan is cheaper than
-// a map intermediary.
-func appendUniqueProducers(dst, src []manifest.NamedResource) []manifest.NamedResource {
-	for _, id := range src {
-		if !slices.Contains(dst, id) {
-			dst = append(dst, id)
-		}
-	}
-	return dst
 }
 
 // transitiveDeps returns the references the resource id needs to render,

@@ -2,101 +2,54 @@ package loader
 
 import (
 	"os"
-	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/pkg/manifest"
+	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/yaml"
 )
 
-// kustomization is the subset of sigs.k8s.io/kustomize/api/types.Kustomization
-// the loader inspects to decide what each tree-walk file is — a manifest,
-// a Component fragment, or a generator data source. Adding fields here
-// is the supported way to widen the loader's understanding of kustomize
-// declarations; we deliberately do not import the upstream type to
-// avoid pulling its full transitive dep tree into the load path.
-type kustomization struct {
-	APIVersion         string            `json:"apiVersion"                   yaml:"apiVersion"`
-	Kind               string            `json:"kind"                         yaml:"kind"`
-	Namespace          string            `json:"namespace,omitempty"          yaml:"namespace,omitempty"`
-	Resources          []string          `json:"resources,omitempty"          yaml:"resources,omitempty"`
-	Components         []string          `json:"components,omitempty"         yaml:"components,omitempty"`
-	ConfigMapGenerator []kvPairGenerator `json:"configMapGenerator,omitempty" yaml:"configMapGenerator,omitempty"`
-	SecretGenerator    []kvPairGenerator `json:"secretGenerator,omitempty"    yaml:"secretGenerator,omitempty"`
+// kustomizationDocument reuses upstream fields while retaining permissive
+// replacement injection detection for singular and plural field path variants.
+type kustomizationDocument struct {
+	types.Kustomization
+	Replacements []replacementDirective `json:"replacements,omitempty"`
 }
 
-// kustomizeAPIPrefix is the kustomize.config.k8s.io API group; both
-// regular Kustomizations and Components live here. A `kind: Component`
-// outside this prefix is a different CR that happens to share the
-// kind name (e.g. a custom operator's Component CR) and must NOT be
-// silently skipped by descend.
-const kustomizeAPIPrefix = "kustomize.config.k8s.io/"
+type document struct {
+	body *kustomizationDocument
+	file string
+}
+type documentReader map[string]document
 
-// isKustomizeComponent reports whether k is a kustomize Component
-// declaration (kind=Component AND kustomize.config.k8s.io apiVersion).
-// Kind alone isn't enough: a YAML with `kind: Component` and a
-// different apiVersion is a foreign CR and must not be treated as a
-// Component fragment.
-func (k *kustomization) isKustomizeComponent() bool {
-	if k == nil || k.Kind != "Component" {
-		return false
+func (r documentReader) read(dir string) (*kustomizationDocument, string) {
+	if cached, ok := r[dir]; ok {
+		return cached.body, cached.file
 	}
-	return strings.HasPrefix(k.APIVersion, kustomizeAPIPrefix)
-}
-
-// kvPairGenerator captures one configMap or secret generator entry.
-// Name + Namespace + Literals participate in flate's generator
-// discovery (see generators.go); Files / Envs are tracked so the
-// outer kustomization can exclude them from resource scans.
-type kvPairGenerator struct {
-	Name      string   `json:"name,omitempty"      yaml:"name,omitempty"`
-	Namespace string   `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Literals  []string `json:"literals,omitempty"  yaml:"literals,omitempty"`
-	Files     []string `json:"files,omitempty"     yaml:"files,omitempty"`
-	Envs      []string `json:"envs,omitempty"      yaml:"envs,omitempty"`
-}
-
-// kustomizationFileNames is the set of filenames the loader treats as a
-// kustomization root during its filesystem walk. The first match in a
-// directory wins.
-//
-// NOTE: this list intentionally differs from manifest.KustomizeBuilderFilenames:
-//   - it includes "kustomization.json" so flate's generic YAML/JSON load path
-//     can discover kustomization roots stored as JSON (kustomize also accepts
-//     this format at build time even though it is rarely used in the wild).
-//   - it omits the bare "Kustomization" name (no extension) which kustomize
-//     build supports but which the loader never encounters in practice —
-//     keeping the loader's list minimal avoids false-positive directory matches.
-var kustomizationFileNames = [3]string{
-	"kustomization.yaml",
-	"kustomization.yml",
-	"kustomization.json",
-}
-
-// readKustomizationAt opens dir/kustomization.{yaml,yml,json}, decodes
-// the subset of fields the loader uses, and returns both the parsed
-// body and the resolved file path. Returns (nil, "") when no
-// kustomization file exists in dir or when decode fails — the latter
-// is treated as "absent" because krusty's render path will surface
-// the real error later with better context than the loader can.
-//
-// The caller hands the returned path forward to walkKustomize /
-// walkComponentData so they don't open the same file again.
-func readKustomizationAt(dir string) (*kustomization, string) {
-	for _, name := range kustomizationFileNames {
-		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path) //nolint:gosec // path joined under the user-supplied scan root
+	for _, name := range manifest.KustomizeBuilderFilenames {
+		file := filepath.Join(dir, name)
+		data, err := os.ReadFile(file) //nolint:gosec // directory belongs to the selected source view
 		if err != nil {
 			continue
 		}
-		var k kustomization
-		if err := yaml.Unmarshal(data, &k); err != nil {
+		var k kustomizationDocument
+		if yaml.Unmarshal(data, &k) != nil {
 			continue
 		}
-		return &k, path
+		if r != nil {
+			r[dir] = document{&k, file}
+		}
+		return &k, file
+	}
+	if r != nil {
+		r[dir] = document{}
 	}
 	return nil, ""
+}
+
+func isKustomizeComponent(k *kustomizationDocument) bool {
+	return k != nil && k.Kind == "Component" && strings.HasPrefix(k.APIVersion, manifest.KustomizeDomain+"/")
 }
 
 // dataFilesFor returns the set of file paths declared as
@@ -111,7 +64,7 @@ func readKustomizationAt(dir string) (*kustomization, string) {
 // declaration is the more authoritative "this IS a Flux manifest"
 // signal. The overlap-resolve runs per-kustomization, scoped to one
 // directory — there's no cross-tree state to manage anymore.
-func dataFilesFor(dir string, k *kustomization) map[string]struct{} {
+func dataFilesFor(dir string, k *kustomizationDocument) map[string]struct{} {
 	if k == nil || (len(k.ConfigMapGenerator) == 0 && len(k.SecretGenerator) == 0) {
 		return nil
 	}
@@ -138,9 +91,13 @@ func dataFilesFor(dir string, k *kustomization) map[string]struct{} {
 			data[abs] = struct{}{}
 		}
 	}
-	for _, g := range slices.Concat(k.ConfigMapGenerator, k.SecretGenerator) {
-		addEntries(g.Files, true)
-		addEntries(g.Envs, false)
+	for _, g := range k.ConfigMapGenerator {
+		addEntries(g.FileSources, true)
+		addEntries(g.EnvSources, false)
+	}
+	for _, g := range k.SecretGenerator {
+		addEntries(g.FileSources, true)
+		addEntries(g.EnvSources, false)
 	}
 	return data
 }
@@ -166,7 +123,7 @@ func stripFileEntryKey(s string) string {
 // rejected: a path that gets opened would otherwise hand a TOCTOU +
 // path-traversal surface for free. Directory `resources:` and
 // `components:` are merely descended into, never opened, so they use
-// the escape-permitting resolveResourcePath / resolveComponentPath.
+// the escape-permitting resolvePath.
 func resolveDataPath(base, rel string) (string, bool) {
 	if rel == "" {
 		return "", false
@@ -182,64 +139,14 @@ func resolveDataPath(base, rel string) (string, bool) {
 	return abs, true
 }
 
-// resolveComponentPath is the components: counterpart to
-// resolveDataPath. kustomize's `components:` legitimately escapes the
-// calling kustomization's directory (e.g. `../components/cluster-
-// settings` is the canonical Flux pattern), so the in-base
-// constraint resolveDataPath enforces is too strict for this field.
-// We still reject URLs and absolute paths — flate's loader only
-// follows local relative components.
-func resolveComponentPath(base, rel string) (string, bool) {
-	return resolvePath(base, rel)
-}
-
 // resolvePath joins rel under base, rejecting empty, absolute, and URL
 // refs (flate's loader only follows local relative paths). It permits
 // parent-directory escaping — both `components:` and directory
 // `resources:` legitimately reference `../...` and kustomize follows
-// them. The two public wrappers carry that intent at the call site;
-// centralizing the shared validation here keeps them from drifting.
+// them.
 func resolvePath(base, rel string) (string, bool) {
 	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "://") {
 		return "", false
 	}
 	return filepath.Clean(filepath.Join(base, rel)), true
-}
-
-// resolveResourcePath is the directory counterpart for `resources:`.
-// A directory listed under `resources:` legitimately escapes the
-// calling kustomization's dir (overlays reference `../base`; Flux
-// repos reference `../../../deploy/...`), and kustomize follows it —
-// so the in-base constraint resolveDataPath enforces for opened data
-// *files* is wrong for a dir we only descend into. Escape is safe
-// here because descend() merely recurses under the visited-set + ctx
-// guard and never opens the path. URLs and absolute paths are still
-// rejected; flate's loader only follows local relative dirs. File
-// resources keep resolveDataPath's stricter policy (re-checked by the
-// caller after stat), so this is the dir-descent path only.
-func resolveResourcePath(base, rel string) (string, bool) {
-	return resolvePath(base, rel)
-}
-
-// IsUnreferencedKustomizeResource reports whether the repo-relative file sits in
-// a directory whose kustomization.yaml does NOT list it as a resource — a stray
-// manifest a kustomize base deliberately excludes, so kustomize (and Flux) never
-// apply it. Orphan detection uses this to demote such a stray Flux Kustomization
-// to a warning instead of hard-failing a file that isn't wired into the tree
-// (the apps/base/app-X/ks.yaml-not-in-kustomization.yaml shape, #777). A
-// directory with no kustomization file returns false: there the manifest is a
-// loose top-level entry, not an excluded base resource.
-func IsUnreferencedKustomizeResource(repoRoot, file string) bool {
-	file = filepath.ToSlash(file)
-	dir := path.Dir(file)
-	d, _, ok := readKustomizeDirectives(repoRoot, dir)
-	if !ok {
-		return false
-	}
-	for _, r := range d.Resources {
-		if resolved, ok := resolveResourcePath(dir, r); ok && filepath.ToSlash(resolved) == file {
-			return false
-		}
-	}
-	return true
 }

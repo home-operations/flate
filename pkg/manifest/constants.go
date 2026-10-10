@@ -1,5 +1,7 @@
 package manifest
 
+import "sigs.k8s.io/kustomize/api/konfig"
+
 // API group prefixes. Versions are intentionally not pinned — we accept any
 // version of these groups for forward compatibility with Flux upgrades.
 const (
@@ -64,22 +66,5 @@ const ValuePlaceholderTemplate = "..PLACEHOLDER_%s.."
 // rather than hard-coding the prefix.
 const ValuePlaceholderPrefix = "..PLACEHOLDER_"
 
-// KustomizeBuilderFilenames is the exact set of filenames `kustomize build`
-// recognizes at any directory it builds — ordered by priority, first match
-// wins. This is the upstream kustomize convention (yaml → yml → bare name).
-//
-// NOTE: this list intentionally differs from pkg/loader's kustomizationFileNames:
-//   - it includes the bare "Kustomization" filename (no extension) which
-//     kustomize build accepts as a valid root file name.
-//   - it omits "kustomization.json" because kustomize build does not look for
-//     a JSON-named file by default; that entry belongs only to the loader's
-//     broader YAML/JSON scan pass.
-//
-// Multiple packages need this list (kustomize render, change-filter
-// ownership, namespace inheritance) — keeping it here avoids cross-
-// package coupling on a 3-element string slice.
-var KustomizeBuilderFilenames = []string{
-	"kustomization.yaml",
-	"kustomization.yml",
-	"Kustomization",
-}
+// KustomizeBuilderFilenames is the upstream list of recognized root filenames.
+var KustomizeBuilderFilenames = konfig.RecognizedKustomizationFileNames()

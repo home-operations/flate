@@ -83,6 +83,9 @@ func TestBuildSelfProduceIndex_NonProducerNotAttributed(t *testing.T) {
 // behavior) when no repoRoot produced an index.
 func TestSelfProduceIndex_NilSafe(t *testing.T) {
 	var idx *SelfProduceIndex
+	if got := idx.OwnersOfProducer(manifest.NamedResource{}); got != nil {
+		t.Errorf("nil index OwnersOfProducer = %v, want nil", got)
+	}
 	if got := idx.ProducedBy(cmID("flux-system")); got != nil {
 		t.Errorf("nil index ProducedBy = %v, want nil", got)
 	}
@@ -441,5 +444,73 @@ func TestBuildSelfProduceIndex_NoSynthesisWithoutWipe(t *testing.T) {
 
 	if obj := s.GetObject(secretID("secure", "app-secret")); obj != nil {
 		t.Errorf("wipeSecrets=false must suppress synthesis; got %#v", obj)
+	}
+}
+
+func TestBuildSelfProduceIndex_ProducerOwners(t *testing.T) {
+	for _, namespace := range []string{"", "authored"} {
+		t.Run("namespace_"+namespace, func(t *testing.T) {
+			root := t.TempDir()
+			s := store.New()
+			var want []manifest.NamedResource
+			for _, name := range []string{"b", "a"} {
+				ks := &manifest.Kustomization{Name: name, Namespace: "flux-system", Path: "./" + name}
+				s.AddObject(ks)
+				want = append(want, ks.Named())
+				testutil.WriteFile(t, root, name+"/kustomization.yaml", "namespace: effective\nresources: [../shared, missing.yaml]\n")
+			}
+			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [producer.yaml]\n")
+			testutil.WriteFile(t, root, "shared/producer.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: '"+namespace+"'}\nspec:\n  target: {name: values}\n  dataFrom: [{extract: {key: values}}]\n")
+			producers := &manifest.ProducerIndex{}
+			idx := BuildSelfProduceIndex(s, root, producers, false)
+			slices.SortFunc(want, manifest.NamedResource.Compare)
+			for _, ns := range []string{namespace, "effective"} {
+				id := manifest.NamedResource{Kind: "ExternalSecret", Namespace: ns, Name: "producer"}
+				got := idx.OwnersOfProducer(id)
+				slices.SortFunc(got, manifest.NamedResource.Compare)
+				if !slices.Equal(got, want) {
+					t.Fatalf("declaration %s owners = %v, want %v", id, got, want)
+				}
+				got[0] = manifest.NamedResource{}
+				fresh := idx.OwnersOfProducer(id)
+				slices.SortFunc(fresh, manifest.NamedResource.Compare)
+				if !slices.Equal(fresh, want) {
+					t.Fatal("caller mutated index")
+				}
+			}
+			if len(idx.OwnersOfProducer(manifest.NamedResource{Kind: "ExternalSecret", Namespace: "foreign", Name: "producer"})) != 0 {
+				t.Fatal("foreign namespace inherited declaration owners")
+			}
+			if got := idx.ProducedBy(manifest.NamedResource{Kind: "ConfigMap", Namespace: "effective", Name: "values"}); len(got) != 0 {
+				t.Fatalf("producer ownership changed self-substitution admission: %v", got)
+			}
+		})
+	}
+}
+
+func TestBuildSelfProduceIndex_ProducerOwnersMultipleTargets(t *testing.T) {
+	for _, namespace := range []string{"", "apps"} {
+		t.Run("namespace_"+namespace, func(t *testing.T) {
+			root := t.TempDir()
+			s := store.New()
+			ks := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "./values"}
+			s.AddObject(ks)
+			testutil.WriteFile(t, root, "values/kustomization.yaml", "namespace: apps\nresources: [bucket.yaml]\n")
+			testutil.WriteFile(t, root, "values/bucket.yaml", "apiVersion: objectbucket.io/v1alpha1\nkind: ObjectBucketClaim\nmetadata: {name: bucket, namespace: '"+namespace+"'}\nspec: {generateBucketName: bucket, storageClassName: bucket}\n")
+			producers := &manifest.ProducerIndex{}
+			idx := BuildSelfProduceIndex(s, root, producers, false)
+			for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+				target := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "bucket"}
+				if _, ok := producers.Producer(target); !ok {
+					t.Fatalf("missing %s target", kind)
+				}
+			}
+			for _, ns := range []string{namespace, "apps"} {
+				producer := manifest.NamedResource{Kind: "ObjectBucketClaim", Namespace: ns, Name: "bucket"}
+				if got := idx.OwnersOfProducer(producer); !slices.Equal(got, []manifest.NamedResource{ks.Named()}) {
+					t.Fatalf("repeated targets duplicate declaration owner: %v", got)
+				}
+			}
+		})
 	}
 }

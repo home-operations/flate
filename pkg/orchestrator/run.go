@@ -105,17 +105,6 @@ func (o *Orchestrator) configureControllers() {
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 		Producers:           o.producers,
 	})
-	// parentResolver unifies the two sources of structural-parent
-	// info: (1) the pre-built file-path prefix index for file-loaded
-	// resources, and (2) the renderedSet for resources that arrive
-	// via a KS render's emitRenderedChildren (populated at Run-time,
-	// not at Bootstrap). Controllers query through this single seam.
-	parentResolver := func(id manifest.NamedResource) (manifest.NamedResource, bool) {
-		if parent, ok := o.parentOf[id]; ok {
-			return parent, true
-		}
-		return o.rendered.ParentOf(id)
-	}
 	// existence bundles the file-existence lookups depwait needs:
 	// Promote lazy-loads a file-indexed dep into the Store the
 	// moment a depwait edge asks for it (covering the bjw-s parent-
@@ -144,7 +133,7 @@ func (o *Orchestrator) configureControllers() {
 	// built once; each Configure adds its controller-specific fields.
 	common := base.Options{
 		Filter:           o.filter,
-		ParentOf:         parentResolver,
+		ParentOf:         o.ParentOf,
 		RenderTracker:    o.rendered,
 		Existence:        existence,
 		PreflightFailure: o.preflightFailure,

@@ -123,7 +123,7 @@ func newGetAllCmd() *cobra.Command {
 			if o == nil {
 				return runErr
 			}
-			return emitResult(printCluster(cmd.OutOrStdout(), o, c, c.output), o, res, c, runErr)
+			return emitResult(printCluster(cmd.OutOrStdout(), o, c, c.output), scopedFailures(o, res, c, manifest.NamedResource{}), runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)
@@ -150,7 +150,7 @@ func newGetImagesCmd() *cobra.Command {
 				return runErr
 			}
 			imgs := slices.Sorted(maps.Keys(collectImages(o, res, c)))
-			return emitResult(emitImageList(cmd.OutOrStdout(), imgs, c.output), o, res, c, runErr)
+			return emitResult(emitImageList(cmd.OutOrStdout(), imgs, c.output), scopedFailures(o, res, c, manifest.NamedResource{}), runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputName, format.OutputYAML, format.OutputJSON)
@@ -183,7 +183,7 @@ func resourceListCmd[T manifest.BaseManifest](
 				Name:   firstArg(args),
 				Labels: l.labels,
 			}
-			return emitResult(printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper), o, res, c, runErr)
+			return emitResult(printResources(cmd.OutOrStdout(), o, sel, c, c.output, kind, cols, mapper), scopedFailures(o, res, c, manifest.NamedResource{}), runErr)
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputTable, format.OutputYAML, format.OutputJSON, format.OutputName)

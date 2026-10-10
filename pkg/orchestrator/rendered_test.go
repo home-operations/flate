@@ -1,7 +1,11 @@
 package orchestrator
 
 import (
+	"fmt"
+	"sync"
 	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -116,5 +120,32 @@ func TestRenderedSet_MarkRenderedBatch_HonorsSelfEdgeAndFirstWriterWins(t *testi
 	r.MarkRenderedBatch(other, []manifest.NamedResource{child})
 	if got, _ := r.ParentOf(child); got != parent {
 		t.Errorf("ParentOf(child) = %v after second batch, want first writer %v", got, parent)
+	}
+}
+
+func TestRenderedSet_ChildrenByParentConcurrent(t *testing.T) {
+	r := newRenderedSet()
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+	var wg sync.WaitGroup
+	for worker := range 2 {
+		wg.Go(func() {
+			for i := range 100 {
+				child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: fmt.Sprintf("%d-%d", worker, i)}
+				r.MarkRenderedBatch(parent, []manifest.NamedResource{child})
+				r.ChildrenByParent()
+			}
+		})
+	}
+	wg.Wait()
+	snapshot := r.ChildrenByParent()
+	assert.Equal(t, len(snapshot[parent]), 200)
+	snapshot[parent][0] = manifest.NamedResource{}
+	delete(snapshot, parent)
+	fresh := r.ChildrenByParent()
+	assert.Equal(t, len(fresh[parent]), 200)
+	for _, child := range fresh[parent] {
+		if child.Name == "" {
+			t.Fatal("snapshot aliases rendered state")
+		}
 	}
 }

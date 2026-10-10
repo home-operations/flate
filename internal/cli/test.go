@@ -74,7 +74,8 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 					return c.includeNamespace(o.Filter(), id.Namespace)
 				},
 			})
-			runErr = scopedRunError(o, res, c, runErr)
+			scope := scopedFailures(o, res, c, manifest.NamedResource{Kind: kinds[0], Name: name})
+			runErr = scopedRunError(scope, runErr)
 			if name != "" && report.Matched == 0 {
 				return errors.Join(noNamedError(testKindName(kinds), name), runErr)
 			}
@@ -82,15 +83,22 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			// (colorprofile) honors NO_COLOR / CLICOLOR / TTY-ness; piped or
 			// redirected output stays plain.
 			color := style.ColorEnabled(cmd.OutOrStdout())
-			// One consolidated report on stdout: the per-resource roster (failures
+			// One consolidated report on stdout: the per-resource report (failures
 			// already appear inline on their rows), then render advisories
-			// (warnings) and deferred logs (notes), then a single verdict. No
-			// separate stderr failure block — that double-printed every failure and
-			// a second, differently-counted verdict.
-			warnings := scopedWarnings(o, res, c)
+			// (warnings) and deferred logs (notes), then a single verdict.
+			// Dependency failures outside the selected roster need a separate
+			// diagnostic so a passing selected row cannot hide a fatal cause.
+			warnings := append(scopedWarnings(o, res, c), scope.warnings...)
 			notes := drainLogNotes()
 			if err := report.Write(cmd.OutOrStdout(), warnings, notes, color, elapsed); err != nil {
 				return errors.Join(err, runErr)
+			}
+			if name != "" && runErr != nil {
+				diagnostics := scope
+				diagnostics.warnings = nil
+				if err := reportFailures(cmd.ErrOrStderr(), diagnostics, runErr); err != nil {
+					return err
+				}
 			}
 			final := runErr
 			if report.AnyFailed() {

@@ -412,6 +412,8 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				if followErrors == nil {
 					followErrors = make(map[manifest.NamedResource]followError)
 				}
+				// An omitted source namespace follows the consumer's inherited namespace.
+				ref.Namespace = ks.SourceRef.Namespace
 				followErrors[id] = followError{path: ks.Path, ref: ref, err: err}
 			}
 			added++
@@ -421,20 +423,24 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		}
 	}
 	if len(followErrors) != 0 {
+		// Namespace inheritance can re-key a surviving consumer without replacing its failed walk.
+		kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
 		for _, id := range slices.SortedFunc(maps.Keys(followErrors), manifest.NamedResource.Compare) {
-			ks, ok := d.cfg.Store.Get[*manifest.Kustomization](id)
-			if !ok {
-				continue
-			}
-			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
 			held := followErrors[id]
-			if ks.Path != held.path || ref != held.ref {
-				continue
+			for _, ks := range kustomizations {
+				if ks.Name != id.Name || ks.Path != held.path {
+					continue
+				}
+				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceRef.Namespace, Name: ks.SourceName}
+				if ref != held.ref {
+					continue
+				}
+				ref.Namespace = ks.SourceNamespace
+				if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+					continue
+				}
+				return held.err
 			}
-			if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
-				continue
-			}
-			return held.err
 		}
 	}
 	l.PreferExisting = false

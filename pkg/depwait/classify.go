@@ -27,7 +27,7 @@ type Classification struct {
 
 // Classify resolves dep for the dag engine WITHOUT blocking, reusing the shared
 // readiness predicates (readyNow, depExists, the ReadyExpr evaluator,
-// Existence.Promote). drainLevel escalates how an unsatisfied dependency is
+// Existence.Promote). level escalates how an unsatisfied dependency is
 // treated at the structural fixpoint and selects the canonical terminal
 // message: notFound ("dependency not found"), the raw stored Failed message,
 // "not ready" (a present-Pending dep at the force level), and the readyExpr
@@ -35,7 +35,7 @@ type Classification struct {
 //
 // MUST run on a worker goroutine (it reads the store) — never under the
 // scheduler's mutex.
-func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel manifest.DrainLevel) Classification {
+func (w *Waiter) Classify(dep manifest.DependencyRef, level manifest.DrainLevel) Classification {
 	id := dep.NamedResource
 
 	// 1. Already satisfied: status Ready, a status-less kind that exists, or a
@@ -62,7 +62,7 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel manifest.DrainL
 			return Classification{Kind: ClassReady}
 		}
 		if !w.depExists(id) {
-			if drainLevel >= manifest.DrainCascade {
+			if level >= manifest.DrainCascade {
 				if w.AllowMissingCRDs && id.Kind == manifest.KindCustomResourceDefinition {
 					return Classification{Kind: ClassReady}
 				}
@@ -101,14 +101,14 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel manifest.DrainL
 				return Classification{Kind: ClassReady}
 			}
 			// Built-in not yet Ready: treat like a plain present-Pending dep.
-			if drainLevel >= manifest.DrainForce {
+			if level >= manifest.DrainForce {
 				return Classification{Kind: ClassFailed, Message: "not ready"}
 			}
 			return Classification{Kind: ClassBlocked}
 		}
 		// Replace mode (the default): the CEL IS the readiness check, so at the
 		// fixpoint a never-true CEL fails with the canonical "readyExpr timeout".
-		if drainLevel >= manifest.DrainCascade {
+		if level >= manifest.DrainCascade {
 			return Classification{Kind: ClassFailed, Message: "readyExpr timeout: context deadline exceeded"}
 		}
 		return Classification{Kind: ClassBlocked}
@@ -117,7 +117,7 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, drainLevel manifest.DrainL
 	// 7. Present and Pending: block. A parked producer will terminalize and the
 	//    cascade carries its real message upward; only a cross-kind cycle
 	//    reaches DrainForce, where it fails "not ready".
-	if drainLevel >= manifest.DrainForce {
+	if level >= manifest.DrainForce {
 		return Classification{Kind: ClassFailed, Message: "not ready"}
 	}
 	return Classification{Kind: ClassBlocked}

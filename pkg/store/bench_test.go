@@ -187,3 +187,39 @@ func BenchmarkStatusInfo_Read(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkStatusFlip(b *testing.B) {
+	for _, withListener := range []bool{false, true} {
+		name := "NoListener"
+		if withListener {
+			name = "OneListener"
+		}
+		b.Run(name, func(b *testing.B) {
+			st := New()
+			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"}
+			st.AddObject(&manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace})
+			if withListener {
+				st.AddListener(EventStatusUpdated, func(manifest.NamedResource, any) {}, false)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				st.UpdateStatus(id, StatusPending, "x")
+				st.UpdateStatus(id, StatusReady, "y")
+			}
+		})
+	}
+}
+
+func BenchmarkGetStatus(b *testing.B) {
+	st := New()
+	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"}
+	st.AddObject(&manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace})
+	st.UpdateStatus(id, StatusReady, "y")
+	b.ReportAllocs()
+	for b.Loop() {
+		info, _ := st.GetStatus(id)
+		if info.Status != StatusReady {
+			b.Fatal("expected ready status")
+		}
+	}
+}

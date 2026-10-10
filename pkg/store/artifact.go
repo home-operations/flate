@@ -160,7 +160,7 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
 		return
 	}
 	sh.artifacts[id] = artifact
-	dispatch := s.fireUnderLock(EventArtifactUpdated, id, artifact)
+	dispatch := fireUnderLock(s, EventArtifactUpdated, id, artifact)
 	sh.mu.Unlock()
 	dispatch()
 }

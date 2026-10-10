@@ -79,24 +79,52 @@ const (
 type StatusInfo struct {
 	Status  Status
 	Message string
-	failed  []manifest.NamedResource
+	failure *dependencyFailure
 }
 
 // IsDependencyFailure reports whether the Failed status came from failed dependencies.
 func (i StatusInfo) IsDependencyFailure() bool {
-	return i.Status == StatusFailed && len(i.failed) > 0
+	return i.failure != nil
 }
 
 // BlockedBy returns a copy of the immediate failed dependencies in this snapshot.
 func (i StatusInfo) BlockedBy() []manifest.NamedResource {
-	return slices.Clone(i.failed)
+	if i.failure == nil {
+		return nil
+	}
+	return slices.Clone(i.failure.ids)
 }
 
 // Failure IDs are immutable so StatusInfo can retain them after the shard unlocks.
 type conditionRecord struct {
-	conditions  []Condition
-	failed      []manifest.NamedResource
+	conditions []Condition
+	failure    *dependencyFailure
+}
+
+type dependencyFailure struct {
+	ids         []manifest.NamedResource
 	fingerprint string
+}
+
+func newDependencyFailure(err error) *dependencyFailure {
+	dep, ok := errors.AsType[*manifest.DependencyFailedError](err)
+	if !ok || len(dep.Failed) == 0 {
+		return nil
+	}
+	ids := slices.Clone(dep.Failed)
+	slices.SortFunc(ids, manifest.NamedResource.Compare)
+	size := 0
+	for _, d := range ids {
+		size += 24 + len(d.Kind) + len(d.Namespace) + len(d.Name)
+	}
+	data := make([]byte, 0, size)
+	for _, d := range ids {
+		for _, field := range [3]string{d.Kind, d.Namespace, d.Name} {
+			data = binary.BigEndian.AppendUint64(data, uint64(len(field)))
+			data = append(data, field...)
+		}
+	}
+	return &dependencyFailure{ids: ids, fingerprint: manifest.SHA256Hex(data)}
 }
 
 // Condition is an alias for k8s metav1.Condition. flate stores
@@ -164,21 +192,19 @@ func readyCondition(status Status, message string) Condition {
 // Ready condition. Returns (zero, false) when no Ready condition is
 // present.
 func (r conditionRecord) statusInfo() (StatusInfo, bool) {
-	for _, c := range r.conditions {
+	for i := range r.conditions {
+		c := &r.conditions[i]
 		if c.Type != ConditionReady {
 			continue
 		}
-		info := StatusInfo{Message: c.Message}
 		switch c.Status {
 		case metav1.ConditionTrue:
-			info.Status = StatusReady
+			return StatusInfo{Status: StatusReady, Message: c.Message}, true
 		case metav1.ConditionFalse:
-			info.Status = StatusFailed
-			info.failed = r.failed
+			return StatusInfo{Status: StatusFailed, Message: c.Message, failure: r.failure}, true
 		default:
-			info.Status = StatusPending
+			return StatusInfo{Status: StatusPending, Message: c.Message}, true
 		}
-		return info, true
 	}
 	return StatusInfo{}, false
 }
@@ -194,25 +220,7 @@ func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, message s
 
 // UpdateFailure atomically records a terminal error and its immediate failed dependencies.
 func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
-	message := err.Error()
-	var failure conditionRecord
-	if dep, ok := errors.AsType[*manifest.DependencyFailedError](err); ok && len(dep.Failed) > 0 {
-		failure.failed = slices.Clone(dep.Failed)
-		slices.SortFunc(failure.failed, manifest.NamedResource.Compare)
-		size := 0
-		for _, d := range failure.failed {
-			size += 24 + len(d.Kind) + len(d.Namespace) + len(d.Name)
-		}
-		data := make([]byte, 0, size)
-		for _, d := range failure.failed {
-			for _, field := range [3]string{d.Kind, d.Namespace, d.Name} {
-				data = binary.BigEndian.AppendUint64(data, uint64(len(field)))
-				data = append(data, field...)
-			}
-		}
-		failure.fingerprint = manifest.SHA256Hex(data)
-	}
-	s.setCondition(id, readyCondition(StatusFailed, message), failure)
+	s.setCondition(id, readyCondition(StatusFailed, err.Error()), newDependencyFailure(err))
 }
 
 // SetCondition upserts cond into the resource's condition list keyed
@@ -230,10 +238,10 @@ func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
 // lands (e.g. tests). The FailedResources rollup filters phantoms
 // by intersecting against the object map at read time.
 func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
-	s.setCondition(id, cond, conditionRecord{})
+	s.setCondition(id, cond, nil)
 }
 
-func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure conditionRecord) {
+func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure *dependencyFailure) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
 	updated, changed := sh.setConditionLocked(id, cond, failure)
@@ -242,7 +250,7 @@ func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure 
 		return
 	}
 	newInfo, _ := updated.statusInfo()
-	dispatch := s.fireUnderLock(EventStatusUpdated, id, newInfo)
+	dispatch := fireUnderLock(s, EventStatusUpdated, id, newInfo)
 	sh.mu.Unlock()
 	dispatch()
 }
@@ -251,14 +259,13 @@ func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure 
 // record aliases the live condition slice. Failure IDs remain immutable.
 // Existing conditions with unchanged provenance MUST be overwritten in place
 // without reassigning the map entry, preserving the allocation-free hot path.
-func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, failure conditionRecord) (conditionRecord, bool) {
+func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, failure *dependencyFailure) (conditionRecord, bool) {
 	record := sh.conditions[id]
 	failureChanged := false
-	if cond.Type == ConditionReady && (len(record.failed) > 0 || len(failure.failed) > 0) {
-		failureChanged = record.fingerprint != failure.fingerprint
+	if cond.Type == ConditionReady && record.failure != failure {
+		failureChanged = record.failure == nil || failure == nil || record.failure.fingerprint != failure.fingerprint
 		if failureChanged {
-			record.failed = failure.failed
-			record.fingerprint = failure.fingerprint
+			record.failure = failure
 		}
 	}
 	for i := range record.conditions {
@@ -285,6 +292,9 @@ func (s *Store) GetStatus(id manifest.NamedResource) (StatusInfo, bool) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
+	if len(sh.conditions) == 0 {
+		return StatusInfo{}, false
+	}
 	return sh.conditions[id].statusInfo()
 }
 

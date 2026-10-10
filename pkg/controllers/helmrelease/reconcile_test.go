@@ -5,10 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -148,11 +146,6 @@ data:
 	}
 }
 
-func ptrDuration(d time.Duration) *metav1.Duration {
-	out := metav1.Duration{Duration: d}
-	return &out
-}
-
 // A chart source that stays Pending fails with typed dependency provenance at force drain.
 func TestReconcile_ChartSourceNotReady(t *testing.T) {
 	c, st := newTestController(t, nil)
@@ -165,7 +158,6 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 
 	hr := &manifest.HelmRelease{
 		Name: "podinfo", Namespace: "flux-system",
-		Timeout: ptrDuration(100 * time.Millisecond),
 		Chart: manifest.HelmChart{
 			Name: "podinfo", RepoKind: manifest.KindOCIRepository,
 			RepoName: "podinfo", RepoNamespace: "flux-system",
@@ -195,7 +187,6 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 
 	hr := &manifest.HelmRelease{
 		Name: "depender", Namespace: "flux-system",
-		Timeout:   ptrDuration(100 * time.Millisecond),
 		DependsOn: []manifest.DependencyRef{{NamedResource: dep.Named()}},
 	}
 	st.AddObject(hr)
@@ -213,7 +204,6 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
 	hr := &manifest.HelmRelease{
 		Name: "child", Namespace: "flux-system",
-		Timeout: ptrDuration(80 * time.Millisecond),
 	}
 	c, st := newTestControllerWithParentOf(t, map[manifest.NamedResource]manifest.NamedResource{
 		hr.Named(): parent.Named(),
@@ -243,7 +233,6 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
 	hr := &manifest.HelmRelease{
 		Name: "child", Namespace: "flux-system",
-		Timeout: ptrDuration(80 * time.Millisecond),
 	}
 	// Resolver returns the parent for the HR only — closes over
 	// captured state, the production shape (which combines a map +
@@ -308,8 +297,7 @@ func TestReconcile_MissingChartFails(t *testing.T) {
 	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
 		Name: "broken", Namespace: "flux-system",
-		Timeout: ptrDuration(80 * time.Millisecond),
-		// Chart left empty — depwait on an unset source ref times out.
+		// An unset chart source fails the dependency gate.
 	}
 	st.AddObject(hr)
 	info := dispatchToFixpoint(t, c, st, hr.Named())

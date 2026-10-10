@@ -6,10 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -414,7 +412,6 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		Timeout:    &metav1.Duration{Duration: 100 * time.Millisecond},
 		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		DependsOn: []manifest.DependencyRef{
 			{NamedResource: dep.Named()},

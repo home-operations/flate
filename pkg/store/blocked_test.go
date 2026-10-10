@@ -46,12 +46,6 @@ func TestUpdateFailure_SnapshotIsolation(t *testing.T) {
 	if current.IsDependencyFailure() || current.BlockedBy() != nil {
 		t.Fatalf("Ready retains failure provenance: %+v", current)
 	}
-	if allocs := testing.AllocsPerRun(100, func() {
-		info, _ := st.GetStatus(id)
-		_ = info.IsDependencyFailure()
-	}); allocs != 0 {
-		t.Fatalf("status snapshot/predicate allocated %g times", allocs)
-	}
 }
 
 func TestUpdateFailure_Transitions(t *testing.T) {

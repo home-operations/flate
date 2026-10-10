@@ -399,7 +399,6 @@ data:
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
-		Timeout:  ptrDuration(100 * time.Millisecond),
 		ValuesFrom: []manifest.ValuesReference{
 			{Kind: manifest.KindConfigMap, Name: "present-values"},
 			{Kind: manifest.KindSecret, Name: "app-values"},
@@ -498,7 +497,6 @@ data:
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
-		Timeout:  ptrDuration(100 * time.Millisecond),
 		ValuesFrom: []manifest.ValuesReference{
 			{Kind: manifest.KindConfigMap, Name: "present-values"},
 			{Kind: manifest.KindSecret, Name: "app-values"},
@@ -545,7 +543,6 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval:   metav1Duration(time.Hour),
-		Timeout:    ptrDuration(100 * time.Millisecond),
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "no-producer"}},
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "charts",
@@ -1111,7 +1108,6 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
-		Timeout:  ptrDuration(100 * time.Millisecond),
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "charts", RepoNamespace: "flux-system",
 			RepoKind: manifest.KindGitRepository,

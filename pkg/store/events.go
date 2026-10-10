@@ -178,6 +178,9 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 	return out
 }
 
+// A generic no-op closure captures its dictionary and allocates.
+var emptyDispatch = func() {}
+
 // fireUnderLock is the race-safe dispatcher writers MUST use: it
 // captures the listener snapshot under the caller's already-held
 // shard lock and returns a closure the caller invokes AFTER releasing
@@ -185,7 +188,7 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 //
 //	sh.mu.Lock()
 //	... mutate sh.objects / sh.conditions / sh.artifacts ...
-//	dispatch := s.fireUnderLock(EventX, id, payload)
+//	dispatch := fireUnderLock(s, EventX, id, payload)
 //	sh.mu.Unlock()
 //	dispatch()
 //
@@ -195,24 +198,25 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 // captured here cannot interleave with an in-progress add.
 //
 // When no listeners are registered for event, fireUnderLock returns
-// a no-op closure with no allocation. AddRendered dispatches changed objects
+// a no-op closure without boxing the payload. AddRendered dispatches changed objects
 // and must stay cheap on the render hot path when nothing's listening.
 //
-// The snapshot slice is drawn from a sync.Pool keyed on capacity
+// The snapshot slice header is drawn from a sync.Pool keyed on capacity
 // bucket and released back after dispatch via defer (so a panicking
 // listener still returns it). The returned closure owns the slice
 // exclusively — the dispatcher MUST NOT alias it past the closure
 // call. listenerSet.snapshot is the only entry to the pool; never
 // retain the result beyond fireUnderLock's returned closure.
-func (s *Store) fireUnderLock(event EventKind, id manifest.NamedResource, payload any) func() {
+func fireUnderLock[T any](s *Store, event EventKind, id manifest.NamedResource, payload T) func() {
 	listeners := s.listeners[event].snapshot()
-	if len(listeners) == 0 {
-		return func() {}
+	if listeners == nil {
+		return emptyDispatch
 	}
+	boxed := any(payload)
 	return func() {
 		defer releaseListenerSnapshot(listeners)
-		for _, fn := range listeners {
-			safeInvoke(fn, id, payload)
+		for _, fn := range *listeners {
+			safeInvoke(fn, id, boxed)
 		}
 	}
 }
@@ -264,37 +268,20 @@ func (l *listenerSet) remove(id int64) {
 	})
 }
 
-// snapshot returns a copy of the current listener funcs so dispatch can
-// iterate without holding the lock (and so listeners can mutate the set
-// during dispatch without affecting the current pass).
-//
-// Returns nil (not a zero-length slice) when no listeners are
-// registered so writers' fireUnderLock can short-circuit without
-// allocating — AddRendered is on the render hot path, and the
-// listener-contract guarantee shouldn't cost an allocation per
-// rendered doc when nothing's listening for that kind.
-//
-// Non-empty snapshots are drawn from listenerSnapshotPools, bucketed
-// by capacity (16/64/256/1024). Callers MUST hand the result to
-// releaseListenerSnapshot exactly once after dispatch and MUST NOT
-// retain any reference to the slice past that point — the slice is
-// recycled and a future fire will overwrite its contents. See
-// fireUnderLock for the canonical release pattern.
-func (l *listenerSet) snapshot() []Listener {
+// snapshot copies listeners under mu into a pooled slice header; nil means none.
+// The caller MUST return the header with releaseListenerSnapshot exactly once
+// and never retain it afterward: another dispatcher may immediately reuse it.
+func (l *listenerSet) snapshot() *[]Listener {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if len(l.entries) == 0 {
 		return nil
 	}
 	bucket := poolBucket(len(l.entries))
-	out := *listenerSnapshotPools[bucket].Get().(*[]Listener)
-	// Reset to zero length; release nils out entries on Put so the
-	// pooled slice carries no stale closure references, but the
-	// length is whatever the previous fire grew it to. Truncate
-	// here and let append below land each listener back.
-	out = out[:0]
+	out := listenerSnapshotPools[bucket].Get().(*[]Listener)
+	*out = (*out)[:0]
 	for _, e := range l.entries {
-		out = append(out, e.fn)
+		*out = append(*out, e.fn)
 	}
 	return out
 }
@@ -337,7 +324,7 @@ func poolBucket(n int) int {
 	}
 }
 
-// releaseListenerSnapshot hands snap back to the appropriate pool.
+// releaseListenerSnapshot returns the same slice header to its pool without allocating.
 // No-op for nil (the empty-set fast path from snapshot). Callers MUST
 // drop every reference to snap after calling this — a later fire
 // will recycle the backing array and any retained alias would race
@@ -349,14 +336,14 @@ func poolBucket(n int) int {
 // cap matches; the bucket-down rule means an over-large slice
 // lands in the largest pool slot, which is the correct home for
 // the next fire that happens to need that much room.
-func releaseListenerSnapshot(snap []Listener) {
+func releaseListenerSnapshot(snap *[]Listener) {
 	if snap == nil {
 		return
 	}
 	// Clear listener references so the pool doesn't pin payload
 	// closures (each Listener may close over arbitrary state).
-	clear(snap)
-	bucket := poolBucket(cap(snap))
-	snap = snap[:0]
-	listenerSnapshotPools[bucket].Put(&snap)
+	clear(*snap)
+	bucket := poolBucket(cap(*snap))
+	*snap = (*snap)[:0]
+	listenerSnapshotPools[bucket].Put(snap)
 }

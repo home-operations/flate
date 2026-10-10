@@ -318,9 +318,8 @@ data: {k: v}
 // same file and pointing at the SAME spec.path. They are peers (neither
 // renders the other), so they must not be wired as each other's
 // structural parent — a mutual parent edge deadlocks the pair in
-// collectDeps until the 30s per-dep timeout, cascading to anything that
-// dependsOn one of them. The run context is bounded so a regression
-// fails fast instead of riding the full DefaultTimeout.
+// collectDeps and stalls their dependents. The context timeout bounds
+// the run if a mutual parent edge regresses.
 func TestOrchestrator_TwoKSSameSpecPathNoSpuriousTimeout(t *testing.T) {
 	dir := t.TempDir()
 	// Two KSes, same spec.path ./flux, both defined in flux/repo.yaml so
@@ -375,8 +374,7 @@ data: {k: v}
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	// Bounded so a regressed mutual-parent deadlock fails in seconds, not
-	// the full 30s depwait.DefaultTimeout.
+	// The context timeout bounds a regressed mutual-parent deadlock.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := o.Run(ctx); err != nil {
@@ -567,7 +565,7 @@ spec:
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	// Bounded so a regressed self-deadlock fails fast, not at the full 30s cap.
+	// The context timeout bounds a regressed self-deadlock.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := o.Run(ctx); err != nil {

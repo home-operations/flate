@@ -246,7 +246,7 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 		return
 	}
 	sh.setLocked(id, obj)
-	dispatch := s.fireUnderLock(EventObjectAdded, id, obj)
+	dispatch := fireUnderLock(s, EventObjectAdded, id, obj)
 	sh.mu.Unlock()
 	dispatch()
 }
@@ -285,7 +285,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 				continue
 			}
 			sh.setLocked(id, obj)
-			dispatches = append(dispatches, s.fireUnderLock(EventObjectAdded, id, obj))
+			dispatches = append(dispatches, fireUnderLock(s, EventObjectAdded, id, obj))
 		}
 		sh.mu.Unlock()
 	}
@@ -355,12 +355,12 @@ func (s *Store) Refire(id manifest.NamedResource) {
 		sh.mu.Unlock()
 		return
 	}
-	updated, changed := sh.setConditionLocked(id, readyCondition(StatusPending, MsgRefetching), conditionRecord{})
-	dispatchObj := s.fireUnderLock(EventObjectAdded, id, obj)
+	updated, changed := sh.setConditionLocked(id, readyCondition(StatusPending, MsgRefetching), nil)
+	dispatchObj := fireUnderLock(s, EventObjectAdded, id, obj)
 	var dispatchStatus func()
 	if changed {
 		info, _ := updated.statusInfo()
-		dispatchStatus = s.fireUnderLock(EventStatusUpdated, id, info)
+		dispatchStatus = fireUnderLock(s, EventStatusUpdated, id, info)
 	}
 	sh.mu.Unlock()
 	if dispatchStatus != nil {
@@ -381,7 +381,7 @@ func (s *Store) AddRendered(obj manifest.BaseManifest) {
 		return
 	}
 	sh.setLocked(id, obj)
-	dispatch := s.fireUnderLock(EventObjectAdded, id, obj)
+	dispatch := fireUnderLock(s, EventObjectAdded, id, obj)
 	sh.mu.Unlock()
 	dispatch()
 }

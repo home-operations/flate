@@ -156,7 +156,7 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	// A short bounded context: the structural fixpoint must terminate well
-	// within it (no per-dep timeout cap). A regression that reintroduces a
+	// within it. A regression that reintroduces a
 	// blocking wait would hit this deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 20_000_000_000) // 20s ceiling
 	defer cancel()

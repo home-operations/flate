@@ -84,16 +84,13 @@ type Result struct {
 	// orchestrator forwards it to lazy-promotion so SOPS Secrets
 	// stay wiped on demand the same way they were at file-load.
 	WipeSecrets bool
+	// DisableChartDigestTracking reflects inline instance patches in file-parsed
+	// HelmReleases, including releases kept out of the store by DiscoveryOnly.
+	DisableChartDigestTracking bool
 }
 
 // Config is the input contract for Run. Store is mandatory.
 type Config struct {
-	// OnHelmRelease observes file-parsed releases synchronously before
-	// discovery admission, including Kustomization-owned releases. Nil disables
-	// observation. Callbacks must not retain or mutate releases, touch the store,
-	// or allocate. Separate Load roots may parse and observe a file again.
-	// The callback MUST be invoked from a single goroutine.
-	OnHelmRelease func(*manifest.HelmRelease)
 	// Path is the scan entry point — the directory the file walker
 	// starts at (a Flux cluster's entry, e.g. kubernetes/flux/cluster).
 	Path string
@@ -142,7 +139,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	l := loader.New(cfg.Store)
 	l.Options.WipeSecrets = cfg.WipeSecrets
-	l.Options.OnHelmRelease = cfg.OnHelmRelease
 	// Render-driven discovery: only Kustomizations and the discovery-
 	// meta pair (ResourceSet, RSIP) reach the Store from the file
 	// walker. HRs, sources, CMs, Secrets, and raw manifests flow
@@ -248,14 +244,15 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 	return &Result{
-		RepoRoot:    repoRoot,
-		SourceFiles: d.sourceFiles,
-		SourceRefs:  d.sourceRefs,
-		ParentOf:    parentOf,
-		SelfProduce: selfProduce,
-		Producers:   producers,
-		Existence:   l.Existence,
-		WipeSecrets: cfg.WipeSecrets,
+		RepoRoot:                   repoRoot,
+		SourceFiles:                d.sourceFiles,
+		SourceRefs:                 d.sourceRefs,
+		ParentOf:                   parentOf,
+		SelfProduce:                selfProduce,
+		Producers:                  producers,
+		Existence:                  l.Existence,
+		WipeSecrets:                cfg.WipeSecrets,
+		DisableChartDigestTracking: l.DisableChartDigestTracking,
 	}, nil
 }
 

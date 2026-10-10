@@ -1677,9 +1677,12 @@ spec:
 				}
 				id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
 				hr, ok := o.store.Get[*manifest.HelmRelease](id)
-				if !ok || !disablesChartDigestTracking(hr) {
+				if !ok {
 					t.Fatal("qualifying rendered release missing")
 				}
+				instance := hr.Values["instance"].(map[string]any)
+				patches := instance["kustomize"].(map[string]any)["patches"].([]any)
+				assert.Equal(t, strings.Contains(patches[0].(map[string]any)["patch"].(string), "DisableChartDigestTracking=true"), true)
 				assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
 				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, producer == "file")
 				ks := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}

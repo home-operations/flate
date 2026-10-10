@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -1167,90 +1166,6 @@ brokenPointer: [ unclosed
 			}
 			if !strings.Contains(err.Error(), "blackbox-exporter.yaml") {
 				t.Errorf("Load error must name the malformed file; got: %v", err)
-			}
-		})
-	}
-}
-
-func TestLoader_OnHelmRelease(t *testing.T) {
-	for _, tc := range []struct {
-		name                               string
-		discovery, observe, preferExisting bool
-	}{
-		{name: "ordinary", observe: true},
-		{name: "discovery", discovery: true, observe: true},
-		{name: "nil ordinary"},
-		{name: "nil discovery", discovery: true},
-		{name: "prefer existing", preferExisting: true, observe: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: first, namespace: apps}
-spec: {suspend: true, chartRef: {kind: OCIRepository, name: fixture}}
----
-apiVersion: v1
-kind: ConfigMap
-metadata: {name: config, namespace: apps}
----
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: second, namespace: apps}
-spec: {suspend: true, chartRef: {kind: OCIRepository, name: fixture}}
-`)
-			st := store.New()
-			l := New(st)
-			l.Options.DiscoveryOnly = tc.discovery
-			l.PreferExisting = tc.preferExisting
-			l.Existence = NewExistenceIndex()
-			first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
-			if tc.preferExisting {
-				st.AddObject(first)
-			}
-			var observations [2]int
-			if tc.observe {
-				l.Options.OnHelmRelease = func(hr *manifest.HelmRelease) {
-					switch hr.Name {
-					case "first":
-						observations[0]++
-					case "second":
-						observations[1]++
-					}
-				}
-			}
-			for round := range 2 {
-				count, err := l.Load(t.Context(), dir)
-				if err != nil {
-					t.Fatal(err)
-				}
-				wantCount := 3
-				if tc.discovery {
-					wantCount = 0
-				} else if tc.preferExisting {
-					wantCount = 2
-					if round == 1 {
-						wantCount = 0
-					}
-				}
-				assert.Equal(t, count, wantCount)
-				for _, name := range []string{"first", "second"} {
-					id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: name}
-					assert.Equal(t, st.GetObject(id) != nil, !tc.discovery)
-					path, exists := l.Existence.Get(id)
-					assert.Equal(t, exists, tc.discovery)
-					if exists {
-						assert.Equal(t, path, filepath.Join(dir, "bundle.yaml"))
-					}
-				}
-			}
-			want := [2]int{}
-			if tc.observe {
-				want = [2]int{2, 2}
-			}
-			assert.Equal(t, observations, want)
-			if tc.preferExisting {
-				assert.Equal(t, st.GetObject(first.Named()), manifest.BaseManifest(first))
 			}
 		})
 	}

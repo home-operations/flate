@@ -667,23 +667,13 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if o.bootstrapped {
 		return nil
 	}
-	disableChartDigestTracking := false
-	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
-		disableChartDigestTracking = *requested
-	}
-	discoveryCfg := discovery.Config{
+	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
 		KRMIgnoreFile: o.cfg.KRMIgnoreFile,
 		Store:         o.store, WipeSecrets: o.cfg.WipeSecrets,
 		ComponentCache: o.componentCache,
 		SourceCache:    o.sourceCache,
-	}
-	if o.cfg.DisableChartDigestTracking == nil {
-		discoveryCfg.OnHelmRelease = func(hr *manifest.HelmRelease) {
-			disableChartDigestTracking = disableChartDigestTracking || disablesChartDigestTracking(hr)
-		}
-	}
-	res, err := discovery.Run(ctx, discoveryCfg)
+	})
 	if err != nil {
 		return err
 	}
@@ -700,7 +690,10 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err
 	}
-	o.hrc.Options.DisableChartDigestTracking = disableChartDigestTracking
+	o.hrc.Options.DisableChartDigestTracking = res.DisableChartDigestTracking
+	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
+		o.hrc.Options.DisableChartDigestTracking = *requested
+	}
 	o.bootstrapped = true
 	return nil
 }

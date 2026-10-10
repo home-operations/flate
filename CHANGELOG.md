@@ -1,5 +1,117 @@
 # Changelog
 
+## [0.6.6](https://github.com/home-operations/flate/compare/v0.6.5...v0.6.6) (2026-10-10)
+
+
+### Features
+
+* **baseline:** fetch an explicit --base from origin when it is not local ([#1016](https://github.com/home-operations/flate/issues/1016)) ([e4d7513](https://github.com/home-operations/flate/commit/e4d7513116991d494465a5320c60b8993dd9e7b3))
+* **go:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.59.0 → v0.60.0) ([#984](https://github.com/home-operations/flate/issues/984)) ([7afccce](https://github.com/home-operations/flate/commit/7afccceb6ef08ceaa0bc66d9d381fa6b4ef9ad35))
+* **go:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.60.0 → v0.61.0) ([#1045](https://github.com/home-operations/flate/issues/1045)) ([cecbe1b](https://github.com/home-operations/flate/commit/cecbe1bbb6787271d84de9ac14156ea6c46e9adc))
+* **go:** update module github.com/fluxcd/pkg/apis/kustomize (v1.20.0 → v1.21.0) ([#990](https://github.com/home-operations/flate/issues/990)) ([63df829](https://github.com/home-operations/flate/commit/63df829f9c4ed3a2014efe5de0d8d00618430ff9))
+* **go:** update module github.com/fluxcd/pkg/apis/meta (v1.31.0 → v1.32.0) ([#991](https://github.com/home-operations/flate/issues/991)) ([ffe0bdf](https://github.com/home-operations/flate/commit/ffe0bdf070c918b0675defa38709271c78e6053c))
+* **go:** update module github.com/fluxcd/pkg/kustomize (v1.40.0 → v1.41.0) ([#992](https://github.com/home-operations/flate/issues/992)) ([b853de3](https://github.com/home-operations/flate/commit/b853de3d38963fa4cc774632e71f833855e58dd8))
+* **go:** update module golang.org/x/crypto (v0.55.0 → v0.56.0) ([#968](https://github.com/home-operations/flate/issues/968)) ([26b09b4](https://github.com/home-operations/flate/commit/26b09b4775c5ae821c0960faaf07e9148c8bef88))
+* **go:** update module golang.org/x/crypto (v0.56.0 → v0.57.0) ([#979](https://github.com/home-operations/flate/issues/979)) ([07d4e3d](https://github.com/home-operations/flate/commit/07d4e3d8b8a379b5d942367527f726568343e083))
+* **go:** update module golang.org/x/sync (v0.22.0 → v0.23.0) ([#977](https://github.com/home-operations/flate/issues/977)) ([ab9b215](https://github.com/home-operations/flate/commit/ab9b2157ef254c2b7f54c27ef0a0f0fd1c50af0a))
+* **go:** update module golang.org/x/sync (v0.23.0 → v0.24.0) ([#1049](https://github.com/home-operations/flate/issues/1049)) ([edc0641](https://github.com/home-operations/flate/commit/edc06414a794eeca3db865c3a91c9aae67a80c7e))
+* **go:** update module helm.sh/helm/v4 (v4.2.4 → v4.3.0) ([#982](https://github.com/home-operations/flate/issues/982)) ([c97e789](https://github.com/home-operations/flate/commit/c97e789bc0724b029c54b13ed2578a9e22795c6d))
+* **helm:** honor DisableChartDigestTracking from the flux-instance release ([#1035](https://github.com/home-operations/flate/issues/1035)) ([ff32c0b](https://github.com/home-operations/flate/commit/ff32c0becff81024e2f2ba6b81a6c53889936fd5))
+* **substitution:** external substituteFrom inputs, overlay values and strict expansion ([#1048](https://github.com/home-operations/flate/issues/1048)) ([0abb18e](https://github.com/home-operations/flate/commit/0abb18e8e653de821859b9aef37ccd4733e61627))
+* **tree:** immutable trees and private render overlays ([#1058](https://github.com/home-operations/flate/issues/1058)) ([f015d21](https://github.com/home-operations/flate/commit/f015d215f217a633356e2168bdc093c59b93913b))
+
+
+### Bug Fixes
+
+* **change:** attribute git diff paths to the correct comparison root ([#1033](https://github.com/home-operations/flate/issues/1033)) ([f9bf3c8](https://github.com/home-operations/flate/commit/f9bf3c8ad66e82b24559646b91c9f2302bffba61))
+* **change:** decide changed files by the rules Flux ships ([#1057](https://github.com/home-operations/flate/issues/1057)) ([32953b3](https://github.com/home-operations/flate/commit/32953b3ecf44482e50211e33e91d97f07bf4dae4))
+* **cli:** scope the exit status of a named build to the selected objects and their dependencies ([#1052](https://github.com/home-operations/flate/issues/1052)) ([16783e7](https://github.com/home-operations/flate/commit/16783e74376ec646b2bb78bcd6440228554322a0))
+* **depwait:** resolve dependsOn dependencies consistently ([#1027](https://github.com/home-operations/flate/issues/1027)) ([c78f96c](https://github.com/home-operations/flate/commit/c78f96ce79d4b188487b0dd5ad8c33efea03c183))
+* **diff:** alias explicit baselines and disclose external skips ([#1020](https://github.com/home-operations/flate/issues/1020)) ([184d096](https://github.com/home-operations/flate/commit/184d096b6907ca0364bda89d6395abe17ff5792d))
+* **diff:** preserve explicit baseline identity and disclose external skips ([#1028](https://github.com/home-operations/flate/issues/1028)) ([e641f73](https://github.com/home-operations/flate/commit/e641f73de5c55b69d9f46a57084613e78e0d2490))
+* **discovery:** follow an empty spec.path as the source root, like Flux ([#1062](https://github.com/home-operations/flate/issues/1062)) ([913f885](https://github.com/home-operations/flate/commit/913f885233c127b78b786e483d0971168c72be08))
+* **discovery:** honor GitRepository spec.ref when aliasing an in-tree source ([#1038](https://github.com/home-operations/flate/issues/1038)) ([25a1ff7](https://github.com/home-operations/flate/commit/25a1ff72f6442ed2a157d271d588f2df80a4f72b))
+* **discovery:** respect graph ownership when promoting orphans ([#1032](https://github.com/home-operations/flate/issues/1032)) ([89021c6](https://github.com/home-operations/flate/commit/89021c61f16d0d6fc8919442c90a19cf88f0f406))
+* **go:** update kubernetes monorepo (v0.37.0 → v0.37.1) ([#1002](https://github.com/home-operations/flate/issues/1002)) ([d68bc06](https://github.com/home-operations/flate/commit/d68bc06c4de8ea2736e3b263ba7ddb1370ab5243))
+* **go:** update module charm.land/bubbletea/v2 (v2.0.9 → v2.0.10) ([#1003](https://github.com/home-operations/flate/issues/1003)) ([822523c](https://github.com/home-operations/flate/commit/822523cafeebcbb55261595afb6ae2bcae1f0898))
+* **go:** update module github.com/fluxcd/helm-controller/api (v1.6.4 → v1.6.5) ([#1030](https://github.com/home-operations/flate/issues/1030)) ([906543a](https://github.com/home-operations/flate/commit/906543aee06c190fc4e25ba9101b38a629b824fd))
+* **go:** update module github.com/fluxcd/kustomize-controller/api (v1.9.5 → v1.9.6) ([#1034](https://github.com/home-operations/flate/issues/1034)) ([aeb3868](https://github.com/home-operations/flate/commit/aeb38684d43c938766f8eeb3d90d134c0cf9b4a8))
+* **go:** update module github.com/fluxcd/source-controller/api (v1.9.5 → v1.9.6) ([#1036](https://github.com/home-operations/flate/issues/1036)) ([9cc1992](https://github.com/home-operations/flate/commit/9cc199285f1400462c0f742b4793075ce7535f2e))
+* **go:** update module github.com/go-git/go-git/v5 (v5.19.2 → v5.19.3) ([#1040](https://github.com/home-operations/flate/issues/1040)) ([fda43b7](https://github.com/home-operations/flate/commit/fda43b75e4e55112d5a9d39b1bbc8643bb923eca))
+* **go:** update module github.com/klauspost/compress (v1.20.0 → v1.20.1) ([#1006](https://github.com/home-operations/flate/issues/1006)) ([755ce86](https://github.com/home-operations/flate/commit/755ce865ee63ddebe317fd65c1a0340c177c171b))
+* **go:** update module sigs.k8s.io/kustomize/api (v0.21.1 → v0.21.2) ([#1041](https://github.com/home-operations/flate/issues/1041)) ([189dc1c](https://github.com/home-operations/flate/commit/189dc1c3cfa2b5261d652c4cf7692345b7f0a2d6))
+* **go:** update module sigs.k8s.io/kustomize/kyaml (v0.21.1 → v0.21.2) ([#1042](https://github.com/home-operations/flate/issues/1042)) ([1380f7c](https://github.com/home-operations/flate/commit/1380f7cdca1c95536fa2729b8c09d364d3f2feae))
+* **helmchart:** send HelmRepository basic auth to the repo host ([#1014](https://github.com/home-operations/flate/issues/1014)) ([f284b8e](https://github.com/home-operations/flate/commit/f284b8e1ea00cdbdd024557b62ec469d92608c05))
+* **helm:** do not render CRDs that --skip-crds will drop ([#1056](https://github.com/home-operations/flate/issues/1056)) ([484a797](https://github.com/home-operations/flate/commit/484a797c8ed9cdbf6fbd03829ae0a6655113591c))
+* **helm:** track resolved OCI chart digests for chartRef OCIRepository releases ([#1031](https://github.com/home-operations/flate/issues/1031)) ([4000e3a](https://github.com/home-operations/flate/commit/4000e3ad4ef8f914756cf96c6c142847ffaca73b))
+* **helm:** validate chart CRD files Flux would apply ([#1061](https://github.com/home-operations/flate/issues/1061)) ([64c99d3](https://github.com/home-operations/flate/commit/64c99d3b1f04a208abdac0bae728b14c2783a7b7))
+* **image:** preserve tags in digest-pinned references ([#1019](https://github.com/home-operations/flate/issues/1019)) ([fe96ac1](https://github.com/home-operations/flate/commit/fe96ac1e9eb471d43a272daa5335256038c45539))
+* **kustomization:** substitute defaults with empty postBuild variables ([#1018](https://github.com/home-operations/flate/issues/1018)) ([ae53a54](https://github.com/home-operations/flate/commit/ae53a545d6e131de6403408437657dc516c06d75))
+* **loader:** fail the run on a malformed manifest instead of skipping it ([#974](https://github.com/home-operations/flate/issues/974)) ([ca451d3](https://github.com/home-operations/flate/commit/ca451d3a54cb683e9619eabe2de2157ebddbe69c))
+* **resourceset:** keep cluster-scoped dependsOn targets namespace-less and add --allow-missing-crds ([#1050](https://github.com/home-operations/flate/issues/1050)) ([35bbfa1](https://github.com/home-operations/flate/commit/35bbfa12b58c99383b13f2c4aaf7188972ef41e8))
+* **schedule:** avoid charging no-op sweeps to redispatch cap ([#1029](https://github.com/home-operations/flate/issues/1029)) ([50d6b80](https://github.com/home-operations/flate/commit/50d6b80a74b07b102b6f03ef6b43899e2cd06212))
+* **schedule:** prevent parallel reconcile livelock ([#1022](https://github.com/home-operations/flate/issues/1022)) ([9986f2e](https://github.com/home-operations/flate/commit/9986f2eb0952d3ae925a2668df8d10fd42ab6cf7))
+* **schedule:** simplify stop state and dependency wake ordering ([#1054](https://github.com/home-operations/flate/issues/1054)) ([94896ab](https://github.com/home-operations/flate/commit/94896abddfeb532e53d2a1fd12b70bb68da9d33a))
+* **source:** fall back to the registry config when an OCI secretRef cannot resolve offline ([#1063](https://github.com/home-operations/flate/issues/1063)) ([fef66c9](https://github.com/home-operations/flate/commit/fef66c989800169a68b89acd432187c729cf7dbc))
+* **source:** replace default excludes with user patterns ([#1021](https://github.com/home-operations/flate/issues/1021)) ([c7db350](https://github.com/home-operations/flate/commit/c7db3506189ff9735838c8847f3b37d57ff37732))
+* **source:** verify sourceignore parity and version artifact caches ([#1047](https://github.com/home-operations/flate/issues/1047)) ([c626084](https://github.com/home-operations/flate/commit/c626084da7f3a413ed69041d247df4739bf21b17))
+* **source:** wait for rendered Secrets ([#981](https://github.com/home-operations/flate/issues/981)) ([86f9e73](https://github.com/home-operations/flate/commit/86f9e73c74668573fdc5958b2f368f8b32ce7d13))
+
+
+### Performance Improvements
+
+* **cli:** derive a soft memory limit from the cgroup limit ([#1055](https://github.com/home-operations/flate/issues/1055)) ([993f39f](https://github.com/home-operations/flate/commit/993f39fd2be715f2fbade657cb4585eddaaf2e2e))
+* **diskcache:** bound the zstd encoder pool ([#1053](https://github.com/home-operations/flate/issues/1053)) ([99d1893](https://github.com/home-operations/flate/commit/99d1893c014ce51d6459bc214f526fba7ae19044))
+* **schedule:** take recovery progress tracking off the per-arrival path ([#1046](https://github.com/home-operations/flate/issues/1046)) ([e019f85](https://github.com/home-operations/flate/commit/e019f85a63864ac678f5c3bf03632599504f29db))
+
+
+### Code Refactoring
+
+* **cli:** remove redundant buffered output filtering ([#1066](https://github.com/home-operations/flate/issues/1066)) ([37286ec](https://github.com/home-operations/flate/commit/37286ec9743089a0c1f4e7e421f2a35b3e930d91))
+* **helm:** decide chart digest tracking once, as a plain bool ([#1064](https://github.com/home-operations/flate/issues/1064)) ([11cc6c4](https://github.com/home-operations/flate/commit/11cc6c40be35fd48c2255595af71c11673482f72))
+* **helm:** one OCI chart identity and a nullable digest-tracking option ([#1051](https://github.com/home-operations/flate/issues/1051)) ([a05b0b0](https://github.com/home-operations/flate/commit/a05b0b0d56926eef8492c409469cbb30dbde7702))
+
+
+### Documentation
+
+* **agents:** clean up touched code and require elegant code ([#1065](https://github.com/home-operations/flate/issues/1065)) ([88d8ae2](https://github.com/home-operations/flate/commit/88d8ae24ba1c127655855cde29e7f2dac10421e2))
+* **agents:** point to the org AI Usage Policy instead of restating it ([c127966](https://github.com/home-operations/flate/commit/c127966d9a791bc56f6a76a76469224534376c10))
+* **agents:** rewrite AGENTS.md from a codebase audit ([#1026](https://github.com/home-operations/flate/issues/1026)) ([72e1bb4](https://github.com/home-operations/flate/commit/72e1bb40cfb48baef32e10352477c737dee87b4e))
+* **agents:** update AI usage policy summary ([dc2a75d](https://github.com/home-operations/flate/commit/dc2a75d433ca3f9945fcdca6fd0606c4c24c48af))
+
+
+### Continuous Integration
+
+* **github-action:** Update action home-operations/.github/actions/workflow-lint (v1.0.3 → v1.0.4) ([#997](https://github.com/home-operations/flate/issues/997)) ([43070b1](https://github.com/home-operations/flate/commit/43070b194a46ba17b10b0ea8be6904d7dad5f643))
+* **renovate:** remove the dispatch workflow ([b83426d](https://github.com/home-operations/flate/commit/b83426d67aa1c716a32fc0e645aca124ac7531ff))
+
+
+### Miscellaneous Chores
+
+* **github-action:** update action jdx/mise-action (v4.3.0 → v5.0.0) ([#1010](https://github.com/home-operations/flate/issues/1010)) ([e59896c](https://github.com/home-operations/flate/commit/e59896c793b5bec9fd7ca2734ac2b176763ae5da))
+* **github-action:** update action jdx/mise-action (v5.0.1 → v5.1.1) ([#1043](https://github.com/home-operations/flate/issues/1043)) ([936baa3](https://github.com/home-operations/flate/commit/936baa32db7497317eea2d8771cc7df22060e277))
+* **github-action:** update action ubuntu (24.04 → 26.04) ([#996](https://github.com/home-operations/flate/issues/996)) ([cacd25c](https://github.com/home-operations/flate/commit/cacd25c7059806e50f988d28f9039df9196786b1))
+* **github-action:** update github-actions ([#1013](https://github.com/home-operations/flate/issues/1013)) ([912689c](https://github.com/home-operations/flate/commit/912689cdf6771875fd2609de56707d6c8f5feb6a))
+* **github-action:** update github-actions ([#1059](https://github.com/home-operations/flate/issues/1059)) ([afe0437](https://github.com/home-operations/flate/commit/afe043776b54a04ca7f1933fbd0ec9b16cd27e6f))
+* **mise:** bump Go to 1.27.2 [fl-jasji] ([#1037](https://github.com/home-operations/flate/issues/1037)) ([1c293da](https://github.com/home-operations/flate/commit/1c293dabe79223d44ea80cbac4d344d6dc3cfcb5))
+* **mise:** update tool go (1.27.0 → 1.27.1) ([#973](https://github.com/home-operations/flate/issues/973)) ([cc80a29](https://github.com/home-operations/flate/commit/cc80a29d6cebef9d52dc6199db995265bc98ba89))
+* **mise:** update tool go:golang.org/x/vuln/cmd/govulncheck (1.7.0 → v1.8.0) ([#978](https://github.com/home-operations/flate/issues/978)) ([0231ced](https://github.com/home-operations/flate/commit/0231ced4ecd4c2d7333505b10c417d2b3e28e520))
+* **mise:** update tool golangci-lint (2.13.2 → 2.14.0) ([#1007](https://github.com/home-operations/flate/issues/1007)) ([2e5aa3f](https://github.com/home-operations/flate/commit/2e5aa3f729477baa631486ce9b92a5df197286c2))
+* **mise:** update tool lefthook (2.1.12 → 2.1.14) ([#994](https://github.com/home-operations/flate/issues/994)) ([7cad552](https://github.com/home-operations/flate/commit/7cad552ae71596a7cc9af6b822c43b094ccc0eef))
+* **mise:** update tool lefthook (2.1.14 → 2.1.15) ([#1011](https://github.com/home-operations/flate/issues/1011)) ([91683cb](https://github.com/home-operations/flate/commit/91683cb202a4f341994b89c7ee069e711e7b4f93))
+* **mise:** update tool lefthook (2.1.15 → 2.1.16) ([#1017](https://github.com/home-operations/flate/issues/1017)) ([63c489f](https://github.com/home-operations/flate/commit/63c489f4ba2eb9862297a5cb4928d92f35acecd8))
+* **mise:** update tool lefthook (2.1.16 → 2.1.17) ([#1023](https://github.com/home-operations/flate/issues/1023)) ([e2dadbf](https://github.com/home-operations/flate/commit/e2dadbf12c609f68339c1ac69d913f9fdc90bd9b))
+* **mise:** update tool oxfmt (0.65.0 → 0.66.0) ([#972](https://github.com/home-operations/flate/issues/972)) ([1ad27b6](https://github.com/home-operations/flate/commit/1ad27b6ccfe72f2f9dcb22d637ffe753083133fb))
+* **mise:** update tool oxfmt (0.66.0 → 0.67.0) ([#983](https://github.com/home-operations/flate/issues/983)) ([e8151a0](https://github.com/home-operations/flate/commit/e8151a027bc6cfc3e530d3a6a972bd4a4596fd36))
+* **mise:** update tool oxfmt (0.67.0 → 0.68.0) ([#995](https://github.com/home-operations/flate/issues/995)) ([a0384e0](https://github.com/home-operations/flate/commit/a0384e04e53209c1ac9fe6a902168e082ea4beff))
+* **mise:** update tool oxfmt (0.68.0 → 0.69.0) ([#1004](https://github.com/home-operations/flate/issues/1004)) ([9737507](https://github.com/home-operations/flate/commit/97375076fd7d0cdc935cc85508c7e45793309c2f))
+* **mise:** update tool oxfmt (0.69.0 → 0.70.0) ([#1005](https://github.com/home-operations/flate/issues/1005)) ([8bdc2d1](https://github.com/home-operations/flate/commit/8bdc2d11d0e34452885e8528f6c7b5801fc953f9))
+* **mise:** update tool oxfmt (0.70.0 → 0.71.0) ([#1009](https://github.com/home-operations/flate/issues/1009)) ([5c3e8af](https://github.com/home-operations/flate/commit/5c3e8af2496a075de8e0dae87b6e1d3faaaead90))
+* **mise:** update tool oxfmt (0.71.0 → 0.72.0) ([#1044](https://github.com/home-operations/flate/issues/1044)) ([cb4b734](https://github.com/home-operations/flate/commit/cb4b7344dd826670b24c39d02768413411d676a9))
+* **mise:** update tool zizmor (1.29.0 → 1.30.0) ([#967](https://github.com/home-operations/flate/issues/967)) ([b80598c](https://github.com/home-operations/flate/commit/b80598cd58c164d79ee38eb20cdacf4a75573a25))
+* **mise:** update tool zizmor (1.30.0 → 1.30.1) ([#985](https://github.com/home-operations/flate/issues/985)) ([123366d](https://github.com/home-operations/flate/commit/123366dc5c17f0f86418be95b55e000d9b29040f))
+* **mise:** upgrade lockfile to format revision 3 ([e06823f](https://github.com/home-operations/flate/commit/e06823fb218e4ac341390034c09270efa400d5cb))
+
 ## [0.6.5](https://github.com/home-operations/flate/compare/v0.6.4...v0.6.5) (2026-09-02)
 
 

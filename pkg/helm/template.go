@@ -1,10 +1,12 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -110,6 +112,27 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 	}
 
+	if opts.SkipCRDs && hr.CRDsPolicy != "Skip" {
+		crds := loaded.Chart.CRDObjects()
+		for _, crd := range crds {
+			docs, err := manifest.DecodeDocs(crdReader(crd))
+			for _, doc := range docs {
+				manifest.ReleaseDoc(doc)
+			}
+			if err != nil {
+				// Full-stream diagnostics preserve Helm's line numbers across CRD files.
+				readers := make([]io.Reader, len(crds))
+				for i, crd := range crds {
+					readers[i] = crdReader(crd)
+				}
+				if _, fullErr := manifest.DecodeDocs(io.MultiReader(readers...)); fullErr != nil {
+					err = fullErr
+				}
+				return "", err
+			}
+		}
+	}
+
 	rel, err := inst.RunWithContext(ctx, loaded.Chart, finalValues)
 	if err != nil {
 		return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
@@ -128,6 +151,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		c.templateCache.Put(key, out)
 	}
 	return out, nil
+}
+
+func crdReader(crd chart.CRD) io.Reader {
+	return io.MultiReader(strings.NewReader("---\n# Source: "+crd.Filename+"\n"),
+		bytes.NewReader(crd.File.Data), strings.NewReader("\n"))
 }
 
 // schemaValidationSkipped reports whether to bypass helm's values.schema.json

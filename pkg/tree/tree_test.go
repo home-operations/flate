@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -157,6 +158,8 @@ func TestTree_MethodErrors(t *testing.T) {
 func TestTree_SymlinkContract(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "file", "root")
+	absoluteTarget := filepath.ToSlash(filepath.Join(root, "file"))
+	absoluteTarget = strings.TrimPrefix(absoluteTarget, filepath.ToSlash(filepath.VolumeName(root)))
 	b := tree.NewBuilder(nil)
 	must(t, b.AddFile("file", []byte("root"), 0o600))
 	must(t, b.AddFile("d/file", []byte("parent"), 0o600))
@@ -169,7 +172,7 @@ func TestTree_SymlinkContract(t *testing.T) {
 		{name: "loop", target: "loop"},
 		{name: "escape", target: "../file"},
 		{name: "absolute-absent", target: "/absent-target"},
-		{name: "absolute-in-root", target: filepath.Join(root, "file")},
+		{name: "absolute-in-root", target: absoluteTarget},
 		{name: "root-link", target: "."},
 		{name: "pair-a", target: "pair-b"},
 		{name: "pair-b", target: "pair-a"},

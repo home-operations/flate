@@ -127,6 +127,17 @@ spec:
 								args = append(args, "--base", "HEAD", "-o", "diff")
 							}
 							out, stderr, code := runCLIBuffers(args...)
+							if tt.sourceURL != "" {
+								wantCode, wantReason := 0, "external source GitRepository/flux-system/pinned is outside the local tree; not rendered"
+								if command == "build" {
+									wantCode, wantReason = 1, "repository not found"
+								}
+								if code != wantCode || !strings.Contains(stderr, wantReason) || strings.Contains(stderr, wantError) ||
+									transport.calls.Load() != 0 || (command == "diff" && out != "") {
+									t.Fatalf("external source must release the working-tree error: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+								}
+								return
+							}
 							if wantError != "" {
 								if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
 									t.Fatalf("unpinned decode error: exit=%d transport=%d\n%s\nstderr (-want +got):\n%s", code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
@@ -179,8 +190,8 @@ spec:
 
 func TestE2E_SourceRef_HeldErrorScope(t *testing.T) {
 	for _, tt := range []struct {
-		name, kind, sourceName, url, ref string
-		unreadable, bothHeld             bool
+		name, kind, sourceName, url, ref    string
+		unreadable, bothHeld, reversedPaths bool
 	}{
 		{name: "oci", kind: "OCIRepository", sourceName: "second"},
 		{name: "bootstrap", kind: "GitRepository", sourceName: "flux-system"},
@@ -188,6 +199,7 @@ func TestE2E_SourceRef_HeldErrorScope(t *testing.T) {
 		{name: "non_matching_url", kind: "GitRepository", sourceName: "second", url: "git://fixture.invalid/other"},
 		{name: "non_decode_error", kind: "GitRepository", sourceName: "second", unreadable: true},
 		{name: "two_held", kind: "GitRepository", sourceName: "second", bothHeld: true},
+		{name: "two_held_path_order", kind: "GitRepository", sourceName: "second", bothHeld: true, reversedPaths: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -207,8 +219,12 @@ spec:
   sourceRef: {kind: `+kind+`, name: `+sourceName+`}
 `)
 			}
-			writeConsumer("a-held", "held", "GitRepository", "held")
-			writeConsumer("b-second", "second", tt.kind, tt.sourceName)
+			heldPath, secondPath := "held", "second"
+			if tt.reversedPaths {
+				heldPath, secondPath = "z-held", "a-second"
+			}
+			writeConsumer("a-held", heldPath, "GitRepository", "held")
+			writeConsumer("b-second", secondPath, tt.kind, tt.sourceName)
 			writeConsumer("z-sources", "sources", "GitRepository", "flux-system")
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [held.yaml]\n")
 			testutil.WriteFile(t, root, "sources/held.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
@@ -237,22 +253,22 @@ metadata: {name: second, namespace: flux-system}
 spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 `)
 			}
-			for _, path := range []string{"held", "second"} {
+			for _, path := range []string{heldPath, secondPath} {
 				testutil.WriteFile(t, root, path+"/kustomization.yaml", "resources: [extra.yaml]\n")
 				testutil.WriteFile(t, root, path+"/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra}\n")
 			}
 			gitCommitAll(t, repo)
-			testutil.WriteFile(t, root, "held/extra.yaml", "metadata: {name: held\n")
+			testutil.WriteFile(t, root, heldPath+"/extra.yaml", "metadata: {name: held\n")
 			if tt.unreadable {
-				file := filepath.Join(root, "second/extra.yaml")
+				file := filepath.Join(root, secondPath+"/extra.yaml")
 				if err := os.Chmod(file, 0); err != nil {
 					t.Skipf("cannot make file unreadable: %v", err)
 				}
 				t.Cleanup(func() { _ = os.Chmod(file, 0o600) })
 			} else {
-				testutil.WriteFile(t, root, "second/extra.yaml", "metadata: {name: second\n")
+				testutil.WriteFile(t, root, secondPath+"/extra.yaml", "metadata: {name: second\n")
 			}
-			_, secondError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "second"))
+			_, secondError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, secondPath))
 			if tt.unreadable && secondError == nil {
 				t.Skip("OS or current user permits reading a file with no permissions")
 			}
@@ -261,11 +277,14 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 			}
 			wantError, repeats := "flate error: "+secondError.Error()+"\n", 1
 			if tt.bothHeld {
-				_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "held"))
+				_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, heldPath))
 				if heldError == nil {
 					t.Fatal("expected held consumer's decode error")
 				}
-				wantError, repeats = "flate error: "+heldError.Error()+"\n", 16
+				repeats = 16
+				if !tt.reversedPaths {
+					wantError = "flate error: " + heldError.Error() + "\n"
+				}
 			}
 			transport := installSourceRefTransport(t, repo.Storer)
 			for i := range repeats {
@@ -275,6 +294,150 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 					t.Fatalf("held-error scope: run=%d exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
 						i, code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
 				}
+			}
+		})
+	}
+}
+
+func TestE2E_SourceRef_HeldErrorAcrossNamespaces(t *testing.T) {
+	for _, tt := range []struct {
+		name, betaURL        string
+		workingTree, symlink bool
+	}{
+		{name: "external_source", betaURL: "git://fixture.invalid/other"},
+		{name: "working_tree_source", betaURL: "git://fixture.invalid/cluster", workingTree: true},
+		{name: "working_tree_symlink", betaURL: "git://fixture.invalid/cluster", workingTree: true, symlink: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			repo := gitInit(t, root)
+			if _, err := repo.CreateRemote(&config.RemoteConfig{
+				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			for _, namespace := range []string{"alpha", "beta"} {
+				suspend, path := "", "./broken"
+				if namespace == "beta" {
+					// The discovery error must surface even without reconciling this consumer.
+					suspend = "  suspend: true\n"
+					if tt.symlink {
+						path = "./broken-alias"
+					}
+				}
+				testutil.WriteFile(t, root, "flux/"+namespace+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: `+namespace+`}
+spec:
+  interval: 10m
+`+suspend+`  path: `+path+`
+  sourceRef: {kind: GitRepository, name: cluster}
+`)
+			}
+			testutil.WriteFile(t, root, "flux/beta-repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: cluster, namespace: beta}
+spec: {interval: 10m, url: '`+tt.betaURL+`'}
+`)
+			testutil.WriteFile(t, root, "flux/sources.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: z-sources, namespace: alpha}
+spec:
+  interval: 10m
+  path: ./sources
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
+			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: cluster, namespace: alpha}
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+  ref: {tag: v1.0.0}
+`)
+			testutil.WriteFile(t, root, "broken/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "broken/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
+			if tt.symlink {
+				if err := os.Symlink("broken", filepath.Join(root, "broken-alias")); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			}
+			gitCommitAll(t, repo)
+			head, err := repo.Head()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+				t.Fatal(err)
+			}
+			mutateFile(t, filepath.Join(root, "broken/cm.yaml"), "value: pinned", "value: newer")
+			gitCommitAll(t, repo)
+			testutil.WriteFile(t, root, "broken/cm.yaml", "metadata: {name: broken\n")
+			_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "broken"))
+			if !errors.Is(heldError, manifest.ErrInput) {
+				t.Fatalf("expected working-tree decode error, got %v", heldError)
+			}
+			transport := installSourceRefTransport(t, repo.Storer)
+			var previous string
+			for _, concurrency := range []string{"2", "8"} {
+				t.Run("concurrency_"+concurrency, func(t *testing.T) {
+					out, stderr, code := runCLIBuffers("build", "ks", "apps", "-n", "alpha",
+						"--path", filepath.Join(root, "flux"), "--concurrency", concurrency, "--cache-dir", t.TempDir())
+					if tt.workingTree {
+						wantError := "flate error: " + heldError.Error() + "\n"
+						if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
+							t.Fatalf("working-tree consumer: exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
+								code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
+						}
+						return
+					}
+					if code != 0 || !strings.Contains(out, "value: pinned") || strings.Contains(out, "value: newer") ||
+						strings.Contains(stderr, heldError.Error()) || transport.calls.Load() != 0 {
+						t.Fatalf("external consumer: exit=%d transport=%d stdout=%q\nstderr:\n%s",
+							code, transport.calls.Load(), out, stderr)
+					}
+					if concurrency == "8" && out != previous {
+						t.Fatalf("output differs across concurrency levels (-want +got):\n%s", cmp.Diff(previous, out))
+					}
+					previous = out
+				})
+			}
+			st := store.New()
+			_, discoveryError := discovery.Run(t.Context(), discovery.Config{
+				Path: filepath.Join(root, "flux"), Store: st,
+				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
+			})
+			for _, namespace := range []string{"alpha", "beta"} {
+				ks, ok := st.Get[*manifest.Kustomization](manifest.NamedResource{
+					Kind: manifest.KindKustomization, Namespace: namespace, Name: "apps",
+				})
+				wantPath := "./broken"
+				if namespace == "beta" && tt.symlink {
+					wantPath = "./broken-alias"
+				}
+				if !ok || ks.SourceNamespace != namespace || ks.SourceRef.Namespace != "" || ks.Path != wantPath {
+					t.Fatalf("expected implicit source in consumer namespace, got %+v", ks)
+				}
+			}
+			art, ok := st.GetArtifact(manifest.NamedResource{
+				Kind: manifest.KindGitRepository, Namespace: "alpha", Name: "cluster",
+			}).(*store.SourceArtifact)
+			if !ok || art.LocalRoot != root || art.LocalPath == root {
+				t.Fatalf("expected alpha's committed source artifact, got %+v", art)
+			}
+			if tt.workingTree {
+				betaArtifact, ok := st.GetArtifact(manifest.NamedResource{
+					Kind: manifest.KindGitRepository, Namespace: "beta", Name: "cluster",
+				}).(*store.SourceArtifact)
+				if !ok || betaArtifact.LocalRoot == root || betaArtifact.LocalPath != root {
+					t.Fatalf("expected beta's working-tree artifact, got %+v", betaArtifact)
+				}
+				if !errors.Is(discoveryError, manifest.ErrInput) {
+					t.Fatalf("expected retained working-tree error, got %v", discoveryError)
+				}
+			} else if discoveryError != nil {
+				t.Fatalf("expected alpha's error to be discarded, got %v", discoveryError)
 			}
 		})
 	}
@@ -410,10 +573,11 @@ spec:
 	}
 }
 
-func TestE2E_SourceRef_PinnedTreeDiscardsHeldConsumer(t *testing.T) {
+func TestE2E_SourceRef_PinnedTreeReplacesHeldConsumer(t *testing.T) {
 	for _, tt := range []struct {
 		name, held, want, heldSource               string
 		survivorName, survivorPath, survivorSource string
+		keepError                                  bool
 	}{
 		{
 			name: "removed",
@@ -433,7 +597,7 @@ spec:
 			want: "value: ok-consumer",
 		},
 		{
-			name: "different_name", heldSource: "unknown",
+			name: "different_name", heldSource: "unknown", keepError: true,
 			survivorName: "b-survivor", survivorPath: "./apps/broken", survivorSource: "unknown",
 			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -461,7 +625,7 @@ spec:
 			want: "value: tagged",
 		},
 		{
-			name: "different_source_ref", heldSource: "unknown",
+			name: "different_source_ref", heldSource: "unknown", keepError: true,
 			survivorName: "a-held", survivorPath: "./apps/broken", survivorSource: "flux-system",
 			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -555,6 +719,14 @@ spec:
 			for _, concurrency := range []string{"2", "8"} {
 				out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
 					"--concurrency", concurrency, "--cache-dir", t.TempDir())
+				if tt.keepError {
+					wantError := "flate error: " + heldError.Error() + "\n"
+					if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
+						t.Fatalf("surviving working-tree consumer: concurrency=%s exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
+							concurrency, code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
+					}
+					continue
+				}
 				if code != 0 || strings.Contains(stderr, heldError.Error()) ||
 					!strings.Contains(out, "value: tagged") || !strings.Contains(out, tt.want) ||
 					strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer") || transport.calls.Load() != 0 {
@@ -568,7 +740,11 @@ spec:
 					Path: filepath.Join(root, "flux"), Store: st,
 					SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 				})
-				if err != nil {
+				if tt.keepError {
+					if !errors.Is(err, manifest.ErrInput) {
+						t.Fatalf("expected surviving consumer's working-tree error, got %v", err)
+					}
+				} else if err != nil {
 					t.Fatalf("expected replaced consumer's held error to be dropped, got %v", err)
 				}
 				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: tt.survivorName}

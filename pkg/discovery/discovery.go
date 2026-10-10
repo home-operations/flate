@@ -324,12 +324,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	l.PreferExisting = true
 	ksExpanded := map[manifest.NamedResource]struct{}{}
 	var aliased []manifest.NamedResource
-	type followError struct {
-		path string
-		ref  manifest.NamedResource
-		err  error
-	}
-	var followErrors map[manifest.NamedResource]followError
+	var followErrors map[string]error
 	for {
 		if total != namespaced {
 			for id := range d.sourceFiles {
@@ -410,11 +405,9 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				}
 				// A late source pin replaces this working-tree walk with its committed tree.
 				if followErrors == nil {
-					followErrors = make(map[manifest.NamedResource]followError)
+					followErrors = make(map[string]error)
 				}
-				// An omitted source namespace follows the consumer's inherited namespace.
-				ref.Namespace = ks.SourceRef.Namespace
-				followErrors[id] = followError{path: ks.Path, ref: ref, err: err}
+				followErrors[target] = err
 			}
 			added++
 		}
@@ -423,23 +416,31 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		}
 	}
 	if len(followErrors) != 0 {
-		// Namespace inheritance can re-key a surviving consumer without replacing its failed walk.
+		// Only a surviving working-tree reader can keep a failed directory walk relevant.
 		kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
-		for _, id := range slices.SortedFunc(maps.Keys(followErrors), manifest.NamedResource.Compare) {
-			held := followErrors[id]
+		for _, dir := range slices.Sorted(maps.Keys(followErrors)) {
 			for _, ks := range kustomizations {
-				if ks.Name != id.Name || ks.Path != held.path {
+				if ks.Path == "" {
 					continue
 				}
-				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceRef.Namespace, Name: ks.SourceName}
-				if ref != held.ref {
+				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+				sourceRoot := repoRoot
+				if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok {
+					if art.LocalRoot == repoRoot {
+						continue
+					}
+					sourceRoot = art.LocalPath
+				} else if d.cfg.Store.GetObject(ref) != nil {
+					// Declared external sources cannot read this tree; missing sources alias it.
 					continue
 				}
-				ref.Namespace = ks.SourceNamespace
-				if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
-					continue
+				target := filepath.Join(sourceRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
+				if resolved, err := filepath.EvalSymlinks(target); err == nil {
+					target = resolved
 				}
-				return held.err
+				if target == dir {
+					return followErrors[dir]
+				}
 			}
 		}
 	}

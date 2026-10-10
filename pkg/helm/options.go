@@ -11,6 +11,8 @@ type Options struct {
 	// DisableChartDigestTracking preserves direct OCI chart versions when true.
 	// False enables tracking. Revision validation and full source cache identity
 	// apply in every mode.
+	// When used through orchestrator.Config, this field is ignored; use
+	// orchestrator.Config.DisableChartDigestTracking instead.
 	DisableChartDigestTracking bool
 	// SkipCRDs excludes CRDs from the rendered output.
 	SkipCRDs bool

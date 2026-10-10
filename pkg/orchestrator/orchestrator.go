@@ -79,9 +79,10 @@ type Config struct {
 	// HelmOptions tunes templating (skip CRDs/secrets/tests, kube
 	// version, etc.).
 	HelmOptions helm.Options
-	// DisableChartDigestTracking overrides HelmOptions.DisableChartDigestTracking.
-	// Nil selects automatic detection from file-loaded HelmRelease values during
-	// Bootstrap; false forces tracking on. New copies the requested value.
+	// DisableChartDigestTracking selects chart digest tracking for the orchestrator.
+	// Bootstrap assigns HelmOptions.DisableChartDigestTracking and ignores any value
+	// supplied there. Nil selects automatic detection from file-loaded HelmRelease
+	// values; false forces tracking on. New copies the requested value.
 	DisableChartDigestTracking *bool
 	// WipeSecrets controls Secret cleartext placeholders.
 	WipeSecrets bool
@@ -206,8 +207,6 @@ type Orchestrator struct {
 	rsc         *resourcesetctrl.Controller
 	filter      *change.Filter
 	sourceCache *source.Cache
-	// Backing storage snapshots the override without a separate allocation.
-	disableChartDigestTracking bool
 	// Accepted identities are immutable after bootstrap, including for late consumers.
 	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
 
@@ -525,8 +524,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		depGraph:       newDependencyGraph(),
 	}
 	if cfg.DisableChartDigestTracking != nil {
-		o.disableChartDigestTracking = *cfg.DisableChartDigestTracking
-		o.cfg.DisableChartDigestTracking = &o.disableChartDigestTracking
+		o.cfg.DisableChartDigestTracking = new(*cfg.DisableChartDigestTracking)
 	}
 	return o, nil
 }

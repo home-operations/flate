@@ -64,10 +64,6 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 		s.DeleteObject(u.old)
 		s.AddObject(updated)
 		delete(l.Index.Records, u.old)
-		if len(record.Refs) != 0 {
-			l.Index.Records[u.old] = manifest.DiscoveryRecord{Refs: record.Refs}
-			record.Refs = nil
-		}
 		record.File = u.file
 		l.Index.Records[u.new] = record
 	}

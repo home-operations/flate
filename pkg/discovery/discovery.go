@@ -1,18 +1,6 @@
-// Package discovery owns flate's filesystem-to-store hydration phase:
-// walking the user's working tree, expanding spec.path references,
-// aliasing in-cluster-bootstrapped sources, rendering ResourceSets, and
-// computing the structural-parent index. The output is everything the
-// reconcile phase needs to start firing controllers — repo root,
-// per-object source files, and the parent index.
-//
-// Source aliasing uses file-loaded URL/ref values before rendering and
-// does not follow parent-render transformations.
-//
-// Splitting this out of the orchestrator turns a 750-line god-object
-// into two ~350-line files with one clean interface between them. The
-// load phase is independently testable (no controller wiring or
-// task service required) and the orchestrator now reads as pure
-// reconcile orchestration.
+// Package discovery hydrates the store, resolves local source identities, and
+// publishes immutable discovery records, ownership claims and resource-graph readers.
+// Source aliasing uses authored URL/ref values before parent rendering.
 package discovery
 
 import (
@@ -24,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -112,7 +99,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
-	d.applyNamespaces(repoRoot)
+	d.loader.ApplyNamespaces(repoRoot)
 	if err := d.checkFollowErrors(repoRoot); err != nil {
 		return nil, err
 	}
@@ -132,8 +119,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	l.FinalizeGenerators(repoRoot)
 	var standaloneSecrets []manifest.NamedResource
 	if cfg.WipeSecrets {
-		for id, r := range l.Index.Files() {
-			if id.Kind == manifest.KindSecret && r.Deferred && d.cfg.Store.GetObject(id) == nil {
+		for id := range l.Index.Files() {
+			if id.Kind == manifest.KindSecret && d.cfg.Store.GetObject(id) == nil {
 				standaloneSecrets = append(standaloneSecrets, id)
 			}
 		}
@@ -148,10 +135,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		WipeSecrets:                cfg.WipeSecrets,
 		DisableChartDigestTracking: l.DisableChartDigestTracking,
 	}, nil
-}
-
-func (d *discoverer) applyNamespaces(repoRoot string) {
-	d.loader.ApplyNamespaces(repoRoot)
 }
 
 type discoverer struct {
@@ -194,7 +177,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	// Pins resolve on final namespace ids. Extra inheritance passes are needed
 	// only when both an authored ref and a self-matching URL make a pin possible;
 	// unpinned followed paths must wait for the complete Kustomization set in Run.
-	d.applyNamespaces(repoRoot)
+	d.loader.ApplyNamespaces(repoRoot)
 	namespaced := total
 
 	// Pins must be resolved before any spec.path is followed so a pinned
@@ -218,7 +201,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				repo, ok := d.cfg.Store.Get[*manifest.GitRepository](id)
 				if ok && repo.Reference != nil && manifest.GitRefString(*repo.Reference) != "" {
 					if _, match := d.selfRemotes(repoRoot)[normalizeGitURL(repo.URL)]; match {
-						d.applyNamespaces(repoRoot)
+						d.loader.ApplyNamespaces(repoRoot)
 						break
 					}
 				}
@@ -237,8 +220,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		if d.hasPins {
 			// A source discovered through a followed path can pin an expanded consumer.
 			for _, ks := range kustomizations {
-				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-				if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+				if _, pinned, _ := loader.SourceView(d.cfg.Store, ks, repoRoot); pinned {
 					delete(ksExpanded, ks.Named())
 				}
 			}
@@ -253,11 +235,8 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if ks.Path == "" && ks.SourceName == "" {
 				continue
 			}
-			sourceRoot := repoRoot
+			sourceRoot, _, _ := loader.SourceView(d.cfg.Store, ks, repoRoot)
 			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-			if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
-				sourceRoot = art.LocalPath
-			}
 			target := filepath.Join(sourceRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
 			// Canonicalize via EvalSymlinks so two spec.paths that
 			// resolve to the same on-disk directory (one direct, one
@@ -349,7 +328,7 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	pinnedKS := make(map[manifest.NamedResource]struct{})
 	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-		if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot == repoRoot {
+		if _, pinned, _ := loader.SourceView(d.cfg.Store, ks, repoRoot); pinned {
 			pinnedSources[ref] = struct{}{}
 			pinnedKS[ks.Named()] = struct{}{}
 		}
@@ -374,7 +353,7 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 		if !pathUnderRoot(filepath.Join(repoRoot, filepath.FromSlash(file)), repoRoot) {
 			continue
 		}
-		owned := slices.ContainsFunc(prefixes, func(c manifest.KSClaim) bool { return c.ID != id && strings.HasPrefix(file, c.Prefix) })
+		_, owned := manifest.StrictParent(prefixes, file, id, nil)
 		if !owned {
 			continue
 		}

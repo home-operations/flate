@@ -35,23 +35,16 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		if o.rendered.has(id) {
 			continue
 		}
-		record, ok := o.index.Lookup(id)
+		record, _ := o.index.Lookup(id)
 		file := record.File
-		if !ok {
+		if file == "" {
 			continue
 		}
 		if !prefixesBuilt {
-			prefixes = loader.New(o.store).Claims(o.repoRoot)
+			prefixes = loader.Claims(o.store, o.repoRoot)
 			prefixesBuilt = true
 		}
-		var parent manifest.NamedResource
-		for _, c := range prefixes {
-			if c.ID != id && strings.HasPrefix(file, c.Prefix) {
-				parent = c.ID
-				break
-			}
-		}
-		ok = parent != (manifest.NamedResource{})
+		parent, ok := manifest.StrictParent(prefixes, file, id, nil)
 		if !ok {
 			// No covering spec.path parent. A Flux KS that is a stray manifest its
 			// own kustomize base excludes (apps/base/app-X/ks.yaml not listed in the
@@ -243,7 +236,7 @@ func (o *Orchestrator) demoteOrphans(failed map[manifest.NamedResource]store.Sta
 	for id, msg := range o.orphans {
 		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
 		slog.Warn("resource orphaned", "id", id.String(),
-			"file", func() string { r, _ := o.index.Lookup(id); return r.File }(),
+			"file", o.fileOf(id),
 			"reason", msg)
 		delete(failed, id)
 	}
@@ -276,8 +269,7 @@ func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]sto
 		// stderr alongside the user-facing report and reads as
 		// "flate had an internal error" when it's just normal
 		// per-resource Flux failures the user expects to see.
-		if r, _ := o.index.Lookup(id); r.File != "" {
-			f := r.File
+		if f := o.fileOf(id); f != "" {
 			slog.Debug("resource failed", "id", id.String(), "reason", info.Message, "file", f)
 		} else {
 			slog.Debug("resource failed", "id", id.String(), "reason", info.Message)
@@ -297,8 +289,7 @@ func (e *FailuresError) Error() string { return e.Message }
 func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))
 	for id, info := range sanitizeFailed(failed) {
-		if r, _ := o.index.Lookup(id); r.File != "" {
-			f := r.File
+		if f := o.fileOf(id); f != "" {
 			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", id.String(), f, info.Message))
 		} else {
 			msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), info.Message))
@@ -307,6 +298,11 @@ func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store
 	slices.Sort(msgs) // deterministic ordering across runs
 	return &FailuresError{Message: fmt.Sprintf("reconcile completed with %d failure(s):\n  %s",
 		len(msgs), strings.Join(msgs, "\n  "))}
+}
+
+func (o *Orchestrator) fileOf(id manifest.NamedResource) string {
+	r, _ := o.index.Lookup(id)
+	return r.File
 }
 
 // sanitizeFailed returns a copy of the failure map with each entry's

@@ -554,3 +554,31 @@ func TestBuildSelfProduceIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestSelfProduceBuilder_SecretPrecedence(t *testing.T) {
+	for _, order := range []string{"placeholder first", "SOPS first", "two SOPS"} {
+		t.Run(order, func(t *testing.T) {
+			id := secretID("apps", "input")
+			b := &selfProduceBuilder{store: store.New(), wipeSecrets: true, secrets: map[manifest.NamedResource]*manifest.Secret{}}
+			first := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"first": "..PLACEHOLDER_first.."}}
+			second := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"second": "..PLACEHOLDER_second.."}}
+			want := first
+			switch order {
+			case "placeholder first":
+				b.synthesizePlaceholderSecret(id, []string{"first"})
+				want = second
+				b.materializeSecret(second, "apps", "apps")
+			case "SOPS first":
+				b.materializeSecret(first, "apps", "apps")
+				b.synthesizePlaceholderSecret(id, []string{"second"})
+			case "two SOPS":
+				want = second
+				b.materializeSecret(first, "apps", "apps")
+				b.materializeSecret(second, "apps", "apps")
+			}
+			if b.secrets[id] != want {
+				t.Fatalf("Secret precedence = %+v, want %+v", b.secrets[id], want)
+			}
+		})
+	}
+}

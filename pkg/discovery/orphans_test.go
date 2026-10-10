@@ -31,7 +31,7 @@ spec:
 	self := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "self"}
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
 	for _, id := range []manifest.NamedResource{self, child} {
-		l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "apps/bundle.yaml"), File: "apps/bundle.yaml", Deferred: true}
+		l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "apps/bundle.yaml"), File: "apps/bundle.yaml"}
 	}
 	d := &discoverer{
 		cfg: Config{Store: st, WipeSecrets: true}, loader: l,
@@ -77,7 +77,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st.DeleteObject(self)
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
 	for _, id := range []manifest.NamedResource{self, child} {
-		l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml", Deferred: true}
+		l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
 	}
 	d := &discoverer{cfg: Config{Store: st}, loader: l}
 	d.promoteOrphans(nil)
@@ -104,7 +104,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			var saved []*manifest.Secret
 			for _, id := range ids {
 				body += "---\napiVersion: v1\nkind: Secret\nmetadata: {name: " + id.Name + ", namespace: secure}\nstringData: {HOST: fixture-value}\n"
-				l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml", Deferred: true}
+				l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
 				if scenario == "unknown-file" {
 					r := l.Index.Records[id]
 					r.File = ""

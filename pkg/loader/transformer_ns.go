@@ -10,8 +10,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-operations/flate/pkg/manifest"
 	yaml "go.yaml.in/yaml/v4"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // transformerScanMaxDepth bounds the recursive walk that confirms a

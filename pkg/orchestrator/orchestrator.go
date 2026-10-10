@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"maps"
-	"path"
 	"slices"
 	"sync"
 
@@ -563,17 +562,13 @@ func (o *Orchestrator) RequiredDataDependencies(consumer manifest.NamedResource)
 			deps[parent] = struct{}{}
 		}
 		file := record.File
-		_, ok := o.index.Lookup(id)
-		if !ok {
+		if file == "" {
 			id.Namespace = ""
 			raw, _ := o.index.Lookup(id)
 			file = raw.File
 		}
-		for file != "" && file != "." && file != "/" {
-			for _, owner := range o.index.Readers[file] {
-				deps[owner] = struct{}{}
-			}
-			file = path.Dir(file)
+		for owner := range o.index.ReadersOfFile(file) {
+			deps[owner] = struct{}{}
 		}
 	}
 	addInput := func(kind, name string) {

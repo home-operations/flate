@@ -19,13 +19,15 @@ import (
 
 // orchestratorExistence applies runtime admission to immutable discovery locations.
 type orchestratorExistence struct {
-	loader      *loader.Loader
+	store       *store.Store
+	index       *manifest.DiscoveryIndex
 	wipeSecrets bool
 	filter      *change.Filter
 }
 
 func (e *orchestratorExistence) Promote(id manifest.NamedResource) bool {
-	return e.loader.Promote(id, e.wipeSecrets, e.admit)
+	record, _ := e.index.Lookup(id)
+	return loader.Promote(e.store, id, record.Path, loader.PromoteOptions{WipeSecrets: e.wipeSecrets, Admit: e.admit})
 }
 
 func (e *orchestratorExistence) admit(obj manifest.BaseManifest) bool {
@@ -39,7 +41,7 @@ func (e *orchestratorExistence) admit(obj manifest.BaseManifest) bool {
 }
 
 func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
-	if r, ok := e.loader.Index.Lookup(id); ok && r.Deferred && r.Path != "" {
+	if r, ok := e.index.Lookup(id); ok && r.Path != "" {
 		return true
 	}
 	if id.Namespace == "" {
@@ -47,8 +49,8 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	}
 	// Discovery retains bare identities until a parent stamps the namespace.
 	id.Namespace = ""
-	r, ok := e.loader.Index.Lookup(id)
-	return ok && r.Deferred && r.Path != ""
+	r, ok := e.index.Lookup(id)
+	return ok && r.Path != ""
 }
 
 // Run starts every controller, blocks until the task service drains,
@@ -109,7 +111,8 @@ func (o *Orchestrator) configureControllers() {
 	// controllers and Waiter consume them via the single
 	// depwait.ExistenceLookup interface.
 	existence := &orchestratorExistence{
-		loader:      &loader.Loader{Store: o.store, Index: o.index},
+		store:       o.store,
+		index:       o.index,
 		wipeSecrets: o.cfg.WipeSecrets,
 		filter:      o.filter,
 	}

@@ -49,7 +49,7 @@ func TestOrchestrator_RequiredDataDependencies_FileOwners(t *testing.T) {
 	for _, namespace := range []string{"", "apps", "foreign"} {
 		t.Run("namespace_"+namespace, func(t *testing.T) {
 			root := t.TempDir()
-			for _, owner := range []string{"a", "b"} {
+			for _, owner := range []string{"a", "b", "c"} {
 				testutil.WriteFile(t, root, owner+".yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: %s, namespace: flux-system}
@@ -58,39 +58,43 @@ spec:
   path: ./%s
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `, owner, owner))
-				testutil.WriteFile(t, root, owner+"/kustomization.yaml", "namespace: apps\nresources: [../shared, missing.yaml]\n")
+				ns := "apps"
+				if owner == "c" {
+					ns = "other"
+				}
+				testutil.WriteFile(t, root, owner+"/kustomization.yaml", "namespace: "+ns+"\nresources: [../shared, missing.yaml]\n")
 			}
 			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [input.yaml, declaration.yaml]\n")
-			testutil.WriteFile(t, root, "shared/input.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: input, namespace: '"+namespace+"'}\nstringData: {values.yaml: 'greeting: hello'}\n")
+			testutil.WriteFile(t, root, "shared/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: '"+namespace+"'}\ndata: {values.yaml: 'greeting: hello'}\n")
 			testutil.WriteFile(t, root, "shared/declaration.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: declaration, namespace: apps}\nspec:\n  target: {name: generated}\n  data: [{secretKey: values.yaml, remoteRef: {key: input}}]\n")
 			o, err := New(Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2})
 			if err != nil {
 				t.Fatal(err)
 			}
 			res, _ := o.Render(t.Context())
-			if res == nil || len(res.Failed) != 2 || o.Filter().Enabled() {
+			if res == nil || len(res.Failed) != 3 || o.Filter().Enabled() {
 				t.Fatalf("full-mode pre-emission fixture failed: %+v", res)
 			}
 			hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
-			hr.ValuesFrom = []helmv2.ValuesReference{{Kind: "Secret", Name: "input", Optional: true}, {Kind: "Secret", Name: "generated"}, {Kind: "Secret", Name: "input"}}
+			hr.ValuesFrom = []helmv2.ValuesReference{{Kind: "ConfigMap", Name: "input", Optional: true}, {Kind: "Secret", Name: "generated"}, {Kind: "ConfigMap", Name: "input"}}
 			o.store.AddObject(hr)
 			got := o.RequiredDataDependencies(hr.Named())
 			for _, id := range []manifest.NamedResource{
-				{Kind: "Secret", Namespace: "apps", Name: "input"},
+				{Kind: "ConfigMap", Namespace: "apps", Name: "input"},
 				{Kind: "Secret", Namespace: "apps", Name: "generated"},
-				{Kind: "ExternalSecret", Namespace: "apps", Name: "declaration"}, ksID("a"), ksID("b"),
+				{Kind: "ExternalSecret", Namespace: "apps", Name: "declaration"}, ksID("a"), ksID("b"), ksID("c"),
 			} {
 				if !slices.Contains(got, id) {
 					t.Fatalf("known prerequisite missing: %s in %v", id, got)
 				}
 			}
 			clone := hr.Clone()
-			clone.ValuesFrom = []helmv2.ValuesReference{{Kind: "Secret", Name: "input", Optional: true}}
+			clone.ValuesFrom = []helmv2.ValuesReference{{Kind: "ConfigMap", Name: "input", Optional: true}}
 			o.store.AddObject(clone)
 			gotInput := o.RequiredDataDependencies(hr.Named())
-			want := 3
+			want := 4
 			if namespace == "foreign" {
-				want = 1
+				want = 3
 			}
 			if len(gotInput) != want || !slices.IsSortedFunc(got, manifest.NamedResource.Compare) || len(slices.Compact(slices.Clone(got))) != len(got) {
 				t.Fatalf("ownership/dedup/sort violated: all=%v input=%v", got, gotInput)
@@ -283,4 +287,24 @@ func TestOrchestrator_RequiredDataDependencies_ChangedOnlyProducers(t *testing.T
 	want := []manifest.NamedResource{input, owner.Named()}
 	slices.SortFunc(want, manifest.NamedResource.Compare)
 	assert.Diff(t, o.RequiredDataDependencies(hr.Named()), want)
+}
+
+func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [../missing]\n")
+	st := store.New()
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./apps"}
+	st.AddObject(producer)
+	l := loader.New(st)
+	l.FinalizeIndex(root, nil)
+	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+	l.Index.Records[input] = manifest.DiscoveryRecord{File: "missing/nested/input.yaml"}
+	consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+	consumer.ValuesFrom = []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "input"}}
+	st.AddObject(consumer)
+	o := &Orchestrator{store: st, index: l.Index, rendered: newRenderedSet()}
+	want := []manifest.NamedResource{input, producer.Named()}
+	if got := o.RequiredDataDependencies(consumer.Named()); !slices.Equal(got, want) {
+		t.Fatalf("missing-directory readers = %v, want %v", got, want)
+	}
 }

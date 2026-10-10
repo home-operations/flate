@@ -13,22 +13,21 @@ import (
 type DiscoveryRecord struct {
 	Path              string          // Absolute raw resource path; empty for generated or projected records.
 	File              string          // Diff coordinate; generator records use the declaration file.
-	Refs              []NamedResource // Authored chart/source references retained under their raw identity.
-	Deferred          bool            // File data awaits runtime admission or pre-render orphan promotion.
-	Parent            NamedResource
-	Renderers         []NamedResource
-	DeclarationOwners []NamedResource
-	Owners            []NamedResource
-	Excluded          bool
-	Pinned            bool
+	Refs              []NamedResource // Authored chart/source references under the discovery identity.
+	Parent            NamedResource   // Strict structural parent, excluding peers with the same claimed path.
+	Renderers         []NamedResource // Kustomizations whose resource graph emits this data identity.
+	DeclarationOwners []NamedResource // Kustomizations whose resource graph contains this producer declaration.
+	Owners            []NamedResource // File-backed data owners, including raw empty-namespace owners.
+	Excluded          bool            // A raw Kustomization file is omitted by its directory's resources list.
+	Pinned            bool            // The Kustomization reads a committed local source artifact.
 }
 
 // DiscoveryIndex owns immutable discovery records, canonical claims and graph readers.
 // Construction writes these maps directly before publication; queries never mutate them.
 type DiscoveryIndex struct {
-	Records map[NamedResource]DiscoveryRecord
-	Claims  map[string][]NamedResource
-	Readers map[string][]NamedResource
+	Records map[NamedResource]DiscoveryRecord // Authored and projected identities.
+	Claims  map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
+	Readers map[string][]NamedResource        // Graph readers by resource file or missing directory.
 }
 
 // Lookup returns the borrowed record for id and reports whether it exists.
@@ -60,38 +59,57 @@ func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedRes
 	if i == nil || file == "" {
 		return nil, nil
 	}
-	if file != ".." && !strings.HasPrefix(file, "../") {
-		prefixed := file + "/"
-		first := true
-		for end := len(prefixed); ; {
-			if ids := i.Claims[prefixed[:end]]; len(ids) != 0 {
-				if first {
-					owners = slices.Clone(ids)
-					first = false
-				} else {
-					ancestors = append(ancestors, ids...)
-				}
-			}
-			if end == 0 {
-				break
-			}
-			end = strings.LastIndexByte(prefixed[:end-1], '/') + 1
+	for ids := range i.matchingPrefixes(file) {
+		if owners == nil {
+			owners = slices.Clone(ids)
+		} else {
+			ancestors = append(ancestors, ids...)
 		}
 	}
-	for _, id := range i.Readers[file] {
+	for id := range i.ReadersOfFile(file) {
 		owners = appendUnique(owners, id)
-	}
-	for dir := path.Dir(file); dir != "." && dir != "/"; dir = path.Dir(dir) {
-		for _, id := range i.Readers[dir] {
-			owners = appendUnique(owners, id)
-		}
 	}
 	slices.SortFunc(owners, NamedResource.Compare)
 	slices.SortFunc(ancestors, NamedResource.Compare)
 	return owners, ancestors
 }
 
-// DataOwners returns data renderers and raw file owners, retaining the asymmetric
+func (i *DiscoveryIndex) matchingPrefixes(file string) iter.Seq[[]NamedResource] {
+	return func(yield func([]NamedResource) bool) {
+		if file == ".." || strings.HasPrefix(file, "../") {
+			return
+		}
+		prefixed := file + "/"
+		for end := len(prefixed); ; {
+			if ids := i.Claims[prefixed[:end]]; len(ids) != 0 && !yield(ids) {
+				return
+			}
+			if end == 0 {
+				return
+			}
+			end = strings.LastIndexByte(prefixed[:end-1], '/') + 1
+		}
+	}
+}
+
+// ReadersOfFile yields graph readers of a file or any missing ancestor directory.
+// Callers deduplicate identities when combining them with other ownership relations.
+func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[NamedResource] {
+	return func(yield func(NamedResource) bool) {
+		if i == nil {
+			return
+		}
+		for current := file; current != "" && current != "." && current != "/"; current = path.Dir(current) {
+			for _, id := range i.Readers[current] {
+				if !yield(id) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// DataOwners returns file-backed data owners, retaining the asymmetric
 // empty-namespace bridge. Two unequal nonempty namespaces never match.
 func (i *DiscoveryIndex) DataOwners(id NamedResource) []NamedResource {
 	r, ok := i.Lookup(id)

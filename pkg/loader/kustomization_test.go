@@ -77,11 +77,11 @@ func TestResolveResourcePath(t *testing.T) {
 	}
 }
 
-// TestIsUnreferencedKustomizeResource pins the #777 orphan signal: a manifest is
+// TestFinalizeIndex_Excluded pins the #777 orphan signal: a manifest is
 // "unreferenced" only when its own directory's kustomization.yaml exists and does
 // not list it. A listed file, or a directory with no kustomization at all (a
 // loose top-level entry), is not.
-func TestIsUnreferencedKustomizeResource(t *testing.T) {
+func TestFinalizeIndex_Excluded(t *testing.T) {
 	dir := t.TempDir()
 	// excluded/ — kustomization references only cm.yaml; ks.yaml is a stray file.
 	testutil.WriteFile(t, dir, "excluded/kustomization.yaml", "resources:\n  - cm.yaml\n")
@@ -105,7 +105,7 @@ func TestIsUnreferencedKustomizeResource(t *testing.T) {
 			l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, tc.file), File: tc.file}
 			l.FinalizeIndex(dir, nil)
 			if got := l.Index.Records[id].Excluded; got != tc.want {
-				t.Errorf("IsUnreferencedKustomizeResource(%q) = %v, want %v", tc.file, got, tc.want)
+				t.Errorf("Excluded(%q) = %v, want %v", tc.file, got, tc.want)
 			}
 		})
 	}
@@ -156,5 +156,32 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	testutil.WriteFile(t, missing, "kustomization.yaml", "namespace: late\n")
 	if got, _ := r.read(missing); got != nil {
 		t.Fatal("negative result was re-read")
+	}
+}
+
+func TestLoader_ClaimsDocumentLifetime(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "components: [old]\n")
+	st := store.New()
+	ks := &manifest.Kustomization{Name: "apps", Path: "./apps"}
+	st.AddObject(ks)
+	l := New(st)
+	l.Claims(root)
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "components: [new]\n")
+	for _, tc := range []struct {
+		name, component string
+		claims          []manifest.KSClaim
+	}{
+		{"discovery snapshot", "apps/old/", l.Claims(root)},
+		{"late reporting", "apps/new/", Claims(st, root)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, claim := range tc.claims {
+				if claim.Prefix == tc.component {
+					return
+				}
+			}
+			t.Fatalf("missing %s in %v", tc.component, tc.claims)
+		})
 	}
 }

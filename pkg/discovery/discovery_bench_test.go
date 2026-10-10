@@ -147,3 +147,21 @@ stringData: {HOST: fixture-value}
 		}
 	}
 }
+
+func BenchmarkRun_WideDirectory(b *testing.B) {
+	root := b.TempDir()
+	testutil.WriteFile(b, root, "flux/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: wide, namespace: flux-system}\nspec: {path: ./wide, sourceRef: {kind: GitRepository, name: flux-system}}\n")
+	var resources strings.Builder
+	for i := range 4000 {
+		file := fmt.Sprintf("cm-%d.yaml", i)
+		fmt.Fprintf(&resources, "  - %s\n", file)
+		testutil.WriteFile(b, root, "wide/"+file, fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm-%d, namespace: default}\ndata: {value: fixture}\n", i))
+	}
+	testutil.WriteFile(b, root, "wide/kustomization.yaml", "resources:\n"+resources.String())
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := Run(b.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: store.New(), WipeSecrets: true}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

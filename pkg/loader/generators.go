@@ -5,8 +5,9 @@ import (
 	"encoding/base64"
 	"strings"
 
-	"github.com/home-operations/flate/pkg/manifest"
 	"sigs.k8s.io/kustomize/api/types"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // generatorRecord captures one configMapGenerator or secretGenerator

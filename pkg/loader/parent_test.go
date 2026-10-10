@@ -99,7 +99,7 @@ func TestKSPathPrefixesLocalOnly_DropsExternalSourced(t *testing.T) {
 		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, LocalPath: repoRoot},
 	)
 
-	prefixes := loaderFixture(s, nil).Claims(repoRoot)
+	prefixes := Claims(s, repoRoot)
 	seen := map[manifest.NamedResource]bool{}
 	for _, p := range prefixes {
 		seen[p.ID] = true
@@ -346,7 +346,7 @@ func TestKSPathPrefixes_SortsLongestFirst(t *testing.T) {
 	s.AddObject(mid)
 	s.AddObject(leaf)
 
-	prefixes := loaderFixture(s, nil).Claims("")
+	prefixes := Claims(s, "")
 	if len(prefixes) != 3 {
 		t.Fatalf("expected 3 prefixes, got %d", len(prefixes))
 	}
@@ -369,11 +369,11 @@ func TestKSPathPrefixes_EmptyPathClaimsRoot(t *testing.T) {
 	s.AddObject(with)
 	s.AddObject(without)
 
-	prefixes := loaderFixture(s, nil).Claims("")
+	prefixes := Claims(s, "")
 	if len(prefixes) != 2 || prefixes[0].ID != with.Named() || prefixes[1].ID != without.Named() || prefixes[1].Prefix != "" {
 		t.Fatalf("expected apps and source-root claims; got %+v", prefixes)
 	}
-	if parent, ok := longestStrictParent(prefixes, "root.yaml", manifest.NamedResource{}, nil); !ok || parent != without.Named() {
+	if parent, ok := manifest.StrictParent(prefixes, "root.yaml", manifest.NamedResource{}, nil); !ok || parent != without.Named() {
 		t.Fatalf("root.yaml parent = %v, %t; want %v", parent, ok, without.Named())
 	}
 }
@@ -389,7 +389,7 @@ func TestKSPathPrefixesLocalOnly_EmptyExternalPath(t *testing.T) {
 	s.AddObject(repo)
 	s.AddObject(external)
 	s.AddObject(local)
-	prefixes := loaderFixture(s, nil).Claims(t.TempDir())
+	prefixes := Claims(s, t.TempDir())
 	if len(prefixes) != 1 || prefixes[0].ID != local.Named() {
 		t.Fatalf("external source root must not claim local files: %+v", prefixes)
 	}
@@ -404,7 +404,7 @@ func TestLongestParent_SkipsSelf(t *testing.T) {
 		{ID: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "self"}, Prefix: "apps/team-a/"},
 	}
 	self := prefixes[0].ID
-	if _, ok := longestStrictParent(prefixes, "apps/team-a/ks.yaml", self, nil); ok {
+	if _, ok := manifest.StrictParent(prefixes, "apps/team-a/ks.yaml", self, nil); ok {
 		t.Errorf("LongestParent must skip self matches")
 	}
 }
@@ -425,7 +425,7 @@ func TestKSPathPrefixes_IncludesSpecComponents(t *testing.T) {
 	}
 	s.AddObject(parent)
 
-	prefixes := loaderFixture(s, nil).Claims("")
+	prefixes := Claims(s, "")
 	// Expect TWO entries for the parent: its spec.path and the
 	// resolved component dir.
 	var sawPath, sawComponent bool
@@ -449,7 +449,7 @@ func TestKSPathPrefixes_IncludesSpecComponents(t *testing.T) {
 
 	// Integration: LongestParent over a file under the component dir
 	// must attribute to the parent KS.
-	got, ok := longestStrictParent(prefixes, "apps/shared/observability/karma.yaml", manifest.NamedResource{}, nil)
+	got, ok := manifest.StrictParent(prefixes, "apps/shared/observability/karma.yaml", manifest.NamedResource{}, nil)
 	if !ok {
 		t.Fatalf("LongestParent missed component-dir child — components fold regression")
 	}
@@ -475,8 +475,8 @@ func TestLongestParent_DeepestMatchWins(t *testing.T) {
 	}
 	s.AddObject(root)
 	s.AddObject(leaf)
-	prefixes := loaderFixture(s, nil).Claims("")
-	got, ok := longestStrictParent(prefixes, "apps/team-a/web/deploy.yaml", manifest.NamedResource{}, nil)
+	prefixes := Claims(s, "")
+	got, ok := manifest.StrictParent(prefixes, "apps/team-a/web/deploy.yaml", manifest.NamedResource{}, nil)
 	if !ok {
 		t.Fatalf("expected a parent match")
 	}
@@ -498,9 +498,9 @@ func TestLongestParent_AbsoluteSpecPath(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	prefixes := loaderFixture(s, nil).Claims("")
+	prefixes := Claims(s, "")
 	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "flux-instance"}
-	parent, ok := longestStrictParent(prefixes, "kubernetes/apps/flux-system/flux-operator/instance/helm-release.yaml", hr, nil)
+	parent, ok := manifest.StrictParent(prefixes, "kubernetes/apps/flux-system/flux-operator/instance/helm-release.yaml", hr, nil)
 	if !ok {
 		t.Fatalf("expected the absolute spec.path KS to parent its helm-release.yaml; prefixes=%v", prefixes)
 	}

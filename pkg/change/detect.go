@@ -12,8 +12,9 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 )
 
 // Set is the immutable result of Detect — the set of file paths

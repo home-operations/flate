@@ -43,22 +43,9 @@ type Options struct {
 	// WipeSecrets controls Secret cleartext replacement. Default true.
 	WipeSecrets bool
 
-	// DiscoveryOnly restricts file-loaded kinds that reach the Store
-	// to the discovery-meta set: Kustomization, ResourceSet, and
-	// ResourceSetInputProvider. Every other Flux CR (HelmRelease,
-	// sources, ConfigMap, Secret) is recorded in Existence instead of
-	// AddObject'd, matching real Flux's render-driven discovery
-	// model where only the bootstrap KS is static and the rest of
-	// the cluster materializes through KS reconciles. depwait
-	// consults the existence index on missing deps; orchestrator
-	// orphan-promotes any index entry not under a KS's spec.path
-	// before reconcile starts.
-	//
-	// Why RS + RSIP stay in-scope: the discovery loop renders
-	// ResourceSets to discover further KSes (RSIPs feed selectors,
-	// RSes produce KSes/RSIPs). There is no ResourceSet controller
-	// yet, so render-emitted RSes would never be processed; keeping
-	// them file-loaded preserves the meta-discovery fixed point.
+	// DiscoveryOnly publishes discovery drivers and sources immediately. Other
+	// resources retain raw locations for render emission, orphan promotion or
+	// depwait admission; publishing them early would bypass parent transforms.
 	DiscoveryOnly bool
 }
 
@@ -227,9 +214,6 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 	}
 	w.visited[dir] = struct{}{}
 
-	// the shared document reader returns the resolved file path alongside the
-	// parsed body so descend can hand both to recordGenerators and
-	// walkKustomize without re-opening the same kustomization.yaml.
 	k, kpath := w.loader.documents.read(dir)
 	if k != nil {
 		// Harvest configMapGenerator/secretGenerator entries
@@ -283,9 +267,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 	// visibility for any consumer that inspects on-disk shape, and
 	// lets parseFile recognize a Flux Kustomization that happens to
 	// be authored at the `kustomization.yaml` filename (rare but
-	// permitted). kpath comes from the descend-side the shared document reader
-	// (or the walkAdHoc fallback) so we don't re-stat the same file
-	// the caller already opened.
+	// permitted). The cached document supplies kpath without another stat.
 	if kpath != "" && !w.ignoreMatches(kpath, false) {
 		n, err := w.loader.loadFile(kpath)
 		if err != nil {
@@ -655,7 +637,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 			// sweep. The discovery index records the {id, path}
 			// pair so the depwait fallback can re-parse the file
 			// on demand without deadlocking the producing KS.
-			l.recordObject(obj, path, true)
+			l.recordObject(obj, path)
 			continue
 		}
 		l.addObject(obj, path)
@@ -664,9 +646,10 @@ func (l *Loader) loadFile(path string) (int, error) {
 	return count, nil
 }
 
+// addObject publishes admitted objects and their immutable discovery coordinates.
 func (l *Loader) addObject(obj manifest.BaseManifest, path string) {
 	l.Store.AddObject(obj)
-	l.recordObject(obj, path, false)
+	l.recordObject(obj, path)
 }
 
 // recordDataFile keeps Component data available for lazy promotion without
@@ -687,7 +670,7 @@ func (l *Loader) recordDataFile(absPath string) error {
 		if l.skipExisting(id) {
 			continue
 		}
-		l.recordObject(obj, absPath, true)
+		l.recordObject(obj, absPath)
 	}
 	return nil
 }
@@ -728,7 +711,7 @@ func (l *Loader) FinalizeGenerators(repoRoot string) {
 	if len(records) == 0 {
 		return
 	}
-	prefixes := l.claims(repoRoot, false)
+	prefixes := buildClaims(l.Store, repoRoot, l.documents, l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization))
 	seen := make(map[manifest.NamedResource]struct{}, len(records))
 	for _, r := range records {
 		parentNS, include := parentNamespaceFor(prefixes, l.Store, r.file, repoRoot)
@@ -748,11 +731,8 @@ func (l *Loader) FinalizeGenerators(repoRoot string) {
 			continue
 		}
 		l.Store.AddObject(obj)
-		l.recordObject(obj, r.file, false)
 		if l.Index != nil {
-			record := l.Index.Records[id]
-			record.Path = ""
-			l.Index.Records[id] = record
+			l.Index.Records[id] = manifest.DiscoveryRecord{File: l.fileCoordinate(r.file)}
 		}
 	}
 }
@@ -767,7 +747,7 @@ func parentNamespaceFor(prefixes []manifest.KSClaim, s *store.Store, absPath, re
 	if err != nil {
 		return "", true
 	}
-	owner, ok := longestStrictParent(prefixes, rel, manifest.NamedResource{}, nil)
+	owner, ok := manifest.StrictParent(prefixes, rel, manifest.NamedResource{}, nil)
 	if !ok {
 		return "", true
 	}
@@ -789,18 +769,13 @@ func parentNamespaceFor(prefixes []manifest.KSClaim, s *store.Store, absPath, re
 	return cmp.Or(ks.TargetNamespace, ks.Namespace), true
 }
 
-func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string, deferred bool) {
+// recordObject retains raw locations and authored source references for deferred admission.
+func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	if l.Index == nil {
 		return
 	}
 	id := obj.Named()
-	rel := absPath
-	if l.SourceRoot != "" {
-		if r, err := filepath.Rel(l.SourceRoot, absPath); err == nil {
-			rel = r
-		}
-	}
-	r := manifest.DiscoveryRecord{Path: absPath, File: filepath.ToSlash(rel), Deferred: deferred}
+	r := manifest.DiscoveryRecord{Path: absPath, File: l.fileCoordinate(absPath)}
 	switch o := obj.(type) {
 	case *manifest.HelmRelease:
 		if o.Chart.RepoKind != "" && o.Chart.RepoName != "" {
@@ -812,6 +787,15 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string, deferre
 		}
 	}
 	l.Index.Records[id] = r
+}
+
+func (l *Loader) fileCoordinate(absPath string) string {
+	if l.SourceRoot != "" {
+		if rel, err := filepath.Rel(l.SourceRoot, absPath); err == nil {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.ToSlash(absPath)
 }
 
 // isDiscoveryKind reports whether obj belongs to the discovery-meta

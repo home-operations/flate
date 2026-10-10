@@ -43,9 +43,7 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 		}
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(b.secrets), manifest.NamedResource.Compare) {
-		if l.Store.GetObject(id) == nil {
-			l.Store.AddObject(b.secrets[id])
-		}
+		l.Store.AddObject(b.secrets[id])
 	}
 	for id, r := range l.Index.Files() {
 		if id.Kind == manifest.KindKustomization && r.Parent == (manifest.NamedResource{}) {
@@ -213,7 +211,7 @@ func (b *selfProduceBuilder) recordProduced(relFile, baseNS, rootNS string, ks m
 
 // materializeSecret retains SOPS stand-ins under the rendered namespace so
 // self-produced substituteFrom inputs are available before reconciliation.
-// Real Store objects win over these construction-time stand-ins.
+// Real Store objects win; the last SOPS Secret replaces earlier stand-ins.
 func (b *selfProduceBuilder) materializeSecret(s *manifest.Secret, baseNS, rootNS string) {
 	ns := cmp.Or(baseNS, s.Namespace, rootNS)
 	if !b.wipeSecrets || b.store == nil || ns == "" {
@@ -291,7 +289,7 @@ func (b *selfProduceBuilder) recordProducer(raw *manifest.RawObject, baseNS, roo
 }
 
 // synthesizePlaceholderSecret retains declared keys for offline substitution.
-// A real or SOPS-wiped Secret takes precedence over a producer stand-in.
+// Existing Store objects and collected stand-ins take precedence.
 func (b *selfProduceBuilder) synthesizePlaceholderSecret(target manifest.NamedResource, keys []string) {
 	if !b.wipeSecrets || b.store == nil || b.store.GetObject(target) != nil || b.secrets[target] != nil {
 		return

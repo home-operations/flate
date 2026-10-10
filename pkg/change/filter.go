@@ -530,9 +530,8 @@ func (f *Filter) resolve() {
 		if queue[head].Kind != manifest.KindKustomization {
 			continue
 		}
-		record, ok := f.index.Lookup(queue[head])
 		src := record.File
-		if !ok {
+		if src == "" {
 			continue
 		}
 		// Pull in whichever KS owns this KS's *source file* — i.e. the

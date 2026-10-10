@@ -5,9 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/home-operations/flate/pkg/manifest"
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/yaml"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // kustomizationDocument reuses upstream fields while retaining permissive
@@ -17,10 +18,13 @@ type kustomizationDocument struct {
 	Replacements []replacementDirective `json:"replacements,omitempty"`
 }
 
+// document retains one source-view decode and its selected filename.
 type document struct {
 	body *kustomizationDocument
 	file string
 }
+
+// documentReader caches positive and negative results by absolute source-view directory.
 type documentReader map[string]document
 
 func (r documentReader) read(dir string) (*kustomizationDocument, string) {

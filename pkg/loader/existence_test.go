@@ -109,7 +109,7 @@ data:
 	if st.GetObject(id) != nil {
 		t.Fatalf("precondition: CM should not be in store yet")
 	}
-	if !l.Promote(id, true, func(manifest.BaseManifest) bool { return true }) {
+	if !Promote(l.Store, id, l.Index.Records[id].Path, PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
 		t.Fatalf("Promote should return true on a known id")
 	}
 	if st.GetObject(id) == nil {
@@ -125,7 +125,7 @@ data:
 func TestExistenceIndex_PromoteUnknownIDReturnsFalse(t *testing.T) {
 	idx := loaderFixture(store.New(), nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
-	if got := idx.Promote(id, true, func(manifest.BaseManifest) bool { return true }); got {
+	if got := Promote(idx.Store, id, idx.Index.Records[id].Path, PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
 		t.Errorf("Promote on unknown id should return false, got true")
 	}
 }
@@ -158,7 +158,7 @@ data:
 		t.Fatalf("remove: %v", err)
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ephemeral"}
-	if got := l.Promote(id, true, func(manifest.BaseManifest) bool { return true }); got {
+	if got := Promote(l.Store, id, l.Index.Records[id].Path, PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
 		t.Errorf("Promote on a removed file should return false, got true")
 	}
 	if st.GetObject(id) != nil {
@@ -199,7 +199,7 @@ data:
 	}
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
 	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-secret"}
-	if !l.Promote(cmID, true, func(manifest.BaseManifest) bool { return true }) {
+	if !Promote(l.Store, cmID, l.Index.Records[cmID].Path, PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
 		t.Fatalf("Promote(cm) should succeed")
 	}
 	if st.GetObject(cmID) == nil {
@@ -240,14 +240,14 @@ stringData: {value: fixture}
 			}
 			idx := loaderFixture(st, nil)
 			for _, id := range []manifest.NamedResource{cm.Named(), secret} {
-				idx.Index.Records[id] = manifest.DiscoveryRecord{Deferred: true, Path: filepath.Join(dir, "bundle.yaml")}
+				idx.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
 			}
 			id := cm.Named()
 			if tc.secret {
 				id = secret
 			}
 			admit := func(obj manifest.BaseManifest) bool { return obj.Named() == cm.Named() }
-			if got := idx.Promote(id, true, admit); got == tc.secret {
+			if got := Promote(idx.Store, id, idx.Index.Records[id].Path, PromoteOptions{WipeSecrets: true, Admit: admit}); got == tc.secret {
 				t.Errorf("Promote returned %v, want %v", got, !tc.secret)
 			}
 			if st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil {

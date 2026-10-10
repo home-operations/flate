@@ -26,11 +26,10 @@ func (f filterFixture) index() *manifest.DiscoveryIndex {
 			}
 		}
 	}
-	l := loader.New(st)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	index.Claims = map[string][]manifest.NamedResource{}
 	index.Readers = map[string][]manifest.NamedResource{}
-	for _, c := range l.Claims(f.root) {
+	for _, c := range loader.Claims(st, f.root) {
 		index.Claims[c.Prefix] = append(index.Claims[c.Prefix], c.ID)
 	}
 	for id, file := range f.files {

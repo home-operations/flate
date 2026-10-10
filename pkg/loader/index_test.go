@@ -1,8 +1,10 @@
 package loader
 
 import (
+	"github.com/home-operations/flate/internal/testutil"
 	"path/filepath"
 	"slices"
+	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -100,5 +102,47 @@ func defaultNamespacesForTest(s *store.Store, files map[manifest.NamedResource]s
 	clear(files)
 	for id, r := range l.Index.Files() {
 		files[id] = r.File
+	}
+}
+
+func TestFinalizeIndex_DataOwners(t *testing.T) {
+	for _, tc := range []struct {
+		name, namespace string
+		owners          bool
+	}{
+		{"raw namespace bridge", "", true},
+		{"file-backed explicit identity", "apps", true},
+		{"projected renderer only", "other", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "raw/kustomization.yaml", "namespace: raw\nresources: [input.yaml]\n")
+			testutil.WriteFile(t, root, "overlay/kustomization.yaml", "namespace: apps\nresources: [../raw]\n")
+			testutil.WriteFile(t, root, "raw/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: '"+tc.namespace+"'}\ndata: {value: fixture}\n")
+			st := store.New()
+			raw := &manifest.Kustomization{Name: "raw", Namespace: "flux-system", Path: "./raw"}
+			overlay := &manifest.Kustomization{Name: "overlay", Namespace: "flux-system", Path: "./overlay"}
+			st.AddObject(raw)
+			st.AddObject(overlay)
+			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input", Namespace: tc.namespace}
+			l := loaderFixture(st, map[manifest.NamedResource]string{id: "raw/input.yaml"})
+			l.FinalizeIndex(root, nil)
+			projected := id
+			projected.Namespace = "apps"
+			r, _ := l.Index.Lookup(projected)
+			if !slices.Equal(r.Renderers, []manifest.NamedResource{overlay.Named()}) {
+				t.Fatalf("projected renderers = %v", r.Renderers)
+			}
+			want := []manifest.NamedResource{overlay.Named(), raw.Named()}
+			if !tc.owners {
+				want = nil
+			}
+			if !slices.Equal(r.Owners, want) {
+				t.Fatalf("materialized data owners = %v, want %v", r.Owners, want)
+			}
+			if got := l.Index.DataOwners(projected); !slices.Equal(got, want) {
+				t.Fatalf("data owners = %v, want %v", got, want)
+			}
+		})
 	}
 }

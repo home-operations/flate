@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -32,16 +33,13 @@ func (d *discoverer) promoteOrphans(standaloneSecrets []manifest.NamedResource) 
 		}
 	}
 	for id, record := range index.Files() {
-		if !record.Deferred {
-			continue
-		}
 		if d.cfg.Store.GetObject(id) != nil {
 			continue
 		}
 		if owned(id, record.File) {
 			continue
 		}
-		if !d.loader.Promote(id, d.cfg.WipeSecrets, admit) {
+		if !loader.Promote(d.cfg.Store, id, record.Path, loader.PromoteOptions{WipeSecrets: d.cfg.WipeSecrets, Admit: admit}) {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}
 	}

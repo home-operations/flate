@@ -110,7 +110,7 @@ func (o *Orchestrator) computeChangeSet(repoRoot string) (*change.Set, error) {
 	if cs.Len() == 0 {
 		o.store.AddWarning(manifest.Warning{
 			Category: manifest.WarnPathConfig,
-			Message:  "no changes detected between --path and --path-orig — output will be empty; verify both paths reference distinct snapshots",
+			Message:  "no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots",
 		})
 	}
 	return cs, nil

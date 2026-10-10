@@ -2,7 +2,6 @@ package change
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -86,32 +85,7 @@ func TestDetect_SizeDifferAlwaysChanged(t *testing.T) {
 	}
 }
 
-func TestDetect_SkipsDotDirsAndVendor(t *testing.T) {
-	before := t.TempDir()
-	after := t.TempDir()
-	// Modifications inside dot-prefixed and well-known noise dirs are
-	// ignored by the walk.
-	writeFile(t, before, ".git/HEAD", "a")
-	writeFile(t, after, ".git/HEAD", "b")
-	writeFile(t, before, "node_modules/foo/index.js", "a")
-	writeFile(t, after, "node_modules/foo/index.js", "b")
-	writeFile(t, before, "vendor/dep/file.go", "a")
-	writeFile(t, after, "vendor/dep/file.go", "b")
-	// Sanity check: a real file change still surfaces. Use
-	// different-sized content so the detector flags via size diff and
-	// keeps the test focused on directory filtering.
-	writeFile(t, before, "real.yaml", "short")
-	writeFile(t, after, "real.yaml", "a longer payload")
-	got, err := Detect(before, after)
-	if err != nil {
-		t.Fatalf("Detect: %v", err)
-	}
-	if paths := got.Paths(); len(paths) != 1 || paths[0] != "real.yaml" {
-		t.Errorf("expected just real.yaml, got %v", paths)
-	}
-}
-
-func TestDetectViaWalker_DoesNotSkipHiddenScanRoot(t *testing.T) {
+func TestDetect_HiddenScanRoot(t *testing.T) {
 	parent := t.TempDir()
 	before := filepath.Join(parent, ".before")
 	after := filepath.Join(parent, ".after")
@@ -120,9 +94,9 @@ func TestDetectViaWalker_DoesNotSkipHiddenScanRoot(t *testing.T) {
 	writeFile(t, before, "mod.yaml", "old")
 	writeFile(t, after, "mod.yaml", "new")
 
-	got, err := detectViaWalker(before, after)
+	got, err := Detect(before, after)
 	if err != nil {
-		t.Fatalf("detectViaWalker: %v", err)
+		t.Fatalf("Detect: %v", err)
 	}
 	if paths := got.Paths(); !slices.Equal(paths, []string{"mod.yaml"}) {
 		t.Errorf("hidden scan root paths = %v, want [mod.yaml]", paths)
@@ -157,120 +131,6 @@ func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
 	}
 	if !got.Contains("mod.yaml") {
 		t.Errorf("Detect missed same-size same-mtime modification — fast-path regression. Paths: %v", got.Paths())
-	}
-}
-
-// TestDetectViaGit_BehavesLikeWalker pins the contract that the git
-// fast path and the Go walker fallback produce identical sets for
-// the same input — modulo the directory-prefix filter both share.
-// Skip when git isn't on PATH (minimal CI containers); the Detect
-// fallback path is what runs there.
-func TestDetectViaGit_BehavesLikeWalker(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH — fallback path is exercised by other tests")
-	}
-	before := t.TempDir()
-	after := t.TempDir()
-	writeFile(t, before, "same.yaml", "x")
-	writeFile(t, after, "same.yaml", "x")
-	writeFile(t, before, "removed.yaml", "gone")
-	writeFile(t, after, "added.yaml", "new")
-	writeFile(t, before, "mod.yaml", "AAA")
-	writeFile(t, after, "mod.yaml", "BBB")
-	writeFile(t, before, "type.yaml", "target")
-	if err := os.Symlink("target", filepath.Join(after, "type.yaml")); err != nil {
-		t.Skipf("symlink unsupported: %v", err)
-	}
-	// .git/ contents must NOT appear in the set — git diff --no-index
-	// happily reports them; the isFilteredPath post-filter drops them.
-	writeFile(t, before, ".git/HEAD", "a")
-	writeFile(t, after, ".git/HEAD", "b")
-
-	gotGit, err := detectViaGit(before, after)
-	if err != nil {
-		t.Fatalf("detectViaGit: %v", err)
-	}
-	gotWalker, err := detectViaWalker(before, after)
-	if err != nil {
-		t.Fatalf("detectViaWalker: %v", err)
-	}
-	want := []string{"added.yaml", "mod.yaml", "removed.yaml", "type.yaml"}
-	if got := gotGit.Paths(); !slices.Equal(got, want) {
-		t.Errorf("git path: %v, want %v", got, want)
-	}
-	if got := gotWalker.Paths(); !slices.Equal(got, want) {
-		t.Errorf("walker path: %v, want %v (must agree with git path)", got, want)
-	}
-}
-
-func TestDetectViaGit_NestedRoots(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
-	cases := []struct {
-		name         string
-		beforeNested bool
-		changed      bool
-	}{
-		{name: "before_nested_unchanged", beforeNested: true},
-		{name: "after_nested_unchanged"},
-		{name: "before_nested_changed", beforeNested: true, changed: true},
-		{name: "after_nested_changed", changed: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			outer := t.TempDir()
-			inner := filepath.Join(outer, ".cache", "baselines", "base")
-			before, after := outer, inner
-			if tc.beforeNested {
-				before, after = inner, outer
-			}
-			writeFile(t, before, "same.yaml", "same")
-			writeFile(t, after, "same.yaml", "same")
-			writeFile(t, before, ".cache/noise.yaml", "old")
-			writeFile(t, after, ".cache/noise.yaml", "new")
-			var want []string
-			if tc.changed {
-				writeFile(t, before, "removed.yaml", "gone")
-				writeFile(t, after, "added.yaml", "new")
-				writeFile(t, before, "mod.yaml", "AAA")
-				writeFile(t, after, "mod.yaml", "BBB")
-				writeFile(t, before, "type.yaml", "target")
-				if err := os.Symlink("target", filepath.Join(after, "type.yaml")); err != nil {
-					t.Skipf("symlink unsupported: %v", err)
-				}
-				want = []string{"added.yaml", "mod.yaml", "removed.yaml", "type.yaml"}
-			}
-			gotGit, err := detectViaGit(before, after)
-			if err != nil {
-				t.Fatalf("detectViaGit: %v", err)
-			}
-			gotWalker, err := detectViaWalker(before, after)
-			if err != nil {
-				t.Fatalf("detectViaWalker: %v", err)
-			}
-			if got := gotGit.Paths(); !slices.Equal(got, want) {
-				t.Errorf("git paths = %v, want %v", got, want)
-			}
-			if got := gotWalker.Paths(); !slices.Equal(got, want) {
-				t.Errorf("walker paths = %v, want %v", got, want)
-			}
-		})
-	}
-}
-
-func TestShouldSkipDir(t *testing.T) {
-	yes := []string{".git", ".cache", "node_modules", "vendor"}
-	no := []string{"src", "kubernetes", "apps", "tests"}
-	for _, n := range yes {
-		if !shouldSkipDir(n) {
-			t.Errorf("shouldSkipDir(%q) = false, want true", n)
-		}
-	}
-	for _, n := range no {
-		if shouldSkipDir(n) {
-			t.Errorf("shouldSkipDir(%q) = true, want false", n)
-		}
 	}
 }
 
@@ -314,46 +174,37 @@ func TestSet_RerootPrependsPrefix(t *testing.T) {
 	}
 }
 
-// TestDetect_SymlinkTargetRewrite pins parity with git --no-index for
-// symlink-target changes. Pre-fix, the Go walker dropped symlinks via
-// `!d.Type().IsRegular()`, so a symlink whose target was rewritten on
-// only one side produced an empty change set on systems without git
-// on PATH (where the slow path is the only path).
-func TestDetect_SymlinkTargetRewrite(t *testing.T) {
-	before := t.TempDir()
-	after := t.TempDir()
-	// Both sides have a "link" pointing somewhere; only after's
-	// changes the target.
-	if err := os.Symlink("target-A", filepath.Join(before, "link")); err != nil {
-		t.Skipf("symlink unsupported: %v", err)
+func TestDetect_Symlinks(t *testing.T) {
+	t.Setenv("PATH", "")
+	cases := []struct {
+		name                      string
+		beforeTarget, afterTarget string
+		afterRegular              bool
+	}{
+		{name: "same_length_retarget", beforeTarget: "target-A", afterTarget: "target-B"},
+		{name: "different_length_retarget", beforeTarget: "target", afterTarget: "other-target"},
+		{name: "regular_type_swap", beforeTarget: "target", afterTarget: "target", afterRegular: true},
 	}
-	if err := os.Symlink("target-B", filepath.Join(after, "link")); err != nil {
-		t.Fatal(err)
-	}
-	set, err := detectViaWalker(before, after)
-	if err != nil {
-		t.Fatalf("detectViaWalker: %v", err)
-	}
-	if !set.Contains("link") {
-		t.Errorf("walker missed symlink-target rewrite: %v", set.Paths())
-	}
-}
-
-// TestDetect_SymlinkVsRegular pins type-swap detection — a symlink on
-// one side and a regular file on the other are different "things" in
-// git's --no-index view and the walker must agree.
-func TestDetect_SymlinkVsRegular(t *testing.T) {
-	before := t.TempDir()
-	after := t.TempDir()
-	if err := os.Symlink("some-target", filepath.Join(before, "x")); err != nil {
-		t.Skipf("symlink unsupported: %v", err)
-	}
-	writeFile(t, after, "x", "some-target") // same byte content as target text
-	set, err := detectViaWalker(before, after)
-	if err != nil {
-		t.Fatalf("detectViaWalker: %v", err)
-	}
-	if !set.Contains("x") {
-		t.Errorf("walker missed symlink↔regular type swap: %v", set.Paths())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before, after := t.TempDir(), t.TempDir()
+			if err := os.Symlink(tc.beforeTarget, filepath.Join(before, "link")); err != nil {
+				t.Fatal(err)
+			}
+			if tc.afterRegular {
+				writeFile(t, after, "link", tc.afterTarget)
+			} else if err := os.Symlink(tc.afterTarget, filepath.Join(after, "link")); err != nil {
+				t.Fatal(err)
+			}
+			for _, roots := range [][2]string{{before, after}, {after, before}} {
+				got, err := Detect(roots[0], roots[1])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if paths := got.Paths(); !slices.Equal(paths, []string{"link"}) {
+					t.Errorf("paths = %v, want [link]", paths)
+				}
+			}
+		})
 	}
 }

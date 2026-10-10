@@ -1,22 +1,21 @@
 package change
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
-	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 )
 
 // Set is the immutable result of Detect — the set of file paths
@@ -79,170 +78,33 @@ func (s *Set) Reroot(prefix string) *Set {
 	return out
 }
 
-// Detect returns the set of repo-relative file paths that differ
-// between before and after.
-//
-// Fast path: when git is on $PATH, `git diff --no-index --name-status
-// -z` does the comparison in C. For a 50k-file tree with one changed
-// file, this finishes in ~10–50ms vs ~200ms–3s for the Go walker —
-// because git's tree-walk + content-compare is implemented in C and
-// uses index-style optimizations the Go walker can't match. The Go
-// path remains as a fallback for: (a) systems without git installed,
-// (b) git invocations that fail with an unexpected exit code, and
-// (c) paths where git refuses to operate.
-//
-// Slow path: walks before and after concurrently, then hashes every
-// same-sized file pair. The previous (size, mtime) fast-path was
-// removed — on coarse-granularity filesystems (HFS+ 1s, fresh `git
-// checkout` clock-stamping) two distinct same-sized files written in
-// the same second produce indistinguishable mtimes, so trusting them
-// as identical silently dropped real changes. Always hashing is the
-// only correctness-preserving option on the fallback path; the git
-// path doesn't need it because content comparison is intrinsic to
-// git's diff machinery.
-//
-// Directories whose name begins with "." (e.g. .git, .flate-cache)
-// and well-known noise dirs (node_modules, vendor) are skipped on
-// both paths.
+// Detect returns the set of repo-relative file paths that differ between
+// before and after, using each tree's own Flux sourceignore rules. File contents,
+// additions, deletions, entry types and symlink targets participate in the diff.
 func Detect(before, after string) (*Set, error) {
 	if before == "" || after == "" {
 		return nil, errors.New("change.Detect: both paths required")
 	}
-
-	set, err := detectViaGit(before, after)
-	if err == nil {
-		return set, nil
-	}
-	// Distinguish "git not on PATH" (expected on minimal CI
-	// containers) from "git failed unexpectedly" (worth a log so
-	// operators can investigate). LookPath returns
-	// *exec.Error{Err: ErrNotFound}; everything else is a real
-	// fault on the git path that callers might want to know about.
-	if lookErr, ok := errors.AsType[*exec.Error](err); !ok || !errors.Is(lookErr.Err, exec.ErrNotFound) {
-		slog.Debug("change.Detect: git path failed, falling back to Go walker", "err", err)
-	}
-	return detectViaWalker(before, after)
-}
-
-// detectViaGit runs `git diff --no-index --name-status -z` between
-// the two paths and parses the NUL-separated output. Each entry is a
-// (status, path) pair: status is one byte (A/D/M/T...), path is the
-// absolute path on whichever side reported the change. Strip the
-// before/after prefix to get the repo-relative path; filter out paths
-// inside skip-dirs the Go walker would have skipped (.git/, etc.).
-//
-// Returns an error if git is not installed, if the diff command
-// errors out unexpectedly, or if the output is malformed. Callers
-// fall back to the Go walker on any error.
-func detectViaGit(before, after string) (*Set, error) {
-	if _, err := exec.LookPath("git"); err != nil {
-		return nil, err
-	}
-	absBefore, err := filepath.Abs(before)
+	before, err := filepath.Abs(before)
 	if err != nil {
 		return nil, err
 	}
-	absAfter, err := filepath.Abs(after)
+	after, err = filepath.Abs(after)
 	if err != nil {
 		return nil, err
 	}
-	// G204: git is a fixed binary on $PATH (we just LookPath'd it);
-	// absBefore and absAfter are caller-controlled directory paths
-	// the orchestrator passes from validated --path / --path-orig
-	// flags. The "--" separator before them disambiguates against
-	// any path starting with `-`.
-	cmd := exec.Command("git", "diff", "--no-index", "--name-status", //nolint:gosec // see comment above
-		"-z", "--no-renames", "--", absBefore, absAfter)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if runErr := cmd.Run(); runErr != nil {
-		// Exit 1 = differences found (expected); other exits = real
-		// failure (e.g. one path doesn't exist, missing-newline
-		// complaints, etc.).
-		if ee, ok := errors.AsType[*exec.ExitError](runErr); !ok || ee.ExitCode() != 1 {
-			return nil, runErr
-		}
-	}
-
-	beforePrefix := filepath.ToSlash(absBefore) + "/"
-	afterPrefix := filepath.ToSlash(absAfter) + "/"
-	paths := make(map[string]struct{})
-
-	// Output format with --name-status -z (and --no-renames): NUL-separated
-	// (status, path) pairs. Walk with IndexByte to avoid the full subslice
-	// allocation that bytes.Split would produce for large diffs.
-	data := stdout.Bytes()
-	for len(data) > 0 {
-		// Consume status field.
-		i := bytes.IndexByte(data, 0)
-		if i < 0 {
-			break
-		}
-		status := data[:i]
-		data = data[i+1:]
-		// Consume path field.
-		j := bytes.IndexByte(data, 0)
-		if j < 0 {
-			break
-		}
-		rawPath := data[:j]
-		data = data[j+1:]
-		if len(status) == 0 || len(rawPath) == 0 {
-			continue
-		}
-		p := filepath.ToSlash(string(rawPath))
-		// Git reports additions from after and other changes from before,
-		// so select the side before stripping overlapping roots.
-		prefix := beforePrefix
-		if status[0] == 'A' {
-			prefix = afterPrefix
-		}
-		rel, ok := strings.CutPrefix(p, prefix)
-		if !ok {
-			// Unexpected path shape — skip rather than mis-attribute.
-			// Defensive only: git always reports paths under the input
-			// directories we passed.
-			continue
-		}
-		if isFilteredPath(rel) {
-			continue
-		}
-		paths[rel] = struct{}{}
-	}
-	return &Set{paths: paths}, nil
-}
-
-// isFilteredPath reports whether any path segment matches the
-// skip-dir rules (mirrors the directory-pruning the Go walker does
-// inline). git diff doesn't honor .gitignore on --no-index mode and
-// happily reports .git/ internals, so we post-filter to keep the
-// fast and slow paths producing identical results.
-func isFilteredPath(rel string) bool {
-	for segment := range strings.SplitSeq(rel, "/") {
-		if shouldSkipDir(segment) {
-			return true
-		}
-	}
-	return false
-}
-
-// detectViaWalker is the git-less fallback: walk both trees,
-// content-hash every same-sized file pair. Slower than the git path
-// but doesn't depend on an external binary, and is the only correct
-// option for environments where git isn't available.
-func detectViaWalker(before, after string) (*Set, error) {
 	var (
 		eg       errgroup.Group
 		beforeFS map[string]fileMeta
 		afterFS  map[string]fileMeta
 	)
 	eg.Go(func() error {
-		tree, err := scanTree(before)
+		tree, err := scanTree(before, after)
 		beforeFS = tree
 		return err
 	})
 	eg.Go(func() error {
-		tree, err := scanTree(after)
+		tree, err := scanTree(after, before)
 		afterFS = tree
 		return err
 	})
@@ -266,8 +128,6 @@ func detectViaWalker(before, after string) (*Set, error) {
 			paths[rel] = struct{}{}
 			continue
 		}
-		// A type swap (regular ↔ symlink) is a content change in git's
-		// --no-index view; flag it without bothering to hash.
 		if bef.symlink != aft.symlink {
 			paths[rel] = struct{}{}
 			continue
@@ -276,9 +136,7 @@ func detectViaWalker(before, after string) (*Set, error) {
 			paths[rel] = struct{}{}
 			continue
 		}
-		// Same size, unknown mtime trustworthiness — hash both sides.
-		// The pre-removal mtime fast-path silently dropped real edits
-		// on coarse-mtime filesystems; correctness over speed here.
+		// Coarse filesystem timestamps cannot establish content equality.
 		hashJobs = append(hashJobs, hashJob{
 			rel: rel, beforeAbs: bef.abs, afterAbs: aft.abs,
 			symlink: aft.symlink,
@@ -327,31 +185,34 @@ func detectViaWalker(before, after string) (*Set, error) {
 	return &Set{paths: paths}, nil
 }
 
-// fileMeta is the per-entry metadata scanTree collects. symlink is
-// true when the entry is a symbolic link rather than a regular file —
-// git's --no-index diff treats symlinks as files whose "content" is
-// the link target text and reports type-swaps (symlink↔regular) as
-// content changes, so the walker mirrors that.
 type fileMeta struct {
 	size    int64
 	abs     string
 	symlink bool
 }
 
-// scanTree walks root collecting per-file metadata. Prunes skip-dirs
-// (via shouldSkipDir) and records symlinks alongside regular files so
-// the diff matches git's --no-index view.
-func scanTree(root string) (map[string]fileMeta, error) {
+// scanTree must descend excluded directories so deeper re-includes survive,
+// mirroring github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns,
+// which loads each directory's own file before subdirectories and skips only .git.
+// The opposite snapshot and .git metadata never belong to the artifact view.
+func scanTree(root, opposite string) (map[string]fileMeta, error) {
 	out := map[string]fileMeta{}
+	var ignoreFiles []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			if p != root && shouldSkipDir(d.Name()) {
+		if p != root && (p == opposite || d.Name() == ".git") {
+			if d.IsDir() {
 				return fs.SkipDir
 			}
 			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if d.Name() == ".sourceignore" {
+			ignoreFiles = append(ignoreFiles, p)
 		}
 		typ := d.Type()
 		// Regular files and symlinks both participate in the diff;
@@ -365,14 +226,7 @@ func scanTree(root string) (map[string]fileMeta, error) {
 		if err != nil {
 			return err
 		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		// For symlinks Info() reports the link's own size (the target
-		// path length) — exactly the bytes we'll hash via readlink.
 		out[filepath.ToSlash(rel)] = fileMeta{
-			size:    info.Size(),
 			abs:     p,
 			symlink: isLink,
 		}
@@ -381,13 +235,31 @@ func scanTree(root string) (map[string]fileMeta, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Opposite-snapshot rules must not disable this side's Flux defaults.
+	matcher, err := sourceignore.NewFromFiles(root, ignoreFiles, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	for rel, meta := range out {
+		if matcher.Match(rel, false) {
+			delete(out, rel)
+			continue
+		}
+		// Lstat preserves the link's own size for comparison via readlink.
+		info, err := os.Lstat(meta.abs)
+		if err != nil {
+			return nil, err
+		}
+		meta.size = info.Size()
+		out[rel] = meta
+	}
 	return out, nil
 }
 
-// hashEntry returns the SHA-256 hex digest of an entry's content. For
-// regular files this is the file body; for symlinks it's the link
-// target text (matching git --no-index's content view of a symlink),
-// so a target-rewrite is detected without following the link.
+// Symlinks are compared without following them because flate renders in-root
+// links. github.com/fluxcd/pkg/artifact v0.18.3 storage.Storage.Archive
+// (storage/archive.go) omits non-regular files; changing that render-parity gap
+// must also change detection's treatment of links.
 func hashEntry(path string, isSymlink bool) (string, error) {
 	if isSymlink {
 		target, err := os.Readlink(path)
@@ -400,6 +272,11 @@ func hashEntry(path string, isSymlink bool) (string, error) {
 	return hashFile(path)
 }
 
+var hashBuffers = sync.Pool{New: func() any {
+	buf := make([]byte, 32*1024)
+	return &buf
+}}
+
 func hashFile(path string) (string, error) {
 	f, err := os.Open(path) //nolint:gosec // path is a tree-walk result, not user-controlled
 	if err != nil {
@@ -407,12 +284,11 @@ func hashFile(path string) (string, error) {
 	}
 	defer func() { _ = f.Close() }()
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	buf := hashBuffers.Get().(*[]byte)
+	defer hashBuffers.Put(buf)
+	// Hide File.WriteTo so CopyBuffer uses the pooled buffer.
+	if _, err := io.CopyBuffer(h, struct{ io.Reader }{f}, *buf); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func shouldSkipDir(name string) bool {
-	return strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor"
 }

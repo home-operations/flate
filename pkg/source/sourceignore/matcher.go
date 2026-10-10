@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	flux "github.com/fluxcd/pkg/sourceignore"
-	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
+	"github.com/fluxcd/pkg/sourceignore/gitignore"
 )
 
 // RulesVersion must change when filtering rules change to invalidate source artifact caches.
@@ -51,6 +51,44 @@ func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sourceignore load: %w", err)
 	}
+	return newMatcher(domain, patterns, extra, withDefaults), nil
+}
+
+// NewFromFiles builds a Matcher from absolute .sourceignore paths collected by
+// an existing tree walk. Rules load in the order of
+// github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns: each directory's
+// own file before its lexically ordered subdirectories, skipping only .git.
+// Defaults and extra follow the same policy as New.
+func NewFromFiles(root string, files []string, extra *string, withDefaults bool) (*Matcher, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("sourceignore abs: %w", err)
+	}
+	domain := splitPath(abs)
+	files = slices.Clone(files)
+	slices.SortFunc(files, func(a, b string) int {
+		return slices.Compare(splitPath(filepath.Dir(a)), splitPath(filepath.Dir(b)))
+	})
+	var patterns []gitignore.Pattern
+	for _, file := range files {
+		rel, err := filepath.Rel(abs, filepath.Dir(file))
+		if err != nil {
+			return nil, fmt.Errorf("sourceignore relative path: %w", err)
+		}
+		fileDomain := domain
+		if rel != "." {
+			fileDomain = slices.Concat(domain, splitPath(rel))
+		}
+		ps, err := flux.ReadIgnoreFile(file, fileDomain)
+		if err != nil {
+			return nil, fmt.Errorf("sourceignore load: %w", err)
+		}
+		patterns = append(patterns, ps...)
+	}
+	return newMatcher(domain, patterns, extra, withDefaults), nil
+}
+
+func newMatcher(domain []string, patterns []gitignore.Pattern, extra *string, withDefaults bool) *Matcher {
 	if extra != nil && strings.TrimSpace(*extra) != "" {
 		patterns = append(patterns, flux.ReadPatterns(strings.NewReader(*extra), domain)...)
 	}
@@ -64,7 +102,7 @@ func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 		}
 		matcher = flux.NewMatcher(patterns)
 	}
-	return &Matcher{matcher: matcher, domain: domain}, nil
+	return &Matcher{matcher: matcher, domain: domain}
 }
 
 // Match reports whether rel (a path relative to the matcher's root, using the

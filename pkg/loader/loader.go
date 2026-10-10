@@ -500,6 +500,9 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 	}
 	dirRel := filepath.ToSlash(rel) + "/"
 	for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+		if ks.Path == "" && ks.SourceName == "" {
+			continue
+		}
 		if strings.HasPrefix(dirRel, NormalizePrefix(ks.Path)) {
 			return true
 		}

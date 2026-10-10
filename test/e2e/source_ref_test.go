@@ -107,6 +107,71 @@ spec:
 	}
 }
 
+func TestE2E_SourceRef_PatchedStubKustomizationKeepsParentPath(t *testing.T) {
+	for _, concurrency := range []string{"2", "8"} {
+		t.Run("concurrency_"+concurrency, func(t *testing.T) {
+			root := t.TempDir()
+			gitInit(t, root)
+			testutil.WriteFile(t, root, "flux/kustomization.yaml", `resources: [root.yaml, tmpl.yaml]
+patches:
+  - target:
+      group: kustomize.toolkit.fluxcd.io
+      version: v1
+      kind: Kustomization
+      name: tmpl
+    patch: |-
+      - op: add
+        path: /spec/path
+        value: ./apps
+      - op: add
+        path: /spec/sourceRef
+        value: {kind: GitRepository, name: flux-system}
+`)
+			testutil.WriteFile(t, root, "flux/root.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: root, namespace: flux-system}
+spec:
+  interval: 1m
+  prune: true
+  path: ./flux
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+			testutil.WriteFile(t, root, "flux/tmpl.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: tmpl, namespace: flux-system}
+spec: {interval: 1m, prune: true}
+`)
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: apps-cm, namespace: apps}\n")
+			testutil.WriteFile(t, root, "unrelated/broken.yaml", "invalid: [\n")
+			out, _ := requireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+				"--concurrency", concurrency, "--cache-dir", t.TempDir())
+			docs, err := manifest.DecodeDocs(strings.NewReader(out))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, len(docs), 3)
+			seen := map[manifest.NamedResource]bool{}
+			for _, doc := range docs {
+				obj, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				seen[obj.Named()] = true
+				if ks, ok := obj.(*manifest.Kustomization); ok && ks.Name == "tmpl" {
+					assert.Equal(t, ks.Path, "./apps")
+					assert.Equal(t, ks.SourceName, "flux-system")
+				}
+			}
+			assert.Diff(t, seen, map[manifest.NamedResource]bool{
+				{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "root"}: true,
+				{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "tmpl"}: true,
+				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "apps-cm"}:         true,
+			})
+		})
+	}
+}
+
 func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 	root, _, _, _ := sourceRefFixture(t)
 	out, stderr := requireCLIOK(t, "build", "all", "--path", root+"/flux",

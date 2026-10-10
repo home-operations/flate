@@ -171,6 +171,9 @@ func resolveNamespace(file string, flux, kust []pathEntry) string {
 func indexFluxByPath(s *store.Store, sourceFiles map[manifest.NamedResource]string, kust []pathEntry, repoRoot string) []pathEntry {
 	var out []pathEntry
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+		if ks.Path == "" && ks.SourceName == "" {
+			continue
+		}
 		ns := cmp.Or(ks.TargetNamespace, ks.Namespace)
 		if ns == "" {
 			if file, ok := sourceFiles[ks.Named()]; ok {

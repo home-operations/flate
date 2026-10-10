@@ -96,7 +96,8 @@ func KSPathPrefixesLocalOnly(s *store.Store, repoRoot string, cache *manifest.Co
 }
 
 // KSPathPrefixesWithCache returns one or more entries per loaded
-// Kustomization. An empty spec.path claims the source root. Each KS contributes:
+// Kustomization with a path or a named source. An empty spec.path claims the
+// named source's root. Each KS contributes:
 //
 //  1. Its spec.path (always).
 //  2. Each spec.components entry (when present, resolved against

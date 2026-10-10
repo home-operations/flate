@@ -14,6 +14,40 @@ func cmID(ns string) manifest.NamedResource {
 	return manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ns, Name: "cluster-settings"}
 }
 
+func TestBuildSelfProduceIndex_EmptyPathRequiresSource(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, source string
+		produces           bool
+	}{
+		{name: "stub"},
+		{name: "source_root", source: "flux-system", produces: true},
+		{name: "explicit_root", path: "./", produces: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cluster-settings}\n")
+			st := store.New()
+			ks := &manifest.Kustomization{
+				Name: "root", Namespace: "flux-system", Path: tc.path,
+				SourceKind: manifest.KindGitRepository, SourceName: tc.source, SourceNamespace: "flux-system",
+			}
+			st.AddObject(ks)
+			idx := BuildSelfProduceIndex(st, root, nil, false)
+			var want []manifest.NamedResource
+			if tc.produces {
+				want = []manifest.NamedResource{ks.Named()}
+			}
+			if got := idx.ProducedBy(cmID("apps")); !slices.Equal(got, want) {
+				t.Fatalf("ProducedBy = %v, want %v", got, want)
+			}
+			if got := idx.OwnersOfFile("apps/cm.yaml"); !slices.Equal(got, want) {
+				t.Fatalf("OwnersOfFile = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 // The bjw-s/onedr0p topology: a root KS with a BARE spec.path (no
 // kustomization.yaml) whose per-namespace subdir bases each stamp their own
 // `namespace:` and pull in a shared substitutions component defining a

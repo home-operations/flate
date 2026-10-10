@@ -368,7 +368,10 @@ func TestKSPathPrefixes_EmptyPathClaimsRoot(t *testing.T) {
 		Name: "with", Namespace: "flux-system",
 		Path: "./apps",
 	}
-	without := &manifest.Kustomization{Name: "without", Namespace: "flux-system"}
+	without := &manifest.Kustomization{
+		Name: "without", Namespace: "flux-system",
+		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
+	}
 	s.AddObject(with)
 	s.AddObject(without)
 

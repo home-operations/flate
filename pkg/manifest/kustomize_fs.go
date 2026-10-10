@@ -133,6 +133,7 @@ type KSClaim struct {
 // one source of truth; callers map KSClaim onto their own claim type and
 // keep their divergent LOOKUP semantics (loader's single-strict-parent vs
 // change's multi-owner+ancestors).
+// Kustomizations with neither a path nor a named source contribute no claims.
 //
 // repoRoot is the filesystem root on-disk component reads resolve against;
 // "" skips them (spec.path + spec.components only) — preserving loader's
@@ -151,6 +152,9 @@ func BuildKSClaims(kss []*Kustomization, repoRoot string, cache *ComponentCache)
 		claims = append(claims, KSClaim{ID: id, Prefix: resolved + "/"})
 	}
 	for _, ks := range kss {
+		if ks.Path == "" && ks.SourceName == "" {
+			continue
+		}
 		id := ks.Named()
 		base := NormalizeClaimBase(ks.Path)
 		prefix := base + "/"

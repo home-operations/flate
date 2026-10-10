@@ -88,7 +88,7 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: other}}
 }
 
 func TestCheckFollowErrors_EmptyPathReadsSourceRoot(t *testing.T) {
-	for _, source := range []string{"missing", "working_tree", "external", "pinned"} {
+	for _, source := range []string{"stub", "missing", "working_tree", "external", "pinned"} {
 		t.Run(source, func(t *testing.T) {
 			for _, path := range []string{"", "./"} {
 				t.Run("path_"+path, func(t *testing.T) {
@@ -103,8 +103,11 @@ func TestCheckFollowErrors_EmptyPathReadsSourceRoot(t *testing.T) {
 						Name: "root", Namespace: "flux-system", Path: path,
 						SourceKind: manifest.KindGitRepository, SourceName: repo.Name, SourceNamespace: repo.Namespace,
 					}
+					if source == "stub" {
+						ks.SourceKind, ks.SourceName, ks.SourceNamespace = "", "", ""
+					}
 					st.AddObject(ks)
-					if source != "missing" {
+					if source != "missing" && source != "stub" {
 						st.AddObject(repo)
 					}
 					switch source {
@@ -116,7 +119,7 @@ func TestCheckFollowErrors_EmptyPathReadsSourceRoot(t *testing.T) {
 					want := manifest.ErrInput
 					d := discoverer{cfg: Config{Store: st}, followErrors: map[string]error{root: want}}
 					got := d.checkFollowErrors(root)
-					if source == "external" || source == "pinned" {
+					if source == "external" || source == "pinned" || (source == "stub" && path == "") {
 						if got != nil {
 							t.Fatalf("non-working-tree reader retained root error: %v", got)
 						}

@@ -102,7 +102,7 @@ func (i *SelfProduceIndex) EmissionParentByFile(file string) (manifest.NamedReso
 	return p, ok
 }
 
-// BuildSelfProduceIndex resolves, per Flux Kustomization with a spec.path,
+// BuildSelfProduceIndex resolves, per Flux Kustomization with a path or named source,
 // which ConfigMaps its own kustomize render emits and in which namespace —
 // by walking the render graph the loader's discovery pass does not attribute
 // to a producer: bare-dir base generation (each immediate subdir holding a
@@ -146,6 +146,9 @@ func BuildSelfProduceIndex(s *store.Store, repoRoot string, producers *manifest.
 	external := ExternalSourcedKSIDs(s, repoRoot)
 	var pinnedBuilders map[string]*selfProduceBuilder
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+		if ks.Path == "" && ks.SourceName == "" {
+			continue
+		}
 		if _, skip := external[ks.Named()]; skip {
 			continue
 		}

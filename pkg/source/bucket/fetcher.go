@@ -5,20 +5,20 @@ package bucket
 import (
 	"context"
 	"fmt"
-	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"io"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Fetcher pulls a Flux Bucket CR into the on-disk cache. Only the
+// Fetcher acquires a Flux Bucket into an immutable filesystem. Only the
 // "generic" provider (any S3-API-compatible storage) is wired up
 // today via minio-go. The aws/gcp/azure providers parse and route
 // here but return a clear "not implemented" error rather than silently
@@ -76,7 +76,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 
 // newMinioClient resolves credentials, endpoint, and TLS/proxy transport for b
 // and constructs the minio client. Returns the resolved endpoint + secure flag
-// too, since the slot key and artifact URL both need them.
+// too, since the cache key and artifact URL both need them.
 func (f *Fetcher) newMinioClient(b *manifest.Bucket) (client *minio.Client, endpoint string, secure bool, err error) {
 	creds, err := f.resolveCredentials(b)
 	if err != nil {

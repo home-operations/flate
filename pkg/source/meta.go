@@ -10,33 +10,13 @@ import (
 	"github.com/home-operations/flate/pkg/source/atomic"
 )
 
-// SlotMetaFile is the single structured sidecar a fetched cache slot carries,
-// replacing the family of per-fact .flate-* marker files (the git revision, the
-// OCI digest). It is `.flate-`-prefixed so it
-// never collides with a user file in the materialized source tree, and JSON so
-// a new fact is a new field rather than a new file.
+// SlotMetaFile names the Git source slot's atomic metadata sidecar.
 const SlotMetaFile = ".flate-meta.json"
 
-// SlotMeta is the content of SlotMetaFile: the metadata a cache-hit needs to
-// validate a slot and decide whether a refetch can be skipped. Fields are
-// populated by whichever fetcher owns the slot — git sets Revision, OCI sets
-// Digest.
+// SlotMeta records the resolved Git commit for a source slot.
 type SlotMeta struct {
-	// Revision is the resolved git commit SHA (GitRepository slots).
+	// Revision is the resolved Git commit SHA.
 	Revision string `json:"revision,omitempty"`
-	// Digest is the resolved OCI content digest (OCIRepository slots).
-	Digest string `json:"digest,omitempty"`
-
-	// ChartVersion, ChartDigest, ChartURL record a HelmRepository HTTP chart
-	// resolution (the concrete version, bare-hex tarball sha256, and absolute
-	// .tgz URL the repo's index.yaml resolved a chart name+version to). They
-	// live on a dedicated "helm-resolve:" slot so a warm run skips the live
-	// index.yaml fetch within spec.interval. Named distinctly from the OCI
-	// Digest so a slot never aliases the two. ChartDigest may be empty for a
-	// digest-less (mutable) index entry.
-	ChartVersion string `json:"chartVersion,omitempty"`
-	ChartDigest  string `json:"chartDigest,omitempty"`
-	ChartURL     string `json:"chartURL,omitempty"`
 }
 
 // WriteSlotMeta persists meta into slotDir atomically (temp file + fsync +
@@ -50,23 +30,15 @@ func WriteSlotMeta(slotDir string, meta SlotMeta) error {
 	return atomic.WriteFile(filepath.Join(slotDir, SlotMetaFile), b, 0o600, true)
 }
 
-// UpdateSlotMeta read-modify-writes the slot's sidecar: read the current
-// SlotMeta (preserving fields the caller leaves alone), apply mutate, write it
-// back. Marker writers run under the slot lock (cache.Slot serializes per key),
-// so the RMW has a single writer. Shared by the per-kind fetchers (oci digest,
-// helmchart chart resolution, git revision) so each records its facts without
-// clobbering the others.
+// UpdateSlotMeta updates a sidecar under the caller-held Git slot lock.
 func UpdateSlotMeta(slotDir string, mutate func(*SlotMeta)) error {
 	m, _ := ReadSlotMeta(slotDir)
 	mutate(&m)
 	return WriteSlotMeta(slotDir, m)
 }
 
-// ReadSlotMeta returns the slot's sidecar. A missing, unreadable, or unparseable
-// sidecar yields ok=false — all three mean "no usable marker", so the caller
-// rebuilds. Atomic writes guarantee the file is either absent or complete, so a
-// parse failure indicates a pre-meta.json slot or external tampering, not a torn
-// write.
+// ReadSlotMeta returns usable Git metadata. Missing, unreadable or invalid
+// sidecars MUST be treated as cache misses.
 func ReadSlotMeta(slotDir string) (meta SlotMeta, ok bool) {
 	b, err := os.ReadFile(filepath.Join(slotDir, SlotMetaFile)) //nolint:gosec // slotDir is fetcher-owned cache path
 	if err != nil {

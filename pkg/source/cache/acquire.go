@@ -2,7 +2,6 @@
 package cache
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
@@ -47,7 +46,6 @@ type Cache struct {
 
 type entry struct {
 	fs         fs.FS
-	data       []byte
 	descriptor ocispec.Descriptor
 	stored     ocispec.Descriptor
 	resolved   time.Time
@@ -60,9 +58,18 @@ type CacheError struct{ Err error } //nolint:revive // The public acquisition co
 func (e *CacheError) Error() string   { return "cache: " + e.Err.Error() }
 func (e *CacheError) Unwrap() []error { return []error{manifest.ErrFlux, e.Err} }
 
+type acquireKey struct {
+	ArchiveKey
+	archive bool
+}
+
+type producerError struct{ error }
+
+func (e *producerError) Unwrap() []error { return []error{manifest.ErrFlux, e.error} }
+
 // Acquire publishes a complete archive only after produce succeeds.
 func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (fs.FS, ocispec.Descriptor, error) {
-	e, err := c.acquire(ctx, key, maxAge, produce)
+	e, err := c.acquire(ctx, acquireKey{ArchiveKey: key, archive: true}, maxAge, produce)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, err
 	}
@@ -71,28 +78,19 @@ func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, maxAge time.Duratio
 
 // Blob returns an independent reader over a complete generation.
 func (c *Cache) Blob(ctx context.Context, key BlobKey, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
-	e, err := c.acquire(ctx, ArchiveKey{ID: key.ID}, maxAge, produce)
+	e, err := c.acquire(ctx, acquireKey{ID: key.ID}, maxAge, produce)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, err
 	}
-	input := &tarFS{data: e.data, nodes: map[string]*tarNode{
-		".":       {FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()},
-		"content": {FileInfo: (&tar.Header{Name: "content", Mode: 0o600, Size: int64(len(e.data))}).FileInfo()},
-	}}
-	r := io.NopCloser(bytes.NewReader(e.data))
-	if c.store != nil {
-		input.blob = c.layout.OCIBlob(e.stored.Digest)
-		input.nodes["content"].FileInfo = (&tar.Header{Name: "content", Mode: 0o600, Size: e.stored.Size}).FileInfo()
-		r, err = c.store.Fetch(ctx, e.stored)
-		if err != nil {
-			return nil, ocispec.Descriptor{}, &CacheError{err}
-		}
+	input := e.fs.(fileFS)
+	r, err := input.Open("content")
+	if err != nil {
+		return nil, ocispec.Descriptor{}, &CacheError{err}
 	}
-	input.list()
-	return &blobHandle{ReadCloser: r, FS: input}, e.descriptor, nil
+	return &blobHandle{ReadCloser: r, input: input}, e.descriptor, nil
 }
 
-func (c *Cache) acquire(ctx context.Context, key ArchiveKey, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
+func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
 	id := key.ID
 	release, err := c.locks.Acquire(ctx, id)
 	if err != nil {
@@ -112,16 +110,21 @@ func (c *Cache) acquire(ctx context.Context, key ArchiveKey, maxAge time.Duratio
 			upstream, at, valid := decode(desc, id)
 			if valid && fresh(at, maxAge) {
 				e = &entry{descriptor: upstream, stored: desc, resolved: at}
-				if strings.HasPrefix(id, "source-") {
+				if key.archive {
+					index := &tarFS{layout: c.layout, digest: desc.Digest}
 					file, err := os.Open(c.layout.OCIBlob(desc.Digest))
 					if err != nil {
 						return nil, &CacheError{err}
 					}
-					e.fs, err = readArchive(file, key, file.Name())
+					e.fs, err = readArchive(file, key.ArchiveKey, index)
 					closeErr := file.Close()
 					if err := errors.Join(err, closeErr); err != nil {
 						return nil, &CacheError{err}
 					}
+				} else {
+					e.fs = fileFS{name: "content", size: desc.Size, open: func() (io.ReadCloser, error) {
+						return os.Open(c.layout.OCIBlob(desc.Digest))
+					}}
 				}
 			}
 		}
@@ -139,20 +142,28 @@ func (c *Cache) acquire(ctx context.Context, key ArchiveKey, maxAge time.Duratio
 	e, err = c.fill(ctx, key, produce)
 	if err != nil {
 		c.entries.Store(id, &entry{err: err})
+		if failure, ok := errors.AsType[*producerError](err); ok {
+			return nil, failure
+		}
 		return nil, &CacheError{err}
 	}
 	c.entries.Store(id, e)
 	return e, nil
 }
 
+// Forever retains a successfully resolved pin regardless of elapsed time.
+const Forever time.Duration = -1
+
 func fresh(at time.Time, maxAge time.Duration) bool {
 	return !at.IsZero() && (maxAge < 0 || maxAge > 0 && time.Since(at) < maxAge)
 }
 
-func (c *Cache) fill(ctx context.Context, key ArchiveKey, produce func(io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
+func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
 	var buf bytes.Buffer
 	var sink io.Writer = &buf
 	var tmp *os.File
+	var index *tarFS
+	var h digest.Digester
 	if c.store != nil {
 		var err error
 		tmp, err = os.CreateTemp(c.layout.OCI(), "acquire-*")
@@ -160,95 +171,124 @@ func (c *Cache) fill(ctx context.Context, key ArchiveKey, produce func(io.Writer
 			return nil, err
 		}
 		defer func() { _ = tmp.Close(); _ = os.Remove(tmp.Name()) }()
-		sink = tmp
+		h = digest.SHA256.Digester()
+		sink = io.MultiWriter(tmp, h.Hash())
+		if key.archive {
+			index = &tarFS{layout: c.layout}
+		}
 	}
-	h := digest.SHA256.Digester()
-	sink = io.MultiWriter(sink, h.Hash())
 	e := &entry{}
-	var upstream ocispec.Descriptor
 	var err error
-	if strings.HasPrefix(key.ID, "source-") {
-		pr, pw := io.Pipe()
-		g, gctx := errgroup.WithContext(ctx)
-		stop := context.AfterFunc(gctx, func() { _ = pr.CloseWithError(gctx.Err()); _ = pw.CloseWithError(gctx.Err()) })
-		defer stop()
-		g.Go(func() error { var err error; upstream, err = produce(pw); _ = pw.CloseWithError(err); return err })
-		g.Go(func() error {
-			defer func() { _ = pr.Close() }()
-			r := io.Reader(pr)
-			blob := ""
+	if key.archive {
+		e.fs, e.descriptor, err = produceArchive(ctx, key.ArchiveKey, index, func(w io.Writer) (ocispec.Descriptor, error) {
 			if tmp != nil {
-				r, blob = io.TeeReader(pr, sink), tmp.Name()
+				w = io.MultiWriter(w, sink)
 			}
-			e.fs, err = readArchive(r, key, blob)
-			if err == nil {
-				_, err = io.Copy(io.Discard, r)
-			}
-			_ = pr.CloseWithError(err)
-			return err
+			return produce(w)
 		})
-		if err := g.Wait(); err != nil {
-			return nil, err
-		}
 	} else {
-		upstream, err = produce(sink)
+		e.descriptor, err = produce(sink)
 		if err != nil {
-			return nil, err
+			err = &producerError{err}
 		}
 	}
-
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	e.descriptor, e.resolved = upstream, time.Now().UTC()
-	if c.store == nil {
-		if e.fs == nil {
-			e.data = buf.Bytes()
-		}
-		return e, nil
-	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-	info, err := tmp.Stat()
 	if err != nil {
 		return nil, err
 	}
-	stored := ocispec.Descriptor{MediaType: "application/octet-stream", Digest: h.Digest(), Size: info.Size(), Annotations: maps.Clone(upstream.Annotations)}
+	e.resolved = time.Now().UTC()
+	if c.store == nil {
+		if !key.archive {
+			data := buf.Bytes()
+			e.fs = fileFS{name: "content", size: int64(len(data)), open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(data)), nil
+			}}
+		}
+		return e, nil
+	}
+	stored, err := c.publish(ctx, tmp, h.Digest(), e)
+	if err != nil {
+		return nil, err
+	}
+	if key.archive {
+		index.digest = stored.Digest
+		if err := pruneArchive(index, index.nodes, key.ArchiveKey); err != nil {
+			return nil, err
+		}
+		index.list()
+	} else {
+		e.fs = fileFS{name: "content", size: stored.Size, open: func() (io.ReadCloser, error) {
+			return os.Open(c.layout.OCIBlob(stored.Digest))
+		}}
+	}
+	if err := c.store.Tag(ctx, stored, key.ID); err != nil {
+		return nil, err
+	}
+	e.stored = stored
+	return e, nil
+}
+
+func produceArchive(ctx context.Context, key ArchiveKey, index *tarFS, produce func(io.Writer) (ocispec.Descriptor, error)) (fs.FS, ocispec.Descriptor, error) {
+	pr, pw := io.Pipe()
+	g, gctx := errgroup.WithContext(ctx)
+	stop := context.AfterFunc(gctx, func() { _ = pr.CloseWithError(gctx.Err()); _ = pw.CloseWithError(gctx.Err()) })
+	defer stop()
+	var upstream ocispec.Descriptor
+	var input fs.FS
+	g.Go(func() error {
+		desc, err := produce(pw)
+		upstream = desc
+		if err != nil {
+			err = &producerError{err}
+		}
+		_ = pw.CloseWithError(err)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		input, err = readArchive(pr, key, index)
+		if err == nil {
+			_, err = io.Copy(io.Discard, pr)
+		}
+		_ = pr.CloseWithError(err)
+		return err
+	})
+	err := g.Wait()
+	return input, upstream, err
+}
+
+func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest, e *entry) (ocispec.Descriptor, error) {
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	info, err := tmp.Stat()
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	stored := ocispec.Descriptor{MediaType: "application/octet-stream", Digest: payload, Size: info.Size(), Annotations: maps.Clone(e.descriptor.Annotations)}
 	if stored.Annotations == nil {
 		stored.Annotations = make(map[string]string)
 	}
 	for k, v := range map[string]string{
 		"resolved-at":         e.resolved.Format(time.RFC3339Nano),
-		"upstream-digest":     upstream.Digest.String(),
-		"upstream-size":       strconv.FormatInt(upstream.Size, 10),
-		"upstream-media-type": upstream.MediaType,
+		"upstream-digest":     e.descriptor.Digest.String(),
+		"upstream-size":       strconv.FormatInt(e.descriptor.Size, 10),
+		"upstream-media-type": e.descriptor.MediaType,
 	} {
 		stored.Annotations[prefix+k] = v
 	}
 	if err := c.store.Push(ctx, stored, tmp); err != nil {
 		if !errors.Is(err, errdef.ErrAlreadyExists) {
-			return nil, err
+			return stored, err
 		}
 		exists, checkErr := c.store.Exists(ctx, stored)
 		if checkErr != nil {
-			return nil, checkErr
+			return stored, checkErr
 		}
 		if !exists {
-			return nil, err
+			return stored, err
 		}
 	}
-	if e.fs != nil {
-		e.fs.(*tarFS).blob = c.layout.OCIBlob(stored.Digest)
-	}
-	if err := tmp.Close(); err != nil {
-		return nil, err
-	}
-	e.stored = stored
-	if err := c.store.Tag(ctx, stored, key.ID); err != nil {
-		return nil, err
-	}
-	return e, nil
+	return stored, tmp.Close()
 }
 
 func decode(stored ocispec.Descriptor, id string) (ocispec.Descriptor, time.Time, bool) {
@@ -259,7 +299,7 @@ func decode(stored ocispec.Descriptor, id string) (ocispec.Descriptor, time.Time
 	d := digest.Digest(a[prefix+"upstream-digest"])
 	valid := stored.Digest.Validate() == nil && err == nil && sizeErr == nil && size >= 0 && (d == "" || d.Validate() == nil)
 	switch {
-	case strings.HasPrefix(id, "source-oci-"):
+	case strings.HasPrefix(id, "source-oci-"), strings.HasPrefix(id, "blob-oci-"):
 		valid = valid && d != "" && a[prefix+"revision"] != ""
 	case strings.HasPrefix(id, "source-bucket-"):
 		count, err := strconv.Atoi(a[prefix+"object-count"])

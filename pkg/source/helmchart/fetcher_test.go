@@ -8,6 +8,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -160,5 +161,17 @@ func TestFetch_RepoNotFound(t *testing.T) {
 	_, err := f.Fetch(context.Background(), helmChart("missing", "kromgo", "3.0.0"))
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("err = %v, want ErrObjectNotFound", err)
+	}
+}
+
+func TestFetch_OCIExactVersionForever(t *testing.T) {
+	repo := ociRepo("oci://example.test/charts")
+	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository}}
+	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub, disableChartDigestTracking: true}
+	if _, err := f.Fetch(t.Context(), helmChart(repo.Name, "chart", "1.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	if stub.got.Interval.Duration != cache.Forever {
+		t.Fatalf("interval=%v", stub.got.Interval.Duration)
 	}
 }

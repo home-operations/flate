@@ -14,17 +14,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/tree"
+	"github.com/opencontainers/go-digest"
 )
 
 var maxExtractedBytes int64 = 1 << 30
 
 type tarFS struct {
-	blob  string
-	data  []byte
-	nodes map[string]*tarNode
+	layout cacheroot.Layout
+	digest digest.Digest
+	nodes  map[string]*tarNode
 }
 type tarNode struct {
 	fs.FileInfo
@@ -74,10 +76,10 @@ func (t *tarFS) Open(name string) (fs.File, error) {
 	if node == nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
-	f := &tarFile{tarNode: node, Reader: io.NewSectionReader(bytes.NewReader(t.data), node.offset, node.Size())}
-	if !node.IsDir() && t.blob != "" {
+	f := &tarFile{tarNode: node, Reader: bytes.NewReader(nil)}
+	if !node.IsDir() {
 		var err error
-		f.file, err = os.Open(t.blob)
+		f.file, err = os.Open(t.layout.OCIBlob(t.digest))
 		if err != nil {
 			return nil, err
 		}
@@ -116,11 +118,14 @@ func (r *positionReader) Seek(offset int64, whence int) (int64, error) {
 	return n, err
 }
 
-func readArchive(r io.Reader, key ArchiveKey, blob string) (fs.FS, error) {
-	memory := blob == ""
+func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
+	memory := index == nil
 	pos := &positionReader{Reader: r}
 	tr := tar.NewReader(pos)
-	index := &tarFS{blob: blob, nodes: map[string]*tarNode{".": {FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()}}}
+	if index == nil {
+		index = &tarFS{}
+	}
+	index.nodes = map[string]*tarNode{".": {FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()}}
 	var builder *tree.Builder
 	if memory {
 		builder = tree.NewBuilder(nil)
@@ -143,9 +148,13 @@ func readArchive(r io.Reader, key ArchiveKey, blob string) (fs.FS, error) {
 		if filepath.ToSlash(safe) == "/flate-archive" {
 			name = "."
 		}
+		if h.Size > maxExtractedBytes-total {
+			return nil, fmt.Errorf("tar entry %q exceeds %d-byte extract limit", h.Name, maxExtractedBytes)
+		}
+		total += h.Size
 		nextHeader = (pos.offset + h.Size + 511) / 512 * 512
 		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir {
-			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // tar.Reader bounds each declared entry; regular payloads are capped below.
+			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // The expanded-byte cap covers every declared entry.
 				return nil, err
 			}
 			nextHeader = (pos.offset + 511) / 512 * 512
@@ -179,10 +188,6 @@ func readArchive(r io.Reader, key ArchiveKey, blob string) (fs.FS, error) {
 		if h.Typeflag == tar.TypeDir {
 			continue
 		}
-		if h.Size > maxExtractedBytes-total {
-			return nil, fmt.Errorf("tar entry %q exceeds %d-byte extract limit", h.Name, maxExtractedBytes)
-		}
-		total += h.Size
 		if sparse && builder == nil {
 			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // The expanded-byte cap covers this regular sparse entry.
 				return nil, err
@@ -200,17 +205,29 @@ func readArchive(r io.Reader, key ArchiveKey, blob string) (fs.FS, error) {
 			}
 		}
 	}
-	index.list()
-	var raw fs.FS = index
-	if memory {
-		raw = builder
+	if !memory {
+		index.list()
+		if index.digest != "" {
+			if err := pruneArchive(index, index.nodes, key); err != nil {
+				return nil, err
+			}
+			index.list()
+		}
+		return index, nil
 	}
-	matcher, err := sourceignore.NewFS(raw, key.Ignore, key.WithDefaults)
-	if err != nil {
+	if err := pruneArchive(builder, index.nodes, key); err != nil {
 		return nil, err
 	}
+	return builder.Build()
+}
+
+func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
+	matcher, err := sourceignore.NewFS(raw, key.Ignore, key.WithDefaults)
+	if err != nil {
+		return err
+	}
 	kept := map[string]bool{".": true}
-	for name, node := range index.nodes {
+	for name, node := range nodes {
 		if node.IsDir() || matcher.Match(filepath.FromSlash(name), false) {
 			continue
 		}
@@ -219,8 +236,8 @@ func readArchive(r io.Reader, key ArchiveKey, blob string) (fs.FS, error) {
 			kept[p] = true
 		}
 	}
-	names := make([]string, 0, len(index.nodes))
-	for name := range index.nodes {
+	names := make([]string, 0, len(nodes))
+	for name := range nodes {
 		names = append(names, name)
 	}
 	slices.Sort(names)
@@ -228,19 +245,16 @@ func readArchive(r io.Reader, key ArchiveKey, blob string) (fs.FS, error) {
 		if kept[name] {
 			continue
 		}
-		delete(index.nodes, name)
-		if memory {
+		delete(nodes, name)
+		if builder, ok := raw.(*tree.Builder); ok {
 			if err := builder.RemoveAll(name); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
-	if memory {
-		return builder.Build()
-	}
-	index.list()
-	return index, nil
+	return nil
 }
+
 func (t *tarFS) list() {
 	for _, node := range t.nodes {
 		node.children = nil
@@ -254,10 +268,4 @@ func (t *tarFS) list() {
 	for _, node := range t.nodes {
 		slices.SortFunc(node.children, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	}
-}
-
-// Blob readers expose the pinned generation as an fs.FS with one content file.
-type blobHandle struct {
-	io.ReadCloser
-	fs.FS
 }

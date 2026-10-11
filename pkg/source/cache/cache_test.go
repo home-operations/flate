@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -273,6 +274,11 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
+	lock := flock.New(cacheroot.New(root).OCILock())
+	t.Cleanup(func() { _ = lock.Close() })
+	if acquired, err := lock.TryLock(); err != nil || acquired {
+		t.Fatalf("first Close released shared lock: acquired=%v, err=%v", acquired, err)
+	}
 	if r, _, err := shared.Blob(t.Context(), BlobKey{ID: "blob-shared"}, time.Hour, producer([]byte("data"), ocispec.Descriptor{})); err != nil {
 		t.Fatal(err)
 	} else {
@@ -281,11 +287,9 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if err := shared.Close(); err != nil {
 		t.Fatal(err)
 	}
-	lock := flock.New(cacheroot.New(root).OCILock())
-	if err := lock.Lock(); err != nil {
-		t.Fatal(err)
+	if acquired, err := lock.TryLock(); err != nil || !acquired {
+		t.Fatalf("last Close retained lock: acquired=%v, err=%v", acquired, err)
 	}
-	t.Cleanup(func() { _ = lock.Close() })
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	if _, err := New(ctx, cacheroot.New(root)); !errors.Is(err, context.DeadlineExceeded) {
@@ -350,5 +354,85 @@ func TestAcquire_SparseReplayMatchesMemory(t *testing.T) {
 	}
 	if err := fstest.TestFS(inputs[1], "sparse-posix-0.0", "sparse-posix-0.1", "sparse-posix-1.0"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDecode_RequiredMetadata(t *testing.T) {
+	for _, family := range []struct {
+		id     string
+		fields map[string]string
+	}{
+		{"source-oci-test", map[string]string{"flate.revision": "v1", "flate.upstream-digest": digest.FromString("upstream").String()}},
+		{"blob-oci-test", map[string]string{"flate.revision": "v1", "flate.upstream-digest": digest.FromString("upstream").String()}},
+		{"source-bucket-test", map[string]string{"flate.revision": "v1", "flate.object-count": "0"}},
+		{"blob-chart-test", map[string]string{"flate.chart-version": "1.0.0", "flate.chart-url": "https://example.test/chart.tgz"}},
+	} {
+		t.Run(family.id, func(t *testing.T) {
+			base := map[string]string{
+				"flate.resolved-at":         time.Now().UTC().Format(time.RFC3339Nano),
+				"flate.upstream-size":       "12",
+				"flate.upstream-media-type": "test/type",
+			}
+			maps.Copy(base, family.fields)
+			checks := []struct{ name, key, value string }{
+				{"valid", "", ""},
+				{"bad stored digest", "", ""},
+				{"bad resolved time", "flate.resolved-at", "invalid"},
+				{"bad upstream size", "flate.upstream-size", "-1"},
+				{"bad upstream digest", "flate.upstream-digest", "invalid"},
+			}
+			for k := range family.fields {
+				checks = append(checks, struct{ name, key, value string }{"missing " + k, k, ""})
+			}
+			if strings.HasPrefix(family.id, "source-bucket-") {
+				checks = append(checks, struct{ name, key, value string }{"negative count", "flate.object-count", "-1"},
+					struct{ name, key, value string }{"malformed count", "flate.object-count", "invalid"})
+			}
+			for _, check := range checks {
+				t.Run(check.name, func(t *testing.T) {
+					a := make(map[string]string, len(base))
+					maps.Copy(a, base)
+					if check.key != "" {
+						a[check.key] = check.value
+					}
+					stored := ocispec.Descriptor{Digest: digest.FromString("stored"), Annotations: a}
+					if check.name == "bad stored digest" {
+						stored.Digest = "invalid"
+					}
+					_, _, valid := decode(stored, family.id)
+					if valid != (check.name == "valid") {
+						t.Fatalf("valid=%v", valid)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestBlob_SourcePrefixIsOpaque(t *testing.T) {
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			root := ""
+			if backing == "disk" {
+				root = t.TempDir()
+			}
+			c := newCache(t, root)
+			key := BlobKey{ID: "source-blob"}
+			reader, _, err := c.Blob(t.Context(), key, Forever, producer([]byte("blob bytes"), ocispec.Descriptor{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := FileFS("chart.tgz", reader)
+			if err := reader.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := fstest.TestFS(input, "chart.tgz"); err != nil {
+				t.Fatal(err)
+			}
+			got, err := fs.ReadFile(input, "chart.tgz")
+			if err != nil || string(got) != "blob bytes" {
+				t.Fatalf("content=%q, err=%v", got, err)
+			}
+		})
 	}
 }

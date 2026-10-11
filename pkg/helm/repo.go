@@ -10,17 +10,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// ChartLoadResult is the loaded chart plus the on-disk path it came from.
-//
-// Fingerprint is a content-addressed sha256 hex of
-// the chart's loader.Load inputs (Metadata + Templates + Files +
-// Schema + chart defaults + subchart contents). Computed once by
-// LoadChart when template caching or valuesFiles need a stable key
-// without re-walking the chart on every render. Memoized per
-// (Client, path) keyed by the same (mtime, size) fingerprint
-// chartCacheEntry uses, so a mutable OCI re-push invalidates this
-// digest just as it invalidates the cached *chart.Chart pointer.
-// Empty when neither cache needs it.
+// ChartLoadResult holds a chart, its location within the source, and its content fingerprint.
+// Fingerprint is populated when template caching or valuesFiles requires it.
 type ChartLoadResult struct {
 	Path        string
 	Chart       *chart.Chart
@@ -28,7 +19,7 @@ type ChartLoadResult struct {
 }
 
 // locateLocalChart resolves a chart whose source is a fetched on-disk
-// artifact — GitRepository, Bucket, or ExternalArtifact. The chart
+// artifact: GitRepository or ExternalArtifact. The chart
 // lives at <artifact.LocalPath>/<chart.Name> in every case.
 func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
 	art := c.resolveLocalSource(hr)

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -566,5 +567,106 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 	}
 	if keys[0] == keys[1] {
 		t.Fatal("distinct sources share their published identity")
+	}
+}
+
+func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			honest := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+			tampered := mustTarGz(t, map[string]string{"app.yaml": "version: v2\n"})
+			if len(tampered) != len(honest.layer) {
+				t.Fatal("fixture lengths differ")
+			}
+			var repaired atomic.Bool
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/manifests/"):
+					w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
+					w.Header().Set("Docker-Content-Digest", honest.manifestDigest)
+					_, _ = w.Write(honest.manifest)
+				case strings.HasSuffix(r.URL.Path, honest.layerDigest):
+					if repaired.Load() {
+						_, _ = w.Write(honest.layer)
+					} else {
+						_, _ = w.Write(tampered)
+					}
+				case strings.HasSuffix(r.URL.Path, honest.configDigest):
+					_, _ = w.Write(honest.config)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			root := ""
+			if backing == "disk" {
+				root = t.TempDir()
+			}
+			c, err := sourcecache.New(t.Context(), cacheroot.New(root))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			f := &Fetcher{Cache: c}
+			repo := &manifest.OCIRepository{Name: "tampered", Namespace: "test",
+				URL: "oci://" + mustURL(t, srv.URL).Host + "/chart", Insecure: true,
+				Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, Interval: metav1.Duration{Duration: time.Hour}}
+			if _, err := f.Fetch(t.Context(), repo); err == nil {
+				t.Fatal("tampered layer accepted")
+			}
+			repaired.Store(true)
+			if backing == "disk" {
+				if err := c.Close(); err != nil {
+					t.Fatal(err)
+				}
+				c, err = sourcecache.New(t.Context(), cacheroot.New(root))
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.Cache = c
+			}
+			art, err := f.Fetch(t.Context(), repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := mustReadFile(t, art.FS, "app.yaml"); got != "version: v1\n" {
+				t.Fatalf("published %q", got)
+			}
+		})
+	}
+}
+
+func TestFetcher_FailureSourceAndOperation(t *testing.T) {
+	for _, operation := range []string{"resolve", "fetch manifest", "fetch layer"} {
+		t.Run(operation, func(t *testing.T) {
+			art := newFakeOCIArtifact(t, map[string]string{"file": "x"})
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/manifests/"):
+					if operation == "resolve" || operation == "fetch manifest" && strings.HasSuffix(r.URL.Path, art.manifestDigest) && r.Method == http.MethodGet {
+						http.NotFound(w, r)
+						return
+					}
+					w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
+					w.Header().Set("Docker-Content-Digest", art.manifestDigest)
+					_, _ = w.Write(art.manifest)
+				case strings.HasSuffix(r.URL.Path, art.layerDigest):
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			c, err := sourcecache.New(t.Context(), cacheroot.Layout{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			repo := &manifest.OCIRepository{Name: "failure", Namespace: "test", URL: "oci://" + mustURL(t, srv.URL).Host + "/chart",
+				Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
+			_, err = (&Fetcher{Cache: c}).Fetch(t.Context(), repo)
+			if err == nil || !strings.HasPrefix(err.Error(), ociID(repo)+" "+operation) || strings.Contains(err.Error(), "cache:") {
+				t.Fatalf("failure identity: %v", err)
+			}
+			if !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("failure classification: %v", err)
+			}
+		})
 	}
 }

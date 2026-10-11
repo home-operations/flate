@@ -45,7 +45,7 @@ func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	return New(secrets, func(_, _ string) *manifest.HelmRepository { return r }, nil, c)
+	return New(secrets, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: c})
 }
 
 func TestFetchHTTPChart(t *testing.T) {
@@ -370,7 +370,7 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = c.Close() })
 				r := httpRepo(srv.URL)
-				f := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, c)
+				f := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: c})
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				result := make(chan error, 1)

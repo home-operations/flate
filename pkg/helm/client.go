@@ -261,14 +261,6 @@ func (c *Client) Resolver() SourceResolver {
 	return c.resolver
 }
 
-func (c *Client) resolveOCIRepo(hr *manifest.HelmRelease) *manifest.OCIRepository {
-	r := c.Resolver()
-	if r == nil {
-		return nil
-	}
-	return r.OCIRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
-}
-
 func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtifact {
 	r := c.Resolver()
 	if r == nil {
@@ -277,9 +269,8 @@ func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtif
 	return r.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
-// LocateChart returns a filesystem path to the chart referenced by hr.
-// The caller is responsible for cleanup (chart paths inside the cache
-// are reused across calls; paths inside the tmp dir are not).
+// LocateChart returns a chart path within a local source artifact.
+// The artifact owner controls the path's lifetime.
 func (c *Client) LocateChart(hr *manifest.HelmRelease) (string, error) {
 	if hr == nil {
 		return "", errors.New("nil HelmRelease")
@@ -287,10 +278,14 @@ func (c *Client) LocateChart(hr *manifest.HelmRelease) (string, error) {
 	switch hr.Chart.RepoKind {
 	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact:
 		return c.locateLocalChart(hr)
-	case manifest.KindOCIRepository:
-		return c.locateOCIChart(hr)
-	case manifest.KindHelmChart:
-		return c.locateHelmChart(hr)
+	case manifest.KindOCIRepository, manifest.KindHelmChart:
+		art := c.resolveLocalSource(hr)
+		if art == nil || art.LocalPath == "" {
+			return "", fmt.Errorf("%w: %s %s artifact not available for HelmRelease %s",
+				manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
+		}
+		name, err := chartPathInFS(os.DirFS(art.LocalPath))
+		return filepath.Join(art.LocalPath, name), err
 	case manifest.KindHelmRepository, "":
 		// HelmRepository charts are materialized into a synthetic HelmChart
 		// by the orchestrator's HR controller before render (see
@@ -314,6 +309,9 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 		input = art.FS
 	}
 	if input != nil {
+		if art.Key == "" {
+			return ChartLoadResult{}, fmt.Errorf("%w: source artifact has no identity", manifest.ErrInput)
+		}
 		switch hr.Chart.RepoKind {
 		case manifest.KindBucket, manifest.KindGitRepository, manifest.KindExternalArtifact:
 			location = path.Clean(hr.Chart.Name)

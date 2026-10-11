@@ -382,7 +382,7 @@ func TestFetcher_OCIHelmRepositoryRegistryFallback(t *testing.T) {
 		URL: "oci://" + host + "/charts", Type: manifest.RepoTypeOCI, Insecure: true,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	charts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, cache)
+	charts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, helmchart.Config{Cache: cache})
 	if err != nil {
 		t.Fatal(err)
 	}

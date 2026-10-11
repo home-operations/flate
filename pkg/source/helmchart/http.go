@@ -31,10 +31,10 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 	}
 	key := cache.BlobKey{ID: "blob-chart-" + h}
 	maxAge := r.Interval.Duration
-	if f.DisableChartDigestTracking && isExactSemver(version) {
-		maxAge = -time.Second
+	if f.disableChartDigestTracking && isExactSemver(version) {
+		maxAge = cache.Forever
 	}
-	reader, desc, err := f.Cache.Blob(ctx, key, maxAge, func(w io.Writer) (ocispec.Descriptor, error) {
+	reader, desc, err := f.cache.Blob(ctx, key, maxAge, func(w io.Writer) (ocispec.Descriptor, error) {
 		idx, err := f.fetchIndex(ctx, r)
 		if err != nil {
 			return ocispec.Descriptor{}, err
@@ -62,9 +62,9 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 		return desc, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", helmID(r), err)
 	}
-	input := source.FileFS("chart.tgz", reader)
+	input := cache.FileFS("chart.tgz", reader)
 	if err := reader.Close(); err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (f *Fetcher) fetchIndex(ctx context.Context, r *manifest.HelmRepository) (*
 		return v.(*repo.IndexFile), nil
 	}
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	reader, _, err := f.Cache.Blob(ctx, cache.BlobKey{ID: "blob-index-" + h}, r.Interval.Duration, func(w io.Writer) (ocispec.Descriptor, error) { return f.httpGet(ctx, r, indexURL, w) })
+	reader, _, err := f.cache.Blob(ctx, cache.BlobKey{ID: "blob-index-" + h}, r.Interval.Duration, func(w io.Writer) (ocispec.Descriptor, error) { return f.httpGet(ctx, r, indexURL, w) })
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", indexURL, err)
 	}

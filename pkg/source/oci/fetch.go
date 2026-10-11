@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"maps"
-	"time"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -41,7 +40,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 	id := "source-oci-" + h
 	maxAge := repo.Interval.Duration
 	if ref.Digest != "" {
-		maxAge = -time.Second
+		maxAge = cache.Forever
 	}
 	var input fs.FS
 	var descriptor ocispec.Descriptor
@@ -59,16 +58,16 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 		id = "blob-oci-" + h
 		r, desc, err := f.Cache.Blob(ctx, cache.BlobKey{ID: id}, maxAge, produce)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
-		input, descriptor = source.FileFS(copiedLayerFilename, r), desc
+		input, descriptor = cache.FileFS(copiedLayerFilename, r), desc
 		if err := r.Close(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
 	case manifest.OCILayerOperationExtract:
 		input, descriptor, err = f.Cache.Acquire(ctx, cache.ArchiveKey{ID: id, Ignore: ignore, WithDefaults: true}, maxAge, produce)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
 	default:
 		return nil, fmt.Errorf("%w: unsupported layer operation %q", manifest.ErrInput, effectiveLayerOperation(repo.LayerSelector))
@@ -84,20 +83,21 @@ func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.O
 	}
 	tag, err := resolveOCISemver(ctx, client, ref.SemVer, ref.SemverFilter, layerMediaType(repo.LayerSelector))
 	if err != nil {
-		return ref, fmt.Errorf("%s semver: %w", ociID(repo), err)
+		return ref, fmt.Errorf("semver: %w", err)
 	}
 	return manifest.OCIRepositoryRef{Tag: tag}, nil
 }
 
 func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, w io.Writer) (ocispec.Descriptor, error) {
 	ref, selector := *repo.Reference, repo.LayerSelector
-	desc, err := client.Resolve(ctx, cmp.Or(versionTag(ref), latestTag))
+	tag := cmp.Or(versionTag(ref), latestTag)
+	desc, err := client.Resolve(ctx, tag)
 	if err != nil {
-		return desc, err
+		return desc, fmt.Errorf("resolve %s: %w", tag, err)
 	}
 	data, err := content.FetchAll(ctx, client, desc)
 	if err != nil {
-		return desc, err
+		return desc, fmt.Errorf("fetch manifest: %w", err)
 	}
 	var m ocispec.Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -118,7 +118,7 @@ func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest
 	}
 	r, err := client.Fetch(ctx, layer)
 	if err != nil {
-		return desc, err
+		return desc, fmt.Errorf("fetch layer: %w", err)
 	}
 	defer func() { _ = r.Close() }()
 	verified := content.NewVerifyReader(r, layer)

@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -187,6 +188,76 @@ func TestBuild_BlockedCountsDistinctResources(t *testing.T) {
 	_ = m.Write(&b, false, 0)
 	if out := b.String(); !strings.Contains(out, "1 blocked") {
 		t.Errorf("verdict should count the dual-rooted resource once:\n%s", out)
+	}
+}
+
+func TestWrite_BlockedNamesIncludeKindOnCollision(t *testing.T) {
+	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "acars"}
+	otherNamespace := hr
+	otherNamespace.Namespace = "default"
+	truncated := hr
+	truncated.Name = "zzz"
+	cases := []struct {
+		name string
+		ids  []manifest.NamedResource
+		want string
+	}{
+		{
+			name: "colliding kinds",
+			ids:  []manifest.NamedResource{ks("acars"), hr},
+			want: "HelmRelease flux-system/acars, Kustomization flux-system/acars",
+		},
+		{
+			name: "distinct names",
+			ids:  []manifest.NamedResource{ks("other"), hr},
+			want: "flux-system/acars, flux-system/other",
+		},
+		{
+			name: "distinct namespaces",
+			ids:  []manifest.NamedResource{ks("acars"), otherNamespace},
+			want: "default/acars, flux-system/acars",
+		},
+		{
+			name: "collision beyond sample",
+			ids:  []manifest.NamedResource{ks("zzz"), ks("e"), ks("d"), ks("c"), ks("b"), ks("a"), truncated},
+			want: "HelmRelease flux-system/zzz, flux-system/a, flux-system/b, flux-system/c, flux-system/d, flux-system/e +1 more",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, primary := range []bool{true, false} {
+				verb := "required by"
+				if primary {
+					verb = "blocks"
+				}
+				t.Run(verb, func(t *testing.T) {
+					root := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "root"}
+					f := failed(tc.ids...)
+					if primary {
+						f[root] = store.StatusInfo{Status: store.StatusFailed, Message: "fetch failed"}
+					}
+					blocked := make(map[manifest.NamedResource][]manifest.NamedResource)
+					for _, id := range tc.ids {
+						blocked[id] = []manifest.NamedResource{root}
+					}
+					m := Build(f, blocked, nil, nil)
+					if m.Blocked != len(tc.ids) {
+						t.Errorf("Blocked = %d, want %d", m.Blocked, len(tc.ids))
+					}
+					var b bytes.Buffer
+					if err := m.Write(&b, false, 0); err != nil {
+						t.Fatal(err)
+					}
+					out := b.String()
+					if !strings.Contains(out, "\n"+msgIndent+verb+" "+tc.want+"\n") {
+						t.Errorf("want %q in report:\n%s", verb+" "+tc.want, out)
+					}
+					if want := fmt.Sprintf("%d blocked", len(tc.ids)); !strings.Contains(out, want) {
+						t.Errorf("want %q in verdict:\n%s", want, out)
+					}
+				})
+			}
+		})
 	}
 }
 

@@ -319,11 +319,19 @@ func Verdict(color bool, glyph string, paintGlyph func(string, bool) string, ela
 	return b.String()
 }
 
-// summarize renders an id list as "a, b, c +N more", capped at blockedSample.
+// summarize caps an id list at blockedSample and includes kinds for ambiguous names.
 func summarize(ids []manifest.NamedResource) string {
 	names := make([]string, 0, len(ids))
+	counts := make(map[string]int, len(ids))
 	for _, id := range ids {
-		names = append(names, id.NamespacedName())
+		name := id.NamespacedName()
+		names = append(names, name)
+		counts[name]++
+	}
+	for i, name := range names {
+		if counts[name] > 1 {
+			names[i] = ids[i].Kind + " " + name
+		}
 	}
 	if len(names) <= blockedSample {
 		return strings.Join(names, ", ")

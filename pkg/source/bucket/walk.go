@@ -113,7 +113,7 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 				return gctx.Err()
 			}
 			if err := c.emit(tw, body); err != nil {
-				return err
+				return cmp.Or(ctx.Err(), err)
 			}
 			budget.Release(c.weight())
 			if c.done != nil {

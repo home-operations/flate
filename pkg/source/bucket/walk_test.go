@@ -265,10 +265,44 @@ func TestWalkBucket_RejectsImplausibleListedSize(t *testing.T) {
 	}
 }
 
+// Children MUST use AfterFunc so the gate holds cancellation propagation
+// until the writer's body error reaches errgroup.
+type gatedCancelContext struct {
+	context.Context
+	gate <-chan struct{}
+}
+
+func (c gatedCancelContext) Value(any) any { return nil }
+
+func (c gatedCancelContext) AfterFunc(f func()) func() bool {
+	return context.AfterFunc(c.Context, func() {
+		<-c.gate
+		f()
+	})
+}
+
+type cancelArchiveWriter struct {
+	cancel context.CancelFunc
+	header bool
+}
+
+func (w *cancelArchiveWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if w.header {
+		w.cancel()
+	}
+	w.header = true
+	return len(p), nil
+}
+
 func TestWalkBucket_Ranges(t *testing.T) {
 	const part = 8 << 20
-	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big"} {
+	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered"} {
 		run := func(t *testing.T) {
+			copyCtx, cancelCopy := context.WithCancel(t.Context())
+			defer cancelCopy()
 			var gets atomic.Int32
 			later := make(chan struct{})
 			streamed := make(chan struct{})
@@ -282,6 +316,8 @@ func TestWalkBucket_Ranges(t *testing.T) {
 				fault = http.StatusNotFound
 			case "ignore_server":
 				fault = http.StatusInternalServerError
+			case "ignore_cancel_ordered":
+				sizes = []int64{9 << 20}
 			case "ignore_big":
 				sizes = []int64{downloads*part + 1, 0, 0}
 			}
@@ -343,6 +379,16 @@ func TestWalkBucket_Ranges(t *testing.T) {
 				w.Header().Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
 				w.WriteHeader(status)
 				w.(http.Flusher).Flush()
+				if behavior == "ignore_cancel_ordered" {
+					_, _ = w.Write(make([]byte, 64<<10))
+					w.(http.Flusher).Flush()
+					if r.Header.Get("Range") != "" {
+						<-r.Context().Done()
+						return
+					}
+					<-copyCtx.Done()
+					return
+				}
 				if i == 1 && (behavior == "ignore_cancel" || behavior == "cancel" && start == part) {
 					_, _ = w.Write(make([]byte, 64<<10))
 					w.(http.Flusher).Flush()
@@ -389,7 +435,14 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), timeout)
 			defer cancel()
 			var data bytes.Buffer
-			desc, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data", Prefix: "prefix/"}, &data)
+			var archive io.Writer = &data
+			if behavior == "ignore_cancel_ordered" {
+				gate := make(chan struct{})
+				defer close(gate)
+				ctx = gatedCancelContext{Context: copyCtx, gate: gate}
+				archive = &cancelArchiveWriter{cancel: cancelCopy}
+			}
+			desc, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data", Prefix: "prefix/"}, archive)
 			if fault != 0 {
 				if response, ok := errors.AsType[minio.ErrorResponse](err); !ok || response.StatusCode != fault {
 					t.Fatalf("streamed sibling failure: %v, want status %d", err, fault)
@@ -404,6 +457,10 @@ func TestWalkBucket_Ranges(t *testing.T) {
 					t.Fatalf("range fault timed out: %v", err)
 				}
 				switch behavior {
+				case "ignore_cancel_ordered":
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("context identity: %v", err)
+					}
 				case "changed":
 					if response, ok := errors.AsType[minio.ErrorResponse](err); !ok || response.StatusCode != http.StatusPreconditionFailed {
 						t.Fatalf("ETag mismatch: %v", err)

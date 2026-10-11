@@ -2,6 +2,7 @@ package loader
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -584,6 +585,54 @@ func TestSelfProduceBuilder_SecretPrecedence(t *testing.T) {
 			}
 			if b.secrets[id] != want {
 				t.Fatalf("Secret precedence = %+v, want %+v", b.secrets[id], want)
+			}
+		})
+	}
+}
+
+func TestFinalizeIndex_MixedKustomizationDataFile(t *testing.T) {
+	for _, mode := range []string{"mixed", "duplicate_record", "duplicate_store_object"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: owner, namespace: flux-system}
+spec: {path: ./apps}
+`)
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources: [bundle.yaml]\n")
+			testutil.WriteFile(t, root, "apps/bundle.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child, namespace: apps}
+spec: {path: ./child}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: values, namespace: apps}
+data: {value: fixture}
+`)
+			if mode != "mixed" {
+				testutil.WriteFile(t, root, "flux/shadow.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {value: shadow}\n")
+			}
+			l := loaderFixture(store.New(), nil)
+			l.Options.DiscoveryOnly = mode != "duplicate_store_object"
+			l.PreferExisting = true
+			l.SourceRoot = root
+			for _, dir := range []string{"flux", "apps"} {
+				if _, err := l.Load(t.Context(), filepath.Join(root, dir)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := l.FinalizeIndex(t.Context(), root, nil); err != nil {
+				t.Fatal(err)
+			}
+			owner := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "owner"}
+			child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
+			values := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}
+			if record, _ := l.Index.Lookup(child); record.Parent != owner {
+				t.Fatalf("child parent = %s, want %s", record.Parent, owner)
+			}
+			if record, _ := l.Index.Lookup(values); !slices.Contains(record.Renderers, owner) {
+				t.Fatalf("mixed-file data renderers = %v, want %s", record.Renderers, owner)
 			}
 		})
 	}

@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"path/filepath"
+	"strings"
 
+	"sigs.k8s.io/kustomize/api/ifc"
 	"sigs.k8s.io/kustomize/api/kv"
 	kloader "sigs.k8s.io/kustomize/api/pkg/loader"
 	"sigs.k8s.io/kustomize/api/provider"
@@ -27,16 +29,10 @@ func (r generatorRecord) materialize(ctx context.Context) (manifest.BaseManifest
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	root := kloader.NewFileLoaderAtRoot(filesys.MakeFsOnDisk())
-	dir, err := filepath.Rel(root.Root(), filepath.Dir(r.file))
-	if err != nil {
-		return nil, fmt.Errorf("%w: generator %s: %w", manifest.ErrInput, r.args.Name, err)
+	var ldr ifc.Loader
+	if len(r.args.EnvSources)+len(r.args.FileSources) != 0 {
+		ldr = generatorFileLoader{Loader: kloader.NewFileLoaderAtRoot(filesys.MakeFsOnDisk()), dir: filepath.Dir(r.file)}
 	}
-	ldr, err := root.New(dir)
-	if err != nil {
-		return nil, fmt.Errorf("%w: generator %s: %w", manifest.ErrInput, r.args.Name, err)
-	}
-	defer ldr.Cleanup() //nolint:errcheck // a local file loader has no temporary artifacts
 	pairs, err := kv.NewLoader(ldr, provider.NewDefaultDepProvider().GetFieldValidator()).Load(r.args.KvPairSources)
 	if err != nil {
 		return nil, fmt.Errorf("%w: generator %s in %s: %w", manifest.ErrInput, r.args.Name, r.file, err)
@@ -53,4 +49,17 @@ func (r generatorRecord) materialize(ctx context.Context) (manifest.BaseManifest
 		return &manifest.ConfigMap{Name: r.args.Name, Namespace: r.namespace, Data: data}, nil
 	}
 	return &manifest.Secret{Name: r.args.Name, Namespace: r.namespace, Data: data}, nil
+}
+
+// Flux builds permit parent-relative files; the public file loader restricts its root.
+type generatorFileLoader struct {
+	ifc.Loader
+	dir string
+}
+
+func (l generatorFileLoader) Load(file string) ([]byte, error) {
+	if !filepath.IsAbs(file) && !strings.HasPrefix(file, "http://") && !strings.HasPrefix(file, "https://") {
+		file = filepath.Join(l.dir, file)
+	}
+	return l.Loader.Load(file)
 }

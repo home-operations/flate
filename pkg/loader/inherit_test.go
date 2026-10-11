@@ -14,6 +14,7 @@ var writeFile = testutil.WriteFile
 func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
+		hrDir string
 		files map[string]string
 		scans []string
 		want  []string
@@ -25,10 +26,21 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"apps/kustomization.yaml": "namespace: outer\nresources: [../base]\n",
 			"base/kustomization.yaml": "namespace: inner\nresources: [hr.yaml]\n",
 		}, scans: []string{"apps"}, want: []string{"outer"}},
+		{name: "three_layer_overlay", hrDir: "leaf", files: map[string]string{
+			"apps/kustomization.yaml": "namespace: outer\nresources: [../base]\n",
+			"base/kustomization.yaml": "namespace: middle\nresources: [../leaf]\n",
+			"leaf/kustomization.yaml": "namespace: inner\nresources: [hr.yaml]\n",
+		}, scans: []string{"apps"}, want: []string{"outer"}},
 		{name: "flux_target", files: map[string]string{
 			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: media}\n",
 			"apps/kustomization.yaml": "namespace: inner\nresources: [hr.yaml]\n",
 		}, scans: []string{"flux", "apps"}, want: []string{"media"}},
+		{name: "nested_claim_fallback", hrDir: "apps/nested", files: map[string]string{
+			"flux/outer.yaml":                "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: outer, namespace: flux-system}\nspec: {path: ./apps}\n",
+			"flux/inner.yaml":                "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: inner, namespace: flux-system}\nspec: {path: ./apps/nested, targetNamespace: shifted}\n",
+			"apps/kustomization.yaml":        "resources: [nested]\n",
+			"apps/nested/kustomization.yaml": "resources: [hr.yaml]\n",
+		}, scans: []string{"flux", "apps"}, want: []string{"shifted"}},
 		{name: "shared_base", files: map[string]string{
 			"flux/red.yaml":           "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: red, namespace: flux-system}\nspec: {path: ./red}\n",
 			"flux/blue.yaml":          "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: blue, namespace: flux-system}\nspec: {path: ./blue}\n",
@@ -36,6 +48,11 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"blue/kustomization.yaml": "namespace: blue\nresources: [../base]\n",
 			"base/kustomization.yaml": "namespace: inner\nresources: [hr.yaml]\n",
 		}, scans: []string{"flux", "red", "blue"}, want: []string{"red", "blue"}},
+		{name: "shared_fallbacks", files: map[string]string{
+			"flux/red.yaml":           "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: red, namespace: red}\nspec: {path: ./base}\n",
+			"flux/blue.yaml":          "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: blue, namespace: blue}\nspec: {path: ./base}\n",
+			"base/kustomization.yaml": "resources: [hr.yaml]\n",
+		}, scans: []string{"flux", "base"}, want: []string{"red", "blue"}},
 		{name: "cross_tree", files: map[string]string{
 			"apps/kustomization.yaml": "namespace: games\nresources: [ks.yaml]\n",
 			"apps/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: games}\nspec: {path: ./base}\n",
@@ -51,6 +68,9 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 				hrDir := "apps"
 				if _, ok := tc.files["base/kustomization.yaml"]; ok {
 					hrDir = "base"
+				}
+				if tc.hrDir != "" {
+					hrDir = tc.hrDir
 				}
 				testutil.WriteFile(t, root, hrDir+"/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -84,6 +104,9 @@ spec:
 				}
 				if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "app"}); ok {
 					t.Fatal("stale raw consumer record")
+				}
+				if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}); ok {
+					t.Fatal("ancestor fallback retained a stale consumer identity")
 				}
 				if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "inner", Name: "app"}); ok {
 					t.Fatal("inner base namespace must not override its overlay")

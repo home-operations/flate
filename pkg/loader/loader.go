@@ -65,6 +65,8 @@ type Loader struct {
 	// before Load and are mutable only until FinalizeIndex returns.
 	Index     *manifest.DiscoveryIndex
 	documents documentReader
+	// Skipped or replaced identities make per-file kind facts incomplete.
+	incompleteFileKinds bool
 
 	// IgnoreFile, when non-empty, is the gitignore-grammar file Load
 	// reads in place of <root>/.krmignore, with its patterns anchored
@@ -607,6 +609,11 @@ func (l *Loader) loadFile(path string) (int, error) {
 		}
 		id := obj.Named()
 		if l.skipExisting(id) {
+			if l.Index != nil {
+				if previous, ok := l.Index.Lookup(id); !ok || previous.Path != path {
+					l.incompleteFileKinds = true
+				}
+			}
 			continue
 		}
 		if l.Options.DiscoveryOnly && !isDiscoveryKind(obj) {
@@ -663,17 +670,28 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	}
 	id := obj.Named()
 	r := manifest.DiscoveryRecord{Path: absPath, File: l.fileCoordinate(absPath)}
+	if previous, ok := l.Index.Lookup(id); ok && previous.File != r.File {
+		l.incompleteFileKinds = true
+	}
 	switch o := obj.(type) {
 	case *manifest.HelmRelease:
 		if o.Chart.RepoKind != "" && o.Chart.RepoName != "" {
-			r.Refs = []manifest.NamedResource{{Kind: o.Chart.RepoKind, Namespace: o.Chart.RepoNamespace, Name: o.Chart.RepoName}}
+			r.Refs = make([]manifest.NamedResource, 1, 1+len(o.ValuesFrom))
+			r.Refs[0] = manifest.NamedResource{Kind: o.Chart.RepoKind, Namespace: o.Chart.RepoNamespace, Name: o.Chart.RepoName}
 		}
 		for _, ref := range o.ValuesFrom {
 			r.Refs = append(r.Refs, manifest.NamedResource{Kind: ref.Kind, Namespace: o.Namespace, Name: ref.Name})
 		}
 	case *manifest.Kustomization:
 		if o.SourceKind != "" && o.SourceName != "" {
-			r.Refs = []manifest.NamedResource{{Kind: o.SourceKind, Namespace: o.SourceNamespace, Name: o.SourceName}}
+			count := 1
+			for _, ref := range o.PostBuildSubstituteFrom {
+				if manifest.IsHardConfigMapEdge(ref) {
+					count++
+				}
+			}
+			r.Refs = make([]manifest.NamedResource, 1, count)
+			r.Refs[0] = manifest.NamedResource{Kind: o.SourceKind, Namespace: o.SourceNamespace, Name: o.SourceName}
 		}
 		for _, ref := range o.PostBuildSubstituteFrom {
 			if manifest.IsHardConfigMapEdge(ref) {

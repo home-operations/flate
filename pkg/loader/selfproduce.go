@@ -20,7 +20,7 @@ func (l *Loader) buildRenderers(ctx context.Context, repoRoot string, producers 
 		return nil
 	}
 	b := &selfProduceBuilder{repoRoot: repoRoot, documents: l.documents, idx: l.Index,
-		emittedFiles: map[string][]manifest.NamedResource{}, producers: producers,
+		emittedFiles: map[string]emissionFile{}, producers: producers,
 		store: l.Store, wipeSecrets: l.Options.WipeSecrets,
 		secrets: map[manifest.NamedResource]*manifest.Secret{}}
 	b.walkGraph(l)
@@ -47,7 +47,7 @@ func (l *Loader) buildRenderers(ctx context.Context, repoRoot string, producers 
 	}
 	for id, r := range l.Index.Files() {
 		if id.Kind == manifest.KindKustomization && r.Parent == (manifest.NamedResource{}) {
-			if parents := b.emittedFiles[r.File]; len(parents) == 1 && parents[0] != id {
+			if parents := b.emittedFiles[r.File].owners; len(parents) == 1 && parents[0] != id {
 				r.Parent = parents[0]
 				l.Index.Records[id] = r
 			}
@@ -58,58 +58,75 @@ func (l *Loader) buildRenderers(ctx context.Context, repoRoot string, producers 
 
 // walkGraph evaluates shared documents separately for each enclosing Flux source and namespace.
 func (b *selfProduceBuilder) walkGraph(l *Loader) {
-	var roots documentReader
-	if b.namespaces != nil {
-		roots = maps.Clone(b.documents)
-	}
-	for dir, doc := range roots {
-		if doc.body == nil {
-			delete(roots, dir)
-			continue
-		}
-		for _, refs := range [][]string{doc.body.Resources, doc.body.Components} {
-			for _, ref := range refs {
-				if child, ok := resolvePath(dir, ref); ok {
-					delete(roots, child)
-				}
-			}
-		}
-	}
 	kss := l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
-	for _, ks := range kss {
-		root, pinned, _ := SourceView(l.Store, ks, b.repoRoot)
-		delete(roots, filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)))
-		if pinned {
-			for dir := range roots {
-				rel, err := filepath.Rel(filepath.Join(b.repoRoot, manifest.NormalizeClaimBase(ks.Path)), dir)
-				if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-					delete(roots, dir)
+	if b.idx != nil && !l.incompleteFileKinds {
+		for _, ks := range kss {
+			if record, ok := b.idx.Lookup(ks.Named()); ok && record.File != "" && record.Parent != (manifest.NamedResource{}) {
+				b.emittedFiles[record.File] = emissionFile{kustomizationsOnly: true}
+			}
+		}
+		if len(b.emittedFiles) != 0 {
+			for id, record := range b.idx.Files() {
+				if id.Kind != manifest.KindKustomization {
+					if _, tracked := b.emittedFiles[record.File]; tracked {
+						b.emittedFiles[record.File] = emissionFile{}
+					}
 				}
 			}
 		}
 	}
-	for _, dir := range slices.Sorted(maps.Keys(roots)) {
-		rel, err := filepath.Rel(b.repoRoot, dir)
-		if err == nil {
-			b.walkBase(filepath.ToSlash(rel), "", "", manifest.NamedResource{}, map[string]struct{}{})
+	visited := map[graphContext]struct{}{}
+	if b.namespaces != nil {
+		roots := map[string]struct{}{}
+		for dir, doc := range b.documents {
+			if doc.body != nil {
+				roots[dir] = struct{}{}
+			}
+		}
+		for _, ks := range kss {
+			root, pinned, _ := SourceView(l.Store, ks, b.repoRoot)
+			delete(roots, filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)))
+			if pinned {
+				local := filepath.Join(b.repoRoot, manifest.NormalizeClaimBase(ks.Path))
+				prefix := strings.TrimSuffix(local, string(filepath.Separator)) + string(filepath.Separator)
+				for dir := range roots {
+					if dir == local || strings.HasPrefix(dir, prefix) {
+						delete(roots, dir)
+					}
+				}
+			}
+		}
+		if len(roots) != 0 {
+			for dir, doc := range b.documents {
+				if doc.body == nil {
+					continue
+				}
+				for _, refs := range [][]string{doc.body.Resources, doc.body.Components} {
+					for _, ref := range refs {
+						if child, ok := resolvePath(dir, ref); ok {
+							delete(roots, child)
+						}
+					}
+				}
+			}
+		}
+		for _, dir := range slices.Sorted(maps.Keys(roots)) {
+			rel, err := filepath.Rel(b.repoRoot, dir)
+			if err == nil {
+				b.walkBase(filepath.ToSlash(rel), "", "", manifest.NamedResource{}, visited)
+			}
 		}
 	}
 	for _, ks := range kss {
 		if ks.Path == "" && ks.SourceName == "" {
 			continue
 		}
-		root, pinned, external := SourceView(l.Store, ks, b.repoRoot)
+		root, _, external := SourceView(l.Store, ks, b.repoRoot)
 		if external {
 			continue
 		}
 		walker := *b
-		if pinned {
-			prefix, err := filepath.Rel(b.repoRoot, root)
-			if err != nil {
-				continue
-			}
-			walker.repoRoot, walker.filePrefix = root, filepath.ToSlash(prefix)
-		}
+		walker.repoRoot = root
 		if b.namespaces != nil && ks.Namespace == "" {
 			if record, ok := l.Index.Lookup(ks.Named()); ok {
 				if scopes := b.namespaces[record.File]; len(scopes) == 1 {
@@ -119,12 +136,16 @@ func (b *selfProduceBuilder) walkGraph(l *Loader) {
 				}
 			}
 		}
-		walker.walkRoot(ks)
+		if b.namespaces == nil {
+			clear(visited)
+		}
+		walker.walkRoot(ks, visited, b.repoRoot)
 		b.generators = walker.generators
 	}
 	if b.namespaces == nil {
-		for _, dir := range slices.Sorted(maps.Keys(b.documents)) {
-			doc := b.documents[dir]
+		var dirs []string
+		var namespaces map[string][]namespaceContext
+		for _, doc := range b.documents {
 			if doc.body == nil || len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) == 0 {
 				continue
 			}
@@ -142,11 +163,42 @@ func (b *selfProduceBuilder) walkGraph(l *Loader) {
 					}
 				}
 			}
-			if !pinned {
-				b.walkBase(filepath.ToSlash(filepath.Dir(rel)), "", "", manifest.NamedResource{}, map[string]struct{}{})
+			if pinned {
+				continue
+			}
+			if namespaces == nil {
+				namespaces = map[string][]namespaceContext{}
+			}
+			namespaces[filepath.ToSlash(rel)] = nil
+			dirs = append(dirs, filepath.ToSlash(filepath.Dir(rel)))
+		}
+		if len(dirs) == 0 {
+			return
+		}
+		walker := *b
+		walker.idx, walker.namespaces = nil, namespaces
+		walker.walkGraph(l)
+		slices.Sort(dirs)
+		for _, dir := range dirs {
+			_, file, _ := b.directives(dir)
+			scopes := namespaces[file]
+			if len(scopes) == 0 {
+				scopes = []namespaceContext{{}}
+			}
+			for _, scope := range scopes {
+				b.walkBase(dir, scope.namespace, scope.fallback, manifest.NamedResource{}, map[graphContext]struct{}{})
 			}
 		}
 	}
+}
+
+type emissionFile struct {
+	owners             []manifest.NamedResource
+	kustomizationsOnly bool
+}
+
+type graphContext struct {
+	root, dir, namespace, fallback string
 }
 
 type selfProduceBuilder struct {
@@ -157,21 +209,21 @@ type selfProduceBuilder struct {
 	namespaces map[string][]namespaceContext
 	generators []generatorRecord
 	idx        *manifest.DiscoveryIndex
-	// emittedFiles accumulates each cross-tree-emitted ks.yaml path → the
-	// distinct parents reaching it; resolved to single-parent
-	// record Parent edges after the walk.
-	emittedFiles map[string][]manifest.NamedResource
-	// producers, when non-nil, receives target-Secret → ExternalSecret /
-	// SealedSecret edges discovered during the same walk.
+	// Only uniquely emitted definition files supply a cross-tree parent gate.
+	emittedFiles map[string]emissionFile
+	// producers retains target-to-producer edges from the graph.
 	producers *manifest.ProducerIndex
-	// store receives a synthetic placeholder Secret for each producer whose
-	// output keys are statically declared (see synthesizePlaceholderSecret).
-	store   *store.Store
-	secrets map[manifest.NamedResource]*manifest.Secret
-	// wipeSecrets gates the placeholder synthesis — it is a wipe-mode behavior
-	// (a stand-in for a secret flate can't read offline), matching the SOPS
-	// ciphertext wipe; --no-wipe-secrets leaves the secret genuinely absent.
+	store     *store.Store
+	secrets   map[manifest.NamedResource]*manifest.Secret
+	// Only wipe mode may synthesize unavailable Secret keys.
 	wipeSecrets bool
+}
+
+func (b *selfProduceBuilder) graphContext(dir, namespace, fallback string) graphContext {
+	if namespace != "" {
+		fallback = ""
+	}
+	return graphContext{root: b.repoRoot, dir: dir, namespace: namespace, fallback: fallback}
 }
 
 func (b *selfProduceBuilder) directives(dir string) (*kustomizationDocument, string, bool) {
@@ -179,24 +231,30 @@ func (b *selfProduceBuilder) directives(dir string) (*kustomizationDocument, str
 	if d == nil {
 		return nil, "", false
 	}
-	rel, err := filepath.Rel(b.repoRoot, file)
-	return d, filepath.ToSlash(rel), err == nil
+	return d, path.Join(filepath.ToSlash(dir), filepath.Base(file)), true
 }
 
-// walkRoot enumerates the base(s) of a Flux Kustomization's spec.path and
-// walks each. A spec.path that holds a kustomization file is itself the
-// single base; a bare spec.path (no kustomization file — Flux's generator
-// synthesizes one listing the subdirs) contributes each immediate subdir
-// that holds a kustomization file. The root imposes no namespace of its
-// own (Flux's generated kustomization sets only `resources:`); rootNS is
-// the consumer-side fallback for a ConfigMap that no layer ever stamps.
-func (b *selfProduceBuilder) walkRoot(ks *manifest.Kustomization) {
+// walkRoot follows spec.path or each immediate kustomize subdirectory of a bare path.
+// targetNamespace overrides graph namespaces; rootNS is the fallback for unstamped data.
+func (b *selfProduceBuilder) walkRoot(ks *manifest.Kustomization, visited map[graphContext]struct{}, repoRoot string) {
 	id := ks.Named()
 	rootNS := cmp.Or(ks.TargetNamespace, ks.Namespace)
 	specDir := manifest.NormalizeClaimBase(ks.Path)
-	visited := map[string]struct{}{}
 
-	if _, _, ok := b.directives(specDir); ok {
+	d, _ := b.documents.read(filepath.Join(b.repoRoot, specDir))
+	if d != nil && b.namespaces != nil {
+		if _, seen := visited[b.graphContext(specDir, cmp.Or(ks.TargetNamespace, d.Namespace), rootNS)]; seen {
+			return
+		}
+	}
+	if b.repoRoot != repoRoot {
+		prefix, err := filepath.Rel(repoRoot, b.repoRoot)
+		if err != nil {
+			return
+		}
+		b.filePrefix = filepath.ToSlash(prefix)
+	}
+	if d != nil {
 		b.walkBase(specDir, ks.TargetNamespace, rootNS, id, visited)
 		return
 	}
@@ -209,39 +267,37 @@ func (b *selfProduceBuilder) walkRoot(ks *manifest.Kustomization) {
 			continue
 		}
 		sub := path.Join(specDir, e.Name())
-		if _, _, ok := b.directives(sub); ok {
+		if d, _ := b.documents.read(filepath.Join(b.repoRoot, sub)); d != nil {
 			b.walkBase(sub, ks.TargetNamespace, rootNS, id, visited)
 		}
 	}
 }
 
-// walkBase walks one kustomize base (or component) at the repo-relative
-// dir, recording the ConfigMaps it emits for ks. parentNS is the namespace
-// inherited from the enclosing layer; baseNS applies the kustomize-faithful
-// rule that the OUTER (ancestor) `namespace:` wins — once an ancestor set
-// one it is locked, so an inner base's directive cannot override it.
-func (b *selfProduceBuilder) walkBase(dir, parentNS, rootNS string, ks manifest.NamedResource, visited map[string]struct{}) {
+// walkBase locks an outer namespace across nested bases and components.
+func (b *selfProduceBuilder) walkBase(dir, parentNS, rootNS string, ks manifest.NamedResource, visited map[graphContext]struct{}) {
 	if dir == "" || strings.HasPrefix(dir, "..") {
 		return // outside the repo root — never read
 	}
-	// Key the cycle guard by (dir, inherited namespace): a shared component
-	// (e.g. ../../components/substitutions) is legitimately included by every
-	// app group, each stamping its own `namespace:` — so the SAME dir under a
-	// DIFFERENT inherited namespace produces a DIFFERENT ConfigMap id and must
-	// be walked again. Keying by dir alone would attribute the CM to whichever
-	// group walked the component first.
-	key := dir + "\x00" + parentNS
-	if _, seen := visited[key]; seen {
-		return // cycle / repeated-under-same-namespace guard
-	}
-	visited[key] = struct{}{}
-
 	d, file, ok := b.directives(dir)
 	if !ok {
 		return
 	}
-	b.recordFile(file, ks)
 	baseNS := cmp.Or(parentNS, d.Namespace)
+	key := b.graphContext(dir, baseNS, rootNS)
+	if _, seen := visited[key]; seen {
+		return
+	}
+	visited[key] = struct{}{}
+	b.recordFile(file, ks)
+	if b.namespaces != nil {
+		coordinate := file
+		if b.filePrefix != "" {
+			coordinate = path.Join(b.filePrefix, file)
+		}
+		if _, needed := b.namespaces[coordinate]; needed {
+			b.recordProduced(file, baseNS, rootNS, ks)
+		}
+	}
 
 	if b.idx != nil {
 		file := filepath.Join(b.repoRoot, filepath.FromSlash(file))
@@ -261,6 +317,18 @@ func (b *selfProduceBuilder) walkBase(dir, parentNS, rootNS string, ks manifest.
 			continue
 		}
 		resolved = filepath.ToSlash(resolved)
+		if b.namespaces != nil {
+			coordinate := resolved
+			if b.filePrefix != "" {
+				coordinate = path.Join(b.filePrefix, resolved)
+			}
+			if _, needed := b.namespaces[coordinate]; needed {
+				b.recordProduced(resolved, baseNS, rootNS, ks)
+			} else if b.documents[filepath.Join(b.repoRoot, resolved)].body != nil {
+				b.walkBase(resolved, baseNS, rootNS, ks, visited)
+			}
+			continue
+		}
 		info, err := os.Stat(filepath.Join(b.repoRoot, resolved))
 		if err != nil {
 			// Still attribute the path: a resource deleted from this tree
@@ -304,7 +372,10 @@ func (b *selfProduceBuilder) recordProduced(relFile, baseNS, rootNS string, ks m
 		if b.filePrefix != "" {
 			relFile = path.Join(b.filePrefix, relFile)
 		}
-		scope := namespaceContext{namespace: baseNS, fallback: rootNS}
+		scope := namespaceContext{namespace: baseNS}
+		if baseNS == "" {
+			scope.fallback = rootNS
+		}
 		if !slices.Contains(b.namespaces[relFile], scope) {
 			b.namespaces[relFile] = append(b.namespaces[relFile], scope)
 		}
@@ -312,6 +383,14 @@ func (b *selfProduceBuilder) recordProduced(relFile, baseNS, rootNS string, ks m
 	}
 
 	b.recordFile(relFile, ks)
+	coordinate := relFile
+	if b.filePrefix != "" {
+		coordinate = path.Join(b.filePrefix, relFile)
+	}
+	if b.emittedFiles[coordinate].kustomizationsOnly {
+		b.recordEmittedKS(relFile, ks)
+		return
+	}
 	_ = decodeFileObjects(filepath.Join(b.repoRoot, relFile),
 		manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets}, true,
 		func(obj manifest.BaseManifest) {
@@ -345,10 +424,7 @@ func (b *selfProduceBuilder) materializeSecret(s *manifest.Secret, baseNS, rootN
 	}
 }
 
-// recordConfigMap attributes cm to ks's self-produce set under its effective
-// namespace: the active transformer (baseNS) wins, then the resource's own,
-// then the consumer-side rootNS fallback (so a namespace-less CM still matches
-// a same-namespace substituteFrom lookup).
+// recordConfigMap uses graph namespace, then authored namespace, then consumer fallback.
 func (b *selfProduceBuilder) recordConfigMap(cm *manifest.ConfigMap, baseNS, rootNS string, ks manifest.NamedResource) {
 	ns := cmp.Or(baseNS, cm.Namespace, rootNS)
 	if ns == "" || ks == (manifest.NamedResource{}) {
@@ -370,9 +446,7 @@ func (b *selfProduceBuilder) recordFile(relFile string, ks manifest.NamedResourc
 	b.idx.Readers[relFile] = appendUniqueProducer(b.idx.Readers[relFile], ks)
 }
 
-// recordEmittedKS notes that ks's render subtree reaches a Flux Kustomization
-// defined at relFile — i.e. ks emits that cross-tree base. Accumulated per file;
-// resolved to a single-parent gate after the walk.
+// recordEmittedKS retains distinct readers for cross-tree parent resolution.
 func (b *selfProduceBuilder) recordEmittedKS(relFile string, ks manifest.NamedResource) {
 	if ks == (manifest.NamedResource{}) {
 		return
@@ -380,7 +454,9 @@ func (b *selfProduceBuilder) recordEmittedKS(relFile string, ks manifest.NamedRe
 	if b.filePrefix != "" {
 		relFile = path.Join(b.filePrefix, relFile)
 	}
-	b.emittedFiles[relFile] = appendUniqueProducer(b.emittedFiles[relFile], ks)
+	file := b.emittedFiles[relFile]
+	file.owners = appendUniqueProducer(file.owners, ks)
+	b.emittedFiles[relFile] = file
 }
 
 // recordProducer records the target(s) a producer generates — the Secret an

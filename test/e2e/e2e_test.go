@@ -926,10 +926,11 @@ spec:
 func TestE2E_BootstrapGeneratorEnvAndFileSubstitution(t *testing.T) {
 	root := t.TempDir()
 	for _, file := range []struct{ path, body string }{
-		{"kustomization.yaml", "namespace: flux-system\nresources: [ks.yaml]\ngeneratorOptions: {disableNameSuffixHash: true}\nconfigMapGenerator:\n- name: bootstrap-values\n  envs: [settings.env]\n  files: [FROM_FILE=payload.txt]\n  literals: [FROM_LITERAL=literal-value]\n"},
+		{"kustomization.yaml", "namespace: flux-system\nresources: [bootstrap]\n"},
+		{"bootstrap/kustomization.yaml", "resources: [ks.yaml]\ngeneratorOptions: {disableNameSuffixHash: true}\nconfigMapGenerator:\n- name: bootstrap-values\n  envs: [../settings.env]\n  files: [FROM_FILE=../payload.txt]\n  literals: [FROM_LITERAL=literal-value]\n"},
 		{"settings.env", "FROM_ENV=env-value\n"},
 		{"payload.txt", "file-value"},
-		{"ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+		{"bootstrap/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: apps, namespace: flux-system}
 spec:

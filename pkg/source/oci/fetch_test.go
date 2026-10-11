@@ -1,6 +1,7 @@
 package oci
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -303,8 +304,8 @@ func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("copy Fetch: %v", err)
 	}
-	if _, err := fs.Stat(copyArt.FS, "layer.tar.gz"); err != nil {
-		t.Fatalf("copy artifact missing layer.tar.gz: %v", err)
+	if got, err := fs.ReadFile(copyArt.FS, "layer.tar.gz"); err != nil || !bytes.Equal(got, v1.layer) {
+		t.Fatalf("copy artifact changed layer bytes: %v", err)
 	}
 
 	extractRepo := &manifest.OCIRepository{
@@ -666,6 +667,56 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 			}
 			if !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("failure classification: %v", err)
+			}
+		})
+	}
+}
+
+func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
+	for _, name := range []string{"unmatched", "empty", "defaults"} {
+		t.Run(name, func(t *testing.T) {
+			art := newFakeOCIArtifact(t, map[string]string{"file.yaml": "x", ".git/config": "git", "image.png": "image"})
+			if name == "empty" {
+				var m ocispec.Manifest
+				if err := json.Unmarshal(art.manifest, &m); err != nil {
+					t.Fatal(err)
+				}
+				m.Layers = nil
+				var err error
+				art.manifest, err = json.Marshal(m)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			srv := startFakeRegistry(t, art.manifest, art.config, art.layer)
+			repo := &manifest.OCIRepository{URL: "oci://" + mustURL(t, srv.URL).Host + "/artifact", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
+			if name == "unmatched" {
+				repo.LayerSelector = &sourcev1.OCILayerSelector{MediaType: "unmatched/type"}
+			}
+			got, err := (&Fetcher{Cache: newSourceCache(t)}).Fetch(t.Context(), repo)
+			if name == "unmatched" {
+				if err == nil {
+					t.Fatal("unmatched mediaType accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "empty" {
+				entries, err := fs.ReadDir(got.FS, ".")
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("empty artifact: entries=%v err=%v", entries, err)
+				}
+				return
+			}
+			for _, name := range []string{".git/config", "image.png"} {
+				if _, err := fs.Stat(got.FS, name); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("default ignore retained %s: %v", name, err)
+				}
+			}
+			if got := mustReadFile(t, got.FS, "file.yaml"); got != "x" {
+				t.Fatalf("content=%q", got)
 			}
 		})
 	}

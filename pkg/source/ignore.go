@@ -13,19 +13,12 @@ import (
 // ApplyIgnore deletes every file under root that matches the source-
 // controller ignore matcher, using the defaults rule defined by [sourceignore.New].
 // Mirrors source-controller's GitRepository / OCIRepository artifact-build behavior.
-//
-// Bucket sources use ApplyIgnoreNoDefaults instead — see that function
-// for the rationale.
 func ApplyIgnore(root string, ignore *string) error {
-	return applyIgnore(root, ignore, true)
-}
-
-func applyIgnore(root string, ignore *string, withDefaults bool) error {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return fmt.Errorf("sourceignore abs: %w", err)
 	}
-	matcher, err := sourceignore.New(abs, ignore, withDefaults)
+	matcher, err := sourceignore.New(abs, ignore, true)
 	if err != nil {
 		return err
 	}

@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -64,14 +65,14 @@ func TestFetchHTTPChart(t *testing.T) {
 		t.Errorf("art.Digest = %q, want %q", art.Digest, chartDigest(chartBytes))
 	}
 	if _, err := fs.Stat(art.FS, "chart.tgz"); err != nil {
-		t.Errorf("chart.tgz not at LocalPath %s: %v", art.Key, err)
+		t.Errorf("chart.tgz missing from artifact %s: %v", art.Key, err)
 	}
 
 	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
 		t.Fatalf("second Fetch: %v", err)
 	}
 	if *hits != 1 {
-		t.Errorf("chart downloaded %d times, want 1 (second fetch should dedup via the blob CAS)", *hits)
+		t.Errorf("chart downloaded %d times, want 1 (second fetch should reuse the cached chart)", *hits)
 	}
 }
 
@@ -88,11 +89,15 @@ func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
 func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, _ := startHelmRepo(t, chartBytes, "")
-	f := newHTTPFetcher(t, httpRepo(srv.URL))
+	repo := httpRepo(srv.URL)
+	f := newHTTPFetcher(t, repo)
 
 	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "9.9.9"))
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("err = %v, want ErrObjectNotFound for a missing version", err)
+	}
+	if !strings.HasPrefix(err.Error(), helmID(repo)) {
+		t.Fatalf("failure identity: %v", err)
 	}
 }
 
@@ -215,7 +220,7 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 			t.Errorf("chart fetched %d times from subpath, want 1 (url resolved against host root?)", *hits)
 		}
 		if _, err := fs.Stat(art.FS, "chart.tgz"); err != nil {
-			t.Errorf("chart.tgz not at LocalPath %s: %v", art.Key, err)
+			t.Errorf("chart.tgz missing from artifact %s: %v", art.Key, err)
 		}
 	})
 

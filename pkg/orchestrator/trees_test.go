@@ -2,13 +2,16 @@ package orchestrator_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // writeCluster lays out a two-app Flux cluster under dir: app-a renders
@@ -188,5 +191,24 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 	}
 	if c := changes[0]; c.Name != "demo" || c.Kind != "ConfigMap" || c.Status != diff.StatusChanged {
 		t.Errorf("change = %+v; want ConfigMap demo changed", c)
+	}
+}
+
+func TestRenderTrees_OwnCacheCloses(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			baseDir, headDir, root := t.TempDir(), t.TempDir(), t.TempDir()
+			writeCluster(t, baseDir, "v1", "same")
+			writeCluster(t, headDir, "v2", "same")
+			if _, _, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir},
+				orchestrator.Config{CacheDir: root, Concurrency: workers}); err != nil {
+				t.Fatal(err)
+			}
+			lock := flock.New(cacheroot.New(root).OCILock())
+			defer func() { _ = lock.Close() }()
+			if acquired, err := lock.TryLock(); err != nil || !acquired {
+				t.Fatalf("own cache retained lock: acquired=%v err=%v", acquired, err)
+			}
+		})
 	}
 }

@@ -128,14 +128,14 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 		t.Run(backing, func(t *testing.T) {
 			var listings atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				files := map[string]string{"dir/file.yaml": "first", "dir/drop.yaml": "drop", ".sourceignore": "dir/drop.yaml\n", "image.png": "image"}
+				files := map[string]string{"dir/file.yaml": "first", "dir/drop.yaml": "drop", ".sourceignore": "dir/drop.yaml\n", "image.png": "image", ".git/config": "git"}
 				if strings.Contains(r.Header.Get("Authorization"), "Credential=second/") {
 					files["dir/file.yaml"] = "other"
 				}
 				if r.URL.Query().Get("list-type") != "" {
 					listings.Add(1)
 					_, _ = fmt.Fprint(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>`)
-					for _, name := range []string{"dir/drop.yaml", "image.png", "dir/file.yaml", ".sourceignore"} {
+					for _, name := range []string{"dir/drop.yaml", "image.png", "dir/file.yaml", ".sourceignore", ".git/config"} {
 						_, _ = fmt.Fprintf(w, `<Contents><Key>prefix/%s</Key><Size>%d</Size><ETag>"%s"</ETag></Contents>`, name, len(files[name]), files[name])
 					}
 					_, _ = fmt.Fprint(w, `</ListBucketResult>`)
@@ -190,7 +190,10 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 						if _, err := fs.Stat(art.FS, "image.png"); err != nil {
 							t.Errorf("bucket flavor excluded image: %v", err)
 						}
-						if art.Metadata["objectCount"] != "4" || art.Revision == "" {
+						if data, err := fs.ReadFile(art.FS, ".git/config"); err != nil || string(data) != "git" {
+							t.Errorf("bucket flavor excluded git content: %q %v", data, err)
+						}
+						if art.Metadata["objectCount"] != "5" || art.Revision == "" {
 							t.Errorf("bucket metadata: %v", art.Metadata)
 						}
 					}

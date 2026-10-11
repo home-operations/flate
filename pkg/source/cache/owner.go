@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content/oci"
 )
 
@@ -76,6 +78,18 @@ func New(ctx context.Context, layout cacheroot.Layout) (*Cache, error) {
 	var store *oci.Store
 	if err == nil {
 		store, err = oci.NewWithContext(ctx, layout.OCI())
+		if err != nil && ctx.Err() == nil {
+			index := filepath.Join(layout.OCI(), ocispec.ImageIndexFile)
+			data, readErr := os.ReadFile(index) //nolint:gosec // The fixed index name is rooted by cacheroot.Layout.
+			if !errors.Is(readErr, os.ErrNotExist) && (readErr != nil || json.Unmarshal(data, new(ocispec.Index)) != nil) {
+				if removeErr := os.Remove(index); removeErr != nil {
+					err = errors.Join(err, removeErr)
+				} else {
+					slog.Warn("cache: rebuilding unreadable store index", "path", index, "error", err)
+					store, err = oci.NewWithContext(ctx, layout.OCI())
+				}
+			}
+		}
 	}
 	owners.Lock()
 	if err != nil {

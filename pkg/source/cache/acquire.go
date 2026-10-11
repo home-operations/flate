@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"maps"
@@ -25,6 +26,8 @@ import (
 )
 
 const prefix = "flate."
+
+const maxTrailingBytes = 1 << 20
 
 // ArchiveKey identifies an archive and its source-ignore policy.
 type ArchiveKey struct {
@@ -49,7 +52,6 @@ type entry struct {
 	descriptor ocispec.Descriptor
 	stored     ocispec.Descriptor
 	resolved   time.Time
-	err        error
 }
 
 // CacheError identifies an acquisition failure, including failed persistence.
@@ -129,7 +131,7 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duratio
 			}
 		}
 	}
-	if e != nil && e.err == nil && fresh(e.resolved, maxAge) {
+	if e != nil && fresh(e.resolved, maxAge) {
 		if c.store != nil {
 			now := time.Now()
 			if err := os.Chtimes(c.layout.OCIBlob(e.stored.Digest), now, now); err != nil {
@@ -141,7 +143,7 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duratio
 	}
 	e, err = c.fill(ctx, key, produce)
 	if err != nil {
-		c.entries.Store(id, &entry{err: err})
+		c.entries.Store(id, &entry{})
 		if failure, ok := errors.AsType[*producerError](err); ok {
 			return nil, failure
 		}
@@ -247,12 +249,19 @@ func produceArchive(ctx context.Context, key ArchiveKey, index *tarFS, produce f
 		var err error
 		input, err = readArchive(pr, key, index)
 		if err == nil {
-			_, err = io.Copy(io.Discard, pr)
+			if n, copyErr := io.CopyN(io.Discard, pr, maxTrailingBytes+1); n > maxTrailingBytes {
+				err = fmt.Errorf("archive has more than %d bytes after its end marker", maxTrailingBytes)
+			} else if !errors.Is(copyErr, io.EOF) {
+				err = copyErr
+			}
 		}
 		_ = pr.CloseWithError(err)
 		return err
 	})
 	err := g.Wait()
+	if err != nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	return input, upstream, err
 }
 

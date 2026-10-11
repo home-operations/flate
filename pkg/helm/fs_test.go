@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
+	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 )
@@ -119,5 +121,22 @@ func BenchmarkLoadChart_FSWarm(b *testing.B) {
 		if _, err := cli.LoadChart(b.Context(), hr); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestLoadFSChart_DecompressedBudgetMatchesHelm(t *testing.T) {
+	old := archive.MaxDecompressedChartSize
+	archive.MaxDecompressedChartSize = 64
+	defer func() { archive.MaxDecompressedChartSize = old }()
+	input := fstest.MapFS{"Chart.yaml": {Data: []byte("apiVersion: v2\nname: chart\nversion: 1.0.0\n")}, "values.yaml": {Data: bytes.Repeat([]byte(" "), 65)}}
+	root := t.TempDir()
+	for name, file := range input {
+		testutil.WriteFile(t, root, name, string(file.Data))
+	}
+	if _, err := loader.LoadDir(root); err == nil {
+		t.Fatal("Helm accepted oversized fixture")
+	}
+	if _, err := loadFSChart(input, "."); err == nil {
+		t.Fatal("FS chart bypassed Helm's decompressed-size budget")
 	}
 }

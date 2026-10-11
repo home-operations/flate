@@ -453,7 +453,6 @@ func New(cfg Config) (*Orchestrator, error) {
 		rsc:         resourcesetctrl.New(st, ts, cfg.WipeSecrets),
 		depGraph:    newDependencyGraph(),
 	}
-
 	if cfg.DisableChartDigestTracking != nil {
 		o.cfg.DisableChartDigestTracking = new(*cfg.DisableChartDigestTracking)
 	}

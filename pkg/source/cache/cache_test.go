@@ -436,3 +436,179 @@ func TestBlob_SourcePrefixIsOpaque(t *testing.T) {
 		})
 	}
 }
+
+func TestAcquire_TrailingDataIsBounded(t *testing.T) {
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			root := ""
+			if backing == "disk" {
+				root = t.TempDir()
+			}
+			c := newCache(t, root)
+			var written int
+			_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-trailing"}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+				if _, err := w.Write(archive(t, "file", "x")); err != nil {
+					return ocispec.Descriptor{}, err
+				}
+				var err error
+				written, err = w.Write(make([]byte, 2<<20))
+				return ocispec.Descriptor{}, err
+			})
+			if err == nil {
+				t.Fatal("accepted trailing data beyond the limit")
+			}
+			if written > 1<<20+1 {
+				t.Fatalf("consumed %d trailing bytes beyond the 1 MiB limit", written)
+			}
+		})
+	}
+}
+
+func TestAcquire_CancellationKeepsContextError(t *testing.T) {
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			root := ""
+			if backing == "disk" {
+				root = t.TempDir()
+			}
+			c := newCache(t, root)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			started := make(chan struct{})
+			go func() { <-started; cancel() }()
+			_, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-cancel"}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+				if _, err := w.Write(archive(t, "file", "x")[:512]); err != nil {
+					return ocispec.Descriptor{}, err
+				}
+				close(started)
+				<-ctx.Done()
+				time.Sleep(time.Millisecond)
+				return ocispec.Descriptor{}, ctx.Err()
+			})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation identity: %v", err)
+			}
+		})
+	}
+}
+
+func TestAcquire_UnchangedRefreshRenews(t *testing.T) {
+	c := newCache(t, t.TempDir())
+	key := ArchiveKey{ID: "source-unchanged"}
+	var first time.Time
+	for range 2 {
+		if _, _, err := c.Acquire(t.Context(), key, 0, producer(archive(t, "file", "same"), ocispec.Descriptor{})); err != nil {
+			t.Fatal(err)
+		}
+		desc, err := c.store.Resolve(t.Context(), key.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, resolved, valid := decode(desc, key.ID)
+		if !valid || !resolved.After(first) {
+			t.Fatalf("resolution time not renewed: %v after %v", resolved, first)
+		}
+		first = resolved
+	}
+}
+
+func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			root := ""
+			if backing == "disk" {
+				root = t.TempDir()
+			}
+			c := newCache(t, root)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			started, halt := make(chan struct{}), make(chan struct{})
+			go func() { <-started; cancel() }()
+			done := make(chan error, 1)
+			go func() {
+				_, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-ignore-context"}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+					tw := tar.NewWriter(w)
+					if err := tw.WriteHeader(&tar.Header{Name: "file", Size: 1 << 30, Mode: 0o600}); err != nil {
+						return ocispec.Descriptor{}, err
+					}
+					close(started)
+					ticker := time.NewTicker(time.Millisecond)
+					defer ticker.Stop()
+					var chunk [512]byte
+					for {
+						select {
+						case <-halt:
+							return ocispec.Descriptor{}, errors.New("producer stopped")
+						case <-ticker.C:
+							if _, err := tw.Write(chunk[:]); err != nil {
+								return ocispec.Descriptor{}, err
+							}
+						}
+					}
+				})
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				close(halt)
+				<-done
+				t.Fatal("canceled acquisition did not stop the producer")
+			}
+		})
+	}
+}
+
+func TestNew_UnreadableIndexRebuilds(t *testing.T) {
+	root := t.TempDir()
+	c := newCache(t, root)
+	key := ArchiveKey{ID: "source-index-recovery"}
+	data := archive(t, "file", "same")
+	if _, _, err := c.Acquire(t.Context(), key, time.Hour, producer(data, ocispec.Descriptor{})); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(cacheroot.New(root).OCI(), "index.json")
+	if err := os.WriteFile(index, []byte(`{"schemaVersion":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c = newCache(t, root)
+	calls := 0
+	input, _, err := c.Acquire(t.Context(), key, time.Hour, func(w io.Writer) (ocispec.Descriptor, error) {
+		calls++
+		return producer(data, ocispec.Descriptor{})(w)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := fs.ReadFile(input, "file"); err != nil || string(got) != "same" || calls != 1 {
+		t.Fatalf("recovery: content=%q calls=%d err=%v", got, calls, err)
+	}
+}
+
+func TestNew_InvalidLayoutPreservesIndex(t *testing.T) {
+	root := t.TempDir()
+	c := newCache(t, root)
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(cacheroot.New(root).OCI(), "index.json")
+	want, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheroot.New(root).OCI(), "oci-layout"), []byte(`{"imageLayoutVersion":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(t.Context(), cacheroot.New(root)); err == nil {
+		t.Fatal("invalid layout accepted")
+	}
+	if got, err := os.ReadFile(index); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("unrelated layout error changed index: %q %v", got, err)
+	}
+}

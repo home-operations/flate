@@ -3,11 +3,15 @@ package bucket
 import (
 	"archive/tar"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,12 +83,127 @@ func TestWalkBucket_BoundedParallelOrder(t *testing.T) {
 	}
 }
 
-func BenchmarkWalkBucket_Delayed(b *testing.B) {
-	client, _ := delayedBucket(b)
-	bucket := &manifest.Bucket{BucketName: "data"}
-	for b.Loop() {
-		if _, err := walkBucket(b.Context(), client, bucket, io.Discard); err != nil {
-			b.Fatal(err)
-		}
+type blockedArchiveWriter struct{ release <-chan struct{} }
+
+func (w blockedArchiveWriter) Write(p []byte) (int, error) {
+	<-w.release
+	return len(p), nil
+}
+
+func TestWalkBucket_ReadAheadByteBound(t *testing.T) {
+	old := readAheadBytes
+	readAheadBytes = 4
+	defer func() { readAheadBytes = old }()
+	for _, size := range []int{1, 6} {
+		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
+			fetched := make(chan struct{}, 16)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("list-type") != "" {
+					_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
+					for i := range 16 {
+						_, _ = fmt.Fprintf(w, "<Contents><Key>file%02d</Key><Size>%d</Size><ETag>\"x\"</ETag></Contents>", i, size)
+					}
+					_, _ = fmt.Fprint(w, "</ListBucketResult>")
+					return
+				}
+				fetched <- struct{}{}
+				w.Header().Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
+				w.Header().Set("ETag", "\"x\"")
+				w.Header().Set("Content-Length", strconv.Itoa(size))
+				_, _ = io.WriteString(w, strings.Repeat("x", size))
+			}))
+			defer srv.Close()
+			client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+			if err != nil {
+				t.Fatal(err)
+			}
+			release := make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			defer unblock()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, blockedArchiveWriter{release})
+				done <- err
+			}()
+			want := max(1, int(readAheadBytes)/size)
+			for range want {
+				select {
+				case <-fetched:
+				case <-ctx.Done():
+					t.Fatal("downloads stalled before filling window")
+				}
+			}
+			select {
+			case <-fetched:
+				t.Fatal("download exceeded byte window")
+			case <-time.After(30 * time.Millisecond):
+			}
+			unblock()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestWalkBucket_Faults(t *testing.T) {
+	for _, failure := range []string{"missing", "server", "hostile", "short", "long", "hang"} {
+		t.Run(failure, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("list-type") != "" {
+					_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
+					for i := range 16 {
+						key := fmt.Sprintf("file%02d", i)
+						if failure == "hostile" && i == 3 {
+							key = "../escape"
+						}
+						_, _ = fmt.Fprintf(w, "<Contents><Key>%s</Key><Size>4</Size><ETag>\"x\"</ETag></Contents>", key)
+					}
+					_, _ = fmt.Fprint(w, "</ListBucketResult>")
+					return
+				}
+				w.Header().Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
+				w.Header().Set("ETag", "\"x\"")
+				if strings.HasSuffix(r.URL.Path, "file05") {
+					switch failure {
+					case "server":
+						http.Error(w, "failure", http.StatusInternalServerError)
+						return
+					case "long":
+						w.Header().Set("Content-Length", "5")
+						_, _ = io.WriteString(w, "abcde")
+						return
+					case "missing":
+						http.NotFound(w, r)
+						return
+					case "hang":
+						<-r.Context().Done()
+						return
+					case "short":
+						w.Header().Set("Content-Length", "4")
+						_, _ = io.WriteString(w, "ab")
+						return
+					}
+				}
+				w.Header().Set("Content-Length", "4")
+				_, _ = io.WriteString(w, "abcd")
+			}))
+			defer srv.Close()
+			client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+			defer cancel()
+			_, err = walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, io.Discard)
+			if err == nil {
+				t.Fatal("fault accepted")
+			}
+			if failure == "hang" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("deadline identity: %v", err)
+			}
+		})
 	}
 }

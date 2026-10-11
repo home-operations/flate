@@ -63,7 +63,17 @@ func (b *Builder) directory(name string) (*node, error) {
 		}
 		*n = *lower
 		if lower.foreign != nil {
-			n.foreign = &foreignNode{source: b.input.lower, path: name, info: lower, upper: true}
+			if b.mounts[lower.foreign.mount] != nil {
+				foreign := *lower.foreign
+				foreign.info, foreign.upper = lower, true
+				n.foreign = &foreign
+			} else {
+				var input fs.FS = b.lower
+				if b.input != nil {
+					input = b.input.lower
+				}
+				n.foreign = &foreignNode{source: input, path: name, info: lower, upper: true}
+			}
 			n.children = nil
 		} else {
 			n.children = slices.Clone(lower.children)
@@ -202,4 +212,36 @@ func (b *Builder) Build() (*Tree, error) {
 	t := &Tree{view: b.view}
 	b.view = view{}
 	return t, nil
+}
+
+// Mount attaches immutable content at one directory without copying its bytes.
+// Mounted inputs MUST remain read-only for the resulting tree lifetime.
+func (b *Builder) Mount(name string, input fs.FS) error {
+	p, err := b.normalize("mount", name)
+	if err != nil {
+		return err
+	}
+	if p == "." {
+		return &fs.PathError{Op: "mount", Path: name, Err: ErrConflict}
+	}
+	if b.mounts[p] != nil {
+		return &fs.PathError{Op: "mount", Path: name, Err: ErrConflict}
+	}
+
+	info, err := fs.Stat(input, ".")
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return &fs.PathError{Op: "mount", Path: name, Err: fs.ErrInvalid}
+	}
+	n := &node{name: path.Base(p), mode: info.Mode(), foreign: &foreignNode{source: input, path: ".", info: info, mount: p, upper: true}}
+	if err := b.put(p, n); err != nil {
+		return err
+	}
+	if b.mounts == nil {
+		b.mounts = make(map[string]fs.FS)
+	}
+	b.mounts[p] = input
+	return nil
 }

@@ -10,10 +10,10 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
@@ -23,7 +23,7 @@ import (
 // A root-path artifact preserves working-tree edits; a distinct path contains
 // the committed tree. Missing entries require normal fetching. Invalid input,
 // unusable objects and materialization failures return domain errors.
-func ResolveLocal(ctx context.Context, root string, repositories []*manifest.GitRepository, cache *source.Cache) (map[manifest.NamedResource]*store.SourceArtifact, error) {
+func ResolveLocal(ctx context.Context, root string, repositories []*manifest.GitRepository) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
 		return nil, nil
 	}
@@ -90,19 +90,33 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 			return nil, localError(repository, r.err)
 		}
 		if r.hash == head {
-			artifacts[repository.Named()] = gitArtifact(repository.URL, root, r.hash.String())
+			artifacts[repository.Named()] = &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: root, Revision: r.hash.String()}
 			continue
 		}
-		if repository.RecurseSubmodules || len(repository.SparseCheckout) != 0 {
+		if repository.RecurseSubmodules {
 			continue
 		}
-		if cache == nil {
-			cache = source.NewCache(cacheroot.New(cacheroot.Default()))
-		}
-		artifact, err := materializeLocal(ctx, repo, cache, localMaterialization{root, r.hash, repository})
+		identity, err := filepath.EvalSymlinks(root)
 		if err != nil {
 			return nil, localError(repository, err)
 		}
+		identity, err = filepath.Abs(identity)
+		if err != nil {
+			return nil, localError(repository, err)
+		}
+		ignore := ""
+		if repository.Ignore != nil {
+			ignore = *repository.Ignore
+		}
+		input, err := gittree.New(ctx, repo.Storer.(*filesystem.Storage).Filesystem(), r.hash, gittree.ViewOptions{Sparse: repository.SparseCheckout, Ignore: ignore})
+		if err != nil {
+			return nil, localError(repository, err)
+		}
+		key, err := source.CacheKeyHash([]string{identity, r.hash.String(), gitCacheKey(repository, r.hash.String(), sourceignore.RulesVersion)}, 32)
+		if err != nil {
+			return nil, localError(repository, err)
+		}
+		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, Revision: r.hash.String(), Key: "local-git-" + key, FS: input}
 		artifacts[repository.Named()] = artifact
 	}
 	return artifacts, nil
@@ -148,48 +162,6 @@ func validateEffectiveRef(ref manifest.GitRepositoryRef) error {
 		return fmt.Errorf("invalid reference %q: %w", name, err)
 	}
 	return nil
-}
-
-type localMaterialization struct {
-	root       string
-	hash       plumbing.Hash
-	repository *manifest.GitRepository
-}
-
-func materializeLocal(ctx context.Context, repo *git.Repository, cache *source.Cache, local localMaterialization) (*store.SourceArtifact, error) {
-	identity, err := filepath.EvalSymlinks(local.root)
-	if err != nil {
-		return nil, err
-	}
-	identity, err = filepath.Abs(identity)
-	if err != nil {
-		return nil, err
-	}
-	revision := local.hash.String()
-	slot, err := cache.Slot(ctx, "local-tree://"+identity, gitCacheKey(local.repository, revision, sourceignore.RulesVersion), "")
-	if err != nil {
-		return nil, err
-	}
-	defer slot.Release()
-	if slot.Exists {
-		if readCachedRevision(slot.Path) == revision {
-			return gitArtifact(local.repository.URL, slot.Path, revision), nil
-		}
-		if err := slot.Refresh(); err != nil {
-			return nil, err
-		}
-	}
-	if err := gittree.Materialize(ctx, repo, local.hash, slot.Path, gittree.Options{}); err != nil {
-		return nil, err
-	}
-	artifact := gitArtifact(local.repository.URL, slot.Path, revision)
-	if err := applyIgnoreAndMark(local.repository, artifact); err != nil {
-		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return commitArtifact(local.repository, slot, artifact)
 }
 
 func localError(repo *manifest.GitRepository, err error) error {

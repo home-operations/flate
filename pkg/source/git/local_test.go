@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,9 +20,6 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
 )
 
 func TestResolveLocal_References(t *testing.T) {
@@ -73,8 +71,8 @@ func TestResolveLocal_References(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repository := localSource(tc.ref)
-			cache := source.NewCache(cacheroot.New(t.TempDir()))
-			artifacts, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, cache)
+
+			artifacts, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository})
 			if tc.fail {
 				if !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("expected domain error, got %v", err)
@@ -131,7 +129,7 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 		t.Errorf("incomplete history did not become unavailable: %v", err)
 	}
 	repository := localSource(manifest.GitRepositoryRef{Commit: a.String(), Branch: "master"})
-	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, nil)
+	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository})
 	if err != nil || len(got) != 0 {
 		t.Fatalf("incomplete history did not fall back: %v, %v", got, err)
 	}
@@ -142,7 +140,7 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 		{Commit: "abc"}, {Name: "bad name"}, {Tag: "bad tag"}, {Branch: "bad branch"}, {SemVer: "invalid"},
 	} {
 		t.Run(manifest.GitRefString(ref), func(t *testing.T) {
-			if _, err := ResolveLocal(t.Context(), t.TempDir(), []*manifest.GitRepository{localSource(ref)}, nil); !errors.Is(err, manifest.ErrInput) {
+			if _, err := ResolveLocal(t.Context(), t.TempDir(), []*manifest.GitRepository{localSource(ref)}); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("expected invalid spec, got %v", err)
 			}
 		})
@@ -152,21 +150,21 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 	if err := os.Mkdir(child, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ResolveLocal(t.Context(), child, []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})}, nil)
+	got, err := ResolveLocal(t.Context(), child, []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})})
 	if err != nil || len(got) != 0 {
 		t.Fatalf("borrowed parent store: %v, %v", got, err)
 	}
 }
 
 func TestResolveLocal_RejectsNilSource(t *testing.T) {
-	if _, err := ResolveLocal(t.Context(), t.TempDir(), []*manifest.GitRepository{nil}, nil); !errors.Is(err, manifest.ErrInput) {
+	if _, err := ResolveLocal(t.Context(), t.TempDir(), []*manifest.GitRepository{nil}); !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("nil source = %v", err)
 	}
 }
 
 func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 	root, repo, a, b := localFixture(t)
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+
 	first := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
 	second := localSource(manifest.GitRepositoryRef{Commit: a.String()})
 	second.Name = "second"
@@ -174,66 +172,31 @@ func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 	ignored.Name = "ignored"
 	ignore := "/extra.txt\n"
 	ignored.Ignore = &ignore
-	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{first, second, ignored}, cache)
+	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{first, second, ignored})
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := got[first.Named()].LocalPath
-	if path != got[second.Named()].LocalPath || path == got[ignored.Named()].LocalPath {
+	key := got[first.Named()].Key
+	if key != got[second.Named()].Key || key == got[ignored.Named()].Key {
 		t.Fatalf("cache did not deduplicate commit/options or isolate ignores: %v", got)
 	}
-	if _, err := os.Stat(filepath.Join(got[ignored.Named()].LocalPath, "extra.txt")); !os.IsNotExist(err) {
+	if _, err := fs.Stat(got[ignored.Named()].FS, "extra.txt"); !os.IsNotExist(err) {
 		t.Fatalf("ignore not applied: %v", err)
 	}
-	if content, err := os.ReadFile(filepath.Join(path, "value.txt")); err != nil || string(content) != "A" {
+	if content, err := fs.ReadFile(got[first.Named()].FS, "value.txt"); err != nil || string(content) != "A" {
 		t.Fatalf("dirty content leaked: %q, %v", content, err)
 	}
 	otherRoot, _, _, _ := localFixture(t)
-	other, err := ResolveLocal(t.Context(), otherRoot, []*manifest.GitRepository{first}, cache)
-	if err != nil || other[first.Named()].LocalPath == path {
+	other, err := ResolveLocal(t.Context(), otherRoot, []*manifest.GitRepository{first})
+	if err != nil || other[first.Named()].Key == key {
 		t.Fatalf("repository identities share artifacts: %v, %v", other, err)
 	}
 	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), b)); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{first}, cache)
+	moved, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{first})
 	if err != nil || moved[first.Named()].LocalPath != root || moved[first.Named()].Revision != b.String() {
 		t.Fatalf("moved tag used stale resolution: %v, %v", moved, err)
-	}
-}
-
-func TestResolveLocal_CacheKeyRulesVersion(t *testing.T) {
-	root, _, revision, _ := localFixture(t)
-	repository := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
-	artifacts, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, cache)
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tt := range []struct {
-		name, version string
-		want          bool
-	}{
-		{name: "current", version: sourceignore.RulesVersion, want: true},
-		{name: "other", version: sourceignore.RulesVersion + "-other"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			slot, err := cache.Slot(t.Context(), "local-tree://"+identity, gitCacheKey(repository, revision.String(), tt.version), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer slot.Release()
-			if slot.Exists != tt.want {
-				t.Fatalf("rules version %q: Exists = %v, want %v", tt.version, slot.Exists, tt.want)
-			}
-			if tt.want && slot.Path != artifacts[repository.Named()].LocalPath {
-				t.Fatalf("resolved artifact %q differs from slot %q", artifacts[repository.Named()].LocalPath, slot.Path)
-			}
-		})
 	}
 }
 
@@ -245,7 +208,7 @@ func TestResolveLocal_AnnotatedSemverWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := localSource(manifest.GitRepositoryRef{SemVer: ">=1.0.0 <2.0.0"})
-	artifacts, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, source.NewCache(cacheroot.New(t.TempDir())))
+	artifacts, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,19 +254,18 @@ func (s *orderedTagStore) IterReferences() (storer.ReferenceIter, error) {
 
 func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 	root, _, _, _ := localFixture(t)
-	cacheRoot := t.TempDir()
-	cache := source.NewCache(cacheroot.New(cacheRoot))
+
 	repository := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
 	var paths [2]string
 	var wg sync.WaitGroup
 	for i := range paths {
 		wg.Go(func() {
-			got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, cache)
+			got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository})
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			paths[i] = got[repository.Named()].LocalPath
+			paths[i] = got[repository.Named()].Key
 		})
 	}
 	wg.Wait()
@@ -312,7 +274,7 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := ResolveLocal(ctx, root, []*manifest.GitRepository{repository}, cache); !errors.Is(err, context.Canceled) {
+	if _, err := ResolveLocal(ctx, root, []*manifest.GitRepository{repository}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation = %v", err)
 	}
 }
@@ -354,7 +316,7 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 			}
 			repository := localSource(ref)
 			repository.SparseCheckout = []string{"apps"}
-			if got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, nil); !errors.Is(err, manifest.ErrInput) || got != nil {
+			if got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}); !errors.Is(err, manifest.ErrInput) || got != nil {
 				t.Fatalf("corruption became fallback: %v, %v", got, err)
 			}
 		})
@@ -372,8 +334,8 @@ func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 				} else {
 					repository.RecurseSubmodules = true
 				}
-				got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, nil)
-				if err != nil || (len(got) != 0) != (tag == "v2.0.0") {
+				got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository})
+				if err != nil || (len(got) != 0) != (tag == "v2.0.0" || option == "sparse") {
 					t.Fatalf("%s %s = %v, %v", option, tag, got, err)
 				}
 			}
@@ -384,17 +346,17 @@ func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.WriteFile(t, root, ".git", "gitdir: "+gitdir+"\n")
-	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v2.0.0"})}, nil)
+	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v2.0.0"})})
 	if err != nil || len(got) != 1 {
 		t.Fatalf("gitdir indirection = %v, %v", got, err)
 	}
 }
 
-func TestResolveLocal_MaterializationFailureLeavesNoArtifact(t *testing.T) {
+func TestResolveLocal_MissingBlobFailsOnRead(t *testing.T) {
 	root, repo, a, _ := localFixture(t)
-	tree := &object.Tree{Entries: []object.TreeEntry{{Name: "missing", Mode: filemode.Regular, Hash: plumbing.NewHash(strings.Repeat("f", 40))}}}
+	inputTree := &object.Tree{Entries: []object.TreeEntry{{Name: "missing", Mode: filemode.Regular, Hash: plumbing.NewHash(strings.Repeat("f", 40))}}}
 	encoded := repo.Storer.NewEncodedObject()
-	if err := tree.Encode(encoded); err != nil {
+	if err := inputTree.Encode(encoded); err != nil {
 		t.Fatal(err)
 	}
 	treeHash, err := repo.Storer.SetEncodedObject(encoded)
@@ -414,22 +376,13 @@ func TestResolveLocal_MaterializationFailureLeavesNoArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cacheRoot := t.TempDir()
-	cache := source.NewCache(cacheroot.New(cacheRoot))
-	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Commit: hash.String()})}, cache)
-	if err == nil || got != nil {
-		t.Fatalf("materialization failure = %v, %v", got, err)
-	}
-	if err := filepath.WalkDir(cacheRoot, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() && strings.Contains(entry.Name(), ".tmp.") || entry.Name() == source.SlotMetaFile {
-			t.Errorf("partial artifact remains at %s", path)
-		}
-		return nil
-	}); err != nil {
+	repository := localSource(manifest.GitRepositoryRef{Commit: hash.String()})
+	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := fs.ReadFile(got[repository.Named()].FS, "missing"); !errors.Is(err, plumbing.ErrObjectNotFound) {
+		t.Fatalf("missing blob: %v", err)
 	}
 }
 

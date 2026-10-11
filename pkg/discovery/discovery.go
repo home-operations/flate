@@ -13,7 +13,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -67,9 +66,6 @@ type Config struct {
 	KRMIgnoreFile string
 	Store         *store.Store
 	WipeSecrets   bool
-	// SourceCache stores committed local source artifacts. Nil lazily uses
-	// the default cache only when a non-HEAD materialization is required.
-	SourceCache *source.Cache
 }
 
 // Run performs the full discovery phase against cfg and writes results

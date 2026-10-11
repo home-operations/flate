@@ -19,7 +19,7 @@ func TestGitCacheKey_RulesVersion(t *testing.T) {
 	assert.Equal(t, sourceignore.RulesVersion, "sourceignore-v1")
 	assert.Equal(t, v1, gitCacheKey(repo, ref, sourceignore.RulesVersion))
 	assert.Equal(t, strings.HasPrefix(v1, prefix), true)
-	assert.Equal(t, len(v1), len(prefix)+16)
+	assert.Equal(t, len(v1), len(prefix)+64)
 	legacyHash, err := source.CacheKeyHash(json.RawMessage(`{"ref":"branch:main"}`), 8)
 	if err != nil {
 		t.Fatal(err)

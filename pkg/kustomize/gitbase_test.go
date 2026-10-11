@@ -10,7 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestIsGitRemoteBase(t *testing.T) {
@@ -90,12 +95,32 @@ func fakeWorktree(t *testing.T, files map[string]string) string {
 
 // withFakeGitBase installs a GitBaseFetcher returning worktree for every
 // call and counting invocations.
-func withFakeGitBase(c *TreeCache, worktree string, calls *atomic.Int32) {
-	c.SetGitBaseFetcher(func(_ context.Context, _, _ string) (string, string, error) {
+func withFakeGitBase(t *testing.T, c *TreeCache, worktree string, calls *atomic.Int32) {
+	t.Helper()
+	repo, err := git.PlainInit(worktree, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := wt.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.invalid"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := gittree.New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, gittree.ViewOptions{Mode: gittree.RemoteBase})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetGitBaseFetcher(func(_ context.Context, _ GitBaseRequest) (*store.SourceArtifact, error) {
 		if calls != nil {
 			calls.Add(1)
 		}
-		return worktree, "deadbeef", nil
+		return &store.SourceArtifact{FS: input, Key: "fake-base", Revision: "deadbeef"}, nil
 	})
 }
 
@@ -110,7 +135,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + gitURL + "\n"})
 
 	cache := newPreflightCache(t)
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
@@ -159,7 +184,7 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/o/r?ref=v1\n"})
 
 	cache := newPreflightCache(t)
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
@@ -188,7 +213,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	})
 
 	cache := NewTreeCache()
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 
 	out, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -217,7 +242,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	src := writeTree(t, map[string]string{"kustomization.yaml": original})
 
 	cache := NewTreeCache()
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 
 	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -253,9 +278,9 @@ func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
 	}
 }
 
-// TestPreflightGitBase_EachKSGetsOwnCopy: multiple kustomizations referencing
+// TestPreflightGitBase_ReusesMountWithinRender: multiple kustomizations referencing
 // the same base each get their own self-contained .flate-remote-<hash>/ dir.
-func TestPreflightGitBase_EachKSGetsOwnCopy(t *testing.T) {
+func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 	worktree := fakeWorktree(t, map[string]string{
 		"kustomization.yaml": "resources:\n  - ./cm.yaml\n",
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
@@ -269,15 +294,22 @@ func TestPreflightGitBase_EachKSGetsOwnCopy(t *testing.T) {
 
 	var calls atomic.Int32
 	cache := newPreflightCache(t)
-	withFakeGitBase(cache, worktree, &calls)
+	withFakeGitBase(t, cache, worktree, &calls)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
 	wantDir := remoteResourcePrefix + urlHash("https://example.com/o/r@v1")
-	for _, sub := range []string{"a", "b", "c"} {
-		if !fsys.Exists(filepath.Join(sub, wantDir, "cm.yaml")) {
-			t.Errorf("%s: base not copied into its own dir", sub)
+	if calls.Load() != 1 {
+		t.Fatalf("fetches = %d, want 1", calls.Load())
+	}
+	if !fsys.Exists(filepath.Join("a", wantDir, "cm.yaml")) {
+		t.Fatal("base mount is missing")
+	}
+	for _, sub := range []string{"b", "c"} {
+		body, err := fsys.ReadFile(filepath.Join(sub, "kustomization.yaml"))
+		if err != nil || !strings.Contains(string(body), "../a/"+wantDir) {
+			t.Fatalf("%s did not reuse base mount: %s, %v", sub, body, err)
 		}
 	}
 }
@@ -306,7 +338,7 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n"})
 	cache := newPreflightCache(t)
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}

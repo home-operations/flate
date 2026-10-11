@@ -52,6 +52,7 @@ type entry struct {
 	descriptor ocispec.Descriptor
 	stored     ocispec.Descriptor
 	resolved   time.Time
+	git        *GitGeneration
 }
 
 // CacheError identifies an acquisition failure, including failed persistence.
@@ -63,6 +64,7 @@ func (e *CacheError) Unwrap() []error { return []error{manifest.ErrFlux, e.Err} 
 type acquireKey struct {
 	ArchiveKey
 	archive bool
+	git     *gitRequest
 }
 
 type producerError struct{ error }
@@ -116,7 +118,15 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duratio
 			upstream, at, valid := decode(desc, id)
 			if valid && fresh(at, maxAge) {
 				e = &entry{descriptor: upstream, stored: desc, resolved: at}
-				if key.archive {
+				if key.git != nil {
+					e.git, err = c.restoreGit(desc, key.git.key)
+					if err != nil {
+						return nil, &CacheError{err}
+					}
+					if e.git == nil {
+						e = nil
+					}
+				} else if key.archive {
 					index := &tarFS{layout: c.layout, digest: desc.Digest}
 					file, err := os.Open(c.layout.OCIBlob(desc.Digest))
 					if err != nil {
@@ -139,6 +149,7 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duratio
 		if c.store != nil {
 			now := time.Now()
 			if err := os.Chtimes(c.layout.OCIBlob(e.stored.Digest), now, now); err != nil {
+				c.entries.Store(id, &entry{})
 				return nil, &CacheError{err}
 			}
 		}
@@ -185,7 +196,12 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer
 	}
 	e := &entry{}
 	var err error
-	if key.archive {
+	if key.git != nil {
+		e.git, e.descriptor, err = c.produceGit(ctx, key.git)
+		if err == nil {
+			_, err = io.WriteString(sink, e.git.id)
+		}
+	} else if key.archive {
 		e.fs, e.descriptor, err = produceArchive(ctx, key.ArchiveKey, index, func(w io.Writer) (ocispec.Descriptor, error) {
 			if tmp != nil {
 				w = io.MultiWriter(w, sink)
@@ -202,6 +218,9 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer
 		return nil, err
 	}
 	e.resolved = time.Now().UTC()
+	if e.git != nil {
+		e.git.ResolvedAt = e.resolved
+	}
 	if c.store == nil {
 		if !key.archive {
 			data := buf.Bytes()

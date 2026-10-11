@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
@@ -25,6 +27,7 @@ import (
 type gitBaseSpec struct {
 	repoURL string // clone URL: scheme + host + repoPath (no ?query, no //subPath)
 	subPath string // kustomization root within the repo ("" = repo root)
+	dir     string
 	ref     string // ?ref= / ?version= value ("" = the repo's default branch)
 }
 
@@ -194,41 +197,49 @@ func trimPrefixFold(s, prefix string) (string, bool) {
 	return s, false
 }
 
-// fetchGitBase resolves a classified git base via the injected GitBaseFetcher,
-// materializes the WHOLE repo worktree into a <prefix><hash>/ directory beside
-// the referencing kustomization in the render's private in-memory fs, and
-// returns the relative resource path (the directory joined with the in-repo
-// subPath).
-//
-// Copying the whole repo — not just subPath — keeps any in-repo ../ references
-// the base itself relies on resolvable. The expensive clone/materialize happens
-// once in the cached fetcher; this is a cheap in-RAM file copy. The directory
-// name keys on (repoURL, ref) only, so multiple subpaths of one repo+ref share
-// a single materialized copy. No cleanup is needed: each render derives a fresh
-// private in-memory overlay, so the copy lives only for that render and there is
-// never stale state to clear.
-func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, dir string, spec gitBaseSpec) (string, error) {
+// fetchGitBase mounts the whole repository so local parent references retain their coordinates.
+func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, spec gitBaseSpec) (string, error) {
 	if cache.gitBase == nil {
 		return "", fmt.Errorf("kustomization references remote git base %q but no git fetcher is wired", spec.repoURL)
 	}
-	worktree, _, err := cache.gitBase(ctx, spec.repoURL, spec.ref)
+	input := memFS.(*treeFS)
+	identity := spec.repoURL + "@" + spec.ref
+	if input.visiting[identity] {
+		return "", fmt.Errorf("%w: recursive remote git base %q", manifest.ErrInput, identity)
+	}
+	if dest := input.bases[identity]; dest != "" {
+		rel, err := filepath.Rel(spec.dir, filepath.Join(dest, spec.subPath))
+		return "./" + filepath.ToSlash(rel), err
+	}
+	artifact, err := cache.gitBase(ctx, GitBaseRequest{URL: spec.repoURL, Ref: spec.ref, MaxAge: input.maxAge})
 	if err != nil {
 		return "", err
 	}
-	name := remoteResourcePrefix + urlHash(spec.repoURL+"@"+spec.ref)
-	destPrefix := filepath.Join(dir, name)
-	if err := copyDirIntoFS(memFS, worktree, destPrefix); err != nil {
+	if artifact == nil || artifact.FS == nil || artifact.Key == "" {
+		return "", fmt.Errorf("%w: remote git base has no immutable content", manifest.ErrInput)
+	}
+	name := remoteResourcePrefix + urlHash(identity)
+	dest := filepath.Join(spec.dir, name)
+	rel, err := input.rel(dest)
+	if err != nil {
+		return "", err
+	}
+	if err := input.upper.Mount(filepath.ToSlash(rel), artifact.FS); err != nil {
+		return "", err
+	}
+	if input.rec != nil {
+		input.rec.markBypass()
+		input.rec = nil
+	}
+	if input.bases == nil {
+		input.bases = make(map[string]string)
+		input.visiting = make(map[string]bool)
+	}
+	input.bases[identity], input.visiting[identity] = dest, true
+	_, err = preflightRemoteResources(ctx, cache, input, dest)
+	delete(input.visiting, identity)
+	if err != nil {
 		return "", err
 	}
 	return "./" + path.Join(name, spec.subPath), nil
-}
-
-// copyDirIntoFS materializes every regular file under srcRoot into memFS at
-// destPrefix/<rel>, applying the same skipStageDir / symlink-deref rules as
-// source-tree materialization. Used to drop a cloned git base into a render's
-// private fs.
-func copyDirIntoFS(memFS filesys.FileSystem, srcRoot, destPrefix string) error {
-	return walkSourceFiles(srcRoot, func(rel string, body []byte) error {
-		return memFS.WriteFile(filepath.Join(destPrefix, rel), body)
-	})
 }

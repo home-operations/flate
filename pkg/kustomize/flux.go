@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
@@ -126,6 +127,9 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 		diskRec = rec
 	}
 	memFS := newTreeFS(lower, root, diskRec)
+	spec, _ := req.Spec["spec"].(map[string]any)
+	interval, _ := spec["interval"].(string)
+	memFS.maxAge, _ = time.ParseDuration(interval)
 	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	canonicalDir, file, err := memFS.CleanedAbs(subDir)
 	if err != nil {

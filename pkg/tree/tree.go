@@ -30,6 +30,7 @@ type view struct {
 	lower   *Tree
 	removed map[string]struct{}
 	input   *foreignInput
+	mounts  map[string]fs.FS
 }
 
 // An extra indirection keeps foreign I/O escape analysis off indexed maps.
@@ -53,6 +54,7 @@ type foreignNode struct {
 	path   string
 	info   fs.FileInfo
 	upper  bool
+	mount  string
 }
 
 func (n *node) Name() string      { return n.name }
@@ -81,12 +83,31 @@ func (t *view) lookup(name string) (*node, error) {
 	if n := t.nodes[name]; n != nil {
 		return n, nil
 	}
-	if t.lower == nil && t.input == nil {
+	if t.lower == nil && t.input == nil && len(t.mounts) == 0 {
 		return nil, fs.ErrNotExist
 	}
 	if t.masked(name) {
 		return nil, fs.ErrNotExist
 	}
+	if len(t.mounts) != 0 {
+		for prefix := path.Dir(name); prefix != "."; prefix = path.Dir(prefix) {
+			input := t.mounts[prefix]
+			if input == nil {
+				continue
+			}
+			rel := strings.TrimPrefix(name, prefix+"/")
+			info, err := fs.Lstat(input, rel)
+			if err != nil {
+				return nil, err
+			}
+			n := &node{name: path.Base(name), mode: info.Mode(), foreign: &foreignNode{source: input, path: rel, info: info, mount: prefix}}
+			if n.mode&fs.ModeSymlink != 0 {
+				n.target, err = fs.ReadLink(input, rel)
+			}
+			return n, err
+		}
+	}
+
 	if t.lower != nil {
 		return t.lower.lookup(name)
 	}
@@ -285,11 +306,11 @@ func (t *view) entries(n *node) ([]fs.DirEntry, error) {
 	if n.foreign == nil || (!n.foreign.upper && n.children != nil) {
 		return n.children, nil
 	}
-	if t.lower != nil && t.nodes[n.foreign.path] == nil {
+	if t.lower != nil && t.nodes[path.Join(n.foreign.mount, n.foreign.path)] == nil {
 		return t.lower.entries(n)
 	}
 	var memo map[string]*node
-	if t.input != nil {
+	if t.input != nil && len(t.mounts) == 0 {
 		memo = t.input.memo
 	}
 	var entries []fs.DirEntry
@@ -311,7 +332,7 @@ func (t *view) entries(n *node) ([]fs.DirEntry, error) {
 	}
 	merged := make([]fs.DirEntry, 0, len(entries)+len(n.children))
 	for _, e := range entries {
-		if len(t.removed) != 0 && t.masked(path.Join(n.foreign.path, e.Name())) {
+		if len(t.removed) != 0 && t.masked(path.Join(n.foreign.mount, n.foreign.path, e.Name())) {
 			continue
 		}
 		if _, exists := slices.BinarySearchFunc(n.children, e.Name(), compareEntry); !exists {

@@ -12,8 +12,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -66,7 +64,6 @@ spec: {path: ./level%d, sourceRef: {kind: GitRepository, name: %s}}
 			testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", depth), "resources: []\n")
 			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, WipeSecrets: true}
 			if repo.name == "late_pin" {
-				cfg.SourceCache = source.NewCache(cacheroot.New(b.TempDir()))
 			}
 			if repo.url != "" {
 				testutil.WriteFile(b, root, "flux/repo.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1

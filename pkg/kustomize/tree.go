@@ -3,15 +3,20 @@ package kustomize
 import (
 	"context"
 	"sync"
+	"time"
+
+	"github.com/home-operations/flate/pkg/store"
 )
 
-// GitBaseFetcher materializes a remote kustomize git base — a repo URL at a
-// bare, undifferentiated ref (tag, branch, commit, or "" for the default
-// branch) — into an on-disk worktree, returning its absolute path and the
-// resolved revision. The orchestrator supplies a closure over its
-// *git.Fetcher; this package only ever sees the function value, keeping it free
-// of the pkg/source → pkg/kustomize import cycle.
-type GitBaseFetcher func(ctx context.Context, repoURL, ref string) (localPath, revision string, err error)
+// GitBaseRequest carries a base identity and the referencing Flux interval.
+type GitBaseRequest struct {
+	URL    string
+	Ref    string
+	MaxAge time.Duration
+}
+
+// GitBaseFetcher acquires an immutable repository view for private render mounts.
+type GitBaseFetcher func(context.Context, GitBaseRequest) (*store.SourceArtifact, error)
 
 // TreeCache carries the state shared across one run's renders.
 type TreeCache struct {

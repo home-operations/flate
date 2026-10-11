@@ -2,8 +2,9 @@ package git
 
 import (
 	"context"
+	"io/fs"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"testing"
 
@@ -11,25 +12,30 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 
+	objectcache "github.com/go-git/go-git/v5/plumbing/cache"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
-	"github.com/home-operations/flate/pkg/source/git/mirror"
+	"github.com/home-operations/flate/pkg/store"
 )
 
-// openOnlyMirror opens the single bare mirror the cache layout holds and
-// fails if there isn't exactly one. go-git's file:// transport shells out
-// to the real git-upload-pack, so shallow boundaries are genuinely written
-// to .git/shallow and observable via Storer.Shallow().
-func openOnlyMirror(t *testing.T, layout cacheroot.Layout) *git.Repository {
+func openGeneration(t *testing.T, f *Fetcher, artifact *store.SourceArtifact) *git.Repository {
 	t.Helper()
-	entries := readMirrorDirs(t, layout.GitMirrors())
-	if len(entries) != 1 {
-		t.Fatalf("expected exactly one mirror dir, got %d", len(entries))
-	}
-	repo, err := git.PlainOpen(filepath.Join(layout.GitMirrors(), entries[0].Name()))
+	id, _, _ := strings.Cut(artifact.Key, "@")
+	generation, err := f.Cache.Git(t.Context(), sourcecache.GitKey{ID: id}, sourcecache.Forever, nil)
 	if err != nil {
-		t.Fatalf("PlainOpen mirror: %v", err)
+		t.Fatal(err)
+	}
+	storer := filesystem.NewStorageWithOptions(generation.Backing, objectcache.NewObjectLRU(0), filesystem.Options{LargeObjectThreshold: 1})
+	t.Cleanup(func() {
+		if err := storer.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	repo, err := git.Open(storer, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return repo
 }
@@ -45,8 +51,8 @@ func TestMirror_ShallowCloneTruncatesHistory(t *testing.T) {
 	tip := mustCommitFile(t, src, "second.txt", "two")
 
 	layout := cacheroot.New(t.TempDir())
-	cache := source.NewCache(layout)
-	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
+	cache := newGitCache(t, layout.Root)
+	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
 		URL: "file://" + src,
@@ -61,12 +67,12 @@ func TestMirror_ShallowCloneTruncatesHistory(t *testing.T) {
 	}
 	// The tip tree is complete even under depth=1 — both files present.
 	for _, name := range []string{"hello.txt", "second.txt"} {
-		if _, err := os.Stat(filepath.Join(art.LocalPath, name)); err != nil {
+		if _, err := fs.Stat(art.FS, path.Join(name)); err != nil {
 			t.Errorf("worktree missing %s under shallow clone: %v", name, err)
 		}
 	}
 
-	mirrorRepo := openOnlyMirror(t, layout)
+	mirrorRepo := openGeneration(t, f, art)
 	shallows, err := mirrorRepo.Storer.Shallow()
 	if err != nil {
 		t.Fatalf("Shallow(): %v", err)
@@ -90,8 +96,8 @@ func TestMirror_ShallowTagFetch(t *testing.T) {
 	tagged := mustTagHEAD(t, src, "v1.0.0")
 
 	layout := cacheroot.New(t.TempDir())
-	cache := source.NewCache(layout)
-	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
+	cache := newGitCache(t, layout.Root)
+	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
 		URL:       "file://" + src,
@@ -105,10 +111,10 @@ func TestMirror_ShallowTagFetch(t *testing.T) {
 	if art.Revision != tagged {
 		t.Errorf("revision = %q, want %q", art.Revision, tagged)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "chart.yaml")); err != nil {
+	if _, err := fs.Stat(art.FS, path.Join("chart.yaml")); err != nil {
 		t.Errorf("worktree missing tagged file: %v", err)
 	}
-	if _, err := openOnlyMirror(t, layout).CommitObject(plumbing.NewHash(parent)); err == nil {
+	if _, err := openGeneration(t, f, art).CommitObject(plumbing.NewHash(parent)); err == nil {
 		t.Errorf("pre-tag commit %s should be absent from a depth=1 mirror", parent)
 	}
 }
@@ -123,8 +129,8 @@ func TestMirror_ShallowIncrementalFetchAfterTipMove(t *testing.T) {
 	mustInitRepo(t, src)
 
 	layout := cacheroot.New(t.TempDir())
-	cache := source.NewCache(layout)
-	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
+	cache := newGitCache(t, layout.Root)
+	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
 		URL: "file://" + src,
@@ -149,7 +155,7 @@ func TestMirror_ShallowIncrementalFetchAfterTipMove(t *testing.T) {
 	if art2.Revision != newTip {
 		t.Errorf("revision after tip move = %q, want new tip %q", art2.Revision, newTip)
 	}
-	if _, err := os.Stat(filepath.Join(art2.LocalPath, "c2.txt")); err != nil {
+	if _, err := fs.Stat(art2.FS, path.Join("c2.txt")); err != nil {
 		t.Errorf("worktree missing new-tip file after incremental shallow fetch: %v", err)
 	}
 }
@@ -165,8 +171,8 @@ func TestMirror_ShallowSemverFetchesTagTips(t *testing.T) {
 	mustTagHEAD(t, src, "v2.0.0")
 
 	layout := cacheroot.New(t.TempDir())
-	cache := source.NewCache(layout)
-	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
+	cache := newGitCache(t, layout.Root)
+	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
 		URL:       "file://" + src,
@@ -180,7 +186,7 @@ func TestMirror_ShallowSemverFetchesTagTips(t *testing.T) {
 	if art.Revision != want {
 		t.Errorf("semver revision = %q, want v2.0.0 tip %q", art.Revision, want)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "version.txt")); err != nil {
+	if _, err := fs.Stat(art.FS, path.Join("version.txt")); err != nil {
 		t.Errorf("worktree missing v2 file: %v", err)
 	}
 }
@@ -198,18 +204,19 @@ func TestMirror_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 	mustSetRefToHEAD(t, src, "refs/heads/feature")
 
 	layout := cacheroot.New(t.TempDir())
-	cache := source.NewCache(layout)
-	f := &Fetcher{Cache: cache, Mirrors: mirror.New(layout), Depth: 1}
+	cache := newGitCache(t, layout.Root)
+	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
 		URL:       "file://" + src,
 		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
-	if _, err := f.Fetch(context.Background(), repo); err != nil {
+	art, err := f.Fetch(t.Context(), repo)
+	if err != nil {
 		t.Fatalf("Fetch tag: %v", err)
 	}
 
-	mirrorRepo := openOnlyMirror(t, layout)
+	mirrorRepo := openGeneration(t, f, art)
 	refs, err := mirrorRepo.References()
 	if err != nil {
 		t.Fatalf("References: %v", err)
@@ -268,7 +275,7 @@ func TestFetch_ShallowLegacyClone(t *testing.T) {
 		mustInitRepo(t, src)
 		tip := mustCommitFile(t, src, "second.txt", "two")
 
-		cache := source.NewCache(cacheroot.New(t.TempDir()))
+		cache := newGitCache(t, t.TempDir())
 		f := &Fetcher{Cache: cache, Depth: 1} // nil Mirrors → legacy path
 		repo := &manifest.GitRepository{
 			Name: "t", Namespace: "flux-system",
@@ -281,7 +288,7 @@ func TestFetch_ShallowLegacyClone(t *testing.T) {
 		if art.Revision != tip {
 			t.Errorf("revision = %q, want %q", art.Revision, tip)
 		}
-		if _, err := os.Stat(filepath.Join(art.LocalPath, "second.txt")); err != nil {
+		if _, err := fs.Stat(art.FS, path.Join("second.txt")); err != nil {
 			t.Errorf("worktree missing tip file: %v", err)
 		}
 	})
@@ -293,7 +300,7 @@ func TestFetch_ShallowLegacyClone(t *testing.T) {
 			"apps/b/manifest.yaml": "kind: ConfigMap",
 		})
 
-		cache := source.NewCache(cacheroot.New(t.TempDir()))
+		cache := newGitCache(t, t.TempDir())
 		f := &Fetcher{Cache: cache, Depth: 1}
 		repo := &manifest.GitRepository{
 			Name: "t", Namespace: "flux-system",
@@ -304,10 +311,10 @@ func TestFetch_ShallowLegacyClone(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Fetch legacy shallow sparse: %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "a", "manifest.yaml")); err != nil {
+		if _, err := fs.Stat(art.FS, path.Join("apps", "a", "manifest.yaml")); err != nil {
 			t.Errorf("sparse-included file missing under shallow: %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "b", "manifest.yaml")); !os.IsNotExist(err) {
+		if _, err := fs.Stat(art.FS, path.Join("apps", "b", "manifest.yaml")); !os.IsNotExist(err) {
 			t.Errorf("sparse-excluded file should be absent; stat err = %v", err)
 		}
 	})

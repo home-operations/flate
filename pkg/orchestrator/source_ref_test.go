@@ -1,9 +1,8 @@
 package orchestrator
 
 import (
-	"os"
+	"io/fs"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,8 +12,6 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -57,7 +54,7 @@ spec:
 				SelfURLs: []string{"git://fixture.invalid/cluster"}, CacheDir: cacheRoot, Concurrency: 2}
 			if kind == "shared-cache" {
 				cacheRoot = t.TempDir()
-				cfg.SourceCache = source.NewCache(cacheroot.New(cacheRoot))
+				cfg.CacheDir = cacheRoot
 			}
 			o, err := New(cfg)
 			if err != nil {
@@ -68,10 +65,10 @@ spec:
 			}
 			id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 			artifact := o.Store().GetArtifact(id).(*store.SourceArtifact)
-			if !strings.HasPrefix(artifact.LocalPath, cacheRoot+string(filepath.Separator)) {
+			if artifact.FS == nil || artifact.Key == "" {
 				t.Fatalf("selected cache %s did not reach discovery: %+v", cacheRoot, artifact)
 			}
-			if content, err := os.ReadFile(filepath.Join(artifact.LocalPath, "value.txt")); err != nil || string(content) != "A" {
+			if content, err := fs.ReadFile(artifact.FS, "value.txt"); err != nil || string(content) != "A" {
 				t.Fatalf("committed artifact = %q, %v", content, err)
 			}
 		})

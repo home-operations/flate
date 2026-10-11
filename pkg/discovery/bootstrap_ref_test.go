@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,7 +21,6 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -96,8 +96,7 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 				scan = root
 			}
 			result, err := Run(t.Context(), Config{
-				Path: scan, Store: st,
-				SelfURLs: []string{"git://fixture.invalid/cluster"}, SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
+				Path: scan, Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -171,11 +170,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				repository.SparseCheckout = []string{"apps"}
 			}
 			st.AddObject(repository)
-			cacheRoot := t.TempDir()
 			d := discoverer{cfg: Config{Store: st, SelfURLs: []string{repository.URL}}}
-			if !tc.head && !tc.fallback && !tc.fail {
-				d.cfg.SourceCache = source.NewCache(cacheroot.New(cacheRoot))
-			}
 			var logs bytes.Buffer
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -209,10 +204,15 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				if artifact.LocalPath != root {
 					t.Fatalf("head alias path = %s", artifact.LocalPath)
 				}
-			} else if !strings.HasPrefix(artifact.LocalPath, cacheRoot+string(filepath.Separator)) || artifact.URL != repository.URL {
+			} else if artifact.FS == nil || artifact.Key == "" || artifact.URL != repository.URL {
 				t.Fatalf("committed artifact did not use supplied cache: %+v", artifact)
 			}
-			content, err := os.ReadFile(filepath.Join(artifact.LocalPath, "value.txt"))
+			var content []byte
+			if artifact.FS != nil {
+				content, err = fs.ReadFile(artifact.FS, "value.txt")
+			} else {
+				content, err = os.ReadFile(filepath.Join(artifact.LocalPath, "value.txt"))
+			}
 			if err != nil || string(content) != want {
 				t.Fatalf("source content = %q, %v; want %s", content, err, want)
 			}
@@ -251,7 +251,6 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			st.AddObject(ks)
 			d := discoverer{cfg: Config{
 				Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
-				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 			}}
 			if _, err := d.overrideSelfReferentialGitRepositories(t.Context(), root); err != nil {
 				t.Fatal(err)

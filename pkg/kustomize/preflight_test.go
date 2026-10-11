@@ -17,7 +17,7 @@ import (
 // the shape preflight now operates on (a render's private fs).
 func memFSWith(t *testing.T, files map[string]string) filesys.FileSystem {
 	t.Helper()
-	fsys := filesys.MakeFsInMemory()
+	fsys := newTreeFS(os.DirFS(t.TempDir()), "/", nil)
 	for p, body := range files {
 		if err := fsys.WriteFile(p, []byte(body)); err != nil {
 			t.Fatalf("write %s: %v", p, err)

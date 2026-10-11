@@ -69,12 +69,12 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 		{name: "wrong namespace", postBuild: substitutionReference("ConfigMap", false), input: strings.Replace(externalCM, "namespace: apps", "namespace: other", 1), fail: true},
 		{name: "wrong name", postBuild: substitutionReference("ConfigMap", false), input: strings.Replace(externalCM, "name: external", "name: other", 1), fail: true},
 		{name: "overlay cannot satisfy reference", postBuild: substitutionReference("ConfigMap", false), pairs: []string{"VALUE=overlay"}, fail: true},
-		{name: "optional absent", postBuild: substitutionReference("ConfigMap", true)},
+		{name: "optional absent", postBuild: substitutionReference("ConfigMap", true), want: "${VALUE}"},
 		{name: "optional supplied", postBuild: substitutionReference("ConfigMap", true), input: externalCM, want: "supplied"},
 		{name: "secret stringData", postBuild: substitutionReference("Secret", false), input: externalSecret, want: "supplied", strict: true},
 		{name: "secret data", postBuild: substitutionReference("Secret", false), input: strings.Replace(externalSecret, "stringData: {VALUE: supplied}", "data: {VALUE: c3VwcGxpZWQ=}", 1), want: "supplied"},
 		{name: "secret ciphertext unchanged", postBuild: substitutionReference("Secret", false), input: strings.Replace(externalSecret, "supplied", "'ENC[AES256_GCM,data:fixture]'", 1) + "sops: {encrypted_regex: data}\n", want: "ENC[AES256_GCM,data:fixture]"},
-		{name: "missing unsupplied secret", postBuild: substitutionReference("Secret", false)},
+		{name: "missing unsupplied secret", postBuild: substitutionReference("Secret", false), want: "${VALUE}"},
 		{name: "inline beats reference", postBuild: substitutionReference("ConfigMap", false) + "    substitute: {VALUE: inline}\n", input: externalCM, want: "inline", strict: true},
 		{name: "overlay beats inline and reference", postBuild: substitutionReference("ConfigMap", false) + "    substitute: {VALUE: inline}\n", input: externalCM, pairs: []string{"VALUE=first", "VALUE=overlay"}, want: "overlay", strict: true},
 		{name: "overlay with empty postBuild", postBuild: "  postBuild: {}\n", pairs: []string{"VALUE=overlay"}, want: "overlay", strict: true},
@@ -263,15 +263,15 @@ func TestRun_StrictSubstitutions(t *testing.T) {
 		name, expression, postBuild, disabled, want string
 		strict, fail                                bool
 	}{
-		{name: "default undefined", expression: "${VALUE}", postBuild: "  postBuild: {}\n"},
-		{name: "strict undefined", expression: "${VALUE}", postBuild: "  postBuild: {}\n", strict: true, fail: true},
+		{name: "default undefined", expression: "${VALUE}", postBuild: "  postBuild: {}\n", want: "${VALUE}"},
+		{name: "strict undefined", expression: "${VALUE}", postBuild: "  postBuild: {substituteStrategy: Always}\n", strict: true, fail: true},
 		{name: "defined empty", expression: "${VALUE}", postBuild: "  postBuild:\n    substitute: {VALUE: ''}\n", strict: true},
-		{name: "assignment default", expression: "${VALUE:=fallback}", postBuild: "  postBuild: {}\n", strict: true, want: "fallback"},
-		{name: "colon default", expression: "${VALUE:-fallback}", postBuild: "  postBuild: {}\n", strict: true, want: "fallback"},
+		{name: "assignment default", expression: "${VALUE:=fallback}", postBuild: "  postBuild: {substituteStrategy: Always}\n", strict: true, want: "fallback"},
+		{name: "colon default", expression: "${VALUE:-fallback}", postBuild: "  postBuild: {substituteStrategy: Always}\n", strict: true, want: "fallback"},
 		{name: "empty with default", expression: "${VALUE:-fallback}", postBuild: "  postBuild:\n    substitute: {VALUE: ''}\n", strict: true, want: "fallback"},
-		{name: "escape", expression: "$${VALUE}", postBuild: "  postBuild: {}\n", strict: true, want: "${VALUE}"},
-		{name: "annotation disabled", expression: "${VALUE}", postBuild: "  postBuild: {}\n", disabled: "annotations", strict: true, want: "${VALUE}"},
-		{name: "label disabled", expression: "${VALUE}", postBuild: "  postBuild: {}\n", disabled: "labels", strict: true, want: "${VALUE}"},
+		{name: "escape", expression: "$${VALUE}", postBuild: "  postBuild: {substituteStrategy: Always}\n", strict: true, want: "${VALUE}"},
+		{name: "annotation disabled", expression: "${VALUE}", postBuild: "  postBuild: {substituteStrategy: Always}\n", disabled: "annotations", strict: true, want: "${VALUE}"},
+		{name: "label disabled", expression: "${VALUE}", postBuild: "  postBuild: {substituteStrategy: Always}\n", disabled: "labels", strict: true, want: "${VALUE}"},
 		{name: "no postBuild", expression: "${VALUE}", strict: true, want: "${VALUE}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -375,7 +375,7 @@ func TestRun_StrictSubstitutionEnvironmentPrecedence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("FLATE_STRICT_SUBSTITUTIONS", tc.env)
-			root := substitutionFixture(t, "  postBuild: {}\n", "${UNDEFINED}")
+			root := substitutionFixture(t, "  postBuild: {substituteStrategy: Always}\n", "${UNDEFINED}")
 			args := []string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2"}
 			if tc.override {
 				args = append(args, "--strict-substitutions=false")
@@ -428,7 +428,7 @@ func TestRun_SubstitutionSecretReadableAdvisory(t *testing.T) {
 }
 
 func TestRun_StrictSubstitutionCachedRender(t *testing.T) {
-	root := substitutionFixture(t, "  postBuild: {}\n", "${VALUE}")
+	root := substitutionFixture(t, "  postBuild: {substituteStrategy: Always}\n", "${VALUE}")
 	cache := t.TempDir()
 	args := []string{"build", "all", "--path", root, "--cache-dir", cache, "--concurrency", "2"}
 	first, diagnostic, code := runCLI(t, args...)

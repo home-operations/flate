@@ -65,7 +65,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root})
 	c := New(st, task.NewBounded(2), kustomize.NewTreeCache(), false)
 	c.Configure(Options{StrictSubstitutions: true})
-	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: app, postBuild: {}}\n"))
+	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: app, postBuild: {substituteStrategy: Always}}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -320,7 +320,7 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 				want = "..PLACEHOLDER_VALUE.."
 				if kind == "known Secret producer without declared keys" {
 					data = "  dataFrom:\n    - extract: {key: fixture}\n"
-					want = ""
+					want = "${VALUE}"
 				}
 				testutil.WriteFile(t, root, "producer/external-secret.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: apps}\nspec:\n  target: {name: external}\n"+data)
 				input.Object = &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "private-fixture-value"}}

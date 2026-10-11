@@ -110,37 +110,40 @@ func TestReconcile_HappyPath(t *testing.T) {
 	}
 }
 
-func TestReconcile_PostBuildSubstitution(t *testing.T) {
+func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 	cases := []struct {
 		name      string
+		strategy  kustomizev1.SubstituteStrategy
 		postBuild map[string]any
 		disabled  string
 		want      string
 	}{
 		{name: "no postBuild", want: "${VAR:=default}"},
-		{name: "empty postBuild", postBuild: map[string]any{}, want: "default"},
-		{name: "empty substitute", postBuild: map[string]any{"substitute": map[string]any{}}, want: "default"},
+		{name: "unset", postBuild: map[string]any{}, want: "${VAR:=default}"},
+		{name: "WithVariables", strategy: kustomizev1.SubstituteStrategyWithVariables, postBuild: map[string]any{}, want: "${VAR:=default}"},
+		{name: "Always", strategy: kustomizev1.SubstituteStrategyAlways, postBuild: map[string]any{}, want: "default"},
+		{name: "empty substitute", postBuild: map[string]any{"substitute": map[string]any{}}, want: "${VAR:=default}"},
 		{
 			name: "missing optional ConfigMap",
 			postBuild: map[string]any{"substituteFrom": []any{
 				map[string]any{"kind": "ConfigMap", "name": "missing", "optional": true},
 			}},
-			want: "default",
+			want: "${VAR:=default}",
 		},
 		{
 			name: "missing Secret",
 			postBuild: map[string]any{"substituteFrom": []any{
 				map[string]any{"kind": "Secret", "name": "missing"},
 			}},
-			want: "default",
+			want: "${VAR:=default}",
 		},
 		{
 			name:      "inline substitute",
 			postBuild: map[string]any{"substitute": map[string]any{"VAR": "configured"}},
 			want:      "configured",
 		},
-		{name: "disabled label", postBuild: map[string]any{}, disabled: "labels", want: "${VAR:=default}"},
-		{name: "disabled annotation", postBuild: map[string]any{}, disabled: "annotations", want: "${VAR:=default}"},
+		{name: "disabled label", strategy: kustomizev1.SubstituteStrategyAlways, postBuild: map[string]any{}, disabled: "labels", want: "${VAR:=default}"},
+		{name: "disabled annotation", strategy: kustomizev1.SubstituteStrategyAlways, postBuild: map[string]any{}, disabled: "annotations", want: "${VAR:=default}"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,6 +163,9 @@ data: {greeting: '${VAR:=default}'}
 				"sourceRef": map[string]any{"kind": "GitRepository", "name": "flux-system"},
 			}
 			if tc.postBuild != nil {
+				if tc.strategy != "" {
+					tc.postBuild["substituteStrategy"] = string(tc.strategy)
+				}
 				spec["postBuild"] = tc.postBuild
 			}
 			obj, err := manifest.ParseDoc(map[string]any{

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -218,7 +220,8 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	// envsubst's parser cannot handle. Mirror that behavior here:
 	// substitute per-doc, skip opted-out resources, so we match Flux
 	// bit-for-bit.
-	if ks.PostBuild != nil {
+	strategy := (kustomizev1.Kustomization{Spec: ks.KustomizationSpec}).GetSubstituteStrategy()
+	if len(ks.PostBuildSubstitute) > 0 || strategy == kustomizev1.SubstituteStrategyAlways {
 		vars := values.VarsMap(ks.PostBuildSubstitute)
 		for i, doc := range docs {
 			if manifest.HasSubstituteDisabled(doc) {

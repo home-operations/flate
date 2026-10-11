@@ -2,6 +2,7 @@ package discovery_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -252,14 +254,7 @@ spec:
 	}
 }
 
-// TestRun_AliasesBootstrapOCIRepository pins the mortebrume/homelab
-// pattern: a Kustomization whose sourceRef points at an OCIRepository
-// (flux-operator FluxInstance publishes the bootstrap source as an
-// OCI artifact rather than a Git repo) must be aliased to the
-// working tree the same way GitRepository sources are. Without this,
-// every dependent KS fails with "dependency not found:
-// OCIRepository/flux-system/flux-system".
-func TestRun_AliasesBootstrapOCIRepository(t *testing.T) {
+func TestRun_UnknownBootstrapOCIArtifactRoot(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
@@ -280,24 +275,9 @@ spec:
 	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
-	if _, err := discovery.Run(context.Background(), discovery.Config{
-		Path: dir, Store: st, WipeSecrets: true,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	aliased := manifest.NamedResource{
-		Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "flux-system",
-	}
-	if st.GetObject(aliased) == nil {
-		t.Errorf("expected bootstrap OCIRepository to be aliased; only GitRepository aliasing would leave this case broken")
-	}
-	if st.GetArtifact(aliased) == nil {
-		t.Errorf("aliased OCIRepository should have a SourceArtifact so depwait resolves")
-	}
-	info, ok := st.GetStatus(aliased)
-	if !ok || info.Status != store.StatusReady {
-		t.Errorf("aliased OCIRepository should be Ready; got ok=%v info=%+v", ok, info)
+	_, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st, WipeSecrets: true})
+	if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "OCIRepository/flux-system/flux-system") || !strings.Contains(err.Error(), "unknown artifact root") {
+		t.Fatalf("bootstrap OCI error = %v", err)
 	}
 }
 
@@ -786,9 +766,9 @@ data: {value: fixture}
 			if err != nil {
 				t.Fatal(err)
 			}
-			raw := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "demo", Namespace: tc.namespace}
+			raw := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "demo", Namespace: "demo"}
 			if _, ok := res.Index.Lookup(raw); !ok {
-				t.Error("raw release must remain indexed")
+				t.Error("projected release must remain indexed")
 			}
 			if st.GetObject(raw) != nil {
 				t.Errorf("graph-owned release promoted: %s", raw)
@@ -912,6 +892,34 @@ data: {value: fixture}
 			}
 			if got, want := cfg.Store.GetArtifact(src) != nil, scenario != "external"; got != want {
 				t.Errorf("source alias = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
+	for _, ns := range []string{"apps", "other"} {
+		t.Run(ns, func(t *testing.T) {
+			root := t.TempDir()
+			for _, file := range []struct{ path, body string }{
+				{"flux/producer.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: flux-system}\nspec: {path: ./producer}\n"},
+				{"flux/consumer.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: flux-system}\nspec: {path: ./consumer}\n"},
+				{"producer/kustomization.yaml", "namespace: apps\nresources: [values.yaml]\n"},
+				{"producer/values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values}\ndata: {values.yaml: fixture}\n"},
+				{"consumer/kustomization.yaml", "namespace: " + ns + "\nresources: [hr.yaml]\n"},
+				{"consumer/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: consumer}\nspec:\n  chartRef: {kind: OCIRepository, name: chart, namespace: flux-system}\n  valuesFrom: [{kind: ConfigMap, name: values}]\n"},
+			} {
+				testutil.WriteFile(t, root, file.path, file.body)
+			}
+			st := store.New()
+			res, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st})
+			if err != nil {
+				t.Fatal(err)
+			}
+			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st)
+			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: ns, Name: "consumer"}
+			if got := filter.ShouldReconcile(id); got != (ns == "apps") {
+				t.Fatalf("consumer %s selected=%t", id, got)
 			}
 		})
 	}

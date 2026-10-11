@@ -27,13 +27,7 @@ func TestNewBootstrapAlias(t *testing.T) {
 			wantURL: "file:///tmp/repo",
 			wantNS:  "flux-system",
 		},
-		{
-			name:    "OCIRepository → synthetic oci:// alias",
-			id:      manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "flux-manifests"},
-			wantOK:  true,
-			wantURL: "oci://flate-bootstrap-alias/flux-system/flux-manifests",
-			wantNS:  "flux-system",
-		},
+
 		{
 			name:   "HelmRepository → unsupported (caller should skip)",
 			id:     manifest.NamedResource{Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "repo"},

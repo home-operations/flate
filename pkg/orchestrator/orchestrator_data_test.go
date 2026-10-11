@@ -280,7 +280,9 @@ func TestOrchestrator_RequiredDataDependencies_ChangedOnlyProducers(t *testing.T
 	testutil.WriteFile(t, root, "values/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {values.yaml: 'greeting: hello'}\n")
 	l := loader.New(o.store)
 	l.Index = indexForTest(map[manifest.NamedResource]string{input: "values/input.yaml", hr.Named(): "consumer.yaml"})
-	l.FinalizeIndex(root, nil)
+	if err := l.FinalizeIndex(t.Context(), root, nil); err != nil {
+		t.Fatal(err)
+	}
 	o.index = l.Index
 	o.filter = change.NewFilter(change.NewSet([]string{"consumer.yaml"}), o.index, o.store)
 	assert.Diff(t, o.filter.ProducersFor(input), []manifest.NamedResource{owner.Named()})
@@ -296,7 +298,9 @@ func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testin
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./apps"}
 	st.AddObject(producer)
 	l := loader.New(st)
-	l.FinalizeIndex(root, nil)
+	if err := l.FinalizeIndex(t.Context(), root, nil); err != nil {
+		t.Fatal(err)
+	}
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
 	l.Index.Records[input] = manifest.DiscoveryRecord{File: "missing/nested/input.yaml"}
 	consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}

@@ -57,7 +57,7 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 	return root, nil
 }
 
-// aliasMissingKustomizationSources supplies missing Git/OCI sourceRefs because
+// aliasMissingKustomizationSources supplies missing Git sourceRefs because
 // Flux bootstrap and flux-operator FluxInstance create the cluster's source
 // out of band. Each alias requires a synthetic CR and a working-tree artifact.
 // All namespaces must be aliased, not just flux-system (#199): clusters can run
@@ -194,17 +194,7 @@ func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.Bas
 			Name: id.Name, Namespace: id.Namespace,
 			URL: url,
 		}, url, true
-	case manifest.KindOCIRepository:
-		// Synthetic oci:// URL — never resolved, only present so the
-		// store has something to return for spec.url reads. The
-		// SourceArtifact's LocalPath is what downstream consumers
-		// actually use. Embed namespace so two distinct-namespace
-		// OCIRepositories with the same name don't collide on URL.
-		url := "oci://flate-bootstrap-alias/" + id.Namespace + "/" + id.Name
-		return &manifest.OCIRepository{
-			Name: id.Name, Namespace: id.Namespace,
-			URL: url,
-		}, url, true
+
 	}
 	return nil, "", false
 }

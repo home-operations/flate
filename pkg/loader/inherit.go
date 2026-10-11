@@ -2,9 +2,8 @@ package loader
 
 import (
 	"cmp"
-	"path"
-	"path/filepath"
-	"strings"
+	"maps"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -17,56 +16,66 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 }
 
 func (l *Loader) applyNamespaceInheritance(repoRoot string) {
-	s := l.Store
-	if l.Index == nil || len(l.Index.Records) == 0 {
+	if l.Index == nil || len(l.Index.Records) == 0 || repoRoot == "" {
 		return
 	}
-	kustomizeByDir := l.indexKustomizeNamespaces(repoRoot)
-	fluxByPath := l.indexFluxByPath(kustomizeByDir, repoRoot)
-
-	type update struct {
-		old, new manifest.NamedResource
-		file     string
+	b := &selfProduceBuilder{repoRoot: repoRoot, documents: l.documents,
+		namespaces: map[string][]namespaceContext{}}
+	b.walkGraph(l)
+	l.Index.Claims = map[string][]manifest.NamedResource{}
+	for _, claim := range l.Claims(repoRoot) {
+		l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
 	}
-	var updates []update
-	for id, record := range l.Index.Files() {
-		file := record.File
-		if id.Namespace != "" {
+	records := maps.Clone(l.Index.Records)
+	for _, id := range slices.SortedFunc(maps.Keys(records), manifest.NamedResource.Compare) {
+		record := records[id]
+		if record.File == "" || id.Namespace != "" {
 			continue
 		}
-		ns := resolveNamespace(file, fluxByPath, kustomizeByDir)
-		if ns == "" {
-			continue
-		}
-		next := id
-		next.Namespace = ns
-		updates = append(updates, update{old: id, new: next, file: file})
-	}
-	for _, u := range updates {
-		// Omitted reference namespaces track inheritance even for deferred consumers.
-		record := l.Index.Records[u.old]
-		refs := record.Refs
-		for i := range refs {
-			if refs[i].Namespace == "" {
-				refs[i].Namespace = u.new.Namespace
+		obj := l.Store.GetObject(id)
+		scopes := b.namespaces[record.File]
+		if len(scopes) == 0 {
+			owners, _ := l.Index.OwnersOfFile(record.File)
+			for _, owner := range owners {
+				if ks, ok := l.Store.Get[*manifest.Kustomization](owner); ok {
+					scopes = append(scopes, namespaceContext{fallback: cmp.Or(ks.TargetNamespace, ks.Namespace)})
+				}
 			}
 		}
-		obj := s.GetObject(u.old)
-		if obj == nil {
-			continue
+		for _, scope := range scopes {
+			ns := cmp.Or(scope.namespace, id.Namespace, scope.fallback)
+			if ns == "" || ns == id.Namespace {
+				continue
+			}
+			next := id
+			next.Namespace = ns
+			projected := record
+			if obj == nil {
+				projected.Path = ""
+			}
+			projected.Refs = slices.Clone(record.Refs)
+			for i := range projected.Refs {
+				if projected.Refs[i].Namespace == "" {
+					projected.Refs[i].Namespace = ns
+				}
+			}
+			if obj != nil {
+				if updated := cloneWithNamespace(obj, ns); updated != nil {
+					l.Store.AddObject(updated)
+				}
+			}
+			l.Index.Records[next] = projected
+			if obj != nil || (id.Kind != manifest.KindConfigMap && id.Kind != manifest.KindSecret) {
+				delete(l.Index.Records, id)
+				l.Store.DeleteObject(id)
+			}
 		}
-		// Store immutability contract (pkg/store doc): clone before
-		// mutating, then DeleteObject(old) + AddObject(new).
-		updated := cloneWithNamespace(obj, u.new.Namespace)
-		if updated == nil {
-			continue
-		}
-		s.DeleteObject(u.old)
-		s.AddObject(updated)
-		delete(l.Index.Records, u.old)
-		record.File = u.file
-		l.Index.Records[u.new] = record
 	}
+}
+
+type namespaceContext struct {
+	namespace string
+	fallback  string
 }
 
 func (l *Loader) applyDefaultNamespaces() {
@@ -90,105 +99,6 @@ func applyDefaultNS[T manifest.BaseManifest](l *Loader, objs []T) {
 			}
 		}
 	}
-}
-
-// pathEntry pairs a slash-suffixed directory prefix with the namespace
-// to apply to anything underneath it.
-type pathEntry struct {
-	prefix string
-	ns     string
-}
-
-// resolveNamespace returns the most-specific namespace that should
-// apply to the resource at file. Flux Kustomizations win over
-// kustomize.yaml directives only when their prefix is longer — the
-// "deepest wins" rule.
-func resolveNamespace(file string, flux, kust []pathEntry) string {
-	slashFile := filepath.ToSlash(file)
-	var best pathEntry
-	for _, group := range [...][]pathEntry{flux, kust} {
-		for _, e := range group {
-			if !strings.HasPrefix(slashFile, e.prefix) {
-				continue
-			}
-			if len(e.prefix) > len(best.prefix) {
-				best = e
-			}
-		}
-	}
-	return best.ns
-}
-
-// indexFluxByPath returns one pathEntry per Flux Kustomization keyed
-// by spec.path → the KS's effective namespace. Mirrors what real Flux
-// renders into the cluster:
-//   - spec.targetNamespace wins when set (kustomize-controller injects it).
-//   - Otherwise metadata.namespace acts as the apply-context default —
-//     resources rendered by the KS without explicit namespaces land
-//     in the KS's own namespace.
-//   - When metadata.namespace is also empty (i.e. the KS hasn't yet
-//     had a kustomize directive applied at the time of indexing), fall
-//     back to the kustomize.yaml directive that would patch the KS at
-//     parent-render time. This handles the cross-tree base/ pattern,
-//     where the parent's `replacements:` block injects targetNamespace
-//     only at kustomize-build, but flate runs inheritance at load.
-//
-// resolveNamespace picks the longest-prefix match, so the slice can
-// stay unsorted.
-func (l *Loader) indexFluxByPath(kust []pathEntry, repoRoot string) []pathEntry {
-	s := l.Store
-	var out []pathEntry
-	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		if ks.Path == "" && ks.SourceName == "" {
-			continue
-		}
-		ns := cmp.Or(ks.TargetNamespace, ks.Namespace)
-		if ns == "" {
-			if record, ok := l.Index.Lookup(ks.Named()); ok {
-				ns = resolveNamespace(record.File, nil, kust)
-			}
-		}
-		if ns == "" {
-			continue
-		}
-		out = append(out, pathEntry{
-			prefix: manifest.NormalizeClaimBase(ks.Path) + "/",
-			ns:     ns,
-		})
-		if root, pinned, _ := SourceView(s, ks, repoRoot); pinned {
-			if prefix, err := filepath.Rel(repoRoot, filepath.Join(root, manifest.NormalizeClaimBase(ks.Path))); err == nil {
-				out = append(out, pathEntry{prefix: filepath.ToSlash(prefix) + "/", ns: ns})
-			}
-		}
-	}
-	return out
-}
-
-// indexKustomizeNamespaces reads every ancestor kustomization.yaml of
-// each source file and returns one pathEntry per `namespace:`
-// directive. Slash-normalized dir keys match discovery file
-// coordinates; repoRoot anchors the on-disk reads.
-func (l *Loader) indexKustomizeNamespaces(repoRoot string) []pathEntry {
-	dirs := map[string]struct{}{}
-	for _, record := range l.Index.Files() {
-		file := record.File
-		for d := path.Dir(file); d != "." && d != "/" && d != ""; d = path.Dir(d) {
-			dirs[d] = struct{}{}
-		}
-	}
-	var out []pathEntry
-	for dir := range dirs {
-		k, _ := l.documents.read(filepath.Join(repoRoot, dir))
-		if k == nil {
-			continue
-		}
-		ns := k.Namespace
-		if ns == "" {
-			continue
-		}
-		out = append(out, pathEntry{prefix: strings.TrimSuffix(dir, "/") + "/", ns: ns})
-	}
-	return out
 }
 
 // cloneWithNamespace returns a shallow copy of obj with metadata.namespace

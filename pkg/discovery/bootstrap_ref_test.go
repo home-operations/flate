@@ -265,7 +265,9 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				st.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, URL: tc.url, LocalPath: t.TempDir()})
 			}
 			l := loader.New(st)
-			l.FinalizeIndex(root, nil)
+			if err := l.FinalizeIndex(t.Context(), root, nil); err != nil {
+				t.Fatal(err)
+			}
 			child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "release"}
 			owners, _ := l.Index.OwnersOfFile("apps/release.yaml")
 			parent := manifest.NamedResource{}

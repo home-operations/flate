@@ -13,7 +13,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func TestFinalizeGenerators_ExcludesWorkingTreeUnderPinnedClaim(t *testing.T) {
+func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.T) {
 	root, artifactDir := t.TempDir(), t.TempDir()
 	s := store.New()
 	sourceID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
@@ -24,11 +24,13 @@ func TestFinalizeGenerators_ExcludesWorkingTreeUnderPinnedClaim(t *testing.T) {
 	s.SetArtifact(sourceID, &store.SourceArtifact{LocalRoot: root, LocalPath: artifactDir})
 	l := loaderFixture(s, nil)
 	l.SourceRoot = root
-	l.generators = []generatorRecord{
-		{file: filepath.Join(root, "apps/kustomization.yaml"), isConfigMap: true, name: "dirty", literals: []string{"value=dirty"}},
-		{file: filepath.Join(artifactDir, "apps/kustomization.yaml"), isConfigMap: true, name: "pinned", literals: []string{"value=pinned"}},
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "configMapGenerator:\n- name: dirty\n  literals: [value=dirty]\n")
+	testutil.WriteFile(t, artifactDir, "apps/kustomization.yaml", "configMapGenerator:\n- name: pinned\n  literals: [value=pinned]\n")
+	l.documents.read(filepath.Join(root, "apps"))
+	l.documents.read(filepath.Join(artifactDir, "apps"))
+	if err := l.FinalizeIndex(t.Context(), root, nil); err != nil {
+		t.Fatal(err)
 	}
-	l.FinalizeGenerators(root)
 	objects := s.ListAs[*manifest.ConfigMap](manifest.KindConfigMap)
 	if len(objects) != 1 || objects[0].Name != "pinned" || objects[0].Namespace != "apps" || objects[0].Data["value"] != "pinned" {
 		t.Fatalf("expected only the artifact generator: %+v", objects)

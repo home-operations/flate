@@ -103,7 +103,9 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 			l := loaderFixture(store.New(), nil)
 			id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "stray"}
 			l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, tc.file), File: tc.file}
-			l.FinalizeIndex(dir, nil)
+			if err := l.FinalizeIndex(t.Context(), dir, nil); err != nil {
+				t.Fatal(err)
+			}
 			if got := l.Index.Records[id].Excluded; got != tc.want {
 				t.Errorf("Excluded(%q) = %v, want %v", tc.file, got, tc.want)
 			}

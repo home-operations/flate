@@ -23,7 +23,6 @@
 package loader
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -32,7 +31,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -82,15 +80,6 @@ type Loader struct {
 	// --path scan's data wins over downstream paths that may point
 	// into a different tree.
 	PreferExisting bool
-
-	// generators accumulates configMapGenerator/secretGenerator
-	// entries observed during the walk. After Load returns, the
-	// orchestrator finalizes them via FinalizeGenerators — the
-	// effective namespace depends on which Flux Kustomization
-	// encloses each kustomization.yaml, and that's only known once
-	// the full walk completes.
-	generatorsMu sync.Mutex
-	generators   []generatorRecord
 }
 
 // New returns a Loader configured to wipe secrets.
@@ -216,14 +205,6 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 
 	k, kpath := w.loader.documents.read(dir)
 	if k != nil {
-		// Harvest configMapGenerator/secretGenerator entries
-		// regardless of whether this is a Kustomization or Component
-		// — both can declare generators, and downstream depwait
-		// lookups for substituteFrom CMs need the synthesized
-		// records either way.
-		if kpath != "" {
-			w.loader.recordGenerators(collectGeneratorRecords(k, kpath))
-		}
 		if isKustomizeComponent(k) {
 			slog.Debug("loader: skipping kustomize Component directory", "dir", dir)
 			// DiscoveryOnly callers still need the change filter's
@@ -675,100 +656,6 @@ func (l *Loader) recordDataFile(absPath string) error {
 	return nil
 }
 
-// recordGenerators appends generator records observed during a walk.
-// The orchestrator's Bootstrap calls FinalizeGenerators after Load
-// returns to resolve effective namespaces and inject the synthesized
-// CMs/Secrets into the store.
-func (l *Loader) recordGenerators(records []generatorRecord) {
-	if len(records) == 0 {
-		return
-	}
-	l.generatorsMu.Lock()
-	defer l.generatorsMu.Unlock()
-	l.generators = append(l.generators, records...)
-}
-
-// FinalizeGenerators materializes every harvested configMapGenerator/
-// secretGenerator entry into the store. Effective namespace is
-// resolved per kustomize precedence: the entry's own namespace wins,
-// then the kustomization.yaml's namespace, then the enclosing Flux
-// Kustomization's namespace (looked up via canonical claims against
-// the source file).
-//
-// Synthesized objects honor PreferExisting: if an explicit CM/Secret
-// with the same id already came from a real on-disk YAML, we don't
-// overwrite it with the generated placeholder.
-//
-// repoRoot is the filesystem root used to compute slash-relative
-// paths for the parent lookup; pass the same root the change filter
-// is keyed against (the Flux KS spec.path prefixes are
-// repoRoot-relative).
-func (l *Loader) FinalizeGenerators(repoRoot string) {
-	l.generatorsMu.Lock()
-	records := l.generators
-	l.generators = nil
-	l.generatorsMu.Unlock()
-	if len(records) == 0 {
-		return
-	}
-	prefixes := buildClaims(l.Store, repoRoot, l.documents, l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization))
-	seen := make(map[manifest.NamedResource]struct{}, len(records))
-	for _, r := range records {
-		parentNS, include := parentNamespaceFor(prefixes, l.Store, r.file, repoRoot)
-		if !include {
-			continue
-		}
-		obj := r.materialize(parentNS)
-		id := obj.Named()
-		if _, dup := seen[id]; dup {
-			// Iterative discovery re-walks the same kustomization.yaml
-			// across passes; the second occurrence is a duplicate.
-			continue
-		}
-		seen[id] = struct{}{}
-		if l.Store.GetObject(id) != nil {
-			// Real CM/Secret YAML already won; don't overwrite.
-			continue
-		}
-		l.Store.AddObject(obj)
-		if l.Index != nil {
-			l.Index.Records[id] = manifest.DiscoveryRecord{File: l.fileCoordinate(r.file)}
-		}
-	}
-}
-
-// parentNamespaceFor resolves the enclosing Flux Kustomization's
-// namespace for the file at absPath. Falls back to "" when the file
-// sits outside any KS spec.path / component — depwait's name-only
-// fallback may still match in that case.
-// Working-tree generators owned by a pin must not be materialized.
-func parentNamespaceFor(prefixes []manifest.KSClaim, s *store.Store, absPath, repoRoot string) (string, bool) {
-	rel, err := filepath.Rel(repoRoot, absPath)
-	if err != nil {
-		return "", true
-	}
-	owner, ok := manifest.StrictParent(prefixes, rel, manifest.NamedResource{}, nil)
-	if !ok {
-		return "", true
-	}
-	ks, _ := s.GetByName[*manifest.Kustomization](manifest.KindKustomization, owner.Namespace, owner.Name)
-	if ks == nil {
-		return "", true
-	}
-	if root, pinned, _ := SourceView(s, ks, repoRoot); pinned {
-		file, err := filepath.Rel(root, absPath)
-		if err != nil || file == ".." || strings.HasPrefix(file, ".."+string(filepath.Separator)) || filepath.IsAbs(file) {
-			return "", false
-		}
-	}
-	// Flux's render-time namespace precedence: spec.targetNamespace
-	// (the resource's effective namespace post-render) wins over the
-	// KS's own namespace (where the KS CR lives). For generated CMs
-	// we want the post-render namespace because that's what
-	// substituteFrom in downstream KSes references.
-	return cmp.Or(ks.TargetNamespace, ks.Namespace), true
-}
-
 // recordObject retains raw locations and authored source references for deferred admission.
 func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	if l.Index == nil {
@@ -781,9 +668,17 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 		if o.Chart.RepoKind != "" && o.Chart.RepoName != "" {
 			r.Refs = []manifest.NamedResource{{Kind: o.Chart.RepoKind, Namespace: o.Chart.RepoNamespace, Name: o.Chart.RepoName}}
 		}
+		for _, ref := range o.ValuesFrom {
+			r.Refs = append(r.Refs, manifest.NamedResource{Kind: ref.Kind, Namespace: o.Namespace, Name: ref.Name})
+		}
 	case *manifest.Kustomization:
 		if o.SourceKind != "" && o.SourceName != "" {
 			r.Refs = []manifest.NamedResource{{Kind: o.SourceKind, Namespace: o.SourceNamespace, Name: o.SourceName}}
+		}
+		for _, ref := range o.PostBuildSubstituteFrom {
+			if manifest.IsHardConfigMapEdge(ref) {
+				r.Refs = append(r.Refs, manifest.NamedResource{Kind: ref.Kind, Namespace: o.Namespace, Name: ref.Name})
+			}
 		}
 	}
 	l.Index.Records[id] = r

@@ -33,7 +33,9 @@ func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 				SourceKind: manifest.KindGitRepository, SourceName: tc.source, SourceNamespace: "flux-system",
 			}
 			st.AddObject(ks)
-			idx := rendererFixture(st, root, nil, false)
+			l := loaderFixture(st, nil)
+			l.Options.WipeSecrets = false
+			idx := rendererFixture(t, l, root, nil)
 			var want []manifest.NamedResource
 			if tc.produces {
 				want = []manifest.NamedResource{ks.Named()}
@@ -74,7 +76,7 @@ func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
 	}
 	s.AddObject(clusterApps)
 
-	idx := rendererFixture(s, dir, nil, true)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
 
 	// Produced in EVERY group's namespace (the namespace transformer stamps
 	// the component's namespace-less ConfigMap per base) — not just the first.
@@ -107,7 +109,7 @@ func TestFinalizeIndex_NonProducerNotAttributed(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	idx := rendererFixture(s, dir, nil, true)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
 	if got := renderers(idx, cmID("flux-system")); len(got) != 0 {
 		t.Errorf("ProducedBy = %v, want empty (KS produces no cluster-settings)", got)
 	}
@@ -149,7 +151,7 @@ func TestFinalizeIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
 	s.AddObject(ks)
 
-	idx := rendererFixture(s, dir, nil, true)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
 
 	for _, file := range []string{
 		"apps/homelab/kustomization.yaml",
@@ -178,7 +180,7 @@ func TestFinalizeIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
 	s.AddObject(ks)
 
-	idx := rendererFixture(s, dir, nil, true)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
 
 	if got := ownersForTest(idx, "apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
 		t.Errorf("OwnersOfFile(escaped file cluster.yaml) = %v, want to contain apps", got)
@@ -201,7 +203,7 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
 	s.AddObject(ks)
 
-	idx := rendererFixture(s, dir, nil, true)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
 
 	if got := ownersForTest(idx, "apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
 		t.Errorf("OwnersOfFile(dangling cluster.yaml) = %v, want to contain apps", got)
@@ -228,7 +230,7 @@ func TestFinalizeIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
 	s.AddObject(ks)
 	s.AddObject(other)
 
-	idx := rendererFixture(s, dir, nil, true)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
 
 	for _, file := range []string{
 		"apps/base/postgres/kustomization.yaml",
@@ -280,7 +282,9 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 		l.Index.Records[id] = manifest.DiscoveryRecord{File: "apps/base/" + name + "/ks.yaml"}
 	}
-	l.FinalizeIndex(dir, nil)
+	if err := l.FinalizeIndex(t.Context(), dir, nil); err != nil {
+		t.Fatal(err)
+	}
 	idx := l.Index
 
 	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
@@ -326,7 +330,7 @@ func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 	})
 
 	producers := &manifest.ProducerIndex{}
-	rendererFixture(s, dir, producers, true)
+	rendererFixture(t, loaderFixture(s, nil), dir, producers)
 
 	want := map[manifest.NamedResource]string{ // target → producer name
 		secretID("secure", "app-values"): "app-creds",
@@ -367,7 +371,7 @@ func TestFinalizeIndex_NamePrefixNotFollowed(t *testing.T) {
 	})
 
 	producers := &manifest.ProducerIndex{}
-	rendererFixture(s, dir, producers, true)
+	rendererFixture(t, loaderFixture(s, nil), dir, producers)
 
 	if _, ok := producers.Producer(secretID("secure", "app-values")); !ok {
 		t.Error("producer not recorded under its raw target name")
@@ -408,7 +412,7 @@ func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	existing := &manifest.Secret{Name: "pre-secret", Namespace: "secure", StringData: map[string]any{"K": "real"}}
 	s.AddObject(existing)
 
-	rendererFixture(s, dir, &manifest.ProducerIndex{}, true)
+	rendererFixture(t, loaderFixture(s, nil), dir, &manifest.ProducerIndex{})
 
 	got, _ := s.GetObject(secretID("secure", "app-secret")).(*manifest.Secret)
 	if got == nil {
@@ -450,7 +454,7 @@ func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 		Path: "./apps",
 	})
 
-	rendererFixture(s, dir, &manifest.ProducerIndex{}, true)
+	rendererFixture(t, loaderFixture(s, nil), dir, &manifest.ProducerIndex{})
 
 	got, _ := s.GetObject(secretID("flux-system", "cluster-secrets")).(*manifest.Secret)
 	if got == nil {
@@ -480,7 +484,9 @@ func TestFinalizeIndex_NoSynthesisWithoutWipe(t *testing.T) {
 		Path: "./apps",
 	})
 
-	rendererFixture(s, dir, &manifest.ProducerIndex{}, false)
+	l := loaderFixture(s, nil)
+	l.Options.WipeSecrets = false
+	rendererFixture(t, l, dir, &manifest.ProducerIndex{})
 
 	if obj := s.GetObject(secretID("secure", "app-secret")); obj != nil {
 		t.Errorf("wipeSecrets=false must suppress synthesis; got %#v", obj)
@@ -502,7 +508,7 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [producer.yaml]\n")
 			testutil.WriteFile(t, root, "shared/producer.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: '"+namespace+"'}\nspec:\n  target: {name: values}\n  dataFrom: [{extract: {key: values}}]\n")
 			producers := &manifest.ProducerIndex{}
-			idx := rendererFixture(s, root, producers, false)
+			idx := rendererFixture(t, loaderFixture(s, nil), root, producers)
 			slices.SortFunc(want, manifest.NamedResource.Compare)
 			for _, ns := range []string{namespace, "effective"} {
 				id := manifest.NamedResource{Kind: "ExternalSecret", Namespace: ns, Name: "producer"}
@@ -538,7 +544,7 @@ func TestFinalizeIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 			testutil.WriteFile(t, root, "values/kustomization.yaml", "namespace: apps\nresources: [bucket.yaml]\n")
 			testutil.WriteFile(t, root, "values/bucket.yaml", "apiVersion: objectbucket.io/v1alpha1\nkind: ObjectBucketClaim\nmetadata: {name: bucket, namespace: '"+namespace+"'}\nspec: {generateBucketName: bucket, storageClassName: bucket}\n")
 			producers := &manifest.ProducerIndex{}
-			idx := rendererFixture(s, root, producers, false)
+			idx := rendererFixture(t, loaderFixture(s, nil), root, producers)
 			for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 				target := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "bucket"}
 				if _, ok := producers.Producer(target); !ok {

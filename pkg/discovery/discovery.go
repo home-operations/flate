@@ -110,13 +110,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// `dependsOn: 0-${CLUSTER_NAME}-config` never matches the real
 	// 0-biohazard-config the parent's render would have substituted.
 	loader.ResolveDependsOnSubstitutions(d.cfg.Store)
-	// Materialize configMapGenerator / secretGenerator entries the
-	// file walker collected. The effective namespace comes from the
-	// enclosing Flux Kustomization, which is only known now that
-	// the full KS tree is loaded. Resolves the depwait gap where a
-	// substituteFrom references a CM produced by a Component's
-	// generator (issue #396).
-	l.FinalizeGenerators(repoRoot)
 	var standaloneSecrets []manifest.NamedResource
 	if cfg.WipeSecrets {
 		for id := range l.Index.Files() {
@@ -126,7 +119,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 	producers := &manifest.ProducerIndex{}
-	l.FinalizeIndex(repoRoot, producers)
+	if err := l.FinalizeIndex(ctx, repoRoot, producers); err != nil {
+		return nil, err
+	}
 	d.promoteOrphans(standaloneSecrets)
 	return &Result{
 		RepoRoot:                   repoRoot,
@@ -237,6 +232,9 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			}
 			sourceRoot, _, _ := loader.SourceView(d.cfg.Store, ks, repoRoot)
 			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+			if ks.SourceKind == manifest.KindOCIRepository && d.cfg.Store.GetObject(ref) == nil && d.cfg.Store.GetArtifact(ref) == nil {
+				return fmt.Errorf("%w: bootstrap OCI source %s has an unknown artifact root", manifest.ErrInput, ref)
+			}
 			target := filepath.Join(sourceRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
 			// Canonicalize via EvalSymlinks so two spec.paths that
 			// resolve to the same on-disk directory (one direct, one

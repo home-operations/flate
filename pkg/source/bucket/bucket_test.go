@@ -2,6 +2,7 @@ package bucket_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -136,7 +137,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 					listings.Add(1)
 					_, _ = fmt.Fprint(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>`)
 					for _, name := range []string{"dir/drop.yaml", "image.png", "dir/file.yaml", ".sourceignore", ".git/config"} {
-						_, _ = fmt.Fprintf(w, `<Contents><Key>prefix/%s</Key><Size>%d</Size><ETag>"%s"</ETag></Contents>`, name, len(files[name]), files[name])
+						_, _ = fmt.Fprintf(w, `<Contents><Key>prefix/%s</Key><Size>%d</Size><ETag>"%x"</ETag></Contents>`, name, len(files[name]), sha256.Sum256([]byte(files[name])))
 					}
 					_, _ = fmt.Fprint(w, `</ListBucketResult>`)
 					return
@@ -148,7 +149,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-				w.Header().Set("ETag", `"test"`)
+				w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sha256.Sum256([]byte(data))))
 				w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
 				_, _ = fmt.Fprint(w, data)
 			}))

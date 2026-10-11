@@ -2,7 +2,6 @@ package bucket
 
 import (
 	"fmt"
-	"github.com/home-operations/flate/pkg/manifest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/minio/minio-go/v7"
 )
 
@@ -35,13 +35,28 @@ func benchmarkBucket(b testing.TB, s bucketWorkload) *minio.Client {
 		}
 		idx, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:], "file"))
 		time.Sleep(s.ttfb(idx))
-		w.Header().Set("Content-Length", strconv.Itoa(s.bodySize))
+		size := s.bodySize
+		if value := r.Header.Get("Range"); value != "" {
+			var start, end int
+			if _, err := fmt.Sscanf(value, "bytes=%d-%d", &start, &end); err != nil {
+				b.Error(err)
+				return
+			}
+			size = end - start + 1
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, s.bodySize))
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(size))
 		w.Header().Set("ETag", "\"x\"")
 		w.Header().Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
+		if r.Header.Get("Range") != "" {
+			w.WriteHeader(http.StatusPartialContent)
+		}
 		buf := make([]byte, s.chunk)
-		for sent := 0; sent < s.bodySize; sent += s.chunk {
-			n := min(s.chunk, s.bodySize-sent)
-			_, _ = w.Write(buf[:n])
+		for sent := 0; sent < size; sent += s.chunk {
+			n := min(s.chunk, size-sent)
+			if _, err := w.Write(buf[:n]); err != nil {
+				return
+			}
 			if s.pace > 0 {
 				w.(http.Flusher).Flush()
 				time.Sleep(s.pace)

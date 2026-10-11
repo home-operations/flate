@@ -207,3 +207,28 @@ func TestWalkBucket_Faults(t *testing.T) {
 		})
 	}
 }
+
+// A listing is untrusted: an object larger than the archive cap, or a negative size, must fail before
+// any allocation or download.
+func TestWalkBucket_RejectsImplausibleListedSize(t *testing.T) {
+	for _, size := range []int64{-1, 1<<30 + 1, 1 << 40} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			var gets atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("list-type") == "" {
+					gets.Add(1)
+					return
+				}
+				_, _ = fmt.Fprintf(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>big</Key><Size>%d</Size><ETag>\"x\"</ETag></Contents></ListBucketResult>", size)
+			}))
+			defer srv.Close()
+			client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, io.Discard); err == nil || gets.Load() != 0 {
+				t.Fatalf("err=%v gets=%d, want a listing-time error and no download", err, gets.Load())
+			}
+		})
+	}
+}

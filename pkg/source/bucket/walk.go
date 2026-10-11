@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -35,11 +34,8 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 		}
 	}
 	slices.SortFunc(entries, func(a, b minio.ObjectInfo) int { return cmp.Compare(a.Key, b.Key) })
-	results := make([]struct {
-		name string
-		data []byte
-		done chan struct{}
-	}, len(entries))
+	bodies := make([]chan []byte, len(entries))
+	names := make([]string, len(entries))
 	for i, e := range entries {
 		if e.Size < 0 || e.Size > 1<<30 {
 			return ocispec.Descriptor{}, fmt.Errorf("bucket object %q exceeds 1 GiB extract limit", e.Key)
@@ -48,12 +44,12 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 		if rel == "" {
 			rel = filepath.Base(e.Key)
 		}
-		safe, err := safepath.SafeJoin(filepath.Join(string(filepath.Separator), "flate-archive"), rel, false)
+		safe, err := safepath.SafeJoin("/flate-archive", rel, false)
 		if err != nil {
 			return ocispec.Descriptor{}, fmt.Errorf("bucket key %q: %w", e.Key, err)
 		}
-		results[i].name = strings.TrimPrefix(filepath.ToSlash(safe), "/flate-archive/")
-		results[i].done = make(chan struct{})
+		names[i] = strings.TrimPrefix(filepath.ToSlash(safe), "/flate-archive/")
+		bodies[i] = make(chan []byte, 1)
 	}
 	// Oversized objects reserve the whole window, keeping the bound at
 	// max(readAheadBytes, largest object), within the archive's 1 GiB cap.
@@ -62,68 +58,63 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 	g.Go(func() error {
 		downloads, dctx := errgroup.WithContext(gctx)
 		downloads.SetLimit(8)
-		var admissionErr error
 		for i, e := range entries {
-			if admissionErr = budget.Acquire(dctx, min(e.Size, readAheadBytes)); admissionErr != nil {
+			if budget.Acquire(dctx, min(e.Size, readAheadBytes)) != nil {
 				break
 			}
 			downloads.Go(func() error {
-				obj, err := client.GetObject(dctx, b.BucketName, e.Key, minio.GetObjectOptions{})
-				if err != nil {
-					return err
-				}
-				data := make([]byte, e.Size)
-				_, err = io.ReadFull(obj, data)
+				body, err := getObject(dctx, client, b.BucketName, e)
 				if err == nil {
-					if n, readErr := io.CopyN(io.Discard, obj, 1); n != 0 {
-						err = fmt.Errorf("bucket object %q exceeds listed size", e.Key)
-					} else if !errors.Is(readErr, io.EOF) {
-						err = readErr
-					}
+					bodies[i] <- body
 				}
-				if err := errors.Join(err, obj.Close()); err != nil {
-					return err
-				}
-				results[i].data = data
-				close(results[i].done)
-				return nil
+				return err
 			})
 		}
-		if err := downloads.Wait(); err != nil {
-			return err
-		}
-		return admissionErr
+		return downloads.Wait()
 	})
 	h := sha256.New()
 	g.Go(func() error {
 		tw := tar.NewWriter(w)
 		for i, e := range entries {
+			var body []byte
 			select {
-			case <-results[i].done:
+			case body = <-bodies[i]:
 			case <-gctx.Done():
 				return gctx.Err()
 			}
-			if err := tw.WriteHeader(&tar.Header{Name: results[i].name, Mode: 0o600, Size: e.Size}); err != nil {
+			if err := tw.WriteHeader(&tar.Header{Name: names[i], Mode: 0o600, Size: e.Size}); err != nil {
 				return err
 			}
-			if _, err := tw.Write(results[i].data); err != nil {
+			if _, err := tw.Write(body); err != nil {
 				return err
 			}
-			results[i].data = nil
 			budget.Release(min(e.Size, readAheadBytes))
 			_, _ = fmt.Fprintf(h, "%s %s\n", e.Key, e.ETag)
 		}
 		return tw.Close()
 	})
 	if err := g.Wait(); err != nil {
-		if ctx.Err() != nil {
-			err = ctx.Err()
-		}
 		return ocispec.Descriptor{}, err
 	}
 
 	return ocispec.Descriptor{Annotations: map[string]string{
-		"flate.revision":     "sha256:" + hex.EncodeToString(h.Sum(nil)),
+		"flate.revision":     fmt.Sprintf("sha256:%x", h.Sum(nil)),
 		"flate.object-count": strconv.Itoa(len(entries)),
 	}}, nil
+}
+
+func getObject(ctx context.Context, client *minio.Client, bucket string, e minio.ObjectInfo) ([]byte, error) {
+	obj, err := client.GetObject(ctx, bucket, e.Key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	data := make([]byte, e.Size)
+	if _, err = io.ReadFull(obj, data); err == nil {
+		if n, readErr := io.CopyN(io.Discard, obj, 1); n != 0 {
+			err = fmt.Errorf("bucket object %q exceeds listed size", e.Key)
+		} else if !errors.Is(readErr, io.EOF) {
+			err = readErr
+		}
+	}
+	return data, errors.Join(err, obj.Close())
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"maps"
@@ -610,5 +611,57 @@ func TestNew_InvalidLayoutPreservesIndex(t *testing.T) {
 	}
 	if got, err := os.ReadFile(index); err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("unrelated layout error changed index: %q %v", got, err)
+	}
+}
+
+// The trailing allowance is exactly maxTrailingBytes; the producer returns right after its last write,
+// so only the consumer's own check can reject the extra byte.
+func TestAcquire_TrailingBoundary(t *testing.T) {
+	for _, backing := range []string{"memory", "disk"} {
+		for _, extra := range []int{0, 1} {
+			t.Run(fmt.Sprintf("%s/%d", backing, extra), func(t *testing.T) {
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
+				}
+				c := newCache(t, root)
+				_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-trailing-boundary"}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+					if _, err := w.Write(archive(t, "file", "x")); err != nil {
+						return ocispec.Descriptor{}, err
+					}
+					_, err := w.Write(make([]byte, maxTrailingBytes+extra))
+					return ocispec.Descriptor{}, err
+				})
+				if (err != nil) != (extra > 0) {
+					t.Fatalf("extra=%d: err=%v", extra, err)
+				}
+			})
+		}
+	}
+}
+
+// The consumer rejecting trailing data while the producer is still writing must surface as the cache's
+// own error on every run, never as the producer's write failure. The race is a fraction of a percent per call.
+func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			root := ""
+			if backing == "disk" {
+				root = t.TempDir()
+			}
+			c := newCache(t, root)
+			for i := range 2000 {
+				_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: fmt.Sprintf("source-trailing-failure-%d", i)}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+					if _, err := w.Write(archive(t, "file", "x")); err != nil {
+						return ocispec.Descriptor{}, err
+					}
+					_, err := w.Write(make([]byte, 2<<20))
+					return ocispec.Descriptor{}, err
+				})
+				if _, ok := errors.AsType[*CacheError](err); !ok {
+					t.Fatalf("run %d: %T %v, want *CacheError", i, err, err)
+				}
+			}
+		})
 	}
 }

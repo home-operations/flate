@@ -119,17 +119,14 @@ func (r *positionReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
-	memory := index == nil
 	pos := &positionReader{Reader: r}
 	tr := tar.NewReader(pos)
+	var builder *tree.Builder
 	if index == nil {
 		index = &tarFS{}
-	}
-	index.nodes = map[string]*tarNode{".": {FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()}}
-	var builder *tree.Builder
-	if memory {
 		builder = tree.NewBuilder(nil)
 	}
+	index.nodes = map[string]*tarNode{".": {FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()}}
 	var total, nextHeader int64
 	for {
 		header := nextHeader
@@ -195,8 +192,8 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
 			nextHeader = (pos.offset + 511) / 512 * 512
 		}
 		if builder != nil {
-			data, err := io.ReadAll(tr)
-			if err != nil {
+			data := make([]byte, h.Size)
+			if _, err := io.ReadFull(tr, data); err != nil {
 				return nil, err
 			}
 			nextHeader = (pos.offset + 511) / 512 * 512
@@ -205,7 +202,7 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
 			}
 		}
 	}
-	if !memory {
+	if builder == nil {
 		index.list()
 		if index.digest != "" {
 			if err := pruneArchive(index, index.nodes, key); err != nil {

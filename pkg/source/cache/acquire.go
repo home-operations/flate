@@ -67,6 +67,10 @@ type acquireKey struct {
 
 type producerError struct{ error }
 
+// readerError marks a failure of the archive consumer that the producer only observes as a failed write.
+type readerError struct{ error }
+
+func (e *readerError) Unwrap() error     { return e.error }
 func (e *producerError) Unwrap() []error { return []error{manifest.ErrFlux, e.error} }
 
 // Acquire publishes a complete archive only after produce succeeds.
@@ -239,7 +243,9 @@ func produceArchive(ctx context.Context, key ArchiveKey, index *tarFS, produce f
 	g.Go(func() error {
 		desc, err := produce(pw)
 		upstream = desc
-		if err != nil {
+		if re, ok := errors.AsType[*readerError](err); ok {
+			err = re.error
+		} else if err != nil {
 			err = &producerError{err}
 		}
 		_ = pw.CloseWithError(err)
@@ -255,7 +261,11 @@ func produceArchive(ctx context.Context, key ArchiveKey, index *tarFS, produce f
 				err = copyErr
 			}
 		}
-		_ = pr.CloseWithError(err)
+		if err != nil {
+			_ = pr.CloseWithError(&readerError{err})
+		} else {
+			_ = pr.Close()
+		}
 		return err
 	})
 	err := g.Wait()

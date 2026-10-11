@@ -100,8 +100,8 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	return ok
 }
 
-// ProducersFor returns Flux Kustomizations that render the file-backed
-// data resource id. Populated only for Enabled filters; used by
+// ProducersFor returns Flux Kustomizations that render the data resource id.
+// Populated only for Enabled filters; used by
 // controllers to add ordering edges for data deps that arrive via
 // another KS's render — e.g. a postBuild.substituteFrom ConfigMap
 // rendered by an unchanged producer KS in changed-only mode. See
@@ -121,6 +121,9 @@ func (f *Filter) ProducersFor(id manifest.NamedResource) []manifest.NamedResourc
 func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResource {
 	if f == nil {
 		return nil
+	}
+	if record, _ := f.index.Lookup(id); len(record.Renderers) > 0 {
+		return record.Renderers
 	}
 	return f.index.DataOwners(id)
 }
@@ -616,11 +619,7 @@ func transitiveDepsOf(obj manifest.BaseManifest) []manifest.NamedResource {
 			})
 		}
 		for _, ref := range o.PostBuildSubstituteFrom {
-			// Shared with collectDeps in pkg/controllers/kustomization via
-			// manifest.IsHardConfigMapEdge — keep-set membership and reconcile
-			// ordering MUST agree on which substituteFrom refs are hard edges
-			// (see the predicate's doc + #418).
-			if !manifest.IsHardConfigMapEdge(ref) {
+			if !manifest.IsSubstituteDataRef(ref) {
 				continue
 			}
 			out = append(out, manifest.NamedResource{

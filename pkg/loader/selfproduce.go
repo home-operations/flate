@@ -101,14 +101,10 @@ func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]s
 
 func (l *Loader) addGenerated(generators []generatorRecord) {
 	for _, r := range generators {
-		obj, err := r.materialize(l.Options.WipeSecrets)
-		if err != nil {
-			slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
-			continue
-		}
-		id := obj.Named()
-		if l.Store.GetObject(id) == nil {
-			l.Store.AddObject(obj)
+		// Generator names are indexed before suffix hashing, including failed inputs.
+		id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: r.namespace, Name: r.args.Name}
+		if r.isConfigMap {
+			id.Kind = manifest.KindConfigMap
 		}
 		record := l.Index.Records[id]
 		if record.File == "" {
@@ -118,6 +114,14 @@ func (l *Loader) addGenerated(generators []generatorRecord) {
 			record.Renderers = appendUniqueProducer(record.Renderers, r.owner)
 		}
 		l.Index.Records[id] = record
+		obj, err := r.materialize(l.Options.WipeSecrets)
+		if err != nil {
+			slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
+			continue
+		}
+		if l.Store.GetObject(id) == nil {
+			l.Store.AddObject(obj)
+		}
 	}
 }
 

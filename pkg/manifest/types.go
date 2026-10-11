@@ -22,19 +22,16 @@ type ValuesReference = meta.ValuesReference
 // the same three fields (Kind, Name, Optional) into a local twin.
 type SubstituteReference = kustomizev1.SubstituteReference
 
-// IsHardConfigMapEdge reports whether a substituteFrom ref forms a hard
-// dependency edge that must be resolvable offline: a non-Optional,
-// non-empty-Name ConfigMap. Optional refs are best-effort; Secrets are
-// SOPS/ExternalSecret-managed and can't be materialized offline; an
-// empty Name is malformed. The changed-only keep set (change.transitiveDepsOf)
-// and the reconcile dependency ordering (kustomization.collectDeps) MUST
-// agree on this predicate or changed-only mode keeps a CM the controller
-// never waits on (or vice-versa), yielding an undefined-${VAR} render that
-// only reproduces in changed-only mode. Single-sourced here so they can't
-// drift. See #418. (A free function, not a method: SubstituteReference is
-// an alias to an external type.)
+// IsSubstituteDataRef reports whether a required substituteFrom ref names offline data.
+// Changed-only retention and reconcile ordering MUST use the same predicate.
+func IsSubstituteDataRef(r SubstituteReference) bool {
+	return !r.Optional && r.Name != "" && (r.Kind == KindConfigMap || r.Kind == KindSecret)
+}
+
+// IsHardConfigMapEdge reports whether a substituteFrom ref requires ConfigMap readiness.
+// Secrets may be SOPS/ExternalSecret-managed and cannot always be materialized offline.
 func IsHardConfigMapEdge(r SubstituteReference) bool {
-	return !r.Optional && r.Kind == KindConfigMap && r.Name != ""
+	return IsSubstituteDataRef(r) && r.Kind == KindConfigMap
 }
 
 // NamedResource uniquely identifies a Kubernetes resource by kind +

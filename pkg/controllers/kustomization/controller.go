@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -34,11 +35,7 @@ type Controller struct {
 	// parsing rendered manifests.
 	WipeSecrets bool
 
-	// selfProduces reports whether a Kustomization's own render emits a
-	// given ConfigMap (see Options.SelfProduces). collectDeps consults it
-	// to drop a self-produced substituteFrom CM from the dep set. Nil when
-	// unset (tests / no repoRoot) → edge always added.
-	selfProduces         func(cm, consumer manifest.NamedResource) bool
+	index                *manifest.DiscoveryIndex
 	substitutionSources  map[manifest.NamedResource]manifest.BaseManifest
 	substitutionProvider values.Provider
 	substitute           map[string]string
@@ -46,18 +43,11 @@ type Controller struct {
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto the
-// controller before Start. base.Options holds the config common to every
-// render controller (Filter / ParentOf / Existence /
-// PreflightFailure); SelfProduces is Kustomization-specific.
+// controller before Start. base.Options holds the common reconcile config.
 type Options struct {
 	base.Options
-	// SelfProduces reports whether consumer's OWN render emits cm. When
-	// it does, collectDeps drops cm from the dependency set — a KS can't
-	// hard-wait on a postBuild.substituteFrom ConfigMap that only its own
-	// render produces (the bjw-s/onedr0p self-substitute). Available in
-	// full mode (graph-aware index), unlike the changed-only producer
-	// skip. Nil → the edge is always added (pre-index behavior).
-	SelfProduces func(cm, consumer manifest.NamedResource) bool
+	// Index contains immutable data renderers discovered before reconciliation.
+	Index *manifest.DiscoveryIndex
 	// SubstituteFrom is the immutable bootstrap-approved postBuild source snapshot.
 	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
 	// Substitute layers over referenced and inline postBuild values.
@@ -80,7 +70,7 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 // read-only once the controller is dispatching.
 func (c *Controller) Configure(opts Options) {
 	c.Controller.Configure(opts.Options)
-	c.selfProduces = opts.SelfProduces
+	c.index = opts.Index
 	c.substitutionSources = opts.SubstituteFrom
 	c.substitute = opts.Substitute
 	c.strictSubstitutions = opts.StrictSubstitutions
@@ -256,29 +246,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	return nil
 }
 
-// collectDeps assembles the dependency refs whose readiness must
-// precede this Kustomization: explicit dependsOn entries (carrying any
-// CEL ReadyExpr), the source ref, the implicit structural parent (the
-// enclosing Flux KS that renders us — must finish first so any
-// parent-render-time spec injections land before our reconcile), and
-// every non-Optional postBuild.substituteFrom ConfigMap (or, in
-// changed-only mode, the unchanged producer Kustomization that renders
-// that ConfigMap).
-//
-// substituteFrom ConfigMap/producer edges fix the race where the
-// referenced CM is emitted by another KS's render: without the edge,
-// KS-A would race KS-B and Prepare would silently expand with empty
-// values for vars that should have come from KS-B's CM. Flux's
-// eventual-consistency reconcile loop self-heals; flate is one-shot,
-// so a missed substitution shows up as broken rendered output.
-//
-// Secret refs are deliberately NOT added as depwait edges. In real
-// repos substituteFrom Secrets are almost always SOPS-encrypted or
-// ExternalSecret-managed — they live in cluster state that flate
-// cannot materialize offline. values.ExpandPostBuildSubstituteReference
-// already gracefully degrades on missing Secrets (logs DEBUG and
-// continues); adding a hard edge here would regress every offline
-// render against a Flux repo that uses secret-substitute patterns.
+// collectDeps orders explicit dependencies, sources, structural parents and
+// substitution data producers before the consumer reads their rendered data.
+// Secrets are not hard data edges: SOPS/ExternalSecret inputs may exist only in cluster state.
 func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
 	deps := c.OrderingDeps(ks.DependsOn)
 	if ks.SourceKind != "" && ks.SourceName != "" {
@@ -290,45 +260,26 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 		deps = append(deps, manifest.DependencyRef{NamedResource: parent})
 	}
 	for _, ref := range ks.PostBuildSubstituteFrom {
-		// Shared with change.transitiveDepsOf via manifest.IsHardConfigMapEdge:
-		// only a non-Optional, named ConfigMap is a hard offline edge (Optional
-		// is best-effort, Secrets are SOPS/ExternalSecret-managed). Keep-set and
-		// reconcile ordering MUST agree on this — see the predicate's doc + #418.
-		if !manifest.IsHardConfigMapEdge(ref) {
+		if !manifest.IsSubstituteDataRef(ref) {
 			continue
 		}
 		depID := manifest.NamedResource{Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name}
 		if c.substitutionSources[depID] != nil {
 			continue
 		}
-		// Drop the hard CM edge ONLY when THIS KS's own render subtree
-		// emits it (the bjw-s/onedr0p self-substitute: cluster-apps' bare-
-		// dir render produces ConfigMap/flux-system/cluster-settings via a
-		// component). Graph-aware and available in full mode, unlike the
-		// changed-only ProducersFor skip below. A CM produced by a
-		// DIFFERENT KS — or genuinely absent — keeps the edge and fails
-		// loudly: a KS waiting on a CM only its own render can emit would
-		// otherwise deadlock against itself.
-		if c.selfProduces == nil || !c.selfProduces(depID, ks.Named()) {
+		record, _ := c.index.Lookup(depID)
+		producers := record.Renderers
+		if f := c.Filter(); len(producers) == 0 && f != nil {
+			producers = f.ProducersFor(depID)
+		}
+		if slices.Contains(producers, ks.Named()) {
+			continue
+		}
+		if manifest.IsHardConfigMapEdge(ref) {
 			deps = append(deps, manifest.DependencyRef{NamedResource: depID})
 		}
-		// In changed-only mode, when the substituteFrom CM is rendered
-		// by another Flux Kustomization (the producer), wait on that
-		// producer too — the CM dep alone doesn't gate ordering when
-		// the producer's reconcile is what materializes the CM. Only
-		// KS producers form depwait edges (generator-produced CMs have
-		// no controller to wait on); skip the self-producer case
-		// (bjw-s self-substitute pattern).
-		if f := c.Filter(); f != nil {
-			for _, producer := range f.ProducersFor(depID) {
-				if producer == ks.Named() {
-					continue
-				}
-				if producer.Kind != manifest.KindKustomization {
-					continue
-				}
-				deps = append(deps, manifest.DependencyRef{NamedResource: producer})
-			}
+		for _, producer := range producers {
+			deps = append(deps, manifest.DependencyRef{NamedResource: producer})
 		}
 	}
 	return deps

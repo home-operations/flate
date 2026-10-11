@@ -1263,3 +1263,34 @@ func TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 		t.Errorf("ProducersFor(CM/ns2/shared) leaked across namespaces: got %v, want [%v]", gotNS2, b)
 	}
 }
+
+func TestFilter_SubstitutionGeneratorProducers(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind string
+		optional   bool
+	}{
+		{name: "ConfigMap", kind: manifest.KindConfigMap},
+		{name: "Secret", kind: manifest.KindSecret},
+		{name: "optional ConfigMap", kind: manifest.KindConfigMap, optional: true},
+		{name: "optional Secret", kind: manifest.KindSecret, optional: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "app",
+				PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: tc.kind, Name: "settings", Optional: tc.optional}}}
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "data"}
+			data := manifest.NamedResource{Kind: tc.kind, Namespace: "apps", Name: "settings"}
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					consumer.Named(): {File: "flux/consumer.yaml"},
+					producer.Named(): {File: "flux/producer.yaml"},
+					data:             {File: "data/kustomization.yaml", Renderers: []manifest.NamedResource{producer.Named()}},
+				},
+				Claims: map[string][]manifest.NamedResource{"app/": {consumer.Named()}, "data/": {producer.Named()}},
+			}
+			f := NewFilter(NewSet([]string{"app/cm.yaml"}), index, testutil.MapLister{consumer.Named(): consumer, producer.Named(): producer})
+			if got := f.ShouldReconcile(producer.Named()); got == tc.optional {
+				t.Fatalf("producer retained = %t, optional reference = %t", got, tc.optional)
+			}
+		})
+	}
+}

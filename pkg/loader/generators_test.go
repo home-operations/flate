@@ -89,13 +89,13 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 				if got != want {
 					t.Fatalf("VALUE=%v, want %q", got, want)
 				}
-				var owners []manifest.NamedResource
-				if !tc.external {
-					owners = []manifest.NamedResource{ks.Named()}
-				}
-				if got := l.Index.Records[id].Renderers; !slices.Equal(got, owners) {
-					t.Fatalf("Renderers = %v, want %v", got, owners)
-				}
+			}
+			var owners []manifest.NamedResource
+			if !tc.external && !tc.escape {
+				owners = []manifest.NamedResource{ks.Named()}
+			}
+			if got := l.Index.Records[id].Renderers; !slices.Equal(got, owners) {
+				t.Fatalf("Renderers = %v, want %v", got, owners)
 			}
 			id.Name = "sibling"
 			if st.GetObject(id) == nil {

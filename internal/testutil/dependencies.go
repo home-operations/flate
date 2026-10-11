@@ -177,3 +177,38 @@ data:
   shared: {{ .Values.shared | default "" | quote }}
 `)
 }
+
+// WriteSubstitutionProducerCluster creates a generator whose rendered data differs from discovery.
+func WriteSubstitutionProducerCluster(t testing.TB, root, kind string) {
+	t.Helper()
+	version := "4.6.2"
+	if kind == "Secret" {
+		version = "NC42LjI="
+	}
+	for _, ks := range []struct{ name, path, postBuild string }{
+		{"producer", "data", "  patches:\n  - target: {kind: " + kind + ", name: settings}\n    patch: |-\n      - op: replace\n        path: /data/VERSION\n        value: " + version + "\n"},
+		{"consumer", "app", "  postBuild: {substituteFrom: [{kind: " + kind + ", name: settings}]}\n"},
+	} {
+		body := strings.Replace(dependencyKS(ks.name, ks.path, ""), "name: shared", "name: flux-system", 1)
+		WriteFile(t, root, "flux/"+ks.name+".yaml", body+ks.postBuild)
+	}
+	generator := "configMapGenerator"
+	if kind == "Secret" {
+		generator = "secretGenerator"
+	}
+	WriteFile(t, root, "data/kustomization.yaml", "namespace: flux-system\ngeneratorOptions: {disableNameSuffixHash: true}\n"+generator+":\n- name: settings\n  envs: [version.env]\n")
+	WriteFile(t, root, "data/version.env", "VERSION=discovered\n")
+	WriteFile(t, root, "app/kustomization.yaml", "namespace: flux-system\nresources: [cm.yaml]\n")
+	WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {version: '${VERSION:=empty}'}\n")
+}
+
+// WriteSubstitutionCycleCluster creates mutually dependent file-backed substitution producers.
+func WriteSubstitutionCycleCluster(t testing.TB, root string) {
+	t.Helper()
+	for _, pair := range []struct{ name, peer string }{{"a", "b"}, {"b", "a"}} {
+		body := strings.Replace(dependencyKS(pair.name, pair.name, ""), "name: shared", "name: flux-system", 1)
+		WriteFile(t, root, "flux/"+pair.name+".yaml", body+"  postBuild: {substituteFrom: [{kind: ConfigMap, name: "+pair.peer+"-settings}]}\n")
+		WriteFile(t, root, pair.name+"/kustomization.yaml", "namespace: flux-system\nresources: [settings.yaml]\n")
+		WriteFile(t, root, pair.name+"/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+pair.name+"-settings}\ndata: {VALUE: "+pair.name+"}\n")
+	}
+}

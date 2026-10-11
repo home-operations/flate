@@ -757,12 +757,7 @@ func (e reportedError) Unwrap() error { return e.err }
 // same projection as the machine error. Named runs need a non-resource error
 // diagnostic before reportedError suppresses the top-level printer.
 func reportFailures(w io.Writer, scope failureScope, err error) error {
-	var m report.Model
-	if scope.named {
-		m = failureReport(scope)
-	} else {
-		m = report.Build(scope.failed, scope.blocked, scope.warnings, nil)
-	}
+	m := failureReport(scope)
 	if m.Empty() {
 		return err
 	}
@@ -789,18 +784,7 @@ func reportFailures(w io.Writer, scope failureScope, err error) error {
 // reportFailures). Typed as *orchestrator.FailuresError so scopedRunError can
 // recognize and re-scope an aggregate that arrives as the run error.
 func aggregateScopedFailures(scope failureScope) error {
-	var model report.Model
-	if scope.named {
-		model = failureReport(scope)
-	} else {
-		for id, info := range scope.failed {
-			if len(scope.blocked[id]) > 0 {
-				model.Blocked++
-				continue
-			}
-			model.Primary = append(model.Primary, report.Primary{ID: id, Msg: info.Message})
-		}
-	}
+	model := failureReport(scope)
 	msgs := make([]string, 0, len(model.Primary)+len(model.Missing))
 	for _, root := range model.Primary {
 		msgs = append(msgs, fmt.Sprintf("%s: %s", root.ID, root.Msg))
@@ -837,7 +821,7 @@ func failureReport(scope failureScope) report.Model {
 	}
 	for id, info := range scope.failed {
 		if !covered[id] {
-			model.Primary = append(model.Primary, report.Primary{ID: id, Msg: info.Message})
+			model.Primary = append(model.Primary, report.Primary{ID: id, Msg: "dependency cycle: " + info.Message})
 			model.Blocked--
 		}
 	}

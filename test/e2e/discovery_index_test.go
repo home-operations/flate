@@ -136,9 +136,9 @@ data: {v: "${K}"}
 `)
 			}
 			testutil.WriteFile(t, root, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: out2, namespace: default}\ndata: {v: \"${K}\"}\n")
-			_, stderr, code := runCLIBuffers("build", "all", "--path", root, "--path-orig", orig, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
-			if code != 1 || !strings.Contains(stderr, "othercm") {
-				t.Fatalf("exit=%d stderr=%s", code, stderr)
+			stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--path-orig", orig, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
+			if code != 0 || !strings.Contains(stdout, "name: out2") || !strings.Contains(stdout, "v: v") {
+				t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
 		})
 	}

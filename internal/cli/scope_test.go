@@ -573,11 +573,13 @@ func TestAggregateScopedFailures_MissingAndCycles(t *testing.T) {
 	assert.Equal(t, len(model.Primary), 2)
 	assert.Equal(t, len(model.Missing), 1)
 	assert.Equal(t, model.Blocked, 1)
-	got := aggregateScopedFailures(failureScope{named: true, failed: failed, blocked: blocked}).Error()
-	assert.Equal(t, got, "reconcile completed with 3 failure(s):\n  Kustomization/apps/a: cycle a\n  Kustomization/apps/b: cycle b\n  Kustomization/apps/missing: not found\n  (+1 blocked by failed/missing dependencies)")
-	for _, want := range []string{missing.String(), "cycle a", "cycle b"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("fatal cause %q hidden: %s", want, got)
+	for _, named := range []bool{false, true} {
+		got := aggregateScopedFailures(failureScope{named: named, failed: failed, blocked: blocked}).Error()
+		assert.Equal(t, got, "reconcile completed with 3 failure(s):\n  Kustomization/apps/a: dependency cycle: cycle a\n  Kustomization/apps/b: dependency cycle: cycle b\n  Kustomization/apps/missing: not found\n  (+1 blocked by failed/missing dependencies)")
+		for _, want := range []string{missing.String(), "cycle a", "cycle b"} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("fatal cause %q hidden: %s", want, got)
+			}
 		}
 	}
 }
@@ -663,7 +665,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 
 func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
 	root := writeNamedScopeFixture(t)
-	want := "reconcile completed with 0 failure(s)\n  (+1 blocked by failed/missing dependencies)"
+	want := "reconcile completed with 1 failure(s):\n  Kustomization/flux-system/outside: not found\n  (+1 blocked by failed/missing dependencies)"
 	for _, verb := range []string{"get", "test"} {
 		t.Run(verb, func(t *testing.T) {
 			kind := "ks"

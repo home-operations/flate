@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"maps"
-	"slices"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -116,15 +115,6 @@ func (o *Orchestrator) configureControllers() {
 		wipeSecrets: o.cfg.WipeSecrets,
 		filter:      o.filter,
 	}
-	// selfProduces reports whether consumer's OWN render emits cm — the
-	// graph-aware self-substitute signal collectDeps uses to drop a
-	// self-produced postBuild.substituteFrom ConfigMap from the dep set.
-	// Nil-safe: a nil index (no repoRoot) yields false, so the edge is
-	// kept (the pre-index always-add behavior).
-	selfProduces := func(cm, consumer manifest.NamedResource) bool {
-		record, _ := o.index.Lookup(cm)
-		return slices.Contains(record.Renderers, consumer)
-	}
 	// The reconcile-shaping config common to all three render controllers,
 	// built once; each Configure adds its controller-specific fields.
 	common := base.Options{
@@ -135,7 +125,7 @@ func (o *Orchestrator) configureControllers() {
 		AllowMissingCRDs: o.cfg.AllowMissingCRDs,
 	}
 	o.ksc.Configure(kustomization.Options{
-		Options: common, SelfProduces: selfProduces,
+		Options: common, Index: o.index,
 		SubstituteFrom: o.substitutionSources, Substitute: o.cfg.Substitute,
 		StrictSubstitutions: o.cfg.StrictSubstitutions,
 	})

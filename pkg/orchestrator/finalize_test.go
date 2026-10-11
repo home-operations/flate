@@ -11,12 +11,12 @@ import (
 func TestCascadeParentFailures_RecordsParentAsBlocker(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
-	o := &Orchestrator{store: store.New(), rendered: newRenderedSet()}
+	o := &Orchestrator{store: store.New()}
 	o.store.AddObject(parent)
 	o.store.AddObject(child)
 	o.store.UpdateStatus(parent.Named(), store.StatusFailed, "build failed")
 	o.store.UpdateStatus(child.Named(), store.StatusReady, "done")
-	o.rendered.MarkRenderedBatch(parent.Named(), []manifest.NamedResource{child.Named()})
+	o.store.RecordEmitted(parent.Named(), []manifest.NamedResource{child.Named()})
 	failed := o.store.FailedResources()
 
 	o.cascadeParentFailures(failed)

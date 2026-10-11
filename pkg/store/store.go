@@ -108,6 +108,9 @@ func newShard() *shard {
 type Store struct {
 	shards [shardCount]*shard
 
+	emittedMu      sync.RWMutex
+	emittedParents map[manifest.NamedResource]manifest.NamedResource
+
 	// listeners is indexed by EventKind (1-based; index 0 unused). A
 	// fixed-size array beats a map here: the set of kinds is closed,
 	// the index arithmetic is O(1) with no hash, and the array itself
@@ -132,7 +135,7 @@ type Store struct {
 
 // New constructs an empty Store.
 func New() *Store {
-	s := &Store{}
+	s := &Store{emittedParents: make(map[manifest.NamedResource]manifest.NamedResource)}
 	for i := range s.shards {
 		s.shards[i] = newShard()
 	}

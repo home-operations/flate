@@ -16,17 +16,29 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
 
+	rs := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "ns", Name: "render-only"}
 	var sawBOnA bool
+	var sawRS bool
 	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id == rs {
+			sawRS = true
+			if got, ok := s.EmittedParent(rs); !ok || got != parent {
+				t.Errorf("ResourceSet owner at arrival = (%v, %v), want %s", got, ok, parent)
+			}
+		}
 		if id == idA {
 			sawBOnA = s.GetObject(idB) != nil
 		}
 	}, false)
 
 	c.emitRenderedChildren(parent, []map[string]any{
+		{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "ResourceSet", "metadata": map[string]any{"name": rs.Name, "namespace": rs.Namespace}, "spec": map[string]any{}},
 		fluxKustomizationDoc("a", "b"),
 		fluxKustomizationDoc("b", "a"),
 	}, true)
+	if !sawRS {
+		t.Fatal("render-only ResourceSet was not published")
+	}
 	if !sawBOnA {
 		t.Fatal("first leaf dispatch did not see later emitted sibling")
 	}
@@ -63,39 +75,24 @@ func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 	}
 }
 
-// recordingTracker is a minimal base.RenderTracker that records the
-// parent→children provenance MarkRenderedBatch is handed, so a test can
-// assert the dedup-skip replay still reports provenance even when it no
-// longer re-publishes the children to the store.
-type recordingTracker struct {
-	children map[manifest.NamedResource][]manifest.NamedResource
-}
-
-func (r *recordingTracker) MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
-	if r.children == nil {
-		r.children = map[manifest.NamedResource][]manifest.NamedResource{}
-	}
-	r.children[parent] = append(r.children[parent], children...)
-}
-
 // TestEmitRenderedChildren_DedupSkip_NoStoreWrites pins Part B of the
 // re-emission-churn fix: the fingerprint-dedup replay (publish=false)
 // must NOT re-AddObject the children — re-firing EventObjectAdded
 // re-submits already-settled children, the churn that transiently
 // un-Ready-s a parent KS and races quiescence ("parent ... not ready").
-// The idempotent provenance side-effect (MarkRenderedBatch) MUST still
+// The idempotent provenance side-effect (Store.RecordEmitted) MUST still
 // fire so the parent index stays correct on every pass (#102). The
 // fresh-render path (publish=true) still publishes.
 func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
 	s := store.New()
 	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
-	rt := &recordingTracker{}
-	c.SetRenderTracker(rt)
 
 	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
 	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "real"}
-	docs := []map[string]any{fluxKustomizationDoc("real", "real")}
+	docs := []map[string]any{fluxKustomizationDoc("parent", "parent"), fluxKustomizationDoc("real", "real")}
 
+	original := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace, Path: "./original"}
+	s.AddObject(original)
 	var events int
 	s.AddListener(store.EventObjectAdded, func(_ manifest.NamedResource, _ any) {
 		events++
@@ -109,8 +106,8 @@ func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
 	if s.GetObject(child) != nil {
 		t.Error("publish=false AddObject'd a leaf child; want the store left untouched")
 	}
-	if got := rt.children[parent]; len(got) != 1 || got[0] != child {
-		t.Errorf("publish=false provenance = %v; want [%v] (MarkRenderedBatch must still fire)", got, child)
+	if got := s.EmittedChildrenByParent()[parent]; len(got) != 1 || got[0] != child {
+		t.Errorf("publish=false provenance = %v; want [%v] (ownership must still be recorded)", got, child)
 	}
 
 	// Fresh render: events fire and the child lands in the store.
@@ -120,6 +117,12 @@ func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
 	}
 	if s.GetObject(child) == nil {
 		t.Error("publish=true did not store the leaf child")
+	}
+	if s.GetObject(parent) != original {
+		t.Error("self-emission overwrote the parent spec")
+	}
+	if _, ok := s.EmittedParent(parent); ok {
+		t.Error("self-emission created an ownership edge")
 	}
 }
 

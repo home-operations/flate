@@ -42,3 +42,21 @@ func BenchmarkRequire_Dependency(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkEmit_Children(b *testing.B) {
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindResourceSet} {
+		b.Run(kind, func(b *testing.B) {
+			st := store.New()
+			c := base.New(st, nil, "benchmark")
+			parent := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "parent"}
+			docs := []map[string]any{
+				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "config", "namespace": "apps"}, "data": map[string]any{"key": "value"}},
+				{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"path": "./child", "sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"}}},
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				c.Emit(parent, docs, false, true)
+			}
+		})
+	}
+}

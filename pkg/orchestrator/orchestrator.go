@@ -223,13 +223,6 @@ type Orchestrator struct {
 	// --allow-missing-secrets. See manifest.ProducerIndex.
 	producers *manifest.ProducerIndex
 
-	// rendered tracks IDs the KS controller emitted from a parent
-	// render (vs. only loaded by the file walker). detectOrphans reads
-	// it to demote stale-on-disk resources to "orphan" rather than
-	// failing the run. Lives here, not on Store — iter-15 carved this
-	// orchestrator-internal bookkeeping out of the data substrate.
-	rendered *renderedSet
-
 	// orphans records resources Run demoted from Failed → Ready because
 	// they aren't referenced by any parent KS. Populated during Run,
 	// surfaced via Render() so embedders can distinguish orphan-skips
@@ -470,7 +463,6 @@ func New(cfg Config) (*Orchestrator, error) {
 		ksc:         kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
 		hrc:         helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
 		rsc:         resourcesetctrl.New(st, ts, cfg.WipeSecrets),
-		rendered:    newRenderedSet(),
 		depGraph:    newDependencyGraph(),
 	}
 	if cfg.DisableChartDigestTracking != nil {
@@ -518,7 +510,7 @@ func (o *Orchestrator) ParentOf(id manifest.NamedResource) (manifest.NamedResour
 	if record, _ := o.index.Lookup(id); record.Parent != (manifest.NamedResource{}) {
 		return record.Parent, true
 	}
-	return o.rendered.ParentOf(id)
+	return o.store.EmittedParent(id)
 }
 
 // ChildrenByParent returns structural and rendered ownership, including children
@@ -526,7 +518,7 @@ func (o *Orchestrator) ParentOf(id manifest.NamedResource) (manifest.NamedResour
 // and Render must have returned; do not call concurrently with either. Returned
 // maps and sorted, deduplicated slices are independent of orchestrator state.
 func (o *Orchestrator) ChildrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
-	children := o.rendered.ChildrenByParent()
+	children := o.store.EmittedChildrenByParent()
 	if o.index != nil {
 		for child, record := range o.index.Records {
 			if parent := record.Parent; parent != (manifest.NamedResource{}) {
@@ -558,7 +550,7 @@ func (o *Orchestrator) RequiredDataDependencies(consumer manifest.NamedResource)
 		if record.Parent != (manifest.NamedResource{}) {
 			deps[record.Parent] = struct{}{}
 		}
-		if parent, ok := o.rendered.ParentOf(id); ok {
+		if parent, ok := o.store.EmittedParent(id); ok {
 			deps[parent] = struct{}{}
 		}
 		file := record.File

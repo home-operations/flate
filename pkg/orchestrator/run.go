@@ -130,7 +130,6 @@ func (o *Orchestrator) configureControllers() {
 	common := base.Options{
 		Filter:           o.filter,
 		ParentOf:         o.ParentOf,
-		RenderTracker:    o.rendered,
 		Existence:        existence,
 		PreflightFailure: o.preflightFailure,
 		AllowMissingCRDs: o.cfg.AllowMissingCRDs,

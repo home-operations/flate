@@ -28,20 +28,6 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-// RenderTracker is the seam a controller uses to report
-// "this child id was emitted by THIS parent's render" to the
-// orchestrator. Nil is OK — the controller no-ops.
-//
-// The parent linkage feeds detectOrphans, the structural-parent
-// resolver, and ResourceSet extension attribution for render-emitted
-// resources. Both the KS and HR controllers report through it
-// identically; MarkRenderedBatch records multiple children under a
-// single lock acquisition so a render emitting N children pays one
-// tracker round-trip rather than N.
-type RenderTracker interface {
-	MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource)
-}
-
 // Controller is the embeddable lifecycle harness. Construct via New,
 // install reconcile-shaping config via SetFilter (panics if called
 // after Start), then Start to register listeners.
@@ -101,11 +87,6 @@ type Controller struct {
 	allowMissingCRDs bool
 	preflight        func(manifest.NamedResource) (string, bool)
 	parentOf         func(manifest.NamedResource) (manifest.NamedResource, bool)
-
-	// renderTracker receives every reconcilable/source child a render
-	// emits. Set via SetRenderTracker before Start; read-only after.
-	// nil is fine — ReportRendered no-ops.
-	renderTracker RenderTracker
 }
 
 // New constructs a base controller with the given stable name (its
@@ -168,13 +149,6 @@ func (c *Controller) SetParentOf(f func(manifest.NamedResource) (manifest.NamedR
 	c.parentOf = f
 }
 
-// SetRenderTracker installs the render-emission tracker. Panics after
-// Start — reconcile-shaping config is frozen once dispatch begins.
-func (c *Controller) SetRenderTracker(rt RenderTracker) {
-	c.requireNotStarted("SetRenderTracker")
-	c.renderTracker = rt
-}
-
 // Options is the post-bootstrap, reconcile-shaping config common to every
 // render controller (Kustomization, HelmRelease, ResourceSet). The
 // orchestrator wires it once before Start; the source controller is fetch-only
@@ -190,10 +164,6 @@ type Options struct {
 	// targetNamespace, postBuild substitutions, a re-emitted patched spec) is
 	// then observable. Nil disables parent enforcement.
 	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
-	// RenderTracker receives every reconcilable child a render emits, feeding
-	// the orchestrator's parent-provenance index (orphan detection, parent
-	// resolution, attribution).
-	RenderTracker RenderTracker
 	// Existence is the file-existence lookup depwait uses to lazy-promote
 	// file-indexed deps and to distinguish a render-only dep still in flight
 	// from a typo'd one. See depwait.ExistenceLookup.
@@ -209,14 +179,13 @@ type Options struct {
 
 // Configure applies the common reconcile-shaping config. A concrete controller
 // calls c.Controller.Configure(opts.Options) before assigning its own fields.
-// The five setters are independent single-field writes, so their order is
+// The setters are independent single-field writes, so their order is
 // immaterial; each still panics if called after Start.
 func (c *Controller) Configure(opts Options) {
 	c.SetFilter(opts.Filter)
 	c.SetDepwait(opts.Existence)
 	c.SetPreflight(opts.PreflightFailure)
 	c.SetParentOf(opts.ParentOf)
-	c.SetRenderTracker(opts.RenderTracker)
 	c.allowMissingCRDs = opts.AllowMissingCRDs
 }
 
@@ -232,20 +201,15 @@ func (c *Controller) Configure(opts Options) {
 // synchronously during AddObject sees the extended keep set.
 func (c *Controller) KeepEmitted(parent manifest.NamedResource, child manifest.BaseManifest) {
 	if f := c.Filter(); f != nil {
-		f.AddEmitted(parent, child)
+		for _, id := range f.AddEmitted(parent, child) {
+			switch id.Kind {
+			case manifest.KindGitRepository, manifest.KindOCIRepository,
+				manifest.KindHelmRepository, manifest.KindBucket,
+				manifest.KindExternalArtifact, manifest.KindKustomization:
+				c.Store.Refire(id)
+			}
+		}
 	}
-}
-
-// ReportRendered reports parent→child render emissions to the
-// configured RenderTracker; no-op when none is wired or there are no
-// children. The emit loop accumulates every child it emits and flushes
-// through this helper exactly once, holding the tracker's lock for one
-// acquisition instead of N.
-func (c *Controller) ReportRendered(parent manifest.NamedResource, children []manifest.NamedResource) {
-	if c.renderTracker == nil || len(children) == 0 {
-		return
-	}
-	c.renderTracker.MarkRenderedBatch(parent, children)
 }
 
 // LookupParent reports the structural parent KS of id via the

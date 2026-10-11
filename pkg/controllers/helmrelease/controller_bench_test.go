@@ -63,3 +63,24 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 		c.OrderingDeps(hr.DependsOn)
 	}
 }
+
+func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
+	for _, tc := range []struct {
+		name string
+		doc  map[string]any
+	}{
+		{"source", map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "GitRepository", "metadata": map[string]any{"name": "repo", "namespace": "apps"}, "spec": map[string]any{"url": "https://example.com/repo", "ref": map[string]any{"branch": "main"}}}},
+		{"raw", map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "service", "namespace": "apps"}}},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			st := store.New()
+			c := &Controller{Controller: base.New(st, nil, "helmrelease")}
+			parent := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent"}
+			docs := []map[string]any{tc.doc}
+			b.ReportAllocs()
+			for b.Loop() {
+				c.emitRenderedChildren(parent, docs, true)
+			}
+		})
+	}
+}

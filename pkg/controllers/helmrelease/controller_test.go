@@ -184,6 +184,9 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 		hc.SourceRef.Kind != manifest.KindHelmRepository || hc.SourceRef.Name != "truecharts" {
 		t.Errorf("synthetic HelmChart = %+v, want chart kromgo@3.0.0 sourceRef HelmRepository/truecharts", hc)
 	}
+	if owner, ok := st.EmittedParent(synID); ok {
+		t.Errorf("synthetic chart has render owner %v", owner)
+	}
 	if info, ok := st.GetStatus(synID); ok {
 		t.Errorf("consumer wrote synthetic status = %+v, want no Ready condition", info)
 	}
@@ -713,30 +716,7 @@ func renderedConfigMapValue(docs []map[string]any, key string) string {
 	return ""
 }
 
-// spyTracker records every emitted parent→child edge for inspection
-// in tests. Batch calls expand into one per-child record so assertions
-// that count individual parent→child emissions stay correct.
-type spyTracker struct {
-	calls []struct{ parent, child manifest.NamedResource }
-}
-
-func (s *spyTracker) MarkRenderedBatch(parent manifest.NamedResource, children []manifest.NamedResource) {
-	for _, child := range children {
-		if parent == child {
-			continue
-		}
-		s.calls = append(s.calls, struct{ parent, child manifest.NamedResource }{parent, child})
-	}
-}
-
-// TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered asserts
-// that emitRenderedChildren calls keepEmitted (via Filter.AddEmitted) and
-// markRendered for every source-kind child (isFluxSourceKind == true), and
-// does NOT call them for non-source kinds (which go through AddRendered).
-// This is the correctness contract for iter-11: HR-rendered source CRs
-// (tofu-controller's OCIRepository pattern) must get parent-provenance
-// tracking and filter keep-set extension, matching KS behavior.
-func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testing.T) {
+func TestEmitRenderedChildren_SourceOwnershipBeforeArrivals(t *testing.T) {
 	st := store.New()
 	ts := task.NewBounded(0)
 	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
@@ -744,8 +724,6 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 		t.Fatalf("helm.NewClient: %v", err)
 	}
 	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
-
-	tracker := &spyTracker{}
 
 	// Build a minimal filter with a non-nil keep set (so Enabled() == true
 	// and AddEmitted is exercised). Use a parent HR in the keep set as a
@@ -762,14 +740,12 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: sourceFiles[parent]}}}, testutil.MapLister{})
 
 	c := New(st, ts, hc, helm.Options{}, false)
-	c.Configure(ReconcileOptions{
-		Filter:        filter,
-		RenderTracker: tracker})
+	c.Configure(ReconcileOptions{Filter: filter})
 	c.Start(context.Background())
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 
 	// One source-kind doc (OCIRepository) and one non-source-kind (ConfigMap).
-	// emitRenderedChildren should call keepEmitted+markRendered for the source
+	// emitRenderedChildren must extend keep and ownership for the source
 	// only, and route the ConfigMap through AddRendered without either call.
 	ociDoc := map[string]any{
 		"apiVersion": "source.toolkit.fluxcd.io/v1beta2",
@@ -784,18 +760,17 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 		"data":       map[string]any{"key": "value"},
 	}
 
-	c.emitRenderedChildren(parent, []map[string]any{ociDoc, cmDoc}, true)
-
-	// markRendered must have been called exactly once, for the OCIRepository.
-	if got := len(tracker.calls); got != 1 {
-		t.Fatalf("MarkRendered called %d times, want 1", got)
-	}
-	call := tracker.calls[0]
-	if call.parent != parent {
-		t.Errorf("MarkRendered parent = %v, want %v", call.parent, parent)
-	}
-	if call.child.Kind != manifest.KindOCIRepository || call.child.Name != "tofu-oci" {
-		t.Errorf("MarkRendered child = %v, want OCIRepository/flux-system/tofu-oci", call.child)
+	var arrivals int
+	st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		arrivals++
+		source := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
+		if got, ok := st.EmittedParent(source); !ok || got != parent {
+			t.Errorf("source owner at arrival of %s = (%v, %v), want %s", id, got, ok, parent)
+		}
+	}, false)
+	c.emitRenderedChildren(parent, []map[string]any{cmDoc, ociDoc}, true)
+	if arrivals != 2 {
+		t.Fatalf("arrivals = %d, want 2", arrivals)
 	}
 
 	// The OCIRepository must have been added to the store (AddObject path).
@@ -814,11 +789,12 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 		t.Error("keepEmitted did not add OCIRepository to filter keep set")
 	}
 
-	// The ConfigMap must NOT have triggered MarkRendered.
-	for _, c := range tracker.calls {
-		if c.child.Kind == manifest.KindConfigMap {
-			t.Errorf("MarkRendered unexpectedly called for ConfigMap child: %v", c.child)
-		}
+	if got, ok := st.EmittedParent(ociID); !ok || got != parent {
+		t.Errorf("source owner = (%v, %v), want (%v, true)", got, ok, parent)
+	}
+	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "tofu-config"}
+	if _, ok := st.EmittedParent(cmID); ok {
+		t.Error("ConfigMap must not receive HelmRelease render ownership")
 	}
 }
 
@@ -827,7 +803,7 @@ func TestEmitRenderedChildren_SourceKindGetsKeepEmittedAndMarkRendered(t *testin
 // fingerprint-dedup replay (publish=false) must NOT re-AddObject the
 // chart-emitted source CRs — re-emit is a DeepEqual no-op anyway, and gating it
 // makes that explicit. The idempotent side-effects the replay exists for —
-// KeepEmitted (keep-set) + ReportRendered (provenance) — MUST still fire.
+// KeepEmitted (keep-set) + Store.RecordEmitted (provenance) — MUST still fire.
 func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 	st := store.New()
 	ts := task.NewBounded(0)
@@ -837,11 +813,10 @@ func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 	}
 	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
 
-	tracker := &spyTracker{}
 	parent := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "tofu"}
 	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "apps/tofu/helmrelease.yaml"}}}, testutil.MapLister{})
 	c := New(st, ts, hc, helm.Options{}, false)
-	c.Configure(ReconcileOptions{Filter: filter, RenderTracker: tracker})
+	c.Configure(ReconcileOptions{Filter: filter})
 	c.Start(context.Background())
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 
@@ -866,8 +841,8 @@ func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 	if obj := st.GetObject(ociID); obj != nil {
 		t.Error("publish=false AddObject'd a source CR; want the store left untouched")
 	}
-	if len(tracker.calls) != 1 || tracker.calls[0].child != ociID {
-		t.Errorf("publish=false provenance = %v; want one MarkRendered for %v", tracker.calls, ociID)
+	if got, ok := st.EmittedParent(ociID); !ok || got != parent {
+		t.Errorf("publish=false owner = (%v, %v), want (%v, true)", got, ok, parent)
 	}
 	if !filter.ShouldReconcile(ociID) {
 		t.Error("publish=false did not extend the keep set (KeepEmitted must still run)")
@@ -880,44 +855,6 @@ func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 	}
 	if obj := st.GetObject(ociID); obj == nil {
 		t.Error("publish=true did not store the source CR")
-	}
-}
-
-func TestEmitRenderedChildren_NilTrackerAndNilFilterAreNoops(t *testing.T) {
-	st := store.New()
-	ts := task.NewBounded(0)
-	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
-	if err != nil {
-		t.Fatalf("helm.NewClient: %v", err)
-	}
-	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
-
-	c := New(st, ts, hc, helm.Options{}, false)
-	// No RenderTracker, no Filter — configure with zero opts.
-	c.Configure(ReconcileOptions{})
-	c.Start(context.Background())
-	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
-
-	parent := manifest.NamedResource{
-		Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "chart",
-	}
-	ociDoc := map[string]any{
-		"apiVersion": "source.toolkit.fluxcd.io/v1beta2",
-		"kind":       "OCIRepository",
-		"metadata":   map[string]any{"name": "chart-oci", "namespace": "flux-system"},
-		"spec":       map[string]any{"url": "oci://ghcr.io/example"},
-	}
-	// Must not panic when tracker and filter are nil.
-	c.emitRenderedChildren(parent, []map[string]any{ociDoc}, true)
-
-	// OCIRepository is still added to the store even without tracker/filter.
-	ociID := manifest.NamedResource{
-		Kind:      manifest.KindOCIRepository,
-		Namespace: "flux-system",
-		Name:      "chart-oci",
-	}
-	if obj := st.GetObject(ociID); obj == nil {
-		t.Error("OCIRepository was not added to store when tracker/filter are nil")
 	}
 }
 

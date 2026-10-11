@@ -60,7 +60,7 @@ func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*stor
 // resolveSourceRoot surfaced "source ... artifact not found".
 //
 // Fix: addRecursive (called via AddEmitted) now walks transitiveDeps
-// recursively AND the orchestrator wires Filter.OnAdd to
+// recursively AND the orchestrator wires KeepEmitted to
 // Store.Refire so source kinds that newly join keep at runtime get
 // their listener re-fired with the updated filter state.
 func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) {

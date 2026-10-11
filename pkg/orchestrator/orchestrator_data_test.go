@@ -26,12 +26,12 @@ func TestOrchestrator_ParentOf(t *testing.T) {
 		{name: "precedence", structural: true, rendered: true, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			o := &Orchestrator{index: indexForTest(nil), rendered: newRenderedSet()}
+			o := &Orchestrator{store: store.New(), index: indexForTest(nil)}
 			if tc.structural {
 				o.index.Records[id] = manifest.DiscoveryRecord{Parent: structural}
 			}
 			if tc.rendered {
-				o.rendered.MarkRenderedBatch(rendered, []manifest.NamedResource{id})
+				o.store.RecordEmitted(rendered, []manifest.NamedResource{id})
 			}
 			got, ok := o.ParentOf(id)
 			want := rendered
@@ -229,8 +229,8 @@ func TestOrchestrator_ChildrenByParent(t *testing.T) {
 	}
 	parent, other, first, second := id("parent"), id("other"), id("a"), id("b")
 	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{first: parent, second: parent})
-	o.rendered.MarkRenderedBatch(parent, []manifest.NamedResource{second})
-	o.rendered.MarkRenderedBatch(other, []manifest.NamedResource{first})
+	o.store.RecordEmitted(parent, []manifest.NamedResource{second})
+	o.store.RecordEmitted(other, []manifest.NamedResource{first})
 	got := o.ChildrenByParent()
 	if !slices.Equal(got[parent], []manifest.NamedResource{first, second}) ||
 		!slices.Equal(got[other], []manifest.NamedResource{first}) {
@@ -256,7 +256,7 @@ func TestOrchestrator_RequiredDataDependencies_Parents(t *testing.T) {
 	input := manifest.NamedResource{Kind: "Secret", Namespace: "apps", Name: "input"}
 	structural, rendered := ksID("structural"), ksID("rendered")
 	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{input: structural})
-	o.rendered.MarkRenderedBatch(rendered, []manifest.NamedResource{input})
+	o.store.RecordEmitted(rendered, []manifest.NamedResource{input})
 	want := []manifest.NamedResource{input, structural, rendered}
 	slices.SortFunc(want, manifest.NamedResource.Compare)
 	if got := o.RequiredDataDependencies(hr.Named()); !slices.Equal(got, want) {
@@ -302,7 +302,7 @@ func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testin
 	consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
 	consumer.ValuesFrom = []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "input"}}
 	st.AddObject(consumer)
-	o := &Orchestrator{store: st, index: l.Index, rendered: newRenderedSet()}
+	o := &Orchestrator{store: st, index: l.Index}
 	want := []manifest.NamedResource{input, producer.Named()}
 	if got := o.RequiredDataDependencies(consumer.Named()); !slices.Equal(got, want) {
 		t.Fatalf("missing-directory readers = %v, want %v", got, want)

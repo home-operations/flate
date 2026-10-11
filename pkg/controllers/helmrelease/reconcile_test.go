@@ -226,7 +226,7 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 // TestReconcile_ParentGateViaResolverFunc verifies the parent gate
 // works when ParentOf is a closure (the production wiring path —
 // orchestrator combines the pre-built path-prefix index with the
-// renderedSet to support both file-loaded and render-emitted HRs).
+// Store render ownership to support both file-loaded and render-emitted HRs).
 // Locks the contract that any resolver implementation is honored,
 // not just the static-map shape.
 func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
@@ -236,7 +236,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 	}
 	// Resolver returns the parent for the HR only — closes over
 	// captured state, the production shape (which combines a map +
-	// a renderedSet lookup).
+	// a Store render ownership lookup).
 	resolver := func(id manifest.NamedResource) (manifest.NamedResource, bool) {
 		if id == hr.Named() {
 			return parent.Named(), true

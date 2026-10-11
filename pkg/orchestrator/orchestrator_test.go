@@ -51,8 +51,7 @@ func TestDetectOrphans(t *testing.T) {
 	}
 
 	o := &Orchestrator{
-		store:    store.New(),
-		rendered: newRenderedSet(),
+		store: store.New(),
 		index: indexForTest(map[manifest.NamedResource]string{
 			parent.Named():       "kubernetes/flux/cluster/ks.yaml",
 			orphan.Named():       "kubernetes/apps/orphan/ks.yaml",
@@ -64,8 +63,8 @@ func TestDetectOrphans(t *testing.T) {
 		o.store.AddObject(ks)
 	}
 	// Mark emittedChild as rendered by its parent — simulates the
-	// AddObject + MarkRenderedBatch call cluster-apps's render would make.
-	o.rendered.MarkRenderedBatch(parent.Named(), []manifest.NamedResource{emittedChild.Named()})
+	// AddObject + RecordEmitted call cluster-apps's render would make.
+	o.store.RecordEmitted(parent.Named(), []manifest.NamedResource{emittedChild.Named()})
 
 	failed := map[manifest.NamedResource]store.StatusInfo{
 		orphan.Named():       {Status: store.StatusFailed, Message: "TIMEZONE undefined"},
@@ -136,8 +135,7 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 	}
 
 	o := &Orchestrator{
-		store:    store.New(),
-		rendered: newRenderedSet(),
+		store: store.New(),
 		index: indexForTest(map[manifest.NamedResource]string{
 			parent.Named(): "kubernetes/flux/cluster/ks.yaml",
 			child.Named():  "kubernetes/apps/media/plex/ks.yaml",
@@ -757,18 +755,12 @@ data: {k: v}
 	}
 }
 
-// TestOrchestrator_Render_RSExtensionAttributedToParentKS verifies
-// the post-Run ResourceSet expansion lands non-Flux RS children
-// (ExternalSecret, ConfigMap-as-data, etc.) in the manifest stream
-// of the structural-parent Kustomization. Without this, dragonfly-
-// acls-style RSes that emit ExternalSecrets from kustomize-substituted
-// RSIPs (the tholinka/home-ops `dragonfly-${APP}` pattern) would
-// silently drop their output — flate would render zero docs for the
-// RS even though the in-cluster controller would produce one.
 func TestOrchestrator_Render_RSExtensionAttributedToParentKS(t *testing.T) {
-	dir := t.TempDir()
-	// Parent KS at the repo root scans ./apps.
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			dir := t.TempDir()
+			// Parent KS at the repo root scans ./apps.
+			testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
   name: apps
@@ -777,32 +769,39 @@ spec:
   path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml", `resources:
-- rs.yaml
-- rsip.yaml
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", `resources: [rsip.yaml]
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: acl
+    literals: [seed=value]
+patches:
+  - target: {kind: ConfigMap, name: acl}
+    patch: |
+      - op: replace
+        path: /apiVersion
+        value: fluxcd.controlplane.io/v1
+      - op: replace
+        path: /kind
+        value: ResourceSet
+      - op: remove
+        path: /data
+      - op: add
+        path: /spec
+        value:
+          inputsFrom:
+            - apiVersion: fluxcd.controlplane.io/v1
+              kind: ResourceSetInputProvider
+              selector:
+                matchLabels: {role: db}
+          resourcesTemplate: |
+            apiVersion: external-secrets.io/v1
+            kind: ExternalSecret
+            metadata: {name: acl, namespace: flux-system}
+            spec:
+              target: {name: acl}
 `)
-	// RS with a selector-based inputsFrom emitting a RawObject
-	// (ExternalSecret) — the kind flate doesn't track natively.
-	testutil.WriteFile(t, dir, "apps/rs.yaml", `apiVersion: fluxcd.controlplane.io/v1
-kind: ResourceSet
-metadata: {name: acl, namespace: flux-system}
-spec:
-  inputsFrom:
-    - apiVersion: fluxcd.controlplane.io/v1
-      kind: ResourceSetInputProvider
-      selector:
-        matchLabels: {role: db}
-  resourcesTemplate: |
-    ---
-    apiVersion: external-secrets.io/v1
-    kind: ExternalSecret
-    metadata:
-      name: acl
-      namespace: flux-system
-    spec:
-      target: {name: acl}
-`)
-	testutil.WriteFile(t, dir, "apps/rsip.yaml", `apiVersion: fluxcd.controlplane.io/v1
+			testutil.WriteFile(t, dir, "apps/rsip.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSetInputProvider
 metadata:
   name: rsip
@@ -813,29 +812,41 @@ spec:
   defaultValues: {user: alice}
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	res, err := o.Render(context.Background())
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
-	mans := res.Manifests[ksID]
-	var found bool
-	for _, doc := range mans {
-		md, _ := doc["metadata"].(map[string]any)
-		name, _ := md["name"].(string)
-		kind, _ := doc["kind"].(string)
-		if kind == "ExternalSecret" && name == "acl" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected ExternalSecret/acl in res.Manifests[%s] (the RS-rendered child); kinds in stream: %v",
-			ksID, kindsOf(mans))
+			o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: workers})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if err := o.Bootstrap(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			rsID := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "acl"}
+			if _, ok := o.index.Lookup(rsID); ok {
+				t.Fatal("fixture ResourceSet must only exist in render output")
+			}
+			res, err := o.Render(t.Context())
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+			if owner, ok := o.Store().EmittedParent(rsID); !ok || owner != ksID {
+				t.Errorf("ResourceSet owner = (%v, %v), want %s", owner, ok, ksID)
+			}
+			mans := res.Manifests[ksID]
+			var found bool
+			for _, doc := range mans {
+				md, _ := doc["metadata"].(map[string]any)
+				name, _ := md["name"].(string)
+				kind, _ := doc["kind"].(string)
+				if kind == "ExternalSecret" && name == "acl" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected ExternalSecret/acl in res.Manifests[%s] (the RS-rendered child); kinds in stream: %v",
+					ksID, kindsOf(mans))
+			}
+		})
 	}
 }
 
@@ -1274,7 +1285,7 @@ data:
 //     accumulation logic.
 //  2. The change.Filter pointer must be stable. Pre-fix,
 //     buildChangeFilter ran twice and replaced o.filter with a brand-
-//     new instance — the second filter dropped any OnAdd hook the
+//     new instance — the second filter dropped any runtime keep/refire configuration the
 //     first pass wired into the store's listener set.
 //  3. o.bootstrapped must already be true before the second call,
 //     pinning the guard's read site.

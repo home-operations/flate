@@ -21,11 +21,11 @@ func (f *Filter) addUngated(id manifest.NamedResource) {
 	if !f.Enabled() {
 		return
 	}
-	f.fireOnAdd(f.addRecursive(id))
+	f.addRecursive(id)
 }
 
 // addRecursive adds id (and transitive deps) to keep AND primary under f.mu,
-// returning the newly-added ids so the caller can fire OnAdd outside the lock.
+// returning the newly-added ids so the caller can refire arrivals outside the lock.
 func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResource {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -728,7 +728,7 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 // PreGate-skipped at startup. AddEmitted MUST read the chart source
 // straight off the emitted manifest (not the Store, which lacks the HR,
 // nor consumerRefs, keyed by the un-stamped id) so the source joins keep
-// and OnAdd refires its fetch. The ObjectLister is intentionally empty
+// and is returned for refiring its fetch. The ObjectLister is intentionally empty
 // and no consumerRefs are wired — proving the fix relies on the manifest.
 func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
@@ -748,16 +748,13 @@ func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 		t.Fatalf("precondition: shared chart source must NOT be in keep before emission; keep=%v", f.KeepNames())
 	}
 
-	var refired []manifest.NamedResource
-	f.OnAdd = func(id manifest.NamedResource) { refired = append(refired, id) }
-
-	f.AddEmitted(parent, hr)
+	added := f.AddEmitted(parent, hr)
 
 	if !f.ShouldReconcile(chartSrc) {
 		t.Errorf("emitted HR's chart source not kept — it stays PreGate-skipped and render fails 'artifact not available'; keep=%v", f.KeepNames())
 	}
-	if !slices.Contains(refired, chartSrc) {
-		t.Errorf("OnAdd did not fire for chart source %s, so Store.Refire never re-fetches it; fired=%v", chartSrc, refired)
+	if !slices.Contains(added, chartSrc) {
+		t.Errorf("AddEmitted did not return chart source %s, so Store.Refire never re-fetches it; added=%v", chartSrc, added)
 	}
 }
 
@@ -1105,12 +1102,8 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	}
 }
 
-// TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer pins that
-// a runtime-added producer KS is delivered to OnAdd. The orchestrator
-// wires OnAdd → Store.Refire for KindKustomization (#418); without
-// the OnAdd dispatch, an unchanged producer joining keep at runtime
-// would stay PreGate-skipped and its CM would never materialize.
-func TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer(t *testing.T) {
+// Dependency-only producers must be returned so callers can refire their arrivals.
+func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent-apps"}
 	childObj := &manifest.Kustomization{
 		Name: "child-app", Namespace: "apps",
@@ -1134,15 +1127,10 @@ func TestFilter_AddEmittedFiresOnAddForSubstituteFromProducer(t *testing.T) {
 		cmID:     "kubernetes/apps/settings/cm.yaml",
 	}, root: "", objects: testutil.MapLister{producer: producerObj, child: childObj, cmID: cmObj}}.index(), testutil.MapLister{producer: producerObj, child: childObj, cmID: cmObj})
 
-	var added []manifest.NamedResource
-	f.OnAdd = func(id manifest.NamedResource) {
-		added = append(added, id)
-	}
-
-	f.AddEmitted(parent, refObj(child))
+	added := f.AddEmitted(parent, refObj(child))
 
 	if !slices.Contains(added, producer) {
-		t.Errorf("OnAdd must fire for the runtime-added producer KS; added=%v", added)
+		t.Errorf("AddEmitted must return the runtime-added producer KS; added=%v", added)
 	}
 }
 

@@ -47,7 +47,7 @@ type Controller struct {
 
 // Options carries the post-bootstrap state the orchestrator wires onto the
 // controller before Start. base.Options holds the config common to every
-// render controller (Filter / ParentOf / RenderTracker / Existence /
+// render controller (Filter / ParentOf / Existence /
 // PreflightFailure); SelfProduces is Kustomization-specific.
 type Options struct {
 	base.Options

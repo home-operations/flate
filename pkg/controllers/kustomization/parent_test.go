@@ -199,7 +199,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 // mapResolver wraps a static parent map into the func resolver shape
 // the controllers consume. Used by tests that want to verify
 // behavior on a known parent index without standing up the full
-// orchestrator wiring (which combines this with the renderedSet).
+// orchestrator wiring (which combines this with the Store render ownership).
 func mapResolver(m map[manifest.NamedResource]manifest.NamedResource) func(manifest.NamedResource) (manifest.NamedResource, bool) {
 	return func(id manifest.NamedResource) (manifest.NamedResource, bool) {
 		parent, ok := m[id]

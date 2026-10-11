@@ -32,7 +32,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		}
 		// A resource that any parent's render also emitted is by
 		// definition not orphaned — kustomize-controller saw it.
-		if o.rendered.has(id) {
+		if _, emitted := o.store.EmittedParent(id); emitted {
 			continue
 		}
 		record, _ := o.index.Lookup(id)
@@ -154,7 +154,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 }
 
 // cascadeParentFailures downgrades render-emitted children whose
-// ancestor (via renderedSet.ParentOf) ended up Failed. Closes a race
+// ancestor (via Store.EmittedParent) ended up Failed. Closes a race
 // window where a parent KS's first reconcile sets Ready, emits
 // children, and then a later re-emission of that parent fails. Without
 // this cascade, dependents that already passed their parent gate stay
@@ -168,7 +168,7 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 		visited := map[manifest.NamedResource]struct{}{child: {}}
 		cur := child
 		for {
-			parent, ok := o.rendered.ParentOf(cur)
+			parent, ok := o.store.EmittedParent(cur)
 			if !ok {
 				return manifest.NamedResource{}, store.StatusInfo{}, false
 			}

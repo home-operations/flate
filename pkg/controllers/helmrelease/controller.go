@@ -56,7 +56,7 @@ type Controller struct {
 // onto the controller. base.Options holds the config common to every render
 // controller (Filter / ParentOf — here resolving each HR to its enclosing KS,
 // which reconcile depwaits on so cluster-KS spec patches land before the first
-// helm.Template call — RenderTracker / Existence / PreflightFailure);
+// helm.Template call — Existence / PreflightFailure);
 // AllowMissingSecrets, Producers and SubstituteFrom are HelmRelease-specific.
 type ReconcileOptions struct {
 	base.Options
@@ -444,39 +444,13 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 	return hr, true
 }
 
-// emitRenderedChildren parses each rendered doc and lands it in the
-// store. Source CRs flow through AddObject (their controllers must
-// pick them up), other kinds via AddRendered (chart's final
-// manifests; nothing else reconciles them). Called both from the
-// fresh-render path and the fingerprint-dedup replay path so the
-// per-doc side-effects fire on every reconcile pass.
-//
-// publish gates the event-firing Store.AddObject of source CRs. The
-// fresh-render path passes true. The fingerprint-dedup replay passes
-// FALSE: the sources were already published byte-identically by the
-// render that set the cached artifact (the source controller writes only
-// artifact + status, never the stored object), so re-AddObject-ing them
-// is a Store.AddObject DeepEqual no-op anyway. The idempotent side-effects
-// the replay exists for — KeepEmitted (keep-set) + ReportRendered
-// (provenance) — are event-free and still run on both paths. Mirrors the
-// KS dedup-replay publish gate (#657).
-//
-// A single-pass loop is safe here because isFluxSourceKind restricts
-// AddObject dispatch to pure source kinds (HelmRepository,
-// OCIRepository, GitRepository, Bucket, HelmChartSource,
-// ExternalArtifact). None of those fire a reconcile that would race
-// a "data first" ordering constraint — unlike KS's two-pass strategy
-// which guards leaf KS/HR controllers that read ConfigMap/Secret
-// substituteFrom data emitted in the same batch. HR-emitting-HR or
-// HR-emitting-KS is deliberately excluded from this controller.
+// emitRenderedChildren stages parsed children so the complete source ownership
+// batch precedes selection changes and every arrival, including raw children.
+// publish=false suppresses source publication during fingerprint replay.
 func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any, publish bool) {
 	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
-	// Accumulate every source-kind child id so the renderedSet write
-	// flushes through MarkRenderedBatch in a single lock acquisition.
-	// Charts that emit multiple source CRs (rare today but
-	// tofu-controller-style HRs already hit this) used to pay N r.mu
-	// acquisitions; one batched write replaces all of them.
-	var rendered []manifest.NamedResource
+	objs := make([]manifest.BaseManifest, 0, len(docs))
+	var emitted []manifest.NamedResource
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
 			name, ns := manifest.DocMetadata(doc)
@@ -489,26 +463,25 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			continue
 		}
 		if manifest.IsKustomizeBuildDirective(obj) {
-			continue // build input, not a cluster resource — never store it
+			continue
 		}
-		// docs is retained on the HelmReleaseArtifact.Manifests; do
-		// NOT return any entry to the decoded-map pool here.
+		// Artifact documents stay retained and cannot return to a map pool.
+		objs = append(objs, obj)
 		if isFluxSourceKind(obj) {
-			// keepEmitted BEFORE AddObject: the listener that fires
-			// synchronously during AddObject must see the extended
-			// keep set when it invokes PreGate. Mirrors the ordering
-			// in kustomization.emitRenderedChildren.
-			childID := obj.Named()
+			emitted = append(emitted, obj.Named())
+		}
+	}
+	c.Store.RecordEmitted(id, emitted)
+	for _, obj := range objs {
+		if isFluxSourceKind(obj) {
 			c.KeepEmitted(id, obj)
 			if publish {
 				c.Store.AddObject(obj)
 			}
-			rendered = append(rendered, childID)
 		} else {
 			c.Store.AddRendered(obj)
 		}
 	}
-	c.ReportRendered(id, rendered)
 }
 
 // preparePrereqs collects refs that helm.Prepare reads from the live

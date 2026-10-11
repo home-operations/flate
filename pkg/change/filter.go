@@ -34,17 +34,6 @@ type Filter struct {
 	index   *manifest.DiscoveryIndex
 	objs    ObjectLister
 
-	// OnAdd, when non-nil, fires for every id newly added to the
-	// keep set by AddEmitted / Add (including transitive-dep
-	// recursion). The orchestrator wires this to refire
-	// EventObjectAdded for source-kind ids whose listener already
-	// short-circuited via PreGate before the consuming KS joined
-	// keep. Issue #260.
-	//
-	// Set BEFORE controllers start. The Filter calls OnAdd outside
-	// its internal lock so callbacks are free to take other locks.
-	OnAdd func(manifest.NamedResource)
-
 	// mu guards keep + keepByName + primary for runtime Add();
 	// resolve() runs once during construction before the controllers
 	// start, so it doesn't need to hold the lock.
@@ -164,11 +153,6 @@ func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResourc
 // patch-propagation chain (primary parent emits patched file-loaded
 // child whose render-with-new-patches differs from baseline).
 //
-// Newly-added ids are passed to OnAdd (when configured) so the
-// orchestrator can refire dependent listeners (e.g. retrigger the
-// source controller's fetch for a source whose PreGate-skip happened
-// before its consumer joined keep).
-//
 // Ordering contract for embedders: call AddEmitted(parent, child)
 // BEFORE the emitting Store.AddObject(child). Store events fire
 // synchronously on the calling goroutine, so the controller's
@@ -176,38 +160,12 @@ func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResourc
 // AddObject — if AddEmitted ran after, the listener sees the old
 // keep set and short-circuits to Ready/"unchanged".
 //
-// No-op when the filter is disabled. Safe for concurrent use.
-func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseManifest) {
+// Returns newly-kept ids after releasing the filter lock. Callers may refire
+// their arrivals before publishing the consumer. Safe for concurrent use.
+func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseManifest) []manifest.NamedResource {
 	if !f.Enabled() {
-		return
+		return nil
 	}
-	// Gate the primacy check and the keep-set mutation under a
-	// single lock acquisition so a concurrent Add or AddEmitted
-	// that promotes `emitter` to primary between our gate read and
-	// the recurse can't cause `child` to be silently dropped.
-	// addEmittedLocked reads primary and (when gated through) does
-	// the addRecursive walk under the same WLock.
-	f.fireOnAdd(f.addEmittedLocked(emitter, child))
-}
-
-// fireOnAdd dispatches OnAdd for every newly-keep'd id. Always called
-// OUTSIDE f.mu: callbacks may take other locks (e.g. the Store's mu via
-// Refire), and holding f.mu here would invert lock order against
-// concurrent ShouldReconcile readers. No-op when OnAdd is unset.
-func (f *Filter) fireOnAdd(added []manifest.NamedResource) {
-	if f.OnAdd == nil {
-		return
-	}
-	for _, newID := range added {
-		f.OnAdd(newID)
-	}
-}
-
-// addEmittedLocked is the WLock-held body of AddEmitted: it reads
-// primary[emitter] and the recurse for child without dropping the
-// lock between them. Returns the slice of newly-keep'd ids so the
-// caller can fire OnAdd outside the lock.
-func (f *Filter) addEmittedLocked(emitter manifest.NamedResource, child manifest.BaseManifest) []manifest.NamedResource {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, primaryEmitter := f.primary[emitter]; !primaryEmitter {
@@ -219,8 +177,7 @@ func (f *Filter) addEmittedLocked(emitter manifest.NamedResource, child manifest
 	// above), so the Store can't see it yet. Walk the child's own
 	// chartRef / sourceRef / valuesFrom straight off the manifest so a
 	// shared, namespace-stamped source (e.g. an OCIRepository every
-	// HelmRelease chartRefs) still joins keep — and OnAdd refires the
-	// fetch its listener PreGate-skipped before the consumer joined keep.
+	// HelmRelease chartRefs) still joins keep before the consumer is published.
 	for _, dep := range transitiveDepsOf(child) {
 		added = append(added, f.addRecursiveLocked(dep)...)
 	}

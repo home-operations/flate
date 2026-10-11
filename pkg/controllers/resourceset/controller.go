@@ -11,7 +11,6 @@ import (
 	"context"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/controllers/emit"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
@@ -34,7 +33,7 @@ type Controller struct {
 	*base.Controller
 
 	// WipeSecrets controls whether Secret cleartext is wiped when parsing
-	// emitted children (forwarded to emit.Children).
+	// emitted children (forwarded to base.Controller.Emit).
 	WipeSecrets bool
 
 	// rawSink, when set, receives each RawObject child this RS emits so the
@@ -46,7 +45,7 @@ type Controller struct {
 // controller before Start. base.Options holds the config common to every
 // render controller (Filter / ParentOf — here gating the RS render on its
 // structural parent KS, which may re-emit the RS with a substituted
-// name/namespace — RenderTracker / Existence / PreflightFailure); RawSink is
+// name/namespace; Existence / PreflightFailure); RawSink is
 // ResourceSet-specific.
 type Options struct {
 	base.Options
@@ -120,7 +119,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 		return err
 	}
 
-	// A fingerprint hit MUST not replay emission: KeepEmitted / ReportRendered /
+	// A fingerprint hit MUST not replay emission: KeepEmitted / Store.RecordEmitted /
 	// rawSink bookkeeping is cumulative and already complete. AddRendered
 	// independently suppresses equal RawObject arrivals. Changed inputs require
 	// a fresh render; fp is reused for SetArtifact.
@@ -148,7 +147,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 // otherwise — the cached docs were already sunk by the render that set
 // the artifact).
 func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publish bool) {
-	children := emit.Children(c.Controller, c.WipeSecrets, id, docs, publish)
+	children := c.Emit(id, docs, c.WipeSecrets, publish)
 	if !publish || c.rawSink == nil {
 		return
 	}
@@ -157,8 +156,7 @@ func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publ
 		return
 	}
 	// Route the RawObject (non-Flux) children to the orchestrator's output sink,
-	// reusing emit.Children's parse — they group under the parent KS in the
-	// build output, the same as the deleted post-run pass produced.
+	// reusing the shared parse so raw output groups under the parent KS.
 	for _, child := range children {
 		if _, raw := child.Obj.(*manifest.RawObject); raw {
 			c.rawSink(id, parentKS, child.Doc)

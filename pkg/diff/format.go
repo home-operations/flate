@@ -34,6 +34,8 @@ const (
 	// FormatDiff (not Kubernetes-aware). Meant for browser review or a CI
 	// artifact, not the terminal.
 	FormatHTML Format = "html"
+	// FormatJSON encodes changes and suppressions in one JSON object.
+	FormatJSON Format = "json"
 )
 
 // isDyffText reports whether f renders the whole doc set natively through

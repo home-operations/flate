@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -125,8 +126,18 @@ func TestChanges_Sorted(t *testing.T) {
 	pb := Parent{Kind: "Kustomization", Namespace: "ns", Name: "b"}
 	left := []Doc{cmDoc(pb, "z", "ns", "1", ""), cmDoc(pa, "y", "ns", "1", "")}
 	right := []Doc{cmDoc(pb, "z", "ns", "2", ""), cmDoc(pa, "y", "ns", "2", "")}
+	for version := 8; version > 1; version-- {
+		doc := cmDoc(pa, "y", "ns", "3", "")
+		doc.Manifest["apiVersion"] = fmt.Sprintf("v%d", version)
+		left = append(left, doc)
+	}
 	got := Changes(left, right, Options{})
-	if len(got) != 2 || got[0].Parent.Name != "a" || got[1].Parent.Name != "b" {
+	if len(got) != 9 || got[8].Parent.Name != "b" {
 		t.Fatalf("changes not sorted by parent: %+v", got)
+	}
+	for i := range 8 {
+		if got[i].Parent.Name != "a" || got[i].APIVersion != fmt.Sprintf("v%d", i+1) {
+			t.Fatalf("changes not sorted by apiVersion: %+v", got)
+		}
 	}
 }

@@ -1,6 +1,11 @@
 package diff
 
-import "reflect"
+import (
+	"bytes"
+	"reflect"
+
+	"github.com/home-operations/flate/internal/format"
+)
 
 // ChangeStatus classifies how a resource differs between two doc sets.
 type ChangeStatus string
@@ -23,18 +28,24 @@ type Change struct {
 	// Parent is the Flux Kustomization / HelmRelease that rendered this
 	// resource — the pairing discriminator (so a Deployment from HR A is
 	// never matched against the same-named Deployment from HR B).
-	Parent                Parent
-	Kind, Namespace, Name string
-	Status                ChangeStatus
+	Parent Parent `json:"parent"`
+	// APIVersion is part of the raw resource identity, before normalization.
+	APIVersion string       `json:"apiVersion"`
+	Kind       string       `json:"kind"`
+	Namespace  string       `json:"namespace"`
+	Name       string       `json:"name"`
+	Status     ChangeStatus `json:"status"`
 	// Old / New are the NORMALIZED manifests (Options strip + binaryData
 	// redaction + the optional Normalize hook applied). Old is nil for an
 	// add; New is nil for a remove.
-	Old, New map[string]any
+	Old map[string]any `json:"old"`
+	New map[string]any `json:"new"`
 	// OldChart / NewChart are the resource's "helm.sh/chart" label
 	// ("<name>-<version>") captured BEFORE normalization stripped it —
 	// "" when absent. Surfaces a chart-version bump the stripped Old/New
 	// no longer carry.
-	OldChart, NewChart string
+	OldChart string `json:"oldChart"`
+	NewChart string `json:"newChart"`
 }
 
 // Changes pairs left against right by (parent, apiVersion, kind,
@@ -64,15 +75,16 @@ func Changes(left, right []Doc, opts Options) []Change {
 			continue
 		}
 		out = append(out, Change{
-			Parent:    p.parent,
-			Kind:      p.kind,
-			Namespace: p.namespace,
-			Name:      p.name,
-			Status:    status,
-			Old:       old,
-			New:       nw,
-			OldChart:  chartLabel(p.a),
-			NewChart:  chartLabel(p.b),
+			Parent:     p.parent,
+			APIVersion: p.apiVersion,
+			Kind:       p.kind,
+			Namespace:  p.namespace,
+			Name:       p.name,
+			Status:     status,
+			Old:        old,
+			New:        nw,
+			OldChart:   chartLabel(p.a),
+			NewChart:   chartLabel(p.b),
 		})
 	}
 	return out
@@ -112,4 +124,13 @@ func chartLabel(m map[string]any) string {
 	}
 	s, _ := labels["helm.sh/chart"].(string)
 	return s
+}
+
+func renderJSON(left, right []Doc, opts Options) ([]byte, error) {
+	var buf bytes.Buffer
+	err := format.JSON(&buf, struct {
+		Changes    []Change      `json:"changes"`
+		Suppressed []Suppression `json:"suppressed"`
+	}{Changes(left, right, opts), append([]Suppression{}, opts.Suppressed...)})
+	return buf.Bytes(), err
 }

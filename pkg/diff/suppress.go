@@ -26,10 +26,10 @@ const (
 // against nothing and read as a wholesale add or delete, when the real event
 // is a render failure the failure summary already reports.
 type Suppression struct {
-	Parent Parent
-	Side   Side   // the side that failed
-	Count  int    // objects the other side rendered and the diff withheld
-	Reason string // the failing side's failure message
+	Parent Parent `json:"parent"`
+	Side   Side   `json:"side"`   // the side that failed
+	Count  int    `json:"count"`  // objects the other side rendered and the diff withheld
+	Reason string `json:"reason"` // the failing side's failure message
 }
 
 // String renders the suppression as the one-line note the formats emit.

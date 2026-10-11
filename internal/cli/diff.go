@@ -64,6 +64,7 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 		Use:     use,
 		Aliases: aliases,
 		Short:   short,
+		Long:    short + ". With -o json, emit a 2-space-indented JSON object {\"changes\": [...], \"suppressed\": [...]} with normalized manifests and one-sided render failures.",
 		Args:    cobra.MaximumNArgs(maxArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDiff(cmd, c, h, d, kind, firstArg(args))
@@ -136,12 +137,8 @@ func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []stri
 }
 
 // diffOutputFormats lists the -o values `flate diff ks/hr/all` accepts,
-// in help-display order: human (the default, listed first), then github,
-// the plain unified diff and its self-contained HTML rendering, then the
-// remaining dyff styles. bindCommon
-// registers the set on the -o flag, which drives both the help text and
-// the parse-time rejection, so the advertised and enforced sets can't
-// drift.
+// in help-display order, with the default first. bindCommon uses this set
+// for both help and parse-time validation.
 func diffOutputFormats() []format.Output {
 	return []format.Output{
 		format.Output(diff.FormatHuman),
@@ -151,13 +148,11 @@ func diffOutputFormats() []format.Output {
 		format.Output(diff.FormatBrief),
 		format.Output(diff.FormatGitLab),
 		format.Output(diff.FormatGitea),
+		format.Output(diff.FormatJSON),
 	}
 }
 
 func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kind, name string) error {
-	// The -o flag (an outputValue enum) already rejects unsupported values
-	// at parse time. The format.Output string values match diff.Format so
-	// the cast below routes each one to its renderer without an extra switch.
 	stopProfile, err := startProfile(c.profileMode, c.profileOut)
 	if err != nil {
 		return err
@@ -214,11 +209,10 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	origDocs, currentDocs, suppressed = diff.SuppressFailed(origDocs, currentDocs,
 		failureReasons(orig.Failures.failed), failureReasons(current.Failures.failed))
 
-	out := diff.Format(c.output)
 	formatted, err := diff.RenderDocs(origDocs, currentDocs, diff.Options{
 		StripAttrs:  d.stripAttrs,
 		StripFields: d.stripFields,
-		Format:      out,
+		Format:      diff.Format(c.output),
 		Suppressed:  suppressed,
 	})
 	if err != nil {

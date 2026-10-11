@@ -1,13 +1,84 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 )
+
+func TestRun_DiffJSON(t *testing.T) {
+	orig, current := writeFixture(t), writeFixture(t)
+	testutil.WriteFile(t, orig, "apps/kustomization.yaml", "resources: [cm.yaml, removed.yaml]\n")
+	testutil.WriteFile(t, orig, "apps/removed.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed, namespace: apps}\n")
+	testutil.WriteFile(t, current, "apps/kustomization.yaml", "resources: [cm.yaml, added.yaml]\n")
+	testutil.WriteFile(t, current, "apps/added.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: added, namespace: apps}\n")
+	testutil.WriteFile(t, current, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: hola}\n")
+	for _, dir := range []string{orig, current} {
+		failure := ""
+		if dir == current {
+			failure = "  postBuild: {substituteFrom: [{kind: ConfigMap, name: missing}]}\n"
+		}
+		testutil.WriteFile(t, dir, "flux/broken.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: broken, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./broken
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`+failure)
+		testutil.WriteFile(t, dir, "broken/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, dir, "broken/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: withheld}\n")
+	}
+	stdout, stderr, code := runCLI(t, "diff", "all", "--path", current, "--path-orig", orig,
+		"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
+	assert.Equal(t, code, 1)
+	assert.Equal(t, strings.Count(stderr, "flate error:"), 1)
+	var got struct{ Changes, Suppressed []map[string]any }
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	var rows []any
+	for _, c := range got.Changes {
+		rows = append(rows, []any{c["name"], c["status"], c["old"] != nil, c["new"] != nil})
+	}
+	assert.Diff(t, rows, []any{
+		[]any{"added", "added", false, true},
+		[]any{"hello", "changed", true, true},
+		[]any{"removed", "removed", true, false},
+	})
+	if len(got.Changes) != 3 || len(got.Suppressed) != 1 {
+		t.Fatalf("unexpected changes or suppressions: %s", stdout)
+	}
+	assert.Equal(t, got.Suppressed[0]["side"], any("current"))
+	assert.Diff(t, slices.Sorted(maps.Keys(got.Changes[0])), []string{"apiVersion", "kind", "name", "namespace", "new", "newChart", "old", "oldChart", "parent", "status"})
+	assert.Diff(t, slices.Sorted(maps.Keys(got.Changes[0]["parent"].(map[string]any))), []string{"kind", "name", "namespace", "path"})
+	assert.Diff(t, slices.Sorted(maps.Keys(got.Suppressed[0])), []string{"count", "parent", "reason", "side"})
+}
+
+func TestRun_DiffJSON_Empty(t *testing.T) {
+	path := writeFixture(t)
+	for _, verb := range []string{"ks", "hr", "all"} {
+		t.Run(verb, func(t *testing.T) {
+			stdout, stderr, code := runCLI(t, "diff", verb, "--path", path, "--path-orig", path,
+				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
+			assert.Equal(t, code, 0)
+			assert.Equal(t, stderr, "")
+			var compact bytes.Buffer
+			if err := json.Compact(&compact, []byte(stdout)); err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, compact.String(), `{"changes":[],"suppressed":[]}`)
+		})
+	}
+}
 
 func writeCustomSourceDiffFixture(t *testing.T, sourceURL string) (current, orig string) {
 	t.Helper()

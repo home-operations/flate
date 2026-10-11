@@ -3,18 +3,17 @@ package diff
 import "fmt"
 
 // Parent identifies the Flux Kustomization or HelmRelease that rendered a
-// manifest. It never appears in the output — it's a pairing discriminator
-// (see pairKey) so a Deployment rendered by HelmRelease A never diffs
-// against the same-named Deployment from HelmRelease B.
+// manifest. It is a pairing discriminator so resources from different
+// producers never match, and identifies the producer in structured output.
 type Parent struct {
-	Kind      string
-	Namespace string
-	Name      string
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
 	// Path is the Flux Kustomization spec.path (only set for KS
 	// parents). Slash-normalized, with the conventional `./` prefix
 	// stripped. Disambiguates two KS parents that share a (kind, ns,
 	// name) but render from different overlays.
-	Path string
+	Path string `json:"path"`
 }
 
 // Doc pairs a rendered manifest with its parent.
@@ -54,8 +53,8 @@ type Options struct {
 	// zero value renders the human default.
 	Format Format
 	// Suppressed lists the producers SuppressFailed withheld from the two
-	// doc sets. Every format discloses them in a leading note block so a
-	// one-sided render failure is never mistaken for a wholesale change.
+	// doc sets. Text and HTML formats disclose them in a leading note block;
+	// JSON includes them in its suppressed array.
 	Suppressed []Suppression
 }
 
@@ -72,6 +71,8 @@ func RenderDocs(left, right []Doc, opts Options) ([]byte, error) {
 		return renderUnified(left, right, opts)
 	case opts.Format == FormatHTML:
 		return renderHTML(left, right, opts)
+	case opts.Format == FormatJSON:
+		return renderJSON(left, right, opts)
 	default:
 		return nil, fmt.Errorf("unsupported diff format %q", opts.Format)
 	}

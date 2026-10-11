@@ -12,6 +12,7 @@ import (
 // is nil when the resource exists on only one side (added/removed).
 type pairedResource struct {
 	parent                Parent
+	apiVersion            string
 	kind, namespace, name string
 	a, b                  map[string]any
 }
@@ -46,7 +47,7 @@ func pair(left, right []Doc) []pairedResource {
 		k := pairKey{d.Parent.Kind, d.Parent.Namespace, d.Parent.Name, d.Parent.Path, apiVersion, kind, ns, name}
 		p, ok := idx[k]
 		if !ok {
-			p = &pairedResource{parent: d.Parent, kind: kind, namespace: ns, name: name}
+			p = &pairedResource{parent: d.Parent, apiVersion: apiVersion, kind: kind, namespace: ns, name: name}
 			idx[k] = p
 		}
 		if side == 0 {
@@ -74,6 +75,7 @@ func pair(left, right []Doc) []pairedResource {
 			cmp.Compare(a.kind, b.kind),
 			cmp.Compare(a.namespace, b.namespace),
 			cmp.Compare(a.name, b.name),
+			cmp.Compare(a.apiVersion, b.apiVersion),
 		)
 	})
 	return out

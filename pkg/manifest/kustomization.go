@@ -100,11 +100,13 @@ func (k *Kustomization) Clone() *Kustomization {
 // UpdatePostBuildSubstitutions merges the given map into the substitution
 // table AND into the raw contents doc, mirroring upstream behavior so the
 // raw document is consistent for serialization.
+// Callers must not mutate subs after this call.
 func (k *Kustomization) UpdatePostBuildSubstitutions(subs map[string]any) {
 	if k.PostBuildSubstitute == nil {
-		k.PostBuildSubstitute = make(map[string]any, len(subs))
+		k.PostBuildSubstitute = subs
+	} else {
+		maps.Copy(k.PostBuildSubstitute, subs)
 	}
-	maps.Copy(k.PostBuildSubstitute, subs)
 	if k.Contents == nil {
 		return
 	}

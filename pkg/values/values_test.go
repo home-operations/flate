@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -440,6 +441,28 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	}
 	if ks.PostBuildSubstitute["DOMAIN"] != "example.com" {
 		t.Errorf("substitute: %+v", ks.PostBuildSubstitute)
+	}
+}
+
+func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUntouched(t *testing.T) {
+	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
+		t.Run(kind, func(t *testing.T) {
+			provider := &SliceProvider{
+				ConfigMaps: []*manifest.ConfigMap{{Name: "vars", Namespace: "ns", Data: map[string]any{"INVALID": []any{"nested"}}}},
+				Secrets:    []*manifest.Secret{{Name: "vars", Namespace: "ns", Data: map[string]any{"INVALID": "invalid-base64"}}},
+			}
+			ks := &manifest.Kustomization{
+				Name: "app", Namespace: "ns",
+				PostBuildSubstitute:     map[string]any{"INLINE": "kept"},
+				PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}},
+				Contents:                map[string]any{"spec": map[string]any{}},
+			}
+			if err := ExpandPostBuildSubstituteReference(ks, provider); !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("got %v, want ErrInput", err)
+			}
+			assert.Diff(t, ks.PostBuildSubstitute, map[string]any{"INLINE": "kept"})
+			assert.Diff(t, ks.Contents, map[string]any{"spec": map[string]any{}})
+		})
 	}
 }
 

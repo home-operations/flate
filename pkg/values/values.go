@@ -504,11 +504,7 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 		return fmt.Errorf("%w: Kustomization with substituteFrom has no namespace", manifest.ErrInvalidSubstituteReference)
 	}
 
-	// Upstream kustomize-controller's LoadVariables merges substituteFrom
-	// refs first, then OVERWRITES with inline spec.postBuild.substitute —
-	// inline values win on key collision. flate previously inverted this
-	// (seeded from inline, then substituteFrom overwrote). Match upstream:
-	// substituteFrom first into a fresh map, then layer inline on top.
+	// Flux gives inline substitutions precedence over references.
 	values := map[string]any{}
 	for _, ref := range ks.PostBuildSubstituteFrom {
 		data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p)
@@ -530,19 +526,16 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 			continue
 		}
 		var readErr error
-		for k := range data.Keys() {
+		data.Keys()(func(k string) bool {
 			v, _, err := data.Value(k)
 			if err != nil {
 				readErr = err
-				break
+				return false
 			}
-			// Match upstream kustomize-controller: every substituteFrom
-			// var value has \n stripped (multi-line ConfigMap entries
-			// would otherwise break inline substitution into single-line
-			// YAML fields like `image:`). See
-			// fluxcd/pkg/kustomize/kustomize_varsub.go.
+			// Flux strips newlines before substituting into single-line YAML fields.
 			values[k] = strings.ReplaceAll(v, "\n", "")
-		}
+			return true
+		})
 		if readErr != nil {
 			return readErr
 		}
@@ -556,16 +549,7 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 		}
 	}
 
-	// Reject invalid var names — matches upstream fluxcd/pkg/kustomize
-	// varSubstitution which fails the whole postBuild on any name that
-	// doesn't match `^[_[:alpha:]][_[:alpha:][:digit:]]*$`. Without this
-	// check flate would render with the invalid keys silently dropped
-	// while real Flux would fail the Kustomization — divergent output.
-	// Collect every invalid name and report them sorted so the error
-	// message is deterministic across runs. Map iteration is
-	// randomized in Go; the previous "return first invalid name"
-	// surfaced a different bad name on each run when multiple were
-	// present, making bisection and CI noise unnecessarily painful.
+	// Flux rejects invalid variable names; sort diagnostics for determinism.
 	var invalid []string
 	for name := range values {
 		if !varsubRegex.MatchString(name) {

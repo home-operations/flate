@@ -25,20 +25,28 @@ func TestSecret_Value_ShadowedAndUnrequestedKeys(t *testing.T) {
 func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 	const cipher = "enabled: ENC[AES256_GCM,data:fixture,type:str]\n"
 	for _, tc := range []struct {
-		kind, field string
-		encoded     bool
+		kind, field, raw   string
+		encoded, encrypted bool
 	}{
-		{KindConfigMap, "data", false}, {KindConfigMap, "binaryData", true},
-		{KindSecret, "stringData", false}, {KindSecret, "data", true},
+		{KindConfigMap, "data", cipher, false, false}, {KindConfigMap, "binaryData", cipher, true, false},
+		{KindSecret, "stringData", cipher, false, false}, {KindSecret, "data", cipher, true, false},
+		{KindConfigMap, "data", "short", false, true}, {KindSecret, "data", "short", true, true},
 	} {
-		t.Run(tc.kind+"/"+tc.field, func(t *testing.T) {
-			raw := cipher
+		name := tc.kind + "/" + tc.field
+		if tc.encrypted {
+			name += "/marked"
+		}
+		t.Run(name, func(t *testing.T) {
+			raw := tc.raw
 			want := "..PLACEHOLDER_VALUE.."
 			if tc.encoded {
 				raw = base64.StdEncoding.EncodeToString([]byte(raw))
 				want = base64.StdEncoding.EncodeToString([]byte(want))
 			}
 			doc := map[string]any{"apiVersion": "v1", "kind": tc.kind, tc.field: map[string]any{"VALUE": raw}}
+			if tc.encrypted {
+				doc["sops"] = map[string]any{"version": "1"}
+			}
 			_, authoritative, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
 			if err == nil {
 				t.Fatal("metadata-invalid data object parsed")

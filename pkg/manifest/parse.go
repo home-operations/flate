@@ -144,6 +144,10 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 			data, _ := doc[field].(map[string]any)
 			var replaced map[string]any
 			for key, raw := range data {
+				// Base64 decoding cannot lengthen a scalar to contain a longer marker.
+				if value, ok := raw.(string); !encrypted && ok && len(value) < len(sopsCiphertextPrefix) {
+					continue
+				}
 				value, err := scalarString(raw)
 				if err != nil && !encrypted {
 					continue

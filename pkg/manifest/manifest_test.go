@@ -931,16 +931,24 @@ spec:
 }
 
 func TestKustomization_UpdatePostBuildSubstitutions(t *testing.T) {
-	k := &Kustomization{Contents: map[string]any{"spec": map[string]any{}}}
-	k.UpdatePostBuildSubstitutions(map[string]any{"K": "v"})
-
-	if k.PostBuildSubstitute["K"] != "v" {
-		t.Fatalf("substitute map not updated: %+v", k.PostBuildSubstitute)
+	for _, tc := range []struct {
+		name string
+		vars map[string]any
+		want map[string]any
+	}{
+		{name: "empty", want: map[string]any{"K": "v"}},
+		{name: "existing", vars: map[string]any{"K": "old", "KEEP": "kept"}, want: map[string]any{"K": "v", "KEEP": "kept"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := &Kustomization{PostBuildSubstitute: tc.vars, Contents: map[string]any{"spec": map[string]any{}}}
+			k.UpdatePostBuildSubstitutions(map[string]any{"K": "v"})
+			assert.Diff(t, k.PostBuildSubstitute, tc.want)
+			spec := k.Contents["spec"].(map[string]any)
+			post := spec["postBuild"].(map[string]any)
+			sub := post["substitute"].(map[string]any)
+			assert.Diff(t, sub, map[string]any{"K": "v"})
+		})
 	}
-	spec := k.Contents["spec"].(map[string]any)
-	post := spec["postBuild"].(map[string]any)
-	sub := post["substitute"].(map[string]any)
-	assert.Diff(t, sub, map[string]any{"K": "v"})
 }
 
 func TestParseConfigMap(t *testing.T) {

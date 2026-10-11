@@ -79,7 +79,7 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 			docs := []map[string]any{tc.doc}
 			b.ReportAllocs()
 			for b.Loop() {
-				c.emitRenderedChildren(parent, docs, true)
+				c.Emit(parent, docs, c.WipeSecrets, true)
 			}
 		})
 	}

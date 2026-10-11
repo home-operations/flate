@@ -1,10 +1,6 @@
 package base
 
-import (
-	"log/slog"
-
-	"github.com/home-operations/flate/pkg/manifest"
-)
+import "github.com/home-operations/flate/pkg/manifest"
 
 // Child retains a parsed render child and its source document in document order.
 type Child struct {
@@ -17,13 +13,16 @@ type Child struct {
 // publish=false suppresses tracked publication during fingerprint replay;
 // raw children retain AddRendered's deduplication and arrival behavior.
 func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, wipeSecrets, publish bool) []Child {
-	// Mirrors kustomize-controller's apply-time namespace defaulting, so a namespace-less
-	// child dedups against its inherited file-loaded copy.
-	manifest.StampNamespaces(docs, parent.Namespace)
+	// HelmRelease documents already carry the release namespace. KS/RS children
+	// inherit their emitter namespace to dedup against file-loaded copies.
+	helmRelease := parent.Kind == manifest.KindHelmRelease
+	if !helmRelease {
+		manifest.StampNamespaces(docs, parent.Namespace)
+	}
 	opts := manifest.ParseDocOptions{WipeSecrets: wipeSecrets}
-	log := c.Logger().With(slog.String("component", "emit"))
+	log := c.Logger()
 	children := make([]Child, 0, len(docs))
-	emitted := make([]manifest.NamedResource, 0, len(docs))
+	var emitted []manifest.NamedResource
 	for _, doc := range docs {
 		if manifest.IsEncryptedSecret(doc) {
 			name, ns := manifest.DocMetadata(doc)
@@ -39,7 +38,10 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 			continue
 		}
 		children = append(children, Child{Obj: obj, Doc: doc})
-		if isTrackedChild(obj) {
+		if isTrackedChild(obj, helmRelease) {
+			if emitted == nil {
+				emitted = make([]manifest.NamedResource, 0, len(docs))
+			}
 			emitted = append(emitted, obj.Named())
 		}
 	}
@@ -48,7 +50,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 		obj := child.Obj
 		id := obj.Named()
 		switch {
-		case !isTrackedChild(obj):
+		case !isTrackedChild(obj, helmRelease):
 			c.Store.AddRendered(obj)
 		case id.Kind == manifest.KindKustomization || id.Kind == manifest.KindHelmRelease:
 			continue
@@ -63,7 +65,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 	for _, child := range children {
 		obj := child.Obj
 		id := obj.Named()
-		if !isTrackedChild(obj) || (id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease) {
+		if !isTrackedChild(obj, helmRelease) || (id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease) {
 			continue
 		}
 		c.KeepEmitted(parent, obj)
@@ -78,15 +80,16 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 	return children
 }
 
-func isTrackedChild(obj manifest.BaseManifest) bool {
+func isTrackedChild(obj manifest.BaseManifest, helmRelease bool) bool {
 	switch obj.(type) {
 	case *manifest.HelmRepository, *manifest.OCIRepository,
 		*manifest.GitRepository, *manifest.Bucket,
-		*manifest.HelmChartSource, *manifest.ExternalArtifact,
-		*manifest.Kustomization, *manifest.HelmRelease,
+		*manifest.HelmChartSource, *manifest.ExternalArtifact:
+		return true
+	case *manifest.Kustomization, *manifest.HelmRelease,
 		*manifest.ConfigMap, *manifest.Secret,
 		*manifest.ResourceSet, *manifest.ResourceSetInputProvider:
-		return true
+		return !helmRelease
 	}
 	return false
 }

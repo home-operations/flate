@@ -716,7 +716,7 @@ func renderedConfigMapValue(docs []map[string]any, key string) string {
 	return ""
 }
 
-func TestEmitRenderedChildren_SourceOwnershipBeforeArrivals(t *testing.T) {
+func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 	st := store.New()
 	ts := task.NewBounded(0)
 	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
@@ -745,7 +745,7 @@ func TestEmitRenderedChildren_SourceOwnershipBeforeArrivals(t *testing.T) {
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 
 	// One source-kind doc (OCIRepository) and one non-source-kind (ConfigMap).
-	// emitRenderedChildren must extend keep and ownership for the source
+	// Emit must extend keep and ownership for the source
 	// only, and route the ConfigMap through AddRendered without either call.
 	ociDoc := map[string]any{
 		"apiVersion": "source.toolkit.fluxcd.io/v1beta2",
@@ -768,7 +768,7 @@ func TestEmitRenderedChildren_SourceOwnershipBeforeArrivals(t *testing.T) {
 			t.Errorf("source owner at arrival of %s = (%v, %v), want %s", id, got, ok, parent)
 		}
 	}, false)
-	c.emitRenderedChildren(parent, []map[string]any{cmDoc, ociDoc}, true)
+	c.Emit(parent, []map[string]any{cmDoc, ociDoc}, c.WipeSecrets, true)
 	if arrivals != 2 {
 		t.Fatalf("arrivals = %d, want 2", arrivals)
 	}
@@ -798,13 +798,13 @@ func TestEmitRenderedChildren_SourceOwnershipBeforeArrivals(t *testing.T) {
 	}
 }
 
-// TestEmitRenderedChildren_DedupReplay_NoStoreWrites pins the publish gate
+// TestEmit_DedupReplay_NoStoreWrites pins the publish gate
 // (mirrors the KS TestEmitRenderedChildren_DedupSkip_NoStoreWrites): the
 // fingerprint-dedup replay (publish=false) must NOT re-AddObject the
 // chart-emitted source CRs — re-emit is a DeepEqual no-op anyway, and gating it
 // makes that explicit. The idempotent side-effects the replay exists for —
 // KeepEmitted (keep-set) + Store.RecordEmitted (provenance) — MUST still fire.
-func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
+func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 	st := store.New()
 	ts := task.NewBounded(0)
 	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
@@ -833,7 +833,7 @@ func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 
 	// Dedup replay: no AddObject, no event, store untouched — but the keep-set
 	// and provenance side-effects still fire.
-	c.emitRenderedChildren(parent, []map[string]any{ociDoc}, false)
+	c.Emit(parent, []map[string]any{ociDoc}, c.WipeSecrets, false)
 
 	if events != 0 {
 		t.Errorf("publish=false fired %d EventObjectAdded; want 0 (no source re-emit)", events)
@@ -849,7 +849,7 @@ func TestEmitRenderedChildren_DedupReplay_NoStoreWrites(t *testing.T) {
 	}
 
 	// Fresh render publishes: event fires and the source lands in the store.
-	c.emitRenderedChildren(parent, []map[string]any{ociDoc}, true)
+	c.Emit(parent, []map[string]any{ociDoc}, c.WipeSecrets, true)
 	if events != 1 {
 		t.Errorf("publish=true fired %d EventObjectAdded; want 1", events)
 	}

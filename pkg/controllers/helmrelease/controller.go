@@ -265,7 +265,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	}
 	fp := helmReleaseFingerprint(hr, sourceIdentity)
 	if handled, err := c.FingerprintDedup(id, fp, func(docs []map[string]any) {
-		c.emitRenderedChildren(id, docs, false)
+		c.Emit(id, docs, c.WipeSecrets, false)
 	}); handled {
 		return err
 	}
@@ -328,7 +328,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	c.emitRenderedChildren(id, docs, true)
+	c.Emit(id, docs, c.WipeSecrets, true)
 
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
 	return nil
@@ -434,54 +434,13 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 	}
 	syn := helmchart.Synthesize(r, hr.Chart.Name, hr.Chart.Version)
 	// keep-emit BEFORE AddObject so the synchronous source-controller
-	// listener sees the extended changed-only keep set (mirrors
-	// emitRenderedChildren).
+	// listener sees the extended changed-only keep set.
 	c.KeepEmitted(id, syn)
 	c.Store.AddObject(syn)
 	hr.Chart.RepoKind = manifest.KindHelmChart
 	hr.Chart.RepoNamespace = syn.Namespace
 	hr.Chart.RepoName = syn.Name
 	return hr, true
-}
-
-// emitRenderedChildren stages parsed children so the complete source ownership
-// batch precedes selection changes and every arrival, including raw children.
-// publish=false suppresses source publication during fingerprint replay.
-func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[string]any, publish bool) {
-	opts := manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets}
-	objs := make([]manifest.BaseManifest, 0, len(docs))
-	var emitted []manifest.NamedResource
-	for _, doc := range docs {
-		if manifest.IsEncryptedSecret(doc) {
-			name, ns := manifest.DocMetadata(doc)
-			c.Logger().Debug("SOPS-encrypted resource wiped to placeholder",
-				"id", id.String(), "ref", manifest.DocKind(doc)+" "+ns+"/"+name)
-		}
-		obj, err := manifest.ParseDoc(doc, opts)
-		if err != nil {
-			c.Logger().Debug("skipped doc", "id", id.String(), "err", err)
-			continue
-		}
-		if manifest.IsKustomizeBuildDirective(obj) {
-			continue
-		}
-		// Artifact documents stay retained and cannot return to a map pool.
-		objs = append(objs, obj)
-		if isFluxSourceKind(obj) {
-			emitted = append(emitted, obj.Named())
-		}
-	}
-	c.Store.RecordEmitted(id, emitted)
-	for _, obj := range objs {
-		if isFluxSourceKind(obj) {
-			c.KeepEmitted(id, obj)
-			if publish {
-				c.Store.AddObject(obj)
-			}
-		} else {
-			c.Store.AddRendered(obj)
-		}
-	}
 }
 
 // preparePrereqs collects refs that helm.Prepare reads from the live

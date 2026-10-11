@@ -7,77 +7,85 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
-// TestTrackedChild_KnownKinds documents which kinds the
-// render-emission helper routes through AddObject vs. AddRendered.
-// Pinning this matrix prevents a future contributor from accidentally
-// widening or narrowing the set — a regression here would either
-// re-introduce the two-phase emission race (by excluding a data kind)
-// or trigger spurious reconciles on non-reconcilable kinds.
-func TestTrackedChild_KnownKinds(t *testing.T) {
+func TestTrackedChild_EmitterKinds(t *testing.T) {
 	cases := []struct {
-		name string
-		obj  manifest.BaseManifest
-		want bool
+		name   string
+		obj    manifest.BaseManifest
+		want   bool
+		wantHR bool
 	}{
-		{"Kustomization", &manifest.Kustomization{}, true},
-		{"HelmRelease", &manifest.HelmRelease{}, true},
-		{"HelmRepository", &manifest.HelmRepository{}, true},
-		{"OCIRepository", &manifest.OCIRepository{}, true},
-		{"GitRepository", &manifest.GitRepository{}, true},
-		{"Bucket", &manifest.Bucket{}, true},
-		{"HelmChartSource", &manifest.HelmChartSource{}, true},
-		{"ExternalArtifact", &manifest.ExternalArtifact{}, true},
-		{"ConfigMap", &manifest.ConfigMap{}, true},
-		{"Secret", &manifest.Secret{}, true},
-		{"ResourceSet", &manifest.ResourceSet{}, true},
-		{"ResourceSetInputProvider", &manifest.ResourceSetInputProvider{}, true},
-		{"RawObject falls through", &manifest.RawObject{Kind: "Service"}, false},
-		{"raw Kustomization", &manifest.RawObject{Kind: manifest.KindKustomization}, false},
-		{"raw HelmRelease", &manifest.RawObject{Kind: manifest.KindHelmRelease}, false},
+		{"Kustomization", &manifest.Kustomization{}, true, false},
+		{"HelmRelease", &manifest.HelmRelease{}, true, false},
+		{"HelmRepository", &manifest.HelmRepository{}, true, true},
+		{"OCIRepository", &manifest.OCIRepository{}, true, true},
+		{"GitRepository", &manifest.GitRepository{}, true, true},
+		{"Bucket", &manifest.Bucket{}, true, true},
+		{"HelmChartSource", &manifest.HelmChartSource{}, true, true},
+		{"ExternalArtifact", &manifest.ExternalArtifact{}, true, true},
+		{"ConfigMap", &manifest.ConfigMap{}, true, false},
+		{"Secret", &manifest.Secret{}, true, false},
+		{"ResourceSet", &manifest.ResourceSet{}, true, false},
+		{"ResourceSetInputProvider", &manifest.ResourceSetInputProvider{}, true, false},
+		{"RawObject falls through", &manifest.RawObject{Kind: "Service"}, false, false},
+		{"raw Kustomization", &manifest.RawObject{Kind: manifest.KindKustomization}, false, false},
+		{"raw HelmRelease", &manifest.RawObject{Kind: manifest.KindHelmRelease}, false, false},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isTrackedChild(tc.obj); got != tc.want {
-				t.Errorf("isTrackedChild(%T) = %v, want %v", tc.obj, got, tc.want)
-			}
-		})
+		for _, helmRelease := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/helmRelease=%t", tc.name, helmRelease), func(t *testing.T) {
+				want := tc.want
+				if helmRelease {
+					want = tc.wantHR
+				}
+				if got := isTrackedChild(tc.obj, helmRelease); got != want {
+					t.Errorf("isTrackedChild(%T, %t) = %v, want %v", tc.obj, helmRelease, got, want)
+				}
+			})
+		}
 	}
 }
 
-// TestEmit_DefaultsNamespace pins the fix for the unsubstituted-OCIRepository
-// bug: a namespace-less rendered child must inherit the emitting parent's
-// namespace, so it dedups against its namespace-inherited file-loaded copy
-// instead of lingering at empty namespace. An explicit namespace is preserved.
+// HelmRelease documents already carry the release namespace, which may differ from the emitter namespace.
 func TestEmit_DefaultsNamespace(t *testing.T) {
-	s := store.New()
-	c := New(s, task.NewBounded(1), "test")
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "infra"}
-
-	c.Emit(parent, []map[string]any{
-		{
-			"apiVersion": "source.toolkit.fluxcd.io/v1",
-			"kind":       "OCIRepository",
-			"metadata":   map[string]any{"name": "certmanager"},
-			"spec":       map[string]any{"url": "oci://quay.io/c", "provider": "generic"},
-		},
-		{
-			"apiVersion": "v1",
-			"kind":       "ConfigMap",
-			"metadata":   map[string]any{"name": "cm", "namespace": "other"},
-		},
-	}, true, true)
-
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "certmanager"}) == nil {
-		t.Error("namespace-less OCIRepository was not defaulted to the parent namespace flux-system")
-	}
-	if obj := s.GetObject(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "", Name: "certmanager"}); obj != nil {
-		t.Errorf("empty-namespace OCIRepository phantom present: %v", obj.Named())
-	}
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "other", Name: "cm"}) == nil {
-		t.Error("explicit namespace not preserved for ConfigMap other/cm")
+	for _, tc := range []struct {
+		kind string
+		want string
+	}{
+		{manifest.KindKustomization, "flux-system"},
+		{manifest.KindResourceSet, "flux-system"},
+		{manifest.KindHelmRelease, ""},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			s := store.New()
+			c := New(s, nil, "test")
+			parent := manifest.NamedResource{Kind: tc.kind, Namespace: "flux-system", Name: "infra"}
+			children := c.Emit(parent, []map[string]any{
+				{
+					"apiVersion": "source.toolkit.fluxcd.io/v1",
+					"kind":       "OCIRepository",
+					"metadata":   map[string]any{"name": "certmanager"},
+					"spec":       map[string]any{"url": "oci://quay.io/c", "provider": "generic"},
+				},
+				{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "cm", "namespace": "release"},
+				},
+			}, true, true)
+			if len(children) != 2 {
+				t.Fatalf("children = %d, want 2", len(children))
+			}
+			for i, want := range []string{tc.want, "release"} {
+				if got := children[i].Obj.Named().Namespace; got != want {
+					t.Errorf("child %d namespace = %q, want %q", i, got, want)
+				}
+			}
+			if s.GetObject(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: tc.want, Name: "certmanager"}) == nil {
+				t.Error("OCIRepository was not published with the expected namespace")
+			}
+		})
 	}
 }
 

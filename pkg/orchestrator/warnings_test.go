@@ -110,7 +110,8 @@ spec:
 // Kustomization whose postBuild.substituteFrom Secret can't be read offline
 // (absent here, as an ExternalSecret-backed one is) surfaces a structured
 // Result.Warnings entry (Category WarnUnresolvedSubstitution, attributed to the
-// Secret) — explaining why the ${VAR}s it would supply render empty. The render
+// Secret): its variables are unavailable, so references may remain unsubstituted
+// or resolve to defaults or empty values. The render
 // itself still succeeds: Secret refs are not hard dependency edges.
 func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 	dir := t.TempDir()
@@ -143,6 +144,12 @@ spec:
 	for _, w := range res.Warnings {
 		if w.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(w.Message, `"cluster-secrets"`) {
 			found = true
+			want := `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
+				"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
+				"or resolve to defaults or empty values"
+			if w.Message != want {
+				t.Errorf("warning Message = %q, want %q", w.Message, want)
+			}
 		}
 	}
 	if !found {

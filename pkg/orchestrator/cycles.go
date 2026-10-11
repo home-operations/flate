@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 
@@ -101,7 +102,8 @@ func logNewCycleMessages(prev, next map[manifest.NamedResource]string) {
 	for _, msg := range prev {
 		seen[msg] = struct{}{}
 	}
-	for _, msg := range next {
+	for _, id := range slices.SortedFunc(maps.Keys(next), manifest.NamedResource.Compare) {
+		msg := next[id]
 		if _, dup := seen[msg]; dup {
 			continue
 		}

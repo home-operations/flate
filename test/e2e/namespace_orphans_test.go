@@ -6,9 +6,14 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	digest "github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"io"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -226,21 +231,25 @@ spec:
 	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
-	c := source.NewCache(cacheroot.New(cache))
-	_, digest, err := c.PutBytes(t.Context(), archive.Bytes(), "chart.tgz")
+	c, err := sourcecache.New(t.Context(), cacheroot.New(cache))
 	if err != nil {
 		t.Fatal(err)
 	}
-	slot, err := c.Slot(t.Context(), "https://charts.example.invalid", "helm-resolve:demo@0.1.0", source.AuthIdentityFromRefs("demo", nil, nil))
+	h, err := source.CacheKeyHash([]any{"https://charts.example.invalid", "demo", "0.1.0", source.AuthIdentityFromRefs("demo", nil, nil), false}, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer slot.Release()
-	if err := slot.PersistMeta(func(m *source.SlotMeta) {
-		m.ChartVersion = "0.1.0"
-		m.ChartDigest = digest
-		m.ChartURL = "https://charts.example.invalid/demo-0.1.0.tgz"
-	}); err != nil {
+	r, _, err := c.Blob(t.Context(), sourcecache.BlobKey{ID: "blob-chart-" + h}, time.Hour, func(w io.Writer) (ocispec.Descriptor, error) {
+		_, err := w.Write(archive.Bytes())
+		return ocispec.Descriptor{Digest: digest.FromBytes(archive.Bytes()), Size: int64(archive.Len()), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return root, cache, namespaces

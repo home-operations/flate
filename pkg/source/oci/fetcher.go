@@ -1,19 +1,4 @@
-// Package oci implements the source.Fetcher for KindOCIRepository
-// via oras-go. Generic provider only — IRSA / Workload Identity is
-// out of scope for offline flate.
-//
-// File map:
-//
-//	fetcher.go  — Fetcher type, Fetch entry, authIdentity, ociID
-//	fetch.go    — fetch pipeline (resolve → slot → copy → publish)
-//	client.go   — registry client: TLS, registry-config, credentials
-//	cache.go    — cache keys, resolve-cache, cache-hit gate, artifact
-//	resolve.go  — OCI ref parsing, semver tag picking, revision shape
-//	marker.go   — cached-digest slot meta sidecar
-//	layer.go    — media types, spec.layerSelector copy/extract
-//
-// flate does not verify OCI signatures: spec.verify is ignored and the artifact
-// is pulled unconditionally (see README).
+// Package oci fetches verified OCI source layers through the shared acquisition cache.
 package oci
 
 import (
@@ -23,6 +8,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -33,7 +19,7 @@ import (
 // Store.GetByName), required when any OCIRepository has spec.secretRef
 // pointing at a kubernetes.io/dockerconfigjson Secret.
 type Fetcher struct {
-	Cache          *source.Cache
+	Cache          *cache.Cache
 	RegistryConfig string
 	Secrets        source.SecretGetter
 
@@ -43,13 +29,7 @@ type Fetcher struct {
 }
 
 // Fetch implements source.TypedFetcher[*manifest.OCIRepository].
-// The typed signature is wrapped via source.Wrap at orchestrator
-// registration — a payload mismatch returns ErrInput once at the
-// adapter site rather than panicking here.
-//
-// Fetch resolves credentials, TLS, and proxy from the CR's *SecretRef
-// fields, then hands off to fetch() — the workhorse in fetch.go that
-// owns slot lifecycle, oras Copy, layer extraction, and marker writes.
+// Credentials, TLS and proxy policy are resolved before acquisition.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
 		return nil, source.ErrUnsupportedProvider("OCIRepository",
@@ -74,7 +54,11 @@ func (f *Fetcher) fetchWithRegistryConfig(ctx context.Context, repo *manifest.OC
 	if err != nil {
 		return nil, err
 	}
-	return fetch(ctx, f, repo, configPath, tlsCfg, proxy)
+	client, err := newRepoClient(repo, configPath, tlsCfg, proxy)
+	if err != nil {
+		return nil, err
+	}
+	return f.fetch(ctx, repo, client)
 }
 
 // ociID is the "OCIRepository <namespace>/<name>" prefix shared by this

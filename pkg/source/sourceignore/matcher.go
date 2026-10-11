@@ -13,9 +13,11 @@ package sourceignore
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -86,6 +88,39 @@ func NewFromFiles(root string, files []string, extra *string, withDefaults bool)
 		patterns = append(patterns, ps...)
 	}
 	return newMatcher(domain, patterns, extra, withDefaults), nil
+}
+
+// NewFS builds the same Flux policy from a slash-named immutable filesystem.
+func NewFS(input fs.FS, extra string, withDefaults bool) (*Matcher, error) {
+	var patterns []gitignore.Pattern
+	err := fs.WalkDir(input, ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == ".git" {
+			return fs.SkipDir
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(input, path.Join(name, flux.IgnoreFile))
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		domain := []string{}
+		if name != "." {
+			domain = strings.Split(name, "/")
+		}
+		patterns = append(patterns, flux.ReadPatterns(strings.NewReader(string(data)), domain)...)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sourceignore load: %w", err)
+	}
+	return newMatcher(nil, patterns, &extra, withDefaults), nil
 }
 
 func newMatcher(domain []string, patterns []gitignore.Pattern, extra *string, withDefaults bool) *Matcher {

@@ -10,21 +10,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func httpRepo(url string) *manifest.HelmRepository {
 	return &manifest.HelmRepository{
 		Name: "repo", Namespace: "flux-system",
-		URL: url,
+		URL:      url,
+		Interval: metav1.Duration{Duration: time.Hour},
 	}
 }
 
@@ -36,11 +40,12 @@ func newHTTPFetcher(t *testing.T, r *manifest.HelmRepository) *Fetcher {
 func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets source.SecretGetter) *Fetcher {
 	t.Helper()
 	layout := cacheroot.New(t.TempDir())
-	f, err := New(secrets, func(_, _ string) *manifest.HelmRepository { return r }, nil, source.NewCache(layout), layout)
+	c, err := sourcecache.New(t.Context(), layout)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatal(err)
 	}
-	return f
+	t.Cleanup(func() { _ = c.Close() })
+	return New(secrets, func(_, _ string) *manifest.HelmRepository { return r }, nil, c)
 }
 
 func TestFetchHTTPChart(t *testing.T) {
@@ -58,13 +63,10 @@ func TestFetchHTTPChart(t *testing.T) {
 	if art.Digest != chartDigest(chartBytes) {
 		t.Errorf("art.Digest = %q, want %q", art.Digest, chartDigest(chartBytes))
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "chart.tgz")); err != nil {
-		t.Errorf("chart.tgz not at LocalPath %s: %v", art.LocalPath, err)
+	if _, err := fs.Stat(art.FS, "chart.tgz"); err != nil {
+		t.Errorf("chart.tgz not at LocalPath %s: %v", art.Key, err)
 	}
 
-	// A second fetch of the same digest-pinned chart must short-circuit on the
-	// content-addressed blob (chartArtifactByDigest -> Cache.BlobByDigest) and
-	// NOT re-download — the dedup the *hits counter exists to pin.
 	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
 		t.Fatalf("second Fetch: %v", err)
 	}
@@ -212,8 +214,8 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 		if *hits != 1 {
 			t.Errorf("chart fetched %d times from subpath, want 1 (url resolved against host root?)", *hits)
 		}
-		if _, err := os.Stat(filepath.Join(art.LocalPath, "chart.tgz")); err != nil {
-			t.Errorf("chart.tgz not at LocalPath %s: %v", art.LocalPath, err)
+		if _, err := fs.Stat(art.FS, "chart.tgz"); err != nil {
+			t.Errorf("chart.tgz not at LocalPath %s: %v", art.Key, err)
 		}
 	})
 
@@ -332,5 +334,78 @@ entries:
 				t.Errorf("chart host got basic auth = %v, want %v", gotAuth, tc.wantAuth)
 			}
 		})
+	}
+}
+
+func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
+	for _, backing := range []string{"memory", "disk"} {
+		for _, endpoint := range []string{"/index.yaml", "/app-template-1.0.0.tgz"} {
+			t.Run(backing+endpoint, func(t *testing.T) {
+				chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
+				started, canceled := make(chan struct{}), make(chan struct{})
+				var attempts atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == endpoint && attempts.Add(1) == 1 {
+						_, _ = io.WriteString(w, "partial")
+						w.(http.Flusher).Flush()
+						close(started)
+						<-r.Context().Done()
+						close(canceled)
+						return
+					}
+					if r.URL.Path == "/index.yaml" {
+						_, _ = io.WriteString(w, helmRepoIndex(chartDigest(chartBytes)))
+						return
+					}
+					_, _ = w.Write(chartBytes)
+				}))
+				t.Cleanup(srv.Close)
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
+				}
+				c, err := sourcecache.New(t.Context(), cacheroot.New(root))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = c.Close() })
+				r := httpRepo(srv.URL)
+				f := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, c)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				result := make(chan error, 1)
+				go func() {
+					_, err := f.Fetch(ctx, helmChart("repo", "app-template", "1.0.0"))
+					result <- err
+				}()
+				select {
+				case <-started:
+				case <-time.After(5 * time.Second):
+					t.Fatal("download did not start")
+				}
+				cancel()
+				select {
+				case err := <-result:
+					if !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
+						t.Fatalf("canceled fetch: %v", err)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("fetch ignored cancellation")
+				}
+				select {
+				case <-canceled:
+				case <-time.After(5 * time.Second):
+					t.Fatal("HTTP request outlived fetch")
+				}
+				art, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := fs.ReadFile(art.FS, "chart.tgz")
+				if err != nil || !bytes.Equal(data, chartBytes) || attempts.Load() != 2 {
+					t.Fatalf("retry: bytes=%d attempts=%d err=%v", len(data), attempts.Load(), err)
+				}
+			})
+		}
 	}
 }

@@ -1,6 +1,7 @@
 package cacheroot
 
 import (
+	"github.com/opencontainers/go-digest"
 	"path/filepath"
 	"testing"
 )
@@ -16,17 +17,15 @@ func TestLayout_Paths(t *testing.T) {
 		got  string
 		want string
 	}{
+		{"OCI", l.OCI(), "/cache/oci"},
+		{"OCILock", l.OCILock(), "/cache/oci.lock"},
+		{"OCIBlob", l.OCIBlob(digest.Digest("sha256:ffff")), "/cache/oci/blobs/sha256/ffff"},
 		{"Sources", l.Sources(), "/cache/sources"},
 		{"SourceSlot", l.SourceSlot("myrepo", "deadbeef0123"), "/cache/sources/myrepo/deadbeef0123"},
 		{"Baselines", l.Baselines(), "/cache/baselines"},
 		{"Baseline", l.Baseline("abc123"), "/cache/baselines/abc123"},
-		{"Blobs", l.Blobs(), "/cache/blobs/sha256"},
-		{"Blob", l.Blob("ffff"), "/cache/blobs/sha256/ffff"},
-		{"RefsRoot", l.RefsRoot(), "/cache/refs"},
-		{"RefsCategory", l.RefsCategory("chart-tarballs"), "/cache/refs/chart-tarballs"},
 		{"GitMirrors", l.GitMirrors(), "/cache/git-mirrors"},
 		{"GitMirror", l.GitMirror("0123"), "/cache/git-mirrors/0123"},
-		{"HelmTmp", l.HelmTmp(), "/cache/helm-tmp"},
 		{"RenderHelmCache", l.RenderHelmCache(), "/cache/render/helm"},
 	}
 	for _, c := range cases {
@@ -42,6 +41,7 @@ func TestLayout_Paths(t *testing.T) {
 // the join hot-path helper can skip a second filepath.Clean pass.
 func TestNew_CleansRoot(t *testing.T) {
 	cases := []struct{ in, want string }{
+		{"", ""},
 		{"/cache/", "/cache"},
 		{"/cache//sub/..", "/cache"},
 		{"/cache/.", "/cache"},

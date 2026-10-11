@@ -1,176 +1,28 @@
 package oci
 
 import (
-	"archive/tar"
-	"compress/gzip"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/safepath"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-// copiedLayerFilename is the deterministic name layers are stored
-// under when LayerSelector.Operation is "copy". Downstream consumers
-// (e.g. Kustomization spec.path on an OCIRepository whose artifact
-// is shipped as a tarball) look for this name when they need the
-// raw blob.
 const copiedLayerFilename = "layer.tar.gz"
 
-// stagedLayerFilename is where applyLayerSelector parks the selected
-// layer before wiping the OCI Image Layout dirs (blobs/, ingest/,
-// oci-layout, index.json). Staging at the slot root lets the layout
-// wipe run with no surviving file handles into deleted subtrees, and
-// the dot-prefix keeps it from colliding with anything kustomize
-// would treat as a resource. extractTarGz removes it on success.
-const stagedLayerFilename = ".flate-layer.tar.gz"
+const (
+	helmChartLayerMediaType      = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+	helmChartProvenanceMediaType = "application/vnd.cncf.helm.chart.provenance.v1.prov"
+)
 
-// ociLayoutArtifacts are the files / directories oras-go's content/oci
-// store writes alongside the blobs we actually want — the OCI Image
-// Layout metadata (index.json, oci-layout, blobs/, ingest/). Downstream
-// consumers (kustomize) only want the extracted tarball contents at
-// the slot root, so cleanupOCILayout sweeps these away once
-// applyLayerSelector has moved / extracted the selected layer.
-var ociLayoutArtifacts = []string{
-	ocispec.ImageBlobsDir,   // "blobs"
-	"ingest",                // content/oci.Storage's temp-rename area
-	ocispec.ImageLayoutFile, // "oci-layout"
-	ocispec.ImageIndexFile,  // "index.json"
-}
-
-// helmChartLayerMediaType is the media type helm assigns to a packaged chart's
-// content layer. Helm-chart OCI tags also normalize semver build-metadata `+`
-// to `_` (registries forbid `+` in tags), so the resolve-side tag conversion
-// keys on this media type.
-const helmChartLayerMediaType = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
-
-// helmChartProvenanceMediaType is the media type helm assigns to the detached
-// PGP signature (`<chart>.prov`) it pushes alongside a signed chart. `helm
-// push` lists this layer AHEAD of the chart content layer in the OCI manifest,
-// and the blob is signature text — not a gzipped tarball. pickLayer must skip
-// it so the default (no-selector) path doesn't hand it to gzip extraction;
-// every signed chart (cert-manager, truecharts, grafana/prometheus community,
-// ...) carries one.
-const helmChartProvenanceMediaType = "application/vnd.cncf.helm.chart.provenance.v1.prov"
-
-// layerMediaType unwraps the selector's target media type, "" when unset.
 func layerMediaType(selector *manifest.OCILayerSelector) string {
 	if selector == nil {
 		return ""
 	}
 	return selector.MediaType
 }
-
-// effectiveLayerOperation returns the operation applyLayerSelector
-// will run for a given selector — Extract by default, honoring an
-// explicit override otherwise. Exposed so callers (the OCI fetcher)
-// can branch behavior such as source-ignore application that only
-// makes sense for the extracted-contents shape.
 func effectiveLayerOperation(selector *manifest.OCILayerSelector) string {
 	if selector == nil || selector.Operation == "" {
 		return manifest.OCILayerOperationExtract
 	}
 	return selector.Operation
-}
-
-// applyLayerSelector post-processes an OCI artifact written into slot
-// by oras.Copy. After Copy, the slot is laid out per the OCI Image
-// Layout spec (see ociLayoutArtifacts). This function:
-//
-//   - Reads the manifest blob to find the layer matching
-//     selector.MediaType (or the first layer when no selector is set).
-//   - Stages the layer at slot/<stagedLayerFilename> so the layout
-//     wipe in the next step can't take open handles or user-tarball
-//     entries that collide with OCI well-known names down with it.
-//   - For Operation = "extract" (Flux's default), untars the staged
-//     layer into the slot root. extractTarGz removes the staged file
-//     on success.
-//   - For Operation = "copy", renames the staged layer to
-//     <copiedLayerFilename>.
-//   - Wipes the OCI Image Layout artifacts.
-func applyLayerSelector(
-	slot string,
-	manifestDigest string,
-	selector *manifest.OCILayerSelector,
-) error {
-	man, err := readSlotManifest(slot, manifestDigest)
-	if err != nil {
-		// No manifest in slot (e.g. helm registry already pulled
-		// the chart elsewhere) — nothing to do.
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	layer, ok := pickLayer(man.Layers, selector)
-	if !ok {
-		if len(man.Layers) > 0 {
-			return fmt.Errorf("no layer matched mediaType %q (manifest has %d layer(s))",
-				layerMediaType(selector), len(man.Layers))
-		}
-		// Zero-layer artifact (no layers, no selector). Wipe the
-		// OCI Image Layout artifacts before returning — without
-		// this, the cache-hit path's hasUnfinishedOCILayout
-		// sentinel fires on the next reconcile, the slot is
-		// reset, and the next fetch reproduces the same zero-
-		// layer state → infinite reset/re-pull loop. Returning
-		// nil here means the slot is finalized empty; the
-		// downstream chart consumer surfaces a clear "no
-		// recognizable chart layout" error rather than looping.
-		if err := cleanupOCILayout(slot); err != nil {
-			return fmt.Errorf("cleanup zero-layer oci layout: %w", err)
-		}
-		return nil
-	}
-
-	op := effectiveLayerOperation(selector)
-
-	staged := filepath.Join(slot, stagedLayerFilename)
-	if err := os.Rename(digestPath(slot, layer.Digest), staged); err != nil {
-		return fmt.Errorf("stage layer: %w", err)
-	}
-	// Wipe the layout BEFORE the operation runs so extract / copy
-	// can never collide with surviving OCI artifact directories.
-	if err := cleanupOCILayout(slot); err != nil {
-		return fmt.Errorf("cleanup oci layout: %w", err)
-	}
-
-	switch op {
-	case manifest.OCILayerOperationExtract:
-		if err := extractTarGz(staged, slot); err != nil {
-			return fmt.Errorf("extract layer: %w", err)
-		}
-	case manifest.OCILayerOperationCopy:
-		if err := os.Rename(staged, filepath.Join(slot, copiedLayerFilename)); err != nil {
-			return fmt.Errorf("copy layer: %w", err)
-		}
-	default:
-		return fmt.Errorf("unsupported layer operation %q", op)
-	}
-	return nil
-}
-
-// readSlotManifest decodes the OCI image manifest oras.Copy wrote into
-// the layout under the given digest.
-func readSlotManifest(slot, digestStr string) (*ocispec.Manifest, error) {
-	path := digestPath(slot, digest.Digest(digestStr))
-	b, err := os.ReadFile(path) //nolint:gosec // slot is fetcher-owned cache path
-	if err != nil {
-		return nil, err
-	}
-	var m ocispec.Manifest
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
-	}
-	return &m, nil
 }
 
 // pickLayer returns the layer matching selector.MediaType, or — with no
@@ -202,149 +54,4 @@ func pickLayer(layers []ocispec.Descriptor, selector *manifest.OCILayerSelector)
 		}
 	}
 	return layers[0], true
-}
-
-// digestPath resolves a digest to its on-disk path inside slot,
-// matching the OCI Image Layout spec: `<slot>/blobs/<algo>/<hex>`.
-// Aligns with oras-go's content/oci.Storage Push.
-func digestPath(slot string, d digest.Digest) string {
-	algo := d.Algorithm().String()
-	hex := d.Encoded()
-	if hex == "" {
-		// Malformed digest — Encoded() returns "" rather than error.
-		// Fall back to splitting on ":" so the path stays inside slot
-		// rather than escaping or hitting a bare blobs/<algo>/ dir.
-		_, hex, _ = strings.Cut(d.String(), ":")
-		if hex == "" {
-			hex = d.String()
-		}
-	}
-	return filepath.Join(slot, ocispec.ImageBlobsDir, algo, hex)
-}
-
-// hasUnfinishedOCILayout reports whether slot still carries any
-// in-progress fetch artifacts:
-//
-//   - The OCI Image Layout dirs/files (blobs/, ingest/, oci-layout,
-//     index.json) cleanupOCILayout is supposed to wipe.
-//   - The staged layer file (.flate-layer.tar.gz) applyLayerSelector
-//     renames into place before extract / copy. A crash between the
-//     stage rename and the cleanup leaves it behind even when the
-//     layout dirs were already wiped.
-//
-// Either signals an inconsistent slot. The OCI fetcher's cache-hit
-// path uses this to reset stale slots before serving them.
-func hasUnfinishedOCILayout(slot string) bool {
-	if _, err := os.Stat(filepath.Join(slot, stagedLayerFilename)); err == nil {
-		return true
-	}
-	for _, name := range ociLayoutArtifacts {
-		if _, err := os.Stat(filepath.Join(slot, name)); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-// cleanupOCILayout removes the OCI Image Layout artifacts oras-go wrote
-// alongside the artifact blobs. By the time this runs the selected
-// layer has already been staged outside the layout subtree, so removal
-// is safe — but the order matters: a layout wipe BEFORE staging would
-// leave nothing to extract from.
-func cleanupOCILayout(slot string) error {
-	for _, name := range ociLayoutArtifacts {
-		if err := os.RemoveAll(filepath.Join(slot, name)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// maxExtractedBytes caps the total bytes extractTarGz writes to disk
-// per call. Defends against zip-bomb-style artifacts (small gzip,
-// huge tar) that would otherwise fill the cache slot until ENOSPC.
-// 1 GiB is generous enough for every helm chart and flux-manifests
-// shape seen in the wild — the largest known charts are ~50 MiB
-// extracted — while still bounding a malicious or buggy publisher.
-//
-// var (not const) so tests can lower it without writing real-size
-// tarballs. Production callers must NOT override it.
-var maxExtractedBytes int64 = 1 << 30
-
-// extractTarGz unpacks a gzipped tarball into dst. Rejects any entry
-// whose resolved path escapes dst — covers `../` traversal, absolute
-// paths in the tar header (e.g. `/etc/passwd`), and symlink-pivoting
-// hardlinks. Symlinks/hardlinks/devices are silently skipped rather
-// than honored; Flux's source-controller does the same and helm
-// charts never depend on them. Output is capped at maxExtractedBytes
-// to bound zip-bomb-style artifacts.
-func extractTarGz(src, dst string) error {
-	f, err := os.Open(src) //nolint:gosec // src lives under the fetcher's cache slot
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return fmt.Errorf("gzip: %w", err)
-	}
-	defer func() { _ = gz.Close() }()
-	tr := tar.NewReader(gz)
-	remaining := maxExtractedBytes
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("tar: %w", err)
-		}
-		target, err := safepath.SafeJoin(dst, hdr.Name, true)
-		if err != nil {
-			return err
-		}
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o750); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
-				return err
-			}
-			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // target stays under dst (safepath.SafeJoin enforced)
-			if err != nil {
-				return err
-			}
-			// LimitReader caps per-call output AND turns a header that
-			// over-claims size into a short read at the limit (rather
-			// than an unbounded write). Track remaining manually so a
-			// single oversized entry surfaces a clear "extract limit"
-			// error instead of a torso-shaped truncated file.
-			n, err := io.Copy(out, io.LimitReader(tr, remaining+1))
-			if err != nil {
-				_ = out.Close()
-				return err
-			}
-			if n > remaining {
-				_ = out.Close()
-				_ = os.Remove(target)
-				return fmt.Errorf("tar entry %q exceeds %d-byte extract limit", hdr.Name, maxExtractedBytes)
-			}
-			remaining -= n
-			if err := out.Close(); err != nil {
-				return err
-			}
-		default:
-			// Skip symlinks, hardlinks, devices, FIFOs, etc.
-			// Honoring symlinks would re-open the traversal surface
-			// (point at /etc/passwd, then a subsequent TypeReg
-			// "writes through" the link); flate has no use case
-			// for these and Flux's source-controller does the same.
-		}
-	}
-	if err := os.Remove(src); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
 }

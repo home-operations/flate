@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -39,13 +39,9 @@ func startHelmRepoCounted(t *testing.T, chartBytes []byte, indexDigest string) (
 // fetcherWithCache builds a Fetcher over a caller-supplied cache+layout, so a
 // test can stand up two Fetchers sharing one on-disk cache — simulating two
 // separate `flate` invocations (each with a fresh in-process indexCache).
-func fetcherWithCache(t *testing.T, r *manifest.HelmRepository, cache *source.Cache, layout cacheroot.Layout) *Fetcher {
+func fetcherWithCache(t *testing.T, r *manifest.HelmRepository, cache *sourcecache.Cache) *Fetcher {
 	t.Helper()
-	f, err := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, cache, layout)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return f
+	return New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, cache)
 }
 
 // TestResolveChart_DiskCacheSkipsIndexWarm pins the fix for the warm==cold
@@ -60,9 +56,13 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 	r.Interval = metav1.Duration{Duration: time.Hour} // fresh window
 
 	layout := cacheroot.New(t.TempDir())
-	cache := source.NewCache(layout)
+	cache, err := sourcecache.New(t.Context(), layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
 
-	cold := fetcherWithCache(t, r, cache, layout)
+	cold := fetcherWithCache(t, r, cache)
 	if _, err := cold.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
 		t.Fatalf("cold Fetch: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 		t.Fatalf("cold: indexHits=%d chartHits=%d, want 1/1", *indexHits, *chartHits)
 	}
 
-	warm := fetcherWithCache(t, r, cache, layout)
+	warm := fetcherWithCache(t, r, cache)
 	if _, err := warm.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
 		t.Fatalf("warm Fetch: %v", err)
 	}
@@ -88,12 +88,17 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, indexHits, _ := startHelmRepoCounted(t, chartBytes, chartDigest(chartBytes))
-	r := httpRepo(srv.URL) // Interval == 0 → always stale
+	r := httpRepo(srv.URL)
+	r.Interval = metav1.Duration{}
 
 	layout := cacheroot.New(t.TempDir())
-	cache := source.NewCache(layout)
+	cache, err := sourcecache.New(t.Context(), layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
 	for i := range 2 {
-		f := fetcherWithCache(t, r, cache, layout)
+		f := fetcherWithCache(t, r, cache)
 		if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
 			t.Fatalf("Fetch %d: %v", i, err)
 		}
@@ -103,10 +108,6 @@ func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
 	}
 }
 
-// TestResolveChart_DigestlessWarmSkipsIndex pins the digest-less edge: a mutable
-// index entry (no digest) still skips the expensive index fetch on a warm run,
-// but the chart .tgz is re-downloaded (no digest → no content-addressed dedup),
-// which is the conservative, correct behavior.
 func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, indexHits, chartHits := startHelmRepoCounted(t, chartBytes, "") // digest-less index
@@ -114,19 +115,23 @@ func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 	r.Interval = metav1.Duration{Duration: time.Hour}
 
 	layout := cacheroot.New(t.TempDir())
-	cache := source.NewCache(layout)
-	cold := fetcherWithCache(t, r, cache, layout)
+	cache, err := sourcecache.New(t.Context(), layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+	cold := fetcherWithCache(t, r, cache)
 	if _, err := cold.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
 		t.Fatalf("cold Fetch: %v", err)
 	}
-	warm := fetcherWithCache(t, r, cache, layout)
+	warm := fetcherWithCache(t, r, cache)
 	if _, err := warm.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
 		t.Fatalf("warm Fetch: %v", err)
 	}
 	if *indexHits != 1 {
 		t.Errorf("digest-less warm re-fetched index: indexHits=%d, want 1", *indexHits)
 	}
-	if *chartHits != 2 {
-		t.Errorf("digest-less chart hits=%d, want 2 (no digest → no CAS dedup, re-download)", *chartHits)
+	if *chartHits != 1 {
+		t.Errorf("digest-less chart hits=%d, want 1 (fresh requested chart)", *chartHits)
 	}
 }

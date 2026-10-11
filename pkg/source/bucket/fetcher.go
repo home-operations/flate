@@ -5,7 +5,10 @@ package bucket
 import (
 	"context"
 	"fmt"
-	"strconv"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"io"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
@@ -21,7 +24,7 @@ import (
 // here but return a clear "not implemented" error rather than silently
 // falling back, unless ForceGeneric sends them down the generic path.
 type Fetcher struct {
-	Cache   *source.Cache
+	Cache   *cache.Cache
 	Secrets source.SecretGetter
 
 	// ForceGeneric skips the provider gate; the generic path then needs
@@ -43,51 +46,30 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 		return nil, err
 	}
 
-	// Cache key: bucket+prefix. Unlike OCI / Git, the bucket fetcher
-	// has no "is the cached slot still valid?" check — walkBucket is
-	// write-only, so any file present in the slot from a previous run
-	// that was DELETED upstream between runs would be served as a
-	// ghost file. The revision hash is computed from the upstream
-	// listing, so it correctly reflects "no change" while the slot
-	// still holds the dead file. We treat every fetch as a miss:
-	// write to a fresh staging dir, then atomic-rename into the final
-	// slot on success.
-	slot, err := f.Cache.Slot(ctx, endpoint+"/"+b.BucketName, b.Prefix, authIdentity(b))
+	ignore := ""
+	if b.Ignore != nil {
+		ignore = *b.Ignore
+	}
+	h, err := source.CacheKeyHash([]any{endpoint, secure, b.BucketName, b.Prefix, b.Region, authIdentity(b), ignore, sourceignore.RulesVersion}, 32)
 	if err != nil {
-		return nil, fmt.Errorf("%s cache slot: %w", bucketID(b), err)
+		return nil, err
 	}
-	defer slot.Release()
-	if slot.Exists {
-		// Drop the prior committed slot and re-stage so the upcoming
-		// walk writes into an empty staging dir.
-		if err := slot.Refresh(); err != nil {
-			return nil, fmt.Errorf("%s refresh: %w", bucketID(b), err)
-		}
-	}
-
-	objectCount, revHash, err := walkBucket(ctx, client, b.BucketName, b.Prefix, slot.Path)
+	key := cache.ArchiveKey{ID: "source-bucket-" + h, Ignore: ignore}
+	input, desc, err := f.Cache.Acquire(ctx, key, b.Interval.Duration, func(w io.Writer) (ocispec.Descriptor, error) {
+		return walkBucket(ctx, client, b, w)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("%s walk: %w", bucketID(b), err)
-	}
-	// Bucket uses the no-defaults ignore variant — matches upstream
-	// source-controller's bucket_controller.go, which constructs an
-	// ignore Matcher without VCS / extension defaults. Buckets are
-	// object stores with no VCS semantics; .jpg / .flux.yaml / etc.
-	// are legitimate content and must reach the artifact.
-	if err := source.ApplyIgnoreNoDefaults(slot.Path, b.Ignore); err != nil {
 		return nil, fmt.Errorf("%s: %w", bucketID(b), err)
-	}
-	if err := slot.Commit(); err != nil {
-		return nil, fmt.Errorf("%s: commit slot: %w", bucketID(b), err)
 	}
 
 	return &store.SourceArtifact{
-		Kind:      manifest.KindBucket,
-		URL:       fmt.Sprintf("%s://%s/%s", schemeFor(secure), endpoint, b.BucketName),
-		LocalPath: slot.Path,
-		Revision:  revHash,
+		Kind:     manifest.KindBucket,
+		URL:      fmt.Sprintf("%s://%s/%s", schemeFor(secure), endpoint, b.BucketName),
+		FS:       input,
+		Key:      key.ID + "@" + desc.Annotations["flate.revision"],
+		Revision: desc.Annotations["flate.revision"],
 		Metadata: map[string]string{
-			"objectCount": strconv.Itoa(objectCount),
+			"objectCount": desc.Annotations["flate.object-count"],
 		},
 	}, nil
 }

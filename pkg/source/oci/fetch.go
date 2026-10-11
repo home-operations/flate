@@ -2,166 +2,146 @@ package oci
 
 import (
 	"cmp"
+	"compress/gzip"
 	"context"
-	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
+	"maps"
+	"time"
 
-	"oras.land/oras-go/v2"
-	orasoci "oras.land/oras-go/v2/content/oci"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// fetch pulls the OCIRepository artifact into cache. It reads as a pipeline:
-// build the registry client, resolve spec.ref to a concrete digest (honoring
-// the tag→digest resolve cache), acquire the artifact slot and try a cache
-// hit, otherwise oras.Copy the artifact and publish it (layer-select, ignore,
-// marker, commit). Credentials come from a docker-style config.json; when
-// spec.ref.semver is set the registry is listed and the highest matching tag
-// resolved before pulling. flate does not verify signatures, so spec.verify is
-// ignored and the artifact is pulled unconditionally.
-func fetch(ctx context.Context, f *Fetcher, repo *manifest.OCIRepository, registryConfig string, tlsCfg *tls.Config, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
-	cache := f.Cache
-	// Fetch already type-asserts repo non-nil before calling fetch().
+func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, client *remote.Repository) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
 		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, ociID(repo))
 	}
-	repoClient, err := newRepoClient(repo, registryConfig, tlsCfg, proxy)
-	if err != nil {
-		return nil, err
-	}
-
-	// Resolve spec.ref to a concrete (tag-or-digest) BEFORE choosing the cache
-	// slot, so different semver matches never share a slot. Flux precedence is
-	// digest > semver > tag.
 	var ref manifest.OCIRepositoryRef
 	if repo.Reference != nil {
 		ref = *repo.Reference
 	}
-	authID := authIdentity(repo)
-
-	resolveSlot, resolvedDigest, err := lookupResolveCache(ctx, cache, repo, ref, authID)
+	ignore := ""
+	if repo.Ignore != nil {
+		ignore = *repo.Ignore
+	}
+	h, err := source.CacheKeyHash([]any{repo.URL, ref, authIdentity(repo), f.RegistryConfig, repo.Insecure, repo.LayerSelector, ignore, sourceignore.RulesVersion}, 32)
 	if err != nil {
 		return nil, err
 	}
-	if resolveSlot != nil {
-		defer resolveSlot.Release()
+	id := "source-oci-" + h
+	maxAge := repo.Interval.Duration
+	if ref.Digest != "" {
+		maxAge = -time.Second
 	}
-	if ref, err = resolveRef(ctx, repoClient, repo, ref); err != nil {
-		return nil, err
-	}
-	tag := cmp.Or(versionTag(ref), latestTag)
-	if resolvedDigest == "" {
-		if resolvedDigest, err = resolveOCIRefDigest(ctx, repoClient, ref, tag); err != nil {
-			return nil, fmt.Errorf("%s resolve %s: %w", ociID(repo), tag, err)
+	var input fs.FS
+	var descriptor ocispec.Descriptor
+	produce := func(w io.Writer) (ocispec.Descriptor, error) {
+		selected, err := resolveRef(ctx, client, repo, ref)
+		if err != nil {
+			return ocispec.Descriptor{}, err
 		}
-		if err := writeResolveCache(resolveSlot, resolvedDigest); err != nil {
+		selectedRepo := *repo
+		selectedRepo.Reference = &selected
+		return produceLayer(ctx, client, &selectedRepo, w)
+	}
+	switch effectiveLayerOperation(repo.LayerSelector) {
+	case manifest.OCILayerOperationCopy:
+		id = "blob-oci-" + h
+		r, desc, err := f.Cache.Blob(ctx, cache.BlobKey{ID: id}, maxAge, produce)
+		if err != nil {
 			return nil, err
 		}
-	}
-	if resolveSlot != nil {
-		resolveSlot.Release()
-	}
-
-	versioned := versionedURL(repo.URL, ref)
-	slotRef := ociCacheKey(repo, ref, resolvedDigest, sourceignore.RulesVersion)
-	if resolvedDigest == "" {
-		slotRef = source.MutableCacheKey(slotRef)
-	}
-	slot, err := cache.Slot(ctx, repo.URL, slotRef, authID)
-	if err != nil {
-		return nil, fmt.Errorf("cache slot for %s: %w", versioned, err)
-	}
-	defer slot.Release()
-	if slot.Exists {
-		if resolvedDigest != "" {
-			if artifact, hit := checkCacheHit(repo, slot.Path, ref, versioned, resolvedDigest); hit {
-				return artifact, nil
-			}
+		input, descriptor = source.FileFS(copiedLayerFilename, r), desc
+		if err := r.Close(); err != nil {
+			return nil, err
 		}
-		// Stale or unresolved slot — wipe and stage a fresh pull target.
-		if err := slot.Refresh(); err != nil {
-			return nil, fmt.Errorf("cache refresh for %s: %w", versioned, err)
+	case manifest.OCILayerOperationExtract:
+		input, descriptor, err = f.Cache.Acquire(ctx, cache.ArchiveKey{ID: id, Ignore: ignore, WithDefaults: true}, maxAge, produce)
+		if err != nil {
+			return nil, err
 		}
+	default:
+		return nil, fmt.Errorf("%w: unsupported layer operation %q", manifest.ErrInput, effectiveLayerOperation(repo.LayerSelector))
 	}
-
-	digest, size, err := copyArtifact(ctx, repoClient, slot.Path, tag, resolvedDigest, versioned)
-	if err != nil {
-		return nil, err
-	}
-	if resolvedDigest != "" && digest != resolvedDigest {
-		return nil, fmt.Errorf("%s: resolved digest %s but copied %s", ociID(repo), resolvedDigest, digest)
-	}
-	return publishArtifact(repo, slot, ref, digest, size)
+	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, URL: repo.URL, FS: input,
+		Key: id + "@" + descriptor.Digest.String(), Revision: descriptor.Annotations["flate.revision"],
+		Digest: descriptor.Digest.String(), Size: descriptor.Size, Metadata: maps.Clone(descriptor.Annotations)}, nil
 }
 
-// resolveRef resolves a semver ref to a concrete tag by listing the registry;
-// digest and plain-tag refs pass through unchanged.
-func resolveRef(ctx context.Context, repoClient *remote.Repository, repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) (manifest.OCIRepositoryRef, error) {
+func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) (manifest.OCIRepositoryRef, error) {
 	if !shouldResolveOCISemver(ref) {
 		return ref, nil
 	}
-	resolved, err := resolveOCISemver(ctx, repoClient, ref.SemVer, ref.SemverFilter, layerMediaType(repo.LayerSelector))
+	tag, err := resolveOCISemver(ctx, client, ref.SemVer, ref.SemverFilter, layerMediaType(repo.LayerSelector))
 	if err != nil {
 		return ref, fmt.Errorf("%s semver: %w", ociID(repo), err)
 	}
-	return manifest.OCIRepositoryRef{Tag: resolved}, nil
+	return manifest.OCIRepositoryRef{Tag: tag}, nil
 }
 
-// copyArtifact runs oras.Copy of the (tag or resolved-digest) reference into an
-// OCI Image Layout content store rooted at slotPath, returning the pulled
-// digest and size.
-//
-// slotPath is the staging dir at this point; on success the caller's
-// slot.Commit() atomic-renames it over the final slot. Any error path returns
-// without committing and Release wipes the staging dir — the final slot stays
-// absent / unchanged, never torn. Blobs land at slot/blobs/<algo>/<hex> per the
-// OCI Image Layout spec; publishArtifact's applyLayerSelector reads from there
-// and wipes the layout after extracting the selected layer.
-func copyArtifact(ctx context.Context, repoClient *remote.Repository, slotPath, tag, resolvedDigest, versioned string) (digest string, size int64, err error) {
-	dest, err := orasoci.New(slotPath)
+func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, w io.Writer) (ocispec.Descriptor, error) {
+	ref, selector := *repo.Reference, repo.LayerSelector
+	desc, err := client.Resolve(ctx, cmp.Or(versionTag(ref), latestTag))
 	if err != nil {
-		return "", 0, fmt.Errorf("oras oci store: %w", err)
+		return desc, err
 	}
-	copyRef := cmp.Or(resolvedDigest, tag)
-	desc, err := oras.Copy(ctx, repoClient, copyRef, dest, tag, oras.DefaultCopyOptions)
+	data, err := content.FetchAll(ctx, client, desc)
 	if err != nil {
-		return "", 0, fmt.Errorf("oras copy %s: %w", versioned, err)
+		return desc, err
 	}
-	return desc.Digest.String(), desc.Size, nil
-}
-
-// publishArtifact finalizes a freshly pulled slot: select/extract the layer,
-// apply source-ignore, persist the digest marker, and commit. It is the last
-// leg of the pull and owns slot.Commit(). flate does not verify signatures, so
-// spec.verify is ignored.
-func publishArtifact(repo *manifest.OCIRepository, slot *source.Slot, ref manifest.OCIRepositoryRef, digest string, size int64) (*store.SourceArtifact, error) {
-	if err := applyLayerSelector(slot.Path, digest, repo.LayerSelector); err != nil {
-		return nil, fmt.Errorf("%s: layer select: %w", ociID(repo), err)
+	var m ocispec.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return desc, err
 	}
-	// Source-controller's default ignore set includes `*.tar.gz`. For
-	// operation=copy the artifact IS the .tar.gz we just produced at
-	// slot/<copiedLayerFilename>, so ApplyIgnore would delete it — skip it.
-	// For operation=extract the slot holds the extracted tree and the ignore
-	// semantics apply as Flux ships them.
-	if effectiveLayerOperation(repo.LayerSelector) == manifest.OCILayerOperationExtract {
-		if err := source.ApplyIgnore(slot.Path, repo.Ignore); err != nil {
-			return nil, fmt.Errorf("%s: %w", ociID(repo), err)
+	desc.Annotations = maps.Clone(m.Annotations)
+	if desc.Annotations == nil {
+		desc.Annotations = make(map[string]string)
+	}
+	desc.Annotations["flate.revision"] = ociRevision(ref, desc.Digest.String())
+	desc.Annotations["flate.resolved-tag"] = ref.Tag
+	layer, ok := pickLayer(m.Layers, selector)
+	if !ok {
+		if len(m.Layers) == 0 {
+			return desc, nil
+		}
+		return desc, fmt.Errorf("no layer matched mediaType %q (manifest has %d layer(s))", layerMediaType(selector), len(m.Layers))
+	}
+	r, err := client.Fetch(ctx, layer)
+	if err != nil {
+		return desc, err
+	}
+	defer func() { _ = r.Close() }()
+	verified := content.NewVerifyReader(r, layer)
+	if effectiveLayerOperation(selector) == manifest.OCILayerOperationExtract {
+		gz, err := gzip.NewReader(verified)
+		if err != nil {
+			return desc, fmt.Errorf("gzip: %w", err)
+		}
+		_, copyErr := io.Copy(w, gz) //nolint:gosec // The archive consumer caps expanded regular payloads before publication.
+		closeErr := gz.Close()
+		if copyErr != nil {
+			return desc, copyErr
+		}
+		if closeErr != nil {
+			return desc, closeErr
+		}
+	} else {
+		if _, err := io.Copy(w, verified); err != nil {
+			return desc, err
 		}
 	}
-	// Write the digest marker before Commit. A failure here is fatal: without
-	// it the next fetch sees a committed slot with "no marker" and
-	// resets+re-pulls every reconcile. Returning (skipping Commit) wipes the
-	// staging dir via Release so the next run starts clean.
-	if err := writeCachedDigest(slot.Path, digest); err != nil {
-		return nil, fmt.Errorf("%s: persist cached digest: %w", ociID(repo), err)
+	if _, err := io.Copy(io.Discard, verified); err != nil {
+		return desc, err
 	}
-	if err := slot.Commit(); err != nil {
-		return nil, fmt.Errorf("%s: commit slot: %w", ociID(repo), err)
-	}
-	return ociArtifact(repo, slot.Path, ref, digest, size), nil
+	return desc, verified.Verify()
 }

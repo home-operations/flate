@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/helmchart"
 )
@@ -366,7 +367,11 @@ func TestFetcher_OCIHelmRepositoryRegistryFallback(t *testing.T) {
 	}
 
 	layout := cacheroot.New(t.TempDir())
-	cache := source.NewCache(layout)
+	cache, err := sourcecache.New(t.Context(), layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
 	ociFetcher := &Fetcher{
 		Cache:          cache,
 		RegistryConfig: config,
@@ -377,7 +382,7 @@ func TestFetcher_OCIHelmRepositoryRegistryFallback(t *testing.T) {
 		URL: "oci://" + host + "/charts", Type: manifest.RepoTypeOCI, Insecure: true,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	charts, err := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, cache, layout)
+	charts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, cache)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +400,7 @@ func TestFetcher_OCIHelmRepositoryRegistryFallback(t *testing.T) {
 	if got.Kind != manifest.KindHelmChart {
 		t.Errorf("artifact Kind = %q, want %q", got.Kind, manifest.KindHelmChart)
 	}
-	if b := mustReadFile(t, filepath.Join(got.LocalPath, "Chart.yaml")); !strings.Contains(b, "name: app") {
+	if b := mustReadFile(t, got.FS, "Chart.yaml"); !strings.Contains(b, "name: app") {
 		t.Errorf("Chart.yaml = %q", b)
 	}
 }

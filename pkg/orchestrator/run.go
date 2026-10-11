@@ -289,5 +289,8 @@ func (o *Orchestrator) Stop() {
 		o.hrc.Close()
 		o.ksc.Close()
 		o.src.Close()
+		if o.cfg.Cache == nil && o.cache != nil {
+			_ = o.cache.Close()
+		}
 	})
 }

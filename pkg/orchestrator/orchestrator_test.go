@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,7 +22,10 @@ import (
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // TestDetectOrphans drives the orphan-detection logic in isolation —
@@ -1775,5 +1779,56 @@ func TestOrchestrator_BootstrapChartDigestTrackingInputOrder(t *testing.T) {
 			}
 			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, true)
 		})
+	}
+}
+
+func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		for _, backing := range []string{"memory", "disk"} {
+			t.Run(fmt.Sprintf("workers_%d/%s", workers, backing), func(t *testing.T) {
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
+				}
+				c, err := sourcecache.New(t.Context(), cacheroot.New(root))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = c.Close() })
+				calls := 0
+				key := sourcecache.BlobKey{ID: "blob-owner-test"}
+				produce := func(w io.Writer) (ocispec.Descriptor, error) {
+					calls++
+					_, err := io.WriteString(w, "held")
+					return ocispec.Descriptor{}, err
+				}
+				reader, _, err := c.Blob(t.Context(), key, time.Hour, produce)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = reader.Close()
+				baseDir, headDir := t.TempDir(), t.TempDir()
+				for _, dir := range []string{baseDir, headDir} {
+					testutil.WriteFile(t, dir, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
+				}
+				base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir},
+					Config{Cache: c, CacheDir: root, Concurrency: workers})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if base.cache != c || head.cache != c {
+					t.Fatal("diff sides have different acquisition owners")
+				}
+				reader, _, err = c.Blob(t.Context(), key, time.Hour, produce)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := io.ReadAll(reader)
+				_ = reader.Close()
+				if err != nil || string(data) != "held" || calls != 1 {
+					t.Fatalf("caller cache after both sides stop: data=%q calls=%d err=%v", data, calls, err)
+				}
+			})
+		}
 	}
 }

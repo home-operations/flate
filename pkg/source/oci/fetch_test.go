@@ -4,24 +4,24 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/opencontainers/go-digest"
+	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -46,7 +46,7 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
-	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	f := &Fetcher{Cache: newSourceCache(t)}
 	repo := &manifest.OCIRepository{
 		Name:      "flux-manifests",
 		Namespace: "flux-system",
@@ -61,15 +61,15 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	if art == nil || art.LocalPath == "" {
+	if art == nil || art.FS == nil {
 		t.Fatal("Fetch returned no artifact")
 	}
 
 	// Observable proof that the layer made it to disk and got extracted.
-	got, err := os.ReadFile(filepath.Join(art.LocalPath, "gotk-components.yaml")) //nolint:gosec // inside t.TempDir-rooted slot
+	got, err := fs.ReadFile(art.FS, "gotk-components.yaml") //nolint:gosec // inside t.TempDir-rooted slot
 	if err != nil {
 		t.Fatalf("expected extracted gotk-components.yaml under %s: %v\nslot contents: %v",
-			art.LocalPath, err, slotEntries(t, art.LocalPath))
+			art.Key, err, art.FS)
 	}
 	if want := "kind: ConfigMap\n"; string(got) != want {
 		t.Errorf("gotk-components.yaml = %q, want %q", got, want)
@@ -77,71 +77,10 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 
 	// OCI layout artifacts should be wiped after extract so kustomize /
 	// downstream consumers see only the artifact's own files.
-	for _, name := range ociLayoutArtifacts {
-		if _, err := os.Stat(filepath.Join(art.LocalPath, name)); !os.IsNotExist(err) {
+	for _, name := range []string{"blobs", "index.json", "oci-layout"} {
+		if _, err := fs.Stat(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("leftover OCI layout artifact in slot: %s (err: %v)", name, err)
 		}
-	}
-}
-
-// TestFetcher_PartialSlotInvalidated guards against a corrupt cache
-// hit: a prior fetch that crashed AFTER oras.Copy populated `blobs/`
-// but BEFORE writeCachedDigest finalized the `.flate-digest` sentinel
-// would otherwise be served back as a valid artifact (cache.Slot
-// reports non-empty dir → exists=true). Treat the missing sentinel
-// as an invalidated slot and re-pull.
-func TestFetcher_PartialSlotInvalidated(t *testing.T) {
-	t.Parallel()
-
-	layerBytes := mustTarGz(t, map[string]string{"Chart.yaml": "apiVersion: v2\nname: x\nversion: 0.1.0\n"})
-	configBytes := []byte(`{}`)
-	manifestBytes := mustManifestJSON(t, configBytes, layerBytes,
-		"application/vnd.cncf.flux.config.v1+json",
-		"application/vnd.cncf.helm.chart.content.v1.tar+gzip",
-	)
-	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
-
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
-	f := &Fetcher{Cache: cache}
-	repo := &manifest.OCIRepository{
-		Name:      "partial",
-		Namespace: "test",
-		URL:       fmt.Sprintf("oci://%s/partial", mustURL(t, srv.URL).Host),
-		Insecure:  true,
-		Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
-	}
-
-	// First fetch populates the slot fully.
-	art, err := f.Fetch(t.Context(), repo)
-	if err != nil {
-		t.Fatalf("first Fetch: %v", err)
-	}
-	digestPath := filepath.Join(art.LocalPath, source.SlotMetaFile)
-	if _, err := os.Stat(digestPath); err != nil {
-		t.Fatalf("first fetch did not produce .flate-digest: %v", err)
-	}
-
-	// Simulate the crash: remove the sentinel but leave stray content
-	// (a leftover dir is closer to the real crash shape than an empty
-	// slot, which Slot() would treat as fresh).
-	if err := os.Remove(digestPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(art.LocalPath, "blobs", "sha256"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-
-	// Second fetch must NOT return the corrupt slot. With the fix it
-	// resets and re-pulls; the .flate-digest comes back.
-	art2, err := f.Fetch(t.Context(), repo)
-	if err != nil {
-		t.Fatalf("second Fetch (after partial-slot reset): %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(art2.LocalPath, source.SlotMetaFile)); err != nil {
-		t.Errorf("second fetch did not re-populate .flate-digest after partial-slot reset: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(art2.LocalPath, "Chart.yaml")); err != nil {
-		t.Errorf("second fetch did not re-extract Chart.yaml: %v", err)
 	}
 }
 
@@ -167,7 +106,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 	)
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
-	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	f := &Fetcher{Cache: newSourceCache(t)}
 	repo := &manifest.OCIRepository{
 		Name:      "collider",
 		Namespace: "test",
@@ -183,7 +122,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 
 	// User's blobs/should-survive.yaml must be intact, not wiped by
 	// the OCI layout cleanup.
-	got, err := os.ReadFile(filepath.Join(art.LocalPath, "blobs", "should-survive.yaml")) //nolint:gosec // inside t.TempDir-rooted slot
+	got, err := fs.ReadFile(art.FS, "blobs/should-survive.yaml") //nolint:gosec // inside t.TempDir-rooted slot
 	if err != nil {
 		t.Fatalf("user's blobs/should-survive.yaml was wiped by cleanup: %v", err)
 	}
@@ -192,7 +131,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 	}
 	// User's index.json + oci-layout files must also survive.
 	for _, name := range []string{"index.json", "oci-layout", "kustomization.yaml"} {
-		if _, err := os.Stat(filepath.Join(art.LocalPath, name)); err != nil {
+		if _, err := fs.Stat(art.FS, name); err != nil {
 			t.Errorf("user's %s was wiped: %v", name, err)
 		}
 	}
@@ -203,7 +142,7 @@ func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
 	v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
 	srv, setArtifact := startMutableFakeRegistry(t, v1, v2)
 
-	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	f := &Fetcher{Cache: newSourceCache(t)}
 	repo := &manifest.OCIRepository{
 		Name:      "mutable",
 		Namespace: "test",
@@ -216,7 +155,7 @@ func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Fetch: %v", err)
 	}
-	if got := mustReadFile(t, filepath.Join(art1.LocalPath, "app.yaml")); !strings.Contains(got, "v1") {
+	if got := mustReadFile(t, art1.FS, "app.yaml"); !strings.Contains(got, "v1") {
 		t.Fatalf("first fetch content = %q", got)
 	}
 
@@ -228,7 +167,7 @@ func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
 	if art2.Digest == art1.Digest {
 		t.Fatalf("mutable tag reused stale digest %s", art2.Digest)
 	}
-	if got := mustReadFile(t, filepath.Join(art2.LocalPath, "app.yaml")); !strings.Contains(got, "v2") {
+	if got := mustReadFile(t, art2.FS, "app.yaml"); !strings.Contains(got, "v2") {
 		t.Fatalf("second fetch content = %q", got)
 	}
 }
@@ -238,7 +177,7 @@ func TestFetcher_MutableTagUsesFreshIntervalResolveCache(t *testing.T) {
 	v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
 	srv, setArtifact := startMutableFakeRegistry(t, v1, v2)
 
-	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	f := &Fetcher{Cache: newSourceCache(t)}
 	repo := &manifest.OCIRepository{
 		Name:      "mutable",
 		Namespace: "test",
@@ -261,7 +200,7 @@ func TestFetcher_MutableTagUsesFreshIntervalResolveCache(t *testing.T) {
 	if art2.Digest != art1.Digest {
 		t.Fatalf("fresh interval cache should reuse digest %s, got %s", art1.Digest, art2.Digest)
 	}
-	if got := mustReadFile(t, filepath.Join(art2.LocalPath, "app.yaml")); !strings.Contains(got, "v1") {
+	if got := mustReadFile(t, art2.FS, "app.yaml"); !strings.Contains(got, "v1") {
 		t.Fatalf("fresh interval cache content = %q", got)
 	}
 }
@@ -270,12 +209,13 @@ func TestFetcher_TagCacheHitSkipsSecondPull(t *testing.T) {
 	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 	srv, failBlobs := startFakeRegistryWithBlobGate(t, v1)
 
-	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	f := &Fetcher{Cache: newSourceCache(t)}
 	repo := &manifest.OCIRepository{
 		Name:      "stable-tag",
 		Namespace: "test",
 		URL:       fmt.Sprintf("oci://%s/stable-tag", mustURL(t, srv.URL).Host),
 		Insecure:  true,
+		Interval:  metav1.Duration{Duration: time.Hour},
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
 	}
 
@@ -291,7 +231,7 @@ func TestFetcher_TagCacheHitSkipsSecondPull(t *testing.T) {
 	if art2.Digest != art1.Digest {
 		t.Fatalf("digest changed on stable tag cache hit: %s -> %s", art1.Digest, art2.Digest)
 	}
-	if got := mustReadFile(t, filepath.Join(art2.LocalPath, "app.yaml")); !strings.Contains(got, "v1") {
+	if got := mustReadFile(t, art2.FS, "app.yaml"); !strings.Contains(got, "v1") {
 		t.Fatalf("cached tag content = %q", got)
 	}
 }
@@ -300,7 +240,7 @@ func TestFetcher_MutableRefreshFailureKeepsPreviousSlot(t *testing.T) {
 	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 	srv, _ := startMutableFakeRegistry(t, v1)
 
-	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	f := &Fetcher{Cache: newSourceCache(t)}
 	repo := &manifest.OCIRepository{
 		Name:      "mutable",
 		Namespace: "test",
@@ -317,7 +257,7 @@ func TestFetcher_MutableRefreshFailureKeepsPreviousSlot(t *testing.T) {
 	if _, err := f.Fetch(t.Context(), repo); err == nil {
 		t.Fatal("expected refresh to fail after registry shutdown")
 	}
-	if got := mustReadFile(t, filepath.Join(art.LocalPath, "app.yaml")); !strings.Contains(got, "v1") {
+	if got := mustReadFile(t, art.FS, "app.yaml"); !strings.Contains(got, "v1") {
 		t.Fatalf("failed mutable refresh damaged previous slot; app.yaml = %q", got)
 	}
 }
@@ -326,7 +266,7 @@ func TestFetcher_DigestRefUsesCachedSlot(t *testing.T) {
 	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 	srv := startFakeRegistry(t, v1.manifest, v1.config, v1.layer)
 
-	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	f := &Fetcher{Cache: newSourceCache(t)}
 	repo := &manifest.OCIRepository{
 		Name:      "pinned",
 		Namespace: "test",
@@ -346,7 +286,7 @@ func TestFetcher_DigestRefUsesCachedSlot(t *testing.T) {
 func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
 	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 	srv := startFakeRegistry(t, v1.manifest, v1.config, v1.layer)
-	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	f := &Fetcher{Cache: newSourceCache(t)}
 
 	copyRepo := &manifest.OCIRepository{
 		Name:      "copy",
@@ -362,7 +302,7 @@ func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("copy Fetch: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(copyArt.LocalPath, "layer.tar.gz")); err != nil {
+	if _, err := fs.Stat(copyArt.FS, "layer.tar.gz"); err != nil {
 		t.Fatalf("copy artifact missing layer.tar.gz: %v", err)
 	}
 
@@ -377,10 +317,10 @@ func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract Fetch: %v", err)
 	}
-	if extractArt.LocalPath == copyArt.LocalPath {
-		t.Fatalf("different layer selectors reused cache slot %s", extractArt.LocalPath)
+	if extractArt.Key == copyArt.Key {
+		t.Fatalf("different layer selectors reused cache slot %s", extractArt.Key)
 	}
-	if got := mustReadFile(t, filepath.Join(extractArt.LocalPath, "app.yaml")); !strings.Contains(got, "v1") {
+	if got := mustReadFile(t, extractArt.FS, "app.yaml"); !strings.Contains(got, "v1") {
 		t.Fatalf("extract artifact content = %q", got)
 	}
 }
@@ -584,24 +524,47 @@ func mustURL(t *testing.T, raw string) *url.URL {
 	return u
 }
 
-func slotEntries(t *testing.T, dir string) []string {
+func mustReadFile(t *testing.T, input fs.FS, path string) string {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return []string{"<unreadable: " + err.Error() + ">"}
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	return names
-}
-
-func mustReadFile(t *testing.T, path string) string {
-	t.Helper()
-	b, err := os.ReadFile(path) //nolint:gosec // test-owned path
+	b, err := fs.ReadFile(input, path) //nolint:gosec // test-owned path
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+func newSourceCache(t *testing.T) *sourcecache.Cache {
+	t.Helper()
+	c, err := sourcecache.New(t.Context(), cacheroot.New(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return c
+}
+
+func TestFetcher_CacheIsolatesSources(t *testing.T) {
+	c := newSourceCache(t)
+	f := &Fetcher{Cache: c}
+	var keys []string
+	for _, body := range []string{"first", "second"} {
+		v := newFakeOCIArtifact(t, map[string]string{"app.yaml": body})
+		srv := startFakeRegistry(t, v.manifest, v.config, v.layer)
+		repo := &manifest.OCIRepository{URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Digest: v.manifestDigest}}
+		art, err := f.Fetch(t.Context(), repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := mustReadFile(t, art.FS, "app.yaml"); got != body {
+			t.Fatalf("source collision: %q, want %q", got, body)
+		}
+		keys = append(keys, art.Key)
+	}
+	if keys[0] == keys[1] {
+		t.Fatal("distinct sources share their published identity")
+	}
 }

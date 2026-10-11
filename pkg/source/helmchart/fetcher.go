@@ -14,7 +14,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
@@ -24,7 +23,7 @@ import (
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -43,32 +42,16 @@ type Fetcher struct {
 	secrets source.SecretGetter // HTTP-branch SecretRef/CertSecretRef auth
 	repos   RepoLookup          // resolves the chart's backing HelmRepository
 	oci     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
-	cache   *source.Cache       // content-addressed store for HTTP chart tarballs
+	Cache   *cache.Cache        // content-addressed store for HTTP chart tarballs
 
-	indexCache    sync.Map                // map[string]*repo.IndexFile (process lifetime)
-	indexLocks    *keylock.KeyMap[string] // coalesce one index.yaml fetch per repo
-	downloadLocks *keylock.KeyMap[string] // coalesce one download per chart
-	tmpDir        string                  // index/TLS temp files
+	indexCache                 sync.Map                // map[string]*repo.IndexFile (process lifetime)
+	indexLocks                 *keylock.KeyMap[string] // coalesce one index.yaml fetch per repo
+	DisableChartDigestTracking bool
 }
 
-// New constructs a HelmChart fetcher. cache is the shared content-addressed
-// store HTTP chart tarballs land in (so they dedup with the rest of the cache
-// and the GC sweep sees them); layout supplies the helm tmp dir for index/TLS
-// temp files.
-func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cache *source.Cache, layout cacheroot.Layout) (*Fetcher, error) {
-	tmpDir := layout.HelmTmp()
-	if err := os.MkdirAll(tmpDir, 0o750); err != nil {
-		return nil, fmt.Errorf("helmchart: tmp dir: %w", err)
-	}
-	return &Fetcher{
-		secrets:       secrets,
-		repos:         repos,
-		oci:           oci,
-		cache:         cache,
-		indexLocks:    keylock.New[string](),
-		downloadLocks: keylock.New[string](),
-		tmpDir:        tmpDir,
-	}, nil
+// New constructs a fetcher using the caller-owned acquisition cache.
+func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cache *cache.Cache) *Fetcher {
+	return &Fetcher{secrets: secrets, repos: repos, oci: oci, Cache: cache, indexLocks: keylock.New[string]()}
 }
 
 // Fetch implements source.TypedFetcher[*manifest.HelmChartSource]. It
@@ -96,7 +79,12 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 		// the synthetic HelmChart's identity. Retry is owned by the
 		// source.WithRetry wrapper around THIS fetcher — the inner OCI
 		// fetcher is bare (not separately wrapped).
-		art, err := f.oci.Fetch(ctx, synthesizeOCIRepository(r, hc.Chart, hc.Version))
+		syn := synthesizeOCIRepository(r, hc.Chart, hc.Version)
+		syn.Interval = r.Interval
+		if f.DisableChartDigestTracking && isExactSemver(hc.Version) {
+			syn.Interval.Duration = -1
+		}
+		art, err := f.oci.Fetch(ctx, syn)
 		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryWithRegistryConfig != nil {
 			retry := missing.RetryWithRegistryConfig
 			wrapped := *missing

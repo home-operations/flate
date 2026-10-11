@@ -16,7 +16,6 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/home-operations/flate/internal/keylock"
-	"github.com/home-operations/flate/pkg/source/blob"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -33,11 +32,6 @@ type Cache struct {
 	// keylock.KeyMap implementation with helm + blob keeps cancellation
 	// semantics and lifetime management consistent across the cache.
 	locks *keylock.KeyMap[string]
-	// blobs is the content-addressed store backing PutBytes/BlobByDigest —
-	// the immutable counterpart to ref-keyed Slot. Owned by the Cache so
-	// every fetcher reaches one cache surface and a shared Cache (the diff
-	// flow's two orchestrators) shares one blob lock map.
-	blobs *blob.Store
 }
 
 // NewCache constructs a Cache backed by the supplied Layout. The
@@ -50,27 +44,7 @@ func NewCache(layout cacheroot.Layout) *Cache {
 	if layout.Root == "" {
 		layout.Root = filepath.Join(os.TempDir(), "flate-cache")
 	}
-	return &Cache{layout: layout, locks: keylock.New[string](), blobs: blob.NewStore(layout)}
-}
-
-// PutBytes installs content as a single file named filename in the shared
-// content-addressed blob store, returning the populated blob directory and its
-// sha256 digest. It's the immutable counterpart to Slot: Slot stages ref-keyed
-// mutable artifacts (git trees, OCI layouts) that need a refresh/commit
-// lifecycle, while PutBytes stores already-content-addressed bytes (e.g. an
-// HTTP chart tarball pulled by digest) so identical content dedups across
-// sources. Concurrent callers writing the same digest serialize internally.
-func (c *Cache) PutBytes(ctx context.Context, content []byte, filename string) (dir, digest string, err error) {
-	return c.blobs.PutBytes(ctx, content, filename)
-}
-
-// BlobByDigest returns the populated blob directory for digest and true on a
-// content-addressed cache hit, or ("", false) for an empty or absent digest.
-func (c *Cache) BlobByDigest(digest string) (string, bool) {
-	if digest == "" || !c.blobs.Exists(digest) {
-		return "", false
-	}
-	return c.blobs.Path(digest), true
+	return &Cache{layout: layout, locks: keylock.New[string]()}
 }
 
 // Slot allocates a per-(url, ref) slot under the cache root with
@@ -347,31 +321,6 @@ func (s *Slot) StageRefresh() error {
 		return nil
 	}
 	return s.allocStaging("refresh stage")
-}
-
-// PersistMeta atomically records meta-only sidecar fields on the slot: the
-// resolve-cache write path (OCI digest, helm chart resolution) whose only
-// on-disk product is the .flate-meta.json sidecar, never a materialized tree.
-// On a cache hit it stages a refresh (keeping the old slot readable until
-// commit), applies mutate to the SlotMeta via the read-modify-write
-// UpdateSlotMeta, then commits under the held slot lock. It is the meta-only
-// sibling of Commit and folds the previously-duplicated stage→write→commit
-// dance the OCI and helmchart resolve writers each carried. Callers keep their
-// own no-op guard (a nil slot or an incomplete resolution) since the predicate
-// differs per source kind.
-func (s *Slot) PersistMeta(mutate func(*SlotMeta)) error {
-	if s.Exists {
-		if err := s.StageRefresh(); err != nil {
-			return fmt.Errorf("slot meta stage: %w", err)
-		}
-	}
-	if err := UpdateSlotMeta(s.Path, mutate); err != nil {
-		return fmt.Errorf("slot meta write: %w", err)
-	}
-	if err := s.Commit(); err != nil {
-		return fmt.Errorf("slot meta commit: %w", err)
-	}
-	return nil
 }
 
 func (s *Slot) lockFile(ctx context.Context) error {

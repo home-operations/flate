@@ -1,277 +1,206 @@
 package helmchart
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"slices"
 	"strings"
 	"time"
 
-	"helm.sh/helm/v4/pkg/getter"
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 	repo "helm.sh/helm/v4/pkg/repo/v1"
+	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// fetchHTTPChart pulls a chart from a classic HTTP HelmRepository: resolve the
-// chart name+version to a concrete (version, digest, URL), then fetch the .tgz
-// via helm's getter, store it content-addressed, and return an artifact whose
-// LocalPath is the blob dir containing chart.tgz. A warm run with a fresh
-// on-disk resolution and the blob already cached opens zero sockets.
 func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository, chartName, version string) (*store.SourceArtifact, error) {
-	authOpts, err := f.helmRepoAuthOptions(r)
+	h, err := source.CacheKeyHash([]any{r.URL, chartName, version, helmRepoAuthIdentity(r), r.PassCredentials}, 32)
 	if err != nil {
 		return nil, err
 	}
-	tr, err := f.helmRepoTransport(r)
-	if err != nil {
-		return nil, err
+	key := cache.BlobKey{ID: "blob-chart-" + h}
+	maxAge := r.Interval.Duration
+	if f.DisableChartDigestTracking && isExactSemver(version) {
+		maxAge = -time.Second
 	}
-	allOpts := authOpts
-	if tr != nil {
-		// Custom-CA repo: override httpGet's default guarded transport with one
-		// that also carries this repo's TLS (last WithTransport wins).
-		allOpts = append(slices.Clone(authOpts), getter.WithTransport(tr))
-	}
-
-	res, err := f.resolveChart(ctx, r, chartName, version, allOpts)
-	if err != nil {
-		return nil, err
-	}
-
-	if art, ok := f.chartArtifactByDigest(res.ChartURL, res.Version, res.Digest); ok {
-		return art, nil
-	}
-	release, err := f.downloadLocks.Acquire(ctx, chartDownloadKey(r, chartName, res.Version, res.ChartURL, res.Digest))
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	if art, ok := f.chartArtifactByDigest(res.ChartURL, res.Version, res.Digest); ok {
-		return art, nil
-	}
-
-	buf, err := httpGet(res.ChartURL, allOpts)
-	if err != nil {
-		return nil, fmt.Errorf("download %s: %w", res.ChartURL, err)
-	}
-	dir, digest, err := f.cache.PutBytes(ctx, buf.Bytes(), "chart.tgz")
-	if err != nil {
-		return nil, fmt.Errorf("store chart %s: %w", res.ChartURL, err)
-	}
-	if res.Digest != "" && digest != res.Digest {
-		return nil, fmt.Errorf("chart %s@%s digest mismatch: index has %s, downloaded %s",
-			chartName, res.Version, res.Digest, digest)
-	}
-	return httpChartArtifact(res.ChartURL, dir, res.Version, digest), nil
-}
-
-// resolveChart maps (chartName, requested version) to a concrete
-// (version, digest, URL) for an HTTP HelmRepository. Three tiers, cheapest
-// first: fetchIndex's in-process index memo (Tier 1), an on-disk resolve slot
-// fresh within spec.interval that skips the network entirely (Tier 2), then a
-// live index.yaml fetch whose result is persisted back to the slot (Tier 3).
-//
-// The slot key uses the RAW requested version, so a semver range and a pin
-// never share a slot — within one spec.interval window the cache deliberately
-// serves the same resolution a live fetch would have at populate time (the OCI
-// mutable-ref / resolve-marker contract, now applied to helm ranges). A pinned
-// exact version resolves identically regardless, so freshness only matters for
-// ranges. The chart .tgz stays content-addressed by digest, so this changes no
-// rendered output — only whether the index is fetched.
-func (f *Fetcher) resolveChart(ctx context.Context, r *manifest.HelmRepository, chartName, version string, opts []getter.Option) (chartResolution, error) {
-	slot, err := f.cache.Slot(ctx, r.URL, "helm-resolve:"+chartName+"@"+version, helmRepoAuthIdentity(r))
-	if err != nil {
-		return chartResolution{}, fmt.Errorf("helm resolve slot for %s: %w", r.URL, err)
-	}
-	defer slot.Release()
-	if slot.Exists {
-		if res, ok := readResolveFresh(slot.Path, r.Interval.Duration); ok {
-			return res, nil
+	reader, desc, err := f.Cache.Blob(ctx, key, maxAge, func(w io.Writer) (ocispec.Descriptor, error) {
+		idx, err := f.fetchIndex(ctx, r)
+		if err != nil {
+			return ocispec.Descriptor{}, err
 		}
-	}
-
-	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	idx, err := f.fetchIndex(ctx, r.Namespace+"/"+r.Name+"@"+indexURL, indexURL, opts)
+		cv, err := idx.Get(chartName, version)
+		if err != nil {
+			return ocispec.Descriptor{}, fmt.Errorf("%w: chart %s@%s not found in %s: %v", manifest.ErrObjectNotFound, chartName, version, r.URL, err)
+		}
+		if len(cv.URLs) == 0 {
+			return ocispec.Descriptor{}, fmt.Errorf("%w: chart %s@%s in %s has no URLs", manifest.ErrObjectNotFound, chartName, version, r.URL)
+		}
+		chartURL, err := absChartURL(r.URL, cv.URLs[0])
+		if err != nil {
+			return ocispec.Descriptor{}, err
+		}
+		desc, err := f.httpGet(ctx, r, chartURL, w)
+		if err != nil {
+			return desc, err
+		}
+		expected := normalizeChartDigest(cv.Digest)
+		if expected != "" && desc.Digest.Encoded() != expected {
+			return desc, fmt.Errorf("chart %s@%s digest mismatch: index has %s, downloaded %s", chartName, cv.Version, expected, desc.Digest.Encoded())
+		}
+		desc.Annotations = map[string]string{"flate.chart-version": cv.Version, "flate.chart-url": chartURL, "flate.chart-digest": expected}
+		return desc, nil
+	})
 	if err != nil {
-		return chartResolution{}, err
+		return nil, err
 	}
-	cv, err := idx.Get(chartName, version)
-	if err != nil {
-		return chartResolution{}, fmt.Errorf("%w: chart %s@%s not found in %s: %v",
-			manifest.ErrObjectNotFound, chartName, version, r.URL, err)
+	input := source.FileFS("chart.tgz", reader)
+	if err := reader.Close(); err != nil {
+		return nil, err
 	}
-	if len(cv.URLs) == 0 {
-		return chartResolution{}, fmt.Errorf("%w: chart %s@%s in %s has no URLs",
-			manifest.ErrObjectNotFound, chartName, version, r.URL)
-	}
-	chartURL, err := absChartURL(r.URL, cv.URLs[0])
-	if err != nil {
-		return chartResolution{}, err
-	}
-	res := chartResolution{Version: cv.Version, Digest: normalizeChartDigest(cv.Digest), ChartURL: chartURL}
-	if err := persistResolve(slot, res); err != nil {
-		return chartResolution{}, err
-	}
-	return res, nil
+	return &store.SourceArtifact{Kind: manifest.KindHelmChart, FS: input, Key: key.ID + "@" + desc.Digest.String(),
+		URL: desc.Annotations["flate.chart-url"], Revision: desc.Annotations["flate.chart-version"], Digest: desc.Digest.Encoded(), Size: desc.Size}, nil
 }
 
-// chartArtifactByDigest returns the cached chart artifact when the index
-// supplied a digest and the blob is already present (content-addressed
-// dedup across HelmRepositories). A digest-less index is mutable → miss.
-func (f *Fetcher) chartArtifactByDigest(chartURL, version, digest string) (*store.SourceArtifact, bool) {
-	dir, ok := f.cache.BlobByDigest(digest)
-	if !ok {
-		return nil, false
+func (f *Fetcher) fetchIndex(ctx context.Context, r *manifest.HelmRepository) (*repo.IndexFile, error) {
+	h, err := source.CacheKeyHash([]any{r.URL, helmRepoAuthIdentity(r), r.PassCredentials}, 32)
+	if err != nil {
+		return nil, err
 	}
-	return httpChartArtifact(chartURL, dir, version, digest), true
-}
-
-func httpChartArtifact(chartURL, dir, version, digest string) *store.SourceArtifact {
-	return &store.SourceArtifact{
-		Kind:      manifest.KindHelmChart,
-		URL:       chartURL,
-		LocalPath: dir, // dir containing chart.tgz
-		Revision:  version,
-		Digest:    digest,
-	}
-}
-
-// fetchIndex returns the parsed index.yaml for a HelmRepository, memoized on
-// indexCache for the process lifetime and keyed by `<ns>/<name>@<indexURL>`
-// (CR identity, so two repos sharing a URL but different auth don't collide).
-// N concurrent chart fetches against the same repo coalesce on indexLocks so
-// exactly one HTTP fetch runs.
-func (f *Fetcher) fetchIndex(ctx context.Context, cacheKey, indexURL string, opts []getter.Option) (*repo.IndexFile, error) {
-	if idx, ok := f.cachedIndex(cacheKey); ok {
-		return idx, nil
-	}
-	release, err := f.indexLocks.Acquire(ctx, cacheKey)
+	release, err := f.indexLocks.Acquire(ctx, h)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	if idx, ok := f.cachedIndex(cacheKey); ok {
-		return idx, nil
+	if v, ok := f.indexCache.Load(h); ok {
+		return v.(*repo.IndexFile), nil
 	}
-	buf, err := httpGet(indexURL, opts)
+	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
+	reader, _, err := f.Cache.Blob(ctx, cache.BlobKey{ID: "blob-index-" + h}, r.Interval.Duration, func(w io.Writer) (ocispec.Descriptor, error) { return f.httpGet(ctx, r, indexURL, w) })
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", indexURL, err)
 	}
-	tmp, err := os.CreateTemp(f.tmpDir, "helm-index-*.yaml")
-	if err != nil {
-		return nil, err
+	data, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil {
+		return nil, readErr
 	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
-		_ = tmp.Close()
-		return nil, err
+	if closeErr != nil {
+		return nil, closeErr
 	}
-	if err := tmp.Close(); err != nil {
-		return nil, err
-	}
-	idx, err := repo.LoadIndexFile(tmpPath)
+	idx, err := indexFromBytes(data)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", indexURL, err)
 	}
-	f.indexCache.Store(cacheKey, idx)
+	f.indexCache.Store(h, idx)
 	return idx, nil
 }
 
-// cachedIndex returns the memoized index.yaml for cacheKey, if present.
-func (f *Fetcher) cachedIndex(cacheKey string) (*repo.IndexFile, bool) {
-	v, ok := f.indexCache.Load(cacheKey)
-	if !ok {
-		return nil, false
+// indexFromBytes follows Flux's IndexFromBytes policy, including skippable chart validation.
+func indexFromBytes(data []byte) (*repo.IndexFile, error) {
+	idx := &repo.IndexFile{}
+	if len(data) == 0 {
+		return idx, repo.ErrEmptyIndexYaml
 	}
-	return v.(*repo.IndexFile), true
-}
-
-func chartDownloadKey(r *manifest.HelmRepository, chartName, version, chartURL, digest string) string {
-	if digest != "" {
-		return "sha256:" + digest
+	var err error
+	if json.Valid(data) {
+		err = json.Unmarshal(data, idx)
+	} else {
+		err = yaml.UnmarshalStrict(data, idx)
 	}
-	return safeName(r.Namespace+"-"+r.Name+"-"+chartName) + "-" + version + "@" + chartURL
+	if err != nil {
+		return idx, err
+	}
+	for name, entries := range idx.Entries {
+		idx.Entries[name] = slices.DeleteFunc(entries, func(v *repo.ChartVersion) bool {
+			if v == nil {
+				return true
+			}
+			if v.Metadata == nil {
+				v.Metadata = &chart.Metadata{}
+			}
+			if v.APIVersion == "" {
+				v.APIVersion = chart.APIVersionV1
+			}
+			err := v.Validate()
+			if validation, ok := errors.AsType[chart.ValidationError](err); ok && strings.HasPrefix(validation.Error(), "validation: more than one dependency with name or alias") {
+				return false
+			}
+			return err != nil
+		})
+	}
+	idx.SortEntries()
+	if idx.APIVersion == "" {
+		return idx, repo.ErrNoAPIVersion
+	}
+	return idx, nil
 }
 
-func normalizeChartDigest(digest string) string {
-	return strings.TrimPrefix(strings.TrimSpace(digest), "sha256:")
-}
-
-// absChartURL resolves urlStr against base — HelmRepository index entries
-// often carry relative URLs which need joining against the repo's spec.url.
-// A trailing slash is forced on the base path so ResolveReference (RFC 3986)
-// treats spec.url as the index's base directory rather than a file: without it
-// `https://host/charts` + `emqx-5.8.9.tgz` would drop the `/charts` segment and
-// 404. Matches Helm's repo.ResolveReferenceURL and Flux source-controller.
-func absChartURL(base, urlStr string) (string, error) {
-	u, err := url.Parse(urlStr)
+func absChartURL(base, target string) (string, error) {
+	u, err := url.Parse(target)
 	if err != nil {
 		return "", err
 	}
 	if u.IsAbs() {
-		return urlStr, nil
+		return target, nil
 	}
-	baseURL, err := url.Parse(base)
+	parent, err := url.Parse(base)
 	if err != nil {
 		return "", err
 	}
-	baseURL.Path = strings.TrimSuffix(baseURL.Path, "/") + "/"
-	return baseURL.ResolveReference(u).String(), nil
+	parent.Path = strings.TrimSuffix(parent.Path, "/") + "/"
+	return parent.ResolveReference(u).String(), nil
+}
+func normalizeChartDigest(d string) string {
+	return strings.TrimPrefix(strings.TrimSpace(d), "sha256:")
 }
 
-// helmHTTPTimeout bounds a single helm HTTP request (an index.yaml or a
-// chart .tgz). A liveness backstop, not a determinism knob: the chart-source
-// wait is now bound to fetch-task completion rather than a per-dep wall
-// clock, and helm's getter builds an http.Client{Timeout: 0} (unbounded)
-// that ignores ctx, so a socket that connects but never delivers bytes would
-// keep the task pool's active count above zero and wedge the whole run.
-// Sized per-request (not per-retry-budget) and large enough that a slow-but-
-// live repo still completes — l7mp.io routinely takes tens of seconds, with
-// an occasional retried EOF — while a dead socket always terminates. A var so
-// tests can shrink it; mutate only before a run starts to stay race-clean.
 var helmHTTPTimeout = 120 * time.Second
+var helmGuardedTransport = func() *http.Transport { tr, _ := helmTransport(nil); return tr }()
 
-// helmGuardedTransport is the default transport for every helm HTTP repo fetch:
-// the SSRF egress guard (source.NewHTTPTransport) with compression disabled to
-// match helm's own getter transport (chart tarballs are already compressed). A
-// custom-CA repo overrides it per-fetch (see helmRepoTransport). Built once; the
-// guard's blocking is gated by the process-global toggle, so this is inert
-// unless ssrfguard.Restrict is enabled.
-var helmGuardedTransport = func() *http.Transport {
-	tr, _ := helmTransport(nil) // nil/nil never errors
-	return tr
-}()
-
-// httpGet fetches url with helm's HTTP getter and the given options. Callers
-// wrap the error with their own context (index fetch vs chart download).
-func httpGet(url string, opts []getter.Option) (*bytes.Buffer, error) {
-	g, err := getter.NewHTTPGetter()
+func (f *Fetcher) httpGet(ctx context.Context, r *manifest.HelmRepository, target string, w io.Writer) (ocispec.Descriptor, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return nil, err
+		return ocispec.Descriptor{}, err
 	}
-	// Prepend the liveness timeout AND the default guarded transport so EVERY
-	// helm HTTP fetch (index.yaml + chart .tgz) is egress-guarded. A caller-
-	// supplied WithTransport (the custom-CA path) still overrides, since getter
-	// applies options in order, last write wins. source.WithRetry layers attempts.
-	opts = append([]getter.Option{
-		getter.WithTimeout(helmHTTPTimeout),
-		getter.WithTransport(helmGuardedTransport),
-	}, opts...)
-	return g.Get(url, opts...)
-}
-
-func safeName(s string) string {
-	return strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
-			return r
-		}
-		return '-'
-	}, s)
+	base, err := url.Parse(r.URL)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	username, password, err := f.helmRepoCredentials(r)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	if (r.PassCredentials || base.Scheme == req.URL.Scheme && base.Host == req.URL.Host) && username != "" && password != "" {
+		req.SetBasicAuth(username, password)
+	}
+	tr, err := f.helmRepoTransport(r)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	if tr == nil {
+		tr = helmGuardedTransport
+	}
+	client := &http.Client{Transport: tr, Timeout: helmHTTPTimeout}
+	response, err := client.Do(req)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return ocispec.Descriptor{}, fmt.Errorf("failed to fetch %s : %s", target, response.Status)
+	}
+	h := digest.SHA256.Digester()
+	size, err := io.Copy(io.MultiWriter(w, h.Hash()), response.Body)
+	return ocispec.Descriptor{Digest: h.Digest(), Size: size, MediaType: response.Header.Get("Content-Type")}, err
 }

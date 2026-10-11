@@ -106,19 +106,6 @@ func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, expr, 
 	return pickSemverTag(collected, expr, filterPattern, mediaType)
 }
 
-// resolveOCIRefDigest returns the concrete digest for a ref: the explicit
-// digest when set, otherwise the registry's resolution of tag.
-func resolveOCIRefDigest(ctx context.Context, repoClient *remote.Repository, ref manifest.OCIRepositoryRef, tag string) (string, error) {
-	if ref.Digest != "" {
-		return ref.Digest, nil
-	}
-	desc, err := repoClient.Resolve(ctx, tag)
-	if err != nil {
-		return "", err
-	}
-	return desc.Digest.String(), nil
-}
-
 // pickSemverTag picks the highest semver-matching tag from a list,
 // applying an optional regex filter. Pure function so it's testable
 // without a real registry.

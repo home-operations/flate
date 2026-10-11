@@ -3,13 +3,24 @@ package bucket_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/bucket"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
@@ -109,5 +120,86 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 	}
 	if !errors.Is(err, manifest.ErrMissingSecret) {
 		t.Errorf("want ErrMissingSecret from the generic path; got %v", err)
+	}
+}
+
+func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			var listings atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				files := map[string]string{"dir/file.yaml": "first", "dir/drop.yaml": "drop", ".sourceignore": "dir/drop.yaml\n", "image.png": "image"}
+				if strings.Contains(r.Header.Get("Authorization"), "Credential=second/") {
+					files["dir/file.yaml"] = "other"
+				}
+				if r.URL.Query().Get("list-type") != "" {
+					listings.Add(1)
+					_, _ = fmt.Fprint(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>`)
+					for _, name := range []string{"dir/drop.yaml", "image.png", "dir/file.yaml", ".sourceignore"} {
+						_, _ = fmt.Fprintf(w, `<Contents><Key>prefix/%s</Key><Size>%d</Size><ETag>"%s"</ETag></Contents>`, name, len(files[name]), files[name])
+					}
+					_, _ = fmt.Fprint(w, `</ListBucketResult>`)
+					return
+				}
+				name := strings.TrimPrefix(r.URL.Path, "/data/prefix/")
+				data, ok := files[name]
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+				w.Header().Set("ETag", `"test"`)
+				w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+				_, _ = fmt.Fprint(w, data)
+			}))
+			t.Cleanup(srv.Close)
+			root := ""
+			if backing == "disk" {
+				root = t.TempDir()
+			}
+			c, err := cache.New(t.Context(), cacheroot.New(root))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			f := &bucket.Fetcher{Cache: c, Secrets: func(ns, _ string) *manifest.Secret {
+				return &manifest.Secret{StringData: map[string]any{"accesskey": ns, "secretkey": "test"}}
+			}}
+			var wg sync.WaitGroup
+			for _, namespace := range []string{"first", "second"} {
+				wg.Go(func() {
+					b := &manifest.Bucket{Name: "source", Namespace: namespace, BucketName: "data", Prefix: "prefix/",
+						Endpoint: srv.URL, Insecure: true, Region: "us-east-1", Interval: metav1.Duration{Duration: time.Hour},
+						SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+					for range 2 {
+						art, err := f.Fetch(t.Context(), b)
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						want := namespace
+						if namespace == "second" {
+							want = "other"
+						}
+						if data, err := fs.ReadFile(art.FS, "dir/file.yaml"); err != nil || string(data) != want {
+							t.Errorf("%s content=%q err=%v", namespace, data, err)
+						}
+						if _, err := fs.Stat(art.FS, "dir/drop.yaml"); !errors.Is(err, fs.ErrNotExist) {
+							t.Errorf("ignored file: %v", err)
+						}
+						if _, err := fs.Stat(art.FS, "image.png"); err != nil {
+							t.Errorf("bucket flavor excluded image: %v", err)
+						}
+						if art.Metadata["objectCount"] != "4" || art.Revision == "" {
+							t.Errorf("bucket metadata: %v", art.Metadata)
+						}
+					}
+				})
+			}
+			wg.Wait()
+			if listings.Load() != 2 {
+				t.Fatalf("listings=%d, want one per auth identity", listings.Load())
+			}
+		})
 	}
 }

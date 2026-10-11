@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sync"
 
@@ -131,6 +133,7 @@ func (c *Client) envSettings() *cli.EnvSettings {
 // output cache mixes it into its own key so a stale chart never
 // serves a different chart's render.
 type chartCacheEntry struct {
+	immutable   bool
 	chart       *chart.Chart
 	mtime       int64 // unix nanos
 	size        int64
@@ -301,26 +304,36 @@ func (c *Client) LocateChart(hr *manifest.HelmRelease) (string, error) {
 	return "", fmt.Errorf("%w: unsupported chart repo kind %s", manifest.ErrInput, hr.Chart.RepoKind)
 }
 
-// LoadChart resolves and loads the chart into helm's in-memory model.
-// Parsed *chart.Chart values are cached by path — Helm's loader.Load
-// reparses the tgz (and recompiles values.schema.json) on every call,
-// which is a significant render-time hot spot when many HelmReleases
-// share a base chart (bjw-s app-template, podinfo, common-library, …).
-// Path comes from the source cache (a content-addressed blob for HTTP
-// tarballs, a ref-keyed slot for OCI) and is stable across reconciles; the
-// per-path (mtime,size) re-check below guards a mutable OCI re-push.
+// LoadChart caches immutable acquired charts by generation and local charts by path.
 func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (ChartLoadResult, error) {
-	path, err := c.LocateChart(hr)
+	var location string
+	var err error
+	art := c.resolveLocalSource(hr)
+	var input fs.FS
+	if art != nil {
+		input = art.FS
+	}
+	if input != nil {
+		switch hr.Chart.RepoKind {
+		case manifest.KindBucket, manifest.KindGitRepository, manifest.KindExternalArtifact:
+			location = path.Clean(hr.Chart.Name)
+		default:
+			location, err = chartPathInFS(input)
+		}
+	} else {
+		location, err = c.LocateChart(hr)
+	}
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
-	// Fast path: already parsed AND the file hasn't been rewritten
-	// since (mtime+size match). Mutable OCI tags re-pushed under the
-	// same name-version land via writeAtomic at the same path, so the
-	// path is a stable string but the underlying bytes may have
-	// changed; without the stat check we'd serve the stale chart.
+	cacheKey := location
+	if input != nil {
+		cacheKey = art.Key + "\x00" + location
+	}
+	path := location
+
 	needsFingerprint := c.templateCache != nil || len(hr.ChartValuesFiles) > 0
-	if ch, fp, ok := c.lookupCachedChart(path); ok && (!needsFingerprint || fp != "") {
+	if ch, fp, ok := c.lookupCachedChart(cacheKey); ok && (!needsFingerprint || fp != "") {
 		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
@@ -328,7 +341,7 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	// reconciles of the same base chart (bjw-s app-template referenced
 	// by 30+ HRs, podinfo across multiple test envs) issue exactly one
 	// loader.Load instead of N. Distinct paths still parse in parallel.
-	release, err := c.chartLoadLocks.Acquire(ctx, path)
+	release, err := c.chartLoadLocks.Acquire(ctx, cacheKey)
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
@@ -336,22 +349,22 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 
 	// Re-check under the per-path lock — another goroutine may have
 	// populated the cache while we waited.
-	ch, fp, cached := c.lookupCachedChart(path)
+	ch, fp, cached := c.lookupCachedChart(cacheKey)
 	if cached && (!needsFingerprint || fp != "") {
 		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
 
 	if !cached {
-		ch, err = loader.Load(path)
+		if input != nil {
+			ch, err = loadFSChart(input, location)
+		} else {
+			ch, err = loader.Load(path)
+		}
 	}
 	if err != nil {
-		// A truncated/corrupt chart tgz left on disk (process killed
-		// mid-download, fs fault, manual delete-then-recreate) would
-		// otherwise stay sticky-broken — `os.Stat`-based cache-hit
-		// checks in LocateChart see the file, return its path, and we
-		// re-error here on every subsequent run. Removing the file
-		// lets the next reconcile re-pull cleanly.
-		_ = os.Remove(path)
+		if input == nil {
+			_ = os.Remove(path)
+		}
 		if _, ok := errors.AsType[chart.ValidationError](err); ok {
 			err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
 		}
@@ -363,9 +376,14 @@ func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (Chart
 	if needsFingerprint {
 		fingerprint = chartFingerprint(ch)
 	}
-	if mtime, size, ok := chartCacheFingerprint(path); ok {
+	mtime, size, ok := int64(0), int64(0), input != nil
+	if input == nil {
+		mtime, size, ok = chartCacheFingerprint(path)
+	}
+	if ok {
 		c.chartMu.Lock()
-		c.chartCache[path] = chartCacheEntry{
+		c.chartCache[cacheKey] = chartCacheEntry{
+			immutable:   input != nil,
 			chart:       ch,
 			mtime:       mtime,
 			size:        size,
@@ -441,6 +459,9 @@ func (c *Client) lookupCachedChart(path string) (*chart.Chart, string, bool) {
 	c.chartMu.RUnlock()
 	if !ok {
 		return nil, "", false
+	}
+	if entry.immutable {
+		return entry.chart, entry.fingerprint, true
 	}
 	mtime, size, ok := chartCacheFingerprint(path)
 	if !ok {

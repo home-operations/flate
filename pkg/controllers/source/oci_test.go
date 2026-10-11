@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
@@ -65,8 +66,13 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			testutil.WriteFileAt(t, config, configJSON)
 			layout := cacheroot.New(t.TempDir())
 			st := store.New()
+			cache, err := sourcecache.New(t.Context(), layout)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cache.Close() })
 			f := &oci.Fetcher{
-				Cache: src.NewCache(layout), RegistryConfig: config,
+				Cache: cache, RegistryConfig: config,
 				Secrets: func(ns, name string) *manifest.Secret {
 					sec, _ := st.GetByName[*manifest.Secret](manifest.KindSecret, ns, name)
 					return sec

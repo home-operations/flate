@@ -5,48 +5,30 @@ import (
 	"fmt"
 	"net/http"
 
-	"helm.sh/helm/v4/pkg/getter"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
 
 // helmRepoAuthIdentity is the cache auth tag for a HelmRepository's
-// resolve/blob slots: it folds the SecretRef (basic auth) and CertSecretRef
+// acquired chart and index keys: it folds the SecretRef (basic auth) and CertSecretRef
 // (TLS material) so a public-index resolution can't leak across a different-
 // auth repo that shares the URL. Mirrors oci.authIdentity.
 func helmRepoAuthIdentity(r *manifest.HelmRepository) string {
 	return source.AuthIdentityFromRefs(r.Namespace, r.SecretRef, r.CertSecretRef)
 }
 
-// helmRepoAuthOptions resolves SecretRef credentials for a HelmRepository
-// into helm getter options. Returns nil options when no SecretRef is set
-// (anonymous). Username/password basic auth + optional PassCredentials.
-func (f *Fetcher) helmRepoAuthOptions(r *manifest.HelmRepository) ([]getter.Option, error) {
+func (f *Fetcher) helmRepoCredentials(r *manifest.HelmRepository) (string, string, error) {
 	if r.SecretRef == nil {
-		return nil, nil
+		return "", "", nil
 	}
 	if f.secrets == nil {
-		// Same sentinel as "secret not found" so --allow-missing-secrets
-		// covers both shapes — the dependency is equally unresolved.
-		return nil, fmt.Errorf("%w: %s references secretRef but no SecretGetter is wired",
-			manifest.ErrMissingSecret, helmID(r))
+		return "", "", fmt.Errorf("%w: %s references secretRef but no SecretGetter is wired", manifest.ErrMissingSecret, helmID(r))
 	}
 	sec := f.secrets(r.Namespace, r.SecretRef.Name)
 	if sec == nil {
-		return nil, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "not found")
+		return "", "", source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "not found")
 	}
-	username, password, err := source.BasicAuthFromSecret(sec, "HelmRepository", r.Namespace, r.Name, r.SecretRef.Name)
-	if err != nil {
-		return nil, err
-	}
-	// helm only sends basic auth to the scheme+host of WithURL; without it
-	// the credentials are silently dropped.
-	opts := []getter.Option{getter.WithURL(r.URL), getter.WithBasicAuth(username, password)}
-	if r.PassCredentials {
-		opts = append(opts, getter.WithPassCredentialsAll(true))
-	}
-	return opts, nil
+	return source.BasicAuthFromSecret(sec, "HelmRepository", r.Namespace, r.Name, r.SecretRef.Name)
 }
 
 // helmRepoTransport builds a per-repo guarded HTTP transport when a

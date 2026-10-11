@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/external"
 	"github.com/home-operations/flate/pkg/source/git"
@@ -139,6 +140,8 @@ type Config struct {
 	// per-orchestrator cache is constructed (fine for single-orchestrator
 	// commands like `build` / `get`).
 	SourceCache *source.Cache
+	// Cache, when injected, remains caller-owned and can be shared across runs.
+	Cache *sourcecache.Cache
 	// ExternalChanges, when non-nil, supplies the file-level diff so
 	// the orchestrator skips its built-in change.Detect step. The
 	// filter is still built from this set and the discovery index
@@ -197,15 +200,19 @@ type Config struct {
 
 // Orchestrator wires controllers and drives reconciliation.
 type Orchestrator struct {
-	cfg         Config
-	store       *store.Store
-	tasks       *task.Service
-	src         *sourcectrl.Controller
-	ksc         *kustomization.Controller
-	hrc         *helmrelease.Controller
-	rsc         *resourcesetctrl.Controller
-	filter      *change.Filter
-	sourceCache *source.Cache
+	cfg           Config
+	store         *store.Store
+	tasks         *task.Service
+	src           *sourcectrl.Controller
+	ksc           *kustomization.Controller
+	hrc           *helmrelease.Controller
+	rsc           *resourcesetctrl.Controller
+	filter        *change.Filter
+	sourceCache   *source.Cache
+	cache         *sourcecache.Cache
+	ociFetcher    *oci.Fetcher
+	bucketFetcher *bucket.Fetcher
+	chartFetcher  *helmchart.Fetcher
 	// Accepted identities are immutable after bootstrap, including for late consumers.
 	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
 
@@ -415,8 +422,8 @@ func New(cfg Config) (*Orchestrator, error) {
 		manifest.KindGitRepository, gitFetcher)
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap(
 		manifest.KindExternalArtifact, &external.Fetcher{})
-	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap(
-		manifest.KindBucket, &bucket.Fetcher{Cache: cache, Secrets: secretGet, ForceGeneric: cfg.ForceGenericProvider})
+	bucketFetcher := &bucket.Fetcher{Cache: cfg.Cache, Secrets: secretGet, ForceGeneric: cfg.ForceGenericProvider}
+	srcCtrl.Fetchers[manifest.KindBucket] = source.Wrap(manifest.KindBucket, bucketFetcher)
 	// HelmRepository: existence-only — the controller just needs the
 	// resource in Ready so HelmRelease deps unblock. The chart itself is
 	// fetched per (chart, version) through a synthesized HelmChart (see
@@ -431,17 +438,14 @@ func New(cfg Config) (*Orchestrator, error) {
 	// Embedders that want one can still WithFetcher a source.ExistenceFetcher.
 	// Not separately retry-wrapped: each consuming fetcher's own WithRetry
 	// wrapper owns retries.
-	ociFetcher := &oci.Fetcher{Cache: cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: cfg.ForceGenericProvider}
+	ociFetcher := &oci.Fetcher{Cache: cfg.Cache, RegistryConfig: cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: cfg.ForceGenericProvider}
 	srcCtrl.Fetchers[manifest.KindOCIRepository] = source.Wrap(
 		manifest.KindOCIRepository, ociFetcher)
 	// HelmChart: the single authoritative chart fetcher. The HR controller
 	// synthesizes a HelmChart per (chart, version, repo) for every
 	// HelmRepository-sourced chart; this fetcher pulls it — HTTP repos via
 	// helm's getter, OCI repos via the OCI fetcher above.
-	hcFetcher, err := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, cache, layout)
-	if err != nil {
-		return nil, err
-	}
+	hcFetcher := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, cfg.Cache)
 	srcCtrl.Fetchers[manifest.KindHelmChart] = source.Wrap(
 		manifest.KindHelmChart, hcFetcher)
 	// Wrap every registered fetcher in the classified retry decorator so
@@ -457,13 +461,14 @@ func New(cfg Config) (*Orchestrator, error) {
 	o := &Orchestrator{
 		cfg:         cfg,
 		sourceCache: cache,
-		store:       st,
-		tasks:       ts,
-		src:         srcCtrl,
-		ksc:         kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
-		hrc:         helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
-		rsc:         resourcesetctrl.New(st, ts, cfg.WipeSecrets),
-		depGraph:    newDependencyGraph(),
+		cache:       cfg.Cache, ociFetcher: ociFetcher, bucketFetcher: bucketFetcher, chartFetcher: hcFetcher,
+		store:    st,
+		tasks:    ts,
+		src:      srcCtrl,
+		ksc:      kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
+		hrc:      helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		rsc:      resourcesetctrl.New(st, ts, cfg.WipeSecrets),
+		depGraph: newDependencyGraph(),
 	}
 	if cfg.DisableChartDigestTracking != nil {
 		o.cfg.DisableChartDigestTracking = new(*cfg.DisableChartDigestTracking)
@@ -604,6 +609,15 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if o.bootstrapped {
 		return nil
 	}
+	if o.cache == nil {
+		var err error
+		o.cache, err = sourcecache.New(ctx, cacheroot.New(o.cfg.CacheDir))
+		if err != nil {
+			return err
+		}
+	}
+	o.ociFetcher.Cache, o.bucketFetcher.Cache = o.cache, o.cache
+	o.chartFetcher.Cache = o.cache
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
 		KRMIgnoreFile: o.cfg.KRMIgnoreFile,
@@ -626,6 +640,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
 		o.hrc.Options.DisableChartDigestTracking = *requested
 	}
+	o.chartFetcher.DisableChartDigestTracking = o.hrc.Options.DisableChartDigestTracking
 	o.bootstrapped = true
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -71,6 +72,13 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 	if cfg.SourceCache == nil {
 		root := cmp.Or(cfg.CacheDir, filepath.Join(os.TempDir(), "flate-cache"))
 		cfg.SourceCache = source.NewCache(cacheroot.New(root))
+	}
+	if cfg.Cache == nil {
+		cfg.Cache, err = sourcecache.New(ctx, cacheroot.New(cfg.CacheDir))
+		if err != nil {
+			return base, head, err
+		}
+		defer func() { err = errors.Join(err, cfg.Cache.Close()) }()
 	}
 	baseCfg := cfg
 	baseCfg.RepoRoot = baseTree.RepoRoot

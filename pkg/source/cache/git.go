@@ -29,12 +29,10 @@ type GitKey struct {
 // GitGeneration retains sealed object backing and any upstream recursive checkout.
 // Every reader MUST construct its own storer; publication retains no producer handles.
 type GitGeneration struct {
-	Backing    billy.Filesystem
-	Worktree   billy.Filesystem
-	Commit     plumbing.Hash
-	Ref        string
-	ResolvedAt time.Time
-	id         string
+	Backing  billy.Filesystem
+	Worktree billy.Filesystem
+	Commit   plumbing.Hash
+	id       string
 }
 
 type gitRequest struct {
@@ -52,7 +50,7 @@ func (c *Cache) Git(ctx context.Context, key GitKey, maxAge time.Duration, produ
 }
 
 func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (*GitGeneration, ocispec.Descriptor, error) {
-	g := &GitGeneration{id: uuid.NewString(), Ref: request.key.Ref}
+	g := &GitGeneration{id: uuid.NewString()}
 	if c.store == nil {
 		g.Backing = memfs.New()
 		if request.key.RecurseSubmodules {
@@ -81,7 +79,7 @@ func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (*GitGenera
 	}
 	g.Commit = hash
 	return g, ocispec.Descriptor{Annotations: map[string]string{
-		prefix + "revision": hash.String(), prefix + "git-ref": g.Ref, prefix + "git-generation": g.id,
+		prefix + "revision": hash.String(), prefix + "git-ref": request.key.Ref, prefix + "git-generation": g.id,
 	}}, nil
 }
 
@@ -92,12 +90,11 @@ func (c *Cache) restoreGit(desc ocispec.Descriptor, key GitKey) (*GitGeneration,
 	if err != nil || parsed.String() != id || !plumbing.IsHash(revision) || a[prefix+"git-ref"] != key.Ref {
 		return nil, nil
 	}
-	g := &GitGeneration{id: id, Ref: key.Ref, Commit: plumbing.NewHash(revision), Backing: osfs.New(c.layout.GitObjects(id))}
-	at, err := time.Parse(time.RFC3339Nano, a[prefix+"resolved-at"])
+	g := &GitGeneration{id: id, Commit: plumbing.NewHash(revision), Backing: osfs.New(c.layout.GitObjects(id))}
+	_, err = time.Parse(time.RFC3339Nano, a[prefix+"resolved-at"])
 	if err != nil {
 		return nil, nil
 	}
-	g.ResolvedAt = at
 	if _, err := g.Backing.Stat("objects"); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil

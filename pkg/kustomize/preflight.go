@@ -79,9 +79,7 @@ func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS files
 			return werr
 		}
 		if info.IsDir() {
-			// Skip a git base materialized by a prior resources: entry — its
-			// own nested kustomization.yaml files must NOT be re-rewritten here
-			// (depth-1 limit). The kustomize build of that base resolves its URLs.
+			// Mounted bases receive preflight when fetched; an outer walk MUST skip them.
 			if path != subPath && strings.HasPrefix(filepath.Base(path), remoteResourcePrefix) {
 				return filepath.SkipDir
 			}

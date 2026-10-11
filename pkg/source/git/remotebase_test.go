@@ -83,6 +83,25 @@ func TestFetchRemoteBase_Commit(t *testing.T) {
 	assertWorktree(t, art.FS, "kustomization.yaml", "c1")
 }
 
+func TestFetchRemoteBase_HashNeverExpires(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	ref := mustSetRefToHEAD(t, src, "refs/tags/pin")
+	f := newRemoteBaseFetcher(t)
+	request := RemoteBaseRequest{URL: "file://" + src, Ref: ref, MaxAge: time.Nanosecond}
+	first, err := f.FetchRemoteBase(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(src); err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.FetchRemoteBase(t.Context(), request)
+	if err != nil || second.Key != first.Key {
+		t.Fatalf("expired hash hit: %+v, %v", second, err)
+	}
+}
+
 func TestFetchRemoteBase_HEAD(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "head-content"})

@@ -126,21 +126,17 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 				return plumbing.ZeroHash, err
 			}
 		}
-		viewOptions.Worktree = worktree
-		backing := storer.(*filesystem.Storage).Filesystem()
-		input, err = gittree.New(ctx, backing, hash, viewOptions)
+		input, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Worktree: worktree, Commit: hash}, viewOptions, nil)
 		return hash, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", gitID(repo), err)
 	}
-	if input == nil {
-		viewOptions.Worktree = generation.Worktree
-		input, err = gittree.New(ctx, generation.Backing, generation.Commit, viewOptions)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %s: %w", manifest.ErrInput, gitID(repo), err)
-		}
+	input, err = generationView(ctx, generation, viewOptions, input)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", manifest.ErrInput, gitID(repo), err)
 	}
+
 	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: key.ID + "@" + generation.Commit.String()}, nil
 }
 
@@ -153,11 +149,8 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 	ref := request.spec.Reference
 	options := request.options
 	if canUseCachedGitSlot(ref) || ref != nil && ref.Commit != "" && ref.Branch == "" {
-		repo, err := git.Init(storer, worktree)
+		repo, err := initRemote(storer, worktree, options.URL)
 		if err != nil {
-			return nil, err
-		}
-		if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{options.URL}}); err != nil {
 			return nil, err
 		}
 		exact := &git.FetchOptions{Auth: options.Auth, ProxyOptions: options.ProxyOptions, Depth: 1, Tags: git.NoTags, RefSpecs: []config.RefSpec{config.RefSpec("+" + ref.Commit + ":refs/flate/pin")}}
@@ -199,11 +192,8 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 		}
 		return repo, err
 	}
-	repo, err := git.Init(storer, worktree)
+	repo, err := initRemote(storer, worktree, options.URL)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{options.URL}}); err != nil {
 		return nil, err
 	}
 	err = repo.FetchContext(ctx, &git.FetchOptions{Auth: options.Auth, ProxyOptions: options.ProxyOptions, Depth: options.Depth, RefSpecs: specs, Tags: git.NoTags})
@@ -211,6 +201,23 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 		err = nil
 	}
 	return repo, err
+}
+
+func initRemote(storer storage.Storer, worktree billy.Filesystem, url string) (*git.Repository, error) {
+	repo, err := git.Init(storer, worktree)
+	if err != nil {
+		return nil, err
+	}
+	_, err = repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
+	return repo, err
+}
+
+func generationView(ctx context.Context, generation *sourcecache.GitGeneration, options gittree.ViewOptions, validated *gittree.FS) (*gittree.FS, error) {
+	if validated != nil {
+		return validated, nil
+	}
+	options.Worktree = generation.Worktree
+	return gittree.New(ctx, generation.Backing, generation.Commit, options)
 }
 
 func refSpecs(ref *manifest.GitRepositoryRef) []config.RefSpec {

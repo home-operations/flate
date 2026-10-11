@@ -47,6 +47,8 @@ func (r *documentReader) mountSources(s *store.Store) {
 	}
 }
 
+var workingFiles = os.DirFS("/")
+
 // input binds source coordinates to their filesystem; an absent mounted file
 // MUST never fall through to the working tree.
 func (r documentReader) input(file string) (fs.FS, string) {
@@ -63,7 +65,7 @@ func (r documentReader) input(file string) (fs.FS, string) {
 	if name == "" {
 		name = "."
 	}
-	return os.DirFS(root), name
+	return workingFiles, name
 }
 
 func (r *documentReader) read(dir string) (*kustomizationDocument, string) {

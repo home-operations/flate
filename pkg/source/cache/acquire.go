@@ -218,9 +218,6 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer
 		return nil, err
 	}
 	e.resolved = time.Now().UTC()
-	if e.git != nil {
-		e.git.ResolvedAt = e.resolved
-	}
 	if c.store == nil {
 		if !key.archive {
 			data := buf.Bytes()

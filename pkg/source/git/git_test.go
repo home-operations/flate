@@ -67,6 +67,56 @@ func TestFetcher_PackedContent(t *testing.T) {
 	}
 }
 
+func TestFetcher_SourceLinksOmitted(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepoWithFiles(t, src, map[string]string{"hello.txt": "hi", "apps/cm.yaml": "kind: ConfigMap"})
+	for name, target := range map[string]string{"alias": "hello.txt", "dirlink": "apps", ".sourceignore": "hello.txt"} {
+		if err := os.Symlink(target, filepath.Join(src, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := git.PlainOpen(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
+	}
+	mustCommitFile(t, src, "hello.txt", "hi")
+	f := &Fetcher{Cache: newGitCache(t, "")}
+	art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "links", URL: "file://" + src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alias", "dirlink", "dirlink/cm.yaml", ".sourceignore"} {
+		if file, err := art.FS.Open(name); !errors.Is(err, fs.ErrNotExist) {
+			if file != nil {
+				_ = file.Close()
+			}
+			t.Errorf("Open(%s): %v", name, err)
+		}
+		if _, err := fs.Stat(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("Stat(%s): %v", name, err)
+		}
+		if _, err := fs.ReadDir(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("ReadDir(%s): %v", name, err)
+		}
+	}
+	entries, err := fs.ReadDir(art.FS, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "alias" || entry.Name() == "dirlink" || entry.Name() == ".sourceignore" {
+			t.Errorf("listed link %s", entry.Name())
+		}
+	}
+}
+
 func TestFetcher_LocalFileURL(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
@@ -444,35 +494,35 @@ func TestFetcher_CommitMustBeReachableFromBranch(t *testing.T) {
 	}
 }
 
-// TestFetcher_SparseCheckout exercises spec.sparseCheckout — when
-// the repo declares specific directories, the worktree contains only
-// those (plus any tree-root metadata go-git keeps).
 func TestFetcher_SparseCheckout(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{
-		"apps/a/manifest.yaml":  "kind: ConfigMap",
-		"apps/b/manifest.yaml":  "kind: ConfigMap",
-		"infra/c/manifest.yaml": "kind: ConfigMap",
-		"README.md":             "top-level",
+		"apps/a/manifest.yaml":     "kind: ConfigMap",
+		"apps/b/manifest.yaml":     "kind: ConfigMap",
+		"apps-extra/manifest.yaml": "kind: ConfigMap",
+		"infra/c/manifest.yaml":    "kind: ConfigMap",
 	})
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL:            "file://" + src,
-		SparseCheckout: []string{"apps/a"},
-	}
-	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
-	if err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	// apps/a must be present; apps/b must not.
-	if _, err := fs.Stat(art.FS, path.Join("apps", "a", "manifest.yaml")); err != nil {
-		t.Errorf("sparse-included file missing: %v", err)
-	}
-	if _, err := fs.Stat(art.FS, path.Join("apps", "b", "manifest.yaml")); !os.IsNotExist(err) {
-		t.Errorf("sparse-excluded file should be absent; stat err = %v", err)
+	f := &Fetcher{Cache: newGitCache(t, t.TempDir())}
+	for _, prefix := range []string{"apps/a", "apps"} {
+		t.Run(prefix, func(t *testing.T) {
+			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
+				Name: "test", Namespace: "flux-system", URL: "file://" + src,
+				SparseCheckout: []string{prefix},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range []string{"apps/a/manifest.yaml", "apps/b/manifest.yaml", "apps-extra/manifest.yaml", "infra/c/manifest.yaml"} {
+				_, err := fs.Stat(art.FS, file)
+				if strings.HasPrefix(file, prefix) {
+					if err != nil {
+						t.Errorf("included %s: %v", file, err)
+					}
+				} else if !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("excluded %s: %v", file, err)
+				}
+			}
+		})
 	}
 }
 

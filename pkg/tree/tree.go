@@ -30,14 +30,14 @@ type view struct {
 	lower   *Tree
 	removed map[string]struct{}
 	input   *foreignInput
-	mounts  map[string]fs.FS
 }
 
 // An extra indirection keeps foreign I/O escape analysis off indexed maps.
 // Only private builders memoize metadata; sealed reads never mutate it.
 type foreignInput struct {
-	lower fs.FS
-	memo  map[string]*node
+	lower  fs.FS
+	memo   map[string]*node
+	mounts map[string]fs.FS
 }
 
 type node struct {
@@ -83,15 +83,15 @@ func (t *view) lookup(name string) (*node, error) {
 	if n := t.nodes[name]; n != nil {
 		return n, nil
 	}
-	if t.lower == nil && t.input == nil && len(t.mounts) == 0 {
+	if t.lower == nil && t.input == nil {
 		return nil, fs.ErrNotExist
 	}
 	if t.masked(name) {
 		return nil, fs.ErrNotExist
 	}
-	if len(t.mounts) != 0 {
+	if t.input != nil {
 		for prefix := path.Dir(name); prefix != "."; prefix = path.Dir(prefix) {
-			input := t.mounts[prefix]
+			input := t.input.mounts[prefix]
 			if input == nil {
 				continue
 			}
@@ -110,6 +110,9 @@ func (t *view) lookup(name string) (*node, error) {
 
 	if t.lower != nil {
 		return t.lower.lookup(name)
+	}
+	if t.input == nil || t.input.lower == nil {
+		return nil, fs.ErrNotExist
 	}
 	if n := t.input.memo[name]; n != nil {
 		return n, nil
@@ -310,7 +313,7 @@ func (t *view) entries(n *node) ([]fs.DirEntry, error) {
 		return t.lower.entries(n)
 	}
 	var memo map[string]*node
-	if t.input != nil && len(t.mounts) == 0 {
+	if t.input != nil && n.foreign.mount == "" {
 		memo = t.input.memo
 	}
 	var entries []fs.DirEntry

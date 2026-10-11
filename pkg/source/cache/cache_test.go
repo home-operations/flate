@@ -19,10 +19,17 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/go-git/go-billy/v5"
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage"
 	"github.com/gofrs/flock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -660,6 +667,109 @@ func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
 				})
 				if _, ok := errors.AsType[*CacheError](err); !ok {
 					t.Fatalf("run %d: %T %v, want *CacheError", i, err, err)
+				}
+			}
+		})
+	}
+}
+
+func TestGit_RestartAndInvalidation(t *testing.T) {
+	for _, scenario := range []string{"hit", "ref-mismatch", "missing-objects", "touch-failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			src, root := t.TempDir(), t.TempDir()
+			repo, err := git.PlainInit(src, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFileAt(t, filepath.Join(src, "file"), "committed")
+			wt, err := repo.Worktree()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := wt.Add("."); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := wt.Commit("seed", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			produce := func(storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+				calls++
+				r, err := git.CloneContext(t.Context(), storer, worktree, &git.CloneOptions{URL: "file://" + src, NoCheckout: true})
+				if err != nil {
+					return plumbing.ZeroHash, err
+				}
+				head, err := r.Head()
+				if err != nil {
+					return plumbing.ZeroHash, err
+				}
+				return head.Hash(), nil
+			}
+			c := newCache(t, root)
+			key := GitKey{ID: "source-git-restart", Ref: "HEAD"}
+			first, err := c.Git(t.Context(), key, Forever, produce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v, _ := c.entries.Load(key.ID)
+			e := v.(*entry)
+			blob := c.layout.OCIBlob(e.stored.Digest)
+			stale := time.Now().Add(-time.Hour)
+			if err := os.Chtimes(blob, stale, stale); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "missing-objects" {
+				if err := os.RemoveAll(filepath.Join(c.layout.GitObjects(first.id), "objects")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "ref-mismatch" {
+				key.Ref = "tag:other"
+			}
+			if err := os.RemoveAll(src); err != nil {
+				t.Fatal(err)
+			}
+			c = newCache(t, root)
+			second, err := c.Git(t.Context(), key, Forever, produce)
+			if scenario == "ref-mismatch" || scenario == "missing-objects" {
+				if err == nil || calls != 2 {
+					t.Fatalf("invalid restore: calls=%d, %v", calls, err)
+				}
+				return
+			}
+			if err != nil || calls != 1 {
+				t.Fatalf("restart hit: calls=%d, %v", calls, err)
+			}
+			input, err := gittree.New(t.Context(), second.Backing, second.Commit, gittree.ViewOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if data, err := fs.ReadFile(input, "file"); err != nil || string(data) != "committed" {
+				t.Fatalf("restored content: %q, %v", data, err)
+			}
+			v, _ = c.entries.Load(key.ID)
+			if !e.resolved.Equal(v.(*entry).resolved) {
+				t.Fatal("restart hit extended freshness")
+			}
+			info, err := os.Stat(blob)
+			if err != nil || !info.ModTime().After(stale) {
+				t.Fatalf("anchor touch: %v, %v", info, err)
+			}
+			if scenario == "touch-failure" {
+				if err := os.Remove(blob); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := c.Git(t.Context(), key, Forever, produce); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("touch failure: %v", err)
+				}
+				if err := os.WriteFile(blob, []byte(first.id), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := c.Git(t.Context(), key, Forever, produce); err == nil || calls != 2 {
+					t.Fatalf("poisoned hit reused: calls=%d, %v", calls, err)
 				}
 			}
 		})

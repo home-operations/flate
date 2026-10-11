@@ -63,16 +63,12 @@ func (b *Builder) directory(name string) (*node, error) {
 		}
 		*n = *lower
 		if lower.foreign != nil {
-			if b.mounts[lower.foreign.mount] != nil {
+			if lower.foreign.mount != "" {
 				foreign := *lower.foreign
 				foreign.info, foreign.upper = lower, true
 				n.foreign = &foreign
 			} else {
-				var input fs.FS = b.lower
-				if b.input != nil {
-					input = b.input.lower
-				}
-				n.foreign = &foreignNode{source: input, path: name, info: lower, upper: true}
+				n.foreign = &foreignNode{source: b.input.lower, path: name, info: lower, upper: true}
 			}
 			n.children = nil
 		} else {
@@ -221,27 +217,20 @@ func (b *Builder) Mount(name string, input fs.FS) error {
 	if err != nil {
 		return err
 	}
-	if p == "." {
-		return &fs.PathError{Op: "mount", Path: name, Err: ErrConflict}
-	}
-	if b.mounts[p] != nil {
-		return &fs.PathError{Op: "mount", Path: name, Err: ErrConflict}
-	}
-
 	info, err := fs.Stat(input, ".")
 	if err != nil {
 		return err
-	}
-	if !info.IsDir() {
-		return &fs.PathError{Op: "mount", Path: name, Err: fs.ErrInvalid}
 	}
 	n := &node{name: path.Base(p), mode: info.Mode(), foreign: &foreignNode{source: input, path: ".", info: info, mount: p, upper: true}}
 	if err := b.put(p, n); err != nil {
 		return err
 	}
-	if b.mounts == nil {
-		b.mounts = make(map[string]fs.FS)
+	if b.input == nil {
+		b.input = &foreignInput{}
 	}
-	b.mounts[p] = input
+	if b.input.mounts == nil {
+		b.input.mounts = make(map[string]fs.FS)
+	}
+	b.input.mounts[p] = input
 	return nil
 }

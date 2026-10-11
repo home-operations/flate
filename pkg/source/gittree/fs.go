@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"path"
 	"path/filepath"
 	"slices"
@@ -25,7 +26,7 @@ import (
 	"github.com/home-operations/flate/pkg/tree"
 )
 
-// ViewMode selects source artifact, remote-base or baseline membership policy.
+// ViewMode selects source artifact or remote-base membership policy.
 type ViewMode uint8
 
 const (
@@ -33,8 +34,6 @@ const (
 	Source ViewMode = iota
 	// RemoteBase follows confined file aliases and omits hidden directories.
 	RemoteBase
-	// Base leaves baseline membership and link policy to its caller.
-	Base
 )
 
 // ViewOptions shapes a commit view without changing its object backing.
@@ -51,8 +50,6 @@ type FS struct {
 	storers  sync.Pool
 	worktree billy.Filesystem
 	nodes    map[string]*gitNode
-	matcher  *sourceignore.Matcher
-	resolver *tree.Tree
 }
 
 type gitNode struct {
@@ -60,7 +57,7 @@ type gitNode struct {
 	hash     plumbing.Hash
 	mode     fs.FileMode
 	children []fs.DirEntry
-	size     atomic.Int64
+	info     atomic.Pointer[gitInfo]
 }
 
 type gitEntry struct {
@@ -91,57 +88,62 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	input.storers.New = func() any {
 		return filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{})
 	}
-	if opts.Worktree != nil {
-		if err := input.walkWorktree(ctx, "."); err != nil {
-			return nil, err
-		}
-	} else {
-		storer := input.storers.Get().(*filesystem.Storage)
-		c, err := object.GetCommit(storer, commit)
-		if err == nil {
-			err = input.walkCommit(ctx, storer, c.TreeHash, ".")
-		}
-		input.storers.Put(storer)
-		if err != nil {
-			return nil, err
-		}
+	if err := input.walk(ctx, commit); err != nil {
+		return nil, err
 	}
-	if opts.Mode == Base {
-		input.list()
-		resolver, err := tree.NewBuilder(input).Build()
-		if err != nil {
-			return nil, err
-		}
-		input.resolver = resolver
-		return input, nil
-	}
-	var err error
-	if opts.Mode == Source {
-		for name, node := range input.nodes {
-			if node.mode&fs.ModeSymlink != 0 {
-				delete(input.nodes, name)
+	visible := func(name string) bool {
+		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+			base := path.Base(parent)
+			if base == "node_modules" || strings.HasPrefix(base, ".") {
+				return false
 			}
 		}
-		input.list()
-		input.matcher, err = sourceignore.NewFS(input, opts.Ignore, true)
+		return true
+	}
+	if opts.Mode == Source {
+		matcher, err := sourceignore.NewFS(input, opts.Ignore, true)
 		if err != nil {
 			return nil, err
+		}
+		visible = func(name string) bool {
+			return input.nodes[name].mode&fs.ModeSymlink == 0 &&
+				(len(opts.Sparse) == 0 || slices.ContainsFunc(opts.Sparse, func(dir string) bool { return strings.HasPrefix(name, dir) })) &&
+				!matcher.Match(filepath.FromSlash(name), false)
 		}
 	}
-	kept := map[string]bool{".": true}
-	var aliases map[string]*gitNode
+	names := slices.Sorted(maps.Keys(input.nodes))
+	var links *tree.Builder
 	if opts.Mode == RemoteBase {
-		input.list()
-		aliases = make(map[string]*gitNode)
-		resolver, err := tree.NewBuilder(input).Build()
-		if err != nil {
-			return nil, err
-		}
-		for name, node := range input.nodes {
+		links = tree.NewBuilder(input)
+		for _, name := range names {
+			node := input.nodes[name]
 			if node.mode&fs.ModeSymlink == 0 {
 				continue
 			}
-			resolved, err := resolver.Resolve(name)
+			reader, err := input.openBlob(node.hash)
+			if err != nil {
+				return nil, err
+			}
+			data, readErr := io.ReadAll(reader)
+			if err := errors.Join(readErr, reader.Close()); err != nil {
+				return nil, err
+			}
+			if err := links.RemoveAll(name); err != nil {
+				return nil, err
+			}
+			if err := links.AddSymlink(name, string(data)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	kept := map[string]bool{".": true}
+	for _, name := range names {
+		node := input.nodes[name]
+		if node.mode.IsDir() || !visible(name) {
+			continue
+		}
+		if node.mode&fs.ModeSymlink != 0 {
+			resolved, err := links.Resolve(name)
 			if errors.Is(err, tree.ErrEscape) || errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
@@ -149,35 +151,10 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 				return nil, err
 			}
 			target := input.nodes[resolved]
-			if target.mode.IsRegular() {
-				aliases[name] = &gitNode{name: path.Base(name), hash: target.hash, mode: target.mode}
-			}
-		}
-	}
-	for name, node := range input.nodes {
-		if node.mode.IsDir() {
-			continue
-		}
-		if node.mode&fs.ModeSymlink != 0 {
-			if aliases[name] == nil {
+			if !target.mode.IsRegular() {
 				continue
 			}
-		}
-		if !selected(name, opts.Sparse) {
-			continue
-		}
-		if input.matcher != nil && input.matcher.Match(filepath.FromSlash(name), false) {
-			continue
-		}
-		if opts.Mode == RemoteBase {
-			hidden := false
-			for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-				base := path.Base(parent)
-				hidden = hidden || base == "node_modules" || strings.HasPrefix(base, ".")
-			}
-			if hidden {
-				continue
-			}
+			input.nodes[name] = &gitNode{name: path.Base(name), hash: target.hash, mode: target.mode}
 		}
 		kept[name] = true
 		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
@@ -187,25 +164,23 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	for name := range input.nodes {
 		if !kept[name] {
 			delete(input.nodes, name)
-		} else if alias := aliases[name]; alias != nil {
-			input.nodes[name] = alias
 		}
 	}
 	input.list()
 	return input, nil
 }
 
-func selected(name string, directories []string) bool {
-	if len(directories) == 0 {
-		return true
+func (g *FS) walk(ctx context.Context, commit plumbing.Hash) error {
+	if g.worktree != nil {
+		return g.walkWorktree(ctx, ".")
 	}
-	for _, directory := range directories {
-		directory = strings.TrimSuffix(filepath.ToSlash(directory), "/")
-		if name == directory || strings.HasPrefix(name, directory+"/") {
-			return true
-		}
+	storer := g.storers.Get().(*filesystem.Storage)
+	defer g.storers.Put(storer)
+	c, err := object.GetCommit(storer, commit)
+	if err != nil {
+		return err
 	}
-	return false
+	return g.walkCommit(ctx, storer, c.TreeHash, ".")
 }
 
 func (g *FS) walkCommit(ctx context.Context, storer *filesystem.Storage, hash plumbing.Hash, prefix string) error {
@@ -233,12 +208,14 @@ func (g *FS) walkCommit(ctx context.Context, storer *filesystem.Storage, hash pl
 			continue
 		}
 		g.nodes[name] = &gitNode{name: entry.Name, hash: entry.Hash, mode: mode}
+		g.nodes[prefix].children = append(g.nodes[prefix].children, gitEntry{g, name})
 		if mode.IsDir() {
 			if err := g.walkCommit(ctx, storer, entry.Hash, name); err != nil {
 				return err
 			}
 		}
 	}
+	slices.SortFunc(g.nodes[prefix].children, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	return nil
 }
 
@@ -263,6 +240,7 @@ func (g *FS) walkWorktree(ctx context.Context, prefix string) error {
 			continue
 		}
 		g.nodes[name] = &gitNode{name: entry.Name(), mode: mode}
+		g.nodes[prefix].children = append(g.nodes[prefix].children, gitEntry{g, name})
 		if mode.IsDir() {
 			if err := g.walkWorktree(ctx, name); err != nil {
 				return err
@@ -274,8 +252,7 @@ func (g *FS) walkWorktree(ctx context.Context, prefix string) error {
 
 func (g *FS) list() {
 	for _, node := range g.nodes {
-		clear(node.children)
-		node.children = node.children[:0]
+		node.children = nil
 	}
 	for name := range g.nodes {
 		if name == "." {
@@ -304,8 +281,8 @@ func (g *FS) Lstat(name string) (fs.FileInfo, error) {
 	if g.worktree != nil {
 		return g.worktree.Lstat(filepath.FromSlash(name))
 	}
-	if size := node.size.Load(); size != 0 {
-		return gitInfo{node, size - 1}, nil
+	if info := node.info.Load(); info != nil {
+		return info, nil
 	}
 	storer := g.storers.Get().(*filesystem.Storage)
 	defer g.storers.Put(storer)
@@ -313,27 +290,16 @@ func (g *FS) Lstat(name string) (fs.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	node.size.Store(size + 1)
-	return gitInfo{node, size}, nil
+	info := &gitInfo{node, size}
+	node.info.Store(info)
+	return info, nil
 }
 
-// Stat follows baseline links; source and remote-base views contain only regular entries.
-func (g *FS) Stat(name string) (fs.FileInfo, error) {
-	if g.resolver != nil {
-		return g.resolver.Stat(name)
-	}
-	return g.Lstat(name)
-}
+// Stat exposes visible source and remote-base entries.
+func (g *FS) Stat(name string) (fs.FileInfo, error) { return g.Lstat(name) }
 
 // ReadDir returns sorted caller-owned entries.
 func (g *FS) ReadDir(name string) ([]fs.DirEntry, error) {
-	if g.resolver != nil {
-		resolved, err := g.resolver.Resolve(name)
-		if err != nil {
-			return nil, err
-		}
-		name = resolved
-	}
 	info, err := g.Lstat(name)
 	if err != nil {
 		return nil, err
@@ -344,34 +310,10 @@ func (g *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	return slices.Clone(g.nodes[name].children), nil
 }
 
-// ReadLink reads a lexical baseline link without following its target.
-func (g *FS) ReadLink(name string) (string, error) {
-	info, err := g.Lstat(name)
-	if err != nil {
-		return "", err
-	}
-	if info.Mode()&fs.ModeSymlink == 0 {
-		return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrInvalid}
-	}
-	if g.worktree != nil {
-		return g.worktree.Readlink(filepath.FromSlash(name))
-	}
-	reader, err := g.openBlob(g.nodes[name].hash)
-	if err != nil {
-		return "", err
-	}
-	data, readErr := io.ReadAll(reader)
-	return string(data), errors.Join(readErr, reader.Close())
-}
-
 // Open returns an independent cursor and retains backing through reader Close.
 func (g *FS) Open(name string) (fs.File, error) {
-	if g.resolver != nil {
-		resolved, err := g.resolver.Resolve(name)
-		if err != nil {
-			return nil, err
-		}
-		name = resolved
+	if node := g.nodes[name]; node != nil && node.mode&fs.ModeSymlink != 0 {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
 	info, err := g.Lstat(name)
 	if err != nil {

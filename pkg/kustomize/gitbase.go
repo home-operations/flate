@@ -6,7 +6,7 @@ package kustomize
 // pre-resolves both so `kustomize build` only ever sees local files. The HTTP
 // half lives in preflight.go; this file owns the git half: recognize a git
 // base, fetch it via the injected GitBaseFetcher (which wraps the existing
-// pkg/source/git machinery), copy the worktree into the render's in-memory fs,
+// pkg/source/git machinery), mount the immutable repository in the render fs,
 // and hand back a local directory path for the resources: entry.
 
 import (
@@ -204,9 +204,6 @@ func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSyste
 	}
 	input := memFS.(*treeFS)
 	identity := spec.repoURL + "@" + spec.ref
-	if input.visiting[identity] {
-		return "", fmt.Errorf("%w: recursive remote git base %q", manifest.ErrInput, identity)
-	}
 	if dest := input.bases[identity]; dest != "" {
 		rel, err := filepath.Rel(spec.dir, filepath.Join(dest, spec.subPath))
 		return "./" + filepath.ToSlash(rel), err
@@ -233,11 +230,9 @@ func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSyste
 	}
 	if input.bases == nil {
 		input.bases = make(map[string]string)
-		input.visiting = make(map[string]bool)
 	}
-	input.bases[identity], input.visiting[identity] = dest, true
+	input.bases[identity] = dest
 	_, err = preflightRemoteResources(ctx, cache, input, dest)
-	delete(input.visiting, identity)
 	if err != nil {
 		return "", err
 	}

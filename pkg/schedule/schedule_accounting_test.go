@@ -65,7 +65,6 @@ func TestRedispatch_SelectorChain(t *testing.T) {
 				}
 				return OutcomeTerminalNoop, nil, true
 			}))
-
 			s.Seed(ids)
 			if err := s.Run(ctx); err != nil {
 				t.Fatal(err)
@@ -343,7 +342,6 @@ func TestRedispatch_TerminalEmissionFeedback(t *testing.T) {
 		s.OnArrival(NodeID{Kind: "ConfigMap", Name: nid.Name}, false)
 		return OutcomeTerminal, nil, true
 	}))
-
 	s.Seed([]NodeID{x, y})
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()

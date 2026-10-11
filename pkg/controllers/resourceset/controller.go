@@ -216,9 +216,9 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 // inputsFrom (ref.Name == "") — the case where its matching RSIPs may be
 // emitted by an unknown producer, so it has no nameable dependency to
 // park on. Such a RS asks the scheduler to re-run it at the structural
-// fixpoint (it is wired as the scheduler's rerun-at-drain predicate) so it
-// re-expands against the now-complete RSIP set. Returns false when id is not
-// a RS in the store.
+// fixpoint (the orchestrator's dispatcher returns this as the dispatch rerun
+// intent) so it re-expands against the now-complete RSIP set. Returns false
+// when id is not a RS in the store.
 func (c *Controller) WantsDrainRerun(id manifest.NamedResource) bool {
 	rs, ok := c.Store.Get[*manifest.ResourceSet](id)
 	if !ok {

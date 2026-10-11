@@ -477,7 +477,6 @@ func TestRedispatchLimit(t *testing.T) {
 				s.mu.Unlock()
 				helpers.Wait()
 			}()
-
 			s.Seed([]NodeID{victim})
 			if mode == "terminal arrival" {
 				s.Seed([]NodeID{producer})
@@ -665,7 +664,6 @@ func run(t *testing.T, f *fakeDisp, workers int) *Scheduler {
 	t.Helper()
 	ts := task.NewBounded(workers)
 	s := New(ts, f)
-
 	seeds := make([]NodeID, 0, len(f.graph))
 	for k := range f.graph {
 		seeds = append(seeds, k)
@@ -854,7 +852,6 @@ func TestDrainRerunReexpandsOnArrival(t *testing.T) {
 
 	ts := task.NewBounded(8)
 	s := New(ts, f)
-
 	s.Seed([]NodeID{id("rs"), id("keepalive")})
 	done := make(chan error, 1)
 	go func() { done <- s.Run(t.Context()) }()

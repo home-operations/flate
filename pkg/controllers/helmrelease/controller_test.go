@@ -192,9 +192,9 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	}
 }
 
-type chartSourceDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID)
+type chartSourceDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool)
 
-func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID) {
+func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
 	return d(ctx, id, level)
 }
 
@@ -230,7 +230,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 				sourceStarted := make(chan struct{})
 				sourceRelease := make(chan struct{})
 				parked := make(chan manifest.NamedResource, len(consumers))
-				dispatch := chartSourceDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID) {
+				dispatch := chartSourceDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
 					if id == source {
 						close(sourceStarted)
 						<-sourceRelease
@@ -238,21 +238,21 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 							st.SetArtifact(id, &store.SourceArtifact{})
 						}
 						st.UpdateStatus(id, tc.status, "source finished")
-						return schedule.OutcomeTerminal, nil
+						return schedule.OutcomeTerminal, nil, false
 					}
 					hr := *st.GetObject(id).(*manifest.HelmRelease)
 					c.materializeHelmChartSource(id, &hr)
 					err := c.awaitChartSource(ctx, &hr, level)
 					if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 						parked <- id
-						return schedule.OutcomeBlocked, blocked.Deps
+						return schedule.OutcomeBlocked, blocked.Deps, false
 					}
 					if err != nil {
 						st.UpdateStatus(id, store.StatusFailed, err.Error())
-						return schedule.OutcomeDependencyFailed, []schedule.NodeID{source}
+						return schedule.OutcomeDependencyFailed, []schedule.NodeID{source}, false
 					}
 					st.UpdateStatus(id, store.StatusReady, "")
-					return schedule.OutcomeTerminal, nil
+					return schedule.OutcomeTerminal, nil, false
 				})
 				s := schedule.New(task.NewBounded(2), dispatch)
 				s.Seed([]schedule.NodeID{source})

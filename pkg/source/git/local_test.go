@@ -265,12 +265,19 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			paths[i] = got[repository.Named()].Key
+			artifact := got[repository.Named()]
+			paths[i] = artifact.Key
+			for range 2 {
+				content, err := fs.ReadFile(artifact.FS, "value.txt")
+				if err != nil || string(content) != "A" {
+					t.Errorf("concurrent committed read = %q, %v", content, err)
+				}
+			}
 		})
 	}
 	wg.Wait()
 	if paths[0] == "" || paths[0] != paths[1] {
-		t.Fatalf("duplicate work did not share slot: %v", paths)
+		t.Fatalf("local artifact identities differ: %v", paths)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -280,7 +287,7 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 }
 
 func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
-	for _, kind := range []string{"tag-target", "head", "store", "tree"} {
+	for _, kind := range []string{"tag-target", "head", "store", "tree", "tree-tag", "recursive-tree-tag"} {
 		t.Run(kind, func(t *testing.T) {
 			root, repo, a, _ := localFixture(t)
 			ref := manifest.GitRepositoryRef{Tag: "v1.0.0"}
@@ -298,7 +305,7 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 					t.Fatal(err)
 				}
 				testutil.WriteFile(t, root, ".git", "corrupt gitdir")
-			case "tree":
+			case "tree", "tree-tag", "recursive-tree-tag":
 				commit, err := repo.CommitObject(a)
 				if err != nil {
 					t.Fatal(err)
@@ -312,9 +319,14 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				ref = manifest.GitRepositoryRef{Commit: hash.String()}
+				if kind == "tree" {
+					ref = manifest.GitRepositoryRef{Commit: hash.String()}
+				} else if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(ref.Tag), hash)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			repository := localSource(ref)
+			repository.RecurseSubmodules = kind == "recursive-tree-tag"
 			repository.SparseCheckout = []string{"apps"}
 			if got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}); !errors.Is(err, manifest.ErrInput) || got != nil {
 				t.Fatalf("corruption became fallback: %v, %v", got, err)

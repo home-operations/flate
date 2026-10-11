@@ -22,7 +22,7 @@ import (
 // ResolveLocal resolves matching authored sources against root's own repository.
 // A root-path artifact preserves working-tree edits; a distinct path contains
 // the committed tree. Missing entries require normal fetching. Invalid input,
-// unusable objects and materialization failures return domain errors.
+// unusable objects and view-construction failures return domain errors.
 func ResolveLocal(ctx context.Context, root string, repositories []*manifest.GitRepository) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
 		return nil, nil
@@ -78,9 +78,6 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		r, ok := resolved[ref]
 		if !ok {
 			r.hash, r.err = resolveRefHash(repo, &ref)
-			if r.err == nil {
-				_, r.err = readCommit(repo, r.hash)
-			}
 			resolved[ref] = r
 		}
 		if errors.Is(r.err, errRefUnavailable) {
@@ -94,6 +91,9 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 			continue
 		}
 		if repository.RecurseSubmodules {
+			if _, err := readCommit(repo, r.hash); err != nil {
+				return nil, localError(repository, err)
+			}
 			continue
 		}
 		identity, err := filepath.EvalSymlinks(root)

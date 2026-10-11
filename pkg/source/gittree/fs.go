@@ -99,8 +99,8 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			return nil, err
 		}
 	}
-	input.list()
 	if opts.Mode == Base {
+		input.list()
 		resolver, err := tree.NewBuilder(input).Build()
 		if err != nil {
 			return nil, err
@@ -124,6 +124,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	kept := map[string]bool{".": true}
 	var aliases map[string]*gitNode
 	if opts.Mode == RemoteBase {
+		input.list()
 		aliases = make(map[string]*gitNode)
 		resolver, err := tree.NewBuilder(input).Build()
 		if err != nil {
@@ -268,7 +269,8 @@ func (g *FS) walkWorktree(ctx context.Context, prefix string) error {
 
 func (g *FS) list() {
 	for _, node := range g.nodes {
-		node.children = nil
+		clear(node.children)
+		node.children = node.children[:0]
 	}
 	for name := range g.nodes {
 		if name == "." {

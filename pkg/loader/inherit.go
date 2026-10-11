@@ -52,6 +52,13 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 			if ns == "" {
 				continue
 			}
+			if obj != nil {
+				updated := cloneWithNamespace(obj, ns)
+				if updated == nil {
+					continue
+				}
+				l.Store.AddObject(updated)
+			}
 			next := id
 			next.Namespace = ns
 			projected := record
@@ -61,11 +68,6 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 			for i := range projected.Refs {
 				if projected.Refs[i].Namespace == "" {
 					projected.Refs[i].Namespace = ns
-				}
-			}
-			if obj != nil {
-				if updated := cloneWithNamespace(obj, ns); updated != nil {
-					l.Store.AddObject(updated)
 				}
 			}
 			l.Index.Records[next] = projected
@@ -174,6 +176,14 @@ func cloneWithNamespace(obj manifest.BaseManifest, ns string) manifest.BaseManif
 		c.Namespace = ns
 		return &c
 	case *manifest.HelmChartSource:
+		c := *o
+		c.Namespace = ns
+		return &c
+	case *manifest.Bucket:
+		c := *o
+		c.Namespace = ns
+		return &c
+	case *manifest.ExternalArtifact:
 		c := *o
 		c.Namespace = ns
 		return &c

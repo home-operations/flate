@@ -28,6 +28,11 @@ func Promote(st *store.Store, id manifest.NamedResource, path string, opts Promo
 		return false
 	}
 	for _, obj := range objs {
+		if raw := obj.Named(); id.Namespace != "" && raw.Namespace == "" && raw.Kind == id.Kind && raw.Name == id.Name {
+			if updated := cloneWithNamespace(obj, id.Namespace); updated != nil {
+				obj = updated
+			}
+		}
 		if !opts.Admit(obj) || st.GetObject(obj.Named()) != nil {
 			continue
 		}

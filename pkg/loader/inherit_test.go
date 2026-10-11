@@ -136,6 +136,48 @@ spec:
 	}
 }
 
+func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
+	for _, tc := range []struct {
+		kind, spec string
+	}{
+		{manifest.KindBucket, "{bucketName: fixtures, endpoint: minio.invalid}"},
+		{manifest.KindGitRepository, "{url: https://example.invalid/repo.git}"},
+		{manifest.KindHelmChart, "{chart: demo, sourceRef: {kind: HelmRepository, name: repo}}"},
+		{manifest.KindExternalArtifact, "{}"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "kustomization.yaml", "namespace: apps\nresources: [source.yaml]\n")
+			testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: "+tc.kind+"\nmetadata: {name: source}\nspec: "+tc.spec+"\n")
+			l := loaderFixture(store.New(), nil)
+			l.SourceRoot, l.Options.DiscoveryOnly = root, true
+			if _, err := l.Load(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
+			raw := manifest.NamedResource{Kind: tc.kind, Name: "source"}
+			original := l.Store.GetObject(raw)
+			if original == nil {
+				t.Fatal("source not loaded")
+			}
+			l.ApplyNamespaces(root)
+			projected := raw
+			projected.Namespace = "apps"
+			if l.Store.GetObject(projected) == nil {
+				t.Fatalf("projected source %s missing", projected)
+			}
+			if _, ok := l.Index.Lookup(projected); !ok {
+				t.Fatalf("projected source %s not indexed", projected)
+			}
+			if original.Named() != raw || l.Store.GetObject(raw) != nil {
+				t.Fatal("raw source must remain immutable and leave the store")
+			}
+			if _, ok := l.Index.Lookup(raw); ok {
+				t.Fatal("stale raw source record")
+			}
+		})
+	}
+}
+
 func TestApplyDefaultNamespaces_LateFallback(t *testing.T) {
 	s := store.New()
 	rs := &manifest.ResourceSet{Name: "apps"}

@@ -12,7 +12,7 @@ import (
 // contain DisableChartDigestTracking=true for helm-controller or no target.
 // Missing or malformed values do not match. The release is never mutated.
 func disablesChartDigestTracking(hr *manifest.HelmRelease) bool {
-	if hr == nil {
+	if hr == nil || hr.Values == nil {
 		return false
 	}
 	// Guard intermediate types so the accessor cannot allocate a malformed-path error.

@@ -148,7 +148,7 @@ func namespaceOrphanFixture(t *testing.T, scenario string) (string, string, []st
 	gitInit(t, root)
 	namespaces := []string{"demo"}
 	rawNS := ""
-	if scenario == "explicit" || scenario == "standalone" {
+	if scenario == "explicit" {
 		rawNS = ", namespace: demo"
 	}
 	bundle := `apiVersion: helm.toolkit.fluxcd.io/v2
@@ -185,8 +185,8 @@ spec: {url: "https://charts.example.invalid", interval: 24h}
 	if scenario == "failing" {
 		base += "patches:\n- patch: |-\n    apiVersion: v1\n    kind: ConfigMap\n    metadata: {name: absent}\n    data: {value: fixture}\n"
 	}
+	testutil.WriteFile(t, root, "cluster/shared/demo/kustomization.yaml", base)
 	if scenario != "standalone" {
-		testutil.WriteFile(t, root, "cluster/shared/demo/kustomization.yaml", base)
 		for _, ns := range namespaces {
 			owner, path := "owner", "cluster/per-cluster"
 			overlay := "resources: [../shared/demo]\n"

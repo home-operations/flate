@@ -121,10 +121,7 @@ data:
 				},
 			}
 			opts := Options{SkipCRDs: tc.skip}
-			inst, _, err := newInstallAction(new(action.Configuration), hr, opts, chartcommon.DefaultCapabilities.Copy())
-			if err != nil {
-				t.Fatal(err)
-			}
+			inst, _ := newInstallAction(new(action.Configuration), hr, opts, chartcommon.DefaultCapabilities.Copy())
 			assert.Equal(t, inst.IncludeCRDs, tc.wantInclude)
 			raw, err := cli.Template(t.Context(), hr, nil, opts)
 			if err != nil {
@@ -462,6 +459,49 @@ func TestOCIChartFingerprint_DistinctInputs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.first != tc.second, true)
+		})
+	}
+}
+
+func TestTemplate_KubeVersion(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: capabilities
+data:
+  version: {{ .Capabilities.KubeVersion.Version | quote }}
+`)
+	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	for _, tc := range []struct {
+		name, version, want string
+		fail                bool
+	}{
+		{name: "default", want: chartcommon.DefaultCapabilities.KubeVersion.Version},
+		{name: "override", version: "1.30.2", want: "v1.30.2"},
+		{name: "invalid", version: "invalid", fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := cli.Template(t.Context(), newHR(), nil, Options{KubeVersion: tc.version})
+			if tc.fail {
+				if err == nil {
+					t.Fatal("invalid override accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			docs, err := manifest.SplitDocs([]byte(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, docs[0]["data"].(map[string]any)["version"], any(tc.want))
 		})
 	}
 }

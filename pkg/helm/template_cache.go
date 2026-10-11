@@ -422,8 +422,6 @@ func writeOptionsBlob(h hashWriter, opts Options) {
 	blob, _ := json.Marshal(struct {
 		SkipCRDs             bool     `json:"skip_crds"`
 		SkipTests            bool     `json:"skip_tests"`
-		SkipSecrets          bool     `json:"skip_secrets"`
-		SkipKinds            []string `json:"skip_kinds,omitempty"`
 		KubeVersion          string   `json:"kube_version,omitempty"`
 		APIVersions          string   `json:"api_versions,omitempty"`
 		IsUpgrade            bool     `json:"is_upgrade"`
@@ -434,8 +432,6 @@ func writeOptionsBlob(h hashWriter, opts Options) {
 	}{
 		SkipCRDs:             opts.SkipCRDs,
 		SkipTests:            opts.SkipTests,
-		SkipSecrets:          opts.SkipSecrets,
-		SkipKinds:            opts.SkipKinds,
 		KubeVersion:          opts.KubeVersion,
 		APIVersions:          opts.APIVersions,
 		IsUpgrade:            opts.IsUpgrade,

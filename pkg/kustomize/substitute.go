@@ -6,40 +6,15 @@ import (
 	"github.com/fluxcd/pkg/envsubst"
 )
 
-// Substitute replaces ${var} placeholders in data using the supplied
-// vars map. Delegates to fluxcd/pkg/envsubst — the exact engine Flux
-// source-controller uses — so behavior matches Flux bit-for-bit:
-//
-//   - $${VAR} passes through as literal ${VAR} (escape).
-//   - ${VAR:-default}, ${VAR:=default}, ${VAR:+alt}, ${VAR:?msg}
-//     handle the unset case per POSIX parameter expansion.
-//   - Bash-only constructs like ${VAR[@]} or ${VAR%%:*} that aren't
-//     recognized by envsubst are emitted literally, not erroneously
-//     matched as bare variable references (a divergence the
-//     previous regex-based implementation had).
-//   - Undefined ${VAR} without a default expands to the empty string,
-//     matching kustomize-controller's default (strict mode is the
-//     opt-in `StrictPostBuildSubstitutions` feature gate, off by
-//     default). Returning the empty string with exists=true keeps
-//     envsubst out of its strict-mode error path and lines flate up
-//     with what real Flux renders against an incomplete substitute
-//     map.
-func Substitute(data []byte, vars map[string]string) ([]byte, error) {
-	return substitute(data, vars, false)
-}
-
-// SubstituteStrict rejects variables absent from vars unless the expansion
-// supplies a default. Defined empty values and escaping follow Flux's engine.
-func SubstituteStrict(data []byte, vars map[string]string) ([]byte, error) {
-	return substitute(data, vars, true)
-}
-
-func substitute(data []byte, vars map[string]string, strict bool) ([]byte, error) {
+// Substitute expands data with Flux's envsubst engine. Strict mode rejects
+// undefined variables without defaults; otherwise they expand to empty strings.
+func Substitute(data []byte, vars map[string]string, strict bool) ([]byte, error) {
 	out, err := envsubst.Eval(string(data), func(s string) (string, bool) {
 		if strict {
 			value, exists := vars[s]
 			return value, exists
 		}
+		// Non-strict mode must report every name as defined to avoid envsubst's strict error path, matching kustomize-controller.
 		return vars[s], true
 	})
 	if err != nil {

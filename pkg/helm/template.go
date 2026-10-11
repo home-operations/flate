@@ -75,10 +75,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		deterministic.SeedFor(hr.ReleaseName(), hr.ReleaseNamespace()),
 	)
 
-	inst, disableHooks, err := newInstallAction(cfg, hr, opts, caps)
-	if err != nil {
-		return "", err
-	}
+	inst, disableHooks := newInstallAction(cfg, hr, opts, caps)
 	if hrValues == nil {
 		hrValues = map[string]any{}
 	}
@@ -175,8 +172,8 @@ func schemaValidationSkipped(opts Options, hr *manifest.HelmRelease, values map[
 // renders through, mirroring helm-controller's install/upgrade field
 // wiring. Returns the configured install, the effective disableHooks
 // flag (reused by Template's post-render hook filter so hooks don't
-// leak into the output when disabled), and any kube-version parse error.
-func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts Options, caps *common.Capabilities) (*action.Install, bool, error) {
+// leak into the output when disabled).
+func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts Options, caps *common.Capabilities) (*action.Install, bool) {
 	inst := action.NewInstall(cfg)
 	inst.DryRunStrategy = action.DryRunClient
 	inst.ReleaseName = hr.ReleaseName()
@@ -221,13 +218,7 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	inst.PostRenderer = newPostRenderer(hr.PostRenderers)
 	// action.Install consults its own KubeVersion field for chart
 	// compatibility checks and ignores cfg.Capabilities for that purpose.
-	if opts.KubeVersion != "" {
-		kv, err := common.ParseKubeVersion(opts.KubeVersion)
-		if err != nil {
-			return nil, false, fmt.Errorf("parse kube-version %q: %w", opts.KubeVersion, err)
-		}
-		inst.KubeVersion = kv
-	}
+	inst.KubeVersion = &caps.KubeVersion
 	// Same for APIVersions — action.Install under DryRunClient
 	// replaces cfg.Capabilities with a fresh default copy and then
 	// only re-applies inst.APIVersions onto that copy. Setting
@@ -239,7 +230,7 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	if hr.Chart.Version != "" {
 		inst.Version = hr.Chart.Version
 	}
-	return inst, disableHooks, nil
+	return inst, disableHooks
 }
 
 // mergeChartValuesFiles caches by loaded content and ordered filenames. Returned

@@ -33,11 +33,7 @@ func substituteDoc(doc map[string]any, vars map[string]string, strict bool) (map
 	if err != nil {
 		return nil, fmt.Errorf("substitute: marshal doc: %w", err)
 	}
-	substitute := kustomize.Substitute
-	if strict {
-		substitute = kustomize.SubstituteStrict
-	}
-	out, err := substitute(raw, vars)
+	out, err := kustomize.Substitute(raw, vars, strict)
 	if err != nil {
 		return nil, err
 	}

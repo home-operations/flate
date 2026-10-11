@@ -162,7 +162,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	if provider == nil {
 		provider = values.NewStoreProvider(c.Store)
 	}
-	ks, err = kustomize.PrepareWithSubstitutions(ks, provider, c.substitute)
+	ks, err = kustomize.Prepare(ks, provider, c.substitute)
 	if err != nil {
 		return err
 	}

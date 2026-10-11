@@ -443,6 +443,20 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 		}
 	})
 
+	for _, tc := range []struct {
+		name string
+		opts Options
+	}{
+		{name: "OptsSkipSecrets", opts: Options{KubeVersion: baseOpts.KubeVersion, SkipSecrets: true}},
+		{name: "OptsSkipKinds", opts: Options{KubeVersion: baseOpts.KubeVersion, SkipKinds: []string{"ConfigMap"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := computeTemplateKey("fp", baseChart, baseValues, tc.opts, baseHR); got != baseKey {
+				t.Error("output filtering changed the template key")
+			}
+		})
+	}
+
 	t.Run("OptsKubeVersion", func(t *testing.T) {
 		alt := baseOpts
 		alt.KubeVersion = "1.32"

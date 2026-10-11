@@ -12,7 +12,7 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-func TestSubstituteStrict_Operators(t *testing.T) {
+func TestSubstitute_StrictOperators(t *testing.T) {
 	for _, tc := range []struct {
 		name, input, want string
 		vars              map[string]string
@@ -29,7 +29,7 @@ func TestSubstituteStrict_Operators(t *testing.T) {
 		{name: "defined transform", input: "${VALUE^^}", vars: map[string]string{"VALUE": "provided"}, want: "PROVIDED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := SubstituteStrict([]byte(tc.input), tc.vars)
+			got, err := Substitute([]byte(tc.input), tc.vars, true)
 			if (err != nil) != tc.fail {
 				t.Fatalf("error=%v", err)
 			}
@@ -42,13 +42,13 @@ func TestSubstituteStrict_Operators(t *testing.T) {
 			}
 		})
 	}
-	out, err := Substitute([]byte("${UNDEFINED}"), nil)
+	out, err := Substitute([]byte("${UNDEFINED}"), nil, false)
 	if err != nil || len(out) != 0 {
 		t.Fatalf("default exported caller changed: %q, %v", out, err)
 	}
 }
 
-func TestPrepareWithSubstitutions_LayersAndImmutability(t *testing.T) {
+func TestPrepare_LayersAndImmutability(t *testing.T) {
 	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./app\n  postBuild:\n    substitute: {VALUE: inline}\n    substituteFrom: [{kind: ConfigMap, name: first}, {kind: ConfigMap, name: second}]\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestPrepareWithSubstitutions_LayersAndImmutability(t *testing.T) {
 		st.AddObject(cm)
 	}
 	provider := values.NewStoreProvider(st)
-	prepared, err := PrepareWithSubstitutions(original, provider, overlay)
+	prepared, err := Prepare(original, provider, overlay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestPrepareWithSubstitutions_LayersAndImmutability(t *testing.T) {
 	if values.VarsMap(prepared.PostBuildSubstitute)["EXTRA"] != "onetwo" {
 		t.Fatal("overlay normalization changed")
 	}
-	ordinary, err := Prepare(original, provider)
+	ordinary, err := Prepare(original, provider, nil)
 	if err != nil || ordinary.PostBuildSubstitute["VALUE"] != "inline" {
 		t.Fatalf("exported Prepare changed: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestPrepareWithSubstitutions_LayersAndImmutability(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ks := &manifest.Kustomization{Name: "plain", Namespace: "apps"}
 			ks.PostBuild = tc.postBuild
-			got, err := PrepareWithSubstitutions(ks, provider, overlay)
+			got, err := Prepare(ks, provider, overlay)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -111,7 +111,7 @@ func TestPrepareWithSubstitutions_LayersAndImmutability(t *testing.T) {
 			}
 		})
 	}
-	invalid, err := PrepareWithSubstitutions(original, provider, map[string]string{"z-invalid": "private", "a-invalid": "private"})
+	invalid, err := Prepare(original, provider, map[string]string{"z-invalid": "private", "a-invalid": "private"})
 	if invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) || !strings.Contains(err.Error(), "[a-invalid z-invalid]") {
 		t.Fatalf("invalid keys not classified/sorted: %v", err)
 	}

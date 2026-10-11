@@ -2,6 +2,7 @@ package loader
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -309,5 +310,33 @@ spec:
 		if st.GetObject(want) == nil {
 			t.Errorf("source %s must stay in Store under DiscoveryOnly; got nil", want.String())
 		}
+	}
+}
+
+func TestPromote_BareDocumentProjection(t *testing.T) {
+	const doc = `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: podinfo%s}
+spec:
+  interval: 1h
+  chart: {spec: {chart: podinfo, version: %s, sourceRef: {kind: HelmRepository, name: podinfo}}}
+`
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "bundle.yaml", fmt.Sprintf(doc, "", "1.0.0")+"---\n"+fmt.Sprintf(doc, ", namespace: other", "2.0.0")+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: note}\n")
+	for _, tc := range []struct{ namespace, version string }{{"apps", "1.0.0"}, {"other", "2.0.0"}} {
+		t.Run(tc.namespace, func(t *testing.T) {
+			st := store.New()
+			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.namespace, Name: "podinfo"}
+			admit := func(manifest.BaseManifest) bool { return true }
+			if !Promote(st, id, filepath.Join(dir, "bundle.yaml"), PromoteOptions{Admit: admit}) {
+				t.Fatalf("Promote(%s) = false", id)
+			}
+			if got := st.GetObject(id).(*manifest.HelmRelease).Chart.Version; got != tc.version {
+				t.Errorf("%s chart version = %s, want %s", id, got, tc.version)
+			}
+			if sibling := (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: tc.namespace, Name: "note"}); st.GetObject(sibling) != nil {
+				t.Errorf("sibling %s must keep its own identity", sibling)
+			}
+		})
 	}
 }

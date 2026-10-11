@@ -2,6 +2,7 @@ package loader
 
 import (
 	"log/slog"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -27,8 +28,11 @@ func Promote(st *store.Store, id manifest.NamedResource, path string, opts Promo
 		slog.Debug("loader: promote re-parse failed", "id", id.String(), "path", path, "err", err)
 		return false
 	}
+	bare := id
+	bare.Namespace = ""
+	authored := slices.ContainsFunc(objs, func(obj manifest.BaseManifest) bool { return obj.Named() == id })
 	for _, obj := range objs {
-		if raw := obj.Named(); id.Namespace != "" && raw.Namespace == "" && raw.Kind == id.Kind && raw.Name == id.Name {
+		if !authored && obj.Named() == bare {
 			if updated := cloneWithNamespace(obj, id.Namespace); updated != nil {
 				obj = updated
 			}

@@ -67,10 +67,12 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 	var leaves []manifest.BaseManifest
 	for _, child := range children {
 		obj := child.Obj
-		id := obj.Named()
-		if !isTrackedChild(obj, helmRelease) || (id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease) {
+		switch obj.(type) {
+		case *manifest.Kustomization, *manifest.HelmRelease:
+		default:
 			continue
 		}
+		id := obj.Named()
 		c.KeepEmitted(parent, obj)
 		// A parent's self-copy must never overwrite its substituted spec.
 		if publish && id != parent {

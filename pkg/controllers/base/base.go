@@ -272,8 +272,8 @@ func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string
 // are byte-identical, so the expensive render (kustomize/helm) is skipped. It
 // still replays the cached docs through emit so the idempotent per-emission
 // side-effects (keep-set extension + parent provenance) fire on every reconcile
-// pass; emit is the controller's emitRenderedChildren(id, docs, publish=false)
-// closure. The replay deliberately does NOT re-publish the children: they were
+// pass; emit is the controller's Emit(id, docs, wipeSecrets, publish=false)
+// replay closure. The replay deliberately does NOT re-publish the children: they were
 // already published byte-identically by the render that set this artifact, so
 // re-AddObject-ing them would only re-fire listeners and re-submit already-
 // settled resources — churn that can transiently un-Ready a parent and race

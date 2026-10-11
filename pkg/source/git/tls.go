@@ -40,9 +40,14 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (*tls.Config, error) 
 		// resolveAuth reports the missing-secret error first.
 		return nil, nil
 	}
-	crt := source.StringFromSecret(sec, "tls.crt")
-	key := source.StringFromSecret(sec, "tls.key")
-	ca := cmp.Or(source.StringFromSecret(sec, "ca.crt"), source.StringFromSecret(sec, "caFile"))
+	crt, _, _ := sec.Value("tls.crt")
+	key, _, _ := sec.Value("tls.key")
+	ca, _, _ := sec.Value("ca.crt")
+	legacyCA, _, _ := sec.Value("caFile")
+	ca = cmp.Or(ca, legacyCA)
+	if manifest.IsValuePlaceholder(crt) || manifest.IsValuePlaceholder(key) || manifest.IsValuePlaceholder(ca) {
+		return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "TLS material unavailable")
+	}
 	if crt == "" && key == "" && ca == "" {
 		// No TLS material — the secret carries only SSH identity or
 		// basic-auth credentials. Anonymous / system-CA path.

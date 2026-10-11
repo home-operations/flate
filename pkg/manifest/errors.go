@@ -53,19 +53,10 @@ var (
 	ErrInvalidValuesReference     = fmt.Errorf("%w: invalid values reference", ErrFlux)
 	ErrInvalidSubstituteReference = fmt.Errorf("%w: invalid substitute reference", ErrFlux)
 	ErrCommand                    = fmt.Errorf("%w: command error", ErrFlux)
-	// ErrMissingSecret signals that a source's auth SecretRef couldn't
-	// be resolved — either the referenced Secret isn't in the offline
-	// tree, or its value is SOPS-encrypted (flate can't decrypt, so it's
-	// wiped to a PLACEHOLDER string) or materialized live by an
-	// ExternalSecret (the Secret manifest exists but its data isn't in
-	// git). The orchestrator's --allow-missing-secrets flag turns this
-	// into a skip rather than a failure.
-	//
-	// Scope: auth secretRef ONLY. certSecretRef and proxySecretRef sites
-	// intentionally still fail loud — silently dropping proxy/TLS material
-	// is a security downgrade flate refuses to make implicit. (flate does
-	// not verify signatures, so spec.verify secretRefs are ignored, never
-	// resolved.)
+	// ErrMissingSecret marks absent or wiped source auth, cert or proxy material.
+	// The source is skipped only under producer or --allow-missing-secrets policy;
+	// configured TLS/proxy requirements are never discarded for a fetch.
+	// Malformed real material remains a failure. Signature refs are ignored.
 	ErrMissingSecret = fmt.Errorf("%w: missing secret", ErrFlux)
 	// ErrSourceSkipped signals that a downstream consumer (KS sourceRef,
 	// HR chartRef) cannot proceed because its source was skipped —

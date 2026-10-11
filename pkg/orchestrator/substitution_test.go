@@ -64,7 +64,7 @@ func TestNew_SubstitutionSnapshot(t *testing.T) {
 	cm := source.Object.(*manifest.ConfigMap)
 	cm.Data["nested"] = map[string]any{"items": []any{"owned"}}
 	raw := []byte("b3duZWQ=")
-	cm.BinaryData = map[string]any{"BINARY": raw}
+	cm.Data["BINARY"] = raw
 	secret := &manifest.Secret{Name: "secret", Namespace: "apps", Data: map[string]any{"VALUE": "b3duZWQ="}, StringData: map[string]any{"VALUE": "owned"}}
 	overlay := map[string]string{"VALUE": "owned"}
 	sources := []SubstitutionSource{source, {Object: secret, Path: "secret-values.yaml"}}
@@ -78,7 +78,7 @@ func TestNew_SubstitutionSnapshot(t *testing.T) {
 	sources[0].Path = "changed"
 	overlay["VALUE"] = "changed"
 	owned := o.cfg.SubstituteFrom[0].Object.(*manifest.ConfigMap)
-	if owned.Name != "external" || owned.Data["VALUE"] != "supplied" || owned.Data["nested"].(map[string]any)["items"].([]any)[0] != "owned" || string(owned.BinaryData["BINARY"].([]byte)) != "b3duZWQ=" || o.cfg.SubstituteFrom[0].Path != "ci-values.yaml" || o.cfg.Substitute["VALUE"] != "owned" {
+	if owned.Name != "external" || owned.Data["VALUE"] != "supplied" || owned.Data["nested"].(map[string]any)["items"].([]any)[0] != "owned" || string(owned.Data["BINARY"].([]byte)) != "b3duZWQ=" || o.cfg.SubstituteFrom[0].Path != "ci-values.yaml" || o.cfg.Substitute["VALUE"] != "owned" {
 		t.Fatal("SDK inputs alias caller memory")
 	}
 	ownedSecret := o.cfg.SubstituteFrom[1].Object.(*manifest.Secret)

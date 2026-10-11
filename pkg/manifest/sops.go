@@ -1,6 +1,11 @@
 package manifest
 
-import "strings"
+import (
+	"bytes"
+	"encoding/base64"
+	"fmt"
+	"strings"
+)
 
 // sopsCiphertextPrefix opens every SOPS-encrypted scalar. SOPS rewrites
 // an encrypted value as `ENC[AES256_GCM,data:…,iv:…,tag:…,type:…]`; the
@@ -8,14 +13,27 @@ import "strings"
 // real cleartext value never matches it by accident.
 const sopsCiphertextPrefix = "ENC[AES256_GCM,"
 
-// IsSopsCiphertext reports whether s is a SOPS-encrypted scalar that
-// flate (running offline, with no decryption key) cannot decrypt. Used
-// to wipe leftover ciphertext to a placeholder so it doesn't poison
-// downstream rendering — e.g. an encrypted ConfigMap value flowing into
-// postBuild substitution, where the `:` inside the ciphertext breaks
-// chart validation (Ingress hosts, cert-manager dnsNames, ...).
-func IsSopsCiphertext(s string) bool {
-	return strings.HasPrefix(s, sopsCiphertextPrefix) && strings.HasSuffix(s, "]")
+// WipeValue replaces raw or once-decoded SOPS ciphertext with a per-key token.
+// Nil encoding denotes a plaintext field; malformed encoding alone is preserved.
+func WipeValue(key, value string, encoding *base64.Encoding, encrypted bool) string {
+	wiped := encrypted || strings.Contains(value, sopsCiphertextPrefix)
+	if !wiped {
+		decoder := encoding
+		if decoder == nil {
+			decoder = base64.StdEncoding
+		}
+		var scratch [128]byte
+		decoded, err := decoder.AppendDecode(scratch[:0], []byte(value))
+		wiped = err == nil && bytes.Contains(decoded, []byte(sopsCiphertextPrefix))
+	}
+	if !wiped {
+		return value
+	}
+	token := fmt.Sprintf(ValuePlaceholderTemplate, key)
+	if encoding != nil {
+		return encoding.EncodeToString([]byte(token))
+	}
+	return token
 }
 
 // IsEncryptedSecret reports whether doc looks like a SOPS-encrypted
@@ -27,7 +45,7 @@ func IsSopsCiphertext(s string) bool {
 // flate runs offline and cannot decrypt; the kustomization and
 // helmrelease controllers call this to log the encrypted resource
 // then wipe its data fields to ValuePlaceholderTemplate via
-// parseSecret, mirroring the --wipe-secrets cleartext behavior.
+// ParseDoc, when --wipe-secrets is enabled.
 // flate ignores spec.decryption entirely — there is no path that
 // reads the decryption Secret.
 func IsEncryptedSecret(doc map[string]any) bool {

@@ -30,7 +30,7 @@ func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest)
 	if !ok {
 		return nil, source.MissingSecretErr(repo.Named().Kind, repo.Namespace, repo.Name, repo.CertSecretRef.Name, "not found")
 	}
-	if got := source.StringFromSecret(secret, "ca.crt"); got != "rendered-ca" {
+	if got, _, _ := secret.Value("ca.crt"); got != "rendered-ca" {
 		return nil, fmt.Errorf("source: CA = %q, want rendered-ca", got)
 	}
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"

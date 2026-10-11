@@ -24,26 +24,28 @@ func snapshotSubstitutions(cfg *Config) error {
 	}
 	cfg.SubstituteFrom = slices.Clone(cfg.SubstituteFrom)
 	for i, source := range cfg.SubstituteFrom {
-		var obj manifest.BaseManifest
+
+		var doc map[string]any
 		switch input := source.Object.(type) {
 		case *manifest.ConfigMap:
 			if input != nil {
-				owned := *input
-				owned.Data = copySubstitutionData(input.Data)
-				owned.BinaryData = copySubstitutionData(input.BinaryData)
-				obj = &owned
+				doc = map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap,
+					"metadata": map[string]any{"name": input.Name, "namespace": input.Namespace},
+					"data":     copySubstitutionData(input.Data)}
 			}
 		case *manifest.Secret:
 			if input != nil {
-				owned := *input
-				owned.Data = copySubstitutionData(input.Data)
-				owned.StringData = copySubstitutionData(input.StringData)
-				obj = &owned
+				doc = map[string]any{"apiVersion": "v1", "kind": manifest.KindSecret,
+					"metadata": map[string]any{"name": input.Name, "namespace": input.Namespace},
+					"data":     copySubstitutionData(input.Data), "stringData": copySubstitutionData(input.StringData)}
 			}
 		}
-		if obj == nil || obj.Named().Namespace == "" || obj.Named().Name == "" {
-			return fmt.Errorf("%w: substituteFrom input %d requires a ConfigMap or Secret with name and namespace",
-				manifest.ErrInput, i+1)
+		if doc == nil {
+			return fmt.Errorf("%w: substituteFrom input %d requires a ConfigMap or Secret with name and namespace", manifest.ErrInput, i+1)
+		}
+		obj, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: cfg.WipeSecrets})
+		if err != nil || obj.Named().Namespace == "" {
+			return fmt.Errorf("%w: substituteFrom input %d requires a ConfigMap or Secret with name and namespace", manifest.ErrInput, i+1)
 		}
 		cfg.SubstituteFrom[i].Object = obj
 	}

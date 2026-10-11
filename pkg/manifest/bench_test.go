@@ -157,7 +157,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -213,7 +213,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -244,7 +244,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -269,7 +269,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -296,7 +296,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}

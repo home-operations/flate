@@ -1,7 +1,9 @@
 package manifest
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -98,12 +100,13 @@ func DocMetadata(doc map[string]any) (name, namespace string) {
 
 // ParseDocOptions tunes ParseDoc behavior.
 type ParseDocOptions struct {
-	// WipeSecrets controls Secret cleartext replacement. Default true.
+	// WipeSecrets replaces SOPS ciphertext with offline placeholders.
 	WipeSecrets bool
 }
 
 // ParseDoc dispatches on kind + apiVersion to the appropriate concrete
-// parser. Unknown kinds become a RawObject; kustomize.config.k8s.io
+// parser and returns the authoritative sanitized document, including on errors.
+// Unknown kinds become a RawObject; kustomize.config.k8s.io
 // build directives and bare data files are silently dropped.
 //
 // Every case matches BOTH kind and API group: a kind name is not unique
@@ -111,52 +114,91 @@ type ParseDocOptions struct {
 // (seaweed.seaweedfs.com Bucket, s3.services.k8s.aws Bucket) is an
 // ordinary cluster resource, so it falls through to RawObject rather
 // than being decoded as — and reconciled as — the Flux CR it isn't.
-func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, error) {
+func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[string]any, error) {
 	kind := DocKind(doc)
 	apiVersion := DocAPIVersion(doc)
 	// kustomize.config.k8s.io build directives (Kustomization,
 	// Component) aren't k8s resources — they're build inputs we
 	// already follow via spec.path discovery. Drop them silently.
 	if strings.HasPrefix(apiVersion, KustomizeDomain) {
-		return &RawObject{Kind: kind, APIVersion: apiVersion}, nil
+		return &RawObject{Kind: kind, APIVersion: apiVersion}, doc, nil
 	}
 	// Documents without a kind are bare data files (helm values,
 	// arbitrary YAML configs). Treat them as RawObjects so the
 	// loader drops them without surfacing as parse errors.
 	if kind == "" {
-		return &RawObject{APIVersion: apiVersion}, nil
+		return &RawObject{APIVersion: apiVersion}, doc, nil
 	}
 	if apiVersion == "" {
-		return nil, inputf("missing apiVersion for %s", kind)
+		return nil, doc, inputf("missing apiVersion for %s", kind)
 	}
 
+	if opts.WipeSecrets && apiVersion == CoreAPIVersion && (kind == KindConfigMap || kind == KindSecret) {
+		encrypted := IsEncryptedSecret(doc)
+		var sanitized map[string]any
+		for _, field := range []string{"data", "stringData", "binaryData"} {
+			var encoding *base64.Encoding
+			if field == "binaryData" || (kind == KindSecret && field == "data") {
+				encoding = base64.StdEncoding
+			}
+			data, _ := doc[field].(map[string]any)
+			var replaced map[string]any
+			for key, raw := range data {
+				value, err := scalarString(raw)
+				if err != nil && !encrypted {
+					continue
+				}
+				wiped := WipeValue(key, value, encoding, encrypted)
+				if wiped == value {
+					continue
+				}
+				if replaced == nil {
+					replaced = maps.Clone(data)
+				}
+				replaced[key] = wiped
+			}
+			if replaced != nil {
+				if sanitized == nil {
+					sanitized = maps.Clone(doc)
+				}
+				sanitized[field] = replaced
+			}
+		}
+		if sanitized != nil {
+			doc = sanitized
+		}
+	}
+	var obj BaseManifest
+	var err error
 	switch {
 	case kind == KindKustomization && inGroup(apiVersion, FluxKustomizeDomain):
-		return parseKustomization(doc)
+		obj, err = parseKustomization(doc)
 	case kind == KindHelmRelease && inGroup(apiVersion, HelmReleaseDomain):
-		return parseHelmRelease(doc)
+		obj, err = parseHelmRelease(doc)
 	case kind == KindHelmRepository && inGroup(apiVersion, SourceDomain):
-		return parseHelmRepository(doc)
+		obj, err = parseHelmRepository(doc)
 	case kind == KindHelmChart && inGroup(apiVersion, SourceDomain):
-		return parseHelmChartSource(doc)
+		obj, err = parseHelmChartSource(doc)
 	case kind == KindGitRepository && inGroup(apiVersion, SourceDomain):
-		return parseGitRepository(doc)
+		obj, err = parseGitRepository(doc)
 	case kind == KindOCIRepository && inGroup(apiVersion, SourceDomain):
-		return ParseOCIRepository(doc)
+		obj, err = ParseOCIRepository(doc)
 	case kind == KindExternalArtifact && inGroup(apiVersion, SourceDomain):
-		return parseExternalArtifact(doc)
+		obj, err = parseExternalArtifact(doc)
 	case kind == KindBucket && inGroup(apiVersion, SourceDomain):
-		return parseBucket(doc)
+		obj, err = parseBucket(doc)
 	case kind == KindResourceSet && inGroup(apiVersion, FluxOperatorDomain):
-		return parseResourceSet(doc)
+		obj, err = parseResourceSet(doc)
 	case kind == KindResourceSetInputProvider && inGroup(apiVersion, FluxOperatorDomain):
-		return parseResourceSetInputProvider(doc)
+		obj, err = parseResourceSetInputProvider(doc)
 	case kind == KindConfigMap && apiVersion == CoreAPIVersion:
-		return parseConfigMap(doc, opts.WipeSecrets)
+		obj, err = parseConfigMap(doc)
 	case kind == KindSecret && apiVersion == CoreAPIVersion:
-		return parseSecret(doc, opts.WipeSecrets)
+		obj, err = parseSecret(doc)
+	default:
+		obj, err = parseRawObject(doc)
 	}
-	return parseRawObject(doc)
+	return obj, doc, err
 }
 
 // IsKustomizeBuildDirective reports whether obj is a kustomize.config.k8s.io

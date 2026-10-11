@@ -133,7 +133,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
 		return err
 	}
-	c.emit(id, docs, true)
+	docs = c.emit(id, docs, true)
 
 	c.Store.SetArtifact(id, &store.ResourceSetArtifact{Manifests: docs, Fingerprint: fp})
 	return nil
@@ -146,14 +146,14 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 // fed only when publishing (the dedup replay would double-feed it
 // otherwise — the cached docs were already sunk by the render that set
 // the artifact).
-func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publish bool) {
-	children := c.Emit(id, docs, c.WipeSecrets, publish)
+func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publish bool) []map[string]any {
+	children, docs := c.Emit(id, docs, c.WipeSecrets, publish)
 	if !publish || c.rawSink == nil {
-		return
+		return docs
 	}
 	parentKS, ok := c.LookupParent(id)
 	if !ok {
-		return
+		return docs
 	}
 	// Route the RawObject (non-Flux) children to the orchestrator's output sink,
 	// reusing the shared parse so raw output groups under the parent KS.
@@ -162,6 +162,7 @@ func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publ
 			c.rawSink(id, parentKS, child.Doc)
 		}
 	}
+	return docs
 }
 
 // collectDeps assembles the dependency refs whose readiness must precede

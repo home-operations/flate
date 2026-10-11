@@ -1,0 +1,58 @@
+package manifest
+
+import (
+	"encoding/base64"
+	"slices"
+	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
+)
+
+func TestSecret_Value_ShadowedAndUnrequestedKeys(t *testing.T) {
+	s := &Secret{StringData: map[string]any{"VALUE": ""}, Data: map[string]any{"VALUE": "malformed!", "UNUSED": "malformed!"}}
+	value, found, err := s.Value("VALUE")
+	if value != "" || !found || err != nil {
+		t.Fatalf("value=%q found=%t err=%v", value, found, err)
+	}
+	keys := slices.Collect(s.Keys())
+	slices.Sort(keys)
+	assert.Diff(t, keys, []string{"UNUSED", "VALUE"})
+	if _, _, err := s.Value("UNUSED"); err == nil {
+		t.Fatal("requested malformed value succeeded")
+	}
+}
+
+func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
+	const cipher = "enabled: ENC[AES256_GCM,data:fixture,type:str]\n"
+	for _, tc := range []struct {
+		kind, field string
+		encoded     bool
+	}{
+		{KindConfigMap, "data", false}, {KindConfigMap, "binaryData", true},
+		{KindSecret, "stringData", false}, {KindSecret, "data", true},
+	} {
+		t.Run(tc.kind+"/"+tc.field, func(t *testing.T) {
+			raw := cipher
+			want := "..PLACEHOLDER_VALUE.."
+			if tc.encoded {
+				raw = base64.StdEncoding.EncodeToString([]byte(raw))
+				want = base64.StdEncoding.EncodeToString([]byte(want))
+			}
+			doc := map[string]any{"apiVersion": "v1", "kind": tc.kind, tc.field: map[string]any{"VALUE": raw}}
+			_, authoritative, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+			if err == nil {
+				t.Fatal("metadata-invalid data object parsed")
+			}
+			if authoritative[tc.field].(map[string]any)["VALUE"] != want || doc[tc.field].(map[string]any)["VALUE"] != raw {
+				t.Fatal("authoritative sanitation changed borrowed input or retained ciphertext")
+			}
+			_, replay, _ := ParseDoc(authoritative, ParseDocOptions{WipeSecrets: true})
+			assert.Diff(t, replay, authoritative)
+		})
+	}
+}
+
+func TestVarsMap_Scalars(t *testing.T) {
+	assert.Diff(t, VarsMap(map[string]any{"TEXT": "one\ntwo", "NUMBER": 3, "BYTES": []byte("bytes"), "NESTED": map[string]any{"x": "y"}}),
+		map[string]string{"TEXT": "onetwo", "NUMBER": "3", "BYTES": "bytes"})
+}

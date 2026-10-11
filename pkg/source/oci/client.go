@@ -106,11 +106,11 @@ func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIR
 	if sec == nil {
 		return f.registryFallback(ctx, repo, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found"))
 	}
-	configJSON := source.StringFromSecret(sec, dockerConfigJSONKey)
-	if configJSON == "" {
+	configJSON, _, _ := sec.Value(dockerConfigJSONKey)
+	if configJSON == "" || manifest.IsValuePlaceholder(configJSON) {
 		// Empty here covers both (a) the Secret has no .dockerconfigjson
 		// key at all and (b) the key exists but `--wipe-secrets` (always
-		// on) replaced its value with PLACEHOLDER, which StringFromSecret
+		// on) replaced its value with PLACEHOLDER, which Secret.Value
 		// returns as "". The ExternalSecret case in #190 hits (b): the
 		// Secret manifest is in-tree but its data is materialized live.
 		// Same ErrMissingSecret sentinel so --allow-missing-secrets

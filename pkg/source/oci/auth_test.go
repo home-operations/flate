@@ -111,7 +111,7 @@ func TestFetcher_ResolveTLS_AllKeysMissing(t *testing.T) {
 		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	})
 	_, err := f.resolveTLS(repo)
-	if err == nil || !strings.Contains(err.Error(), "tls.crt") {
+	if !errors.Is(err, manifest.ErrMissingSecret) {
 		t.Errorf("expected missing-keys error; got %v", err)
 	}
 }

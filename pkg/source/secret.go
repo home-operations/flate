@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -55,12 +54,8 @@ func MissingSecretErr(kind, ns, name, secretRef, reason string) error {
 	}
 }
 
-// resolveSecretRef fetches the Secret a set *SecretRef points at, shared
-// by ResolveProxy and ResolveCertSecret. field names the spec field
-// (e.g. "proxySecretRef") for diagnostics. Callers handle the nil-ref
-// "not configured" case before calling; once ref is set, an unwired
-// SecretGetter or a missing Secret is a loud error matching
-// source-controller's fail-loud behavior.
+// An unwired getter is configuration failure; missing material retains the
+// source and Secret identities for the existing whole-source skip policy.
 func resolveSecretRef(secrets SecretGetter, ns, ownerKind, ownerID, field string, ref *manifest.LocalObjectReference) (*manifest.Secret, error) {
 	if secrets == nil {
 		return nil, fmt.Errorf("%s %s references %s but no source.SecretGetter is wired",
@@ -73,52 +68,12 @@ func resolveSecretRef(secrets SecretGetter, ns, ownerKind, ownerID, field string
 	return sec, nil
 }
 
-// StringFromSecret reads a key from a Secret, preferring StringData
-// over Data. Data values are base64-decoded (per k8s Secret semantics)
-// before being returned, so the same string surface holds regardless
-// of whether the source manifest used `data:` or `stringData:`.
-// PLACEHOLDER_-wiped values (the result of flate's secret wiping
-// pre-processing) are reported as empty so callers surface a clear
-// "missing keys" error rather than authenticating with the literal
-// placeholder.
-//
-// Used by per-kind Fetchers (git, oci, bucket) to resolve auth + TLS
-// material from the Secret a SecretRef points at.
-func StringFromSecret(sec *manifest.Secret, key string) string {
-	if v, ok := sec.StringData[key].(string); ok {
-		if manifest.IsValuePlaceholder(v) {
-			return ""
-		}
-		return v
-	}
-	if v, ok := sec.Data[key].(string); ok {
-		// `data:` is base64-encoded YAML-side; decode so the returned
-		// value is the actual material (PEM block, dockerconfigjson,
-		// password, …) rather than its base64 envelope. Real k8s
-		// Secrets that ship a `cosign.pub` or `tls.crt` use this form.
-		decoded, err := base64.StdEncoding.DecodeString(v)
-		if err != nil {
-			return ""
-		}
-		s := string(decoded)
-		if manifest.IsValuePlaceholder(s) {
-			return ""
-		}
-		return s
-	}
-	return ""
-}
-
-// BasicAuthFromSecret extracts the username/password pair every HTTP-auth
-// fetcher reads from a Secret (git HTTPS, HelmRepository). It returns a uniform
-// MissingSecretErr when either field is absent or PLACEHOLDER-wiped — empty
-// covers both the missing-key and ExternalSecret-stub cases, so a caller's
-// --allow-missing-secrets gate (errors.Is ErrMissingSecret) treats them
-// alike. ownerKind/ns/name/secretRef only shape that error message.
+// BasicAuthFromSecret reports absent, undecodable or wiped credentials through
+// MissingSecretError. Placeholder tokens must never become credentials.
 func BasicAuthFromSecret(sec *manifest.Secret, ownerKind, ns, name, secretRef string) (username, password string, err error) {
-	username = StringFromSecret(sec, "username")
-	password = StringFromSecret(sec, "password")
-	if username == "" || password == "" {
+	username, _, _ = sec.Value("username")
+	password, _, _ = sec.Value("password")
+	if username == "" || password == "" || manifest.IsValuePlaceholder(username) || manifest.IsValuePlaceholder(password) {
 		return "", "", MissingSecretErr(ownerKind, ns, name, secretRef, "missing username/password")
 	}
 	return username, password, nil

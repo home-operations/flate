@@ -8,7 +8,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 // ResolveDependsOnSubstitutions resolves bare ${VAR} references in
@@ -68,7 +67,7 @@ func substituteUnion(s *store.Store) map[string]string {
 	union := map[string]string{}
 	conflicting := map[string]struct{}{}
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		for k, v := range values.VarsMap(ks.PostBuildSubstitute) {
+		for k, v := range manifest.VarsMap(ks.PostBuildSubstitute) {
 			if _, bad := conflicting[k]; bad {
 				continue
 			}

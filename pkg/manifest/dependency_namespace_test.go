@@ -37,7 +37,7 @@ func TestDependsOn_TypedNamespace(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				obj, err := ParseDoc(docs[0], ParseDocOptions{})
+				obj, _, err := ParseDoc(docs[0], ParseDocOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}

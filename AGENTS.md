@@ -56,7 +56,8 @@ Leaf packages stay leaf: `tree` (stdlib only), `manifest`, `task`, `schedule` (s
   do not add another on the render path.
 - Changed-only mode: `KeepEmitted`/`AddEmitted` before `AddObject`.
 - Only SOPS ciphertext is wiped (`..PLACEHOLDER_<key>..`); missing secrets fail loud unless a
-  producer exists or `--allow-missing-secrets` is set; cert and proxy refs always fail loud.
+  producer exists or `--allow-missing-secrets` is set; absent or wiped auth, cert and proxy material follows that same whole-source skip policy;
+  malformed real material fails loud.
 - Fetched content goes through `safepath` and `atomic` writes; cache paths come only from
   `cacheroot.Layout`; the SSRF guard is process-global and opt-in via `RestrictEgress`.
 - Output order never depends on goroutine scheduling: sort anything derived from a map.

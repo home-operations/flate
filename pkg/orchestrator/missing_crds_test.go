@@ -154,7 +154,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 		doc["spec"].(map[string]any)["suspend"] = true
 		doc["metadata"].(map[string]any)["labels"] = map[string]any{"resourceset.fluxcd.controlplane.io/name": "flux-operator", "resourceset.fluxcd.controlplane.io/namespace": "flux-system"}
 		want = append(want, doc)
-		obj, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		obj, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}

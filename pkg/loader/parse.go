@@ -48,7 +48,7 @@ func decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool,
 		return fmt.Errorf("decode %s: %w", path, err)
 	}
 	for _, doc := range docs {
-		obj, err := manifest.ParseDoc(doc, opts)
+		obj, _, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
 			slog.Debug("loader: doc skipped", "path", path, "err", err)
 			manifest.ReleaseDoc(doc)

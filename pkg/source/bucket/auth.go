@@ -55,9 +55,9 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 	if sec == nil {
 		return nil, source.MissingSecretErr("Bucket", b.Namespace, b.Name, b.SecretRef.Name, "not found")
 	}
-	access := source.StringFromSecret(sec, "accesskey")
-	secret := source.StringFromSecret(sec, "secretkey")
-	if access == "" || secret == "" {
+	access, _, _ := sec.Value("accesskey")
+	secret, _, _ := sec.Value("secretkey")
+	if access == "" || secret == "" || manifest.IsValuePlaceholder(access) || manifest.IsValuePlaceholder(secret) {
 		// Empty covers both missing-key and PLACEHOLDER-wiped values
 		// (the ExternalSecret case). Same sentinel so
 		// --allow-missing-secrets covers both shapes.

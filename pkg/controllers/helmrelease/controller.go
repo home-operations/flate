@@ -328,7 +328,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	c.Emit(id, docs, c.WipeSecrets, true)
+	_, docs = c.Emit(id, docs, c.WipeSecrets, true)
 
 	c.Store.SetArtifact(id, &store.HelmReleaseArtifact{Manifests: docs, Fingerprint: fp})
 	return nil

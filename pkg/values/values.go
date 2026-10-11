@@ -1,7 +1,6 @@
 package values
 
 import (
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -291,120 +290,41 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 	return nil
 }
 
-// lookupValueRef returns the raw string value referenced by ref. It reads
-// only the single key the ref names (ref.GetValuesKey()), mirroring upstream
-// Flux's chartutil.ChartValuesFromReferences, which indexes
-// typedRes.Data[valuesKey] directly. This is the steady-state per-HelmRelease
-// path; reading one key avoids decodeBag's full-bag normalization, which
-// base64-decodes and coerces every sibling entry only to discard all but one
-// (decodeBag was ~25% of alloc_space in BenchmarkExpandValueReferences_*).
-//
-// Consequence — a deliberate, Flux-aligning narrowing of the error surface:
-// the old full-bag decode failed the ref if ANY sibling key was malformed,
-// whereas this validates only the requested key (as Flux does). Output for
-// every input that renders today is unchanged; only pathological inputs with a
-// valid requested key beside a malformed sibling stop erroring. The
-// substituteFrom/postBuild path (which legitimately consumes the whole bag)
-// keeps using lookupResourceData/decodeBag.
+// lookupValueRef reads only the requested key, preserving unrelated malformed siblings.
 func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) (string, error) {
-	stringData, binaryData, found, err := resourceBag(ref.Kind, namespace, ref.Name, p)
+	data, err := resourceData(ref.Kind, namespace, ref.Name, p)
 	if err != nil {
 		return "", err
 	}
-	// An absent resource and a present-but-empty bag both surface as
-	// "resource not found": decodeBag returned nil for an empty bag, which the
-	// previous data==nil branch mapped to ErrObjectNotFound. Preserve that so
-	// error identity (and Optional handling) is unchanged.
-	if !found || (len(stringData) == 0 && len(binaryData) == 0) {
+	if data == nil {
 		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name}
 	}
 	key := ref.GetValuesKey()
-	val, ok, err := lookupBagKey(stringData, binaryData, key)
+	value, ok, err := data.Value(key)
 	if err != nil {
 		return "", err
 	}
 	if !ok {
 		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name, key: key}
 	}
-	return val, nil
+	return value, nil
 }
 
-// resourceBag returns the raw (stringData, binaryData) maps backing a
-// ConfigMap or Secret values reference, without decoding the whole bag. found
-// is false when the resource is absent (no error). ConfigMap binaryData is
-// intentionally nil: valuesFrom reads only ConfigMap.data, matching upstream
-// fluxcd ChartValuesFromReferences (see lookupResourceData).
-func resourceBag(kind, namespace, name string, p Provider) (stringData, binaryData map[string]any, found bool, err error) {
+// Empty bags retain the same missing-resource disposition as absent objects.
+func resourceData(kind, namespace, name string, p Provider) (manifest.Data, error) {
 	switch kind {
 	case manifest.KindSecret:
-		if s := p.Secret(namespace, name); s != nil {
-			return s.StringData, s.Data, true, nil
+		if s := p.Secret(namespace, name); s != nil && len(s.Data)+len(s.StringData) > 0 {
+			return s, nil
 		}
-		return nil, nil, false, nil
 	case manifest.KindConfigMap:
-		if c := p.ConfigMap(namespace, name); c != nil {
-			return c.Data, nil, true, nil
+		if c := p.ConfigMap(namespace, name); c != nil && len(c.Data) > 0 {
+			return c, nil
 		}
-		return nil, nil, false, nil
-	default:
-		return nil, nil, false, fmt.Errorf("%w: unsupported kind %s", manifest.ErrInvalidValuesReference, kind)
-	}
-}
-
-// lookupBagKey returns the value at key from a ConfigMap/Secret data bag,
-// applying decodeBag's coercion and precedence — binaryData wins over
-// stringData on collision (decodeBag writes stringData first, then binaryData
-// overwrites) — but reading ONLY key and leaving sibling entries untouched. ok
-// is false when key is absent. An error surfaces only when the requested key
-// itself is malformed; the error strings match decodeBag's so a malformed
-// requested key reports identically.
-func lookupBagKey(stringData, binaryData map[string]any, key string) (string, bool, error) {
-	if v, ok := binaryData[key]; ok {
-		s, err := bagValueAsString(v)
-		if err != nil {
-			return "", false, fmt.Errorf("binaryData[%s]: %w", key, err)
-		}
-		decoded, err := base64.StdEncoding.DecodeString(s)
-		if err != nil {
-			return "", false, fmt.Errorf("decode binaryData[%s]: %w", key, err)
-		}
-		return string(decoded), true, nil
-	}
-	if v, ok := stringData[key]; ok {
-		s, err := bagValueAsString(v)
-		if err != nil {
-			return "", false, fmt.Errorf("stringData[%s]: %w", key, err)
-		}
-		return s, true, nil
-	}
-	return "", false, nil
-}
-
-// lookupResourceData fetches and decodes the data bag for a ConfigMap or
-// Secret. Returns nil when the resource is not found (no error). Hard errors
-// (unsupported kind, malformed binaryData) always surface regardless of
-// Optional.
-func lookupResourceData(kind, namespace, name string, p Provider) (map[string]string, error) {
-	switch kind {
-	case manifest.KindSecret:
-		if s := p.Secret(namespace, name); s != nil {
-			return decodeBag(s.StringData, s.Data)
-		}
-		return nil, nil
-	case manifest.KindConfigMap:
-		if c := p.ConfigMap(namespace, name); c != nil {
-			// valuesFrom/substituteFrom read only ConfigMap.data; upstream
-			// fluxcd/pkg/chartutil/values.go ChartValuesFromReferences
-			// pulls from typedRes.Data exclusively and never touches
-			// BinaryData. Pass nil so a ConfigMap carrying binaryData
-			// doesn't quietly leak base64-decoded entries — flate would
-			// render with keys real Flux never sees.
-			return decodeBag(c.Data, nil)
-		}
-		return nil, nil
 	default:
 		return nil, fmt.Errorf("%w: unsupported kind %s", manifest.ErrInvalidValuesReference, kind)
 	}
+	return nil, nil
 }
 
 type missingValueRefError struct {
@@ -427,65 +347,6 @@ func (e *missingValueRefError) Unwrap() error {
 		return manifest.ErrInvalidValuesReference
 	}
 	return manifest.ErrObjectNotFound
-}
-
-// decodeBag normalizes ConfigMap/Secret data so callers see a single
-// map[string]string. binaryData values are base64-decoded. Non-string
-// shapes (a Secret.Data field decoded as []byte, a number leaf the
-// parser produced from an unquoted YAML scalar) get explicit handling
-// — the previous fmt.Sprint fallback silently rendered Go's Stringer
-// output, which for []byte is "[107 58]" rather than the intended
-// "k:" — silently breaking values-reference resolution.
-func decodeBag(stringData, binaryData map[string]any) (map[string]string, error) {
-	if len(stringData) == 0 && len(binaryData) == 0 {
-		return nil, nil
-	}
-	out := make(map[string]string, len(stringData)+len(binaryData))
-	for k, v := range stringData {
-		s, err := bagValueAsString(v)
-		if err != nil {
-			return nil, fmt.Errorf("stringData[%s]: %w", k, err)
-		}
-		out[k] = s
-	}
-	for k, v := range binaryData {
-		s, err := bagValueAsString(v)
-		if err != nil {
-			return nil, fmt.Errorf("binaryData[%s]: %w", k, err)
-		}
-		decoded, err := base64.StdEncoding.DecodeString(s)
-		if err != nil {
-			return nil, fmt.Errorf("decode binaryData[%s]: %w", k, err)
-		}
-		out[k] = string(decoded)
-	}
-	return out, nil
-}
-
-// bagValueAsString coerces a single ConfigMap.Data / Secret.Data value
-// into the string form helm values / postBuild substitution consume.
-// Distinguishes the JSON/YAML shapes the decoder actually produces
-// (string, []byte after future schema corrections, JSON-numeric
-// scalars) from the "garbage value" case which now returns an error
-// instead of silently rendering "[107 58]"-style Stringer output.
-// Also used by VarsMap for scalar postBuild substitution values.
-func bagValueAsString(v any) (string, error) {
-	switch t := v.(type) {
-	case string:
-		return t, nil
-	case []byte:
-		// Secret.Data is spec-correct as []byte; a future schema fix or a
-		// non-standard decoder could land values here.
-		return string(t), nil
-	case nil:
-		return "", nil
-	case bool, int, int32, int64, uint, uint32, uint64, float32, float64:
-		// JSON scalar shapes — render via fmt.Sprint, deterministic
-		// for these types.
-		return fmt.Sprint(t), nil
-	default:
-		return "", fmt.Errorf("unsupported value type %T", v)
-	}
 }
 
 // updateHelmReleaseValues merges one valuesFrom ref into the values
@@ -650,7 +511,7 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 	// substituteFrom first into a fresh map, then layer inline on top.
 	values := map[string]any{}
 	for _, ref := range ks.PostBuildSubstituteFrom {
-		data, err := lookupResourceData(ref.Kind, ks.Namespace, ref.Name, p)
+		data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p)
 		if err != nil {
 			if errors.Is(err, manifest.ErrInvalidValuesReference) {
 				// Unsupported kind — log and skip rather than failing the
@@ -668,13 +529,22 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 			}
 			continue
 		}
-		for k, v := range data {
+		var readErr error
+		for k := range data.Keys() {
+			v, _, err := data.Value(k)
+			if err != nil {
+				readErr = err
+				break
+			}
 			// Match upstream kustomize-controller: every substituteFrom
 			// var value has \n stripped (multi-line ConfigMap entries
 			// would otherwise break inline substitution into single-line
 			// YAML fields like `image:`). See
 			// fluxcd/pkg/kustomize/kustomize_varsub.go.
 			values[k] = strings.ReplaceAll(v, "\n", "")
+		}
+		if readErr != nil {
+			return readErr
 		}
 	}
 	// Layer inline spec.postBuild.substitute on top — inline wins on
@@ -732,7 +602,7 @@ func UnreadableSubstituteSecrets(ks *manifest.Kustomization, p Provider) []strin
 		if ref.Kind != manifest.KindSecret || ref.Optional {
 			continue
 		}
-		if data, err := lookupResourceData(ref.Kind, ks.Namespace, ref.Name, p); err == nil && data == nil {
+		if data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p); err == nil && data == nil {
 			unreadable = append(unreadable, ref.Name)
 		}
 	}
@@ -741,30 +611,4 @@ func UnreadableSubstituteSecrets(ks *manifest.Kustomization, p Provider) []strin
 	}
 	slices.Sort(unreadable)
 	return slices.Compact(unreadable)
-}
-
-// VarsMap returns the substitution variables for use with
-// kustomize.Substitute. Non-string scalar values are stringified;
-// nested maps/slices and other unsupported shapes are silently
-// dropped with a Debug log rather than rendered as Go's default
-// `map[k:v]` / `[1 2 3]` representation, which produced literal
-// garbage substitutions diverging from upstream kustomize-controller
-// (whose LoadVariables only accepts flat string→string). Newline
-// characters are stripped from every value — upstream does the same
-// so multi-line entries can't break inline substitution into
-// single-line YAML fields.
-func VarsMap(in map[string]any) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		s, err := bagValueAsString(v)
-		if err != nil {
-			slog.Debug("values: dropping non-scalar substitute var", "key", k, "err", err)
-			continue
-		}
-		out[k] = strings.ReplaceAll(s, "\n", "")
-	}
-	return out
 }

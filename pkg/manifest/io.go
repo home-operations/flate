@@ -38,7 +38,7 @@ func getDecodedMap() map[string]any {
 // caller. Callers must ensure no live reference to the top-level map
 // remains — parsers that retain the top-level doc (currently only
 // Kustomization's Contents field) must NOT release it. Inner submaps
-// retained by other parsers (ConfigMap.Data, ConfigMap.BinaryData)
+// retained by other parsers (ConfigMap.Data, Secret.Data)
 // stay alive independently — clear(m) only removes top-level entries.
 func putDecodedMap(m map[string]any) {
 	if m == nil {

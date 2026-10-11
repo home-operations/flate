@@ -1,6 +1,10 @@
 package base
 
-import "github.com/home-operations/flate/pkg/manifest"
+import (
+	"slices"
+
+	"github.com/home-operations/flate/pkg/manifest"
+)
 
 // Child retains a parsed render child and its source document in document order.
 type Child struct {
@@ -12,7 +16,8 @@ type Child struct {
 // Data precedes leaf reconcilables, whose batch must be visible to siblings.
 // publish=false suppresses tracked publication during fingerprint replay;
 // raw children retain AddObject's deduplication and arrival behavior.
-func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, wipeSecrets, publish bool) []Child {
+// Returned documents are authoritative even when a typed child is invalid.
+func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, wipeSecrets, publish bool) ([]Child, []map[string]any) {
 	// HelmRelease documents already carry the release namespace. KS/RS children
 	// inherit their emitter namespace to dedup against file-loaded copies.
 	helmRelease := parent.Kind == manifest.KindHelmRelease
@@ -23,13 +28,35 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 	log := c.Logger()
 	children := make([]Child, 0, len(docs))
 	var emitted []manifest.NamedResource
-	for _, doc := range docs {
-		if manifest.IsEncryptedSecret(doc) {
-			name, ns := manifest.DocMetadata(doc)
-			log.Debug("SOPS-encrypted resource wiped to placeholder",
-				"id", parent.String(), "ref", manifest.DocKind(doc)+" "+ns+"/"+name)
+	retained := false
+	for i, doc := range docs {
+		obj, authoritative, err := manifest.ParseDoc(doc, opts)
+		changed := false
+		for _, field := range []string{"data", "stringData", "binaryData"} {
+			before, _ := doc[field].(map[string]any)
+			after, _ := authoritative[field].(map[string]any)
+			for key, raw := range before {
+				if value, ok := raw.(string); ok {
+					changed = after[key] != value
+				} else {
+					_, changed = after[key].(string)
+				}
+				if changed {
+					break
+				}
+			}
+			if changed {
+				break
+			}
 		}
-		obj, err := manifest.ParseDoc(doc, opts)
+		if changed {
+			if !retained {
+				docs = slices.Clone(docs)
+				retained = true
+			}
+			docs[i] = authoritative
+		}
+		doc = authoritative
 		if err != nil {
 			log.Debug("skipped doc", "id", parent.String(), "err", err)
 			continue
@@ -62,7 +89,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 		}
 	}
 	if helmRelease {
-		return children
+		return children, docs
 	}
 	var leaves []manifest.BaseManifest
 	for _, child := range children {
@@ -82,7 +109,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 	if publish {
 		c.Store.AddObjects(leaves)
 	}
-	return children
+	return children, docs
 }
 
 func isTrackedChild(obj manifest.BaseManifest, helmRelease bool) bool {

@@ -61,7 +61,7 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 			s := store.New()
 			c := New(s, nil, "test")
 			parent := manifest.NamedResource{Kind: tc.kind, Namespace: "flux-system", Name: "infra"}
-			children := c.Emit(parent, []map[string]any{
+			children, _ := c.Emit(parent, []map[string]any{
 				{
 					"apiVersion": "source.toolkit.fluxcd.io/v1",
 					"kind":       "OCIRepository",
@@ -191,5 +191,27 @@ func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
 	}
 	if owner, ok := s.EmittedParent(parent); ok {
 		t.Errorf("self-copy has owner %v", owner)
+	}
+}
+
+func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
+	c := New(store.New(), nil, "test")
+	docs := []map[string]any{
+		{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "valid"}, "stringData": map[string]any{"VALUE": "embedded ENC[AES256_GCM,data:fixture]"}},
+		{"apiVersion": "v1", "kind": "Secret", "stringData": map[string]any{"VALUE": "embedded ENC[AES256_GCM,data:fixture]"}},
+	}
+	parent := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "parent"}
+	children, retained := c.Emit(parent, docs, true, true)
+	if len(children) != 1 || len(retained) != 2 {
+		t.Fatalf("children=%d retained=%d", len(children), len(retained))
+	}
+	for i := range docs {
+		if retained[i]["stringData"].(map[string]any)["VALUE"] != "..PLACEHOLDER_VALUE.." || docs[i]["stringData"].(map[string]any)["VALUE"] == "..PLACEHOLDER_VALUE.." {
+			t.Fatal("ciphertext retained or borrowed document mutated")
+		}
+	}
+	_, replay := c.Emit(parent, retained, true, false)
+	if &replay[0] != &retained[0] {
+		t.Fatal("idempotent replay cloned the retained slice")
 	}
 }

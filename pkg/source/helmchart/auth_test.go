@@ -73,10 +73,7 @@ func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 	}
 }
 
-// TestHelmRepoTransport_MalformedFailsLoud: a present Secret carrying none of
-// tls.crt/tls.key/ca.crt is malformed config and fails LOUD (not the
-// soft-skippable missing-secret sentinel).
-func TestHelmRepoTransport_MalformedFailsLoud(t *testing.T) {
+func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
 	r := httpRepo("https://charts.example")
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret {
@@ -87,8 +84,8 @@ func TestHelmRepoTransport_MalformedFailsLoud(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a loud error for a TLS secret with none of the keys")
 	}
-	if errors.Is(err, manifest.ErrMissingSecret) {
-		t.Errorf("a malformed (key-less) TLS secret must fail loud, not as ErrMissingSecret; got %v", err)
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("a key-less TLS secret must be soft-skippable; got %v", err)
 	}
 	if tr != nil {
 		t.Errorf("transport = %v, want nil on error", tr)

@@ -219,7 +219,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	// bit-for-bit.
 	strategy := (kustomizev1.Kustomization{Spec: ks.KustomizationSpec}).GetSubstituteStrategy()
 	if len(ks.PostBuildSubstitute) > 0 || strategy == kustomizev1.SubstituteStrategyAlways {
-		vars := values.VarsMap(ks.PostBuildSubstitute)
+		vars := manifest.VarsMap(ks.PostBuildSubstitute)
 		for i, doc := range docs {
 			if manifest.HasSubstituteDisabled(doc) {
 				continue
@@ -236,7 +236,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	c.Emit(id, docs, c.WipeSecrets, true)
+	_, docs = c.Emit(id, docs, c.WipeSecrets, true)
 
 	c.Store.SetArtifact(id, &store.KustomizationArtifact{
 		Path:        filepath.Join(sourceRoot, ks.Path),

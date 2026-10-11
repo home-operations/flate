@@ -132,10 +132,10 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	fs.BoolVar(&f.strictSubstitutions, "strict-substitutions", false,
 		"fail postBuild expansion on undefined variables without defaults")
 	fs.BoolVar(&f.allowMissingSecrets, "allow-missing-secrets", false,
-		"soft-skip ALL source auth Secrets and HelmRelease valuesFrom Secret/ConfigMap refs "+
+		"soft-skip sources with absent or wiped auth/cert/proxy Secrets and HelmRelease valuesFrom Secret/ConfigMap refs "+
 			"that only materialize in the live cluster. Usually unnecessary: a missing Secret "+
 			"declared by an in-repo ExternalSecret/SealedSecret (with a static target name) is "+
-			"auto-skipped without this flag. cert/proxy secretRefs still fail loud.")
+			"auto-skipped without this flag. Malformed real material still fails.")
 	fs.BoolVar(&f.forceGenericProvider, "force-generic-provider", false,
 		"route non-generic spec.provider sources (GitRepository/OCIRepository/Bucket) "+
 			"through the generic credential path instead of failing. With a secretRef, "+

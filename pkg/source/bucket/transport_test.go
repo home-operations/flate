@@ -1,6 +1,7 @@
 package bucket
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -88,7 +89,7 @@ func TestFetcher_ResolveTransport_AllKeysMissing(t *testing.T) {
 		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
 	}
 	_, err := f.resolveTransport(b)
-	if err == nil || !strings.Contains(err.Error(), "tls.crt") {
+	if !errors.Is(err, manifest.ErrMissingSecret) {
 		t.Errorf("expected missing-keys error; got %v", err)
 	}
 }

@@ -32,11 +32,8 @@ func (p *ProxyConfig) URL() (*url.URL, error) {
 	return u, nil
 }
 
-// ResolveProxy reads ref's Secret via secrets and decodes it into a
-// ProxyConfig. Returns (nil, nil) when ref is nil — proxy is opt-in.
-// Surfaces a loud error when ref is set but the Secret is missing or
-// lacks the required address key, matching source-controller's
-// fail-loud behavior.
+// ResolveProxy reads the configured proxy address and optional credentials.
+// Missing or wiped material returns MissingSecretError; a nil ref disables proxying.
 func ResolveProxy(secrets SecretGetter, ns, ownerKind, ownerID string, ref *manifest.LocalObjectReference) (*ProxyConfig, error) {
 	if ref == nil {
 		return nil, nil
@@ -45,14 +42,20 @@ func ResolveProxy(secrets SecretGetter, ns, ownerKind, ownerID string, ref *mani
 	if err != nil {
 		return nil, err
 	}
-	addr := StringFromSecret(sec, "address")
-	if addr == "" {
-		return nil, fmt.Errorf("%s %s: proxy secret %s/%s missing required 'address' key",
-			ownerKind, ownerID, ns, ref.Name)
+
+	var material [3]string
+	for i, key := range []string{"address", "username", "password"} {
+		value, _, err := sec.Value(key)
+		if err != nil {
+			return nil, fmt.Errorf("proxy secret %s/%s: %w", ns, ref.Name, err)
+		}
+		if manifest.IsValuePlaceholder(value) {
+			return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "proxy material unavailable")
+		}
+		material[i] = value
 	}
-	return &ProxyConfig{
-		Address:  addr,
-		Username: StringFromSecret(sec, "username"),
-		Password: StringFromSecret(sec, "password"),
-	}, nil
+	if material[0] == "" {
+		return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "missing required 'address' key")
+	}
+	return &ProxyConfig{Address: material[0], Username: material[1], Password: material[2]}, nil
 }

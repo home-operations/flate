@@ -53,7 +53,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	obj, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+	obj, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	if prepared.Contents["spec"].(map[string]any)["postBuild"].(map[string]any)["substitute"].(map[string]any)["VALUE"] != "overlay" {
 		t.Fatal("effective values missing from prepared spec")
 	}
-	if values.VarsMap(prepared.PostBuildSubstitute)["EXTRA"] != "onetwo" {
+	if manifest.VarsMap(prepared.PostBuildSubstitute)["EXTRA"] != "onetwo" {
 		t.Fatal("overlay normalization changed")
 	}
 	ordinary, err := Prepare(original, provider, nil)

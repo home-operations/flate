@@ -168,7 +168,7 @@ data: {greeting: '${VAR:=default}'}
 				}
 				spec["postBuild"] = tc.postBuild
 			}
-			obj, err := manifest.ParseDoc(map[string]any{
+			obj, _, err := manifest.ParseDoc(map[string]any{
 				"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 				"kind":       "Kustomization",
 				"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},

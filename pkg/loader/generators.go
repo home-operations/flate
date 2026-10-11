@@ -46,8 +46,8 @@ func (r generatorRecord) materialize(wipeSecrets bool) (manifest.BaseManifest, e
 	data := make(map[string]any, len(pairs))
 	for _, pair := range pairs {
 		value := pair.Value
-		if wipeSecrets && manifest.IsSopsCiphertext(value) {
-			value = fmt.Sprintf(manifest.ValuePlaceholderTemplate, pair.Key)
+		if wipeSecrets {
+			value = manifest.WipeValue(pair.Key, value, nil, false)
 		}
 		if !r.isConfigMap {
 			value = base64.StdEncoding.EncodeToString([]byte(value))

@@ -953,7 +953,8 @@ metadata:
 data:
   DOMAIN: example.com
 `)
-	cm, err := parseConfigMap(doc, true)
+	cmobj, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+	cm := cmobj.(*ConfigMap)
 	if err != nil {
 		t.Fatalf("parseConfigMap: %v", err)
 	}
@@ -980,7 +981,8 @@ data:
   PLAINTEXT: keep-me
 `
 	t.Run("wiped", func(t *testing.T) {
-		cm, err := parseConfigMap(mustYAML(t, src), true)
+		cmobj, _, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: true})
+		cm := cmobj.(*ConfigMap)
 		if err != nil {
 			t.Fatalf("parseConfigMap: %v", err)
 		}
@@ -990,7 +992,8 @@ data:
 		})
 	})
 	t.Run("preserved when wipeSecrets=false", func(t *testing.T) {
-		cm, err := parseConfigMap(mustYAML(t, src), false)
+		cmobj, _, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: false})
+		cm := cmobj.(*ConfigMap)
 		if err != nil {
 			t.Fatalf("parseConfigMap: %v", err)
 		}
@@ -1020,7 +1023,8 @@ stringData:
   enc-key: ` + sops + `
 `
 	t.Run("sops wiped, plaintext preserved", func(t *testing.T) {
-		s, err := parseSecret(mustYAML(t, yamlDoc), true)
+		sobj, _, err := ParseDoc(mustYAML(t, yamlDoc), ParseDocOptions{WipeSecrets: true})
+		s := sobj.(*Secret)
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
 		}
@@ -1046,7 +1050,8 @@ stringData:
 	})
 
 	t.Run("preserved with wipeSecrets=false", func(t *testing.T) {
-		s, err := parseSecret(mustYAML(t, yamlDoc), false)
+		sobj, _, err := ParseDoc(mustYAML(t, yamlDoc), ParseDocOptions{WipeSecrets: false})
+		s := sobj.(*Secret)
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
 		}
@@ -1070,7 +1075,8 @@ metadata: {name: wordpress-values, namespace: default}
 data:
   values.yaml: `+base64.StdEncoding.EncodeToString([]byte(valuesYAML))+`
 `)
-		s, err := parseSecret(doc, true)
+		sobj, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+		s := sobj.(*Secret)
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
 		}
@@ -1101,11 +1107,13 @@ stringData:
 `
 	doc := mustYAML(t, yamlDoc)
 
-	s1, err := parseSecret(doc, true)
+	s1obj, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+	s1 := s1obj.(*Secret)
 	if err != nil {
 		t.Fatalf("first parse: %v", err)
 	}
-	s2, err := parseSecret(doc, true)
+	s2obj, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+	s2 := s2obj.(*Secret)
 	if err != nil {
 		t.Fatalf("second parse: %v", err)
 	}
@@ -1179,7 +1187,7 @@ metadata: {name: x}`, "Foo"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			obj, err := ParseDoc(mustYAML(t, tc.yaml), defaultParseDocOptions())
+			obj, _, err := ParseDoc(mustYAML(t, tc.yaml), defaultParseDocOptions())
 			if err != nil {
 				t.Fatalf("ParseDoc: %v", err)
 			}
@@ -1243,7 +1251,7 @@ spec: {name: b}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			obj, err := ParseDoc(mustYAML(t, tc.yaml), defaultParseDocOptions())
+			obj, _, err := ParseDoc(mustYAML(t, tc.yaml), defaultParseDocOptions())
 			if err != nil {
 				t.Fatalf("ParseDoc: %v", err)
 			}
@@ -1459,12 +1467,12 @@ func TestRawObject_DoesNotAliasParsedDoc(t *testing.T) {
 }
 
 func TestParseDoc_MissingFields(t *testing.T) {
-	if _, err := ParseDoc(map[string]any{"kind": "Foo"}, defaultParseDocOptions()); err == nil || !strings.Contains(err.Error(), "apiVersion") {
+	if _, _, err := ParseDoc(map[string]any{"kind": "Foo"}, defaultParseDocOptions()); err == nil || !strings.Contains(err.Error(), "apiVersion") {
 		t.Errorf("expected apiVersion error, got %v", err)
 	}
 	// Bare data files (no kind:) are silently dropped as RawObjects —
 	// helm values, config blobs, etc. that aren't k8s resources.
-	obj, err := ParseDoc(map[string]any{"apiVersion": "v1"}, defaultParseDocOptions())
+	obj, _, err := ParseDoc(map[string]any{"apiVersion": "v1"}, defaultParseDocOptions())
 	if err != nil {
 		t.Errorf("missing-kind docs should not error, got %v", err)
 	}
@@ -1697,7 +1705,7 @@ data:
 		if err != nil {
 			t.Fatalf("HR iter %d DecodeDocs: %v", i, err)
 		}
-		obj, err := ParseDoc(docs[0], opts)
+		obj, _, err := ParseDoc(docs[0], opts)
 		if err != nil {
 			t.Fatalf("HR iter %d ParseDoc: %v", i, err)
 		}
@@ -1718,7 +1726,7 @@ data:
 		if err != nil {
 			t.Fatalf("KS iter %d DecodeDocs: %v", i, err)
 		}
-		kobj, err := ParseDoc(ksDocs[0], opts)
+		kobj, _, err := ParseDoc(ksDocs[0], opts)
 		if err != nil {
 			t.Fatalf("KS iter %d ParseDoc: %v", i, err)
 		}
@@ -1741,7 +1749,7 @@ data:
 		if err != nil {
 			t.Fatalf("CM iter %d DecodeDocs: %v", i, err)
 		}
-		cobj, err := ParseDoc(cmDocs[0], opts)
+		cobj, _, err := ParseDoc(cmDocs[0], opts)
 		if err != nil {
 			t.Fatalf("CM iter %d ParseDoc: %v", i, err)
 		}

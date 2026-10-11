@@ -4,8 +4,8 @@ flate renders Flux (Kustomization, HelmRelease, ResourceSet, sources) offline, a
 binary: no cluster, no kubectl, no shellouts. helm, kustomize, git and OCI run as linked
 libraries. Output must match Flux bit-for-bit and be byte-identical run to run. Speed is the
 point of the project: changed-only renders, a bounded parallel DAG, aggressive dedup.
-`pkg/` is a public SDK (konflate embeds `pkg/orchestrator`); treat exported `pkg/` API and
-`Warning.Category` codes as compatibility-sensitive.
+`pkg/` is a public SDK (konflate embeds `pkg/orchestrator`): list every exported `pkg/` API or
+`Warning.Category` change in the PR, and remove unused or test-only exports when the result is leaner.
 
 ## Working here
 
@@ -21,6 +21,12 @@ point of the project: changed-only renders, a bounded parallel DAG, aggressive d
   of unrelated code. Remove what your change orphans; clean up touched code in the same files
   and nearby functions within the same concern: simplify it, delete dead code, fix stale comments.
   Leave other pre-existing dead code and mention it.
+- Replace, don't add: a change that introduces a new way to do something migrates every consumer
+  and deletes the old path in the same PR; never land a new path beside the old one to migrate
+  later. In a planned series a single PR may grow when a later PR in the series does the deleting;
+  the series as a whole must shrink. PRs state production lines as +added/-removed.
+- Call upstream (helm, Flux, kustomize, go-git, oras, stdlib) instead of re-implementing it; if it
+  lacks a hook, post-process its output. No compatibility shims or aliases past their last caller.
 
 ## Layout
 
@@ -34,6 +40,10 @@ Leaf packages stay leaf: `tree` (stdlib only), `manifest`, `task`, `schedule` (s
 
 ## Invariants
 
+- One mechanism per concern. Store events (`Store.AddListener`) are the only observer mechanism;
+  do not add `On*` callback hooks. Children are published through `base.Controller.Emit`. Every
+  kind goes through the same generic paths: per-kind behaviour lives in a method on the manifest
+  type, never in a kind switch in a consumer.
 - Stored manifests are immutable: clone, mutate the copy, `AddObject` again. Never write to an
   embedded `Spec` after parse.
 - Store listeners run inline and must never block on the store. Writers snapshot listeners
@@ -109,6 +119,8 @@ Leaf packages stay leaf: `tree` (stdlib only), `manifest`, `task`, `schedule` (s
   and are documented in `testdata/TESTDATA.md`. Assert with `internal/assert` or `cmp.Diff`
   (`-want +got`). No golden files.
 - Every fix lands with a regression test for the reported symptom.
+- Test flate's own logic: no tests of behaviour an upstream library already covers, none for
+  trivial guards; adapt an existing test before adding a new one.
 
 ## Before a PR
 

@@ -95,15 +95,6 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(downloads + 2)
 	g.Go(func() error {
-		for _, c := range chunks {
-			if err := budget.Acquire(gctx, c.weight()); err != nil {
-				return err
-			}
-			g.Go(func() error { return c.fetch(gctx, client, b.BucketName) })
-		}
-		return nil
-	})
-	g.Go(func() error {
 		tw := tar.NewWriter(w)
 		for _, c := range chunks {
 			var body io.Reader
@@ -121,6 +112,15 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 			}
 		}
 		return tw.Close()
+	})
+	g.Go(func() error {
+		for _, c := range chunks {
+			if err := budget.Acquire(gctx, c.weight()); err != nil {
+				return err
+			}
+			g.Go(func() error { return c.fetch(gctx, client, b.BucketName) })
+		}
+		return nil
 	})
 	if err := g.Wait(); err != nil {
 		return ocispec.Descriptor{}, err

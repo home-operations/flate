@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // TestNewBootstrapAlias covers the per-kind branches that aliasing
@@ -63,31 +62,5 @@ func TestNewBootstrapAlias(t *testing.T) {
 				t.Errorf("obj.Named() = %v, want %v", named, tc.id)
 			}
 		})
-	}
-}
-
-// TestKnownSourceIDs covers the helper's multi-kind union behavior.
-func TestKnownSourceIDs(t *testing.T) {
-	t.Parallel()
-	s := store.New()
-	gr := &manifest.GitRepository{Name: "g1", Namespace: "ns"}
-	oc := &manifest.OCIRepository{Name: "o1", Namespace: "ns"}
-	hr := &manifest.HelmRepository{Name: "h1", Namespace: "ns"}
-	s.AddObject(gr)
-	s.AddObject(oc)
-	s.AddObject(hr)
-
-	got := knownSourceIDs(s, manifest.KindGitRepository, manifest.KindOCIRepository)
-	if _, ok := got[gr.Named()]; !ok {
-		t.Errorf("missing GitRepository entry")
-	}
-	if _, ok := got[oc.Named()]; !ok {
-		t.Errorf("missing OCIRepository entry")
-	}
-	if _, ok := got[hr.Named()]; ok {
-		t.Errorf("HelmRepository should not appear — not in the requested kinds")
-	}
-	if len(got) != 2 {
-		t.Errorf("len = %d, want 2; got = %v", len(got), got)
 	}
 }

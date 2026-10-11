@@ -69,7 +69,10 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 	// existing doubles as a dedup set: after a successful publish we add
 	// the new id so repeated sourceRefs across KSes are skipped without
 	// a second map.
-	existing := knownSourceIDs(d.cfg.Store, manifest.KindGitRepository, manifest.KindOCIRepository)
+	existing := make(map[manifest.NamedResource]struct{})
+	for _, obj := range d.cfg.Store.ListObjects(manifest.KindGitRepository) {
+		existing[obj.Named()] = struct{}{}
+	}
 	var aliased []manifest.NamedResource
 	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
 		id := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
@@ -191,19 +194,6 @@ func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.Bas
 		Name: id.Name, Namespace: id.Namespace,
 		URL: url,
 	}, url, true
-}
-
-// knownSourceIDs returns the IDs of every object currently in s for
-// the given kinds. Used by aliasing pass 1 to skip sourceRefs that
-// already have a real CR.
-func knownSourceIDs(s *store.Store, kinds ...string) map[manifest.NamedResource]struct{} {
-	out := make(map[manifest.NamedResource]struct{})
-	for _, kind := range kinds {
-		for _, obj := range s.ListObjects(kind) {
-			out[obj.Named()] = struct{}{}
-		}
-	}
-	return out
 }
 
 // warnIfMultipleBootstrapAliases must combine only working-tree aliases:

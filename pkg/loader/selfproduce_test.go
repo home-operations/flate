@@ -9,6 +9,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -142,28 +143,42 @@ func TestDiscoveryIndex_NilSafe(t *testing.T) {
 // file the walk reads — both kustomization.yamls and the leaf resource —
 // back to the owning top-level Kustomization.
 func TestFinalizeIndex_OwnersOfFileResourcesEscape(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
-	testutil.WriteFile(t, dir, "apps/base/postgres/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cluster.yaml\n")
-	testutil.WriteFile(t, dir, "apps/base/postgres/cluster.yaml",
-		"apiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: postgres\n")
+	for _, count := range []int{1, 2} {
+		t.Run(fmt.Sprintf("owners_%d", count), func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
+			testutil.WriteFile(t, dir, "apps/base/postgres/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cluster.yaml\n")
+			testutil.WriteFile(t, dir, "apps/base/postgres/cluster.yaml",
+				"apiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: postgres\n")
 
-	s := store.New()
-	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
-	s.AddObject(ks)
+			s := store.New()
+			var want []manifest.NamedResource
+			for i := range count {
+				ks := &manifest.Kustomization{Name: fmt.Sprintf("apps-%d", i), Namespace: "flux-system", Path: "./apps/homelab"}
+				s.AddObject(ks)
+				want = append(want, ks.Named())
+			}
 
-	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
+			idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
 
-	for _, file := range []string{
-		"apps/homelab/kustomization.yaml",
-		"apps/base/postgres/kustomization.yaml",
-		"apps/base/postgres/cluster.yaml",
-	} {
-		if got := ownersForTest(idx, file); !slices.Contains(got, ks.Named()) {
-			t.Errorf("OwnersOfFile(%s) = %v, want to contain apps", file, got)
-		}
+			for _, file := range []string{
+				"apps/homelab/kustomization.yaml",
+				"apps/base/postgres/kustomization.yaml",
+				"apps/base/postgres/cluster.yaml",
+			} {
+				if got := idx.Readers[file]; !slices.Equal(got, want) {
+					t.Errorf("Readers[%s] = %v, want %v", file, got, want)
+				}
+			}
+			filter := change.NewFilter(change.NewSet([]string{"apps/base/postgres/cluster.yaml"}), idx, s)
+			for _, id := range want {
+				if !filter.ShouldReconcile(id) {
+					t.Errorf("changed shared base did not select %s", id)
+				}
+			}
+		})
 	}
 }
 

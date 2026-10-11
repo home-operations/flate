@@ -42,11 +42,11 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 			}
 		}
 	}
-	l.Index.Claims = nil
+	claims := &manifest.DiscoveryIndex{Readers: l.Index.Readers}
 	for _, id := range ids {
 		record := l.Index.Records[id]
 		obj := l.Store.GetObject(id)
-		scopes, fallback := l.scopesFor(record, namespaces[record.File], repoRoot)
+		scopes, fallback := l.scopesFor(record, namespaces[record.File], repoRoot, claims)
 		for _, scope := range scopes {
 			ns := cmp.Or(scope.namespace, fallback, scope.fallback)
 			if ns == "" {
@@ -55,9 +55,6 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 			next := id
 			next.Namespace = ns
 			projected := record
-			if obj == nil {
-				projected.Path = ""
-			}
 			if len(scopes) > 1 {
 				projected.Refs = slices.Clone(record.Refs)
 			}
@@ -72,25 +69,23 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 				}
 			}
 			l.Index.Records[next] = projected
-			if obj != nil || (id.Kind != manifest.KindConfigMap && id.Kind != manifest.KindSecret) {
-				delete(l.Index.Records, id)
-				l.Store.DeleteObject(id)
-			}
+			delete(l.Index.Records, id)
+			l.Store.DeleteObject(id)
 		}
 	}
 }
 
-func (l *Loader) scopesFor(record manifest.DiscoveryRecord, scopes []namespaceContext, repoRoot string) ([]namespaceContext, string) {
+func (l *Loader) scopesFor(record manifest.DiscoveryRecord, scopes []namespaceContext, repoRoot string, claims *manifest.DiscoveryIndex) ([]namespaceContext, string) {
 	if len(scopes) > 0 && !slices.ContainsFunc(scopes, func(scope namespaceContext) bool { return scope.namespace == "" }) {
 		return scopes, ""
 	}
-	if l.Index.Claims == nil {
-		l.Index.Claims = map[string][]manifest.NamedResource{}
+	if claims.Claims == nil {
+		claims.Claims = map[string][]manifest.NamedResource{}
 		for _, claim := range l.Claims(repoRoot) {
-			l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
+			claims.Claims[claim.Prefix] = appendUniqueProducer(claims.Claims[claim.Prefix], claim.ID)
 		}
 	}
-	owners, _ := l.Index.OwnersOfFile(record.File)
+	owners, _ := claims.OwnersOfFile(record.File)
 	if len(scopes) == 0 {
 		for _, owner := range owners {
 			if ks, ok := l.Store.Get[*manifest.Kustomization](owner); ok {

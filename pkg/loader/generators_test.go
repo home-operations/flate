@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -15,11 +16,12 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 	const encrypted = "ENC[AES256_GCM,data:fixture,iv:x,tag:y,type:str]"
 	for _, tc := range []struct {
 		name, kind, namespace, input, value, want string
-		wipe, existing, symlink, external         bool
+		wipe, existing, symlink, external, escape bool
 	}{
 		{name: "outside_flux_graph", kind: "configMap", input: "literals: [VALUE=fixture]", want: "fixture", external: true},
 		{name: "missing_file", kind: "configMap", input: "files: [VALUE=missing.txt]"},
 		{name: "outside_root", kind: "configMap", input: "files: [VALUE=../../../outside.txt]"},
+		{name: "resource_outside_root", kind: "configMap", input: "literals: [VALUE=outside]", escape: true},
 		{name: "symlink_escape", kind: "configMap", input: "files: [VALUE=escape.txt]", symlink: true},
 		{name: "inside_root", kind: "configMap", input: "files: [VALUE=../input.txt]", value: "fixture", want: "fixture"},
 		{name: "outer_namespace", kind: "configMap", namespace: "namespace: outer\n", input: "literals: [VALUE=fixture]", want: "fixture"},
@@ -35,6 +37,10 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			testutil.WriteFile(t, parent, "outside.txt", "OUTSIDE")
 			testutil.WriteFile(t, root, "apps/input.txt", tc.value)
 			testutil.WriteFile(t, root, "apps/a/kustomization.yaml", tc.namespace+tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+tc.input+"\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n")
+			if tc.escape {
+				testutil.WriteFile(t, parent, "outside/kustomization.yaml", tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+tc.input+"\n")
+				testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources: [../../../outside]\n"+tc.kind+"Generator:\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n")
+			}
 			if tc.symlink {
 				if err := os.Symlink(filepath.Join(parent, "outside.txt"), filepath.Join(root, "apps/a/escape.txt")); err != nil {
 					t.Fatal(err)
@@ -82,6 +88,13 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 				}
 				if got != want {
 					t.Fatalf("VALUE=%v, want %q", got, want)
+				}
+				var owners []manifest.NamedResource
+				if !tc.external {
+					owners = []manifest.NamedResource{ks.Named()}
+				}
+				if got := l.Index.Records[id].Renderers; !slices.Equal(got, owners) {
+					t.Fatalf("Renderers = %v, want %v", got, owners)
 				}
 			}
 			id.Name = "sibling"

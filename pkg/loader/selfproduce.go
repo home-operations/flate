@@ -37,9 +37,8 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 		standalone = l.standaloneRoots(repoRoot, kss)
 	}
 	record := func(v graphVisit) {
-		coordinate := v.coordinate
 		if v.owner != (manifest.NamedResource{}) {
-			b.idx.Readers[coordinate] = appendUniqueProducer(b.idx.Readers[coordinate], v.owner)
+			b.idx.Readers[v.coordinate] = appendUniqueProducer(b.idx.Readers[v.coordinate], v.owner)
 		}
 		if v.document != nil {
 			delete(remaining, filepath.Dir(v.file))
@@ -59,30 +58,50 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 		record(v)
 	}
 	if len(remaining) != 0 {
-		standalone = standalone[:0]
-	next:
-		for _, dir := range slices.Sorted(maps.Keys(remaining)) {
-			doc := l.documents[dir]
-			rel, err := filepath.Rel(repoRoot, doc.file)
-			if err != nil || strings.HasPrefix(rel, "..") {
-				continue
-			}
-			owners, _ := l.Index.OwnersOfFile(filepath.ToSlash(rel))
-			for _, owner := range owners {
-				if ks, ok := l.Store.Get[*manifest.Kustomization](owner); ok {
-					if _, pinned, _ := SourceView(l.Store, ks, repoRoot); pinned {
-						continue next
-					}
-				}
-			}
-			standalone = append(standalone, filepath.ToSlash(filepath.Dir(rel)))
-		}
-		for v := range l.graphVisits(repoRoot, nil, standalone) {
+		for v := range l.graphVisits(repoRoot, nil, l.unreachedGeneratorRoots(repoRoot, remaining)) {
 			record(v)
 		}
 	}
+	l.addGenerated(generators)
+	for _, id := range slices.SortedFunc(maps.Keys(b.secrets), manifest.NamedResource.Compare) {
+		l.Store.AddObject(b.secrets[id])
+	}
+	for id, r := range l.Index.Files() {
+		if id.Kind == manifest.KindKustomization && r.Parent == (manifest.NamedResource{}) {
+			if parents := b.emittedFiles[r.File]; len(parents) == 1 && parents[0] != id {
+				r.Parent = parents[0]
+				l.Index.Records[id] = r
+			}
+		}
+	}
+}
+
+func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]struct{}) []string {
+	var roots []string
+	for _, dir := range slices.Sorted(maps.Keys(remaining)) {
+		rel, err := filepath.Rel(repoRoot, l.documents[dir].file)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		owners, _ := l.Index.OwnersOfFile(filepath.ToSlash(rel))
+		if slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool {
+			ks, ok := l.Store.Get[*manifest.Kustomization](owner)
+			if !ok {
+				return false
+			}
+			_, pinned, _ := SourceView(l.Store, ks, repoRoot)
+			return pinned
+		}) {
+			continue
+		}
+		roots = append(roots, filepath.ToSlash(filepath.Dir(rel)))
+	}
+	return roots
+}
+
+func (l *Loader) addGenerated(generators []generatorRecord) {
 	for _, r := range generators {
-		obj, err := r.materialize(b.wipeSecrets)
+		obj, err := r.materialize(l.Options.WipeSecrets)
 		if err != nil {
 			slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
 			continue
@@ -100,21 +119,17 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 		}
 		l.Index.Records[id] = record
 	}
-	for _, id := range slices.SortedFunc(maps.Keys(b.secrets), manifest.NamedResource.Compare) {
-		l.Store.AddObject(b.secrets[id])
-	}
-	for id, r := range l.Index.Files() {
-		if id.Kind == manifest.KindKustomization && r.Parent == (manifest.NamedResource{}) {
-			if parents := b.emittedFiles[r.File]; len(parents) == 1 && parents[0] != id {
-				r.Parent = parents[0]
-				l.Index.Records[id] = r
-			}
-		}
-	}
 }
 
 type graphContext struct {
 	root, dir, namespace, fallback string
+}
+
+func (c *graphContext) lockNamespace(namespace string) {
+	c.namespace = cmp.Or(c.namespace, namespace)
+	if c.namespace != "" {
+		c.fallback = ""
+	}
 }
 
 type graphVisit struct {
@@ -164,44 +179,7 @@ func (l *Loader) graphVisits(repoRoot string, kss []*manifest.Kustomization, sta
 				return
 			}
 		}
-		var roots []graphVisit
-		grouped := map[graphContext]int{}
-		for _, ks := range kss {
-			if ks.Path == "" && ks.SourceName == "" {
-				continue
-			}
-			root, _, external := SourceView(l.Store, ks, repoRoot)
-			if external {
-				continue
-			}
-			ns := ks.Namespace
-			if ns == "" {
-				if contexts := scopes[l.Index.Records[ks.Named()].Path]; len(contexts) == 1 {
-					ns = cmp.Or(contexts[0].namespace, contexts[0].fallback)
-				}
-			}
-			v := graphVisit{root: root, dir: manifest.NormalizeClaimBase(ks.Path), namespace: ks.TargetNamespace, fallback: cmp.Or(ks.TargetNamespace, ns), owner: ks.Named()}
-			if root != repoRoot {
-				prefix, err := filepath.Rel(repoRoot, root)
-				if err != nil {
-					continue
-				}
-				v.prefix = filepath.ToSlash(prefix)
-			}
-			if d, _ := l.documents.read(filepath.Join(root, v.dir)); d != nil {
-				v.namespace = cmp.Or(v.namespace, d.Namespace)
-				if v.namespace != "" {
-					v.fallback = ""
-				}
-			}
-			if i, found := grouped[v.graphContext]; found {
-				roots[i].peers = append(roots[i].peers, v.owner)
-			} else {
-				grouped[v.graphContext] = len(roots)
-				roots = append(roots, v)
-			}
-		}
-		for _, v := range roots {
+		for _, v := range l.graphRoots(repoRoot, kss, scopes) {
 			clear(w.visited)
 			if d, _ := l.documents.read(filepath.Join(v.root, v.dir)); d != nil {
 				if !w.walk(v, emit) {
@@ -221,6 +199,44 @@ func (l *Loader) graphVisits(repoRoot string, kss []*manifest.Kustomization, sta
 			}
 		}
 	}
+}
+
+func (l *Loader) graphRoots(repoRoot string, kss []*manifest.Kustomization, scopes map[string][]namespaceContext) []graphVisit {
+	var roots []graphVisit
+	grouped := map[graphContext]int{}
+	for _, ks := range kss {
+		if ks.Path == "" && ks.SourceName == "" {
+			continue
+		}
+		root, _, external := SourceView(l.Store, ks, repoRoot)
+		if external {
+			continue
+		}
+		ns := ks.Namespace
+		if ns == "" {
+			if contexts := scopes[l.Index.Records[ks.Named()].Path]; len(contexts) != 0 {
+				ns = cmp.Or(contexts[0].namespace, contexts[0].fallback)
+			}
+		}
+		v := graphVisit{root: root, dir: manifest.NormalizeClaimBase(ks.Path), namespace: ks.TargetNamespace, fallback: cmp.Or(ks.TargetNamespace, ns), owner: ks.Named()}
+		if root != repoRoot {
+			prefix, err := filepath.Rel(repoRoot, root)
+			if err != nil {
+				continue
+			}
+			v.prefix = filepath.ToSlash(prefix)
+		}
+		if d, _ := l.documents.read(filepath.Join(root, v.dir)); d != nil {
+			v.lockNamespace(d.Namespace)
+		}
+		if i, found := grouped[v.graphContext]; found {
+			roots[i].peers = append(roots[i].peers, v.owner)
+		} else {
+			grouped[v.graphContext] = len(roots)
+			roots = append(roots, v)
+		}
+	}
+	return roots
 }
 
 func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization) []string {
@@ -280,10 +296,7 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 	if d == nil {
 		return true
 	}
-	v.namespace = cmp.Or(v.namespace, d.Namespace)
-	if v.namespace != "" {
-		v.fallback = ""
-	}
+	v.lockNamespace(d.Namespace)
 	if _, seen := w.visited[v.graphContext]; seen {
 		return true
 	}

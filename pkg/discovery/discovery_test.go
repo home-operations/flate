@@ -271,7 +271,8 @@ spec:
     namespace: flux-system
   interval: 1h
 `)
-	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
+	testutil.WriteFile(t, dir, "apps/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: from-working-tree, namespace: flux-system}\nspec: {chart: {spec: {chart: fixture, sourceRef: {kind: HelmRepository, name: missing}}}}\n")
 
 	st := store.New()
 	res, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(dir, "flux"), RepoRoot: dir, Store: st, WipeSecrets: true})
@@ -284,6 +285,9 @@ spec:
 	}
 	if owners, _ := res.Index.OwnersOfFile("apps/kustomization.yaml"); len(owners) != 0 {
 		t.Fatalf("unknown OCI source claimed working-tree files: %v", owners)
+	}
+	if st.GetObject(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "from-working-tree"}) != nil {
+		t.Fatal("unknown OCI source loaded a HelmRelease from the working tree")
 	}
 }
 

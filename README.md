@@ -200,7 +200,7 @@ for id, info := range res.Failed {
 Other entry points worth knowing:
 
 - `Orchestrator.WithFetcher(kind, f)` — swap any source fetcher (in-memory fakes for tests, custom kinds).
-- `Store.OnObject` / `OnStatus` / `OnArtifact` — typed listeners; payloads are pre-cast.
+- `Store.AddListener(kind, fn, replay)` - the only store observer; payloads are `manifest.BaseManifest`, `StatusInfo` or `Artifact` by `EventKind`.
 - `helm.Prepare(hr, lookup, provider)` then `helmClient.TemplateDocs(...)` — render one HelmRelease without the orchestrator. `lookup` is a `manifest.HelmChartLookup` (`func(ns, name string) *HelmChartSource`). `kustomize.Prepare(ks, provider)` is the symmetric helper for Kustomizations.
 - `discovery.Run(ctx, Config{Path, Store, WipeSecrets})` — load phase as a standalone unit.
 - `change.Filter.AddEmitted(emitter, child)` — extend the changed-only-mode keep set at runtime when a custom controller emits a child that wasn't visible at filter-build time; records the emitter→child edge. Call BEFORE `Store.AddObject(child)` so the synchronous listener sees the extended set.

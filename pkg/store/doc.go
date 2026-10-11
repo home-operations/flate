@@ -13,6 +13,6 @@
 // returns an unsubscribe function).
 //
 // Store is safe for concurrent use. Listeners run inline on the goroutine
-// that triggered the event; they MUST NOT block waiting for another Store
-// event on that goroutine.
+// that triggered the event; they MUST NOT call back into the same Store
+// with a blocking call.
 package store

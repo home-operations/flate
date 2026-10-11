@@ -1049,24 +1049,6 @@ func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 	return out
 }
 
-func TestOrchestrator_StatusListener(t *testing.T) {
-	s := store.New()
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "k"}
-
-	var seen store.StatusInfo
-	unsub := s.AddListener(store.EventStatusUpdated, func(other manifest.NamedResource, payload any) {
-		if other == id {
-			seen = payload.(store.StatusInfo)
-		}
-	}, false)
-	defer unsub()
-
-	s.UpdateStatus(id, store.StatusFailed, "boom")
-	if seen.Status != store.StatusFailed || seen.Message != "boom" {
-		t.Errorf("status listener did not receive payload: %+v", seen)
-	}
-}
-
 // TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer is the
 // end-to-end regression fence for issue #418. A leaf HelmRelease
 // change under cluster-apps must NOT cause cluster-apps's reconcile

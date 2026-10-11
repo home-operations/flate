@@ -82,11 +82,11 @@ func (o *Orchestrator) finalize() error {
 		prefixes = loader.Claims(o.store, o.repoRoot)
 	}
 	o.orphans = o.detectOrphans(failed, prefixes)
-	for id, msg := range o.orphans {
+	for _, id := range slices.SortedFunc(maps.Keys(o.orphans), manifest.NamedResource.Compare) {
 		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
 		slog.Warn("resource orphaned", "id", id.String(),
 			"file", o.fileOf(id),
-			"reason", msg)
+			"reason", o.orphans[id])
 		delete(failed, id)
 	}
 	o.warnMissingCRDs()

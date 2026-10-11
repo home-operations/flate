@@ -28,10 +28,13 @@ func TestClassify_CoreStates(t *testing.T) {
 	ready := ksDep("ready")
 	failed := ksDep("failed")
 	pending := ksDep("pending")
+	statusless := manifest.DependencyRef{
+		Kind: manifest.KindHelmChart, Namespace: "ns", Name: "statusless"}
 	absent := ksDep("absent")
 	s.UpdateStatus(ready.NamedResource, store.StatusReady, "")
 	s.UpdateStatus(failed.NamedResource, store.StatusFailed, "boom")
 	s.UpdateStatus(pending.NamedResource, store.StatusPending, "working")
+	s.AddObject(&manifest.HelmChartSource{Name: "statusless", Namespace: "ns"})
 
 	w := &Waiter{Store: s}
 
@@ -50,6 +53,17 @@ func TestClassify_CoreStates(t *testing.T) {
 	}
 	if got := classifyDep(t, w, pending, manifest.DrainForce); got.Kind != ClassFailed || got.Message != "not ready" {
 		t.Errorf("pending@force: got %+v, want ClassFailed 'not ready'", got)
+	}
+	// Present with no Ready condition (a synthetic HelmChart before its source
+	// worker's first write) classifies exactly like Pending.
+	for level, want := range map[manifest.DrainLevel]Classification{
+		manifest.DrainNone:    {Kind: ClassBlocked},
+		manifest.DrainCascade: {Kind: ClassBlocked},
+		manifest.DrainForce:   {Kind: ClassFailed, Message: "not ready"},
+	} {
+		if got := classifyDep(t, w, statusless, level); got != want {
+			t.Errorf("statusless@%v: got %+v, want %+v", level, got, want)
+		}
 	}
 	// Absent: blocks at none, fails "dependency not found" once draining.
 	if got := classifyDep(t, w, absent, manifest.DrainNone); got.Kind != ClassBlocked {

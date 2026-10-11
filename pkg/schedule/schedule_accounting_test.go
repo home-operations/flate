@@ -34,7 +34,7 @@ func TestRedispatch_SelectorChain(t *testing.T) {
 				ids[i] = id(fmt.Sprintf("stage-%02d", i))
 				indexes[ids[i]] = i
 			}
-			s = New(tasks, dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+			s = New(tasks, dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				i := indexes[nid]
 				mu.Lock()
 				round, gate := wave, barrier
@@ -58,14 +58,14 @@ func TestRedispatch_SelectorChain(t *testing.T) {
 				if round == i {
 					emitted[i] = true
 					s.OnArrival(id(fmt.Sprintf("provider-%02d", i)), false)
-					return OutcomeTerminal, nil
+					return OutcomeTerminal, nil, true
 				}
 				if round == 0 {
-					return OutcomeTerminal, nil // fresh empty artifact
+					return OutcomeTerminal, nil, true // fresh empty artifact
 				}
-				return OutcomeTerminalNoop, nil
+				return OutcomeTerminalNoop, nil, true
 			}))
-			s.SetRerunAtDrain(func(NodeID) bool { return true })
+
 			s.Seed(ids)
 			if err := s.Run(ctx); err != nil {
 				t.Fatal(err)
@@ -145,12 +145,12 @@ func TestRedispatch_BlockedDependencyRetries(t *testing.T) {
 			victim, producer, dep := id("a-consumer"), id("z-producer"), id("data")
 			var runs atomic.Int64
 			started := make(chan struct{})
-			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				if nid == producer {
 					select {
 					case <-started:
 					case <-ctx.Done():
-						return OutcomeTerminal, nil
+						return OutcomeTerminal, nil, false
 					}
 					for range maxRedispatches + 8 {
 						waitUntil(t, func() bool {
@@ -164,15 +164,15 @@ func TestRedispatch_BlockedDependencyRetries(t *testing.T) {
 							s.OnArrival(dep, false)
 						}
 					}
-					return OutcomeTerminal, nil
+					return OutcomeTerminal, nil, false
 				}
 				if runs.Add(1) == 1 {
 					close(started)
 				}
 				if runs.Load() > maxRedispatches+8 {
-					return OutcomeTerminal, nil
+					return OutcomeTerminal, nil, false
 				}
-				return OutcomeBlocked, []NodeID{dep}
+				return OutcomeBlocked, []NodeID{dep}, false
 			}))
 			s.Seed([]NodeID{victim, producer})
 			if err := s.Run(ctx); err != nil {
@@ -203,9 +203,9 @@ func TestRedispatch_SlotWaitPreservesContent(t *testing.T) {
 	}
 	victim := id("waiting")
 	var runs atomic.Int64
-	s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID) {
+	s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
 		runs.Add(1)
-		return OutcomeTerminalNoop, nil
+		return OutcomeTerminalNoop, nil, false
 	}))
 	s.Seed([]NodeID{victim})
 	done := make(chan error, 1)
@@ -234,9 +234,9 @@ func TestRedispatch_EmitBeforeBlockCancellation(t *testing.T) {
 	gate := make(chan struct{})
 	x, y := id("x"), id("y")
 	data := func(nid NodeID) NodeID { return NodeID{Kind: "ConfigMap", Name: nid.Name} }
-	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 		if ctx.Err() != nil {
-			return OutcomeBlocked, nil
+			return OutcomeBlocked, nil, false
 		}
 		active.Add(1)
 		defer active.Add(-1)
@@ -253,12 +253,12 @@ func TestRedispatch_EmitBeforeBlockCancellation(t *testing.T) {
 			other = y
 		}
 		if count <= 2 && nid == x {
-			return OutcomeBlocked, []NodeID{data(other)}
+			return OutcomeBlocked, []NodeID{data(other)}, false
 		}
 		if count >= 81 {
 			held <- struct{}{}
 			<-ctx.Done()
-			return OutcomeBlocked, []NodeID{data(other)}
+			return OutcomeBlocked, []NodeID{data(other)}, false
 		}
 		for ctx.Err() == nil {
 			s.mu.Lock()
@@ -276,7 +276,7 @@ func TestRedispatch_EmitBeforeBlockCancellation(t *testing.T) {
 			held <- struct{}{}
 			<-ctx.Done()
 		}
-		return OutcomeBlocked, []NodeID{data(other)}
+		return OutcomeBlocked, []NodeID{data(other)}, false
 	}))
 	s.Seed([]NodeID{x, y})
 	done := make(chan error, 1)
@@ -319,7 +319,7 @@ func TestRedispatch_TerminalEmissionFeedback(t *testing.T) {
 	started := make(chan struct{}, 2)
 	gate := make(chan struct{})
 	x, y := id("x"), id("y")
-	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 		active.Add(1)
 		defer active.Add(-1)
 		mu.Lock()
@@ -338,12 +338,12 @@ func TestRedispatch_TerminalEmissionFeedback(t *testing.T) {
 			other = y
 		}
 		if nid == x && run%2 == 0 {
-			return OutcomeBlocked, []NodeID{other}
+			return OutcomeBlocked, []NodeID{other}, true
 		}
 		s.OnArrival(NodeID{Kind: "ConfigMap", Name: nid.Name}, false)
-		return OutcomeTerminal, nil
+		return OutcomeTerminal, nil, true
 	}))
-	s.SetRerunAtDrain(func(NodeID) bool { return true })
+
 	s.Seed([]NodeID{x, y})
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -481,11 +481,11 @@ func TestProgress_ChargedEpisodeRearms(t *testing.T) {
 			requested, applied := make(chan struct{}), make(chan struct{})
 			var runs, active atomic.Int64
 			var s *Scheduler
-			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				if nid == producer {
 					for round := range 4 {
 						if !awaitSignal(ctx, requested) {
-							return OutcomeTerminal, nil
+							return OutcomeTerminal, nil, false
 						}
 						if round == 1 {
 							s.OnStatusWake(dep, true, false)
@@ -495,10 +495,10 @@ func TestProgress_ChargedEpisodeRearms(t *testing.T) {
 						select {
 						case applied <- struct{}{}:
 						case <-ctx.Done():
-							return OutcomeTerminal, nil
+							return OutcomeTerminal, nil, false
 						}
 					}
-					return OutcomeTerminal, nil
+					return OutcomeTerminal, nil, false
 				}
 				assert.Equal(t, active.Add(1), int64(1))
 				defer active.Add(-1)
@@ -506,10 +506,10 @@ func TestProgress_ChargedEpisodeRearms(t *testing.T) {
 				select {
 				case requested <- struct{}{}:
 				case <-ctx.Done():
-					return OutcomeTerminal, nil
+					return OutcomeTerminal, nil, false
 				}
 				awaitSignal(ctx, applied)
-				return OutcomeDependencyFailed, []NodeID{dep}
+				return OutcomeDependencyFailed, []NodeID{dep}, false
 			}))
 			s.Seed([]NodeID{consumer, producer})
 			if err := s.Run(ctx); err != nil {
@@ -531,12 +531,12 @@ func TestProgress_RunnableUpgradeExecution(t *testing.T) {
 			upgraded, entered, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			dep, consumer := id("dependency"), id("consumer")
 			var active, runs atomic.Int64
-			s := New(tasks, dispatchFunc(func(ctx context.Context, _ NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+			s := New(tasks, dispatchFunc(func(ctx context.Context, _ NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				assert.Equal(t, active.Load(), int64(1))
 				runs.Add(1)
 				close(entered)
 				awaitSignal(ctx, release)
-				return OutcomeTerminal, nil
+				return OutcomeTerminal, nil, false
 			}))
 			n := &node{id: consumer, state: stateRunning}
 			s.nodes[consumer], s.inFlight = n, 1

@@ -17,7 +17,12 @@ import (
 // untranslated.
 type dagDispatcher struct{ o *Orchestrator }
 
-func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID) {
+func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+	out, blocked := d.reconcile(ctx, id, drainLevel)
+	return out, blocked, id.Kind == manifest.KindResourceSet && d.o.rsc.WantsDrainRerun(id)
+}
+
+func (d dagDispatcher) reconcile(ctx context.Context, id schedule.NodeID, drainLevel manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID) {
 	o := d.o
 	var blocked []manifest.NamedResource
 	switch {
@@ -97,12 +102,6 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 func (o *Orchestrator) runDAG(ctx context.Context) error {
 	defer o.Stop()
 	sched := schedule.New(o.tasks, dagDispatcher{o})
-	// A selector-inputsFrom ResourceSet has no nameable input provider to park
-	// on, so the scheduler re-expands it at the structural fixpoint (against the
-	// now-complete store). Only ResourceSets ever opt in.
-	sched.SetRerunAtDrain(func(id manifest.NamedResource) bool {
-		return id.Kind == manifest.KindResourceSet && o.rsc.WantsDrainRerun(id)
-	})
 
 	// Start the controllers. This registers lifecycle state + the HR producer
 	// index (flush=true replay), but no dispatch listeners — the scheduler owns

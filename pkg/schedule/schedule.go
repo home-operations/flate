@@ -69,8 +69,9 @@ type Dispatcher interface {
 	// goroutine (a task.Service worker) and reports back:
 	//   - out: OutcomeTerminal, OutcomeTerminalNoop, OutcomeBlocked, or OutcomeDependencyFailed.
 	//   - blocked: unsatisfied or failed dependency ids for the latter two outcomes.
+	//   - rerun: re-evaluate this node at the structural fixpoint.
 	// drainLevel is one of manifest.DrainNone/manifest.DrainCascade/manifest.DrainForce.
-	Dispatch(ctx context.Context, id NodeID, drainLevel manifest.DrainLevel) (out Outcome, blocked []NodeID)
+	Dispatch(ctx context.Context, id NodeID, drainLevel manifest.DrainLevel) (out Outcome, blocked []NodeID, rerun bool)
 }
 
 type nodeState uint8
@@ -136,7 +137,7 @@ type node struct {
 	// rerun marks a node that re-runs at the structural fixpoint — a
 	// ResourceSet whose selector-only inputsFrom has no nameable producer to
 	// park on, so it must re-expand once the store has quiesced. Set from the
-	// scheduler's rerunAtDrain predicate after the node's first dispatch.
+	// Dispatcher after every reconcile body.
 	rerun bool
 }
 
@@ -168,20 +169,7 @@ type Scheduler struct {
 	// nothing new (every re-render a dedup no-op) leaves it clear and the run
 	// terminates. Arrivals are finite and monotone, so sweeps are bounded.
 	dirty bool
-	// rerunAtDrain reports whether a node wants to re-run at the fixpoint. Set
-	// by the orchestrator (SetRerunAtDrain); evaluated off the hot path in the
-	// dispatch goroutine, never under mu.
-	rerunAtDrain func(NodeID) bool
 }
-
-// SetRerunAtDrain installs the predicate that decides whether a node re-runs at
-// the structural fixpoint (a selector-only ResourceSet, which has no nameable
-// input provider to park on). It is evaluated in the dispatch goroutine after
-// each Dispatch, so it may read the store. Optional — nil means no node reruns.
-// Ordinary terminal results conservatively charge the next selector execution;
-// only OutcomeTerminalNoop allows free dedup sweeps. Blocked retries gate before
-// publication and contribute no productivity charge.
-func (s *Scheduler) SetRerunAtDrain(fn func(NodeID) bool) { s.rerunAtDrain = fn }
 
 // New constructs a Scheduler that runs bodies on tasks via disp.
 func New(tasks *task.Service, disp Dispatcher) *Scheduler {
@@ -252,8 +240,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			level := s.draining
 			s.mu.Unlock()
 			s.tasks.Go(runCtx, "schedule/"+id.String(), func(ctx context.Context) {
-				out, blocked := s.disp.Dispatch(ctx, id, level)
-				rerun := s.rerunAtDrain != nil && s.rerunAtDrain(id)
+				out, blocked, rerun := s.disp.Dispatch(ctx, id, level)
 				s.complete(id, out, blocked, rerun)
 			})
 			s.mu.Lock()
@@ -338,10 +325,6 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 		n.conservativeUsed = false
 		return
 	}
-	// Record the node's rerun intent, re-evaluated at each dispatch. The value
-	// is stable per node — a selector-only ResourceSet's rerun status is a fixed
-	// spec property — so each write sets the same value. Read by
-	// requeueRerunLocked at the fixpoint.
 	n.rerun = rerun
 	if out == OutcomeDependencyFailed {
 		if !sameFailed {

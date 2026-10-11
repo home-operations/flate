@@ -21,9 +21,9 @@ func id(name string) NodeID {
 	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
-type dispatchFunc func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID)
+type dispatchFunc func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool)
 
-func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain manifest.DrainLevel) (Outcome, []NodeID) {
+func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain manifest.DrainLevel) (Outcome, []NodeID, bool) {
 	return f(ctx, id, drain)
 }
 
@@ -235,11 +235,11 @@ func TestScheduler_RunCancellationBoundary(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID) {
+			s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				if tc.cancelDispatch {
 					cancel()
 				}
-				return OutcomeTerminal, nil
+				return OutcomeTerminal, nil, false
 			}))
 			if tc.seed {
 				s.Seed([]NodeID{id("last")})
@@ -273,7 +273,7 @@ func TestScheduler_RunStopDrains(t *testing.T) {
 			victim, held := id("feedback"), id("held")
 			var active, runs atomic.Int64
 			var s *Scheduler
-			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				active.Add(1)
 				defer active.Add(-1)
 				runs.Add(1)
@@ -282,12 +282,12 @@ func TestScheduler_RunStopDrains(t *testing.T) {
 					if awaitSignal(ctx, fail) {
 						s.OnArrival(victim, true)
 					}
-					return OutcomeTerminal, nil
+					return OutcomeTerminal, nil, false
 				}
 				<-ctx.Done()
 				stopping <- struct{}{}
 				awaitSignal(checkCtx, release)
-				return OutcomeTerminal, nil
+				return OutcomeTerminal, nil, false
 			}))
 			s.Seed([]NodeID{victim, held})
 			if capFirst {
@@ -448,17 +448,17 @@ func TestRedispatchLimit(t *testing.T) {
 			terminal, arrived := make(chan struct{}), make(chan struct{})
 			victim := id("feedback")
 			producer := id("producer")
-			disp := dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+			disp := dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				if nid == producer {
 					for awaitSignal(ctx, terminal) {
 						s.OnArrival(victim, true)
 						select {
 						case arrived <- struct{}{}:
 						case <-ctx.Done():
-							return OutcomeTerminal, nil
+							return OutcomeTerminal, nil, mode == "drain replay"
 						}
 					}
-					return OutcomeTerminal, nil
+					return OutcomeTerminal, nil, mode == "drain replay"
 				}
 				runs.Add(1)
 				switch mode {
@@ -467,7 +467,7 @@ func TestRedispatchLimit(t *testing.T) {
 				case "drain replay":
 					s.OnArrival(NodeID{Kind: manifest.KindConfigMap, Name: "values"}, false)
 				}
-				return OutcomeTerminal, nil
+				return OutcomeTerminal, nil, mode == "drain replay"
 			})
 			s = New(task.NewBounded(2), disp)
 			defer func() {
@@ -477,7 +477,7 @@ func TestRedispatchLimit(t *testing.T) {
 				s.mu.Unlock()
 				helpers.Wait()
 			}()
-			s.SetRerunAtDrain(func(NodeID) bool { return mode == "drain replay" })
+
 			s.Seed([]NodeID{victim})
 			if mode == "terminal arrival" {
 				s.Seed([]NodeID{producer})
@@ -525,13 +525,13 @@ func TestRedispatchBudgetAllowsConvergence(t *testing.T) {
 			limit := maxRedispatches
 			var s *Scheduler
 			runs := 0
-			s = New(task.NewBounded(2), dispatchFunc(func(_ context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+			s = New(task.NewBounded(2), dispatchFunc(func(_ context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				runs++
 				if runs <= limit {
 					s.OnArrival(nid, true)
-					return outcome, []NodeID{id("dep")}
+					return outcome, []NodeID{id("dep")}, false
 				}
-				return OutcomeTerminal, nil
+				return OutcomeTerminal, nil, false
 			}))
 			s.Seed([]NodeID{id("finite")})
 			if err := s.Run(ctx); err != nil {
@@ -565,7 +565,7 @@ type fakeDisp struct {
 	// closed — used to force interleavings (e.g. the lost-wakeup race).
 	gate map[NodeID]chan struct{}
 
-	// drainRerun, if set for an id, makes Dispatch return rerunAtDrain=true for
+	// drainRerun, if set for an id, makes Dispatch return rerun=true for
 	// it — modeling a selector ResourceSet that re-expands at the fixpoint.
 	drainRerun map[NodeID]bool
 
@@ -587,7 +587,7 @@ func newFake(graph map[NodeID][]NodeID) *fakeDisp {
 	}
 }
 
-func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel manifest.DrainLevel) (Outcome, []NodeID) {
+func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel manifest.DrainLevel) (Outcome, []NodeID, bool) {
 	f.mu.Lock()
 	g := f.gate[nid]
 	f.mu.Unlock()
@@ -631,13 +631,13 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel manifest.D
 	case len(failed) > 0:
 		f.termAny[nid] = true
 		f.termReady[nid] = false
-		return OutcomeDependencyFailed, failed
+		return OutcomeDependencyFailed, failed, f.drainRerun[nid]
 	case len(blocked) > 0:
-		return OutcomeBlocked, blocked
+		return OutcomeBlocked, blocked, f.drainRerun[nid]
 	default:
 		f.termAny[nid] = true
 		f.termReady[nid] = true
-		return OutcomeTerminal, nil
+		return OutcomeTerminal, nil, f.drainRerun[nid]
 	}
 }
 
@@ -665,7 +665,7 @@ func run(t *testing.T, f *fakeDisp, workers int) *Scheduler {
 	t.Helper()
 	ts := task.NewBounded(workers)
 	s := New(ts, f)
-	s.SetRerunAtDrain(func(id NodeID) bool { return f.drainRerun[id] })
+
 	seeds := make([]NodeID, 0, len(f.graph))
 	for k := range f.graph {
 		seeds = append(seeds, k)
@@ -854,7 +854,7 @@ func TestDrainRerunReexpandsOnArrival(t *testing.T) {
 
 	ts := task.NewBounded(8)
 	s := New(ts, f)
-	s.SetRerunAtDrain(func(id NodeID) bool { return f.drainRerun[id] })
+
 	s.Seed([]NodeID{id("rs"), id("keepalive")})
 	done := make(chan error, 1)
 	go func() { done <- s.Run(t.Context()) }()
@@ -919,31 +919,31 @@ func TestRedispatch_ContentBudget(t *testing.T) {
 				var runs int
 				started, finished := make(chan struct{}), make(chan struct{})
 				victim, companion := id("content"), id("companion")
-				s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID) {
+				s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 					if nid == companion {
 						close(started)
 						select {
 						case <-finished:
 						case <-ctx.Done():
 						}
-						return OutcomeTerminal, nil
+						return OutcomeTerminal, nil, false
 					}
 					select {
 					case <-started:
 					case <-ctx.Done():
-						return OutcomeTerminal, nil
+						return OutcomeTerminal, nil, false
 					}
 					runs++
 					if runs > requests {
 						close(finished)
-						return OutcomeTerminal, nil
+						return OutcomeTerminal, nil, false
 					}
 					s.OnArrival(nid, true)
 					s.OnArrival(nid, true)
 					if mode == "blocked" || mode == "alternating" && runs%2 == 0 {
-						return OutcomeBlocked, []NodeID{id("missing")}
+						return OutcomeBlocked, []NodeID{id("missing")}, false
 					}
-					return OutcomeTerminal, nil
+					return OutcomeTerminal, nil, false
 				}))
 				s.Seed([]NodeID{victim, companion})
 				err := s.Run(ctx)

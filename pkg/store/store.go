@@ -220,7 +220,7 @@ func nameKey(namespace, name string) string { return namespace + "/" + name }
 func (s *Store) AddObject(obj manifest.BaseManifest) {
 	id := obj.Named()
 	sh := s.shardFor(id)
-	if _, raw := obj.(*manifest.RawObject); !raw {
+	if !manifest.IsRawObject(obj) {
 		sh.mu.RLock()
 		prev, exists := sh.objects[id]
 		sh.mu.RUnlock()
@@ -360,14 +360,14 @@ func objectEqual(a, b manifest.BaseManifest) bool {
 	if prev, ok := a.(*manifest.RawObject); ok {
 		cur, ok := b.(*manifest.RawObject)
 		return ok && prev.Kind == cur.Kind && prev.APIVersion == cur.APIVersion &&
-			prev.Name == cur.Name && prev.Namespace == cur.Namespace && renderedValueEqual(prev.Spec, cur.Spec)
+			prev.Name == cur.Name && prev.Namespace == cur.Namespace && specValueEqual(prev.Spec, cur.Spec)
 	}
 	return reflect.DeepEqual(a, b)
 }
 
 // Raw rendered specs contain JSON-shaped maps and slices. Comparing those
 // directly avoids reflection's per-entry allocations on replayed charts.
-func renderedValueEqual(a, b any) bool {
+func specValueEqual(a, b any) bool {
 	switch v := a.(type) {
 	case map[string]any:
 		other, ok := b.(map[string]any)
@@ -376,14 +376,14 @@ func renderedValueEqual(a, b any) bool {
 		}
 		for key, value := range v {
 			ov, exists := other[key]
-			if !exists || !renderedValueEqual(value, ov) {
+			if !exists || !specValueEqual(value, ov) {
 				return false
 			}
 		}
 		return true
 	case []any:
 		other, ok := b.([]any)
-		return ok && (v == nil) == (other == nil) && slices.EqualFunc(v, other, renderedValueEqual)
+		return ok && (v == nil) == (other == nil) && slices.EqualFunc(v, other, specValueEqual)
 	case nil, string, bool, int, int64, float64:
 		return a == b
 	default:

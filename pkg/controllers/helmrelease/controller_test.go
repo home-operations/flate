@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -15,6 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -129,12 +131,6 @@ func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifes
 }
 
 func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
-	c, st := newTestController(t, nil)
-	st.AddObject(&manifest.HelmRepository{
-		Name: "truecharts", Namespace: "flux-system",
-		URL:  "oci://oci.trueforge.org/truecharts",
-		Type: manifest.RepoTypeOCI,
-	})
 	hr := &manifest.HelmRelease{
 		Name: "kromgo", Namespace: "apps",
 		Chart: manifest.HelmChart{
@@ -145,6 +141,21 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 			Version:       "3.0.0",
 		},
 	}
+
+	filter := change.NewFilter(change.NewSet([]string{"release.yaml"}), &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "release.yaml"}},
+	}, testutil.MapLister{})
+	c, st := newTestController(t, filter)
+	st.AddObject(&manifest.HelmRepository{
+		Name: "truecharts", Namespace: "flux-system",
+		URL:  "oci://oci.trueforge.org/truecharts",
+		Type: manifest.RepoTypeOCI,
+	})
+	st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id.Kind == manifest.KindHelmChart && !filter.ShouldReconcile(id) {
+			t.Error("synthetic HelmChart was published before entering the changed-only keep set")
+		}
+	}, false)
 
 	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
 	if !repointed {
@@ -162,8 +173,6 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 		t.Errorf("chart name/version = %q/%q, want kromgo/3.0.0", got.Chart.Name, got.Chart.Version)
 	}
 
-	// Synthetic HelmChart registered for the source controller, seeded
-	// Pending so the chart-source depwait never observes it as absent.
 	synID := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: got.Chart.RepoNamespace, Name: got.Chart.RepoName}
 	obj := st.GetObjectByName(manifest.KindHelmChart, synID.Namespace, synID.Name)
 	if obj == nil {
@@ -175,67 +184,107 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 		hc.SourceRef.Kind != manifest.KindHelmRepository || hc.SourceRef.Name != "truecharts" {
 		t.Errorf("synthetic HelmChart = %+v, want chart kromgo@3.0.0 sourceRef HelmRepository/truecharts", hc)
 	}
-	if info, ok := st.GetStatus(synID); !ok || info.Status != store.StatusPending {
-		t.Errorf("synthetic status = %+v (ok=%v), want Pending", info, ok)
+	if info, ok := st.GetStatus(synID); ok {
+		t.Errorf("consumer wrote synthetic status = %+v, want no Ready condition", info)
 	}
 }
 
-// TestMaterializeHelmChartSource_IdempotentReSeed pins the idempotency fix:
-// once the synthetic HelmChart has been fetched (Ready), re-running materialize
-// — a parent-KS re-emit, or a SECOND HelmRelease that shares the same
-// (repo, chart, version) synthetic id — must NOT flap it back to Pending. A
-// byte-identical AddObject fires no EventObjectAdded, so the source controller
-// would never re-fetch to restore Ready and the chart-source await would wedge
-// until timeout. The Pending seed therefore fires only when status is absent.
-func TestMaterializeHelmChartSource_IdempotentReSeed(t *testing.T) {
-	c, st := newTestController(t, nil)
-	st.AddObject(&manifest.HelmRepository{
-		Name: "bitnami", Namespace: "flux-system",
-		URL: "https://charts.example/bitnami",
-	})
-	mkHR := func(name string) *manifest.HelmRelease {
-		return &manifest.HelmRelease{
-			Name: name, Namespace: "apps",
-			Chart: manifest.HelmChart{
-				RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
-				Name: "redis", Version: "1.0.0",
-			},
-		}
-	}
+type chartSourceDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID)
 
-	// First HR materializes the synthetic and seeds it Pending.
-	hrA := mkHR("redis-a")
-	got1, repointed := c.materializeHelmChartSource(hrA.Named(), hrA)
-	if !repointed {
-		t.Fatal("first materialize did not repoint")
-	}
-	synID := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: got1.Chart.RepoNamespace, Name: got1.Chart.RepoName}
+func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID) {
+	return d(ctx, id, level)
+}
 
-	// Source controller fetches it and marks it Ready.
-	st.UpdateStatus(synID, store.StatusReady, "")
-
-	// A second HR sharing the same (repo, chart, version) synthesizes the SAME
-	// id; re-materialize must leave the Ready status untouched.
-	hrB := mkHR("redis-b")
-	got2, repointed := c.materializeHelmChartSource(hrB.Named(), hrB)
-	if !repointed {
-		t.Fatal("second materialize did not repoint")
-	}
-	if got2.Chart.RepoName != synID.Name {
-		t.Fatalf("second HR synthesized id %q, want shared %q", got2.Chart.RepoName, synID.Name)
-	}
-	if info, ok := st.GetStatus(synID); !ok || info.Status != store.StatusReady {
-		t.Errorf("synthetic status flapped to %+v (ok=%v), want still Ready", info, ok)
-	}
-
-	// Re-emitting the SAME HR (a fresh reconcile snapshot, still
-	// HelmRepository-sourced) is likewise idempotent — no flap.
-	reHRA := mkHR("redis-a")
-	if _, repointed := c.materializeHelmChartSource(reHRA.Named(), reHRA); !repointed {
-		t.Fatal("re-materialize of the same HR did not repoint")
-	}
-	if info, ok := st.GetStatus(synID); !ok || info.Status != store.StatusReady {
-		t.Errorf("synthetic status flapped to %+v after re-emit, want still Ready", info)
+func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status store.Status
+	}{
+		{"ready", store.StatusReady},
+		{"failed", store.StatusFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c, st := newTestController(t, nil)
+				st.AddObject(&manifest.HelmRepository{
+					Name: "bitnami", Namespace: "flux-system", URL: "https://charts.example/bitnami",
+				})
+				consumers := []*manifest.HelmRelease{
+					{Name: "redis-a", Namespace: "apps"},
+					{Name: "redis-b", Namespace: "apps"},
+				}
+				chart := manifest.HelmChart{
+					RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
+					Name: "redis", Version: "1.0.0",
+				}
+				for _, hr := range consumers {
+					hr.Chart = chart
+					st.AddObject(hr)
+				}
+				first := *consumers[0]
+				c.materializeHelmChartSource(first.Named(), &first)
+				source := chartSourceID(&first)
+				sourceStarted := make(chan struct{})
+				sourceRelease := make(chan struct{})
+				parked := make(chan manifest.NamedResource, len(consumers))
+				dispatch := chartSourceDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID) {
+					if id == source {
+						close(sourceStarted)
+						<-sourceRelease
+						if tc.status == store.StatusReady {
+							st.SetArtifact(id, &store.SourceArtifact{})
+						}
+						st.UpdateStatus(id, tc.status, "source finished")
+						return schedule.OutcomeTerminal, nil
+					}
+					hr := *st.GetObject(id).(*manifest.HelmRelease)
+					c.materializeHelmChartSource(id, &hr)
+					err := c.awaitChartSource(ctx, &hr, level)
+					if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
+						parked <- id
+						return schedule.OutcomeBlocked, blocked.Deps
+					}
+					if err != nil {
+						st.UpdateStatus(id, store.StatusFailed, err.Error())
+						return schedule.OutcomeDependencyFailed, []schedule.NodeID{source}
+					}
+					st.UpdateStatus(id, store.StatusReady, "")
+					return schedule.OutcomeTerminal, nil
+				})
+				s := schedule.New(task.NewBounded(2), dispatch)
+				s.Seed([]schedule.NodeID{source})
+				done := make(chan error, 1)
+				go func() { done <- s.Run(t.Context()) }()
+				<-sourceStarted
+				for _, hr := range consumers {
+					s.OnArrival(hr.Named(), true)
+				}
+				second := *consumers[1]
+				c.materializeHelmChartSource(second.Named(), &second)
+				if chartSourceID(&second) != source {
+					t.Errorf("second source = %s, want shared %s", chartSourceID(&second), source)
+				}
+				if info, ok := st.GetStatus(source); ok {
+					t.Errorf("consumer wrote synthetic status = %+v, want no Ready condition", info)
+				}
+				for range consumers {
+					<-parked
+				}
+				synctest.Wait()
+				close(sourceRelease)
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+				if info, ok := st.GetStatus(source); !ok || info.Status != tc.status || info.Message != "source finished" {
+					t.Errorf("source status = %+v (ok=%v), want preserved %v", info, ok, tc.status)
+				}
+				for _, hr := range consumers {
+					if info, ok := st.GetStatus(hr.Named()); !ok || info.Status != tc.status {
+						t.Errorf("consumer %s status = %+v (ok=%v), want %v", hr.Named(), info, ok, tc.status)
+					}
+				}
+			})
+		})
 	}
 }
 

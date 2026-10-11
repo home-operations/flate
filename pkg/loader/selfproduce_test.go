@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -283,9 +285,7 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 		l.Index.Records[id] = manifest.DiscoveryRecord{File: "apps/base/" + name + "/ks.yaml"}
 	}
-	if err := l.FinalizeIndex(t.Context(), dir, nil); err != nil {
-		t.Fatal(err)
-	}
+	l.FinalizeIndex(dir, nil)
 	idx := l.Index
 
 	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
@@ -583,15 +583,13 @@ func TestSelfProduceBuilder_SecretPrecedence(t *testing.T) {
 				b.materializeSecret(first, "apps", "apps")
 				b.materializeSecret(second, "apps", "apps")
 			}
-			if b.secrets[id] != want {
-				t.Fatalf("Secret precedence = %+v, want %+v", b.secrets[id], want)
-			}
+			assert.Diff(t, b.secrets[id], want)
 		})
 	}
 }
 
 func TestFinalizeIndex_MixedKustomizationDataFile(t *testing.T) {
-	for _, mode := range []string{"mixed", "duplicate_record", "duplicate_store_object"} {
+	for _, mode := range []string{"mixed", "mixed_producer", "duplicate_record", "duplicate_store_object"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -600,17 +598,23 @@ metadata: {name: owner, namespace: flux-system}
 spec: {path: ./apps}
 `)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources: [bundle.yaml]\n")
-			testutil.WriteFile(t, root, "apps/bundle.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+			bundle := `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: child, namespace: apps}
 spec: {path: ./child}
----
+`
+			if mode == "mixed_producer" {
+				bundle += "---\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer}\nspec: {target: {name: values}}\n"
+			} else {
+				bundle += `---
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: values, namespace: apps}
 data: {value: fixture}
-`)
-			if mode != "mixed" {
+`
+			}
+			testutil.WriteFile(t, root, "apps/bundle.yaml", bundle)
+			if strings.HasPrefix(mode, "duplicate") {
 				testutil.WriteFile(t, root, "flux/shadow.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {value: shadow}\n")
 			}
 			l := loaderFixture(store.New(), nil)
@@ -622,16 +626,19 @@ data: {value: fixture}
 					t.Fatal(err)
 				}
 			}
-			if err := l.FinalizeIndex(t.Context(), root, nil); err != nil {
-				t.Fatal(err)
-			}
+			producers := &manifest.ProducerIndex{}
+			l.FinalizeIndex(root, producers)
 			owner := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "owner"}
 			child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
 			values := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}
 			if record, _ := l.Index.Lookup(child); record.Parent != owner {
 				t.Fatalf("child parent = %s, want %s", record.Parent, owner)
 			}
-			if record, _ := l.Index.Lookup(values); !slices.Contains(record.Renderers, owner) {
+			if mode == "mixed_producer" {
+				if _, ok := producers.Producer(secretID("apps", "values")); !ok {
+					t.Fatal("mixed-file raw producer is missing")
+				}
+			} else if record, _ := l.Index.Lookup(values); !slices.Contains(record.Renderers, owner) {
 				t.Fatalf("mixed-file data renderers = %v, want %s", record.Renderers, owner)
 			}
 		})

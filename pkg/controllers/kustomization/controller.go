@@ -136,6 +136,10 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		fresh, ok, err := c.RequireRefresh[*manifest.Kustomization](
 			ctx, id, deps, level)
 		if err != nil {
+			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+			if level >= manifest.DrainCascade && ks.SourceKind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
+				return fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, ref)
+			}
 			return err
 		}
 		if ok {

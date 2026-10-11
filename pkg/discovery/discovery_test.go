@@ -2,7 +2,6 @@ package discovery_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -275,9 +274,16 @@ spec:
 	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
-	_, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st, WipeSecrets: true})
-	if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "OCIRepository/flux-system/flux-system") || !strings.Contains(err.Error(), "unknown artifact root") {
-		t.Fatalf("bootstrap OCI error = %v", err)
+	res, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(dir, "flux"), RepoRoot: dir, Store: st, WipeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "flux-system"}
+	if st.GetObject(id) != nil || st.GetArtifact(id) != nil {
+		t.Fatal("unknown OCI source must wait without a working-tree alias")
+	}
+	if owners, _ := res.Index.OwnersOfFile("apps/kustomization.yaml"); len(owners) != 0 {
+		t.Fatalf("unknown OCI source claimed working-tree files: %v", owners)
 	}
 }
 
@@ -920,6 +926,33 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: ns, Name: "consumer"}
 			if got := filter.ShouldReconcile(id); got != (ns == "apps") {
 				t.Fatalf("consumer %s selected=%t", id, got)
+			}
+		})
+	}
+}
+
+func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
+	for _, optional := range []bool{false, true} {
+		t.Run(fmt.Sprint(optional), func(t *testing.T) {
+			root := t.TempDir()
+			for _, file := range []struct{ path, body string }{
+				{"flux/producer.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: apps}\nspec: {path: ./producer}\n"},
+				{"flux/consumer.yaml", fmt.Sprintf("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./consumer\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: values, optional: %t}]\n", optional)},
+				{"producer/kustomization.yaml", "namespace: apps\nresources: [values.yaml]\n"},
+				{"producer/values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values}\ndata: {VALUE: fixture}\n"},
+				{"consumer/kustomization.yaml", "resources: []\n"},
+			} {
+				testutil.WriteFile(t, root, file.path, file.body)
+			}
+			st := store.New()
+			res, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st})
+			if err != nil {
+				t.Fatal(err)
+			}
+			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st)
+			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+			if got := filter.ShouldReconcile(id); got == optional {
+				t.Fatalf("optional=%t consumer selected=%t", optional, got)
 			}
 		})
 	}

@@ -27,7 +27,10 @@ func TestNewBootstrapAlias(t *testing.T) {
 			wantURL: "file:///tmp/repo",
 			wantNS:  "flux-system",
 		},
-
+		{
+			name: "OCIRepository → unsupported (must wait for its artifact)",
+			id:   manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "source"},
+		},
 		{
 			name:   "HelmRepository → unsupported (caller should skip)",
 			id:     manifest.NamedResource{Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "repo"},

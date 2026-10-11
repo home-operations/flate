@@ -31,8 +31,6 @@ func BenchmarkFinalizeIndex_WideDirectory(b *testing.B) {
 			r.Path = filepath.Join(root, r.File)
 			l.Index.Records[id] = r
 		}
-		if err := l.FinalizeIndex(b.Context(), root, nil); err != nil {
-			b.Fatal(err)
-		}
+		l.FinalizeIndex(root, nil)
 	}
 }

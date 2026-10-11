@@ -77,10 +77,6 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 			continue
 		}
 		if !d.publishBootstrapAlias(id, repoRoot) {
-			// Unsupported kind for aliasing (anything outside
-			// newBootstrapAlias's switch) — silently skip; the
-			// downstream depwait failure surfaces a clearer error
-			// than a misleading half-publish would.
 			continue
 		}
 		existing[id] = struct{}{}
@@ -187,16 +183,14 @@ func (d *discoverer) publishBootstrapAlias(id manifest.NamedResource, repoRoot s
 // returned separately so callers can stamp it onto the SourceArtifact
 // without re-reading the manifest.
 func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.BaseManifest, string, bool) {
-	switch id.Kind {
-	case manifest.KindGitRepository:
-		url := "file://" + repoRoot
-		return &manifest.GitRepository{
-			Name: id.Name, Namespace: id.Namespace,
-			URL: url,
-		}, url, true
-
+	if id.Kind != manifest.KindGitRepository {
+		return nil, "", false
 	}
-	return nil, "", false
+	url := "file://" + repoRoot
+	return &manifest.GitRepository{
+		Name: id.Name, Namespace: id.Namespace,
+		URL: url,
+	}, url, true
 }
 
 // knownSourceIDs returns the IDs of every object currently in s for

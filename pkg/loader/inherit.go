@@ -28,38 +28,25 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 		return
 	}
 	slices.SortFunc(ids, manifest.NamedResource.Compare)
-	b := &selfProduceBuilder{repoRoot: repoRoot, documents: l.documents,
-		namespaces: make(map[string][]namespaceContext, len(ids))}
+	namespaces := make(map[string][]namespaceContext, len(ids))
 	for _, id := range ids {
-		b.namespaces[l.Index.Records[id].File] = nil
+		namespaces[l.Index.Records[id].File] = nil
 	}
-	b.walkGraph(l)
+	kss := l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
+	for v := range l.graphVisits(repoRoot, kss, l.standaloneRoots(repoRoot, kss)) {
+		file := v.coordinate
+		if _, needed := namespaces[file]; needed {
+			scope := namespaceContext{namespace: v.namespace, fallback: v.fallback}
+			if !slices.Contains(namespaces[file], scope) {
+				namespaces[file] = append(namespaces[file], scope)
+			}
+		}
+	}
 	l.Index.Claims = nil
 	for _, id := range ids {
 		record := l.Index.Records[id]
 		obj := l.Store.GetObject(id)
-		scopes := b.namespaces[record.File]
-		fallback := ""
-		if len(scopes) == 0 || slices.ContainsFunc(scopes, func(scope namespaceContext) bool { return scope.namespace == "" }) {
-			if l.Index.Claims == nil {
-				l.Index.Claims = map[string][]manifest.NamedResource{}
-				for _, claim := range l.Claims(repoRoot) {
-					l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
-				}
-			}
-			owners, _ := l.Index.OwnersOfFile(record.File)
-			if len(scopes) == 0 {
-				for _, owner := range owners {
-					if ks, ok := l.Store.Get[*manifest.Kustomization](owner); ok {
-						scopes = append(scopes, namespaceContext{fallback: cmp.Or(ks.TargetNamespace, ks.Namespace)})
-					}
-				}
-			} else if len(owners) == 1 {
-				if ks, ok := l.Store.Get[*manifest.Kustomization](owners[0]); ok {
-					fallback = cmp.Or(ks.TargetNamespace, ks.Namespace)
-				}
-			}
-		}
+		scopes, fallback := l.scopesFor(record, namespaces[record.File], repoRoot)
 		for _, scope := range scopes {
 			ns := cmp.Or(scope.namespace, fallback, scope.fallback)
 			if ns == "" {
@@ -91,6 +78,33 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 			}
 		}
 	}
+}
+
+func (l *Loader) scopesFor(record manifest.DiscoveryRecord, scopes []namespaceContext, repoRoot string) ([]namespaceContext, string) {
+	if len(scopes) > 0 && !slices.ContainsFunc(scopes, func(scope namespaceContext) bool { return scope.namespace == "" }) {
+		return scopes, ""
+	}
+	if l.Index.Claims == nil {
+		l.Index.Claims = map[string][]manifest.NamedResource{}
+		for _, claim := range l.Claims(repoRoot) {
+			l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
+		}
+	}
+	owners, _ := l.Index.OwnersOfFile(record.File)
+	if len(scopes) == 0 {
+		for _, owner := range owners {
+			if ks, ok := l.Store.Get[*manifest.Kustomization](owner); ok {
+				scopes = append(scopes, namespaceContext{fallback: cmp.Or(ks.TargetNamespace, ks.Namespace)})
+			}
+		}
+		return scopes, ""
+	}
+	if len(owners) == 1 {
+		if ks, ok := l.Store.Get[*manifest.Kustomization](owners[0]); ok {
+			return scopes, cmp.Or(ks.TargetNamespace, ks.Namespace)
+		}
+	}
+	return scopes, ""
 }
 
 type namespaceContext struct {

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"github.com/home-operations/flate/internal/testutil"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -140,5 +141,79 @@ data: {v: "${K}"}
 				t.Fatalf("exit=%d stderr=%s", code, stderr)
 			}
 		})
+	}
+}
+
+func TestE2E_BootstrapGeneratorFailureIsolation(t *testing.T) {
+	for _, input := range []string{"files: [missing.txt]", "files: [OUT=../../../outside.txt]"} {
+		t.Run(input, func(t *testing.T) {
+			parent := t.TempDir()
+			root := filepath.Join(parent, "repo")
+			testutil.WriteFile(t, parent, "outside.txt", "OUTSIDE-CONTENT")
+			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: good, namespace: flux-system}
+spec: {path: ./apps/good}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: bad, namespace: flux-system}
+spec: {path: ./apps/bad}
+`)
+			testutil.WriteFile(t, root, "apps/good/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "apps/good/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: good-output}\n")
+			testutil.WriteFile(t, root, "apps/bad/kustomization.yaml", "configMapGenerator:\n- name: bad\n  "+input+"\n")
+			for _, workers := range []string{"2", "8"} {
+				stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
+				if code != 1 || !strings.Contains(stdout, "good-output") || !strings.Contains(stderr, "bad") || !strings.Contains(stderr, "file sources:") {
+					t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				if strings.Contains(stdout, "OUTSIDE-CONTENT") {
+					t.Fatal("generator exposed an outside file")
+				}
+			}
+		})
+	}
+}
+
+func TestE2E_BootstrapGeneratorSopsSubstitution(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: consumer, namespace: flux-system}
+spec:
+  path: ./apps/b
+  postBuild: {substituteFrom: [{kind: Secret, name: creds}]}
+`)
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux, apps/a]\n")
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
+	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "secretGenerator:\n- name: creds\n  namespace: flux-system\n  envs: [creds.sops.env]\n")
+	testutil.WriteFile(t, root, "apps/a/creds.sops.env", "API_KEY=ENC[AES256_GCM,data:abcd1234,iv:xyz,tag:tt,type:str]\nsops_version=3.8.1\nsops_mac=ENC[fixture]\n")
+	testutil.WriteFile(t, root, "apps/b/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "apps/b/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {key: '${API_KEY}'}\n")
+	for _, workers := range []string{"2", "8"} {
+		stdout := runCLIStdout(t, "build", "ks", "consumer", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
+		if !strings.Contains(stdout, "..PLACEHOLDER_API_KEY..") || strings.Contains(stdout, "ENC[") {
+			t.Fatalf("ciphertext substitution: %s", stdout)
+		}
+	}
+}
+
+func TestE2E_SourceRef_UnknownOCIArtifactRoot(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: bootstrap, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: OCIRepository, name: missing}
+`)
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: wrong-working-tree-output}\n")
+	for _, workers := range []string{"2", "8"} {
+		stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
+		if code != 1 || !strings.Contains(stderr, "unknown OCI artifact root") || !strings.Contains(stderr, "OCIRepository/flux-system/missing") || strings.Contains(stdout, "wrong-working-tree-output") {
+			t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+		}
 	}
 }

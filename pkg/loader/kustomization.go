@@ -18,10 +18,12 @@ type kustomizationDocument struct {
 	Replacements []replacementDirective `json:"replacements,omitempty"`
 }
 
-// document retains one source-view decode and its selected filename.
+// document caches a directory document or parsed file objects by source-view path.
+// Consumers MUST never mutate its objects.
 type document struct {
-	body *kustomizationDocument
-	file string
+	body    *kustomizationDocument
+	file    string
+	objects []manifest.BaseManifest
 }
 
 // documentReader caches positive and negative results by absolute source-view directory.
@@ -42,7 +44,7 @@ func (r documentReader) read(dir string) (*kustomizationDocument, string) {
 			continue
 		}
 		if r != nil {
-			r[dir] = document{&k, file}
+			r[dir] = document{body: &k, file: file}
 		}
 		return &k, file
 	}

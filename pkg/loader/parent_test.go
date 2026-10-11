@@ -9,9 +9,7 @@ import (
 
 func parentsForTest(t *testing.T, l *Loader, repoRoot, kind string) map[manifest.NamedResource]manifest.NamedResource {
 	t.Helper()
-	if err := l.FinalizeIndex(t.Context(), repoRoot, nil); err != nil {
-		t.Fatal(err)
-	}
+	l.FinalizeIndex(repoRoot, nil)
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for id, r := range l.Index.Records {
 		if id.Kind == kind && r.Parent != (manifest.NamedResource{}) {

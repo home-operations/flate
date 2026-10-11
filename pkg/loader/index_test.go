@@ -25,9 +25,7 @@ func stampForTest(s *store.Store, files map[manifest.NamedResource]string, root 
 
 func rendererFixture(t *testing.T, l *Loader, root string, producers *manifest.ProducerIndex) *manifest.DiscoveryIndex {
 	t.Helper()
-	if err := l.FinalizeIndex(t.Context(), root, producers); err != nil {
-		t.Fatal(err)
-	}
+	l.FinalizeIndex(root, producers)
 	return l.Index
 }
 
@@ -103,9 +101,7 @@ func TestFinalizeIndex_DataOwners(t *testing.T) {
 			st.AddObject(overlay)
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input", Namespace: tc.namespace}
 			l := loaderFixture(st, map[manifest.NamedResource]string{id: "raw/input.yaml"})
-			if err := l.FinalizeIndex(t.Context(), root, nil); err != nil {
-				t.Fatal(err)
-			}
+			l.FinalizeIndex(root, nil)
 			projected := id
 			projected.Namespace = "apps"
 			r, _ := l.Index.Lookup(projected)

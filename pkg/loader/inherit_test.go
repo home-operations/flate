@@ -13,12 +13,17 @@ var writeFile = testutil.WriteFile
 
 func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		hrDir string
-		files map[string]string
-		scans []string
-		want  []string
+		name   string
+		hrDir  string
+		pinned bool
+		files  map[string]string
+		scans  []string
+		want   []string
 	}{
+		{name: "pinned_namespace", pinned: true, files: map[string]string{
+			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: pinned, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: apps, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"apps/kustomization.yaml": "namespace: dirty\nresources: [hr.yaml]\n",
+		}, scans: []string{"flux", "apps"}, want: []string{"apps"}},
 		{name: "standalone", files: map[string]string{
 			"apps/kustomization.yaml": "namespace: media\nresources: [hr.yaml]\n",
 		}, scans: []string{"apps"}, want: []string{"media"}},
@@ -55,7 +60,7 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 		}, scans: []string{"flux", "base"}, want: []string{"red", "blue"}},
 		{name: "cross_tree", files: map[string]string{
 			"apps/kustomization.yaml": "namespace: games\nresources: [ks.yaml]\n",
-			"apps/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: games}\nspec: {path: ./base}\n",
+			"apps/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: games}\nspec: {path: ./base, dependsOn: [{name: prerequisite}]}\n",
 			"base/kustomization.yaml": "resources: [hr.yaml]\n",
 		}, scans: []string{"apps", "base"}, want: []string{"games"}},
 	} {
@@ -81,12 +86,24 @@ spec:
 `)
 				l := loaderFixture(store.New(), nil)
 				l.SourceRoot, l.Options.DiscoveryOnly = root, deferred
+				if tc.pinned {
+					artifact := t.TempDir()
+					testutil.WriteFile(t, artifact, "apps/kustomization.yaml", "resources: []\n")
+					l.Store.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, LocalPath: artifact})
+					l.documents.read(filepath.Join(artifact, "apps"))
+				}
 				for _, scan := range tc.scans {
 					if _, err := l.Load(t.Context(), filepath.Join(root, scan)); err != nil {
 						t.Fatal(err)
 					}
 				}
 				l.ApplyNamespaces(root)
+				if tc.name == "cross_tree" {
+					ks, ok := l.Store.Get[*manifest.Kustomization](manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "games", Name: "games"})
+					if !ok || len(ks.DependsOn) != 1 || ks.DependsOn[0].Namespace != "games" {
+						t.Fatalf("projected dependsOn namespace: %+v", ks)
+					}
+				}
 				for _, ns := range tc.want {
 					id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: ns, Name: "app"}
 					r, ok := l.Index.Lookup(id)
@@ -98,8 +115,11 @@ spec:
 							t.Fatalf("%s ref=%s", id, ref)
 						}
 					}
-					if !deferred && l.Store.GetObject(id) == nil {
-						t.Fatalf("missing projected %s", id)
+					if !deferred {
+						hr, ok := l.Store.Get[*manifest.HelmRelease](id)
+						if !ok || hr.Chart.RepoNamespace != ns {
+							t.Fatalf("projected %s chart source namespace: %+v", id, hr)
+						}
 					}
 				}
 				if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "app"}); ok {

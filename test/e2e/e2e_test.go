@@ -952,7 +952,7 @@ data:
 		testutil.WriteFile(t, root, file.path, file.body)
 	}
 	var previous string
-	for _, concurrency := range []string{"2", "4"} {
+	for _, concurrency := range []string{"2", "8"} {
 		out := runCLIStdout(t, "build", "all", "--path", root, "--concurrency", concurrency, "--no-progress")
 		for _, want := range []string{"env-value", "file-value", "literal-value"} {
 			if !strings.Contains(out, want) {

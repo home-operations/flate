@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -65,8 +66,6 @@ type Loader struct {
 	// before Load and are mutable only until FinalizeIndex returns.
 	Index     *manifest.DiscoveryIndex
 	documents documentReader
-	// Skipped or replaced identities make per-file kind facts incomplete.
-	incompleteFileKinds bool
 
 	// IgnoreFile, when non-empty, is the gitignore-grammar file Load
 	// reads in place of <root>/.krmignore, with its patterns anchored
@@ -598,22 +597,26 @@ func (l *Loader) skipExisting(id manifest.NamedResource) bool {
 }
 
 func (l *Loader) loadFile(path string) (int, error) {
-	objs, err := parseFile(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+	objs := []manifest.BaseManifest{}
+	err := decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, l.documents != nil, func(obj manifest.BaseManifest) {
+		if raw, ok := obj.(*manifest.RawObject); ok && len(manifest.ProducerTargets(raw)) == 0 {
+			return
+		}
+		objs = append(objs, obj)
+	})
 	if err != nil {
 		return 0, err
 	}
 	count := 0
 	for _, obj := range objs {
+		if _, raw := obj.(*manifest.RawObject); raw {
+			continue
+		}
 		if hr, ok := obj.(*manifest.HelmRelease); ok {
 			l.DisableChartDigestTracking = l.DisableChartDigestTracking || disablesChartDigestTracking(hr)
 		}
 		id := obj.Named()
 		if l.skipExisting(id) {
-			if l.Index != nil {
-				if previous, ok := l.Index.Lookup(id); !ok || previous.Path != path {
-					l.incompleteFileKinds = true
-				}
-			}
 			continue
 		}
 		if l.Options.DiscoveryOnly && !isDiscoveryKind(obj) {
@@ -630,6 +633,17 @@ func (l *Loader) loadFile(path string) (int, error) {
 		}
 		l.addObject(obj, path)
 		count++
+	}
+	if l.documents != nil {
+		objects := slices.DeleteFunc(objs, func(obj manifest.BaseManifest) bool {
+			switch obj.(type) {
+			case *manifest.ConfigMap, *manifest.Secret, *manifest.Kustomization, *manifest.RawObject:
+				return false
+			default:
+				return true
+			}
+		})
+		l.documents[path] = document{objects: objects}
 	}
 	return count, nil
 }
@@ -670,9 +684,6 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	}
 	id := obj.Named()
 	r := manifest.DiscoveryRecord{Path: absPath, File: l.fileCoordinate(absPath)}
-	if previous, ok := l.Index.Lookup(id); ok && previous.File != r.File {
-		l.incompleteFileKinds = true
-	}
 	switch o := obj.(type) {
 	case *manifest.HelmRelease:
 		if o.Chart.RepoKind != "" && o.Chart.RepoName != "" {

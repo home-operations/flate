@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"context"
 	"path/filepath"
 	"slices"
 
@@ -9,7 +8,7 @@ import (
 )
 
 // FinalizeIndex records immutable ownership facts and seeds the runtime producer registry.
-func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, producers *manifest.ProducerIndex) error {
+func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerIndex) {
 	if l.documents == nil {
 		l.documents = documentReader{}
 	}
@@ -61,9 +60,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, producers *
 		l.Index.Records[id] = r
 	}
 	// Graph traversal supplies readers before file-backed data ownership is frozen.
-	if err := l.buildRenderers(ctx, repoRoot, producers); err != nil {
-		return err
-	}
+	l.buildRenderers(repoRoot, producers)
 	l.fillOwners()
 	for id, r := range l.Index.Records {
 		slices.SortFunc(r.Renderers, manifest.NamedResource.Compare)
@@ -77,7 +74,6 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, producers *
 	for _, ids := range l.Index.Readers {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
 	}
-	return nil
 }
 
 func (l *Loader) fillOwners() {

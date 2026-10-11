@@ -1,0 +1,79 @@
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+)
+
+type generatedOCIFetcher struct {
+	root    string
+	fetched atomic.Bool
+}
+
+func (f *generatedOCIFetcher) Fetch(_ context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+	if obj.Named().Name == "app" {
+		f.fetched.Store(true)
+	}
+	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: f.root, Digest: "sha256:fixture"}, nil
+}
+
+func TestRender_DeferredOCIArtifactRoot(t *testing.T) {
+	for _, producer := range []bool{false, true} {
+		for _, workers := range []int{2, 8} {
+			t.Run(fmt.Sprintf("producer_%t_workers_%d", producer, workers), func(t *testing.T) {
+				root, artifact := t.TempDir(), t.TempDir()
+				testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: consumer, namespace: flux-system}
+spec:
+  path: ./
+  sourceRef: {kind: OCIRepository, name: app}
+`)
+				if producer {
+					testutil.WriteFile(t, root, "flux/rs.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: producer, namespace: flux-system}
+spec:
+  inputs: [{name: app}]
+  resourcesTemplate: |
+    apiVersion: source.toolkit.fluxcd.io/v1
+    kind: OCIRepository
+    metadata: {name: << inputs.name >>, namespace: flux-system}
+    spec: {url: oci://fixture.invalid/app, interval: 1h, ref: {tag: latest}}
+`)
+				}
+				testutil.WriteFile(t, artifact, "kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, artifact, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output}\n")
+				o, err := New(Config{Path: root + "/flux", RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers})
+				if err != nil {
+					t.Fatal(err)
+				}
+				f := &generatedOCIFetcher{root: artifact}
+				o.WithFetcher(manifest.KindOCIRepository, f)
+				res, err := o.Render(t.Context())
+				if (err == nil) != producer {
+					t.Fatalf("producer=%t Render error=%v", producer, err)
+				}
+				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "consumer"}
+				status, _ := o.Store().GetStatus(id)
+				if producer {
+					if !f.fetched.Load() || status.Status != store.StatusReady || len(res.Manifests[id]) != 1 {
+						t.Fatalf("fetched=%t status=%+v manifests=%v", f.fetched.Load(), status, res.Manifests[id])
+					}
+					if name, _ := manifest.DocMetadata(res.Manifests[id][0]); name != "artifact-output" {
+						t.Fatalf("rendered %q from the working tree instead of the OCI artifact", name)
+					}
+				} else if f.fetched.Load() || status.Status != store.StatusFailed || !strings.Contains(status.Message, "unknown OCI artifact root") {
+					t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
+				}
+			})
+		}
+	}
+}

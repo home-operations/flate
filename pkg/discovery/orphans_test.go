@@ -72,9 +72,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st.AddObject(ks)
 	l := discoveryLoaderForTest(st)
 	l.Options.WipeSecrets = false
-	if err := l.FinalizeIndex(t.Context(), dir, nil); err != nil {
-		t.Fatal(err)
-	}
+	l.FinalizeIndex(dir, nil)
 	self := ks.Named()
 	st.DeleteObject(self)
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
@@ -138,9 +136,7 @@ spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 					t.Fatal(err)
 				}
 				st.AddObject(ks)
-				if err := l.FinalizeIndex(t.Context(), dir, nil); err != nil {
-					t.Fatal(err)
-				}
+				l.FinalizeIndex(dir, nil)
 			}
 			if scenario == "failed" {
 				if err := os.Remove(filepath.Join(dir, "bundle.yaml")); err != nil {

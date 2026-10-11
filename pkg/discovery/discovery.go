@@ -119,9 +119,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 	producers := &manifest.ProducerIndex{}
-	if err := l.FinalizeIndex(ctx, repoRoot, producers); err != nil {
-		return nil, err
-	}
+	l.FinalizeIndex(repoRoot, producers)
 	d.promoteOrphans(standaloneSecrets)
 	return &Result{
 		RepoRoot:                   repoRoot,
@@ -230,10 +228,10 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if ks.Path == "" && ks.SourceName == "" {
 				continue
 			}
-			sourceRoot, _, _ := loader.SourceView(d.cfg.Store, ks, repoRoot)
+			sourceRoot, _, external := loader.SourceView(d.cfg.Store, ks, repoRoot)
 			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-			if ks.SourceKind == manifest.KindOCIRepository && d.cfg.Store.GetObject(ref) == nil && d.cfg.Store.GetArtifact(ref) == nil {
-				return fmt.Errorf("%w: bootstrap OCI source %s has an unknown artifact root", manifest.ErrInput, ref)
+			if external && ks.SourceKind == manifest.KindOCIRepository && d.cfg.Store.GetObject(ref) == nil && d.cfg.Store.GetArtifact(ref) == nil {
+				continue
 			}
 			target := filepath.Join(sourceRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
 			// Canonicalize via EvalSymlinks so two spec.paths that

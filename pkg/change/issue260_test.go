@@ -60,9 +60,9 @@ func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*stor
 // resolveSourceRoot surfaced "source ... artifact not found".
 //
 // Fix: addRecursive (called via AddEmitted) now walks transitiveDeps
-// recursively AND the orchestrator wires KeepEmitted to
-// Store.Refire so source kinds that newly join keep at runtime get
-// their listener re-fired with the updated filter state.
+// recursively AND KeepEmitted refires
+// source kinds that newly join keep at runtime so their listener sees
+// the updated filter state.
 func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "kubernetes/flux/cluster/ks.yaml"), clusterKS)

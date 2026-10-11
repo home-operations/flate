@@ -197,6 +197,10 @@ func (c *Controller) Configure(opts Options) {
 // through Filter.AddEmitted so an ancestor-only parent doesn't cascade
 // unrelated file-loaded children into keep (#204/#260/#308).
 //
+// Newly-kept source and Kustomization ids are refired because their listeners
+// PreGate-skipped before a consumer joined keep (#260, #418). Other kinds are never
+// refired: nothing moves a refired HelmChart's Pending status back to Ready.
+//
 // MUST be called BEFORE Store.AddObject so the listener that fires
 // synchronously during AddObject sees the extended keep set.
 func (c *Controller) KeepEmitted(parent manifest.NamedResource, child manifest.BaseManifest) {

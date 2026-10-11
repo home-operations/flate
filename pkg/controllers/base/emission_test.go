@@ -96,13 +96,16 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				c.SetFilter(change.NewFilter(change.NewSet([]string{"parent.yaml"}), &manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
 				}, s))
-				var arrivals, refires, consumers int
+				var arrivals, refires, consumers, sets int
 				s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 					arrivals++
 					for _, child := range []manifest.NamedResource{rs, consumer, source.Named()} {
 						if got, ok := s.EmittedParent(child); !ok || got != parent {
 							t.Errorf("owner at arrival of %s = (%v, %v), want %s", id, got, ok, parent)
 						}
+					}
+					if id == rs {
+						sets++
 					}
 					if id == source.Named() {
 						refires++
@@ -121,10 +124,64 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 					{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease", "metadata": map[string]any{"name": "child"}, "spec": map[string]any{"chartRef": map[string]any{"kind": "OCIRepository", "name": "shared"}}},
 					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": map[string]any{"name": "shared"}, "spec": map[string]any{"url": source.URL}},
 				}, false, publish)
-				if arrivals == 0 || refires == 0 || (consumers == 1) != publish {
-					t.Fatalf("arrivals=%d refires=%d consumers=%d publish=%t", arrivals, refires, consumers, publish)
+				if arrivals == 0 || refires == 0 || (consumers == 1) != publish || (sets == 1) != publish {
+					t.Fatalf("arrivals=%d refires=%d consumers=%d sets=%d publish=%t", arrivals, refires, consumers, sets, publish)
 				}
 			})
 		}
+	}
+}
+
+// The file-loaded copy of the emitted consumer is already in the store, as after discovery.
+func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
+	s := store.New()
+	c := New(s, nil, "test")
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings"}
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps",
+		PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}
+	release := &manifest.HelmRelease{Name: "release", Namespace: "apps",
+		Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: "chart"}}
+	for _, obj := range []manifest.BaseManifest{producer, chart, consumer, release} {
+		s.AddObject(obj)
+		s.UpdateStatus(obj.Named(), store.StatusReady, "unchanged")
+	}
+	c.SetFilter(change.NewFilter(change.NewSet([]string{"parent.yaml"}), &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			parent:   {File: "parent.yaml"},
+			settings: {Owners: []manifest.NamedResource{producer.Named()}},
+		},
+	}, s))
+
+	c.KeepEmitted(parent, consumer)
+	c.KeepEmitted(parent, release)
+
+	for _, tc := range []struct {
+		obj  manifest.BaseManifest
+		want store.Status
+	}{{producer, store.StatusPending}, {chart, store.StatusReady}} {
+		if info, _ := s.GetStatus(tc.obj.Named()); info.Status != tc.want {
+			t.Errorf("%s status = %s, want %s", tc.obj.Named(), info.Status, tc.want)
+		}
+	}
+}
+
+// A ResourceSet re-emitting itself must neither overwrite its stored spec nor own itself.
+func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
+	s := store.New()
+	c := New(s, nil, "test")
+	parent := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "apps", Name: "parent"}
+
+	c.Emit(parent, []map[string]any{
+		{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "ResourceSet", "metadata": map[string]any{"name": "parent"}, "spec": map[string]any{}},
+	}, false, true)
+
+	if s.GetObject(parent) != nil {
+		t.Error("self-copy was published")
+	}
+	if owner, ok := s.EmittedParent(parent); ok {
+		t.Errorf("self-copy has owner %v", owner)
 	}
 }

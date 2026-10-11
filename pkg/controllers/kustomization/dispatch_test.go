@@ -31,11 +31,11 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 		}
 	}, false)
 
-	c.emitRenderedChildren(parent, []map[string]any{
+	c.Emit(parent, []map[string]any{
 		{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "ResourceSet", "metadata": map[string]any{"name": rs.Name, "namespace": rs.Namespace}, "spec": map[string]any{}},
 		fluxKustomizationDoc("a", "b"),
 		fluxKustomizationDoc("b", "a"),
-	}, true)
+	}, false, true)
 	if !sawRS {
 		t.Fatal("render-only ResourceSet was not published")
 	}
@@ -62,10 +62,10 @@ func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 		}
 	}, false)
 
-	c.emitRenderedChildren(parent, []map[string]any{
+	c.Emit(parent, []map[string]any{
 		kustomizeConfigDoc(),                 // build directive — must be dropped
 		fluxKustomizationDoc("real", "real"), // real child — must be stored
-	}, true)
+	}, false, true)
 
 	if leaked {
 		t.Error("kustomize.config build directive was emitted to the store (phantom Kustomization//)")
@@ -99,7 +99,7 @@ func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
 	}, false)
 
 	// Dedup-skip replay: no events, store untouched, provenance recorded.
-	c.emitRenderedChildren(parent, docs, false)
+	c.Emit(parent, docs, false, false)
 	if events != 0 {
 		t.Errorf("publish=false fired %d EventObjectAdded; want 0 (no republish churn)", events)
 	}
@@ -111,7 +111,7 @@ func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
 	}
 
 	// Fresh render: events fire and the child lands in the store.
-	c.emitRenderedChildren(parent, docs, true)
+	c.Emit(parent, docs, false, true)
 	if events != 1 {
 		t.Errorf("publish=true fired %d EventObjectAdded; want 1 (the leaf published)", events)
 	}

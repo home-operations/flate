@@ -17,6 +17,8 @@ type Child struct {
 // publish=false suppresses tracked publication during fingerprint replay;
 // raw children retain AddRendered's deduplication and arrival behavior.
 func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, wipeSecrets, publish bool) []Child {
+	// Mirrors kustomize-controller's apply-time namespace defaulting, so a namespace-less
+	// child dedups against its inherited file-loaded copy.
 	manifest.StampNamespaces(docs, parent.Namespace)
 	opts := manifest.ParseDocOptions{WipeSecrets: wipeSecrets}
 	log := c.Logger().With(slog.String("component", "emit"))

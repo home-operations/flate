@@ -196,7 +196,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	// churn/quiescence rationale (#657–#660). fp is reused for SetArtifact below.
 	fp := kustomizationFingerprint(ks, fingerprintSource(source))
 	if handled, err := c.FingerprintDedup(id, fp, func(docs []map[string]any) {
-		c.emitRenderedChildren(id, docs, false)
+		c.Emit(id, docs, c.WipeSecrets, false)
 	}); handled {
 		return err
 	}
@@ -242,7 +242,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	c.emitRenderedChildren(id, docs, true)
+	c.Emit(id, docs, c.WipeSecrets, true)
 
 	c.Store.SetArtifact(id, &store.KustomizationArtifact{
 		Path:        filepath.Join(sourceRoot, ks.Path),

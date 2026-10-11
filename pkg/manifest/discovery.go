@@ -109,6 +109,15 @@ func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[NamedResource] {
 	}
 }
 
+// DataProducers returns borrowed data renderers, falling back to file-backed owners.
+// The returned slice MUST remain immutable after discovery publishes the index.
+func (i *DiscoveryIndex) DataProducers(id NamedResource) []NamedResource {
+	if r, _ := i.Lookup(id); len(r.Renderers) > 0 {
+		return r.Renderers
+	}
+	return i.DataOwners(id)
+}
+
 // DataOwners returns file-backed data owners, retaining the asymmetric
 // empty-namespace bridge. Two unequal nonempty namespaces never match.
 func (i *DiscoveryIndex) DataOwners(id NamedResource) []NamedResource {

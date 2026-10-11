@@ -49,11 +49,12 @@ func TestCollectDeps_SubstitutionProducers(t *testing.T) {
 	producer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
 	cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 	for _, tc := range []struct {
-		name            string
-		ref             manifest.SubstituteReference
-		producers, want []manifest.NamedResource
+		name                    string
+		ref                     manifest.SubstituteReference
+		producers, owners, want []manifest.NamedResource
 	}{
 		{name: "required ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
+		{name: "Owners-only ConfigMap in full mode", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, owners: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
 		{name: "optional ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
 		{name: "required Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{producer}},
 		{name: "optional Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
@@ -65,7 +66,7 @@ func TestCollectDeps_SubstitutionProducers(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			id := manifest.NamedResource{Kind: tc.ref.Kind, Namespace: consumer.Namespace, Name: tc.ref.Name}
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Renderers: tc.producers}}}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Renderers: tc.producers, Owners: tc.owners}}}
 			c := New(store.New(), nil, nil, false)
 			c.Configure(Options{Index: index})
 			ks := &manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace, PostBuildSubstituteFrom: []manifest.SubstituteReference{tc.ref}}
@@ -104,10 +105,11 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	cmObj := &manifest.ConfigMap{Name: "cluster-settings", Namespace: ""}
 	cmID := cmObj.Named()
 
-	f := change.NewFilter(change.NewSet([]string{"kubernetes/apps/changed.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer: {File: "kubernetes/flux/cluster-apps.yaml"}, producer: {File: "kubernetes/flux/cluster-vars.yaml"}, cmID: {File: "kubernetes/flux/vars/cluster-settings.yaml", Owners: []manifest.NamedResource{producer}}}, Claims: map[string][]manifest.NamedResource{"kubernetes/apps/": {consumer}, "kubernetes/flux/vars/": {producer}}}, testutil.MapLister{consumer: consumerObj, producer: producerObj, cmID: cmObj})
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer: {File: "kubernetes/flux/cluster-apps.yaml"}, producer: {File: "kubernetes/flux/cluster-vars.yaml"}, cmID: {File: "kubernetes/flux/vars/cluster-settings.yaml", Owners: []manifest.NamedResource{producer}}}, Claims: map[string][]manifest.NamedResource{"kubernetes/apps/": {consumer}, "kubernetes/flux/vars/": {producer}}}
+	f := change.NewFilter(change.NewSet([]string{"kubernetes/apps/changed.yaml"}), index, testutil.MapLister{consumer: consumerObj, producer: producerObj, cmID: cmObj})
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{Filter: f})
+	c.Configure(Options{Filter: f, Index: index})
 	deps := c.collectDeps(consumerObj)
 
 	wantCM := manifest.NamedResource{
@@ -148,10 +150,11 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	cmObj := &manifest.ConfigMap{Name: "settings", Namespace: ""}
 	cmID := cmObj.Named()
 
-	f := change.NewFilter(change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{self: {File: "kubernetes/foo/app/ks.yaml"}, cmID: {File: "kubernetes/foo/app/settings.yaml", Owners: []manifest.NamedResource{self}}}, Claims: map[string][]manifest.NamedResource{"kubernetes/foo/app/": {self}}}, testutil.MapLister{self: selfObj, cmID: cmObj})
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{self: {File: "kubernetes/foo/app/ks.yaml"}, cmID: {File: "kubernetes/foo/app/settings.yaml", Owners: []manifest.NamedResource{self}}}, Claims: map[string][]manifest.NamedResource{"kubernetes/foo/app/": {self}}}
+	f := change.NewFilter(change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}), index, testutil.MapLister{self: selfObj, cmID: cmObj})
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{Filter: f})
+	c.Configure(Options{Filter: f, Index: index})
 	deps := c.collectDeps(selfObj)
 
 	for _, d := range deps {

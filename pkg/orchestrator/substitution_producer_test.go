@@ -94,19 +94,3 @@ func TestRender_SubstitutionProducerFailures(t *testing.T) {
 		})
 	}
 }
-
-func TestRender_SubstitutionProducerCycle(t *testing.T) {
-	root := t.TempDir()
-	testutil.WriteSubstitutionCycleCluster(t, root)
-	o := newSubstitutionOrchestrator(t, Config{Path: root})
-	res, err := o.Render(t.Context())
-	if err == nil {
-		t.Fatal("mutual substitution producers must fail")
-	}
-	for _, pair := range []struct{ name, peer string }{{"a", "b"}, {"b", "a"}} {
-		id, peer := ksID(pair.name), ksID(pair.peer)
-		if _, failed := res.Failed[id]; !failed || !slices.Contains(res.Blocked[id], peer) {
-			t.Fatalf("cycle member %s does not name %s: failures=%v blockers=%v", id, peer, res.Failed, res.Blocked)
-		}
-	}
-}

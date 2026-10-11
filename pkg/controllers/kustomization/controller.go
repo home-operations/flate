@@ -267,15 +267,11 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 		if c.substitutionSources[depID] != nil {
 			continue
 		}
-		record, _ := c.index.Lookup(depID)
-		producers := record.Renderers
-		if f := c.Filter(); len(producers) == 0 && f != nil {
-			producers = f.ProducersFor(depID)
-		}
+		producers := c.index.DataProducers(depID)
 		if slices.Contains(producers, ks.Named()) {
 			continue
 		}
-		if manifest.IsHardConfigMapEdge(ref) {
+		if ref.Kind == manifest.KindConfigMap {
 			deps = append(deps, manifest.DependencyRef{NamedResource: depID})
 		}
 		for _, producer := range producers {

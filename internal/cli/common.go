@@ -819,9 +819,15 @@ func failureReport(scope failureScope) report.Model {
 			covered[id] = true
 		}
 	}
-	for id, info := range scope.failed {
+	for id := range scope.failed {
 		if !covered[id] {
-			model.Primary = append(model.Primary, report.Primary{ID: id, Msg: "dependency cycle: " + info.Message})
+			peers := slices.Clone(scope.blocked[id])
+			slices.SortFunc(peers, manifest.NamedResource.Compare)
+			names := make([]string, len(peers))
+			for i, p := range peers {
+				names[i] = p.String()
+			}
+			model.Primary = append(model.Primary, report.Primary{ID: id, Msg: "dependency cycle: blocked by " + strings.Join(names, ", ")})
 			model.Blocked--
 		}
 	}

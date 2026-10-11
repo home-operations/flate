@@ -101,14 +101,9 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 }
 
 // ProducersFor returns Flux Kustomizations that render the data resource id.
-// Populated only for Enabled filters; used by
-// controllers to add ordering edges for data deps that arrive via
-// another KS's render — e.g. a postBuild.substituteFrom ConfigMap
-// rendered by an unchanged producer KS in changed-only mode. See
-// #418.
-//
-// Returns a copy — callers append-without-aliasing the filter's
-// internal state.
+// Populated only for Enabled filters; used by the orchestrator to include
+// unchanged substitution data producers in changed-only dependency closures.
+// Returns a copy so callers can append without aliasing the discovery index.
 func (f *Filter) ProducersFor(id manifest.NamedResource) []manifest.NamedResource {
 	if !f.Enabled() {
 		return nil
@@ -122,10 +117,7 @@ func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResourc
 	if f == nil {
 		return nil
 	}
-	if record, _ := f.index.Lookup(id); len(record.Renderers) > 0 {
-		return record.Renderers
-	}
-	return f.index.DataOwners(id)
+	return f.index.DataProducers(id)
 }
 
 // AddEmitted extends the keep set with child when emitter is a

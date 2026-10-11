@@ -575,8 +575,8 @@ func TestAggregateScopedFailures_MissingAndCycles(t *testing.T) {
 	assert.Equal(t, model.Blocked, 1)
 	for _, named := range []bool{false, true} {
 		got := aggregateScopedFailures(failureScope{named: named, failed: failed, blocked: blocked}).Error()
-		assert.Equal(t, got, "reconcile completed with 3 failure(s):\n  Kustomization/apps/a: dependency cycle: cycle a\n  Kustomization/apps/b: dependency cycle: cycle b\n  Kustomization/apps/missing: not found\n  (+1 blocked by failed/missing dependencies)")
-		for _, want := range []string{missing.String(), "cycle a", "cycle b"} {
+		assert.Equal(t, got, "reconcile completed with 3 failure(s):\n  Kustomization/apps/a: dependency cycle: blocked by Kustomization/apps/b\n  Kustomization/apps/b: dependency cycle: blocked by Kustomization/apps/a\n  Kustomization/apps/missing: not found\n  (+1 blocked by failed/missing dependencies)")
+		for _, want := range []string{missing.String(), "blocked by " + b.String(), "blocked by " + a.String()} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("fatal cause %q hidden: %s", want, got)
 			}
@@ -603,7 +603,7 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 	if got := reportFailures(&out, scope, runErr); got == nil {
 		t.Fatal("fatal cycle became successful")
 	}
-	for _, want := range []string{"cycle a", "cycle b", "unrelated failure", "2 failed"} {
+	for _, want := range []string{"blocked by " + b.String(), "blocked by " + a.String(), "unrelated failure", "2 failed"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("fatal cycle hidden by warnings: %s", out.String())
 		}

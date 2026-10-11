@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -44,9 +46,9 @@ type ViewOptions struct {
 }
 
 // FS reads a commit lazily. Backing MUST remain immutable while readers exist.
-// Each object operation owns a private storer with no retained expanded objects.
+// Pooled storers are exclusive to an operation and retain no expanded objects.
 type FS struct {
-	backing  billy.Filesystem
+	storers  sync.Pool
 	worktree billy.Filesystem
 	nodes    map[string]*gitNode
 	matcher  *sourceignore.Matcher
@@ -58,6 +60,7 @@ type gitNode struct {
 	hash     plumbing.Hash
 	mode     fs.FileMode
 	children []fs.DirEntry
+	size     atomic.Int64
 }
 
 type gitEntry struct {
@@ -84,18 +87,22 @@ func (i gitInfo) Sys() any           { return nil }
 
 // New validates metadata and compiles visibility without reading regular blob bodies.
 func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, opts ViewOptions) (*FS, error) {
-	input := &FS{backing: backing, worktree: opts.Worktree, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}}}
+	input := &FS{worktree: opts.Worktree, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}}}
+	input.storers.New = func() any {
+		return filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{})
+	}
 	if opts.Worktree != nil {
 		if err := input.walkWorktree(ctx, "."); err != nil {
 			return nil, err
 		}
 	} else {
-		storer := filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{})
+		storer := input.storers.Get().(*filesystem.Storage)
 		c, err := object.GetCommit(storer, commit)
 		if err == nil {
 			err = input.walkCommit(ctx, storer, c.TreeHash, ".")
 		}
-		if err := errors.Join(err, storer.Close()); err != nil {
+		input.storers.Put(storer)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -143,9 +150,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			}
 			target := input.nodes[resolved]
 			if target.mode.IsRegular() {
-				alias := *target
-				alias.name = path.Base(name)
-				aliases[name] = &alias
+				aliases[name] = &gitNode{name: path.Base(name), hash: target.hash, mode: target.mode}
 			}
 		}
 	}
@@ -299,11 +304,16 @@ func (g *FS) Lstat(name string) (fs.FileInfo, error) {
 	if g.worktree != nil {
 		return g.worktree.Lstat(filepath.FromSlash(name))
 	}
-	storer := filesystem.NewStorageWithOptions(g.backing, cache.NewObjectLRU(0), filesystem.Options{})
+	if size := node.size.Load(); size != 0 {
+		return gitInfo{node, size - 1}, nil
+	}
+	storer := g.storers.Get().(*filesystem.Storage)
+	defer g.storers.Put(storer)
 	size, err := storer.EncodedObjectSize(node.hash)
-	if err := errors.Join(err, storer.Close()); err != nil {
+	if err != nil {
 		return nil, err
 	}
+	node.size.Store(size + 1)
 	return gitInfo{node, size}, nil
 }
 
@@ -381,31 +391,15 @@ func (g *FS) Open(name string) (fs.File, error) {
 	return f, nil
 }
 
-type blobReader struct {
-	io.ReadCloser
-	storer *filesystem.Storage
-}
-
-func (r *blobReader) Close() error {
-	err := errors.Join(r.ReadCloser.Close(), r.storer.Close())
-	r.ReadCloser, r.storer = nil, nil
-	return err
-}
-
 func (g *FS) openBlob(hash plumbing.Hash) (io.ReadCloser, error) {
 	// Upstream's streaming delta reader does not reset its position on backward copies.
-	storer := filesystem.NewStorageWithOptions(g.backing, cache.NewObjectLRU(0), filesystem.Options{})
+	storer := g.storers.Get().(*filesystem.Storage)
+	defer g.storers.Put(storer)
 	blob, err := object.GetBlob(storer, hash)
 	if err != nil {
-		_ = storer.Close()
 		return nil, err
 	}
-	reader, err := blob.Reader()
-	if err != nil {
-		_ = storer.Close()
-		return nil, err
-	}
-	return &blobReader{reader, storer}, nil
+	return blob.Reader()
 }
 
 type gitFile struct {

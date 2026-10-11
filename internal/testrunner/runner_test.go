@@ -117,7 +117,7 @@ func TestRun_SkipsForeignKindLookalike(t *testing.T) {
 	flux := manifest.NamedResource{Kind: manifest.KindBucket, Namespace: "flux-system", Name: "minio"}
 	s.AddObject(&manifest.Bucket{Name: flux.Name, Namespace: flux.Namespace})
 	s.UpdateStatus(flux, store.StatusReady, "")
-	s.AddRendered(&manifest.RawObject{
+	s.AddObject(&manifest.RawObject{
 		Kind:       manifest.KindBucket,
 		APIVersion: "seaweed.seaweedfs.com/v1",
 		Name:       "greptimedb", Namespace: "observability",

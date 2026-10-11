@@ -19,50 +19,72 @@ func newCM(name, ns string) *manifest.ConfigMap {
 	return &manifest.ConfigMap{Name: name, Namespace: ns}
 }
 
-func TestStore_AddRenderedContentDedup(t *testing.T) {
-	for _, distinct := range []bool{false, true} {
-		t.Run(fmt.Sprintf("distinct=%t", distinct), func(t *testing.T) {
-			s := New()
-			obj := &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "app", Namespace: "ns", Spec: map[string]any{"replicas": 1}}
-			seen := 0
-			s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
-				seen++
-				if s.GetObject(id) == nil {
-					t.Error("listener cannot see rendered object")
-				}
-			}, false)
-			s.AddRendered(obj)
-			equal := obj
-			if distinct {
-				equal = obj.Clone()
+func TestStore_AddObject_ContentDedup(t *testing.T) {
+	for _, insert := range []struct {
+		name string
+		add  func(*Store, manifest.BaseManifest)
+	}{
+		{"single", (*Store).AddObject},
+		{"batch", func(s *Store, obj manifest.BaseManifest) { s.AddObjects([]manifest.BaseManifest{obj}) }},
+	} {
+		t.Run(insert.name, func(t *testing.T) {
+			for _, distinct := range []bool{false, true} {
+				t.Run(fmt.Sprintf("distinct=%t", distinct), func(t *testing.T) {
+					s := New()
+					obj := &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "app", Namespace: "ns", Spec: map[string]any{"replicas": 1}}
+					seen := 0
+					s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+						seen++
+						if s.GetObject(id) == nil {
+							t.Error("listener cannot see rendered object")
+						}
+					}, false)
+					insert.add(s, obj)
+					equal := obj
+					if distinct {
+						equal = obj.Clone()
+					}
+					insert.add(s, equal)
+					assert.Equal(t, seen, 1)
+					changed := obj.Clone()
+					changed.Spec["replicas"] = 2
+					insert.add(s, changed)
+					assert.Equal(t, seen, 2)
+					assert.Equal(t, s.GetObject(obj.Named()), manifest.BaseManifest(changed))
+					assert.Equal(t, s.GetObjectByName(obj.Kind, obj.Namespace, obj.Name), manifest.BaseManifest(changed))
+				})
 			}
-			s.AddRendered(equal)
-			assert.Equal(t, seen, 1)
-			changed := obj.Clone()
-			changed.Spec["replicas"] = 2
-			s.AddRendered(changed)
-			assert.Equal(t, seen, 2)
-			assert.Equal(t, s.GetObject(obj.Named()), manifest.BaseManifest(changed))
-			assert.Equal(t, s.GetObjectByName(obj.Kind, obj.Namespace, obj.Name), manifest.BaseManifest(changed))
 		})
 	}
 }
 
-func TestStore_AddRenderedConcurrentDedup(t *testing.T) {
-	s := New()
-	var seen atomic.Int64
-	s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen.Add(1) }, false)
-	var wg sync.WaitGroup
-	for range 32 {
-		wg.Go(func() {
-			s.AddRendered(&manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "app", Spec: map[string]any{"replicas": 1}})
+func TestStore_AddObject_ConcurrentDedup(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		newObject func() manifest.BaseManifest
+	}{
+		{"typed", func() manifest.BaseManifest {
+			return &manifest.ConfigMap{Name: "app", Namespace: "ns", Data: map[string]any{"key": "value"}}
+		}},
+		{"raw", func() manifest.BaseManifest {
+			return &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "app", Spec: map[string]any{"replicas": 1}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New()
+			var seen atomic.Int64
+			s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen.Add(1) }, false)
+			var wg sync.WaitGroup
+			for range 32 {
+				wg.Go(func() { s.AddObject(tc.newObject()) })
+			}
+			wg.Wait()
+			assert.Equal(t, seen.Load(), int64(1))
 		})
 	}
-	wg.Wait()
-	assert.Equal(t, seen.Load(), int64(1))
 }
 
-func TestStore_AddRenderedNestedContent(t *testing.T) {
+func TestStore_AddObject_NestedContent(t *testing.T) {
 	cases := []struct {
 		name  string
 		spec  map[string]any
@@ -83,10 +105,10 @@ func TestStore_AddRenderedNestedContent(t *testing.T) {
 			s := New()
 			seen := 0
 			s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen++ }, false)
-			s.AddRendered(base)
+			s.AddObject(base)
 			clone := *base
 			clone.Spec = tc.spec
-			s.AddRendered(&clone)
+			s.AddObject(&clone)
 			want := 2
 			if tc.equal {
 				want = 1
@@ -96,7 +118,7 @@ func TestStore_AddRenderedNestedContent(t *testing.T) {
 	}
 }
 
-func TestRenderedEqual_RawObjectFields(t *testing.T) {
+func TestObjectEqual_RawObjectFields(t *testing.T) {
 	rawType := reflect.TypeFor[manifest.RawObject]()
 	fields := make([]string, rawType.NumField())
 	for i := range fields {
@@ -107,7 +129,7 @@ func TestRenderedEqual_RawObjectFields(t *testing.T) {
 		Kind: "Widget", APIVersion: "example.test/v1", Name: "app", Namespace: "ns",
 		Spec: map[string]any{"items": []any{map[string]any{"value": "same"}}},
 	}
-	assert.Equal(t, renderedEqual(base, base), true)
+	assert.Equal(t, objectEqual(base, base), true)
 	for _, tc := range []struct {
 		name   string
 		change func(*manifest.RawObject)
@@ -129,8 +151,8 @@ func TestRenderedEqual_RawObjectFields(t *testing.T) {
 			if tc.change != nil {
 				tc.change(candidate)
 			}
-			assert.Equal(t, renderedEqual(base, candidate), tc.equal)
-			assert.Equal(t, renderedEqual(candidate, base), tc.equal)
+			assert.Equal(t, objectEqual(base, candidate), tc.equal)
+			assert.Equal(t, objectEqual(candidate, base), tc.equal)
 		})
 	}
 	assert.Diff(t, base.Spec, map[string]any{"items": []any{map[string]any{"value": "same"}}})
@@ -186,21 +208,25 @@ func TestStore_AddObject_CloneTriggersUpdate(t *testing.T) {
 	}
 }
 
-func TestStore_AddObjectsDispatchesAfterAllWrites(t *testing.T) {
+func TestStore_AddObjects_DispatchesAfterAllWrites(t *testing.T) {
 	s := New()
 	a := newCM("a", "ns")
-	b := newCM("b", "ns")
+	b := &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "b", Namespace: "ns", Spec: map[string]any{"replicas": 1}}
 	idA := a.Named()
 	idB := b.Named()
 
 	var sawBOnA bool
+	var seen int
 	s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		seen++
 		if id == idA {
 			sawBOnA = s.GetObject(idB) != nil
 		}
 	}, false)
 
 	s.AddObjects([]manifest.BaseManifest{a, b})
+	s.AddObjects([]manifest.BaseManifest{newCM("a", "ns"), b.Clone()})
+	assert.Equal(t, seen, 2)
 	if !sawBOnA {
 		t.Fatal("listener for first object did not see later batch sibling")
 	}
@@ -619,22 +645,6 @@ func TestStore_AddListener_FlushNoDoubleFire(t *testing.T) {
 			t.Fatalf("racer fired %d times on iteration; want exactly 1", got)
 		}
 	}
-}
-
-// TestStore_AddRendered_DispatchesListeners pins the listener contract:
-// AddRendered MUST fire EventObjectAdded so callers that listen for
-// kinds promoted via render (e.g. valuesFrom invalidation watching
-// rendered Secret docs) see the event. The original implementation
-// skipped dispatch entirely with a "rendered docs are leaves" comment;
-// adding any new listener for a render-output kind silently broke.
-func TestStore_AddRendered_DispatchesListeners(t *testing.T) {
-	s := New()
-	var seen atomic.Int64
-	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-		seen.Add(1)
-	}, false)
-	s.AddRendered(newCM("a", "ns"))
-	assert.Equal(t, seen.Load(), int64(1)) // AddRendered must dispatch
 }
 
 // TestStore_AddListenerNoFlush_NoMissedConcurrentWrites pins that a

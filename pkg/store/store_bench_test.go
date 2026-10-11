@@ -21,7 +21,7 @@ func BenchmarkListenerFire_ChangedWrite(b *testing.B) {
 			}
 			var i int
 			for b.Loop() {
-				s.AddRendered(objects[i%len(objects)])
+				s.AddObject(objects[i%len(objects)])
 				i++
 			}
 		})
@@ -45,14 +45,14 @@ func BenchmarkAddRendered(b *testing.B) {
 							}}},
 						}},
 					}
-					s.AddRendered(obj)
+					s.AddObject(obj)
 					twin := obj
 					if distinct {
 						twin = obj.Clone()
 					}
 					b.ReportAllocs()
 					for b.Loop() {
-						s.AddRendered(twin)
+						s.AddObject(twin)
 					}
 				})
 			}

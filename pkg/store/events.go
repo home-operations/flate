@@ -168,7 +168,7 @@ var emptyListenerSnapshot listenerSnapshot
 // captured here cannot interleave with an in-progress add.
 //
 // When no listeners are registered for event, fireUnderLock returns
-// a no-op closure without boxing the payload. AddRendered dispatches changed objects
+// a no-op closure without boxing the payload. AddObject dispatches changed objects
 // and must stay cheap on the render hot path when nothing's listening.
 //
 // Published snapshots are immutable. An in-flight dispatch may still invoke

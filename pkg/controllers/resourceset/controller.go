@@ -120,7 +120,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 	}
 
 	// A fingerprint hit MUST not replay emission: KeepEmitted / Store.RecordEmitted /
-	// rawSink bookkeeping is cumulative and already complete. AddRendered
+	// rawSink bookkeeping is cumulative and already complete. AddObject
 	// independently suppresses equal RawObject arrivals. Changed inputs require
 	// a fresh render; fp is reused for SetArtifact.
 	fp := resourceSetFingerprint(rs, c.Store)

@@ -11,7 +11,7 @@ type Child struct {
 // Emit records ownership before extending selection or publishing children.
 // Data precedes leaf reconcilables, whose batch must be visible to siblings.
 // publish=false suppresses tracked publication during fingerprint replay;
-// raw children retain AddRendered's deduplication and arrival behavior.
+// raw children retain AddObject's deduplication and arrival behavior.
 func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, wipeSecrets, publish bool) []Child {
 	// HelmRelease documents already carry the release namespace. KS/RS children
 	// inherit their emitter namespace to dedup against file-loaded copies.
@@ -51,7 +51,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 		id := obj.Named()
 		switch {
 		case !isTrackedChild(obj, helmRelease):
-			c.Store.AddRendered(obj)
+			c.Store.AddObject(obj)
 		case id.Kind == manifest.KindKustomization || id.Kind == manifest.KindHelmRelease:
 			continue
 		default:

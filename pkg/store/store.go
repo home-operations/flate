@@ -96,7 +96,7 @@ func newShard() *shard {
 //  1. Shallow-copy the struct (most manifest types are flat enough
 //     that *clone := *orig works).
 //  2. Mutate the copy's fields.
-//  3. Re-AddObject the modified copy. AddObject's reflect.DeepEqual
+//  3. Re-AddObject the modified copy. AddObject's content
 //     dedup avoids spurious events, and the second-pass dispatch
 //     reaches downstream controllers.
 //
@@ -215,36 +215,22 @@ func nameKey(namespace, name string) string { return namespace + "/" + name }
 // Re-adding a different object overwrites the existing entry AND still
 // dispatches an ObjectAdded event (so newer values propagate).
 //
-// The equal-prev fast path reads under RLock and runs reflect.DeepEqual
-// outside the write lock. Reflection on a typed CR is the slowest
-// operation in this method; keeping it off the write path means
-// re-emits (a common pattern when a parent KS re-renders unchanged
-// children) don't block concurrent readers.
-//
-// Dedup is cheapest-first, mirroring SetArtifact: a pointer-identity
-// check (prev == obj) ahead of reflect.DeepEqual. Every BaseManifest
-// implementer is a pointer receiver, so the interface holds a pointer
-// and == is a safe, allocation-free pointer compare that never panics.
-// A parent KS that re-emits the SAME child pointer on an unchanged
-// re-render (the dominant re-emit shape) then skips reflection
-// entirely — reflect.DeepEqual is ~70% of this method's cost on a
-// typed CR with a populated Data map, and stored objects are immutable
-// by contract so same-pointer implies content-equal.
+// Typed manifests compare outside the write lock so unchanged re-emits do not
+// block readers. RawObjects use one write lock and allocation-free equality.
 func (s *Store) AddObject(obj manifest.BaseManifest) {
 	id := obj.Named()
 	sh := s.shardFor(id)
-	sh.mu.RLock()
-	prev, exists := sh.objects[id]
-	sh.mu.RUnlock()
-	if exists && (prev == obj || reflect.DeepEqual(prev, obj)) {
-		return
+	if _, raw := obj.(*manifest.RawObject); !raw {
+		sh.mu.RLock()
+		prev, exists := sh.objects[id]
+		sh.mu.RUnlock()
+		if exists && objectEqual(prev, obj) {
+			return
+		}
 	}
 	sh.mu.Lock()
-	// Re-check under the write lock: a concurrent AddObject may have
-	// landed the same object between our RUnlock and Lock. Without the
-	// re-check we'd dispatch a redundant event for a write the previous
-	// goroutine already did.
-	if cur, ok := sh.objects[id]; ok && (cur == obj || reflect.DeepEqual(cur, obj)) {
+	// A concurrent writer may have inserted equal content after the read check.
+	if cur, ok := sh.objects[id]; ok && objectEqual(cur, obj) {
 		sh.mu.Unlock()
 		return
 	}
@@ -259,12 +245,8 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 // render emits a coherent sibling set whose listeners need the whole
 // set before reacting.
 //
-// Sharded layout: each input object routes to its Kind's shard. We
-// group writes by shard so each shard locks at most once, then drop
-// every lock before dispatching — the "writes visible before any
-// listener fires" guarantee holds within each shard, and listeners
-// running outside any shard lock can see writes that landed in
-// other shards before this call returned.
+// Each shard locks at most once. Every changed sibling is visible before any
+// listener runs, and dispatch never holds a shard lock.
 func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 	if len(objs) == 0 {
 		return
@@ -284,7 +266,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 		sh.mu.Lock()
 		for _, obj := range buckets[i] {
 			id := obj.Named()
-			if cur, ok := sh.objects[id]; ok && (cur == obj || reflect.DeepEqual(cur, obj)) {
+			if cur, ok := sh.objects[id]; ok && objectEqual(cur, obj) {
 				continue
 			}
 			sh.setLocked(id, obj)
@@ -297,11 +279,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 	}
 }
 
-// setLocked is the single funnel for inserting an object into both
-// the primary `objects` map and the secondary `byName` index. Three
-// write paths (AddObject, AddRendered, future renames) must keep
-// these two maps in sync; routing them through one helper makes the
-// "forgot to update byName" drift class structurally impossible.
+// setLocked keeps the primary objects map and secondary byName index in sync.
 // Caller MUST hold sh.mu (write lock).
 func (sh *shard) setLocked(id manifest.NamedResource, obj manifest.BaseManifest) {
 	sh.objects[id] = obj
@@ -372,28 +350,10 @@ func (s *Store) Refire(id manifest.NamedResource) {
 	dispatchObj()
 }
 
-// AddRendered records a manifest produced by helm/kustomize rendering.
-// Unchanged replays must not fire arrivals: the scheduler uses arrivals
-// to request reconciles and to decide whether its fixpoint is dirty.
-func (s *Store) AddRendered(obj manifest.BaseManifest) {
-	id := obj.Named()
-	sh := s.shardFor(id)
-	sh.mu.Lock()
-	if prev, ok := sh.objects[id]; ok && renderedEqual(prev, obj) {
-		sh.mu.Unlock()
-		return
-	}
-	sh.setLocked(id, obj)
-	dispatch := fireUnderLock(s, EventObjectAdded, id, obj)
-	sh.mu.Unlock()
-	dispatch()
-}
-
-// renderedEqual MUST compare every RawObject field: Kind, APIVersion, Name,
+// objectEqual MUST compare every RawObject field: Kind, APIVersion, Name,
 // Namespace and Spec. The interface-identity shortcut assumes pointer
-// implementations of BaseManifest. Reflection handles other typed manifests,
-// which are not the dominant AddRendered payload.
-func renderedEqual(a, b manifest.BaseManifest) bool {
+// implementations of BaseManifest. Reflection handles other typed manifests.
+func objectEqual(a, b manifest.BaseManifest) bool {
 	if a == b {
 		return true
 	}

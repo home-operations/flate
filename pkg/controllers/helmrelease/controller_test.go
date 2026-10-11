@@ -746,7 +746,7 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 
 	// One source-kind doc (OCIRepository) and one non-source-kind (ConfigMap).
 	// Emit must extend keep and ownership for the source
-	// only, and route the ConfigMap through AddRendered without either call.
+	// only, and route the ConfigMap through AddObject without either call.
 	ociDoc := map[string]any{
 		"apiVersion": "source.toolkit.fluxcd.io/v1beta2",
 		"kind":       "OCIRepository",

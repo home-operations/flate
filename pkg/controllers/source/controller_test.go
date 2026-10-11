@@ -199,7 +199,7 @@ func TestController_OwnsExcludesForeignKind(t *testing.T) {
 		APIVersion: "seaweed.seaweedfs.com/v1",
 		Name:       "greptimedb", Namespace: "observability",
 	}
-	st.AddRendered(foreign)
+	st.AddObject(foreign)
 	if c.Owns(foreign.Named()) {
 		t.Fatalf("Owns(%s) = true for a foreign %s CRD", foreign.Named(), foreign.APIVersion)
 	}

@@ -1585,8 +1585,12 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 			writeDigestTrackingRelease(t, root, "apps/hr.yaml", "true")
 			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2}
 			if stage == "discovery" {
-				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [hr.yaml, broken.yaml]\n")
-				testutil.WriteFile(t, root, "apps/broken.yaml", "invalid: [\n")
+				if err := os.Remove(filepath.Join(root, "apps/kustomization.yaml")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("z-broken.yaml", filepath.Join(root, "apps/z-broken.yaml")); err != nil {
+					t.Fatal(err)
+				}
 			} else {
 				cfg.PathOrig = filepath.Join(root, "baseline-loop")
 				if err := os.Symlink("baseline-loop", cfg.PathOrig); err != nil {
@@ -1606,7 +1610,9 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, false)
 			writeDigestTrackingRelease(t, root, "apps/hr.yaml", "false")
 			if stage == "discovery" {
-				testutil.WriteFile(t, root, "apps/broken.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: valid}\n")
+				if err := os.Remove(filepath.Join(root, "apps/z-broken.yaml")); err != nil {
+					t.Fatal(err)
+				}
 			} else {
 				o.cfg.PathOrig = ""
 			}

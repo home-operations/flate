@@ -769,7 +769,7 @@ func reportFailures(w io.Writer, scope failureScope, err error) error {
 	if writeErr := m.Write(w, style.ColorEnabled(w), 0); writeErr != nil && scope.named {
 		return errors.Join(writeErr, err)
 	}
-	if extras := errors.Join(nonResourceRunErrors(err)...); scope.named && extras != nil {
+	if extras := errors.Join(nonResourceRunErrors(err)...); extras != nil {
 		if _, writeErr := fmt.Fprintln(w, "flate error:", extras); writeErr != nil {
 			return errors.Join(writeErr, err)
 		}
@@ -859,6 +859,9 @@ func nonResourceRunErrors(err error) []error {
 func flattenErrors(err error) []error {
 	if err == nil {
 		return nil
+	}
+	if _, ok := errors.AsType[*orchestrator.FailuresError](err); !ok {
+		return []error{err}
 	}
 	if uw, ok := err.(interface{ Unwrap() []error }); ok {
 		var out []error

@@ -1094,13 +1094,6 @@ metadata: {name: a, namespace: ns}
 	}
 }
 
-// TestLoader_MalformedManifestFails pins that a file the walk opens which
-// isn't valid YAML fails Load instead of being logged and skipped. Both walk
-// modes must agree: the kustomize graph (the file is listed under
-// `resources:`) and the ad-hoc tree walk (no kustomization.yaml). Skipping
-// the file would silently drop any Flux Kustomization it declares from the
-// run, and when the parent that renders the directory sits outside the scan
-// root nothing else ever reports the syntax error.
 func TestLoader_MalformedManifestFails(t *testing.T) {
 	const broken = `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -1131,17 +1124,37 @@ brokenPointer: [ unclosed
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := filepath.Join(t.TempDir(), "app")
 			testutil.WriteFile(t, dir, "blackbox-exporter.yaml", broken)
 			for name, body := range tc.files {
 				testutil.WriteFile(t, dir, name, body)
 			}
-			_, err := New(store.New()).Load(t.Context(), dir)
+			l := New(store.New())
+			_, err := l.Load(t.Context(), dir)
 			if !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("Load error = %v, want one wrapping manifest.ErrInput", err)
 			}
 			if !strings.Contains(err.Error(), "blackbox-exporter.yaml") {
 				t.Errorf("Load error must name the malformed file; got: %v", err)
+			}
+			l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+			l.SourceRoot = dir
+			if _, err := l.Load(t.Context(), dir); err != nil {
+				t.Fatalf("indexed discovery aborted before ownership was known: %v", err)
+			}
+			if err := l.Index.Errors["blackbox-exporter.yaml"].Err; !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("deferred decode error = %v, want manifest.ErrInput", err)
+			}
+			first := l.Index.Errors["blackbox-exporter.yaml"]
+			if first.Root != dir {
+				t.Fatalf("first decode root = %q, want %q", first.Root, dir)
+			}
+			parent := filepath.Dir(dir)
+			if _, err := l.Load(t.Context(), parent); err != nil {
+				t.Fatal(err)
+			}
+			if got := l.Index.Errors["blackbox-exporter.yaml"]; got.Root != first.Root || got.Err != first.Err {
+				t.Fatalf("second walk replaced the first decode failure: first=%+v got=%+v", first, got)
 			}
 		})
 	}

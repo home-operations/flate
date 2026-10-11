@@ -884,42 +884,133 @@ func copyTree(t *testing.T, src string) string {
 	return dst
 }
 
-// TestE2E_MalformedPointerFailsTest covers the narrow --path shape from
-// #971: a Flux Kustomization "pointer" file listed in a kustomization.yaml
-// has a YAML syntax error, and the parent Kustomization that would render
-// the directory (and so trip kustomize's own error) is outside the scan
-// root. `flate test` must still exit non-zero and name the file, instead of
-// dropping the pointer from the roster and reporting green.
-func TestE2E_MalformedPointerFailsTest(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "monitoring/kustomization.yaml", `resources:
-  - blackbox-exporter.yaml
-  - other.yaml
-`)
-	testutil.WriteFile(t, dir, "monitoring/blackbox-exporter.yaml", `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
+func TestE2E_MalformedManifestScope(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		graph     bool
+		owned     bool
+		shared    bool
+		wide      bool
+		suspended bool
+		changed   bool
+	}{
+		{name: "owned graph", graph: true, owned: true},
+		{name: "shared graph", graph: true, owned: true, shared: true},
+		{name: "owned ad-hoc", owned: true},
+		{name: "owned ad-hoc, wide scan", owned: true, wide: true},
+		{name: "suspended owner", owned: true, wide: true, suspended: true},
+		{name: "changed-only, unselected owner", owned: true, wide: true, changed: true},
+		{name: "unowned graph", graph: true},
+		{name: "unowned ad-hoc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			repo := gitInit(t, dir)
+			testutil.WriteFile(t, dir, "monitoring/blackbox-exporter.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: blackbox-exporter, namespace: flux-system}
 spec:
   path: ./monitoring/blackbox-exporter/app
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  sourceRef: {kind: GitRepository, name: flux-system}
 brokenPointer: [ unclosed
 `)
-	testutil.WriteFile(t, dir, "monitoring/other.yaml", `---
+			if tc.graph {
+				testutil.WriteFile(t, dir, "monitoring/kustomization.yaml", "resources:\n  - blackbox-exporter.yaml\n")
+			}
+			testutil.WriteFile(t, dir, "healthy/kustomization.yaml", "resources:\n  - configmap.yaml\n")
+			testutil.WriteFile(t, dir, "healthy/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: sibling-output}
+data: {value: rendered}
+`)
+			scan := filepath.Join(dir, "monitoring")
+			if tc.owned {
+				scan = filepath.Join(dir, "flux")
+				testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources:\n  - ks.yaml\n")
+				testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: owner, namespace: flux-system}
+spec:
+  path: ./monitoring
+  sourceRef: {kind: GitRepository, name: flux-system}
+---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
-metadata: {name: other, namespace: flux-system}
+metadata: {name: sibling, namespace: flux-system}
 spec:
-  path: ./monitoring/other/app
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  path: ./healthy
+  sourceRef: {kind: GitRepository, name: flux-system}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: dependent, namespace: flux-system}
+spec:
+  path: ./healthy
+  dependsOn: [{name: owner}]
+  sourceRef: {kind: GitRepository, name: flux-system}
 `)
-
-	out, code := runCLIExpectErr(t, "test", "all", "--path", filepath.Join(dir, "monitoring"), "--no-progress")
-	if code == 0 {
-		t.Fatalf("expected non-zero exit for a malformed pointer file; got 0:\n%s", out)
-	}
-	if !strings.Contains(out, "blackbox-exporter.yaml") {
-		t.Errorf("error must name the malformed file; got:\n%s", out)
+			}
+			if tc.shared {
+				testutil.WriteFile(t, dir, "flux/peer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: peer, namespace: flux-system}
+spec:
+  path: ./monitoring
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+				testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources: [ks.yaml, peer.yaml]\n")
+			}
+			if tc.wide {
+				scan = dir
+			}
+			if tc.suspended {
+				mutateFile(t, filepath.Join(dir, "flux/ks.yaml"), "path: ./monitoring", "path: ./monitoring\n  suspend: true")
+			}
+			args := []string{"build", "all", "--path", scan, "--no-progress", "--concurrency", "2"}
+			if tc.changed {
+				gitCommitAll(t, repo)
+				original := copyTree(t, dir)
+				mutateFile(t, filepath.Join(dir, "healthy/configmap.yaml"), "value: rendered", "value: changed")
+				args = append(args, "--path-orig", original)
+			}
+			stdout, stderr, code := runCLIBuffers(args...)
+			if tc.suspended || tc.changed {
+				if code != 0 || !strings.Contains(stdout, "sibling-output") || strings.Contains(stderr, "decode") {
+					t.Fatalf("unreconciled owner failed the run: exit=%d\n%s\n%s", code, stdout, stderr)
+				}
+				if tc.changed && (!strings.Contains(stdout, "value: changed") || strings.Contains(stdout, "name: blackbox-exporter")) {
+					t.Fatalf("changed sibling did not render alone:\n%s", stdout)
+				}
+				return
+			}
+			if code != 1 || !strings.Contains(stderr, "blackbox-exporter.yaml") {
+				t.Fatalf("expected exit 1 naming malformed file; got %d:\n%s", code, stderr)
+			}
+			if tc.owned {
+				wantDecodes := 1
+				if tc.shared {
+					wantDecodes++
+				}
+				if got := strings.Count(stderr, "did not find expected"); got != wantDecodes {
+					t.Fatalf("decode error reported %d times:\n%s", got, stderr)
+				}
+				if strings.Contains(stderr, "flate error: loader: decode") {
+					t.Fatalf("owned decode error escaped resource attribution:\n%s", stderr)
+				}
+				if !strings.Contains(stdout, "sibling-output") || !strings.Contains(stderr, "flux-system/owner") || !strings.Contains(stderr, "flux-system/dependent") {
+					t.Fatalf("expected sibling output and scoped owner/dependent failures:\n%s\n%s", stdout, stderr)
+				}
+				if tc.shared && !strings.Contains(stderr, "flux-system/peer") {
+					t.Fatalf("second owner escaped the malformed file failure:\n%s", stderr)
+				}
+				stdout, stderr, code = runCLIBuffers("build", "ks", "sibling", "--path", scan, "--no-progress", "--concurrency", "2")
+				if code != 0 || !strings.Contains(stdout, "sibling-output") {
+					t.Fatalf("healthy named sibling failed: exit=%d\n%s\n%s", code, stdout, stderr)
+				}
+			} else if !strings.Contains(stderr, "decode") {
+				t.Fatalf("unowned malformed file lost decode error:\n%s", stderr)
+			}
+		})
 	}
 }
 

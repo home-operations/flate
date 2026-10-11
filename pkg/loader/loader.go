@@ -251,7 +251,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 	// be authored at the `kustomization.yaml` filename (rare but
 	// permitted). The cached document supplies kpath without another stat.
 	if kpath != "" && !w.ignoreMatches(kpath, false) {
-		n, err := w.loader.loadFile(kpath)
+		n, err := w.loader.loadFile(kpath, w.scanRoot)
 		if err != nil {
 			slog.Warn("loader: kustomization file failed to parse", "path", kpath, "err", err)
 		}
@@ -303,13 +303,8 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		if w.ignoreMatches(abs, false) {
 			continue
 		}
-		n, err := w.loader.loadFile(abs)
+		n, err := w.loader.loadFile(abs, w.scanRoot)
 		if err != nil {
-			// A file kustomize would read that isn't valid YAML fails
-			// `kustomize build` for whichever Kustomization renders
-			// this package. That parent may sit outside the scan
-			// root, so fail here rather than let the file's Flux CRs
-			// silently drop out of the run.
 			return count, fmt.Errorf("loader: %w", err)
 		}
 		count += n
@@ -578,7 +573,7 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 		if w.ignoreMatches(path, false) {
 			return nil
 		}
-		n, err := w.loader.loadFile(path)
+		n, err := w.loader.loadFile(path, w.scanRoot)
 		if err != nil {
 			return fmt.Errorf("loader: %w", err)
 		}
@@ -596,7 +591,8 @@ func (l *Loader) skipExisting(id manifest.NamedResource) bool {
 	return l.PreferExisting && l.Store.GetObject(id) != nil
 }
 
-func (l *Loader) loadFile(path string) (int, error) {
+// Indexed discovery defers decode errors; Load without an index remains strict.
+func (l *Loader) loadFile(path, root string) (int, error) {
 	objs := []manifest.BaseManifest{}
 	err := decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, l.documents != nil, func(obj manifest.BaseManifest) {
 		if raw, ok := obj.(*manifest.RawObject); ok && len(manifest.ProducerTargets(raw)) == 0 {
@@ -605,7 +601,17 @@ func (l *Loader) loadFile(path string) (int, error) {
 		objs = append(objs, obj)
 	})
 	if err != nil {
-		return 0, err
+		if l.Index == nil || !errors.Is(err, manifest.ErrInput) {
+			return 0, err
+		}
+		if l.Index.Errors == nil {
+			l.Index.Errors = make(map[string]manifest.DiscoveryError)
+		}
+		file := l.fileCoordinate(path)
+		if _, seen := l.Index.Errors[file]; !seen {
+			l.Index.Errors[file] = manifest.DiscoveryError{Err: fmt.Errorf("loader: %w", err), Root: root}
+		}
+		return 0, nil
 	}
 	count := 0
 	for _, obj := range objs {

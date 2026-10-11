@@ -278,19 +278,19 @@ spec:
 							}
 							out, stderr, code := runCLIBuffers(args...)
 							if tt.sourceURL != "" {
-								wantCode, wantReason := 0, "external source GitRepository/flux-system/pinned is outside the local tree; not rendered"
+								wantReason := "external source GitRepository/flux-system/pinned is outside the local tree; not rendered"
 								if command == "build" {
-									wantCode, wantReason = 1, "repository not found"
+									wantReason = "repository not found"
 								}
-								if code != wantCode || !strings.Contains(stderr, wantReason) || strings.Contains(stderr, wantError) ||
-									transport.calls.Load() != 0 || (command == "diff" && out != "") {
-									t.Fatalf("external source must release the working-tree error: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+								if code != 1 || !strings.Contains(stderr, wantReason) || !strings.Contains(stderr, "loader: decode") ||
+									!strings.Contains(stderr, "apps/extra.yaml") || transport.calls.Load() != 0 || (command == "diff" && out != "") {
+									t.Fatalf("unowned working-tree error missing: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
 								}
 								return
 							}
 							if wantError != "" {
-								if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
-									t.Fatalf("unpinned decode error: exit=%d transport=%d\n%s\nstderr (-want +got):\n%s", code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
+								if code != 1 || !strings.Contains(stderr, "kustomize build ./apps") || transport.calls.Load() != 0 {
+									t.Fatalf("unpinned Kustomization failure: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
 								}
 								return
 							}
@@ -386,7 +386,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 				testutil.WriteFile(t, root, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata: {name: second, namespace: flux-system}
-spec: {url: 'oci://fixture.invalid/second', interval: 10m}
+spec: {url: 'oci://fixture.invalid/second', interval: 10m, secretRef: {name: missing-auth}}
 `)
 			} else if tt.url != "" {
 				testutil.WriteFile(t, root, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
@@ -440,9 +440,12 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 			for i := range repeats {
 				out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
 					"--concurrency", "2", "--cache-dir", t.TempDir())
-				if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
-					t.Fatalf("held-error scope: run=%d exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
-						i, code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
+				if tt.unreadable {
+					if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
+						t.Fatalf("unreadable file: exit=%d stdout=%q stderr=%s", code, out, stderr)
+					}
+				} else if code != 1 || !strings.Contains(stderr, "kustomize build ./"+heldPath) || !strings.Contains(stderr, "flux-system/b-second") {
+					t.Fatalf("scoped failures: run=%d exit=%d stdout=%q stderr=%s", i, code, out, stderr)
 				}
 			}
 		})
@@ -468,7 +471,6 @@ func TestE2E_SourceRef_HeldErrorAcrossNamespaces(t *testing.T) {
 			for _, namespace := range []string{"alpha", "beta"} {
 				suspend := ""
 				if namespace == "beta" {
-					// The discovery error must surface even without reconciling this consumer.
 					suspend = "  suspend: true\n"
 				}
 				testutil.WriteFile(t, root, "flux/"+namespace+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -525,17 +527,9 @@ spec:
 				t.Run("concurrency_"+concurrency, func(t *testing.T) {
 					out, stderr, code := runCLIBuffers("build", "ks", "apps", "-n", "alpha",
 						"--path", filepath.Join(root, "flux"), "--concurrency", concurrency, "--cache-dir", t.TempDir())
-					if tt.workingTree {
-						wantError := "flate error: " + heldError.Error() + "\n"
-						if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
-							t.Fatalf("working-tree consumer: exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
-								code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
-						}
-						return
-					}
 					if code != 0 || !strings.Contains(out, "value: pinned") || strings.Contains(out, "value: newer") ||
 						strings.Contains(stderr, heldError.Error()) || transport.calls.Load() != 0 {
-						t.Fatalf("external consumer: exit=%d transport=%d stdout=%q\nstderr:\n%s",
+						t.Fatalf("suspended consumer: exit=%d transport=%d stdout=%q\nstderr:\n%s",
 							code, transport.calls.Load(), out, stderr)
 					}
 					if concurrency == "8" && out != previous {
@@ -545,7 +539,7 @@ spec:
 				})
 			}
 			st := store.New()
-			_, discoveryError := discovery.Run(t.Context(), discovery.Config{
+			res, discoveryError := discovery.Run(t.Context(), discovery.Config{
 				Path: filepath.Join(root, "flux"), Store: st,
 				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 			})
@@ -570,7 +564,7 @@ spec:
 				if !ok || betaArtifact.LocalRoot == root || betaArtifact.LocalPath != root {
 					t.Fatalf("expected beta's working-tree artifact, got %+v", betaArtifact)
 				}
-				if !errors.Is(discoveryError, manifest.ErrInput) {
+				if discoveryError != nil || !errors.Is(res.Index.Errors["broken/cm.yaml"].Err, manifest.ErrInput) {
 					t.Fatalf("expected retained working-tree error, got %v", discoveryError)
 				}
 			} else if discoveryError != nil {
@@ -630,14 +624,14 @@ spec:
 	if !errors.Is(wantError, manifest.ErrInput) {
 		t.Fatalf("expected a working-tree decode error, got %v", wantError)
 	}
-	_, err = discovery.Run(t.Context(), discovery.Config{
+	res, err := discovery.Run(t.Context(), discovery.Config{
 		Path: filepath.Join(root, "flux"), Store: store.New(),
 		SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 	})
-	if !errors.Is(err, manifest.ErrInput) {
-		t.Fatalf("empty-path working-tree reader lost the root error: %v", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	assert.Equal(t, err.Error(), wantError.Error())
+	assert.Equal(t, res.Index.Errors["apps/cm.yaml"].Err.Error(), wantError.Error())
 }
 
 func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {
@@ -673,7 +667,6 @@ spec:
 			}
 			testutil.WriteFile(t, root, "entries/kustomization.yaml", "resources: [nested/child.yaml]\n")
 			testutil.WriteFile(t, root, "entries/nested/kustomization.yaml", "resources: [child.yaml]\n")
-			// Suspension prevents reconciliation from masking a lost discovery error.
 			testutil.WriteFile(t, root, "entries/nested/child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: a-held}
@@ -747,24 +740,20 @@ spec:
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected held consumer's decode error, got %v", heldError)
 			}
-			wantError, wantCode := "flate error: "+heldError.Error()+"\n", 1
-			if tt.pinned {
-				wantError, wantCode = "", 0
-			}
 			transport := installSourceRefTransport(t, repo.Storer)
 			for _, concurrency := range []string{"2", "8"} {
 				t.Run("concurrency_"+concurrency, func(t *testing.T) {
 					out, stderr, code := runCLIBuffers("build", "ks", "probe", "-n", "flux-system",
 						"--path", filepath.Join(root, "flux"), "--concurrency", concurrency, "--cache-dir", t.TempDir())
-					if code != wantCode || stderr != wantError || transport.calls.Load() != 0 ||
-						(!tt.pinned && out != "") || (tt.pinned && !strings.Contains(out, "name: ok")) {
+					if code != 0 || stderr != "" || transport.calls.Load() != 0 ||
+						!strings.Contains(out, "name: ok") {
 						t.Fatalf("re-keyed held consumer: exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
-							code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
+							code, transport.calls.Load(), out, cmp.Diff("", stderr))
 					}
 				})
 			}
 			st := store.New()
-			_, discoveryError := discovery.Run(t.Context(), discovery.Config{
+			res, discoveryError := discovery.Run(t.Context(), discovery.Config{
 				Path: filepath.Join(root, "flux"), Store: st,
 				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 			})
@@ -779,7 +768,7 @@ spec:
 				if discoveryError != nil || !ok || art.LocalRoot != root || art.LocalPath == root {
 					t.Fatalf("expected genuine inherited source pin without a held error: error=%v artifact=%+v", discoveryError, art)
 				}
-			} else if !errors.Is(discoveryError, manifest.ErrInput) {
+			} else if discoveryError != nil || !errors.Is(res.Index.Errors["held/broken.yaml"].Err, manifest.ErrInput) {
 				t.Fatalf("expected discovery to retain the decode error, got %v", discoveryError)
 			}
 		})
@@ -790,7 +779,6 @@ func TestE2E_SourceRef_PinnedTreeReplacesHeldConsumer(t *testing.T) {
 	for _, tt := range []struct {
 		name, held, want, heldSource               string
 		survivorName, survivorPath, survivorSource string
-		keepError                                  bool
 	}{
 		{
 			name: "removed",
@@ -810,7 +798,7 @@ spec:
 			want: "value: ok-consumer",
 		},
 		{
-			name: "different_name", heldSource: "unknown", keepError: true,
+			name: "different_name", heldSource: "unknown",
 			survivorName: "b-survivor", survivorPath: "./apps/broken", survivorSource: "unknown",
 			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -838,7 +826,7 @@ spec:
 			want: "value: tagged",
 		},
 		{
-			name: "different_source_ref", heldSource: "unknown", keepError: true,
+			name: "different_source_ref", heldSource: "unknown",
 			survivorName: "a-held", survivorPath: "./apps/broken", survivorSource: "flux-system",
 			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -932,14 +920,6 @@ spec:
 			for _, concurrency := range []string{"2", "8"} {
 				out, stderr, code := runCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
 					"--concurrency", concurrency, "--cache-dir", t.TempDir())
-				if tt.keepError {
-					wantError := "flate error: " + heldError.Error() + "\n"
-					if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
-						t.Fatalf("surviving working-tree consumer: concurrency=%s exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
-							concurrency, code, transport.calls.Load(), out, cmp.Diff(wantError, stderr))
-					}
-					continue
-				}
 				if code != 0 || strings.Contains(stderr, heldError.Error()) ||
 					!strings.Contains(out, "value: tagged") || !strings.Contains(out, tt.want) ||
 					strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer") || transport.calls.Load() != 0 {
@@ -949,16 +929,12 @@ spec:
 			}
 			if tt.survivorName != "" {
 				st := store.New()
-				_, err := discovery.Run(t.Context(), discovery.Config{
+				res, err := discovery.Run(t.Context(), discovery.Config{
 					Path: filepath.Join(root, "flux"), Store: st,
 					SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 				})
-				if tt.keepError {
-					if !errors.Is(err, manifest.ErrInput) {
-						t.Fatalf("expected surviving consumer's working-tree error, got %v", err)
-					}
-				} else if err != nil {
-					t.Fatalf("expected replaced consumer's held error to be dropped, got %v", err)
+				if err != nil || !errors.Is(res.Index.Errors["apps/broken/extra.yaml"].Err, manifest.ErrInput) {
+					t.Fatalf("expected retained working-tree diagnostic, got %v", err)
 				}
 				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: tt.survivorName}
 				ks, ok := st.Get[*manifest.Kustomization](id)

@@ -8,10 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -100,9 +98,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 	d.loader.ApplyNamespaces(repoRoot)
-	if err := d.checkFollowErrors(repoRoot); err != nil {
-		return nil, err
-	}
 	// Resolve bare ${VAR} in Kustomization dependsOn against the
 	// cluster's postBuild substitute values, now that the full KS set is
 	// discovered (so the substitute union is complete and its conflict
@@ -134,7 +129,6 @@ type discoverer struct {
 	cfg             Config
 	loader          *loader.Loader
 	resolvedSources map[manifest.NamedResource]*manifest.GitRepository
-	followErrors    map[string]error
 	remotes         map[string]struct{}
 	remotesLoaded   bool
 	hasPins         bool
@@ -251,22 +245,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				continue
 			}
 			if err := d.loadAt(ctx, target, scanned, &total); err != nil {
-				if ks.SourceKind != manifest.KindGitRepository || !errors.Is(err, manifest.ErrInput) {
-					return err
-				}
-				if repo, ok := d.cfg.Store.Get[*manifest.GitRepository](ref); ok {
-					if d.resolvedSources[ref] == repo {
-						return err
-					}
-					if _, local := d.selfRemotes(repoRoot)[normalizeGitURL(repo.URL)]; !local {
-						return err
-					}
-				}
-				// A late source pin replaces this working-tree walk with its committed tree.
-				if d.followErrors == nil {
-					d.followErrors = make(map[string]error)
-				}
-				d.followErrors[target] = err
+				return err
 			}
 			added++
 		}
@@ -278,40 +257,6 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	aliased = append(d.aliasMissingKustomizationSources(repoRoot), aliased...)
 	warnIfMultipleBootstrapAliases(aliased, repoRoot)
 	slog.Debug("discovery: loaded objects", "count", total, "scan_root", scanRoot, "source_root", repoRoot)
-	return nil
-}
-
-func (d *discoverer) checkFollowErrors(repoRoot string) error {
-	if len(d.followErrors) == 0 {
-		return nil
-	}
-	// Only a surviving working-tree reader with its final source identity keeps a failed walk relevant.
-	kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
-	for _, dir := range slices.Sorted(maps.Keys(d.followErrors)) {
-		for _, ks := range kustomizations {
-			if ks.Path == "" && ks.SourceName == "" {
-				continue
-			}
-			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-			sourceRoot := repoRoot
-			if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok {
-				if art.LocalRoot == repoRoot {
-					continue
-				}
-				sourceRoot = art.LocalPath
-			} else if d.cfg.Store.GetObject(ref) != nil {
-				// Declared external sources cannot read this tree; missing sources alias it.
-				continue
-			}
-			target := filepath.Join(sourceRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
-			if resolved, err := filepath.EvalSymlinks(target); err == nil {
-				target = resolved
-			}
-			if target == dir {
-				return d.followErrors[dir]
-			}
-		}
-	}
 	return nil
 }
 

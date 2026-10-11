@@ -82,23 +82,22 @@ func (o *Orchestrator) finalize() error {
 	o.logSummary(failed, ksCount, hrCount)
 	o.logResourceFailures(failed)
 
-	// Compose any unattributed panic count with the aggregated
-	// per-resource failures so the panic signal isn't dropped when
-	// other resources also failed. Pre-fix, the panic counter was
-	// only consulted on the clean-aggregate path; a panicked task
-	// running alongside any normal failure looked indistinguishable
-	// from a clean reconcile to Service.Failures()-driven callers.
-	var panicErr error
+	var errs []error
 	if n := o.tasks.Failures(); n > 0 {
-		panicErr = fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n)
+		errs = append(errs, fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n))
 	}
-	if len(failed) == 0 {
-		return panicErr
+	if len(failed) != 0 {
+		errs = append(errs, o.aggregateFailures(failed))
 	}
-	if panicErr != nil {
-		return errors.Join(o.aggregateFailures(failed), panicErr)
+	if o.index != nil {
+		for _, file := range slices.Sorted(maps.Keys(o.index.Errors)) {
+			if owners, _ := o.index.OwnersOfFile(file); len(owners) == 0 {
+				errs = append(errs, o.index.Errors[file].Err)
+			}
+		}
 	}
-	return o.aggregateFailures(failed)
+
+	return errors.Join(errs...)
 }
 
 // warnMissingCRDs uses only final canonical references and Ready/artifact

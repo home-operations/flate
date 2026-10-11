@@ -1056,7 +1056,9 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			if !errors.Is(got, context.Canceled) {
 				t.Fatalf("lost non-resource error: %v", got)
 			}
-			assert.Equal(t, strings.Contains(out.String(), "flate error: context canceled"), named)
+			if !strings.Contains(out.String(), "flate error: context canceled") {
+				t.Errorf("non-resource error missing from report: %s", &out)
+			}
 			writeErr := errors.New("report write failed")
 			got = reportFailures(failingWriter{err: writeErr}, scope, aggregateScopedFailures(scope))
 			assert.Equal(t, errors.Is(got, writeErr), named)

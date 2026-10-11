@@ -99,7 +99,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, LocalPath: repoRoot},
 	)
 
-	prefixes := Claims(s, repoRoot)
+	prefixes := loaderFixture(s, nil).Claims(repoRoot)
 	seen := map[manifest.NamedResource]bool{}
 	for _, p := range prefixes {
 		seen[p.ID] = true
@@ -109,6 +109,9 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	}
 	if !seen[bootstrap.Named()] || !seen[aliasedKS.Named()] {
 		t.Errorf("local-sourced KS claims must be retained; seen=%v", seen)
+	}
+	if parent, ok := manifest.StrictParent(Claims(s, repoRoot), "kubernetes/other/bad.yaml", manifest.NamedResource{}, nil); !ok || parent != external.Named() {
+		t.Fatalf("final reporting must retain external-source ownership: parent=%v, found=%t", parent, ok)
 	}
 }
 
@@ -389,9 +392,12 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 	s.AddObject(repo)
 	s.AddObject(external)
 	s.AddObject(local)
-	prefixes := Claims(s, t.TempDir())
+	prefixes := loaderFixture(s, nil).Claims(t.TempDir())
 	if len(prefixes) != 1 || prefixes[0].ID != local.Named() {
 		t.Fatalf("external source root must not claim local files: %+v", prefixes)
+	}
+	if parent, ok := manifest.StrictParent(Claims(s, ""), "bad.yaml", manifest.NamedResource{}, nil); !ok || parent != external.Named() {
+		t.Fatalf("final reporting must retain external source-root ownership: parent=%v, found=%t", parent, ok)
 	}
 }
 

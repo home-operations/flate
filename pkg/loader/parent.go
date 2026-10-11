@@ -8,10 +8,10 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Claims builds local-tree claims, including committed source coordinates.
-// Post-render reporting MUST rebuild them to include late Kustomizations.
+// Claims builds final-store claims for reporting, including external sources
+// and committed source coordinates. Discovery MUST use Loader.Claims instead.
 func Claims(s *store.Store, repoRoot string) []manifest.KSClaim {
-	return buildClaims(s, repoRoot, documentReader{}, localKustomizations(s, repoRoot))
+	return buildClaims(s, repoRoot, documentReader{}, s.ListAs[*manifest.Kustomization](manifest.KindKustomization))
 }
 
 // Claims reuses discovery's source-view documents while the Loader is mutable.

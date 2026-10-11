@@ -21,11 +21,8 @@ import (
 // so flate downgrades the failure to a warning rather than gating the
 // test on stale local files. A child under a parent that FAILED is a
 // blocked cascade victim, not an orphan — it stays failed (see below).
-func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]string {
+func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo, prefixes []manifest.KSClaim) map[manifest.NamedResource]string {
 	out := make(map[manifest.NamedResource]string)
-	// Claims are rebuilt after drain to include runtime-created Kustomizations.
-	var prefixes []manifest.KSClaim
-	var prefixesBuilt bool
 	for id, info := range failed {
 		if !isReconcilableKind(id.Kind) {
 			continue
@@ -40,10 +37,6 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		if file == "" {
 			continue
 		}
-		if !prefixesBuilt {
-			prefixes = loader.Claims(o.store, o.repoRoot)
-			prefixesBuilt = true
-		}
 		parent, ok := manifest.StrictParent(prefixes, file, id, nil)
 		if !ok {
 			// No covering spec.path parent. A Flux KS that is a stray manifest its
@@ -53,6 +46,11 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 			if record.Excluded {
 				out[id] = info.Message
 			}
+			continue
+		}
+		// External sources own decode errors but cannot parent local-tree orphans.
+		ks, _ := o.store.Get[*manifest.Kustomization](parent)
+		if _, _, external := loader.SourceView(o.store, ks, o.repoRoot); external {
 			continue
 		}
 		// A covering parent that itself FAILED emitted nothing, so every child
@@ -77,7 +75,19 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 func (o *Orchestrator) finalize() error {
 	failed := o.store.FailedResources()
 	ksCount, hrCount := o.cascadeParentFailures(failed)
-	o.demoteOrphans(failed)
+	// Final ownership includes every Kustomization present after the drain.
+	var prefixes []manifest.KSClaim
+	if len(failed) != 0 || (o.index != nil && len(o.index.Errors) != 0) {
+		prefixes = loader.Claims(o.store, o.repoRoot)
+	}
+	o.orphans = o.detectOrphans(failed, prefixes)
+	for id, msg := range o.orphans {
+		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
+		slog.Warn("resource orphaned", "id", id.String(),
+			"file", o.fileOf(id),
+			"reason", msg)
+		delete(failed, id)
+	}
 	o.warnMissingCRDs()
 	o.logSummary(failed, ksCount, hrCount)
 	o.logResourceFailures(failed)
@@ -91,8 +101,15 @@ func (o *Orchestrator) finalize() error {
 	}
 	if o.index != nil {
 		for _, file := range slices.Sorted(maps.Keys(o.index.Errors)) {
-			if owners, _ := o.index.OwnersOfFile(file); len(owners) == 0 {
-				errs = append(errs, o.index.Errors[file].Err)
+			_, owned := manifest.StrictParent(prefixes, file, manifest.NamedResource{}, nil)
+			if !owned {
+				for range o.index.ReadersOfFile(file) {
+					owned = true
+					break
+				}
+			}
+			if !owned {
+				errs = append(errs, o.index.Errors[file])
 			}
 		}
 	}
@@ -220,25 +237,6 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 		}
 	}
 	return ksCount, hrCount
-}
-
-// demoteOrphans filters out resources whose source files sit under
-// another Kustomization's spec.path but were never emitted by that
-// parent's render. Real Flux wouldn't reconcile them either — the
-// file walker only loaded them because flate scans the whole tree.
-// Surface as warnings instead of failures so the test isn't gated on
-// stale on-disk files the user has not wired into their kustomize
-// tree. Mutates the failed map in place; the demoted ids land in
-// o.orphans for Render() to surface.
-func (o *Orchestrator) demoteOrphans(failed map[manifest.NamedResource]store.StatusInfo) {
-	o.orphans = o.detectOrphans(failed)
-	for id, msg := range o.orphans {
-		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
-		slog.Warn("resource orphaned", "id", id.String(),
-			"file", o.fileOf(id),
-			"reason", msg)
-		delete(failed, id)
-	}
 }
 
 func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo, ksCount, hrCount int) {

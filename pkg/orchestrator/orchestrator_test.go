@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -76,7 +77,7 @@ func TestDetectOrphans(t *testing.T) {
 		root.Named():         {Status: store.StatusFailed, Message: "broken"},
 	}
 
-	orphans := o.detectOrphans(failed)
+	orphans := o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot))
 
 	if _, ok := orphans[orphan.Named()]; !ok {
 		t.Errorf("expected orphan to be detected")
@@ -90,6 +91,12 @@ func TestDetectOrphans(t *testing.T) {
 	if got := len(orphans); got != 1 {
 		t.Errorf("expected exactly 1 orphan, got %d: %+v", got, orphans)
 	}
+	o.store.AddObject(&manifest.GitRepository{Name: "external", Namespace: "flux-system"})
+	o.store.AddObject(&manifest.Kustomization{
+		Name: "external", Namespace: "flux-system", Path: "./",
+		SourceKind: manifest.KindGitRepository, SourceName: "external", SourceNamespace: "flux-system",
+	})
+	assert.Diff(t, o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot)), orphans)
 }
 
 // TestDetectOrphans_NonReconcilableKindsIgnored — ConfigMaps and
@@ -116,7 +123,7 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 	failed := map[manifest.NamedResource]store.StatusInfo{
 		cm.Named(): {Status: store.StatusFailed, Message: "bogus"},
 	}
-	orphans := o.detectOrphans(failed)
+	orphans := o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot))
 	if len(orphans) != 0 {
 		t.Errorf("orphan detection should skip non-reconcilable kinds; got %+v", orphans)
 	}
@@ -152,7 +159,7 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 		parent.Named(): {Status: store.StatusFailed, Message: "kustomize build boom"}, // the build that emitted nothing
 		child.Named():  {Status: store.StatusFailed, Message: "dependencies failed: cluster-apps"},
 	}
-	orphans := o.detectOrphans(failed)
+	orphans := o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot))
 	if _, ok := orphans[child.Named()]; ok {
 		t.Errorf("child under a FAILED covering parent is a cascade victim, not an orphan: %+v", orphans)
 	}

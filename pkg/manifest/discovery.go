@@ -28,13 +28,7 @@ type DiscoveryIndex struct {
 	Records map[NamedResource]DiscoveryRecord // Authored and projected identities.
 	Claims  map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
 	Readers map[string][]NamedResource        // Graph readers by resource file or missing directory.
-	Errors  map[string]DiscoveryError         // File decode failures deferred until final source ownership is known.
-}
-
-// DiscoveryError retains the first decode failure and the absolute root of its discovery walk.
-type DiscoveryError struct {
-	Err  error
-	Root string
+	Errors  map[string]error                  // File decode failures deferred until final source ownership is known.
 }
 
 // Lookup returns the borrowed record for id and reports whether it exists.

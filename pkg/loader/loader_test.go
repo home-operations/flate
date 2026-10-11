@@ -1142,18 +1142,15 @@ brokenPointer: [ unclosed
 			if _, err := l.Load(t.Context(), dir); err != nil {
 				t.Fatalf("indexed discovery aborted before ownership was known: %v", err)
 			}
-			if err := l.Index.Errors["blackbox-exporter.yaml"].Err; !errors.Is(err, manifest.ErrInput) {
+			if err := l.Index.Errors["blackbox-exporter.yaml"]; !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("deferred decode error = %v, want manifest.ErrInput", err)
 			}
 			first := l.Index.Errors["blackbox-exporter.yaml"]
-			if first.Root != dir {
-				t.Fatalf("first decode root = %q, want %q", first.Root, dir)
-			}
 			parent := filepath.Dir(dir)
 			if _, err := l.Load(t.Context(), parent); err != nil {
 				t.Fatal(err)
 			}
-			if got := l.Index.Errors["blackbox-exporter.yaml"]; got.Root != first.Root || got.Err != first.Err {
+			if got := l.Index.Errors["blackbox-exporter.yaml"]; got != first {
 				t.Fatalf("second walk replaced the first decode failure: first=%+v got=%+v", first, got)
 			}
 		})

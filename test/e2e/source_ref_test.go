@@ -278,13 +278,13 @@ spec:
 							}
 							out, stderr, code := runCLIBuffers(args...)
 							if tt.sourceURL != "" {
-								wantReason := "external source GitRepository/flux-system/pinned is outside the local tree; not rendered"
+								wantCode, wantReason := 0, "external source GitRepository/flux-system/pinned is outside the local tree; not rendered"
 								if command == "build" {
-									wantReason = "repository not found"
+									wantCode, wantReason = 1, "repository not found"
 								}
-								if code != 1 || !strings.Contains(stderr, wantReason) || !strings.Contains(stderr, "loader: decode") ||
-									!strings.Contains(stderr, "apps/extra.yaml") || transport.calls.Load() != 0 || (command == "diff" && out != "") {
-									t.Fatalf("unowned working-tree error missing: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+								if code != wantCode || !strings.Contains(stderr, wantReason) || strings.Contains(stderr, "loader: decode") ||
+									transport.calls.Load() != 0 || (command == "diff" && out != "") {
+									t.Fatalf("external source must release the working-tree error: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
 								}
 								return
 							}
@@ -564,7 +564,7 @@ spec:
 				if !ok || betaArtifact.LocalRoot == root || betaArtifact.LocalPath != root {
 					t.Fatalf("expected beta's working-tree artifact, got %+v", betaArtifact)
 				}
-				if discoveryError != nil || !errors.Is(res.Index.Errors["broken/cm.yaml"].Err, manifest.ErrInput) {
+				if discoveryError != nil || !errors.Is(res.Index.Errors["broken/cm.yaml"], manifest.ErrInput) {
 					t.Fatalf("expected retained working-tree error, got %v", discoveryError)
 				}
 			} else if discoveryError != nil {
@@ -631,7 +631,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, res.Index.Errors["apps/cm.yaml"].Err.Error(), wantError.Error())
+	assert.Equal(t, res.Index.Errors["apps/cm.yaml"].Error(), wantError.Error())
 }
 
 func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {
@@ -768,7 +768,7 @@ spec:
 				if discoveryError != nil || !ok || art.LocalRoot != root || art.LocalPath == root {
 					t.Fatalf("expected genuine inherited source pin without a held error: error=%v artifact=%+v", discoveryError, art)
 				}
-			} else if discoveryError != nil || !errors.Is(res.Index.Errors["held/broken.yaml"].Err, manifest.ErrInput) {
+			} else if discoveryError != nil || !errors.Is(res.Index.Errors["held/broken.yaml"], manifest.ErrInput) {
 				t.Fatalf("expected discovery to retain the decode error, got %v", discoveryError)
 			}
 		})
@@ -933,7 +933,7 @@ spec:
 					Path: filepath.Join(root, "flux"), Store: st,
 					SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 				})
-				if err != nil || !errors.Is(res.Index.Errors["apps/broken/extra.yaml"].Err, manifest.ErrInput) {
+				if err != nil || !errors.Is(res.Index.Errors["apps/broken/extra.yaml"], manifest.ErrInput) {
 					t.Fatalf("expected retained working-tree diagnostic, got %v", err)
 				}
 				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: tt.survivorName}

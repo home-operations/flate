@@ -1052,11 +1052,11 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "failed"}
 			scope := failureScope{named: named, failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "render failed"}}}
 			var out bytes.Buffer
-			got := reportFailures(&out, scope, context.Canceled)
+			got := reportFailures(&out, scope, fmt.Errorf("reconcile: %w", context.Canceled))
 			if !errors.Is(got, context.Canceled) {
 				t.Fatalf("lost non-resource error: %v", got)
 			}
-			if !strings.Contains(out.String(), "flate error: context canceled") {
+			if !strings.Contains(out.String(), "flate error: reconcile: context canceled") {
 				t.Errorf("non-resource error missing from report: %s", &out)
 			}
 			writeErr := errors.New("report write failed")

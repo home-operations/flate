@@ -893,6 +893,8 @@ func TestE2E_MalformedManifestScope(t *testing.T) {
 		wide      bool
 		suspended bool
 		changed   bool
+		generated bool
+		external  bool
 	}{
 		{name: "owned graph", graph: true, owned: true},
 		{name: "shared graph", graph: true, owned: true, shared: true},
@@ -900,6 +902,9 @@ func TestE2E_MalformedManifestScope(t *testing.T) {
 		{name: "owned ad-hoc, wide scan", owned: true, wide: true},
 		{name: "suspended owner", owned: true, wide: true, suspended: true},
 		{name: "changed-only, unselected owner", owned: true, wide: true, changed: true},
+		{name: "ResourceSet-generated owner", owned: true, wide: true, generated: true},
+		{name: "suspended generated owner", owned: true, wide: true, generated: true, suspended: true},
+		{name: "external-source owner", owned: true, wide: true, external: true},
 		{name: "unowned graph", graph: true},
 		{name: "unowned ad-hoc"},
 	} {
@@ -927,13 +932,33 @@ data: {value: rendered}
 			if tc.owned {
 				scan = filepath.Join(dir, "flux")
 				testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources:\n  - ks.yaml\n")
-				testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+				owner := `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: owner, namespace: flux-system}
 spec:
   path: ./monitoring
   sourceRef: {kind: GitRepository, name: flux-system}
----
+`
+				if tc.suspended {
+					owner = strings.Replace(owner, "path: ./monitoring", "path: ./monitoring\n  suspend: true", 1)
+				}
+				if tc.generated {
+					owner = `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: owners, namespace: flux-system}
+spec:
+  resourcesTemplate: |
+    ` + strings.ReplaceAll(strings.TrimSpace(owner), "\n", "\n    ") + "\n"
+				}
+				if tc.external {
+					owner = strings.Replace(owner, "name: flux-system}", "name: external}", 1) + `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: external, namespace: flux-system}
+spec: {url: 'https://fixture.invalid/other'}
+`
+				}
+				testutil.WriteFile(t, dir, "flux/ks.yaml", owner+`---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: sibling, namespace: flux-system}
@@ -963,9 +988,6 @@ spec:
 			if tc.wide {
 				scan = dir
 			}
-			if tc.suspended {
-				mutateFile(t, filepath.Join(dir, "flux/ks.yaml"), "path: ./monitoring", "path: ./monitoring\n  suspend: true")
-			}
 			args := []string{"build", "all", "--path", scan, "--no-progress", "--concurrency", "2"}
 			if tc.changed {
 				gitCommitAll(t, repo)
@@ -973,7 +995,16 @@ spec:
 				mutateFile(t, filepath.Join(dir, "healthy/configmap.yaml"), "value: rendered", "value: changed")
 				args = append(args, "--path-orig", original)
 			}
+			if tc.external {
+				args = []string{"diff", "all", "--path", scan, "--path-orig", copyTree(t, dir), "--no-progress", "--concurrency", "2"}
+			}
 			stdout, stderr, code := runCLIBuffers(args...)
+			if tc.external {
+				if code != 0 || stdout != "" || !strings.Contains(stderr, "outside the local tree; not rendered") || strings.Contains(stderr, "decode") {
+					t.Fatalf("external-source owner failed the diff: exit=%d\n%s\n%s", code, stdout, stderr)
+				}
+				return
+			}
 			if tc.suspended || tc.changed {
 				if code != 0 || !strings.Contains(stdout, "sibling-output") || strings.Contains(stderr, "decode") {
 					t.Fatalf("unreconciled owner failed the run: exit=%d\n%s\n%s", code, stdout, stderr)

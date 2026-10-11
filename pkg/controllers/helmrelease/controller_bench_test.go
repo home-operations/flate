@@ -66,11 +66,14 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 
 func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 	for _, tc := range []struct {
-		name string
-		doc  map[string]any
+		name    string
+		doc     map[string]any
+		publish bool
 	}{
-		{"source", map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "GitRepository", "metadata": map[string]any{"name": "repo", "namespace": "apps"}, "spec": map[string]any{"url": "https://example.com/repo", "ref": map[string]any{"branch": "main"}}}},
-		{"raw", map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "service", "namespace": "apps"}}},
+		{"source", map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "GitRepository", "metadata": map[string]any{"name": "repo", "namespace": "apps"}, "spec": map[string]any{"url": "https://example.com/repo", "ref": map[string]any{"branch": "main"}}}, true},
+		{"raw", map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "service", "namespace": "apps"}}, true},
+		{"source_replay", map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "GitRepository", "metadata": map[string]any{"name": "repo", "namespace": "apps"}, "spec": map[string]any{"url": "https://example.com/repo", "ref": map[string]any{"branch": "main"}}}, false},
+		{"raw_replay", map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "service", "namespace": "apps"}}, false},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			st := store.New()
@@ -79,7 +82,7 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 			docs := []map[string]any{tc.doc}
 			b.ReportAllocs()
 			for b.Loop() {
-				c.Emit(parent, docs, c.WipeSecrets, true)
+				c.Emit(parent, docs, c.WipeSecrets, tc.publish)
 			}
 		})
 	}

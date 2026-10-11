@@ -81,9 +81,9 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 				if got := children[i].Obj.Named().Namespace; got != want {
 					t.Errorf("child %d namespace = %q, want %q", i, got, want)
 				}
-			}
-			if s.GetObject(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: tc.want, Name: "certmanager"}) == nil {
-				t.Error("OCIRepository was not published with the expected namespace")
+				if s.GetObject(children[i].Obj.Named()) == nil {
+					t.Errorf("child %d was not published", i)
+				}
 			}
 		})
 	}

@@ -61,6 +61,9 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 			}
 		}
 	}
+	if helmRelease {
+		return children
+	}
 	var leaves []manifest.BaseManifest
 	for _, child := range children {
 		obj := child.Obj

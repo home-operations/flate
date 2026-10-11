@@ -562,20 +562,22 @@ func TestAggregateScopedFailures_MissingAndCycles(t *testing.T) {
 	id := func(name string) manifest.NamedResource {
 		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
 	}
-	selected, missing, a, b := id("selected"), id("missing"), id("a"), id("b")
+	selected, missing, a, b, consumer := id("selected"), id("missing"), id("a"), id("b"), id("consumer")
 	failed := map[manifest.NamedResource]store.StatusInfo{
 		selected: {Status: store.StatusFailed, Message: "missing prerequisite"},
 		a:        {Status: store.StatusFailed, Message: "cycle a"},
 		b:        {Status: store.StatusFailed, Message: "cycle b"},
+		consumer: {Status: store.StatusFailed, Message: "consumer blocked"},
 	}
-	blocked := map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, a: {b}, b: {a}}
+	blocked := map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, a: {b}, b: {a}, consumer: {a}}
 	model := failureReport(failureScope{failed: failed, blocked: blocked})
 	assert.Equal(t, len(model.Primary), 2)
 	assert.Equal(t, len(model.Missing), 1)
-	assert.Equal(t, model.Blocked, 1)
+	assert.Equal(t, model.Blocked, 2)
+	assert.Diff(t, model.Primary[0].Blocks, []manifest.NamedResource{consumer})
 	for _, named := range []bool{false, true} {
 		got := aggregateScopedFailures(failureScope{named: named, failed: failed, blocked: blocked}).Error()
-		assert.Equal(t, got, "reconcile completed with 3 failure(s):\n  Kustomization/apps/a: dependency cycle: blocked by Kustomization/apps/b\n  Kustomization/apps/b: dependency cycle: blocked by Kustomization/apps/a\n  Kustomization/apps/missing: not found\n  (+1 blocked by failed/missing dependencies)")
+		assert.Equal(t, got, "reconcile completed with 3 failure(s):\n  Kustomization/apps/a: dependency cycle: blocked by Kustomization/apps/b\n  Kustomization/apps/b: dependency cycle: blocked by Kustomization/apps/a\n  Kustomization/apps/missing: not found\n  (+2 blocked by failed/missing dependencies)")
 		for _, want := range []string{missing.String(), "blocked by " + b.String(), "blocked by " + a.String()} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("fatal cause %q hidden: %s", want, got)

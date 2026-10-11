@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -803,8 +804,7 @@ func aggregateScopedFailures(scope failureScope) error {
 	return &orchestrator.FailuresError{Message: msg}
 }
 
-// Closed blocker cycles have no report roots; retain their individual failures
-// in both the footer and the machine error, with consistent fatal counts.
+// Closed blocker cycles become primary causes; downstream failures remain blocked.
 func failureReport(scope failureScope) report.Model {
 	model := report.Build(scope.failed, scope.blocked, scope.warnings, nil)
 	covered := map[manifest.NamedResource]bool{}
@@ -819,19 +819,47 @@ func failureReport(scope failureScope) report.Model {
 			covered[id] = true
 		}
 	}
+	cycles := map[manifest.NamedResource]bool{}
 	for id := range scope.failed {
-		if !covered[id] {
-			peers := slices.Clone(scope.blocked[id])
-			slices.SortFunc(peers, manifest.NamedResource.Compare)
-			names := make([]string, len(peers))
-			for i, p := range peers {
-				names[i] = p.String()
+		if covered[id] {
+			continue
+		}
+		seen := map[manifest.NamedResource]bool{}
+		var reaches func(manifest.NamedResource) bool
+		reaches = func(dep manifest.NamedResource) bool {
+			if dep == id {
+				return true
 			}
-			model.Primary = append(model.Primary, report.Primary{ID: id, Msg: "dependency cycle: blocked by " + strings.Join(names, ", ")})
-			model.Blocked--
+			if seen[dep] {
+				return false
+			}
+			seen[dep] = true
+			return slices.ContainsFunc(scope.blocked[dep], reaches)
+		}
+		if slices.ContainsFunc(scope.blocked[id], reaches) {
+			cycles[id] = true
 		}
 	}
-	slices.SortFunc(model.Primary, func(a, b report.Primary) int { return a.ID.Compare(b.ID) })
+	if len(cycles) == 0 {
+		return model
+	}
+	blocked := maps.Clone(scope.blocked)
+	for id := range cycles {
+		delete(blocked, id)
+	}
+	model = report.Build(scope.failed, blocked, scope.warnings, nil)
+	for i, root := range model.Primary {
+		if !cycles[root.ID] {
+			continue
+		}
+		peers := slices.Clone(scope.blocked[root.ID])
+		slices.SortFunc(peers, manifest.NamedResource.Compare)
+		names := make([]string, len(peers))
+		for i, p := range peers {
+			names[i] = p.String()
+		}
+		model.Primary[i].Msg = "dependency cycle: blocked by " + strings.Join(names, ", ")
+	}
 	return model
 }
 

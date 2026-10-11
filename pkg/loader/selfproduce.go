@@ -80,7 +80,7 @@ func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]s
 	var roots []string
 	for _, dir := range slices.Sorted(maps.Keys(remaining)) {
 		rel, err := filepath.Rel(repoRoot, l.documents[dir].file)
-		if err != nil || strings.HasPrefix(rel, "..") {
+		if err != nil {
 			continue
 		}
 		owners, _ := l.Index.OwnersOfFile(filepath.ToSlash(rel))
@@ -123,13 +123,6 @@ func (l *Loader) addGenerated(generators []generatorRecord) {
 
 type graphContext struct {
 	root, dir, namespace, fallback string
-}
-
-func (c *graphContext) lockNamespace(namespace string) {
-	c.namespace = cmp.Or(c.namespace, namespace)
-	if c.namespace != "" {
-		c.fallback = ""
-	}
 }
 
 type graphVisit struct {
@@ -226,9 +219,6 @@ func (l *Loader) graphRoots(repoRoot string, kss []*manifest.Kustomization, scop
 			}
 			v.prefix = filepath.ToSlash(prefix)
 		}
-		if d, _ := l.documents.read(filepath.Join(root, v.dir)); d != nil {
-			v.lockNamespace(d.Namespace)
-		}
 		if i, found := grouped[v.graphContext]; found {
 			roots[i].peers = append(roots[i].peers, v.owner)
 		} else {
@@ -296,7 +286,7 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 	if d == nil {
 		return true
 	}
-	v.lockNamespace(d.Namespace)
+	v.namespace = cmp.Or(v.namespace, d.Namespace)
 	if _, seen := w.visited[v.graphContext]; seen {
 		return true
 	}

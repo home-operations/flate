@@ -42,7 +42,7 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 			}
 		}
 	}
-	claims := &manifest.DiscoveryIndex{Readers: l.Index.Readers}
+	claims := &manifest.DiscoveryIndex{}
 	for _, id := range ids {
 		record := l.Index.Records[id]
 		obj := l.Store.GetObject(id)

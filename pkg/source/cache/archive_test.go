@@ -48,6 +48,25 @@ func TestAcquire_SkippedSparseEntryCountsAgainstCap(t *testing.T) {
 		})
 	}
 }
+
+func TestAcquire_EmptyEntryHeadersCountAgainstCap(t *testing.T) {
+	old := maxExtractedBytes
+	maxExtractedBytes = 1024
+	t.Cleanup(func() { maxExtractedBytes = old })
+	for _, backing := range []struct{ name, root string }{{"memory", ""}, {"disk", t.TempDir()}} {
+		t.Run(backing.name, func(t *testing.T) {
+			c := newCache(t, backing.root)
+			key := ArchiveKey{ID: "source-empty-headers-cap"}
+			if _, _, err := c.Acquire(t.Context(), key, time.Hour, producer(archive(t, "a", "", "b", "", "c", ""), ocispec.Descriptor{})); err == nil {
+				t.Fatal("empty entry headers bypassed extract cap")
+			}
+			if _, _, err := c.Acquire(t.Context(), key, time.Hour, producer(archive(t, "a", "", "b", ""), ocispec.Descriptor{})); err != nil {
+				t.Fatalf("retry at extract cap: %v", err)
+			}
+		})
+	}
+}
+
 func TestAcquire_TrailingRecordPadding(t *testing.T) {
 	data := append(archive(t, "file", "x"), make([]byte, 8192)...)
 	for _, backing := range []struct{ name, root string }{{"memory", ""}, {"disk", t.TempDir()}} {

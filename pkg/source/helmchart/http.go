@@ -1,6 +1,7 @@
 package helmchart
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -86,11 +87,27 @@ func (f *Fetcher) fetchIndex(ctx context.Context, r *manifest.HelmRepository) (*
 		return v.(*repo.IndexFile), nil
 	}
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	reader, _, err := f.cache.Blob(ctx, cache.BlobKey{ID: "blob-index-" + h}, r.Interval.Duration, func(w io.Writer) (ocispec.Descriptor, error) { return f.httpGet(ctx, r, indexURL, w) })
+	var idx *repo.IndexFile
+	reader, _, err := f.cache.Blob(ctx, cache.BlobKey{ID: "blob-index-" + h}, r.Interval.Duration, func(w io.Writer) (ocispec.Descriptor, error) {
+		var buf bytes.Buffer
+		desc, err := f.httpGet(ctx, r, indexURL, io.MultiWriter(w, &buf))
+		if err != nil {
+			return desc, err
+		}
+		idx, err = indexFromBytes(buf.Bytes())
+		if err != nil {
+			return desc, fmt.Errorf("parse %s: %w", indexURL, err)
+		}
+		return desc, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", indexURL, err)
 	}
-	data, readErr := io.ReadAll(reader)
+	var data []byte
+	var readErr error
+	if idx == nil {
+		data, readErr = io.ReadAll(reader)
+	}
 	closeErr := reader.Close()
 	if readErr != nil {
 		return nil, readErr
@@ -98,9 +115,11 @@ func (f *Fetcher) fetchIndex(ctx context.Context, r *manifest.HelmRepository) (*
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	idx, err := indexFromBytes(data)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", indexURL, err)
+	if idx == nil {
+		idx, err = indexFromBytes(data)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", indexURL, err)
+		}
 	}
 	f.indexCache.Store(h, idx)
 	return idx, nil

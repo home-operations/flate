@@ -145,6 +145,7 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
 		if filepath.ToSlash(safe) == "/flate-archive" {
 			name = "."
 		}
+		total += pos.offset - header
 		if h.Size > maxExtractedBytes-total {
 			return nil, fmt.Errorf("tar entry %q exceeds %d-byte extract limit", h.Name, maxExtractedBytes)
 		}

@@ -210,7 +210,7 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 
 func TestAcquire_ExpandedCapCountsIgnoredDuplicates(t *testing.T) {
 	old := maxExtractedBytes
-	maxExtractedBytes = 5
+	maxExtractedBytes = 2*512 + 5
 	t.Cleanup(func() { maxExtractedBytes = old })
 	for _, root := range []string{"", t.TempDir()} {
 		c := newCache(t, root)

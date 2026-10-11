@@ -76,6 +76,45 @@ func TestFetchHTTPChart(t *testing.T) {
 	}
 }
 
+func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
+	for _, tc := range []struct{ name, data string }{
+		{"empty", ""},
+		{"malformed", "["},
+		{"no api version", "entries: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if attempts.Add(1) == 1 {
+					_, _ = io.WriteString(w, tc.data)
+					return
+				}
+				_, _ = io.WriteString(w, helmRepoIndex(""))
+			}))
+			t.Cleanup(srv.Close)
+			r := httpRepo(srv.URL)
+			f := newHTTPFetcher(t, r)
+			if _, err := f.fetchIndex(t.Context(), r); err == nil {
+				t.Fatal("accepted invalid index")
+			}
+			idx, err := f.fetchIndex(t.Context(), r)
+			if err != nil {
+				t.Fatalf("retry within repository interval: %v", err)
+			}
+			if _, err := idx.Get("app-template", "1.0.0"); err != nil {
+				t.Fatal(err)
+			}
+			warm := New(nil, nil, nil, Config{Cache: f.cache})
+			if _, err := warm.fetchIndex(t.Context(), r); err != nil {
+				t.Fatalf("cached index: %v", err)
+			}
+			if got := attempts.Load(); got != 2 {
+				t.Fatalf("index fetched %d times, want 2", got)
+			}
+		})
+	}
+}
+
 func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, _ := startHelmRepo(t, chartBytes, "deadbeefdeadbeef") // index advertises a wrong digest

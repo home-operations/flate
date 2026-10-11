@@ -23,6 +23,12 @@ import (
 // blocked cascade victim, not an orphan — it stays failed (see below).
 func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo, prefixes []manifest.KSClaim) map[manifest.NamedResource]string {
 	out := make(map[manifest.NamedResource]string)
+	// External sources own decode errors but cannot parent local-tree orphans.
+	prefixes = slices.DeleteFunc(slices.Clone(prefixes), func(claim manifest.KSClaim) bool {
+		ks, _ := o.store.Get[*manifest.Kustomization](claim.ID)
+		_, _, external := loader.SourceView(o.store, ks, o.repoRoot)
+		return external
+	})
 	for id, info := range failed {
 		if !isReconcilableKind(id.Kind) {
 			continue
@@ -46,11 +52,6 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 			if record.Excluded {
 				out[id] = info.Message
 			}
-			continue
-		}
-		// External sources own decode errors but cannot parent local-tree orphans.
-		ks, _ := o.store.Get[*manifest.Kustomization](parent)
-		if _, _, external := loader.SourceView(o.store, ks, o.repoRoot); external {
 			continue
 		}
 		// A covering parent that itself FAILED emitted nothing, so every child

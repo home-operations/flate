@@ -497,6 +497,63 @@ spec:
 	}
 }
 
+func TestE2E_OrphanParentSource(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		external bool
+	}{
+		{name: "local parent"},
+		{name: "deeper external parent", external: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "kubernetes/flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: local-apps, namespace: flux-system}
+spec:
+  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+			resources := "resources: [configmap.yaml]\n"
+			if tc.external {
+				resources = "resources: [configmap.yaml, external.yaml]\n"
+				testutil.WriteFile(t, dir, "kubernetes/apps/external.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: external, namespace: flux-system}
+spec:
+  url: https://fixture.invalid/external
+  secretRef: {name: missing-auth}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: external-parent, namespace: flux-system}
+spec:
+  path: ./kubernetes/apps/orphan
+  sourceRef: {kind: GitRepository, name: external}
+`)
+			}
+			testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", resources)
+			testutil.WriteFile(t, dir, "kubernetes/apps/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: healthy-output}
+data: {value: rendered}
+`)
+			testutil.WriteFile(t, dir, "kubernetes/apps/orphan/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: orphan, namespace: flux-system}
+spec:
+  path: ./missing
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+			stdout, stderr, code := runCLIBuffers("build", "all", "--path", dir,
+				"--allow-missing-secrets", "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
+			if code != 0 || !strings.Contains(stdout, "name: healthy-output") || strings.Contains(stdout, "name: orphan\n") {
+				t.Fatalf("unreferenced child failed a healthy local build: exit=%d\n%s\n%s", code, stdout, stderr)
+			}
+		})
+	}
+}
+
 // TestE2E_ComponentChangePropagatesToAllConsumers — the fixture has
 // two apps (app-a, app-b) consuming components/shared; mutating the
 // shared component must show up in both consumers' diffs.

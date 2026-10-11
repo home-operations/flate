@@ -60,7 +60,8 @@ metadata: {name: child}
 spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}}
 `
 			testutil.WriteFile(t, root, "apps/child.yaml", child)
-			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, cm.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=pinned]\n")
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, cm.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=pinned]\n- name: file-generated\n  files: [value=input.txt]\n")
+			testutil.WriteFile(t, root, "apps/input.txt", "pinned")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {value: pinned}\n")
 			wt, err := repo.Worktree()
 			if err != nil {
@@ -83,6 +84,7 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 				t.Fatal(err)
 			}
 			testutil.WriteFile(t, root, "apps/phantom.yaml", strings.Replace(child, "name: child", "name: phantom", 1))
+			testutil.WriteFile(t, root, "apps/input.txt", "dirty")
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [phantom.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=dirty]\n- name: phantom-generated\n  literals: [value=dirty]\n")
 			if _, err := wt.Add("."); err != nil {
 				t.Fatal(err)
@@ -113,6 +115,10 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 			generatedCM, ok := st.GetObject(generated).(*manifest.ConfigMap)
 			if !ok || generatedCM.Data["value"] != "pinned" || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "phantom-generated"}) != nil {
 				t.Fatalf("pinned generators = %v", generatedCM)
+			}
+			fileGenerated, ok := st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "file-generated"}).(*manifest.ConfigMap)
+			if !ok || fileGenerated.Data["value"] != "pinned" {
+				t.Fatalf("committed generator file = %v", fileGenerated)
 			}
 			for _, id := range []manifest.NamedResource{childID, cm, generated} {
 				file := filepath.Join(root, filepath.FromSlash(filesForTest(result.Index)[id]))
@@ -149,7 +155,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 		{name: "no-store", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}, noStore: true, fallback: true},
 		{name: "no-store-invalid", ref: &manifest.GitRepositoryRef{Commit: "abc"}, noStore: true, fail: true},
 		{name: "no-store-no-ref", noStore: true, head: true},
-		{name: "sparse", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}, sparse: true, fallback: true},
+		{name: "sparse", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}, sparse: true},
 		{name: "submodules", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}, submodules: true, fallback: true},
 		{name: "head-sparse", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true, head: true},
 		{name: "missing-commit", ref: &manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, sparse: true, fallback: true},
@@ -212,6 +218,12 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				content, err = fs.ReadFile(artifact.FS, "value.txt")
 			} else {
 				content, err = os.ReadFile(filepath.Join(artifact.LocalPath, "value.txt"))
+			}
+			if tc.sparse && !tc.head {
+				if !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("sparse source retained excluded file: %q, %v", content, err)
+				}
+				return
 			}
 			if err != nil || string(content) != want {
 				t.Fatalf("source content = %q, %v; want %s", content, err, want)
@@ -350,13 +362,13 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := os.Stat(defaultRoot)
-		if tag != "v1.0.0" && !os.IsNotExist(err) {
+		if !os.IsNotExist(err) {
 			t.Fatalf("default cache created for %q: %v", tag, err)
 		}
 		if tag == "v1.0.0" {
 			artifact := st.GetArtifact(repository.Named()).(*store.SourceArtifact)
-			if err != nil || !strings.HasPrefix(artifact.LocalPath, defaultRoot+string(filepath.Separator)) {
-				t.Fatalf("nil cache materialization = %+v, %v", artifact, err)
+			if artifact.FS == nil || artifact.Key == "" {
+				t.Fatalf("committed source = %+v", artifact)
 			}
 		}
 	}

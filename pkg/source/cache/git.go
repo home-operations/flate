@@ -70,7 +70,7 @@ func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (*GitGenera
 			}
 		}
 	}
-	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{LargeObjectThreshold: 1})
+	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
 	hash, err := request.produce(storer, g.Worktree)
 	closeErr := storer.Close()
 	if err != nil {
@@ -113,7 +113,7 @@ func (c *Cache) restoreGit(desc ocispec.Descriptor, key GitKey) (*GitGeneration,
 			return nil, err
 		}
 	}
-	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{LargeObjectThreshold: 1})
+	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
 	commit, err := object.GetCommit(storer, g.Commit)
 	if err == nil {
 		_, err = commit.Tree()

@@ -1,4 +1,4 @@
-// Package loader hydrates a Store from on-disk Flux manifests.
+// Package loader hydrates a Store from Flux source filesystems.
 //
 // The loader's discovery model mirrors `kustomize build` (and
 // flux-local): the kustomize resource graph is the source of truth.
@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -96,21 +95,22 @@ func New(s *store.Store) *Loader {
 //
 // Honors ctx cancellation; visited-set protects against cycles.
 func (l *Loader) Load(ctx context.Context, root string) (int, error) {
-	if l.Index != nil && l.documents == nil {
-		l.documents = documentReader{}
-	}
 	if l.Store == nil {
 		return 0, errors.New("loader: Store is nil")
 	}
+	if l.Index != nil && l.documents.cache == nil {
+		l.documents.cache = map[string]document{}
+	}
+	l.documents.mountSources(l.Store)
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return 0, err
 	}
 	var ignore *ignoreSet
 	if l.IgnoreFile != "" {
-		ignore, err = loadIgnoreFile(l.IgnoreFile, abs)
+		ignore, err = l.documents.loadIgnoreFile(l.IgnoreFile, abs)
 	} else {
-		ignore, err = loadIgnore(abs)
+		ignore, err = l.documents.loadIgnore(abs)
 	}
 	if err != nil {
 		return 0, err
@@ -274,9 +274,10 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 			// ignore them at discovery time.
 			continue
 		}
-		info, err := os.Stat(abs)
+		input, name := w.loader.documents.input(abs)
+		info, err := fs.Stat(input, name)
 		if err != nil {
-			// Resource pointer that doesn't exist on disk. Don't
+			// Resource pointer absent from the selected source view. Don't
 			// surface here; kustomize.RenderFlux will produce a
 			// clearer error with the right context at render time.
 			continue
@@ -324,7 +325,8 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 		if !ok {
 			continue
 		}
-		info, err := os.Stat(abs)
+		input, name := w.loader.documents.input(abs)
+		info, err := fs.Stat(input, name)
 		if err != nil || !info.IsDir() {
 			continue
 		}
@@ -371,7 +373,8 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomizationDocument, kpath
 			seen[abs] = struct{}{}
 		}
 	}
-	entries, err := os.ReadDir(dir)
+	input, name := w.loader.documents.input(dir)
+	entries, err := fs.ReadDir(input, name)
 	if err != nil {
 		slog.Warn("loader: bootstrap-sibling readdir failed", "dir", dir, "err", err)
 		return 0
@@ -388,7 +391,7 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomizationDocument, kpath
 		if _, ok := seen[abs]; ok {
 			continue
 		}
-		objs, err := parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets})
+		objs, err := w.loader.documents.parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets})
 		if err != nil {
 			slog.Warn("loader: bootstrap-sibling parse failed", "path", abs, "err", err)
 			continue
@@ -469,7 +472,8 @@ func (w *walker) walkComponentData(ctx context.Context, dir string, k *kustomiza
 		if !ok || w.ignoreMatches(abs, false) || !isManifestFile(abs) {
 			continue
 		}
-		info, err := os.Stat(abs)
+		input, name := w.loader.documents.input(abs)
+		info, err := fs.Stat(input, name)
 		if err != nil || info.IsDir() {
 			// Directories under a Component's `resources:` are sibling
 			// kustomize packages, not bare data files; the producer
@@ -491,7 +495,8 @@ func (w *walker) walkComponentData(ctx context.Context, dir string, k *kustomiza
 		if !ok {
 			continue
 		}
-		info, err := os.Stat(abs)
+		input, name := w.loader.documents.input(abs)
+		info, err := fs.Stat(input, name)
 		if err != nil || !info.IsDir() {
 			continue
 		}
@@ -525,7 +530,11 @@ func (w *walker) walkComponentData(ctx context.Context, dir string, k *kustomiza
 // kustomization.yaml at its root.
 func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 	count := 0
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+	input, name := w.loader.documents.input(root)
+	walkRoot := filepath.FromSlash(name)
+	err := fs.WalkDir(input, name, func(name string, d fs.DirEntry, walkErr error) error {
+		rel, _ := filepath.Rel(walkRoot, filepath.FromSlash(name))
+		path := filepath.Join(root, rel)
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
 		}
@@ -594,7 +603,7 @@ func (l *Loader) skipExisting(id manifest.NamedResource) bool {
 // Indexed discovery defers decode errors; Load without an index remains strict.
 func (l *Loader) loadFile(path string) (int, error) {
 	objs := []manifest.BaseManifest{}
-	err := decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, l.documents != nil, func(obj manifest.BaseManifest) {
+	err := l.documents.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, l.documents.cache != nil, func(obj manifest.BaseManifest) {
 		if raw, ok := obj.(*manifest.RawObject); ok && len(manifest.ProducerTargets(raw)) == 0 {
 			return
 		}
@@ -640,7 +649,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 		l.addObject(obj, path)
 		count++
 	}
-	if l.documents != nil {
+	if l.documents.cache != nil {
 		objects := slices.DeleteFunc(objs, func(obj manifest.BaseManifest) bool {
 			switch obj.(type) {
 			case *manifest.ConfigMap, *manifest.Secret, *manifest.Kustomization, *manifest.RawObject:
@@ -649,7 +658,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 				return true
 			}
 		})
-		l.documents[path] = document{objects: objects}
+		l.documents.cache[path] = document{objects: objects}
 	}
 	return count, nil
 }
@@ -663,7 +672,7 @@ func (l *Loader) addObject(obj manifest.BaseManifest, path string) {
 // recordDataFile keeps Component data available for lazy promotion without
 // publishing untemplated Component resources into the Store.
 func (l *Loader) recordDataFile(absPath string) error {
-	objs, err := parseFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+	objs, err := l.documents.parseFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
 	if err != nil {
 		return err
 	}

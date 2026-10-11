@@ -2,12 +2,15 @@ package git
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +24,48 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
+
+func TestFetcher_PackedContent(t *testing.T) {
+	var blocks [8]string
+	for i := range blocks {
+		var block strings.Builder
+		for line := range 200 {
+			fmt.Fprintf(&block, "%x\n", sha256.Sum256(fmt.Appendf(nil, "%d-%d", i, line)))
+		}
+		blocks[i] = block.String()
+	}
+	files := map[string]string{"base.txt": strings.Join(blocks[:], ""), "reordered.txt": ""}
+	for _, i := range []int{3, 0, 5, 1, 7, 2, 6, 4} {
+		files["reordered.txt"] += blocks[i]
+	}
+	src := t.TempDir()
+	mustInitRepoWithFiles(t, src, files)
+	for _, mode := range []string{"memory", "disk"} {
+		t.Run(mode, func(t *testing.T) {
+			root := ""
+			if mode == "disk" {
+				root = t.TempDir()
+			}
+			f := &Fetcher{Cache: newGitCache(t, root)}
+			art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: "file://" + filepath.ToSlash(src)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var readers sync.WaitGroup
+			for range 2 {
+				readers.Go(func() {
+					for file, want := range files {
+						got, err := fs.ReadFile(art.FS, file)
+						if err != nil || string(got) != want {
+							t.Errorf("packed %s content differs: bytes=%d, err=%v", file, len(got), err)
+						}
+					}
+				})
+			}
+			readers.Wait()
+		})
+	}
+}
 
 func TestFetcher_LocalFileURL(t *testing.T) {
 	src := t.TempDir()

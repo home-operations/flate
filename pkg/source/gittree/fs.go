@@ -90,7 +90,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			return nil, err
 		}
 	} else {
-		storer := filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{LargeObjectThreshold: 1})
+		storer := filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{})
 		c, err := object.GetCommit(storer, commit)
 		if err == nil {
 			err = input.walkCommit(ctx, storer, c.TreeHash, ".")
@@ -299,7 +299,7 @@ func (g *FS) Lstat(name string) (fs.FileInfo, error) {
 	if g.worktree != nil {
 		return g.worktree.Lstat(filepath.FromSlash(name))
 	}
-	storer := filesystem.NewStorageWithOptions(g.backing, cache.NewObjectLRU(0), filesystem.Options{LargeObjectThreshold: 1})
+	storer := filesystem.NewStorageWithOptions(g.backing, cache.NewObjectLRU(0), filesystem.Options{})
 	size, err := storer.EncodedObjectSize(node.hash)
 	if err := errors.Join(err, storer.Close()); err != nil {
 		return nil, err
@@ -393,7 +393,8 @@ func (r *blobReader) Close() error {
 }
 
 func (g *FS) openBlob(hash plumbing.Hash) (io.ReadCloser, error) {
-	storer := filesystem.NewStorageWithOptions(g.backing, cache.NewObjectLRU(0), filesystem.Options{LargeObjectThreshold: 1})
+	// Upstream's streaming delta reader does not reset its position on backward copies.
+	storer := filesystem.NewStorageWithOptions(g.backing, cache.NewObjectLRU(0), filesystem.Options{})
 	blob, err := object.GetBlob(storer, hash)
 	if err != nil {
 		_ = storer.Close()

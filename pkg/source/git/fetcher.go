@@ -40,6 +40,7 @@ type Fetcher struct {
 	fallback     sync.Map
 }
 
+// Fetch publishes an immutable source view only after acquisition succeeds.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
 		return nil, source.ErrUnsupportedProvider("GitRepository",
@@ -260,13 +261,6 @@ func gitSchemeAllowed(url string) bool {
 		return true
 	}
 	return false
-}
-
-func effectiveNamedRef(ref manifest.GitRepositoryRef) string {
-	if ref.Commit != "" {
-		return ""
-	}
-	return ref.Name
 }
 
 func gitRefLabel(ref manifest.GitRepositoryRef) string {

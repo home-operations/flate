@@ -370,10 +370,6 @@ func New(cfg Config) (*Orchestrator, error) {
 
 	st := store.New()
 	ts := task.NewBounded(cfg.Concurrency)
-	secretGet := func(ns, name string) *manifest.Secret {
-		s, _ := st.GetByName[*manifest.Secret](manifest.KindSecret, ns, name)
-		return s
-	}
 	// Route helm.Client's source-CR lookups straight through the canonical
 	// Store rather than maintaining a duplicate registry the HR controller
 	// would otherwise have to keep in sync via Add* push-API calls.
@@ -386,18 +382,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	// payload at dispatch surfaces "<kind> fetcher: unexpected
 	// payload <T>" from the single adapter site rather than from
 	// four nearly-identical type assertions.
-	gitFetcher := &git.Fetcher{
-		Cache:           cfg.Cache,
-		Secrets:         secretGet,
-		Depth:           cfg.GitDepth,
-		RestrictSchemes: cfg.RestrictEgress,
-		ForceGeneric:    cfg.ForceGenericProvider,
-	}
-	treeCache.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest) (*store.SourceArtifact, error) {
-		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest(request))
-	})
-	srcCtrl.Fetchers[manifest.KindGitRepository] = source.Wrap(
-		manifest.KindGitRepository, gitFetcher)
+	srcCtrl.Fetchers[manifest.KindGitRepository] = nil
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap(
 		manifest.KindExternalArtifact, &external.Fetcher{})
 	// Nil entries reserve default fetchers until discovery fixes their policy.
@@ -605,8 +590,16 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		return secret
 	}
 	resolver := helm.NewStoreSourceResolver(o.store)
+	gitFetcher := &git.Fetcher{
+		Cache: o.cache, Secrets: secretGet, Depth: o.cfg.GitDepth,
+		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
+	}
+	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest) (*store.SourceArtifact, error) {
+		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest(request))
+	})
 	ociFetcher := &oci.Fetcher{Cache: o.cache, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
 	for kind, f := range map[string]source.Fetcher{
+		manifest.KindGitRepository: source.Wrap(manifest.KindGitRepository, gitFetcher),
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,
 			&bucket.Fetcher{Cache: o.cache, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}),
 		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),

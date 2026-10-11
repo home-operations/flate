@@ -20,9 +20,10 @@ import (
 )
 
 // ResolveLocal resolves matching authored sources against root's own repository.
-// A root-path artifact preserves working-tree edits; a distinct path contains
-// the committed tree. Missing entries require normal fetching. Invalid input,
-// unusable objects and view-construction failures return domain errors.
+// A root-path artifact preserves working-tree edits; a committed artifact's
+// FS supplies its bytes and LocalPath labels ownership. Missing entries require
+// normal fetching. Invalid input, unusable objects and view-construction failures
+// return domain errors.
 func ResolveLocal(ctx context.Context, root string, repositories []*manifest.GitRepository) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
 		return nil, nil
@@ -116,7 +117,7 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		if err != nil {
 			return nil, localError(repository, err)
 		}
-		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, Revision: r.hash.String(), Key: "local-git-" + key, FS: input}
+		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: filepath.Join(filepath.Dir(identity), ".flate-sources", key), Revision: r.hash.String(), Key: "local-git-" + key, FS: input}
 		artifacts[repository.Named()] = artifact
 	}
 	return artifacts, nil

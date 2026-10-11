@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -306,10 +307,10 @@ func (d *discoverer) loadAt(ctx context.Context, dir string, scanned map[string]
 		return nil
 	}
 	scanned[dir] = struct{}{}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+	n, err := d.loader.Load(ctx, dir)
+	if d.loader.IgnoreFile == "" && errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	n, err := d.loader.Load(ctx, dir)
 	if err != nil {
 		return err
 	}

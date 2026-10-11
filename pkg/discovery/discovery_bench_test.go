@@ -63,8 +63,6 @@ spec: {path: ./level%d, sourceRef: {kind: GitRepository, name: %s}}
 			}
 			testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", depth), "resources: []\n")
 			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, WipeSecrets: true}
-			if repo.name == "late_pin" {
-			}
 			if repo.url != "" {
 				testutil.WriteFile(b, root, "flux/repo.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository

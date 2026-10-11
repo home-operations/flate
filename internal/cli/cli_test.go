@@ -6,9 +6,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 )
 
@@ -127,6 +129,41 @@ func TestRun_UnknownCommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "frobnicate") {
 		t.Errorf("error should name the unknown command; got %q", stderr)
+	}
+}
+
+func TestRun_GroupDefaultsToAll(t *testing.T) {
+	elapsed := regexp.MustCompile(`   [0-9]+\.[0-9]+s\n$`)
+	for _, group := range []string{"build", "diff", "get", "test"} {
+		t.Run(group, func(t *testing.T) {
+			path := writeFixture(t)
+			flags := []string{"-p", path, "--concurrency", "2"}
+			if group == "diff" {
+				orig := writeFixture(t)
+				testutil.WriteFileAt(t, filepath.Join(path, "apps", "cm.yaml"),
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: changed}\n")
+				flags = append(flags, "--path-orig", orig)
+			}
+			want, wantErr, wantCode := runCLI(t, append([]string{group, "all"}, flags...)...)
+			got, gotErr, gotCode := runCLI(t, append([]string{group}, flags...)...)
+			if wantCode != 0 || gotCode != wantCode || gotErr != wantErr {
+				t.Fatalf("bare: exit %d, stderr %q; all: exit %d, stderr %q", gotCode, gotErr, wantCode, wantErr)
+			}
+			assert.Diff(t, elapsed.ReplaceAllString(got, ""), elapsed.ReplaceAllString(want, ""))
+			_, stderr, code := runCLI(t, group, "frobnicate")
+			if code != 1 || !strings.Contains(stderr, `unknown command "frobnicate"`) {
+				t.Errorf("unknown subcommand: exit %d, stderr %q", code, stderr)
+			}
+			help, stderr, code := runCLI(t, group, "--help")
+			if code != 0 || stderr != "" {
+				t.Fatalf("help: exit %d, stderr %q", code, stderr)
+			}
+			for _, text := range []string{"Available Commands:", "all", "--path", "defaults to all"} {
+				if !strings.Contains(help, text) {
+					t.Errorf("help missing %q: %s", text, help)
+				}
+			}
+		})
 	}
 }
 

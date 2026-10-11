@@ -21,10 +21,7 @@ import (
 )
 
 func newDiffCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "diff",
-		Short: "Diff rendered output against a previous revision",
-	}
+	cmd := diffCmd("diff", nil, "Diff rendered output against a previous revision (defaults to all)", "")
 	cmd.AddCommand(
 		diffCmd("all", nil,
 			"Diff every Kustomization and HelmRelease against another path", ""),
@@ -56,16 +53,16 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 	// `diff all` has no name filter — it's the catch-all combined
 	// view, accepts no positional args. Per-kind variants accept an
 	// optional single name positional to scope the diff.
-	maxArgs := 1
+	positional := cobra.MaximumNArgs(1)
 	if kind == "" {
-		maxArgs = 0
+		positional = cobra.NoArgs
 	}
 	cmd := &cobra.Command{
 		Use:     use,
 		Aliases: aliases,
 		Short:   short,
 		Long:    short + ". With -o json, emit a 2-space-indented JSON object {\"changes\": [...], \"suppressed\": [...]} with normalized manifests and one-sided render failures.",
-		Args:    cobra.MaximumNArgs(maxArgs),
+		Args:    positional,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDiff(cmd, c, h, d, kind, firstArg(args))
 		},

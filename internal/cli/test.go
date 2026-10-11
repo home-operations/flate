@@ -16,10 +16,11 @@ import (
 // formats). When adding json/yaml here later, pass them to bindCommon.
 
 func newTestCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "test",
-		Short: "Report Kustomization + HelmRelease reconcile status",
-	}
+	// Include source kinds so soft-skipped sources appear in the report.
+	kinds := []string{manifest.KindKustomization, manifest.KindHelmRelease,
+		manifest.KindGitRepository, manifest.KindOCIRepository,
+		manifest.KindHelmRepository, manifest.KindBucket}
+	cmd := testCmd("test", nil, "Report Kustomization + HelmRelease reconcile status (defaults to all)", cobra.NoArgs, kinds...)
 	cmd.AddCommand(
 		testCmd("ks [name]", []string{"kustomization", "kustomizations"},
 			"Validate Kustomizations", cobra.MaximumNArgs(1),
@@ -29,14 +30,7 @@ func newTestCmd() *cobra.Command {
 			manifest.KindHelmRelease),
 		testCmd("all", nil,
 			"Validate every Kustomization, HelmRelease, and Flux source CR", cobra.NoArgs,
-			// Source kinds are included so a soft-skipped source (e.g.
-			// --allow-missing-secrets on an OCIRepository whose auth Secret
-			// is materialized live via ExternalSecret) shows up on its own
-			// line as SKIPPED instead of only as a parenthetical reason
-			// on its downstream KS/HR.
-			manifest.KindKustomization, manifest.KindHelmRelease,
-			manifest.KindGitRepository, manifest.KindOCIRepository,
-			manifest.KindHelmRepository, manifest.KindBucket),
+			kinds...),
 	)
 	return cmd
 }

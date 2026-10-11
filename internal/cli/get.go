@@ -15,11 +15,9 @@ import (
 )
 
 func newGetCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "get",
-		Short: "List Kustomizations, HelmReleases, container images, or a cluster summary",
-	}
-	cmd.AddCommand(newGetKSCmd(), newGetHRCmd(), newGetImagesCmd(), newGetAllCmd())
+	cmd := getAllCmd("get", "List Kustomizations, HelmReleases, container images, or a cluster summary (defaults to all)")
+	cmd.AddCommand(newGetKSCmd(), newGetHRCmd(), newGetImagesCmd(),
+		getAllCmd("all", "Summarize every Kustomization and HelmRelease"))
 	return cmd
 }
 
@@ -109,12 +107,13 @@ func resolveChartRefVersion(orch *orchestrator.Orchestrator, hr *manifest.HelmRe
 	return ""
 }
 
-func newGetAllCmd() *cobra.Command {
+func getAllCmd(use, short string) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
 	cmd := &cobra.Command{
-		Use:   "all",
-		Short: "Summarize every Kustomization and HelmRelease",
+		Use:   use,
+		Short: short,
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// printCluster emits a key/value summary; only yaml/json shape
 			// it. `-o name`/`table` have no cluster-summary form, so the -o

@@ -46,14 +46,18 @@ docker pull ghcr.io/home-operations/flate:latest
 ## Use
 
 ```bash
+flate get          --path ./kubernetes
 flate get ks       --path ./kubernetes
+flate build        --path ./kubernetes
 flate build hr     --path ./kubernetes plex
 flate diff ks      --path ./kubernetes --path-orig ../baseline/kubernetes
-flate diff all     --path ./kubernetes --path-orig ../baseline/kubernetes
-flate diff all     --path ./kubernetes --path-orig ../baseline/kubernetes -o json
+flate diff         --path ./kubernetes --path-orig ../baseline/kubernetes
+flate diff         --path ./kubernetes --path-orig ../baseline/kubernetes -o json
 flate diff images  --path ./kubernetes --path-orig ../baseline/kubernetes -o json
-flate test all     --path ./kubernetes
+flate test         --path ./kubernetes
 ```
+
+`build`, `diff`, `get`, and `test` default to `all` when no subcommand is given; `flate build -p ./kubernetes` is equivalent to `flate build all -p ./kubernetes`. Group help lists the subcommands and the flags for `all`.
 
 The `[name]` positional on `get ks/hr` and `build`/`diff`/`test ks/hr` is matched against the resource's bare name (`metadata.name`), not `namespace/name`. Use `-n / --namespace` to scope.
 

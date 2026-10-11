@@ -31,10 +31,8 @@ func bindBuildFlags(fs *pflag.FlagSet, b *buildFlags) {
 }
 
 func newBuildCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "build",
-		Short: "Render Flux objects to YAML",
-	}
+	kinds := []string{manifest.KindKustomization, manifest.KindHelmRelease}
+	cmd := buildCmd("build", nil, "Render Flux objects to YAML (defaults to all)", cobra.NoArgs, kinds...)
 	cmd.AddCommand(
 		buildCmd("ks [name]", []string{"kustomization", "kustomizations"},
 			"Render Kustomizations", cobra.MaximumNArgs(1),
@@ -43,8 +41,7 @@ func newBuildCmd() *cobra.Command {
 			"Render HelmReleases", cobra.MaximumNArgs(1),
 			manifest.KindHelmRelease),
 		buildCmd("all", nil,
-			"Render all Kustomization and HelmRelease objects", cobra.NoArgs,
-			manifest.KindKustomization, manifest.KindHelmRelease),
+			"Render all Kustomization and HelmRelease objects", cobra.NoArgs, kinds...),
 	)
 	return cmd
 }

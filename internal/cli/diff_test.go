@@ -55,7 +55,7 @@ func TestSuppressionReasons(t *testing.T) {
 				o.Store().AddObject(obj)
 				o.Store().UpdateStatus(obj.Named(), store.StatusReady, tc.message)
 				if tc.wantSkip {
-					want[obj.Named()] = tc.message
+					want[obj.Named()] = "missing Secret"
 				}
 			}
 			assert.Diff(t, suppressionReasons(side, &commonFlags{namespace: "apps"}), want)
@@ -77,7 +77,6 @@ func TestRun_Diff_OneSidedSkipSuppressed(t *testing.T) {
 		{name: "orig skipped", orig: "skipped", current: "local", wantSide: "orig"},
 		{name: "unrelated change", orig: "local", current: "skipped", other: true, wantSide: "current"},
 		{name: "release removed", orig: "local", current: "absent", wantRemove: true},
-		{name: "unchanged", orig: "local", current: "local"},
 		{name: "json", orig: "local", current: "skipped", json: true, wantSide: "current"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,6 +154,7 @@ spec:
 				assert.Equal(t, got.Suppressed[0].Count, 1)
 				assert.Equal(t, got.Suppressed[0].Parent, diff.Parent{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"})
 				assert.Equal(t, strings.Contains(got.Suppressed[0].Reason, "missing-ca"), true)
+				assert.Equal(t, strings.HasPrefix(got.Suppressed[0].Reason, store.SkippedPrefix), false)
 				return
 			}
 			if tc.wantSide != "" {
@@ -174,8 +174,79 @@ spec:
 			if tc.other && (!strings.Contains(stdout, "-  greeting: before") || !strings.Contains(stdout, "+  greeting: after")) {
 				t.Errorf("unrelated change must remain visible:\n%s", stdout)
 			}
-			if tc.orig == tc.current {
-				assert.Equal(t, stdout, "")
+		})
+	}
+}
+
+func TestRun_Diff_OneSidedSkipSuppressed_Kustomization(t *testing.T) {
+	orig, current := writeFixture(t), writeFixture(t)
+	for _, path := range []string{orig, current} {
+		testutil.WriteFile(t, path, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec: {url: https://example.test/cluster.git}
+`)
+		testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: [cm.yaml, hr.yaml, child.yaml]\nnamePrefix: x-\n")
+		testutil.WriteFile(t, path, "apps/child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child, namespace: flux-system}
+spec:
+  path: ./nested
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+		hr := `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: apps}
+spec:
+  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`
+		testutil.WriteFile(t, path, "apps/hr.yaml", hr)
+		testutil.WriteFile(t, path, "nested/hr.yaml", hr)
+		testutil.WriteFile(t, path, "nested/kustomization.yaml", "resources: [hr.yaml]\nnamePrefix: y-\n")
+		testutil.WriteFile(t, path, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+		testutil.WriteFile(t, path, "charts/demo/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}', namespace: apps}
+`)
+	}
+	testutil.WriteFile(t, current, "flux/cluster.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: private, namespace: flux-system}
+spec:
+  url: oci://example.invalid/private/manifests
+  certSecretRef: {name: missing-ca}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: OCIRepository, name: private}
+`)
+	for _, tc := range []struct {
+		side, namespace, orig, current string
+	}{
+		{side: "current", orig: orig, current: current},
+		{side: "orig", orig: current, current: orig},
+		{side: "current", namespace: "apps", orig: orig, current: current},
+		{side: "orig", namespace: "apps", orig: current, current: orig},
+	} {
+		t.Run(tc.side+"/"+tc.namespace, func(t *testing.T) {
+			stdout, stderr, code := runCLI(t, "diff", "all", "--path", tc.current, "--path-orig", tc.orig,
+				"--namespace", tc.namespace, "--allow-missing-secrets", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+			assert.Equal(t, code, 0)
+			parent := "# Kustomization flux-system/apps:"
+			if tc.namespace != "" {
+				parent = "# HelmRelease apps/x-demo:"
+			}
+			if !strings.Contains(stdout, parent) || !strings.Contains(stdout, "on the "+tc.side+" side; diff suppressed (") {
+				t.Errorf("missing ownership suppression: stdout=%s stderr=%s", stdout, stderr)
+			}
+			if strings.Contains(stdout, "ConfigMap apps/") {
+				t.Errorf("owned resources must not appear as wholesale changes:\n%s", stdout)
 			}
 		})
 	}

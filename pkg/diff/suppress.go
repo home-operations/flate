@@ -21,15 +21,13 @@ const (
 )
 
 // Suppression records a producer (Kustomization or HelmRelease) whose
-// rendered objects were withheld from a diff because it failed to render on
-// exactly one side. Left in, everything the healthy side produced would pair
-// against nothing and read as a wholesale add or delete, when the real event
-// is a render failure the failure summary already reports.
+// rendered objects were withheld because rendering failed or was skipped on
+// exactly one side, avoiding misleading wholesale additions or deletions.
 type Suppression struct {
 	Parent Parent `json:"parent"`
-	Side   Side   `json:"side"`   // the side that failed
+	Side   Side   `json:"side"`   // the side whose rendering failed or was skipped
 	Count  int    `json:"count"`  // objects the other side rendered and the diff withheld
-	Reason string `json:"reason"` // the failing side's failure message
+	Reason string `json:"reason"` // the render failure or skip reason
 }
 
 // String renders the suppression as the one-line note the formats emit.
@@ -44,10 +42,10 @@ func (s Suppression) String() string {
 }
 
 // SuppressFailed withholds every doc whose parent is in exactly one of
-// leftFailed / rightFailed (parent id -> failure message) and returns the
+// leftFailed / rightFailed (parent id -> render failure or skip reason) and returns the
 // trimmed sets plus one Suppression per affected parent, sorted. Docs are
-// dropped from BOTH sides so a stale artifact on the failing side cannot
-// surface as a change either. A parent failed on both sides, or with nothing
+// dropped from BOTH sides so a stale artifact on the failed or skipped side cannot
+// surface as a change either. A parent failed or skipped on both sides, or with nothing
 // rendered on the healthy side, yields no Suppression. Pass the result to
 // RenderDocs via Options.Suppressed so the withheld set is disclosed in the
 // output; feed the trimmed sets to Changes the same way.

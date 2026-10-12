@@ -25,10 +25,7 @@ import (
 // partially-updated graph.
 type dependencyGraph struct {
 	mu sync.Mutex
-	// outEdges[src] is the set of dsts src depends on. Empty entries
-	// (id present, value empty) are kept so ReplaceEdges sees the
-	// prior-empty state and can diff against it (distinguishes
-	// "never registered" from "registered with no deps").
+	// outEdges[src] contains only nodes with outgoing dependencies.
 	outEdges map[manifest.NamedResource]map[manifest.NamedResource]struct{}
 	// failed maps each cycle member to the human-readable message
 	// recorded in the orchestrator's preflightFailures map. Acts as
@@ -44,135 +41,103 @@ func newDependencyGraph() *dependencyGraph {
 	}
 }
 
-// ReplaceEdges replaces id's out-edge set with deps. deps must already
-// be kind-filtered (every entry shares id.Kind); cross-kind entries
-// would create heterogeneous SCCs that the DFS walks below assume
-// cannot occur.
-//
-// Callers read the post-update failure set via Failures().
-// replacePreflightFailures already diffs the new failures map against
-// the prior preflightFailures map to compute the "cleared" set for
-// refire, so ReplaceEdges does not duplicate that delta computation.
-//
-// Algorithm:
-//
-//   - Diff old vs new out-edges for id. If unchanged, no-op.
-//   - Apply the diff to outEdges.
-//   - For each ADDED edge (id → dst), forward-DFS from dst checking
-//     whether dst can reach id. Each such path is a new cycle; flag
-//     every node on the path as failed.
-//   - If any edges were REMOVED, an existing cycle involving id may
-//     have broken. Re-validate every currently-failed node by checking
-//     it's still in some cycle (reachable from itself via outEdges).
-//     Re-validation is bounded by the number of currently-failed
-//     nodes — in healthy graphs that's zero.
-//
-// Failure messages use the same "dependency cycle detected: A → B → A"
-// format as the legacy formatCyclePath so downstream consumers
-// (controllers' PreflightFailure lookups, log lines) see identical
-// strings.
+// ReplaceEdges installs deps, which MUST share id.Kind, and refreshes changed cycles.
 func (g *dependencyGraph) ReplaceEdges(id manifest.NamedResource, deps []manifest.NamedResource) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	oldSet := g.outEdges[id]
 
-	// No-change fast path. The post-Bootstrap listener replays a
-	// ReplaceEdges per id on every reconcile, and in a stable graph
-	// almost every call passes deps identical to what's already
-	// installed. Detect that against the existing oldSet WITHOUT
-	// allocating the newSet map (the dominant per-reconcile allocation
-	// on the warm path). The set built from deps equals oldSet iff every
-	// dep is already in oldSet and every oldSet member appears in deps
-	// — the second scan over the (tiny) deps slice makes this correct
-	// even when deps carries duplicates, matching the map-dedup the
-	// slow path below performs.
 	if edgeSetEqual(oldSet, deps) {
 		return
 	}
 
 	newSet := make(map[manifest.NamedResource]struct{}, len(deps))
 	for _, d := range deps {
-		// Self-edges produce a trivial 1-node cycle. Keep them so
-		// the cycle-detection step records the failure; callers
-		// don't filter them.
 		newSet[d] = struct{}{}
 	}
-
-	// Diff so we can take the fast paths below.
-	var addedDsts []manifest.NamedResource
-	for d := range newSet {
-		if _, had := oldSet[d]; !had {
-			addedDsts = append(addedDsts, d)
-		}
-	}
-	hasRemoved := false
-	for d := range oldSet {
-		if _, keep := newSet[d]; !keep {
-			hasRemoved = true
-			break
-		}
-	}
-
-	// Install the new out-edge set.
 	if len(newSet) == 0 {
 		delete(g.outEdges, id)
 	} else {
 		g.outEdges[id] = newSet
 	}
 
-	// New cycles can only appear through ADDED edges. For each one,
-	// forward-DFS from dst looking for a path back to id; every
-	// node along such a path forms a new cycle.
-	for _, dst := range addedDsts {
-		path, ok := g.findPathLocked(dst, id)
-		if !ok {
-			continue
-		}
-		// path = [dst, ..., id]. The closed cycle is
-		// [id, dst, ..., id]; prepending id yields the same
-		// "close the loop visually" shape the legacy tri-color
-		// DFS emitted, so formatCyclePath renders identical
-		// messages downstream.
-		cycle := make([]manifest.NamedResource, 0, len(path)+1)
-		cycle = append(cycle, id)
-		cycle = append(cycle, path...)
-		msg := "dependency cycle detected: " + formatCyclePath(cycle)
-		for _, m := range cycle {
-			g.failed[m] = msg
+	removed := false
+	for dst := range oldSet {
+		if _, kept := newSet[dst]; !kept {
+			removed = true
+			break
 		}
 	}
-
-	// If edges were removed, any previously-failed node may have
-	// dropped out of every cycle. Revalidate the failed set.
-	// Pure-add updates cannot break an existing cycle, so the
-	// revalidation pass is skipped on the hot path (Bootstrap and
-	// render-emit-of-new-objects).
-	if hasRemoved {
+	found := g.closesCycleLocked(id, oldSet)
+	if found {
+		g.markCycleMembersLocked(id)
+	}
+	if len(g.failed) > 0 && (removed || found) {
 		g.revalidateFailedLocked()
 	}
 }
 
-// findPathLocked runs an iterative forward DFS from start looking for
-// target. Returns the node-path start → ... → target (inclusive of
-// both endpoints) when found. Iterative (stack-based) to avoid Go's
-// goroutine-stack growth on adversarial inputs — a 5k-node chain
-// would blow recursion in tests with -gcflags=-l.
-//
-// Visit ordering inside the DFS is sorted so multi-cycle outputs are
-// deterministic across runs — log diffs and golden-file tests in
-// downstream consumers rely on this. The legacy DFS sorted outgoing
-// edges; this preserves the same behavior.
+// Terminal destinations cannot close a cycle and must not allocate traversal state.
+func (g *dependencyGraph) closesCycleLocked(id manifest.NamedResource, oldSet map[manifest.NamedResource]struct{}) bool {
+	seen := map[manifest.NamedResource]bool{}
+	var queue []manifest.NamedResource
+	for dst := range g.outEdges[id] {
+		if _, had := oldSet[dst]; had || len(g.outEdges[dst]) == 0 {
+			continue
+		}
+		if dst == id {
+			return true
+		}
+		seen[dst] = true
+		queue = append(queue, dst)
+	}
+	for i := 0; i < len(queue); i++ {
+		for dst := range g.outEdges[queue[i]] {
+			if dst == id {
+				return true
+			}
+			if !seen[dst] && len(g.outEdges[dst]) > 0 {
+				seen[dst] = true
+				queue = append(queue, dst)
+			}
+		}
+	}
+	return false
+}
+
+// Cycle members must be reachable from id and able to reach id.
+func (g *dependencyGraph) markCycleMembersLocked(id manifest.NamedResource) {
+	incoming := map[manifest.NamedResource][]manifest.NamedResource{}
+	reachable := map[manifest.NamedResource]bool{id: true}
+	queue := []manifest.NamedResource{id}
+	for i := 0; i < len(queue); i++ {
+		src := queue[i]
+		for dst := range g.outEdges[src] {
+			if len(g.outEdges[dst]) == 0 {
+				continue
+			}
+			incoming[dst] = append(incoming[dst], src)
+			if !reachable[dst] {
+				reachable[dst] = true
+				queue = append(queue, dst)
+			}
+		}
+	}
+	// Consumed reverse edges bound revisits without another visited set.
+	queue = []manifest.NamedResource{id}
+	for i := 0; i < len(queue); i++ {
+		member := queue[i]
+		g.failed[member] = ""
+		queue = append(queue, incoming[member]...)
+		delete(incoming, member)
+	}
+}
+
+// findPathLocked uses sorted iterative DFS to return a path containing at least one edge.
 func (g *dependencyGraph) findPathLocked(
 	start, target manifest.NamedResource,
 ) ([]manifest.NamedResource, bool) {
-	// NOTE: start == target is NOT a short-circuit hit — the caller
-	// is asking "does start reach target via at least one edge". The
-	// reachability test in revalidateFailedLocked depends on this:
-	// a failed node that's lost all outgoing edges must report
-	// false (not "trivially yes I am myself") so its stale failure
-	// entry gets cleared. Self-loops still work because the DFS
-	// below visits the self-edge and reports [start, start].
 	type frame struct {
 		node     manifest.NamedResource
 		children []manifest.NamedResource
@@ -198,12 +163,6 @@ func (g *dependencyGraph) findPathLocked(
 			return path, true
 		}
 		if visited[next] || next == start {
-			// Skip nodes we've already explored from. The next ==
-			// start guard prevents re-pushing the root frame when
-			// a non-self-loop back-edge points at start; the
-			// outer-loop visited map intentionally omits start so
-			// the self-loop case (start ∈ out[start]) still reports
-			// the cycle on the first iteration.
 			continue
 		}
 		visited[next] = true
@@ -240,25 +199,35 @@ func edgeSetEqual(oldSet map[manifest.NamedResource]struct{}, deps []manifest.Na
 // (NamedResource.Compare). Callers range over the result, so an empty
 // edge set yielding an empty slice is safe.
 func sortedNeighbors(edges map[manifest.NamedResource]struct{}) []manifest.NamedResource {
-	return slices.SortedFunc(maps.Keys(edges), manifest.NamedResource.Compare)
+	neighbors := make([]manifest.NamedResource, 0, len(edges))
+	for dst := range edges {
+		neighbors = append(neighbors, dst)
+	}
+	slices.SortFunc(neighbors, manifest.NamedResource.Compare)
+	return neighbors
 }
 
-// revalidateFailedLocked walks every currently-failed node and checks
-// whether it's still in a cycle. Nodes that are no longer reachable
-// from themselves are removed from the failed map. Bounded by the
-// size of the failed set — typically zero, never more than a handful
-// of cycle members in production graphs.
-//
-// The cycle-membership check is "can node reach itself via outEdges":
-// equivalent to "node is in a non-trivial SCC OR has a self-loop".
+// Sorted roots and minimal rotations stabilize messages for overlapping cycles.
 func (g *dependencyGraph) revalidateFailedLocked() {
-	if len(g.failed) == 0 {
-		return
-	}
-	// Snapshot keys so we can delete while iterating.
-	for _, id := range slices.Collect(maps.Keys(g.failed)) {
-		if _, ok := g.findPathLocked(id, id); !ok {
+	checked := make(map[manifest.NamedResource]struct{}, len(g.failed))
+	for _, id := range slices.SortedFunc(maps.Keys(g.failed), manifest.NamedResource.Compare) {
+		if _, seen := checked[id]; seen {
+			continue
+		}
+		path, ok := g.findPathLocked(id, id)
+		if !ok {
 			delete(g.failed, id)
+			continue
+		}
+		first := slices.Index(path, slices.MinFunc(path, manifest.NamedResource.Compare))
+		cycle := slices.Concat(path[first:len(path)-1], path[:first+1])
+		msg := "dependency cycle detected: " + formatCyclePath(cycle)
+		for _, member := range path {
+			if _, seen := checked[member]; seen {
+				continue
+			}
+			g.failed[member] = msg
+			checked[member] = struct{}{}
 		}
 	}
 }
@@ -294,17 +263,7 @@ func (g *dependencyGraph) snapshotEdgesLocked() map[manifest.NamedResource][]man
 		if len(dsts) == 0 {
 			continue
 		}
-		// Collect-and-sort by hand (pre-sized) rather than the sortedNeighbors
-		// helper: sortedNeighbors goes through slices.SortedFunc(maps.Keys(...)),
-		// which starts from a nil slice with no capacity hint and allocates an
-		// iterator closure per call. This snapshot walks the whole graph, so the
-		// pre-sized make() is the leaner form — don't "DRY" it into sortedNeighbors.
-		deps := make([]manifest.NamedResource, 0, len(dsts))
-		for dst := range dsts {
-			deps = append(deps, dst)
-		}
-		slices.SortFunc(deps, manifest.NamedResource.Compare)
-		out[src] = deps
+		out[src] = sortedNeighbors(dsts)
 	}
 	if len(out) == 0 {
 		return nil

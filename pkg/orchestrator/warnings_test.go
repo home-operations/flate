@@ -7,9 +7,51 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestRender_ScanAndPathWarnings(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		sameRoot bool
+		category string
+	}{
+		{name: "empty scan", category: "EmptyScan"},
+		{name: "same root", sameRoot: true, category: "PathConfig"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			cfg := Config{Path: root, CacheDir: t.TempDir(), Concurrency: 2}
+			if tt.sameRoot {
+				cfg.PathOrig = root
+			}
+			o, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer o.Stop()
+			res, err := o.Render(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var warnings []manifest.Warning
+			for _, w := range res.Warnings {
+				if w.Category == tt.category {
+					warnings = append(warnings, w)
+				}
+			}
+			if len(warnings) != 1 {
+				t.Fatalf("warnings = %+v, want one %s", res.Warnings, tt.category)
+			}
+			assert.Equal(t, warnings[0].Count, 1)
+			if tt.sameRoot {
+				assert.Diff(t, warnings[0].Detail, []string{root})
+			}
+		})
+	}
+}
 
 // TestRender_StaleValuesWarning is the konflate-facing contract: a HelmRelease
 // pinning a value no chart template references surfaces as a structured

@@ -41,7 +41,7 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	s.UpdateStatus(dep, store.StatusFailed, "still rolling out") // built-in says Failed
 	s.SetCondition(dep, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"})
 
-	w := &Waiter{Store: s} // AdditiveReadyExpr=false (default replace mode)
+	w := &Waiter{Store: s}
 	ref := manifest.DependencyRef{
 		NamedResource: dep,
 		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,

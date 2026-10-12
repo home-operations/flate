@@ -18,14 +18,6 @@ type Waiter struct {
 	Store  *store.Store
 	Parent manifest.NamedResource
 
-	// AdditiveReadyExpr toggles Flux's AdditiveCELDependencyCheck
-	// feature gate. When false (the default, matching Flux), a
-	// dep's ReadyExpr REPLACES the built-in Ready check — flate
-	// treats the dep as Ready when the expression returns true. When
-	// true, the dep must satisfy both the built-in Ready check AND
-	// the ReadyExpr (additive mode).
-	AdditiveReadyExpr bool
-
 	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
 	// because the cluster installs them at runtime.
 	AllowMissingCRDs bool
@@ -67,17 +59,11 @@ func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
 	if !store.SupportsStatus(id.Kind) {
 		return true
 	}
-	if dep.ReadyExpr != "" && !w.AdditiveReadyExpr {
-		return w.readyExprSatisfied(dep.ReadyExpr, id)
-	}
-	info, ok := w.Store.GetStatus(id)
-	if !ok || info.Status != store.StatusReady {
-		return false
-	}
 	if dep.ReadyExpr != "" {
 		return w.readyExprSatisfied(dep.ReadyExpr, id)
 	}
-	return true
+	info, ok := w.Store.GetStatus(id)
+	return ok && info.Status == store.StatusReady
 }
 
 // readyExprSatisfied reports whether expr produced a definitive Ready

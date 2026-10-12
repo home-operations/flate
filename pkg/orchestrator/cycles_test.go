@@ -30,7 +30,7 @@ func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
 	// `extra` is an acyclic dep — it must not be marked failed.
 	idExtra := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "extra"}
 
-	o := &Orchestrator{store: store.New()}
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB, idExtra))
 	o.store.AddObject(makeKS("b", "ns", idA))
 	o.store.AddObject(makeKS("extra", "ns"))
@@ -60,7 +60,7 @@ func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 
-	o := &Orchestrator{store: store.New()}
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB))
 	o.store.AddObject(makeKS("b", "ns", idA))
 	o.failDependsOnCycles()
@@ -81,7 +81,7 @@ func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
 	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 
-	o := &Orchestrator{store: store.New()}
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB))
 	o.store.AddObject(makeKS("b", "ns", idA))
 	o.failDependsOnCycles()
@@ -115,7 +115,7 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 
-	o := &Orchestrator{store: store.New()}
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	// Bootstrap-time graph: just one acyclic KS. No cycles to break.
 	o.store.AddObject(makeKS("acyclic", "ns"))
 	o.failDependsOnCycles()
@@ -149,7 +149,7 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 // with exactly one id, no batched DFS.
 func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 	const N = 10000
-	o := &Orchestrator{store: store.New()}
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 
 	// Chain: ks-0 → ks-1 → ks-2 → ... → ks-(N-1). Pure DAG.
 	ids := make([]manifest.NamedResource, N)
@@ -196,7 +196,7 @@ func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 	idC := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "c"}
 
-	o := &Orchestrator{store: store.New()}
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB))
 	o.updateDependencyGraphFor(idA)
 	o.store.AddObject(makeKS("b", "ns", idC))
@@ -228,7 +228,7 @@ func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
 	idX := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "x"}
 	idY := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "y"}
 
-	o := &Orchestrator{store: store.New()}
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(&manifest.HelmRelease{
 		Name: "x", Namespace: "ns",
 		DependsOn: testutil.DepRefs(idY),

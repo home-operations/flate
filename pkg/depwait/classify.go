@@ -39,7 +39,7 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, level manifest.DrainLevel)
 	id := dep.NamedResource
 
 	// 1. Already satisfied: status Ready, a status-less kind that exists, or a
-	//    satisfied ReadyExpr (replace or additive).
+	//    satisfied ReadyExpr.
 	if w.readyNow(dep) {
 		return Classification{Kind: ClassReady}
 	}
@@ -85,29 +85,8 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, level manifest.DrainLevel)
 
 	// 6. Present with a ReadyExpr that readyNow rejected.
 	if dep.ReadyExpr != "" {
-		// Additive mode (Flux AdditiveCELDependencyCheck=true): the built-in
-		// Ready check AND the CEL must both hold. When the built-in status is
-		// already Ready, the CEL is the blocker, so evaluate it now and return
-		// the byte-exact Flux result rather than blocking forever.
-		if w.AdditiveReadyExpr {
-			if info, ok := w.Store.GetStatus(id); ok && info.Status == store.StatusReady {
-				okExpr, evalErr := evaluateReadyExpr(dep.ReadyExpr, w.Store, w.Parent, id)
-				if evalErr != nil {
-					return Classification{Kind: ClassFailed, Message: "readyExpr: " + evalErr.Error()}
-				}
-				if !okExpr {
-					return Classification{Kind: ClassFailed, Message: "readyExpr returned false"}
-				}
-				return Classification{Kind: ClassReady}
-			}
-			// Built-in not yet Ready: treat like a plain present-Pending dep.
-			if level >= manifest.DrainForce {
-				return Classification{Kind: ClassFailed, Message: "not ready"}
-			}
-			return Classification{Kind: ClassBlocked}
-		}
-		// Replace mode (the default): the CEL IS the readiness check, so at the
-		// fixpoint a never-true CEL fails with the canonical "readyExpr timeout".
+		// The CEL replaces the built-in readiness check. At the fixpoint,
+		// a never-true expression fails with the canonical timeout.
 		if level >= manifest.DrainCascade {
 			return Classification{Kind: ClassFailed, Message: "readyExpr timeout: context deadline exceeded"}
 		}

@@ -24,7 +24,6 @@ import (
 // listeners do not overwrite each other's deltas. The graph itself
 // owns finer-grained synchronization for its in-memory state.
 func (o *Orchestrator) failDependsOnCycles() {
-	o.ensureDepGraph()
 	// Refresh the graph from the canonical store state. This walks
 	// every KS + HR and pushes their current dependsOn list through
 	// ReplaceEdges. After Bootstrap this is the only path that runs
@@ -32,15 +31,6 @@ func (o *Orchestrator) failDependsOnCycles() {
 	// re-Bootstrap (test harnesses) the graph picks up the new state.
 	o.rebuildDependencyGraphFromStore()
 	o.syncPreflightFailures()
-}
-
-// ensureDepGraph lazy-inits depGraph for test harnesses that construct
-// an Orchestrator literal (bypassing New). Production code goes through
-// New, which seeds depGraph, so this is a no-op there.
-func (o *Orchestrator) ensureDepGraph() {
-	if o.depGraph == nil {
-		o.depGraph = newDependencyGraph()
-	}
 }
 
 // updateDependencyGraphFor is the per-event incremental path the
@@ -54,7 +44,6 @@ func (o *Orchestrator) ensureDepGraph() {
 // controllers read them via PreflightFailure on their next status
 // check.
 func (o *Orchestrator) updateDependencyGraphFor(id manifest.NamedResource) {
-	o.ensureDepGraph()
 	obj := o.store.GetObject(id)
 	if obj == nil {
 		// Object went away between the event fire and our read.

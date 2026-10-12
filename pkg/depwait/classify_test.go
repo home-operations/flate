@@ -1,10 +1,7 @@
 package depwait
 
 import (
-	"strings"
 	"testing"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -83,54 +80,12 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	s.UpdateStatus(dep.NamedResource, store.StatusReady, "")
 	dep.ReadyExpr = `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")` // not satisfied
 
-	w := &Waiter{Store: s} // AdditiveReadyExpr=false (default/reachable mode)
+	w := &Waiter{Store: s}
 	if got := classifyDep(t, w, dep, manifest.DrainNone); got.Kind != ClassBlocked {
 		t.Errorf("replace ReadyExpr false@none: got %+v, want ClassBlocked", got)
 	}
 	if got := classifyDep(t, w, dep, manifest.DrainCascade); got.Kind != ClassFailed ||
 		got.Message != "readyExpr timeout: context deadline exceeded" {
 		t.Errorf("replace ReadyExpr false@cascade: got %+v, want ClassFailed 'readyExpr timeout: context deadline exceeded'", got)
-	}
-}
-
-// TestClassify_AdditiveReadyExpr is the defensive byte-equivalence guard: in
-// additive mode (currently unreachable — no production Waiter sets it) Classify
-// must match watchOne, failing a present-Ready dep immediately with
-// "readyExpr returned false" on a clean-false CEL rather than blocking/timing
-// out. Locks the fix so the divergence cannot return if the feature gate is
-// ever wired.
-func TestClassify_AdditiveReadyExpr(t *testing.T) {
-	s := store.New()
-	dep := ksDep("infra")
-	s.UpdateStatus(dep.NamedResource, store.StatusReady, "") // built-in Ready holds
-	dep.ReadyExpr = `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`
-
-	w := &Waiter{Store: s, AdditiveReadyExpr: true}
-	// CEL is clean-false (no Healthy condition) → immediate fail, any drain level.
-	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-		got := classifyDep(t, w, dep, drain)
-		if got.Kind != ClassFailed || got.Message != "readyExpr returned false" {
-			t.Errorf("additive clean-false@%d: got %+v, want ClassFailed 'readyExpr returned false'", drain, got)
-		}
-	}
-	// Now satisfy the CEL: built-in Ready AND CEL true → ClassReady.
-	s.SetCondition(dep.NamedResource, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue})
-	if got := classifyDep(t, w, dep, manifest.DrainNone); got.Kind != ClassReady {
-		t.Errorf("additive both-true: got %+v, want ClassReady", got)
-	}
-	dep.ReadyExpr = `dep.metadata.labels["missing"] == "ready"`
-	if got := classifyDep(t, w, dep, manifest.DrainCascade); got.Kind != ClassFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
-		t.Fatalf("additive evaluation failure = %+v", got)
-	}
-	s.UpdateStatus(dep.NamedResource, store.StatusPending, "working")
-	for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-		got := classifyDep(t, w, dep, level)
-		if level == manifest.DrainForce {
-			if got.Kind != ClassFailed || got.Message != "not ready" {
-				t.Fatalf("additive pending force = %+v", got)
-			}
-		} else if got.Kind != ClassBlocked {
-			t.Fatalf("additive pending at level %d = %+v", level, got)
-		}
 	}
 }

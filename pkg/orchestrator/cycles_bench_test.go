@@ -35,7 +35,7 @@ import (
 // Phase 2.6 target: ≥10× improvement.
 func BenchmarkFailDependsOnCycles_Incremental(b *testing.B) {
 	const N = 1000
-	o := &Orchestrator{store: store.New()}
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 
 	ids := make([]manifest.NamedResource, N)
 	for i := range N {
@@ -74,7 +74,7 @@ func BenchmarkFailDependsOnCycles_Incremental(b *testing.B) {
 // listener fires; the incremental path takes over after.
 func BenchmarkFailDependsOnCycles_Bootstrap(b *testing.B) {
 	const N = 1000
-	o := &Orchestrator{store: store.New()}
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 
 	ids := make([]manifest.NamedResource, N)
 	for i := range N {

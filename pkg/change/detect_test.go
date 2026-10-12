@@ -152,10 +152,10 @@ func TestHashFile(t *testing.T) {
 		t.Fatalf("hashFile c: %v", err)
 	}
 	if ha != hb {
-		t.Errorf("identical content should hash equal: %q vs %q", ha, hb)
+		t.Errorf("identical content should hash equal: %x vs %x", ha, hb)
 	}
 	if ha == hc {
-		t.Errorf("different content should hash differently: %q vs %q", ha, hc)
+		t.Errorf("different content should hash differently: %x vs %x", ha, hc)
 	}
 }
 

@@ -28,7 +28,7 @@ func (o *Orchestrator) buildChangeFilter(repoRoot string) error {
 	}
 	f := change.NewFilter(changes, o.index, o.store)
 	o.filter = f
-	slog.Debug("changed-only keep set", "size", o.filter.Size(), "items", o.filter.KeepNames())
+	slog.Debug("changed-only keep set", "filter", o.filter)
 	return nil
 }
 

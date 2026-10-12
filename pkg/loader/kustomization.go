@@ -55,7 +55,7 @@ func (r documentReader) read(dir string) (*kustomizationDocument, string) {
 }
 
 func isKustomizeComponent(k *kustomizationDocument) bool {
-	return k != nil && k.Kind == "Component" && strings.HasPrefix(k.APIVersion, manifest.KustomizeDomain+"/")
+	return k != nil && k.Kind == types.ComponentKind && strings.HasPrefix(k.APIVersion, manifest.KustomizeDomain+"/")
 }
 
 // dataFilesFor returns the set of file paths declared as

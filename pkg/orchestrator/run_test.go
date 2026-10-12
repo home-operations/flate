@@ -106,7 +106,7 @@ spec: {url: https://example.test/excluded.git}
 	}
 	idx.Store = st
 	e := &orchestratorExistence{store: idx.Store, index: idx.Index, wipeSecrets: true, filter: filter}
-	size := filter.Size()
+	size := len(filter.KeepNames())
 	if !e.Promote(selected) || st.GetObject(selected) == nil || st.GetObject(chart) == nil {
 		t.Fatal("selected values and required chart source must be admitted")
 	}
@@ -115,7 +115,7 @@ spec: {url: https://example.test/excluded.git}
 			t.Errorf("excluded sibling %s must remain absent", id)
 		}
 	}
-	if filter.Size() != size {
+	if len(filter.KeepNames()) != size {
 		t.Error("ordering promotion must not expand keep")
 	}
 	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})

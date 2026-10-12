@@ -779,7 +779,7 @@ func isManifestFile(path string) bool {
 // re-runs filepath.Rel + gitignore.Match for the same path.
 func (w *walker) shouldSkipDir(name, full string) bool {
 	switch name {
-	case ".git", "node_modules", ".cache":
+	case "node_modules":
 		return true
 	case "templates", "crds":
 		// These directories typically contain Helm template fragments

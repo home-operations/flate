@@ -1,6 +1,7 @@
 package change
 
 import (
+	"log/slog"
 	"slices"
 	"sync"
 
@@ -513,14 +514,10 @@ func (f *Filter) resolve() {
 	}
 }
 
-// Size returns the number of resources in the resolved keep set.
-func (f *Filter) Size() int {
-	if f == nil {
-		return 0
-	}
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return len(f.keep)
+// LogValue snapshots the keep set only when the log handler needs it.
+func (f *Filter) LogValue() slog.Value {
+	items := f.KeepNames()
+	return slog.GroupValue(slog.Int("size", len(items)), slog.Any("items", items))
 }
 
 // KeepNames returns the resolved keep-set as sorted strings for logs.

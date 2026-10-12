@@ -270,43 +270,25 @@ func resolve(ctx context.Context, repo *git.Repository, base string) (*resolutio
 		return nil, fmt.Errorf("load HEAD commit: %w", err)
 	}
 
-	// Each rung names a candidate ref tip and tries the merge-base
-	// against HEAD; the first that resolves wins.
-	mergeBaseWith := func(candidate plumbing.Hash, source string) (*resolution, bool) {
-		if mb, err := mergeBase(repo, headCommit, candidate); err == nil {
-			return &resolution{Hash: mb, Source: source, Repo: repo}, true
-		}
-		return nil, false
-	}
-	// tryRef resolves a ref name to its tip, then attempts the
-	// merge-base; ok=false when the ref is missing or has no merge-base.
-	tryRef := func(name plumbing.ReferenceName, source string) (*resolution, bool) {
-		if h, ok := resolveRef(repo, name); ok {
-			return mergeBaseWith(h, source)
-		}
-		return nil, false
-	}
-
-	// 1. @{u} via the branch config (go-git's ResolveRevision doesn't
-	//    accept @{u}; read branch.<name>.remote/.merge directly).
+	// go-git's ResolveRevision does not accept @{u}; read the branch config.
 	if up, ok := upstreamHash(repo, head); ok {
-		if r, ok := mergeBaseWith(up, "merge-base with @{u}"); ok {
-			return r, nil
+		if mb, err := mergeBase(repo, headCommit, up); err == nil {
+			return &resolution{Hash: mb, Source: "merge-base with @{u}", Repo: repo}, nil
 		}
 	}
 
-	// 2. origin/HEAD: a symbolic ref under refs/remotes/origin/HEAD
-	//    pointing at e.g. refs/remotes/origin/main. Resolve through
-	//    the symref to the underlying branch tip.
-	if r, ok := tryRef(plumbing.NewRemoteHEADReferenceName("origin"), "merge-base with origin/HEAD"); ok {
-		return r, nil
-	}
-
-	// 3. Common defaults when origin/HEAD isn't set (older clones,
-	//    some self-hosted setups).
-	for _, name := range []string{"main", "master"} {
-		if r, ok := tryRef(plumbing.NewRemoteReferenceName("origin", name), "merge-base with origin/"+name); ok {
-			return r, nil
+	for _, rung := range []struct {
+		ref    plumbing.ReferenceName
+		source string
+	}{
+		{plumbing.NewRemoteHEADReferenceName(git.DefaultRemoteName), "merge-base with " + git.DefaultRemoteName + "/HEAD"},
+		{plumbing.NewRemoteReferenceName(git.DefaultRemoteName, "main"), "merge-base with " + git.DefaultRemoteName + "/main"},
+		{plumbing.NewRemoteReferenceName(git.DefaultRemoteName, "master"), "merge-base with " + git.DefaultRemoteName + "/master"},
+	} {
+		if tip, ok := resolveRef(repo, rung.ref); ok {
+			if mb, err := mergeBase(repo, headCommit, tip); err == nil {
+				return &resolution{Hash: mb, Source: rung.source, Repo: repo}, nil
+			}
 		}
 	}
 

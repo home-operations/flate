@@ -54,7 +54,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
 			c := New(st, nil, nil, false)
 			c.Configure(Options{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{consumer.Named(): parent})})
-			size := filter.Size()
+			size := len(filter.KeepNames())
 			deps := c.collectDeps(consumer)
 			if got := slices.Contains(deps, consumer.DependsOn[0]); got != tc.retain {
 				t.Errorf("ordering edge retained = %v, want %v; deps = %v", got, tc.retain, deps)
@@ -67,7 +67,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 					t.Errorf("content/parent dependency %s was pruned", id)
 				}
 			}
-			if filter.Size() != size || len(consumer.DependsOn) != 1 {
+			if len(filter.KeepNames()) != size || len(consumer.DependsOn) != 1 {
 				t.Error("ordering collection must preserve keep and input edges")
 			}
 		})

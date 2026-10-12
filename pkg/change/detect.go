@@ -2,7 +2,6 @@ package change
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
@@ -12,6 +11,7 @@ import (
 	"slices"
 	"sync"
 
+	fluxignore "github.com/fluxcd/pkg/sourceignore"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/pkg/source/sourceignore"
@@ -192,7 +192,7 @@ func scanTree(root, opposite string) (map[string]fileMeta, error) {
 		if d.IsDir() {
 			return nil
 		}
-		if d.Name() == ".sourceignore" {
+		if d.Name() == fluxignore.IgnoreFile {
 			ignoreFiles = append(ignoreFiles, p)
 		}
 		typ := d.Type()
@@ -241,14 +241,13 @@ func scanTree(root, opposite string) (map[string]fileMeta, error) {
 // links. github.com/fluxcd/pkg/artifact v0.18.3 storage.Storage.Archive
 // (storage/archive.go) omits non-regular files; changing that render-parity gap
 // must also change detection's treatment of links.
-func hashEntry(path string, isSymlink bool) (string, error) {
+func hashEntry(path string, isSymlink bool) ([sha256.Size]byte, error) {
 	if isSymlink {
 		target, err := os.Readlink(path)
 		if err != nil {
-			return "", err
+			return [sha256.Size]byte{}, err
 		}
-		sum := sha256.Sum256([]byte(target))
-		return hex.EncodeToString(sum[:]), nil
+		return sha256.Sum256([]byte(target)), nil
 	}
 	return hashFile(path)
 }
@@ -258,10 +257,10 @@ var hashBuffers = sync.Pool{New: func() any {
 	return &buf
 }}
 
-func hashFile(path string) (string, error) {
+func hashFile(path string) ([sha256.Size]byte, error) {
 	f, err := os.Open(path) //nolint:gosec // path is a tree-walk result, not user-controlled
 	if err != nil {
-		return "", err
+		return [sha256.Size]byte{}, err
 	}
 	defer func() { _ = f.Close() }()
 	h := sha256.New()
@@ -269,7 +268,9 @@ func hashFile(path string) (string, error) {
 	defer hashBuffers.Put(buf)
 	// Hide File.WriteTo so CopyBuffer uses the pooled buffer.
 	if _, err := io.CopyBuffer(h, struct{ io.Reader }{f}, *buf); err != nil {
-		return "", err
+		return [sha256.Size]byte{}, err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	var sum [sha256.Size]byte
+	h.Sum(sum[:0])
+	return sum, nil
 }

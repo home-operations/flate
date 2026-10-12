@@ -65,12 +65,12 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				st.AddObject(target)
 				st.UpdateStatus(target.Named(), tc.status, "fixture")
 			}
-			size := filter.Size()
+			size := len(filter.KeepNames())
 			deps := c.OrderingDeps(hr.DependsOn)
 			if got := slices.Contains(deps, hr.DependsOn[0]); got != tc.retain {
 				t.Errorf("ordering edge retained = %v, want %v; deps = %v", got, tc.retain, deps)
 			}
-			if filter.Size() != size || len(hr.DependsOn) != 1 {
+			if len(filter.KeepNames()) != size || len(hr.DependsOn) != 1 {
 				t.Error("ordering collection must preserve keep and input edges")
 			}
 		})

@@ -423,12 +423,18 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 
 	// Flux gives inline substitutions precedence over references.
 	values := map[string]any{}
-	for ref := range manifest.References(ks) {
-		if ref.Use != "substituteFrom" {
-			continue
-		}
-		data, err := resourceData(ref.Kind, ref.Namespace, ref.Name, p)
+	var refs []manifest.SubstituteReference
+	if ks.PostBuild != nil {
+		refs = ks.PostBuild.SubstituteFrom
+	}
+	for _, ref := range refs {
+		data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p)
 		if err != nil {
+			if errors.Is(err, manifest.ErrInvalidValuesReference) {
+				slog.Debug("values: unsupported SubstituteReference kind",
+					"id", ks.Named().String(), "kind", ref.Kind)
+				continue
+			}
 			return err
 		}
 		if data == nil {

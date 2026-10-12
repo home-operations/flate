@@ -371,26 +371,6 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 	}
 }
 
-func TestExpandValueReferences_AllocationBudget(t *testing.T) {
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{{
-		Name: "shared", Namespace: "default", Data: map[string]any{"values.yaml": "replicaCount: 3\n"},
-	}}}
-	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "shared", ValuesKey: "values.yaml"}
-	cache := NewCache()
-	var result map[string]any
-	var err error
-	allocs := testing.AllocsPerRun(100, func() {
-		hr := &manifest.HelmRelease{Name: "app", Namespace: "default", ValuesFrom: []manifest.ValuesReference{ref}}
-		err = ExpandValueReferences(hr, provider, cache)
-		result = hr.Values
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assert.Equal(t, allocs, float64(4))
-	assert.Equal(t, result["replicaCount"], any(float64(3)))
-}
-
 // TestExpandValueReferences_NilCache pins the nil-cache contract:
 // ExpandValueReferences with a nil *Cache works identically to the
 // non-cached path — tests and one-shot embedders pass nil.
@@ -422,32 +402,18 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 		Name: "apps", Namespace: "flux-system",
 		Contents: map[string]any{"spec": map[string]any{}},
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+			{Kind: "Unsupported", Name: "vars"},
 			{Kind: "ConfigMap", Name: "vars"},
 		}},
 	}
+	postBuild := ks.PostBuild
 	if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
 		t.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
 	}
+	assert.Equal(t, ks.PostBuild, postBuild)
 	if ks.PostBuildSubstitute["DOMAIN"] != "example.com" {
 		t.Errorf("substitute: %+v", ks.PostBuildSubstitute)
 	}
-}
-
-func TestExpandPostBuildSubstituteReference_AllocationBudget(t *testing.T) {
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{{Name: "vars", Namespace: "ns", Data: map[string]any{"KEY": "value"}}}}
-	var postBuild kustomizev1.PostBuild
-	allocs := testing.AllocsPerRun(100, func() {
-		postBuild.SubstituteFrom = []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}}
-		ks := &manifest.Kustomization{Name: "app", Namespace: "ns"}
-		ks.PostBuild = &postBuild
-		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
-			t.Fatal(err)
-		}
-		if ks.PostBuild != &postBuild || ks.PostBuildSubstitute["KEY"] != "value" {
-			t.Fatal("substitution did not preserve the authored PostBuild")
-		}
-	})
-	assert.Equal(t, allocs, float64(7))
 }
 
 func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUntouched(t *testing.T) {

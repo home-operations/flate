@@ -28,6 +28,9 @@ type ResourceSet struct {
 	// downstream consumers can read them without re-parsing the raw
 	// document.
 	Labels map[string]string `json:"-" yaml:"-"`
+
+	// Suspend reports whether the reconciliation-disabled annotation pauses the set.
+	Suspend bool `json:"-" yaml:"-"`
 }
 
 // Named identifies the ResourceSet.
@@ -50,6 +53,7 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 		Namespace:       cr.Namespace,
 		ResourceSetSpec: cr.Spec,
 		Labels:          cr.Labels,
+		Suspend:         cr.IsDisabled(),
 	}, nil
 }
 

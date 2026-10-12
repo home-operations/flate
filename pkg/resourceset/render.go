@@ -18,10 +18,11 @@
 //     `inputs.<provider>.foo`. ID generation matches upstream's
 //     adler32 scheme so renders are byte-equivalent to flux-operator
 //     output. Capped at 10000 permutations.
+//   - spec.steps (ordered builds with cross-step duplicate rejection)
 //   - spec.resources (typed JSON template list)
 //   - spec.resourcesTemplate (multi-document YAML string)
 //   - spec.commonMetadata (labels + annotations applied to every emitted object)
-//   - Deduplication by (apiVersion, kind, namespace, name)
+//   - Deduplication by (API group, kind, namespace, name)
 //   - Default-namespace fallback to the ResourceSet's own namespace
 //
 // Deferred:
@@ -46,72 +47,98 @@ import (
 // to disable inputsFrom resolution (tests, simple cases).
 type ProviderResolver func(ref fluxopv1.InputProviderReference, namespace string) ([]*manifest.ResourceSetInputProvider, error)
 
-// Render evaluates rs.Spec across rs.Spec.Inputs (flatten strategy) and
-// returns the resulting Kubernetes manifests as decoded YAML documents,
-// already deduplicated and stamped with rs.Spec.CommonMetadata. The
-// caller is responsible for parsing each doc into a typed manifest.
-//
-// When rs.Spec.Inputs is empty (e.g. d2-fleet's policies.yaml — static
-// resources with no matrix), templates render once with a nil input set.
-//
-// resolve is optional: when non-nil, spec.inputsFrom references are
-// resolved and their providers' exported inputs are flattened into the
-// matrix alongside any inline rs.Spec.Inputs.
+// Render evaluates the ResourceSet's resources or ordered steps across its
+// input matrix, deduplicates within each step, and stamps common metadata.
+// Referenced providers with no combined inputs produce no resources.
+// resolve is optional and supplies providers referenced by spec.inputsFrom.
 func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]any, error) {
 	if rs == nil {
 		return nil, nil
 	}
-
+	if len(rs.Steps) > 0 && (len(rs.Resources) > 0 || rs.ResourcesTemplate != "") {
+		return nil, fmt.Errorf("%w: spec.steps is mutually exclusive with spec.resources and spec.resourcesTemplate", manifest.ErrInput)
+	}
+	for _, step := range rs.Steps {
+		if len(step.Resources) == 0 && step.ResourcesTemplate == "" {
+			return nil, fmt.Errorf("%w: step %q: at least one of resources or resourcesTemplate must be set", manifest.ErrInput, step.Name)
+		}
+	}
 	inputs, err := buildInputSets(rs, resolve)
 	if err != nil {
 		return nil, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
 	}
-	// Under Permute, an empty input slice means the Cartesian product
-	// genuinely collapsed (every-provider-empty with includeEmpty=true,
-	// or no providers contributed). Render zero docs rather than
-	// falling through to renderResources' "no matrix → render once
-	// with nil" fallback, which only applies under Flatten where an
-	// empty matrix legitimately means "static resources, no inputs".
-	if len(inputs) == 0 && isPermute(rs) {
+	if len(rs.InputsFrom) > 0 && len(inputs) == 0 {
 		return nil, nil
 	}
 
+	steps := rs.Steps
+	if len(steps) == 0 {
+		steps = []fluxopv1.ResourceSetStep{{Resources: rs.Resources, ResourcesTemplate: rs.ResourcesTemplate}}
+	}
+	var docs []map[string]any
+	stepOfObject := make(map[string]string)
+	for _, step := range steps {
+		rendered, err := renderStep(step, inputs)
+		if err != nil {
+			if len(rs.Steps) > 0 {
+				err = fmt.Errorf("step %q: %w", step.Name, err)
+			}
+			return nil, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
+		}
+		if len(rs.Steps) > 0 {
+			for _, doc := range rendered {
+				key := DedupKey(doc)
+				if prev, found := stepOfObject[key]; found && prev != step.Name {
+					return nil, fmt.Errorf("%w: duplicate resource %s in step %q, already defined in step %q", manifest.ErrInput, key, step.Name, prev)
+				}
+				stepOfObject[key] = step.Name
+			}
+		}
+		// Reuse the first step's slice without copying to avoid an extra allocation per render.
+		if docs == nil {
+			docs = rendered
+		} else {
+			docs = append(docs, rendered...)
+		}
+	}
+	for _, doc := range docs {
+		manifest.StampNamespace(doc, rs.Namespace)
+		applyOwnerLabels(doc, rs)
+		applyCommonMetadata(doc, rs.CommonMetadata)
+	}
+	return docs, nil
+}
+
+func renderStep(step fluxopv1.ResourceSetStep, inputs []map[string]any) ([]map[string]any, error) {
 	seen := make(map[string]struct{})
 	var docs []map[string]any
-	appendUnique := func(rendered []map[string]any) {
+	appendUnique := func(rendered []map[string]any, dedup bool) {
 		for _, doc := range rendered {
 			key := DedupKey(doc)
 			if key == "" {
 				continue
 			}
-			if _, dup := seen[key]; dup {
+			if _, dup := seen[key]; dedup && dup {
 				continue
 			}
 			seen[key] = struct{}{}
 			docs = append(docs, doc)
 		}
 	}
-
-	for i, raw := range rs.Resources {
+	// Flux preserves no-input JSON duplicates while giving them precedence over YAML.
+	for i, raw := range step.Resources {
 		rendered, err := renderResources(raw, inputs)
 		if err != nil {
-			return nil, fmt.Errorf("ResourceSet %s: spec.resources[%d]: %w", rs.Named().NamespacedName(), i, err)
+			return nil, fmt.Errorf("spec.resources[%d]: %w", i, err)
 		}
-		appendUnique(rendered)
+		appendUnique(rendered, len(inputs) > 0)
 	}
-
-	if rs.ResourcesTemplate != "" {
-		rendered, err := renderResourcesTemplate(rs.ResourcesTemplate, inputs)
+	if step.ResourcesTemplate != "" {
+		rendered, err := renderResourcesTemplate(step.ResourcesTemplate, inputs)
 		if err != nil {
-			return nil, fmt.Errorf("ResourceSet %s: spec.resourcesTemplate: %w", rs.Named().NamespacedName(), err)
+			return nil, fmt.Errorf("spec.resourcesTemplate: %w", err)
 		}
-		appendUnique(rendered)
-	}
-
-	for _, doc := range docs {
-		manifest.StampNamespace(doc, rs.Namespace)
-		applyOwnerLabels(doc, rs)
-		applyCommonMetadata(doc, rs.CommonMetadata)
+		appendUnique(rendered, true)
 	}
 	return docs, nil
 }
@@ -139,7 +166,7 @@ func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any,
 		if err != nil {
 			return nil, err
 		}
-		if doc == nil || disabledByReconcileAnnotation(doc) {
+		if doc == nil || (len(inputs) > 0 && disabledByReconcileAnnotation(doc)) {
 			continue
 		}
 		out = append(out, doc)
@@ -205,7 +232,7 @@ func splitMultiDoc(pt *parsedTemplate, inputSet map[string]any) ([]map[string]an
 			out = append(out, doc)
 		}
 	}
-	return out, nil
+	return manifest.FlattenLists(out), nil
 }
 
 func renderSingle(pt *parsedTemplate, inputSet map[string]any) (map[string]any, error) {

@@ -2,11 +2,12 @@ package resourceset
 
 import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// DedupKey identifies a rendered doc by (apiVersion, kind, namespace,
+// DedupKey identifies a rendered doc by (API group, kind, namespace,
 // name) for cross-render deduplication. Returns "" when kind or name
 // are missing — signal to the caller to drop the doc rather than
 // merge with an "empty key" collision pile.
@@ -21,7 +22,8 @@ func DedupKey(doc map[string]any) string {
 	if kind == "" || name == "" {
 		return ""
 	}
-	return manifest.DocAPIVersion(doc) + "|" + kind + "|" + ns + "|" + name
+	gv, _ := schema.ParseGroupVersion(manifest.DocAPIVersion(doc))
+	return gv.Group + "|" + kind + "|" + ns + "|" + name
 }
 
 func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {

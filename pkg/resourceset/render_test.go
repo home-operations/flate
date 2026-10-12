@@ -797,3 +797,167 @@ metadata: {name: << inputs.name | slugify >>}`,
 		})
 	}
 }
+
+func TestRender_Steps(t *testing.T) {
+	resource := jsonTmpl(t, `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"first"}}`)
+	template := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: second}"
+	for _, tt := range []struct {
+		name    string
+		spec    fluxopv1.ResourceSetSpec
+		names   []string
+		wantErr string
+	}{
+		{name: "ordered steps", spec: fluxopv1.ResourceSetSpec{Steps: []fluxopv1.ResourceSetStep{
+			{Name: "deploy", Resources: []*apix.JSON{resource}},
+			{Name: "config", ResourcesTemplate: template},
+		}}, names: []string{"first", "second"}},
+		{name: "dedup within step", spec: fluxopv1.ResourceSetSpec{Inputs: []fluxopv1.ResourceSetInput{{}}, Steps: []fluxopv1.ResourceSetStep{
+			{Name: "deploy", Resources: []*apix.JSON{resource, resource}},
+		}}, names: []string{"first"}},
+		{name: "no-input duplicate inside a step keeps both", spec: fluxopv1.ResourceSetSpec{Steps: []fluxopv1.ResourceSetStep{
+			{Name: "deploy", Resources: []*apix.JSON{resource, resource}},
+		}}, names: []string{"first", "first"}},
+		{name: "duplicate across steps", spec: fluxopv1.ResourceSetSpec{Steps: []fluxopv1.ResourceSetStep{
+			{Name: "first", Resources: []*apix.JSON{resource}},
+			{Name: "second", Resources: []*apix.JSON{jsonTmpl(t, `{"apiVersion":"apps/v1beta2","kind":"Deployment","metadata":{"name":"first"}}`)}},
+		}}, wantErr: "duplicate resource"},
+		{name: "steps and resources", spec: fluxopv1.ResourceSetSpec{Resources: []*apix.JSON{resource}, Steps: []fluxopv1.ResourceSetStep{{Name: "deploy", Resources: []*apix.JSON{resource}}}}, wantErr: "mutually exclusive"},
+		{name: "steps and template", spec: fluxopv1.ResourceSetSpec{ResourcesTemplate: template, Steps: []fluxopv1.ResourceSetStep{{Name: "deploy", Resources: []*apix.JSON{resource}}}}, wantErr: "mutually exclusive"},
+		{name: "empty step with empty providers", spec: fluxopv1.ResourceSetSpec{InputsFrom: []fluxopv1.InputProviderReference{{Name: "empty"}}, Steps: []fluxopv1.ResourceSetStep{{Name: "empty"}}}, wantErr: "at least one"},
+		{name: "step template error", spec: fluxopv1.ResourceSetSpec{Steps: []fluxopv1.ResourceSetStep{{Name: "bad", ResourcesTemplate: "<< inputs.missing >>"}}}, wantErr: `step "bad"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rs := &manifest.ResourceSet{Name: "steps", Namespace: "default", ResourceSetSpec: tt.spec}
+			docs, err := resourceset.Render(rs, nil)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			names := make([]string, 0, len(docs))
+			for _, doc := range docs {
+				name, ns := manifest.DocMetadata(doc)
+				if ns != "default" {
+					t.Errorf("namespace = %q", ns)
+				}
+				labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
+				if labels[fluxopv1.OwnerLabelResourceSetName] != "steps" {
+					t.Errorf("labels = %v", labels)
+				}
+				names = append(names, name)
+			}
+			assert.Diff(t, names, tt.names)
+		})
+	}
+}
+
+func TestRender_EmptyInputRule(t *testing.T) {
+	for _, strategy := range []string{fluxopv1.InputStrategyFlatten, fluxopv1.InputStrategyPermute} {
+		for _, referenced := range []bool{false, true} {
+			name := strategy + "/inline-only"
+			if referenced {
+				name = strategy + "/empty-provider"
+			}
+			t.Run(name, func(t *testing.T) {
+				rs := &manifest.ResourceSet{Name: "empty", Namespace: "default", InputStrategy: &fluxopv1.InputStrategySpec{Name: strategy}, ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: static}"}
+				want := 1
+				if referenced {
+					rs.InputsFrom = []fluxopv1.InputProviderReference{{Name: "empty"}}
+					want = 0
+				}
+				resolve := func(fluxopv1.InputProviderReference, string) ([]*manifest.ResourceSetInputProvider, error) {
+					return []*manifest.ResourceSetInputProvider{{Name: "empty", Type: fluxopv1.InputProviderGitHubBranch}}, nil
+				}
+				docs, err := resourceset.Render(rs, resolve)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(docs) != want {
+					t.Fatalf("docs = %d, want %d", len(docs), want)
+				}
+			})
+		}
+	}
+}
+
+func TestRender_GroupDedup(t *testing.T) {
+	rs := &manifest.ResourceSet{Name: "group", Namespace: "default", Inputs: []fluxopv1.ResourceSetInput{{}}, Resources: []*apix.JSON{
+		jsonTmpl(t, `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"shared"}}`),
+	}, ResourcesTemplate: `apiVersion: apps/v1beta2
+kind: Deployment
+metadata: {name: shared}
+---
+apiVersion: other.example/v1
+kind: Deployment
+metadata: {name: shared}`}
+	docs, err := resourceset.Render(rs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("docs = %d, want 2", len(docs))
+	}
+	assert.Diff(t, []string{manifest.DocAPIVersion(docs[0]), manifest.DocAPIVersion(docs[1])}, []string{"apps/v1", "other.example/v1"})
+}
+
+func TestRender_NoInputJSONBypassesExclusionAndDedup(t *testing.T) {
+	raw := jsonTmpl(t, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"static","annotations":{"fluxcd.controlplane.io/reconcile":"disabled"}}}`)
+	rs := &manifest.ResourceSet{Name: "static", Namespace: "default", Resources: []*apix.JSON{raw, raw}, ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata: {name: static}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+ name: excluded
+ annotations: {fluxcd.controlplane.io/reconcile: disabled}`}
+	docs, err := resourceset.Render(rs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("docs = %d, want 2 JSON duplicates", len(docs))
+	}
+	for _, doc := range docs {
+		if doc["metadata"].(map[string]any)["annotations"].(map[string]any)[fluxopv1.ReconcileAnnotation] != fluxopv1.DisabledValue {
+			t.Fatalf("wrong resource: %v", doc)
+		}
+	}
+}
+
+func TestRender_ListItems(t *testing.T) {
+	rs := &manifest.ResourceSet{Name: "list", Namespace: "default", ResourcesTemplate: `apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata: {name: first}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata: {name: second}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata: {name: first}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: excluded
+    annotations: {fluxcd.controlplane.io/reconcile: disabled}`}
+	docs, err := resourceset.Render(rs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(docs))
+	for _, doc := range docs {
+		name, ns := manifest.DocMetadata(doc)
+		names = append(names, name)
+		if ns != "default" {
+			t.Errorf("namespace = %q", ns)
+		}
+	}
+	assert.Diff(t, names, []string{"first", "second"})
+}

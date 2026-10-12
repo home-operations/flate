@@ -113,8 +113,7 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		return false, err
 	}
 	// Fast path: a resource is rewritten only when its scalar carries an
-	// http://|https:// scheme — every trigger (isHTTPURL, and isGitRemoteBase
-	// via cutHTTPScheme) gates on that scheme, the git path case-insensitively.
+	// http://|https:// scheme; both rewrite triggers use cutHTTPScheme.
 	// So if the raw bytes contain no case-insensitive "http" substring at all,
 	// no entry can match and the full YAML parse + node walk + re-marshal below
 	// is provably a no-op. Skipping it for the common (local-only) kustomization
@@ -154,7 +153,7 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 			changed = true
 			continue
 		}
-		if !isHTTPURL(entry.Value) {
+		if _, _, ok := cutHTTPScheme(entry.Value); !ok {
 			continue
 		}
 		localFile, fetchErr := fetchRemoteResource(ctx, cache, memFS, dir, entry.Value)
@@ -200,10 +199,6 @@ func findMappingValue(doc *yaml.Node, key string) *yaml.Node {
 		}
 	}
 	return nil
-}
-
-func isHTTPURL(s string) bool {
-	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
 // containsHTTPFold reports whether b contains the ASCII substring "http"

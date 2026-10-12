@@ -83,3 +83,31 @@ func TestIsHTTPClientError(t *testing.T) {
 		}
 	}
 }
+
+func TestFetchRemote_RetryTransientCacheClientError(t *testing.T) {
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusNotFound} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var hits atomic.Int64
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if hits.Add(1) == 1 {
+					w.WriteHeader(status)
+					return
+				}
+				_, _ = w.Write([]byte("retried"))
+			}))
+			t.Cleanup(srv.Close)
+			cache := NewTreeCache()
+			if _, err := cache.FetchRemote(t.Context(), srv.URL); err == nil {
+				t.Fatal("first fetch should fail")
+			}
+			body, err := cache.FetchRemote(t.Context(), srv.URL)
+			if status == http.StatusNotFound {
+				if !isHTTPClientError(err) || hits.Load() != 1 {
+					t.Fatalf("4xx cache: err=%v, hits=%d", err, hits.Load())
+				}
+			} else if err != nil || string(body) != "retried" || hits.Load() != 2 {
+				t.Fatalf("transient retry: body=%q, err=%v, hits=%d", body, err, hits.Load())
+			}
+		})
+	}
+}

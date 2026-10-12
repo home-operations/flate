@@ -196,6 +196,51 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 			}},
 		},
 		{
+			name: "image tag override preserves registry",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  newName: mirror/nginx\n  newTag: \"1.0\"\n",
+				"deploy.yaml":        cmYAML("deploy"),
+			},
+			subPath: ".",
+			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "newTag": "2.0"}}},
+		},
+		{
+			name: "image registry override preserves version",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  newName: mirror/nginx\n  digest: sha256:old\n",
+				"deploy.yaml":        cmYAML("deploy"),
+			},
+			subPath: ".",
+			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "newName": "other/nginx"}}},
+		},
+		{
+			name: "image digest override clears tag",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  newTag: \"1.0\"\n",
+				"deploy.yaml":        cmYAML("deploy"),
+			},
+			subPath: ".",
+			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "digest": "sha256:new"}}},
+		},
+		{
+			name: "image tag override clears digest",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  digest: sha256:old\n",
+				"deploy.yaml":        cmYAML("deploy"),
+			},
+			subPath: ".",
+			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "newTag": "2.0"}}},
+		},
+		{
+			name: "repeated spec image merges fields",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  newTag: \"1.0\"\n",
+				"deploy.yaml":        cmYAML("deploy"),
+			},
+			subPath: ".",
+			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "newName": "mirror/nginx"}, map[string]any{"name": "nginx", "newTag": "2.0"}}},
+		},
+		{
 			name: "components with ignoreMissing",
 			files: map[string]string{
 				"kustomization.yaml":      existingKustomization("deploy.yaml"),

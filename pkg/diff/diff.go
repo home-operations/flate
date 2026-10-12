@@ -16,6 +16,14 @@ type Parent struct {
 	Path string `json:"path"`
 }
 
+func (p Parent) label() string {
+	s := p.Kind + " " + joinNS(p.Namespace, p.Name)
+	if p.Path != "" {
+		s += " (" + p.Path + ")"
+	}
+	return s
+}
+
 // Doc pairs a rendered manifest with its parent.
 type Doc struct {
 	Manifest map[string]any
@@ -64,16 +72,20 @@ type Options struct {
 // set through dyff for native per-resource labels; FormatDiff takes the
 // per-resource unified-diff path.
 func RenderDocs(left, right []Doc, opts Options) ([]byte, error) {
-	switch {
-	case opts.Format == "" || opts.Format.isDyffText():
-		return renderNative(left, right, opts)
-	case opts.Format == FormatDiff:
+	if opts.Format == "" {
+		opts.Format = FormatHuman
+	}
+	switch opts.Format {
+	case FormatDiff:
 		return renderUnified(left, right, opts)
-	case opts.Format == FormatHTML:
+	case FormatHTML:
 		return renderHTML(left, right, opts)
-	case opts.Format == FormatJSON:
+	case FormatJSON:
 		return renderJSON(left, right, opts)
 	default:
+		if diffStyles[opts.Format].writer != nil {
+			return renderNative(left, right, opts)
+		}
 		return nil, fmt.Errorf("unsupported diff format %q", opts.Format)
 	}
 }

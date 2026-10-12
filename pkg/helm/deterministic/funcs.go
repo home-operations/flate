@@ -20,9 +20,8 @@ import (
 // one render the stream is consumed in a deterministic order.
 func Funcs(seed []byte) template.FuncMap {
 	s := newStream(seed)
-	fm := template.FuncMap{}
+	fm := randFuncs(s)
 	maps.Copy(fm, clockFuncs())
-	maps.Copy(fm, randFuncs(s))
 	maps.Copy(fm, certFuncs(s))
 	// Sorted keys are stricter than Helm's unordered Sprig keys.
 	fm["keys"] = func(dicts ...map[string]any) []string {

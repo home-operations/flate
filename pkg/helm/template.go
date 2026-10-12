@@ -103,8 +103,10 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	var key string
 	if c.templateCache != nil {
 		key = computeTemplateKey(loaded.Fingerprint, loaded.Chart, finalValues, opts, hr)
-		if cached, ok := c.templateCache.Get(key); ok {
-			return cached, nil
+		if key != "" {
+			if cached, ok := c.templateCache.Get(key); ok {
+				return cached, nil
+			}
 		}
 	}
 
@@ -144,7 +146,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	// CLI overrides. CLI --skip-tests always wins.
 	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
 	out := releaseManifest(relV1, opts, disableHooks, skipTests)
-	if c.templateCache != nil {
+	if key != "" {
 		c.templateCache.Put(key, out)
 	}
 	return out, nil
@@ -237,6 +239,9 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 // maps MUST be cloned because downstream values layering mutates them. The
 // missing-file policy separates requests that skip files from those that fail.
 func (c *Client) mergeChartValuesFiles(loaded ChartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
+	if loaded.Fingerprint == "" {
+		return mergeChartValuesFilesUncached(loaded.Chart, names, ignoreMissing)
+	}
 	key := chartValuesCacheKey(loaded.Fingerprint, names, ignoreMissing)
 	c.chartMu.RLock()
 	cached, ok := c.chartValuesCache[key]

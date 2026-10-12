@@ -8,6 +8,8 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+const diffContextLines = 3
+
 func joinNS(ns, name string) string {
 	if ns == "" {
 		return name
@@ -18,19 +20,20 @@ func joinNS(ns, name string) string {
 // renderUnified produces a plain unified diff (`diff -u`) of the two doc
 // sets: it pairs resources by parent + identity (see pair), diffs each
 // changed pair's YAML, and concatenates the bodies. Identical resources
-// are dropped. Not Kubernetes-aware — see unifiedBody.
+// are dropped. Lists are diffed line by line, without Kubernetes-aware matching.
 func renderUnified(left, right []Doc, opts Options) ([]byte, error) {
-	left = opts.normalize(left)
-	right = opts.normalize(right)
 	var b bytes.Buffer
 	first := true
-	for _, p := range pair(left, right) {
-		body, err := unifiedBody(p.a, p.b, p.label())
+	for p, err := range changedPairs(left, right, opts) {
 		if err != nil {
 			return nil, err
 		}
-		if body == "" {
-			continue // identical resources
+		body, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+			A: difflib.SplitLines(p.from), B: difflib.SplitLines(p.to),
+			FromFile: p.label(), ToFile: p.label(), Context: diffContextLines,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("unified diff: %w", err)
 		}
 		if !first {
 			b.WriteByte('\n')
@@ -38,42 +41,7 @@ func renderUnified(left, right []Doc, opts Options) ([]byte, error) {
 		b.WriteString(body)
 		first = false
 	}
-	return withHeader(suppressionHeader(opts, notePrefix(FormatDiff)), b.Bytes()), nil
-}
-
-// unifiedBody renders a standard unified diff (`diff -u` / `git diff`
-// style) between a resource's two YAML serializations. label names both
-// the `---` and `+++` sides identically — it's one resource's before and
-// after, so the `-`/`+` line prefixes carry the distinction. A nil side
-// (added or removed resource) serializes to the empty document, so the
-// whole counterpart shows as an add/remove block.
-//
-// Unlike the dyff styles this is not Kubernetes-aware: a reordered list
-// diffs line-by-line. It exists for users who want output any
-// unified-diff tool can consume.
-func unifiedBody(a, b map[string]any, label string) (string, error) {
-	from, err := marshalForUnified(a)
-	if err != nil {
-		return "", err
-	}
-	to, err := marshalForUnified(b)
-	if err != nil {
-		return "", err
-	}
-	if from == to {
-		return "", nil
-	}
-	out, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
-		A:        difflib.SplitLines(from),
-		B:        difflib.SplitLines(to),
-		FromFile: label,
-		ToFile:   label,
-		Context:  3,
-	})
-	if err != nil {
-		return "", fmt.Errorf("unified diff: %w", err)
-	}
-	return out, nil
+	return withHeader(suppressionHeader(opts.Suppressed, diffStyles[FormatDiff].note), b.Bytes()), nil
 }
 
 // marshalForUnified serializes a manifest to YAML for line diffing. A

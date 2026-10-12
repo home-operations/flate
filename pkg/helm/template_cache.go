@@ -198,14 +198,17 @@ func (c *templateCache) removeElement(el *list.Element) {
 // by computeTemplateKey.
 func chartFingerprint(ch *chart.Chart) string {
 	h := sha256.New()
-	writeChartFingerprint(h, ch)
+	if !writeChartFingerprint(h, ch) {
+		return ""
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
 // computeTemplateKey returns a hex-encoded sha256 of every input
 // that affects Template's output for a given (chart, values, opts,
 // hr) tuple. A change in any input yields a distinct key, so a
-// stale entry never serves a different render.
+// stale entry never serves a different render. Unmarshalable values return
+// an empty key; callers MUST skip cache reads and writes for that render.
 //
 // chartFP is the precomputed chart fingerprint (see chartFingerprint
 // + Client.LoadChart's caching layer); pass the empty string when no
@@ -261,7 +264,9 @@ func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]
 	// template cache is enabled — fall back to a fresh walk when
 	// callers pass an empty fingerprint (tests, direct compute calls).
 	if chartFP == "" {
-		writeChartFingerprint(h, ch)
+		if !writeChartFingerprint(h, ch) {
+			return ""
+		}
 	} else {
 		_, _ = h.Write([]byte("chart-fp:"))
 		_, _ = h.Write([]byte(chartFP))
@@ -324,9 +329,11 @@ func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]
 
 	// Resolved values: encoding/json already sorts map[string]V keys
 	// alphabetically so this is stable across Go runs without an
-	// explicit pre-sort pass. nil and empty map collapse to the same
-	// `null` token, matching action.Install's treatment of both.
-	valuesBlob, _ := json.Marshal(finalValues)
+	// explicit pre-sort pass.
+	valuesBlob, err := json.Marshal(finalValues)
+	if err != nil {
+		return ""
+	}
 	_, _ = h.Write([]byte("values:"))
 	_, _ = h.Write(valuesBlob)
 
@@ -341,10 +348,10 @@ func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]
 //
 // A nil chart yields a stable sentinel write so the key remains
 // distinct from an empty chart.
-func writeChartFingerprint(h hashWriter, ch *chart.Chart) {
+func writeChartFingerprint(h hashWriter, ch *chart.Chart) bool {
 	if ch == nil {
 		_, _ = h.Write([]byte("chart:nil\n"))
-		return
+		return true
 	}
 	_, _ = h.Write([]byte("chart:meta:"))
 	if ch.Metadata != nil {
@@ -372,7 +379,10 @@ func writeChartFingerprint(h hashWriter, ch *chart.Chart) {
 	// Values: chart-default values map. helm coalesces these under
 	// user values, so a default change can flip the render even when
 	// the user values are byte-identical.
-	valuesBlob, _ := json.Marshal(ch.Values)
+	valuesBlob, err := json.Marshal(ch.Values)
+	if err != nil {
+		return false
+	}
 	_, _ = h.Write([]byte("defaults:"))
 	_, _ = h.Write(valuesBlob)
 	_, _ = h.Write([]byte{0})
@@ -381,8 +391,11 @@ func writeChartFingerprint(h hashWriter, ch *chart.Chart) {
 	// includes their templates / values, so a subchart content
 	// change must invalidate the parent's cache entry.
 	for _, sub := range ch.Dependencies() {
-		writeChartFingerprint(h, sub)
+		if !writeChartFingerprint(h, sub) {
+			return false
+		}
 	}
+	return true
 }
 
 // writeFileSlice hashes a tag + every (name, len, data) tuple in fs.

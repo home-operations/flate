@@ -19,26 +19,22 @@ import (
 // document-level "order changed" note. Both are rare in practice for
 // content diffs.
 func renderNative(left, right []Doc, opts Options) ([]byte, error) {
-	from, err := multiDocInput("from", opts.normalize(left))
+	from, err := multiDocInput("from", normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize))
 	if err != nil {
 		return nil, err
 	}
-	to, err := multiDocInput("to", opts.normalize(right))
+	to, err := multiDocInput("to", normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize))
 	if err != nil {
 		return nil, err
 	}
 	// dyffReport's CompareInputFiles defaults to KubernetesEntityDetection
 	// =on (native labels + name-based pairing) and IgnoreOrderChanges=off
 	// (so in-resource list reorders still surface as `⇆ order changed`).
-	style := opts.Format
-	if style == "" {
-		style = FormatHuman
-	}
-	body, err := dyffReport(from, to, style)
+	body, err := dyffReport(from, to, opts.Format)
 	if err != nil {
 		return nil, err
 	}
-	return withHeader(suppressionHeader(opts, notePrefix(style)), body), nil
+	return withHeader(suppressionHeader(opts.Suppressed, diffStyles[opts.Format].note), body), nil
 }
 
 // multiDocInput marshals a doc set into a single multi-document YAML

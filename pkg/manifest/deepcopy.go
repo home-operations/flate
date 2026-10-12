@@ -6,37 +6,24 @@ import (
 	"strings"
 )
 
-// AnyStringNode reports whether any string key or value in v satisfies pred.
-// Flux substitutes serialized YAML, so a reference in a map key must also
-// trigger postBuild substitution.
-func AnyStringNode(v any, pred func(string) bool) bool {
-	return anyString(v, pred, true)
-}
-
-func anyString(v any, pred func(string) bool, keys bool) bool {
+// ContainsValuePlaceholder reports whether any string value in v contains a
+// wipe placeholder. Keys do not affect Helm's schema-validation decision.
+func ContainsValuePlaceholder(v any) bool {
 	switch t := v.(type) {
 	case string:
-		return pred(t)
+		return HasValuePlaceholder(t)
 	case map[string]any:
-		for k, vv := range t {
-			if (keys && pred(k)) || anyString(vv, pred, keys) {
+		for _, vv := range t {
+			if ContainsValuePlaceholder(vv) {
 				return true
 			}
 		}
 	case []any:
-		for _, vv := range t {
-			if anyString(vv, pred, keys) {
-				return true
-			}
+		if slices.ContainsFunc(t, ContainsValuePlaceholder) {
+			return true
 		}
 	}
 	return false
-}
-
-// ContainsValuePlaceholder reports whether any string value in v contains a
-// wipe placeholder. Keys do not affect Helm's schema-validation decision.
-func ContainsValuePlaceholder(v any) bool {
-	return anyString(v, HasValuePlaceholder, false)
 }
 
 // HasValuePlaceholder reports whether s contains a wipe placeholder, including

@@ -20,7 +20,7 @@ import (
 // reads the seeded stream directly (unlike rsa/ecdsa.GenerateKey, which route
 // through crypto/rand's CustomReader and discard a custom reader), and ed25519
 // signatures are deterministic (RFC 8032). Combined with a stream-derived serial
-// and FixedTime validity, every cert/key renders identically run to run — with
+// and fixedTime validity, every cert/key renders identically run to run — with
 // no hand-rolled crypto and no seeded reader handed to x509.CreateCertificate.
 //
 // flate renders for offline review and never applies its output, so an ed25519
@@ -60,7 +60,7 @@ type certificate struct {
 }
 
 // issue generates a deterministic ed25519 key, finishes the template (serial from
-// the stream, validity from FixedTime), signs it, and PEM-encodes both. A nil
+// the stream, validity from fixedTime), signs it, and PEM-encodes both. A nil
 // signerKey means self-signed (parent and signer are the freshly generated cert
 // and key). x509.CreateCertificate is handed the stream, but never reads it: the
 // serial is pre-set and ed25519 signing consumes no randomness.
@@ -74,8 +74,8 @@ func issue(s *stream, tmpl, parent *x509.Certificate, signerKey ed25519.PrivateK
 		return certificate{}, fmt.Errorf("generating serial: %w", err)
 	}
 	tmpl.SerialNumber = serial
-	tmpl.NotBefore = FixedTime
-	tmpl.NotAfter = FixedTime.Add(24 * time.Hour * time.Duration(days))
+	tmpl.NotBefore = fixedTime
+	tmpl.NotAfter = fixedTime.Add(24 * time.Hour * time.Duration(days))
 	if signerKey == nil {
 		parent, signerKey = tmpl, priv
 	}
@@ -171,7 +171,7 @@ func parseCA(ca certificate) (*x509.Certificate, ed25519.PrivateKey, error) {
 
 func genPrivateKey(s *stream, typ string) string {
 	switch typ {
-	case "", "rsa", "ecdsa", "ed25519":
+	case "", "rsa", "ecdsa", "ed25519", "dsa":
 		_, priv, err := ed25519.GenerateKey(s)
 		if err != nil {
 			return fmt.Sprintf("failed to generate private key: %s", err)

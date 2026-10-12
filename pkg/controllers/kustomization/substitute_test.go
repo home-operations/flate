@@ -1,79 +1,110 @@
 package kustomization
 
 import (
-	"strings"
+	"encoding/json"
+	"math"
 	"testing"
+	"time"
 
-	"github.com/home-operations/flate/pkg/manifest"
+	fluxkustomize "github.com/fluxcd/pkg/kustomize"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/kustomize/api/resource"
+	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
+	"sigs.k8s.io/yaml"
+
+	"github.com/google/go-cmp/cmp"
 )
 
-// containsSubstitution gates whether substituteDoc pays for a full
-// YAML marshal/unmarshal round-trip. The check lives as a closure
-// passed to manifest.AnyStringNode — pin its behavior here.
-func TestContainsSubstitution(t *testing.T) {
-	hasDollar := func(s string) bool { return strings.Contains(s, "${") }
-	cases := []struct {
+func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
+	for _, tc := range []struct {
 		name string
-		in   any
-		want bool
+		doc  map[string]any
 	}{
-		{"nil", nil, false},
-		{"empty map", map[string]any{}, false},
-		{"plain scalars only", map[string]any{
-			"a": "literal", "b": 3, "c": true,
-		}, false},
-		{"top-level scalar with ${", map[string]any{
-			"a": "${VAR}",
-		}, true},
-		{"nested in list", map[string]any{
-			"data": []any{"first", "${VAR}", "third"},
-		}, true},
-		{"deeply nested", map[string]any{
-			"spec": map[string]any{
-				"containers": []any{
-					map[string]any{"image": "ghcr.io/x:${TAG}"},
-				},
-			},
-		}, true},
-		{"string with dollar but no brace", map[string]any{"a": "price$5"}, false},
-	}
-	for _, tc := range cases {
+		{"literal", map[string]any{"data": map[string]any{"key": "literal", "boolean": "yes", "date": "2001-01-01"}}},
+		{"nested scalars", map[string]any{"spec": map[string]any{"values": []any{nil, true, 3, 1.5, int64(42)}}}},
+		{"negative zero", map[string]any{"value": math.Copysign(0, -1)}},
+		{"large signed integer", map[string]any{"value": int(9007199254740993)}},
+		{"large unsigned integer", map[string]any{"value": uint64(18446744073709551615)}},
+		{"timestamp", map[string]any{"value": time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)}},
+		{"bare dollars", map[string]any{"$PID": []any{"$", "echo $PID", "$- $9", "cost $5"}}},
+		{"key reference", map[string]any{"${VAR}": 1}},
+		{"value reference", map[string]any{"value": "${VAR}"}},
+		{"default reference", map[string]any{"value": "${MISSING:=yes}"}},
+		{"escape after bare dollar", map[string]any{"value": "$PID $$PID"}},
+		{"nested escape", map[string]any{"spec": []any{map[string]any{"$$PID": "literal"}}}},
+		{"infinity", map[string]any{"spec": []any{math.Inf(1)}}},
+		{"NaN", map[string]any{"spec": map[string]any{"value": math.NaN()}}},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := manifest.AnyStringNode(tc.in, hasDollar); got != tc.want {
-				t.Errorf("AnyStringNode(${) = %v, want %v", got, tc.want)
+			vars := map[string]string{"VAR": "example"}
+			got, gotErr := substituteDoc(tc.doc, vars, true)
+			raw, err := yaml.Marshal(tc.doc)
+			if err != nil {
+				if gotErr == nil {
+					t.Fatalf("precheck error = nil, round-trip error = %v", err)
+				}
+				return
+			}
+			node, err := kyaml.Parse(string(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := fluxkustomize.SubstituteVariables(t.Context(), nil,
+				unstructured.Unstructured{Object: map[string]any{
+					"spec": map[string]any{"postBuild": map[string]any{"substitute": map[string]any{"VAR": "example"}}},
+				}}, &resource.Resource{RNode: *node},
+				fluxkustomize.SubstituteWithDryRun(true), fluxkustomize.SubstituteWithAlways(true), fluxkustomize.SubstituteWithStrict(true))
+			if (gotErr != nil) != (err != nil) {
+				t.Fatalf("precheck error = %v, Flux error = %v", gotErr, err)
+			}
+			if err != nil {
+				return
+			}
+			raw, err = res.MarshalJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(string(raw), string(encoded)); diff != "" {
+				t.Errorf("precheck equivalence (-want +got):\n%s", diff)
 			}
 		})
 	}
 }
 
-// substituteDoc skips the marshal/unmarshal round-trip when no `${` is
-// present anywhere — pure pass-through with no allocations from yaml.
-func TestSubstituteDoc_NoSubstitutionShortCircuits(t *testing.T) {
-	doc := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "ConfigMap",
-		"metadata":   map[string]any{"name": "cm"},
-		"data":       map[string]any{"key": "literal"},
-	}
-	out, err := substituteDoc(doc, map[string]string{"VAR": "x"}, false)
-	if err != nil {
-		t.Fatalf("substituteDoc: %v", err)
-	}
-	// Short-circuit returned the input map untouched. Maps are
-	// reference types so we can't compare pointer identity via &out;
-	// the real assertion is mutation visibility: writing to out must
-	// be visible on doc.
-	out["data"].(map[string]any)["new"] = "marker"
-	if doc["data"].(map[string]any)["new"] != "marker" {
-		t.Errorf("expected short-circuit to return the input map; got a copy")
+func TestSubstituteDoc_DoubleDollarEscape(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		doc  map[string]any
+		want map[string]any
+	}{
+		{"value", map[string]any{"data": map[string]any{"script": "echo $$PID"}},
+			map[string]any{"data": map[string]any{"script": "echo $PID"}}},
+		{"key", map[string]any{"data": map[string]any{"$$PID": "literal"}},
+			map[string]any{"data": map[string]any{"$PID": "literal"}}},
+		{"nested list", map[string]any{"spec": map[string]any{"args": []any{"literal", "echo $$PID"}}},
+			map[string]any{"spec": map[string]any{"args": []any{"literal", "echo $PID"}}}},
+		{"nested map in list", map[string]any{"spec": map[string]any{"containers": []any{
+			map[string]any{"command": "echo $$PID"},
+		}}}, map[string]any{"spec": map[string]any{"containers": []any{
+			map[string]any{"command": "echo $PID"},
+		}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := substituteDoc(tc.doc, map[string]string{"PID": "expanded"}, true)
+			if err != nil {
+				t.Fatalf("substituteDoc: %v", err)
+			}
+			if diff := cmp.Diff(tc.want, out); diff != "" {
+				t.Errorf("substitution (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
-// substituteDoc substitutes a `${VAR}` in MAP KEY position, matching
-// Flux (which runs envsubst over the serialized YAML text). This is the
-// ClusterSecretStore `vaults: { ${OP_VAULT}: 1 }` shape: the only `${`
-// in the doc sits in a key and the value is a non-string, so the old
-// values-only gate skipped the doc and left the key literal.
 func TestSubstituteDoc_SubstitutesMapKey(t *testing.T) {
 	doc := map[string]any{
 		"apiVersion": "external-secrets.io/v1",
@@ -98,16 +129,24 @@ func TestSubstituteDoc_SubstitutesMapKey(t *testing.T) {
 	if !ok {
 		t.Fatalf("substituted key missing; got keys %v", vaults)
 	}
-	// The marshal/unmarshal round-trip still coerces the value even when
-	// the trigger was a key — `1` stays an int, not a string.
-	if iv, _ := v.(int); iv != 1 {
-		t.Errorf("value = %v (%T), want int 1", v, v)
+
+	if iv, _ := v.(float64); iv != 1 {
+		t.Errorf("value = %v (%T), want float64 1", v, v)
 	}
 }
 
-// An escaped `$${VAR}` key unescapes to a literal `${VAR}` key — it must
-// not be excluded from the round-trip (the gate has to pass so envsubst
-// can do the unescaping) and must not be expanded. Matches Flux.
+func TestSubstituteDoc_KeyCollisionLastWins(t *testing.T) {
+	doc := map[string]any{"${OP_VAULT}": 1, "homelab": 2}
+	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(map[string]any{"homelab": float64(2)}, out); diff != "" {
+		t.Errorf("substitution (-want +got):\n%s", diff)
+	}
+}
+
+// Escaped references must remain literal even when their variables are defined.
 func TestSubstituteDoc_EscapedDollarKey(t *testing.T) {
 	doc := map[string]any{
 		"data": map[string]any{"$${OP_VAULT}": 1},
@@ -125,41 +164,24 @@ func TestSubstituteDoc_EscapedDollarKey(t *testing.T) {
 	}
 }
 
-// When a key-position substitution makes two sibling keys collide, the
-// re-decode hits a duplicate key. go.yaml.in/yaml/v4 fails loudly on
-// that rather than silently last-wins, so substituteDoc surfaces it as
-// a render error (the reconcile fails) instead of dropping data —
-// documenting the behavior for this pathological misconfiguration.
-func TestSubstituteDoc_KeyCollisionErrors(t *testing.T) {
-	doc := map[string]any{
-		"data": map[string]any{"${OP_VAULT}": 1, "homelab": 2},
-	}
-	out, err := substituteDoc(doc, map[string]string{"OP_VAULT": "homelab"}, false)
-	if err == nil {
-		t.Fatalf("expected a duplicate-key error on collision; got out=%#v", out)
-	}
-	if out != nil {
-		t.Errorf("expected nil doc on error; got %#v", out)
-	}
-	if !strings.Contains(err.Error(), "homelab") || !strings.Contains(err.Error(), "already defined") {
-		t.Errorf("error should name the colliding key; got %v", err)
-	}
-}
-
-// substituteDoc round-trips through YAML for type-coercion when `${`
-// is present — `replicas: ${N}` ends up as int after substitution.
 func TestSubstituteDoc_PreservesYAMLTypeCoercion(t *testing.T) {
-	doc := map[string]any{
-		"apiVersion": "apps/v1",
-		"kind":       "Deployment",
-		"spec":       map[string]any{"replicas": "${REPLICAS}"},
-	}
-	out, err := substituteDoc(doc, map[string]string{"REPLICAS": "3"}, false)
-	if err != nil {
-		t.Fatalf("substituteDoc: %v", err)
-	}
-	spec := out["spec"].(map[string]any)
-	if rep, _ := spec["replicas"].(int); rep != 3 {
-		t.Errorf("replicas = %v (%T), want int 3 (yaml round-trip should coerce)", spec["replicas"], spec["replicas"])
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  any
+	}{
+		{name: "integer", value: "3", want: float64(3)},
+		{name: "date", value: "2001-01-01", want: "2001-01-01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := map[string]any{"spec": map[string]any{"value": "${VALUE}"}}
+			out, err := substituteDoc(doc, map[string]string{"VALUE": tc.value}, false)
+			if err != nil {
+				t.Fatalf("substituteDoc: %v", err)
+			}
+			if diff := cmp.Diff(tc.want, out["spec"].(map[string]any)["value"]); diff != "" {
+				t.Errorf("coercion (-want +got):\n%s", diff)
+			}
+		})
 	}
 }

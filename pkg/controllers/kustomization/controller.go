@@ -125,6 +125,15 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 			_, blocked := errors.AsType[*depwait.ErrBlocked](err)
 			_, failed := errors.AsType[*manifest.DependencyFailedError](err)
 			if (blocked || failed) && level >= manifest.DrainCascade && ks.SourceKind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
+			ref := manifest.NamedResource{}
+			for edge := range manifest.References(ks) {
+				if edge.Use == "source" {
+					ref = edge.NamedResource
+					break
+				}
+			}
+			if level >= manifest.DrainCascade && ref.Kind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
+			if level >= manifest.DrainCascade && ref.Kind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
 				return fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, ref)
 			}
 			return err
@@ -293,13 +302,7 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 // working-tree aliases are the only artifacts that set neither Revision nor
 // Digest, which is precisely the signal.
 func (c *Controller) resolveSource(ks *manifest.Kustomization) (*store.SourceArtifact, bool, error) {
-	srcID := manifest.NamedResource{}
-	for ref := range manifest.References(ks) {
-		if ref.Use == "source" {
-			srcID = ref.NamedResource
-			break
-		}
-	}
+	srcID := ks.SourceID()
 	if srcID.Kind == "" || srcID.Name == "" {
 		// Child Kustomizations that inherit sourceRef from a parent's
 		// render patches show empty here until that parent reconciles.

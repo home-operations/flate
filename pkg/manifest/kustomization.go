@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"cmp"
-	"iter"
 	"maps"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -54,21 +53,9 @@ func (k *Kustomization) Named() NamedResource {
 	return NamedResource{Kind: KindKustomization, Namespace: k.Namespace, Name: k.Name}
 }
 
-// Clone returns a copy of k safe for in-place mutation during a single
-// reconcile pass. Deep-copies every mutable reference field —
-// reconcile bodies, prepare passes, and orchestrator stamping all
-// observe the same canonical store-owned object across goroutines,
-// so a partial clone is a footgun the moment any of those grow a
-// new mutation. Cheap: typical KS has <10 labels/annotations and
-// short DependsOn / PostBuild.SubstituteFrom.
+// Clone deep-copies mutable fields; store-owned specs MUST remain immutable.
 func (k *Kustomization) Clone() *Kustomization {
 	out := *k
-	// Deep-copy the embedded kustomizev1.KustomizationSpec: it owns
-	// pointer/slice fields (PostBuild.Substitute / SubstituteFrom,
-	// Decryption, KubeConfig, Patches, Images, HealthChecks,
-	// HealthCheckExprs, Components, spec DependsOn, Timeout, Interval)
-	// that a shallow `out := *k` silently aliases to the store-owned
-	// canonical. Use the upstream generated DeepCopyInto.
 	k.DeepCopyInto(&out.KustomizationSpec)
 	out.Contents = DeepCopyMap(k.Contents)
 	out.PostBuildSubstitute = maps.Clone(k.PostBuildSubstitute)
@@ -150,10 +137,6 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 		return nil, inputf("Kustomization %s/%s: spec.sourceRef.kind=%q but spec.sourceRef.name is empty (check for truncated YAML)",
 			cr.Namespace, cr.Name, cr.Spec.SourceRef.Kind)
 	}
-	// namespace is optional — a parent Kustomization's
-	// spec.targetNamespace may fill it in at apply time.
-	ns := cr.Namespace
-
 	var subst map[string]any
 	if pb := cr.Spec.PostBuild; pb != nil {
 		if len(pb.Substitute) > 0 {
@@ -172,7 +155,7 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 
 	return &Kustomization{
 		Name:                cr.Name,
-		Namespace:           ns,
+		Namespace:           cr.Namespace,
 		KustomizationSpec:   cr.Spec,
 		Contents:            doc,
 		PostBuildSubstitute: subst,
@@ -181,39 +164,47 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 	}, nil
 }
 
-func (k *Kustomization) references() iter.Seq[DependencyRef] {
-	return func(yield func(DependencyRef) bool) {
-		if src := k.SourceRef; src.Kind != "" || src.Name != "" {
-			if !yield(DependencyRef{
-				Kind: src.Kind, Namespace: cmp.Or(src.Namespace, k.Namespace), Name: src.Name,
-				Use: "source", Content: src.Kind != "" && src.Name != "", Ready: true,
-			}) {
-				return
-			}
-		}
-		for i, dep := range k.DependsOn {
-			if !yield(DependencyRef{
-				Kind: KindKustomization, Namespace: cmp.Or(dep.Namespace, k.Namespace), Name: dep.Name,
-				Use: "dependsOn", Position: i, Ready: true, ReadyExpr: dep.ReadyExpr,
-			}) {
-				return
-			}
-		}
-		if k.PostBuild == nil {
+// SourceID resolves the authored source against the effective namespace.
+func (k *Kustomization) SourceID() NamedResource {
+	return NamedResource{Kind: k.SourceRef.Kind, Namespace: cmp.Or(k.SourceRef.Namespace, k.Namespace), Name: k.SourceRef.Name}
+}
+
+// IsFragment identifies patch fragments without a render path or source name.
+func (k *Kustomization) IsFragment() bool { return k.Path == "" && k.SourceRef.Name == "" }
+
+func (k *Kustomization) references(yield func(DependencyRef) bool) {
+	if src := k.SourceID(); src.Kind != "" || src.Name != "" {
+		if !yield(DependencyRef{
+			NamedResource: src,
+			Use:           "source", Content: src.Kind != "" && src.Name != "", Ready: true,
+		}) {
 			return
 		}
-		for i, ref := range k.PostBuild.SubstituteFrom {
-			if ref.Kind != KindConfigMap && ref.Kind != KindSecret {
-				continue
-			}
-			content := !ref.Optional && ref.Name != ""
-			if !yield(DependencyRef{
-				Kind: ref.Kind, Namespace: k.Namespace, Name: ref.Name,
-				Use: "substituteFrom", Position: i, Optional: ref.Optional, Content: content,
-				Ready: content && ref.Kind == KindConfigMap,
-			}) {
-				return
-			}
+	}
+	for i, dep := range k.DependsOn {
+		if !yield(DependencyRef{
+			Kind: KindKustomization, Namespace: cmp.Or(dep.Namespace, k.Namespace), Name: dep.Name,
+			Use: "dependsOn", Position: i, Ready: true, ReadyExpr: dep.ReadyExpr,
+		}) {
+			return
+		}
+	}
+	if k.PostBuild == nil {
+		return
+	}
+	for i, ref := range k.PostBuild.SubstituteFrom {
+		if ref.Kind != KindConfigMap && ref.Kind != KindSecret {
+			continue
+		}
+		content := !ref.Optional && ref.Name != ""
+		if !yield(DependencyRef{
+			Kind: ref.Kind, Namespace: k.Namespace, Name: ref.Name,
+			Use: "substituteFrom", Position: i, Optional: ref.Optional, Content: content,
+			Ready: content && ref.Kind == KindConfigMap,
+		}) {
+			return
 		}
 	}
 }
+
+func (k *Kustomization) kind() KindInfo { return kindTable[kindKustomization].KindInfo }

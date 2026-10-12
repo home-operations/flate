@@ -41,3 +41,12 @@ func TestKindOf_GroupAndScope(t *testing.T) {
 		})
 	}
 }
+
+func TestKindOf_TableSlots(t *testing.T) {
+	for _, obj := range []BaseManifest{&Kustomization{}, &HelmRelease{}, &HelmRepository{}, &HelmChartSource{}, &GitRepository{}, &OCIRepository{}, &ExternalArtifact{}, &Bucket{}, &ResourceSet{}, &ResourceSetInputProvider{}, &ConfigMap{}, &Secret{}} {
+		t.Run(obj.Named().Kind, func(t *testing.T) {
+			assert.Diff(t, KindOf(obj), kindTable[kindIndex[obj.Named().Kind]].KindInfo)
+			assert.Equal(t, testing.AllocsPerRun(100, func() { KindOf(obj) }), float64(0))
+		})
+	}
+}

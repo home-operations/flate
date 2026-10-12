@@ -216,17 +216,11 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				continue
 			}
 			ksExpanded[id] = struct{}{}
-			if ks.Path == "" && ks.SourceRef.Name == "" {
+			if ks.IsFragment() {
 				continue
 			}
 			sourceRoot, _, external := loader.SourceView(d.cfg.Store, ks, repoRoot)
-			var ref manifest.NamedResource
-			for r := range manifest.References(ks) {
-				if r.Use == "source" {
-					ref = r.NamedResource
-					break
-				}
-			}
+			ref := ks.SourceID()
 			if external && ref.Kind == manifest.KindOCIRepository && d.cfg.Store.GetObject(ref) == nil && d.cfg.Store.GetArtifact(ref) == nil {
 				continue
 			}
@@ -271,13 +265,7 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	pinnedSources := make(map[manifest.NamedResource]struct{})
 	pinnedKS := make(map[manifest.NamedResource]struct{})
 	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		var ref manifest.NamedResource
-		for r := range manifest.References(ks) {
-			if r.Use == "source" {
-				ref = r.NamedResource
-				break
-			}
-		}
+		ref := ks.SourceID()
 		if _, pinned, _ := loader.SourceView(d.cfg.Store, ks, repoRoot); pinned {
 			pinnedSources[ref] = struct{}{}
 			pinnedKS[ks.Named()] = struct{}{}

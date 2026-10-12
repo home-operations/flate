@@ -115,13 +115,7 @@ func (r documentReader) Readlink(file string) (string, error) {
 // external ownership. Missing Git source objects retain bootstrap alias semantics.
 // External-sourced Kustomizations MUST NOT claim unrelated working-tree files.
 func SourceView(s *store.Store, ks *manifest.Kustomization, repoRoot string) (root string, pinned, external bool) {
-	var ref manifest.NamedResource
-	for r := range manifest.References(ks) {
-		if r.Use == "source" {
-			ref = r.NamedResource
-			break
-		}
-	}
+	ref := ks.SourceID()
 	if ref.Name == "" || ref == manifest.BootstrapSourceID {
 		return repoRoot, false, false
 	}

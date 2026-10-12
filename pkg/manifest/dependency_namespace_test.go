@@ -9,7 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
-func TestIsClusterScopedKind_Scope(t *testing.T) {
+func TestIsClusterScoped_Scope(t *testing.T) {
 	for _, tc := range []struct {
 		kind string
 		want bool
@@ -18,7 +18,7 @@ func TestIsClusterScopedKind_Scope(t *testing.T) {
 		{"ConfigMap", false}, {"Secret", false}, {"Kustomization", false}, {"HelmRelease", false}, {"Widget", false}, {"", false},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
-			assert.Equal(t, IsClusterScopedKind(tc.kind), tc.want)
+			assert.Equal(t, isClusterScopedKind(tc.kind), tc.want)
 			assert.Equal(t, IsClusterScoped(map[string]any{"kind": tc.kind}), tc.want)
 		})
 	}

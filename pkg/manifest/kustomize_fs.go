@@ -32,7 +32,7 @@ func BuildKSClaims(kss []*Kustomization, components map[NamedResource][]string) 
 		claims = append(claims, KSClaim{ID: id, Prefix: resolved + "/"})
 	}
 	for _, ks := range kss {
-		if ks.Path == "" && ks.SourceRef.Name == "" {
+		if ks.IsFragment() {
 			continue
 		}
 		id := ks.Named()

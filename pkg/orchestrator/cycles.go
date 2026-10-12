@@ -53,7 +53,8 @@ func (o *Orchestrator) updateDependencyGraphFor(id manifest.NamedResource) {
 		o.syncPreflightFailures()
 		return
 	}
-	deps := sameKindDepTargets(obj, id.Kind)
+	var buf [8]manifest.NamedResource
+	deps := sameKindDepTargets(obj, id.Kind, buf[:0])
 	o.depGraph.ReplaceEdges(id, deps)
 	o.syncPreflightFailures()
 }
@@ -112,7 +113,8 @@ func (o *Orchestrator) rebuildDependencyGraphFromStore() {
 	for _, kind := range reconcilableKinds {
 		for _, obj := range o.store.ListObjects(kind) {
 			id := obj.Named()
-			deps := sameKindDepTargets(obj, kind)
+			var buf [8]manifest.NamedResource
+			deps := sameKindDepTargets(obj, kind, buf[:0])
 			o.depGraph.ReplaceEdges(id, deps)
 		}
 	}
@@ -122,25 +124,12 @@ func (o *Orchestrator) rebuildDependencyGraphFromStore() {
 // HelmRelease and filters it down to entries of the same kind. Flux's
 // spec.dependsOn is kind-homogeneous (KS deps on KS, HR deps on HR);
 // stripping cross-kind entries here keeps the graph's invariant intact.
-func sameKindDepTargets(obj manifest.BaseManifest, kind string) []manifest.NamedResource {
-	refs := manifest.References(obj)
-	count := 0
-	refs(func(ref manifest.DependencyRef) bool {
-		if ref.Use == "dependsOn" && ref.Kind == kind {
-			count++
-		}
-		return true
-	})
-	if count == 0 {
-		return nil
-	}
-	out := make([]manifest.NamedResource, 0, count)
-	refs(func(ref manifest.DependencyRef) bool {
+func sameKindDepTargets(obj manifest.BaseManifest, kind string, out []manifest.NamedResource) []manifest.NamedResource {
+	for ref := range manifest.References(obj) {
 		if ref.Use == "dependsOn" && ref.Kind == kind {
 			out = append(out, ref.NamedResource)
 		}
-		return true
-	})
+	}
 	return out
 }
 

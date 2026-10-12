@@ -252,6 +252,26 @@ func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
 	}
 }
 
+func TestSameKindDepTargets_CallerBuffer(t *testing.T) {
+	for _, count := range []int{1, 8, 12} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			want := make([]manifest.NamedResource, count)
+			for i := range want {
+				want[i] = manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: fmt.Sprint(i)}
+			}
+			ks := makeKS("app", "ns", want...)
+			var buf [8]manifest.NamedResource
+			assert.Diff(t, sameKindDepTargets(ks, manifest.KindKustomization, buf[:0]), want)
+			if count <= len(buf) {
+				allocs := testing.AllocsPerRun(100, func() {
+					_ = sameKindDepTargets(ks, manifest.KindKustomization, buf[:0])
+				})
+				assert.Equal(t, allocs, float64(0))
+			}
+		})
+	}
+}
+
 func TestLogNewCycleMessages_Deterministic(t *testing.T) {
 	var got []string
 	previous := slog.Default()

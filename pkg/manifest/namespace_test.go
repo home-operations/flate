@@ -146,7 +146,7 @@ func TestStampNamespace_EmissionPolicy(t *testing.T) {
 					"apiVersion": tc.apiVersion, "kind": tc.kind,
 					"metadata": map[string]any{"name": "object", "namespace": authored},
 				}
-				obj, err := ParseDoc(doc, ParseDocOptions{})
+				obj, _, _, err := ParseDoc(doc, ParseDocOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -75,13 +75,7 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 	}
 	var aliased []manifest.NamedResource
 	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		var id manifest.NamedResource
-		for ref := range manifest.References(ks) {
-			if ref.Use == "source" {
-				id = ref.NamedResource
-				break
-			}
-		}
+		id := ks.SourceID()
 		if _, ok := existing[id]; ok {
 			continue
 		}

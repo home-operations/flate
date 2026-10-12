@@ -108,10 +108,6 @@ func parseSecret(doc map[string]any) (*Secret, error) {
 	return &Secret{Name: name, Namespace: ns, Data: data, StringData: stringData}, nil
 }
 
-func (c *ConfigMap) references() iter.Seq[DependencyRef] {
-	return func(func(DependencyRef) bool) {}
-}
+func (c *ConfigMap) kind() KindInfo { return kindTable[kindConfigMap].KindInfo }
 
-func (s *Secret) references() iter.Seq[DependencyRef] {
-	return func(func(DependencyRef) bool) {}
-}
+func (s *Secret) kind() KindInfo { return kindTable[kindSecret].KindInfo }

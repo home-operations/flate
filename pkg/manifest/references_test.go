@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"slices"
 	"testing"
@@ -172,5 +173,70 @@ spec:
 	for ref := range References(&o) {
 		assert.Equal(t, ref.Use, "secretRef")
 		break
+	}
+}
+
+func TestReferences_NoAllocations(t *testing.T) {
+	for _, tc := range []struct{ kind, spec string }{
+		{KindKustomization, "sourceRef: {kind: GitRepository, name: source}\n  dependsOn: [{name: parent}]\n  postBuild: {substituteFrom: [{kind: Unsupported, name: ignored}, {kind: ConfigMap, name: values}]}"},
+		{KindHelmRelease, "chartRef: {kind: OCIRepository, name: chart}\n  dependsOn: [{name: parent}]\n  valuesFrom: [{kind: ConfigMap, name: values}]"},
+		{KindResourceSet, "dependsOn: [{apiVersion: v1, kind: ConfigMap, name: values}, {apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, name: crd}]\n  inputsFrom: [{kind: ResourceSetInputProvider, name: input}]"},
+		{KindGitRepository, "url: https://example.com/repo\n  secretRef: {name: auth}\n  proxySecretRef: {name: proxy}"},
+		{KindOCIRepository, "url: oci://example.com/repo\n  secretRef: {name: auth}\n  certSecretRef: {name: cert}\n  proxySecretRef: {name: proxy}"},
+		{KindHelmRepository, "url: https://example.com/charts\n  secretRef: {name: auth}\n  certSecretRef: {name: cert}"},
+		{KindBucket, "bucketName: charts\n  endpoint: example.com\n  secretRef: {name: auth}\n  certSecretRef: {name: cert}\n  proxySecretRef: {name: proxy}"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			group := SourceDomain
+			if tc.kind == KindKustomization {
+				group = FluxKustomizeDomain
+			}
+			if tc.kind == KindHelmRelease {
+				group = HelmReleaseDomain
+			}
+			if tc.kind == KindResourceSet {
+				group = FluxOperatorDomain
+			}
+			obj, _, _, err := ParseDoc(mustYAML(t, "apiVersion: "+group+"/v1\nkind: "+tc.kind+"\nmetadata: {name: consumer, namespace: apps}\nspec:\n  "+tc.spec+"\n"), ParseDocOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			allocs := testing.AllocsPerRun(100, func() {
+				for ref := range References(obj) {
+					if ref.Name != "" {
+						count++
+					}
+				}
+			})
+			assert.Equal(t, allocs, float64(0))
+			if count == 0 {
+				t.Fatal("reference walk was empty")
+			}
+		})
+	}
+}
+
+func TestKustomization_FragmentAndSourceIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, kind, source, namespace string
+		fragment                            bool
+	}{
+		{"empty", "", "", "", "", true},
+		{"kind without name", "", KindGitRepository, "", "", true},
+		{"path only", "./apps", "", "", "", false},
+		{"name without kind", "", "", "source", "", false},
+		{"relative source", "", KindGitRepository, "source", "", false},
+		{"explicit source", "", KindGitRepository, "source", "other", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ks := &Kustomization{Namespace: "effective", Path: tc.path, SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: tc.kind, Name: tc.source, Namespace: tc.namespace}}
+			assert.Equal(t, ks.IsFragment(), tc.fragment)
+			ns := tc.namespace
+			if ns == "" {
+				ns = ks.Namespace
+			}
+			assert.Diff(t, ks.SourceID(), NamedResource{Kind: tc.kind, Namespace: ns, Name: tc.source})
+		})
 	}
 }

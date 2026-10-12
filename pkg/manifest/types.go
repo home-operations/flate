@@ -69,7 +69,7 @@ func (n NamedResource) Compare(other NamedResource) int {
 // Implementations own their dependency walk and MUST keep embedded specs immutable.
 type BaseManifest interface {
 	Named() NamedResource
-	references() iter.Seq[DependencyRef]
+	kind() KindInfo
 }
 
 // DependencyRef describes one authored dependency or resolved chart source.
@@ -95,26 +95,38 @@ type DependencyRef struct {
 
 // References yields dependencies in source-field order without deduplication.
 // The object and its embedded spec MUST remain immutable during iteration.
+// Concrete dispatch keeps yield out of interface calls so iteration closures stay on the stack.
 func References(obj BaseManifest) iter.Seq[DependencyRef] {
-	return obj.references()
-}
-
-func credentialReferences(namespace string, refs ...*LocalObjectReference) iter.Seq[DependencyRef] {
 	return func(yield func(DependencyRef) bool) {
-		uses := [...]string{"secretRef", "certSecretRef", "proxySecretRef"}
-		for i, ref := range refs {
-			if ref != nil && !yield(DependencyRef{
-				Kind: KindSecret, Namespace: namespace, Name: ref.Name,
-				Use: uses[i], Position: i, Content: true,
-			}) {
-				return
-			}
+		switch obj := obj.(type) {
+		case *Kustomization:
+			obj.references(yield)
+		case *HelmRelease:
+			obj.references(yield)
+		case *ResourceSet:
+			obj.references(yield)
+		case *HelmChartSource:
+			obj.references(yield)
+		case *GitRepository:
+			obj.references(yield)
+		case *OCIRepository:
+			obj.references(yield)
+		case *HelmRepository:
+			obj.references(yield)
+		case *Bucket:
+			obj.references(yield)
 		}
 	}
 }
 
-func (r *RawObject) references() iter.Seq[DependencyRef] {
-	return func(func(DependencyRef) bool) {}
+func credentialReferences(yield func(DependencyRef) bool, namespace string, refs ...*LocalObjectReference) {
+	uses := [...]string{"secretRef", "certSecretRef", "proxySecretRef"}
+	for i, ref := range refs {
+		if ref != nil && !yield(DependencyRef{Kind: KindSecret, Namespace: namespace, Name: ref.Name,
+			Use: uses[i], Position: i, Content: true}) {
+			return
+		}
+	}
 }
 
 // DrainLevel controls dependency failure classification at the DAG fixpoint.
@@ -144,18 +156,7 @@ func (r *RawObject) Named() NamedResource {
 	return NamedResource{Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
 }
 
-// Clone returns a deep copy safe for mutation without aliasing the
-// store-owned source. The Spec map is recursively cloned so
-// downstream transformations (e.g. namespace inheritance,
-// substitution overlays) don't mutate the loader's parsed doc.
-//
-// The package doc advertises store-stored objects as immutable
-// (store.AddObject's reflect.DeepEqual dedup compares against shared
-// pointers), but RawObject's pre-Clone construction aliased the
-// loader's `doc[spec]` map directly — any consumer that wrote
-// through r.Spec corrupted the underlying multi-doc YAML the loader
-// reused across passes. Clone makes the immutability contract
-// enforceable instead of nominal.
+// Clone deep-copies the spec to preserve store and parsed-document immutability.
 func (r *RawObject) Clone() *RawObject {
 	out := *r
 	out.Spec = DeepCopyMap(r.Spec)
@@ -201,4 +202,10 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 		Namespace:  ns,
 		Spec:       spec,
 	}, nil
+}
+
+func (r *RawObject) kind() KindInfo {
+	info, _ := kindInfo(apiGroup(r.APIVersion), r.Kind)
+	info.Tracked, info.Runnable, info.Status = false, false, false
+	return info
 }

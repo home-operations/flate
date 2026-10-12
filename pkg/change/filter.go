@@ -591,23 +591,11 @@ func transitiveDepsOf(obj manifest.BaseManifest) []manifest.NamedResource {
 	if obj == nil {
 		return nil
 	}
-	refs := manifest.References(obj)
-	count := 0
-	refs(func(ref manifest.DependencyRef) bool {
-		if ref.Content {
-			count++
-		}
-		return true
-	})
-	if count == 0 {
-		return nil
-	}
-	out := make([]manifest.NamedResource, 0, count)
-	refs(func(ref manifest.DependencyRef) bool {
+	var out []manifest.NamedResource
+	for ref := range manifest.References(obj) {
 		if ref.Content {
 			out = append(out, ref.NamedResource)
 		}
-		return true
-	})
+	}
 	return out
 }

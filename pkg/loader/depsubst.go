@@ -65,7 +65,6 @@ func ResolveDependsOnSubstitutions(s *store.Store) {
 		if clone == nil {
 			continue
 		}
-		s.DeleteObject(ks.Named())
 		s.AddObject(clone)
 	}
 }

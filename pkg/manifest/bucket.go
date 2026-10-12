@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"cmp"
-	"iter"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
@@ -52,12 +51,14 @@ func parseBucket(doc map[string]any) (*Bucket, error) {
 		Namespace:  cr.Namespace,
 		BucketSpec: cr.Spec,
 	}
-	if use := emptySecretReference(out.references()); use != "" {
+	if use := emptySecretReference(out.references); use != "" {
 		return nil, secretReferenceError(out.Named(), use)
 	}
 	return out, nil
 }
 
-func (b *Bucket) references() iter.Seq[DependencyRef] {
-	return credentialReferences(b.Namespace, b.SecretRef, b.CertSecretRef, b.ProxySecretRef)
+func (b *Bucket) references(yield func(DependencyRef) bool) {
+	credentialReferences(yield, b.Namespace, b.SecretRef, b.CertSecretRef, b.ProxySecretRef)
 }
+
+func (b *Bucket) kind() KindInfo { return kindTable[kindBucket].KindInfo }

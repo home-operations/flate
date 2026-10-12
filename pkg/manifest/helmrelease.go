@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"iter"
 	"maps"
 	"slices"
 
@@ -155,22 +154,9 @@ func (h *HelmRelease) UsesDirectOCIRepository() bool {
 	return h.ChartRef != nil && h.ChartRef.Kind == KindOCIRepository
 }
 
-// Clone returns a copy of h safe for in-place mutation during a single
-// reconcile pass. Deep-copies every mutable reference field —
-// reconcile bodies, prepare passes, and orchestrator stamping all
-// observe the same canonical store-owned object across goroutines,
-// so a partial clone is a footgun the moment any of those grow a
-// new mutation. Cheap: typical HR has <10 labels/annotations and
-// short DependsOn / ChartValuesFiles.
+// Clone deep-copies mutable fields; store-owned specs MUST remain immutable.
 func (h *HelmRelease) Clone() *HelmRelease {
 	out := *h
-	// Deep-copy the embedded helmv2.HelmReleaseSpec: it owns several
-	// pointer/slice fields (Install, Upgrade, Test, Rollback,
-	// DriftDetection, Uninstall, KubeConfig, WaitStrategy, Chart,
-	// ChartRef, CommonMetadata, MaxHistory, Timeout, ValuesFrom,
-	// PostRenderers, HealthCheckExprs) that a shallow `out := *h`
-	// silently aliases to the store-owned canonical. Use the upstream
-	// generated DeepCopyInto.
 	h.DeepCopyInto(&out.HelmReleaseSpec)
 	out.Values = DeepCopyMap(h.Values)
 	out.ChartValuesFiles = slices.Clone(h.ChartValuesFiles)
@@ -327,46 +313,46 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	}, nil
 }
 
-func (h *HelmRelease) references() iter.Seq[DependencyRef] {
-	return func(yield func(DependencyRef) bool) {
-		var authored NamedResource
-		if ref := h.ChartRef; ref != nil {
-			authored = NamedResource{Kind: ref.Kind, Namespace: cmp.Or(ref.Namespace, h.Namespace), Name: ref.Name}
-			if !yield(DependencyRef{NamedResource: authored, Use: "chart", Content: true, Ready: true}) {
-				return
-			}
-		} else if tmpl := h.HelmReleaseSpec.Chart; tmpl != nil {
-			ref := tmpl.Spec.SourceRef
-			authored = NamedResource{Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: cmp.Or(ref.Namespace, h.Namespace), Name: ref.Name}
-			if !yield(DependencyRef{NamedResource: authored, Use: "source", Content: true, Ready: true}) {
-				return
-			}
+func (h *HelmRelease) references(yield func(DependencyRef) bool) {
+	var authored NamedResource
+	if ref := h.ChartRef; ref != nil {
+		authored = NamedResource{Kind: ref.Kind, Namespace: cmp.Or(ref.Namespace, h.Namespace), Name: ref.Name}
+		if !yield(DependencyRef{NamedResource: authored, Use: "chart", Content: true, Ready: true}) {
+			return
 		}
-		// A matching projection still carries parse-time namespace defaults.
-		// Only a different resolved source supplies its own namespace.
-		if h.Chart.RepoKind != "" && (authored.Kind != h.Chart.RepoKind || authored.Name != h.Chart.RepoName) {
-			if !yield(DependencyRef{
-				Kind: h.Chart.RepoKind, Namespace: cmp.Or(h.Chart.RepoNamespace, h.Namespace), Name: h.Chart.RepoName,
-				Use: "source", Content: true, Ready: true,
-			}) {
-				return
-			}
+	} else if tmpl := h.HelmReleaseSpec.Chart; tmpl != nil {
+		ref := tmpl.Spec.SourceRef
+		authored = NamedResource{Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: cmp.Or(ref.Namespace, h.Namespace), Name: ref.Name}
+		if !yield(DependencyRef{NamedResource: authored, Use: "source", Content: true, Ready: true}) {
+			return
 		}
-		for i, dep := range h.DependsOn {
-			if !yield(DependencyRef{
-				Kind: KindHelmRelease, Namespace: cmp.Or(dep.Namespace, h.Namespace), Name: dep.Name,
-				Use: "dependsOn", Position: i, Ready: true, ReadyExpr: dep.ReadyExpr,
-			}) {
-				return
-			}
+	}
+	// A matching projection still carries parse-time namespace defaults.
+	// Only a different resolved source supplies its own namespace.
+	if h.Chart.RepoKind != "" && (authored.Kind != h.Chart.RepoKind || authored.Name != h.Chart.RepoName) {
+		if !yield(DependencyRef{
+			Kind: h.Chart.RepoKind, Namespace: cmp.Or(h.Chart.RepoNamespace, h.Namespace), Name: h.Chart.RepoName,
+			Use: "source", Content: true, Ready: true,
+		}) {
+			return
 		}
-		for i, ref := range h.ValuesFrom {
-			if !yield(DependencyRef{
-				Kind: ref.Kind, Namespace: h.Namespace, Name: ref.Name,
-				Use: "valuesFrom", Position: i, Optional: ref.Optional, Content: true, Ready: !ref.Optional,
-			}) {
-				return
-			}
+	}
+	for i, dep := range h.DependsOn {
+		if !yield(DependencyRef{
+			Kind: KindHelmRelease, Namespace: cmp.Or(dep.Namespace, h.Namespace), Name: dep.Name,
+			Use: "dependsOn", Position: i, Ready: true, ReadyExpr: dep.ReadyExpr,
+		}) {
+			return
+		}
+	}
+	for i, ref := range h.ValuesFrom {
+		if !yield(DependencyRef{
+			Kind: ref.Kind, Namespace: h.Namespace, Name: ref.Name,
+			Use: "valuesFrom", Position: i, Optional: ref.Optional, Content: true, Ready: !ref.Optional,
+		}) {
+			return
 		}
 	}
 }
+
+func (h *HelmRelease) kind() KindInfo { return kindTable[kindHelmRelease].KindInfo }

@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"cmp"
-	"iter"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
@@ -44,11 +43,11 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	}, nil
 }
 
-func (h *HelmChartSource) references() iter.Seq[DependencyRef] {
-	return func(yield func(DependencyRef) bool) {
-		yield(DependencyRef{
-			Kind: cmp.Or(h.SourceRef.Kind, KindHelmRepository), Namespace: h.Namespace, Name: h.SourceRef.Name,
-			Use: "source", Content: h.SourceRef.Name != "", Ready: true,
-		})
-	}
+func (h *HelmChartSource) references(yield func(DependencyRef) bool) {
+	yield(DependencyRef{
+		Kind: cmp.Or(h.SourceRef.Kind, KindHelmRepository), Namespace: h.Namespace, Name: h.SourceRef.Name,
+		Use: "source", Content: h.SourceRef.Name != "", Ready: true,
+	})
 }
+
+func (h *HelmChartSource) kind() KindInfo { return kindTable[kindHelmChartSource].KindInfo }

@@ -371,6 +371,26 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 	}
 }
 
+func TestExpandValueReferences_AllocationBudget(t *testing.T) {
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{{
+		Name: "shared", Namespace: "default", Data: map[string]any{"values.yaml": "replicaCount: 3\n"},
+	}}}
+	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "shared", ValuesKey: "values.yaml"}
+	cache := NewCache()
+	var result map[string]any
+	var err error
+	allocs := testing.AllocsPerRun(100, func() {
+		hr := &manifest.HelmRelease{Name: "app", Namespace: "default", ValuesFrom: []manifest.ValuesReference{ref}}
+		err = ExpandValueReferences(hr, provider, cache)
+		result = hr.Values
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, allocs, float64(4))
+	assert.Equal(t, result["replicaCount"], any(float64(3)))
+}
+
 // TestExpandValueReferences_NilCache pins the nil-cache contract:
 // ExpandValueReferences with a nil *Cache works identically to the
 // non-cached path — tests and one-shot embedders pass nil.
@@ -422,9 +442,9 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 			}
 			ks := &manifest.Kustomization{
 				Name: "app", Namespace: "ns",
-				PostBuildSubstitute:     map[string]any{"INLINE": "kept"},
-				PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}},
-				Contents:                map[string]any{"spec": map[string]any{}},
+				PostBuildSubstitute: map[string]any{"INLINE": "kept"},
+				PostBuild:           &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}}},
+				Contents:            map[string]any{"spec": map[string]any{}},
 			}
 			if err := ExpandPostBuildSubstituteReference(ks, provider); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("got %v, want ErrInput", err)
@@ -438,7 +458,7 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testing.T) {
 	sec := &manifest.Secret{Name: "vars", Namespace: "ns", Data: map[string]any{"C": "!", "A": "!", "B": "!"}}
 	provider := &SliceProvider{Secrets: []*manifest.Secret{sec}}
-	ks := &manifest.Kustomization{Name: "app", Namespace: "ns", PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "vars"}}}
+	ks := &manifest.Kustomization{Name: "app", Namespace: "ns", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "vars"}}}}
 	_, _, want := sec.Value("A")
 	for range 50 {
 		err := ExpandPostBuildSubstituteReference(ks, provider)

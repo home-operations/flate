@@ -307,25 +307,17 @@ func (c *Controller) IsFileIndexed(id manifest.NamedResource) bool {
 // OrderingDeps selects explicit ordering refs and prunes only known unchanged
 // targets. Unknown refs MUST remain available for missing-dependency diagnosis.
 func (c *Controller) OrderingDeps(obj manifest.BaseManifest) []manifest.DependencyRef {
-	capacity := 0
+	var deps []manifest.DependencyRef
 	for dep := range manifest.References(obj) {
 		if dep.Use == "dependsOn" {
-			capacity++
+			deps = append(deps, dep)
 		}
 	}
-	if capacity == 0 {
-		return nil
-	}
-	deps := make([]manifest.DependencyRef, 0, capacity)
-	for dep := range manifest.References(obj) {
-		if dep.Use != "dependsOn" {
-			continue
-		}
-		if c.filterActive() && !c.filter.ShouldReconcile(dep.NamedResource) &&
-			(c.IsFileIndexed(dep.NamedResource) || c.Store.GetObject(dep.NamedResource) != nil) {
-			continue
-		}
-		deps = append(deps, dep)
+	if c.filterActive() {
+		deps = slices.DeleteFunc(deps, func(dep manifest.DependencyRef) bool {
+			return !c.filter.ShouldReconcile(dep.NamedResource) &&
+				(c.IsFileIndexed(dep.NamedResource) || c.Store.GetObject(dep.NamedResource) != nil)
+		})
 	}
 	return deps
 }

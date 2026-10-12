@@ -31,7 +31,7 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 			if tc.inline {
 				spec = map[string]any{"chart": map[string]any{"spec": map[string]any{"chart": "podinfo", "sourceRef": ref}}}
 			}
-			obj, err := manifest.ParseDoc(map[string]any{
+			obj, _, _, err := manifest.ParseDoc(map[string]any{
 				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
 				"metadata": map[string]any{"name": "app", "namespace": "authored"}, "spec": spec,
 			}, manifest.ParseDocOptions{})

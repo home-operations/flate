@@ -3,15 +3,13 @@ package manifest
 // IsClusterScoped reports group-aware scope for a recognized document.
 func IsClusterScoped(doc map[string]any) bool {
 	if DocAPIVersion(doc) == "" {
-		return IsClusterScopedKind(DocKind(doc))
+		return isClusterScopedKind(DocKind(doc))
 	}
 	info, known := kindInfo(apiGroup(DocAPIVersion(doc)), DocKind(doc))
 	return known && !info.Namespaced
 }
 
-// IsClusterScopedKind reports scope for known kind names without group context.
-// Document consumers MUST use IsClusterScoped to distinguish foreign groups.
-func IsClusterScopedKind(kind string) bool {
+func isClusterScopedKind(kind string) bool {
 	if i, ok := kindIndex[kind]; ok {
 		return !kindTable[i].Namespaced
 	}

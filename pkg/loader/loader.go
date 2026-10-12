@@ -412,7 +412,7 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomizationDocument, kpath
 			// A Flux-GVK patch fragment with neither spec.path nor sourceRef
 			// must never become a reconcilable Kustomization. A sourceRef alone
 			// is sufficient for a bootstrap entry that renders the source root.
-			if ks.Path == "" && ks.SourceRef.Kind == "" && ks.SourceRef.Name == "" {
+			if ks.IsFragment() {
 				continue
 			}
 			if w.loader.skipExisting(obj.Named()) {
@@ -446,7 +446,7 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 	}
 	dirRel := filepath.ToSlash(rel) + "/"
 	for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		if ks.Path == "" && ks.SourceRef.Name == "" {
+		if ks.IsFragment() {
 			continue
 		}
 		root := l.SourceRoot
@@ -637,7 +637,8 @@ func (l *Loader) loadFile(path string) (int, error) {
 	}
 	count := 0
 	for _, obj := range objs {
-		if !manifest.KindOf(obj).Tracked {
+		info := manifest.KindOf(obj)
+		if !info.Tracked {
 			continue
 		}
 		if hr, ok := obj.(*manifest.HelmRelease); ok {
@@ -647,7 +648,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 		if l.skipExisting(id) {
 			continue
 		}
-		if l.Options.DiscoveryOnly && !isDiscoveryKind(obj) {
+		if l.Options.DiscoveryOnly && (info.Group == "" || info.Kind == manifest.KindHelmRelease) {
 			// Under render-driven discovery, HRs / ConfigMaps /
 			// Secrets / raw manifests stay out of the Store at file-
 			// load time. They reach the Store via KS render
@@ -708,25 +709,10 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	}
 	id := obj.Named()
 	r := manifest.DiscoveryRecord{Path: absPath, File: l.fileCoordinate(absPath)}
-	refs := manifest.References(obj)
-	selected := func(ref manifest.DependencyRef) bool {
-		if ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Ready {
-			return true
-		}
-		return (ref.Use == "source" || ref.Use == "chart") && ref.Kind != "" && ref.Name != ""
-	}
-	count := 0
-	for ref := range refs {
-		if selected(ref) {
-			count++
-		}
-	}
-	if count != 0 {
-		r.Refs = make([]manifest.NamedResource, 0, count)
-		for ref := range refs {
-			if selected(ref) {
-				r.Refs = append(r.Refs, ref.NamedResource)
-			}
+	for ref := range manifest.References(obj) {
+		if ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Ready ||
+			(ref.Use == "source" || ref.Use == "chart") && ref.Kind != "" && ref.Name != "" {
+			r.Refs = append(r.Refs, ref.NamedResource)
 		}
 	}
 	l.Index.Records[id] = r
@@ -739,29 +725,6 @@ func (l *Loader) fileCoordinate(absPath string) string {
 		}
 	}
 	return filepath.ToSlash(absPath)
-}
-
-// isDiscoveryKind reports whether obj belongs to the discovery-meta
-// kind set the loader keeps in the Store under DiscoveryOnly:
-//
-//   - Kustomization, ResourceSet, ResourceSetInputProvider — the
-//     reconcile driver and its meta-discovery hooks (RS renders to
-//     more KSes; RSIPs feed RS selectors).
-//   - Sources (GitRepository, OCIRepository, HelmRepository,
-//     HelmChartSource, Bucket, ExternalArtifact) — sources are
-//     rarely patched at render time and need to be visible at
-//     discovery for the bootstrap-alias pass to recognize them as
-//     already-known (otherwise every GitRepository gets aliased to
-//     the working tree, which silently redirects every KS's render
-//     to the wrong source root).
-//
-// HelmReleases, ConfigMaps, Secrets, and other reconcilables flow
-// from KS render output via emitRenderedChildren — or, when no KS
-// would render them, through the orchestrator's post-discovery
-// orphan-promotion sweep.
-func isDiscoveryKind(obj manifest.BaseManifest) bool {
-	info := manifest.KindOf(obj)
-	return info.Tracked && info.Kind != manifest.KindHelmRelease && info.Kind != manifest.KindConfigMap && info.Kind != manifest.KindSecret
 }
 
 func isManifestFile(path string) bool {

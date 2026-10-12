@@ -161,7 +161,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 	var err error
 	group := apiGroup(apiVersion)
 	if i, ok := groupKindIndex[[2]string{group, kind}]; ok && kindTable[i].decode != nil && (group != "" || apiVersion == CoreAPIVersion) {
-		obj, err = kindTable[i].decode(doc, opts)
+		obj, err = kindTable[i].decode(doc)
 	} else {
 		obj, err = parseRawObject(doc)
 	}

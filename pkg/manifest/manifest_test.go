@@ -1827,7 +1827,7 @@ spec:
 func TestParseDoc_BuildDirectives(t *testing.T) {
 	for _, kind := range []string{"Kustomization", "Component"} {
 		t.Run(kind, func(t *testing.T) {
-			obj, err := ParseDoc(map[string]any{"kind": kind, "apiVersion": "kustomize.config.k8s.io/v1beta1"}, ParseDocOptions{})
+			obj, _, _, err := ParseDoc(map[string]any{"kind": kind, "apiVersion": "kustomize.config.k8s.io/v1beta1"}, ParseDocOptions{})
 			if err != nil || obj != nil {
 				t.Fatalf("ParseDoc = %T, %v; want nil, nil", obj, err)
 			}

@@ -55,15 +55,12 @@ func (g *GitRepository) RepoName() string { return g.Named().FluxResourceName() 
 
 // Active source credentials MUST name a Secret, even when missing secrets are allowed.
 func emptySecretReference(refs iter.Seq[DependencyRef]) string {
-	var use string
-	refs(func(ref DependencyRef) bool {
+	for ref := range refs {
 		if ref.Kind == KindSecret && ref.Name == "" {
-			use = ref.Use
-			return false
+			return ref.Use
 		}
-		return true
-	})
-	return use
+	}
+	return ""
 }
 
 func secretReferenceError(id NamedResource, use string) error {
@@ -95,7 +92,7 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 		Namespace:         cr.Namespace,
 		GitRepositorySpec: cr.Spec,
 	}
-	if use := emptySecretReference(out.references()); use != "" {
+	if use := emptySecretReference(out.references); use != "" {
 		return nil, secretReferenceError(out.Named(), use)
 	}
 	return out, nil
@@ -157,7 +154,7 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		Namespace:         cr.Namespace,
 		OCIRepositorySpec: cr.Spec,
 	}
-	if use := emptySecretReference(out.references()); use != "" {
+	if use := emptySecretReference(out.references); use != "" {
 		return nil, secretReferenceError(out.Named(), use)
 	}
 	return out, nil
@@ -217,14 +214,16 @@ func parseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 	return out, nil
 }
 
-func (g *GitRepository) references() iter.Seq[DependencyRef] {
-	return credentialReferences(g.Namespace, g.SecretRef, nil, g.ProxySecretRef)
+func (g *GitRepository) references(yield func(DependencyRef) bool) {
+	credentialReferences(yield, g.Namespace, g.SecretRef, nil, g.ProxySecretRef)
 }
 
-func (o *OCIRepository) references() iter.Seq[DependencyRef] {
-	return credentialReferences(o.Namespace, o.SecretRef, o.CertSecretRef, o.ProxySecretRef)
+func (o *OCIRepository) references(yield func(DependencyRef) bool) {
+	credentialReferences(yield, o.Namespace, o.SecretRef, o.CertSecretRef, o.ProxySecretRef)
 }
 
-func (e *ExternalArtifact) references() iter.Seq[DependencyRef] {
-	return func(func(DependencyRef) bool) {}
-}
+func (g *GitRepository) kind() KindInfo { return kindTable[kindGitRepository].KindInfo }
+
+func (o *OCIRepository) kind() KindInfo { return kindTable[kindOCIRepository].KindInfo }
+
+func (e *ExternalArtifact) kind() KindInfo { return kindTable[kindExternalArtifact].KindInfo }

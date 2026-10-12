@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"cmp"
-	"iter"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
@@ -41,12 +40,14 @@ func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 		Namespace:          cr.Namespace,
 		HelmRepositorySpec: cr.Spec,
 	}
-	if use := emptySecretReference(out.references()); use != "" {
+	if use := emptySecretReference(out.references); use != "" {
 		return nil, secretReferenceError(out.Named(), use)
 	}
 	return out, nil
 }
 
-func (h *HelmRepository) references() iter.Seq[DependencyRef] {
-	return credentialReferences(h.Namespace, h.SecretRef, h.CertSecretRef)
+func (h *HelmRepository) references(yield func(DependencyRef) bool) {
+	credentialReferences(yield, h.Namespace, h.SecretRef, h.CertSecretRef)
 }
+
+func (h *HelmRepository) kind() KindInfo { return kindTable[kindHelmRepository].KindInfo }

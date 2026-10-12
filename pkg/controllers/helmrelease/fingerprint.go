@@ -15,11 +15,7 @@ import (
 // returns "", which never matches, so the dedup short-circuit is
 // skipped and we re-render).
 func helmReleaseFingerprint(hr *manifest.HelmRelease, sourceIdentity string) string {
-	return manifest.Fingerprint(helmReleaseFingerprintPayload(hr, sourceIdentity))
-}
-
-func helmReleaseFingerprintPayload(hr *manifest.HelmRelease, sourceIdentity string) any {
-	return struct {
+	return manifest.Fingerprint(struct {
 		SourceIdentity           string `json:",omitempty"`
 		ReleaseName              string
 		ReleaseNamespace         string
@@ -43,5 +39,5 @@ func helmReleaseFingerprintPayload(hr *manifest.HelmRelease, sourceIdentity stri
 		CRDsPolicy:               hr.CRDsPolicy,
 		DisableSchemaValidation:  hr.DisableSchemaValidation,
 		DisableOpenAPIValidation: hr.DisableOpenAPIValidation,
-	}
+	})
 }

@@ -81,7 +81,7 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			ts := task.NewBounded(2)
 			c := New(st, ts)
 			c.Fetchers[manifest.KindOCIRepository] = src.Wrap(manifest.KindOCIRepository, f)
-			c.Start(t.Context())
+			c.StartLifecycle()
 			t.Cleanup(func() {
 				c.Close()
 				ts.BlockTillDone()

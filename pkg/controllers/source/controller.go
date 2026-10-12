@@ -63,7 +63,7 @@ type FetchOptions struct {
 }
 
 // New constructs a source controller. Register fetchers on the
-// returned struct's Fetchers map before Start.
+// returned struct's Fetchers map before StartLifecycle.
 func New(s *store.Store, t *task.Service) *Controller {
 	return &Controller{
 		Controller: base.New(s, t, "source"),
@@ -72,18 +72,11 @@ func New(s *store.Store, t *task.Service) *Controller {
 }
 
 // Configure installs the post-bootstrap state. Panics if called after
-// Start.
+// StartLifecycle.
 func (c *Controller) Configure(opts FetchOptions) {
 	c.SetFilter(opts.Filter)
 	c.allowMissingSecrets = opts.AllowMissingSecrets
 	c.producers = opts.Producers
-}
-
-// Start registers listeners on the Store. The controller runs until
-// Close is called. The scheduler owns dispatch (via ReconcileNode), so
-// Start only wires lifecycle state — no dispatch listener.
-func (c *Controller) Start(_ context.Context) {
-	c.StartLifecycle()
 }
 
 // suspendedSource reports whether a source object is suspended, via the
@@ -91,12 +84,6 @@ func (c *Controller) Start(_ context.Context) {
 func suspendedSource(obj manifest.BaseManifest) bool {
 	s, _ := obj.(src.Suspendable)
 	return s != nil && s.Suspended()
-}
-
-// HasFetcher reports whether a fetcher is registered for kind.
-func (c *Controller) HasFetcher(kind string) bool {
-	_, ok := c.Fetchers[kind]
-	return ok
 }
 
 // Owns reports whether id is a node this controller reconciles — the dag
@@ -107,7 +94,7 @@ func (c *Controller) HasFetcher(kind string) bool {
 // An id absent from the store still counts as ours — reporting the
 // vanished object is the controller's job.
 func (c *Controller) Owns(id manifest.NamedResource) bool {
-	if !c.HasFetcher(id.Kind) {
+	if _, ok := c.Fetchers[id.Kind]; !ok {
 		return false
 	}
 	obj := c.Store.GetObject(id)
@@ -125,7 +112,7 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 }
 
 // reconcile fetches the source artifact via the registered Fetcher and
-// writes the result through base.RunWithStatus so panic recovery,
+// writes the result through base.RunWithStatusOutcome so panic recovery,
 // final status writes, and ErrSourceSkipped routing match the
 // KS/HR controllers' shape. Returning ErrSourceSkipped yields a
 // Ready+"skipped: ..." status; ErrBlocked parks the fetch for a dependency
@@ -194,7 +181,7 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, l
 	c.Logger().Debug("fetch complete", "id", id.String(), "duration", time.Since(started), "artifact", artifact != nil)
 	// An ExistenceFetcher returns (nil, nil) — the kind doesn't produce
 	// an on-disk artifact (HelmRepository; OCIRepository when fetching
-	// is disabled). RunWithStatus will still mark Ready so dependsOn
+	// is disabled). RunWithStatusOutcome will still mark Ready so dependsOn
 	// watchers unblock; chart resolution falls through to whichever
 	// mechanism actually serves the chart.
 	if artifact != nil {

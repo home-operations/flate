@@ -1,7 +1,7 @@
 // Package base provides the shared lifecycle harness every flate
 // controller wraps around its per-resource reconcile body.
 //
-// Each concrete controller (source, kustomization, helmrelease)
+// Each concrete controller (source, kustomization, helmrelease, resourceset)
 // embeds *base.Controller and contributes only the controller-specific
 // dependencies (Fetchers, Helm client, Staging cache, ...) plus the
 // reconcile function itself. Lifecycle wiring — the started gate, the
@@ -9,7 +9,7 @@
 // Suspend/Filter pre-gate — lives here exactly once.
 //
 // The package also owns the panic-recovery + status-transition harness
-// (Recover, RunWithStatus) that surrounds individual reconcile bodies.
+// (RunWithStatusOutcome) that surrounds individual reconcile bodies.
 package base
 
 import (
@@ -29,11 +29,11 @@ import (
 )
 
 // Controller is the embeddable lifecycle harness. Construct via New,
-// install reconcile-shaping config via SetFilter (panics if called
-// after Start), then Start to register listeners.
+// install reconcile-shaping config via SetFilter, then call StartLifecycle
+// before dispatch or listener registration.
 //
-// All three concrete controllers carry the same lifecycle shape:
-//   - a started gate so Configure-after-Start is a hard error
+// All four concrete controllers carry the same lifecycle shape:
+//   - a started gate so configuration during dispatch is a hard error
 //   - a filter for changed-only mode
 //   - an unsubscriber list cleared by Close
 //
@@ -43,7 +43,7 @@ import (
 // The KS and HR controllers additionally share depwait configuration
 // (Existence) and a pre-reconcile preflight check (Preflight,
 // ParentOf). Configure these via SetDepwait / SetPreflight / SetParentOf
-// before Start so reconcile bodies can call Require, PreflightError,
+// before dispatch so reconcile bodies can call Require, PreflightError,
 // and LookupParent without each controller duplicating the nil-check
 // boilerplate.
 type Controller struct {
@@ -75,14 +75,14 @@ type Controller struct {
 
 	// unsubMu guards unsub so AddListener and Close can be called
 	// concurrently (e.g. shutdown racing a listener-triggered Submit).
-	// The slice is short-lived (registered at Start, drained at Close)
+	// The slice is short-lived (registered via AddListener, drained at Close)
 	// and per-controller, so the lock has near-zero contention.
 	unsubMu sync.Mutex
 	unsub   []store.Unsubscribe
 
 	// Shared KS/HR depwait and preflight state. Set via SetDepwait,
 	// SetPreflight, SetParentOf. The source controller leaves these nil;
-	// KS and HR configure them before Start via their Configure methods.
+	// KS and HR configure them before dispatch via their Configure methods.
 	existence        depwait.ExistenceLookup
 	allowMissingCRDs bool
 	preflight        func(manifest.NamedResource) (string, bool)
@@ -116,34 +116,34 @@ func (c *Controller) Logger() *slog.Logger { return c.log }
 // begins. method is the calling setter's name for the panic message.
 func (c *Controller) requireNotStarted(method string) {
 	if c.started.Load() {
-		panic("controller: " + method + " called after Start")
+		panic("controller: " + method + " called after dispatch begins")
 	}
 }
 
 // SetFilter installs the change filter that gates reconciliation in
-// changed-only mode. Panics if called after Start — the invariant is
+// changed-only mode. Panics once StartLifecycle is called; the invariant is
 // that reconcile-shaping config is frozen once dispatch begins.
 func (c *Controller) SetFilter(f *change.Filter) {
 	c.requireNotStarted("SetFilter")
 	c.filter = f
 }
 
-// Filter returns the configured filter (may be nil-but-non-active).
-func (c *Controller) Filter() *change.Filter { return c.filter }
-
-// SetDepwait installs the depwait resolution wires. Panics after Start.
+// SetDepwait installs the depwait resolution wires.
+// Panics once StartLifecycle is called.
 func (c *Controller) SetDepwait(existence depwait.ExistenceLookup) {
 	c.requireNotStarted("SetDepwait")
 	c.existence = existence
 }
 
-// SetPreflight installs the pre-reconcile failure reporter. Panics after Start.
+// SetPreflight installs the pre-reconcile failure reporter.
+// Panics once StartLifecycle is called.
 func (c *Controller) SetPreflight(f func(manifest.NamedResource) (string, bool)) {
 	c.requireNotStarted("SetPreflight")
 	c.preflight = f
 }
 
-// SetParentOf installs the structural parent resolver. Panics after Start.
+// SetParentOf installs the structural parent resolver.
+// Panics once StartLifecycle is called.
 func (c *Controller) SetParentOf(f func(manifest.NamedResource) (manifest.NamedResource, bool)) {
 	c.requireNotStarted("SetParentOf")
 	c.parentOf = f
@@ -151,7 +151,7 @@ func (c *Controller) SetParentOf(f func(manifest.NamedResource) (manifest.NamedR
 
 // Options is the post-bootstrap, reconcile-shaping config common to every
 // render controller (Kustomization, HelmRelease, ResourceSet). The
-// orchestrator wires it once before Start; the source controller is fetch-only
+// orchestrator wires it once before dispatch; the source controller is fetch-only
 // and configures just its filter directly, so it does NOT embed this. A
 // concrete controller embeds Options in its own option struct and forwards it
 // to Configure, then assigns its controller-specific fields.
@@ -180,7 +180,7 @@ type Options struct {
 // Configure applies the common reconcile-shaping config. A concrete controller
 // calls c.Controller.Configure(opts.Options) before assigning its own fields.
 // The setters are independent single-field writes, so their order is
-// immaterial; each still panics if called after Start.
+// immaterial; each panics once StartLifecycle is called.
 func (c *Controller) Configure(opts Options) {
 	c.SetFilter(opts.Filter)
 	c.SetDepwait(opts.Existence)
@@ -190,7 +190,7 @@ func (c *Controller) Configure(opts Options) {
 }
 
 // KeepEmitted extends the change filter's keep set so render-emitted
-// children pass the changed-only-mode PreGate check. Without this, a
+// children pass the changed-only-mode preGate check. Without this, a
 // parent whose render emits a child that wasn't on disk at filter-build
 // time (kustomize component+replacement KSes, charts that render source
 // CRs) would silently drop that child from the diff comparison. Routed
@@ -198,13 +198,13 @@ func (c *Controller) Configure(opts Options) {
 // unrelated file-loaded children into keep (#204/#260/#308).
 //
 // Newly-kept source and Kustomization ids are refired because their listeners
-// PreGate-skipped before a consumer joined keep (#260, #418). Other kinds are never
+// preGate-skipped before a consumer joined keep (#260, #418). Other kinds are never
 // refired: nothing moves a refired HelmChart's Pending status back to Ready.
 //
 // MUST be called BEFORE Store.AddObject so the listener that fires
 // synchronously during AddObject sees the extended keep set.
 func (c *Controller) KeepEmitted(parent manifest.NamedResource, child manifest.BaseManifest) {
-	if f := c.Filter(); f != nil {
+	if f := c.filter; f != nil {
 		for _, id := range f.AddEmitted(parent, child) {
 			switch id.Kind {
 			case manifest.KindGitRepository, manifest.KindOCIRepository,
@@ -325,8 +325,7 @@ func (c *Controller) SourceSkipped(id manifest.NamedResource, label string) erro
 }
 
 // StartLifecycle flips the started gate, freezing reconcile-shaping
-// config. Concrete controllers call this from their Start(ctx) before
-// installing any listeners via AddListener.
+// config. Call before dispatch or installing listeners via AddListener.
 func (c *Controller) StartLifecycle() {
 	c.started.Store(true)
 }
@@ -378,13 +377,13 @@ func (c *Controller) Close() {
 	}
 }
 
-// PreGate is the canonical Suspend/Filter pre-reconcile check.
+// preGate is the canonical Suspend/Filter pre-reconcile check.
 // Returns true when the resource is gated out — caller MUST bail.
 //
 //   - suspended → marks Ready "suspended", returns true
 //   - filter excludes the id → marks Ready "unchanged", returns true
 //   - otherwise → returns false, caller proceeds to Submit/reconcile
-func (c *Controller) PreGate(id manifest.NamedResource, suspended bool) bool {
+func (c *Controller) preGate(id manifest.NamedResource, suspended bool) bool {
 	if suspended {
 		c.Store.UpdateStatus(id, store.StatusReady, store.MsgSuspended)
 		return true
@@ -396,12 +395,7 @@ func (c *Controller) PreGate(id manifest.NamedResource, suspended bool) bool {
 	return false
 }
 
-// filterActive reports whether a non-nil, enabled change filter is
-// configured. Replaces the previous c.filter.Enabled() call that
-// relied on Filter.Enabled being nil-safe — making every future
-// non-pointer-deref method on *Filter latently NPE-prone. Routing
-// every read through this helper means a future method addition on
-// *Filter doesn't crash PreGate.
+// filterActive reports whether a non-nil, enabled change filter is configured.
 func (c *Controller) filterActive() bool {
 	return c.filter != nil && c.filter.Enabled()
 }
@@ -475,7 +469,7 @@ func (c *Controller) RequireRefresh[T manifest.BaseManifest](
 	return obj, ok, nil
 }
 
-// Recover catches a panic from the current goroutine and marks id
+// recoverPanic catches a panic from the current goroutine and marks id
 // StatusFailed with a "panic: <r>" message so the orchestrator
 // surfaces it. log is the controller's pre-bound logger (Logger()); the
 // panic is recorded under its controller=<name> attribute.
@@ -485,7 +479,7 @@ func (c *Controller) RequireRefresh[T manifest.BaseManifest](
 // reconcile MUST count against the orchestrator's failure gate, not
 // silently masquerade as success when Service.Failures() is consulted
 // for the final exit-code decision.
-func Recover(s *store.Store, id manifest.NamedResource, log *slog.Logger) {
+func recoverPanic(s *store.Store, id manifest.NamedResource, log *slog.Logger) {
 	r := recover()
 	if r == nil {
 		return
@@ -495,38 +489,11 @@ func Recover(s *store.Store, id manifest.NamedResource, log *slog.Logger) {
 	panic(r)
 }
 
-// RunWithStatus is the standard reconcile body for controllers that
-// (a) coalesce concurrent submits per-id and (b) want the recover →
-// re-read → run → mark-Ready/Failed pattern. The re-read lets a
-// coalesced re-run pick up patches a parent KS installed mid-flight
-// rather than the stale payload from the original event. A missing
-// object (deleted between coalescer enqueue and run) is treated as a
-// no-op rather than a failure.
-//
-// On success the terminal status write is conditional: if the
-// current status already carries an informative Ready message (a
-// soft-skip from --allow-missing-secrets, an MsgUnchanged from the
-// change filter, an MsgSuspended from PreGate), the empty-message
-// overwrite is suppressed so the informative message survives a
-// short-circuited coalesced re-run that returns nil. Plain Ready
-// (no message) and any non-Ready status get the standard "" Ready
-// write so the controller's terminal contract is preserved.
-func RunWithStatus[T manifest.BaseManifest](
-	ctx context.Context,
-	s *store.Store,
-	id manifest.NamedResource,
-	log *slog.Logger,
-	fn func(context.Context, T) error,
-) {
-	_ = RunWithStatusOutcome[T](ctx, s, id, log, fn)
-}
-
-// RunWithStatusOutcome is RunWithStatus that additionally reports the dag
-// scheduler's outcome: the blocked dependency set, or nil when the body
-// terminalized (Ready / Skipped / Failed). It intercepts a *depwait.ErrBlocked
-// returned by the body BEFORE the generic Failed-status write, leaving the
-// Pending status the body wrote — so a blocked node stays non-Ready
-// and re-runnable.
+// RunWithStatusOutcome re-reads the stored object, runs its reconcile body,
+// and records a terminal status under panic recovery. Informative Ready
+// messages and externally recorded failures MUST survive a no-op reconcile.
+// A missing object is skipped. A blocked dependency set is returned without
+// marking Failed so the scheduler can park and re-run the node.
 func RunWithStatusOutcome[T manifest.BaseManifest](
 	ctx context.Context,
 	s *store.Store,
@@ -534,7 +501,7 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 	log *slog.Logger,
 	fn func(context.Context, T) error,
 ) []manifest.NamedResource {
-	defer Recover(s, id, log)
+	defer recoverPanic(s, id, log)
 	obj, ok := s.Get[T](id)
 	if !ok {
 		// Object deleted (or wrong type) between discovery/enqueue and run.
@@ -542,7 +509,7 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 		// the testrunner reports cleanly — a vanished resource is the same
 		// outcome real Flux sees when the CR is deleted.
 		if info, has := s.GetStatus(id); has && info.Status != store.StatusReady {
-			s.UpdateStatus(id, store.StatusReady, "skipped: object not in store at reconcile time")
+			s.UpdateStatus(id, store.StatusReady, store.SkippedPrefix+" object not in store at reconcile time")
 		}
 		return nil
 	}
@@ -586,7 +553,7 @@ type Dispatch[T manifest.BaseManifest] struct {
 }
 
 // DispatchNode runs id's reconcile body under the dag engine and reports the
-// blocked dependency set (nil = terminalized). It performs the PreGate /
+// blocked dependency set (nil = terminalized). It performs the preGate /
 // preflight pre-checks, then RunWithStatusOutcome. level threads the
 // scheduler's fixpoint level into Require. The orchestrator's Dispatcher
 // calls this, routing by Kind, so no per-kind match check is needed here.
@@ -605,7 +572,7 @@ func (c *Controller) DispatchNode[T manifest.BaseManifest](
 		// Vanished — RunWithStatusOutcome's vanished branch records a terminal status.
 		return RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
 	}
-	if c.PreGate(id, dispatch.Suspended(obj)) {
+	if c.preGate(id, dispatch.Suspended(obj)) {
 		return nil // gated out (suspended/unchanged)
 	}
 	if msg, failed := c.PreflightFailure(id); failed {

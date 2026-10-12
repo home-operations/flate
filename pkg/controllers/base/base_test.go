@@ -15,13 +15,13 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-func TestRunWithStatus_Success(t *testing.T) {
+func TestRunWithStatusOutcome_Success(t *testing.T) {
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatus(t.Context(), s, id, slog.Default(),
+	base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
 		func(_ context.Context, obj *manifest.HelmRelease) error {
 			if obj.Name != "app" {
 				t.Errorf("re-read got %q, want app", obj.Name)
@@ -35,13 +35,13 @@ func TestRunWithStatus_Success(t *testing.T) {
 	}
 }
 
-func TestRunWithStatus_Failure(t *testing.T) {
+func TestRunWithStatusOutcome_Failure(t *testing.T) {
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatus(t.Context(), s, id, slog.Default(),
+	base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
 		func(_ context.Context, _ *manifest.HelmRelease) error {
 			return errors.New("render failed")
 		},
@@ -55,7 +55,7 @@ func TestRunWithStatus_Failure(t *testing.T) {
 	}
 }
 
-func TestRunWithStatus_Panic(t *testing.T) {
+func TestRunWithStatusOutcome_Panic(t *testing.T) {
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
@@ -68,7 +68,7 @@ func TestRunWithStatus_Panic(t *testing.T) {
 	var rec any
 	func() {
 		defer func() { rec = recover() }()
-		base.RunWithStatus(t.Context(), s, id, slog.Default(),
+		base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
 			func(_ context.Context, _ *manifest.HelmRelease) error {
 				panic("kaboom")
 			},
@@ -86,11 +86,11 @@ func TestRunWithStatus_Panic(t *testing.T) {
 	}
 }
 
-func TestRunWithStatus_MissingObject(t *testing.T) {
+func TestRunWithStatusOutcome_MissingObject(t *testing.T) {
 	s := store.New()
 	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "ghost"}
 	called := false
-	base.RunWithStatus(t.Context(), s, id, slog.Default(),
+	base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
 		func(_ context.Context, _ *manifest.HelmRelease) error {
 			called = true
 			return nil
@@ -104,14 +104,8 @@ func TestRunWithStatus_MissingObject(t *testing.T) {
 	}
 }
 
-// TestRunWithStatus_PreservesInformativeReadyMessage pins the
-// 3.5 fix: when a coalesced re-run returns nil but the current
-// status carries an informative Ready message (skipped:, unchanged,
-// suspended), the terminal "" Ready write must NOT clobber it. The
-// previous unconditional s.UpdateStatus(id, Ready, "") at the end
-// of RunWithStatus erased these sub-states whenever a short-circuit
-// returned nil after the message had been set.
-func TestRunWithStatus_PreservesInformativeReadyMessage(t *testing.T) {
+// Informative Ready messages MUST survive a no-op reconcile.
+func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
 	for _, message := range []string{store.MsgUnchanged, store.MsgSuspended, store.SkippedPrefix + " missing secret"} {
 		t.Run(message, func(t *testing.T) {
 			s := store.New()
@@ -120,7 +114,7 @@ func TestRunWithStatus_PreservesInformativeReadyMessage(t *testing.T) {
 			id := hr.Named()
 			s.UpdateStatus(id, store.StatusReady, message)
 
-			base.RunWithStatus(t.Context(), s, id, slog.Default(),
+			base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
 				func(_ context.Context, _ *manifest.HelmRelease) error { return nil },
 			)
 			got, _ := s.GetStatus(id)
@@ -134,13 +128,13 @@ func TestRunWithStatus_PreservesInformativeReadyMessage(t *testing.T) {
 	}
 }
 
-func TestRunWithStatus_PreservesExternalFailure(t *testing.T) {
+func TestRunWithStatusOutcome_PreservesExternalFailure(t *testing.T) {
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatus(t.Context(), s, id, slog.Default(),
+	base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
 		func(_ context.Context, _ *manifest.HelmRelease) error {
 			s.UpdateStatus(id, store.StatusFailed, "dependency cycle detected")
 			return nil
@@ -281,7 +275,7 @@ func TestController_DoubleCloseIsSafe(t *testing.T) {
 }
 
 // TestDispatchNode pins the dag scheduler's per-node entry point: it must bail
-// (via PreGate) on a suspended object — Ready/"suspended", no reconcile — mark a
+// (via preGate) on a suspended object — Ready/"suspended", no reconcile — mark a
 // preflight-failed id Failed without running it, and run the reconcile only for
 // a non-suspended, preflight-clean object. (The scheduler's Dispatcher routes by
 // Kind, so DispatchNode does no match check.)
@@ -304,12 +298,12 @@ func TestDispatchNode(t *testing.T) {
 		})
 	}
 
-	// Suspended → PreGate bails to Ready/"suspended", no reconcile.
+	// Suspended → preGate bails to Ready/"suspended", no reconcile.
 	susHR := &manifest.HelmRelease{Name: "suspended", Namespace: "ns"}
 	s.AddObject(susHR)
 	dispatch(susHR.Named())
 	if info, _ := s.GetStatus(susHR.Named()); info.Message != "suspended" {
-		t.Errorf("suspended HR status = %+v; want Ready/suspended via PreGate", info)
+		t.Errorf("suspended HR status = %+v; want Ready/suspended via preGate", info)
 	}
 
 	// Preflight-failed → Failed, no reconcile.

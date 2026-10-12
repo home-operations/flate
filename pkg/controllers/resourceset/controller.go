@@ -27,7 +27,7 @@ type RawSink func(owner, parentKS manifest.NamedResource, doc map[string]any)
 
 // Controller orchestrates ResourceSet reconciliation. Reconcile-shaping
 // state (Filter, ParentOf, …) flows in via Configure exactly once before
-// Start — the same "config is read-only after Start" invariant the KS
+// StartLifecycle — the same "config is read-only after StartLifecycle" invariant the KS
 // and HR controllers carry, encoded in the embedded *base.Controller.
 type Controller struct {
 	*base.Controller
@@ -42,7 +42,7 @@ type Controller struct {
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto the
-// controller before Start. base.Options holds the config common to every
+// controller before StartLifecycle. base.Options holds the config common to every
 // render controller (Filter / ParentOf — here gating the RS render on its
 // structural parent KS, which may re-emit the RS with a substituted
 // name/namespace; Existence / PreflightFailure); RawSink is
@@ -61,18 +61,11 @@ func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 }
 
 // Configure installs the post-bootstrap state. Panics if called after
-// Start — encodes the invariant that reconcile-shaping config is
+// StartLifecycle — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
 func (c *Controller) Configure(opts Options) {
 	c.Controller.Configure(opts.Options)
 	c.rawSink = opts.RawSink
-}
-
-// Start wires lifecycle state. The scheduler owns dispatch (via
-// ReconcileNode) and the orchestrator's dagrun wires its own wake
-// listeners, so Start registers no dispatch listener of its own.
-func (c *Controller) Start(_ context.Context) {
-	c.StartLifecycle()
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the

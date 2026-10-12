@@ -2,43 +2,32 @@ package git
 
 import (
 	"cmp"
-	"crypto/tls"
 	"fmt"
 
+	"github.com/go-git/go-git/v5"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// resolveTLS builds a *tls.Config from spec.secretRef for HTTPS
-// GitRepositories. It reads both a custom CA ("ca.crt" preferred,
-// "caFile" legacy alias) AND a client certificate ("tls.crt" +
-// "tls.key") so HTTPS-with-mTLS repositories authenticate — matching
-// the cert-resolution schema the OCI and Bucket fetchers already use.
-// Returns nil when the secret carries no TLS material at all (the
-// anonymous / system-CA / SSH-identity / basic-auth path).
-//
-// Unlike OCI/Bucket this does NOT route through source.ResolveCertSecret:
-// a GitRepository's single secretRef carries auth credentials AND
-// optional TLS material together, so a secret holding only an SSH
-// identity or username/password must resolve to nil here rather than
-// erroring "no TLS material". The SSH-URL guard and the no-material
-// short-circuit below preserve that.
-func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (*tls.Config, error) {
+// Git secretRef may contain only auth credentials, so TLS material is optional.
+// Validate PEM before go-git appends the CA bundle to the system trust roots.
+func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (git.CloneOptions, error) {
+	var opts git.CloneOptions
 	if repo.SecretRef == nil {
-		return nil, nil
+		return opts, nil
 	}
 	if isSSHURL(repo.URL) {
-		return nil, nil
+		return opts, nil
 	}
 	if f.Secrets == nil {
 		// resolveAuth already errored if SecretRef && !Secrets, but
 		// guard anyway so this method is safe to call standalone.
-		return nil, nil
+		return opts, nil
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
 		// resolveAuth reports the missing-secret error first.
-		return nil, nil
+		return opts, nil
 	}
 	crt, _, _ := sec.Value("tls.crt")
 	key, _, _ := sec.Value("tls.key")
@@ -46,17 +35,16 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (*tls.Config, error) 
 	legacyCA, _, _ := sec.Value("caFile")
 	ca = cmp.Or(ca, legacyCA)
 	if manifest.HasValuePlaceholder(crt) || manifest.HasValuePlaceholder(key) || manifest.HasValuePlaceholder(ca) {
-		return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "TLS material unavailable")
+		return opts, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "TLS material unavailable")
 	}
 	if crt == "" && key == "" && ca == "" {
-		// No TLS material — the secret carries only SSH identity or
-		// basic-auth credentials. Anonymous / system-CA path.
-		return nil, nil
+		return opts, nil
 	}
-	cfg, err := source.BuildTLSConfig(crt, key, ca)
+	_, err := source.BuildTLSConfig(crt, key, ca)
 	if err != nil {
-		return nil, fmt.Errorf("%s: secretRef %s/%s: %w",
+		return opts, fmt.Errorf("%s: secretRef %s/%s: %w",
 			gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
 	}
-	return cfg, nil
+	opts.CABundle, opts.ClientCert, opts.ClientKey = []byte(ca), []byte(crt), []byte(key)
+	return opts, nil
 }

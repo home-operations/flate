@@ -21,7 +21,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/git/internal/gittransport"
+	// HTTPS operations must retain flate's header timeout and egress guard.
+	_ "github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
@@ -47,41 +48,40 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*sto
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GitProviderGeneric,
 			"SecretRef-based credentials")
 	}
-	auth, proxy, restore, err := f.resolveTransport(repo)
+	opts, err := f.resolveTransport(repo)
 	if err != nil {
 		return nil, err
 	}
-	defer restore()
-	return f.fetch(ctx, repo, auth, proxy)
+	return f.fetch(ctx, repo, opts)
 }
 
-// resolveTransport resolves the auth, TLS, and proxy material for repo
-// and installs the process-wide HTTPS transport for the fetch. It
-// returns the auth method and proxy config the go-git call needs plus a
-// restore closure the caller MUST defer to tear the transport back down.
-// Shared by Fetch and FetchRemoteBase so both agree on credential resolution.
-func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (transport.AuthMethod, *source.ProxyConfig, func(), error) {
+func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (git.CloneOptions, error) {
 	auth, err := f.resolveAuth(repo)
 	if err != nil {
-		return nil, nil, nil, err
+		return git.CloneOptions{}, err
 	}
-	tlsCfg, err := f.resolveTLS(repo)
+	opts, err := f.resolveTLS(repo)
 	if err != nil {
-		return nil, nil, nil, err
+		return git.CloneOptions{}, err
 	}
 	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "GitRepository",
 		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
 	if err != nil {
-		return nil, nil, nil, err
+		return git.CloneOptions{}, err
 	}
-	restore, err := gittransport.InstallHTTPS(tlsCfg, proxy)
-	if err != nil {
-		return nil, nil, nil, err
+	opts.URL, opts.NoCheckout, opts.Auth = repo.URL, true, auth
+	opts.Depth = effectiveDepth(f.Depth, repo.Reference)
+	if proxy != nil {
+		if _, err := proxy.URL(); err != nil {
+			return git.CloneOptions{}, fmt.Errorf("%w: %s: proxySecretRef %s/%s: invalid proxy address",
+				manifest.ErrInput, gitID(repo), repo.Namespace, repo.ProxySecretRef.Name)
+		}
+		opts.ProxyOptions = transport.ProxyOptions{URL: proxy.Address, Username: proxy.Username, Password: proxy.Password}
 	}
-	return auth, proxy, restore, nil
+	return opts, nil
 }
 
-func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth transport.AuthMethod, proxy *source.ProxyConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts git.CloneOptions) (*store.SourceArtifact, error) {
 	if err := f.validateRepo(repo); err != nil {
 		return nil, err
 	}
@@ -97,10 +97,6 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 	maxAge := repo.Interval.Duration
 	if canUseCachedGitSlot(repo.Reference) {
 		maxAge = sourcecache.Forever
-	}
-	opts := git.CloneOptions{URL: repo.URL, NoCheckout: true, Auth: auth, Depth: effectiveDepth(f.Depth, repo.Reference)}
-	if proxy != nil {
-		opts.ProxyOptions = transport.ProxyOptions{URL: proxy.Address, Username: proxy.Username, Password: proxy.Password}
 	}
 	ignore := ""
 	if repo.Ignore != nil {
@@ -122,7 +118,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, auth 
 			if err := checkoutRef(cloned, ref, repo.SparseCheckout); err != nil {
 				return plumbing.ZeroHash, err
 			}
-			if err := updateSubmodules(ctx, cloned, auth); err != nil {
+			if err := updateSubmodules(ctx, cloned, opts.Auth); err != nil {
 				return plumbing.ZeroHash, err
 			}
 		}
@@ -148,13 +144,18 @@ type gitAcquisition struct {
 func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree billy.Filesystem, request gitAcquisition) (*git.Repository, error) {
 	ref := request.spec.Reference
 	options := request.options
+	fetch := &git.FetchOptions{
+		Auth: options.Auth, ProxyOptions: options.ProxyOptions, CABundle: options.CABundle,
+		ClientCert: options.ClientCert, ClientKey: options.ClientKey,
+		Depth: options.Depth, Tags: git.NoTags,
+	}
 	if canUseCachedGitSlot(ref) || ref != nil && ref.Commit != "" && ref.Branch == "" {
 		repo, err := initRemote(storer, worktree, options.URL)
 		if err != nil {
 			return nil, err
 		}
-		exact := &git.FetchOptions{Auth: options.Auth, ProxyOptions: options.ProxyOptions, Depth: 1, Tags: git.NoTags, RefSpecs: []config.RefSpec{config.RefSpec("+" + ref.Commit + ":refs/flate/pin")}}
-		err = repo.FetchContext(ctx, exact)
+		fetch.Depth, fetch.RefSpecs = 1, []config.RefSpec{config.RefSpec("+" + ref.Commit + ":refs/flate/pin")}
+		err = repo.FetchContext(ctx, fetch)
 		if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) {
 				return nil, err
@@ -162,8 +163,8 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 			if _, loaded := f.fallback.LoadOrStore(options.URL, struct{}{}); !loaded {
 				slog.Debug("git: exact commit fetch refused; fetching full history", "url", options.URL, "error", err)
 			}
-			exact.Depth, exact.RefSpecs = 0, []config.RefSpec{"+refs/*:refs/*"}
-			if err := repo.FetchContext(ctx, exact); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+			fetch.Depth, fetch.RefSpecs = 0, []config.RefSpec{"+refs/*:refs/*"}
+			if err := repo.FetchContext(ctx, fetch); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 				return nil, err
 			}
 		}
@@ -171,7 +172,7 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 	}
 	if request.spec.RecurseSubmodules {
 		options.RecurseSubmodules = git.DefaultSubmoduleRecursionDepth
-		options.Depth = 0
+		options.Depth, fetch.Depth = 0, 0
 	}
 	specs := refSpecs(ref)
 	if len(specs) == 0 || worktree != nil {
@@ -186,7 +187,8 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 		} else {
 			return repo, nil
 		}
-		err = repo.FetchContext(ctx, &git.FetchOptions{Auth: options.Auth, ProxyOptions: options.ProxyOptions, RefSpecs: specs, Tags: git.NoTags})
+		fetch.Depth, fetch.RefSpecs = 0, specs
+		err = repo.FetchContext(ctx, fetch)
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
 			err = nil
 		}
@@ -196,7 +198,8 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 	if err != nil {
 		return nil, err
 	}
-	err = repo.FetchContext(ctx, &git.FetchOptions{Auth: options.Auth, ProxyOptions: options.ProxyOptions, Depth: options.Depth, RefSpecs: specs, Tags: git.NoTags})
+	fetch.RefSpecs = specs
+	err = repo.FetchContext(ctx, fetch)
 	if errors.Is(err, git.NoErrAlreadyUpToDate) {
 		err = nil
 	}

@@ -1,12 +1,21 @@
 package gittransport
 
 import (
-	"crypto/tls"
+	"context"
+	"encoding/pem"
+	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
-
+	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
 
 // TestDefaultClientIsBounded confirms init installed a go-git HTTPS default
@@ -22,40 +31,62 @@ func TestDefaultClientIsBounded(t *testing.T) {
 	if got, want := boundedHTTPSTransport.ResponseHeaderTimeout, source.ResponseHeaderTimeout; got != want {
 		t.Fatalf("default HTTPS transport ResponseHeaderTimeout = %v; want source.ResponseHeaderTimeout %v", got, want)
 	}
-}
-
-// TestInstallHTTPS_AnonymousNoOp confirms the anonymous path is a no-op that
-// does not acquire the install lock (it relies on the bounded default), and
-// the returned restore is safe to call.
-func TestInstallHTTPS_AnonymousNoOp(t *testing.T) {
-	restore, err := InstallHTTPS(nil, nil)
-	if err != nil {
-		t.Fatalf("InstallHTTPS(nil, nil): %v", err)
-	}
-	if restore == nil {
-		t.Fatal("restore func is nil")
-	}
-	restore() // must not panic / must not unlock an unheld mutex
-}
-
-// TestInstallHTTPS_RestoresBoundedDefault pins the liveness contract: after a
-// custom-CA fetch's restore runs, go-git's process-global https client is the
-// BOUNDED default again — not go-git's unbounded githttp.DefaultClient. Without
-// this, the first mTLS/custom-CA GitRepository fetch would strip the
-// ResponseHeaderTimeout backstop off every subsequent anonymous fetch in the
-// process, re-exposing the hang this package exists to prevent.
-func TestInstallHTTPS_RestoresBoundedDefault(t *testing.T) {
-	restore, err := InstallHTTPS(&tls.Config{}, nil) // non-nil cfg → takes the install path
-	if err != nil {
-		t.Fatalf("InstallHTTPS: %v", err)
-	}
-	// Mid-install the custom transport is active, not the bounded default.
-	if client.Protocols["https"] == boundedHTTPSClient {
-		t.Fatal("custom transport was not installed under the lock")
-	}
-	restore()
-	// Restore must reinstall the bounded default, not githttp.DefaultClient.
 	if client.Protocols["https"] != boundedHTTPSClient {
-		t.Fatal("restore did not reinstall the bounded default HTTPS client")
+		t.Fatal("bounded HTTPS client is not installed")
+	}
+}
+
+func TestDefaultClient_PerCallControls(t *testing.T) {
+	bound := boundedHTTPSTransport.ResponseHeaderTimeout
+	boundedHTTPSTransport.ResponseHeaderTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { boundedHTTPSTransport.ResponseHeaderTimeout = bound })
+	for _, name := range []string{"ca-timeout", "insecure-timeout", "restricted", "canceled"} {
+		t.Run(name, func(t *testing.T) {
+			arrived := make(chan struct{}, 1)
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				arrived <- struct{}{}
+				<-r.Context().Done()
+			}))
+			defer srv.Close()
+			remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{Name: "origin", URLs: []string{srv.URL}})
+			opts := &git.ListOptions{CABundle: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})}
+			if name == "insecure-timeout" {
+				opts.CABundle, opts.InsecureSkipTLS = nil, true
+			}
+			if name == "restricted" {
+				ssrfguard.Restrict(true)
+				defer ssrfguard.Restrict(false)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := remote.ListContext(ctx, opts); done <- err }()
+			if name == "canceled" {
+				select {
+				case <-arrived:
+					cancel()
+				case <-time.After(time.Second):
+					t.Fatal("TLS listing did not reach server")
+				}
+			}
+			err := <-done
+			switch name {
+			case "restricted":
+				if dial, ok := errors.AsType[*net.OpError](err); !ok || dial.Op != "dial" {
+					t.Fatalf("egress was not blocked at dial: %v", err)
+				}
+			case "canceled":
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation: %v", err)
+				}
+			default:
+				if timeout, ok := errors.AsType[net.Error](err); !ok || !timeout.Timeout() {
+					t.Fatalf("header timeout: %v", err)
+				}
+			}
+			if boundedHTTPSTransport.TLSClientConfig != nil && boundedHTTPSTransport.TLSClientConfig.InsecureSkipVerify {
+				t.Fatal("per-call TLS mutated the installed transport")
+			}
+		})
 	}
 }

@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -70,18 +71,30 @@ func StrictParent(claims []KSClaim, file string, self NamedResource, selfPrefixe
 	return NamedResource{}, false
 }
 
-// NormalizeClaimBase returns a clean repo-relative base with no trailing slash.
-// Flux SecureJoin roots spec.path at the artifact, including absolute paths and
-// parent segments that would otherwise escape the root.
+// NormalizeClaimBase returns a repo-relative base with no trailing slash.
+// Leading parent segments are clamped at the artifact root. Interior parent
+// segments must remain unresolved because SecureJoin follows symlinks first.
 func NormalizeClaimBase(p string) string {
-	p = strings.TrimPrefix(strings.Trim(p, "/"), "./")
-	clean := path.Clean(p)
-	if clean == "." {
-		return ""
+	p = strings.Trim(filepath.ToSlash(p), "/")
+	for {
+		part, rest, _ := strings.Cut(p, "/")
+		if part != "." && part != ".." {
+			break
+		}
+		p = strings.TrimLeft(rest, "/")
 	}
-	// Root only escaping paths; prefixing every path allocates on each call.
-	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return strings.TrimPrefix(path.Clean("/"+p), "/")
+	if !strings.Contains(p, "//") && !strings.Contains(p, "/./") && !strings.HasSuffix(p, "/.") {
+		return p
 	}
-	return strings.TrimPrefix(clean, "/")
+	var b strings.Builder
+	for part := range strings.SplitSeq(p, "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('/')
+		}
+		b.WriteString(part)
+	}
+	return b.String()
 }

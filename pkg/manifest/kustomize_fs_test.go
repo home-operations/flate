@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -34,10 +35,6 @@ func TestBuildKSClaims_PathsAndComponents(t *testing.T) {
 	}
 }
 
-// TestNormalizeClaimBase pins the spec.path shapes that must all claim the
-// same repo-relative files. The leading-slash case is #920: Flux resolves
-// spec.path root-relatively, so `/kubernetes/apps` must not keep a slash that
-// a repo-relative source file can never match.
 func TestNormalizeClaimBase(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -47,12 +44,18 @@ func TestNormalizeClaimBase(t *testing.T) {
 		{"/kubernetes/apps", "kubernetes/apps"},
 		{"/kubernetes/apps/", "kubernetes/apps"},
 		{"//kubernetes/apps", "kubernetes/apps"},
-		{"./apps/../x", "x"},
+		{"./apps/../x", "apps/../x"},
 		{"apps//team", "apps/team"},
+		{filepath.FromSlash("apps/team"), "apps/team"},
+		{"alias/../base", "alias/../base"},
+		{"./alias//./../base/.", "alias/../base"},
 		{".//apps", "apps"},
 		{"././", ""},
 		{"../x", "x"},
-		{"apps/../../x", "x"},
+		{"../../x", "x"},
+		{".", ""},
+		{"..", ""},
+		{"apps/../../x", "apps/../../x"},
 		{"..foo", "..foo"},
 		{"./", ""},
 		{"/", ""},

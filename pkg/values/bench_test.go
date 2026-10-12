@@ -161,19 +161,49 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 	cm := &manifest.ConfigMap{Name: "cluster-settings", Namespace: "flux-system", Data: data}
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 
-	// Parsed inputs already own PostBuild storage; only references are fresh here.
-	var postBuild kustomizev1.PostBuild
-
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
 		// Fresh KS per iteration mirrors a distinct KS reconcile sharing
 		// the same substituteFrom CM.
-		postBuild.SubstituteFrom = []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}}
+		postBuild := kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}}}
 		ks := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
 		ks.PostBuild = &postBuild
 		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
 			b.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
+		}
+	}
+}
+
+func BenchmarkExpandPostBuildSubstituteReference_ParseSharedCM(b *testing.B) {
+	const input = `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: app, namespace: flux-system}
+spec:
+  sourceRef: {kind: GitRepository, name: apps}
+  postBuild: {substituteFrom: [{kind: ConfigMap, name: cluster-settings}]}
+`
+	data := make(map[string]any, 50)
+	for i := range 50 {
+		data[fmt.Sprintf("VAR_%d", i)] = fmt.Sprintf("value-%d", i)
+	}
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{{Name: "cluster-settings", Namespace: "flux-system", Data: data}}}
+	b.ReportAllocs()
+	for b.Loop() {
+		docs, err := manifest.DecodeDocs(strings.NewReader(input))
+		if err != nil {
+			b.Fatal(err)
+		}
+		obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+		if err != nil {
+			b.Fatal(err)
+		}
+		ks := obj.(*manifest.Kustomization)
+		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
+			b.Fatal(err)
+		}
+		if len(ks.PostBuildSubstitute) != len(data) || ks.PostBuildSubstitute["VAR_49"] != "value-49" {
+			b.Fatal("shared ConfigMap substitutions were not expanded")
 		}
 	}
 }

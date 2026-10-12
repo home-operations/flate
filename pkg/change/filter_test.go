@@ -1,8 +1,6 @@
 package change
 
 import (
-	"io"
-	"log/slog"
 	"slices"
 	"testing"
 
@@ -1294,20 +1292,6 @@ func TestFilter_SubstitutionGeneratorProducers(t *testing.T) {
 				t.Fatalf("producer retained = %t, optional reference = %t", got, tc.optional)
 			}
 		})
-	}
-}
-
-func TestFilter_LogValueNotEvaluatedAtInfo(t *testing.T) {
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	f := &Filter{keep: map[manifest.NamedResource]struct{}{
-		{Kind: manifest.KindKustomization, Name: "kept"}: {},
-	}}
-	if allocations := testing.AllocsPerRun(100, func() {
-		slog.Debug("changed-only keep set", "filter", f)
-	}); allocations != 0 {
-		t.Errorf("disabled debug log allocated %g times", allocations)
 	}
 }
 

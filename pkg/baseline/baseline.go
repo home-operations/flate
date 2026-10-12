@@ -322,7 +322,7 @@ func resolveExplicit(ctx context.Context, repo *git.Repository, base string) (*r
 	// `--base origin/main`. Skip the fallback when base already
 	// looks remote-qualified to keep the error close to intent.
 	if !strings.ContainsRune(base, '/') {
-		remote := "origin/" + base
+		remote := git.DefaultRemoteName + "/" + base
 		if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
 			return &resolution{Hash: *h, Source: "explicit --base=" + base + " (via " + remote + ")", Repo: repo}, nil
 		}

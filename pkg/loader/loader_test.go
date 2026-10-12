@@ -273,6 +273,34 @@ metadata: {name: a, namespace: ns}
 	}
 }
 
+func TestLoader_SkipsDotDirs(t *testing.T) {
+	for _, name := range []string{".git", ".cache", ".hidden"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, filepath.Join(name, "hidden.yaml"), `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: hidden, namespace: ns}
+spec: {path: ./hidden, sourceRef: {kind: GitRepository, name: flux-system}}
+`)
+			testutil.WriteFile(t, dir, "visible.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: visible, namespace: ns}
+spec: {path: ./visible, sourceRef: {kind: GitRepository, name: flux-system}}
+`)
+			s := store.New()
+			if _, err := New(s).Load(t.Context(), dir); err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "hidden"}) != nil {
+				t.Error("dot-directory manifest was loaded")
+			}
+			if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "visible"}) == nil {
+				t.Error("root manifest was skipped")
+			}
+		})
+	}
+}
+
 // A directory whose kustomization.yaml declares `kind: Component` is
 // a template fragment — parents reference it via spec.components and
 // kustomize materializes it at parent-render time. flate's standalone

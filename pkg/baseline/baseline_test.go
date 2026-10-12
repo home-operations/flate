@@ -205,6 +205,61 @@ func TestAutoResolve_OriginMainFallback(t *testing.T) {
 	}
 }
 
+func TestAutoResolve_Ladder(t *testing.T) {
+	for _, tc := range []struct {
+		name, main, master, remoteHEAD, upstream, want string
+	}{
+		{name: "master only", master: "base", want: "master"},
+		{name: "main and master, different tips", main: "tip", master: "base", want: "main"},
+		{name: "origin/HEAD disjoint, origin/main valid", remoteHEAD: "disjoint", main: "tip", want: "main"},
+		{name: "@{u} disjoint, origin/HEAD valid", upstream: "disjoint", remoteHEAD: "tip", want: "HEAD"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			base := initRepoWithFile(t, dir, "a.yaml", "base")
+			tip := writeAndCommit(t, dir, "a.yaml", "tip")
+			repo := openHelper(t, dir)
+			disjoint, err := repo.CommitObject(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			disjoint.Message = "disjoint root"
+			encoded := repo.Storer.NewEncodedObject()
+			if err := disjoint.Encode(encoded); err != nil {
+				t.Fatal(err)
+			}
+			disjointHash, err := repo.Storer.SetEncodedObject(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hashes := map[string]plumbing.Hash{"base": base, "tip": tip, "disjoint": disjointHash}
+			for _, ref := range []struct{ name, commit string }{
+				{"main", tc.main}, {"master", tc.master}, {"HEAD", tc.remoteHEAD}, {"upstream", tc.upstream},
+			} {
+				if ref.commit != "" {
+					setRef(t, repo, plumbing.NewRemoteReferenceName("origin", ref.name), hashes[ref.commit])
+				}
+			}
+			if tc.upstream != "" {
+				head, err := repo.Head()
+				if err != nil {
+					t.Fatal(err)
+				}
+				configureBranch(t, repo, head.Name().Short(), "origin", "refs/heads/upstream")
+			}
+
+			res, err := AutoResolve(t.Context(), dir, "", cacheroot.Layout{})
+			if err != nil {
+				t.Fatalf("AutoResolve: %v", err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(res.TempDir) })
+			if want := "merge-base with origin/" + tc.want; res.Source != want {
+				t.Errorf("Source = %q, want %q", res.Source, want)
+			}
+		})
+	}
+}
+
 // TestAutoResolve_DetachedHEAD: HEAD is at a SHA, not a branch. The
 // @{u} rung is unreachable (no branch → no config); the algorithm
 // must fall through to origin/HEAD. This is the GH Actions PR case.

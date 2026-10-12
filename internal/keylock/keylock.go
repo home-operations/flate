@@ -35,6 +35,9 @@ func (m *KeyMap[K]) Acquire(ctx context.Context, key K) (release func(), err err
 	}
 	m.mu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return noop, err
+	}
 	select {
 	case lock <- struct{}{}:
 		return func() { <-lock }, nil

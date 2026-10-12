@@ -2,6 +2,7 @@ package keylock
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -63,6 +64,19 @@ func TestKeyMap_CancelledCtxReturnsErr(t *testing.T) {
 	defer release2()
 	if err == nil {
 		t.Errorf("expected ctx.Err, got nil")
+	}
+}
+
+func TestKeyMap_PreCancelledUncontendedReturnsErr(t *testing.T) {
+	m := New[string]()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for range 100 {
+		release, err := m.Acquire(ctx, "k")
+		release()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Acquire: got %v, want context.Canceled", err)
+		}
 	}
 }
 

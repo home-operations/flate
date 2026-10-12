@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -195,6 +196,13 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer
 		}
 	}
 	e := &entry{}
+	if c.store != nil && key.git != nil {
+		defer func() {
+			if e.git != nil && e.stored.Digest == "" {
+				_ = os.RemoveAll(filepath.Dir(c.layout.GitObjects(e.git.id)))
+			}
+		}()
+	}
 	var err error
 	if key.git != nil {
 		e.git, e.descriptor, err = c.produceGit(ctx, key.git)

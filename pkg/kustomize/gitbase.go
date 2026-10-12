@@ -19,7 +19,9 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 
+	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
+	"sigs.k8s.io/yaml"
 )
 
 // gitBaseSpec is a resources: entry classified as a remote git base,
@@ -205,6 +207,9 @@ func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSyste
 	input := memFS.(*treeFS)
 	identity := spec.repoURL + "@" + spec.ref
 	if dest := input.bases[identity]; dest != "" {
+		if err := preflightGitBase(ctx, cache, input, filepath.Join(dest, spec.subPath)); err != nil {
+			return "", err
+		}
 		rel, err := filepath.Rel(spec.dir, filepath.Join(dest, spec.subPath))
 		return "./" + filepath.ToSlash(rel), err
 	}
@@ -232,9 +237,53 @@ func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSyste
 		input.bases = make(map[string]string)
 	}
 	input.bases[identity] = dest
-	_, err = preflightRemoteResources(ctx, cache, input, dest)
+	err = preflightGitBase(ctx, cache, input, filepath.Join(dest, spec.subPath))
 	if err != nil {
 		return "", err
 	}
 	return "./" + path.Join(name, spec.subPath), nil
+}
+
+// Fetched bases MUST only preflight packages reachable from the selected path.
+func preflightGitBase(ctx context.Context, cache *TreeCache, input *treeFS, root string) error {
+	pending := []string{root}
+	if input.preflighted == nil {
+		input.preflighted = make(map[string]struct{})
+	}
+	for len(pending) != 0 {
+		dir := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if _, ok := input.preflighted[dir]; ok {
+			continue
+		}
+		input.preflighted[dir] = struct{}{}
+		for _, name := range manifest.KustomizeBuilderFilenames {
+			file := filepath.Join(dir, name)
+			if !input.Exists(file) {
+				continue
+			}
+			if _, err := rewriteURLResources(ctx, cache, input, file); err != nil {
+				return err
+			}
+			body, err := input.ReadFile(file)
+			if err != nil {
+				return err
+			}
+			var k types.Kustomization
+			if err := yaml.Unmarshal(body, &k); err != nil {
+				return err
+			}
+			k.FixKustomization()
+			for _, refs := range [][]string{k.Resources, k.Components} {
+				for _, ref := range refs {
+					target := filepath.Join(dir, ref)
+					if input.IsDir(target) {
+						pending = append(pending, target)
+					}
+				}
+			}
+			break
+		}
+	}
+	return nil
 }

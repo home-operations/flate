@@ -1,12 +1,19 @@
 package source
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/go-git/go-billy/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/storage"
+	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -128,5 +135,89 @@ func TestSweep_DryRunReports(t *testing.T) {
 	}
 	if _, err := os.Stat(slot); err != nil {
 		t.Errorf("DryRun removed slot on disk: %v", err)
+	}
+}
+
+func TestSweep_GitGenerations(t *testing.T) {
+	for _, scenario := range []string{"unheld", "held", "dry-run", "bad-index"} {
+		t.Run(scenario, func(t *testing.T) {
+			layout := cacheroot.New(t.TempDir())
+			c, err := cache.New(t.Context(), layout)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			produce := func(storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+				for _, input := range []billy.Filesystem{storer.(*filesystem.Storage).Filesystem(), worktree} {
+					file, err := input.Create("marker")
+					if err != nil {
+						return plumbing.ZeroHash, err
+					}
+					if _, err := file.Write([]byte("retained")); err != nil {
+						_ = file.Close()
+						return plumbing.ZeroHash, err
+					}
+					if err := file.Close(); err != nil {
+						return plumbing.ZeroHash, err
+					}
+				}
+				return plumbing.ZeroHash, nil
+			}
+			key := cache.GitKey{ID: "source-git-sweep", RecurseSubmodules: true}
+			first, err := c.Git(t.Context(), key, 0, produce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := c.Git(t.Context(), key, 0, produce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "held" {
+				other, err := cache.New(t.Context(), layout)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = other.Close() })
+			}
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "bad-index" {
+				if err := os.WriteFile(filepath.Join(layout.OCI(), "index.json"), []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			res, err := Sweep(layout, SweepOpts{DryRun: scenario == "dry-run"})
+			if scenario == "bad-index" {
+				if err != nil || len(res.Errors) != 1 || len(res.Removed) != 0 {
+					t.Fatalf("unreadable index: %+v, %v", res, err)
+				}
+			} else if err != nil || len(res.Errors) != 0 {
+				t.Fatalf("Sweep: %v, %v", err, res.Errors)
+			}
+			old := filepath.Dir(first.Backing.Root())
+			if scenario == "held" || scenario == "bad-index" {
+				if slices.Contains(res.Removed, old) {
+					t.Fatal("sweep selected a held generation")
+				}
+			} else if !slices.Contains(res.Removed, old) || res.Bytes < 16 {
+				t.Fatalf("orphan not reclaimed: %+v", res)
+			}
+			for _, input := range []billy.Filesystem{first.Backing, first.Worktree} {
+				_, err := input.Stat("marker")
+				if scenario == "unheld" {
+					if !errors.Is(err, fs.ErrNotExist) {
+						t.Fatalf("unheld generation remains: %v", err)
+					}
+				} else if err != nil {
+					t.Fatalf("protected generation removed: %v", err)
+				}
+			}
+			for _, input := range []billy.Filesystem{second.Backing, second.Worktree} {
+				if _, err := input.Stat("marker"); err != nil {
+					t.Fatalf("indexed generation removed: %v", err)
+				}
+			}
+		})
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -51,12 +53,18 @@ func (c *Cache) Git(ctx context.Context, key GitKey, maxAge time.Duration, produ
 
 func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (*GitGeneration, ocispec.Descriptor, error) {
 	g := &GitGeneration{id: uuid.NewString()}
+	complete := false
 	if c.store == nil {
 		g.Backing = memfs.New()
 		if request.key.RecurseSubmodules {
 			g.Worktree = memfs.New()
 		}
 	} else {
+		defer func() {
+			if !complete {
+				_ = os.RemoveAll(filepath.Dir(c.layout.GitObjects(g.id)))
+			}
+		}()
 		g.Backing = osfs.New(c.layout.GitObjects(g.id))
 		if err := g.Backing.MkdirAll(".", 0o750); err != nil {
 			return nil, ocispec.Descriptor{}, err
@@ -77,6 +85,7 @@ func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (*GitGenera
 	if err := errors.Join(closeErr, ctx.Err()); err != nil {
 		return nil, ocispec.Descriptor{}, err
 	}
+	complete = true
 	g.Commit = hash
 	return g, ocispec.Descriptor{Annotations: map[string]string{
 		prefix + "revision": hash.String(), prefix + "git-ref": request.key.Ref, prefix + "git-generation": g.id,

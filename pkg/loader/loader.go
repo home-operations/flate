@@ -108,6 +108,14 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	}
 	var ignore *ignoreSet
 	if l.IgnoreFile != "" {
+		input, name := l.documents.input(abs)
+		info, statErr := fs.Stat(input, name)
+		if errors.Is(statErr, fs.ErrNotExist) || statErr == nil && !info.IsDir() {
+			return 0, nil
+		}
+		if statErr != nil {
+			return 0, statErr
+		}
 		ignore, err = l.documents.loadIgnoreFile(l.IgnoreFile, abs)
 	} else {
 		ignore, err = l.documents.loadIgnore(abs)

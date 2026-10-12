@@ -775,3 +775,50 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 		})
 	}
 }
+
+func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
+	for _, scenario := range []string{"producer", "cancelled", "publication"} {
+		t.Run(scenario, func(t *testing.T) {
+			c := newCache(t, t.TempDir())
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			failure := errors.New("incomplete clone")
+			_, err := c.Git(ctx, GitKey{ID: "source-git-failed", RecurseSubmodules: true}, 0, func(_ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+				file, err := worktree.Create("partial")
+				if err != nil {
+					return plumbing.ZeroHash, err
+				}
+				if err := file.Close(); err != nil {
+					return plumbing.ZeroHash, err
+				}
+				if scenario == "publication" {
+					index := filepath.Join(c.layout.OCI(), ocispec.ImageIndexFile)
+					if err := os.Remove(index); err != nil && !errors.Is(err, fs.ErrNotExist) {
+						return plumbing.ZeroHash, err
+					}
+					return plumbing.ZeroHash, os.Mkdir(index, 0o750)
+				}
+				if scenario == "cancelled" {
+					cancel()
+					return plumbing.ZeroHash, nil
+				}
+				return plumbing.ZeroHash, failure
+			})
+			want := failure
+			if scenario == "cancelled" {
+				want = context.Canceled
+			}
+			if scenario == "publication" {
+				if _, ok := errors.AsType[*CacheError](err); !ok {
+					t.Fatalf("publication error = %v", err)
+				}
+			} else if !errors.Is(err, want) {
+				t.Fatalf("Git error = %v, want %v", err, want)
+			}
+			entries, err := os.ReadDir(filepath.Dir(c.layout.GitObjects("")))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("failed generation directories = %v, %v", entries, err)
+			}
+		})
+	}
+}

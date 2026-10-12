@@ -17,13 +17,14 @@ import (
 // treeFS adapts the common resolver to kyaml's OS mount names. Mutable state
 // belongs to one render; only the sealed lower tree is shared.
 type treeFS struct {
-	upper   *tree.Builder
-	lower   fs.FS
-	root    string
-	rec     *readSet
-	changed map[string]struct{}
-	maxAge  time.Duration
-	bases   map[string]string
+	upper       *tree.Builder
+	lower       fs.FS
+	root        string
+	rec         *readSet
+	changed     map[string]struct{}
+	maxAge      time.Duration
+	bases       map[string]string
+	preflighted map[string]struct{}
 }
 
 func newTreeFS(lower fs.FS, root string, rec *readSet) *treeFS {

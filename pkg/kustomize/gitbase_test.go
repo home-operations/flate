@@ -208,9 +208,11 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 // ../ reference still resolves (copy-only-subPath would break this).
 func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	worktree := fakeWorktree(t, map[string]string{
-		"apps/foo/kustomization.yaml": "resources:\n  - ../../shared\n",
-		"shared/kustomization.yaml":   "resources:\n  - ./cm.yaml\n",
-		"shared/cm.yaml":              "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: from-parent-ref\n",
+		"apps/foo/kustomization.yaml":        "resources:\n  - ../../shared\n",
+		"shared/kustomization.yaml":          "resources:\n  - ./cm.yaml\n",
+		"shared/cm.yaml":                     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: from-parent-ref\n",
+		"examples/kustomization.yaml":        "resources:\n  - http://127.0.0.1:1/unreachable.yaml\n",
+		"apps/foo/unused/kustomization.yaml": "resources:\n  - http://127.0.0.1:1/unreachable.yaml\n",
 	})
 
 	src := writeTree(t, map[string]string{
@@ -286,15 +288,23 @@ func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
 // TestPreflightGitBase_ReusesMountWithinRender: multiple kustomizations referencing
 // the same base each get their own self-contained .flate-remote-<hash>/ dir.
 func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote}\n"))
+	}))
+	t.Cleanup(srv.Close)
 	worktree := fakeWorktree(t, map[string]string{
-		"kustomization.yaml": "resources:\n  - ./cm.yaml\n",
-		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
+		"kustomization.yaml":     "resources:\n  - ./cm.yaml\n",
+		"cm.yaml":                "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
+		"one/kustomization.yaml": "resources:\n  - " + srv.URL + "/one.yaml\n",
+		"two/kustomization.yaml": "resources:\n  - " + srv.URL + "/two.yaml\n",
 	})
 
 	fsys := memFSWith(t, map[string]string{
-		"a/kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n",
-		"b/kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n",
-		"c/kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n",
+		"a/kustomization.yaml": "resources:\n  - https://example.com/o/r//one?ref=v1\n",
+		"b/kustomization.yaml": "resources:\n  - https://example.com/o/r//two?ref=v1\n",
+		"c/kustomization.yaml": "resources:\n  - https://example.com/o/r//one?ref=v1\n",
 	})
 
 	var calls atomic.Int32
@@ -307,6 +317,9 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 	wantDir := remoteResourcePrefix + urlHash("https://example.com/o/r@v1")
 	if calls.Load() != 1 {
 		t.Fatalf("fetches = %d, want 1", calls.Load())
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("selected package URL fetches = %d, want 2", hits.Load())
 	}
 	if !fsys.Exists(filepath.Join("a", wantDir, "cm.yaml")) {
 		t.Fatal("base mount is missing")

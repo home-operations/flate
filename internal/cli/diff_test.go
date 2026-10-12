@@ -179,8 +179,8 @@ spec:
 }
 
 func TestRun_Diff_OneSidedSkipSuppressed_Kustomization(t *testing.T) {
-	orig, current := writeFixture(t), writeFixture(t)
-	for _, path := range []string{orig, current} {
+	orig, current, failed := writeFixture(t), writeFixture(t), writeFixture(t)
+	for _, path := range []string{orig, current, failed} {
 		testutil.WriteFile(t, path, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
@@ -226,18 +226,21 @@ spec:
   path: ./apps
   sourceRef: {kind: OCIRepository, name: private}
 `)
+	testutil.WriteFile(t, failed, "apps/kustomization.yaml", "resources: [cm.yaml, hr.yaml, child.yaml, missing.yaml]\nnamePrefix: x-\n")
 	for _, tc := range []struct {
-		side, namespace, orig, current string
+		name, side, namespace, orig, current string
+		wantCode                             int
 	}{
-		{side: "current", orig: orig, current: current},
-		{side: "orig", orig: current, current: orig},
-		{side: "current", namespace: "apps", orig: orig, current: current},
-		{side: "orig", namespace: "apps", orig: current, current: orig},
+		{name: "current", side: "current", orig: orig, current: current},
+		{name: "orig", side: "orig", orig: current, current: orig},
+		{name: "current/apps", side: "current", namespace: "apps", orig: orig, current: current},
+		{name: "orig/apps", side: "orig", namespace: "apps", orig: current, current: orig},
+		{name: "current failed", side: "current", orig: orig, current: failed, wantCode: 1},
 	} {
-		t.Run(tc.side+"/"+tc.namespace, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr, code := runCLI(t, "diff", "all", "--path", tc.current, "--path-orig", tc.orig,
 				"--namespace", tc.namespace, "--allow-missing-secrets", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
-			assert.Equal(t, code, 0)
+			assert.Equal(t, code, tc.wantCode)
 			parent := "# Kustomization flux-system/apps:"
 			if tc.namespace != "" {
 				parent = "# HelmRelease apps/x-demo:"
@@ -245,11 +248,77 @@ spec:
 			if !strings.Contains(stdout, parent) || !strings.Contains(stdout, "on the "+tc.side+" side; diff suppressed (") {
 				t.Errorf("missing ownership suppression: stdout=%s stderr=%s", stdout, stderr)
 			}
+			for _, name := range []string{"x-demo", "y-demo"} {
+				assert.Equal(t, strings.Contains(stdout, "# HelmRelease apps/"+name+":"), true)
+			}
+			assert.Equal(t, strings.Contains(stdout, "(skipped:"), false)
 			if strings.Contains(stdout, "ConfigMap apps/") {
 				t.Errorf("owned resources must not appear as wholesale changes:\n%s", stdout)
 			}
 		})
 	}
+
+	t.Run("moved HelmRelease", func(t *testing.T) {
+		orig, current := writeFixture(t), writeFixture(t)
+		for _, path := range []string{orig, current} {
+			testutil.WriteFile(t, path, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec: {url: https://example.test/cluster.git}
+`)
+			testutil.WriteFile(t, path, "flux/other.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: other, namespace: flux-system}
+spec:
+  path: ./other
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+			dir, greeting := "apps", "before"
+			if path == current {
+				dir, greeting = "other", "after"
+				testutil.WriteFile(t, path, "flux/cluster.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: private, namespace: flux-system}
+spec:
+  url: oci://example.invalid/private/manifests
+  certSecretRef: {name: missing-ca}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./apps
+  sourceRef: {kind: OCIRepository, name: private}
+`)
+			}
+			testutil.WriteFile(t, path, "other/kustomization.yaml", "resources: []\n")
+			testutil.WriteFile(t, path, dir+"/kustomization.yaml", "resources: [hr.yaml]\n")
+			testutil.WriteFile(t, path, dir+"/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: apps}
+spec:
+  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  values: {greeting: `+greeting+`}
+`)
+			testutil.WriteFile(t, path, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+			testutil.WriteFile(t, path, "charts/demo/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}', namespace: apps}
+data:
+  greeting: {{ .Values.greeting }}
+`)
+		}
+		stdout, stderr, code := runCLI(t, "diff", "all", "--path", current, "--path-orig", orig,
+			"--allow-missing-secrets", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+		if code != 0 || !strings.Contains(stdout, "-  greeting: before") || !strings.Contains(stdout, "+  greeting: after") {
+			t.Errorf("moved release change must remain visible: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+		}
+		assert.Equal(t, strings.Contains(stdout, "# HelmRelease apps/demo:"), false)
+	})
+
 }
 
 func TestRun_DiffJSON(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 
@@ -203,31 +204,8 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 	// against, so its healthy-side output would read as a wholesale add or
 	// delete. Withhold it and let the formats disclose the suppression.
 	origReasons, currentReasons := suppressionReasons(orig, c), suppressionReasons(current, c)
-	for _, pair := range []struct {
-		side, other *diffSide
-		reasons     map[manifest.NamedResource]string
-	}{{&orig, &current, origReasons}, {&current, &orig, currentReasons}} {
-		for _, docs := range [][]diff.Doc{origDocs, currentDocs} {
-			for _, doc := range docs {
-				id := manifest.NamedResource{Kind: doc.Parent.Kind, Namespace: doc.Parent.Namespace, Name: doc.Parent.Name}
-				// The counterpart can own children absent from a skipped build.
-				// Keep each snapshot's acyclic ownership chain intact.
-				for _, o := range []*orchestrator.Orchestrator{pair.side.O, pair.other.O} {
-					for parent := id; parent != (manifest.NamedResource{}); {
-						if reason, ok := pair.reasons[parent]; ok {
-							pair.reasons[id] = reason
-							break
-						}
-						if info, ok := pair.side.O.Store().GetStatus(parent); ok && store.IsSkipped(info) {
-							pair.reasons[id] = strings.TrimSpace(strings.TrimPrefix(info.Message, store.SkippedPrefix))
-							break
-						}
-						parent, _ = o.ParentOf(parent)
-					}
-				}
-			}
-		}
-	}
+	inheritSuppression(origReasons, &orig, &current, origDocs, currentDocs)
+	inheritSuppression(currentReasons, &current, &orig, origDocs, currentDocs)
 	var suppressed []diff.Suppression
 	origDocs, currentDocs, suppressed = diff.SuppressFailed(origDocs, currentDocs,
 		origReasons, currentReasons)
@@ -283,6 +261,37 @@ func reportExternalDiffSkips(w io.Writer, side diffSide, repoRoot, label string,
 	return nil
 }
 
+func inheritSuppression(reasons map[manifest.NamedResource]string, side, other *diffSide, docs ...[]diff.Doc) {
+	parents := map[manifest.NamedResource]struct{}{}
+	for _, group := range docs {
+		for _, doc := range group {
+			id := manifest.NamedResource{Kind: doc.Parent.Kind, Namespace: doc.Parent.Namespace, Name: doc.Parent.Name}
+			parents[id] = struct{}{}
+		}
+	}
+	for _, id := range slices.SortedFunc(maps.Keys(parents), manifest.NamedResource.Compare) {
+		o := side.O
+		// The counterpart owns children absent from this snapshot's build.
+		if side.O.Store().GetObject(id) == nil {
+			o = other.O
+		}
+		for parent, ok := id, true; ok; parent, ok = o.ParentOf(parent) {
+			if reason, suppressed := reasons[parent]; suppressed {
+				reasons[id] = reason
+				break
+			}
+			if info, exists := side.O.Store().GetStatus(parent); exists && store.IsSkipped(info) {
+				reasons[id] = skipReason(info)
+				break
+			}
+		}
+	}
+}
+
+func skipReason(info store.StatusInfo) string {
+	return strings.TrimSpace(strings.TrimPrefix(info.Message, store.SkippedPrefix))
+}
+
 // suppressionReasons includes scoped failures and soft-skipped render producers
 // in the id -> message map diff.SuppressFailed consumes.
 func suppressionReasons(side diffSide, c *commonFlags) map[manifest.NamedResource]string {
@@ -297,7 +306,7 @@ func suppressionReasons(side diffSide, c *commonFlags) map[manifest.NamedResourc
 				continue
 			}
 			if info, ok := side.O.Store().GetStatus(id); ok && store.IsSkipped(info) {
-				out[id] = strings.TrimSpace(strings.TrimPrefix(info.Message, store.SkippedPrefix))
+				out[id] = skipReason(info)
 			}
 		}
 	}

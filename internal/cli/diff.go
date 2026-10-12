@@ -269,13 +269,19 @@ func inheritSuppression(reasons map[manifest.NamedResource]string, side, other *
 			parents[id] = struct{}{}
 		}
 	}
+	visited := map[manifest.NamedResource]struct{}{}
 	for _, id := range slices.SortedFunc(maps.Keys(parents), manifest.NamedResource.Compare) {
+		clear(visited)
 		o := side.O
 		// The counterpart owns children absent from this snapshot's build.
 		if side.O.Store().GetObject(id) == nil {
 			o = other.O
 		}
 		for parent, ok := id, true; ok; parent, ok = o.ParentOf(parent) {
+			if _, dup := visited[parent]; dup {
+				break
+			}
+			visited[parent] = struct{}{}
 			if reason, suppressed := reasons[parent]; suppressed {
 				reasons[id] = reason
 				break

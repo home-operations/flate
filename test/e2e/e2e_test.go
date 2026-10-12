@@ -8,6 +8,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,6 +242,49 @@ func TestE2E_DiffNoChange(t *testing.T) {
 	if strings.Contains(out, "---") && strings.Contains(out, "+++") &&
 		strings.Contains(out, "@@") {
 		t.Errorf("unexpected diff content for identical paths:\n%s", out)
+	}
+}
+
+func TestE2E_Diff_OwnershipCycle(t *testing.T) {
+	orig, current := t.TempDir(), t.TempDir()
+	for _, side := range []struct {
+		path  string
+		value string
+	}{
+		{path: orig, value: "before"},
+		{path: current, value: "after"},
+	} {
+		testutil.WriteFile(t, side.path, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec: {url: https://example.test/cluster.git}
+`)
+		for _, name := range []string{"a", "b"} {
+			testutil.WriteFile(t, side.path, "shared/"+name+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: `+name+`, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./shared
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+		}
+		testutil.WriteFile(t, side.path, "shared/kustomization.yaml", "resources: [a.yaml, b.yaml, cm.yaml]\n")
+		testutil.WriteFile(t, side.path, "shared/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello, namespace: apps}
+data:
+  value: `+side.value+`
+`)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() { panic("diff ownership walk did not complete") })
+	defer stop()
+	out, stderr := requireCLIOK(t, "diff", "all", "--path", current, "--path-orig", orig,
+		"--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "-o", "diff")
+	if !strings.Contains(out, "-  value: before") || !strings.Contains(out, "+  value: after") {
+		t.Errorf("expected ConfigMap value change:\n%s\nstderr:\n%s", out, stderr)
 	}
 }
 

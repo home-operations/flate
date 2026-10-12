@@ -78,10 +78,7 @@ func Cyan(s string, color bool) string { return render(cyanStyle, s, color) }
 // overflow. It is ANSI- and wide-rune-aware (escape sequences and CJK width are
 // counted correctly), so a styled line truncates by what's actually shown.
 func Truncate(s string, width int) string {
-	if width < 1 {
-		width = 1
-	}
-	return ansi.Truncate(s, width, "…")
+	return ansi.Truncate(s, max(width, 1), "…")
 }
 
 // Elapsed renders a duration compactly for live and summary timing: tenths of a

@@ -348,7 +348,8 @@ func startFakeRegistry(t *testing.T, manifestBytes, configBytes, layerBytes []by
 			w.Header().Set("Docker-Content-Digest", manifestDigest)
 			_, _ = w.Write(manifestBytes)
 		case strings.Contains(r.URL.Path, "/blobs/"):
-			switch r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:] {
+			_, digest, _ := strings.CutLast(r.URL.Path, "/")
+			switch digest {
 			case configDigest:
 				_, _ = w.Write(configBytes)
 			case layerDigest:
@@ -390,7 +391,8 @@ func startFakeRegistryWithBlobGate(t *testing.T, art fakeOCIArtifact) (*httptest
 				http.Error(w, "blob pulls disabled", http.StatusServiceUnavailable)
 				return
 			}
-			switch r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:] {
+			_, digest, _ := strings.CutLast(r.URL.Path, "/")
+			switch digest {
 			case art.configDigest:
 				_, _ = w.Write(configBody)
 			case art.layerDigest:
@@ -466,7 +468,7 @@ func startMutableFakeRegistry(t *testing.T, artifacts ...fakeOCIArtifact) (*http
 			w.Header().Set("Docker-Content-Digest", art.manifestDigest)
 			_, _ = w.Write(art.manifest)
 		case strings.Contains(r.URL.Path, "/blobs/"):
-			d := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			_, d, _ := strings.CutLast(r.URL.Path, "/")
 			if body, ok := blobs[d]; ok {
 				_, _ = w.Write(body)
 				return

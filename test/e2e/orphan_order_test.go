@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	stdcmp "cmp"
 	"fmt"
 	"regexp"
 	"strings"
@@ -43,9 +44,7 @@ spec:
 					t.Fatalf("want eight orphan notes:\n%s", stdout)
 				}
 				got := clock.ReplaceAllString(stdout, "   <elapsed>\n")
-				if want == "" {
-					want = got
-				}
+				want = stdcmp.Or(want, got)
 				if diff := cmp.Diff(want, got); diff != "" {
 					t.Fatalf("run %d stdout differs (-want +got):\n%s", run, diff)
 				}

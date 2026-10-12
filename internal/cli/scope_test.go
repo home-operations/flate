@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -79,9 +80,7 @@ func TestRun_NamedScope_UnrelatedFailure(t *testing.T) {
 						if code != 0 {
 							t.Fatalf("named build exited %d: %s", code, errOut)
 						}
-						if want == "" {
-							want = out
-						}
+						want = cmp.Or(want, out)
 						if out == "" || out != want {
 							t.Fatalf("selected YAML differs: want %s, got %s", want, out)
 						}
@@ -227,9 +226,8 @@ spec:
 				if (code == 1) != tc.broken || !strings.Contains(stdout, "selected-rendered") {
 					t.Fatalf("authored owner policy violated: %d %s\n%s", code, stdout, stderr)
 				}
-				if selectedYAML == "" {
-					selectedYAML = stdout
-				} else if stdout != selectedYAML {
+				selectedYAML = cmp.Or(selectedYAML, stdout)
+				if stdout != selectedYAML {
 					t.Fatalf("producer health changed selected YAML: want %s, got %s", selectedYAML, stdout)
 				}
 				if tc.chain && (!strings.Contains(stderr, "producer-chain") || !strings.Contains(stderr, "missing-producer-root")) {
@@ -787,7 +785,8 @@ func TestRun_NamedScope_DiffBothSnapshots(t *testing.T) {
 			assert.Equal(t, got, want)
 			for _, label := range []string{"orig snapshot:", "current snapshot:"} {
 				_, block, ok := strings.Cut(stderr, label)
-				if !ok || !strings.Contains(strings.Split(block, "snapshot:")[0], "warnings") {
+				block, _, _ = strings.Cut(block, "snapshot:")
+				if !ok || !strings.Contains(block, "warnings") {
 					t.Fatalf("missing %s warning block: %s", label, stderr)
 				}
 			}

@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
@@ -68,10 +69,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	if req.Source.FS != nil && req.Source.Key == "" {
 		return nil, fmt.Errorf("%w: source artifact has no identity", manifest.ErrInput)
 	}
-	lower, root := req.Source.FS, req.Label
-	if root == "" {
-		root = req.Source.LocalPath
-	}
+	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath)
 	var disk filesys.FileSystem
 	ignoreKey := ""
 	if lower == nil {
@@ -92,9 +90,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 		}
 		lower = diskInput{FileSystem: disk, root: root, info: make(map[string]fs.FileInfo)}
 	} else {
-		if root == "" {
-			root = string(filepath.Separator) + "flate-source"
-		}
+		root = cmp.Or(root, string(filepath.Separator)+"flate-source")
 		var err error
 		root, err = filepath.Abs(root)
 		if err != nil {

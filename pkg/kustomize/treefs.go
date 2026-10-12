@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	"cmp"
 	"errors"
 	"io/fs"
 	"path"
@@ -47,11 +48,7 @@ func fromKyaml(root, name string, separator byte) (string, error) {
 		return ".", nil
 	}
 	if len(name) > len(root) && strings.HasPrefix(name, root) && name[len(root)] == '/' {
-		rel := name[len(root)+1:]
-		if rel == "" {
-			return ".", nil
-		}
-		return rel, nil
+		return cmp.Or(name[len(root)+1:], "."), nil
 	}
 	if strings.HasPrefix(name, "/") || (separator == '\\' && len(name) > 1 && name[1] == ':') {
 		return "", &fs.PathError{Op: "mount", Path: name, Err: tree.ErrEscape}
@@ -106,9 +103,7 @@ func (t *treeFS) raw(name string) (string, error) {
 	if !found {
 		return rel, nil
 	}
-	if parent == "" {
-		parent = "."
-	}
+	parent = cmp.Or(parent, ".")
 	parent, err = t.upper.Resolve(parent)
 	if err != nil {
 		return "", treeError("resolve", name, err)

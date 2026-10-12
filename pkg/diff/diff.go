@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"cmp"
 	"fmt"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -76,9 +77,7 @@ type Options struct {
 // set through dyff for native per-resource labels; FormatDiff takes the
 // per-resource unified-diff path.
 func RenderDocs(left, right []Doc, opts Options) ([]byte, error) {
-	if opts.Format == "" {
-		opts.Format = FormatHuman
-	}
+	opts.Format = cmp.Or(opts.Format, FormatHuman)
 	switch opts.Format {
 	case FormatDiff:
 		return renderUnified(left, right, opts)

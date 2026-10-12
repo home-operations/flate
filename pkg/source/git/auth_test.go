@@ -187,6 +187,7 @@ func TestSshUserFromURL(t *testing.T) {
 	cases := map[string]string{
 		"git@github.com:owner/repo.git":    "git",
 		"ssh://buildbot@example.com/r.git": "buildbot",
+		"ssh://@example.com/r.git":         "git",
 		"https://github.com/x/y.git":       "git", // not actually SSH, but tests default
 		"":                                 "git",
 	}

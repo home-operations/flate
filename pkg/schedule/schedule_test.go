@@ -597,9 +597,7 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel manifest.D
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.runs[nid]++
-	if drainLevel > f.maxDrain {
-		f.maxDrain = drainLevel
-	}
+	f.maxDrain = max(f.maxDrain, drainLevel)
 	deps := f.graph[nid]
 	var blocked []NodeID
 	var failed []NodeID

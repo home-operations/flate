@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"cmp"
 	"errors"
 	"math"
 	"testing"
@@ -46,9 +47,7 @@ data:
 		}
 		assert.Equal(t, len(docs), 1)
 		assert.Equal(t, docs[0]["data"].(map[string]any)["port"], any("50413"))
-		if first == "" {
-			first = raw
-		}
+		first = cmp.Or(first, raw)
 		assert.Equal(t, raw, first)
 	}
 }

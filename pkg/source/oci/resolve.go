@@ -28,14 +28,12 @@ func parseOCIRef(versioned string) (string, error) {
 	versioned = strings.TrimPrefix(versioned, "oci://")
 	// Strip ":<tag>" or "@<digest>" portion for the reference; oras
 	// takes them separately.
-	if i := strings.LastIndex(versioned, "@"); i > 0 {
-		versioned = versioned[:i]
+	if before, _, found := strings.CutLast(versioned, "@"); found && before != "" {
+		versioned = before
 	}
-	if i := strings.LastIndex(versioned, ":"); i > 0 {
-		// Don't confuse port numbers with tags ("registry:5000/x").
-		if !strings.Contains(versioned[i+1:], "/") {
-			versioned = versioned[:i]
-		}
+	// Don't confuse port numbers with tags ("registry:5000/x").
+	if before, after, found := strings.CutLast(versioned, ":"); found && before != "" && !strings.Contains(after, "/") {
+		versioned = before
 	}
 	if _, err := url.Parse("oci://" + versioned); err != nil {
 		return "", fmt.Errorf("parse OCI ref %q: %w", versioned, err)

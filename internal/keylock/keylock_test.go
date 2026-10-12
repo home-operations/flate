@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -81,26 +82,24 @@ func TestKeyMap_PreCancelledUncontendedReturnsErr(t *testing.T) {
 }
 
 func TestKeyMap_CancelUnblocksWaiter(t *testing.T) {
-	m := New[string]()
-	first, _ := m.Acquire(context.Background(), "k")
-	defer first()
+	synctest.Test(t, func(t *testing.T) {
+		m := New[string]()
+		first, _ := m.Acquire(t.Context(), "k")
+		defer first()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		release, err := m.Acquire(ctx, "k")
-		defer release()
-		done <- err
-	}()
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() {
+			release, err := m.Acquire(ctx, "k")
+			defer release()
+			done <- err
+		}()
 
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	select {
-	case err := <-done:
-		if err == nil {
+		synctest.Wait()
+		cancel()
+		synctest.Wait()
+		if err := <-done; err == nil {
 			t.Errorf("expected non-nil err on cancelled acquire")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("cancel did not unblock waiter")
-	}
+	})
 }

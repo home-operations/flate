@@ -9,11 +9,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// MissingSecretErr returns a structured *MissingSecretError that (a) renders
-// the same string as the prior fmt.Errorf form (byte-equivalence of the skip
-// reason), (b) still satisfies errors.Is(ErrMissingSecret), and (c) exposes the
-// missing Secret's identity via errors.As — even through an outer wrap — so the
-// source controller can consult the producer index.
+// MissingSecretErr must preserve the skip reason, satisfy ErrMissingSecret, and
+// expose the Secret identity through outer wraps for the producer index.
 func TestMissingSecretErr(t *testing.T) {
 	err := MissingSecretErr("OCIRepository", "ns", "r", "ghcr-creds", "not found")
 
@@ -25,9 +22,9 @@ func TestMissingSecretErr(t *testing.T) {
 		t.Error("errors.Is(err, ErrMissingSecret) = false, want true")
 	}
 
-	var mse *MissingSecretError
-	if !errors.As(fmt.Errorf("git clone: %w", err), &mse) {
-		t.Fatal("errors.As did not recover *MissingSecretError through a wrap")
+	mse, ok := errors.AsType[*MissingSecretError](fmt.Errorf("git clone: %w", err))
+	if !ok {
+		t.Fatal("errors.AsType did not recover *MissingSecretError through a wrap")
 	}
 	wantSecret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "ghcr-creds"}
 	if mse.Secret != wantSecret {

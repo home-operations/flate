@@ -153,8 +153,7 @@ func retryable(err error) bool {
 	// A dial/IO timeout is transient. net.DNSError for a typo'd host is
 	// also a net.Error, but its Timeout() is false (IsNotFound/permanent),
 	// so it correctly falls through to the default-deny below.
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 		return true
 	}
 	// Connection reset (the common transient registry blip), connection

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	stdcmp "cmp"
 	"encoding/json"
 	"errors"
 	"os"
@@ -223,10 +224,7 @@ spec:
   sourceRef: {kind: GitRepository, name: `+tt.sourceRefName+`, namespace: flux-system}
 `)
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
-			url, ref := tt.sourceURL, "  ref: {tag: v1.0.0}\n"
-			if url == "" {
-				url = "git://fixture.invalid/cluster"
-			}
+			url, ref := stdcmp.Or(tt.sourceURL, "git://fixture.invalid/cluster"), "  ref: {tag: v1.0.0}\n"
 			if tt.noRef {
 				ref = ""
 			}
@@ -892,10 +890,7 @@ spec:
 			}
 			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: tagged", "value: newer")
 			gitCommitAll(t, repo)
-			heldSource := tt.heldSource
-			if heldSource == "" {
-				heldSource = "pinned"
-			}
+			heldSource := stdcmp.Or(tt.heldSource, "pinned")
 			testutil.WriteFile(t, root, "apps/broken/held.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: a-held, namespace: flux-system}

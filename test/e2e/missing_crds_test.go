@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 	"testing"
@@ -254,9 +255,7 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 				t.Fatal("rendered output changed across runs or concurrency levels")
 			}
 			got := strings.Join(lines, "\n")
-			if first == "" {
-				first = got
-			}
+			first = cmp.Or(first, got)
 			if got != first {
 				t.Fatalf("warnings changed: want %s got %s", first, got)
 			}

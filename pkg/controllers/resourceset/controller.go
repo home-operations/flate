@@ -8,6 +8,7 @@
 package resourceset
 
 import (
+	"cmp"
 	"context"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -173,11 +174,9 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 	}
 	deps := make([]manifest.DependencyRef, capacity)
 	for i, dep := range rs.DependsOn {
-		ns := dep.Namespace
+		ns := cmp.Or(dep.Namespace, rs.Namespace)
 		if manifest.IsClusterScopedKind(dep.Kind) {
 			ns = ""
-		} else if ns == "" {
-			ns = rs.Namespace
 		}
 		deps[i] = manifest.DependencyRef{
 			Kind: dep.Kind, Namespace: ns, Name: dep.Name,

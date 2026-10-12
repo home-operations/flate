@@ -197,10 +197,10 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, l
 // the Secret identity; a missing-secret error that isn't that type (or whose
 // Secret has no producer) is not producer-backed.
 func (c *Controller) producerBacked(err error) bool {
-	var mse *src.MissingSecretError
-	if !errors.As(err, &mse) {
+	mse, ok := errors.AsType[*src.MissingSecretError](err)
+	if !ok {
 		return false
 	}
-	_, ok := c.producers.Producer(mse.Secret)
+	_, ok = c.producers.Producer(mse.Secret)
 	return ok
 }

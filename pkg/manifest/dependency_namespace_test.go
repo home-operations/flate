@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 	"testing"
@@ -50,10 +51,7 @@ func TestDependsOn_TypedNamespace(t *testing.T) {
 				default:
 					t.Fatalf("unexpected %T", obj)
 				}
-				wantNS := ns
-				if wantNS == "" {
-					wantNS = "apps"
-				}
+				wantNS := cmp.Or(ns, "apps")
 				assert.Diff(t, deps, []DependencyRef{{Kind: kind, Name: "dependency", Namespace: wantNS, ReadyExpr: "true"}})
 			})
 		}

@@ -27,13 +27,13 @@ func detectBundledKubeVersion() string {
 		if dep.Path != "k8s.io/api" {
 			continue
 		}
-		v := strings.TrimPrefix(dep.Version, "v0.")
-		if v == dep.Version {
+		v, ok := strings.CutPrefix(dep.Version, "v0.")
+		if !ok {
 			return fallbackKubeVersion
 		}
 		// Optional pseudo-version suffix on master builds: trim.
-		if i := strings.Index(v, "-"); i > 0 {
-			v = v[:i]
+		if version, _, _ := strings.Cut(v, "-"); version != "" {
+			v = version
 		}
 		return "1." + v
 	}

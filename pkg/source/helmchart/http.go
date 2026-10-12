@@ -2,6 +2,7 @@ package helmchart
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -148,9 +149,7 @@ func indexFromBytes(data []byte) (*repo.IndexFile, error) {
 			if v.Metadata == nil {
 				v.Metadata = &chart.Metadata{}
 			}
-			if v.APIVersion == "" {
-				v.APIVersion = chart.APIVersionV1
-			}
+			v.APIVersion = cmp.Or(v.APIVersion, chart.APIVersionV1)
 			err := v.Validate()
 			if validation, ok := errors.AsType[chart.ValidationError](err); ok && strings.HasPrefix(validation.Error(), "validation: more than one dependency with name or alias") {
 				return false

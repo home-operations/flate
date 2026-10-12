@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -70,7 +69,7 @@ func docNames(t *testing.T, yamlOut string) []string {
 			names = append(names, rest)
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
@@ -161,7 +160,7 @@ func TestStreamEmitter_FinishCatchUpAndSetEquivalence(t *testing.T) {
 		name, _ := meta["name"].(string)
 		want = append(want, name)
 	}
-	sort.Strings(want)
+	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Fatalf("streamed set %v != buffered set %v", got, want)
 	}

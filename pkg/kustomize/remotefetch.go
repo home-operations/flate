@@ -48,7 +48,7 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, err
 			// that isn't a definitive 4xx), drop the cache entry so
 			// the next caller retries instead of inheriting our
 			// failure for the rest of the run. isHTTPClientError uses
-			// errors.As against httpStatusError so it stays correct
+			// errors.AsType against httpStatusError so it stays correct
 			// even when the error is wrapped (e.g. "preflight: %w").
 			if rf.err != nil && !isHTTPClientError(rf.err) {
 				c.remoteFetches.CompareAndDelete(urlStr, rf)
@@ -68,9 +68,9 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, err
 // Anything else — transport errors, timeouts, 5xx — is treated as
 // transient so the cache entry gets dropped.
 //
-// Uses errors.As against httpStatusError so the check stays correct
+// Uses errors.AsType against httpStatusError so the check stays correct
 // when the error is wrapped (e.g. fmt.Errorf("preflight: %w", err)).
 func isHTTPClientError(err error) bool {
-	var hse *httpStatusError
-	return errors.As(err, &hse) && hse.Code >= 400 && hse.Code < 500
+	hse, ok := errors.AsType[*httpStatusError](err)
+	return ok && hse.Code >= 400 && hse.Code < 500
 }

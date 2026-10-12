@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"cmp"
 	"strings"
 	"testing"
 )
@@ -36,10 +37,7 @@ func TestRenderDocs_NativeLabels(t *testing.T) {
 		{"", []string{"v1/ConfigMap/apps/hello", "data.greeting"}}, // default = human
 	}
 	for _, tc := range cases {
-		name := string(tc.format)
-		if name == "" {
-			name = "default"
-		}
+		name := cmp.Or(string(tc.format), "default")
 		t.Run(name, func(t *testing.T) {
 			out, err := RenderDocs(left, right, Options{Format: tc.format})
 			if err != nil {

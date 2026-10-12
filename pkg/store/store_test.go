@@ -580,19 +580,16 @@ func TestStore_Concurrency(_ *testing.T) {
 	const N = 200
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range N {
 			s.AddObject(newCM("a", "ns"))
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		for range N {
 			_ = s.ListObjects("ConfigMap")
 		}
-	}()
+	})
 	wg.Wait()
 }
 
@@ -624,21 +621,18 @@ func TestStore_AddListener_FlushNoDoubleFire(t *testing.T) {
 
 		var startGate, done sync.WaitGroup
 		startGate.Add(1)
-		done.Add(2)
 
-		go func() {
-			defer done.Done()
+		done.Go(func() {
 			startGate.Wait()
 			s.AddObject(racerObj)
-		}()
-		go func() {
-			defer done.Done()
+		})
+		done.Go(func() {
 			startGate.Wait()
 			s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
 				v, _ := counts.LoadOrStore(id, new(atomic.Int64))
 				v.(*atomic.Int64).Add(1)
 			}, true)
-		}()
+		})
 		startGate.Done()
 		done.Wait()
 

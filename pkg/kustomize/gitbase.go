@@ -69,12 +69,11 @@ func isGitRemoteBase(raw string) (gitBaseSpec, bool) {
 
 	// Host is everything up to the first "/", kept with its trailing slash to
 	// match kustomize's Host (e.g. "https://github.com/"); the rest is the path.
-	slash := strings.IndexByte(pathPart, '/')
-	if slash < 0 {
+	host, repoSegs, found := strings.Cut(pathPart, "/")
+	if !found {
 		return gitBaseSpec{}, false // host only, no repo path
 	}
-	hostPrefix := scheme + pathPart[:slash+1]
-	repoSegs := pathPart[slash+1:]
+	hostPrefix := scheme + host + "/"
 
 	repoPath, subPath, ok := markerSplit(repoSegs)
 	if !ok {
@@ -99,10 +98,10 @@ func isGitRemoteBase(raw string) (gitBaseSpec, bool) {
 // (_git/, then //, then .git), mirroring repospec.go's tryExplicitMarkerSplit
 // order. Returns ok=false when none is present.
 func markerSplit(p string) (repoPath, subPath string, ok bool) {
-	if i := strings.Index(p, gitRootDelimiter); i >= 0 {
+	if before, after, found := strings.Cut(p, gitRootDelimiter); found {
 		// _git/: repo root is the FIRST segment after the delimiter.
-		seg, rest, _ := strings.Cut(p[i+len(gitRootDelimiter):], "/")
-		return p[:i+len(gitRootDelimiter)] + seg, rest, true
+		seg, rest, _ := strings.Cut(after, "/")
+		return before + gitRootDelimiter + seg, rest, true
 	}
 	if before, after, found := strings.Cut(p, gitSubPathSep); found {
 		// //: a convention-only separator, dropped from the result.
@@ -138,15 +137,12 @@ func gitSuffixIndex(p string) int {
 // the rest as the subpath, mirroring repospec.go's orgRepoSegments default.
 // Fewer than two non-empty segments is not a valid git base.
 func defaultSplit(p string) (repoPath, subPath string, ok bool) {
-	segs := strings.SplitN(p, "/", 3)
-	if len(segs) < 2 || segs[0] == "" || segs[1] == "" {
+	org, rest, _ := strings.Cut(p, "/")
+	repo, subPath, _ := strings.Cut(rest, "/")
+	if org == "" || repo == "" {
 		return "", "", false
 	}
-	repoPath = segs[0] + "/" + segs[1]
-	if len(segs) == 3 {
-		subPath = segs[2]
-	}
-	return repoPath, subPath, true
+	return org + "/" + repo, subPath, true
 }
 
 // refFromQuery returns the git ref from a URL query: ?ref= takes precedence

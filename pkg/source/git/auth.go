@@ -82,8 +82,8 @@ func isSSHURL(url string) bool {
 // "ssh://user@host/repo" forms. Defaults to "git" when absent.
 func sshUserFromURL(url string) string {
 	u := strings.TrimPrefix(url, "ssh://")
-	if at := strings.Index(u, "@"); at > 0 {
-		return u[:at]
+	if user, _, found := strings.Cut(u, "@"); found && user != "" {
+		return user
 	}
 	return "git"
 }

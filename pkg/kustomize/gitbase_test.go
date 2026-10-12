@@ -35,6 +35,8 @@ func TestIsGitRemoteBase(t *testing.T) {
 		// --- git bases ---
 		{name: "ref query", url: "https://github.com/o/r?ref=v0.2.2",
 			ok: true, repoURL: "https://github.com/o/r", ref: "v0.2.2"},
+		{name: "ref query with default subpath", url: "https://github.com/o/r/sub/dir?ref=main",
+			ok: true, repoURL: "https://github.com/o/r", subPath: "sub/dir", ref: "main"},
 		{name: "version query", url: "https://github.com/o/r?version=v0.2.2",
 			ok: true, repoURL: "https://github.com/o/r", ref: "v0.2.2"},
 		{name: "ref beats version", url: "https://github.com/o/r?version=v1&ref=v2",
@@ -68,6 +70,8 @@ func TestIsGitRemoteBase(t *testing.T) {
 		{name: "parent relative", url: "../shared"},
 		{name: "host only with ref", url: "https://github.com?ref=v1"},
 		{name: "single segment with ref", url: "https://github.com/onlyorg?ref=v1"},
+		{name: "empty org with ref", url: "https://github.com//repo?ref=v1"},
+		{name: "empty repo with ref", url: "https://github.com/org/?ref=v1"},
 		{name: "subpath escapes repo", url: "https://github.com/o/r//../escape?ref=v1"},
 	}
 	for _, tc := range cases {

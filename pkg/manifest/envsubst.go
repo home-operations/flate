@@ -18,7 +18,7 @@ import (
 // aren't a real concern in practice.
 var envsubstDefaultRE = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*:[=-]([^}]+)\}`)
 
-// ResolveEnvsubstDefaults applies envsubst-style defaults to s.
+// resolveEnvsubstDefaults applies envsubst-style defaults to s.
 // `${VAR:=default}` and `${VAR:-default}` become `default`. Bare
 // `${VAR}` (no default) is left untouched.
 //
@@ -28,7 +28,7 @@ var envsubstDefaultRE = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*:[=-]([^}]
 // remote refs even when the parent KS's postBuild.substitute hasn't
 // supplied a value. Real Flux's reconcile would resolve the same
 // pattern via postBuild substitution, just one phase later.
-func ResolveEnvsubstDefaults(s string) string {
+func resolveEnvsubstDefaults(s string) string {
 	if !maybeHasEnvsubst(s) {
 		return s
 	}
@@ -44,13 +44,13 @@ func maybeHasEnvsubst(s string) bool {
 
 // envsubstReferenceRE matches any unresolved envsubst reference —
 // `${VAR}`, `${VAR:?msg}`, etc. — that survived
-// ResolveEnvsubstDefaults. The character class `[}:]` rules out
+// resolveEnvsubstDefaults. The character class `[}:]` rules out
 // random literal `${` followed by alphanumerics that aren't actually
 // envsubst (rare but possible in shell/CEL strings).
 var envsubstReferenceRE = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*[}:]`)
 
 // HasEnvsubstReference reports whether s contains a `${VAR}` style
-// reference that survived ResolveEnvsubstDefaults — i.e. a bare
+// reference that survived resolveEnvsubstDefaults — i.e. a bare
 // `${VAR}` with no default. Used by the file walker to detect
 // template files whose metadata.name / namespace was meant to be
 // substituted by a parent Kustomization's postBuild.substitute(From).

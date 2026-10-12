@@ -143,7 +143,7 @@ func normalizeChartURL(url, chartName string) string {
 // registry (spec.type: oci, or an oci:// URL) rather than a classic HTTP
 // index.yaml.
 func isOCIHelmRepo(r *manifest.HelmRepository) bool {
-	return r.Type == manifest.RepoTypeOCI || strings.HasPrefix(r.URL, "oci://")
+	return r.Type == sourcev1.HelmRepositoryTypeOCI || strings.HasPrefix(r.URL, "oci://")
 }
 
 // synthesizeOCIRepository builds an in-memory OCIRepository for a single

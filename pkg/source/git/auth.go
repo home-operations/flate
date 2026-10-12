@@ -30,7 +30,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 	}
 	if isSSHURL(repo.URL) {
 		identity, _, _ := sec.Value("identity")
-		if identity == "" || manifest.IsValuePlaceholder(identity) {
+		if identity == "" || manifest.HasValuePlaceholder(identity) {
 			// Empty covers both missing-key and PLACEHOLDER-wiped values
 			// (the ExternalSecret case). Same sentinel so
 			// --allow-missing-secrets covers both shapes.
@@ -46,7 +46,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 		// enforce strict host-key checking; otherwise skip (offline
 		// renders against ephemeral worktrees are the norm). Users who
 		// need strict checks provide `known_hosts` in the Secret.
-		if kh, _, _ := sec.Value("known_hosts"); kh != "" && !manifest.IsValuePlaceholder(kh) {
+		if kh, _, _ := sec.Value("known_hosts"); kh != "" && !manifest.HasValuePlaceholder(kh) {
 			cb, herr := knownHostsCallback([]byte(kh))
 			if herr != nil {
 				return nil, fmt.Errorf("%s: parse known_hosts: %w", gitID(repo), herr)
@@ -59,7 +59,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 	}
 	// HTTPS / HTTP: bearerToken takes precedence over basic auth, mirroring
 	// source-controller's docs.
-	if token, _, _ := sec.Value("bearerToken"); token != "" && !manifest.IsValuePlaceholder(token) {
+	if token, _, _ := sec.Value("bearerToken"); token != "" && !manifest.HasValuePlaceholder(token) {
 		return &githttp.TokenAuth{Token: token}, nil
 	}
 	username, password, err := source.BasicAuthFromSecret(sec, "GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name)

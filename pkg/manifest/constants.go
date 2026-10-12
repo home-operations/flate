@@ -50,19 +50,13 @@ var BootstrapSourceID = NamedResource{
 	Kind: KindGitRepository, Namespace: DefaultNamespace, Name: DefaultNamespace,
 }
 
-// HelmRepository types as understood by Flux.
-const (
-	RepoTypeDefault = "default"
-	RepoTypeOCI     = "oci"
-)
-
 // ValuePlaceholderTemplate is the format string used when wiping Secret
-// values. The "{name}" token is replaced with the data key.
+// values. The "%s" verb is replaced with the data key.
 const ValuePlaceholderTemplate = "..PLACEHOLDER_%s.."
 
 // ValuePlaceholderPrefix is the literal prefix produced by
 // ValuePlaceholderTemplate; consumers checking whether a string is a
-// wipe placeholder should use ContainsValuePlaceholder / IsValuePlaceholder
+// wipe placeholder should use ContainsValuePlaceholder / HasValuePlaceholder
 // rather than hard-coding the prefix.
 const ValuePlaceholderPrefix = "..PLACEHOLDER_"
 

@@ -404,7 +404,7 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 			// — treat as empty so a wiped values-file (common pattern: kustomize
 			// `secretGenerator` wrapping a SOPS-encrypted values.yaml) doesn't
 			// block the whole HR render.
-			if manifest.IsValuePlaceholder(found) {
+			if manifest.HasValuePlaceholder(found) {
 				return values, nil
 			}
 			return values, fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)

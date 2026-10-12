@@ -16,12 +16,12 @@ import (
 // substitutes a child KS's text (via its parent's postBuild) before the
 // dependency is ever matched. flate builds its dependency graph from the
 // raw file-parsed KS — where `dependsOn: 0-${CLUSTER_NAME}-config` (no
-// default) survives ResolveEnvsubstDefaults and never matches the real
+// default) survives the parse-time default collapse and never matches the real
 // `0-biohazard-config` — so without this pass the dependency is reported
 // "not found".
 //
 // ${VAR:=default} forms are already collapsed at parse time
-// (ResolveEnvsubstDefaults), so this pass only ever resolves *bare* vars,
+// (the parse-time default collapse), so this pass only ever resolves *bare* vars,
 // drawing values from the union of every discovered KS's
 // spec.postBuild.substitute map. Two guards keep it from manufacturing a
 // false dependency match:

@@ -73,7 +73,7 @@ func resolveSecretRef(secrets SecretGetter, ns, ownerKind, ownerID, field string
 func BasicAuthFromSecret(sec *manifest.Secret, ownerKind, ns, name, secretRef string) (username, password string, err error) {
 	username, _, _ = sec.Value("username")
 	password, _, _ = sec.Value("password")
-	if username == "" || password == "" || manifest.IsValuePlaceholder(username) || manifest.IsValuePlaceholder(password) {
+	if username == "" || password == "" || manifest.HasValuePlaceholder(username) || manifest.HasValuePlaceholder(password) {
 		return "", "", MissingSecretErr(ownerKind, ns, name, secretRef, "missing username/password")
 	}
 	return username, password, nil

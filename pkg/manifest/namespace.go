@@ -68,3 +68,33 @@ func StampNamespaces(docs []map[string]any, ns string) {
 		StampNamespace(doc, ns)
 	}
 }
+
+// EnsureMetadata returns doc["metadata"] as a map[string]any, lazily
+// creating one when absent (or when present as a non-map). Used by
+// writers that mutate metadata.labels / metadata.annotations; readers
+// should prefer a direct type-assert + nil-tolerant access so we
+// don't allocate when nothing will be written.
+func EnsureMetadata(doc map[string]any) map[string]any {
+	return childMap(doc, "metadata")
+}
+
+// MergeStringMap merges in into md[key] as a map[string]any. Creates
+// the inner map when absent; existing entries with the same key are
+// overwritten. No-op when in is empty.
+//
+// Used by the ResourceSet output + Helm post-render passes to merge
+// CommonMetadata (labels / annotations) onto rendered docs without
+// touching unrelated entries.
+func MergeStringMap(md map[string]any, key string, in map[string]string) {
+	if len(in) == 0 {
+		return
+	}
+	out, _ := md[key].(map[string]any)
+	if out == nil {
+		out = make(map[string]any, len(in))
+	}
+	for k, v := range in {
+		out[k] = v
+	}
+	md[key] = out
+}

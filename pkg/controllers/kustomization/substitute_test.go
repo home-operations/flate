@@ -9,7 +9,7 @@ import (
 
 // containsSubstitution gates whether substituteDoc pays for a full
 // YAML marshal/unmarshal round-trip. The check lives as a closure
-// passed to manifest.AnyStringLeaf — pin its behavior here.
+// passed to manifest.AnyStringNode — pin its behavior here.
 func TestContainsSubstitution(t *testing.T) {
 	hasDollar := func(s string) bool { return strings.Contains(s, "${") }
 	cases := []struct {
@@ -39,8 +39,8 @@ func TestContainsSubstitution(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := manifest.AnyStringLeaf(tc.in, hasDollar); got != tc.want {
-				t.Errorf("AnyStringLeaf(${) = %v, want %v", got, tc.want)
+			if got := manifest.AnyStringNode(tc.in, hasDollar); got != tc.want {
+				t.Errorf("AnyStringNode(${) = %v, want %v", got, tc.want)
 			}
 		})
 	}

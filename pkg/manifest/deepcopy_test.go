@@ -100,13 +100,6 @@ func TestDeepCopyMap_Nil(t *testing.T) {
 	}
 }
 
-// AnyStringNode gates the postBuild substitution round-trip. Unlike
-// AnyStringLeaf it must also see `${VAR}` in MAP KEY position — Flux
-// runs envsubst over the serialized YAML text, where a key is just
-// another token, so a key-only reference (e.g. `${OP_VAULT}: 1`) has to
-// trigger the round-trip or the var is left literal. The value-only and
-// no-match cases must stay identical to AnyStringLeaf (the parity sweep
-// below) so the change is inert for docs that were already handled.
 func TestAnyStringNode(t *testing.T) {
 	hasDollar := func(s string) bool { return strings.Contains(s, "${") }
 	cases := []struct {
@@ -114,7 +107,6 @@ func TestAnyStringNode(t *testing.T) {
 		in   any
 		want bool
 	}{
-		// Cases shared with AnyStringLeaf — must match it exactly.
 		{"nil", nil, false},
 		{"empty map", map[string]any{}, false},
 		{"plain scalars only", map[string]any{"a": "literal", "b": 3, "c": true}, false},
@@ -124,8 +116,6 @@ func TestAnyStringNode(t *testing.T) {
 			"spec": map[string]any{"containers": []any{map[string]any{"image": "ghcr.io/x:${TAG}"}}},
 		}, true},
 		{"dollar but no brace", map[string]any{"a": "price$5"}, false},
-		// Key-position cases — these are where AnyStringNode diverges
-		// from (improves on) AnyStringLeaf.
 		{"key with ${, non-string value", map[string]any{"${OP_VAULT}": 1}, true},
 		{"key with ${ nested under a list", map[string]any{
 			"vaults": []any{map[string]any{"${OP_VAULT}": 1}},
@@ -142,25 +132,25 @@ func TestAnyStringNode(t *testing.T) {
 	}
 }
 
-// TestAnyStringNode_ParityWithLeafOnValues pins that AnyStringNode and
-// AnyStringLeaf agree whenever no `${` sits in a key — i.e. the new
-// behavior is strictly additive (it only ever flips false→true for a
-// key-position match, never changes a value-driven result).
-func TestAnyStringNode_ParityWithLeafOnValues(t *testing.T) {
-	hasDollar := func(s string) bool { return strings.Contains(s, "${") }
-	valueOnly := []any{
-		nil,
-		map[string]any{},
-		map[string]any{"a": "literal", "b": 3},
-		map[string]any{"a": "${VAR}"},
-		map[string]any{"data": []any{"x", "${VAR}", "y"}},
-		map[string]any{"spec": map[string]any{"replicas": "${N}"}},
-		map[string]any{"a": "price$5"},
-	}
-	for i, v := range valueOnly {
-		if AnyStringNode(v, hasDollar) != AnyStringLeaf(v, hasDollar) {
-			t.Errorf("case %d: AnyStringNode and AnyStringLeaf disagree on a key-free tree", i)
-		}
+func TestContainsValuePlaceholder_ValuesOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   any
+		want bool
+	}{
+		{"nil", nil, false},
+		{"literal", "value", false},
+		{"placeholder", "..PLACEHOLDER_key..", true},
+		{"concatenation", "registry...PLACEHOLDER_DOMAIN..", true},
+		{"key only", map[string]any{"..PLACEHOLDER_key..": 1}, false},
+		{"nested key", []any{map[string]any{"..PLACEHOLDER_key..": "value"}}, false},
+		{"nested value", map[string]any{"data": []any{3, map[string]any{"value": "..PLACEHOLDER_key.."}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ContainsValuePlaceholder(tc.in); got != tc.want {
+				t.Errorf("ContainsValuePlaceholder = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

@@ -91,8 +91,8 @@ func TestResolveEnvsubstDefaults(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ResolveEnvsubstDefaults(tc.in); got != tc.want {
-				t.Errorf("ResolveEnvsubstDefaults(%q) = %q, want %q", tc.in, got, tc.want)
+			if got := resolveEnvsubstDefaults(tc.in); got != tc.want {
+				t.Errorf("resolveEnvsubstDefaults(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

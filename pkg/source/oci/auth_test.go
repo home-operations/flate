@@ -379,7 +379,7 @@ func TestFetcher_OCIHelmRepositoryRegistryFallback(t *testing.T) {
 	}
 	repo := &manifest.HelmRepository{
 		Name: "charts", Namespace: "ns",
-		URL: "oci://" + host + "/charts", Type: manifest.RepoTypeOCI, Insecure: true,
+		URL: "oci://" + host + "/charts", Type: sourcev1.HelmRepositoryTypeOCI, Insecure: true,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
 	charts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, helmchart.Config{Cache: cache})

@@ -34,33 +34,6 @@ func (h HelmChart) ChartName() string {
 	return h.RepoFullName() + "/" + h.Name
 }
 
-// IsResolved reports whether this HelmChart is in its final form —
-// i.e. NOT an unresolved chartRef placeholder. A chartRef pointing
-// at a HelmChart CRD lands in the store with RepoKind=KindHelmChart
-// and no chart Name; ResolveChartRef rewrites the HelmChart in
-// place by looking up the referenced HelmChartSource and setting
-// the chart name + version + the underlying source kind. Callers
-// that read h.Name / h.Version must either run after Prepare /
-// ResolveChartRef, or check IsResolved first — see also the empty
-// Name guarantee in chartFromHelmRelease.
-//
-// chartRef → Bucket / GitRepository / OCIRepository also lands with
-// Name="" intentionally (the underlying source's content determines
-// the chart layout, not the ref name). IsResolved keys on both
-// "RepoKind has a real name" AND "the bytes-determining field —
-// Name for HelmRepository, Version for chartRef-HelmChart — is
-// non-empty" so a caller that branches on IsResolved to safely
-// dereference Name doesn't get an empty subpath silently.
-func (h HelmChart) IsResolved() bool {
-	if h.Name == "" {
-		return false
-	}
-	if h.RepoKind == KindHelmChart && h.Version == "" {
-		return false
-	}
-	return true
-}
-
 // chartFromHelmRelease projects the chart reference out of a typed
 // HelmRelease spec, unifying spec.chartRef and spec.chart into one
 // resolved shape. defaultNamespace fills in an omitted ref namespace.
@@ -72,16 +45,9 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string)
 		if ref.Name == "" {
 			return HelmChart{}, inputf("HelmRelease missing spec.chartRef.name")
 		}
-		// Leave Name empty for a chartRef → HelmChart CRD: the
-		// referenced HelmChartSource carries the actual chart name,
-		// which ResolveChartRef materializes via helmChartFromSource.
-		// The previous Name=ref.Name placeholder gave callers a wrong
-		// "<refName>" string if they read it before resolve — and
-		// IsResolved() now exposes the unresolved state explicitly so
-		// consumers can branch. For non-HelmChart chartRefs
-		// (OCIRepository/Bucket), the RepoKind is already final and
-		// Name stays empty intentionally — the underlying source's
-		// content determines the chart layout, not the ref name.
+		// A chartRef name identifies the source, not the chart inside it.
+		// ResolveChartRef reads the chart name from a HelmChartSource;
+		// other source kinds determine it from their artifact's layout.
 		return HelmChart{
 			RepoName:      ref.Name,
 			RepoNamespace: cmp.Or(ref.Namespace, defaultNamespace),
@@ -305,8 +271,8 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	// both the value lookup and its cache key see the same string. Bare
 	// ${VAR} (no default) is left for postBuild substitution.
 	for i := range cr.Spec.ValuesFrom {
-		cr.Spec.ValuesFrom[i].ValuesKey = ResolveEnvsubstDefaults(cr.Spec.ValuesFrom[i].ValuesKey)
-		cr.Spec.ValuesFrom[i].Name = ResolveEnvsubstDefaults(cr.Spec.ValuesFrom[i].Name)
+		cr.Spec.ValuesFrom[i].ValuesKey = resolveEnvsubstDefaults(cr.Spec.ValuesFrom[i].ValuesKey)
+		cr.Spec.ValuesFrom[i].Name = resolveEnvsubstDefaults(cr.Spec.ValuesFrom[i].Name)
 	}
 	// metadata.namespace is optional — Flux Kustomizations commonly
 	// inject it via spec.targetNamespace. Treat the empty string as
@@ -321,21 +287,11 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 			return nil, inputf("HelmRelease spec.values: %w", err)
 		}
 	}
-	disableSchema := (cr.Spec.Install != nil && cr.Spec.Install.DisableSchemaValidation) ||
-		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableSchemaValidation)
-	disableOpenAPI := (cr.Spec.Install != nil && cr.Spec.Install.DisableOpenAPIValidation) ||
-		(cr.Spec.Upgrade != nil && cr.Spec.Upgrade.DisableOpenAPIValidation)
-	// Upgrade.CRDs wins over Install.CRDs — helm-controller's
-	// upgrade-after-install model means the upgrade policy is what
-	// the running cluster sees once any release is past its first
-	// install.
-	crdsPolicy := ""
-	if cr.Spec.Install != nil {
-		crdsPolicy = string(cr.Spec.Install.CRDs)
-	}
-	if cr.Spec.Upgrade != nil && cr.Spec.Upgrade.CRDs != "" {
-		crdsPolicy = string(cr.Spec.Upgrade.CRDs)
-	}
+	install, upgrade := cr.GetInstall(), cr.GetUpgrade()
+	disableSchema := install.DisableSchemaValidation || upgrade.DisableSchemaValidation
+	disableOpenAPI := install.DisableOpenAPIValidation || upgrade.DisableOpenAPIValidation
+	// The upgrade policy takes precedence after the first install.
+	crdsPolicy := string(cmp.Or(upgrade.CRDs, install.CRDs))
 	dependsOn := make([]DependencyRef, 0, len(cr.Spec.DependsOn))
 	for _, dep := range cr.Spec.DependsOn {
 		if dep.Name == "" {

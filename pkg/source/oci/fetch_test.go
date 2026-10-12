@@ -297,7 +297,7 @@ func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
 		Insecure:  true,
 		Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
 		LayerSelector: &sourcev1.OCILayerSelector{
-			Operation: manifest.OCILayerOperationCopy,
+			Operation: sourcev1.OCILayerCopy,
 		},
 	}
 	copyArt, err := f.Fetch(t.Context(), copyRepo)

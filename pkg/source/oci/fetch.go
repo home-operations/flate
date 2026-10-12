@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"maps"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
@@ -54,7 +55,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 		return produceLayer(ctx, client, &selectedRepo, w)
 	}
 	switch effectiveLayerOperation(repo.LayerSelector) {
-	case manifest.OCILayerOperationCopy:
+	case sourcev1.OCILayerCopy:
 		id = "blob-oci-" + h
 		r, desc, err := f.Cache.Blob(ctx, cache.BlobKey{ID: id}, maxAge, produce)
 		if err != nil {
@@ -64,7 +65,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 		if err := r.Close(); err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
-	case manifest.OCILayerOperationExtract:
+	case sourcev1.OCILayerExtract:
 		input, descriptor, err = f.Cache.Acquire(ctx, cache.ArchiveKey{ID: id, Ignore: ignore, WithDefaults: true}, maxAge, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
@@ -122,7 +123,7 @@ func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest
 	}
 	defer func() { _ = r.Close() }()
 	verified := content.NewVerifyReader(r, layer)
-	if effectiveLayerOperation(selector) == manifest.OCILayerOperationExtract {
+	if effectiveLayerOperation(selector) == sourcev1.OCILayerExtract {
 		gz, err := gzip.NewReader(verified)
 		if err != nil {
 			return desc, fmt.Errorf("gzip: %w", err)

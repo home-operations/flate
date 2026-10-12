@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 )
 
 // sopsCiphertextPrefix opens every SOPS-encrypted scalar. SOPS rewrites
@@ -61,10 +63,6 @@ func IsEncryptedSecret(doc map[string]any) bool {
 // $${VAR[@]} bash array expansions would otherwise crash the parser.
 const SubstituteAnnotationKey = "kustomize.toolkit.fluxcd.io/substitute"
 
-// SubstituteDisabledValue is the literal value that opts a resource
-// out of postBuild substitution. Matches Flux's `DisabledValue`.
-const SubstituteDisabledValue = "disabled"
-
 // HasSubstituteDisabled reports whether a manifest doc carries the
 // substitute-disabled label or annotation. flate skips envsubst on
 // such resources, mirroring Flux's per-resource opt-out.
@@ -75,7 +73,7 @@ func HasSubstituteDisabled(doc map[string]any) bool {
 	}
 	for _, field := range []string{"labels", "annotations"} {
 		m, _ := md[field].(map[string]any)
-		if v, _ := m[SubstituteAnnotationKey].(string); v == SubstituteDisabledValue {
+		if v, _ := m[SubstituteAnnotationKey].(string); v == kustomizev1.DisabledValue {
 			return true
 		}
 	}

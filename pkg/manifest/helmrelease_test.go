@@ -25,3 +25,24 @@ func TestHelmRelease_UsesDirectOCIRepository(t *testing.T) {
 		})
 	}
 }
+
+func TestParseHelmRelease_DisableValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, specBody          string
+		wantSchema, wantOpenAPI bool
+	}{
+		{name: "neither"},
+		{name: "install only", specBody: "  install: {disableSchemaValidation: true}", wantSchema: true},
+		{name: "upgrade only", specBody: "  upgrade: {disableOpenAPIValidation: true}", wantOpenAPI: true},
+		{name: "both", specBody: "  install: {disableOpenAPIValidation: true}\n  upgrade: {disableSchemaValidation: true}", wantSchema: true, wantOpenAPI: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hr, err := parseHelmRelease(helmReleaseDoc(t, tc.specBody))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, hr.DisableSchemaValidation, tc.wantSchema)
+			assert.Equal(t, hr.DisableOpenAPIValidation, tc.wantOpenAPI)
+		})
+	}
+}

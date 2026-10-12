@@ -7,40 +7,32 @@ import (
 	"strings"
 )
 
-// TrimSentinelPrefix removes the noisy `flux error: <subcategory>: `
-// chain produced by sentinel-wrapped errors (ErrFlux → ErrInput /
-// ErrObjectNotFound / …) so user-facing messages lead with the
-// actual cause. Idempotent — strings that don't start with the
-// prefix, or whose subcategory isn't one of the known sentinels,
-// pass through unchanged.
-//
-// Lives next to the sentinels themselves so the whitelist stays
-// in sync: adding a new ErrFoo here means updating one list, not
-// hunting through orchestrator code.
+// TrimSentinelPrefix removes ErrFlux and a registered sentinel category
+// from user-facing messages. Sentinels register their categories at declaration.
 func TrimSentinelPrefix(msg string) string {
-	const prefix = "flux error: "
-	if !strings.HasPrefix(msg, prefix) {
+	prefix := ErrFlux.Error() + ": "
+	rest, ok := strings.CutPrefix(msg, prefix)
+	if !ok {
 		return msg
 	}
-	rest := msg[len(prefix):]
-	// One more level: `<subcategory>: <body>`. Strip subcategory only
-	// when it matches a known sentinel wrap so colon-containing
-	// non-sentinel messages aren't mangled.
-	i := strings.Index(rest, ": ")
-	if i <= 0 {
+	category, body, ok := strings.Cut(rest, ": ")
+	if !ok {
 		return rest
 	}
-	switch rest[:i] {
-	case "input error",
-		"object not found",
-		"invalid values reference",
-		"invalid substitute reference",
-		"command error",
-		"missing secret",
-		"source skipped":
-		return rest[i+2:]
+	for _, sentinel := range sentinels {
+		if category == strings.TrimPrefix(sentinel.Error(), prefix) {
+			return body
+		}
 	}
 	return rest
+}
+
+var sentinels []error
+
+func sentinel(category string) error {
+	err := fmt.Errorf("%w: "+category, ErrFlux)
+	sentinels = append(sentinels, err)
+	return err
 }
 
 // Sentinel errors. Callers branch on these with errors.Is. Every error
@@ -48,21 +40,20 @@ func TrimSentinelPrefix(msg string) string {
 // errors.Is(err, manifest.ErrFlux) classifies any flux-related failure.
 var (
 	ErrFlux                       = errors.New("flux error")
-	ErrInput                      = fmt.Errorf("%w: input error", ErrFlux)
-	ErrObjectNotFound             = fmt.Errorf("%w: object not found", ErrFlux)
-	ErrInvalidValuesReference     = fmt.Errorf("%w: invalid values reference", ErrFlux)
-	ErrInvalidSubstituteReference = fmt.Errorf("%w: invalid substitute reference", ErrFlux)
-	ErrCommand                    = fmt.Errorf("%w: command error", ErrFlux)
+	ErrInput                      = sentinel("input error")
+	ErrObjectNotFound             = sentinel("object not found")
+	ErrInvalidValuesReference     = sentinel("invalid values reference")
+	ErrInvalidSubstituteReference = sentinel("invalid substitute reference")
 	// ErrMissingSecret marks absent or wiped source auth, cert or proxy material.
 	// The source is skipped only under producer or --allow-missing-secrets policy;
 	// configured TLS/proxy requirements are never discarded for a fetch.
 	// Malformed real material remains a failure. Signature refs are ignored.
-	ErrMissingSecret = fmt.Errorf("%w: missing secret", ErrFlux)
+	ErrMissingSecret = sentinel("missing secret")
 	// ErrSourceSkipped signals that a downstream consumer (KS sourceRef,
 	// HR chartRef) cannot proceed because its source was skipped —
 	// typically by --allow-missing-secrets. Consumers translate this
 	// into their own skip rather than a hard failure.
-	ErrSourceSkipped = fmt.Errorf("%w: source skipped", ErrFlux)
+	ErrSourceSkipped = sentinel("source skipped")
 )
 
 // inputf formats an input error.

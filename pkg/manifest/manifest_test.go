@@ -206,6 +206,7 @@ func TestParseHelmRelease_CRDsPolicy(t *testing.T) {
 		want     string
 	}{
 		{"install only", "  install: {crds: Create}", "Create"},
+		{"empty upgrade uses install", "  install: {crds: Create}\n  upgrade: {}", "Create"},
 		{"upgrade wins over install", "  install: {crds: Create}\n  upgrade: {crds: CreateReplace}", "CreateReplace"},
 		{"skip suppresses", "  upgrade: {crds: Skip}", "Skip"},
 		{"empty when neither set", "", ""},

@@ -149,7 +149,7 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	st.AddObject(&manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
 		URL:  "oci://oci.trueforge.org/truecharts",
-		Type: manifest.RepoTypeOCI,
+		Type: sourcev1.HelmRepositoryTypeOCI,
 	})
 	st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if id.Kind == manifest.KindHelmChart && !filter.ShouldReconcile(id) {
@@ -316,7 +316,7 @@ func TestMaterializeHelmChartSource_LateArrival(t *testing.T) {
 	st.AddObject(&manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
 		URL:  "oci://oci.trueforge.org/truecharts",
-		Type: manifest.RepoTypeOCI,
+		Type: sourcev1.HelmRepositoryTypeOCI,
 	})
 
 	// Pass 2: now present — must repoint to the synthetic HelmChart.

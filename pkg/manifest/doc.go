@@ -3,10 +3,8 @@
 //
 // The types here mirror the Flux CRDs (GitRepository, OCIRepository,
 // HelmRepository, HelmRelease, Kustomization, ...) together with the
-// supporting Kubernetes core kinds (ConfigMap, Secret). Each resource type
-// can be decoded from raw YAML (the form Flux stores in a repo) via its
-// ParseDoc-equivalent constructor, and re-encoded to a canonical YAML
-// representation for export.
+// supporting Kubernetes core kinds (ConfigMap, Secret). ParseDoc decodes
+// raw YAML documents into these types for canonical YAML export.
 //
 // flate renders the user's own repo offline, not a live cluster, so Secret
 // values pass through verbatim — plaintext, public keys, certs, binary data.

@@ -107,7 +107,7 @@ func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIR
 		return f.registryFallback(ctx, repo, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found"))
 	}
 	configJSON, _, _ := sec.Value(dockerConfigJSONKey)
-	if configJSON == "" || manifest.IsValuePlaceholder(configJSON) {
+	if configJSON == "" || manifest.HasValuePlaceholder(configJSON) {
 		// Empty here covers both (a) the Secret has no .dockerconfigjson
 		// key at all and (b) the key exists but `--wipe-secrets` (always
 		// on) replaced its value with PLACEHOLDER, which Secret.Value

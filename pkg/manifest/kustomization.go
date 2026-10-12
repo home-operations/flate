@@ -24,10 +24,6 @@ type Kustomization struct {
 
 	kustomizev1.KustomizationSpec `json:",inline" yaml:",inline"`
 
-	// SourcePath is the location on disk this Kustomization was loaded
-	// from (config.kubernetes.io/path annotation).
-	SourcePath string `json:"-" yaml:"-"`
-
 	// SourceKind / SourceName / SourceNamespace mirror the embedded
 	// Spec.SourceRef with the namespace defaulted to the Kustomization's
 	// own namespace (matching Flux's behavior). The embedded struct's
@@ -154,12 +150,12 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 	// matches what real Flux's postBuild.substitute would produce.
 	// Bare ${VAR} (no default) is left for the postBuild step to
 	// fill — only ${VAR:=default} and ${VAR:-default} collapse here.
-	cr.Spec.Path = ResolveEnvsubstDefaults(cr.Spec.Path)
-	cr.Spec.SourceRef.Name = ResolveEnvsubstDefaults(cr.Spec.SourceRef.Name)
-	cr.Spec.SourceRef.Namespace = ResolveEnvsubstDefaults(cr.Spec.SourceRef.Namespace)
+	cr.Spec.Path = resolveEnvsubstDefaults(cr.Spec.Path)
+	cr.Spec.SourceRef.Name = resolveEnvsubstDefaults(cr.Spec.SourceRef.Name)
+	cr.Spec.SourceRef.Namespace = resolveEnvsubstDefaults(cr.Spec.SourceRef.Namespace)
 	for i := range cr.Spec.DependsOn {
-		cr.Spec.DependsOn[i].Name = ResolveEnvsubstDefaults(cr.Spec.DependsOn[i].Name)
-		cr.Spec.DependsOn[i].Namespace = ResolveEnvsubstDefaults(cr.Spec.DependsOn[i].Namespace)
+		cr.Spec.DependsOn[i].Name = resolveEnvsubstDefaults(cr.Spec.DependsOn[i].Name)
+		cr.Spec.DependsOn[i].Namespace = resolveEnvsubstDefaults(cr.Spec.DependsOn[i].Namespace)
 	}
 	// sourceRef validation catches the truncated-YAML case where
 	// `name:` (no value, e.g. file ends mid-mapping) decodes silently
@@ -202,7 +198,6 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 		Name:                    cr.Name,
 		Namespace:               ns,
 		KustomizationSpec:       cr.Spec,
-		SourcePath:              cr.Annotations["config.kubernetes.io/path"],
 		SourceKind:              cr.Spec.SourceRef.Kind,
 		SourceName:              cr.Spec.SourceRef.Name,
 		SourceNamespace:         srcNamespace,

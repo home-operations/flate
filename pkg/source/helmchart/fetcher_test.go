@@ -15,7 +15,7 @@ import (
 func ociRepo(url string) *manifest.HelmRepository {
 	return &manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
-		URL: url, Type: manifest.RepoTypeOCI,
+		URL: url, Type: sourcev1.HelmRepositoryTypeOCI,
 	}
 }
 
@@ -46,7 +46,7 @@ func TestIsOCIHelmRepo(t *testing.T) {
 		repo *manifest.HelmRepository
 		want bool
 	}{
-		{"type oci", &manifest.HelmRepository{URL: "https://x", Type: manifest.RepoTypeOCI}, true},
+		{"type oci", &manifest.HelmRepository{URL: "https://x", Type: sourcev1.HelmRepositoryTypeOCI}, true},
 		{"oci:// url no type", &manifest.HelmRepository{URL: "oci://reg/x"}, true},
 		{"http default", &manifest.HelmRepository{URL: "https://charts.example"}, false},
 	}
@@ -62,7 +62,7 @@ func TestIsOCIHelmRepo(t *testing.T) {
 func TestSynthesizeOCIRepository(t *testing.T) {
 	r := &manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
-		URL: "oci://oci.trueforge.org/truecharts/", Type: manifest.RepoTypeOCI,
+		URL: "oci://oci.trueforge.org/truecharts/", Type: sourcev1.HelmRepositoryTypeOCI,
 	}
 	syn := synthesizeOCIRepository(r, "kromgo", "3.0.0")
 	if syn.URL != "oci://oci.trueforge.org/truecharts/kromgo" {

@@ -16,7 +16,7 @@ import (
 // rendered output so flate's model stays consistent across build/diff:
 // every rendered document is an individual, name-able resource. It also
 // lets each item flow through ParseDoc as its real kind — a List wrapper
-// has no metadata.name, so ParseDoc rejects it today and the resources
+// has no metadata.name, so ParseDoc rejects it and the resources
 // inside go untracked in the store. The loader's own SplitDocs/DecodeDocs
 // of user CR files is deliberately left un-flattened.
 //

@@ -49,7 +49,7 @@ func ResolveProxy(secrets SecretGetter, ns, ownerKind, ownerID string, ref *mani
 		if err != nil {
 			return nil, fmt.Errorf("proxy secret %s/%s: %w", ns, ref.Name, err)
 		}
-		if manifest.IsValuePlaceholder(value) {
+		if manifest.HasValuePlaceholder(value) {
 			return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "proxy material unavailable")
 		}
 		material[i] = value

@@ -108,13 +108,13 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 		return nil, inputf("GitRepository missing spec.url")
 	}
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GitProviderGeneric)
-	cr.Spec.URL = ResolveEnvsubstDefaults(cr.Spec.URL)
+	cr.Spec.URL = resolveEnvsubstDefaults(cr.Spec.URL)
 	if r := cr.Spec.Reference; r != nil {
-		r.Branch = ResolveEnvsubstDefaults(r.Branch)
-		r.Tag = ResolveEnvsubstDefaults(r.Tag)
-		r.SemVer = ResolveEnvsubstDefaults(r.SemVer)
-		r.Commit = ResolveEnvsubstDefaults(r.Commit)
-		r.Name = ResolveEnvsubstDefaults(r.Name)
+		r.Branch = resolveEnvsubstDefaults(r.Branch)
+		r.Tag = resolveEnvsubstDefaults(r.Tag)
+		r.SemVer = resolveEnvsubstDefaults(r.SemVer)
+		r.Commit = resolveEnvsubstDefaults(r.Commit)
+		r.Name = resolveEnvsubstDefaults(r.Name)
 	}
 	owner := cr.Namespace + "/" + cr.Name
 	if err := validateOptionalRefs("GitRepository", owner,
@@ -151,13 +151,6 @@ type OCIRepository struct {
 // filename "layer.tar.gz".
 type OCILayerSelector = sourcev1.OCILayerSelector
 
-// OCILayerOperationExtract and OCILayerOperationCopy are the two
-// values source-controller accepts on LayerSelector.Operation.
-const (
-	OCILayerOperationExtract = "extract"
-	OCILayerOperationCopy    = "copy"
-)
-
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {
 	return NamedResource{Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
@@ -168,16 +161,6 @@ func (o *OCIRepository) Suspended() bool { return o.Suspend }
 
 // RepoName delegates to the canonical NamedResource helper.
 func (o *OCIRepository) RepoName() string { return o.Named().FluxResourceName() }
-
-// Version returns the digest, semver expression, or tag in that order.
-// A semver expression is returned verbatim — callers wanting a concrete
-// tag must resolve it against remote tag listing (pkg/source).
-func (o *OCIRepository) Version() string {
-	if o.Reference == nil {
-		return ""
-	}
-	return cmp.Or(o.Reference.Digest, o.Reference.SemVer, o.Reference.Tag)
-}
 
 // ParseOCIRepository decodes an OCIRepository CR.
 func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
@@ -193,11 +176,11 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	// `tag: "${FLUXCD_VERSION:=v2.8.5}"` becomes "v2.8.5" before the
 	// fetcher tries to resolve it. Bare ${VAR} (no default) is left
 	// for postBuild substitution.
-	cr.Spec.URL = ResolveEnvsubstDefaults(cr.Spec.URL)
+	cr.Spec.URL = resolveEnvsubstDefaults(cr.Spec.URL)
 	if r := cr.Spec.Reference; r != nil {
-		r.Tag = ResolveEnvsubstDefaults(r.Tag)
-		r.SemVer = ResolveEnvsubstDefaults(r.SemVer)
-		r.Digest = ResolveEnvsubstDefaults(r.Digest)
+		r.Tag = resolveEnvsubstDefaults(r.Tag)
+		r.SemVer = resolveEnvsubstDefaults(r.SemVer)
+		r.Digest = resolveEnvsubstDefaults(r.Digest)
 	}
 	owner := cr.Namespace + "/" + cr.Name
 	if err := validateOptionalRefs("OCIRepository", owner,

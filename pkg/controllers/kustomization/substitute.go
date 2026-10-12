@@ -20,7 +20,7 @@ import (
 // as int rather than string. Cheap pre-check on the decoded tree skips
 // the round-trip for the (common) case of docs with no `${` anywhere.
 //
-// The pre-check uses AnyStringNode (keys + values), not AnyStringLeaf:
+// The pre-check inspects both keys and values:
 // envsubst runs over the serialized YAML text, so a `${VAR}` in key
 // position (e.g. `${OP_VAULT}: 1`) substitutes just like one in value
 // position. Gating on values alone would skip a key-only reference and

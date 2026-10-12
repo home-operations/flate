@@ -34,7 +34,7 @@ func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("HelmRepository missing spec.url")
 	}
-	cr.Spec.Type = cmp.Or(cr.Spec.Type, RepoTypeDefault)
+	cr.Spec.Type = cmp.Or(cr.Spec.Type, sourcev1.HelmRepositoryTypeDefault)
 	owner := cr.Namespace + "/" + cr.Name
 	if err := validateOptionalRefs("HelmRepository", owner,
 		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},

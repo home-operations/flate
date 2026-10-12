@@ -1,6 +1,7 @@
 package oci
 
 import (
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -20,7 +21,7 @@ func layerMediaType(selector *manifest.OCILayerSelector) string {
 }
 func effectiveLayerOperation(selector *manifest.OCILayerSelector) string {
 	if selector == nil || selector.Operation == "" {
-		return manifest.OCILayerOperationExtract
+		return sourcev1.OCILayerExtract
 	}
 	return selector.Operation
 }

@@ -2,9 +2,21 @@ package manifest
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestTrimSentinelPrefix_AllSentinels(t *testing.T) {
+	for _, sentinel := range sentinels {
+		t.Run(sentinel.Error(), func(t *testing.T) {
+			msg := fmt.Errorf("%w: cause: detail", sentinel).Error()
+			if got := TrimSentinelPrefix(msg); got != "cause: detail" {
+				t.Errorf("TrimSentinelPrefix(%q) = %q", msg, got)
+			}
+		})
+	}
+}
 
 // TestTrimSentinelPrefix locks the user-facing error format: strip
 // the two-layer `flux error: <subcategory>:` chain produced by

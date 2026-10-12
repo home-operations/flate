@@ -666,6 +666,10 @@ func TestLoader_DotDotPaths(t *testing.T) {
 		accepted bool
 	}{
 		{path: "..foo", accepted: true},
+		{path: "..foo/bar", accepted: true},
+		{path: "..foo/../../outside"},
+		{path: "a/../../x"},
+		{path: "./../x"},
 		{path: ".."},
 		{path: "../x"},
 	} {

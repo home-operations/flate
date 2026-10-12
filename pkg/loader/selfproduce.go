@@ -277,6 +277,12 @@ func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization)
 	return dirs
 }
 
+// Kustomize graph and transformer references use slash separators on every OS.
+func escapedSlashPath(rel string) bool {
+	rel = path.Clean(rel)
+	return rel == ".." || strings.HasPrefix(rel, "../")
+}
+
 type graphWalker struct {
 	documents documentReader
 	visited   map[graphContext]struct{}
@@ -284,7 +290,7 @@ type graphWalker struct {
 
 // An outer namespace stays locked across nested bases and components.
 func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
-	if safepath.Escaped(v.dir) {
+	if escapedSlashPath(v.dir) {
 		return true
 	}
 	d, file := w.documents.read(filepath.Join(v.root, v.dir))

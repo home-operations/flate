@@ -13,7 +13,6 @@ import (
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
 // transformerScanMaxDepth bounds the recursive walk that confirms a
@@ -221,14 +220,14 @@ func (d namespaceTransformerDoc) injectsKustomizationTargetNamespace() bool {
 
 // resolveRef cleans a kustomize resource/transformer reference relative
 // to baseDir, rejecting remote (scheme://) and absolute refs and any
-// path that escapes above the repo (leading ".."). The boolean reports
+// path that escapes above the repo (".." or a "../" prefix). The boolean reports
 // whether the ref is a usable in-repo relative path.
 func resolveRef(baseDir, ref string) (string, bool) {
 	if ref == "" || strings.Contains(ref, "://") || filepath.IsAbs(ref) {
 		return "", false
 	}
-	resolved := path.Clean(path.Join(baseDir, filepath.ToSlash(ref)))
-	if resolved == "." || safepath.Escaped(resolved) {
+	resolved := path.Join(baseDir, filepath.ToSlash(ref))
+	if resolved == "." || escapedSlashPath(resolved) {
 		return "", false
 	}
 	return resolved, true

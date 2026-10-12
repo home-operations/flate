@@ -16,9 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 )
 
-// testTreeFS builds the same memory-over-disk overlay RenderFlux uses:
-// source files are read from a secure on-disk FS rooted at root; writes go to
-// memory.
+// testTreeFS keeps construction writes private over a secure disk input.
 func testTreeFS(t *testing.T, root string) filesys.FileSystem {
 	t.Helper()
 	disk, err := fluxfilesys.MakeFsOnDiskSecure(root)

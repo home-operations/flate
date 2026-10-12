@@ -189,8 +189,8 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
 	// Persist for the next run, unless the build consumed inputs the disk
-	// read-set can't validate: pre-fetched remote content (injected) or an
-	// unrepresentable read such as a Glob (rec.bypassed).
+	// read-set can't validate: pre-fetched remote content (injected) or a read
+	// outside the source root (rec.bypassed).
 	if rec != nil && !injected && !rec.bypassed() {
 		cache.render.put(key, rec.snapshot(), out)
 	}
@@ -303,7 +303,7 @@ func applyOwnerLabels(rm resmap.ResMap, rawSpec map[string]any) error {
 		return nil
 	}
 	namespace, _ := md["namespace"].(string)
-	const group = "kustomize.toolkit.fluxcd.io"
+	const group = manifest.FluxKustomizeDomain
 	// Build owner overlay with only non-empty values so a cluster-scoped
 	// Kustomization (no namespace) doesn't clobber an existing namespace label.
 	owner := make(map[string]string, 2)

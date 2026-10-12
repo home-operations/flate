@@ -355,25 +355,6 @@ func (t *view) ReadLink(name string) (string, error) {
 	return n.target, nil
 }
 
-// Glob returns lexical matches in order, omitting escaping links. Dangling and
-// looping links remain matches; opening them reports the resolution error.
-func (t *view) Glob(pattern string) ([]string, error) {
-	matches, err := fs.Glob(globFS{t: t}, pattern)
-	if err != nil {
-		return nil, &fs.PathError{Op: "glob", Path: pattern, Err: err}
-	}
-	return slices.DeleteFunc(matches, func(name string) bool {
-		_, err := t.Resolve(name)
-		return errors.Is(err, ErrEscape)
-	}), nil
-}
-
-type globFS struct{ t *view }
-
-func (g globFS) Open(name string) (fs.File, error)          { return g.t.Open(name) }
-func (g globFS) Stat(name string) (fs.FileInfo, error)      { return g.t.Lstat(name) }
-func (g globFS) ReadDir(name string) ([]fs.DirEntry, error) { return g.t.ReadDir(name) }
-
 // WalkRaw walks lexical nodes in order without following a link root or link
 // entries. SkipDir prunes the single merged directory index.
 func (t *view) WalkRaw(name string, fn fs.WalkDirFunc) error {

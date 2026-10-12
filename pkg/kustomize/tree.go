@@ -1,11 +1,5 @@
 package kustomize
 
-// tree.go holds the per-run render cache. With the memory-over-disk overlay
-// (see flux.go RenderFlux), source trees are read straight from disk — no
-// per-run snapshot or copy — so this is now just the small amount of shared
-// state a run's renders need: the HTTP remote-resource fetch dedup table and
-// the injected git-base fetcher.
-
 import (
 	"context"
 	"sync"

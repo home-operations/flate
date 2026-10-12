@@ -1,13 +1,11 @@
 package kustomize
 
 import (
-	"bytes"
 	"errors"
 	"io/fs"
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -266,20 +264,7 @@ func (t *treeFS) ReadDir(name string) ([]string, error) {
 	return entryNames(entries), treeError("readdir", name, err)
 }
 
-func (t *treeFS) Glob(pattern string) ([]string, error) {
-	if t.rec != nil {
-		t.rec.markBypass()
-	}
-	rel, err := t.rel(pattern)
-	if err != nil {
-		return nil, err
-	}
-	matches, err := t.upper.Glob(rel)
-	for i, name := range matches {
-		matches[i] = t.mount(name)
-	}
-	return matches, treeError("glob", pattern, err)
-}
+func (t *treeFS) Glob(string) ([]string, error) { return nil, fs.ErrPermission }
 
 func (t *treeFS) Walk(name string, fn filepath.WalkFunc) error {
 	rel, err := t.raw(name)
@@ -316,89 +301,9 @@ func (t *treeFS) WriteFile(name string, data []byte) error {
 	return nil
 }
 
-func (t *treeFS) Mkdir(name string) error {
-	rel, err := t.writePath(name)
-	if err != nil {
-		return err
-	}
-	if _, err := t.upper.Lstat(rel); err == nil {
-		return &fs.PathError{Op: "mkdir", Path: name, Err: fs.ErrExist}
-	}
-	if _, err := t.upper.Stat(path.Dir(rel)); err != nil {
-		return err
-	}
-	return treeError("mkdir", name, t.upper.AddDir(rel, 0o755))
-}
-
-func (t *treeFS) MkdirAll(name string) error {
-	rel, err := t.writePath(name)
-	if err != nil {
-		return err
-	}
-	return treeError("mkdir", name, t.upper.AddDir(rel, 0o755))
-}
-
-func (t *treeFS) RemoveAll(name string) error {
-	rel, err := t.writePath(name)
-	if err != nil {
-		return err
-	}
-	if err := t.upper.RemoveAll(rel); err != nil {
-		return treeError("remove", name, err)
-	}
-	t.mark(path.Clean(rel))
-	return nil
-}
-
-type writeFile struct {
-	data   bytes.Buffer
-	tree   *treeFS
-	name   string
-	closed bool
-}
-
-func (f *writeFile) Close() error {
-	if f.closed {
-		return fs.ErrClosed
-	}
-	f.closed = true
-	return f.tree.WriteFile(f.name, f.data.Bytes())
-}
-
-type writeInfo struct {
-	name string
-	size int64
-}
-
-func (i writeInfo) Name() string       { return i.name }
-func (i writeInfo) Size() int64        { return i.size }
-func (i writeInfo) Mode() fs.FileMode  { return 0o644 }
-func (i writeInfo) ModTime() time.Time { return time.Time{} }
-func (i writeInfo) IsDir() bool        { return false }
-func (i writeInfo) Sys() any           { return nil }
-
-func (f *writeFile) Stat() (fs.FileInfo, error) {
-	if f.closed {
-		return nil, fs.ErrClosed
-	}
-	return writeInfo{name: filepath.Base(f.name), size: int64(f.data.Len())}, nil
-}
-func (f *writeFile) Write(data []byte) (int, error) {
-	if f.closed {
-		return 0, fs.ErrClosed
-	}
-	return f.data.Write(data)
-}
-func (f *writeFile) Read(data []byte) (int, error) {
-	if f.closed {
-		return 0, fs.ErrClosed
-	}
-	return f.data.Read(data)
-}
-
-func (t *treeFS) Create(name string) (filesys.File, error) {
-	if _, err := t.writePath(name); err != nil {
-		return nil, err
-	}
-	return &writeFile{tree: t, name: name}, nil
+func (t *treeFS) Mkdir(string) error     { return fs.ErrPermission }
+func (t *treeFS) MkdirAll(string) error  { return fs.ErrPermission }
+func (t *treeFS) RemoveAll(string) error { return fs.ErrPermission }
+func (t *treeFS) Create(string) (filesys.File, error) {
+	return nil, fs.ErrPermission
 }

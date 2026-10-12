@@ -126,23 +126,6 @@ func TestTreeFS_MethodMatrix(t *testing.T) {
 	if err != nil || entries[0] != "file" {
 		t.Fatal("ReadDir exposed shared names")
 	}
-	matches, err := adapter.Glob("/virtual/root/*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"dangling", "loop", "chain9"} {
-		if !slices.Contains(matches, "/virtual/root/"+name) {
-			t.Fatalf("Glob lost %s: %v", name, matches)
-		}
-	}
-	for _, name := range []string{"escape", "absolute"} {
-		if slices.Contains(matches, "/virtual/root/"+name) {
-			t.Fatalf("Glob exposed %s", name)
-		}
-	}
-	if _, err := adapter.Glob("/virtual/root/["); err == nil {
-		t.Fatal("invalid Glob succeeded")
-	}
 }
 
 func TestTreeFS_PrivateWritesAndMergedWalk(t *testing.T) {
@@ -170,57 +153,10 @@ func TestTreeFS_PrivateWritesAndMergedWalk(t *testing.T) {
 	if err := a.WriteFile("/virtual/app", nil); !errors.Is(err, tree.ErrConflict) {
 		t.Fatalf("write directory = %v", err)
 	}
-	if err := a.MkdirAll("/virtual/keep/file"); !errors.Is(err, tree.ErrConflict) {
-		t.Fatalf("mkdir file = %v", err)
-	}
-	if err := a.Mkdir("/virtual/created"); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Mkdir("/virtual/missing/child"); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("Mkdir parent = %v", err)
-	}
-	if err := a.MkdirAll("/virtual/nested/child"); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.RemoveAll("/virtual/app"); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.MkdirAll("/virtual/app"); err != nil {
-		t.Fatal(err)
-	}
-	if a.Exists("/virtual/app/old") || a.Exists("/virtual/app/generated") {
-		t.Fatal("recreation revealed masked lower descendants")
-	}
-	file, err := a.Create("/virtual/app/a b+é")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.Write([]byte("created")); err != nil {
-		t.Fatal(err)
-	}
-	info, err := file.Stat()
-	if err != nil || info.Size() != 7 {
-		t.Fatalf("write Stat = %v, %v", info, err)
-	}
-	if a.Exists("/virtual/app/a b+é") {
-		t.Fatal("write published before Close")
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := a.CleanedAbs("/virtual/app/a b+é"); err != nil {
-		t.Fatal(err)
-	}
-	if data, err := a.ReadFile("/virtual/app/a b+é"); err != nil || string(data) != "created" {
-		t.Fatalf("created = %q, %v", data, err)
-	}
-	if _, err := file.Write(nil); !errors.Is(err, fs.ErrClosed) {
-		t.Fatal("closed handle writable")
-	}
 	if data, err := lower.ReadFile("app/old"); err != nil || string(data) != "old" {
 		t.Fatal("lower tree changed")
 	}
-	if _, err := lower.Stat("app/a b+é"); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := lower.Stat("app/generated"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal("write reached source")
 	}
 }

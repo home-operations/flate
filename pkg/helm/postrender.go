@@ -61,7 +61,7 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffe
 	for i, p := range k.Patches {
 		patches[i] = kustypes.Patch{
 			Patch:  p.Patch,
-			Target: adaptSelector(p.Target),
+			Target: flatekustomize.AdaptSelector(p.Target),
 		}
 	}
 	cfg := kustypes.Kustomization{
@@ -116,21 +116,5 @@ func adaptImages(in []kustomize.Image) []kustypes.Image {
 			Digest:  im.Digest,
 		}
 	}
-	return out
-}
-
-func adaptSelector(sel *kustomize.Selector) *kustypes.Selector {
-	if sel == nil {
-		return nil
-	}
-	out := &kustypes.Selector{
-		LabelSelector:      sel.LabelSelector,
-		AnnotationSelector: sel.AnnotationSelector,
-	}
-	out.Group = sel.Group
-	out.Version = sel.Version
-	out.Kind = sel.Kind
-	out.Name = sel.Name
-	out.Namespace = sel.Namespace
 	return out
 }

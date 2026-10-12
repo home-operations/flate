@@ -148,8 +148,7 @@ data:
 
 // BenchmarkRenderFlux_MultiKSPerRoot measures concurrent renders of distinct
 // subPaths under the SAME source root — the bulk of a single-cluster repo,
-// where the memory-over-disk overlay lets every render run in parallel against
-// the shared read-only source with no staging lock.
+// with private construction overlays over a shared read-only source.
 func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 	src := b.TempDir()
 	const apps = 40

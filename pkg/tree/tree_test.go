@@ -266,25 +266,6 @@ func TestTree_SymlinkContract(t *testing.T) {
 	}
 }
 
-func TestTree_GlobLinkContract(t *testing.T) {
-	b := tree.NewBuilder(nil)
-	must(t, b.AddFile("file", []byte("data"), 0o600))
-	must(t, b.AddSymlink("dangling", "missing"))
-	must(t, b.AddSymlink("escape", "../file"))
-	must(t, b.AddSymlink("loop", "loop"))
-	tr := build(t, b)
-	matches, err := tr.Glob("*")
-	must(t, err)
-	assert.Diff(t, matches, []string{"dangling", "file", "loop"})
-	for _, name := range []string{"dangling", "loop"} {
-		matches, err := tr.Glob(name)
-		must(t, err)
-		assert.Diff(t, matches, []string{name})
-	}
-	_, err = tr.Glob("[")
-	assert.Equal(t, errors.Is(err, path.ErrBadPattern), true)
-}
-
 func TestTree_WalkRawLinkRoot(t *testing.T) {
 	b := tree.NewBuilder(nil)
 	must(t, b.AddFile("dir/file", []byte("data"), 0o600))
@@ -353,12 +334,6 @@ func TestTree_ReturnedSlicesAreCallerOwned(t *testing.T) {
 							return
 						}
 						entries[0] = nil
-						matches, err := tr.Glob("dir/*")
-						if err != nil || len(matches) != 2 || matches[0] != "dir/a +@日本.yaml" {
-							t.Errorf("Glob: %v, %v", matches, err)
-							return
-						}
-						matches[0] = "changed"
 						f, err := tr.Open("dir")
 						if err != nil {
 							t.Error(err)

@@ -1,5 +1,7 @@
 package diff
 
+import "github.com/homeport/dyff/pkg/dyff"
+
 // Format selects the diff output flavor. The github/human/brief/gitlab/
 // gitea styles map to dyff's own output styles; diff is a plain unified
 // diff.
@@ -38,15 +40,37 @@ const (
 	FormatJSON Format = "json"
 )
 
-// isDyffText reports whether f renders the whole doc set natively through
-// dyff (see renderNative) rather than through the per-resource unified-diff
-// path (FormatDiff). The zero value defaults to the human style in
-// renderNative, so it is handled there rather than here.
-func (f Format) isDyffText() bool {
-	switch f {
-	case FormatGitHub, FormatHuman, FormatBrief, FormatGitLab, FormatGitea:
-		return true
-	default:
-		return false
+const (
+	dyffContextLines         = 4
+	dyffMinorChangeThreshold = 0.1
+)
+
+// Prefixes mirror dyff's CLI and keep suppression notes in the same syntax.
+var diffStyles = map[Format]struct {
+	note   string
+	writer func(dyff.Report) dyff.ReportWriter
+}{
+	FormatGitHub: {note: "! ", writer: diffSyntax("@@", "#", "!")},
+	FormatGitLab: {note: "# ", writer: diffSyntax("=", "=", "#")},
+	FormatGitea:  {note: "! ", writer: diffSyntax("@@", "=", "!")},
+	FormatDiff:   {note: "# "},
+	FormatHuman: {note: "⚠ ", writer: func(report dyff.Report) dyff.ReportWriter {
+		return &dyff.HumanReport{
+			Report: report, Indent: 2, UseIndentLines: true, OmitHeader: true,
+			MultilineContextLines: dyffContextLines, MinorChangeThreshold: dyffMinorChangeThreshold,
+		}
+	}},
+	FormatBrief: {note: "⚠ ", writer: func(report dyff.Report) dyff.ReportWriter {
+		return &dyff.BriefReport{Report: report}
+	}},
+}
+
+func diffSyntax(path, root, change string) func(dyff.Report) dyff.ReportWriter {
+	return func(report dyff.Report) dyff.ReportWriter {
+		return &dyff.DiffSyntaxReport{
+			PathPrefix: path, RootDescriptionPrefix: root, ChangeTypePrefix: change,
+			Report: report, Indent: 0, UseIndentLines: true, NoTableStyle: true, OmitHeader: true,
+			PrefixMultiline: true, MultilineContextLines: dyffContextLines, MinorChangeThreshold: dyffMinorChangeThreshold,
+		}
 	}
 }

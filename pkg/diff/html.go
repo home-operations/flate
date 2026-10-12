@@ -19,19 +19,12 @@ var htmlTmpl string
 
 var diffHTMLTemplate = template.Must(template.New("diff").Parse(htmlTmpl))
 
-// Row/cell kinds and resource statuses. These are not free-form: the
-// template renders them straight into CSS class suffixes — diff-<kind>,
-// status-<status>, and dot <status> — so each value must stay matched to a
-// rule in templates/diff.html.tmpl.
+// Row/cell kinds become CSS class suffixes and must match diff.html.tmpl.
 const (
 	kindCtx   = "ctx"
 	kindAdd   = "add"
 	kindDel   = "del"
 	kindBlank = "blank"
-
-	statusChanged = "changed"
-	statusAdded   = "added"
-	statusRemoved = "removed"
 )
 
 // htmlData is the diff.html.tmpl payload.
@@ -110,9 +103,6 @@ type sRow struct {
 // theme. Identical resources are dropped, matching renderUnified; an empty
 // diff produces no output at all, like the other formats.
 func renderHTML(left, right []Doc, opts Options) ([]byte, error) {
-	left = opts.normalize(left)
-	right = opts.normalize(right)
-
 	hl, css, err := newHighlighter()
 	if err != nil {
 		return nil, err
@@ -122,25 +112,17 @@ func renderHTML(left, right []Doc, opts Options) ([]byte, error) {
 	for _, s := range opts.Suppressed {
 		data.Suppressed = append(data.Suppressed, s.String())
 	}
-	for _, p := range pair(left, right) {
-		from, err := marshalForUnified(p.a)
+	for p, err := range changedPairs(left, right, opts) {
 		if err != nil {
 			return nil, err
 		}
-		to, err := marshalForUnified(p.b)
-		if err != nil {
-			return nil, err
-		}
-		if from == to {
-			continue // identical — drop, as the unified path does
-		}
-		r := buildHTMLResource(p, from, to, hl)
+		r := buildHTMLResource(p, hl)
 		r.ID = fmt.Sprintf("r%d", len(data.Resources))
 		data.Resources = append(data.Resources, r)
 		switch r.Status {
-		case statusAdded:
+		case string(StatusAdded):
 			data.Added++
-		case statusRemoved:
+		case string(StatusRemoved):
 			data.Removed++
 		default:
 			data.Changed++
@@ -182,19 +164,19 @@ func buildTree(res []htmlResource) []treeParent {
 // trimmed before/between/after the hunks are emitted as collapsed rows behind
 // an expander so the whole file can be revealed in place — see unifiedRows /
 // sideRows.
-func buildHTMLResource(p pairedResource, from, to string, hl *highlighter) htmlResource {
-	a, b := difflib.SplitLines(from), difflib.SplitLines(to)
-	ah, bh := hl.lines(a), hl.lines(b)
-	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(3)
-	markIntraline(a, b, groups, hl, ah, bh)
+func buildHTMLResource(p changedPair, hl *highlighter) htmlResource {
+	a, b := difflib.SplitLines(p.from), difflib.SplitLines(p.to)
+	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(diffContextLines)
+	ah, bh := highlightPair(a, b, groups, hl)
+	status, _ := classify(p.a, p.b)
 
 	id := joinNS(p.namespace, p.name)
 	res := htmlResource{
 		Title:  p.label(),
 		Kind:   p.kind,
 		Name:   id,
-		Parent: htmlParent(p.parent),
-		Status: htmlStatus(from, to),
+		Parent: p.parent.label(),
+		Status: string(status),
 		URows:  unifiedRows(ah, bh, groups),
 		SRows:  sideRows(ah, bh, groups),
 	}
@@ -350,10 +332,9 @@ func sideRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []sRow {
 	return rows
 }
 
-// markIntraline rewrites replace-aligned line pairs in ah/bh to add word-level
-// highlight spans around the runes that actually changed, so a one-character
-// edit reads as a one-character highlight instead of a whole-line tint.
-func markIntraline(a, b []string, groups [][]difflib.OpCode, hl *highlighter, ah, bh []template.HTML) {
+// highlightPair returns highlighted lines with changed rune spans on each side.
+func highlightPair(a, b []string, groups [][]difflib.OpCode, hl *highlighter) ([]template.HTML, []template.HTML) {
+	ah, bh := hl.lines(a), hl.lines(b)
 	for _, group := range groups {
 		for _, op := range group {
 			if op.Tag != 'r' {
@@ -371,6 +352,7 @@ func markIntraline(a, b []string, groups [][]difflib.OpCode, hl *highlighter, ah
 			}
 		}
 	}
+	return ah, bh
 }
 
 // runeDiffRange returns the per-side changed rune ranges of two differing lines
@@ -450,25 +432,6 @@ func classFor(tt chroma.TokenType) string {
 	return ""
 }
 
-func htmlParent(p Parent) string {
-	s := p.Kind + " " + joinNS(p.Namespace, p.Name)
-	if p.Path != "" {
-		s += " (" + p.Path + ")"
-	}
-	return s
-}
-
-func htmlStatus(from, to string) string {
-	switch {
-	case from == "":
-		return statusAdded
-	case to == "":
-		return statusRemoved
-	default:
-		return statusChanged
-	}
-}
-
 // highlighter renders single YAML lines to syntax-highlighted HTML spans
 // (chroma, class-based). The matching stylesheet — both the light (github) and
 // dark (github-dark) variants, scoped under .chroma.light / .chroma.dark — is
@@ -477,8 +440,6 @@ func htmlStatus(from, to string) string {
 // indices; block-scalar bodies lose cross-line context, immaterial for review.
 type highlighter struct {
 	lexer chroma.Lexer
-	style *chroma.Style
-	fmtr  *chromahtml.Formatter
 }
 
 func newHighlighter() (*highlighter, string, error) {
@@ -488,13 +449,7 @@ func newHighlighter() (*highlighter, string, error) {
 	}
 	lexer = chroma.Coalesce(lexer)
 	light := styles.Get("github")
-	if light == nil {
-		light = styles.Fallback
-	}
 	dark := styles.Get("github-dark")
-	if dark == nil {
-		dark = light
-	}
 	// WithModeClasses scopes the wrapper class and WriteCSS rules by the style's
 	// mode (.chroma.light / .chroma.dark) — the light/dark scoping diff.html.tmpl
 	// toggles. chroma made it opt-in in v2.27.0 (implicitly on before); without it
@@ -508,34 +463,18 @@ func newHighlighter() (*highlighter, string, error) {
 	if err := fmtr.WriteCSS(&css, dark); err != nil {
 		return nil, "", fmt.Errorf("chroma css (dark): %w", err)
 	}
-	return &highlighter{lexer: lexer, style: light, fmtr: fmtr}, css.String(), nil
+	return &highlighter{lexer: lexer}, css.String(), nil
 }
 
 func (h *highlighter) lines(src []string) []template.HTML {
 	out := make([]template.HTML, len(src))
 	for i, s := range src {
-		out[i] = h.line(s)
+		out[i] = h.emit(s, 0, 0)
 	}
 	return out
 }
 
-func (h *highlighter) line(s string) template.HTML {
-	s = strings.TrimRight(s, "\n")
-	esc := func() template.HTML { return rawHTML(template.HTMLEscapeString(s)) }
-	it, err := h.lexer.Tokenise(nil, s)
-	if err != nil {
-		return esc()
-	}
-	var b strings.Builder
-	if err := h.fmtr.Format(&b, h.style, it); err != nil {
-		return esc()
-	}
-	return rawHTML(b.String())
-}
-
-// rawHTML wraps already-escaped markup for injection into the template.
-// Callers pass chroma formatter output or template.HTMLEscapeString output,
-// both of which HTML-escape the underlying token text.
+// rawHTML accepts markup whose token text has already been HTML-escaped.
 func rawHTML(s string) template.HTML {
-	return template.HTML(s) //nolint:gosec // s is pre-escaped (chroma / HTMLEscapeString)
+	return template.HTML(s) //nolint:gosec // s contains escaped token text and generated spans
 }

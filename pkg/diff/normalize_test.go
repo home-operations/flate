@@ -14,6 +14,25 @@ func renderDiff(t *testing.T, left, right []Doc, opts Options) string {
 	return string(out)
 }
 
+func TestRenderDocs_NormalizeBeforePair(t *testing.T) {
+	for _, format := range []Format{FormatDiff, FormatHTML} {
+		t.Run(string(format), func(t *testing.T) {
+			left, right := cm("old", "ns", "owner", "same"), cm("new", "ns", "owner", "same")
+			opts := Options{Format: format, Normalize: func(m map[string]any) {
+				m["metadata"].(map[string]any)["name"] = "normalized"
+			}}
+			if out := renderDiff(t, []Doc{left}, []Doc{right}, opts); out != "" {
+				t.Errorf("normalized identities should pair without a diff, got:\n%s", out)
+			}
+			for _, doc := range []Doc{left, right} {
+				if doc.Manifest["metadata"].(map[string]any)["name"] == "normalized" {
+					t.Error("normalization mutated an input manifest")
+				}
+			}
+		})
+	}
+}
+
 // TestNormalize_StripAttrsRemovesNoise pins that Options.StripAttrs is
 // applied before the diff: rotating a stripped annotation without changing
 // anything else yields no diff. This is the chart-bump noise filter —

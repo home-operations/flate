@@ -255,3 +255,25 @@ func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
 		t.Errorf("owner namespace label = %v, want flux-system", labels["kustomize.toolkit.fluxcd.io/namespace"])
 	}
 }
+
+func TestRenderFlux_OwnerLabels_ClusterScoped(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"kustomization.yaml": existingKustomization("cm.yaml"),
+		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  labels:\n    kustomize.toolkit.fluxcd.io/namespace: existing\n",
+	})
+	spec := ksDoc(nil)
+	spec["metadata"] = map[string]any{"name": "infra"}
+	out, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Label: root, SubPath: ".", Spec: spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := yaml.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	md := got["metadata"].(map[string]any)
+	labels := md["labels"].(map[string]any)
+	if labels["kustomize.toolkit.fluxcd.io/namespace"] != "existing" || labels["kustomize.toolkit.fluxcd.io/name"] != "infra" {
+		t.Fatalf("cluster-scoped owner labels: %v", labels)
+	}
+}

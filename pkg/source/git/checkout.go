@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -99,7 +100,7 @@ func checkoutRef(repo *git.Repository, ref manifest.GitRepositoryRef, sparse []s
 // parent's auth is reused for each submodule's fetch — Flux's
 // behavior assumes a single credential source per GitRepository CR,
 // even when submodules live on different hosts.
-func updateSubmodules(repo *git.Repository, auth transport.AuthMethod) error {
+func updateSubmodules(ctx context.Context, repo *git.Repository, auth transport.AuthMethod) error {
 	wt, err := repo.Worktree()
 	if err != nil {
 		return err
@@ -108,7 +109,7 @@ func updateSubmodules(repo *git.Repository, auth transport.AuthMethod) error {
 	if err != nil {
 		return err
 	}
-	return subs.Update(&git.SubmoduleUpdateOptions{
+	return subs.UpdateContext(ctx, &git.SubmoduleUpdateOptions{
 		Init:              true,
 		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
 		Auth:              auth,

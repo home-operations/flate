@@ -122,7 +122,7 @@ func chartLabel(m map[string]any) string {
 	if !ok {
 		return ""
 	}
-	s, _ := labels["helm.sh/chart"].(string)
+	s, _ := labels[helmChartLabel].(string)
 	return s
 }
 

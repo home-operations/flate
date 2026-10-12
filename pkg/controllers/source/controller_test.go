@@ -45,7 +45,7 @@ func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts
 	c := New(st, ts)
 	maps.Copy(c.Fetchers, fetchers)
 	c.Configure(opts)
-	c.Start(t.Context())
+	c.StartLifecycle()
 	t.Cleanup(func() {
 		c.Close()
 		ts.BlockTillDone()
@@ -157,7 +157,7 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 func TestController_UnregisteredKindIgnored(t *testing.T) {
 	// Register an OCIRepository fetcher so the controller is alive but has no
 	// entry for KindGitRepository. Under the dag scheduler the source controller
-	// only exposes ReconcileNode for registered kinds (HasFetcher), so the
+	// only exposes ReconcileNode for registered kinds (Owns), so the
 	// scheduler never dispatches the GitRepository — it must therefore carry no
 	// status once the registered kind has been reconciled.
 	registered := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindOCIRepository}}

@@ -21,7 +21,7 @@ func newController(t *testing.T) (*Controller, *store.Store) {
 	tasks := task.NewBounded(0)
 	c := New(s, tasks, true)
 	c.Configure(Options{})
-	c.Start(context.Background())
+	c.StartLifecycle()
 	t.Cleanup(func() {
 		c.Close()
 		tasks.BlockTillDone()
@@ -241,5 +241,30 @@ func TestWantsDrainRerun_NamedOnly(t *testing.T) {
 	// Unknown id → false.
 	if c.WantsDrainRerun(manifest.NamedResource{Kind: manifest.KindResourceSet, Name: "ghost"}) {
 		t.Error("WantsDrainRerun = true for an absent RS, want false")
+	}
+}
+
+func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
+	c, s := newController(t)
+	rs := &manifest.ResourceSet{Name: "ready", Namespace: "apps", ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata: {name: output}`}
+	s.AddObject(rs)
+	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusReady {
+		t.Fatalf("first status = %+v, want Ready", info)
+	}
+	artifact := s.GetArtifact(rs.Named())
+	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		if id == rs.Named() && payload.(store.StatusInfo).Status == store.StatusPending {
+			t.Error("already-Ready ResourceSet transiently became Pending")
+		}
+	}, false)
+	t.Cleanup(unsub)
+	c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
+	if info, _ := s.GetStatus(rs.Named()); info.Status != store.StatusReady {
+		t.Errorf("final status = %+v, want Ready", info)
+	}
+	if s.GetArtifact(rs.Named()) != artifact {
+		t.Error("no-op reconcile replaced artifact")
 	}
 }

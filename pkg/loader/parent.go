@@ -11,14 +11,17 @@ import (
 // Claims builds final-store claims for reporting, including external sources
 // and committed source coordinates. Discovery MUST use Loader.Claims instead.
 func Claims(s *store.Store, repoRoot string) []manifest.KSClaim {
-	return buildClaims(s, repoRoot, documentReader{}, s.ListAs[*manifest.Kustomization](manifest.KindKustomization))
+	reader := documentReader{cache: map[string]document{}}
+	reader.mountSources(s)
+	return buildClaims(s, repoRoot, reader, s.ListAs[*manifest.Kustomization](manifest.KindKustomization))
 }
 
 // Claims reuses discovery's source-view documents while the Loader is mutable.
 func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
-	if l.documents == nil {
-		l.documents = documentReader{}
+	if l.documents.cache == nil {
+		l.documents.cache = map[string]document{}
 	}
+	l.documents.mountSources(l.Store)
 	return buildClaims(l.Store, repoRoot, l.documents, localKustomizations(l.Store, repoRoot))
 }
 

@@ -1,9 +1,10 @@
 package cacheroot
 
 import (
-	"github.com/opencontainers/go-digest"
 	"path/filepath"
 	"testing"
+
+	"github.com/opencontainers/go-digest"
 )
 
 // TestLayout_Paths locks in the on-disk layout. The test is intentionally
@@ -17,15 +18,15 @@ func TestLayout_Paths(t *testing.T) {
 		got  string
 		want string
 	}{
+		{"GitObjects", l.GitObjects("generation"), "/cache/oci/git/generation/objects"},
+		{"GitWorktree", l.GitWorktree("generation"), "/cache/oci/git/generation/worktree"},
 		{"OCI", l.OCI(), "/cache/oci"},
 		{"OCILock", l.OCILock(), "/cache/oci.lock"},
 		{"OCIBlob", l.OCIBlob(digest.Digest("sha256:ffff")), "/cache/oci/blobs/sha256/ffff"},
 		{"Sources", l.Sources(), "/cache/sources"},
-		{"SourceSlot", l.SourceSlot("myrepo", "deadbeef0123"), "/cache/sources/myrepo/deadbeef0123"},
 		{"Baselines", l.Baselines(), "/cache/baselines"},
 		{"Baseline", l.Baseline("abc123"), "/cache/baselines/abc123"},
 		{"GitMirrors", l.GitMirrors(), "/cache/git-mirrors"},
-		{"GitMirror", l.GitMirror("0123"), "/cache/git-mirrors/0123"},
 		{"RenderHelmCache", l.RenderHelmCache(), "/cache/render/helm"},
 	}
 	for _, c := range cases {

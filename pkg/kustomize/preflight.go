@@ -79,10 +79,8 @@ func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS files
 			return werr
 		}
 		if info.IsDir() {
-			// Skip a git base materialized by a prior resources: entry — its
-			// own nested kustomization.yaml files must NOT be re-rewritten here
-			// (depth-1 limit). The kustomize build of that base resolves its URLs.
-			if strings.HasPrefix(filepath.Base(path), remoteResourcePrefix) {
+			// Mounted bases receive preflight when fetched; an outer walk MUST skip them.
+			if path != subPath && strings.HasPrefix(filepath.Base(path), remoteResourcePrefix) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -145,7 +143,8 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		// single file. GETting a git URL returns the host's HTML page, which
 		// then fails to parse as YAML (#616) — so it must take the git path.
 		if spec, ok := isGitRemoteBase(entry.Value); ok {
-			localDir, fetchErr := fetchGitBase(ctx, cache, memFS, dir, spec)
+			spec.dir = dir
+			localDir, fetchErr := fetchGitBase(ctx, cache, memFS, spec)
 			if fetchErr != nil {
 				return false, fmt.Errorf("remote git base %s: %w", entry.Value, fetchErr)
 			}

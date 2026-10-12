@@ -97,3 +97,46 @@ func BenchmarkFailDependsOnCycles_Bootstrap(b *testing.B) {
 		o.failDependsOnCycles()
 	}
 }
+
+func BenchmarkDependencyGraph_RegisterHealthyChain(b *testing.B) {
+	ids := make([]manifest.NamedResource, 100)
+	for i := range ids {
+		ids[i] = ksNode(fmt.Sprintf("node-%03d", i))
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		g := newDependencyGraph()
+		for i, id := range ids {
+			var deps []manifest.NamedResource
+			if i > 0 {
+				deps = []manifest.NamedResource{ids[i-1]}
+			}
+			g.ReplaceEdges(id, deps)
+		}
+	}
+}
+
+func BenchmarkDependencyGraph_RegisterWhileCycleFailed(b *testing.B) {
+	for _, fan := range []int{0, 100, 1000} {
+		b.Run(fmt.Sprintf("fan=%d", fan), func(b *testing.B) {
+			a, c, leaf := ksNode("a"), ksNode("b"), ksNode("leaf")
+			deps := []manifest.NamedResource{c}
+			for i := range fan {
+				deps = append(deps, ksNode(fmt.Sprintf("fan-%04d", i)))
+			}
+			ids := make([]manifest.NamedResource, 500)
+			for i := range ids {
+				ids[i] = ksNode(fmt.Sprintf("node-%04d", i))
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				g := newDependencyGraph()
+				g.ReplaceEdges(a, deps)
+				g.ReplaceEdges(c, []manifest.NamedResource{a})
+				for _, id := range ids {
+					g.ReplaceEdges(id, []manifest.NamedResource{leaf})
+				}
+			}
+		})
+	}
+}

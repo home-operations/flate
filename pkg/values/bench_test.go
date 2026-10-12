@@ -62,7 +62,7 @@ func BenchmarkExpandValueReferences_SharedLargeCM(b *testing.B) {
 
 // BenchmarkExpandValueReferences_ManyFromRefs measures ExpandValueReferences
 // against an HR with 10 valuesFrom ConfigMap refs — each carrying a
-// multi-key YAML document — backed by a SliceProvider. The DeepMerge
+// multi-key YAML document — backed by a SliceProvider. The merge
 // chain dominates here; the lookupValueRef path runs once per ref.
 func BenchmarkExpandValueReferences_ManyFromRefs(b *testing.B) {
 	const n = 10
@@ -87,7 +87,7 @@ counts:
 	}
 	provider := &SliceProvider{ConfigMaps: cms}
 	// Shared Cache across iterations: same valuesFrom refs hit the
-	// FNV-keyed memo and skip yaml.Unmarshal — matches the production
+	// content-keyed memo and skip yaml.Unmarshal — matches the production
 	// pattern where M HRs sharing a platform-wide values CM parse
 	// exactly once.
 	cache := NewCache()
@@ -169,35 +169,5 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
 			b.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
 		}
-	}
-}
-
-// BenchmarkDeepMerge_DeepTree measures DeepMerge against two 5-level
-// nested maps — the cost the Helm prepare path pays per HR when
-// layering inline values onto resolved valuesFrom output.
-func BenchmarkDeepMerge_DeepTree(b *testing.B) {
-	base := buildDeepTree(5, "base")
-	override := buildDeepTree(5, "override")
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		_ = DeepMerge(base, override)
-	}
-}
-
-// buildDeepTree constructs a depth-deep map where every level is a
-// fresh map[string]any containing a leaf "leaf" key plus a "next" key
-// that recurses. Used so DeepMerge has to walk all the way down to
-// merge a leaf — exercising the recursive-map branch end to end.
-func buildDeepTree(depth int, tag string) map[string]any {
-	if depth == 0 {
-		return map[string]any{"leaf": tag}
-	}
-	return map[string]any{
-		"leaf": tag,
-		"key1": fmt.Sprintf("scalar-%d", depth),
-		"key2": []any{1, 2, 3, "four", true},
-		"next": buildDeepTree(depth-1, tag),
 	}
 }

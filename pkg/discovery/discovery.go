@@ -7,13 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -67,9 +67,6 @@ type Config struct {
 	KRMIgnoreFile string
 	Store         *store.Store
 	WipeSecrets   bool
-	// SourceCache stores committed local source artifacts. Nil lazily uses
-	// the default cache only when a non-HEAD materialization is required.
-	SourceCache *source.Cache
 }
 
 // Run performs the full discovery phase against cfg and writes results
@@ -310,10 +307,10 @@ func (d *discoverer) loadAt(ctx context.Context, dir string, scanned map[string]
 		return nil
 	}
 	scanned[dir] = struct{}{}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+	n, err := d.loader.Load(ctx, dir)
+	if d.loader.IgnoreFile == "" && errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	n, err := d.loader.Load(ctx, dir)
 	if err != nil {
 		return err
 	}

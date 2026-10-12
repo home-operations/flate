@@ -10,6 +10,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+const valuesToken = ".Values"
+
 // StaleValuePaths returns the top-level release-value keys a HelmRelease supplies
 // that NO chart template references — the #744 signal that an override has gone
 // stale (a key renamed/removed when the chart was upgraded silently does
@@ -182,13 +184,12 @@ func chartTemplateText(ch *chart.Chart) string {
 // neither `.` (a field selector, .Values.foo) nor `"` (a literal index,
 // `.Values "foo"` / `index .Values "foo"`) accesses the map as a whole.
 func opaqueValuesAccess(src string) bool {
-	const tok = ".Values"
 	for i := 0; ; {
-		j := strings.Index(src[i:], tok)
+		j := strings.Index(src[i:], valuesToken)
 		if j < 0 {
 			return false
 		}
-		next := i + j + len(tok)
+		next := i + j + len(valuesToken)
 		for next < len(src) && (src[next] == ' ' || src[next] == '\t') {
 			next++
 		}
@@ -198,7 +199,7 @@ func opaqueValuesAccess(src string) bool {
 		if c := src[next]; c != '.' && c != '"' {
 			return true
 		}
-		i += j + len(tok)
+		i += j + len(valuesToken)
 	}
 }
 
@@ -211,7 +212,7 @@ func valuesKeyReferenced(src, key string) bool {
 	if strings.Contains(src, `"`+key+`"`) {
 		return true
 	}
-	needle := ".Values." + key
+	needle := valuesToken + "." + key
 	for i := 0; ; {
 		j := strings.Index(src[i:], needle)
 		if j < 0 {

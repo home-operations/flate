@@ -2,8 +2,10 @@ package loader
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
-	"os"
+	"io"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,10 +31,11 @@ type ignoreSet struct {
 // pattern per line. Patterns are interpreted relative to root and support
 // the full gitignore glob syntax, including ** for zero-or-more path
 // segments.
-func loadIgnore(root string) (*ignoreSet, error) {
-	f, err := os.Open(filepath.Join(root, ".krmignore")) //nolint:gosec // root is the cluster scan root
+func (r documentReader) loadIgnore(root string) (*ignoreSet, error) {
+	input, name := r.input(filepath.Join(root, ".krmignore"))
+	f, err := input.Open(name)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return &ignoreSet{}, nil
 		}
 		return &ignoreSet{}, err
@@ -46,8 +49,13 @@ func loadIgnore(root string) (*ignoreSet, error) {
 // kept elsewhere in the repo (e.g. .krmignore.staging) reads exactly as
 // it would at the scan root. Unlike loadIgnore, a missing file is an
 // error: the caller named it explicitly.
-func loadIgnoreFile(path, root string) (*ignoreSet, error) {
-	f, err := os.Open(path) //nolint:gosec // path is a user-supplied ignore file
+func (r documentReader) loadIgnoreFile(path, root string) (*ignoreSet, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
+	}
+	input, name := r.input(abs)
+	f, err := input.Open(name)
 	if err != nil {
 		return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
 	}
@@ -57,7 +65,7 @@ func loadIgnoreFile(path, root string) (*ignoreSet, error) {
 
 // parseIgnore builds the ignoreSet from one gitignore-grammar file,
 // anchoring its patterns at root.
-func parseIgnore(f *os.File, root string) (*ignoreSet, error) {
+func parseIgnore(f io.Reader, root string) (*ignoreSet, error) {
 	out := &ignoreSet{}
 	// domain is the root split into path segments, used by the gitignore
 	// pattern parser to anchor absolute-style patterns correctly.

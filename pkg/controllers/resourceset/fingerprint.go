@@ -1,9 +1,6 @@
 package resourceset
 
 import (
-	"cmp"
-	"slices"
-
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -36,15 +33,14 @@ func resourceSetFingerprint(rs *manifest.ResourceSet, s *store.Store) string {
 }
 
 // inputDigest pairs an RSIP identity with the digest of its exported
-// inputs. The slice is sorted by identity so the fingerprint is
-// independent of store iteration / selector-match order.
+// inputs.
 type inputDigest struct {
 	ID     string
 	Inputs string
 }
 
 // resolvedInputDigests resolves rs.InputsFrom through the same
-// StoreResolver resourceset.Render uses and returns one sorted digest
+// StoreResolver resourceset.Render uses and returns one digest
 // entry per matching RSIP. An RSIP that fails to export inputs or a
 // reference that fails to resolve contributes nothing — the fingerprint
 // then differs from a successful resolution, forcing a render.
@@ -69,8 +65,5 @@ func resolvedInputDigests(rs *manifest.ResourceSet, s *store.Store) []inputDiges
 			})
 		}
 	}
-	slices.SortFunc(out, func(a, b inputDigest) int {
-		return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Inputs, b.Inputs))
-	})
 	return out
 }

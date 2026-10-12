@@ -2,10 +2,15 @@ package git
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,15 +21,107 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
+
+func TestFetcher_PackedContent(t *testing.T) {
+	var blocks [8]string
+	for i := range blocks {
+		var block strings.Builder
+		for line := range 200 {
+			fmt.Fprintf(&block, "%x\n", sha256.Sum256(fmt.Appendf(nil, "%d-%d", i, line)))
+		}
+		blocks[i] = block.String()
+	}
+	files := map[string]string{"base.txt": strings.Join(blocks[:], ""), "reordered.txt": ""}
+	for _, i := range []int{3, 0, 5, 1, 7, 2, 6, 4} {
+		files["reordered.txt"] += blocks[i]
+	}
+	src := t.TempDir()
+	mustInitRepoWithFiles(t, src, files)
+	for _, mode := range []string{"memory", "disk"} {
+		t.Run(mode, func(t *testing.T) {
+			root := ""
+			if mode == "disk" {
+				root = t.TempDir()
+			}
+			f := &Fetcher{Cache: newGitCache(t, root)}
+			art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: "file://" + filepath.ToSlash(src)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var readers sync.WaitGroup
+			for range 2 {
+				readers.Go(func() {
+					for file, want := range files {
+						got, err := fs.ReadFile(art.FS, file)
+						if err != nil || string(got) != want {
+							t.Errorf("packed %s content differs: bytes=%d, err=%v", file, len(got), err)
+						}
+					}
+				})
+			}
+			readers.Wait()
+		})
+	}
+}
+
+func TestFetcher_SourceLinksOmitted(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepoWithFiles(t, src, map[string]string{"hello.txt": "hi", "apps/cm.yaml": "kind: ConfigMap"})
+	for name, target := range map[string]string{"alias": "hello.txt", "dirlink": "apps", ".sourceignore": "hello.txt"} {
+		if err := os.Symlink(target, filepath.Join(src, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := git.PlainOpen(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
+	}
+	mustCommitFile(t, src, "hello.txt", "hi")
+	f := &Fetcher{Cache: newGitCache(t, "")}
+	art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "links", URL: "file://" + src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alias", "dirlink", "dirlink/cm.yaml", ".sourceignore"} {
+		if file, err := art.FS.Open(name); !errors.Is(err, fs.ErrNotExist) {
+			if file != nil {
+				_ = file.Close()
+			}
+			t.Errorf("Open(%s): %v", name, err)
+		}
+		if _, err := fs.Stat(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("Stat(%s): %v", name, err)
+		}
+		if _, err := fs.ReadDir(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("ReadDir(%s): %v", name, err)
+		}
+	}
+	entries, err := fs.ReadDir(art.FS, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "alias" || entry.Name() == "dirlink" || entry.Name() == ".sourceignore" {
+			t.Errorf("listed link %s", entry.Name())
+		}
+	}
+}
 
 func TestFetcher_LocalFileURL(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL: "file://" + src,
@@ -36,10 +133,10 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 		t.Fatalf("Fetch: %v", err)
 	}
 	sa := art
-	if sa.LocalPath == "" || sa.URL == "" {
+	if sa.FS == nil || sa.Key == "" || sa.URL == "" {
 		t.Errorf("incomplete artifact: %+v", sa)
 	}
-	if _, err := os.Stat(filepath.Join(sa.LocalPath, "hello.txt")); err != nil {
+	if _, err := fs.Stat(sa.FS, path.Join("hello.txt")); err != nil {
 		t.Errorf("expected checked-out file: %v", err)
 	}
 
@@ -65,7 +162,7 @@ func TestFetcher_RestrictSchemesBlocksFileURL(t *testing.T) {
 		URL: "file://" + src,
 	}
 
-	blocked := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir())), RestrictSchemes: true}
+	blocked := &Fetcher{Cache: newGitCache(t, t.TempDir()), RestrictSchemes: true}
 	_, err := blocked.Fetch(context.Background(), repo)
 	if err == nil {
 		t.Fatal("RestrictSchemes: true must reject a file:// GitRepository")
@@ -77,7 +174,7 @@ func TestFetcher_RestrictSchemesBlocksFileURL(t *testing.T) {
 		t.Errorf("error must name the rejected scheme; got %v", err)
 	}
 
-	allowed := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))} // RestrictSchemes defaults off
+	allowed := &Fetcher{Cache: newGitCache(t, t.TempDir())} // RestrictSchemes defaults off
 	if _, err := allowed.Fetch(context.Background(), repo); err != nil {
 		t.Fatalf("RestrictSchemes off must allow file://: %v", err)
 	}
@@ -125,7 +222,7 @@ func TestFetcher_MutableDefaultRefRefreshesCache(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL: "file://" + src,
@@ -147,7 +244,7 @@ func TestFetcher_MutableDefaultRefRefreshesCache(t *testing.T) {
 	if art2.Revision != want {
 		t.Fatalf("revision = %s, want %s", art2.Revision, want)
 	}
-	if _, err := os.Stat(filepath.Join(art2.LocalPath, "later.txt")); err != nil {
+	if _, err := fs.Stat(art2.FS, path.Join("later.txt")); err != nil {
 		t.Fatalf("refreshed checkout missing later.txt: %v", err)
 	}
 }
@@ -156,7 +253,7 @@ func TestFetcher_MutableRefUsesFreshIntervalCache(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL:      "file://" + src,
@@ -176,16 +273,16 @@ func TestFetcher_MutableRefUsesFreshIntervalCache(t *testing.T) {
 	if art2.Revision != art1.Revision {
 		t.Fatalf("fresh interval cache should reuse revision %s, got %s", art1.Revision, art2.Revision)
 	}
-	if _, err := os.Stat(filepath.Join(art2.LocalPath, "later.txt")); !os.IsNotExist(err) {
+	if _, err := fs.Stat(art2.FS, path.Join("later.txt")); !os.IsNotExist(err) {
 		t.Fatalf("fresh interval cache should not include later commit, stat err=%v", err)
 	}
 }
 
-func TestFetcher_MutableRefreshFailureKeepsPreviousSlot(t *testing.T) {
+func TestFetcher_MutableRefreshFailureKeepsHeldGeneration(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL: "file://" + src,
@@ -202,7 +299,7 @@ func TestFetcher_MutableRefreshFailureKeepsPreviousSlot(t *testing.T) {
 	if _, err := f.Fetch(context.Background(), repo); err == nil {
 		t.Fatal("expected refresh to fail after removing upstream repo")
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "hello.txt")); err != nil {
+	if _, err := fs.Stat(art.FS, path.Join("hello.txt")); err != nil {
 		t.Fatalf("failed mutable refresh removed previous committed slot: %v", err)
 	}
 }
@@ -215,7 +312,7 @@ func TestFetcher_RefByName(t *testing.T) {
 	mustInitRepo(t, src)
 	tagged := mustTagHEAD(t, src, "v0.1.0")
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL:       "file://" + src,
@@ -237,7 +334,7 @@ func TestFetcher_RefByName_Unresolvable(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL:       "file://" + src,
@@ -258,7 +355,7 @@ func TestFetcher_RefByNameFallbackFetchesExplicitRef(t *testing.T) {
 	})
 	want := mustSetRefToHEAD(t, src, "refs/pull/1/head")
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL:            "file://" + src,
@@ -273,10 +370,10 @@ func TestFetcher_RefByNameFallbackFetchesExplicitRef(t *testing.T) {
 	if art.Revision != want {
 		t.Errorf("revision = %q, want %q", art.Revision, want)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "a", "manifest.yaml")); err != nil {
+	if _, err := fs.Stat(art.FS, path.Join("apps", "a", "manifest.yaml")); err != nil {
 		t.Errorf("sparse-included file missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "b", "manifest.yaml")); !os.IsNotExist(err) {
+	if _, err := fs.Stat(art.FS, path.Join("apps", "b", "manifest.yaml")); !os.IsNotExist(err) {
 		t.Errorf("sparse-excluded file should be absent; stat err = %v", err)
 	}
 }
@@ -288,7 +385,7 @@ func TestFetcher_SemVerRef(t *testing.T) {
 	want := mustCommitFile(t, src, "version.txt", "v1.1.0")
 	mustTagHEAD(t, src, "v1.1.0")
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL:       "file://" + src,
@@ -302,7 +399,7 @@ func TestFetcher_SemVerRef(t *testing.T) {
 	if art.Revision != want {
 		t.Errorf("semver revision = %q, want %q", art.Revision, want)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "version.txt")); err != nil {
+	if _, err := fs.Stat(art.FS, path.Join("version.txt")); err != nil {
 		t.Errorf("semver checkout missing v1.1 file: %v", err)
 	}
 }
@@ -314,7 +411,7 @@ func TestFetcher_CommitPrecedesRefName(t *testing.T) {
 	mustCommitFile(t, src, "version.txt", "v1.1.0")
 	mustTagHEAD(t, src, "v1.1.0")
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL: "file://" + src,
@@ -331,7 +428,7 @@ func TestFetcher_CommitPrecedesRefName(t *testing.T) {
 	if art.Revision != first {
 		t.Errorf("revision = %q, want commit %q", art.Revision, first)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "version.txt")); !os.IsNotExist(err) {
+	if _, err := fs.Stat(art.FS, path.Join("version.txt")); !os.IsNotExist(err) {
 		t.Errorf("commit should have won over ref.name; version.txt stat err = %v", err)
 	}
 }
@@ -342,7 +439,7 @@ func TestFetcher_CommitPrecedesUnresolvableRefName(t *testing.T) {
 	first := mustTagHEAD(t, src, "v1.0.0")
 	mustCommitFile(t, src, "version.txt", "v1.1.0")
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL: "file://" + src,
@@ -368,7 +465,7 @@ func TestFetcher_CommitMustBeReachableFromBranch(t *testing.T) {
 	mainOnly := mustCommitFile(t, src, "main-only.txt", "main")
 	mustSetRefToHash(t, src, "refs/heads/staging", initial)
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	f := &Fetcher{Cache: cache}
 
 	commitOnly := &manifest.GitRepository{
@@ -397,35 +494,35 @@ func TestFetcher_CommitMustBeReachableFromBranch(t *testing.T) {
 	}
 }
 
-// TestFetcher_SparseCheckout exercises spec.sparseCheckout — when
-// the repo declares specific directories, the worktree contains only
-// those (plus any tree-root metadata go-git keeps).
 func TestFetcher_SparseCheckout(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{
-		"apps/a/manifest.yaml":  "kind: ConfigMap",
-		"apps/b/manifest.yaml":  "kind: ConfigMap",
-		"infra/c/manifest.yaml": "kind: ConfigMap",
-		"README.md":             "top-level",
+		"apps/a/manifest.yaml":     "kind: ConfigMap",
+		"apps/b/manifest.yaml":     "kind: ConfigMap",
+		"apps-extra/manifest.yaml": "kind: ConfigMap",
+		"infra/c/manifest.yaml":    "kind: ConfigMap",
 	})
-
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL:            "file://" + src,
-		SparseCheckout: []string{"apps/a"},
-	}
-	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
-	if err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	// apps/a must be present; apps/b must not.
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "a", "manifest.yaml")); err != nil {
-		t.Errorf("sparse-included file missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "b", "manifest.yaml")); !os.IsNotExist(err) {
-		t.Errorf("sparse-excluded file should be absent; stat err = %v", err)
+	f := &Fetcher{Cache: newGitCache(t, t.TempDir())}
+	for _, prefix := range []string{"apps/a", "apps"} {
+		t.Run(prefix, func(t *testing.T) {
+			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
+				Name: "test", Namespace: "flux-system", URL: "file://" + src,
+				SparseCheckout: []string{prefix},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range []string{"apps/a/manifest.yaml", "apps/b/manifest.yaml", "apps-extra/manifest.yaml", "infra/c/manifest.yaml"} {
+				_, err := fs.Stat(art.FS, file)
+				if strings.HasPrefix(file, prefix) {
+					if err != nil {
+						t.Errorf("included %s: %v", file, err)
+					}
+				} else if !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("excluded %s: %v", file, err)
+				}
+			}
+		})
 	}
 }
 
@@ -441,7 +538,7 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 	})
 
 	patterns := "*.tmp\ndocs/\n"
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL:    "file://" + src,
@@ -452,13 +549,13 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "scratch.tmp")); !os.IsNotExist(err) {
+	if _, err := fs.Stat(art.FS, path.Join("apps", "scratch.tmp")); !os.IsNotExist(err) {
 		t.Errorf("expected *.tmp to be removed by spec.ignore; stat err = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "docs")); !os.IsNotExist(err) {
+	if _, err := fs.Stat(art.FS, path.Join("docs")); !os.IsNotExist(err) {
 		t.Errorf("expected docs/ to be removed by spec.ignore; stat err = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, "apps", "deployment.yaml")); err != nil {
+	if _, err := fs.Stat(art.FS, path.Join("apps", "deployment.yaml")); err != nil {
 		t.Errorf("non-ignored file should remain: %v", err)
 	}
 }
@@ -467,11 +564,11 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 // sourceignore patterns don't match `.flate-*`) and lets the next
 // Fetch validate the cache without `.git/` — which the ignore step
 // itself wipes via the VCS-excludes preset.
-func TestFetcher_CacheMarkerSurvivesIgnore(t *testing.T) {
+func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	patterns := "/*\n!/hello.txt\n"
 	commit := mustHead(t, src)
 	repo := &manifest.GitRepository{
@@ -485,19 +582,12 @@ func TestFetcher_CacheMarkerSurvivesIgnore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	marker := filepath.Join(art.LocalPath, source.SlotMetaFile)
-	b, err := os.ReadFile(marker) //nolint:gosec // test path
-	if err != nil {
-		t.Fatalf("expected marker %s to exist after Fetch with restrictive ignore: %v", source.SlotMetaFile, err)
+	if _, err := fs.Stat(art.FS, ".git"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("git metadata visible: %v", err)
 	}
-	if string(b) == "" {
-		t.Errorf("marker exists but is empty")
+	if err := os.RemoveAll(src); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(art.LocalPath, ".git")); err == nil {
-		t.Errorf("expected .git/ to be wiped by ApplyIgnore but it still exists")
-	}
-
-	// Second Fetch should hit the cache via the marker.
 	art2, err := f.Fetch(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("Fetch second: %v", err)
@@ -514,7 +604,7 @@ func TestFetcher_CommitCacheKeyIncludesIgnore(t *testing.T) {
 		"docs.md":   "docs",
 	})
 	commit := mustHead(t, src)
-	cache := source.NewCache(cacheroot.New(t.TempDir()))
+	cache := newGitCache(t, t.TempDir())
 	f := &Fetcher{Cache: cache}
 
 	ignore := "docs.md\n"
@@ -528,7 +618,7 @@ func TestFetcher_CommitCacheKeyIncludesIgnore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch ignored: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(ignored.LocalPath, "docs.md")); !os.IsNotExist(err) {
+	if _, err := fs.Stat(ignored.FS, path.Join("docs.md")); !os.IsNotExist(err) {
 		t.Fatalf("ignored checkout should not contain docs.md: %v", err)
 	}
 
@@ -541,10 +631,10 @@ func TestFetcher_CommitCacheKeyIncludesIgnore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch plain: %v", err)
 	}
-	if plain.LocalPath == ignored.LocalPath {
-		t.Fatalf("different ignore policies reused cache slot %s", plain.LocalPath)
+	if plain.Key == ignored.Key {
+		t.Fatalf("different ignore policies reused cache slot %s", plain.Key)
 	}
-	if _, err := os.Stat(filepath.Join(plain.LocalPath, "docs.md")); err != nil {
+	if _, err := fs.Stat(plain.FS, path.Join("docs.md")); err != nil {
 		t.Fatalf("plain checkout lost docs.md through ignored cache slot: %v", err)
 	}
 }
@@ -673,4 +763,35 @@ func mustInitRepo(t *testing.T, dir string) {
 	}); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
+}
+
+func newGitCache(t testing.TB, root string) *sourcecache.Cache {
+	t.Helper()
+	c, err := sourcecache.New(t.Context(), cacheroot.New(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return c
+}
+
+func mustSetRefToHEAD(t *testing.T, dir, refName string) string {
+	t.Helper()
+	r, err := git.PlainOpen(dir)
+	if err != nil {
+		t.Fatalf("PlainOpen: %v", err)
+	}
+	head, err := r.Head()
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	ref := plumbing.NewHashReference(plumbing.ReferenceName(refName), head.Hash())
+	if err := r.Storer.SetReference(ref); err != nil {
+		t.Fatalf("SetReference %s: %v", refName, err)
+	}
+	return head.Hash().String()
 }

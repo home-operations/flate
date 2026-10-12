@@ -1,8 +1,11 @@
 package loader
 
 import (
+	"errors"
+	"io/fs"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -135,15 +138,25 @@ func TestLoader_KustomizationFilenames(t *testing.T) {
 }
 
 func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
-	r := documentReader{}
+	r := documentReader{cache: map[string]document{}}
 	working := filepath.Join(t.TempDir(), "apps")
 	committed := filepath.Join(t.TempDir(), "apps")
 	testutil.WriteFile(t, working, "Kustomization", "namespace: working\n")
-	testutil.WriteFile(t, committed, "Kustomization", "namespace: committed\n")
+	testutil.WriteFile(t, committed, "Kustomization", "namespace: host\n")
+	testutil.WriteFile(t, committed, "host.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: host}\n")
+	if _, name := r.input(filepath.VolumeName(working) + string(filepath.Separator)); name != "." {
+		t.Fatalf("filesystem root name = %q, want dot", name)
+	}
+	r.views = map[string]fs.FS{committed: fstest.MapFS{
+		"Kustomization": {Data: []byte("namespace: committed\n")},
+	}}
 	first, file := r.read(working)
 	other, _ := r.read(committed)
 	if first == nil || other == nil || first.Namespace != "working" || other.Namespace != "committed" {
 		t.Fatalf("source views were mixed: working=%v committed=%v", first, other)
+	}
+	if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{}); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("absent committed file fell through to disk: %v", err)
 	}
 	testutil.WriteFile(t, working, "Kustomization", "namespace: changed\n")
 	if got, gotFile := r.read(working); got != first || gotFile != file {

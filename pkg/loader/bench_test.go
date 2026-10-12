@@ -85,7 +85,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		objs, err := parseFile(path, opts)
+		objs, err := (documentReader{}).parseFile(path, opts)
 		if err != nil {
 			b.Fatalf("parseFile: %v", err)
 		}
@@ -158,7 +158,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		objs, err := parseFile(path, opts)
+		objs, err := (documentReader{}).parseFile(path, opts)
 		if err != nil {
 			b.Fatalf("parseFile: %v", err)
 		}
@@ -178,7 +178,7 @@ func BenchmarkIgnoreMatches(b *testing.B) {
 		fmt.Fprintf(&patterns, "ignored-%d/**\n", i)
 	}
 	testutil.WriteFile(b, root, ".krmignore", patterns.String())
-	ig, err := loadIgnore(root)
+	ig, err := (documentReader{}).loadIgnore(root)
 	if err != nil {
 		b.Fatalf("loadIgnore: %v", err)
 	}

@@ -29,7 +29,7 @@ func BenchmarkReadRegistration_Collection(b *testing.B) {
 					tasks := task.NewBounded(workers)
 					c := New(s, tasks, true)
 					c.Configure(Options{})
-					c.Start(b.Context())
+					c.StartLifecycle()
 					defer c.Close()
 					rs := selectorFixture("consumer", "blue")
 					s.AddObject(rs)
@@ -111,7 +111,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 				tasks := task.NewBounded(workers)
 				var renders, dispatches atomic.Int64
 				c := renderCountingController(s, tasks, &renders)
-				c.Start(b.Context())
+				c.StartLifecycle()
 				defer c.Close()
 				sets := [2]*manifest.ResourceSet{independentWriterFixture("u", "blue"), independentWriterFixture("v", "green")}
 				for _, rs := range sets {
@@ -185,7 +185,7 @@ func TestDirtyRerun_EqualOutputRenderCount(t *testing.T) {
 	tasks := task.NewBounded(2)
 	var renders, updates atomic.Int64
 	c := renderCountingController(s, tasks, &renders)
-	c.Start(t.Context())
+	c.StartLifecycle()
 	defer c.Close()
 	rs := independentWriterFixture("u", "blue")
 	s.AddObject(rs)

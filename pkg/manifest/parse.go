@@ -121,7 +121,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 	// kustomize.config.k8s.io build directives (Kustomization,
 	// Component) aren't k8s resources — they're build inputs we
 	// already follow via spec.path discovery. Drop them silently.
-	if strings.HasPrefix(apiVersion, KustomizeDomain) {
+	if inGroup(apiVersion, KustomizeDomain) {
 		return &RawObject{Kind: kind, APIVersion: apiVersion}, doc, false, nil
 	}
 	// Documents without a kind are bare data files (helm values,
@@ -217,7 +217,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 // nameless object (id "<kind>//") that no controller ever reconciles.
 func IsKustomizeBuildDirective(obj BaseManifest) bool {
 	raw, ok := obj.(*RawObject)
-	return ok && strings.HasPrefix(raw.APIVersion, KustomizeDomain)
+	return ok && inGroup(raw.APIVersion, KustomizeDomain)
 }
 
 // inGroup reports whether apiVersion belongs to the API group group.
@@ -229,13 +229,13 @@ func inGroup(apiVersion, group string) bool {
 	return g == group
 }
 
-// checkAPIVersion enforces an api group prefix on a raw document.
+// checkAPIVersion requires an exact API group match on a raw document.
 func checkAPIVersion(doc map[string]any, want string) error {
 	v := DocAPIVersion(doc)
 	if v == "" {
 		return inputf("missing apiVersion")
 	}
-	if !strings.HasPrefix(v, want) {
+	if !inGroup(v, want) {
 		return inputf("expected apiVersion %q, got %q", want, v)
 	}
 	return nil

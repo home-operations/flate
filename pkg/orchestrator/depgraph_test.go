@@ -2,8 +2,11 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -12,6 +15,84 @@ import (
 // dependency-graph snapshot tests.
 func ksNode(name string) manifest.NamedResource {
 	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
+}
+
+func TestDependencyGraph_CycleMessages(t *testing.T) {
+	a, b, c := ksNode("a"), ksNode("b"), ksNode("c")
+	ab := "dependency cycle detected: " + a.String() + " → " + b.String() + " → " + a.String()
+	ac := "dependency cycle detected: " + a.String() + " → " + c.String() + " → " + a.String()
+	t.Run("intersecting cycles", func(t *testing.T) {
+		for range 200 {
+			for _, order := range [][]manifest.NamedResource{{a, b, c}, {c, b, a}, {b, a, c}} {
+				g := newDependencyGraph()
+				for _, id := range order {
+					deps := []manifest.NamedResource{a}
+					if id == a {
+						deps = []manifest.NamedResource{c, b, c}
+					}
+					g.ReplaceEdges(id, deps)
+				}
+				assert.Diff(t, g.Failures(), map[manifest.NamedResource]string{a: ab, b: ab, c: ac})
+			}
+		}
+	})
+	t.Run("partial break", func(t *testing.T) {
+		g := newDependencyGraph()
+		g.ReplaceEdges(a, []manifest.NamedResource{b, c})
+		g.ReplaceEdges(c, []manifest.NamedResource{a})
+		g.ReplaceEdges(b, []manifest.NamedResource{a})
+		g.ReplaceEdges(a, []manifest.NamedResource{c})
+		assert.Diff(t, g.Failures(), map[manifest.NamedResource]string{a: ac, c: ac})
+	})
+	t.Run("self loop", func(t *testing.T) {
+		g := newDependencyGraph()
+		g.ReplaceEdges(a, []manifest.NamedResource{a})
+		assert.Diff(t, g.Failures(), map[manifest.NamedResource]string{
+			a: "dependency cycle detected: " + a.String() + " → " + a.String(),
+		})
+		g.ReplaceEdges(a, nil)
+		assert.Equal(t, len(g.Failures()), 0)
+	})
+}
+
+func TestDependencyGraph_NonMembersStayHealthy(t *testing.T) {
+	a, b, c, d, e := ksNode("a"), ksNode("b"), ksNode("c"), ksNode("d"), ksNode("e")
+	g := newDependencyGraph()
+	g.ReplaceEdges(c, []manifest.NamedResource{d})
+	g.ReplaceEdges(d, []manifest.NamedResource{ksNode("leaf")})
+	g.ReplaceEdges(a, []manifest.NamedResource{b})
+	g.ReplaceEdges(b, []manifest.NamedResource{a, c}) // tail c -> d hangs off the cycle
+	g.ReplaceEdges(e, []manifest.NamedResource{a})    // upstream of the cycle, not on it
+	msg := "dependency cycle detected: " + a.String() + " → " + b.String() + " → " + a.String()
+	assert.Diff(t, g.Failures(), map[manifest.NamedResource]string{a: msg, b: msg})
+}
+
+func TestDependencyGraph_CycleMembershipRegistrationOrder(t *testing.T) {
+	x, y, w, z := ksNode("x"), ksNode("y"), ksNode("w"), ksNode("z")
+	xw := "dependency cycle detected: " + w.String() + " → " + z.String() + " → " + x.String() + " → " + w.String()
+	xy := "dependency cycle detected: " + x.String() + " → " + y.String() + " → " + z.String() + " → " + x.String()
+	want := map[manifest.NamedResource]string{w: xw, x: xw, y: xy, z: xw}
+	deps := map[manifest.NamedResource][]manifest.NamedResource{x: {y, w}, y: {z}, w: {z}, z: {x}}
+	nodes := []manifest.NamedResource{x, y, w, z}
+	var checkOrder func([]manifest.NamedResource)
+	checkOrder = func(order []manifest.NamedResource) {
+		if len(order) == len(nodes) {
+			t.Run(fmt.Sprint(order), func(t *testing.T) {
+				g := newDependencyGraph()
+				for _, id := range order {
+					g.ReplaceEdges(id, deps[id])
+				}
+				assert.Diff(t, g.Failures(), want)
+			})
+			return
+		}
+		for _, node := range nodes {
+			if !slices.Contains(order, node) {
+				checkOrder(append(order, node))
+			}
+		}
+	}
+	checkOrder(nil)
 }
 
 // TestDependencyGraph_Edges pins the snapshot the orchestrator installs into

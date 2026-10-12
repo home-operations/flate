@@ -26,8 +26,6 @@ import (
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -315,7 +313,6 @@ spec:
 			st := store.New()
 			res, err := discovery.Run(t.Context(), discovery.Config{
 				Path: filepath.Join(root, "flux"), Store: st,
-				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -541,7 +538,6 @@ spec:
 			st := store.New()
 			res, discoveryError := discovery.Run(t.Context(), discovery.Config{
 				Path: filepath.Join(root, "flux"), Store: st,
-				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 			})
 			for _, namespace := range []string{"alpha", "beta"} {
 				ks, ok := st.Get[*manifest.Kustomization](manifest.NamedResource{
@@ -626,7 +622,6 @@ spec:
 	}
 	res, err := discovery.Run(t.Context(), discovery.Config{
 		Path: filepath.Join(root, "flux"), Store: store.New(),
-		SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -755,7 +750,6 @@ spec:
 			st := store.New()
 			res, discoveryError := discovery.Run(t.Context(), discovery.Config{
 				Path: filepath.Join(root, "flux"), Store: st,
-				SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 			})
 			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "shifted", Name: "a-held"}
 			ks, ok := st.Get[*manifest.Kustomization](id)
@@ -931,7 +925,6 @@ spec:
 				st := store.New()
 				res, err := discovery.Run(t.Context(), discovery.Config{
 					Path: filepath.Join(root, "flux"), Store: st,
-					SourceCache: source.NewCache(cacheroot.New(t.TempDir())),
 				})
 				if err != nil || !errors.Is(res.Index.Errors["apps/broken/extra.yaml"], manifest.ErrInput) {
 					t.Fatalf("expected retained working-tree diagnostic, got %v", err)

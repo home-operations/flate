@@ -1,8 +1,11 @@
 package discovery
 
 import (
+	"errors"
+	"io/fs"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -80,5 +83,47 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: other}}
 				t.Fatal("committed subtree replaced the resolved source")
 			}
 		})
+	}
+}
+
+func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
+	for _, backing := range []string{"disk", "memory"} {
+		for _, scenario := range []string{"missing-directory", "file", "missing-ignore"} {
+			t.Run(backing+"/"+scenario, func(t *testing.T) {
+				root := t.TempDir()
+				st := store.New()
+				d := discoverer{cfg: Config{Store: st}, loader: discoveryLoaderForTest(st)}
+				d.loader.IgnoreFile = filepath.Join(root, "override.krmignore")
+				target := filepath.Join(root, "missing")
+				if scenario == "missing-ignore" {
+					target = root
+				} else {
+					testutil.WriteFile(t, root, "override.krmignore", "")
+				}
+				if scenario == "file" {
+					testutil.WriteFile(t, root, "missing", "content")
+				}
+				if backing == "memory" {
+					input := fstest.MapFS{}
+					if scenario != "missing-ignore" {
+						input["override.krmignore"] = &fstest.MapFile{}
+					}
+					if scenario == "file" {
+						input["missing"] = &fstest.MapFile{Data: []byte("content")}
+					}
+					st.AddObject(&manifest.GitRepository{Name: "source"})
+					st.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "source"}, &store.SourceArtifact{LocalPath: root, FS: input})
+				}
+				total := 0
+				err := d.loadAt(t.Context(), target, map[string]struct{}{}, &total)
+				if scenario == "missing-ignore" {
+					if !errors.Is(err, fs.ErrNotExist) {
+						t.Fatalf("missing explicit ignore error = %v", err)
+					}
+				} else if err != nil || total != 0 {
+					t.Fatalf("missing followed path: loaded=%d, error=%v", total, err)
+				}
+			})
+		}
 	}
 }

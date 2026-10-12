@@ -18,7 +18,7 @@ func TestLoadIgnore_GlobStarMatchesAcrossDirectories(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, ".krmignore", "apps/junk/**\n")
 
-	ig, err := loadIgnore(root)
+	ig, err := (documentReader{}).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestLoadIgnore_SingleGlobPattern(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, ".krmignore", "apps/*.yaml\n")
 
-	ig, err := loadIgnore(root)
+	ig, err := (documentReader{}).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestLoadIgnore_SingleGlobPattern(t *testing.T) {
 // no-op set without error.
 func TestLoadIgnore_NoFile(t *testing.T) {
 	root := t.TempDir()
-	ig, err := loadIgnore(root)
+	ig, err := (documentReader{}).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore on missing file: %v", err)
 	}
@@ -93,7 +93,7 @@ apps/junk/**
 # another comment
 `)
 
-	ig, err := loadIgnore(root)
+	ig, err := (documentReader{}).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestLoadIgnore_DirOnlyPattern(t *testing.T) {
 	// "tmp/" — trailing slash means "only match directories named tmp"
 	testutil.WriteFile(t, root, ".krmignore", "tmp/\n")
 
-	ig, err := loadIgnore(root)
+	ig, err := (documentReader{}).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestLoadIgnore_DirOnlyPattern(t *testing.T) {
 func TestWalkerIgnoreMatches_MemoMatchesUncached(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, ".krmignore", "apps/junk/**\ntmp/\n")
-	ig, err := loadIgnore(root)
+	ig, err := (documentReader{}).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
@@ -333,6 +333,13 @@ data: {env: `+env+`}
 
 	t.Run("override anchors at the scan root", func(t *testing.T) {
 		if got := envOf(t, filepath.Join(dir, "ignores", "production.krmignore")); got != "staging" {
+			t.Errorf("env = %q, want staging", got)
+		}
+	})
+
+	t.Run("relative override anchors at the scan root", func(t *testing.T) {
+		t.Chdir(dir)
+		if got := envOf(t, "ignores/production.krmignore"); got != "staging" {
 			t.Errorf("env = %q, want staging", got)
 		}
 	})

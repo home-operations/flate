@@ -23,7 +23,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/external"
 	"github.com/home-operations/flate/pkg/source/git"
-	"github.com/home-operations/flate/pkg/source/git/mirror"
 	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
@@ -133,13 +132,6 @@ type Config struct {
 	// the cache survives reboots and OS tmpfs cleanups. Falls back to
 	// os.TempDir()/flate-cache only when UserCacheDir errors.
 	CacheDir string
-	// SourceCache, when non-nil, is shared across orchestrators. The
-	// `flate diff` flow constructs two orchestrators that point at the
-	// same on-disk source-cache root; they MUST share one *Cache so the
-	// internal mutex serializes concurrent slot allocation. When nil a
-	// per-orchestrator cache is constructed (fine for single-orchestrator
-	// commands like `build` / `get`).
-	SourceCache *source.Cache
 	// Cache, when injected, remains caller-owned and can be shared across runs.
 	Cache *sourcecache.Cache
 	// ExternalChanges, when non-nil, supplies the file-level diff so
@@ -200,16 +192,15 @@ type Config struct {
 
 // Orchestrator wires controllers and drives reconciliation.
 type Orchestrator struct {
-	cfg         Config
-	store       *store.Store
-	tasks       *task.Service
-	src         *sourcectrl.Controller
-	ksc         *kustomization.Controller
-	hrc         *helmrelease.Controller
-	rsc         *resourcesetctrl.Controller
-	filter      *change.Filter
-	sourceCache *source.Cache
-	cache       *sourcecache.Cache
+	cfg    Config
+	store  *store.Store
+	tasks  *task.Service
+	src    *sourcectrl.Controller
+	ksc    *kustomization.Controller
+	hrc    *helmrelease.Controller
+	rsc    *resourcesetctrl.Controller
+	filter *change.Filter
+	cache  *sourcecache.Cache
 	// Accepted identities are immutable after bootstrap, including for late consumers.
 	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
 
@@ -379,11 +370,6 @@ func New(cfg Config) (*Orchestrator, error) {
 
 	st := store.New()
 	ts := task.NewBounded(cfg.Concurrency)
-	cache := cmp.Or(cfg.SourceCache, source.NewCache(layout))
-	secretGet := func(ns, name string) *manifest.Secret {
-		s, _ := st.GetByName[*manifest.Secret](manifest.KindSecret, ns, name)
-		return s
-	}
 	// Route helm.Client's source-CR lookups straight through the canonical
 	// Store rather than maintaining a duplicate registry the HR controller
 	// would otherwise have to keep in sync via Add* push-API calls.
@@ -396,27 +382,7 @@ func New(cfg Config) (*Orchestrator, error) {
 	// payload at dispatch surfaces "<kind> fetcher: unexpected
 	// payload <T>" from the single adapter site rather than from
 	// four nearly-identical type assertions.
-	gitFetcher := &git.Fetcher{
-		Cache:           cache,
-		Secrets:         secretGet,
-		Mirrors:         mirror.New(layout),
-		Depth:           cfg.GitDepth,
-		RestrictSchemes: cfg.RestrictEgress,
-		ForceGeneric:    cfg.ForceGenericProvider,
-	}
-	// Resolve kustomize remote git bases (resources: URLs carrying ?ref= or a
-	// git marker) through the same clone/mirror/ref-resolution machinery as
-	// Flux GitRepository sources. The seam is a function value because
-	// pkg/kustomize cannot import pkg/source/git (import cycle via pkg/source).
-	treeCache.SetGitBaseFetcher(func(ctx context.Context, repoURL, ref string) (string, string, error) {
-		art, err := gitFetcher.FetchRemoteBase(ctx, repoURL, ref)
-		if err != nil {
-			return "", "", err
-		}
-		return art.LocalPath, art.Revision, nil
-	})
-	srcCtrl.Fetchers[manifest.KindGitRepository] = source.Wrap(
-		manifest.KindGitRepository, gitFetcher)
+	srcCtrl.Fetchers[manifest.KindGitRepository] = nil
 	srcCtrl.Fetchers[manifest.KindExternalArtifact] = source.Wrap(
 		manifest.KindExternalArtifact, &external.Fetcher{})
 	// Nil entries reserve default fetchers until discovery fixes their policy.
@@ -442,16 +408,15 @@ func New(cfg Config) (*Orchestrator, error) {
 		}
 	}
 	o := &Orchestrator{
-		cfg:         cfg,
-		sourceCache: cache,
-		cache:       cfg.Cache,
-		store:       st,
-		tasks:       ts,
-		src:         srcCtrl,
-		ksc:         kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
-		hrc:         helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
-		rsc:         resourcesetctrl.New(st, ts, cfg.WipeSecrets),
-		depGraph:    newDependencyGraph(),
+		cfg:      cfg,
+		cache:    cfg.Cache,
+		store:    st,
+		tasks:    ts,
+		src:      srcCtrl,
+		ksc:      kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
+		hrc:      helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		rsc:      resourcesetctrl.New(st, ts, cfg.WipeSecrets),
+		depGraph: newDependencyGraph(),
 	}
 	if cfg.DisableChartDigestTracking != nil {
 		o.cfg.DisableChartDigestTracking = new(*cfg.DisableChartDigestTracking)
@@ -603,7 +568,6 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
 		KRMIgnoreFile: o.cfg.KRMIgnoreFile,
 		Store:         o.store, WipeSecrets: o.cfg.WipeSecrets,
-		SourceCache: o.sourceCache,
 	})
 	if err != nil {
 		return err
@@ -626,8 +590,16 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		return secret
 	}
 	resolver := helm.NewStoreSourceResolver(o.store)
+	gitFetcher := &git.Fetcher{
+		Cache: o.cache, Secrets: secretGet, Depth: o.cfg.GitDepth,
+		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
+	}
+	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest) (*store.SourceArtifact, error) {
+		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest(request))
+	})
 	ociFetcher := &oci.Fetcher{Cache: o.cache, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
 	for kind, f := range map[string]source.Fetcher{
+		manifest.KindGitRepository: source.Wrap(manifest.KindGitRepository, gitFetcher),
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,
 			&bucket.Fetcher{Cache: o.cache, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}),
 		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),

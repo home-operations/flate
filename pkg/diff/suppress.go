@@ -37,7 +37,7 @@ func (s Suppression) String() string {
 		noun = "object"
 	}
 	return fmt.Sprintf("%s %s: %d %s not rendered on the %s side; diff suppressed (%s)",
-		s.Parent.Kind, joinNS(s.Parent.Namespace, s.Parent.Name), s.Count, noun, s.Side,
+		s.Parent.Kind, (manifest.NamedResource{Namespace: s.Parent.Namespace, Name: s.Parent.Name}).NamespacedName(), s.Count, noun, s.Side,
 		strings.Join(strings.Fields(s.Reason), " "))
 }
 

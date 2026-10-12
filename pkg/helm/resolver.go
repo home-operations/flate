@@ -20,9 +20,6 @@ type SourceResolver interface {
 	// HelmRepository returns the HelmRepository at the given (ns, name)
 	// or nil. Used for index.yaml fetch + SecretRef/CertSecretRef.
 	HelmRepository(namespace, name string) *manifest.HelmRepository
-	// OCIRepository returns the OCIRepository at the given (ns, name)
-	// or nil. The .url field is the chart-artifact root.
-	OCIRepository(namespace, name string) *manifest.OCIRepository
 	// LocalSourceArtifact returns the fetched on-disk artifact for a
 	// GitRepository / Bucket / ExternalArtifact source, or nil. Charts
 	// live at <artifact.LocalPath>/<hr.Chart.Name> for any of those
@@ -47,11 +44,6 @@ type storeResolver struct {
 
 func (r *storeResolver) HelmRepository(namespace, name string) *manifest.HelmRepository {
 	obj, _ := r.store.GetByName[*manifest.HelmRepository](manifest.KindHelmRepository, namespace, name)
-	return obj
-}
-
-func (r *storeResolver) OCIRepository(namespace, name string) *manifest.OCIRepository {
-	obj, _ := r.store.GetByName[*manifest.OCIRepository](manifest.KindOCIRepository, namespace, name)
 	return obj
 }
 

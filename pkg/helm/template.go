@@ -3,17 +3,18 @@ package helm
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
+	"sync"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
+	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	"helm.sh/helm/v4/pkg/cli"
 	release "helm.sh/helm/v4/pkg/release/v1"
 	"sigs.k8s.io/yaml"
 
@@ -21,6 +22,10 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/values"
 )
+
+const sourceHeader = "# Source: "
+
+var envSettings = sync.OnceValue(cli.New)
 
 // Template renders a HelmRelease and returns the rendered manifest as a
 // single YAML string (multiple documents separated by "---" lines).
@@ -60,7 +65,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	}
 
 	cfg := new(action.Configuration)
-	if err := cfg.Init(c.envSettings().RESTClientGetter(), hr.ReleaseNamespace(), ""); err != nil {
+	if err := cfg.Init(envSettings().RESTClientGetter(), hr.ReleaseNamespace(), ""); err != nil {
 		return "", fmt.Errorf("helm init: %w", err)
 	}
 	cfg.Capabilities = caps
@@ -90,7 +95,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if err != nil {
 			return "", fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
 		}
-		finalValues = values.DeepMerge(base, hrValues)
+		finalValues = loader.MergeMaps(base, hrValues)
 	}
 
 	// Output cache: the same (chart fingerprint, finalValues, opts,
@@ -120,7 +125,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	}
 
 	// Disabled dependencies must be pruned before validating their CRDs.
-	if opts.SkipCRDs && hr.CRDsPolicy != "Skip" {
+	if opts.SkipCRDs && hr.CRDsPolicy != string(helmv2.Skip) {
 		crds := loaded.Chart.CRDObjects()
 		for _, crd := range crds {
 			docs, err := manifest.DecodeDocs(crdReader(crd))
@@ -153,7 +158,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 }
 
 func crdReader(crd chart.CRD) io.Reader {
-	return io.MultiReader(strings.NewReader("---\n# Source: "+crd.Filename+"\n"),
+	return io.MultiReader(strings.NewReader("---\n"+sourceHeader+crd.Filename+"\n"),
 		bytes.NewReader(crd.File.Data), strings.NewReader("\n"))
 }
 
@@ -189,7 +194,7 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	// The CLI skip flag suppresses CRDs regardless of HR policy.
 	// spec.install.crds / spec.upgrade.crds set to "Skip" also suppresses
 	// CRDs when the CLI requests them.
-	if hr.CRDsPolicy == "Skip" {
+	if hr.CRDsPolicy == string(helmv2.Skip) {
 		inst.IncludeCRDs = false
 	}
 	// HR-scoped install/upgrade.disableHooks OR'd with the CLI flag,
@@ -279,8 +284,7 @@ func chartValuesCacheKey(fingerprint string, names []string, ignoreMissing bool)
 	} else {
 		data = append(data, 0)
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return manifest.SHA256Hex(data)
 }
 
 // mergeChartValuesFilesUncached merges the named values files (relative
@@ -288,11 +292,6 @@ func chartValuesCacheKey(fingerprint string, names []string, ignoreMissing bool)
 // are skipped when ignoreMissing is true; otherwise the first missing
 // file is an error. Mirrors helm-controller's chartutil layering: each
 // file is merged on top of the previous one.
-//
-// Pure function — no caching. Client.mergeChartValuesFiles wraps this
-// with the chart-keyed cache layer so production callers never re-parse
-// the same bytes twice. Kept exported-to-package so benchmarks can
-// measure the uncached parse cost in isolation.
 func mergeChartValuesFilesUncached(c *chart.Chart, names []string, ignoreMissing bool) (map[string]any, error) {
 	out := map[string]any{}
 	for _, name := range names {
@@ -316,7 +315,7 @@ func mergeChartValuesFilesUncached(c *chart.Chart, names []string, ignoreMissing
 		// out is freshly built and wholly owned by this call (each m is
 		// unmarshaled here and discarded after merge), so merge in place
 		// rather than reallocating a new top-level map per file. Same
-		// merge semantics as DeepMerge — override sub-maps are inserted
+		// merge semantics as Helm — override sub-maps are inserted
 		// by reference, collisions recurse — but without the growing
 		// maps.Copy of the accumulator on every iteration. The caller
 		// (mergeChartValuesFiles) hands out a DeepCopyMap clone, so the
@@ -414,7 +413,7 @@ func isHookDoc(doc map[string]any) bool {
 	if anns == nil {
 		return false
 	}
-	_, has := anns["helm.sh/hook"]
+	_, has := anns[release.HookAnnotation]
 	return has
 }
 
@@ -428,10 +427,10 @@ func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests
 	size := len(rel.Manifest)
 	if !disableHooks {
 		for _, h := range rel.Hooks {
-			if skipTests && isTestHook(h) {
+			if skipTests && slices.Contains(h.Events, release.HookTest) {
 				continue
 			}
-			size += len("---\n# Source: \n") + len(h.Path) + len(h.Manifest) + 1
+			size += len("---\n"+sourceHeader+"\n") + len(h.Path) + len(h.Manifest) + 1
 		}
 	}
 	var b strings.Builder
@@ -440,13 +439,13 @@ func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests
 	lastNewline := strings.HasSuffix(rel.Manifest, "\n")
 	if !disableHooks {
 		for _, h := range rel.Hooks {
-			if skipTests && isTestHook(h) {
+			if skipTests && slices.Contains(h.Events, release.HookTest) {
 				continue
 			}
 			if !lastNewline {
 				b.WriteByte('\n')
 			}
-			fmt.Fprintf(&b, "---\n# Source: %s\n%s", h.Path, h.Manifest)
+			fmt.Fprintf(&b, "---\n"+sourceHeader+"%s\n%s", h.Path, h.Manifest)
 			lastNewline = strings.HasSuffix(h.Manifest, "\n")
 		}
 	}
@@ -466,7 +465,7 @@ func filterShowOnly(content string, paths []string) string {
 	for section := range strings.SplitSeq(content, "\n---\n") {
 		var header string
 		for line := range strings.SplitSeq(section, "\n") {
-			if rest, ok := strings.CutPrefix(line, "# Source: "); ok {
+			if rest, ok := strings.CutPrefix(line, sourceHeader); ok {
 				header = rest
 				break
 			}
@@ -480,8 +479,4 @@ func filterShowOnly(content string, paths []string) string {
 		out.WriteString(section)
 	}
 	return out.String()
-}
-
-func isTestHook(h *release.Hook) bool {
-	return slices.Contains(h.Events, release.HookTest)
 }

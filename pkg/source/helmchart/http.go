@@ -65,7 +65,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", helmID(r), err)
 	}
-	input := cache.FileFS("chart.tgz", reader)
+	input := cache.FileFS(source.HelmChartArchiveFilename, reader)
 	if err := reader.Close(); err != nil {
 		return nil, err
 	}

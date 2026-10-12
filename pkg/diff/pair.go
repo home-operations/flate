@@ -51,7 +51,7 @@ func changedPairs(left, right []Doc, opts Options) iter.Seq2[changedPair, error]
 // label is the resource's human-facing title, e.g. "Deployment apps/web" —
 // the heading the unified and HTML paths put above each resource's diff.
 func (p pairedResource) label() string {
-	return p.kind + " " + joinNS(p.namespace, p.name)
+	return p.kind + " " + (manifest.NamedResource{Namespace: p.namespace, Name: p.name}).NamespacedName()
 }
 
 // pairKey identifies a resource for cross-set matching.

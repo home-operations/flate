@@ -16,7 +16,7 @@ import (
 // build-info is unavailable, we fall back to a sensible default.
 var BundledKubeVersion = sync.OnceValue(detectBundledKubeVersion)
 
-const fallbackKubeVersion = "1.36.0"
+const fallbackKubeVersion = "1.37.1"
 
 func detectBundledKubeVersion() string {
 	info, ok := debug.ReadBuildInfo()
@@ -27,8 +27,6 @@ func detectBundledKubeVersion() string {
 		if dep.Path != "k8s.io/api" {
 			continue
 		}
-		// dep.Version is "v0.36.0" — strip the leading "v0." and
-		// reassemble as "1.<minor>.<patch>".
 		v := strings.TrimPrefix(dep.Version, "v0.")
 		if v == dep.Version {
 			return fallbackKubeVersion

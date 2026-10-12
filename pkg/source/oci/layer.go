@@ -6,8 +6,6 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-const copiedLayerFilename = "layer.tar.gz"
-
 const (
 	helmChartLayerMediaType      = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
 	helmChartProvenanceMediaType = "application/vnd.cncf.helm.chart.provenance.v1.prov"

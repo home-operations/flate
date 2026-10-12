@@ -23,7 +23,9 @@ func Promote(st *store.Store, id manifest.NamedResource, path string, opts Promo
 	if obj := st.GetObject(id); obj != nil {
 		return opts.Admit(obj)
 	}
-	objs, err := parseFile(path, manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets})
+	reader := documentReader{}
+	reader.mountSources(st)
+	objs, err := reader.parseFile(path, manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets})
 	if err != nil {
 		slog.Debug("loader: promote re-parse failed", "id", id.String(), "path", path, "err", err)
 		return false

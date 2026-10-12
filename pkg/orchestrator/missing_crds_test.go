@@ -279,7 +279,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			}}
 			c := resourcesetctrl.New(s, tasks, true)
 			c.Configure(opts)
-			c.Start(t.Context())
+			c.StartLifecycle()
 			t.Cleanup(c.Close)
 			t.Cleanup(tasks.BlockTillDone)
 			crd := fluxopv1.Dependency{Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
@@ -311,7 +311,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 				opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s)
 				c = resourcesetctrl.New(s, tasks, true)
 				c.Configure(opts)
-				c.Start(t.Context())
+				c.StartLifecycle()
 				t.Cleanup(c.Close)
 			}
 			if blocked := c.ReconcileNode(t.Context(), rs.Named(), 1); len(blocked) != 0 {

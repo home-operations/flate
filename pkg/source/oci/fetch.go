@@ -61,7 +61,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
-		input, descriptor = cache.FileFS(copiedLayerFilename, r), desc
+		input, descriptor = cache.FileFS(source.OCICopiedLayerFilename, r), desc
 		if err := r.Close(); err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}

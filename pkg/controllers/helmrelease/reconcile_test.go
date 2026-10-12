@@ -178,7 +178,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 }
 
 // TestReconcile_DependsOnFailed cascades a dep failure to a non-rendering
-// HR — DependencyFailedError surfaces via RunWithStatus → Failed status.
+// HR — DependencyFailedError surfaces via RunWithStatusOutcome → Failed status.
 func TestReconcile_DependsOnFailed(t *testing.T) {
 	c, st := newTestController(t, nil)
 	dep := &manifest.HelmRelease{Name: "dep", Namespace: "flux-system"}

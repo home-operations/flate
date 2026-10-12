@@ -23,7 +23,7 @@ import (
 
 // Controller orchestrates Kustomization reconciliation. Reconcile-
 // shaping state (Filter, ParentOf) flows in via Configure exactly once
-// before Start. The invariant — "config is read-only after Start" — is
+// before StartLifecycle. The invariant — "config is read-only after StartLifecycle" — is
 // encoded in the embedded *base.Controller, not just in code review.
 type Controller struct {
 	*base.Controller
@@ -43,7 +43,7 @@ type Controller struct {
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto the
-// controller before Start. base.Options holds the common reconcile config.
+// controller before StartLifecycle. base.Options holds the common reconcile config.
 type Options struct {
 	base.Options
 	// Index contains immutable data renderers discovered before reconciliation.
@@ -66,7 +66,7 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 }
 
 // Configure installs the post-bootstrap state. Panics if called after
-// Start — encodes the invariant that reconcile-shaping config is
+// StartLifecycle — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
 func (c *Controller) Configure(opts Options) {
 	c.Controller.Configure(opts.Options)
@@ -80,13 +80,6 @@ func (c *Controller) Configure(opts Options) {
 			sources: opts.SubstituteFrom, fallback: c.substitutionProvider,
 		}
 	}
-}
-
-// Start wires lifecycle state. The scheduler owns dispatch (via ReconcileNode)
-// and the orchestrator's dagrun wires its own discovery/wake listeners, so
-// Start registers no dispatch listener of its own.
-func (c *Controller) Start(_ context.Context) {
-	c.StartLifecycle()
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
@@ -120,7 +113,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		// structural parent may have re-emitted us with mutated spec (e.g.
 		// `replacements:` injecting spec.targetNamespace) while we were
 		// waiting. Without the refresh the first render would use the
-		// stale-spec snapshot captured by RunWithStatus, producing
+		// stale-spec snapshot captured by RunWithStatusOutcome, producing
 		// duplicate renders that linger in the store with the wrong
 		// namespace. See #102.
 		fresh, ok, err := c.RequireRefresh[*manifest.Kustomization](

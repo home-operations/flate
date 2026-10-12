@@ -10,13 +10,6 @@ import (
 
 const diffContextLines = 3
 
-func joinNS(ns, name string) string {
-	if ns == "" {
-		return name
-	}
-	return ns + "/" + name
-}
-
 // renderUnified produces a plain unified diff (`diff -u`) of the two doc
 // sets: it pairs resources by parent + identity (see pair), diffs each
 // changed pair's YAML, and concatenates the bodies. Identical resources

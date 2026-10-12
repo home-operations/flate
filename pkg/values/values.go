@@ -1,10 +1,8 @@
 package values
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"log/slog"
 	"maps"
 	"regexp"
@@ -52,33 +50,9 @@ func (p *storeProvider) Secret(namespace, name string) *manifest.Secret {
 	return s
 }
 
-// DeepMerge returns a new map with override's keys merged into base.
-// Nested maps recurse; lists and scalars from override fully replace
-// values from base — matching Helm's merge semantics. Both inputs
-// are read-only.
-//
-// Implemented as deepMergeShared over a fresh shallow copy of base:
-// the copy makes the top-level map owned, and deepMergeShared's
-// copy-on-collision recursion keeps every borrowed (base) sub-tree
-// read-only, so neither input is mutated.
-func DeepMerge(base, override map[string]any) map[string]any {
-	out := make(map[string]any, len(base)+len(override))
-	maps.Copy(out, base)
-	return deepMergeShared(out, override)
-}
-
-// DeepMergeInto merges override's keys into dst in place. Same merge
-// semantics as DeepMerge but mutates dst instead of allocating a new
-// map. Callers MUST own dst and any sub-maps reachable from it —
-// passing a map that shares sub-trees with another reachable
-// reference will corrupt that reference. Designed for hot paths
-// (ExpandValueReferences's per-ref loop) where the caller is
-// building up a fresh map across N refs and the N-1 intermediate
-// allocations DeepMerge would do are wasted.
-//
-// Sub-maps coming from override are inserted by reference (not
-// cloned) when no existing key collides — same as DeepMerge.
-// Returns dst for fluent-style use.
+// DeepMergeInto merges override into dst using Helm's merge semantics.
+// Callers MUST own dst and its sub-maps. Non-colliding override sub-maps
+// are inserted by reference; override remains read-only.
 func DeepMergeInto(dst, override map[string]any) map[string]any {
 	if dst == nil {
 		dst = map[string]any{}
@@ -105,18 +79,10 @@ func DeepMergeInto(dst, override map[string]any) map[string]any {
 // map/map key collision shallow-clones the existing dst node into a
 // fresh owned map BEFORE recursing — copy-on-write — so the recursion
 // never writes through a borrowed (shared) sub-tree. Non-colliding
-// override sub-maps are inserted by reference, exactly like DeepMerge.
+// override sub-maps are inserted by reference.
 //
-// The resulting value graph is identical to a DeepMerge(dst, override)
-// chain, but without re-copying the whole top-level accumulator on each
-// call: ExpandValueReferences's share path folds N valuesFrom refs into
-// one accumulator with N in-place merges instead of N functional
-// DeepMerges that each clone the growing top level. Returns dst.
-//
-// Safety invariant: override is never mutated (only read), and any dst
-// sub-map that aliases a shared canonical is cloned before it is
-// written to. The cache canonical therefore stays pristine, matching
-// the contract DeepMerge upheld in the old share path.
+// The accumulator is owned, but its sub-maps may alias immutable cache
+// entries. Clone colliding maps before writing through a borrowed node.
 func deepMergeShared(dst, override map[string]any) map[string]any {
 	for k, v := range override {
 		existing, ok := dst[k]
@@ -140,24 +106,12 @@ func deepMergeShared(dst, override map[string]any) map[string]any {
 	return dst
 }
 
-// Cache memoizes parsed-YAML output of valuesFrom refs across HRs.
-// One HR with N valuesFrom refs hits each entry once; M HRs sharing
-// the same ConfigMap/Secret/key tuple (a common pattern when a
-// platform values CM is referenced by every app HR) re-yaml.Unmarshal'd
-// the same bytes M times. Cache key folds the content hash so a
-// mutation to the underlying object (re-AddObject) invalidates
-// naturally without an explicit listener.
-//
-// Stored values are TREATED AS IMMUTABLE — callers receive a deep
-// clone before mutation so concurrent ExpandValueReferences calls
-// can't observe a partially-modified sub-tree. The cache itself is
-// safe for concurrent use.
-//
-// Zero value is a no-op cache: NewCache or a non-nil *Cache must
-// be supplied to opt into memoization. nil is the legacy fast path
-// for tests / one-shot embedders.
+// Cache memoizes valuesFrom YAML by content across HelmReleases.
+// Stored maps are immutable; callers must clone before mutation or merge
+// with copy-on-write. The zero value is ready for concurrent use.
+// A nil *Cache disables memoization.
 type Cache struct {
-	m sync.Map // map[uint64]map[string]any
+	m sync.Map // map[string]map[string]any
 }
 
 // NewCache returns an empty *Cache ready for use. Construct one per
@@ -168,7 +122,7 @@ func NewCache() *Cache { return &Cache{} }
 // NOT mutate the returned map; the cache's defensive-clone happens at
 // the call site (ExpandValueReferences) which knows whether the value
 // will be merged through DeepMergeInto (mutating) or read-only.
-func (c *Cache) lookup(key uint64) (map[string]any, bool) {
+func (c *Cache) lookup(key string) (map[string]any, bool) {
 	if c == nil {
 		return nil, false
 	}
@@ -179,51 +133,11 @@ func (c *Cache) lookup(key uint64) (map[string]any, bool) {
 	return v.(map[string]any), true
 }
 
-// store memoizes parsed under key. No-op when c is nil so the
-// non-cached path stays branchless on the caller.
-func (c *Cache) store(key uint64, parsed map[string]any) {
-	if c == nil {
-		return
+// put stores an immutable parsed map. A nil receiver disables memoization.
+func (c *Cache) put(key string, parsed map[string]any) {
+	if c != nil {
+		c.m.Store(key, parsed)
 	}
-	c.m.Store(key, parsed)
-}
-
-// valuesRefCacheKey folds (ref.Kind, namespace, ref.Name, valuesKey,
-// content-hash) into a FNV64 key. Including the content hash means
-// any mutation to the underlying ConfigMap/Secret data shifts the
-// key — re-AddObject changes the bytes, the new bytes hash differently,
-// and the next lookup misses naturally. No explicit invalidation needed.
-//
-// Why FNV64 (stdlib hash/fnv) over sha256: collision probability across
-// the small key-space a single flate run produces (≤ thousands of
-// entries) is effectively zero, and FNV is ~10× cheaper. The previous-
-// cache convention elsewhere in flate (chartValuesCache, store hashing)
-// uses sha256 for stable cross-run keys; this cache is single-run only,
-// so the faster hash is fine.
-func valuesRefCacheKey(kind, namespace, name, valuesKey, content string) uint64 {
-	// hash.Hash.Write never returns an error per its contract; the
-	// _, _ = drains the (int, error) tuple so gosec G104 doesn't flag
-	// every byte fed into the digest.
-	h := fnv.New64a()
-	// Each field is followed by a NUL so adjacent fields can't run
-	// together (e.g. name="ab"+key="c" vs name="a"+key="bc").
-	writeField := func(s string) {
-		_, _ = h.Write([]byte(s))
-		_, _ = h.Write([]byte{0})
-	}
-	writeField(kind)
-	writeField(namespace)
-	writeField(name)
-	writeField(valuesKey)
-	// Mix the content length into the hash explicitly so two refs that
-	// happen to FNV-collide on the same prefix don't end up sharing
-	// a cache entry; binary.LittleEndian.PutUint64 produces 8 stable
-	// bytes regardless of the host architecture.
-	var b [8]byte
-	binary.LittleEndian.PutUint64(b[:], uint64(len(content)))
-	_, _ = h.Write(b[:])
-	_, _ = h.Write([]byte(content))
-	return h.Sum64()
 }
 
 // ExpandValueReferences resolves all spec.valuesFrom references on hr,
@@ -265,7 +179,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 			}
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
-		if values, err = updateHelmReleaseValues(ref, found, values, hr.Namespace, cache, share); err != nil {
+		if values, err = updateHelmReleaseValues(ref, found, values, cache, share); err != nil {
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 	}
@@ -367,7 +281,7 @@ func (e *missingValueRefError) Unwrap() error {
 // via replaceLiteralValueAtPath).
 //
 // Otherwise the found YAML is parsed (memoized in cache when non-nil, keyed
-// by kind, namespace, name, valuesKey, content-hash) and deep-merged.
+// by content) and deep-merged.
 //
 // share selects the merge strategy, decided once per HR by the caller:
 //   - share=true (the HR has NO TargetPath ref): deepMergeShared, which
@@ -382,7 +296,7 @@ func (e *missingValueRefError) Unwrap() error {
 //     DeepMergeInto over a DeepCopyMap of the canonical, so the
 //     accumulator is FULLY OWNED and the in-place strvals write that a
 //     TargetPath ref performs can't reach (and corrupt) the shared cache.
-func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any, namespace string, cache *Cache, share bool) (map[string]any, error) {
+func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any, cache *Cache, share bool) (map[string]any, error) {
 	if ref.TargetPath != "" {
 		// Only reached when share==false (the caller sets share false the
 		// moment any ref carries a TargetPath), so `values` is owned and
@@ -395,8 +309,7 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 		return values, err
 	}
 
-	key := valuesRefCacheKey(ref.Kind, namespace, ref.Name, ref.GetValuesKey(), found)
-	parsed, ok := cache.lookup(key)
+	parsed, ok := cache.lookup(found)
 	if !ok {
 		if err := yaml.Unmarshal([]byte(found), &parsed); err != nil {
 			// Wiped Secret values surface here as the literal placeholder
@@ -413,14 +326,13 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 			return values, nil
 		}
 		// Cache the parsed tree (canonical, never mutated) before merging.
-		cache.store(key, parsed)
+		cache.put(found, parsed)
 	}
 	if share {
 		// Folds parsed into the owned accumulator in place: non-colliding
 		// sub-trees are shared by reference; map collisions copy-on-write
 		// so the cache canonical (parsed) is never mutated. Avoids the
-		// per-ref full clone of the growing top-level map that a functional
-		// DeepMerge chain pays across N valuesFrom refs.
+		// per-ref full clone of the growing top-level map across N valuesFrom refs.
 		return deepMergeShared(values, parsed), nil
 	}
 	// Owned-accumulator path: clone the canonical so the later in-place

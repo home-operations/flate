@@ -26,7 +26,7 @@ func TestDAGDispatch_ResourceSetDedup(t *testing.T) {
 	tasks := task.NewBounded(2)
 	c := resourceset.New(s, tasks, true)
 	c.Configure(resourceset.Options{})
-	c.Start(t.Context())
+	c.StartLifecycle()
 	t.Cleanup(c.Close)
 	rs := &manifest.ResourceSet{Name: "dedup", Namespace: "ns", ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
@@ -57,7 +57,7 @@ func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
 				tasks := task.NewBounded(2)
 				c := resourceset.New(s, tasks, true)
 				c.Configure(resourceset.Options{})
-				c.Start(t.Context())
+				c.StartLifecycle()
 				rs := &manifest.ResourceSet{Name: "matrix", Namespace: "ns", ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: output}
@@ -110,7 +110,7 @@ data: {key: fixed}
 				}
 				c = resourceset.New(s, tasks, true)
 				c.Configure(opts)
-				c.Start(t.Context())
+				c.StartLifecycle()
 				t.Cleanup(c.Close)
 				d.o.rsc = c
 				var arrivals atomic.Int64
@@ -150,7 +150,7 @@ func TestDAGDispatch_ConcurrentResourceSetUpdate(t *testing.T) {
 	tasks := task.NewBounded(2)
 	c := resourceset.New(s, tasks, true)
 	c.Configure(resourceset.Options{})
-	c.Start(t.Context())
+	c.StartLifecycle()
 	t.Cleanup(c.Close)
 	rs := &manifest.ResourceSet{Name: "concurrent", Namespace: "ns", ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap

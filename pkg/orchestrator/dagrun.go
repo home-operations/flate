@@ -107,10 +107,10 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	// index (flush=true replay), but no dispatch listeners — the scheduler owns
 	// dispatch. No render runs here, so no children are emitted before the wake
 	// adapters below are registered.
-	o.src.Start(ctx)
-	o.ksc.Start(ctx)
+	o.src.StartLifecycle()
+	o.ksc.StartLifecycle()
 	o.hrc.Start(ctx)
-	o.rsc.Start(ctx)
+	o.rsc.StartLifecycle()
 
 	// Store → scheduler adapters (fire-only, flush=false), registered AFTER the
 	// shared cycle-detect listener so cycle preflight runs first.

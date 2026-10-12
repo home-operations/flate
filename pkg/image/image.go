@@ -32,38 +32,6 @@ func Extract(doc map[string]any) []string {
 	return slices.Sorted(maps.Keys(set))
 }
 
-// Split separates an OCI image reference into its repository name and
-// its version: the tag, the digest, or both joined with "@". The name is
-// returned verbatim, NOT normalized: "nginx:1" splits to ("nginx", "1"),
-// not ("docker.io/library/nginx", …). Intended for references Extract
-// returned; a value that doesn't parse as a reference yields (ref, "").
-//
-// Pairs with Extract for per-repository version diffing — detecting that
-// ghcr.io/home-operations/sonarr moved from v4.0.0 to v4.1.0 — so a
-// consumer doesn't hand-roll a string split that mishandles a registry
-// port (host:5000/img) or a tag+digest reference.
-func Split(ref string) (name, version string) {
-	parsed, err := reference.Parse(ref)
-	if err != nil {
-		return ref, ""
-	}
-	named, ok := parsed.(reference.Named)
-	if !ok {
-		return ref, ""
-	}
-	name = named.Name()
-	if t, ok := parsed.(reference.Tagged); ok {
-		version = t.Tag()
-	}
-	if d, ok := parsed.(reference.Digested); ok {
-		if version != "" {
-			version += "@"
-		}
-		version += d.Digest().String()
-	}
-	return name, version
-}
-
 func walk(v any, set map[string]struct{}) {
 	switch tv := v.(type) {
 	case map[string]any:

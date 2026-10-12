@@ -274,7 +274,7 @@ func preflightGitBase(ctx context.Context, cache *TreeCache, input *treeFS, root
 				return err
 			}
 			k.FixKustomization()
-			for _, refs := range [][]string{k.Resources, k.Components} {
+			for _, refs := range [][]string{k.Resources, k.Components, k.Transformers, k.Generators} {
 				for _, ref := range refs {
 					target := filepath.Join(dir, ref)
 					if input.IsDir(target) {

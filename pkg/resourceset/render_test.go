@@ -752,3 +752,48 @@ metadata:
 		t.Errorf("expected 4 docs (2 inputs × 2 docs each), got %d", len(docs))
 	}
 }
+
+func TestRender_NullInput(t *testing.T) {
+	rs := &manifest.ResourceSet{
+		Name: "null", Namespace: "apps",
+		Inputs: []fluxopv1.ResourceSetInput{{"value": nil}},
+		ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata: {name: null-input}
+data:
+  value: << if eq inputs.value nil >>"null"<< end >>`,
+	}
+	docs, err := resourceset.Render(rs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("documents = %d, want 1", len(docs))
+	}
+	assert.Diff(t, docs[0]["data"], map[string]any{"value": "null"})
+}
+
+func TestRender_SlugifyLength(t *testing.T) {
+	for _, tc := range []struct{ name, input, want string }{
+		{"truncate", strings.Repeat("a", 64), strings.Repeat("a", 63)},
+		{"smart truncate", strings.Repeat("a", 32) + " " + strings.Repeat("b", 32), strings.Repeat("a", 32)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := &manifest.ResourceSet{
+				Name: "slug", Namespace: "apps",
+				Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"`+tc.input+`"`)}},
+				ResourcesTemplate: `apiVersion: v1
+kind: ConfigMap
+metadata: {name: << inputs.name | slugify >>}`,
+			}
+			docs, err := resourceset.Render(rs, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(docs) != 1 {
+				t.Fatalf("documents = %d, want 1", len(docs))
+			}
+			assert.Equal(t, docs[0]["metadata"].(map[string]any)["name"].(string), tc.want)
+		})
+	}
+}

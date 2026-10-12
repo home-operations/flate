@@ -1,6 +1,10 @@
 package diff
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/home-operations/flate/pkg/manifest"
+)
 
 // Parent identifies the Flux Kustomization or HelmRelease that rendered a
 // manifest. It is a pairing discriminator so resources from different
@@ -17,7 +21,7 @@ type Parent struct {
 }
 
 func (p Parent) label() string {
-	s := p.Kind + " " + joinNS(p.Namespace, p.Name)
+	s := p.Kind + " " + (manifest.NamedResource{Namespace: p.Namespace, Name: p.Name}).NamespacedName()
 	if p.Path != "" {
 		s += " (" + p.Path + ")"
 	}

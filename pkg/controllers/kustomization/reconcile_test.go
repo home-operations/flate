@@ -48,7 +48,7 @@ data: {greeting: hi}
 	tasks := task.NewBounded(0)
 	c := New(s, tasks, cache, true)
 	c.Configure(Options{})
-	c.Start(context.Background())
+	c.StartLifecycle()
 	t.Cleanup(func() {
 		c.Close()
 		tasks.BlockTillDone()

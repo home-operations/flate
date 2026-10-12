@@ -121,7 +121,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 					if id == consumer {
 						consumers++
 						info, _ := s.GetStatus(source.Named())
-						if info.Status != store.StatusPending || !c.Filter().ShouldReconcile(consumer) {
+						if info.Status != store.StatusPending || !c.filter.ShouldReconcile(consumer) {
 							t.Errorf("consumer arrived before prerequisite was Pending and consumer was kept: %+v", info)
 						}
 					}

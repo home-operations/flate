@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	yaml "go.yaml.in/yaml/v4"
@@ -31,7 +32,7 @@ func substitutionEnv(flag, input string) ([]string, error) {
 	}
 	key := envKey(flag)
 	if flag == "substitute-from" {
-		paths := strings.Split(input, ":")
+		paths := filepath.SplitList(input)
 		for i, path := range paths {
 			if path == "" {
 				return nil, fmt.Errorf("%w: %s path %d is empty", manifest.ErrInput, key, i+1)

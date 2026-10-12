@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
+	"helm.sh/helm/v4/pkg/chart/v2/util"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -28,7 +29,7 @@ func (c *Client) locateLocalChart(hr *manifest.HelmRelease) (string, error) {
 			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
 	}
 	path := filepath.Join(art.LocalPath, hr.Chart.Name)
-	if _, err := os.Stat(filepath.Join(path, chartYamlFilename)); err != nil {
+	if _, err := os.Stat(filepath.Join(path, util.ChartfileName)); err != nil {
 		return "", fmt.Errorf("chart not found at %s: %w", path, err)
 	}
 	return path, nil

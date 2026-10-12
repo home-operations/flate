@@ -9,8 +9,18 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
+	"time"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
+	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestIsGitRemoteBase(t *testing.T) {
@@ -90,12 +100,32 @@ func fakeWorktree(t *testing.T, files map[string]string) string {
 
 // withFakeGitBase installs a GitBaseFetcher returning worktree for every
 // call and counting invocations.
-func withFakeGitBase(c *TreeCache, worktree string, calls *atomic.Int32) {
-	c.SetGitBaseFetcher(func(_ context.Context, _, _ string) (string, string, error) {
+func withFakeGitBase(t *testing.T, c *TreeCache, worktree string, calls *atomic.Int32) {
+	t.Helper()
+	repo, err := git.PlainInit(worktree, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := wt.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.invalid"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := gittree.New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, gittree.ViewOptions{Mode: gittree.RemoteBase})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetGitBaseFetcher(func(_ context.Context, _ GitBaseRequest) (*store.SourceArtifact, error) {
 		if calls != nil {
 			calls.Add(1)
 		}
-		return worktree, "deadbeef", nil
+		return &store.SourceArtifact{FS: input, Key: "fake-base", Revision: "deadbeef"}, nil
 	})
 }
 
@@ -110,7 +140,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + gitURL + "\n"})
 
 	cache := newPreflightCache(t)
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
@@ -159,7 +189,7 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/o/r?ref=v1\n"})
 
 	cache := newPreflightCache(t)
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
@@ -178,9 +208,11 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 // ../ reference still resolves (copy-only-subPath would break this).
 func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	worktree := fakeWorktree(t, map[string]string{
-		"apps/foo/kustomization.yaml": "resources:\n  - ../../shared\n",
-		"shared/kustomization.yaml":   "resources:\n  - ./cm.yaml\n",
-		"shared/cm.yaml":              "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: from-parent-ref\n",
+		"apps/foo/kustomization.yaml":        "resources:\n  - ../../shared\n",
+		"shared/kustomization.yaml":          "resources:\n  - ./cm.yaml\n",
+		"shared/cm.yaml":                     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: from-parent-ref\n",
+		"examples/kustomization.yaml":        "resources:\n  - http://127.0.0.1:1/unreachable.yaml\n",
+		"apps/foo/unused/kustomization.yaml": "resources:\n  - http://127.0.0.1:1/unreachable.yaml\n",
 	})
 
 	src := writeTree(t, map[string]string{
@@ -188,7 +220,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	})
 
 	cache := NewTreeCache()
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 
 	out, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -217,7 +249,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	src := writeTree(t, map[string]string{"kustomization.yaml": original})
 
 	cache := NewTreeCache()
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 
 	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -253,31 +285,49 @@ func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
 	}
 }
 
-// TestPreflightGitBase_EachKSGetsOwnCopy: multiple kustomizations referencing
+// TestPreflightGitBase_ReusesMountWithinRender: multiple kustomizations referencing
 // the same base each get their own self-contained .flate-remote-<hash>/ dir.
-func TestPreflightGitBase_EachKSGetsOwnCopy(t *testing.T) {
+func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote}\n"))
+	}))
+	t.Cleanup(srv.Close)
 	worktree := fakeWorktree(t, map[string]string{
-		"kustomization.yaml": "resources:\n  - ./cm.yaml\n",
-		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
+		"kustomization.yaml":     "resources:\n  - ./cm.yaml\n",
+		"cm.yaml":                "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
+		"one/kustomization.yaml": "resources:\n  - " + srv.URL + "/one.yaml\n",
+		"two/kustomization.yaml": "resources:\n  - " + srv.URL + "/two.yaml\n",
 	})
 
 	fsys := memFSWith(t, map[string]string{
-		"a/kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n",
-		"b/kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n",
-		"c/kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n",
+		"a/kustomization.yaml": "resources:\n  - https://example.com/o/r//one?ref=v1\n",
+		"b/kustomization.yaml": "resources:\n  - https://example.com/o/r//two?ref=v1\n",
+		"c/kustomization.yaml": "resources:\n  - https://example.com/o/r//one?ref=v1\n",
 	})
 
 	var calls atomic.Int32
 	cache := newPreflightCache(t)
-	withFakeGitBase(cache, worktree, &calls)
+	withFakeGitBase(t, cache, worktree, &calls)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
 	wantDir := remoteResourcePrefix + urlHash("https://example.com/o/r@v1")
-	for _, sub := range []string{"a", "b", "c"} {
-		if !fsys.Exists(filepath.Join(sub, wantDir, "cm.yaml")) {
-			t.Errorf("%s: base not copied into its own dir", sub)
+	if calls.Load() != 1 {
+		t.Fatalf("fetches = %d, want 1", calls.Load())
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("selected package URL fetches = %d, want 2", hits.Load())
+	}
+	if !fsys.Exists(filepath.Join("a", wantDir, "cm.yaml")) {
+		t.Fatal("base mount is missing")
+	}
+	for _, sub := range []string{"b", "c"} {
+		body, err := fsys.ReadFile(filepath.Join(sub, "kustomization.yaml"))
+		if err != nil || !strings.Contains(string(body), "../a/"+wantDir) {
+			t.Fatalf("%s did not reuse base mount: %s, %v", sub, body, err)
 		}
 	}
 }
@@ -296,26 +346,136 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 	testutil.WriteFileAt(t, hostFile, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: "+sentinel+"\n")
 
 	worktree := fakeWorktree(t, map[string]string{
-		"kustomization.yaml": "resources:\n  - ./cm.yaml\n  - ./creds.yaml\n",
-		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
+		"kustomization.yaml":  "resources:\n  - ./cm.yaml\n  - ./creds.yaml\n",
+		".github/x.yaml":      "hidden",
+		"node_modules/y.yaml": "hidden",
+		"cm.yaml":             "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
 	})
 	// The attacker's symlink: a referenced resource whose target escapes the base.
 	if err := os.Symlink(hostFile, filepath.Join(worktree, "creds.yaml")); err != nil {
 		t.Skipf("symlinks unsupported: %v", err)
 	}
 
+	for name, target := range map[string]string{
+		"alias.yaml": "cm.yaml", "missing.yaml": "absent.yaml", "dirlink": "node_modules",
+		".github/a": "b", ".github/b": "a", "node_modules/a": "b", "node_modules/b": "a",
+	} {
+		if err := os.Symlink(target, filepath.Join(worktree, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n"})
 	cache := newPreflightCache(t)
-	withFakeGitBase(cache, worktree, nil)
+	withFakeGitBase(t, cache, worktree, nil)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
 	wantDir := remoteResourcePrefix + urlHash("https://example.com/o/r@v1")
+	if data, err := fsys.ReadFile(filepath.Join(wantDir, "alias.yaml")); err != nil || !strings.Contains(string(data), "name: base") {
+		t.Fatalf("regular alias: %s, %v", data, err)
+	}
+	for _, name := range []string{".github", "node_modules", "missing.yaml", "dirlink"} {
+		if fsys.Exists(filepath.Join(wantDir, name)) {
+			t.Errorf("hidden entry %s", name)
+		}
+	}
 	if !fsys.Exists(filepath.Join(wantDir, "cm.yaml")) {
 		t.Error("legit base resource should still be materialized")
 	}
 	if fsys.Exists(filepath.Join(wantDir, "creds.yaml")) {
 		t.Fatal("symlink escaping the base root must NOT be materialized into the render fs (#741)")
+	}
+}
+
+func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
+	const parentURL = "https://example.invalid/o/parent.git"
+	const childURL = "https://example.invalid/o/child.git"
+	parent := fakeWorktree(t, map[string]string{"kustomization.yaml": "resources:\n  - " + childURL + "\n"})
+	child := fakeWorktree(t, map[string]string{
+		"kustomization.yaml": "resources:\n  - cm.yaml\n", "cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: first}\n",
+	})
+	for _, dir := range []string{parent, child} {
+		r, err := git.PlainInit(dir, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wt, err := r.Worktree()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wt.Add("."); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wt.Commit("seed", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sources, err := cache.New(t.Context(), cacheroot.New(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sources.Close() })
+	fetcher := &sourcegit.Fetcher{Cache: sources}
+	c := NewTreeCache()
+	var requests []GitBaseRequest
+	c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest) (*store.SourceArtifact, error) {
+		requests = append(requests, request)
+		dir := parent
+		if request.URL == childURL {
+			dir = child
+		}
+		return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, MaxAge: request.MaxAge})
+	})
+	input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "\n")}}}
+	render := func(interval string) ([]byte, error) {
+		return RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: map[string]any{"spec": map[string]any{"interval": interval}}})
+	}
+	update := func(name, body string) {
+		t.Helper()
+		testutil.WriteFileAt(t, filepath.Join(child, name), body)
+		r, err := git.PlainOpen(child)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wt, err := r.Worktree()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wt.Add(name); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wt.Commit(name, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if output, err := render("1h"); err != nil || !strings.Contains(string(output), "name: first") {
+		t.Fatalf("nested base: %s, %v", output, err)
+	}
+	update("cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: second}\n")
+	for _, tc := range []struct {
+		interval, want string
+		maxAge         time.Duration
+	}{
+		{"1h", "first", time.Hour}, {"1ns", "second", time.Nanosecond},
+	} {
+		requests = nil
+		output, err := render(tc.interval)
+		if err != nil || !strings.Contains(string(output), "name: "+tc.want) {
+			t.Fatalf("interval %s: %s, %v", tc.interval, output, err)
+		}
+		if len(requests) != 2 {
+			t.Fatalf("nested requests: %v", requests)
+		}
+		for _, request := range requests {
+			if request.MaxAge != tc.maxAge {
+				t.Fatalf("nested interval = %v, want %v", request.MaxAge, tc.maxAge)
+			}
+		}
+	}
+	update("kustomization.yaml", "resources:\n  - "+parentURL+"\n")
+	if _, err := render("1ns"); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("upstream cycle error: %v", err)
 	}
 }

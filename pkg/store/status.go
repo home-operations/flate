@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/binary"
 	"errors"
 	"slices"
 	"strings"
@@ -102,8 +101,7 @@ type conditionRecord struct {
 }
 
 type dependencyFailure struct {
-	ids         []manifest.NamedResource
-	fingerprint string
+	ids []manifest.NamedResource
 }
 
 func newDependencyFailure(err error) *dependencyFailure {
@@ -113,23 +111,12 @@ func newDependencyFailure(err error) *dependencyFailure {
 	}
 	ids := slices.Clone(dep.Failed)
 	slices.SortFunc(ids, manifest.NamedResource.Compare)
-	size := 0
-	for _, d := range ids {
-		size += 24 + len(d.Kind) + len(d.Namespace) + len(d.Name)
-	}
-	data := make([]byte, 0, size)
-	for _, d := range ids {
-		for _, field := range [3]string{d.Kind, d.Namespace, d.Name} {
-			data = binary.BigEndian.AppendUint64(data, uint64(len(field)))
-			data = append(data, field...)
-		}
-	}
-	return &dependencyFailure{ids: ids, fingerprint: manifest.SHA256Hex(data)}
+	return &dependencyFailure{ids: ids}
 }
 
 // same reports whether f and o record the same failed dependencies; nil means none.
 func (f *dependencyFailure) same(o *dependencyFailure) bool {
-	return f == o || f != nil && o != nil && f.fingerprint == o.fingerprint
+	return f == o || f != nil && o != nil && slices.Equal(f.ids, o.ids)
 }
 
 // Condition is an alias for k8s metav1.Condition. flate stores

@@ -108,13 +108,6 @@ func join(base string, segs ...string) string {
 // GC's age sweep and listing tools.
 func (l Layout) Sources() string { return join(l.Root, SourcesDir) }
 
-// SourceSlot returns the on-disk slot for a given (slug, hash) pair.
-// slug is a human-readable repo name; hash is the content-keyed
-// identifier source.Cache computes from (url, ref, authID).
-func (l Layout) SourceSlot(slug, hash string) string {
-	return join(l.Root, SourcesDir, slug, hash)
-}
-
 // Baselines returns the parent directory of every materialized
 // baseline tree.
 func (l Layout) Baselines() string { return join(l.Root, BaselinesDir) }
@@ -127,12 +120,6 @@ func (l Layout) Baseline(commitSHA string) string {
 
 // GitMirrors returns the parent of every bare git mirror.
 func (l Layout) GitMirrors() string { return join(l.Root, GitMirrorsDir) }
-
-// GitMirror returns the on-disk path for a bare mirror keyed by the
-// stable hash of an upstream URL.
-func (l Layout) GitMirror(urlHash string) string {
-	return join(l.Root, GitMirrorsDir, urlHash)
-}
 
 // RenderHelmCache returns the parent directory of the persisted helm
 // template-output cache. Entries live under sharded subdirs keyed by
@@ -154,3 +141,9 @@ func (l Layout) OCILock() string { return join(l.Root, "oci.lock") }
 func (l Layout) OCIBlob(d digest.Digest) string {
 	return join(l.OCI(), "blobs", d.Algorithm().String(), d.Encoded())
 }
+
+// GitObjects returns the sealed object backing for a validated generation ID.
+func (l Layout) GitObjects(id string) string { return join(l.OCI(), "git", id, "objects") }
+
+// GitWorktree returns the recursive worktree for a validated generation ID.
+func (l Layout) GitWorktree(id string) string { return join(l.OCI(), "git", id, "worktree") }

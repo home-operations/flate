@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
@@ -104,7 +105,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	if cache.render != nil {
 		key = renderKey(req.Spec, root, req.SubPath, ignoreKey)
 		if req.Source.Key != "" {
-			key = manifest.Fingerprint([]string{key, req.Source.Key, "render-fs-v2"})
+			key = manifest.Fingerprint([]string{key, req.Source.Key})
 		}
 	}
 	if rc := cache.render; rc != nil && key != "" {
@@ -126,6 +127,9 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 		diskRec = rec
 	}
 	memFS := newTreeFS(lower, root, diskRec)
+	spec, _ := req.Spec["spec"].(map[string]any)
+	interval, _ := spec["interval"].(string)
+	memFS.maxAge, _ = time.ParseDuration(interval)
 	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	canonicalDir, file, err := memFS.CleanedAbs(subDir)
 	if err != nil {
@@ -168,10 +172,11 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	if err != nil {
 		built := fmt.Errorf("kustomize build %s: %w", subPath, err)
 		// On a duplicate-resource-id failure, name every accumulated path that
-		// emits the colliding resource so a localized duplicate is locatable
-		// (no-op for any other error — see duplicateProducers).
-		if attr := duplicateProducers(err, memFS, subDir, subPath, data); attr != "" {
-			return nil, fmt.Errorf("%w\n%s", built, attr)
+		// emits the colliding resource so a localized duplicate is locatable.
+		if strings.Contains(err.Error(), "already registered id") {
+			if attr := duplicateProducers(memFS, subDir, subPath, data); attr != "" {
+				return nil, fmt.Errorf("%w\n%s", built, attr)
+			}
 		}
 		return nil, built
 	}
@@ -197,6 +202,9 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	return out, nil
 }
 
+// renderKeyVersion MUST change whenever rendered bytes or cache framing change.
+const renderKeyVersion = "render-fs-v3"
+
 // renderKey includes source options and the immutable content pin. Alias
 // content is validated by the read set rather than a whole-checkout hash.
 func renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) string {
@@ -205,7 +213,8 @@ func renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) st
 		SourceRoot string
 		SubPath    string
 		Ignore     string
-	}{rawSpec, sourceRoot, subPath, ignoreKey})
+		Version    string
+	}{rawSpec, sourceRoot, subPath, ignoreKey, renderKeyVersion})
 }
 
 // diskRoot holds the per-sourceRoot invariants RenderFlux reuses across every

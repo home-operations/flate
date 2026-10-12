@@ -3,10 +3,10 @@ package loader
 import (
 	"cmp"
 	"fmt"
+	"io/fs"
 	"iter"
 	"log/slog"
 	"maps"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -23,12 +23,12 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 	}
 	b := &selfProduceBuilder{idx: l.Index,
 		emittedFiles: map[string][]manifest.NamedResource{}, producers: producers,
-		store: l.Store, wipeSecrets: l.Options.WipeSecrets,
+		store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
 		secrets: map[manifest.NamedResource]*manifest.Secret{}}
 	var generators []generatorRecord
 	kss := l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
 	remaining := map[string]struct{}{}
-	for dir, doc := range l.documents {
+	for dir, doc := range l.documents.cache {
 		if doc.body != nil && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
 			remaining[dir] = struct{}{}
 		}
@@ -44,15 +44,15 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 		if v.document != nil {
 			delete(remaining, filepath.Dir(v.file))
 			for _, g := range v.document.ConfigMapGenerator {
-				generators = append(generators, generatorRecord{root: v.root, file: v.file, namespace: cmp.Or(v.namespace, g.Namespace, v.fallback), isConfigMap: true, args: g.GeneratorArgs, owner: v.owner})
+				generators = append(generators, generatorRecord{root: v.root, file: v.file, namespace: cmp.Or(v.namespace, g.Namespace, v.fallback), isConfigMap: true, args: g.GeneratorArgs, owner: v.owner, reader: l.documents})
 			}
 			for _, g := range v.document.SecretGenerator {
-				generators = append(generators, generatorRecord{root: v.root, file: v.file, namespace: cmp.Or(v.namespace, g.Namespace, v.fallback), args: g.GeneratorArgs, owner: v.owner})
+				generators = append(generators, generatorRecord{root: v.root, file: v.file, namespace: cmp.Or(v.namespace, g.Namespace, v.fallback), args: g.GeneratorArgs, owner: v.owner, reader: l.documents})
 			}
 			return
 		}
 		if v.owner != (manifest.NamedResource{}) && v.readable {
-			b.recordProduced(v, l.documents[v.file].objects)
+			b.recordProduced(v, l.documents.cache[v.file].objects)
 		}
 	}
 	for v := range l.graphVisits(repoRoot, kss, standalone) {
@@ -80,7 +80,7 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]struct{}) []string {
 	var roots []string
 	for _, dir := range slices.Sorted(maps.Keys(remaining)) {
-		rel, err := filepath.Rel(repoRoot, l.documents[dir].file)
+		rel, err := filepath.Rel(repoRoot, l.documents.cache[dir].file)
 		if err != nil {
 			continue
 		}
@@ -185,7 +185,8 @@ func (l *Loader) graphVisits(repoRoot string, kss []*manifest.Kustomization, sta
 				}
 				continue
 			}
-			entries, _ := os.ReadDir(filepath.Join(v.root, v.dir))
+			input, name := l.documents.input(filepath.Join(v.root, v.dir))
+			entries, _ := fs.ReadDir(input, name)
 			for _, e := range entries {
 				if e.IsDir() {
 					child := v
@@ -236,7 +237,7 @@ func (l *Loader) graphRoots(repoRoot string, kss []*manifest.Kustomization, scop
 
 func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization) []string {
 	roots := map[string]struct{}{}
-	for dir, doc := range l.documents {
+	for dir, doc := range l.documents.cache {
 		if doc.body != nil {
 			roots[dir] = struct{}{}
 		}
@@ -254,7 +255,7 @@ func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization)
 			}
 		}
 	}
-	for dir, doc := range l.documents {
+	for dir, doc := range l.documents.cache {
 		if doc.body == nil {
 			continue
 		}
@@ -316,10 +317,11 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 			child := v
 			child.dir = filepath.ToSlash(resolved)
 			abs := filepath.Join(v.root, resolved)
-			childDoc, known := w.documents[abs]
+			childDoc, known := w.documents.cache[abs]
 			directory := childDoc.body != nil
 			if !known {
-				info, err := os.Stat(abs)
+				input, name := w.documents.input(abs)
+				info, err := fs.Stat(input, name)
 				directory = err == nil && info.IsDir()
 			}
 			if directory {
@@ -340,6 +342,7 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 }
 
 type selfProduceBuilder struct {
+	reader       documentReader
 	idx          *manifest.DiscoveryIndex
 	emittedFiles map[string][]manifest.NamedResource
 	producers    *manifest.ProducerIndex
@@ -368,7 +371,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 		}
 		return
 	}
-	_ = decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets}, true, record)
+	_ = b.reader.decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets}, true, record)
 }
 
 // materializeSecret retains SOPS stand-ins under the rendered namespace so

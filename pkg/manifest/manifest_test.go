@@ -208,6 +208,8 @@ func TestParseHelmRelease_CRDsPolicy(t *testing.T) {
 		{"install only", "  install: {crds: Create}", "Create"},
 		{"empty upgrade uses install", "  install: {crds: Create}\n  upgrade: {}", "Create"},
 		{"upgrade wins over install", "  install: {crds: Create}\n  upgrade: {crds: CreateReplace}", "CreateReplace"},
+		{"upgrade only", "  upgrade: {crds: CreateReplace}", "CreateReplace"},
+		{"empty upgrade preserves install", "  install: {crds: Create}\n  upgrade: {}", "Create"},
 		{"skip suppresses", "  upgrade: {crds: Skip}", "Skip"},
 		{"empty when neither set", "", ""},
 	}
@@ -1252,6 +1254,16 @@ kind: ConfigMap
 metadata: {name: c, namespace: default}`},
 		// The group is compared exactly, so a group that merely starts
 		// with one of ours is foreign too.
+		{"group with kustomize prefix", `
+apiVersion: kustomize.config.k8s.io.example.com/v1
+kind: Kustomization
+metadata: {name: custom, namespace: default}
+spec: {value: keep}`},
+		{"component with kustomize prefix", `
+apiVersion: kustomize.config.k8s.io.example.com/v1
+kind: Component
+metadata: {name: custom, namespace: default}
+spec: {value: keep}`},
 		{"group with flux prefix", `
 apiVersion: source.toolkit.fluxcd.io.example.com/v1
 kind: Bucket
@@ -1818,6 +1830,8 @@ func TestIsKustomizeBuildDirective(t *testing.T) {
 	}{
 		{"kustomize-config Kustomization", &RawObject{Kind: "Kustomization", APIVersion: "kustomize.config.k8s.io/v1beta1"}, true},
 		{"kustomize-config Component", &RawObject{Kind: "Component", APIVersion: "kustomize.config.k8s.io/v1alpha1"}, true},
+		{"foreign Kustomization", &RawObject{Kind: "Kustomization", APIVersion: "kustomize.config.k8s.io.example.com/v1"}, false},
+		{"foreign Component", &RawObject{Kind: "Component", APIVersion: "kustomize.config.k8s.io.example.com/v1"}, false},
 		{"flux Kustomization (typed)", &Kustomization{}, false},
 		{"unknown resource RawObject", &RawObject{Kind: "Widget", APIVersion: "example.com/v1"}, false},
 		{"helmrelease (typed)", &HelmRelease{}, false},
@@ -1827,6 +1841,57 @@ func TestIsKustomizeBuildDirective(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := IsKustomizeBuildDirective(tc.obj); got != tc.want {
 				t.Errorf("IsKustomizeBuildDirective = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseHelmRelease_DisableValidationCombinations(t *testing.T) {
+	for _, flags := range []struct {
+		name            string
+		schema, openAPI bool
+	}{
+		{name: "neither"},
+		{name: "schema", schema: true},
+		{name: "openapi", openAPI: true},
+		{name: "both", schema: true, openAPI: true},
+	} {
+		for _, stage := range []string{"neither", "install", "upgrade", "both"} {
+			t.Run(flags.name+"/"+stage, func(t *testing.T) {
+				enabled := fmt.Sprintf("{disableSchemaValidation: %t, disableOpenAPIValidation: %t}", flags.schema, flags.openAPI)
+				var spec string
+				if stage == "install" || stage == "both" {
+					spec += "  install: " + enabled + "\n"
+				}
+				if stage == "upgrade" || stage == "both" {
+					spec += "  upgrade: " + enabled + "\n"
+				}
+				hr, err := parseHelmRelease(helmReleaseDoc(t, spec))
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantSchema := stage != "neither" && flags.schema
+				wantOpenAPI := stage != "neither" && flags.openAPI
+				if hr.DisableSchemaValidation != wantSchema || hr.DisableOpenAPIValidation != wantOpenAPI {
+					t.Errorf("validation flags = (%t, %t), want (%t, %t)", hr.DisableSchemaValidation, hr.DisableOpenAPIValidation, wantSchema, wantOpenAPI)
+				}
+			})
+		}
+	}
+}
+
+func TestCheckAPIVersion_ExactGroup(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		wantErr error
+	}{
+		{version: SourceDomain + "/v1"},
+		{version: SourceDomain + ".example.com/v1", wantErr: ErrInput},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			err := checkAPIVersion(map[string]any{"apiVersion": tc.version}, SourceDomain)
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("error = %v, want %v", err, tc.wantErr)
 			}
 		})
 	}

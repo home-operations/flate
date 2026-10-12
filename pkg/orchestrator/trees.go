@@ -5,12 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
@@ -52,14 +49,9 @@ type Rendered struct {
 // outputs (e.g. via diff.Changes) yields the same diff a full render
 // would: an unchanged resource renders on neither side.
 //
-// Both sides share one source.Cache so a chart / OCI layer / git source
-// fetched for one side is reused by the other (and concurrent slot
-// allocation is serialized), and they run concurrently. cfg supplies the
-// render tuning; cfg.Path / RepoRoot / PathOrig / SelfURLs are set from
-// baseTree/headTree (any values on cfg are ignored), and cfg.SourceCache,
-// when nil, is created from cfg.CacheDir (falling back to the OS tempdir).
-// A consumer that renders many comparisons (one per PR) should pass its
-// own long-lived cfg.SourceCache so artifacts persist across calls.
+// Both sides share the common cache owner and run concurrently. Caller-injected
+// cfg.Cache remains caller-owned; an internal owner closes after both sides stop.
+// cfg.Path, RepoRoot, PathOrig and SelfURLs come from the supplied trees.
 //
 // Both orchestrators are Stopped before return; their Stores remain
 // readable. err is non-nil if either side had any failure; callers that
@@ -69,10 +61,6 @@ type Rendered struct {
 // right). Each side reconciles changed-only against the OTHER tree's
 // RepoRoot.
 func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base, head Rendered, err error) {
-	if cfg.SourceCache == nil {
-		root := cmp.Or(cfg.CacheDir, filepath.Join(os.TempDir(), "flate-cache"))
-		cfg.SourceCache = source.NewCache(cacheroot.New(root))
-	}
 	if cfg.Cache == nil {
 		cfg.Cache, err = sourcecache.New(ctx, cacheroot.New(cfg.CacheDir))
 		if err != nil {

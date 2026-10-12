@@ -31,28 +31,30 @@ const dupDiagBuildLimit = 256
 //
 // Each child builds cleanly on its own — the id only clashes once accumulated —
 // so rebuilding the directory entries one at a time and inverting
-// resource id → paths pinpoints every producer. It returns "" for any error
-// that isn't a duplicate id, or when the collision can't be attributed (it lives
-// within one entry, or against a leaf file), leaving the caller to surface the
-// raw error unchanged.
+// resource id → paths pinpoints every producer. It returns "" when a collision
+// lies within one entry or against a leaf file, leaving the raw error unchanged.
 //
 // kustomizationYAML is the merged kustomization RenderFlux already built for
 // subDir (absolute); subPath is the repo-relative spec.path, used to render
 // producer paths the reader can open.
-func duplicateProducers(buildErr error, memFS filesys.FileSystem, subDir, subPath string, kustomizationYAML []byte) string {
+func duplicateProducers(memFS filesys.FileSystem, subDir, subPath string, kustomizationYAML []byte) string {
 	var kus kustypes.Kustomization
-	if !strings.Contains(buildErr.Error(), "already registered id") ||
-		yaml.Unmarshal(kustomizationYAML, &kus) != nil {
+	if yaml.Unmarshal(kustomizationYAML, &kus) != nil {
 		return ""
 	}
 
 	// Invert each child's resource ids into id → the paths that emit it.
 	pathsByID := map[string][]string{}
+	attempted := 0
 	for _, entry := range kus.Resources {
+		if attempted >= dupDiagBuildLimit {
+			break
+		}
 		dir := filepath.Join(subDir, entry)
-		if len(pathsByID) >= dupDiagBuildLimit || !memFS.IsDir(dir) {
+		if !memFS.IsDir(dir) {
 			continue
 		}
+		attempted++
 		rel := "./" + path.Join(strings.TrimPrefix(subPath, "./"), entry)
 		for _, id := range buildIDs(memFS, dir) {
 			pathsByID[id] = append(pathsByID[id], rel)
@@ -86,8 +88,9 @@ func buildIDs(memFS filesys.FileSystem, dir string) []string {
 	if err != nil {
 		return nil
 	}
-	ids := make([]string, 0, len(rm.AllIds()))
-	for _, id := range rm.AllIds() {
+	allIDs := rm.AllIds()
+	ids := make([]string, 0, len(allIDs))
+	for _, id := range allIDs {
 		ids = append(ids, id.String())
 	}
 	return ids

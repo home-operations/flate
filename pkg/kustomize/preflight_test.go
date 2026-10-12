@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -17,7 +18,7 @@ import (
 // the shape preflight now operates on (a render's private fs).
 func memFSWith(t *testing.T, files map[string]string) filesys.FileSystem {
 	t.Helper()
-	fsys := filesys.MakeFsInMemory()
+	fsys := newTreeFS(os.DirFS(t.TempDir()), "/", nil)
 	for p, body := range files {
 		if err := fsys.WriteFile(p, []byte(body)); err != nil {
 			t.Fatalf("write %s: %v", p, err)
@@ -347,5 +348,40 @@ func TestHttpGetURL_AcceptsBodyAtCap(t *testing.T) {
 	}
 	if len(body) != remoteFetchMaxBytes {
 		t.Errorf("expected %d bytes, got %d", remoteFetchMaxBytes, len(body))
+	}
+}
+
+func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
+	for _, scheme := range []string{"HTTP", "HtTp", "HTTPS", "hTtPs"} {
+		t.Run(scheme, func(t *testing.T) {
+			var hits atomic.Int64
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits.Add(1)
+				_, _ = w.Write([]byte(cmYAML("remote")))
+			})
+			var srv *httptest.Server
+			if strings.EqualFold(scheme, "https") {
+				srv = httptest.NewTLSServer(handler)
+			} else {
+				srv = httptest.NewServer(handler)
+			}
+			t.Cleanup(srv.Close)
+			client := remoteFetchClient
+			remoteFetchClient = srv.Client()
+			t.Cleanup(func() { remoteFetchClient = client })
+			url := scheme + srv.URL[strings.Index(srv.URL, ":"):] + "/cm.yaml"
+			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
+			cache := NewTreeCache()
+			out, err := RenderFlux(t.Context(), cache, RenderRequest{Label: root, SubPath: ".", Spec: demoRawSpec})
+			if err != nil || !strings.Contains(string(out), "name: remote") {
+				t.Fatalf("render: %s, %v", out, err)
+			}
+			if _, err := cache.FetchRemote(t.Context(), url); err != nil {
+				t.Fatal(err)
+			}
+			if got := hits.Load(); got != 1 {
+				t.Fatalf("server hits = %d, want 1 shared preflight fetch", got)
+			}
+		})
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"os"
+	"io/fs"
 	"path"
 	"path/filepath"
 	"slices"
@@ -128,7 +128,7 @@ func (reader documentReader) replacementInjectedNamespace(repoRoot, overlayDir s
 		return nsResolution{}
 	}
 	for _, r := range d.Replacements {
-		if r.injectsKustomizationTargetNamespace(repoRoot, overlayDir) {
+		if r.injectsKustomizationTargetNamespace(reader, repoRoot, overlayDir) {
 			return nsResolution{ns: d.Namespace, ok: true}
 		}
 	}
@@ -159,7 +159,7 @@ func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string
 		if !ok {
 			return false
 		}
-		return fileHasNamespaceTransformer(repoRoot, target) ||
+		return reader.fileHasNamespaceTransformer(repoRoot, target) ||
 			reader.subtreeHasNamespaceTransformer(repoRoot, target, visited, depth+1)
 	})
 }
@@ -168,8 +168,9 @@ func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string
 // manifest file and reports whether any document is a qualifying
 // NamespaceTransformer. Returns false when target is a directory, unreadable, or
 // any document is malformed (all-or-nothing, matching a whole-file parse).
-func fileHasNamespaceTransformer(repoRoot, target string) bool {
-	data, err := os.ReadFile(filepath.Join(repoRoot, target)) //nolint:gosec // path composed from known cluster layout
+func (reader documentReader) fileHasNamespaceTransformer(repoRoot, target string) bool {
+	input, name := reader.input(filepath.Join(repoRoot, target))
+	data, err := fs.ReadFile(input, name)
 	if err != nil {
 		return false
 	}
@@ -270,7 +271,7 @@ type replacementSelect struct {
 // Namespace-name → Kustomization.spec.targetNamespace replacement, resolving the
 // external `{path:}` form (a YAML list of replacement objects) against
 // overlayDir.
-func (r replacementDirective) injectsKustomizationTargetNamespace(repoRoot, overlayDir string) bool {
+func (r replacementDirective) injectsKustomizationTargetNamespace(reader documentReader, repoRoot, overlayDir string) bool {
 	if r.Source != nil {
 		return r.copiesNamespaceNameToKustomizationTargetNamespace()
 	}
@@ -281,7 +282,8 @@ func (r replacementDirective) injectsKustomizationTargetNamespace(repoRoot, over
 	if !ok {
 		return false
 	}
-	data, err := os.ReadFile(filepath.Join(repoRoot, ref)) //nolint:gosec // path composed from known cluster layout
+	input, name := reader.input(filepath.Join(repoRoot, ref))
+	data, err := fs.ReadFile(input, name)
 	if err != nil {
 		return false
 	}

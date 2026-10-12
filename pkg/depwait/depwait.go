@@ -18,14 +18,6 @@ type Waiter struct {
 	Store  *store.Store
 	Parent manifest.NamedResource
 
-	// AdditiveReadyExpr toggles Flux's AdditiveCELDependencyCheck
-	// feature gate. When false (the default, matching Flux), a
-	// dep's ReadyExpr REPLACES the built-in Ready check — flate
-	// treats the dep as Ready when the expression returns true. When
-	// true, the dep must satisfy both the built-in Ready check AND
-	// the ReadyExpr (additive mode).
-	AdditiveReadyExpr bool
-
 	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
 	// because the cluster installs them at runtime.
 	AllowMissingCRDs bool
@@ -67,25 +59,12 @@ func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
 	if !store.SupportsStatus(id.Kind) {
 		return true
 	}
-	if dep.ReadyExpr != "" && !w.AdditiveReadyExpr {
-		return w.readyExprSatisfied(dep.ReadyExpr, id)
+	if dep.ReadyExpr != "" {
+		ready, _ := w.tryReadyExpr(dep.ReadyExpr, id)
+		return ready
 	}
 	info, ok := w.Store.GetStatus(id)
-	if !ok || info.Status != store.StatusReady {
-		return false
-	}
-	if dep.ReadyExpr != "" {
-		return w.readyExprSatisfied(dep.ReadyExpr, id)
-	}
-	return true
-}
-
-// readyExprSatisfied reports whether expr produced a definitive Ready
-// result for id right now (no waiting). A clean false, a transient eval
-// error, or a compile failure all read as "not ready".
-func (w *Waiter) readyExprSatisfied(expr string, id manifest.NamedResource) bool {
-	ready, _ := w.tryReadyExpr(expr, id)
-	return ready
+	return ok && info.Status == store.StatusReady
 }
 
 // tryReadyExpr evaluates expr once against id's projected state and reports:

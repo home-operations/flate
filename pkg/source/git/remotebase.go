@@ -4,115 +4,83 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"log/slog"
+	"time"
 
+	"errors"
+
+	"github.com/go-git/go-billy/v5"
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/storage"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/git/mirror"
+	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// FetchRemoteBase fetches a public kustomize remote git base: repoURL at a
-// bare, undifferentiated ref (tag, branch, commit, or "" for the default
-// branch), anonymously, returning a SourceArtifact whose LocalPath is a
-// materialized worktree directory (no .git). It is a lean sibling of
-// fetchViaMirror for the one job kustomize remote bases need.
-//
-// Unlike Fetch — which takes a Flux GitRepository CR with EXCLUSIVE ref
-// fields (Tag XOR Branch XOR Commit XOR …) and a NARROW per-field mirror
-// fetch — kustomize's ?ref= is a single opaque string with `git checkout
-// <ref>` semantics: it may be a tag, branch, or commit SHA and the caller
-// cannot know which. So FetchRemoteBase fetches the mirror BROADLY (empty
-// FetchPlan → +refs/*:refs/*, all heads+tags+HEAD) and resolves the string
-// through resolveRefHash's Name branch, which delegates to go-git
-// ResolveRevision — git rev-parse order over refs/tags then refs/heads then
-// a hash prefix, peeling annotated tags. One call covers every ref kind with
-// no field-guessing; an empty ref resolves to the mirror's HEAD.
-//
-// Anonymous only (no SecretRef/proxy/TLS/verification/submodules/sparse):
-// kustomize remote bases are public bases; an authenticated base belongs in
-// a real GitRepository CR. Requires Mirrors and Cache. The materialized
-// worktree is cached per (repoURL, ref) in a slot whose ref label is
-// namespaced so it never collides with a real GitRepository CR's slot for
-// the same URL, and is reused on warm runs via the revision recorded in
-// the slot's .flate-meta.json sidecar.
-func (f *Fetcher) FetchRemoteBase(ctx context.Context, repoURL, ref string) (*store.SourceArtifact, error) {
-	if f.Mirrors == nil || f.Cache == nil {
-		return nil, fmt.Errorf("%w: remote git base fetch requires mirror+cache", manifest.ErrInput)
-	}
-	if repoURL == "" {
-		return nil, fmt.Errorf("%w: remote git base missing url", manifest.ErrInput)
-	}
-	// Defense-in-depth for #743: an untrusted render only reaches here via an
-	// https kustomize ?ref= base today (see isGitRemoteBase), but gate the
-	// scheme anyway so a future broadening can't smuggle a file:// base past it.
-	if f.RestrictSchemes && !gitSchemeAllowed(repoURL) {
-		return nil, fmt.Errorf("%w: remote git base %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
-			manifest.ErrInput, repoURL)
-	}
-	refLabel := cmp.Or(ref, "HEAD")
+// RemoteBaseRequest carries a public base's identity and caller freshness bound.
+type RemoteBaseRequest struct {
+	URL    string
+	Ref    string
+	MaxAge time.Duration
+}
 
-	// Per-(url, ref) slot, anonymous (authID ""). The ref label is
-	// namespaced ("kustomize-base#…") so a remote base never shares a slot
-	// with a real GitRepository CR pinned at the same URL+ref — the two have
-	// different materialization disciplines (this one is .git-free + marked).
-	slot, err := f.Cache.Slot(ctx, repoURL, "kustomize-base#"+refLabel, "")
-	if err != nil {
-		return nil, fmt.Errorf("cache slot for %s: %w", repoURL, err)
+// FetchRemoteBase returns an immutable lazy view of the whole public repository.
+func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest) (*store.SourceArtifact, error) {
+	if f.Cache == nil {
+		return nil, fmt.Errorf("%w: remote git base requires cache", manifest.ErrInput)
 	}
-	defer slot.Release()
-
-	// Warm-run hit: a committed slot always carries the revision marker
-	// (written below, before Commit). A bare ref may name a mutable branch,
-	// but kustomize bases are pinned in practice and re-resolution is cheap,
-	// so treat any marked slot as a hit and leave the mirror untouched.
-	if slot.Exists {
-		if rev := readCachedRevision(slot.Path); rev != "" {
-			return gitArtifact(repoURL, slot.Path, rev), nil
-		}
-		// Marker-less slot (legacy / hand-edited) — re-materialize cleanly.
-		if err := slot.Refresh(); err != nil {
-			return nil, err
+	repo := &manifest.GitRepository{}
+	repo.URL = request.URL
+	if err := f.validateRepo(repo); err != nil {
+		return nil, err
+	}
+	if request.Ref != "" {
+		repo.Reference = &manifest.GitRepositoryRef{Name: request.Ref}
+		if plumbing.IsHash(request.Ref) {
+			repo.Reference = &manifest.GitRepositoryRef{Commit: request.Ref}
+			request.MaxAge = sourcecache.Forever
 		}
 	}
-
-	// Broad fetch: empty FetchPlan → mirror falls back to +refs/*:refs/* so
-	// refs/tags/*, refs/heads/*, and HEAD are all present for ResolveRevision.
-	// go-git accepts file:// URLs directly (same as fetchViaMirror), so no
-	// scheme stripping is needed here.
-	mirrorRepo, err := f.Mirrors.OpenOrFetch(ctx, repoURL, nil, nil, mirror.FetchPlan{})
+	h, err := source.CacheKeyHash([]string{request.URL, request.Ref, "remote-base-v1"}, 32)
 	if err != nil {
 		return nil, err
 	}
-
-	var refPtr *manifest.GitRepositoryRef
-	if ref != "" {
-		refPtr = &manifest.GitRepositoryRef{Name: ref} // Name → ResolveRevision (rev-parse order)
-	}
-	hash, err := resolveRefHash(mirrorRepo, refPtr)
+	key := sourcecache.GitKey{ID: "git-base-" + h, Ref: cmp.Or(request.Ref, "HEAD")}
+	var input *gittree.FS
+	generation, err := f.Cache.Git(ctx, key, request.MaxAge, func(storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+		// Opaque base refs require upstream rev-parse over all advertised heads and tags.
+		acquisition := *repo
+		if !plumbing.IsHash(request.Ref) {
+			acquisition.Reference = nil
+		}
+		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{&acquisition, git.CloneOptions{URL: request.URL, NoCheckout: true}})
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		if !plumbing.IsHash(request.Ref) {
+			err := cloned.FetchContext(ctx, &git.FetchOptions{RefSpecs: []config.RefSpec{"+refs/*:refs/*"}, Tags: git.NoTags})
+			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+				return plumbing.ZeroHash, err
+			}
+		}
+		hash, err := resolveRefHash(cloned, repo.Reference)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		input, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Commit: hash}, gittree.ViewOptions{Mode: gittree.RemoteBase}, nil)
+		return hash, err
+	})
 	if err != nil {
-		return nil, fmt.Errorf("remote git base %s ref %q: %w", repoURL, refLabel, err)
+		return nil, err
+	}
+	input, err = generationView(ctx, generation, gittree.ViewOptions{Mode: gittree.RemoteBase}, input)
+	if err != nil {
+		return nil, fmt.Errorf("%w: remote git base: %w", manifest.ErrInput, err)
 	}
 
-	// Walk the tree at hash into the slot's staging dir. Symlinks materialize
-	// as real OS symlinks so a base that follows symlinked components renders
-	// like a git checkout; submodules are warn-and-skipped (the bare mirror
-	// has no nested object stores).
-	if err := gittree.Materialize(ctx, mirrorRepo, hash, slot.Path, gittree.Options{
-		OnSubmodule: func(path string) {
-			slog.Warn("kustomize remote base: skipping submodule (mirror path does not recurse)",
-				"url", repoURL, "path", path)
-		},
-	}); err != nil {
-		return nil, fmt.Errorf("materialize %s at %s: %w", hash, refLabel, err)
-	}
-
-	rev := hash.String()
-	if err := writeCachedRevision(slot.Path, rev); err != nil {
-		return nil, fmt.Errorf("remote git base %s: write revision marker: %w", repoURL, err)
-	}
-	if err := slot.Commit(); err != nil {
-		return nil, fmt.Errorf("remote git base %s: commit slot: %w", repoURL, err)
-	}
-	return gitArtifact(repoURL, slot.Path, rev), nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: request.URL, Revision: generation.Commit.String(), Key: key.ID + "@" + generation.Commit.String(), FS: input}, nil
 }

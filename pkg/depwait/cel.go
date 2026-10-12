@@ -7,8 +7,9 @@ import (
 	"sync"
 
 	"cel.dev/cel-go/cel"
-	"cel.dev/cel-go/common/types"
-	"cel.dev/cel-go/common/types/ref"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -87,14 +88,14 @@ func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedReso
 	if err != nil {
 		return false, fmt.Errorf("eval: %w", err)
 	}
-	// asBool errors are type-shape problems with the expression itself
-	// (e.g. `dep.metadata.name` returns a string). The user's expr is
-	// broken regardless of dep state, so surface as terminal.
-	ok, err := asBool(val)
-	if err != nil {
-		return false, &celCompileErr{err}
+	// A non-bool result is an expression error, independent of dependency state.
+	if val == nil {
+		return false, &celCompileErr{errors.New("readyExpr returned nil")}
 	}
-	return ok, nil
+	if b, ok := val.Value().(bool); ok {
+		return b, nil
+	}
+	return false, &celCompileErr{fmt.Errorf("readyExpr must return bool; got %s", val.Type().TypeName())}
 }
 
 // celCompileErr signals an unrecoverable expression problem (parse,
@@ -242,25 +243,12 @@ func conditionToMap(c metav1.Condition) map[string]any {
 // behave sensibly. Kinds absent from the map return "" — most ReadyExpr
 // formulations don't read it, so the empty value is a safe default.
 var kindAPIVersion = map[string]string{
-	manifest.KindKustomization:    manifest.FluxKustomizeDomain + "/v1",
-	manifest.KindHelmRelease:      manifest.HelmReleaseDomain + "/v2",
-	manifest.KindGitRepository:    manifest.SourceDomain + "/v1",
-	manifest.KindOCIRepository:    manifest.SourceDomain + "/v1",
-	manifest.KindHelmRepository:   manifest.SourceDomain + "/v1",
-	manifest.KindHelmChart:        manifest.SourceDomain + "/v1",
-	manifest.KindBucket:           manifest.SourceDomain + "/v1",
-	manifest.KindExternalArtifact: manifest.SourceDomain + "/v1",
-}
-
-func asBool(v ref.Val) (bool, error) {
-	if v == nil {
-		return false, errors.New("readyExpr returned nil")
-	}
-	if b, ok := v.Value().(bool); ok {
-		return b, nil
-	}
-	if v.Type() == types.BoolType {
-		return v.Equal(types.True).Value().(bool), nil
-	}
-	return false, fmt.Errorf("readyExpr must return bool; got %s", v.Type().TypeName())
+	manifest.KindKustomization:    kustomizev1.GroupVersion.String(),
+	manifest.KindHelmRelease:      helmv2.GroupVersion.String(),
+	manifest.KindGitRepository:    sourcev1.GroupVersion.String(),
+	manifest.KindOCIRepository:    sourcev1.GroupVersion.String(),
+	manifest.KindHelmRepository:   sourcev1.GroupVersion.String(),
+	manifest.KindHelmChart:        sourcev1.GroupVersion.String(),
+	manifest.KindBucket:           sourcev1.GroupVersion.String(),
+	manifest.KindExternalArtifact: sourcev1.GroupVersion.String(),
 }

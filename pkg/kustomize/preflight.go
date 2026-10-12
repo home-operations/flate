@@ -79,10 +79,8 @@ func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS files
 			return werr
 		}
 		if info.IsDir() {
-			// Skip a git base materialized by a prior resources: entry — its
-			// own nested kustomization.yaml files must NOT be re-rewritten here
-			// (depth-1 limit). The kustomize build of that base resolves its URLs.
-			if strings.HasPrefix(filepath.Base(path), remoteResourcePrefix) {
+			// Mounted bases receive preflight when fetched; an outer walk MUST skip them.
+			if path != subPath && strings.HasPrefix(filepath.Base(path), remoteResourcePrefix) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -113,8 +111,7 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		return false, err
 	}
 	// Fast path: a resource is rewritten only when its scalar carries an
-	// http://|https:// scheme — every trigger (isHTTPURL, and isGitRemoteBase
-	// via cutHTTPScheme) gates on that scheme, the git path case-insensitively.
+	// http://|https:// scheme; both rewrite triggers use cutHTTPScheme.
 	// So if the raw bytes contain no case-insensitive "http" substring at all,
 	// no entry can match and the full YAML parse + node walk + re-marshal below
 	// is provably a no-op. Skipping it for the common (local-only) kustomization
@@ -146,7 +143,8 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		// single file. GETting a git URL returns the host's HTML page, which
 		// then fails to parse as YAML (#616) — so it must take the git path.
 		if spec, ok := isGitRemoteBase(entry.Value); ok {
-			localDir, fetchErr := fetchGitBase(ctx, cache, memFS, dir, spec)
+			spec.dir = dir
+			localDir, fetchErr := fetchGitBase(ctx, cache, memFS, spec)
 			if fetchErr != nil {
 				return false, fmt.Errorf("remote git base %s: %w", entry.Value, fetchErr)
 			}
@@ -154,7 +152,7 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 			changed = true
 			continue
 		}
-		if !isHTTPURL(entry.Value) {
+		if _, _, ok := cutHTTPScheme(entry.Value); !ok {
 			continue
 		}
 		localFile, fetchErr := fetchRemoteResource(ctx, cache, memFS, dir, entry.Value)
@@ -200,10 +198,6 @@ func findMappingValue(doc *yaml.Node, key string) *yaml.Node {
 		}
 	}
 	return nil
-}
-
-func isHTTPURL(s string) bool {
-	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
 // containsHTTPFold reports whether b contains the ASCII substring "http"

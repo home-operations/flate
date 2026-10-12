@@ -3,11 +3,18 @@ package kustomize
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 var demoRawSpec = map[string]any{
@@ -188,5 +195,65 @@ func TestDecodeFrame_RejectsMalformed(t *testing.T) {
 	// Header claims 10 snapshot bytes but only 1 follows.
 	if _, _, err := decodeFrame([]byte{0, 0, 0, 10, 'x'}); err == nil {
 		t.Error("an out-of-range header length must error")
+	}
+}
+
+func TestRenderFlux_RemoteNotCached(t *testing.T) {
+	var version atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote-v%d}\n", version.Load())
+	}))
+	t.Cleanup(srv.Close)
+	root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization(srv.URL + "/cm.yaml")})
+	cacheDir := t.TempDir()
+	for _, v := range []int64{1, 2} {
+		version.Store(v)
+		cache := NewTreeCache()
+		cache.SetRenderCache(cacheDir, 1<<20)
+		out, err := RenderFlux(t.Context(), cache, RenderRequest{Label: root, SubPath: ".", Spec: demoRawSpec})
+		if err != nil || !strings.Contains(string(out), fmt.Sprintf("name: remote-v%d", v)) {
+			t.Fatalf("remote version %d: %s, %v", v, out, err)
+		}
+	}
+}
+
+func TestRenderKey_VersionedSalt(t *testing.T) {
+	files := map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")}
+	root := writeTree(t, files)
+	oldKey := manifest.Fingerprint(struct {
+		Spec       map[string]any
+		SourceRoot string
+		SubPath    string
+		Ignore     string
+	}{demoRawSpec, root, ".", ""})
+	want := manifest.Fingerprint(struct {
+		Spec       map[string]any
+		SourceRoot string
+		SubPath    string
+		Ignore     string
+		Version    string
+	}{demoRawSpec, root, ".", "", "render-fs-v3"})
+	if got := renderKey(demoRawSpec, root, ".", ""); got != want {
+		t.Errorf("render key salt changed: got %s, want %s", got, want)
+	}
+	for _, origin := range []string{"disk", "artifact"} {
+		t.Run(origin, func(t *testing.T) {
+			cacheDir := t.TempDir()
+			cache := NewTreeCache()
+			cache.SetRenderCache(cacheDir, 1<<20)
+			req := RenderRequest{Label: root, SubPath: ".", Spec: demoRawSpec}
+			key := oldKey
+			if origin == "artifact" {
+				req.Source = &store.SourceArtifact{Key: "pin", FS: memoryTree(t, files)}
+				key = manifest.Fingerprint([]string{oldKey, "pin", "render-fs-v2"})
+			}
+			cache.render.put(key, readSetSnapshot{}, []byte("STALE"))
+			cache = NewTreeCache()
+			cache.SetRenderCache(cacheDir, 1<<20)
+			out, err := RenderFlux(t.Context(), cache, req)
+			if err != nil || !strings.Contains(string(out), "name: fresh") {
+				t.Fatalf("persisted old key reused: %s, %v", out, err)
+			}
+		})
 	}
 }

@@ -2,6 +2,7 @@ package helm
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ import (
 // that templates `now` must render byte-identically across two UNCACHED
 // renders. sprig registers `now` as time.Now, so with nanosecond precision
 // two renders would differ run to run; the cfg.CustomTemplateFuncs override
-// pins it to deterministic.FixedTime. Caching is disabled (zero-value
+// pins it to the fixed clock. Caching is disabled (zero-value
 // ClientOptions) so byte-identity can only come from the override, not a
 // cache hit — and the rendered value must reflect the fixed 2020 clock.
 func TestTemplate_DeterministicNow(t *testing.T) {
@@ -53,7 +54,7 @@ func TestTemplate_DeterministicNow(t *testing.T) {
 		t.Errorf("uncached renders differ — `now` not deterministic:\n first=%q\nsecond=%q", first, second)
 	}
 	if !strings.Contains(first, "20200101000000") {
-		t.Errorf("rendered stamp not pinned to FixedTime (2020-01-01):\n%s", first)
+		t.Errorf("rendered stamp not pinned to the fixed clock (2020-01-01):\n%s", first)
 	}
 }
 
@@ -68,7 +69,7 @@ func TestTemplate_DeterministicRandom(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
 		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\n  annotations:\n    checksum/secret: {{ randAlphaNum 24 | sha256sum | quote }}\ndata:\n  token: {{ randAlphaNum 24 | quote }}\n  id: {{ uuidv4 | quote }}\n")
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\n  annotations:\n    checksum/secret: {{ randAlphaNum 24 | sha256sum | quote }}\ndata:\n  token: {{ randAlphaNum 24 | quote }}\n  id: {{ uuidv4 | quote }}\n  bcrypt: {{ bcrypt \"password\" | quote }}\n  htpasswd: {{ htpasswd \"user\" \"password\" | quote }}\n  aes: {{ encryptAES \"key\" \"plaintext\" | quote }}\n")
 
 	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
 	if err != nil {
@@ -175,5 +176,28 @@ func TestTemplate_DeterministicCerts(t *testing.T) {
 	}
 	if first != second {
 		t.Errorf("uncached renders differ — cert funcs not deterministic:\n first=%q\nsecond=%q", first, second)
+	}
+}
+
+func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\ndata:\n  cleartext: {{ encryptAES \"key\" .Values.plaintext | decryptAES \"key\" | quote }}\n")
+	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	for _, plaintext := range []string{"", "hello", strings.Repeat("a", 16), "Unicode: βé"} {
+		t.Run(plaintext, func(t *testing.T) {
+			out, err := cli.Template(t.Context(), newHR(), map[string]any{"plaintext": plaintext}, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, fmt.Sprintf("cleartext: %q", plaintext)) {
+				t.Fatalf("decryptAES round trip differs: %s", out)
+			}
+		})
 	}
 }

@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // kustomizationDocument reuses upstream fields while retaining permissive
@@ -27,15 +29,53 @@ type document struct {
 }
 
 // documentReader caches positive and negative results by absolute source-view directory.
-type documentReader map[string]document
+type documentReader struct {
+	cache map[string]document
+	views map[string]fs.FS
+}
 
-func (r documentReader) read(dir string) (*kustomizationDocument, string) {
-	if cached, ok := r[dir]; ok {
+func (r *documentReader) mountSources(s *store.Store) {
+	for _, obj := range s.ListObjects(manifest.KindGitRepository) {
+		art, ok := s.GetArtifact(obj.Named()).(*store.SourceArtifact)
+		if !ok || art.FS == nil || art.LocalPath == "" {
+			continue
+		}
+		if r.views == nil {
+			r.views = map[string]fs.FS{}
+		}
+		r.views[art.LocalPath] = art.FS
+	}
+}
+
+var workingFiles = os.DirFS("/")
+
+// input binds source coordinates to their filesystem; an absent mounted file
+// MUST never fall through to the working tree.
+func (r documentReader) input(file string) (fs.FS, string) {
+	if len(r.views) != 0 {
+		for root := file; root != filepath.Dir(root); root = filepath.Dir(root) {
+			if input := r.views[root]; input != nil {
+				rel, _ := filepath.Rel(root, file)
+				return input, filepath.ToSlash(rel)
+			}
+		}
+	}
+	root := filepath.VolumeName(file) + string(filepath.Separator)
+	name := filepath.ToSlash(strings.TrimPrefix(file, root))
+	if name == "" {
+		name = "."
+	}
+	return workingFiles, name
+}
+
+func (r *documentReader) read(dir string) (*kustomizationDocument, string) {
+	if cached, ok := r.cache[dir]; ok {
 		return cached.body, cached.file
 	}
 	for _, name := range manifest.KustomizeBuilderFilenames {
 		file := filepath.Join(dir, name)
-		data, err := os.ReadFile(file) //nolint:gosec // directory belongs to the selected source view
+		input, name := r.input(file)
+		data, err := fs.ReadFile(input, name)
 		if err != nil {
 			continue
 		}
@@ -43,13 +83,13 @@ func (r documentReader) read(dir string) (*kustomizationDocument, string) {
 		if yaml.Unmarshal(data, &k) != nil {
 			continue
 		}
-		if r != nil {
-			r[dir] = document{body: &k, file: file}
+		if r.cache != nil {
+			r.cache[dir] = document{body: &k, file: file}
 		}
 		return &k, file
 	}
-	if r != nil {
-		r[dir] = document{}
+	if r.cache != nil {
+		r.cache[dir] = document{}
 	}
 	return nil, ""
 }

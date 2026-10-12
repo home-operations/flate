@@ -3,6 +3,7 @@ package store
 import (
 	"cmp"
 	"hash/fnv"
+	"maps"
 	"reflect"
 	"slices"
 	"sync"
@@ -31,6 +32,10 @@ const numEventKinds = 3
 // distinct shards.
 const shardCount = 16
 
+type nameID struct {
+	namespace, name string
+}
+
 // shard owns the per-Kind state for the Kinds that hash to its
 // index. The objects/conditions/artifacts maps are keyed by
 // manifest.NamedResource, which includes Kind — so within a shard
@@ -51,7 +56,7 @@ type shard struct {
 	// index. Keyed by Kind first so a single GetByName lookup is two
 	// map indexes; sharding by Kind guarantees a shard only ever
 	// holds Kinds that hash to it.
-	byName map[string]map[string]manifest.BaseManifest
+	byName map[string]map[nameID]manifest.BaseManifest
 }
 
 func newShard() *shard {
@@ -59,7 +64,7 @@ func newShard() *shard {
 		objects:    make(map[manifest.NamedResource]manifest.BaseManifest),
 		conditions: make(map[manifest.NamedResource]conditionRecord),
 		artifacts:  make(map[manifest.NamedResource]Artifact),
-		byName:     make(map[string]map[string]manifest.BaseManifest),
+		byName:     make(map[string]map[nameID]manifest.BaseManifest),
 	}
 }
 
@@ -209,8 +214,6 @@ func (s *Store) rUnlockAll() {
 	}
 }
 
-func nameKey(namespace, name string) string { return namespace + "/" + name }
-
 // AddObject inserts a manifest. Re-adding an equal object is a no-op.
 // Re-adding a different object overwrites the existing entry AND still
 // dispatches an ObjectAdded event (so newer values propagate).
@@ -285,10 +288,10 @@ func (sh *shard) setLocked(id manifest.NamedResource, obj manifest.BaseManifest)
 	sh.objects[id] = obj
 	inner, ok := sh.byName[id.Kind]
 	if !ok {
-		inner = make(map[string]manifest.BaseManifest)
+		inner = make(map[nameID]manifest.BaseManifest)
 		sh.byName[id.Kind] = inner
 	}
-	inner[nameKey(id.Namespace, id.Name)] = obj
+	inner[nameID{id.Namespace, id.Name}] = obj
 }
 
 // deleteLocked is the symmetric remove for setLocked. Drops the
@@ -303,7 +306,7 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 	delete(sh.conditions, id)
 	delete(sh.artifacts, id)
 	// delete is a no-op on a nil map, so byName[id.Kind] needs no guard.
-	delete(sh.byName[id.Kind], nameKey(id.Namespace, id.Name))
+	delete(sh.byName[id.Kind], nameID{id.Namespace, id.Name})
 	return true
 }
 
@@ -371,16 +374,7 @@ func specValueEqual(a, b any) bool {
 	switch v := a.(type) {
 	case map[string]any:
 		other, ok := b.(map[string]any)
-		if !ok || (v == nil) != (other == nil) || len(v) != len(other) {
-			return false
-		}
-		for key, value := range v {
-			ov, exists := other[key]
-			if !exists || !specValueEqual(value, ov) {
-				return false
-			}
-		}
-		return true
+		return ok && (v == nil) == (other == nil) && maps.EqualFunc(v, other, specValueEqual)
 	case []any:
 		other, ok := b.([]any)
 		return ok && (v == nil) == (other == nil) && slices.EqualFunc(v, other, specValueEqual)
@@ -440,7 +434,7 @@ func (s *Store) GetObjectByName(kind, namespace, name string) manifest.BaseManif
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	// Indexing a nil map (unseen kind) yields nil — no guard needed.
-	return sh.byName[kind][nameKey(namespace, name)]
+	return sh.byName[kind][nameID{namespace, name}]
 }
 
 // ListObjects returns every stored manifest, optionally filtered by kind,

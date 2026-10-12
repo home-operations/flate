@@ -1,6 +1,8 @@
 package source
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -8,7 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
+	"github.com/google/uuid"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // SweepOpts tunes Sweep's behavior.
@@ -59,6 +64,7 @@ func Sweep(layout cacheroot.Layout, opts SweepOpts) (SweepResult, error) {
 	if opts.IncludeMirrors {
 		res.sweepDirByAge(layout.GitMirrors(), 1, cutoff, opts.DryRun)
 	}
+	res.sweepGitGenerations(layout, opts.DryRun)
 	return res, nil
 }
 
@@ -129,4 +135,63 @@ func entrySize(path string) int64 {
 		return nil
 	})
 	return total
+}
+
+// The existing store ownership lock pins every acquired reader until Cache.Close.
+func (res *SweepResult) sweepGitGenerations(layout cacheroot.Layout, dryRun bool) {
+	dir := filepath.Dir(layout.GitObjects(""))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			res.Errors = append(res.Errors, fmt.Errorf("read git generations: %w", err))
+		}
+		return
+	}
+	lock := flock.New(layout.OCILock(), flock.SetPermissions(0o600))
+	defer func() { _ = lock.Close() }()
+	locked, err := lock.TryLock()
+	if err != nil {
+		res.Errors = append(res.Errors, fmt.Errorf("lock git generations: %w", err))
+		return
+	}
+	if !locked {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(layout.OCI(), ocispec.ImageIndexFile))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		res.Errors = append(res.Errors, fmt.Errorf("read git index: %w", err))
+		return
+	}
+	var index ocispec.Index
+	if err == nil {
+		if err := json.Unmarshal(data, &index); err != nil {
+			res.Errors = append(res.Errors, fmt.Errorf("read git index: %w", err))
+			return
+		}
+	}
+	referenced := make(map[string]struct{}, len(index.Manifests))
+	for _, desc := range index.Manifests {
+		if desc.Annotations[ocispec.AnnotationRefName] == "" {
+			continue
+		}
+		referenced[desc.Annotations["flate.git-generation"]] = struct{}{}
+	}
+	for _, entry := range entries {
+		id := entry.Name()
+		parsed, err := uuid.Parse(id)
+		if err != nil || parsed.String() != id || !entry.IsDir() {
+			continue
+		}
+		if _, ok := referenced[id]; ok {
+			continue
+		}
+		path := filepath.Dir(layout.GitObjects(id))
+		res.Bytes += entrySize(path)
+		res.Removed = append(res.Removed, path)
+		if !dryRun {
+			if err := os.RemoveAll(path); err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("remove git generation: %w", err))
+			}
+		}
+	}
 }

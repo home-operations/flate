@@ -104,15 +104,15 @@ func SuppressFailed(left, right []Doc, leftFailed, rightFailed map[manifest.Name
 	return l, r, suppressed
 }
 
-// suppressionHeader renders opts.Suppressed as a leading block, one prefixed
+// suppressionHeader renders suppressions as a leading block, one prefixed
 // line per entry, so the reader meets the explanation before any body. Empty
 // when nothing was suppressed.
-func suppressionHeader(opts Options, prefix string) []byte {
-	if len(opts.Suppressed) == 0 {
+func suppressionHeader(suppressed []Suppression, prefix string) []byte {
+	if len(suppressed) == 0 {
 		return nil
 	}
 	var b strings.Builder
-	for _, s := range opts.Suppressed {
+	for _, s := range suppressed {
 		b.WriteString(prefix)
 		b.WriteString(s.String())
 		b.WriteByte('\n')
@@ -133,17 +133,4 @@ func withHeader(header, body []byte) []byte {
 	out = append(out, header...)
 	out = append(out, '\n')
 	return append(out, body...)
-}
-
-// notePrefix is the line marker a style uses for the suppression header:
-// the diff-syntax styles reuse their change marker so a ```diff fence
-// highlights the note; the human styles get a plain warning glyph.
-func notePrefix(f Format) string {
-	switch f {
-	case FormatGitHub, FormatGitea:
-		return "! "
-	case FormatGitLab, FormatDiff:
-		return "# "
-	}
-	return "⚠ "
 }

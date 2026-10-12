@@ -149,20 +149,25 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		return nil, "", fmt.Errorf("unable to get images: %w", err)
 	}
 	for _, image := range images {
-		newImage := kustypes.Image{
-			Name:    image.Name,
-			NewName: image.NewName,
-			NewTag:  image.NewTag,
-			Digest:  image.Digest,
-		}
-		// Dedup spec.images by name, last write winning — flux's
-		// checkKustomizeImageExists.
 		if i := slices.IndexFunc(kus.Images, func(img kustypes.Image) bool {
 			return img.Name == image.Name
 		}); i >= 0 {
-			kus.Images[i] = newImage
+			if image.NewName != "" {
+				kus.Images[i].NewName = image.NewName
+			}
+			// Tag and digest select one version; overriding either must clear
+			// the other so a stale digest cannot defeat a new tag at pull time.
+			if image.NewTag != "" || image.Digest != "" {
+				kus.Images[i].NewTag = image.NewTag
+				kus.Images[i].Digest = image.Digest
+			}
 		} else {
-			kus.Images = append(kus.Images, newImage)
+			kus.Images = append(kus.Images, kustypes.Image{
+				Name:    image.Name,
+				NewName: image.NewName,
+				NewTag:  image.NewTag,
+				Digest:  image.Digest,
+			})
 		}
 	}
 

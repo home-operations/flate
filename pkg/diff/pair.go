@@ -2,6 +2,7 @@ package diff
 
 import (
 	"cmp"
+	"iter"
 	"log/slog"
 	"slices"
 
@@ -16,6 +17,35 @@ type pairedResource struct {
 	apiVersion            string
 	kind, namespace, name string
 	a, b                  map[string]any
+}
+
+type changedPair struct {
+	pairedResource
+	from, to string
+}
+
+// changedPairs yields YAML differences after normalization, which can change identities.
+// A nil side marshals to an empty document, so its counterpart is a full add/remove.
+func changedPairs(left, right []Doc, opts Options) iter.Seq2[changedPair, error] {
+	return func(yield func(changedPair, error) bool) {
+		left = normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize)
+		right = normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize)
+		for _, p := range pair(left, right) {
+			from, err := marshalForUnified(p.a)
+			if err != nil {
+				yield(changedPair{}, err)
+				return
+			}
+			to, err := marshalForUnified(p.b)
+			if err != nil {
+				yield(changedPair{}, err)
+				return
+			}
+			if from != to && !yield(changedPair{pairedResource: p, from: from, to: to}, nil) {
+				return
+			}
+		}
+	}
 }
 
 // label is the resource's human-facing title, e.g. "Deployment apps/web" —

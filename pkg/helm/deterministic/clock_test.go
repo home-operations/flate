@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-// TestDateInZone_DefaultsToFixedTimeAndForcesUTC pins the two determinism
+// TestDateInZone_DefaultsToFixedClockAndForcesUTC pins the two determinism
 // fixes in the ported date helper: an unrecognized argument falls back to
-// FixedTime (not the wall clock), and an empty or "Local" zone is treated
+// fixedTime (not the wall clock), and an empty or "Local" zone is treated
 // as UTC so formatting never depends on $TZ. An explicit time and an
 // explicit named zone are honored unchanged.
-func TestDateInZone_DefaultsToFixedTimeAndForcesUTC(t *testing.T) {
-	// Unrecognized arg → FixedTime, not time.Now().
+func TestDateInZone_DefaultsToFixedClockAndForcesUTC(t *testing.T) {
+	// Unrecognized arg → fixedTime, not time.Now().
 	if got := dateInZone("20060102150405", "not-a-time", "UTC"); got != "20200101000000" {
 		t.Errorf(`dateInZone default branch = %q, want "20200101000000"`, got)
 	}
@@ -29,7 +29,7 @@ func TestDateInZone_DefaultsToFixedTimeAndForcesUTC(t *testing.T) {
 }
 
 // TestClockFuncs_DateForcesUTC pins that the registered "date" override
-// formats in UTC with a FixedTime fallback — so `{{ now | date … }}` is
+// formats in UTC with a fixedTime fallback — so `{{ now | date … }}` is
 // reproducible across machines, not just across runs on one machine.
 func TestClockFuncs_DateForcesUTC(t *testing.T) {
 	fm := clockFuncs()
@@ -37,7 +37,7 @@ func TestClockFuncs_DateForcesUTC(t *testing.T) {
 	if !ok {
 		t.Fatalf(`"date" override has unexpected type %T`, fm["date"])
 	}
-	if got := date("20060102150405", FixedTime); got != "20200101000000" {
-		t.Errorf(`date(FixedTime) = %q, want "20200101000000"`, got)
+	if got := date("20060102150405", fixedTime); got != "20200101000000" {
+		t.Errorf(`date(fixedTime) = %q, want "20200101000000"`, got)
 	}
 }

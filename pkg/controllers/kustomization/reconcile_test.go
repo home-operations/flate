@@ -116,6 +116,7 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 		strategy  kustomizev1.SubstituteStrategy
 		postBuild map[string]any
 		disabled  string
+		input     string
 		want      string
 	}{
 		{name: "no postBuild", want: "${VAR:=default}"},
@@ -144,10 +145,19 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 		},
 		{name: "disabled label", strategy: kustomizev1.SubstituteStrategyAlways, postBuild: map[string]any{}, disabled: "labels", want: "${VAR:=default}"},
 		{name: "disabled annotation", strategy: kustomizev1.SubstituteStrategyAlways, postBuild: map[string]any{}, disabled: "annotations", want: "${VAR:=default}"},
+		{name: "double dollar without variables", input: "echo $$PID", want: "echo $$PID"},
+		{name: "double dollar Always", input: "echo $$PID", strategy: kustomizev1.SubstituteStrategyAlways, postBuild: map[string]any{}, want: "echo $PID"},
+		{name: "double dollar with variables", input: "echo $$PID", postBuild: map[string]any{"substitute": map[string]any{"VAR": "configured"}}, want: "echo $PID"},
+		{name: "double dollar disabled label", input: "echo $$PID", postBuild: map[string]any{"substitute": map[string]any{"VAR": "configured"}}, disabled: "labels", want: "echo $$PID"},
+		{name: "double dollar disabled annotation", input: "echo $$PID", postBuild: map[string]any{"substitute": map[string]any{"VAR": "configured"}}, disabled: "annotations", want: "echo $$PID"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c, s, root := newControllerWithFixture(t)
+			input := tc.input
+			if input == "" {
+				input = "${VAR:=default}"
+			}
 			optOut := ""
 			if tc.disabled != "" {
 				optOut = fmt.Sprintf(", %s: {kustomize.toolkit.fluxcd.io/substitute: disabled}", tc.disabled)
@@ -155,8 +165,8 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 			testutil.WriteFileAt(t, filepath.Join(root, "apps", "cm.yaml"), fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
 metadata: {name: hello, namespace: default%s}
-data: {greeting: '${VAR:=default}'}
-`, optOut))
+data: {greeting: '%s'}
+`, optOut, input))
 
 			spec := map[string]any{
 				"path":      "./apps",

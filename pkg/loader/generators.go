@@ -3,10 +3,10 @@ package loader
 import (
 	"encoding/base64"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
-	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 	"sigs.k8s.io/kustomize/api/ifc"
 	"sigs.k8s.io/kustomize/api/kv"
 	kloader "sigs.k8s.io/kustomize/api/pkg/loader"
@@ -15,9 +15,11 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/tree"
 )
 
 type generatorRecord struct {
+	reader      documentReader
 	root        string
 	file        string
 	owner       manifest.NamedResource
@@ -29,15 +31,12 @@ type generatorRecord struct {
 func (r generatorRecord) materialize(wipeSecrets bool) (manifest.BaseManifest, error) {
 	var ldr ifc.Loader
 	if len(r.args.EnvSources)+len(r.args.FileSources) != 0 {
-		root := r.root
-		if resolved, err := filepath.EvalSymlinks(root); err == nil {
-			root = resolved
-		}
-		fs, err := fluxfilesys.MakeFsOnDiskSecure(root)
+		input, name := r.reader.input(r.root)
+		input, err := fs.Sub(input, name)
 		if err != nil {
-			return nil, fmt.Errorf("%w: secure generator fs %s: %w", manifest.ErrInput, root, err)
+			return nil, fmt.Errorf("%w: generator fs %s: %w", manifest.ErrInput, r.root, err)
 		}
-		ldr = generatorFileLoader{Loader: kloader.NewFileLoaderAtRoot(filesys.MakeFsOnDisk()), fs: fs, dir: filepath.Dir(r.file)}
+		ldr = generatorFileLoader{Loader: kloader.NewFileLoaderAtRoot(filesys.MakeFsOnDisk()), fs: tree.NewBuilder(input), root: r.root, dir: filepath.Dir(r.file)}
 	}
 	pairs, err := kv.NewLoader(ldr, provider.NewDefaultDepProvider().GetFieldValidator()).Load(r.args.KvPairSources)
 	if err != nil {
@@ -64,8 +63,8 @@ func (r generatorRecord) materialize(wipeSecrets bool) (manifest.BaseManifest, e
 // upstream; local reads must pass through the source-confined filesystem.
 type generatorFileLoader struct {
 	ifc.Loader
-	fs  filesys.FileSystem
-	dir string
+	fs        fs.FS
+	root, dir string
 }
 
 func (l generatorFileLoader) Load(file string) ([]byte, error) {
@@ -75,5 +74,9 @@ func (l generatorFileLoader) Load(file string) ([]byte, error) {
 	if !filepath.IsAbs(file) {
 		file = filepath.Join(l.dir, file)
 	}
-	return l.fs.ReadFile(file)
+	name, err := filepath.Rel(l.root, file)
+	if err != nil {
+		return nil, err
+	}
+	return fs.ReadFile(l.fs, filepath.ToSlash(name))
 }

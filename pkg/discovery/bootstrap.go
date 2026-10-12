@@ -115,7 +115,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 			pinned = append(pinned, repo)
 		}
 	}
-	artifacts, err := git.ResolveLocal(ctx, repoRoot, pinned, d.cfg.SourceCache)
+	artifacts, err := git.ResolveLocal(ctx, repoRoot, pinned)
 	if err != nil {
 		return nil, err
 	}

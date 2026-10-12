@@ -41,6 +41,7 @@ func (i *DiscoveryIndex) Lookup(id NamedResource) (DiscoveryRecord, bool) {
 }
 
 // Files yields records with a change-coordinate file, including generator declarations.
+// Iteration is unordered; callers MUST sort any order-sensitive result.
 func (i *DiscoveryIndex) Files() iter.Seq2[NamedResource, DiscoveryRecord] {
 	return func(yield func(NamedResource, DiscoveryRecord) bool) {
 		if i == nil {

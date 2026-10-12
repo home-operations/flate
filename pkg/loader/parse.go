@@ -3,7 +3,6 @@ package loader
 import (
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -12,9 +11,9 @@ import (
 // a thin collector over decodeFileObjects with keepRaw=false, so unmodeled
 // kinds (manifest.RawObject) are dropped. See decodeFileObjects for the shared
 // decode + filter contract.
-func parseFile(path string, opts manifest.ParseDocOptions) ([]manifest.BaseManifest, error) {
+func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([]manifest.BaseManifest, error) {
 	var out []manifest.BaseManifest
-	err := decodeFileObjects(path, opts, false, func(obj manifest.BaseManifest) {
+	err := r.decodeFileObjects(path, opts, false, func(obj manifest.BaseManifest) {
 		out = append(out, obj)
 	})
 	return out, err
@@ -37,8 +36,9 @@ func parseFile(path string, opts manifest.ParseDocOptions) ([]manifest.BaseManif
 //
 // Per-doc parse errors carry path in their log fields; file-level errors (open,
 // decode) surface to the caller with the path baked into the wrap.
-func decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(manifest.BaseManifest)) error {
-	f, err := os.Open(path) //nolint:gosec // path came from a tree-walk under the scan root or a raw-file discovery record
+func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(manifest.BaseManifest)) error {
+	input, name := r.input(path)
+	f, err := input.Open(name)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}

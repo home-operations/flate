@@ -71,11 +71,10 @@ func (c *Controller) Configure(opts Options) {
 // ReconcileNode runs id's reconcile under the dag engine, returning the
 // blocked dependency set (nil = terminalized).
 // The orchestrator's scheduler Dispatcher calls this for ResourceSet
-// nodes. A ResourceSet has no Suspend field, so the suspended predicate
-// is always false.
+// nodes. Reconciliation-disabled ResourceSets use the shared suspension gate.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
 	return c.DispatchNode(ctx, id, level, base.Dispatch[*manifest.ResourceSet]{
-		Suspended: func(*manifest.ResourceSet) bool { return false },
+		Suspended: func(rs *manifest.ResourceSet) bool { return rs.Suspend },
 		Reconcile: c.reconcile,
 	})
 }
@@ -215,7 +214,7 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 // when id is not a RS in the store.
 func (c *Controller) WantsDrainRerun(id manifest.NamedResource) bool {
 	rs, ok := c.Store.Get[*manifest.ResourceSet](id)
-	if !ok {
+	if !ok || rs.Suspend {
 		return false
 	}
 	for _, ref := range rs.InputsFrom {

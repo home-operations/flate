@@ -50,7 +50,7 @@ data: {key: value}
 }
 
 func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
-	for _, name := range []string{"dedup", "fresh fingerprint identical docs", "missing artifact", "empty fingerprint", "blocked gate", "failed gate", "preflight failure", "filter skip", "vanished", "render failure"} {
+	for _, name := range []string{"dedup", "fresh fingerprint identical docs", "missing artifact", "empty fingerprint", "blocked gate", "failed gate", "preflight failure", "filter skip", "vanished", "render failure", "suspended"} {
 		for _, selector := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/selector_%v", name, selector), func(t *testing.T) {
 				s := store.New()
@@ -58,7 +58,7 @@ func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
 				c := resourceset.New(s, tasks, true)
 				c.Configure(resourceset.Options{})
 				c.StartLifecycle()
-				rs := &manifest.ResourceSet{Name: "matrix", Namespace: "ns", ResourcesTemplate: `apiVersion: v1
+				rs := &manifest.ResourceSet{Name: "matrix", Namespace: "ns", Inputs: []fluxopv1.ResourceSetInput{{}}, ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: output}
 data: {key: fixed}
@@ -104,6 +104,9 @@ data: {key: fixed}
 				case "vanished":
 					s.DeleteObject(rs.Named())
 					s.SetArtifact(rs.Named(), before)
+				case "suspended":
+					fresh.Suspend = true
+					s.AddObject(&fresh)
 				case "render failure":
 					fresh.ResourcesTemplate = "<< .missing.field >>"
 					s.AddObject(&fresh)
@@ -117,7 +120,7 @@ data: {key: fixed}
 				unsub := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals.Add(1) }, false)
 				t.Cleanup(unsub)
 				out, blocked, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
-				if rerun != (selector && name != "vanished") || out != want || (len(blocked) > 0) != (want == schedule.OutcomeBlocked) {
+				if rerun != (selector && name != "vanished" && name != "suspended") || out != want || (len(blocked) > 0) != (want == schedule.OutcomeBlocked) {
 					t.Fatalf("outcome=%v blocked=%v; want %v", out, blocked, want)
 				}
 				if want == schedule.OutcomeTerminalNoop && arrivals.Load() != 0 {
@@ -152,7 +155,7 @@ func TestDAGDispatch_ConcurrentResourceSetUpdate(t *testing.T) {
 	c.Configure(resourceset.Options{})
 	c.StartLifecycle()
 	t.Cleanup(c.Close)
-	rs := &manifest.ResourceSet{Name: "concurrent", Namespace: "ns", ResourcesTemplate: `apiVersion: v1
+	rs := &manifest.ResourceSet{Name: "concurrent", Namespace: "ns", Inputs: []fluxopv1.ResourceSetInput{{}}, ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: output}
 data: {key: initial}

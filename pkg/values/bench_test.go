@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -165,7 +167,7 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 		// Fresh KS per iteration mirrors a distinct KS reconcile sharing
 		// the same substituteFrom CM.
 		ks := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
-		ks.PostBuildSubstituteFrom = []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}}
+		ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}}}
 		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
 			b.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
 		}

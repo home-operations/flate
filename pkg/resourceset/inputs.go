@@ -95,8 +95,12 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 
 	seen := make(map[string]struct{})
 	var providers []*manifest.ResourceSetInputProvider
-	for _, ref := range rs.InputsFrom {
-		matches, err := resolve(ref, rs.Namespace)
+	for edge := range manifest.References(rs) {
+		if edge.Use != "inputsFrom" {
+			continue
+		}
+		ref := rs.InputsFrom[edge.Position]
+		matches, err := resolve(ref, edge.Namespace)
 		if err != nil {
 			return nil, fmt.Errorf("inputsFrom %q: %w", ref.Name, err)
 		}

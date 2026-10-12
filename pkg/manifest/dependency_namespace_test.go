@@ -42,17 +42,9 @@ func TestDependsOn_TypedNamespace(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				var deps []DependencyRef
-				switch x := obj.(type) {
-				case *Kustomization:
-					deps = x.DependsOn
-				case *HelmRelease:
-					deps = x.DependsOn
-				default:
-					t.Fatalf("unexpected %T", obj)
-				}
+				deps := refsForUse(t, obj, "dependsOn")
 				wantNS := cmp.Or(ns, "apps")
-				assert.Diff(t, deps, []DependencyRef{{Kind: kind, Name: "dependency", Namespace: wantNS, ReadyExpr: "true"}})
+				assert.Diff(t, deps, []DependencyRef{{Kind: kind, Name: "dependency", Namespace: wantNS, Use: "dependsOn", Ready: true, ReadyExpr: "true"}})
 			})
 		}
 	}

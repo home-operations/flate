@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -34,7 +36,7 @@ func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 			st := store.New()
 			ks := &manifest.Kustomization{
 				Name: "root", Namespace: "flux-system", Path: tc.path,
-				SourceKind: manifest.KindGitRepository, SourceName: tc.source, SourceNamespace: "flux-system",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: tc.source, Namespace: "flux-system"},
 			}
 			st.AddObject(ks)
 			l := loaderFixture(st, nil)

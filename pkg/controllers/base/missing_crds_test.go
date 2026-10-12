@@ -14,7 +14,7 @@ import (
 func TestConfigure_MissingCRDs(t *testing.T) {
 	c := base.New(store.New(), task.NewBounded(2), "test")
 	id := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "ns", Name: "app"}
-	deps := []manifest.DependencyRef{{Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}}
+	deps := []manifest.DependencyRef{{Ready: true, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}}
 	err := c.Require(t.Context(), id, deps, manifest.DrainCascade)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	c.Configure(base.Options{AllowMissingCRDs: true})

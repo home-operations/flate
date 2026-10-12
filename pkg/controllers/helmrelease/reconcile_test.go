@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -190,7 +191,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 
 	hr := &manifest.HelmRelease{
 		Name: "depender", Namespace: "flux-system",
-		DependsOn: []manifest.DependencyRef{{NamedResource: dep.Named()}},
+		DependsOn: []helmv2.DependencyReference{{Name: dep.Name, Namespace: dep.Namespace}},
 	}
 	st.AddObject(hr)
 	info := dispatchToFixpoint(t, c, st, hr.Named())

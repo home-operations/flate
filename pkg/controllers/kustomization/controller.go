@@ -121,7 +121,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		fresh, ok, err := c.RequireRefresh[*manifest.Kustomization](
 			ctx, id, deps, level)
 		if err != nil {
-			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+			ref := ks.SourceID()
 			_, blocked := errors.AsType[*depwait.ErrBlocked](err)
 			_, failed := errors.AsType[*manifest.DependencyFailedError](err)
 			if (blocked || failed) && level >= manifest.DrainCascade && ks.SourceKind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
@@ -247,20 +247,21 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 // substitution data producers before the consumer reads their rendered data.
 // Secrets are not hard data edges: SOPS/ExternalSecret inputs may exist only in cluster state.
 func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
-	deps := c.OrderingDeps(ks.DependsOn)
-	if ks.SourceKind != "" && ks.SourceName != "" {
-		deps = append(deps, manifest.DependencyRef{
-			Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName,
-		})
-	}
+	deps := c.OrderingDeps(ks)
 	if parent, ok := c.LookupParent(ks.Named()); ok {
-		deps = append(deps, manifest.DependencyRef{NamedResource: parent})
+		deps = append(deps, manifest.DependencyRef{NamedResource: parent, Ready: true})
 	}
-	for _, ref := range ks.PostBuildSubstituteFrom {
-		if !manifest.IsSubstituteDataRef(ref) {
+	for ref := range manifest.References(ks) {
+		if ref.Use == "source" {
+			if ref.Kind != "" && ref.Name != "" {
+				deps = append(deps, ref)
+			}
 			continue
 		}
-		depID := manifest.NamedResource{Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name}
+		if ref.Use != "substituteFrom" || ref.Optional || ref.Name == "" {
+			continue
+		}
+		depID := ref.NamedResource
 		if c.substitutionSources[depID] != nil {
 			continue
 		}
@@ -272,7 +273,7 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 			deps = append(deps, manifest.DependencyRef{NamedResource: depID})
 		}
 		for _, producer := range producers {
-			deps = append(deps, manifest.DependencyRef{NamedResource: producer})
+			deps = append(deps, manifest.DependencyRef{NamedResource: producer, Ready: true})
 		}
 	}
 	return deps
@@ -292,8 +293,14 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 // working-tree aliases are the only artifacts that set neither Revision nor
 // Digest, which is precisely the signal.
 func (c *Controller) resolveSource(ks *manifest.Kustomization) (*store.SourceArtifact, bool, error) {
-	srcID := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-	if ks.SourceKind == "" || ks.SourceName == "" {
+	srcID := manifest.NamedResource{}
+	for ref := range manifest.References(ks) {
+		if ref.Use == "source" {
+			srcID = ref.NamedResource
+			break
+		}
+	}
+	if srcID.Kind == "" || srcID.Name == "" {
 		// Child Kustomizations that inherit sourceRef from a parent's
 		// render patches show empty here until that parent reconciles.
 		// Fall back to the seeded bootstrap GitRepository (the user's

@@ -32,7 +32,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 			for _, state := range []string{"absent", "explicit namespace", "object", "ready status", "pending status", "failed status", "promoted", "promotion miss", "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList", "valid expression", "invalid expression", "present invalid expression"} {
 				t.Run(fmt.Sprintf("enabled_%t/drain_%d/%s", enabled, drain, state), func(t *testing.T) {
 					s := store.New()
-					ref := manifest.DependencyRef{Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
+					ref := manifest.DependencyRef{Ready: true, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
 					want := ClassBlocked
 					msg := ""
 					if drain >= manifest.DrainCascade {
@@ -117,7 +117,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 
 func TestClassify_MissingCRDs_NoAllocations(t *testing.T) {
 	s := store.New()
-	ref := manifest.DependencyRef{Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
+	ref := manifest.DependencyRef{Ready: true, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
 	for _, enabled := range []bool{false, true} {
 		w := &Waiter{Store: s, AllowMissingCRDs: enabled}
 		if got := testing.AllocsPerRun(100, func() { w.Classify(ref, manifest.DrainCascade) }); got != 0 {

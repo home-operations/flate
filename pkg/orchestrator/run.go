@@ -30,13 +30,9 @@ func (e *orchestratorExistence) Promote(id manifest.NamedResource) bool {
 }
 
 func (e *orchestratorExistence) admit(obj manifest.BaseManifest) bool {
-	switch obj.(type) {
-	case *manifest.ConfigMap, *manifest.Secret, *manifest.ResourceSetInputProvider,
-		*manifest.GitRepository, *manifest.HelmRepository, *manifest.OCIRepository,
-		*manifest.HelmChartSource, *manifest.Bucket, *manifest.ExternalArtifact:
-		return e.filter.ShouldReconcile(obj.Named())
-	}
-	return false
+	info := manifest.KindOf(obj)
+	return info.Tracked && (info.Group == manifest.SourceDomain || !info.Runnable) &&
+		e.filter.ShouldReconcile(obj.Named())
 }
 
 func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {

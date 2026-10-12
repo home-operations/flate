@@ -8,7 +8,6 @@
 package resourceset
 
 import (
-	"cmp"
 	"context"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -151,7 +150,7 @@ func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publ
 	// Route the RawObject (non-Flux) children to the orchestrator's output sink,
 	// reusing the shared parse so raw output groups under the parent KS.
 	for _, child := range children {
-		if _, raw := child.Obj.(*manifest.RawObject); raw {
+		if !manifest.KindOf(child.Obj).Tracked {
 			c.rawSink(id, parentKS, child.Doc)
 		}
 	}
@@ -172,36 +171,19 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 	if hasParent {
 		capacity++
 	}
-	deps := make([]manifest.DependencyRef, capacity)
-	for i, dep := range rs.DependsOn {
-		ns := cmp.Or(dep.Namespace, rs.Namespace)
-		if manifest.IsClusterScopedKind(dep.Kind) {
-			ns = ""
+	deps := make([]manifest.DependencyRef, 0, capacity)
+	for ref := range manifest.References(rs) {
+		if ref.Use == "dependsOn" {
+			ref.Ready = true
 		}
-		deps[i] = manifest.DependencyRef{
-			Kind: dep.Kind, Namespace: ns, Name: dep.Name,
-			ReadyExpr: dep.ReadyExpr,
+		if ref.Use == "dependsOn" || ref.Use == "inputsFrom" && ref.Name != "" {
+			deps = append(deps, ref)
 		}
-	}
-	n := len(rs.DependsOn)
-	for _, ref := range rs.InputsFrom {
-		if ref.Name == "" {
-			continue // selector-only: no nameable RSIP to park on
-		}
-		// InputProviderReference is same-namespace by spec — RSIPs live in
-		// the ResourceSet's own namespace.
-		deps[n].NamedResource = manifest.NamedResource{
-			Kind:      manifest.KindResourceSetInputProvider,
-			Namespace: rs.Namespace,
-			Name:      ref.Name,
-		}
-		n++
 	}
 	if hasParent {
-		deps[n].NamedResource = parent
-		n++
+		deps = append(deps, manifest.DependencyRef{NamedResource: parent, Ready: true})
 	}
-	return deps[:n]
+	return deps
 }
 
 // WantsDrainRerun reports whether the ResourceSet id has a selector-only
@@ -216,8 +198,8 @@ func (c *Controller) WantsDrainRerun(id manifest.NamedResource) bool {
 	if !ok || rs.Suspend {
 		return false
 	}
-	for _, ref := range rs.InputsFrom {
-		if ref.Name == "" {
+	for ref := range manifest.References(rs) {
+		if ref.Use == "inputsFrom" && ref.Name == "" {
 			return true
 		}
 	}

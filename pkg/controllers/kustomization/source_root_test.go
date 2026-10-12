@@ -105,10 +105,8 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 	c := New(s, nil, nil, false)
 	ks := &manifest.Kustomization{
 		Name: "foo", Namespace: "flux-system",
-		Path:            "./app",
-		SourceKind:      manifest.KindGitRepository,
-		SourceName:      "external",
-		SourceNamespace: "flux-system",
+		Path:      "./app",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "external", Namespace: "flux-system"},
 	}
 	got, _, err := c.resolveSource(ks)
 	if err != nil {

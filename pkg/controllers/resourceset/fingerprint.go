@@ -47,10 +47,14 @@ type inputDigest struct {
 func resolvedInputDigests(rs *manifest.ResourceSet, s *store.Store) []inputDigest {
 	resolve := resourceset.StoreResolver(s)
 	var out []inputDigest
-	for _, ref := range rs.InputsFrom {
+	for edge := range manifest.References(rs) {
+		if edge.Use != "inputsFrom" {
+			continue
+		}
+		ref := rs.InputsFrom[edge.Position]
 		// InputProviderReference is same-namespace by spec — resolve in the
 		// ResourceSet's own namespace, exactly as resourceset.Render does.
-		providers, err := resolve(ref, rs.Namespace)
+		providers, err := resolve(ref, edge.Namespace)
 		if err != nil {
 			continue
 		}

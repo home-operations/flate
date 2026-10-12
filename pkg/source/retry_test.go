@@ -142,13 +142,7 @@ func repeatErr(e error, n int) []error {
 }
 
 func testObj() manifest.BaseManifest {
-	return stubObj{}
-}
-
-type stubObj struct{}
-
-func (stubObj) Named() manifest.NamedResource {
-	return manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "x"}
+	return &manifest.RawObject{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "x"}
 }
 
 // fastRetry is a config with negligible waits so tests don't sleep.

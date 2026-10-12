@@ -3,6 +3,7 @@ package helmrelease
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -59,7 +61,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				}
 				changes = change.NewSet(files)
 			}
-			hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []manifest.DependencyRef{{NamedResource: target.Named(), ReadyExpr: "dep.spec.suspend == false"}}}
+			hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}}}
 			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, testutil.MapLister{})
 			c, st := newTestControllerWithOptions(t, ReconcileOptions{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}})
 			if tc.present {
@@ -67,8 +69,10 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				st.UpdateStatus(target.Named(), tc.status, "fixture")
 			}
 			size := len(filter.KeepNames())
-			deps := c.OrderingDeps(hr.DependsOn)
-			if got := slices.Contains(deps, hr.DependsOn[0]); got != tc.retain {
+			deps := c.OrderingDeps(hr)
+			if got := slices.ContainsFunc(deps, func(dep manifest.DependencyRef) bool {
+				return dep.Use == "dependsOn" && dep.Name == hr.DependsOn[0].Name
+			}); got != tc.retain {
 				t.Errorf("ordering edge retained = %v, want %v; deps = %v", got, tc.retain, deps)
 			}
 			if len(filter.KeepNames()) != size || len(hr.DependsOn) != 1 {
@@ -227,7 +231,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 				}
 				first := *consumers[0]
 				c.materializeHelmChartSource(first.Named(), &first)
-				source := chartSourceID(&first)
+				source := (manifest.NamedResource{Kind: first.Chart.RepoKind, Namespace: first.Chart.RepoNamespace, Name: first.Chart.RepoName})
 				sourceStarted := make(chan struct{})
 				sourceRelease := make(chan struct{})
 				parked := make(chan manifest.NamedResource, len(consumers))
@@ -265,8 +269,8 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 				}
 				second := *consumers[1]
 				c.materializeHelmChartSource(second.Named(), &second)
-				if chartSourceID(&second) != source {
-					t.Errorf("second source = %s, want shared %s", chartSourceID(&second), source)
+				if (manifest.NamedResource{Kind: second.Chart.RepoKind, Namespace: second.Chart.RepoNamespace, Name: second.Chart.RepoName}) != source {
+					t.Errorf("second source = %s, want shared %s", (manifest.NamedResource{Kind: second.Chart.RepoKind, Namespace: second.Chart.RepoNamespace, Name: second.Chart.RepoName}), source)
 				}
 				if info, ok := st.GetStatus(source); ok {
 					t.Errorf("consumer wrote synthetic status = %+v, want no Ready condition", info)
@@ -1024,11 +1028,11 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 	c, _ := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		DependsOn: []manifest.DependencyRef{
-			{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "other"},
+		DependsOn: []helmv2.DependencyReference{
+			{Namespace: "default", Name: "other"},
 		},
 	}
-	got := c.OrderingDeps(hr.DependsOn)
+	got := c.OrderingDeps(hr)
 	if len(got) != 1 || got[0].Name != "other" {
 		t.Fatalf("OrderingDeps = %+v", got)
 	}
@@ -1053,16 +1057,16 @@ func TestController_CollectHRDepsPrunesUnchangedDeps(t *testing.T) {
 	st.AddObject(&manifest.HelmRelease{Name: prowlarr.Name, Namespace: prowlarr.Namespace})
 	hr := &manifest.HelmRelease{
 		Name: "lidarr", Namespace: "downloads",
-		DependsOn: []manifest.DependencyRef{{NamedResource: qbit}, {NamedResource: prowlarr}},
+		DependsOn: []helmv2.DependencyReference{{Name: qbit.Name, Namespace: qbit.Namespace}, {Name: prowlarr.Name, Namespace: prowlarr.Namespace}},
 	}
-	got := c.OrderingDeps(hr.DependsOn)
+	got := c.OrderingDeps(hr)
 	if len(got) != 1 || got[0].NamedResource != qbit {
 		t.Fatalf("OrderingDeps = %+v; want only the in-keep qbittorrent dep", got)
 	}
 
 	// Sanity: a disabled filter (full mode) prunes nothing.
 	cFull, _ := newTestController(t, nil)
-	if got := cFull.OrderingDeps(hr.DependsOn); len(got) != 2 {
+	if got := cFull.OrderingDeps(hr); len(got) != 2 {
 		t.Errorf("disabled filter must not prune; OrderingDeps = %+v", got)
 	}
 }
@@ -1135,5 +1139,31 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	}
 	if info, _ := st.GetStatus(hr.Named()); info.Status != store.StatusReady {
 		t.Errorf("HR not Ready after no-op re-run: %+v", info)
+	}
+}
+
+func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T) {
+	for _, optional := range []bool{false, true} {
+		t.Run(fmt.Sprint(optional), func(t *testing.T) {
+			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+			approved := &manifest.Secret{Name: "approved", Namespace: "apps"}
+			c, st := newTestControllerWithOptions(t, ReconcileOptions{
+				ParentOf:       func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent, true },
+				SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{approved.Named(): approved},
+			})
+			ks := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+				{Kind: "Unsupported", Name: "ignored"},
+				{Kind: manifest.KindSecret, Name: approved.Name},
+				{Kind: manifest.KindSecret, Name: "unreadable", Optional: optional},
+				{Kind: manifest.KindSecret, Name: approved.Name},
+			}}}
+			st.AddObject(ks)
+			if got := c.parentReadsUnreadableSecret(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}); got == optional {
+				t.Fatalf("parent unreadable = %v, want %v", got, !optional)
+			}
+			if len(ks.PostBuild.SubstituteFrom) != 4 || ks.PostBuild.SubstituteFrom[0].Kind != "Unsupported" {
+				t.Fatal("parent substitution refs mutated")
+			}
+		})
 	}
 }

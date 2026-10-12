@@ -649,14 +649,15 @@ spec:
 	if err != nil {
 		t.Fatalf("parseKustomization: %v", err)
 	}
-	if len(k.DependsOn) != 1 {
-		t.Fatalf("DependsOn len = %d", len(k.DependsOn))
+	deps := refsForUse(t, k, "dependsOn")
+	if len(deps) != 1 {
+		t.Fatalf("DependsOn len = %d", len(deps))
 	}
-	if k.DependsOn[0].Name != "infra" {
-		t.Errorf("name: %q", k.DependsOn[0].Name)
+	if deps[0].Name != "infra" {
+		t.Errorf("name: %q", deps[0].Name)
 	}
-	if !strings.Contains(k.DependsOn[0].ReadyExpr, "InfraInitialized") {
-		t.Errorf("ReadyExpr lost: %q", k.DependsOn[0].ReadyExpr)
+	if !strings.Contains(deps[0].ReadyExpr, "InfraInitialized") {
+		t.Errorf("ReadyExpr lost: %q", deps[0].ReadyExpr)
 	}
 }
 
@@ -667,14 +668,15 @@ func TestParseHelmRelease_DependsOn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseHelmRelease: %v", err)
 	}
-	if got, want := len(hr.DependsOn), 2; got != want {
+	deps := refsForUse(t, hr, "dependsOn")
+	if got, want := len(deps), 2; got != want {
 		t.Fatalf("DependsOn len = %d, want %d", got, want)
 	}
-	if got := hr.DependsOn[0].NamespacedName(); got != "ns/other" {
+	if got := deps[0].NamespacedName(); got != "ns/other" {
 		t.Errorf("DependsOn[0] = %q, want ns/other", got)
 	}
-	if hr.DependsOn[1].Namespace != "other-ns" || hr.DependsOn[1].Name != "cross" {
-		t.Errorf("DependsOn[1] = %+v", hr.DependsOn[1])
+	if deps[1].Namespace != "other-ns" || deps[1].Name != "cross" {
+		t.Errorf("DependsOn[1] = %+v", deps[1])
 	}
 }
 
@@ -916,17 +918,18 @@ spec:
 	if err != nil {
 		t.Fatalf("parseKustomization: %v", err)
 	}
-	if len(k.DependsOn) != 2 {
-		t.Fatalf("DependsOn len = %d, want 2", len(k.DependsOn))
+	deps := refsForUse(t, k, "dependsOn")
+	if len(deps) != 2 {
+		t.Fatalf("DependsOn len = %d, want 2", len(deps))
 	}
-	if got := k.DependsOn[0].NamespacedName(); got != "flux-system/infra" {
+	if got := deps[0].NamespacedName(); got != "flux-system/infra" {
 		t.Errorf("DependsOn[0] = %q, want flux-system/infra", got)
 	}
-	if got := k.DependsOn[1].NamespacedName(); got != "other/extras" {
+	if got := deps[1].NamespacedName(); got != "other/extras" {
 		t.Errorf("DependsOn[1] = %q, want other/extras", got)
 	}
-	if len(k.PostBuildSubstituteFrom) != 1 || !k.PostBuildSubstituteFrom[0].Optional {
-		t.Errorf("substituteFrom = %+v", k.PostBuildSubstituteFrom)
+	if len(k.PostBuild.SubstituteFrom) != 1 || !k.PostBuild.SubstituteFrom[0].Optional {
+		t.Errorf("substituteFrom = %+v", k.PostBuild.SubstituteFrom)
 	}
 	if k.PostBuildSubstitute["DOMAIN"] != "example.com" {
 		t.Errorf("substitute = %+v", k.PostBuildSubstitute)
@@ -1276,7 +1279,7 @@ spec: {name: b}`},
 			if err != nil {
 				t.Fatalf("ParseDoc: %v", err)
 			}
-			if !IsRawObject(obj) {
+			if KindOf(obj).Tracked {
 				t.Fatalf("got %T, want *RawObject", obj)
 			}
 			// Identity must survive: the object still renders and diffs
@@ -1289,12 +1292,12 @@ spec: {name: b}`},
 	}
 }
 
-func TestIsRawObject(t *testing.T) {
-	if IsRawObject(&Bucket{Name: "b"}) {
-		t.Error("typed Flux Bucket reported as RawObject")
+func TestKindOf_Admission(t *testing.T) {
+	if !KindOf(&Bucket{Name: "b"}).Tracked {
+		t.Error("typed Flux Bucket is not tracked")
 	}
-	if !IsRawObject(&RawObject{Kind: KindBucket, Name: "b"}) {
-		t.Error("RawObject not reported as RawObject")
+	if KindOf(&RawObject{Kind: KindBucket, APIVersion: "example.com/v1", Name: "b"}).Tracked {
+		t.Error("foreign Bucket is tracked")
 	}
 }
 
@@ -1491,14 +1494,13 @@ func TestParseDoc_MissingFields(t *testing.T) {
 	if _, _, _, err := ParseDoc(map[string]any{"kind": "Foo"}, defaultParseDocOptions()); err == nil || !strings.Contains(err.Error(), "apiVersion") {
 		t.Errorf("expected apiVersion error, got %v", err)
 	}
-	// Bare data files (no kind:) are silently dropped as RawObjects —
-	// helm values, config blobs, etc. that aren't k8s resources.
+	// Bare data files (no kind:) are not Kubernetes resources.
 	obj, _, _, err := ParseDoc(map[string]any{"apiVersion": "v1"}, defaultParseDocOptions())
 	if err != nil {
 		t.Errorf("missing-kind docs should not error, got %v", err)
 	}
-	if _, ok := obj.(*RawObject); !ok {
-		t.Errorf("expected RawObject for missing-kind doc, got %T", obj)
+	if obj != nil {
+		t.Errorf("expected nil for missing-kind doc, got %T", obj)
 	}
 }
 
@@ -1822,25 +1824,12 @@ spec:
 	}
 }
 
-func TestIsKustomizeBuildDirective(t *testing.T) {
-	cases := []struct {
-		name string
-		obj  BaseManifest
-		want bool
-	}{
-		{"kustomize-config Kustomization", &RawObject{Kind: "Kustomization", APIVersion: "kustomize.config.k8s.io/v1beta1"}, true},
-		{"kustomize-config Component", &RawObject{Kind: "Component", APIVersion: "kustomize.config.k8s.io/v1alpha1"}, true},
-		{"foreign Kustomization", &RawObject{Kind: "Kustomization", APIVersion: "kustomize.config.k8s.io.example.com/v1"}, false},
-		{"foreign Component", &RawObject{Kind: "Component", APIVersion: "kustomize.config.k8s.io.example.com/v1"}, false},
-		{"flux Kustomization (typed)", &Kustomization{}, false},
-		{"unknown resource RawObject", &RawObject{Kind: "Widget", APIVersion: "example.com/v1"}, false},
-		{"helmrelease (typed)", &HelmRelease{}, false},
-		{"nil", nil, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := IsKustomizeBuildDirective(tc.obj); got != tc.want {
-				t.Errorf("IsKustomizeBuildDirective = %v, want %v", got, tc.want)
+func TestParseDoc_BuildDirectives(t *testing.T) {
+	for _, kind := range []string{"Kustomization", "Component"} {
+		t.Run(kind, func(t *testing.T) {
+			obj, err := ParseDoc(map[string]any{"kind": kind, "apiVersion": "kustomize.config.k8s.io/v1beta1"}, ParseDocOptions{})
+			if err != nil || obj != nil {
+				t.Fatalf("ParseDoc = %T, %v; want nil, nil", obj, err)
 			}
 		})
 	}

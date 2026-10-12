@@ -588,50 +588,26 @@ func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.Nam
 // Skipped resources still get marked Ready by their controllers, so
 // downstream depwait completes naturally.
 func transitiveDepsOf(obj manifest.BaseManifest) []manifest.NamedResource {
-	switch o := obj.(type) {
-	case *manifest.HelmRelease:
-		out := []manifest.NamedResource{{
-			Kind: o.Chart.RepoKind, Namespace: o.Chart.RepoNamespace, Name: o.Chart.RepoName,
-		}}
-		for _, ref := range o.ValuesFrom {
-			out = append(out, manifest.NamedResource{
-				Kind: ref.Kind, Namespace: o.Namespace, Name: ref.Name,
-			})
-		}
-		return out
-
-	case *manifest.Kustomization:
-		var out []manifest.NamedResource
-		if o.SourceKind != "" && o.SourceName != "" {
-			out = append(out, manifest.NamedResource{
-				Kind: o.SourceKind, Namespace: o.SourceNamespace, Name: o.SourceName,
-			})
-		}
-		for _, ref := range o.PostBuildSubstituteFrom {
-			if !manifest.IsSubstituteDataRef(ref) {
-				continue
-			}
-			out = append(out, manifest.NamedResource{
-				Kind: ref.Kind, Namespace: o.Namespace, Name: ref.Name,
-			})
-		}
-		return out
-
-	case *manifest.HelmChartSource:
-		// A HelmRelease chartRef pointing at a HelmChart CRD lands the
-		// HelmChart in the BFS via the HR's RepoKind=KindHelmChart edge
-		// above. The chart's actual bytes come from the HelmChart's own
-		// sourceRef (OCIRepository/HelmRepository/GitRepository/Bucket)
-		// — follow that edge so changed-only mode keeps the backing
-		// source alive. Without this, the HelmChart sits in keep but
-		// the source artifact is PreGate-skipped and render fails
-		// "artifact not found."
-		if o.SourceRef.Name == "" {
-			return nil
-		}
-		return []manifest.NamedResource{{
-			Kind: o.SourceRef.Kind, Namespace: o.Namespace, Name: o.SourceRef.Name,
-		}}
+	if obj == nil {
+		return nil
 	}
-	return nil
+	refs := manifest.References(obj)
+	count := 0
+	refs(func(ref manifest.DependencyRef) bool {
+		if ref.Content {
+			count++
+		}
+		return true
+	})
+	if count == 0 {
+		return nil
+	}
+	out := make([]manifest.NamedResource, 0, count)
+	refs(func(ref manifest.DependencyRef) bool {
+		if ref.Content {
+			out = append(out, ref.NamedResource)
+		}
+		return true
+	})
+	return out
 }

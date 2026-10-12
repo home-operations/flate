@@ -100,8 +100,17 @@ spec:
 				l.ApplyNamespaces(root)
 				if tc.name == "cross_tree" {
 					ks, ok := l.Store.Get[*manifest.Kustomization](manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "games", Name: "games"})
-					if !ok || len(ks.DependsOn) != 1 || ks.DependsOn[0].Namespace != "games" {
-						t.Fatalf("projected dependsOn namespace: %+v", ks)
+					if !ok {
+						t.Fatal("projected Kustomization missing")
+					}
+					var deps []manifest.NamedResource
+					for ref := range manifest.References(ks) {
+						if ref.Use == "dependsOn" {
+							deps = append(deps, ref.NamedResource)
+						}
+					}
+					if len(deps) != 1 || deps[0].Namespace != "games" {
+						t.Fatalf("projected dependsOn namespace: %+v", deps)
 					}
 				}
 				for _, ns := range tc.want {

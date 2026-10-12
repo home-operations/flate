@@ -1,8 +1,10 @@
 package manifest
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"iter"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 )
@@ -158,4 +160,33 @@ func (p *ResourceSetInputProvider) derivedID() string {
 	// First 8 bytes (16 hex chars) of the full digest — enough to
 	// uniquely identify the input set within a render.
 	return SHA256Hex([]byte(p.Namespace + "/" + p.Name))[:16]
+}
+
+func (r *ResourceSet) references() iter.Seq[DependencyRef] {
+	return func(yield func(DependencyRef) bool) {
+		for i, dep := range r.DependsOn {
+			ns := cmp.Or(dep.Namespace, r.Namespace)
+			if IsClusterScoped(map[string]any{"apiVersion": dep.APIVersion, "kind": dep.Kind}) {
+				ns = ""
+			}
+			if !yield(DependencyRef{
+				Kind: dep.Kind, Namespace: ns, Name: dep.Name,
+				Use: "dependsOn", Position: i, Ready: dep.Ready, ReadyExpr: dep.ReadyExpr,
+			}) {
+				return
+			}
+		}
+		for i, ref := range r.InputsFrom {
+			if !yield(DependencyRef{
+				Kind: KindResourceSetInputProvider, Namespace: r.Namespace, Name: ref.Name,
+				Use: "inputsFrom", Position: i, Content: true,
+			}) {
+				return
+			}
+		}
+	}
+}
+
+func (p *ResourceSetInputProvider) references() iter.Seq[DependencyRef] {
+	return func(func(DependencyRef) bool) {}
 }

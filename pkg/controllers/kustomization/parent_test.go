@@ -4,6 +4,8 @@ import (
 	"slices"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -69,7 +71,7 @@ func TestCollectDeps_SubstitutionProducers(t *testing.T) {
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Renderers: tc.producers, Owners: tc.owners}}}
 			c := New(store.New(), nil, nil, false)
 			c.Configure(Options{Index: index})
-			ks := &manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace, PostBuildSubstituteFrom: []manifest.SubstituteReference{tc.ref}}
+			ks := &manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}}}
 			var got []manifest.NamedResource
 			for _, dep := range c.collectDeps(ks) {
 				got = append(got, dep.NamedResource)
@@ -90,9 +92,9 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	consumerObj := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
 		Path: "kubernetes/apps",
-		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
-		},
+		}},
 	}
 	producerObj := &manifest.Kustomization{
 		Name: "cluster-vars", Namespace: "flux-system",
@@ -140,9 +142,9 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	selfObj := &manifest.Kustomization{
 		Name: "app", Namespace: "foo",
 		Path: "kubernetes/foo/app",
-		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "settings"},
-		},
+		}},
 	}
 	self := selfObj.Named()
 	// CM rendered by self — file lives under self's spec.path so

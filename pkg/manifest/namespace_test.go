@@ -120,6 +120,52 @@ func TestStampNamespace_EmptyNamespaceIsNoop(t *testing.T) {
 	}
 }
 
+func TestStampNamespace_EmissionPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		kind, apiVersion string
+		namespaced       bool
+		stamped          bool
+	}{
+		{"ComponentStatus", "v1", false, true},
+		{"CSIDriver", "storage.k8s.io/v1", false, true},
+		{"CSINode", "storage.k8s.io/v1", false, true},
+		{"VolumeAttachment", "storage.k8s.io/v1", false, true},
+		{"RuntimeClass", "node.k8s.io/v1", false, true},
+		{"CertificateSigningRequest", "certificates.k8s.io/v1", false, true},
+		{"FlowSchema", "flowcontrol.apiserver.k8s.io/v1", false, true},
+		{"PriorityLevelConfiguration", "flowcontrol.apiserver.k8s.io/v1", false, true},
+		{"ValidatingAdmissionPolicy", "admissionregistration.k8s.io/v1", false, true},
+		{"ValidatingAdmissionPolicyBinding", "admissionregistration.k8s.io/v1", false, true},
+		{"ClusterRole", "rbac.authorization.k8s.io/v1", false, false},
+		{"ClusterRole", "foreign.example/v1", true, false},
+		{"Widget", "foreign.example/v1", true, true},
+	} {
+		t.Run(tc.apiVersion+"/"+tc.kind, func(t *testing.T) {
+			for _, authored := range []string{"", "authored"} {
+				doc := map[string]any{
+					"apiVersion": tc.apiVersion, "kind": tc.kind,
+					"metadata": map[string]any{"name": "object", "namespace": authored},
+				}
+				obj, err := ParseDoc(doc, ParseDocOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := KindOf(obj).Namespaced; got != tc.namespaced {
+					t.Fatalf("Namespaced = %v, want %v", got, tc.namespaced)
+				}
+				StampNamespace(doc, "effective")
+				want := authored
+				if authored == "" && tc.stamped {
+					want = "effective"
+				}
+				if _, got := DocMetadata(doc); got != want {
+					t.Errorf("authored %q: namespace = %q, want %q", authored, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestStampNamespaces_MixedSlice(t *testing.T) {
 	docs := []map[string]any{
 		{"kind": "ServiceAccount", "metadata": map[string]any{"name": "sa"}},

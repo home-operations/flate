@@ -28,6 +28,13 @@ import (
 // referenced by N HRs) parse exactly once across the entire run.
 func Prepare(hr *manifest.HelmRelease, lookup manifest.HelmChartLookup, provider values.Provider, cache *values.Cache) (*manifest.HelmRelease, error) {
 	hr = hr.Clone()
+	chart := hr.Chart
+	for ref := range manifest.References(hr) {
+		if ref.Use == "chart" || ref.Use == "source" {
+			chart.RepoKind, chart.RepoNamespace, chart.RepoName = ref.Kind, ref.Namespace, ref.Name
+		}
+	}
+	hr.Chart = chart
 	if err := hr.ResolveChartRef(lookup); err != nil {
 		return nil, err
 	}

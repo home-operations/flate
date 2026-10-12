@@ -73,7 +73,7 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, level manifest.DrainLevel)
 	}
 
 	// 4. Present, status-less kind (ConfigMap/Secret): existence is readiness.
-	if !store.SupportsStatus(id.Kind) {
+	if !dep.Ready || !w.supportsStatus(id, w.Store.GetObject(id)) {
 		return Classification{Kind: ClassReady}
 	}
 

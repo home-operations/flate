@@ -30,17 +30,18 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-// reconcilableKinds are the workload kinds the orchestrator drives
-// through the parent gate and dependsOn graph (Flux's spec.dependsOn is
-// kind-homogeneous to these two). Ranged over wherever a pass must visit
-// every Kustomization and HelmRelease in the store.
-var reconcilableKinds = []string{manifest.KindKustomization, manifest.KindHelmRelease}
+var reconcilableKinds = func() []string {
+	var kinds []string
+	for info := range manifest.Kinds() {
+		if info.Status && info.Group != manifest.SourceDomain {
+			kinds = append(kinds, info.Kind)
+		}
+	}
+	return kinds
+}()
 
-// isReconcilableKind reports whether kind is a Kustomization or
-// HelmRelease — the kinds that carry preflight failures, parent gates,
-// and dependsOn edges.
 func isReconcilableKind(kind string) bool {
-	return kind == manifest.KindKustomization || kind == manifest.KindHelmRelease
+	return slices.Contains(reconcilableKinds, kind)
 }
 
 // SubstitutionSource supplies a ConfigMap or Secret only for postBuild references.
@@ -533,11 +534,10 @@ func (o *Orchestrator) requiredDataDependencies(consumer manifest.NamedResource)
 			deps[owner] = struct{}{}
 		}
 	}
-	addInput := func(kind, name string) {
-		if name == "" {
+	addInput := func(id manifest.NamedResource) {
+		if id.Name == "" {
 			return
 		}
-		id := manifest.NamedResource{Kind: kind, Namespace: consumer.Namespace, Name: name}
 		deps[id] = struct{}{}
 		addOwners(id)
 		if producer, ok := o.producers.Producer(id); ok {
@@ -548,14 +548,11 @@ func (o *Orchestrator) requiredDataDependencies(consumer manifest.NamedResource)
 			deps[producer] = struct{}{}
 		}
 	}
-	switch obj := o.store.GetObject(consumer).(type) {
-	case *manifest.HelmRelease:
-		for _, ref := range obj.ValuesFrom {
-			addInput(ref.Kind, ref.Name)
-		}
-	case *manifest.Kustomization:
-		for _, ref := range obj.PostBuildSubstituteFrom {
-			addInput(ref.Kind, ref.Name)
+	if obj := o.store.GetObject(consumer); obj != nil {
+		for ref := range manifest.References(obj) {
+			if ref.Use == "valuesFrom" || ref.Use == "substituteFrom" {
+				addInput(ref.NamedResource)
+			}
 		}
 	}
 	out := slices.Collect(maps.Keys(deps))

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -19,7 +21,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 	sourceID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 	s.AddObject(&manifest.Kustomization{
 		Name: "pinned", Namespace: "flux-system", TargetNamespace: "apps", Path: "./apps",
-		SourceKind: sourceID.Kind, SourceName: sourceID.Name, SourceNamespace: sourceID.Namespace,
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: sourceID.Kind, Name: sourceID.Name, Namespace: sourceID.Namespace},
 	})
 	s.SetArtifact(sourceID, &store.SourceArtifact{LocalRoot: root, LocalPath: artifactDir})
 	l := loaderFixture(s, nil)

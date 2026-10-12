@@ -17,9 +17,9 @@ func TestRequire_Classifications(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			st := store.New()
 			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "consumer"}
-			ready := manifest.DependencyRef{Kind: manifest.KindKustomization, Namespace: "apps", Name: "ready"}
-			failed := manifest.DependencyRef{Kind: manifest.KindKustomization, Namespace: "apps", Name: "failed"}
-			pending := manifest.DependencyRef{Kind: manifest.KindKustomization, Namespace: "apps", Name: "pending"}
+			ready := manifest.DependencyRef{Ready: true, Kind: manifest.KindKustomization, Namespace: "apps", Name: "ready"}
+			failed := manifest.DependencyRef{Ready: true, Kind: manifest.KindKustomization, Namespace: "apps", Name: "failed"}
+			pending := manifest.DependencyRef{Ready: true, Kind: manifest.KindKustomization, Namespace: "apps", Name: "pending"}
 			st.UpdateStatus(ready.NamedResource, store.StatusReady, "")
 			st.UpdateStatus(failed.NamedResource, store.StatusFailed, "render failed")
 			st.UpdateStatus(pending.NamedResource, store.StatusPending, "working")

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -30,7 +32,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 			other := &manifest.GitRepository{Name: "other", Namespace: "flux-system"}
 			ks := &manifest.Kustomization{
 				Name: "root", Namespace: "flux-system", Path: "./",
-				SourceKind: manifest.KindGitRepository, SourceName: repository.Name, SourceNamespace: repository.Namespace,
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: repository.Name, Namespace: repository.Namespace},
 			}
 			cm := &manifest.ConfigMap{Name: "dirty", Namespace: "flux-system"}
 			artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalRoot: root, LocalPath: t.TempDir()}

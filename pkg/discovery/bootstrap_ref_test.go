@@ -14,9 +14,11 @@ import (
 	"testing"
 	"time"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
@@ -258,7 +260,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			}
 			ks := &manifest.Kustomization{
 				Name: "apps", Namespace: id.Namespace, Path: "./apps",
-				SourceKind: id.Kind, SourceName: id.Name, SourceNamespace: id.Namespace,
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name, Namespace: id.Namespace},
 			}
 			st.AddObject(ks)
 			d := discoverer{cfg: Config{

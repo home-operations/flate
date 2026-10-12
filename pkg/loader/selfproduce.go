@@ -204,7 +204,7 @@ func (l *Loader) graphRoots(repoRoot string, kss []*manifest.Kustomization, scop
 	var roots []graphVisit
 	grouped := map[graphContext]int{}
 	for _, ks := range kss {
-		if ks.Path == "" && ks.SourceName == "" {
+		if ks.Path == "" && ks.SourceRef.Name == "" {
 			continue
 		}
 		root, _, external := SourceView(l.Store, ks, repoRoot)

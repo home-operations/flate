@@ -4,6 +4,8 @@ import (
 	"slices"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -46,9 +48,9 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			}
 			consumer := &manifest.Kustomization{
 				Name: "consumer", Namespace: "apps",
-				DependsOn:  []manifest.DependencyRef{{NamedResource: target.Named(), ReadyExpr: "dep.spec.suspend == false"}},
-				SourceKind: manifest.KindGitRepository, SourceName: "source", SourceNamespace: "apps",
-				PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values"}},
+				DependsOn: []kustomizev1.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}},
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source", Namespace: "apps"},
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values"}}},
 			}
 			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, st)
 			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
@@ -56,7 +58,9 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			c.Configure(Options{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{consumer.Named(): parent})})
 			size := len(filter.KeepNames())
 			deps := c.collectDeps(consumer)
-			if got := slices.Contains(deps, consumer.DependsOn[0]); got != tc.retain {
+			if got := slices.ContainsFunc(deps, func(dep manifest.DependencyRef) bool {
+				return dep.Use == "dependsOn" && dep.Name == consumer.DependsOn[0].Name
+			}); got != tc.retain {
 				t.Errorf("ordering edge retained = %v, want %v; deps = %v", got, tc.retain, deps)
 			}
 			for _, id := range []manifest.NamedResource{

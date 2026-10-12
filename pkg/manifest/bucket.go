@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"cmp"
+	"iter"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
@@ -46,17 +47,17 @@ func parseBucket(doc map[string]any) (*Bucket, error) {
 		return nil, inputf("Bucket %s/%s missing spec.endpoint", cr.Namespace, cr.Name)
 	}
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.BucketProviderGeneric)
-	owner := cr.Namespace + "/" + cr.Name
-	if err := validateOptionalRefs("Bucket", owner,
-		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},
-		secretRefCheck{Field: "spec.certSecretRef", Ref: cr.Spec.CertSecretRef},
-		secretRefCheck{Field: "spec.proxySecretRef", Ref: cr.Spec.ProxySecretRef},
-	); err != nil {
-		return nil, err
-	}
-	return &Bucket{
+	out := &Bucket{
 		Name:       cr.Name,
 		Namespace:  cr.Namespace,
 		BucketSpec: cr.Spec,
-	}, nil
+	}
+	if use := emptySecretReference(out.references()); use != "" {
+		return nil, secretReferenceError(out.Named(), use)
+	}
+	return out, nil
+}
+
+func (b *Bucket) references() iter.Seq[DependencyRef] {
+	return credentialReferences(b.Namespace, b.SecretRef, b.CertSecretRef, b.ProxySecretRef)
 }

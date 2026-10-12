@@ -64,7 +64,7 @@ spec:
 		t.Errorf("foreign Bucket CRD must not be fetched; artifact=%+v", art)
 	}
 	obj := o.Store().GetObject(id)
-	if !manifest.IsRawObject(obj) {
+	if manifest.KindOf(obj).Tracked {
 		t.Fatalf("stored object = %T, want *manifest.RawObject", obj)
 	}
 

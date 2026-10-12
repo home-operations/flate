@@ -158,7 +158,7 @@ func Run(result *orchestrator.Result) Report {
 	for _, obj := range result.Objects {
 		id := obj.Named()
 		// Bootstrap and foreign objects have no user-facing reconcile verdict.
-		if id == manifest.BootstrapSourceID || manifest.IsRawObject(obj) {
+		if id == manifest.BootstrapSourceID || !manifest.KindOf(obj).Tracked {
 			continue
 		}
 		seen[id] = true

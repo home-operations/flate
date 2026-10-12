@@ -2,6 +2,7 @@ package change
 
 import (
 	"fmt"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"path/filepath"
 	"testing"
 
@@ -57,13 +58,13 @@ func BenchmarkTransitiveDeps(b *testing.B) {
 	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
-		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
 			{Kind: manifest.KindConfigMap, Name: "cluster-secrets"},
 			{Kind: manifest.KindConfigMap, Name: "common-config"},
 			{Kind: manifest.KindConfigMap, Name: "common-secrets"},
-		},
+		}},
 	}
 	s.AddObject(ks)
 
@@ -86,10 +87,8 @@ func seedKSStore(n int) (*store.Store, map[manifest.NamedResource]string) {
 		path := fmt.Sprintf("./apps/app-%d", i)
 		ks := &manifest.Kustomization{
 			Name: name, Namespace: "flux-system",
-			Path:            path,
-			SourceKind:      manifest.KindGitRepository,
-			SourceName:      "flux-system",
-			SourceNamespace: "flux-system",
+			Path:      path,
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
 		}
 		s.AddObject(ks)
 		sourceFiles[ks.Named()] = fmt.Sprintf("apps/app-%d/ks.yaml", i)

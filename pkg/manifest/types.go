@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"cmp"
+	"iter"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	meta "github.com/fluxcd/pkg/apis/meta"
@@ -21,18 +22,6 @@ type ValuesReference = meta.ValuesReference
 // kustomize-controller's own type — flate's parser previously copied
 // the same three fields (Kind, Name, Optional) into a local twin.
 type SubstituteReference = kustomizev1.SubstituteReference
-
-// IsSubstituteDataRef reports whether a required substituteFrom ref names offline data.
-// Changed-only retention and reconcile ordering MUST use the same predicate.
-func IsSubstituteDataRef(r SubstituteReference) bool {
-	return !r.Optional && r.Name != "" && (r.Kind == KindConfigMap || r.Kind == KindSecret)
-}
-
-// IsHardConfigMapEdge reports whether a substituteFrom ref requires ConfigMap readiness.
-// Secrets may be SOPS/ExternalSecret-managed and cannot always be materialized offline.
-func IsHardConfigMapEdge(r SubstituteReference) bool {
-	return IsSubstituteDataRef(r) && r.Kind == KindConfigMap
-}
 
 // NamedResource uniquely identifies a Kubernetes resource by kind +
 // namespace + name. Values are comparable and safe to use as map keys.
@@ -76,21 +65,56 @@ func (n NamedResource) Compare(other NamedResource) int {
 	)
 }
 
-// BaseManifest is the marker interface every domain object implements.
-// Concrete handling is done via type assertions in each controller.
+// BaseManifest is the sealed interface for parsed domain objects.
+// Implementations own their dependency walk and MUST keep embedded specs immutable.
 type BaseManifest interface {
 	Named() NamedResource
+	references() iter.Seq[DependencyRef]
 }
 
-// DependencyRef is a Kustomization or HelmRelease dependency entry —
-// the target resource plus an optional CEL expression that overrides
-// the built-in Ready check (per Flux's spec.dependsOn[].readyExpr).
+// DependencyRef describes one authored dependency or resolved chart source.
 type DependencyRef struct {
 	NamedResource
+	// Use is source, chart, dependsOn, valuesFrom, substituteFrom, secretRef,
+	// certSecretRef, proxySecretRef or inputsFrom.
+	Use string
+	// Position is the zero-based position within the source field. Credential
+	// fields use secretRef=0, certSecretRef=1 and proxySecretRef=2.
+	Position int
+	// Optional permits an absent target under the reference's data policy.
+	Optional bool
+	// Content selects changed-only content dependents; ordering edges are false.
+	Content bool
+	// Ready requests readiness rather than existence, independently of kind status.
+	Ready bool
 	// ReadyExpr is the CEL expression to evaluate against the dep's
 	// projected status. When non-empty, the built-in Ready=True check
 	// is replaced. Empty means "use the built-in check."
 	ReadyExpr string
+}
+
+// References yields dependencies in source-field order without deduplication.
+// The object and its embedded spec MUST remain immutable during iteration.
+func References(obj BaseManifest) iter.Seq[DependencyRef] {
+	return obj.references()
+}
+
+func credentialReferences(namespace string, refs ...*LocalObjectReference) iter.Seq[DependencyRef] {
+	return func(yield func(DependencyRef) bool) {
+		uses := [...]string{"secretRef", "certSecretRef", "proxySecretRef"}
+		for i, ref := range refs {
+			if ref != nil && !yield(DependencyRef{
+				Kind: KindSecret, Namespace: namespace, Name: ref.Name,
+				Use: uses[i], Position: i, Content: true,
+			}) {
+				return
+			}
+		}
+	}
+}
+
+func (r *RawObject) references() iter.Seq[DependencyRef] {
+	return func(func(DependencyRef) bool) {}
 }
 
 // DrainLevel controls dependency failure classification at the DAG fixpoint.
@@ -118,17 +142,6 @@ type RawObject struct {
 // Named identifies the resource.
 func (r *RawObject) Named() NamedResource {
 	return NamedResource{Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
-}
-
-// IsRawObject reports whether obj is the unmodeled fallback type rather
-// than one of flate's typed CRs. ParseDoc only produces a typed CR when
-// the document's API group matches too, so a resource whose kind names a
-// Flux CR but which parses to a RawObject is a foreign CRD sharing the
-// name — every consumer that routes on Kind alone (the source
-// controller's Fetchers map, the `flate test` roster) must exclude it.
-func IsRawObject(obj BaseManifest) bool {
-	_, raw := obj.(*RawObject)
-	return raw
 }
 
 // Clone returns a deep copy safe for mutation without aliasing the

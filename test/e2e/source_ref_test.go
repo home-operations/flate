@@ -166,7 +166,7 @@ spec: {interval: 1m, prune: true}
 				seen[obj.Named()] = true
 				if ks, ok := obj.(*manifest.Kustomization); ok && ks.Name == "tmpl" {
 					assert.Equal(t, ks.Path, "./apps")
-					assert.Equal(t, ks.SourceName, "flux-system")
+					assert.Equal(t, ks.SourceRef.Name, "flux-system")
 				}
 			}
 			assert.Diff(t, seen, map[manifest.NamedResource]bool{
@@ -541,8 +541,13 @@ spec:
 				ks, ok := st.Get[*manifest.Kustomization](manifest.NamedResource{
 					Kind: manifest.KindKustomization, Namespace: namespace, Name: "apps",
 				})
-				if !ok || ks.SourceNamespace != namespace || ks.SourceRef.Namespace != "" || ks.Path != "./broken" {
+				if !ok || ks.SourceRef.Namespace != "" || ks.Path != "./broken" {
 					t.Fatalf("expected implicit source in consumer namespace, got %+v", ks)
+				}
+				for ref := range manifest.References(ks) {
+					if ref.Use == "source" {
+						assert.Equal(t, ref.Namespace, namespace)
+					}
 				}
 			}
 			art, ok := st.GetArtifact(manifest.NamedResource{
@@ -751,12 +756,19 @@ spec:
 			})
 			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "shifted", Name: "a-held"}
 			ks, ok := st.Get[*manifest.Kustomization](id)
-			if !ok || ks.Path != "./held" || ks.SourceName != "unknown" || ks.SourceNamespace != tt.wantNamespace {
+			if !ok || ks.Path != "./held" || ks.SourceRef.Name != "unknown" {
 				t.Fatalf("expected surviving consumer with inherited namespace and unchanged path/source, got %+v", ks)
 			}
+			var sourceRef manifest.NamedResource
+			for ref := range manifest.References(ks) {
+				if ref.Use == "source" {
+					sourceRef = ref.NamedResource
+					break
+				}
+			}
+			assert.Equal(t, sourceRef.Namespace, tt.wantNamespace)
 			if tt.pinned {
-				ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-				art, ok := st.GetArtifact(ref).(*store.SourceArtifact)
+				art, ok := st.GetArtifact(sourceRef).(*store.SourceArtifact)
 				if discoveryError != nil || !ok || art.LocalRoot != root || art.LocalPath == root {
 					t.Fatalf("expected genuine inherited source pin without a held error: error=%v artifact=%+v", discoveryError, art)
 				}
@@ -926,7 +938,7 @@ spec:
 				}
 				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: tt.survivorName}
 				ks, ok := st.Get[*manifest.Kustomization](id)
-				if !ok || ks.Path != tt.survivorPath || ks.SourceName != tt.survivorSource || ks.SourceRef.Namespace != "" {
+				if !ok || ks.Path != tt.survivorPath || ks.SourceRef.Name != tt.survivorSource || ks.SourceRef.Namespace != "" {
 					t.Fatalf("expected survivor with independently changed identity field, got %+v", ks)
 				}
 				if tt.survivorName != "a-held" {

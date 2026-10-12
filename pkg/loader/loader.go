@@ -412,7 +412,7 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomizationDocument, kpath
 			// A Flux-GVK patch fragment with neither spec.path nor sourceRef
 			// must never become a reconcilable Kustomization. A sourceRef alone
 			// is sufficient for a bootstrap entry that renders the source root.
-			if ks.Path == "" && ks.SourceKind == "" && ks.SourceName == "" {
+			if ks.Path == "" && ks.SourceRef.Kind == "" && ks.SourceRef.Name == "" {
 				continue
 			}
 			if w.loader.skipExisting(obj.Named()) {
@@ -446,7 +446,7 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 	}
 	dirRel := filepath.ToSlash(rel) + "/"
 	for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		if ks.Path == "" && ks.SourceName == "" {
+		if ks.Path == "" && ks.SourceRef.Name == "" {
 			continue
 		}
 		root := l.SourceRoot
@@ -637,7 +637,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 	}
 	count := 0
 	for _, obj := range objs {
-		if _, raw := obj.(*manifest.RawObject); raw {
+		if !manifest.KindOf(obj).Tracked {
 			continue
 		}
 		if hr, ok := obj.(*manifest.HelmRelease); ok {
@@ -664,12 +664,8 @@ func (l *Loader) loadFile(path string) (int, error) {
 	}
 	if l.documents.cache != nil {
 		objects := slices.DeleteFunc(objs, func(obj manifest.BaseManifest) bool {
-			switch obj.(type) {
-			case *manifest.ConfigMap, *manifest.Secret, *manifest.Kustomization, *manifest.RawObject:
-				return false
-			default:
-				return true
-			}
+			info := manifest.KindOf(obj)
+			return info.Tracked && info.Kind != manifest.KindConfigMap && info.Kind != manifest.KindSecret && info.Kind != manifest.KindKustomization
 		})
 		l.documents.cache[path] = document{objects: objects}
 	}
@@ -712,29 +708,24 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	}
 	id := obj.Named()
 	r := manifest.DiscoveryRecord{Path: absPath, File: l.fileCoordinate(absPath)}
-	switch o := obj.(type) {
-	case *manifest.HelmRelease:
-		if o.Chart.RepoKind != "" && o.Chart.RepoName != "" {
-			r.Refs = make([]manifest.NamedResource, 1, 1+len(o.ValuesFrom))
-			r.Refs[0] = manifest.NamedResource{Kind: o.Chart.RepoKind, Namespace: o.Chart.RepoNamespace, Name: o.Chart.RepoName}
+	refs := manifest.References(obj)
+	selected := func(ref manifest.DependencyRef) bool {
+		if ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Ready {
+			return true
 		}
-		for _, ref := range o.ValuesFrom {
-			r.Refs = append(r.Refs, manifest.NamedResource{Kind: ref.Kind, Namespace: o.Namespace, Name: ref.Name})
+		return (ref.Use == "source" || ref.Use == "chart") && ref.Kind != "" && ref.Name != ""
+	}
+	count := 0
+	for ref := range refs {
+		if selected(ref) {
+			count++
 		}
-	case *manifest.Kustomization:
-		if o.SourceKind != "" && o.SourceName != "" {
-			count := 1
-			for _, ref := range o.PostBuildSubstituteFrom {
-				if manifest.IsHardConfigMapEdge(ref) {
-					count++
-				}
-			}
-			r.Refs = make([]manifest.NamedResource, 1, count)
-			r.Refs[0] = manifest.NamedResource{Kind: o.SourceKind, Namespace: o.SourceNamespace, Name: o.SourceName}
-		}
-		for _, ref := range o.PostBuildSubstituteFrom {
-			if manifest.IsHardConfigMapEdge(ref) {
-				r.Refs = append(r.Refs, manifest.NamedResource{Kind: ref.Kind, Namespace: o.Namespace, Name: ref.Name})
+	}
+	if count != 0 {
+		r.Refs = make([]manifest.NamedResource, 0, count)
+		for ref := range refs {
+			if selected(ref) {
+				r.Refs = append(r.Refs, ref.NamedResource)
 			}
 		}
 	}
@@ -769,19 +760,8 @@ func (l *Loader) fileCoordinate(absPath string) string {
 // would render them, through the orchestrator's post-discovery
 // orphan-promotion sweep.
 func isDiscoveryKind(obj manifest.BaseManifest) bool {
-	switch obj.(type) {
-	case *manifest.Kustomization,
-		*manifest.ResourceSet,
-		*manifest.ResourceSetInputProvider,
-		*manifest.GitRepository,
-		*manifest.OCIRepository,
-		*manifest.HelmRepository,
-		*manifest.HelmChartSource,
-		*manifest.Bucket,
-		*manifest.ExternalArtifact:
-		return true
-	}
-	return false
+	info := manifest.KindOf(obj)
+	return info.Tracked && info.Kind != manifest.KindHelmRelease && info.Kind != manifest.KindConfigMap && info.Kind != manifest.KindSecret
 }
 
 func isManifestFile(path string) bool {

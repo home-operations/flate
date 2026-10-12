@@ -223,7 +223,7 @@ func (s *Store) rUnlockAll() {
 func (s *Store) AddObject(obj manifest.BaseManifest) {
 	id := obj.Named()
 	sh := s.shardFor(id)
-	if !manifest.IsRawObject(obj) {
+	if manifest.KindOf(obj).Tracked {
 		sh.mu.RLock()
 		prev, exists := sh.objects[id]
 		sh.mu.RUnlock()

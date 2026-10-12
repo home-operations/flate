@@ -86,7 +86,6 @@ func TestReconcile_HappyPath(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
@@ -219,7 +218,6 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
@@ -262,7 +260,6 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
@@ -320,7 +317,6 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
@@ -376,7 +372,6 @@ func TestReconcile_SuspendShortCircuits(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 	}
 	s.AddObject(ks)
 	info := dispatchToFixpoint(t, c, s, ks.Named())
@@ -402,7 +397,6 @@ func TestReconcile_MissingPathFails(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
@@ -430,9 +424,8 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
-		DependsOn: []manifest.DependencyRef{
-			{NamedResource: dep.Named()},
+		DependsOn: []kustomizev1.DependencyReference{
+			{Name: dep.Name, Namespace: dep.Namespace},
 		},
 		Contents: map[string]any{},
 	}

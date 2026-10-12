@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -149,7 +151,7 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps",
-		PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}}
 	release := &manifest.HelmRelease{Name: "release", Namespace: "apps",
 		Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: "chart"}}
 	for _, obj := range []manifest.BaseManifest{producer, chart, consumer, release} {

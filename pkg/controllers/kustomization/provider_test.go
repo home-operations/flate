@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -28,7 +30,7 @@ func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
 			source := &manifest.ConfigMap{Name: "external", Namespace: "apps"}
 			supplied := map[manifest.NamedResource]manifest.BaseManifest{{Kind: tc.kind, Namespace: tc.namespace, Name: tc.ref}: source}
 			c.Configure(Options{SubstituteFrom: supplied, Substitute: map[string]string{"VALUE": "overlay"}})
-			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "external"}}}
+			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "external"}}}}
 			deps := c.collectDeps(ks)
 			if (len(deps) == 0) != tc.accepted {
 				t.Fatalf("deps=%v, accepted=%v", deps, tc.accepted)
@@ -48,7 +50,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 	if c.substitutionProvider.Secret("apps", "external") != external || c.substitutionProvider.Secret("apps", "other") != other || c.substitutionProvider.Secret("other", "external") != nil {
 		t.Fatal("provider lost exact frozen precedence or fallback")
 	}
-	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: "Secret", Name: "external"}}}
+	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Secret", Name: "external"}}}}
 	if got := values.UnreadableSubstituteSecrets(ks, c.substitutionProvider); len(got) != 0 {
 		t.Fatalf("readable supplied Secret reported unreadable: %v", got)
 	}

@@ -140,24 +140,6 @@ const (
 	ReasonReconciling = "Reconciling"
 )
 
-// SupportsStatus reports whether the given kind participates in the
-// status pipeline. Kinds outside this set (ConfigMap, Secret, ...) are
-// considered "ready" simply by existing.
-func SupportsStatus(kind string) bool {
-	switch kind {
-	case manifest.KindKustomization,
-		manifest.KindGitRepository,
-		manifest.KindHelmRelease,
-		manifest.KindHelmRepository,
-		manifest.KindOCIRepository,
-		manifest.KindHelmChart,
-		manifest.KindExternalArtifact,
-		manifest.KindBucket:
-		return true
-	}
-	return false
-}
-
 // readyCondition builds the Ready condition that corresponds to the
 // (status, message) pair UpdateStatus accepts. Reason is derived from
 // Status; Message is passed through verbatim.

@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"cmp"
+	"iter"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
@@ -35,16 +36,17 @@ func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 		return nil, inputf("HelmRepository missing spec.url")
 	}
 	cr.Spec.Type = cmp.Or(cr.Spec.Type, sourcev1.HelmRepositoryTypeDefault)
-	owner := cr.Namespace + "/" + cr.Name
-	if err := validateOptionalRefs("HelmRepository", owner,
-		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},
-		secretRefCheck{Field: "spec.certSecretRef", Ref: cr.Spec.CertSecretRef},
-	); err != nil {
-		return nil, err
-	}
-	return &HelmRepository{
+	out := &HelmRepository{
 		Name:               cr.Name,
 		Namespace:          cr.Namespace,
 		HelmRepositorySpec: cr.Spec,
-	}, nil
+	}
+	if use := emptySecretReference(out.references()); use != "" {
+		return nil, secretReferenceError(out.Named(), use)
+	}
+	return out, nil
+}
+
+func (h *HelmRepository) references() iter.Seq[DependencyRef] {
+	return credentialReferences(h.Namespace, h.SecretRef, h.CertSecretRef)
 }

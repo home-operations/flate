@@ -197,7 +197,13 @@ func (s *selectionSide) prepareExternal(root manifest.NamedResource, ks *manifes
 	if !store.IsUnchanged(info) && !store.IsSkipped(info) {
 		return
 	}
-	src := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
+	var src manifest.NamedResource
+	for ref := range manifest.References(ks) {
+		if ref.Use == "source" {
+			src = ref.NamedResource
+			break
+		}
+	}
 	s.result.External = append(s.result.External, manifest.Warning{Resource: id, Message: "external source " + src.String() + " is outside the local tree; not rendered"})
 }
 

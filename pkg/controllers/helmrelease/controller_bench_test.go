@@ -1,6 +1,7 @@
 package helmrelease
 
 import (
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -54,13 +55,13 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 
 func BenchmarkCollectHRDeps(b *testing.B) {
 	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "target"}
-	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []manifest.DependencyRef{{NamedResource: id}}}
+	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := &Controller{Controller: base.New(st, nil, "helmrelease")}
 	c.SetFilter(change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st))
 	b.ReportAllocs()
 	for b.Loop() {
-		c.OrderingDeps(hr.DependsOn)
+		c.OrderingDeps(hr)
 	}
 }
 

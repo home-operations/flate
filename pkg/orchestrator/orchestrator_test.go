@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,7 +95,7 @@ func TestDetectOrphans(t *testing.T) {
 	o.store.AddObject(&manifest.GitRepository{Name: "external", Namespace: "flux-system"})
 	o.store.AddObject(&manifest.Kustomization{
 		Name: "external", Namespace: "flux-system", Path: "./",
-		SourceKind: manifest.KindGitRepository, SourceName: "external", SourceNamespace: "flux-system",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "external", Namespace: "flux-system"},
 	})
 	assert.Diff(t, o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot)), orphans)
 }

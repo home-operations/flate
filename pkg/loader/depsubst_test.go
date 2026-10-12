@@ -3,15 +3,17 @@ package loader
 import (
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 func ksWithDeps(name, ns string, sub map[string]any, depNames ...string) *manifest.Kustomization {
-	deps := make([]manifest.DependencyRef, len(depNames))
+	deps := make([]kustomizev1.DependencyReference, len(depNames))
 	for i, dn := range depNames {
-		deps[i] = manifest.DependencyRef{
-			Kind: manifest.KindKustomization, Namespace: ns, Name: dn,
+		deps[i] = kustomizev1.DependencyReference{
+			Namespace: ns, Name: dn,
 		}
 	}
 	return &manifest.Kustomization{
@@ -27,10 +29,13 @@ func firstDepName(t *testing.T, s *store.Store, ns, name string) string {
 	if !ok {
 		t.Fatalf("Kustomization %s/%s missing from store", ns, name)
 	}
-	if len(ks.DependsOn) == 0 {
-		t.Fatalf("Kustomization %s/%s has no dependsOn", ns, name)
+	for ref := range manifest.References(ks) {
+		if ref.Use == "dependsOn" {
+			return ref.Name
+		}
 	}
-	return ks.DependsOn[0].Name
+	t.Fatalf("Kustomization %s/%s has no dependsOn", ns, name)
+	return ""
 }
 
 // A bare ${VAR} in a child KS's dependsOn (no default) resolves to the
@@ -99,5 +104,38 @@ func TestResolveDependsOnSubstitutions_NoTemplateUntouchedAndAgreeingVarOK(t *te
 	}
 	if got := firstDepName(t, s, "flux-system", "templated"); got != "0-biohazard-config" {
 		t.Errorf("agreeing var must still resolve; got %q", got)
+	}
+}
+
+func TestResolveDependsOnSubstitutions_PreservesAuthoredNamespaceAndStoredSpec(t *testing.T) {
+	st := store.New()
+	st.AddObject(ksWithDeps("settings", "apps", map[string]any{"APP": "backend", "NS": "shared"}))
+	original := &manifest.Kustomization{
+		Name: "consumer", Namespace: "apps",
+		DependsOn: []kustomizev1.DependencyReference{
+			{Name: "${APP}", ReadyExpr: "dep.metadata.name == 'backend'"},
+			{Name: "database", Namespace: "${NS}"},
+		},
+	}
+	st.AddObject(original)
+	ResolveDependsOnSubstitutions(st)
+	updated, ok := st.Get[*manifest.Kustomization](original.Named())
+	if !ok || updated == original {
+		t.Fatal("resolved Kustomization was not replaced")
+	}
+	if got := original.DependsOn; got[0].Name != "${APP}" || got[0].Namespace != "" || got[1].Namespace != "${NS}" {
+		t.Fatalf("stored original spec mutated: %+v", got)
+	}
+	if got := updated.DependsOn; got[0].Name != "backend" || got[0].Namespace != "" || got[1].Namespace != "shared" {
+		t.Fatalf("authored dependency projection = %+v", got)
+	}
+	var refs []manifest.DependencyRef
+	for ref := range manifest.References(updated) {
+		if ref.Use == "dependsOn" {
+			refs = append(refs, ref)
+		}
+	}
+	if len(refs) != 2 || refs[0].Namespace != "apps" || refs[1].Namespace != "shared" || refs[0].ReadyExpr != "dep.metadata.name == 'backend'" {
+		t.Fatalf("effective dependency references = %+v", refs)
 	}
 }

@@ -13,7 +13,7 @@ func classifyDep(t *testing.T, w *Waiter, ref manifest.DependencyRef, drain mani
 }
 
 func ksDep(name string) manifest.DependencyRef {
-	return manifest.DependencyRef{
+	return manifest.DependencyRef{Ready: true,
 		Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
@@ -25,7 +25,7 @@ func TestClassify_CoreStates(t *testing.T) {
 	ready := ksDep("ready")
 	failed := ksDep("failed")
 	pending := ksDep("pending")
-	statusless := manifest.DependencyRef{
+	statusless := manifest.DependencyRef{Ready: true,
 		Kind: manifest.KindHelmChart, Namespace: "ns", Name: "statusless"}
 	absent := ksDep("absent")
 	s.UpdateStatus(ready.NamedResource, store.StatusReady, "")
@@ -87,5 +87,29 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	if got := classifyDep(t, w, dep, manifest.DrainCascade); got.Kind != ClassFailed ||
 		got.Message != "readyExpr timeout: context deadline exceeded" {
 		t.Errorf("replace ReadyExpr false@cascade: got %+v, want ClassFailed 'readyExpr timeout: context deadline exceeded'", got)
+	}
+}
+
+func TestClassify_EdgeReadiness(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		obj   manifest.BaseManifest
+		ready bool
+		want  ClassKind
+	}{
+		{name: "existence ignores pending", obj: &manifest.Kustomization{Name: "dependency", Namespace: "apps"}, want: ClassReady},
+		{name: "ready waits for pending", obj: &manifest.Kustomization{Name: "dependency", Namespace: "apps"}, ready: true, want: ClassBlocked},
+		{name: "foreign kind remains existence", obj: &manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: "example.com/v1", Name: "dependency", Namespace: "apps"}, ready: true, want: ClassReady},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := store.New()
+			s.AddObject(tc.obj)
+			s.UpdateStatus(tc.obj.Named(), store.StatusPending, "working")
+			w := &Waiter{Store: s}
+			got := w.Classify(manifest.DependencyRef{NamedResource: tc.obj.Named(), Ready: tc.ready}, manifest.DrainNone)
+			if got.Kind != tc.want {
+				t.Fatalf("classification = %+v, want %v", got, tc.want)
+			}
+		})
 	}
 }

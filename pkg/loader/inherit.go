@@ -142,14 +142,6 @@ func cloneWithNamespace(obj manifest.BaseManifest, ns string) manifest.BaseManif
 	case *manifest.Kustomization:
 		c := o.Clone()
 		c.Namespace = ns
-		if c.SourceRef.Namespace == "" {
-			c.SourceNamespace = ns
-		}
-		for i := range c.DependsOn {
-			if c.DependsOn[i].Namespace == "" {
-				c.DependsOn[i].Namespace = ns
-			}
-		}
 		if c.Contents != nil {
 			manifest.EnsureMetadata(c.Contents)["namespace"] = ns
 		}

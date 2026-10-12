@@ -409,3 +409,40 @@ spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
 		})
 	}
 }
+
+func TestReconcile_InputsFromAuthoredKindUsesRSIP(t *testing.T) {
+	c, s := newController(t)
+	provider := staticRSIP("inputs", "apps", nil, map[string]string{"user": "alice"})
+	s.AddObject(provider)
+	obj, _, _, err := manifest.ParseDoc(map[string]any{
+		"apiVersion": "fluxcd.controlplane.io/v1", "kind": manifest.KindResourceSet,
+		"metadata": map[string]any{"name": "app", "namespace": "apps"},
+		"spec": map[string]any{
+			"inputsFrom":        []any{map[string]any{"kind": "Unsupported", "name": "inputs"}},
+			"resourcesTemplate": "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>, namespace: apps}\n",
+		},
+	}, manifest.ParseDocOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := obj.(*manifest.ResourceSet)
+	s.AddObject(rs)
+	deps := c.collectDeps(rs)
+	if len(deps) != 1 || deps[0].NamedResource != provider.Named() || deps[0].Ready {
+		t.Fatalf("input dependencies = %+v, want existence edge to %s", deps, provider.Named())
+	}
+	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
+		t.Fatalf("blocked = %v with existing provider", blocked)
+	}
+	info, _ := s.GetStatus(rs.Named())
+	if info.Status != store.StatusReady {
+		t.Fatalf("status = %+v, want Ready", info)
+	}
+	art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+	if !hasRenderedDoc(art, "Widget", "alice") {
+		t.Fatalf("expected rendered Widget/alice; artifact = %+v", art)
+	}
+	if rs.InputsFrom[0].Kind != "Unsupported" {
+		t.Fatal("authored input kind mutated")
+	}
+}

@@ -49,7 +49,7 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			st := store.New()
 			ks := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "./apps/a"}
 			if tc.external {
-				ks.SourceKind, ks.SourceName, ks.SourceNamespace = manifest.KindGitRepository, "external", "flux-system"
+				ks.SourceRef.Kind, ks.SourceRef.Name, ks.SourceRef.Namespace = manifest.KindGitRepository, "external", "flux-system"
 				st.AddObject(&manifest.GitRepository{Name: "external", Namespace: "flux-system"})
 			}
 			st.AddObject(ks)

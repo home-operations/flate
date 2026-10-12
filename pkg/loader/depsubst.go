@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/fluxcd/pkg/envsubst"
@@ -46,15 +45,26 @@ func ResolveDependsOnSubstitutions(s *store.Store) {
 		return v, ok
 	}
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		resolved := resolveDeps(ks.DependsOn, mapping)
-		if resolved == nil {
+		var clone *manifest.Kustomization
+		for ref := range manifest.References(ks) {
+			if ref.Use != "dependsOn" {
+				continue
+			}
+			dep := ks.DependsOn[ref.Position]
+			name := evalKeep(dep.Name, mapping)
+			ns := evalKeep(dep.Namespace, mapping)
+			if name == dep.Name && ns == dep.Namespace {
+				continue
+			}
+			if clone == nil {
+				clone = ks.Clone()
+			}
+			clone.DependsOn[ref.Position].Name = name
+			clone.DependsOn[ref.Position].Namespace = ns
+		}
+		if clone == nil {
 			continue
 		}
-		// Store immutability contract: clone, mutate the copy, replace.
-		// The id is unchanged (own name has no var), so this is a
-		// same-key replace.
-		clone := ks.Clone()
-		clone.DependsOn = resolved
 		s.DeleteObject(ks.Named())
 		s.AddObject(clone)
 	}
@@ -80,27 +90,6 @@ func substituteUnion(s *store.Store) map[string]string {
 		}
 	}
 	return union
-}
-
-// resolveDeps resolves ${VAR} in each dependsOn name/namespace via
-// mapping. Returns a fresh slice when anything changed, or nil when no
-// reference needed resolution — so the caller only clones a KS it must.
-// The input slice is never mutated.
-func resolveDeps(deps []manifest.DependencyRef, mapping func(string) (string, bool)) []manifest.DependencyRef {
-	var out []manifest.DependencyRef
-	for i, dep := range deps {
-		name := evalKeep(dep.Name, mapping)
-		ns := evalKeep(dep.Namespace, mapping)
-		if name == dep.Name && ns == dep.Namespace {
-			continue
-		}
-		if out == nil {
-			out = slices.Clone(deps)
-		}
-		out[i].Name = name
-		out[i].Namespace = ns
-	}
-	return out
 }
 
 // evalKeep resolves ${VAR} in s via mapping, returning s unchanged when

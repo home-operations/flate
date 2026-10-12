@@ -10,7 +10,9 @@ import (
 
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -399,9 +401,9 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Contents: map[string]any{"spec": map[string]any{}},
-		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: "ConfigMap", Name: "vars"},
-		},
+		}},
 	}
 	if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
 		t.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
@@ -455,7 +457,7 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 			if source == "inline" {
 				ks.PostBuildSubstitute = vars
 			} else {
-				ks.PostBuildSubstituteFrom = []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}}
+				ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}}}
 				provider.ConfigMaps = []*manifest.ConfigMap{{Name: "cm", Namespace: "ns", Data: vars}}
 			}
 
@@ -467,6 +469,7 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 				t.Errorf("error should name invalid vars in sorted order; got %v", err)
 			}
 		})
+	}
 	}
 }
 
@@ -485,13 +488,13 @@ func TestUnreadableSubstituteSecrets(t *testing.T) {
 	}
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		PostBuildSubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindSecret, Name: "absent-vars"},                // unreadable → reported
 			{Kind: manifest.KindSecret, Name: "sops-vars"},                  // placeholder data → readable
 			{Kind: manifest.KindSecret, Name: "real"},                       // real data → readable
 			{Kind: manifest.KindConfigMap, Name: "cm"},                      // not a Secret → skipped
 			{Kind: manifest.KindSecret, Name: "opt-absent", Optional: true}, // optional → skipped
-		},
+		}},
 	}
 	if got, want := UnreadableSubstituteSecrets(ks, provider), []string{"absent-vars"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("UnreadableSubstituteSecrets = %v, want %v", got, want)
@@ -787,5 +790,54 @@ func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
 	}
 	if len(hr.Values) != 0 {
 		t.Errorf("expected empty values, got %v", hr.Values)
+	}
+}
+
+func TestExpandValueReferences_EffectiveNamespaceAndPositions(t *testing.T) {
+	original := &manifest.HelmRelease{Name: "app", Namespace: "authored", ValuesFrom: []manifest.ValuesReference{
+		{Kind: manifest.KindConfigMap, Name: "missing", Optional: true},
+		{Kind: manifest.KindConfigMap, Name: "shared", ValuesKey: "first.yaml"},
+		{Kind: manifest.KindConfigMap, Name: "shared", ValuesKey: "second.yaml"},
+		{Kind: manifest.KindConfigMap, Name: "shared", ValuesKey: "first.yaml"},
+	}}
+	hr := original.Clone()
+	hr.Namespace = "effective"
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{
+		{Name: "shared", Namespace: "authored", Data: map[string]any{"first.yaml": "value: wrong"}},
+		{Name: "shared", Namespace: "effective", Data: map[string]any{"first.yaml": "value: first", "second.yaml": "value: second"}},
+	}}
+	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := hr.Values["value"]; got != "first" {
+		t.Fatalf("merged value = %v, want first", got)
+	}
+	if original.Namespace != "authored" || original.Values != nil {
+		t.Fatalf("original mutated: %+v", original)
+	}
+}
+
+func TestExpandPostBuildSubstituteReference_EffectiveNamespaceAndDuplicates(t *testing.T) {
+	original := &manifest.Kustomization{Name: "app", Namespace: "authored", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		{Kind: "Unsupported", Name: "ignored"},
+		{Kind: manifest.KindConfigMap, Name: "first"},
+		{Kind: manifest.KindConfigMap, Name: "second"},
+		{Kind: manifest.KindConfigMap, Name: "first"},
+	}}}
+	ks := original.Clone()
+	ks.Namespace = "effective"
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{
+		{Name: "first", Namespace: "authored", Data: map[string]any{"VALUE": "wrong"}},
+		{Name: "first", Namespace: "effective", Data: map[string]any{"VALUE": "first"}},
+		{Name: "second", Namespace: "effective", Data: map[string]any{"VALUE": "second"}},
+	}}
+	if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
+		t.Fatal(err)
+	}
+	if got := ks.PostBuildSubstitute["VALUE"]; got != "first" {
+		t.Fatalf("substitution = %v, want first", got)
+	}
+	if original.Namespace != "authored" || original.PostBuildSubstitute != nil {
+		t.Fatalf("original mutated: %+v", original)
 	}
 }

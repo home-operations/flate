@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"cmp"
+	"iter"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
@@ -52,48 +53,21 @@ func (g *GitRepository) Suspended() bool { return g.Suspend }
 // the same id.
 func (g *GitRepository) RepoName() string { return g.Named().FluxResourceName() }
 
-// validateSecretRefName rejects a Secret/LocalObjectReference whose
-// Name is empty. Without this check, a typo'd YAML like
-// `secretRef: {}` would fall through to a runtime lookup of
-// "<ns>/" — and with --allow-missing-secrets enabled, would silently
-// soft-skip the source. That converts a schema typo into invisible
-// behavior change. Reject upfront with a clear pointer to the field.
-//
-// kind/owner/field are formatted into the error: e.g. ("OCIRepository",
-// "default/private-app", "spec.secretRef").
-func validateSecretRefName(kind, owner, field, name string) error {
-	if name == "" {
-		return inputf("%s %s: %s.name is empty", kind, owner, field)
-	}
-	return nil
+// Active source credentials MUST name a Secret, even when missing secrets are allowed.
+func emptySecretReference(refs iter.Seq[DependencyRef]) string {
+	var use string
+	refs(func(ref DependencyRef) bool {
+		if ref.Kind == KindSecret && ref.Name == "" {
+			use = ref.Use
+			return false
+		}
+		return true
+	})
+	return use
 }
 
-// secretRefCheck pairs a spec.field path with a pointer to the
-// LocalObjectReference at that path. Used in slice form with
-// validateOptionalRefs to batch every Secret-ref validation at the
-// edge of a parser.
-type secretRefCheck struct {
-	Field string
-	Ref   *LocalObjectReference
-}
-
-// validateOptionalRefs runs validateSecretRefName for each non-nil
-// ref in checks. Caller hands the parser's full list of pointer-to-
-// LocalObjectReference fields in one shot so adding a new ref to a
-// source kind's schema is a one-line edit rather than 3-5 new
-// boilerplate blocks. Value-type refs (e.g. Verification.SecretRef,
-// nested inside a *Verification) stay inline since they don't
-// share the nil-pointer-guard shape.
-func validateOptionalRefs(kind, owner string, checks ...secretRefCheck) error {
-	for _, c := range checks {
-		if c.Ref == nil {
-			continue
-		}
-		if err := validateSecretRefName(kind, owner, c.Field, c.Ref.Name); err != nil {
-			return err
-		}
-	}
-	return nil
+func secretReferenceError(id NamedResource, use string) error {
+	return inputf("%s %s/%s: spec.%s.name is empty", id.Kind, id.Namespace, id.Name, use)
 }
 
 // parseGitRepository decodes a GitRepository CR via the Flux typed
@@ -116,19 +90,15 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 		r.Commit = resolveEnvsubstDefaults(r.Commit)
 		r.Name = resolveEnvsubstDefaults(r.Name)
 	}
-	owner := cr.Namespace + "/" + cr.Name
-	if err := validateOptionalRefs("GitRepository", owner,
-		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},
-		secretRefCheck{Field: "spec.proxySecretRef", Ref: cr.Spec.ProxySecretRef},
-	); err != nil {
-		return nil, err
-	}
-	// flate does not verify signatures: spec.verify is ignored, not validated.
-	return &GitRepository{
+	out := &GitRepository{
 		Name:              cr.Name,
 		Namespace:         cr.Namespace,
 		GitRepositorySpec: cr.Spec,
-	}, nil
+	}
+	if use := emptySecretReference(out.references()); use != "" {
+		return nil, secretReferenceError(out.Named(), use)
+	}
+	return out, nil
 }
 
 // OCIRepositoryRef is the Flux OCIRepositoryRef from source-controller.
@@ -182,20 +152,15 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		r.SemVer = resolveEnvsubstDefaults(r.SemVer)
 		r.Digest = resolveEnvsubstDefaults(r.Digest)
 	}
-	owner := cr.Namespace + "/" + cr.Name
-	if err := validateOptionalRefs("OCIRepository", owner,
-		secretRefCheck{Field: "spec.secretRef", Ref: cr.Spec.SecretRef},
-		secretRefCheck{Field: "spec.certSecretRef", Ref: cr.Spec.CertSecretRef},
-		secretRefCheck{Field: "spec.proxySecretRef", Ref: cr.Spec.ProxySecretRef},
-	); err != nil {
-		return nil, err
-	}
-	// flate does not verify signatures: spec.verify is ignored, not validated.
-	return &OCIRepository{
+	out := &OCIRepository{
 		Name:              cr.Name,
 		Namespace:         cr.Namespace,
 		OCIRepositorySpec: cr.Spec,
-	}, nil
+	}
+	if use := emptySecretReference(out.references()); use != "" {
+		return nil, secretReferenceError(out.Named(), use)
+	}
+	return out, nil
 }
 
 // ExternalArtifact is the Flux ExternalArtifact CRD
@@ -250,4 +215,16 @@ func parseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 		out.Digest = a.Digest
 	}
 	return out, nil
+}
+
+func (g *GitRepository) references() iter.Seq[DependencyRef] {
+	return credentialReferences(g.Namespace, g.SecretRef, nil, g.ProxySecretRef)
+}
+
+func (o *OCIRepository) references() iter.Seq[DependencyRef] {
+	return credentialReferences(o.Namespace, o.SecretRef, o.CertSecretRef, o.ProxySecretRef)
+}
+
+func (e *ExternalArtifact) references() iter.Seq[DependencyRef] {
+	return func(func(DependencyRef) bool) {}
 }

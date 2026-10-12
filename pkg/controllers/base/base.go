@@ -304,15 +304,28 @@ func (c *Controller) IsFileIndexed(id manifest.NamedResource) bool {
 	return c.existence != nil && c.existence.IsFileIndexed(id)
 }
 
-// OrderingDeps clones explicit dependsOn refs and prunes only known unchanged
+// OrderingDeps selects explicit ordering refs and prunes only known unchanged
 // targets. Unknown refs MUST remain available for missing-dependency diagnosis.
-func (c *Controller) OrderingDeps(deps []manifest.DependencyRef) []manifest.DependencyRef {
-	deps = slices.Clone(deps)
-	if c.filterActive() {
-		deps = slices.DeleteFunc(deps, func(d manifest.DependencyRef) bool {
-			return !c.filter.ShouldReconcile(d.NamedResource) &&
-				(c.IsFileIndexed(d.NamedResource) || c.Store.GetObject(d.NamedResource) != nil)
-		})
+func (c *Controller) OrderingDeps(obj manifest.BaseManifest) []manifest.DependencyRef {
+	capacity := 0
+	for dep := range manifest.References(obj) {
+		if dep.Use == "dependsOn" {
+			capacity++
+		}
+	}
+	if capacity == 0 {
+		return nil
+	}
+	deps := make([]manifest.DependencyRef, 0, capacity)
+	for dep := range manifest.References(obj) {
+		if dep.Use != "dependsOn" {
+			continue
+		}
+		if c.filterActive() && !c.filter.ShouldReconcile(dep.NamedResource) &&
+			(c.IsFileIndexed(dep.NamedResource) || c.Store.GetObject(dep.NamedResource) != nil) {
+			continue
+		}
+		deps = append(deps, dep)
 	}
 	return deps
 }

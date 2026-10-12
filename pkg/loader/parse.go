@@ -54,7 +54,7 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 			manifest.ReleaseDoc(doc)
 			continue
 		}
-		if _, isRaw := obj.(*manifest.RawObject); isRaw && !keepRaw {
+		if obj == nil || !manifest.KindOf(obj).Tracked && !keepRaw {
 			manifest.ReleaseDoc(doc)
 			continue
 		}

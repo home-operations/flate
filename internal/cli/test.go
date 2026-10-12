@@ -19,10 +19,12 @@ import (
 // formats). When adding json/yaml here later, pass them to bindCommon.
 
 func newTestCmd() *cobra.Command {
-	// Include source kinds so soft-skipped sources appear in the report.
-	kinds := []string{manifest.KindKustomization, manifest.KindHelmRelease,
-		manifest.KindGitRepository, manifest.KindOCIRepository,
-		manifest.KindHelmRepository, manifest.KindBucket}
+	var kinds []string
+	for info := range manifest.Kinds() {
+		if info.Status && info.Kind != manifest.KindHelmChart && info.Kind != manifest.KindExternalArtifact {
+			kinds = append(kinds, info.Kind)
+		}
+	}
 	cmd := testCmd("test", nil, "Report Kustomization + HelmRelease reconcile status (defaults to all)", cobra.NoArgs, kinds...)
 	cmd.AddCommand(
 		testCmd("ks [name]", []string{"kustomization", "kustomizations"},

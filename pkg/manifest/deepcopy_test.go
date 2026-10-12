@@ -181,21 +181,19 @@ func TestKustomization_Clone_Isolation(t *testing.T) {
 func TestHelmRelease_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 	src := &HelmRelease{
 		Name: "plex", Namespace: "media",
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Install:   &helmv2.Install{DisableHooks: false},
-			Upgrade:   &helmv2.Upgrade{DisableHooks: false},
-			Rollback:  &helmv2.Rollback{DisableHooks: false},
-			Uninstall: &helmv2.Uninstall{DisableHooks: false},
-			Test:      &helmv2.Test{Enable: false},
-			DriftDetection: &helmv2.DriftDetection{
-				Mode: helmv2.DriftDetectionWarn,
-			},
-			ValuesFrom: []helmv2.ValuesReference{
-				{Kind: "ConfigMap", Name: "src-cm"},
-			},
-			DependsOn: []helmv2.DependencyReference{
-				{Name: "src-dep"},
-			},
+		Install:   &helmv2.Install{DisableHooks: false},
+		Upgrade:   &helmv2.Upgrade{DisableHooks: false},
+		Rollback:  &helmv2.Rollback{DisableHooks: false},
+		Uninstall: &helmv2.Uninstall{DisableHooks: false},
+		Test:      &helmv2.Test{Enable: false},
+		DriftDetection: &helmv2.DriftDetection{
+			Mode: helmv2.DriftDetectionWarn,
+		},
+		ValuesFrom: []helmv2.ValuesReference{
+			{Kind: "ConfigMap", Name: "src-cm"},
+		},
+		DependsOn: []helmv2.DependencyReference{
+			{Name: "src-dep"},
 		},
 	}
 	dst := src.Clone()
@@ -241,26 +239,21 @@ func TestHelmRelease_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 	src := &Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		KustomizationSpec: kustomizev1.KustomizationSpec{
-			PostBuild: &kustomizev1.PostBuild{
-				Substitute: map[string]string{"K": "v"},
-			},
-			Patches: []kustomize.Patch{
-				{Patch: "src-patch"},
-			},
-			Components: []string{"src-comp"},
-			DependsOn: []kustomizev1.DependencyReference{
-				{Name: "src-dep"},
-			},
+		PostBuild: &kustomizev1.PostBuild{
+			Substitute: map[string]string{"K": "v"},
+		},
+		Patches: []kustomize.Patch{
+			{Patch: "src-patch"},
+		},
+		Components: []string{"src-comp"},
+		DependsOn: []kustomizev1.DependencyReference{
+			{Name: "src-dep"},
 		},
 	}
 	dst := src.Clone()
 	dst.PostBuild.Substitute["K"] = "MUTATED"
 	dst.Patches[0].Patch = "MUTATED"
 	dst.Components[0] = "MUTATED"
-	// KustomizationSpec.DependsOn is shadowed by the flate-side
-	// Kustomization.DependsOn ([]DependencyRef); access through the
-	// embedded field name to disambiguate.
 	dst.KustomizationSpec.DependsOn[0].Name = "MUTATED"
 
 	if src.PostBuild.Substitute["K"] != "v" {

@@ -92,7 +92,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 			ks.PostBuild = &kustomizev1.PostBuild{}
-			ks.PostBuildSubstituteFrom = []manifest.SubstituteReference{{Kind: kind, Name: "external"}}
+			ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "external"}}}
 			var fingerprints []string
 			for _, value := range []string{"first", "second", "first"} {
 				var source manifest.BaseManifest
@@ -129,7 +129,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	st.AddObject(&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "repository"}})
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	ks.PostBuild = &kustomizev1.PostBuild{}
-	ks.PostBuildSubstituteFrom = []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}}
+	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}}}
 	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st), nil)
 	if err != nil {
 		t.Fatal(err)

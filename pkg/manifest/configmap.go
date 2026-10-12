@@ -107,3 +107,11 @@ func parseSecret(doc map[string]any) (*Secret, error) {
 	stringData, _ := doc["stringData"].(map[string]any)
 	return &Secret{Name: name, Namespace: ns, Data: data, StringData: stringData}, nil
 }
+
+func (c *ConfigMap) references() iter.Seq[DependencyRef] {
+	return func(func(DependencyRef) bool) {}
+}
+
+func (s *Secret) references() iter.Seq[DependencyRef] {
+	return func(func(DependencyRef) bool) {}
+}

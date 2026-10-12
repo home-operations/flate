@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
@@ -484,7 +485,7 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 }
 
 func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
-	obj := &manifest.Kustomization{Name: "external", Namespace: "apps", SourceKind: manifest.KindOCIRepository, SourceName: "source"}
+	obj := &manifest.Kustomization{Name: "external", Namespace: "apps", KustomizationSpec: kustomizev1.KustomizationSpec{SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}}
 	run := selectedRun(&Result{})
 	run.store.AddObject(obj)
 	run.store.UpdateStatus(obj.Named(), store.StatusReady, "skipped: external source")

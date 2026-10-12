@@ -3,6 +3,8 @@ package kustomization
 import (
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -10,7 +12,7 @@ import (
 
 func BenchmarkCollectDeps(b *testing.B) {
 	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "target"}
-	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []manifest.DependencyRef{{NamedResource: id}}}
+	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := New(st, nil, nil, false)
 	c.SetFilter(change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st))

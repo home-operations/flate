@@ -138,8 +138,8 @@ func (o *Orchestrator) warnMissingCRDs() {
 		if _, ok := o.store.GetArtifact(id).(*store.ResourceSetArtifact); !ok {
 			continue
 		}
-		for _, dep := range rs.DependsOn {
-			if dep.Kind != manifest.KindCustomResourceDefinition {
+		for dep := range manifest.References(rs) {
+			if dep.Use != "dependsOn" || dep.Kind != manifest.KindCustomResourceDefinition {
 				continue
 			}
 			crd := manifest.NamedResource{Kind: dep.Kind, Name: dep.Name}

@@ -53,10 +53,13 @@ type ExistenceLookup interface {
 
 func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
 	id := dep.NamedResource
-	if !w.depExists(id) {
-		return false
+	obj := w.Store.GetObject(id)
+	if obj == nil {
+		if _, exists := w.Store.GetStatus(id); !exists {
+			return false
+		}
 	}
-	if !store.SupportsStatus(id.Kind) {
+	if !dep.Ready || !w.supportsStatus(id, obj) {
 		return true
 	}
 	if dep.ReadyExpr != "" {
@@ -65,6 +68,19 @@ func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
 	}
 	info, ok := w.Store.GetStatus(id)
 	return ok && info.Status == store.StatusReady
+}
+
+// Status-only entries have no API group; preserve their kind-based readiness.
+func (w *Waiter) supportsStatus(id manifest.NamedResource, obj manifest.BaseManifest) bool {
+	if obj != nil {
+		return manifest.KindOf(obj).Status
+	}
+	for kind := range manifest.Kinds() {
+		if kind.Kind == id.Kind {
+			return kind.Status
+		}
+	}
+	return false
 }
 
 // tryReadyExpr evaluates expr once against id's projected state and reports:

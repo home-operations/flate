@@ -104,31 +104,13 @@ type ParseDocOptions struct {
 	WipeSecrets bool
 }
 
-// ParseDoc dispatches on kind + apiVersion to the appropriate concrete
-// parser and returns the authoritative document and whether sanitation changed it,
-// including on errors.
-// Unknown kinds become a RawObject; kustomize.config.k8s.io
-// build directives and bare data files are silently dropped.
-//
-// Every case matches BOTH kind and API group: a kind name is not unique
-// across groups, and a foreign CRD that happens to reuse one of Flux's
-// (seaweed.seaweedfs.com Bucket, s3.services.k8s.aws Bucket) is an
-// ordinary cluster resource, so it falls through to RawObject rather
-// than being decoded as — and reconciled as — the Flux CR it isn't.
+// ParseDoc decodes recognized group/kind pairs and returns the authoritative
+// document and whether sanitation changed it, including on errors. Foreign kinds
+// become RawObjects; bare data and Kustomize build directives return nil.
 func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[string]any, bool, error) {
-	kind := DocKind(doc)
-	apiVersion := DocAPIVersion(doc)
-	// kustomize.config.k8s.io build directives (Kustomization,
-	// Component) aren't k8s resources — they're build inputs we
-	// already follow via spec.path discovery. Drop them silently.
-	if inGroup(apiVersion, KustomizeDomain) {
-		return &RawObject{Kind: kind, APIVersion: apiVersion}, doc, false, nil
-	}
-	// Documents without a kind are bare data files (helm values,
-	// arbitrary YAML configs). Treat them as RawObjects so the
-	// loader drops them without surfacing as parse errors.
-	if kind == "" {
-		return &RawObject{APIVersion: apiVersion}, doc, false, nil
+	kind, apiVersion := DocKind(doc), DocAPIVersion(doc)
+	if kind == "" || apiGroup(apiVersion) == KustomizeDomain {
+		return nil, doc, false, nil
 	}
 	if apiVersion == "" {
 		return nil, doc, false, inputf("missing apiVersion for %s", kind)
@@ -177,47 +159,13 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 	}
 	var obj BaseManifest
 	var err error
-	switch {
-	case kind == KindKustomization && inGroup(apiVersion, FluxKustomizeDomain):
-		obj, err = parseKustomization(doc)
-	case kind == KindHelmRelease && inGroup(apiVersion, HelmReleaseDomain):
-		obj, err = parseHelmRelease(doc)
-	case kind == KindHelmRepository && inGroup(apiVersion, SourceDomain):
-		obj, err = parseHelmRepository(doc)
-	case kind == KindHelmChart && inGroup(apiVersion, SourceDomain):
-		obj, err = parseHelmChartSource(doc)
-	case kind == KindGitRepository && inGroup(apiVersion, SourceDomain):
-		obj, err = parseGitRepository(doc)
-	case kind == KindOCIRepository && inGroup(apiVersion, SourceDomain):
-		obj, err = ParseOCIRepository(doc)
-	case kind == KindExternalArtifact && inGroup(apiVersion, SourceDomain):
-		obj, err = parseExternalArtifact(doc)
-	case kind == KindBucket && inGroup(apiVersion, SourceDomain):
-		obj, err = parseBucket(doc)
-	case kind == KindResourceSet && inGroup(apiVersion, FluxOperatorDomain):
-		obj, err = parseResourceSet(doc)
-	case kind == KindResourceSetInputProvider && inGroup(apiVersion, FluxOperatorDomain):
-		obj, err = parseResourceSetInputProvider(doc)
-	case kind == KindConfigMap && apiVersion == CoreAPIVersion:
-		obj, err = parseConfigMap(doc)
-	case kind == KindSecret && apiVersion == CoreAPIVersion:
-		obj, err = parseSecret(doc)
-	default:
+	group := apiGroup(apiVersion)
+	if i, ok := groupKindIndex[[2]string{group, kind}]; ok && kindTable[i].decode != nil && (group != "" || apiVersion == CoreAPIVersion) {
+		obj, err = kindTable[i].decode(doc, opts)
+	} else {
 		obj, err = parseRawObject(doc)
 	}
 	return obj, doc, changed, err
-}
-
-// IsKustomizeBuildDirective reports whether obj is a kustomize.config.k8s.io
-// build directive (a Kustomization or Component). ParseDoc preserves these as
-// metadata-less RawObjects — they're build inputs, not cluster resources, and
-// the loader drops them during discovery. Render paths must drop them too: a
-// kustomization.yaml self-referenced in its own resources: makes `kustomize
-// build` emit one, which would otherwise land in the Store as a phantom,
-// nameless object (id "<kind>//") that no controller ever reconciles.
-func IsKustomizeBuildDirective(obj BaseManifest) bool {
-	raw, ok := obj.(*RawObject)
-	return ok && inGroup(raw.APIVersion, KustomizeDomain)
 }
 
 // inGroup reports whether apiVersion belongs to the API group group.

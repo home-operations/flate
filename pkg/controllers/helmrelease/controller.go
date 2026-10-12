@@ -160,7 +160,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 		// the canonical spec instead of the pre-patch snapshot we
 		// were dispatched with.
 		fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](
-			ctx, id, []manifest.DependencyRef{{NamedResource: parent}}, level)
+			ctx, id, []manifest.DependencyRef{{NamedResource: parent, Ready: true}}, level)
 		if err != nil {
 			return err
 		}
@@ -174,7 +174,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
-	if deps := c.OrderingDeps(hr.DependsOn); len(deps) > 0 {
+	if deps := c.OrderingDeps(hr); len(deps) > 0 {
 		c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
 		// RequireRefresh fuses the dependsOn gate with the load-bearing
 		// re-read: the parent KS may have re-rendered (e.g. its own
@@ -372,22 +372,23 @@ func (c *Controller) parentReadsUnreadableSecret(id manifest.NamedResource) bool
 	if !ok {
 		return false
 	}
-	if len(c.substitutionSources) > 0 {
-		owned := *ks
-		owned.PostBuildSubstituteFrom = slices.DeleteFunc(slices.Clone(ks.PostBuildSubstituteFrom), func(ref manifest.SubstituteReference) bool {
-			return c.substitutionSources[manifest.NamedResource{Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name}] != nil
-		})
-		ks = &owned
+	if len(c.substitutionSources) > 0 && ks.PostBuild != nil {
+		var positions []int
+		for ref := range manifest.References(ks) {
+			if ref.Use == "substituteFrom" && c.substitutionSources[ref.NamedResource] != nil {
+				positions = append(positions, ref.Position)
+			}
+		}
+		if len(positions) > 0 {
+			owned := ks.Clone()
+			for _, position := range slices.Backward(positions) {
+
+				owned.PostBuild.SubstituteFrom = slices.Delete(owned.PostBuild.SubstituteFrom, position, position+1)
+			}
+			ks = owned
+		}
 	}
 	return len(values.UnreadableSubstituteSecrets(ks, values.NewStoreProvider(c.Store))) > 0
-}
-
-// chartSourceID is the resource identity of the HelmRelease's current chart
-// source (the thing its render reads from).
-func chartSourceID(hr *manifest.HelmRelease) manifest.NamedResource {
-	return manifest.NamedResource{
-		Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName,
-	}
 }
 
 // awaitChartSource gates hr on its current chart source reaching Ready, then
@@ -401,11 +402,28 @@ func chartSourceID(hr *manifest.HelmRelease) manifest.NamedResource {
 // parks this node and re-runs it when the fetch completes — a slow fetch is
 // waited for by OUTCOME instead of dropped.
 func (c *Controller) awaitChartSource(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
-	srcID := chartSourceID(hr)
-	if err := c.Require(ctx, hr.Named(), []manifest.DependencyRef{{NamedResource: srcID}}, level); err != nil {
+	var deps []manifest.DependencyRef
+	var chart manifest.DependencyRef
+	for ref := range manifest.References(hr) {
+		switch ref.Use {
+		case "source":
+			deps = append(deps, ref)
+		case "chart":
+			chart = ref
+		}
+	}
+	if len(deps) == 0 {
+		deps = append(deps, chart)
+	}
+	if err := c.Require(ctx, hr.Named(), deps, level); err != nil {
 		return err
 	}
-	return c.SourceSkipped(srcID, "chart source")
+	for _, dep := range deps {
+		if err := c.SourceSkipped(dep.NamedResource, "chart source"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // materializeHelmChartSource handles a HelmRelease whose chart source is a
@@ -456,23 +474,17 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 // after Prepare since it needs Ready, not just exists).
 func preparePrereqs(hr *manifest.HelmRelease) []manifest.DependencyRef {
 	var out []manifest.DependencyRef
-
-	// chartRef → HelmChart CRD: the unresolved Name=="" placeholder
-	// shape (chartFromHelmRelease leaves Name empty for HelmChart
-	// chartRefs); Prepare's ResolveChartRef would synchronously read
-	// the HelmChartSource from the store to materialize it.
-	if hr.Chart.RepoKind == manifest.KindHelmChart && hr.Chart.Version == "" {
-		out = append(out, manifest.DependencyRef{
-			Kind: manifest.KindHelmChart, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName})
-	}
-
-	for _, ref := range hr.ValuesFrom {
-		if ref.Optional {
-			continue
+	for ref := range manifest.References(hr) {
+		switch ref.Use {
+		case "chart", "source":
+			if ref.Kind == manifest.KindHelmChart && hr.Chart.Version == "" {
+				out = append(out, ref)
+			}
+		case "valuesFrom":
+			if !ref.Optional {
+				out = append(out, ref)
+			}
 		}
-		out = append(out, manifest.DependencyRef{
-			Kind: ref.Kind, Namespace: hr.Namespace, Name: ref.Name})
 	}
-
 	return out
 }

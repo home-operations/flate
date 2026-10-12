@@ -58,37 +58,19 @@ func (d dagDispatcher) reconcile(ctx context.Context, id schedule.NodeID, drainL
 	return schedule.OutcomeTerminal, nil
 }
 
-// dagSchedulable reports whether id is a node the scheduler runs
-// (Kustomization/HelmRelease/ResourceSet/source) versus pure data
-// (ConfigMap/Secret/RSIP) that only WAKES nodes parked on it. A
-// ResourceSetInputProvider is deliberately excluded: a render-emitted
-// RSIP fires EventObjectAdded to wake RSes parked on it, but it is not a
-// runnable node (flate exports its inputs statically, there is nothing to
-// reconcile).
-func (o *Orchestrator) dagSchedulable(id manifest.NamedResource) bool {
-	return isReconcilableKind(id.Kind) ||
-		id.Kind == manifest.KindResourceSet ||
-		o.src.Owns(id)
-}
-
 // seedNodes returns every file-loaded reconcilable + ResourceSet + source
 // object currently in the store — the scheduler's initial frontier.
 // ResourceSetInputProviders are NOT seeded: they are pure data, not
 // runnable nodes (see dagSchedulable).
 func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 	var ids []manifest.NamedResource
-	for _, kind := range reconcilableKinds {
-		for _, obj := range o.store.ListObjects(kind) {
-			ids = append(ids, obj.Named())
+	for info := range manifest.Kinds() {
+		if !info.Runnable {
+			continue
 		}
-	}
-	for _, obj := range o.store.ListObjects(manifest.KindResourceSet) {
-		ids = append(ids, obj.Named())
-	}
-	for kind := range o.src.Fetchers {
-		for _, obj := range o.store.ListObjects(kind) {
-			if id := obj.Named(); o.src.Owns(id) {
-				ids = append(ids, id)
+		for _, obj := range o.store.ListObjects(info.Kind) {
+			if manifest.KindOf(obj).Runnable && (info.Group != manifest.SourceDomain || o.src.Owns(obj.Named())) {
+				ids = append(ids, obj.Named())
 			}
 		}
 	}
@@ -121,8 +103,11 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	//   resurrection. The listener runs OUTSIDE the store shard lock (AddObject
 	//   fires it post-unlock), and sched.OnArrival only updates
 	//   scheduler state, so there is no store-lock ↔ sched.mu inversion.
-	unsubAdd := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		sched.OnArrival(id, o.dagSchedulable(id))
+	unsubAdd := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+		obj, _ := payload.(manifest.BaseManifest)
+		info := manifest.KindOf(obj)
+		_, source := o.src.Fetchers[id.Kind]
+		sched.OnArrival(id, info.Runnable && (info.Group != manifest.SourceDomain || source))
 	}, false)
 	defer unsubAdd()
 	//   EventStatusUpdated: wake nodes parked on a dep that reached a terminal

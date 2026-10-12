@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -103,12 +102,9 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 		for _, dep := range s.run.Result.Blocked[id] {
 			add(dep)
 		}
-		if obj, ok := s.run.store.GetObject(id).(*manifest.ResourceSet); ok {
-			for _, dep := range obj.DependsOn {
-				add(manifest.NamedResource{Kind: dep.Kind, Namespace: cmp.Or(dep.Namespace, id.Namespace), Name: dep.Name})
-			}
-			for _, ref := range obj.InputsFrom {
-				add(manifest.NamedResource{Kind: manifest.KindResourceSetInputProvider, Namespace: id.Namespace, Name: ref.Name})
+		if obj := s.run.store.GetObject(id); obj != nil {
+			for ref := range manifest.References(obj) {
+				add(ref.NamedResource)
 			}
 		}
 		if id.Kind == manifest.KindHelmRelease || id.Kind == manifest.KindKustomization {
@@ -284,7 +280,7 @@ func (s *selectionSide) prepareStatuses(name string) {
 	}
 	for _, obj := range s.result.Objects {
 		id := obj.Named()
-		if id != manifest.BootstrapSourceID && !manifest.IsRawObject(obj) {
+		if id != manifest.BootstrapSourceID && manifest.KindOf(obj).Tracked {
 			add(id)
 		}
 	}

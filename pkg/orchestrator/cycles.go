@@ -123,25 +123,24 @@ func (o *Orchestrator) rebuildDependencyGraphFromStore() {
 // spec.dependsOn is kind-homogeneous (KS deps on KS, HR deps on HR);
 // stripping cross-kind entries here keeps the graph's invariant intact.
 func sameKindDepTargets(obj manifest.BaseManifest, kind string) []manifest.NamedResource {
-	var deps []manifest.DependencyRef
-	switch v := obj.(type) {
-	case *manifest.Kustomization:
-		deps = v.DependsOn
-	case *manifest.HelmRelease:
-		deps = v.DependsOn
-	default:
-		return nil
-	}
-	if len(deps) == 0 {
-		return nil
-	}
-	out := make([]manifest.NamedResource, 0, len(deps))
-	for _, d := range deps {
-		if d.Kind != kind {
-			continue
+	refs := manifest.References(obj)
+	count := 0
+	refs(func(ref manifest.DependencyRef) bool {
+		if ref.Use == "dependsOn" && ref.Kind == kind {
+			count++
 		}
-		out = append(out, d.NamedResource)
+		return true
+	})
+	if count == 0 {
+		return nil
 	}
+	out := make([]manifest.NamedResource, 0, count)
+	refs(func(ref manifest.DependencyRef) bool {
+		if ref.Use == "dependsOn" && ref.Kind == kind {
+			out = append(out, ref.NamedResource)
+		}
+		return true
+	})
 	return out
 }
 

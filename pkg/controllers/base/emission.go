@@ -43,7 +43,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 			log.Debug("skipped doc", "id", parent.String(), "err", err)
 			continue
 		}
-		if manifest.IsKustomizeBuildDirective(obj) {
+		if obj == nil {
 			continue
 		}
 		children = append(children, Child{Obj: obj, Doc: doc})
@@ -58,10 +58,11 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 	for _, child := range children {
 		obj := child.Obj
 		id := obj.Named()
+		info := manifest.KindOf(obj)
 		switch {
 		case !isTrackedChild(obj, helmRelease):
 			c.Store.AddObject(obj)
-		case id.Kind == manifest.KindKustomization || id.Kind == manifest.KindHelmRelease:
+		case info.Status && info.Group != manifest.SourceDomain:
 			continue
 		default:
 			c.KeepEmitted(parent, obj)
@@ -76,9 +77,8 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 	var leaves []manifest.BaseManifest
 	for _, child := range children {
 		obj := child.Obj
-		switch obj.(type) {
-		case *manifest.Kustomization, *manifest.HelmRelease:
-		default:
+		info := manifest.KindOf(obj)
+		if !info.Status || info.Group == manifest.SourceDomain {
 			continue
 		}
 		id := obj.Named()
@@ -95,15 +95,6 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 }
 
 func isTrackedChild(obj manifest.BaseManifest, helmRelease bool) bool {
-	switch obj.(type) {
-	case *manifest.HelmRepository, *manifest.OCIRepository,
-		*manifest.GitRepository, *manifest.Bucket,
-		*manifest.HelmChartSource, *manifest.ExternalArtifact:
-		return true
-	case *manifest.Kustomization, *manifest.HelmRelease,
-		*manifest.ConfigMap, *manifest.Secret,
-		*manifest.ResourceSet, *manifest.ResourceSetInputProvider:
-		return !helmRelease
-	}
-	return false
+	info := manifest.KindOf(obj)
+	return info.Tracked && (!helmRelease || info.Group == manifest.SourceDomain)
 }

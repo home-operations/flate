@@ -109,8 +109,12 @@ func (c *Controller) omitValuesFrom(
 		return hr
 	}
 	filtered := make([]manifest.ValuesReference, 0, len(hr.ValuesFrom))
-	for _, ref := range hr.ValuesFrom {
-		id, ok := valuesRefID(hr, ref)
+	for edge := range manifest.References(hr) {
+		if edge.Use != "valuesFrom" {
+			continue
+		}
+		ref := hr.ValuesFrom[edge.Position]
+		id, ok := valuesRefID(edge)
 		if !ok {
 			filtered = append(filtered, ref)
 			continue
@@ -171,13 +175,13 @@ func (c *Controller) valuesRefExists(id manifest.NamedResource) bool {
 	return c.Store.GetObjectByName(id.Kind, id.Namespace, id.Name) != nil
 }
 
-func valuesRefID(hr *manifest.HelmRelease, ref manifest.ValuesReference) (manifest.NamedResource, bool) {
+func valuesRefID(ref manifest.DependencyRef) (manifest.NamedResource, bool) {
 	if ref.Optional || ref.Name == "" {
 		return manifest.NamedResource{}, false
 	}
 	switch ref.Kind {
 	case manifest.KindSecret, manifest.KindConfigMap:
-		return manifest.NamedResource{Kind: ref.Kind, Namespace: hr.Namespace, Name: ref.Name}, true
+		return ref.NamedResource, true
 	default:
 		return manifest.NamedResource{}, false
 	}
@@ -188,14 +192,20 @@ func omittedValuesRefIDs(before, after *manifest.HelmRelease) []manifest.NamedRe
 		return nil
 	}
 	kept := make(map[manifest.NamedResource]struct{}, len(after.ValuesFrom))
-	for _, ref := range after.ValuesFrom {
-		if id, ok := valuesRefID(after, ref); ok {
+	for ref := range manifest.References(after) {
+		if ref.Use != "valuesFrom" {
+			continue
+		}
+		if id, ok := valuesRefID(ref); ok {
 			kept[id] = struct{}{}
 		}
 	}
 	var out []manifest.NamedResource
-	for _, ref := range before.ValuesFrom {
-		id, ok := valuesRefID(before, ref)
+	for ref := range manifest.References(before) {
+		if ref.Use != "valuesFrom" {
+			continue
+		}
+		id, ok := valuesRefID(ref)
 		if !ok {
 			continue
 		}
@@ -212,8 +222,12 @@ func removeValuesRefs(hr *manifest.HelmRelease, ids map[manifest.NamedResource]s
 		return hr
 	}
 	filtered := make([]manifest.ValuesReference, 0, len(hr.ValuesFrom))
-	for _, ref := range hr.ValuesFrom {
-		if id, ok := valuesRefID(hr, ref); ok {
+	for edge := range manifest.References(hr) {
+		if edge.Use != "valuesFrom" {
+			continue
+		}
+		ref := hr.ValuesFrom[edge.Position]
+		if id, ok := valuesRefID(edge); ok {
 			if _, drop := ids[id]; drop {
 				continue
 			}

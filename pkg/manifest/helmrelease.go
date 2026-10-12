@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"maps"
 	"slices"
 
@@ -103,8 +104,6 @@ func helmChartFromSource(src *HelmChartSource) HelmChart {
 //   - Values is the decoded form of spec.values (map[string]any) so
 //     consumers don't have to JSON-decode on every access. Shadows
 //     the embedded Spec.Values (*apiextensionsv1.JSON).
-//   - DependsOn is normalized to []DependencyRef (with ReadyExpr).
-//     Shadows the embedded Spec.DependsOn ([]DependencyReference).
 //   - CRDsPolicy collapses spec.install.crds vs spec.upgrade.crds.
 //   - DisableSchemaValidation projects install policy; OpenAPI combines both actions.
 //   - ChartValuesFiles + IgnoreMissingValuesFiles are sourced from
@@ -122,10 +121,6 @@ type HelmRelease struct {
 	// Values is the decoded form of spec.values. Shadows the embedded
 	// Spec.Values (*apiextensionsv1.JSON).
 	Values map[string]any `json:"-" yaml:"-"`
-
-	// DependsOn is the normalized form of spec.dependsOn (carrying any
-	// ReadyExpr). Shadows the embedded Spec.DependsOn ([]DependencyReference).
-	DependsOn []DependencyRef `json:"-" yaml:"-"`
 
 	Labels      map[string]string `json:"-" yaml:"-"`
 	Annotations map[string]string `json:"-" yaml:"-"`
@@ -179,7 +174,6 @@ func (h *HelmRelease) Clone() *HelmRelease {
 	h.DeepCopyInto(&out.HelmReleaseSpec)
 	out.Values = DeepCopyMap(h.Values)
 	out.ChartValuesFiles = slices.Clone(h.ChartValuesFiles)
-	out.DependsOn = slices.Clone(h.DependsOn)
 	out.Labels = maps.Clone(h.Labels)
 	out.Annotations = maps.Clone(h.Annotations)
 	return &out
@@ -245,10 +239,17 @@ func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
 	if h.Chart.RepoKind != KindHelmChart || h.Chart.Version != "" {
 		return nil
 	}
-	src := lookup(h.Chart.RepoNamespace, h.Chart.RepoName)
+	id := NamedResource{Kind: h.Chart.RepoKind, Namespace: cmp.Or(h.Chart.RepoNamespace, h.Namespace), Name: h.Chart.RepoName}
+	for ref := range References(h) {
+		if ref.Use == "chart" {
+			id = ref.NamedResource
+			break
+		}
+	}
+	src := lookup(id.Namespace, id.Name)
 	if src == nil {
 		return fmt.Errorf("%w: HelmChartSource %s not found for HelmRelease %s",
-			ErrObjectNotFound, h.Chart.RepoFullName(), h.Named().NamespacedName())
+			ErrObjectNotFound, id.NamespacedName(), h.Named().NamespacedName())
 	}
 	h.Chart = helmChartFromSource(src)
 	if len(src.ValuesFiles) > 0 {
@@ -295,15 +296,10 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	disableOpenAPI := install.DisableOpenAPIValidation || upgrade.DisableOpenAPIValidation
 	// The upgrade policy takes precedence after the first install.
 	crdsPolicy := string(cmp.Or(upgrade.CRDs, install.CRDs))
-	dependsOn := make([]DependencyRef, 0, len(cr.Spec.DependsOn))
 	for _, dep := range cr.Spec.DependsOn {
 		if dep.Name == "" {
 			return nil, inputf("HelmRelease missing dependsOn.name")
 		}
-		dependsOn = append(dependsOn, DependencyRef{
-			Kind: KindHelmRelease, Namespace: cmp.Or(dep.Namespace, cr.Namespace), Name: dep.Name,
-			ReadyExpr: dep.ReadyExpr,
-		})
 	}
 	// spec.chart.spec.valuesFiles (inline template). spec.chartRef
 	// case is handled later by ResolveChartRef once HelmChartSource is
@@ -321,7 +317,6 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		HelmReleaseSpec:          cr.Spec,
 		Chart:                    chart,
 		Values:                   values,
-		DependsOn:                dependsOn,
 		Labels:                   cr.Labels,
 		Annotations:              cr.Annotations,
 		DisableSchemaValidation:  disableSchema,
@@ -330,4 +325,48 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		IgnoreMissingValuesFiles: ignoreMissingValuesFiles,
 		CRDsPolicy:               crdsPolicy,
 	}, nil
+}
+
+func (h *HelmRelease) references() iter.Seq[DependencyRef] {
+	return func(yield func(DependencyRef) bool) {
+		var authored NamedResource
+		if ref := h.ChartRef; ref != nil {
+			authored = NamedResource{Kind: ref.Kind, Namespace: cmp.Or(ref.Namespace, h.Namespace), Name: ref.Name}
+			if !yield(DependencyRef{NamedResource: authored, Use: "chart", Content: true, Ready: true}) {
+				return
+			}
+		} else if tmpl := h.HelmReleaseSpec.Chart; tmpl != nil {
+			ref := tmpl.Spec.SourceRef
+			authored = NamedResource{Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: cmp.Or(ref.Namespace, h.Namespace), Name: ref.Name}
+			if !yield(DependencyRef{NamedResource: authored, Use: "source", Content: true, Ready: true}) {
+				return
+			}
+		}
+		// A matching projection still carries parse-time namespace defaults.
+		// Only a different resolved source supplies its own namespace.
+		if h.Chart.RepoKind != "" && (authored.Kind != h.Chart.RepoKind || authored.Name != h.Chart.RepoName) {
+			if !yield(DependencyRef{
+				Kind: h.Chart.RepoKind, Namespace: cmp.Or(h.Chart.RepoNamespace, h.Namespace), Name: h.Chart.RepoName,
+				Use: "source", Content: true, Ready: true,
+			}) {
+				return
+			}
+		}
+		for i, dep := range h.DependsOn {
+			if !yield(DependencyRef{
+				Kind: KindHelmRelease, Namespace: cmp.Or(dep.Namespace, h.Namespace), Name: dep.Name,
+				Use: "dependsOn", Position: i, Ready: true, ReadyExpr: dep.ReadyExpr,
+			}) {
+				return
+			}
+		}
+		for i, ref := range h.ValuesFrom {
+			if !yield(DependencyRef{
+				Kind: ref.Kind, Namespace: h.Namespace, Name: ref.Name,
+				Use: "valuesFrom", Position: i, Optional: ref.Optional, Content: true, Ready: !ref.Optional,
+			}) {
+				return
+			}
+		}
+	}
 }

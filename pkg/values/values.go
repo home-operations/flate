@@ -171,8 +171,12 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 		return ref.TargetPath != ""
 	})
 	values := map[string]any{}
-	for _, ref := range hr.ValuesFrom {
-		found, err := lookupValueRef(ref, hr.Namespace, provider)
+	for edge := range manifest.References(hr) {
+		if edge.Use != "valuesFrom" {
+			continue
+		}
+		ref := hr.ValuesFrom[edge.Position]
+		found, err := lookupValueRef(ref, edge.Namespace, provider)
 		if err != nil {
 			if _, ok := errors.AsType[*missingValueRefError](err); ok && ref.Optional {
 				continue
@@ -409,26 +413,22 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 // ExpandPostBuildSubstituteReferenceWithSubstitutions applies overlay after
 // referenced and inline values. An overlay never enables absent postBuild.
 func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomization, p Provider, overlay map[string]string) error {
-	if ks == nil || (len(ks.PostBuildSubstitute) == 0 && len(ks.PostBuildSubstituteFrom) == 0 &&
-		(ks.PostBuild == nil || len(overlay) == 0)) {
+	if ks == nil || len(ks.PostBuildSubstitute) == 0 && (ks.PostBuild == nil ||
+		len(ks.PostBuild.SubstituteFrom) == 0 && len(ks.PostBuild.Substitute) == 0 && len(overlay) == 0) {
 		return nil
 	}
-	if len(ks.PostBuildSubstituteFrom) > 0 && ks.Namespace == "" {
+	if len(ks.PostBuild.SubstituteFrom) > 0 && ks.Namespace == "" {
 		return fmt.Errorf("%w: Kustomization with substituteFrom has no namespace", manifest.ErrInvalidSubstituteReference)
 	}
 
 	// Flux gives inline substitutions precedence over references.
 	values := map[string]any{}
-	for _, ref := range ks.PostBuildSubstituteFrom {
-		data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p)
+	for ref := range manifest.References(ks) {
+		if ref.Use != "substituteFrom" {
+			continue
+		}
+		data, err := resourceData(ref.Kind, ref.Namespace, ref.Name, p)
 		if err != nil {
-			if errors.Is(err, manifest.ErrInvalidValuesReference) {
-				// Unsupported kind — log and skip rather than failing the
-				// whole KS, matching upstream's lenient substituteFrom handling.
-				slog.Debug("values: unsupported SubstituteReference kind",
-					"id", ks.Named().String(), "kind", ref.Kind)
-				continue
-			}
 			return err
 		}
 		if data == nil {
@@ -483,7 +483,7 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 	return nil
 }
 
-// UnreadableSubstituteSecrets returns the names of ks.PostBuildSubstituteFrom
+// UnreadableSubstituteSecrets returns the names of substituteFrom
 // Secret references whose data flate can't read offline — an absent Secret or
 // an ExternalSecret-synthesized empty target, both of which yield no data so
 // the ${VAR}s they would supply expand to the empty string. SOPS-encrypted
@@ -500,11 +500,14 @@ func UnreadableSubstituteSecrets(ks *manifest.Kustomization, p Provider) []strin
 		return nil
 	}
 	var unreadable []string
-	for _, ref := range ks.PostBuildSubstituteFrom {
+	for ref := range manifest.References(ks) {
+		if ref.Use != "substituteFrom" {
+			continue
+		}
 		if ref.Kind != manifest.KindSecret || ref.Optional {
 			continue
 		}
-		if data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p); err == nil && data == nil {
+		if data, err := resourceData(ref.Kind, ref.Namespace, ref.Name, p); err == nil && data == nil {
 			unreadable = append(unreadable, ref.Name)
 		}
 	}

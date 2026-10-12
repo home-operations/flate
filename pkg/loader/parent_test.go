@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -43,7 +45,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 			st := store.New()
 			ks := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: tc.path}
 			if tc.pinned {
-				ks.SourceKind, ks.SourceName, ks.SourceNamespace = manifest.KindGitRepository, "pinned", "flux-system"
+				ks.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "pinned", Namespace: "flux-system"}
 			}
 			st.AddObject(ks)
 			child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
@@ -60,7 +62,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 					t.Fatal(err)
 				}
 				if tc.pinned {
-					src := &manifest.GitRepository{Name: ks.SourceName, Namespace: ks.SourceNamespace}
+					src := &manifest.GitRepository{Name: ks.SourceRef.Name, Namespace: ks.SourceRef.Namespace}
 					st.AddObject(src)
 					st.SetArtifact(src.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(root, "snapshot"), FS: input})
 				} else {
@@ -149,22 +151,22 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	// Bootstrap-sourced root (sourceRef == BootstrapSourceID) — kept.
 	bootstrap := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
-		Path: "./kubernetes/apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
+		Path:      "./kubernetes/apps",
 	}
 	// Self/aliased source: an in-tree GitRepository with a working-tree artifact
 	// (URL-matched by discovery) — kept.
 	aliasedKS := &manifest.Kustomization{
 		Name: "self-apps", Namespace: "flux-system",
-		SourceKind: manifest.KindGitRepository, SourceName: "home-kubernetes", SourceNamespace: "flux-system",
-		Path: "./kubernetes/self",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "home-kubernetes", Namespace: "flux-system"},
+		Path:      "./kubernetes/self",
 	}
 	// External source: an in-tree GitRepository with NO working-tree artifact,
 	// claiming the WIDE ./kubernetes — must be dropped.
 	external := &manifest.Kustomization{
 		Name: "side-sync", Namespace: "flux-system",
-		SourceKind: manifest.KindGitRepository, SourceName: "side-repo", SourceNamespace: "flux-system",
-		Path: "./kubernetes",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "side-repo", Namespace: "flux-system"},
+		Path:      "./kubernetes",
 	}
 	s.AddObject(bootstrap)
 	s.AddObject(aliasedKS)
@@ -208,7 +210,7 @@ func TestSourceView_LocalRoot(t *testing.T) {
 			repo := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 			ks := &manifest.Kustomization{
 				Name: "apps", Namespace: repo.Namespace, Path: "./apps",
-				SourceKind: manifest.KindGitRepository, SourceName: repo.Name, SourceNamespace: repo.Namespace,
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: repo.Name, Namespace: repo.Namespace},
 			}
 			st.AddObject(repo)
 			st.AddObject(ks)
@@ -445,7 +447,7 @@ func TestClaims_EmptyPathClaimsRoot(t *testing.T) {
 	}
 	without := &manifest.Kustomization{
 		Name: "without", Namespace: "flux-system",
-		SourceKind: manifest.KindGitRepository, SourceName: "flux-system", SourceNamespace: "flux-system",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
 	}
 	s.AddObject(with)
 	s.AddObject(without)
@@ -464,7 +466,7 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 	repo := &manifest.GitRepository{Name: "external", Namespace: "flux-system"}
 	external := &manifest.Kustomization{
 		Name: "external", Namespace: "flux-system",
-		SourceKind: manifest.KindGitRepository, SourceName: repo.Name, SourceNamespace: repo.Namespace,
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: repo.Name, Namespace: repo.Namespace},
 	}
 	local := &manifest.Kustomization{Name: "local", Namespace: "flux-system", Path: "./apps"}
 	s.AddObject(repo)

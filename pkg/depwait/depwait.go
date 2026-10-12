@@ -60,18 +60,11 @@ func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
 		return true
 	}
 	if dep.ReadyExpr != "" {
-		return w.readyExprSatisfied(dep.ReadyExpr, id)
+		ready, _ := w.tryReadyExpr(dep.ReadyExpr, id)
+		return ready
 	}
 	info, ok := w.Store.GetStatus(id)
 	return ok && info.Status == store.StatusReady
-}
-
-// readyExprSatisfied reports whether expr produced a definitive Ready
-// result for id right now (no waiting). A clean false, a transient eval
-// error, or a compile failure all read as "not ready".
-func (w *Waiter) readyExprSatisfied(expr string, id manifest.NamedResource) bool {
-	ready, _ := w.tryReadyExpr(expr, id)
-	return ready
 }
 
 // tryReadyExpr evaluates expr once against id's projected state and reports:

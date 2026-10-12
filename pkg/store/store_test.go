@@ -156,6 +156,8 @@ func TestObjectEqual_RawObjectFields(t *testing.T) {
 		})
 	}
 	assert.Diff(t, base.Spec, map[string]any{"items": []any{map[string]any{"value": "same"}}})
+	// nil and empty maps stay distinct, as under reflect.DeepEqual.
+	assert.Equal(t, objectEqual(&manifest.RawObject{Spec: map[string]any{}}, &manifest.RawObject{}), false)
 }
 
 func TestStore_AddObjectIdempotent(t *testing.T) {

@@ -1,6 +1,7 @@
 package depwait
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -80,6 +81,9 @@ func TestReadyExpr_NonBoolResult(t *testing.T) {
 	_, err := evaluateReadyExpr(`dep.metadata.name`, s, manifest.NamedResource{}, dep) // string, not bool
 	if err == nil || !strings.Contains(err.Error(), "must return bool") {
 		t.Errorf("non-bool result: err=%v, want a 'must return bool' error", err)
+	}
+	if _, terminal := errors.AsType[*celCompileErr](err); !terminal {
+		t.Errorf("non-bool result: err=%T, want terminal *celCompileErr", err)
 	}
 }
 

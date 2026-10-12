@@ -20,8 +20,9 @@ func SeedFor(releaseName, releaseNamespace string) []byte {
 // share: a ChaCha8 keyed by the seed. Its Read returns exactly len(p) bytes
 // with a nil error — the contract crypto/rand-style consumers (crypto/rand.Int,
 // io.ReadFull, and, in the cert tier, rsa.GenerateKey / x509.CreateCertificate)
-// expect from an io.Reader. ChaCha8's algorithm is fixed by the standard
-// library, so a given seed yields the same byte sequence across Go releases.
+// expect from an io.Reader. All consumers MUST use Read: interleaving Read
+// and Uint64 has no specified ordering guarantee. Fixed-seed vectors pin the
+// byte sequence.
 //
 // A stream is stateful — each draw advances it — and therefore NOT safe for
 // concurrent use. Build one per render (Helm renders a chart's templates

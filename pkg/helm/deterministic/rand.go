@@ -2,8 +2,10 @@ package deterministic
 
 import (
 	"encoding/base64"
+	"encoding/binary"
+	"fmt"
 	"io"
-	"math/rand/v2"
+	"strings"
 	"text/template"
 
 	"github.com/google/uuid"
@@ -39,6 +41,14 @@ func randFuncs(s *stream) template.FuncMap {
 		"randInt":      func(minN, maxN int) int { return randInt(s, minN, maxN) },
 		"uuidv4":       func() string { return uuidv4(s) },
 		"shuffle":      func(in string) string { return shuffle(s, in) },
+		"bcrypt":       func(input string) string { return bcrypt(s, input) },
+		"htpasswd": func(username, password string) string {
+			if strings.Contains(username, ":") {
+				return fmt.Sprintf("invalid username: %s", username)
+			}
+			return username + ":" + bcrypt(s, password)
+		},
+		"encryptAES": func(password, plaintext string) (string, error) { return encryptAES(s, password, plaintext) },
 	}
 }
 
@@ -52,8 +62,10 @@ func randFuncs(s *stream) template.FuncMap {
 // valid permutation, not byte-identical to sprig.
 func shuffle(s *stream, in string) string {
 	r := []rune(in)
-	//nolint:gosec // G404: deterministic rendering deliberately draws from the seeded ChaCha8, not crypto/rand.
-	rand.New(s.c).Shuffle(len(r), func(i, j int) { r[i], r[j] = r[j], r[i] })
+	for i := len(r) - 1; i > 0; i-- {
+		j := randInt(s, 0, i+1)
+		r[i], r[j] = r[j], r[i]
+	}
 	return string(r)
 }
 
@@ -91,8 +103,9 @@ func randInt(s *stream, minN, maxN int) int {
 	if span <= 0 {
 		return minN
 	}
-	//nolint:gosec // G404: deterministic rendering deliberately draws from the seeded ChaCha8, not crypto/rand.
-	return minN + rand.New(s.c).IntN(span)
+	var buf [8]byte
+	_, _ = s.Read(buf[:])
+	return minN + int(binary.LittleEndian.Uint64(buf[:])%uint64(span)) //nolint:gosec // G115: the remainder is less than the positive int span.
 }
 
 func uuidv4(s *stream) string {

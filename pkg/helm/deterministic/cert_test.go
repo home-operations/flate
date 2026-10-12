@@ -51,7 +51,7 @@ func genCAFn(t *testing.T, fm map[string]any) func(string, int) (certificate, er
 
 // TestCertFuncs_DeterministicAndValid pins the cert tier: a CA and a leaf signed
 // by it render byte-identically for a given seed, are valid ed25519 x509 with the
-// FixedTime window, and the leaf verifies against the CA — so caBundle/tls.crt
+// fixedTime window, and the leaf verifies against the CA — so caBundle/tls.crt
 // stop churning while staying internally consistent.
 func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 	fm := Funcs(SeedFor("rel", "ns"))
@@ -76,10 +76,10 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 	if caCert.SignatureAlgorithm != x509.PureEd25519 {
 		t.Errorf("CA SignatureAlgorithm = %v, want PureEd25519 (a CustomReader-tainted algorithm would be nondeterministic)", caCert.SignatureAlgorithm)
 	}
-	if !caCert.NotBefore.Equal(FixedTime) {
-		t.Errorf("CA NotBefore = %v, want FixedTime %v", caCert.NotBefore, FixedTime)
+	if !caCert.NotBefore.Equal(fixedTime) {
+		t.Errorf("CA NotBefore = %v, want fixedTime %v", caCert.NotBefore, fixedTime)
 	}
-	if want := FixedTime.Add(365 * 24 * time.Hour); !caCert.NotAfter.Equal(want) {
+	if want := fixedTime.Add(365 * 24 * time.Hour); !caCert.NotAfter.Equal(want) {
 		t.Errorf("CA NotAfter = %v, want %v", caCert.NotAfter, want)
 	}
 
@@ -138,18 +138,18 @@ func TestGenSignedCert_RejectsNonEd25519CA(t *testing.T) {
 
 // TestGenPrivateKey_ParsesPerType pins that every supported key type renders a
 // parseable deterministic ed25519 key. stdlib cannot make rsa/ecdsa keygen
-// deterministic, so those collapse to ed25519; "dsa" keeps sprig's message.
+// deterministic, so those collapse to ed25519; "dsa" also uses the offline ed25519 stand-in.
 func TestGenPrivateKey_ParsesPerType(t *testing.T) {
 	fm := Funcs(SeedFor("rel", "ns"))
 	gpk, ok := fm["genPrivateKey"].(func(string) string)
 	if !ok {
 		t.Fatalf("genPrivateKey override has unexpected type %T", fm["genPrivateKey"])
 	}
-	for _, typ := range []string{"", "rsa", "ecdsa", "ed25519"} {
+	for _, typ := range []string{"", "rsa", "ecdsa", "ed25519", "dsa"} {
 		mustParseEd25519Key(t, gpk(typ))
 	}
-	if got := gpk("dsa"); got != "Unknown type dsa" {
-		t.Errorf("genPrivateKey(\"dsa\") = %q, want unknown-type message", got)
+	if got := gpk("unknown"); got != "Unknown type unknown" {
+		t.Errorf("genPrivateKey(\"unknown\") = %q, want unknown-type message", got)
 	}
 
 	a := Funcs(SeedFor("rel", "ns"))["genPrivateKey"].(func(string) string)("rsa")

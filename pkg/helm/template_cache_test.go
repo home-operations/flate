@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -408,109 +409,82 @@ func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
 	}
 }
 
-// TestComputeTemplateKey_DifferingFieldsDiverge pins that every keyed
-// input dimension actually affects the digest. A regression where a
-// new render-affecting field gets added without being mixed in would
-// allow the cache to serve stale renders — the symptom we MUST catch.
-//
-// Each subtest mutates one input from the baseline and asserts the
-// key changes.
 func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
-	baseChart := minimalChart()
-	baseHR := minimalHR()
-	baseValues := map[string]any{"k": "v"}
-	baseOpts := Options{KubeVersion: "1.33"}
-	baseKey := computeTemplateKey("fp", baseChart, baseValues, baseOpts, baseHR)
-
-	t.Run("ChartFingerprint", func(t *testing.T) {
-		if got := computeTemplateKey("fp-different", baseChart, baseValues, baseOpts, baseHR); got == baseKey {
-			t.Error("different chart fingerprint did not change the key")
-		}
-	})
-
-	t.Run("Values", func(t *testing.T) {
-		altValues := map[string]any{"k": "different"}
-		if got := computeTemplateKey("fp", baseChart, altValues, baseOpts, baseHR); got == baseKey {
-			t.Error("different values did not change the key")
-		}
-	})
-
-	t.Run("OptsDisableChartDigestTracking", func(t *testing.T) {
-		alt := baseOpts
-		alt.DisableChartDigestTracking = true
-		if got := computeTemplateKey("fp", baseChart, baseValues, alt, baseHR); got != baseKey {
-			t.Error("digest tracking option changed a non-OCI key")
-		}
-	})
-
-	for _, tc := range []struct {
-		name string
-		opts Options
-	}{
-		{name: "OptsSkipSecrets", opts: Options{KubeVersion: baseOpts.KubeVersion, SkipSecrets: true}},
-		{name: "OptsSkipKinds", opts: Options{KubeVersion: baseOpts.KubeVersion, SkipKinds: []string{"ConfigMap"}}},
+	ch, hr := minimalChart(), minimalHR()
+	values := map[string]any{"k": "v"}
+	base := computeTemplateKey("fp", ch, values, Options{}, hr)
+	if base == "" {
+		t.Fatal("valid inputs produced an empty key")
+	}
+	excluded := map[string]string{
+		"DisableChartDigestTracking": "OCI tracking is folded into the loaded chart fingerprint",
+		"SkipSecrets":                "resource filtering occurs downstream of Template",
+		"SkipKinds":                  "resource filtering occurs downstream of Template",
+	}
+	typ := reflect.TypeFor[Options]()
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		t.Run("Options/"+field.Name, func(t *testing.T) {
+			var opts Options
+			v := reflect.ValueOf(&opts).Elem().Field(i)
+			switch v.Kind() {
+			case reflect.Bool:
+				v.SetBool(true)
+			case reflect.String:
+				v.SetString("different")
+			case reflect.Slice:
+				v.Set(reflect.ValueOf([]string{"different"}))
+			default:
+				t.Fatalf("new option %s requires an explicit cache-key decision", field.Name)
+			}
+			key := computeTemplateKey("fp", ch, values, opts, hr)
+			if key == "" {
+				t.Fatal("valid option produced an empty key")
+			}
+			_, skip := excluded[field.Name]
+			assert.Equal(t, key == base, skip)
+		})
+	}
+	for _, field := range []string{
+		"Name", "Namespace", "HelmReleaseSpec.ReleaseName", "TargetNamespace",
+		"CRDsPolicy", "DisableSchemaValidation", "DisableOpenAPIValidation",
+		"Install.DisableHooks", "Install.Replace", "Upgrade.DisableHooks", "Test.Enable",
+		"Chart.Version", "ChartValuesFiles", "IgnoreMissingValuesFiles", "PostRenderers",
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := computeTemplateKey("fp", baseChart, baseValues, tc.opts, baseHR); got != baseKey {
-				t.Error("output filtering changed the template key")
+		t.Run("HelmRelease/"+field, func(t *testing.T) {
+			alt := hr.Clone()
+			v := reflect.ValueOf(alt).Elem()
+			for name := range strings.SplitSeq(field, ".") {
+				v = v.FieldByName(name)
+				if v.Kind() == reflect.Pointer {
+					v.Set(reflect.New(v.Type().Elem()))
+					v = v.Elem()
+				}
+			}
+			switch v.Kind() {
+			case reflect.Bool:
+				v.SetBool(true)
+			case reflect.String:
+				v.SetString("different")
+			case reflect.Slice:
+				v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+				if v.Type().Elem().Kind() == reflect.String {
+					v.Index(0).SetString("different")
+				}
+			default:
+				t.Fatalf("field %s requires an explicit cache-key decision", field)
+			}
+			key := computeTemplateKey("fp", ch, values, Options{}, alt)
+			if key == "" || key == base {
+				t.Fatal("changed release input did not produce a distinct valid key")
 			}
 		})
 	}
-
-	t.Run("OptsKubeVersion", func(t *testing.T) {
-		alt := baseOpts
-		alt.KubeVersion = "1.32"
-		if got := computeTemplateKey("fp", baseChart, baseValues, alt, baseHR); got == baseKey {
-			t.Error("different KubeVersion did not change the key")
-		}
+	t.Run("ChartFingerprint", func(t *testing.T) {
+		assert.Equal(t, computeTemplateKey("different", ch, values, Options{}, hr) == base, false)
 	})
-
-	t.Run("OptsSkipCRDs", func(t *testing.T) {
-		alt := baseOpts
-		alt.SkipCRDs = !baseOpts.SkipCRDs
-		if got := computeTemplateKey("fp", baseChart, baseValues, alt, baseHR); got == baseKey {
-			t.Error("different SkipCRDs did not change the key")
-		}
-	})
-
-	t.Run("OptsAPIVersions", func(t *testing.T) {
-		alt := baseOpts
-		alt.APIVersions = "v1,apps/v1"
-		if got := computeTemplateKey("fp", baseChart, baseValues, alt, baseHR); got == baseKey {
-			t.Error("different APIVersions did not change the key")
-		}
-	})
-
-	t.Run("OptsShowOnly", func(t *testing.T) {
-		alt := baseOpts
-		alt.ShowOnly = []string{"templates/cm.yaml"}
-		if got := computeTemplateKey("fp", baseChart, baseValues, alt, baseHR); got == baseKey {
-			t.Error("different ShowOnly did not change the key")
-		}
-	})
-
-	t.Run("HRReleaseName", func(t *testing.T) {
-		alt := *baseHR
-		alt.HelmReleaseSpec.ReleaseName = "different"
-		if got := computeTemplateKey("fp", baseChart, baseValues, baseOpts, &alt); got == baseKey {
-			t.Error("different ReleaseName did not change the key")
-		}
-	})
-
-	t.Run("HRChartValuesFiles", func(t *testing.T) {
-		alt := *baseHR
-		alt.ChartValuesFiles = []string{"values-prod.yaml"}
-		if got := computeTemplateKey("fp", baseChart, baseValues, baseOpts, &alt); got == baseKey {
-			t.Error("different ChartValuesFiles did not change the key")
-		}
-	})
-
-	t.Run("HRCRDsPolicy", func(t *testing.T) {
-		alt := *baseHR
-		alt.CRDsPolicy = "Skip"
-		if got := computeTemplateKey("fp", baseChart, baseValues, baseOpts, &alt); got == baseKey {
-			t.Error("different CRDsPolicy did not change the key")
-		}
+	t.Run("Values", func(t *testing.T) {
+		assert.Equal(t, computeTemplateKey("fp", ch, map[string]any{"k": "different"}, Options{}, hr) == base, false)
 	})
 }
 

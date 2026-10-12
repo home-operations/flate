@@ -10,7 +10,10 @@ import (
 	"time"
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
+	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
@@ -47,6 +50,7 @@ description: test
 	st.AddObject(gr)
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		FS: os.DirFS(dir), Key: "immutable-chart-fixture",
 	})
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 
@@ -123,73 +127,57 @@ description: test
 // the path, and an overwrite is invisible.
 func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 	dir := t.TempDir()
+	ch := minimalChart()
+	ch.Metadata.Description = "first"
+	saved, err := chartutil.Save(ch, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, httpChartFilename)
+	if err := os.Rename(saved, archive); err != nil {
+		t.Fatal(err)
+	}
 	cli, err := NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatal(err)
 	}
 	st := store.New()
-	gr := &manifest.GitRepository{Name: "chart-repo", Namespace: "flux-system"}
-	st.AddObject(gr)
-	st.SetArtifact(gr.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
-	})
+	ref := &manifest.OCIRepository{Name: "chart-repo", Namespace: "flux-system"}
+	st.AddObject(ref)
+	st.SetArtifact(ref.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir})
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
-
-	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name:          "mychart",
-			RepoName:      "chart-repo",
-			RepoNamespace: "flux-system",
-			RepoKind:      manifest.KindGitRepository,
-		},
-	}
-
-	// First version of the chart.
-	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
-name: mychart
-version: 0.1.0
-description: first
-`)
-	testutil.WriteFile(t, dir, "mychart/values.yaml", "k: v1\n")
-
-	first, err := cli.LoadChart(context.Background(), hr)
+	hr := newHR()
+	hr.Chart.RepoKind = manifest.KindOCIRepository
+	first, err := cli.LoadChart(t.Context(), hr)
 	if err != nil {
-		t.Fatalf("first LoadChart: %v", err)
+		t.Fatal(err)
 	}
-
-	// Overwrite Chart.yaml — flate's chartCacheFingerprint stats
-	// Chart.yaml for directory charts (directory mtime is unreliable),
-	// so this is the file the cache key actually tracks. New content
-	// changes both size and mtime; the future-mtime stamp guards
-	// against coarse-granularity filesystems where same-second
-	// rewrites can collide.
-	writeFuture := func(rel, body string) {
-		t.Helper()
-		testutil.WriteFile(t, dir, rel, body)
-		future := time.Now().Add(2 * time.Hour)
-		if err := os.Chtimes(filepath.Join(dir, rel), future, future); err != nil {
-			t.Fatal(err)
-		}
+	if len(cli.chartCache) != 1 {
+		t.Fatal("archive chart was not cached")
 	}
-	writeFuture("mychart/Chart.yaml", `apiVersion: v2
-name: mychart
-version: 0.1.0
-description: second-version-different-size-and-mtime
-`)
-
-	second, err := cli.LoadChart(context.Background(), hr)
+	ch.Metadata.Description = "second-version-different-size-and-mtime"
+	saved, err = chartutil.Save(ch, dir)
 	if err != nil {
-		t.Fatalf("second LoadChart: %v", err)
+		t.Fatal(err)
 	}
-	// LoadChart now returns a per-call clone for ProcessDependencies
-	// safety, so pointer identity isn't the right signal — compare a
-	// content field (Description) that differs between the two
-	// on-disk versions.
-	if first.Chart.Metadata.Description == second.Chart.Metadata.Description {
-		t.Errorf("cache served stale chart after on-disk overwrite; mtime/size invalidation failed (description still %q)",
-			first.Chart.Metadata.Description)
+	if err := os.Rename(saved, archive); err != nil {
+		t.Fatal(err)
 	}
+	future := time.Now().Add(2 * time.Hour)
+	if err := os.Chtimes(archive, future, future); err != nil {
+		t.Fatal(err)
+	}
+	second, err := cli.LoadChart(t.Context(), hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, first.Chart.Metadata.Description, "first")
+	assert.Equal(t, second.Chart.Metadata.Description, ch.Metadata.Description)
+	loaded, err := loader.Load(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, second.Chart.Metadata.Description, loaded.Metadata.Description)
 }
 
 // TestLoadChart_PerCallCloneIsolatesValuesAndDependencies pins that

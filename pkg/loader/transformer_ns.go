@@ -13,6 +13,7 @@ import (
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
 // transformerScanMaxDepth bounds the recursive walk that confirms a
@@ -227,7 +228,7 @@ func resolveRef(baseDir, ref string) (string, bool) {
 		return "", false
 	}
 	resolved := path.Clean(path.Join(baseDir, filepath.ToSlash(ref)))
-	if resolved == "." || strings.HasPrefix(resolved, "..") {
+	if resolved == "." || safepath.Escaped(resolved) {
 		return "", false
 	}
 	return resolved, true

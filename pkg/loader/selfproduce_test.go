@@ -659,3 +659,55 @@ data: {value: fixture}
 		})
 	}
 }
+
+func TestLoader_DotDotPaths(t *testing.T) {
+	for _, tc := range []struct {
+		path     string
+		accepted bool
+	}{
+		{path: "..foo", accepted: true},
+		{path: ".."},
+		{path: "../x"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "repo")
+			dir := filepath.Join(root, tc.path)
+			testutil.WriteFile(t, dir, "kustomization.yaml", "configMapGenerator:\n- name: settings\n  literals: [key=value]\n")
+			documents := documentReader{}
+			documents.read(dir)
+
+			l := &Loader{documents: documents}
+			var wantRoots []string
+			if tc.accepted {
+				wantRoots = []string{tc.path}
+			}
+			if got := l.standaloneRoots(root, nil); !slices.Equal(got, wantRoots) {
+				t.Errorf("standaloneRoots = %v, want %v", got, wantRoots)
+			}
+
+			w := graphWalker{documents: documents, visited: map[graphContext]struct{}{}}
+			var files []string
+			if !w.walk(graphVisit{root: root, dir: tc.path}, func(v graphVisit) bool {
+				files = append(files, v.file)
+				return true
+			}) {
+				t.Fatal("walk stopped before completing")
+			}
+			var wantFiles []string
+			if tc.accepted {
+				wantFiles = []string{filepath.Join(dir, "kustomization.yaml")}
+			}
+			if !slices.Equal(files, wantFiles) {
+				t.Errorf("walk files = %v, want %v", files, wantFiles)
+			}
+
+			wantRef := ""
+			if tc.accepted {
+				wantRef = tc.path
+			}
+			if got, ok := resolveRef(".", tc.path); ok != tc.accepted || got != wantRef {
+				t.Errorf("resolveRef = (%q, %v), want (%q, %v)", got, ok, wantRef, tc.accepted)
+			}
+		})
+	}
+}

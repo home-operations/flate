@@ -392,90 +392,120 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 	const parentURL = "https://example.invalid/o/parent.git"
 	const childURL = "https://example.invalid/o/child.git"
-	parent := fakeWorktree(t, map[string]string{"kustomization.yaml": "resources:\n  - " + childURL + "\n"})
-	child := fakeWorktree(t, map[string]string{
-		"kustomization.yaml": "resources:\n  - cm.yaml\n", "cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: first}\n",
-	})
-	for _, dir := range []string{parent, child} {
-		r, err := git.PlainInit(dir, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		wt, err := r.Worktree()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := wt.Add("."); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := wt.Commit("seed", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	sources, err := cache.New(t.Context(), cacheroot.New(""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = sources.Close() })
-	fetcher := &sourcegit.Fetcher{Cache: sources}
-	c := NewTreeCache()
-	var requests []GitBaseRequest
-	c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest) (*store.SourceArtifact, error) {
-		requests = append(requests, request)
-		dir := parent
-		if request.URL == childURL {
-			dir = child
-		}
-		return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, MaxAge: request.MaxAge})
-	})
-	input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "\n")}}}
-	render := func(interval string) ([]byte, error) {
-		return RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: map[string]any{"spec": map[string]any{"interval": interval}}})
-	}
-	update := func(name, body string) {
-		t.Helper()
-		testutil.WriteFileAt(t, filepath.Join(child, name), body)
-		r, err := git.PlainOpen(child)
-		if err != nil {
-			t.Fatal(err)
-		}
-		wt, err := r.Worktree()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := wt.Add(name); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := wt.Commit(name, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if output, err := render("1h"); err != nil || !strings.Contains(string(output), "name: first") {
-		t.Fatalf("nested base: %s, %v", output, err)
-	}
-	update("cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: second}\n")
-	for _, tc := range []struct {
-		interval, want string
-		maxAge         time.Duration
+	for _, fixture := range []struct {
+		name, kustomization, resource, marker string
 	}{
-		{"1h", "first", time.Hour}, {"1ns", "second", time.Nanosecond},
+		{
+			name:          "resources",
+			kustomization: "resources:\n  - package\n",
+			resource:      "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: first}\n",
+			marker:        "name: ",
+		},
+		{
+			name:          "transformers",
+			kustomization: "resources:\n  - root.yaml\ntransformers:\n  - package\n",
+			resource: "apiVersion: builtin\nkind: LabelTransformer\nmetadata: {name: labels}\n" +
+				"labels: {nested: first}\nfieldSpecs:\n  - path: metadata/labels\n    create: true\n",
+			marker: "nested: ",
+		},
+		{
+			name:          "generators",
+			kustomization: "generators:\n  - package\n",
+			resource:      "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: first}\nliterals: [nested=gitbase]\n",
+			marker:        "name: ",
+		},
 	} {
-		requests = nil
-		output, err := render(tc.interval)
-		if err != nil || !strings.Contains(string(output), "name: "+tc.want) {
-			t.Fatalf("interval %s: %s, %v", tc.interval, output, err)
-		}
-		if len(requests) != 2 {
-			t.Fatalf("nested requests: %v", requests)
-		}
-		for _, request := range requests {
-			if request.MaxAge != tc.maxAge {
-				t.Fatalf("nested interval = %v, want %v", request.MaxAge, tc.maxAge)
+		t.Run(fixture.name, func(t *testing.T) {
+			parent := fakeWorktree(t, map[string]string{
+				"kustomization.yaml":         fixture.kustomization,
+				"package/kustomization.yaml": "resources:\n  - " + childURL + "\n",
+				"root.yaml":                  "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: root}\n",
+			})
+			child := fakeWorktree(t, map[string]string{
+				"kustomization.yaml": "resources:\n  - cm.yaml\n", "cm.yaml": fixture.resource,
+			})
+			for _, dir := range []string{parent, child} {
+				r, err := git.PlainInit(dir, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wt, err := r.Worktree()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := wt.Add("."); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := wt.Commit("seed", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
-	}
-	update("kustomization.yaml", "resources:\n  - "+parentURL+"\n")
-	if _, err := render("1ns"); err == nil || !strings.Contains(err.Error(), "cycle") {
-		t.Fatalf("upstream cycle error: %v", err)
+			sources, err := cache.New(t.Context(), cacheroot.New(""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = sources.Close() })
+			fetcher := &sourcegit.Fetcher{Cache: sources}
+			c := NewTreeCache()
+			var requests []GitBaseRequest
+			c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest) (*store.SourceArtifact, error) {
+				requests = append(requests, request)
+				dir := parent
+				if request.URL == childURL {
+					dir = child
+				}
+				return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, MaxAge: request.MaxAge})
+			})
+			input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "\n")}}}
+			render := func(interval string) ([]byte, error) {
+				return RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: map[string]any{"spec": map[string]any{"interval": interval}}})
+			}
+			update := func(name, body string) {
+				t.Helper()
+				testutil.WriteFileAt(t, filepath.Join(child, name), body)
+				r, err := git.PlainOpen(child)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wt, err := r.Worktree()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := wt.Add(name); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := wt.Commit(name, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if output, err := render("1h"); err != nil || !strings.Contains(string(output), fixture.marker+"first") {
+				t.Fatalf("nested base: %s, %v", output, err)
+			}
+			update("cm.yaml", strings.ReplaceAll(fixture.resource, "first", "second"))
+			for _, tc := range []struct {
+				interval, want string
+				maxAge         time.Duration
+			}{
+				{"1h", "first", time.Hour}, {"1ns", "second", time.Nanosecond},
+			} {
+				requests = nil
+				output, err := render(tc.interval)
+				if err != nil || !strings.Contains(string(output), fixture.marker+tc.want) {
+					t.Fatalf("interval %s: %s, %v", tc.interval, output, err)
+				}
+				if len(requests) != 2 {
+					t.Fatalf("nested requests: %v", requests)
+				}
+				for _, request := range requests {
+					if request.MaxAge != tc.maxAge {
+						t.Fatalf("nested interval = %v, want %v", request.MaxAge, tc.maxAge)
+					}
+				}
+			}
+			update("kustomization.yaml", "resources:\n  - "+parentURL+"\n")
+			if _, err := render("1ns"); err == nil || !strings.Contains(err.Error(), "cycle") {
+				t.Fatalf("upstream cycle error: %v", err)
+			}
+		})
 	}
 }

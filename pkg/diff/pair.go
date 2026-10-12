@@ -2,6 +2,7 @@ package diff
 
 import (
 	"cmp"
+	"log/slog"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -37,10 +38,11 @@ type pairKey struct {
 // by (parent, apiVersion, kind, namespace, name), so a Deployment
 // rendered by HelmRelease A never diffs against the same-named
 // Deployment from HelmRelease B. The result is sorted by parent then
-// resource identity for deterministic output.
+// resource identity for deterministic output. Duplicate identities retain
+// the last document on each side, matching apply order, and emit a warning.
 func pair(left, right []Doc) []pairedResource {
 	idx := make(map[pairKey]*pairedResource, len(left)+len(right))
-	add := func(side int, d Doc) {
+	add := func(side string, d Doc) {
 		kind := manifest.DocKind(d.Manifest)
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		name, ns := manifest.DocMetadata(d.Manifest)
@@ -50,17 +52,24 @@ func pair(left, right []Doc) []pairedResource {
 			p = &pairedResource{parent: d.Parent, apiVersion: apiVersion, kind: kind, namespace: ns, name: name}
 			idx[k] = p
 		}
-		if side == 0 {
-			p.a = d.Manifest
-		} else {
-			p.b = d.Manifest
+		dst := &p.a
+		if side == "right" {
+			dst = &p.b
 		}
+		if *dst != nil {
+			slog.Warn("diff: duplicate document shadows an earlier document",
+				"side", side, "parentKind", d.Parent.Kind,
+				"parentNamespace", d.Parent.Namespace, "parentName", d.Parent.Name,
+				"parentPath", d.Parent.Path, "apiVersion", apiVersion,
+				"kind", kind, "namespace", ns, "name", name)
+		}
+		*dst = d.Manifest
 	}
 	for _, d := range left {
-		add(0, d)
+		add("left", d)
 	}
 	for _, d := range right {
-		add(1, d)
+		add("right", d)
 	}
 	out := make([]pairedResource, 0, len(idx))
 	for _, p := range idx {

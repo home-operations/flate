@@ -497,7 +497,8 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 // ExpandPostBuildSubstituteReferenceWithSubstitutions applies overlay after
 // referenced and inline values. An overlay never enables absent postBuild.
 func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomization, p Provider, overlay map[string]string) error {
-	if ks == nil || (len(ks.PostBuildSubstituteFrom) == 0 && (ks.PostBuild == nil || len(overlay) == 0)) {
+	if ks == nil || (len(ks.PostBuildSubstitute) == 0 && len(ks.PostBuildSubstituteFrom) == 0 &&
+		(ks.PostBuild == nil || len(overlay) == 0)) {
 		return nil
 	}
 	if len(ks.PostBuildSubstituteFrom) > 0 && ks.Namespace == "" {
@@ -563,7 +564,7 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 	}
 	if len(invalid) > 0 {
 		slices.Sort(invalid)
-		return fmt.Errorf("%w: substituteFrom var name(s) %v invalid (must match %s)",
+		return fmt.Errorf("%w: substitute var name(s) %v invalid (must match %s)",
 			manifest.ErrInvalidSubstituteReference, invalid, varsubRegex.String())
 	}
 	ks.UpdatePostBuildSubstitutions(values)

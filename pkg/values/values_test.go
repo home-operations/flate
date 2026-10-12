@@ -479,27 +479,27 @@ func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testin
 	}
 }
 
-// TestExpandPostBuildSubstituteReference_RejectsInvalidVarName locks
-// the upstream contract (fluxcd/pkg/kustomize varSubstitution): any
-// var name failing `^[_[:alpha:]][_[:alpha:][:digit:]]*$` fails the
-// whole postBuild rather than being silently dropped. A ConfigMap key
-// with a dash makes upstream Flux fail the Kustomization; flate must
-// surface the same error.
 func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) {
-	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
-	ks.PostBuildSubstituteFrom = []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}}
-	provider := &SliceProvider{
-		ConfigMaps: []*manifest.ConfigMap{{
-			Name: "cm", Namespace: "ns",
-			Data: map[string]any{"my-var": "v", "ok_name": "v"},
-		}},
-	}
-	err := ExpandPostBuildSubstituteReference(ks, provider)
-	if err == nil {
-		t.Fatal("expected error for dashed var name")
-	}
-	if !strings.Contains(err.Error(), "my-var") {
-		t.Errorf("error should name the invalid var; got %v", err)
+	for _, source := range []string{"ConfigMap", "inline"} {
+		t.Run(source, func(t *testing.T) {
+			ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
+			vars := map[string]any{"z-var": "v", "my-var": "v", "ok_name": "v"}
+			provider := &SliceProvider{}
+			if source == "inline" {
+				ks.PostBuildSubstitute = vars
+			} else {
+				ks.PostBuildSubstituteFrom = []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}}
+				provider.ConfigMaps = []*manifest.ConfigMap{{Name: "cm", Namespace: "ns", Data: vars}}
+			}
+
+			err := ExpandPostBuildSubstituteReference(ks, provider)
+			if !errors.Is(err, manifest.ErrInvalidSubstituteReference) {
+				t.Fatalf("expected invalid substitute reference, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "[my-var z-var]") {
+				t.Errorf("error should name invalid vars in sorted order; got %v", err)
+			}
+		})
 	}
 }
 

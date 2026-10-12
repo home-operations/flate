@@ -1,6 +1,11 @@
 package diff
 
-import "testing"
+import (
+	"bytes"
+	"log/slog"
+	"strings"
+	"testing"
+)
 
 // TestPair_DistinguishesByParent locks the parent-aware pairing: two
 // HelmReleases each rendering a same-named Deployment are tracked
@@ -64,5 +69,44 @@ func TestPair_KeyIncludesParentPath(t *testing.T) {
 		if changed && p.parent.Path != "main/apps" {
 			t.Errorf("change attributed to wrong parent path %q", p.parent.Path)
 		}
+	}
+}
+
+func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
+	parent := Parent{Kind: "Kustomization", Namespace: "flux-system", Name: "apps", Path: "./apps"}
+	for _, side := range []string{"left", "right"} {
+		t.Run(side, func(t *testing.T) {
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+
+			first := cmDoc(parent, "shared", "ns", "shadowed", "")
+			last := cmDoc(parent, "shared", "ns", "retained", "")
+			other := cmDoc(parent, "shared", "ns", "other-side", "")
+			left, right := []Doc{first, last}, []Doc{other}
+			if side == "right" {
+				left, right = right, left
+			}
+			pairs := pair(left, right)
+			if len(pairs) != 1 {
+				t.Fatalf("expected one paired resource, got %d", len(pairs))
+			}
+			retained, counterpart := pairs[0].a, pairs[0].b
+			if side == "right" {
+				retained, counterpart = counterpart, retained
+			}
+			if retained["data"].(map[string]any)["k"] != "retained" || counterpart["data"].(map[string]any)["k"] != "other-side" {
+				t.Fatalf("expected last document paired with other side, got %+v", pairs[0])
+			}
+			if strings.Count(logs.String(), "level=WARN") != 1 {
+				t.Fatalf("expected one duplicate warning, got %q", logs.String())
+			}
+			for _, field := range []string{"diff: duplicate document", "side=" + side, "parentKind=Kustomization", "parentNamespace=flux-system", "parentName=apps", "parentPath=./apps", "apiVersion=v1", "kind=ConfigMap", "namespace=ns", "name=shared"} {
+				if !strings.Contains(logs.String(), field) {
+					t.Errorf("warning missing %q: %s", field, logs.String())
+				}
+			}
+		})
 	}
 }

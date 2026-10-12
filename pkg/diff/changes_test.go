@@ -141,3 +141,27 @@ func TestChanges_Sorted(t *testing.T) {
 		}
 	}
 }
+
+func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
+	p := Parent{Kind: "Kustomization", Namespace: "ns", Name: "apps"}
+	left := []Doc{cmDoc(p, "shared", "ns", "shadowed", ""), cmDoc(p, "shared", "ns", "retained", "")}
+	for _, tt := range []struct {
+		name string
+		last string
+		want int
+	}{
+		{name: "shadowed change", last: "retained", want: 0},
+		{name: "retained change", last: "changed", want: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			right := []Doc{cmDoc(p, "shared", "ns", "changed-shadowed", ""), cmDoc(p, "shared", "ns", tt.last, "")}
+			got := Changes(left, right, Options{})
+			if len(got) != tt.want {
+				t.Fatalf("expected %d changes, got %+v", tt.want, got)
+			}
+			if tt.want > 0 && (got[0].Status != StatusChanged || got[0].Old["data"].(map[string]any)["k"] != "retained" || got[0].New["data"].(map[string]any)["k"] != tt.last) {
+				t.Fatalf("expected change between retained documents, got %+v", got[0])
+			}
+		})
+	}
+}

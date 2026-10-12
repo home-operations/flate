@@ -677,7 +677,7 @@ func TestLoader_DotDotPaths(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "repo")
 			dir := filepath.Join(root, tc.path)
 			testutil.WriteFile(t, dir, "kustomization.yaml", "configMapGenerator:\n- name: settings\n  literals: [key=value]\n")
-			documents := documentReader{}
+			documents := documentReader{cache: map[string]document{}}
 			documents.read(dir)
 
 			l := &Loader{documents: documents}

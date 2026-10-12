@@ -55,6 +55,9 @@ func ResolveProxy(secrets SecretGetter, ns, ownerKind, ownerID string, ref *mani
 		material[i] = value
 	}
 	if material[0] == "" {
+		if material[1] != "" || material[2] != "" {
+			return nil, fmt.Errorf("%w: proxy secret %s/%s missing required 'address' key", manifest.ErrInput, ns, ref.Name)
+		}
 		return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "missing required 'address' key")
 	}
 	return &ProxyConfig{Address: material[0], Username: material[1], Password: material[2]}, nil

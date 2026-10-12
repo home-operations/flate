@@ -53,7 +53,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	obj, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+	obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -157,7 +157,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -213,7 +213,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -244,7 +244,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -269,7 +269,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -296,9 +296,34 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, _, _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
+	}
+}
+
+func BenchmarkParseDoc_ConfigMapAndStringData(b *testing.B) {
+	for _, kind := range []string{KindConfigMap, KindSecret} {
+		b.Run(kind, func(b *testing.B) {
+			field := "data"
+			if kind == KindSecret {
+				field = "stringData"
+			}
+			doc := map[string]any{
+				"apiVersion": "v1", "kind": kind, "metadata": map[string]any{"name": "vars", "namespace": "ns"},
+				field: map[string]any{
+					"HOST": "service.cluster.example.com", "URL": "https://service.cluster.example.com/path?key=value",
+					"HEX": strings.Repeat("0123456789abcdef", 4), "TEXT": strings.Repeat("line of text\n", 30),
+					"PEM": "-----BEGIN CERTIFICATE-----\n" + strings.Repeat("abcdefgh", 200) + "\n-----END CERTIFICATE-----",
+				},
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

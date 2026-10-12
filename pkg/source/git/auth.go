@@ -37,9 +37,6 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 			return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing 'identity' for SSH auth")
 		}
 		password, _, _ := sec.Value("password")
-		if manifest.IsValuePlaceholder(password) {
-			password = ""
-		}
 		user := sshUserFromURL(repo.URL)
 		auth, err := gitssh.NewPublicKeys(user, []byte(identity), password)
 		if err != nil {

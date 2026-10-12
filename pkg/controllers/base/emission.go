@@ -30,25 +30,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 	var emitted []manifest.NamedResource
 	retained := false
 	for i, doc := range docs {
-		obj, authoritative, err := manifest.ParseDoc(doc, opts)
-		changed := false
-		for _, field := range []string{"data", "stringData", "binaryData"} {
-			before, _ := doc[field].(map[string]any)
-			after, _ := authoritative[field].(map[string]any)
-			for key, raw := range before {
-				if value, ok := raw.(string); ok {
-					changed = after[key] != value
-				} else {
-					_, changed = after[key].(string)
-				}
-				if changed {
-					break
-				}
-			}
-			if changed {
-				break
-			}
-		}
+		obj, authoritative, changed, err := manifest.ParseDoc(doc, opts)
 		if changed {
 			if !retained {
 				docs = slices.Clone(docs)

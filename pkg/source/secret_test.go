@@ -1,6 +1,7 @@
 package source
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"testing"
@@ -39,7 +40,7 @@ func TestMissingSecretErr(t *testing.T) {
 }
 
 func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
-	for _, value := range []string{"", "..PLACEHOLDER_username..", "invalid-base64!"} {
+	for _, value := range []string{"", "..PLACEHOLDER_username..", base64.StdEncoding.EncodeToString([]byte("..PLACEHOLDER_username..")), "invalid-base64!"} {
 		sec := &manifest.Secret{Data: map[string]any{"username": value}, StringData: map[string]any{"password": "plain"}}
 		if _, _, err := BasicAuthFromSecret(sec, "GitRepository", "ns", "repo", "creds"); !errors.Is(err, manifest.ErrMissingSecret) {
 			t.Fatalf("value %q: %v", value, err)

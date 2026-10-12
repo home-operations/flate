@@ -3,6 +3,7 @@ package bucket_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -78,6 +79,28 @@ func TestFetcher_SecretRefMissingKeys(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "missing accesskey/secretkey") {
 		t.Errorf("error should say missing accesskey/secretkey; got %v", err)
+	}
+}
+
+func TestFetcher_WipedCredentials(t *testing.T) {
+	for _, field := range []string{"accesskey", "secretkey"} {
+		for _, encoded := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/encoded=%t", field, encoded), func(t *testing.T) {
+				data := map[string]any{"accesskey": "access", "secretkey": "secret", field: "..PLACEHOLDER_" + field + ".."}
+				sec := &manifest.Secret{StringData: data}
+				if encoded {
+					sec.StringData, sec.Data = nil, map[string]any{}
+					for k, v := range data {
+						sec.Data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
+					}
+				}
+				f := &bucket.Fetcher{Secrets: func(_, _ string) *manifest.Secret { return sec }}
+				b := &manifest.Bucket{Name: "b", Namespace: "ns", BucketName: "fixture", Endpoint: "127.0.0.1:1", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+				if _, err := f.Fetch(t.Context(), b); !errors.Is(err, manifest.ErrMissingSecret) {
+					t.Fatalf("got %v, want ErrMissingSecret", err)
+				}
+			})
+		}
 	}
 }
 

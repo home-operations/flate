@@ -466,6 +466,19 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 	}
 }
 
+func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testing.T) {
+	sec := &manifest.Secret{Name: "vars", Namespace: "ns", Data: map[string]any{"C": "!", "A": "!", "B": "!"}}
+	provider := &SliceProvider{Secrets: []*manifest.Secret{sec}}
+	ks := &manifest.Kustomization{Name: "app", Namespace: "ns", PostBuildSubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "vars"}}}
+	_, _, want := sec.Value("A")
+	for range 50 {
+		err := ExpandPostBuildSubstituteReference(ks, provider)
+		if err == nil || err.Error() != want.Error() {
+			t.Fatalf("got %v, want %v", err, want)
+		}
+	}
+}
+
 // TestExpandPostBuildSubstituteReference_RejectsInvalidVarName locks
 // the upstream contract (fluxcd/pkg/kustomize varSubstitution): any
 // var name failing `^[_[:alpha:]][_[:alpha:][:digit:]]*$` fails the

@@ -50,7 +50,7 @@ data:
 			if err != nil {
 				t.Fatal(err)
 			}
-			obj, _, err := manifest.ParseDoc(map[string]any{
+			obj, _, _, err := manifest.ParseDoc(map[string]any{
 				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
 				"metadata": map[string]any{"name": "podinfo", "namespace": "apps"},
 				"spec":     map[string]any{"chartRef": map[string]any{"kind": "OCIRepository", "name": "podinfo"}},

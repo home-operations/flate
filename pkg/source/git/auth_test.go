@@ -2,15 +2,66 @@ package git
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/pem"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestFetcher_WipedCredentials(t *testing.T) {
+	_, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(key, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"tls.crt", "identity", "known_hosts", "bearerToken"} {
+		for _, encoded := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/encoded=%t", field, encoded), func(t *testing.T) {
+				data := map[string]any{"identity": string(pem.EncodeToMemory(block)), "username": "u", "password": "p", field: "..PLACEHOLDER_" + field + ".."}
+				sec := &manifest.Secret{StringData: data}
+				if encoded {
+					sec.StringData, sec.Data = nil, map[string]any{}
+					for k, v := range data {
+						sec.Data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
+					}
+				}
+				f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return sec }}
+				repo := &manifest.GitRepository{Name: "g", Namespace: "ns", URL: "https://host/repo", SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+				if field == "identity" || field == "known_hosts" {
+					repo.URL = "ssh://git@host/repo"
+				}
+				if field == "tls.crt" {
+					_, err = f.resolveTLS(repo)
+				} else {
+					var auth transport.AuthMethod
+					auth, err = f.resolveAuth(repo)
+					if field == "bearerToken" {
+						if _, ok := auth.(*githttp.BasicAuth); !ok {
+							t.Fatalf("got %T, want basic auth", auth)
+						}
+					}
+				}
+				missing := field == "tls.crt" || field == "identity"
+				if missing && !errors.Is(err, manifest.ErrMissingSecret) || !missing && err != nil {
+					t.Fatalf("missing=%t, error=%v", missing, err)
+				}
+			})
+		}
+	}
+}
 
 func TestFetcher_NonGenericProvider(t *testing.T) {
 	f := &Fetcher{}

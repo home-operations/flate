@@ -105,7 +105,8 @@ type ParseDocOptions struct {
 }
 
 // ParseDoc dispatches on kind + apiVersion to the appropriate concrete
-// parser and returns the authoritative sanitized document, including on errors.
+// parser and returns the authoritative document and whether sanitation changed it,
+// including on errors.
 // Unknown kinds become a RawObject; kustomize.config.k8s.io
 // build directives and bare data files are silently dropped.
 //
@@ -114,25 +115,26 @@ type ParseDocOptions struct {
 // (seaweed.seaweedfs.com Bucket, s3.services.k8s.aws Bucket) is an
 // ordinary cluster resource, so it falls through to RawObject rather
 // than being decoded as — and reconciled as — the Flux CR it isn't.
-func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[string]any, error) {
+func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[string]any, bool, error) {
 	kind := DocKind(doc)
 	apiVersion := DocAPIVersion(doc)
 	// kustomize.config.k8s.io build directives (Kustomization,
 	// Component) aren't k8s resources — they're build inputs we
 	// already follow via spec.path discovery. Drop them silently.
 	if strings.HasPrefix(apiVersion, KustomizeDomain) {
-		return &RawObject{Kind: kind, APIVersion: apiVersion}, doc, nil
+		return &RawObject{Kind: kind, APIVersion: apiVersion}, doc, false, nil
 	}
 	// Documents without a kind are bare data files (helm values,
 	// arbitrary YAML configs). Treat them as RawObjects so the
 	// loader drops them without surfacing as parse errors.
 	if kind == "" {
-		return &RawObject{APIVersion: apiVersion}, doc, nil
+		return &RawObject{APIVersion: apiVersion}, doc, false, nil
 	}
 	if apiVersion == "" {
-		return nil, doc, inputf("missing apiVersion for %s", kind)
+		return nil, doc, false, inputf("missing apiVersion for %s", kind)
 	}
 
+	changed := false
 	if opts.WipeSecrets && apiVersion == CoreAPIVersion && (kind == KindConfigMap || kind == KindSecret) {
 		encrypted := IsEncryptedSecret(doc)
 		var sanitized map[string]any
@@ -170,6 +172,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 		}
 		if sanitized != nil {
 			doc = sanitized
+			changed = true
 		}
 	}
 	var obj BaseManifest
@@ -202,7 +205,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 	default:
 		obj, err = parseRawObject(doc)
 	}
-	return obj, doc, err
+	return obj, doc, changed, err
 }
 
 // IsKustomizeBuildDirective reports whether obj is a kustomize.config.k8s.io

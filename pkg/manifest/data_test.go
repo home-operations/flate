@@ -47,14 +47,17 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 			if tc.encrypted {
 				doc["sops"] = map[string]any{"version": "1"}
 			}
-			_, authoritative, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
-			if err == nil {
+			_, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+			if err == nil || !changed {
 				t.Fatal("metadata-invalid data object parsed")
 			}
 			if authoritative[tc.field].(map[string]any)["VALUE"] != want || doc[tc.field].(map[string]any)["VALUE"] != raw {
 				t.Fatal("authoritative sanitation changed borrowed input or retained ciphertext")
 			}
-			_, replay, _ := ParseDoc(authoritative, ParseDocOptions{WipeSecrets: true})
+			_, replay, changed, _ := ParseDoc(authoritative, ParseDocOptions{WipeSecrets: true})
+			if changed {
+				t.Fatal("replay reported sanitation changes")
+			}
 			assert.Diff(t, replay, authoritative)
 		})
 	}

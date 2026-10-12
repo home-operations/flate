@@ -1,6 +1,9 @@
 package manifest
 
-import "testing"
+import (
+	"encoding/base64"
+	"testing"
+)
 
 func TestIsEncryptedSecret(t *testing.T) {
 	cases := []struct {
@@ -71,6 +74,7 @@ func TestWipeValue_Ciphertext(t *testing.T) {
 	}{
 		{"encrypted str scalar", "ENC[AES256_GCM,data:abc=,iv:def=,tag:ghi=,type:str]", true},
 		{"encrypted comment scalar", "ENC[AES256_GCM,data:abc=,iv:def=,tag:ghi=,type:comment]", true},
+		{"encoded plaintext field", base64.StdEncoding.EncodeToString([]byte("ENC[AES256_GCM,data:abc]")), false},
 		{"cleartext value", "example.com", false},
 		{"empty", "", false},
 		{"prefix only, no close bracket", "ENC[AES256_GCM,data:abc", true},

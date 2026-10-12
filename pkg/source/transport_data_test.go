@@ -19,6 +19,8 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 		{"empty TLS", nil, true, true},
 		{"real incomplete pair", map[string]any{"tls.crt": "real"}, true, false},
 		{"real invalid CA", map[string]any{"ca.crt": "invalid PEM"}, true, false},
+		{"real proxy credentials without address", map[string]any{"username": "u", "password": "p"}, false, false},
+		{"empty proxy", nil, false, true},
 		{"wiped proxy", map[string]any{"address": "..PLACEHOLDER_address.."}, false, true},
 		{"wiped proxy password", map[string]any{"address": "http://proxy", "password": "..PLACEHOLDER_password.."}, false, true},
 	} {

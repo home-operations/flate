@@ -17,13 +17,9 @@ const sopsCiphertextPrefix = "ENC[AES256_GCM,"
 // Nil encoding denotes a plaintext field; malformed encoding alone is preserved.
 func WipeValue(key, value string, encoding *base64.Encoding, encrypted bool) string {
 	wiped := encrypted || strings.Contains(value, sopsCiphertextPrefix)
-	if !wiped {
-		decoder := encoding
-		if decoder == nil {
-			decoder = base64.StdEncoding
-		}
+	if !wiped && encoding != nil {
 		var scratch [128]byte
-		decoded, err := decoder.AppendDecode(scratch[:0], []byte(value))
+		decoded, err := encoding.AppendDecode(scratch[:0], []byte(value))
 		wiped = err == nil && bytes.Contains(decoded, []byte(sopsCiphertextPrefix))
 	}
 	if !wiped {

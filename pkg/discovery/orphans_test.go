@@ -65,7 +65,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	if err != nil {
 		t.Fatal(err)
 	}
-	ks, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+	ks, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 				if err != nil {
 					t.Fatal(err)
 				}
-				ks, _, err := manifest.ParseDoc(ksDoc[0], manifest.ParseDocOptions{})
+				ks, _, _, err := manifest.ParseDoc(ksDoc[0], manifest.ParseDocOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}

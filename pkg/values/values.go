@@ -525,19 +525,24 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 			}
 			continue
 		}
-		var readErr error
+		var failure struct {
+			key string
+			err error
+		}
 		data.Keys()(func(k string) bool {
 			v, _, err := data.Value(k)
 			if err != nil {
-				readErr = err
-				return false
+				if failure.err == nil || k < failure.key {
+					failure.err, failure.key = err, k
+				}
+				return true
 			}
 			// Flux strips newlines before substituting into single-line YAML fields.
 			values[k] = strings.ReplaceAll(v, "\n", "")
 			return true
 		})
-		if readErr != nil {
-			return readErr
+		if failure.err != nil {
+			return failure.err
 		}
 	}
 	// Layer inline spec.postBuild.substitute on top — inline wins on

@@ -1,24 +1,34 @@
 package manifest
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
-func TestBuildKSClaims_EmptyPathRequiresSource(t *testing.T) {
+func TestBuildKSClaims_PathsAndComponents(t *testing.T) {
 	for _, tc := range []struct {
-		name, path, source string
-		wantClaims         int
+		name, path, source, component string
+		want                          []string
 	}{
 		{name: "stub"},
-		{name: "source_root", source: "flux-system", wantClaims: 1},
-		{name: "explicit_root", path: "./", wantClaims: 1},
+		{name: "source_root", source: "flux-system", want: []string{""}},
+		{name: "explicit_root", path: "./", want: []string{""}},
+		{name: "dot_prefix", path: "./apps", component: "../..foo", want: []string{"..foo/", "apps/"}},
+		{name: "parent", path: "./apps", component: "../..", want: []string{"apps/"}},
+		{name: "outside", path: "./apps", component: "../../outside", want: []string{"apps/"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ks := &Kustomization{Name: "root", Path: tc.path, SourceName: tc.source}
+			ks := &Kustomization{Name: "root", Path: tc.path, SourceName: tc.source, Components: []string{tc.component}}
 			claims := BuildKSClaims([]*Kustomization{ks}, nil)
-			if len(claims) != tc.wantClaims {
-				t.Fatalf("claims = %v, want %d claims", claims, tc.wantClaims)
+			var prefixes []string
+			for _, claim := range claims {
+				if claim.ID != ks.Named() {
+					t.Fatalf("claim ID = %v, want %v", claim.ID, ks.Named())
+				}
+				prefixes = append(prefixes, claim.Prefix)
 			}
-			if len(claims) != 0 && (claims[0].ID != ks.Named() || claims[0].Prefix != "") {
-				t.Fatalf("claims = %v, want %s claiming the source root", claims, ks.Named())
+			if !slices.Equal(prefixes, tc.want) {
+				t.Fatalf("claim prefixes = %v, want %v", prefixes, tc.want)
 			}
 		})
 	}
@@ -37,6 +47,13 @@ func TestNormalizeClaimBase(t *testing.T) {
 		{"/kubernetes/apps", "kubernetes/apps"},
 		{"/kubernetes/apps/", "kubernetes/apps"},
 		{"//kubernetes/apps", "kubernetes/apps"},
+		{"./apps/../x", "x"},
+		{"apps//team", "apps/team"},
+		{".//apps", "apps"},
+		{"././", ""},
+		{"../x", "x"},
+		{"apps/../../x", "x"},
+		{"..foo", "..foo"},
 		{"./", ""},
 		{"/", ""},
 		{"", ""},

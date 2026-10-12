@@ -50,7 +50,7 @@ type ProducerTarget struct {
 //     else each spec.data[].secretKey. spec.dataFrom extract/find is deliberately
 //     not enumerated: those keys live in the remote store, unknowable offline, so
 //     a dataFrom-only ExternalSecret declares none.
-//   - SealedSecret (bitnami-labs/sealed-secrets): the one Secret it unseals —
+//   - SealedSecret (bitnami.com): the one Secret it unseals;
 //     spec.template.metadata.name, defaulting to metadata.name. Its declared keys
 //     are spec.encryptedData's (a key→ciphertext map decrypted into same-named
 //     output keys).
@@ -72,8 +72,8 @@ type ProducerTarget struct {
 // a false match.
 func ProducerTargets(raw *RawObject) []ProducerTarget {
 	spec := specView{raw.Spec}
-	switch raw.Kind {
-	case "ExternalSecret":
+	switch {
+	case raw.Kind == "ExternalSecret" && inGroup(raw.APIVersion, "external-secrets.io"):
 		name := cmp.Or(spec.child("target").str("name"), raw.Name)
 		// A target.template fully defines the output keys; without one they are
 		// each data[].secretKey. (Slices aren't comparable, so this fallback
@@ -83,10 +83,10 @@ func ProducerTargets(raw *RawObject) []ProducerTarget {
 			keys = spec.entryKeys("data", "secretKey")
 		}
 		return []ProducerTarget{raw.secret(name, keys)}
-	case "SealedSecret":
+	case raw.Kind == "SealedSecret" && inGroup(raw.APIVersion, "bitnami.com"):
 		name := cmp.Or(spec.child("template").child("metadata").str("name"), raw.Name)
 		return []ProducerTarget{raw.secret(name, spec.mapKeys("encryptedData"))}
-	case "ObjectBucketClaim":
+	case raw.Kind == "ObjectBucketClaim" && inGroup(raw.APIVersion, "objectbucket.io"):
 		return []ProducerTarget{raw.secret(raw.Name, nil), raw.target(KindConfigMap, raw.Name, nil)}
 	default:
 		return nil

@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -22,11 +21,11 @@ type KSClaim struct {
 func BuildKSClaims(kss []*Kustomization, components map[NamedResource][]string) []KSClaim {
 	claims := make([]KSClaim, 0, len(kss))
 	add := func(id NamedResource, base, ref string) {
-		if ref == "" || strings.Contains(ref, "://") || filepath.IsAbs(ref) {
+		if ref == "" || strings.Contains(ref, "://") || path.IsAbs(ref) {
 			return
 		}
 		resolved := path.Clean(path.Join(base, ref))
-		if resolved == "." || strings.HasPrefix(resolved, "..") {
+		if resolved == "." || resolved == ".." || strings.HasPrefix(resolved, "../") {
 			return
 		}
 		claims = append(claims, KSClaim{ID: id, Prefix: resolved + "/"})
@@ -57,7 +56,6 @@ func BuildKSClaims(kss []*Kustomization, components map[NamedResource][]string) 
 // peers that share a claimed path, or their dependency gates would deadlock.
 // Claims must be ordered longest-prefix-first by BuildKSClaims.
 func StrictParent(claims []KSClaim, file string, self NamedResource, selfPrefixes map[string]struct{}) (NamedResource, bool) {
-	file = filepath.ToSlash(file)
 	for _, c := range claims {
 		if c.ID == self {
 			continue
@@ -72,16 +70,18 @@ func StrictParent(claims []KSClaim, file string, self NamedResource, selfPrefixe
 	return NamedResource{}, false
 }
 
-// NormalizeClaimBase turns a Kustomization spec.path into a clean,
-// slash-separated, repo-relative base with no trailing slash. ToSlash is
-// applied so Windows-style spec.path values (rare, but unconstrained by the
-// Flux CRD) normalize to the same shape as discovery file coordinates. A leading slash
-// is dropped: kustomize-controller resolves spec.path with SecureJoin, which
-// treats an absolute path as relative to the artifact root, so
-// `/kubernetes/apps` claims the same files as `./kubernetes/apps`.
+// NormalizeClaimBase returns a clean repo-relative base with no trailing slash.
+// Flux SecureJoin roots spec.path at the artifact, including absolute paths and
+// parent segments that would otherwise escape the root.
 func NormalizeClaimBase(p string) string {
-	p = filepath.ToSlash(p)
-	p = strings.TrimPrefix(p, "./")
-	p = strings.TrimLeft(p, "/")
-	return strings.TrimSuffix(p, "/")
+	p = strings.TrimPrefix(strings.Trim(p, "/"), "./")
+	clean := path.Clean(p)
+	if clean == "." {
+		return ""
+	}
+	// Root only escaping paths; prefixing every path allocates on each call.
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return strings.TrimPrefix(path.Clean("/"+p), "/")
+	}
+	return strings.TrimPrefix(clean, "/")
 }

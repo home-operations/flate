@@ -12,7 +12,174 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/diff"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestSuppressionReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		namespace string
+		message   string
+		wantSkip  bool
+	}{
+		{name: "skipped", namespace: "apps", message: "skipped: missing Secret", wantSkip: true},
+		{name: "outside namespace", namespace: "other", message: "skipped: missing Secret"},
+		{name: "unchanged", namespace: "apps", message: store.MsgUnchanged},
+		{name: "suspended", namespace: "apps", message: store.MsgSuspended},
+		{name: "ready", namespace: "apps", message: "rendered"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects := []manifest.BaseManifest{
+				&manifest.Kustomization{Name: "apps", Namespace: tc.namespace},
+				&manifest.HelmRelease{Name: "demo", Namespace: tc.namespace},
+			}
+			failedID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "failed"}
+			unrelatedID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "unrelated"}
+			failure := store.StatusInfo{Status: store.StatusFailed, Message: "render failed"}
+			side := diffSide{
+				O: o,
+				Res: &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+					failedID: failure, unrelatedID: failure,
+				}},
+				Failures: failureScope{failed: map[manifest.NamedResource]store.StatusInfo{failedID: failure}},
+			}
+			want := map[manifest.NamedResource]string{failedID: failure.Message}
+			for _, obj := range objects {
+				o.Store().AddObject(obj)
+				o.Store().UpdateStatus(obj.Named(), store.StatusReady, tc.message)
+				if tc.wantSkip {
+					want[obj.Named()] = tc.message
+				}
+			}
+			assert.Diff(t, suppressionReasons(side, &commonFlags{namespace: "apps"}), want)
+		})
+	}
+}
+
+func TestRun_Diff_OneSidedSkipSuppressed(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		orig       string
+		current    string
+		other      bool
+		json       bool
+		wantSide   string
+		wantRemove bool
+	}{
+		{name: "current skipped", orig: "local", current: "skipped", wantSide: "current"},
+		{name: "orig skipped", orig: "skipped", current: "local", wantSide: "orig"},
+		{name: "unrelated change", orig: "local", current: "skipped", other: true, wantSide: "current"},
+		{name: "release removed", orig: "local", current: "absent", wantRemove: true},
+		{name: "unchanged", orig: "local", current: "local"},
+		{name: "json", orig: "local", current: "skipped", json: true, wantSide: "current"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			write := func(source, message string) string {
+				t.Helper()
+				path := writeFixture(t)
+				testutil.WriteFile(t, path, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec: {url: https://example.test/cluster.git}
+`)
+				testutil.WriteFile(t, path, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+				testutil.WriteFile(t, path, "charts/demo/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}', namespace: apps}
+data:
+  greeting: {{ .Values.greeting }}
+`)
+				chart := `  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`
+				if tc.other {
+					testutil.WriteFile(t, path, "flux/other.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: other, namespace: apps}
+spec:
+`+chart+`  values: {greeting: `+message+`}
+`)
+				}
+				if source == "skipped" {
+					testutil.WriteFile(t, path, "flux/oci.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: private-chart, namespace: apps}
+spec:
+  url: oci://example.invalid/private/chart
+  certSecretRef: {name: missing-ca}
+`)
+					chart = "  chartRef: {kind: OCIRepository, name: private-chart}\n"
+				}
+				if source != "absent" {
+					testutil.WriteFile(t, path, "flux/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: apps}
+spec:
+`+chart+"  values: {greeting: hello}\n")
+				}
+				return path
+			}
+			orig := write(tc.orig, "before")
+			current := write(tc.current, "after")
+			format := "diff"
+			if tc.json {
+				format = "json"
+			}
+			stdout, stderr, code := runCLI(t, "diff", "hr", "--path", current, "--path-orig", orig,
+				"--allow-missing-secrets", "--output", format, "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+			if code != 0 {
+				t.Fatalf("diff hr exited %d: stderr=%s", code, stderr)
+			}
+			if tc.json {
+				var got struct {
+					Changes    []diff.Change
+					Suppressed []diff.Suppression
+				}
+				if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+					t.Fatal(err)
+				}
+				assert.Equal(t, len(got.Changes), 0)
+				if len(got.Suppressed) != 1 {
+					t.Fatalf("expected one suppression, got:\n%s", stdout)
+				}
+				assert.Equal(t, got.Suppressed[0].Side, diff.SideCurrent)
+				assert.Equal(t, got.Suppressed[0].Count, 1)
+				assert.Equal(t, got.Suppressed[0].Parent, diff.Parent{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"})
+				assert.Equal(t, strings.Contains(got.Suppressed[0].Reason, "missing-ca"), true)
+				return
+			}
+			if tc.wantSide != "" {
+				prefix := "# HelmRelease apps/demo: 1 object not rendered on the " + tc.wantSide + " side; diff suppressed ("
+				if !strings.HasPrefix(stdout, prefix) || !strings.Contains(stdout, "missing-ca") {
+					t.Errorf("expected suppression with the missing Secret reason; got:\n%s", stdout)
+				}
+				if strings.Contains(stdout, "ConfigMap apps/demo") {
+					t.Errorf("skipped release must not appear as added or removed:\n%s", stdout)
+				}
+			} else if strings.Contains(stdout, "diff suppressed") {
+				t.Errorf("a complete comparison must not be suppressed:\n%s", stdout)
+			}
+			if tc.wantRemove && !strings.Contains(stdout, "-  greeting: hello") {
+				t.Errorf("actual release removal must remain visible:\n%s", stdout)
+			}
+			if tc.other && (!strings.Contains(stdout, "-  greeting: before") || !strings.Contains(stdout, "+  greeting: after")) {
+				t.Errorf("unrelated change must remain visible:\n%s", stdout)
+			}
+			if tc.orig == tc.current {
+				assert.Equal(t, stdout, "")
+			}
+		})
+	}
+}
 
 func TestRun_DiffJSON(t *testing.T) {
 	orig, current := writeFixture(t), writeFixture(t)

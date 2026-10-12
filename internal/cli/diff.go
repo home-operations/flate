@@ -199,12 +199,12 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
 	}
 
-	// A producer that failed on one side only has nothing to pair against, so
-	// its healthy-side output would read as a wholesale add or delete. Withhold
-	// it and let the formats disclose the suppression.
+	// A producer that failed or was skipped on one side has nothing to pair
+	// against, so its healthy-side output would read as a wholesale add or
+	// delete. Withhold it and let the formats disclose the suppression.
 	var suppressed []diff.Suppression
 	origDocs, currentDocs, suppressed = diff.SuppressFailed(origDocs, currentDocs,
-		failureReasons(orig.Failures.failed), failureReasons(current.Failures.failed))
+		suppressionReasons(orig, c), suppressionReasons(current, c))
 
 	formatted, err := diff.RenderDocs(origDocs, currentDocs, diff.Options{
 		StripAttrs:  d.stripAttrs,
@@ -257,12 +257,23 @@ func reportExternalDiffSkips(w io.Writer, side diffSide, repoRoot, label string,
 	return nil
 }
 
-// failureReasons projects a scoped failure map onto the id -> message shape
-// diff.SuppressFailed consumes.
-func failureReasons(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]string {
-	out := make(map[manifest.NamedResource]string, len(failed))
-	for id, info := range failed {
+// suppressionReasons includes scoped failures and soft-skipped render producers
+// in the id -> message map diff.SuppressFailed consumes.
+func suppressionReasons(side diffSide, c *commonFlags) map[manifest.NamedResource]string {
+	out := make(map[manifest.NamedResource]string, len(side.Failures.failed))
+	for id, info := range side.Failures.failed {
 		out[id] = info.Message
+	}
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+		for _, obj := range side.O.Store().ListObjects(kind) {
+			id := obj.Named()
+			if !c.includeNamespace(side.O.Filter(), id.Namespace) {
+				continue
+			}
+			if info, ok := side.O.Store().GetStatus(id); ok && store.IsSkipped(info) {
+				out[id] = info.Message
+			}
+		}
 	}
 	return out
 }

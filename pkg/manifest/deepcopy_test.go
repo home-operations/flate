@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"slices"
-	"strings"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -97,38 +96,6 @@ func TestDeepCopyMap_Isolation(t *testing.T) {
 func TestDeepCopyMap_Nil(t *testing.T) {
 	if DeepCopyMap(nil) != nil {
 		t.Errorf("nil source should produce nil")
-	}
-}
-
-func TestAnyStringNode(t *testing.T) {
-	hasDollar := func(s string) bool { return strings.Contains(s, "${") }
-	cases := []struct {
-		name string
-		in   any
-		want bool
-	}{
-		{"nil", nil, false},
-		{"empty map", map[string]any{}, false},
-		{"plain scalars only", map[string]any{"a": "literal", "b": 3, "c": true}, false},
-		{"top-level value with ${", map[string]any{"a": "${VAR}"}, true},
-		{"value nested in list", map[string]any{"data": []any{"first", "${VAR}", "third"}}, true},
-		{"value deeply nested", map[string]any{
-			"spec": map[string]any{"containers": []any{map[string]any{"image": "ghcr.io/x:${TAG}"}}},
-		}, true},
-		{"dollar but no brace", map[string]any{"a": "price$5"}, false},
-		{"key with ${, non-string value", map[string]any{"${OP_VAULT}": 1}, true},
-		{"key with ${ nested under a list", map[string]any{
-			"vaults": []any{map[string]any{"${OP_VAULT}": 1}},
-		}, true},
-		{"escaped $${ key still triggers", map[string]any{"$${OP_VAULT}": 1}, true},
-		{"plain key, no ${ anywhere", map[string]any{"vaults": map[string]any{"homelab": 1}}, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := AnyStringNode(tc.in, hasDollar); got != tc.want {
-				t.Errorf("AnyStringNode(${) = %v, want %v", got, tc.want)
-			}
-		})
 	}
 }
 

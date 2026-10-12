@@ -110,11 +110,9 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	err := root.ExecuteContext(ctx)
-	// Deferred log notes (and Result.Warnings) are surfaced ONLY by `flate
-	// test`, the diagnostic command — a data-producing verb (build/get/diff/
-	// cache) stays quiet. So there is no end-of-run flush: anything buffered by
-	// a non-test verb is intentionally dropped (it has already been drained and
-	// rendered by `test`, or it belongs to a verb that doesn't report it).
+	// Deferred log notes and render advisories belong to `flate test`;
+	// diff also reports omitted required values on stderr. There is no
+	// end-of-run log flush: only `test` drains the buffered notes.
 	if err != nil {
 		// reportFailures already rendered a styled report for this error; don't
 		// reprint it as a flat "flate error: …" line.

@@ -11,6 +11,7 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -476,6 +477,20 @@ data:
 	if got := renderedConfigMapValue(art.Manifests, "fallback"); got != "fallback" {
 		t.Fatalf("rendered fallback = %q, want fallback", got)
 	}
+	assert.Diff(t, st.Warnings(), []manifest.Warning{
+		{Resource: hr.Named(), Category: manifest.WarnOmittedValues, Message: "required valuesFrom ConfigMap/default/runtime-values omitted from offline render", Count: 1},
+		{Resource: hr.Named(), Category: manifest.WarnOmittedValues, Message: "required valuesFrom Secret/default/app-values omitted from offline render", Count: 1},
+	})
+	hr = hr.Clone()
+	hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "another-values"})
+	st.AddObject(hr)
+	assert.Equal(t, dispatchToFixpoint(t, c, st, hr.Named()).Status, store.StatusReady)
+	assert.Equal(t, st.GetArtifact(hr.Named()), store.Artifact(art))
+	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+		return w.Message == "required valuesFrom Secret/default/another-values omitted from offline render"
+	}) {
+		t.Fatalf("fingerprint replay lost the added omission: %+v", st.Warnings())
+	}
 }
 
 func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
@@ -490,12 +505,12 @@ func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
 	}
 	st.AddObject(hr)
 	values := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
-	_, err := c.resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainNone)
+	_, _, err := c.resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainNone)
 	blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
 	if !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{values}) {
 		t.Fatalf("mixed gate = %v, want blocked values reference", err)
 	}
-	_, err = c.resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainCascade)
+	_, _, err = c.resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainCascade)
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
 	if !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{chart.Named()}) || failed.Reasons[chart.Named()] != "chart failed" {
 		t.Fatalf("drained gate = %v, want chart failure after values omission", err)

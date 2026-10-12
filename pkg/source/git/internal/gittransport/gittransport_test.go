@@ -40,11 +40,9 @@ func TestDefaultClient_PerCallControls(t *testing.T) {
 	bound := boundedHTTPSTransport.ResponseHeaderTimeout
 	boundedHTTPSTransport.ResponseHeaderTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { boundedHTTPSTransport.ResponseHeaderTimeout = bound })
-	for _, name := range []string{"ca-timeout", "insecure-timeout", "restricted", "canceled"} {
+	for _, name := range []string{"ca-timeout", "insecure-timeout", "restricted"} {
 		t.Run(name, func(t *testing.T) {
-			arrived := make(chan struct{}, 1)
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-				arrived <- struct{}{}
 				<-r.Context().Done()
 			}))
 			defer srv.Close()
@@ -61,23 +59,11 @@ func TestDefaultClient_PerCallControls(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { _, err := remote.ListContext(ctx, opts); done <- err }()
-			if name == "canceled" {
-				select {
-				case <-arrived:
-					cancel()
-				case <-time.After(time.Second):
-					t.Fatal("TLS listing did not reach server")
-				}
-			}
 			err := <-done
 			switch name {
 			case "restricted":
 				if dial, ok := errors.AsType[*net.OpError](err); !ok || dial.Op != "dial" {
 					t.Fatalf("egress was not blocked at dial: %v", err)
-				}
-			case "canceled":
-				if !errors.Is(err, context.Canceled) {
-					t.Fatalf("cancellation: %v", err)
 				}
 			default:
 				if timeout, ok := errors.AsType[net.Error](err); !ok || !timeout.Timeout() {

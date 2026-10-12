@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-// TestDateInZone_DefaultsTofixedTimeAndForcesUTC pins the two determinism
+// TestDateInZone_DefaultsToFixedClockAndForcesUTC pins the two determinism
 // fixes in the ported date helper: an unrecognized argument falls back to
 // fixedTime (not the wall clock), and an empty or "Local" zone is treated
 // as UTC so formatting never depends on $TZ. An explicit time and an
 // explicit named zone are honored unchanged.
-func TestDateInZone_DefaultsTofixedTimeAndForcesUTC(t *testing.T) {
+func TestDateInZone_DefaultsToFixedClockAndForcesUTC(t *testing.T) {
 	// Unrecognized arg → fixedTime, not time.Now().
 	if got := dateInZone("20060102150405", "not-a-time", "UTC"); got != "20200101000000" {
 		t.Errorf(`dateInZone default branch = %q, want "20200101000000"`, got)

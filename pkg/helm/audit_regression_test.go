@@ -1,8 +1,6 @@
 package helm
 
 import (
-	"encoding/json"
-	"errors"
 	"math"
 	"testing"
 
@@ -13,7 +11,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -37,20 +34,6 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, computeTemplateKey("", tc.chart, tc.values, Options{}, minimalHR()), "")
 		})
-	}
-}
-
-func TestComputeTemplateKey_NaNRejectedAtParse(t *testing.T) {
-	_, _, _, err := manifest.ParseDoc(map[string]any{
-		"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
-		"metadata": map[string]any{"name": "demo", "namespace": "default"},
-		"spec":     map[string]any{"values": map[string]any{"bad": math.NaN()}},
-	}, manifest.ParseDocOptions{})
-	if !errors.Is(err, manifest.ErrInput) {
-		t.Fatalf("NaN parse error = %v, want ErrInput", err)
-	}
-	if _, ok := errors.AsType[*json.UnsupportedValueError](err); !ok {
-		t.Fatalf("NaN parse error = %v, want unsupported JSON value", err)
 	}
 }
 

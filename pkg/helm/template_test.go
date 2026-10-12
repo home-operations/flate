@@ -2,6 +2,7 @@ package helm
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"helm.sh/helm/v4/pkg/action"
@@ -362,6 +363,31 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 	}
 	if a["kind"] != "chartA" || b["kind"] != "chartB" {
 		t.Errorf("distinct-chart cache aliased: a=%v b=%v", a, b)
+	}
+}
+
+func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"A", "B"} {
+		t.Run(name, func(t *testing.T) {
+			ch := &chart.Chart{
+				Metadata: &chart.Metadata{Name: name, Version: "1.0.0"},
+				Values:   map[string]any{"n": math.NaN()},
+				Files: []*chartcommon.File{
+					{Name: "values.yaml", Data: []byte("k: " + name + "\n")},
+				},
+			}
+			loaded := ChartLoadResult{Chart: ch, Fingerprint: chartFingerprint(ch)}
+			assert.Equal(t, loaded.Fingerprint, "")
+			values, err := cli.mergeChartValuesFiles(loaded, []string{"values.yaml"}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, values["k"], any(name))
+		})
 	}
 }
 

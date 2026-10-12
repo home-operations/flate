@@ -207,7 +207,7 @@ func chartFingerprint(ch *chart.Chart) string {
 // computeTemplateKey returns a hex-encoded sha256 of every input
 // that affects Template's output for a given (chart, values, opts,
 // hr) tuple. A change in any input yields a distinct key, so a
-// stale entry never serves a different render. Unmarshalable inputs return
+// stale entry never serves a different render. Unmarshalable values return
 // an empty key; callers MUST skip cache reads and writes for that render.
 //
 // chartFP is the precomputed chart fingerprint (see chartFingerprint
@@ -282,9 +282,7 @@ func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]
 	// an explicit sort. Indirected through writeOptionsBlob so the
 	// allocation lives in a single helper rather than ballooning the
 	// keyer.
-	if !writeOptionsBlob(h, opts) {
-		return ""
-	}
+	writeOptionsBlob(h, opts)
 
 	// HR-level fields that drive action.Install but bypass opts. A
 	// dedicated tagged blob — same rationale as writeOptionsBlob above.
@@ -324,10 +322,7 @@ func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]
 	if hr.Test != nil {
 		khr.TestEnable = hr.Test.Enable
 	}
-	hrBlob, err := json.Marshal(khr)
-	if err != nil {
-		return ""
-	}
+	hrBlob, _ := json.Marshal(khr)
 	_, _ = h.Write([]byte("hr:"))
 	_, _ = h.Write(hrBlob)
 	_, _ = h.Write([]byte{0})
@@ -360,10 +355,7 @@ func writeChartFingerprint(h hashWriter, ch *chart.Chart) bool {
 	}
 	_, _ = h.Write([]byte("chart:meta:"))
 	if ch.Metadata != nil {
-		metaBlob, err := json.Marshal(ch.Metadata)
-		if err != nil {
-			return false
-		}
+		metaBlob, _ := json.Marshal(ch.Metadata)
 		_, _ = h.Write(metaBlob)
 	}
 	_, _ = h.Write([]byte{0})
@@ -439,8 +431,8 @@ type hashWriter interface {
 // into h via a tagged anonymous struct. Pulled into its own helper
 // (rather than inlined into computeTemplateKey) so the json.Marshal
 // stack frame doesn't dominate the keyer's escape analysis.
-func writeOptionsBlob(h hashWriter, opts Options) bool {
-	blob, err := json.Marshal(struct {
+func writeOptionsBlob(h hashWriter, opts Options) {
+	blob, _ := json.Marshal(struct {
 		SkipCRDs             bool     `json:"skip_crds"`
 		SkipTests            bool     `json:"skip_tests"`
 		KubeVersion          string   `json:"kube_version,omitempty"`
@@ -461,11 +453,7 @@ func writeOptionsBlob(h hashWriter, opts Options) bool {
 		EnableDNS:            opts.EnableDNS,
 		SkipSchemaValidation: opts.SkipSchemaValidation,
 	})
-	if err != nil {
-		return false
-	}
 	_, _ = h.Write([]byte("opts:"))
 	_, _ = h.Write(blob)
 	_, _ = h.Write([]byte{0})
-	return true
 }

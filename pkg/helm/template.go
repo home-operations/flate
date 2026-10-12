@@ -101,7 +101,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	// affecting input, so cache hits are byte-identical to the
 	// uncached path (also pinned by an integration test).
 	var key string
-	if c.templateCache != nil && loaded.Fingerprint != "" {
+	if c.templateCache != nil {
 		key = computeTemplateKey(loaded.Fingerprint, loaded.Chart, finalValues, opts, hr)
 		if key != "" {
 			if cached, ok := c.templateCache.Get(key); ok {

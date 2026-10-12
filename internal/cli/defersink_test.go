@@ -3,7 +3,11 @@ package cli
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/report"
 )
 
 type captureHandler struct{ msgs *[]string }
@@ -34,15 +38,33 @@ func TestDeferSink_BuffersWarnPassesError(t *testing.T) {
 	}
 
 	notes := sink.drain()
-	if len(notes) != 2 {
-		t.Fatalf("drain = %+v, want 2 distinct notes", notes)
-	}
-	if notes[0].Count != 2 {
-		t.Errorf("identical warns should collapse with a count: %+v", notes[0])
-	}
+	assert.Diff(t, notes, []report.Note{
+		{Text: "note", Count: 1},
+		{Text: "resource orphaned id=a", Count: 2},
+	})
 
 	log.Warn("after-drain")
 	if len(inline) != 2 || inline[1] != "after-drain" {
 		t.Errorf("post-drain logs should pass through inline, got %v", inline)
+	}
+}
+
+func TestDeferSink_DrainOrderIsDeterministic(t *testing.T) {
+	want := make([]report.Note, 0, 8)
+	for _, text := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+		want = append(want, report.Note{Text: text, Count: 1})
+	}
+	for range 50 {
+		var inline []string
+		sink := newDeferSink(captureHandler{&inline}, true)
+		log := slog.New(sink)
+		var wg sync.WaitGroup
+		for _, note := range want {
+			wg.Go(func() {
+				log.WarnContext(t.Context(), note.Text)
+			})
+		}
+		wg.Wait()
+		assert.Diff(t, sink.drain(), want)
 	}
 }

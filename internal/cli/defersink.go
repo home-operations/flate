@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 
@@ -73,7 +75,7 @@ func (d *deferSink) WithGroup(name string) slog.Handler {
 	return &deferSink{inner: d.inner.WithGroup(name), buf: d.buf}
 }
 
-// drain stops buffering and returns the collected notes in first-seen order.
+// drain stops buffering and returns the collected notes in text order.
 // Idempotent: a second call returns nothing.
 func (d *deferSink) drain() []report.Note {
 	d.buf.mu.Lock()
@@ -84,6 +86,9 @@ func (d *deferSink) drain() []report.Note {
 		notes = append(notes, report.Note{Text: text, Count: d.buf.counts[text]})
 	}
 	d.buf.order, d.buf.counts = nil, map[string]int{}
+	slices.SortFunc(notes, func(a, b report.Note) int {
+		return cmp.Compare(a.Text, b.Text)
+	})
 	return notes
 }
 

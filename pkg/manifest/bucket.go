@@ -51,8 +51,10 @@ func parseBucket(doc map[string]any) (*Bucket, error) {
 		Namespace:  cr.Namespace,
 		BucketSpec: cr.Spec,
 	}
-	if use := emptySecretReference(out.references); use != "" {
-		return nil, secretReferenceError(out.Named(), use)
+	var err error
+	out.references(validateSecretReference(out.Named(), &err))
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

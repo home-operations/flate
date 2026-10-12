@@ -83,15 +83,13 @@ var kindTable = [...]kindEntry{
 	{Group: "kyverno.io", Kind: "ClusterPolicy", skipNamespaceStamp: true},
 }
 
-var kindIndex, groupKindIndex = func() (map[string]int, map[[2]string]int) {
+var kindIndex = func() map[string]int {
 	kinds := make(map[string]int, len(kindTable))
-	groups := make(map[[2]string]int, len(kindTable))
 	for i := range kindTable {
 		entry := &kindTable[i]
 		kinds[entry.Kind] = i
-		groups[[2]string{entry.Group, entry.Kind}] = i
 	}
-	return kinds, groups
+	return kinds
 }()
 
 // Scope is resolved once; render-path lookups never initialize global OpenAPI state.
@@ -127,7 +125,7 @@ func apiGroup(apiVersion string) string {
 }
 
 func kindInfo(group, kind string) (KindInfo, bool) {
-	if i, ok := groupKindIndex[[2]string{group, kind}]; ok {
+	if i, ok := kindIndex[kind]; ok && kindTable[i].Group == group {
 		return kindTable[i].KindInfo, true
 	}
 	return KindInfo{Group: group, Kind: kind, Namespaced: true}, false

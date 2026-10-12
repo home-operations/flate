@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"cmp"
-	"iter"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
@@ -54,17 +53,14 @@ func (g *GitRepository) Suspended() bool { return g.Suspend }
 func (g *GitRepository) RepoName() string { return g.Named().FluxResourceName() }
 
 // Active source credentials MUST name a Secret, even when missing secrets are allowed.
-func emptySecretReference(refs iter.Seq[DependencyRef]) string {
-	for ref := range refs {
+func validateSecretReference(id NamedResource, err *error) func(DependencyRef) bool {
+	return func(ref DependencyRef) bool {
 		if ref.Kind == KindSecret && ref.Name == "" {
-			return ref.Use
+			*err = inputf("%s %s/%s: spec.%s.name is empty", id.Kind, id.Namespace, id.Name, ref.Use)
+			return false
 		}
+		return true
 	}
-	return ""
-}
-
-func secretReferenceError(id NamedResource, use string) error {
-	return inputf("%s %s/%s: spec.%s.name is empty", id.Kind, id.Namespace, id.Name, use)
 }
 
 // parseGitRepository decodes a GitRepository CR via the Flux typed
@@ -92,8 +88,10 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 		Namespace:         cr.Namespace,
 		GitRepositorySpec: cr.Spec,
 	}
-	if use := emptySecretReference(out.references); use != "" {
-		return nil, secretReferenceError(out.Named(), use)
+	var err error
+	out.references(validateSecretReference(out.Named(), &err))
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -154,8 +152,10 @@ func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		Namespace:         cr.Namespace,
 		OCIRepositorySpec: cr.Spec,
 	}
-	if use := emptySecretReference(out.references); use != "" {
-		return nil, secretReferenceError(out.Named(), use)
+	var err error
+	out.references(validateSecretReference(out.Named(), &err))
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

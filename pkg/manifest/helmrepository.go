@@ -40,8 +40,10 @@ func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 		Namespace:          cr.Namespace,
 		HelmRepositorySpec: cr.Spec,
 	}
-	if use := emptySecretReference(out.references); use != "" {
-		return nil, secretReferenceError(out.Named(), use)
+	var err error
+	out.references(validateSecretReference(out.Named(), &err))
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

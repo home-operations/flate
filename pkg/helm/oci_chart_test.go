@@ -3,7 +3,6 @@ package helm
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -78,7 +77,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			for i, release := range []*manifest.HelmRelease{hr, hrB} {
 				digest := []string{digestA, digestB}[i]
 				st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: release.Chart.RepoName},
-					&store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, FS: os.DirFS(dir), Key: digest, Revision: "6.15.0@" + digest, Digest: digest})
+					&store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
 			}
 			originals := []*manifest.HelmRelease{hr.Clone(), hrB.Clone()}
 			ts := task.NewBounded(2)
@@ -126,7 +125,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 					t.Fatalf("release mutated (-want +got):\n%s", diff)
 				}
 			}
-			canonical := cli.chartCache[digestA+"\x00."].chart
+			canonical := cli.chartCache[dir].chart
 			if canonical.Metadata.Version != "6.15.0" || canonical.Dependencies()[0].Metadata.Version != "1.2.3+child" {
 				t.Fatal("parallel renders mutated canonical metadata")
 			}

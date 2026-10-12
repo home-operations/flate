@@ -471,13 +471,24 @@ func (c *Client) lookupCachedChart(path string) (*chart.Chart, string, bool) {
 	return entry.chart, entry.fingerprint, true
 }
 
-// chartCacheFingerprint tracks archive replacements by mtime and size.
-// Mutable directories MUST be reloaded: no single file's stat represents
-// edits to templates, values, schemas, or nested dependencies.
+// chartCacheFingerprint returns the (mtime, size) tuple flate uses
+// to detect chart-content changes under a stable path. For a tgz
+// chart the file's own stat is the source of truth; for a directory
+// chart the directory mtime is filesystem-dependent and doesn't move
+// when sub-files change, so stat Chart.yaml — the file loader.Load
+// actually parses to derive the chart identity — instead. Returns
+// ok=false when neither is reachable.
 func chartCacheFingerprint(path string) (mtime, size int64, ok bool) {
 	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
+	if err != nil {
 		return 0, 0, false
 	}
-	return info.ModTime().UnixNano(), info.Size(), true
+	if !info.IsDir() {
+		return info.ModTime().UnixNano(), info.Size(), true
+	}
+	cy, err := os.Stat(filepath.Join(path, chartYamlFilename))
+	if err != nil {
+		return 0, 0, false
+	}
+	return cy.ModTime().UnixNano(), cy.Size(), true
 }

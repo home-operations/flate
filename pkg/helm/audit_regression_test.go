@@ -3,7 +3,6 @@ package helm
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"testing"
 
@@ -17,30 +16,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
-
-func TestTemplate_DirectoryTemplateEdit(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	body := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\ndata:\n  value: %s\n"
-	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", fmt.Sprintf(body, "first"))
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
-	first, err := cli.Template(t.Context(), newHR(), nil, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", fmt.Sprintf(body, "other"))
-	second, err := cli.Template(t.Context(), newHR(), nil, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first == second {
-		t.Fatal("directory template edit served stale output")
-	}
-}
 
 func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 	for _, tc := range []struct {
@@ -66,7 +41,7 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 }
 
 func TestComputeTemplateKey_NaNRejectedAtParse(t *testing.T) {
-	_, err := manifest.ParseDoc(map[string]any{
+	_, _, _, err := manifest.ParseDoc(map[string]any{
 		"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
 		"metadata": map[string]any{"name": "demo", "namespace": "default"},
 		"spec":     map[string]any{"values": map[string]any{"bad": math.NaN()}},

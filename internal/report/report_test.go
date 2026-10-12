@@ -37,7 +37,7 @@ func TestBuild_GroupsCascadeUnderRoots(t *testing.T) {
 		dependent: {missing},
 	}
 
-	m := Build(f, blocked, nil, nil)
+	m := Build(f, blocked, nil)
 
 	if len(m.Primary) != 1 || m.Primary[0].ID != root {
 		t.Fatalf("Primary = %+v, want only root", m.Primary)
@@ -54,7 +54,7 @@ func TestBuild_GroupsCascadeUnderRoots(t *testing.T) {
 	}
 
 	var b bytes.Buffer
-	if err := m.Write(&b, false, 0); err != nil {
+	if err := m.Write(&b, false); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -74,7 +74,7 @@ func TestBuild_GroupsCascadeUnderRoots(t *testing.T) {
 // TestBuild_PrimaryOnly covers a lone real failure with nothing depending on it.
 func TestBuild_PrimaryOnly(t *testing.T) {
 	a := ks("a")
-	m := Build(failed(a), nil, nil, nil)
+	m := Build(failed(a), nil, nil)
 	if len(m.Primary) != 1 || len(m.Missing) != 0 || len(m.Primary[0].Blocks) != 0 {
 		t.Fatalf("want one primary with no blocks, got %+v", m)
 	}
@@ -83,22 +83,9 @@ func TestBuild_PrimaryOnly(t *testing.T) {
 	}
 }
 
-// TestBuild_NotesOnly covers a clean run that only carries deferred log notes.
-func TestBuild_NotesOnly(t *testing.T) {
-	m := Build(nil, nil, nil, []Note{{Text: "resource orphaned id=x", Count: 3}})
-	if len(m.Primary) != 0 || len(m.Missing) != 0 || m.Empty() {
-		t.Fatalf("notes-only model should be non-empty with no failures: %+v", m)
-	}
-	var b bytes.Buffer
-	_ = m.Write(&b, false, 0)
-	if out := b.String(); !strings.Contains(out, "notes (3)") || !strings.Contains(out, "×3") {
-		t.Errorf("notes footer missing or not collapsed:\n%s", out)
-	}
-}
-
 // TestBuild_Empty covers a clean run with nothing to show.
 func TestBuild_Empty(t *testing.T) {
-	if !Build(nil, nil, nil, nil).Empty() {
+	if !Build(nil, nil, nil).Empty() {
 		t.Error("a clean run must produce an empty model")
 	}
 }
@@ -111,12 +98,12 @@ func TestWrite_WarningsSection(t *testing.T) {
 		{Resource: hr, Category: manifest.WarnStaleValues, Message: "values not defined by the chart schema", Detail: []string{"image.tagg", "oldKey"}},
 		{Category: manifest.WarnEmptyScan, Message: "no Flux objects found"}, // global
 	}
-	m := Build(nil, nil, warns, nil)
+	m := Build(nil, nil, warns)
 	if m.Empty() {
 		t.Fatal("a model with warnings is not empty")
 	}
 	var b bytes.Buffer
-	if err := m.Write(&b, false, 0); err != nil {
+	if err := m.Write(&b, false); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -134,7 +121,7 @@ func TestWrite_WarningsSection(t *testing.T) {
 func TestWrite_WarningCount(t *testing.T) {
 	warns := []manifest.Warning{{Category: manifest.WarnPathConfig, Message: "same root", Count: 4}}
 	var b bytes.Buffer
-	_ = Build(nil, nil, warns, nil).Write(&b, false, 0)
+	_ = Build(nil, nil, warns).Write(&b, false)
 	if out := b.String(); !strings.Contains(out, "×4") {
 		t.Errorf("warning repeat count not rendered:\n%s", out)
 	}
@@ -151,7 +138,7 @@ func TestWrite_PrimaryMessageIsMultiLine(t *testing.T) {
 			"duplicate resource(s) produced by multiple accumulated paths:\n  - ./one\n  - ./two"},
 	}
 	var b bytes.Buffer
-	if err := Build(f, nil, nil, nil).Write(&b, false, 0); err != nil {
+	if err := Build(f, nil, nil).Write(&b, false); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -172,7 +159,7 @@ func TestBuild_BlockedCountsDistinctResources(t *testing.T) {
 		dual: {root, missing}, // blocked by a failed parent AND a missing dep
 	}
 
-	m := Build(f, blocked, nil, nil)
+	m := Build(f, blocked, nil)
 	if m.Blocked != 1 {
 		t.Errorf("Blocked = %d, want 1 distinct blocked resource", m.Blocked)
 	}
@@ -184,7 +171,7 @@ func TestBuild_BlockedCountsDistinctResources(t *testing.T) {
 	}
 
 	var b bytes.Buffer
-	_ = m.Write(&b, false, 0)
+	_ = m.Write(&b, false)
 	if out := b.String(); !strings.Contains(out, "1 blocked") {
 		t.Errorf("verdict should count the dual-rooted resource once:\n%s", out)
 	}
@@ -257,11 +244,11 @@ func TestVerdict(t *testing.T) {
 	}
 }
 
-// TestRoots_WalksTransitiveChainToTrueRoot pins the shared grouping the test
-// runner reuses: a leaf folds under the primary at the top of its blocker chain.
+// TestRoots_WalksTransitiveChainToTrueRoot pins that a leaf folds under the
+// primary at the top of its blocker chain.
 func TestRoots_WalksTransitiveChainToTrueRoot(t *testing.T) {
 	root, mid, leaf := ks("root"), ks("mid"), ks("leaf")
-	byRoot := Roots(map[manifest.NamedResource][]manifest.NamedResource{
+	byRoot := roots(map[manifest.NamedResource][]manifest.NamedResource{
 		mid:  {root},
 		leaf: {mid},
 	})

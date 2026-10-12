@@ -86,7 +86,7 @@ func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 	case OutcomeBlocked:
 		return style.GlyphBlocked, style.Dim
 	default: // OutcomeSkipped
-		return style.GlyphSkip, style.Skip
+		return style.GlyphSkip, style.Dim
 	}
 }
 
@@ -228,9 +228,8 @@ func Run(j Job) Report {
 	}
 	// Surface run failures whose kind isn't in the roster (e.g. a
 	// ResourceSet whose template won't parse, or a synthetic HelmChart) so a
-	// primary fault isn't silently dropped now that there's no separate
-	// build/diff failure block to catch it. The per-kind loop above already
-	// covered roster kinds; here we only add previously-unseen failed ids.
+	// primary fault cannot be omitted. Only failed ids absent from the roster
+	// and blocked set belong here.
 	// A victim already classified blocked stays in the blocked set; a failed id
 	// that is itself blocked joins the cascade rather than listing on its own row.
 	seen := make(map[manifest.NamedResource]bool, len(rep.Cases)+len(blocked))

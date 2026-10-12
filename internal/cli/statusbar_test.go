@@ -4,9 +4,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -166,6 +168,25 @@ func TestModel_DedupAndInflight(t *testing.T) {
 	}
 	if got := m.inflightLabels(); len(got) != 0 {
 		t.Errorf("terminal resource still in-flight: %v", got)
+	}
+}
+
+func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		names []string
+	}{
+		{"later first", []string{"alpha", "charlie", "bravo"}},
+		{"later last", []string{"bravo", "charlie", "alpha"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := inflightModel(false, tc.names...)
+			first := time.Unix(1, 0)
+			m.first[barID("bravo")] = first
+			m.first[barID("charlie")] = first
+			m.first[barID("alpha")] = first.Add(time.Second)
+			assert.Diff(t, m.inflightLabels(), []string{"bravo", "charlie", "alpha"})
+		})
 	}
 }
 

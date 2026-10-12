@@ -676,19 +676,9 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...fun
 		defer hook(o)()
 	}
 	res, err := o.Render(ctx)
-	// Render nils the result only when Bootstrap fails (Run-time
-	// per-resource failures still produce a non-nil Result). Drop
-	// the partial orchestrator in that case: every CLI verb gates
-	// on `o == nil` to surface the underlying error, but without
-	// this nil-out the verb would proceed to read a Store that's
-	// partially populated by the discovery pre-Bootstrap walk and
-	// produce confusing output — e.g. `flate test all` reporting
-	// every loaded resource as "FAILED (no status reported)"
-	// instead of surfacing the actual Bootstrap error (an
-	// unimplemented ResourceSet inputStrategy, a YAML schema
-	// rejection, etc.). Issue surfaced by tholinka/home-ops where
-	// a Permute ResourceSet drowned the real "not yet implemented"
-	// message under 247 phantom failures.
+	// A Bootstrap failure has no Result. Callers must receive a nil
+	// orchestrator so they surface the error instead of reading a
+	// partially populated Store.
 	if res == nil {
 		return nil, nil, err
 	}
@@ -762,7 +752,7 @@ func reportFailures(w io.Writer, scope failureScope, err error) error {
 	if m.Empty() {
 		return err
 	}
-	if writeErr := m.Write(w, style.ColorEnabled(w), 0); writeErr != nil && scope.named {
+	if writeErr := m.Write(w, style.ColorEnabled(w)); writeErr != nil && scope.named {
 		return errors.Join(writeErr, err)
 	}
 	if extras := errors.Join(nonResourceRunErrors(err)...); extras != nil {
@@ -806,7 +796,7 @@ func aggregateScopedFailures(scope failureScope) error {
 
 // Closed blocker cycles become primary causes; downstream failures remain blocked.
 func failureReport(scope failureScope) report.Model {
-	model := report.Build(scope.failed, scope.blocked, scope.warnings, nil)
+	model := report.Build(scope.failed, scope.blocked, scope.warnings)
 	covered := map[manifest.NamedResource]bool{}
 	for _, root := range model.Primary {
 		covered[root.ID] = true
@@ -847,7 +837,7 @@ func failureReport(scope failureScope) report.Model {
 	for id := range cycles {
 		delete(blocked, id)
 	}
-	model = report.Build(scope.failed, blocked, scope.warnings, nil)
+	model = report.Build(scope.failed, blocked, scope.warnings)
 	for i, root := range model.Primary {
 		if !cycles[root.ID] {
 			continue

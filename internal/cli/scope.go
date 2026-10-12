@@ -130,7 +130,7 @@ func requiredClosure(o *orchestrator.Orchestrator, res *orchestrator.Result, c *
 }
 
 func unrelatedFailureWarnings(res *orchestrator.Result, unrelated map[manifest.NamedResource]store.StatusInfo, required map[manifest.NamedResource]struct{}) []manifest.Warning {
-	model := report.Build(res.Failed, res.Blocked, nil, nil)
+	model := report.Build(res.Failed, res.Blocked, nil)
 	covered := map[manifest.NamedResource]bool{}
 	var warnings []manifest.Warning
 	children := func(ids []manifest.NamedResource) []string {

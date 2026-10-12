@@ -1,8 +1,9 @@
 package cli
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -159,12 +160,8 @@ func (m barModel) inflightLabels() []string {
 	for id := range m.inflight {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool {
-		ti, tj := m.first[ids[i]], m.first[ids[j]]
-		if !ti.Equal(tj) {
-			return ti.Before(tj)
-		}
-		return ids[i].Compare(ids[j]) < 0
+	slices.SortFunc(ids, func(a, b manifest.NamedResource) int {
+		return cmp.Or(m.first[a].Compare(m.first[b]), a.Compare(b))
 	})
 	names := make([]string, len(ids))
 	for i, id := range ids {

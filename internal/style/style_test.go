@@ -37,7 +37,7 @@ func TestColorEnabled_NonTTY(t *testing.T) {
 // color=true wraps the text in ANSI while preserving it.
 func TestRenderers_ColorGating(t *testing.T) {
 	const s = "hello"
-	for _, f := range []func(string, bool) string{Pass, Fail, Skip, Dim, Bold, Cyan} {
+	for _, f := range []func(string, bool) string{Pass, Fail, Dim, Bold, Cyan} {
 		if got := f(s, false); got != s {
 			t.Errorf("plain render = %q, want %q", got, s)
 		}

@@ -201,7 +201,7 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 
 	// A producer that failed on one side only has nothing to pair against, so
 	// its healthy-side output would read as a wholesale add or delete. Withhold
-	// it and let the formats disclose the suppression instead (#938).
+	// it and let the formats disclose the suppression.
 	var suppressed []diff.Suppression
 	origDocs, currentDocs, suppressed = diff.SuppressFailed(origDocs, currentDocs,
 		failureReasons(orig.Failures.failed), failureReasons(current.Failures.failed))

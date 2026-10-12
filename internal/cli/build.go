@@ -101,9 +101,8 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			// Per-resource Run failures: emit whatever we rendered, then
 			// flip the exit code so CI pipelines piping `flate build` into
 			// kubectl apply don't silently apply a half-rendered tree.
-			// emitResult surfaces both an emit-time IO failure AND the
-			// partial-failure list — previously the emit error masked
-			// the run failures, so CI fixed the wrong thing.
+			// emitResult must surface both emit-time IO failures and
+			// per-resource reconcile failures.
 			return reportFailures(cmd.ErrOrStderr(), scope, emitResult(emitErr, scope, runErr))
 		},
 	}
@@ -171,7 +170,9 @@ func emissionDocs(mans []map[string]any, b *buildFlags, skipKinds []string) []ma
 	docs := slices.Clone(mans)
 	slices.SortStableFunc(docs, compareDocs)
 	if b.onlyCRDs {
-		return filterCRDsOnly(docs)
+		return slices.DeleteFunc(docs, func(doc map[string]any) bool {
+			return manifest.DocKind(doc) != manifest.KindCustomResourceDefinition
+		})
 	}
 	return manifest.DropKinds(docs, skipKinds)
 }
@@ -197,19 +198,4 @@ func compareDocs(a, b map[string]any) int {
 		cmp.Compare(ans, bns),
 		cmp.Compare(an, bn),
 	)
-}
-
-// filterCRDsOnly returns the subset of docs whose `kind` is
-// CustomResourceDefinition. Inlined here (rather than via
-// manifest.DropKinds) to skip the slice-copy when nothing matches:
-// most rendered artifacts contain zero CRDs, so the common case is to
-// return a length-0 slice without allocation.
-func filterCRDsOnly(docs []map[string]any) []map[string]any {
-	var out []map[string]any
-	for _, doc := range docs {
-		if manifest.DocKind(doc) == manifest.KindCustomResourceDefinition {
-			out = append(out, doc)
-		}
-	}
-	return out
 }

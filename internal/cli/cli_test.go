@@ -810,15 +810,18 @@ func TestCompareDocs_OrdersByKindNamespaceName(t *testing.T) {
 	}
 }
 
-// TestFilterCRDsOnly drops every non-CRD doc.
-func TestFilterCRDsOnly(t *testing.T) {
+// TestEmissionDocs_OnlyCRDs drops every non-CRD doc.
+func TestEmissionDocs_OnlyCRDs(t *testing.T) {
 	docs := []map[string]any{
 		{"kind": "ConfigMap"},
 		{"kind": "CustomResourceDefinition"},
 		{"kind": "Secret"},
 		{"kind": "CustomResourceDefinition"},
 	}
-	out := filterCRDsOnly(docs)
+	out := emissionDocs(docs, &buildFlags{onlyCRDs: true}, nil)
+	if docs[2]["kind"] != "Secret" {
+		t.Errorf("emissionDocs mutated the input: %+v", docs)
+	}
 	if len(out) != 2 {
 		t.Errorf("expected 2 CRDs, got %d: %+v", len(out), out)
 	}
@@ -829,12 +832,10 @@ func TestFilterCRDsOnly(t *testing.T) {
 	}
 }
 
-// TestFilterCRDsOnly_EmptyOnNoCRDs covers the common-case zero-alloc
-// path: no CRDs in input → nil out.
-func TestFilterCRDsOnly_EmptyOnNoCRDs(t *testing.T) {
+func TestEmissionDocs_EmptyOnNoCRDs(t *testing.T) {
 	docs := []map[string]any{{"kind": "ConfigMap"}, {"kind": "Secret"}}
-	if out := filterCRDsOnly(docs); out != nil {
-		t.Errorf("expected nil for no-CRD input, got %+v", out)
+	if out := emissionDocs(docs, &buildFlags{onlyCRDs: true}, nil); len(out) != 0 {
+		t.Errorf("expected no docs for no-CRD input, got %+v", out)
 	}
 }
 

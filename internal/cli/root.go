@@ -129,8 +129,7 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 // setLogLevel validates lvl against the published enum and installs
 // the slog default. Unknown values are rejected up-front so
 // `--log-level bogus` fails clearly instead of silently degrading to
-// info — the previous behavior misled users who typo'd `--log-level
-// dbug` and assumed Debug output was simply quiet.
+// info.
 func setLogLevel(lvl string, explicit bool, w io.Writer) error {
 	var l slog.Level
 	switch lvl {

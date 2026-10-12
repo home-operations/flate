@@ -8,10 +8,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/report"
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestWrite_NotesFooter(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		notes []report.Note
+		want  string
+	}{
+		{name: "empty", want: "\n  ✓ 0 passed\n"},
+		{
+			name:  "single",
+			notes: []report.Note{{Text: "resource orphaned id=x"}},
+			want:  "\n  notes (1)\n    resource orphaned id=x\n\n  ✓ 0 passed\n",
+		},
+		{
+			name:  "collapsed",
+			notes: []report.Note{{Text: "resource orphaned id=x", Count: 3}, {Text: "source fetched", Count: 1}},
+			want:  "\n  notes (4)\n    resource orphaned id=x (×3)\n    source fetched\n\n  ✓ 0 passed\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var b bytes.Buffer
+			if err := (Report{}).Write(&b, nil, tc.notes, false, 0); err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, b.String(), tc.want)
+		})
+	}
+}
 
 // TestWrite_VerdictGlyphAndElapsed: the summary leads with a green ✓ when all
 // pass and a red ✗ when anything fails, and shows the elapsed clock only when

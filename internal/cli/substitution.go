@@ -92,7 +92,7 @@ func (c *commonFlags) loadSubstitutions(ctx context.Context) error {
 			}
 			kind := manifest.DocKind(doc)
 			name, namespace := manifest.DocMetadata(doc)
-			if manifest.DocAPIVersion(doc) != "v1" ||
+			if manifest.DocAPIVersion(doc) != manifest.CoreAPIVersion ||
 				(kind != manifest.KindConfigMap && kind != manifest.KindSecret) || name == "" || namespace == "" {
 				return fmt.Errorf("%w: --substitute-from %q document %d: expected a core v1 ConfigMap or Secret with name and namespace",
 					manifest.ErrInput, path, ordinal)

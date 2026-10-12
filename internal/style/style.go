@@ -20,7 +20,7 @@ import (
 )
 
 // Status glyphs shared across surfaces: a passing/success mark, a failure mark,
-// and a skipped/secondary dash. Pair with Pass/Fail/Skip for color.
+// and a skipped/secondary dash. Pair with Pass/Fail/Dim for color.
 const (
 	GlyphPass    = "✓"
 	GlyphFail    = "✗"
@@ -65,9 +65,6 @@ func Fail(s string, color bool) string { return render(redStyle, s, color) }
 // Warn renders s as an advisory (yellow) when color is on, else verbatim.
 func Warn(s string, color bool) string { return render(yellowStyle, s, color) }
 
-// Skip renders s as skipped/secondary (faint) when color is on, else verbatim.
-func Skip(s string, color bool) string { return render(faintStyle, s, color) }
-
 // Dim renders s faint when color is on, else verbatim.
 func Dim(s string, color bool) string { return render(faintStyle, s, color) }
 
@@ -83,9 +80,6 @@ func Cyan(s string, color bool) string { return render(cyanStyle, s, color) }
 func Truncate(s string, width int) string {
 	if width < 1 {
 		width = 1
-	}
-	if ansi.StringWidth(s) <= width {
-		return s
 	}
 	return ansi.Truncate(s, width, "…")
 }

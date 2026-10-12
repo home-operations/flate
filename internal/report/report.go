@@ -56,11 +56,8 @@ type Note struct {
 type Model struct {
 	Primary []Primary
 	Missing []Missing
-	// Warnings are non-fatal render advisories (Result.Warnings) — rendered in
-	// their own footer section above operational Notes. Distinct from failures
-	// (the render succeeded) and from Notes (operational slog lines).
+	// Warnings are non-fatal render advisories (Result.Warnings).
 	Warnings []manifest.Warning
-	Notes    []Note
 	// Blocked is the count of distinct derived (cascaded) failures. It is the
 	// verdict's "N blocked" figure — distinct resources, not the sum of the
 	// per-root Blocks/RequiredBy lists, which can overlap when one resource
@@ -70,20 +67,19 @@ type Model struct {
 
 // Empty reports whether there is nothing to render.
 func (m Model) Empty() bool {
-	return len(m.Primary) == 0 && len(m.Missing) == 0 && len(m.Warnings) == 0 && len(m.Notes) == 0
+	return len(m.Primary) == 0 && len(m.Missing) == 0 && len(m.Warnings) == 0
 }
 
 // Build partitions failures into primary errors and root-grouped cascades.
 // failed is Result.Failed (sentinel-trimmed messages); blocked is Result.Blocked
-// (a failed id → the immediate deps that blocked it, empty for primaries); notes
-// are the deferred log lines for the footer.
+// (a failed id → the immediate deps that blocked it, absent for primaries).
 //
 // A blocked resource is folded into the root(s) it traces to: walking its
 // blockers until reaching a primary failure (a failed id that is not itself
 // blocked) or a missing id (absent from failed). Cascaded resources never get
 // their own line — they appear only in a root's Blocks / RequiredBy list.
-func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource, warnings []manifest.Warning, notes []Note) Model {
-	byRoot := Roots(blocked)
+func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource, warnings []manifest.Warning) Model {
+	byRoot := roots(blocked)
 
 	var primary []Primary
 	var missing []Missing
@@ -102,16 +98,14 @@ func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manif
 
 	slices.SortFunc(primary, func(a, b Primary) int { return a.ID.Compare(b.ID) })
 	slices.SortFunc(missing, func(a, b Missing) int { return a.ID.Compare(b.ID) })
-	return Model{Primary: primary, Missing: missing, Warnings: warnings, Notes: notes, Blocked: len(blocked)}
+	return Model{Primary: primary, Missing: missing, Warnings: warnings, Blocked: len(blocked)}
 }
 
-// Roots inverts a blocked graph into root cause → the resources that trace to
+// roots inverts a blocked graph into root cause → the resources that trace to
 // it. blocked maps each derived failure to the immediate dependencies that
 // blocked it; a root is any id reached by walking those blockers that is not
 // itself blocked (a primary failure, or a dependency missing from the graph).
-// Shared by Build and the test runner so both fold a cascade under the same
-// root with identical walk semantics.
-func Roots(blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
+func roots(blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
 	byRoot := map[manifest.NamedResource][]manifest.NamedResource{}
 	for id := range blocked {
 		for _, r := range RootsOf(id, blocked) {
@@ -153,14 +147,12 @@ func sortedIDs(ids []manifest.NamedResource) []manifest.NamedResource {
 	return slices.Compact(out) // NamedResource is a comparable struct; sorted ⇒ dups adjacent
 }
 
-// Write renders the model to w. color gates ANSI styling; elapsed, when > 0,
-// closes the verdict line.
-func (m Model) Write(w io.Writer, color bool, elapsed time.Duration) error {
+// Write renders the model to w. color gates ANSI styling.
+func (m Model) Write(w io.Writer, color bool) error {
 	doc := Document(
 		m.failuresBlock(color),
 		WarningsBlock(m.Warnings, color),
-		NotesBlock(m.Notes, color),
-		m.verdictBlock(color, elapsed),
+		m.verdictBlock(color),
 	)
 	if doc == "" {
 		return nil
@@ -219,26 +211,28 @@ func WarningsBlock(warnings []manifest.Warning, color bool) string {
 // when there are none. Shared by every footer-bearing surface.
 func NotesBlock(notes []Note, color bool) string {
 	items := make([]string, 0, len(notes))
+	var total int
 	for _, n := range notes {
+		total += cmp.Or(n.Count, 1)
 		line := n.Text
 		if n.Count > 1 {
 			line = fmt.Sprintf("%s (×%d)", line, n.Count)
 		}
 		items = append(items, style.Dim(line, color))
 	}
-	return section(style.Dim(fmt.Sprintf("notes (%d)", noteTotal(notes)), color), items)
+	return section(style.Dim(fmt.Sprintf("notes (%d)", total), color), items)
 }
 
-// verdictBlock renders the "✗ N failed · M blocked   elapsed" line, or "" when
+// verdictBlock renders the "✗ N failed · M blocked" line, or "" when
 // nothing failed — a clean run carrying only advisories shows just those, not a
 // misleading red "✗ 0 failed". failed = primary + missing roots; blocked is the
 // distinct cascaded count (m.Blocked, not the sum of per-root lists).
-func (m Model) verdictBlock(color bool, elapsed time.Duration) string {
+func (m Model) verdictBlock(color bool) string {
 	failed := len(m.Primary) + len(m.Missing)
 	if failed == 0 && m.Blocked == 0 {
 		return ""
 	}
-	return Verdict(color, style.GlyphFail, style.Fail, elapsed,
+	return Verdict(color, style.GlyphFail, style.Fail, 0,
 		Count{N: failed, Label: "failed", Paint: style.Fail},
 		Count{N: m.Blocked, Label: "blocked", Paint: style.Dim},
 	)
@@ -258,17 +252,6 @@ func section(header string, items []string) string {
 	return b.String()
 }
 
-// nonEmpty returns the non-empty blocks, in order.
-func nonEmpty(blocks ...string) []string {
-	out := make([]string, 0, len(blocks))
-	for _, b := range blocks {
-		if b != "" {
-			out = append(out, b)
-		}
-	}
-	return out
-}
-
 // Document assembles a footer from section blocks: a leading blank line parts it
 // from preceding output, a single blank line separates each non-empty block, and
 // it ends with a newline. Returns "" when every block is empty, so the caller
@@ -276,7 +259,12 @@ func nonEmpty(blocks ...string) []string {
 // in one place, so there's no per-section newline bookkeeping to drift. Shared
 // by the build/diff failure report and the `flate test` roster.
 func Document(blocks ...string) string {
-	nz := nonEmpty(blocks...)
+	nz := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b != "" {
+			nz = append(nz, b)
+		}
+	}
 	if len(nz) == 0 {
 		return ""
 	}
@@ -372,12 +360,4 @@ func MessageLines(s string) []string {
 		}
 	}
 	return out
-}
-
-func noteTotal(notes []Note) int {
-	n := 0
-	for _, note := range notes {
-		n += cmp.Or(note.Count, 1)
-	}
-	return n
 }

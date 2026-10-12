@@ -80,11 +80,11 @@ Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig
 
 **Build substitution inputs.** These options also work with `get`, `test`, and both sides of `diff`.
 
-| Flag                                    | Environment                                    | Behavior                                                                                                                                          |
-| --------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--substitute-from <file>` (repeatable) | `FLATE_SUBSTITUTE_FROM`: colon-separated paths | Supply ConfigMap/Secret values for exact `postBuild.substituteFrom` identities; bootstrap-known repository objects and producers take precedence. |
-| `--substitute KEY=VALUE` (repeatable)   | `FLATE_SUBSTITUTE`: CSV comma-separated pairs  | Override referenced values and authored inline substitutions, in that order, whenever `postBuild` is present.                                     |
-| `--strict-substitutions`                | `FLATE_STRICT_SUBSTITUTIONS`: boolean          | Fail undefined variables without defaults; disabled by default.                                                                                   |
+| Flag                                    | Environment                                                            | Behavior                                                                                                                                          |
+| --------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--substitute-from <file>` (repeatable) | `FLATE_SUBSTITUTE_FROM`: paths separated by the OS path-list separator | Supply ConfigMap/Secret values for exact `postBuild.substituteFrom` identities; bootstrap-known repository objects and producers take precedence. |
+| `--substitute KEY=VALUE` (repeatable)   | `FLATE_SUBSTITUTE`: CSV comma-separated pairs                          | Override referenced values and authored inline substitutions, in that order, whenever `postBuild` is present.                                     |
+| `--strict-substitutions`                | `FLATE_STRICT_SUBSTITUTIONS`: boolean                                  | Fail undefined variables without defaults; disabled by default.                                                                                   |
 
 Explicit flags replace the corresponding environment input, including `--strict-substitutions=false`. File paths are relative to the invocation's working directory. Files accept multiple YAML documents, each a core `v1` ConfigMap or Secret with explicit name and namespace; empty/null documents are skipped. Later files/documents replace duplicate kind/namespace/name identities as whole objects. Later overlay pairs replace earlier keys; empty values and embedded equals signs are valid. CLI pairs retain commas; use CSV quoting for commas within environment values.
 

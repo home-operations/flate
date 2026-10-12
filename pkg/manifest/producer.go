@@ -73,7 +73,7 @@ type ProducerTarget struct {
 func ProducerTargets(raw *RawObject) []ProducerTarget {
 	spec := specView{raw.Spec}
 	switch {
-	case raw.Kind == "ExternalSecret" && inGroup(raw.APIVersion, "external-secrets.io"):
+	case raw.Kind == "ExternalSecret" && apiGroup(raw.APIVersion) == "external-secrets.io":
 		name := cmp.Or(spec.child("target").str("name"), raw.Name)
 		// A target.template fully defines the output keys; without one they are
 		// each data[].secretKey. (Slices aren't comparable, so this fallback
@@ -83,10 +83,10 @@ func ProducerTargets(raw *RawObject) []ProducerTarget {
 			keys = spec.entryKeys("data", "secretKey")
 		}
 		return []ProducerTarget{raw.secret(name, keys)}
-	case raw.Kind == "SealedSecret" && inGroup(raw.APIVersion, "bitnami.com"):
+	case raw.Kind == "SealedSecret" && apiGroup(raw.APIVersion) == "bitnami.com":
 		name := cmp.Or(spec.child("template").child("metadata").str("name"), raw.Name)
 		return []ProducerTarget{raw.secret(name, spec.mapKeys("encryptedData"))}
-	case raw.Kind == "ObjectBucketClaim" && inGroup(raw.APIVersion, "objectbucket.io"):
+	case raw.Kind == "ObjectBucketClaim" && apiGroup(raw.APIVersion) == "objectbucket.io":
 		return []ProducerTarget{raw.secret(raw.Name, nil), raw.target(KindConfigMap, raw.Name, nil)}
 	default:
 		return nil

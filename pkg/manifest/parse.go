@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"maps"
-	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -168,22 +167,13 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 	return obj, doc, changed, err
 }
 
-// inGroup reports whether apiVersion belongs to the API group group.
-// The group is compared exactly while the version is ignored, so any
-// version of a group flate models is accepted (see constants.go) and a
-// group that merely starts with one of ours is not.
-func inGroup(apiVersion, group string) bool {
-	g, _, _ := strings.Cut(apiVersion, "/")
-	return g == group
-}
-
 // checkAPIVersion requires an exact API group match on a raw document.
 func checkAPIVersion(doc map[string]any, want string) error {
 	v := DocAPIVersion(doc)
 	if v == "" {
 		return inputf("missing apiVersion")
 	}
-	if !inGroup(v, want) {
+	if apiGroup(v) != want {
 		return inputf("expected apiVersion %q, got %q", want, v)
 	}
 	return nil

@@ -3,8 +3,9 @@ package manifest
 import (
 	"path/filepath"
 	"slices"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"testing"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 )
 
 func TestBuildKSClaims_PathsAndComponents(t *testing.T) {

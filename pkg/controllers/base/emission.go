@@ -47,7 +47,8 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 			continue
 		}
 		children = append(children, Child{Obj: obj, Doc: doc})
-		if isTrackedChild(obj, helmRelease) {
+		info := manifest.KindOf(obj)
+		if info.Tracked && (!helmRelease || info.Group == manifest.SourceDomain) {
 			if emitted == nil {
 				emitted = make([]manifest.NamedResource, 0, len(docs))
 			}
@@ -60,7 +61,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 		id := obj.Named()
 		info := manifest.KindOf(obj)
 		switch {
-		case !isTrackedChild(obj, helmRelease):
+		case !info.Tracked || helmRelease && info.Group != manifest.SourceDomain:
 			c.Store.AddObject(obj)
 		case info.Status && info.Group != manifest.SourceDomain:
 			continue
@@ -92,9 +93,4 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 		c.Store.AddObjects(leaves)
 	}
 	return children, docs
-}
-
-func isTrackedChild(obj manifest.BaseManifest, helmRelease bool) bool {
-	info := manifest.KindOf(obj)
-	return info.Tracked && (!helmRelease || info.Group == manifest.SourceDomain)
 }

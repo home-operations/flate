@@ -483,3 +483,4 @@ func TestReconcile_InputsFromAuthoredKindUsesRSIP(t *testing.T) {
 		t.Fatal("authored input kind mutated")
 	}
 }
+

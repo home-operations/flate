@@ -1029,10 +1029,15 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 		Name: "demo", Namespace: "default",
 		DependsOn: []helmv2.DependencyReference{
 			{Namespace: "default", Name: "other"},
+			{Name: "second"},
+			{Name: "third"},
 		},
 	}
+	if allocs := testing.AllocsPerRun(100, func() { c.OrderingDeps(hr) }); allocs != 1 {
+		t.Fatalf("OrderingDeps allocations = %v, want 1", allocs)
+	}
 	got := c.OrderingDeps(hr)
-	if len(got) != 1 || got[0].Name != "other" {
+	if len(got) != 3 || got[0].Name != "other" {
 		t.Fatalf("OrderingDeps = %+v", got)
 	}
 	// Mutating the returned slice must not affect hr.DependsOn.

@@ -11,44 +11,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func TestTrackedChild_EmitterKinds(t *testing.T) {
-	cases := []struct {
-		name   string
-		obj    manifest.BaseManifest
-		want   bool
-		wantHR bool
-	}{
-		{"Kustomization", &manifest.Kustomization{}, true, false},
-		{"HelmRelease", &manifest.HelmRelease{}, true, false},
-		{"HelmRepository", &manifest.HelmRepository{}, true, true},
-		{"OCIRepository", &manifest.OCIRepository{}, true, true},
-		{"GitRepository", &manifest.GitRepository{}, true, true},
-		{"Bucket", &manifest.Bucket{}, true, true},
-		{"HelmChartSource", &manifest.HelmChartSource{}, true, true},
-		{"ExternalArtifact", &manifest.ExternalArtifact{}, true, true},
-		{"ConfigMap", &manifest.ConfigMap{}, true, false},
-		{"Secret", &manifest.Secret{}, true, false},
-		{"ResourceSet", &manifest.ResourceSet{}, true, false},
-		{"ResourceSetInputProvider", &manifest.ResourceSetInputProvider{}, true, false},
-		{"RawObject falls through", &manifest.RawObject{Kind: "Service"}, false, false},
-		{"raw Kustomization", &manifest.RawObject{Kind: manifest.KindKustomization}, false, false},
-		{"raw HelmRelease", &manifest.RawObject{Kind: manifest.KindHelmRelease}, false, false},
-	}
-	for _, tc := range cases {
-		for _, helmRelease := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/helmRelease=%t", tc.name, helmRelease), func(t *testing.T) {
-				want := tc.want
-				if helmRelease {
-					want = tc.wantHR
-				}
-				if got := isTrackedChild(tc.obj, helmRelease); got != want {
-					t.Errorf("isTrackedChild(%T, %t) = %v, want %v", tc.obj, helmRelease, got, want)
-				}
-			})
-		}
-	}
-}
-
 // HelmRelease documents already carry the release namespace, which may differ from the emitter namespace.
 func TestEmit_DefaultsNamespace(t *testing.T) {
 	for _, tc := range []struct {

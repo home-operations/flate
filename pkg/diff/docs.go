@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"maps"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -22,11 +23,7 @@ import (
 // parent's documents keep their render emission order) so the result is
 // deterministic across the input map's random iteration order.
 func DocsFromManifests(manifests map[manifest.NamedResource][]map[string]any, pathOf func(manifest.NamedResource) string) []Doc {
-	parents := make([]manifest.NamedResource, 0, len(manifests))
-	for id := range manifests {
-		parents = append(parents, id)
-	}
-	slices.SortFunc(parents, manifest.NamedResource.Compare)
+	parents := slices.SortedFunc(maps.Keys(manifests), manifest.NamedResource.Compare)
 
 	out := make([]Doc, 0, len(manifests))
 	for _, id := range parents {

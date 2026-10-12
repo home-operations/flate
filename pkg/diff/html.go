@@ -12,6 +12,8 @@ import (
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/pmezard/go-difflib/difflib"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 //go:embed templates/diff.html.tmpl
@@ -170,7 +172,7 @@ func buildHTMLResource(p changedPair, hl *highlighter) htmlResource {
 	ah, bh := highlightPair(a, b, groups, hl)
 	status, _ := classify(p.a, p.b)
 
-	id := joinNS(p.namespace, p.name)
+	id := (manifest.NamedResource{Namespace: p.namespace, Name: p.name}).NamespacedName()
 	res := htmlResource{
 		Title:  p.label(),
 		Kind:   p.kind,

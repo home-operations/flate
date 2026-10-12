@@ -24,6 +24,14 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+// Artifact filenames are shared by source fetchers and chart loaders.
+const (
+	// OCICopiedLayerFilename is the unextracted OCI layer in an artifact FS.
+	OCICopiedLayerFilename = "layer.tar.gz"
+	// HelmChartArchiveFilename is the HTTP chart archive in an artifact FS.
+	HelmChartArchiveFilename = "chart.tgz"
+)
+
 // Fetcher resolves a single source CR into an on-disk artifact. The
 // source controller stores Fetchers in a map keyed by Kind and
 // dispatches via this untyped interface. Concrete implementations

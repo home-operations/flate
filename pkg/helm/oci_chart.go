@@ -1,8 +1,6 @@
 package helm
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -11,6 +9,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+const chartDigestPrefixLength = 12
 
 // ociChartVersion matches Flux's source revision semantics, replacing build
 // metadata while preserving the chart's prerelease. OCI tags encode '+' as '_'.
@@ -48,10 +48,10 @@ func splitOCIRevision(revision string) (*semver.Version, string, error) {
 		return nil, "", fmt.Errorf("%w: invalid artifact revision %q", manifest.ErrInput, revision)
 	}
 	_, suffix, ok := strings.Cut(digest, ":")
-	if !ok || strings.Contains(suffix, ":") || len(suffix) < 12 {
+	if !ok || strings.Contains(suffix, ":") || len(suffix) < chartDigestPrefixLength {
 		return nil, "", fmt.Errorf("%w: invalid artifact revision %q", manifest.ErrInput, revision)
 	}
-	return tagVer, suffix[:12], nil
+	return tagVer, suffix[:chartDigestPrefixLength], nil
 }
 
 func ociChartFingerprint(fingerprint string, source *store.SourceArtifact, disabled bool) string {
@@ -67,12 +67,5 @@ func ociChartFingerprint(fingerprint string, source *store.SourceArtifact, disab
 	} else {
 		data = append(data, 0)
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return manifest.SHA256Hex(data)
 }
-
-const (
-	chartYamlFilename      = "Chart.yaml"
-	copiedOCILayerFilename = "layer.tar.gz"
-	httpChartFilename      = "chart.tgz"
-)

@@ -1,9 +1,12 @@
 package helm
 
 import (
+	"slices"
 	"strings"
 
 	"helm.sh/helm/v4/pkg/chart/common"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // Options collects the helm template flags flate supports.
@@ -50,20 +53,12 @@ type Options struct {
 // SkipResourceKinds returns the union of canonical and user-specified
 // kinds to drop from rendered output.
 func (o Options) SkipResourceKinds() []string {
-	extra := 0
+	out := slices.Grow(slices.Clone(o.SkipKinds), 2)
 	if o.SkipCRDs {
-		extra++
+		out = append(out, manifest.KindCustomResourceDefinition)
 	}
 	if o.SkipSecrets {
-		extra++
-	}
-	out := make([]string, len(o.SkipKinds), len(o.SkipKinds)+extra)
-	copy(out, o.SkipKinds)
-	if o.SkipCRDs {
-		out = append(out, "CustomResourceDefinition")
-	}
-	if o.SkipSecrets {
-		out = append(out, "Secret")
+		out = append(out, manifest.KindSecret)
 	}
 	return out
 }
@@ -80,15 +75,9 @@ func (o Options) capabilities() (*common.Capabilities, error) {
 		caps.KubeVersion = *kv
 	}
 	if o.APIVersions != "" {
-		caps.APIVersions = common.VersionSet(splitComma(o.APIVersions))
+		caps.APIVersions = common.VersionSet(strings.FieldsFunc(o.APIVersions, func(r rune) bool {
+			return r == ',' || r == ' ' || r == '\t'
+		}))
 	}
 	return caps, nil
-}
-
-// splitComma splits s on commas / whitespace into non-empty tokens.
-// strings.FieldsFunc already skips empty spans, so no post-filter needed.
-func splitComma(s string) []string {
-	return strings.FieldsFunc(s, func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\t'
-	})
 }

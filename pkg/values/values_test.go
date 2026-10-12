@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	"helm.sh/helm/v4/pkg/chart/v2/loader"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -41,9 +43,9 @@ func (p *SliceProvider) Secret(namespace, name string) *manifest.Secret {
 
 // TestDeepMergeInto_MutatesDstPreservesSemantics pins the in-place
 // variant's contract: dst is mutated, override is read-only, and
-// the resulting tree matches DeepMerge's output for the same inputs.
+// the resulting tree matches Helm's output for the same inputs.
 // Sub-maps from override are inserted by reference when no key
-// collides (same as DeepMerge); on a collision the recursive merge
+// collides (matching Helm); on a collision the recursive merge
 // produces a single in-place result, not a fresh allocation per
 // level. Used in ExpandValueReferences's hot path to avoid O(N²)
 // clones across N valuesFrom refs.
@@ -74,31 +76,6 @@ func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
 	}
 	if dst["a"] != 2 || dst["b"].(map[string]any)["y"] != 99 {
 		t.Error("dst not mutated as expected")
-	}
-}
-
-func TestDeepMerge(t *testing.T) {
-	base := map[string]any{
-		"a": 1,
-		"b": map[string]any{"x": 1, "y": 2},
-		"l": []any{1, 2, 3},
-	}
-	over := map[string]any{
-		"a": 2,
-		"b": map[string]any{"y": 99},
-		"l": []any{9},
-	}
-	out := DeepMerge(base, over)
-	if out["a"] != 2 {
-		t.Errorf("scalar override failed: %v", out["a"])
-	}
-	bb := out["b"].(map[string]any)
-	if bb["x"] != 1 || bb["y"] != 99 {
-		t.Errorf("nested merge wrong: %v", bb)
-	}
-	ll := out["l"].([]any)
-	if len(ll) != 1 || ll[0] != 9 {
-		t.Errorf("list should be replaced, got %v", ll)
 	}
 }
 
@@ -305,11 +282,7 @@ func TestExpandValueReferences_MissingOptionalKeySkipped(t *testing.T) {
 	}
 }
 
-// TestExpandValueReferences_CacheHits pins Item 6: two lookups for
-// the same (kind, ns, name, key, content) tuple return the same
-// parsed value from one yaml.Unmarshal — and a mutation to the
-// underlying ConfigMap.Data content causes the cache to miss because
-// the content-hash component of the key shifts.
+// Identical YAML shares one immutable parse across resource identities.
 func TestExpandValueReferences_CacheHits(t *testing.T) {
 	cm := &manifest.ConfigMap{
 		Name: "platform", Namespace: "default",
@@ -332,14 +305,12 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 		t.Fatalf("first: replicaCount=%v", a.Values["replicaCount"])
 	}
 
-	// Second HR sharing the same ref must hit the cache. Verify by
-	// mutating the ConfigMap.Data IN A WAY that would change the
-	// PARSE result but keep the SAME RAW BYTES — impossible by
-	// construction. So instead we verify behaviorally: the cache
-	// must serve identical output regardless of how many parsers
-	// raced. The next test (CacheInvalidatesOnContentChange)
-	// covers the inverse: mutating the bytes DOES invalidate.
+	other := &manifest.ConfigMap{Name: "other", Namespace: "apps",
+		Data: map[string]any{"extra.yaml": cm.Data["values.yaml"]}}
+	provider.ConfigMaps = append(provider.ConfigMaps, other)
 	b := hr()
+	b.Namespace = other.Namespace
+	b.ValuesFrom = []manifest.ValuesReference{{Kind: "ConfigMap", Name: other.Name, ValuesKey: "extra.yaml"}}
 	if err := ExpandValueReferences(b, provider, cache); err != nil {
 		t.Fatalf("second ExpandValueReferences: %v", err)
 	}
@@ -347,12 +318,13 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 		t.Errorf("second: replicaCount=%v", b.Values["replicaCount"])
 	}
 
-	// Overwrite a TOP-LEVEL key on a's result. Each HR gets its own
-	// top-level values map (DeepMerge allocates a fresh one), so a
-	// top-level write never reaches the shared cache canonical — a third
-	// HR still sees the parsed value. (Nested sub-trees ARE shared with
-	// the canonical and must not be mutated in place — that contract is
-	// pinned by the TargetPath and concurrency tests below.)
+	entries := 0
+	cache.m.Range(func(_, _ any) bool { entries++; return true })
+	if entries != 1 {
+		t.Fatalf("identical content cached %d times, want once", entries)
+	}
+
+	// Top-level writes must not reach the shared cache canonical.
 	a.Values["replicaCount"] = "stomped"
 	c := hr()
 	if err := ExpandValueReferences(c, provider, cache); err != nil {
@@ -363,10 +335,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 	}
 }
 
-// TestExpandValueReferences_CacheInvalidatesOnContentChange pins the
-// natural-invalidation contract: when the underlying ConfigMap
-// content changes (re-AddObject lands new bytes), the FNV key
-// shifts and the cache misses — no explicit listener needed.
+// Changed YAML must resolve to a fresh parse without explicit invalidation.
 func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 	cm := &manifest.ConfigMap{
 		Name: "platform", Namespace: "default",
@@ -389,8 +358,6 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 		t.Fatalf("first replicaCount=%v", a.Values["replicaCount"])
 	}
 
-	// Mutate the underlying ConfigMap's content — different bytes
-	// → different FNV hash component of the cache key → miss.
 	cm.Data["values.yaml"] = "replicaCount: 99\n"
 
 	b := mk()
@@ -632,11 +599,8 @@ func equalish(a, b any) bool {
 	return a == b
 }
 
-// TestDeepMergeMatchesDeepMergeInto pins the equivalence the copy-on-collision
-// optimization relies on: functional DeepMerge(base, override) produces the
-// SAME value graph as the eager DeepMergeInto(copy(base), copy(override)) the
-// share path replaced. If these ever diverge, render output would change.
-func TestDeepMergeMatchesDeepMergeInto(t *testing.T) {
+// TestDeepMergeInto_MatchesHelmMerge pins flate's in-place merge against Helm.
+func TestDeepMergeInto_MatchesHelmMerge(t *testing.T) {
 	cases := []struct {
 		name           string
 		base, override map[string]any
@@ -651,11 +615,11 @@ func TestDeepMergeMatchesDeepMergeInto(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			functional := DeepMerge(tc.base, tc.override)
+			functional := loader.MergeMaps(tc.base, tc.override)
 			eager := manifest.DeepCopyMap(tc.base)
 			DeepMergeInto(eager, manifest.DeepCopyMap(tc.override))
 			if !reflect.DeepEqual(functional, eager) {
-				t.Errorf("DeepMerge != DeepMergeInto\n functional=%#v\n eager=%#v", functional, eager)
+				t.Errorf("Helm MergeMaps != DeepMergeInto\n functional=%#v\n eager=%#v", functional, eager)
 			}
 		})
 	}

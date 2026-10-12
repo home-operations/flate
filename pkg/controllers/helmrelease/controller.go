@@ -263,10 +263,9 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 		}
 		sourceIdentity = source.Digest + "\x00" + source.Revision
 	}
-	fp := helmReleaseFingerprint(hr, sourceIdentity)
+	fp := helmReleaseFingerprint(hr, sourceIdentity, omitted)
 	if handled, err := c.FingerprintDedup(id, fp, func(docs []map[string]any) {
 		c.Emit(id, docs, c.WipeSecrets, false)
-		c.recordOmittedValues(id, omitted)
 	}); handled {
 		return err
 	}

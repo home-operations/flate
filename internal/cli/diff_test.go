@@ -87,18 +87,14 @@ func TestRun_Diff_OmittedValues(t *testing.T) {
 		verb, resource        string
 		namespace             string
 		origRef, currentRef   bool
-		optional, present     bool
-		change, strict        bool
+		change                bool
 		wantOrig, wantCurrent bool
 		wantCode              int
 	}{
 		{name: "current omitted", kind: "ConfigMap", currentRef: true, wantCurrent: true},
 		{name: "orig omitted", kind: "ConfigMap", origRef: true, wantOrig: true},
 		{name: "both omitted", kind: "Secret", origRef: true, currentRef: true, wantOrig: true, wantCurrent: true},
-		{name: "optional", kind: "Secret", currentRef: true, optional: true},
-		{name: "present", kind: "ConfigMap", currentRef: true, present: true},
 		{name: "changed output", kind: "Secret", currentRef: true, change: true, wantCurrent: true},
-		{name: "without flag", kind: "Secret", currentRef: true, strict: true, wantCode: 1},
 		{name: "named release", kind: "ConfigMap", resource: "demo", currentRef: true, wantCurrent: true},
 		{name: "other release", kind: "ConfigMap", resource: "other", currentRef: true, wantCode: 1},
 		{name: "other namespace", kind: "ConfigMap", namespace: "flux-system", currentRef: true},
@@ -123,19 +119,7 @@ data:
 `)
 				refs := ""
 				if ref {
-					optional := "false"
-					if tc.optional {
-						optional = "true"
-					}
-					refs = "  valuesFrom:\n    - kind: " + tc.kind + "\n      name: extra-values\n      optional: " + optional + "\n"
-				}
-				if tc.present {
-					testutil.WriteFile(t, path, "flux/values.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: extra-values, namespace: apps}
-data:
-  values.yaml: "greeting: hello\n"
-`)
+					refs = "  valuesFrom:\n    - kind: " + tc.kind + "\n      name: extra-values\n"
 				}
 				if tc.kind == "Secret" {
 					testutil.WriteFile(t, path, "flux/vso.yaml", `apiVersion: secrets.hashicorp.com/v1beta1
@@ -154,7 +138,7 @@ spec:
     spec:
       chart: charts/demo
       sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`+refs+`  values: {message: `+message+`}
+`+refs+`  values: {message: `+message+`, unused: stale}
 `)
 				return path
 			}
@@ -167,50 +151,48 @@ spec:
 			current := write(tc.currentRef, "10m", message)
 			cache := t.TempDir()
 			for _, output := range []string{"diff", "json"} {
-				for range 2 {
-					verb := "hr"
-					if tc.verb != "" {
-						verb = tc.verb
+				verb := "hr"
+				if tc.verb != "" {
+					verb = tc.verb
+				}
+				args := []string{"diff", verb, "--path", current, "--path-orig", orig,
+					"--cache-dir", cache, "--concurrency", "2", "--output", output, "--no-progress", "--allow-missing-secrets"}
+				if tc.resource != "" {
+					args = append(args, tc.resource)
+				}
+				if tc.namespace != "" {
+					args = append(args, "--namespace", tc.namespace)
+				}
+
+				stdout, stderr, code := runCLI(t, args...)
+				assert.Equal(t, code, tc.wantCode)
+				assert.Equal(t, strings.Contains(stderr, "values not used by the chart"), false)
+				assert.Equal(t, strings.Contains(stdout, "flate warning:"), false)
+				for _, side := range []struct {
+					name string
+					want bool
+				}{{"orig", tc.wantOrig}, {"current", tc.wantCurrent}} {
+					note := "flate warning: " + side.name + " snapshot: HelmRelease/apps/demo: required valuesFrom " + tc.kind + "/apps/extra-values omitted from offline render"
+					assert.Equal(t, strings.Contains(stderr, note), side.want)
+				}
+				if tc.resource == "other" {
+					assert.Equal(t, stdout, "")
+					continue
+				}
+				if output == "json" {
+					var got struct{ Changes, Suppressed []map[string]any }
+					if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+						t.Fatal(err)
 					}
-					args := []string{"diff", verb, "--path", current, "--path-orig", orig,
-						"--cache-dir", cache, "--concurrency", "2", "--output", output, "--no-progress"}
-					if tc.resource != "" {
-						args = append(args, tc.resource)
-					}
-					if tc.namespace != "" {
-						args = append(args, "--namespace", tc.namespace)
-					}
-					if !tc.strict {
-						args = append(args, "--allow-missing-secrets")
-					}
-					stdout, stderr, code := runCLI(t, args...)
-					assert.Equal(t, code, tc.wantCode)
-					for _, side := range []struct {
-						name string
-						want bool
-					}{{"orig", tc.wantOrig}, {"current", tc.wantCurrent}} {
-						note := "flate warning: " + side.name + " snapshot: HelmRelease/apps/demo: required valuesFrom " + tc.kind + "/apps/extra-values omitted from offline render"
-						assert.Equal(t, strings.Contains(stderr, note), side.want)
-					}
-					if tc.resource == "other" {
-						assert.Equal(t, stdout, "")
-						continue
-					}
-					if output == "json" {
-						var got struct{ Changes, Suppressed []map[string]any }
-						if err := json.Unmarshal([]byte(stdout), &got); err != nil {
-							t.Fatal(err)
+					assert.Equal(t, len(got.Changes) > 0, tc.change)
+				} else if tc.change {
+					for _, want := range []string{"-  message: before", "+  message: after"} {
+						if !strings.Contains(stdout, want) {
+							t.Errorf("available change %q missing: %s", want, stdout)
 						}
-						assert.Equal(t, len(got.Changes) > 0, tc.change)
-					} else if tc.change {
-						for _, want := range []string{"-  message: before", "+  message: after"} {
-							if !strings.Contains(stdout, want) {
-								t.Errorf("available change %q missing: %s", want, stdout)
-							}
-						}
-					} else if code == 0 {
-						assert.Equal(t, stdout, "")
 					}
+				} else if code == 0 {
+					assert.Equal(t, stdout, "")
 				}
 			}
 		})

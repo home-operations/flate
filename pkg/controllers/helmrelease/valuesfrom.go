@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -202,7 +203,8 @@ func omittedValuesRefIDs(before, after *manifest.HelmRelease) []manifest.NamedRe
 			out = append(out, id)
 		}
 	}
-	return out
+	slices.SortFunc(out, manifest.NamedResource.Compare)
+	return slices.Compact(out)
 }
 
 func removeValuesRefs(hr *manifest.HelmRelease, ids map[manifest.NamedResource]struct{}) *manifest.HelmRelease {

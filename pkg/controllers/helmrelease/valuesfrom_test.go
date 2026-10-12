@@ -14,6 +14,7 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		name         string
 		waitValues   bool
 		materialized bool
+		duplicate    bool
 		fail         bool
 		wantGreeting string
 		wantWarnings int
@@ -23,6 +24,7 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		{name: "chart wait, still missing", wantGreeting: "fallback", wantWarnings: 1},
 		{name: "chart wait, materialized", materialized: true, wantGreeting: "supplied"},
 		{name: "chart failed", fail: true},
+		{name: "duplicate omitted ref", duplicate: true, wantGreeting: "fallback", wantWarnings: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -56,6 +58,9 @@ data:
 					RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
 				},
 			}
+			if tc.duplicate {
+				hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "other.yaml"})
+			}
 			if tc.waitValues {
 				hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "chart-values"})
 			}
@@ -81,6 +86,9 @@ data:
 			st.UpdateStatus(src.Named(), status, "chart source")
 			assert.Equal(t, dispatchToFixpoint(t, c, st, hr.Named()).Status, status)
 			assert.Equal(t, len(st.Warnings()), tc.wantWarnings)
+			for _, warning := range st.Warnings() {
+				assert.Equal(t, warning.Count, 1)
+			}
 			if tc.fail {
 				return
 			}

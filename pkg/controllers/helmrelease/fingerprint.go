@@ -6,16 +6,18 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// helmReleaseFingerprint produces a stable hash of the inputs that
-// determine helm.Template's output for hr. Excludes metadata.labels
-// and metadata.annotations on purpose — kustomize-controller-emitted
-// HRs differ from their file-loaded sources only in label stamping,
-// and re-rendering on a label diff is pure waste. Returns "" when
-// the payload can't be hashed (degrades safely: manifest.Fingerprint
-// returns "", which never matches, so the dedup short-circuit is
-// skipped and we re-render).
-func helmReleaseFingerprint(hr *manifest.HelmRelease, sourceIdentity string) string {
-	return manifest.Fingerprint(helmReleaseFingerprintPayload(hr, sourceIdentity))
+// helmReleaseFingerprint hashes render inputs and omitted-reference advisories.
+// Labels and annotations MUST not invalidate parent-stamped artifact replays.
+// Unhashable inputs return "", which MUST bypass the dedup short-circuit.
+func helmReleaseFingerprint(hr *manifest.HelmRelease, sourceIdentity string, omitted []manifest.NamedResource) string {
+	payload := helmReleaseFingerprintPayload(hr, sourceIdentity)
+	if len(omitted) > 0 {
+		payload = struct {
+			Release any
+			Omitted []manifest.NamedResource
+		}{payload, omitted}
+	}
+	return manifest.Fingerprint(payload)
 }
 
 func helmReleaseFingerprintPayload(hr *manifest.HelmRelease, sourceIdentity string) any {

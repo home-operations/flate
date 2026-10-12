@@ -27,7 +27,7 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				if fp := helmReleaseFingerprint(hr, identity); fp == "" {
+				if fp := helmReleaseFingerprint(hr, identity, nil); fp == "" {
 					b.Fatal("empty fingerprint")
 				}
 			}
@@ -46,7 +46,7 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 	for b.Loop() {
 		source := resolver.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
 		identity := source.Digest + "\x00" + source.Revision
-		if fp := helmReleaseFingerprint(hr, identity); fp == "" {
+		if fp := helmReleaseFingerprint(hr, identity, nil); fp == "" {
 			b.Fatal("empty fingerprint")
 		}
 	}

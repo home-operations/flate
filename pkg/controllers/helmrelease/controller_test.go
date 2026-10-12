@@ -481,15 +481,21 @@ data:
 		{Resource: hr.Named(), Category: manifest.WarnOmittedValues, Message: "required valuesFrom ConfigMap/default/runtime-values omitted from offline render", Count: 1},
 		{Resource: hr.Named(), Category: manifest.WarnOmittedValues, Message: "required valuesFrom Secret/default/app-values omitted from offline render", Count: 1},
 	})
+	warnings := st.Warnings()
+	hr = hr.Clone()
+	hr.Labels = map[string]string{"owner": "re-emitted"}
+	st.AddObject(hr)
+	assert.Equal(t, dispatchToFixpoint(t, c, st, hr.Named()).Status, store.StatusReady)
+	assert.Equal(t, st.GetArtifact(hr.Named()), store.Artifact(art))
+	assert.Diff(t, st.Warnings(), warnings)
 	hr = hr.Clone()
 	hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "another-values"})
 	st.AddObject(hr)
 	assert.Equal(t, dispatchToFixpoint(t, c, st, hr.Named()).Status, store.StatusReady)
-	assert.Equal(t, st.GetArtifact(hr.Named()), store.Artifact(art))
 	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
-		return w.Message == "required valuesFrom Secret/default/another-values omitted from offline render"
+		return w.Message == "required valuesFrom Secret/default/another-values omitted from offline render" && w.Count == 1
 	}) {
-		t.Fatalf("fingerprint replay lost the added omission: %+v", st.Warnings())
+		t.Fatalf("new omitted reference did not produce a Count 1 warning: %+v", st.Warnings())
 	}
 }
 
@@ -667,7 +673,7 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	}
 	stamped.Annotations = map[string]string{"reconcile.fluxcd.io/requestedAt": "now"}
 
-	if got, want := helmReleaseFingerprint(stamped, ""), helmReleaseFingerprint(base, ""); got != want {
+	if got, want := helmReleaseFingerprint(stamped, "", nil), helmReleaseFingerprint(base, "", nil); got != want {
 		t.Errorf("fingerprint changed under label/annotation stamping; got %q want %q", got, want)
 	}
 }
@@ -686,7 +692,7 @@ func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
 	patched := base.Clone()
 	patched.DriftDetection = &helmv2.DriftDetection{Mode: helmv2.DriftDetectionEnabled}
 
-	if got := helmReleaseFingerprint(base, ""); got == helmReleaseFingerprint(patched, "") {
+	if got := helmReleaseFingerprint(base, "", nil); got == helmReleaseFingerprint(patched, "", nil) {
 		t.Errorf("fingerprint should differ when spec.driftDetection mutates; both = %q", got)
 	}
 }
@@ -695,7 +701,7 @@ func TestHelmReleaseFingerprint_SourceIdentity(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps"}
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	art := &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest, LocalPath: "/chart"}
-	fp := helmReleaseFingerprint(hr, art.Digest+"\x00"+art.Revision)
+	fp := helmReleaseFingerprint(hr, art.Digest+"\x00"+art.Revision, nil)
 	for _, tc := range []struct {
 		name     string
 		edit     func(*store.SourceArtifact)
@@ -708,7 +714,7 @@ func TestHelmReleaseFingerprint_SourceIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			changed := *art
 			tc.edit(&changed)
-			if same := helmReleaseFingerprint(hr, changed.Digest+"\x00"+changed.Revision) == fp; same != tc.wantSame {
+			if same := helmReleaseFingerprint(hr, changed.Digest+"\x00"+changed.Revision, nil) == fp; same != tc.wantSame {
 				t.Fatalf("fingerprint unchanged = %v, want %v", same, tc.wantSame)
 			}
 		})

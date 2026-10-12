@@ -217,7 +217,7 @@ func (l *Loader) graphRoots(repoRoot string, kss []*manifest.Kustomization, scop
 				ns = cmp.Or(contexts[0].namespace, contexts[0].fallback)
 			}
 		}
-		v := graphVisit{root: root, dir: manifest.NormalizeClaimBase(ks.Path), namespace: ks.TargetNamespace, fallback: cmp.Or(ks.TargetNamespace, ns), owner: ks.Named()}
+		v := graphVisit{root: root, dir: l.documents.claimBase(root, ks.Path), namespace: ks.TargetNamespace, fallback: cmp.Or(ks.TargetNamespace, ns), owner: ks.Named()}
 		if root != repoRoot {
 			prefix, err := filepath.Rel(repoRoot, root)
 			if err != nil {
@@ -244,9 +244,10 @@ func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization)
 	}
 	for _, ks := range kss {
 		root, pinned, _ := SourceView(l.Store, ks, repoRoot)
-		delete(roots, filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)))
+		base := l.documents.claimBase(root, ks.Path)
+		delete(roots, filepath.Join(root, base))
 		if pinned {
-			local := filepath.Join(repoRoot, manifest.NormalizeClaimBase(ks.Path))
+			local := filepath.Join(repoRoot, base)
 			prefix := strings.TrimSuffix(local, string(filepath.Separator)) + string(filepath.Separator)
 			for dir := range roots {
 				if dir == local || strings.HasPrefix(dir, prefix) {

@@ -1,11 +1,89 @@
 package loader
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/tree"
 )
+
+func TestFinalizeIndex_ParentSegments(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, base      string
+		link, mounted, pinned bool
+	}{
+		{name: "plain", path: "./apps/../base", base: "base"},
+		{name: "trailing parent", path: "./apps/base/..", base: "apps"},
+		{name: "symlink", path: "./alias/../base", base: "deep/base", link: true},
+		{name: "clamped", path: "./apps/../../base", base: "base"},
+		{name: "source root", path: "./apps/../.."},
+		{name: "source view", path: "./alias/../base", base: "deep/base", link: true, mounted: true},
+		{name: "committed source view", path: "./alias/../base", base: "deep/base", link: true, mounted: true, pinned: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, dir := range []string{"apps/base", "deep/inner"} {
+				if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			prefix := tc.base
+			if prefix != "" {
+				prefix += "/"
+			}
+			testutil.WriteFile(t, root, prefix+"kustomization.yaml", "namespace: apps\nresources: [hr.yaml, cm.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [VALUE=fixture]\n")
+			testutil.WriteFile(t, root, prefix+"hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child, namespace: apps}\n")
+			testutil.WriteFile(t, root, prefix+"cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n")
+			st := store.New()
+			ks := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: tc.path}
+			if tc.pinned {
+				ks.SourceKind, ks.SourceName, ks.SourceNamespace = manifest.KindGitRepository, "pinned", "flux-system"
+			}
+			st.AddObject(ks)
+			child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
+			data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "data"}
+			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "generated"}
+			l := loaderFixture(st, map[manifest.NamedResource]string{child: prefix + "hr.yaml", data: prefix + "cm.yaml"})
+			if tc.mounted {
+				b := tree.NewBuilder(os.DirFS(root))
+				if err := b.AddSymlink("alias", "deep/inner"); err != nil {
+					t.Fatal(err)
+				}
+				input, err := b.Build()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.pinned {
+					src := &manifest.GitRepository{Name: ks.SourceName, Namespace: ks.SourceNamespace}
+					st.AddObject(src)
+					st.SetArtifact(src.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(root, "snapshot"), FS: input})
+				} else {
+					l.documents.views = map[string]fs.FS{root: input}
+				}
+			} else if tc.link {
+				if err := os.Symlink("deep/inner", filepath.Join(root, "alias")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			l.SourceRoot = root
+			l.FinalizeIndex(root, nil)
+			assert.Equal(t, l.Index.Records[child].Parent, ks.Named())
+			owners, _ := l.Index.OwnersOfFile(prefix + "hr.yaml")
+			assert.Diff(t, owners, []manifest.NamedResource{ks.Named()})
+			assert.Diff(t, l.Index.Records[data].Owners, []manifest.NamedResource{ks.Named()})
+			assert.Diff(t, l.Index.DataProducers(data), []manifest.NamedResource{ks.Named()})
+			assert.Diff(t, l.Index.Records[generated].Renderers, []manifest.NamedResource{ks.Named()})
+			assert.Equal(t, l.dirCoveredByOtherKS(filepath.Join(root, tc.base)), tc.base != "")
+			assert.Equal(t, ks.Path, tc.path)
+		})
+	}
+}
 
 func parentsForTest(t *testing.T, l *Loader, repoRoot, kind string) map[manifest.NamedResource]manifest.NamedResource {
 	t.Helper()

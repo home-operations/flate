@@ -1,8 +1,12 @@
 package loader
 
 import (
+	"io/fs"
 	"path/filepath"
 	"slices"
+	"strings"
+
+	securejoin "github.com/cyphar/filepath-securejoin"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -38,13 +42,22 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 	var components map[manifest.NamedResource][]string
 	for _, ks := range kss {
 		root, pin, _ := SourceView(s, ks, repoRoot)
+		base := documents.claimBase(root, ks.Path)
+		if base != manifest.NormalizeClaimBase(ks.Path) {
+			c := *ks
+			c.Path = base
+			if c.Path == "" {
+				c.Path = "."
+			}
+			ks = &c
+		}
 		if pin {
 			pinned = append(pinned, ks)
 		} else {
 			local = append(local, ks)
 		}
 		if root != "" {
-			if k, _ := documents.read(filepath.Join(root, manifest.NormalizeClaimBase(ks.Path))); k != nil && len(k.Components) != 0 {
+			if k, _ := documents.read(filepath.Join(root, base)); k != nil && len(k.Components) != 0 {
 				if components == nil {
 					components = map[manifest.NamedResource][]string{}
 				}
@@ -67,6 +80,35 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 		slices.SortStableFunc(claims, func(a, b manifest.KSClaim) int { return len(b.Prefix) - len(a.Prefix) })
 	}
 	return claims
+}
+
+// Failed resolution retains the lexical claim; reconciliation reports path errors.
+func (r documentReader) claimBase(root, p string) string {
+	base := manifest.NormalizeClaimBase(p)
+	if root == "" || !strings.Contains(base, "/../") && !strings.HasSuffix(base, "/..") {
+		return base
+	}
+	resolved, err := securejoin.SecureJoinVFS(root, base, r)
+	if err != nil {
+		return base
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return base
+	}
+	return manifest.NormalizeClaimBase(rel)
+}
+
+// Lstat keeps SecureJoin inside the mounted source filesystem.
+func (r documentReader) Lstat(file string) (fs.FileInfo, error) {
+	input, name := r.input(filepath.Clean(file))
+	return fs.Lstat(input, name)
+}
+
+// Readlink uses the same mounted source view as Lstat.
+func (r documentReader) Readlink(file string) (string, error) {
+	input, name := r.input(filepath.Clean(file))
+	return fs.ReadLink(input, name)
 }
 
 // SourceView classifies a Kustomization's local source root, committed pin and

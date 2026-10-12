@@ -449,7 +449,12 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 		if ks.Path == "" && ks.SourceName == "" {
 			continue
 		}
-		if strings.HasPrefix(dirRel, manifest.NormalizeClaimBase(ks.Path)+"/") {
+		root := l.SourceRoot
+		if strings.Contains(ks.Path, "..") {
+			root, _, _ = SourceView(l.Store, ks, root)
+		}
+		base := l.documents.claimBase(root, ks.Path)
+		if strings.HasPrefix(dirRel, base+"/") {
 			return true
 		}
 	}

@@ -268,3 +268,32 @@ metadata: {name: output}`}
 		t.Error("no-op reconcile replaced artifact")
 	}
 }
+
+func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
+	for _, value := range []string{fluxopv1.DisabledValue, "DISABLED"} {
+		t.Run(value, func(t *testing.T) {
+			c, s := newController(t)
+			doc := map[string]any{
+				"apiVersion": fluxopv1.GroupVersion.String(), "kind": manifest.KindResourceSet,
+				"metadata": map[string]any{"name": "disabled", "namespace": "default", "annotations": map[string]any{fluxopv1.ReconcileAnnotation: value}},
+				"spec":     map[string]any{"inputsFrom": []any{map[string]any{"name": "missing"}}, "resourcesTemplate": "<< inputs.missing >>"},
+			}
+			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.AddObject(obj)
+			blocked := c.ReconcileNode(t.Context(), obj.Named(), manifest.DrainNone)
+			if len(blocked) != 0 {
+				t.Fatalf("disabled ResourceSet blocked on %v", blocked)
+			}
+			info, _ := s.GetStatus(obj.Named())
+			if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
+				t.Fatalf("status = %+v, want Ready/suspended", info)
+			}
+			if art := s.GetArtifact(obj.Named()); art != nil {
+				t.Fatalf("disabled ResourceSet rendered: %v", art)
+			}
+		})
+	}
+}

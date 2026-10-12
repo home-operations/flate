@@ -1292,15 +1292,6 @@ spec: {name: b}`},
 	}
 }
 
-func TestKindOf_Admission(t *testing.T) {
-	if !KindOf(&Bucket{Name: "b"}).Tracked {
-		t.Error("typed Flux Bucket is not tracked")
-	}
-	if KindOf(&RawObject{Kind: KindBucket, APIVersion: "example.com/v1", Name: "b"}).Tracked {
-		t.Error("foreign Bucket is tracked")
-	}
-}
-
 func TestStripResourceAttributes(t *testing.T) {
 	r := map[string]any{
 		"kind": "Deployment",

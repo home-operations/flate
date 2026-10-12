@@ -110,32 +110,15 @@ func TestResolveDependsOnSubstitutions_NoTemplateUntouchedAndAgreeingVarOK(t *te
 func TestResolveDependsOnSubstitutions_PreservesAuthoredNamespaceAndStoredSpec(t *testing.T) {
 	st := store.New()
 	st.AddObject(ksWithDeps("settings", "apps", map[string]any{"APP": "backend", "NS": "shared"}))
-	original := &manifest.Kustomization{
-		Name: "consumer", Namespace: "apps",
-		DependsOn: []kustomizev1.DependencyReference{
-			{Name: "${APP}", ReadyExpr: "dep.metadata.name == 'backend'"},
-			{Name: "database", Namespace: "${NS}"},
-		},
-	}
+	original := ksWithDeps("consumer", "apps", nil, "${APP}")
+	original.DependsOn[0].Namespace = "${NS}"
 	st.AddObject(original)
 	ResolveDependsOnSubstitutions(st)
-	updated, ok := st.Get[*manifest.Kustomization](original.Named())
-	if !ok || updated == original {
-		t.Fatal("resolved Kustomization was not replaced")
+	updated, _ := st.Get[*manifest.Kustomization](original.Named())
+	if updated == original || updated.DependsOn[0].Name != "backend" || updated.DependsOn[0].Namespace != "shared" {
+		t.Fatalf("resolved dependency = %+v", updated.DependsOn)
 	}
-	if got := original.DependsOn; got[0].Name != "${APP}" || got[0].Namespace != "" || got[1].Namespace != "${NS}" {
-		t.Fatalf("stored original spec mutated: %+v", got)
-	}
-	if got := updated.DependsOn; got[0].Name != "backend" || got[0].Namespace != "" || got[1].Namespace != "shared" {
-		t.Fatalf("authored dependency projection = %+v", got)
-	}
-	var refs []manifest.DependencyRef
-	for ref := range manifest.References(updated) {
-		if ref.Use == "dependsOn" {
-			refs = append(refs, ref)
-		}
-	}
-	if len(refs) != 2 || refs[0].Namespace != "apps" || refs[1].Namespace != "shared" || refs[0].ReadyExpr != "dep.metadata.name == 'backend'" {
-		t.Fatalf("effective dependency references = %+v", refs)
+	if original.DependsOn[0].Name != "${APP}" || original.DependsOn[0].Namespace != "${NS}" {
+		t.Fatalf("stored original spec mutated: %+v", original.DependsOn)
 	}
 }

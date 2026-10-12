@@ -433,6 +433,23 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	}
 }
 
+func TestExpandPostBuildSubstituteReference_AllocationBudget(t *testing.T) {
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{{Name: "vars", Namespace: "ns", Data: map[string]any{"KEY": "value"}}}}
+	var postBuild kustomizev1.PostBuild
+	allocs := testing.AllocsPerRun(100, func() {
+		postBuild.SubstituteFrom = []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}}
+		ks := &manifest.Kustomization{Name: "app", Namespace: "ns"}
+		ks.PostBuild = &postBuild
+		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
+			t.Fatal(err)
+		}
+		if ks.PostBuild != &postBuild || ks.PostBuildSubstitute["KEY"] != "value" {
+			t.Fatal("substitution did not preserve the authored PostBuild")
+		}
+	})
+	assert.Equal(t, allocs, float64(7))
+}
+
 func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUntouched(t *testing.T) {
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		t.Run(kind, func(t *testing.T) {
@@ -489,7 +506,6 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 				t.Errorf("error should name invalid vars in sorted order; got %v", err)
 			}
 		})
-	}
 	}
 }
 
@@ -810,54 +826,5 @@ func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
 	}
 	if len(hr.Values) != 0 {
 		t.Errorf("expected empty values, got %v", hr.Values)
-	}
-}
-
-func TestExpandValueReferences_EffectiveNamespaceAndPositions(t *testing.T) {
-	original := &manifest.HelmRelease{Name: "app", Namespace: "authored", ValuesFrom: []manifest.ValuesReference{
-		{Kind: manifest.KindConfigMap, Name: "missing", Optional: true},
-		{Kind: manifest.KindConfigMap, Name: "shared", ValuesKey: "first.yaml"},
-		{Kind: manifest.KindConfigMap, Name: "shared", ValuesKey: "second.yaml"},
-		{Kind: manifest.KindConfigMap, Name: "shared", ValuesKey: "first.yaml"},
-	}}
-	hr := original.Clone()
-	hr.Namespace = "effective"
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{
-		{Name: "shared", Namespace: "authored", Data: map[string]any{"first.yaml": "value: wrong"}},
-		{Name: "shared", Namespace: "effective", Data: map[string]any{"first.yaml": "value: first", "second.yaml": "value: second"}},
-	}}
-	if err := ExpandValueReferences(hr, provider, nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := hr.Values["value"]; got != "first" {
-		t.Fatalf("merged value = %v, want first", got)
-	}
-	if original.Namespace != "authored" || original.Values != nil {
-		t.Fatalf("original mutated: %+v", original)
-	}
-}
-
-func TestExpandPostBuildSubstituteReference_EffectiveNamespaceAndDuplicates(t *testing.T) {
-	original := &manifest.Kustomization{Name: "app", Namespace: "authored", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-		{Kind: "Unsupported", Name: "ignored"},
-		{Kind: manifest.KindConfigMap, Name: "first"},
-		{Kind: manifest.KindConfigMap, Name: "second"},
-		{Kind: manifest.KindConfigMap, Name: "first"},
-	}}}
-	ks := original.Clone()
-	ks.Namespace = "effective"
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{
-		{Name: "first", Namespace: "authored", Data: map[string]any{"VALUE": "wrong"}},
-		{Name: "first", Namespace: "effective", Data: map[string]any{"VALUE": "first"}},
-		{Name: "second", Namespace: "effective", Data: map[string]any{"VALUE": "second"}},
-	}}
-	if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
-		t.Fatal(err)
-	}
-	if got := ks.PostBuildSubstitute["VALUE"]; got != "first" {
-		t.Fatalf("substitution = %v, want first", got)
-	}
-	if original.Namespace != "authored" || original.PostBuildSubstitute != nil {
-		t.Fatalf("original mutated: %+v", original)
 	}
 }

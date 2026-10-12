@@ -161,13 +161,17 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 	cm := &manifest.ConfigMap{Name: "cluster-settings", Namespace: "flux-system", Data: data}
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 
+	// Parsed inputs already own PostBuild storage; only references are fresh here.
+	var postBuild kustomizev1.PostBuild
+
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
 		// Fresh KS per iteration mirrors a distinct KS reconcile sharing
 		// the same substituteFrom CM.
+		postBuild.SubstituteFrom = []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}}
 		ks := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
-		ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}}}
+		ks.PostBuild = &postBuild
 		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
 			b.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
 		}

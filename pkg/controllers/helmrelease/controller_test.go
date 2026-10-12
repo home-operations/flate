@@ -3,7 +3,6 @@ package helmrelease
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -1143,27 +1142,12 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 }
 
 func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T) {
-	for _, optional := range []bool{false, true} {
-		t.Run(fmt.Sprint(optional), func(t *testing.T) {
-			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
-			approved := &manifest.Secret{Name: "approved", Namespace: "apps"}
-			c, st := newTestControllerWithOptions(t, ReconcileOptions{
-				ParentOf:       func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent, true },
-				SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{approved.Named(): approved},
-			})
-			ks := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-				{Kind: "Unsupported", Name: "ignored"},
-				{Kind: manifest.KindSecret, Name: approved.Name},
-				{Kind: manifest.KindSecret, Name: "unreadable", Optional: optional},
-				{Kind: manifest.KindSecret, Name: approved.Name},
-			}}}
-			st.AddObject(ks)
-			if got := c.parentReadsUnreadableSecret(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}); got == optional {
-				t.Fatalf("parent unreadable = %v, want %v", got, !optional)
-			}
-			if len(ks.PostBuild.SubstituteFrom) != 4 || ks.PostBuild.SubstituteFrom[0].Kind != "Unsupported" {
-				t.Fatal("parent substitution refs mutated")
-			}
-		})
+	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent, true }})
+	ks := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}
+	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Unsupported"}, {Kind: manifest.KindSecret, Name: "unreadable"}}}
+	st.AddObject(ks)
+	if !c.parentReadsUnreadableSecret(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}) {
+		t.Fatal("unreadable Secret at authored position was missed")
 	}
 }

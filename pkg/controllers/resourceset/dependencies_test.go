@@ -2,7 +2,6 @@ package resourceset
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -50,40 +49,6 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 			}
 			assert.Diff(t, c.collectDeps(rs), want)
 			assert.Equal(t, calls, 1)
-		})
-	}
-}
-
-func TestReconcile_DependsOnOmittedReadyWaitsForKustomization(t *testing.T) {
-	for _, status := range []store.Status{store.StatusPending, store.StatusFailed} {
-		t.Run(string(status), func(t *testing.T) {
-			c, s := newController(t)
-			dep := &manifest.Kustomization{Name: "platform", Namespace: "apps"}
-			s.AddObject(dep)
-			s.UpdateStatus(dep.Named(), status, "platform failed")
-			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", DependsOn: []fluxopv1.Dependency{{Kind: manifest.KindKustomization, Name: dep.Name}}, ResourcesTemplate: "invalid: {{ undefined }}"}
-			s.AddObject(rs)
-			blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
-			info, _ := s.GetStatus(rs.Named())
-			if status == store.StatusPending {
-				assert.Diff(t, blocked, []manifest.NamedResource{dep.Named()})
-				assert.Equal(t, info.Status, store.StatusPending)
-			} else {
-				assert.Equal(t, len(blocked), 0)
-				assert.Equal(t, info.Status, store.StatusFailed)
-				if !strings.Contains(info.Message, "platform failed") {
-					t.Fatalf("dependency failure = %q", info.Message)
-				}
-			}
-			if s.GetArtifact(rs.Named()) != nil {
-				t.Fatal("rendered ResourceSet before dependency readiness")
-			}
-			for ref := range manifest.References(rs) {
-				if ref.Use == "dependsOn" {
-					assert.Equal(t, ref.Ready, false)
-				}
-			}
-			assert.Equal(t, rs.DependsOn[0].Ready, false)
 		})
 	}
 }

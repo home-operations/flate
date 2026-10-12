@@ -417,7 +417,7 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 		len(ks.PostBuild.SubstituteFrom) == 0 && len(ks.PostBuild.Substitute) == 0 && len(overlay) == 0) {
 		return nil
 	}
-	if len(ks.PostBuild.SubstituteFrom) > 0 && ks.Namespace == "" {
+	if ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) > 0 && ks.Namespace == "" {
 		return fmt.Errorf("%w: Kustomization with substituteFrom has no namespace", manifest.ErrInvalidSubstituteReference)
 	}
 

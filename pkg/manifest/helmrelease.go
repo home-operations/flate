@@ -106,7 +106,7 @@ func helmChartFromSource(src *HelmChartSource) HelmChart {
 //   - DependsOn is normalized to []DependencyRef (with ReadyExpr).
 //     Shadows the embedded Spec.DependsOn ([]DependencyReference).
 //   - CRDsPolicy collapses spec.install.crds vs spec.upgrade.crds.
-//   - DisableSchema/OpenAPIValidation collapse Install vs Upgrade.
+//   - DisableSchemaValidation projects install policy; OpenAPI combines both actions.
 //   - ChartValuesFiles + IgnoreMissingValuesFiles are sourced from
 //     spec.chart.spec.valuesFiles OR the referenced HelmChart CRD.
 type HelmRelease struct {
@@ -136,8 +136,8 @@ type HelmRelease struct {
 	// helm-controller's "upgrade-after-install" model.
 	CRDsPolicy string `json:"-" yaml:"-"`
 
-	// DisableSchemaValidation / DisableOpenAPIValidation collapse the
-	// install vs upgrade equivalents into single flags.
+	// DisableSchemaValidation projects install policy. DisableOpenAPIValidation
+	// combines install and upgrade policy.
 	DisableSchemaValidation  bool `json:"-" yaml:"-"`
 	DisableOpenAPIValidation bool `json:"-" yaml:"-"`
 
@@ -288,7 +288,7 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		}
 	}
 	install, upgrade := cr.GetInstall(), cr.GetUpgrade()
-	disableSchema := install.DisableSchemaValidation || upgrade.DisableSchemaValidation
+	disableSchema := install.DisableSchemaValidation
 	disableOpenAPI := install.DisableOpenAPIValidation || upgrade.DisableOpenAPIValidation
 	// The upgrade policy takes precedence after the first install.
 	crdsPolicy := string(cmp.Or(upgrade.CRDs, install.CRDs))

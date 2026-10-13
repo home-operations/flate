@@ -88,7 +88,7 @@ func newDiffImagesCmd() *cobra.Command {
 }
 
 func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemoved bool) error {
-	stopProfile, err := startProfile(c.profileMode, c.profileOut)
+	stopProfile, err := startProfile()
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func diffOutputFormats() []format.Output {
 }
 
 func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, h *helmFlags, root manifest.NamedResource) error {
-	stopProfile, err := startProfile(c.profileMode, c.profileOut)
+	stopProfile, err := startProfile()
 	if err != nil {
 		return err
 	}

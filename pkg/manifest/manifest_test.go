@@ -1870,7 +1870,7 @@ func TestParseHelmRelease_DisableValidationCombinations(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				wantSchema := stage != "neither" && flags.schema
+				wantSchema := (stage == "install" || stage == "both") && flags.schema
 				wantOpenAPI := stage != "neither" && flags.openAPI
 				if hr.DisableSchemaValidation != wantSchema || hr.DisableOpenAPIValidation != wantOpenAPI {
 					t.Errorf("validation flags = (%t, %t), want (%t, %t)", hr.DisableSchemaValidation, hr.DisableOpenAPIValidation, wantSchema, wantOpenAPI)

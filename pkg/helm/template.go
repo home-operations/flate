@@ -162,17 +162,14 @@ func crdReader(crd chart.CRD) io.Reader {
 		bytes.NewReader(crd.File.Data), strings.NewReader("\n"))
 }
 
-// schemaValidationSkipped reports whether to bypass helm's values.schema.json
-// validation for this render. Beyond the explicit opt-outs (CLI flag, HR
-// field), flate skips when a wipe placeholder reaches rendering: secret-derived
-// values it couldn't resolve become a ..PLACEHOLDER_KEY.. token that a schema's
-// DNS/URL/regex constraint would reject. Real Flux resolves the secret and
-// validates for real — flate can't, so it skips rather than emit a bogus
-// failure against a value it fabricated.
+// schemaValidationSkipped uses the selected action's policy. Placeholder values
+// cannot be validated against constraints intended for resolved secrets.
 func schemaValidationSkipped(opts Options, hr *manifest.HelmRelease, values map[string]any) bool {
-	return opts.SkipSchemaValidation ||
-		hr.DisableSchemaValidation ||
-		manifest.ContainsValuePlaceholder(values)
+	disabled := hr.DisableSchemaValidation
+	if opts.IsUpgrade {
+		disabled = hr.Upgrade != nil && hr.Upgrade.DisableSchemaValidation
+	}
+	return opts.SkipSchemaValidation || disabled || manifest.ContainsValuePlaceholder(values)
 }
 
 // newInstallAction builds the DryRunClient action.Install that Template

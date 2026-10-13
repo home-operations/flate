@@ -34,7 +34,7 @@ func TestParseHelmRelease_DisableValidation(t *testing.T) {
 		{name: "neither"},
 		{name: "install only", specBody: "  install: {disableSchemaValidation: true}", wantSchema: true},
 		{name: "upgrade only", specBody: "  upgrade: {disableOpenAPIValidation: true}", wantOpenAPI: true},
-		{name: "both", specBody: "  install: {disableOpenAPIValidation: true}\n  upgrade: {disableSchemaValidation: true}", wantSchema: true, wantOpenAPI: true},
+		{name: "both", specBody: "  install: {disableOpenAPIValidation: true}\n  upgrade: {disableSchemaValidation: true}", wantOpenAPI: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hr, err := parseHelmRelease(helmReleaseDoc(t, tc.specBody))

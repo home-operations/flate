@@ -179,7 +179,11 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 					t.Fatal("get must suppress advisories")
 				}
 				for _, skip := range []bool{true, false} {
-					built, builtErr := requireCLIOK(t, append(append([]string{"build", "all"}, args...), fmt.Sprintf("--skip-crds=%t", skip))...)
+					skipKinds := "Secret"
+					if skip {
+						skipKinds += ",CustomResourceDefinition"
+					}
+					built, builtErr := requireCLIOK(t, append(append([]string{"build", "all"}, args...), "--skip-kinds="+skipKinds)...)
 					if strings.Contains(built+builtErr, "absent from offline inputs") {
 						t.Fatal("build must suppress advisories")
 					}
@@ -195,7 +199,7 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 							}
 						}
 						if found == skip {
-							t.Fatalf("skip-crds=%t did not filter only output: %s", skip, built)
+							t.Fatalf("CRD excluded=%t did not filter only output: %s", skip, built)
 						}
 					}
 				}

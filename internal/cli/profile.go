@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"errors"
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,21 +10,16 @@ import (
 	"runtime/trace"
 )
 
-// startProfile turns on the runtime profile selected by mode and
-// returns a stop function the caller must defer. mode == "" returns
-// a no-op stop function and nil error so callers can wire it
-// unconditionally.
-//
-// CPU and trace profiles record events while running; the stop fn
-// finalizes the file. mem profile is sampled at stop time; block
-// and mutex profiles are also dumped at stop time after enabling
-// runtime sampling.
-func startProfile(mode, outDir string) (stop func(), err error) {
+// startProfile reads FLATE_PROFILE and FLATE_PROFILE_OUT. Callers MUST defer
+// the returned cleanup, including when command execution fails.
+func startProfile() (func(), error) {
+	mode := os.Getenv("FLATE_PROFILE")
+	outDir := cmp.Or(os.Getenv("FLATE_PROFILE_OUT"), ".")
 	if mode == "" {
 		return func() {}, nil
 	}
-	if err := os.MkdirAll(outDir, 0o750); err != nil {
-		return nil, fmt.Errorf("profile-out: %w", err)
+	if err := os.MkdirAll(outDir, 0o750); err != nil { //nolint:gosec // FLATE_PROFILE_OUT is an operator-selected profile destination.
+		return nil, fmt.Errorf("FLATE_PROFILE_OUT: %w", err)
 	}
 	path := filepath.Join(outDir, mode+".pprof")
 	switch mode {
@@ -65,7 +60,7 @@ func startProfile(mode, outDir string) (stop func(), err error) {
 		}
 		return func() { trace.Stop(); _ = f.Close() }, nil
 	}
-	return nil, errors.New("--profile must be one of: cpu, mem, block, mutex, trace")
+	return nil, fmt.Errorf("invalid FLATE_PROFILE %q: must be one of: cpu, mem, block, mutex, trace", mode)
 }
 
 // dumpProfileAt returns a stop func that writes the named pprof profile
@@ -86,8 +81,8 @@ func dumpProfileAt(path, name string, disable func()) func() {
 
 // createProfileFile opens path for writing a profile. The G304 nolint
 // is centralized here: every caller composes path from the trusted
-// --profile-out directory plus a fixed mode/filename suffix, so it is
+// FLATE_PROFILE_OUT directory plus a fixed mode/filename suffix, so it is
 // not an attacker-controlled path.
 func createProfileFile(path string) (*os.File, error) {
-	return os.Create(path) //nolint:gosec // path = trusted --profile-out + fixed suffix
+	return os.Create(path) //nolint:gosec // path = trusted FLATE_PROFILE_OUT + fixed suffix
 }

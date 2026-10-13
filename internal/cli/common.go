@@ -32,6 +32,13 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+const (
+	sourceRetryAttempts = 3
+	sourceRetryMinWait  = 200 * time.Millisecond
+	sourceRetryMaxWait  = 3 * time.Second
+	sourceRetryJitter   = 0.1
+)
+
 type commonFlags struct {
 	path     string
 	pathOrig string
@@ -40,11 +47,8 @@ type commonFlags struct {
 	// remote URLs for self-referential aliasing.
 	pathOrigRoot         string
 	pathOrigSelfURLs     []string
-	krmIgnore            string
 	base                 string
 	namespace            string
-	skipCRDs             bool
-	skipSecrets          bool
 	substituteFrom       []string
 	substitute           []string
 	strictSubstitutions  bool
@@ -58,14 +62,6 @@ type commonFlags struct {
 	output               string
 	registryConfig       string
 	concurrency          int
-	// sourceRetry* tune the bounded retry applied uniformly to every source
-	// fetch on transient network errors. attempts is the total tries (first +
-	// retries); 1 disables. min/max bound the exponential backoff and jitter
-	// spreads it. Plumbed into orchestrator.Config.SourceRetry → source.WithRetry.
-	sourceRetryAttempts int
-	sourceRetryMinWait  time.Duration
-	sourceRetryMaxWait  time.Duration
-	sourceRetryJitter   float64
 	// gitDepth caps the shallow-clone history depth for GitRepository
 	// sources. Default 1 (opt-out shallow); 0 = full clone. Refs pinned
 	// to an explicit commit always full-clone. Plumbed into
@@ -74,14 +70,6 @@ type commonFlags struct {
 	// cacheDir is resolved lazily via resolveCacheRoot and memoized so
 	// multiple lookups within one invocation return the same value.
 	cacheDir string
-	// profileMode selects a runtime profile to capture for the run.
-	// Empty disables profiling; valid values are "cpu", "mem", "block",
-	// "mutex", and "trace". Wired through startProfile in profile.go.
-	profileMode string
-	// profileOut is the directory profile files land in. Defaults to
-	// the current working directory when --profile is set and no
-	// --profile-out is given.
-	profileOut string
 	// helmTemplateCacheMB caps the in-memory helm template-output
 	// cache in megabytes. Default 256; 0 disables. Plumbed through
 	// orchestrator.Config.HelmTemplateCacheBytes into the helm.Client
@@ -114,13 +102,9 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	fs.StringVarP(&f.path, "path", "p", ".", "path to the Flux cluster directory")
 	fs.StringVarP(&f.pathOrig, "path-orig", "P", "",
 		"baseline path; when set, every command runs in changed-only mode")
-	fs.StringVar(&f.krmIgnore, "krmignore", "",
-		"gitignore-style file read instead of <path>/.krmignore; patterns are relative to --path")
 	bindBase(fs, f)
 	fs.StringVarP(&f.namespace, "namespace", "n", "",
 		"limit to this namespace (default: every namespace, or just the changed ones when --path-orig is set)")
-	fs.BoolVar(&f.skipCRDs, "skip-crds", true, "exclude CRD objects from rendered output")
-	fs.BoolVar(&f.skipSecrets, "skip-secrets", true, "exclude Secret objects from rendered output")
 	fs.BoolVar(&f.allowMissingCRDs, "allow-missing-crds", false,
 		"accept CRD dependencies absent from the offline inputs because the cluster installs them at runtime")
 	fs.StringArrayVar(&f.substituteFrom, "substitute-from", nil,
@@ -147,7 +131,8 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"(no reading arbitrary in-pod repos). Off by default — only enable when rendering "+
 			"UNTRUSTED input; trusted repos legitimately reach private/LAN hosts and use local "+
 			"file:// self-sources. A configured proxy and ssh:// git egress are not covered (operator-owned).")
-	fs.StringSliceVar(&f.skipKinds, "skip-kinds", nil, "extra kinds to drop from rendered output")
+	fs.StringSliceVar(&f.skipKinds, "skip-kinds",
+		[]string{manifest.KindSecret, manifest.KindCustomResourceDefinition}, "kinds to exclude from rendered output (empty includes all kinds)")
 	// Commands with no -o variants (test) register no -o flag at all, so
 	// `-o anything` is an unknown flag rather than a rendered alternative.
 	// Otherwise -o is an enum (outputValue): an unsupported value is
@@ -164,17 +149,6 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 			"(Windows), falling back to $TMPDIR/flate-cache if those error.")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
-	// Retry only kicks in for transient network failures (connection
-	// reset/refused, timeouts); a bad path / auth / not-found still fails
-	// on the first try. --source-retry-attempts=1 disables it entirely.
-	fs.IntVar(&f.sourceRetryAttempts, "source-retry-attempts", 3,
-		"max attempts per source fetch on transient network errors (1 disables retry)")
-	fs.DurationVar(&f.sourceRetryMinWait, "source-retry-min-wait", 200*time.Millisecond,
-		"minimum backoff between source-fetch retries")
-	fs.DurationVar(&f.sourceRetryMaxWait, "source-retry-max-wait", 3*time.Second,
-		"maximum backoff between source-fetch retries")
-	fs.Float64Var(&f.sourceRetryJitter, "source-retry-jitter", 0.1,
-		"jitter fraction [0,1] applied to source-fetch retry backoff")
 	// Shallow clone is the dominant speedup for GitRepository sources that
 	// pull a subdir out of a deep-history monorepo: depth=1 fetches only
 	// the tip commit, which is all the worktree materialization needs.
@@ -182,10 +156,6 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 	fs.IntVar(&f.gitDepth, "git-depth", 1,
 		"shallow-clone depth for GitRepository sources; 0 = full clone "+
 			"(refs pinned to an explicit commit always full-clone)")
-	fs.Var(&profileValue{target: &f.profileMode}, "profile",
-		"write a runtime profile: cpu, mem, block, mutex, or trace (off by default)")
-	fs.StringVar(&f.profileOut, "profile-out", ".",
-		"directory to write profile files into (used with --profile)")
 	// 256 MiB default mirrors helm.DefaultTemplateCacheBytes. 0 disables
 	// the cache entirely (useful in memory-constrained CI or when
 	// debugging the uncached helm render path).
@@ -263,7 +233,6 @@ type helmFlags struct {
 	noHooks                    bool
 	showOnly                   []string
 	enableDNS                  bool
-	skipSchemaValidation       bool
 	disableChartDigestTracking *bool
 }
 
@@ -279,8 +248,6 @@ func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
 	fs.BoolVar(&h.noHooks, "no-hooks", false, "exclude hook-annotated templates")
 	fs.StringSliceVarP(&h.showOnly, "show-only", "s", nil, "only show specific template paths (repeatable)")
 	fs.BoolVar(&h.enableDNS, "enable-dns", false, "enable DNS lookups during helm template")
-	fs.BoolVar(&h.skipSchemaValidation, "skip-schema-validation", false,
-		"skip helm values.schema.json validation (dominates allocation churn on big repos)")
 	fs.BoolFunc("disable-chart-digest-tracking",
 		"preserve original OCI chart versions (absent: auto-detect; =false: force digest tracking)",
 		func(text string) error {
@@ -295,17 +262,17 @@ func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
 
 func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	return helm.Options{
-		SkipCRDs:             c.skipCRDs,
-		SkipSecrets:          c.skipSecrets,
-		SkipKinds:            c.skipKinds,
-		KubeVersion:          h.kubeVersion,
-		APIVersions:          h.apiVersions,
-		IsUpgrade:            h.isUpgrade,
-		NoHooks:              h.noHooks,
-		ShowOnly:             h.showOnly,
-		EnableDNS:            h.enableDNS,
-		SkipSchemaValidation: h.skipSchemaValidation,
-		SkipTests:            true,
+		SkipCRDs: slices.Contains(c.skipKinds, manifest.KindCustomResourceDefinition),
+		SkipKinds: slices.DeleteFunc(slices.Clone(c.skipKinds), func(kind string) bool {
+			return kind == manifest.KindCustomResourceDefinition
+		}),
+		KubeVersion: h.kubeVersion,
+		APIVersions: h.apiVersions,
+		IsUpgrade:   h.isUpgrade,
+		NoHooks:     h.noHooks,
+		ShowOnly:    h.showOnly,
+		EnableDNS:   h.enableDNS,
+		SkipTests:   true,
 	}
 }
 
@@ -426,17 +393,16 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		// root, or the .git default of an explicit --path-orig. Replaces
 		// the core's old .git "widen" heuristic.
 		PathOrig:                   c.baselineRoot(),
-		KRMIgnoreFile:              c.krmIgnore,
 		HelmOptions:                c.helmOptions(h),
 		DisableChartDigestTracking: h.disableChartDigestTracking,
 		WipeSecrets:                true,
 		RegistryConfig:             c.registryConfig,
 		Concurrency:                c.concurrency,
 		SourceRetry: source.RetryConfig{
-			Attempts: c.sourceRetryAttempts,
-			MinWait:  c.sourceRetryMinWait,
-			MaxWait:  c.sourceRetryMaxWait,
-			Jitter:   c.sourceRetryJitter,
+			Attempts: sourceRetryAttempts,
+			MinWait:  sourceRetryMinWait,
+			MaxWait:  sourceRetryMaxWait,
+			Jitter:   sourceRetryJitter,
 		},
 		GitDepth:                  c.gitDepth,
 		SubstituteFrom:            c.substitutionSources,
@@ -547,29 +513,6 @@ func (o *outputValue) Set(v string) error {
 		return nil
 	}
 	return fmt.Errorf("must be one of: %s", joinOutputs(o.allowed))
-}
-
-// profileModes are the runtime profiles --profile accepts. The empty
-// string (the default) means no profiling; startProfile treats it as a
-// no-op.
-var profileModes = []string{"cpu", "mem", "block", "mutex", "trace"}
-
-// profileValue is the pflag.Value backing --profile: a string
-// constrained to profileModes (or "" for off). Set rejects anything
-// else, so cobra surfaces the error (with usage) at parse time, before
-// the command runs — instead of deferring to startProfile's runtime
-// default case after all other init has happened. Mirrors outputValue.
-type profileValue struct{ target *string }
-
-func (p *profileValue) String() string { return *p.target }
-func (p *profileValue) Type() string   { return "string" }
-
-func (p *profileValue) Set(v string) error {
-	if v == "" || slices.Contains(profileModes, v) {
-		*p.target = v
-		return nil
-	}
-	return fmt.Errorf("must be one of: %s", strings.Join(profileModes, ", "))
 }
 
 // runOrchestratorCfg routes the CLI through the embed-friendly

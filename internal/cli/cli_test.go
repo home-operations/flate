@@ -9,9 +9,12 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 )
 
 // runCLI drives cli.Run inside the test binary and returns
@@ -253,24 +256,24 @@ func TestRun_BuildKS_RejectsBadOutput(t *testing.T) {
 	}
 }
 
-// TestRun_BuildAll_OnlyCRDs exercises the --only-crds gate: a fixture
+// TestRun_BuildAll_OnlyKinds exercises the --only-kinds gate: a fixture
 // without any CRDs should emit nothing but still exit 0.
-func TestRun_BuildAll_OnlyCRDs(t *testing.T) {
+func TestRun_BuildAll_OnlyKinds(t *testing.T) {
 	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", path, "--only-crds")
+	stdout, stderr, code := runCLI(t, "build", "all", "--path", path, "--only-kinds", "CustomResourceDefinition")
 	if code != 0 {
-		t.Fatalf("build --only-crds exited %d: %s", code, stderr)
+		t.Fatalf("build --only-kinds exited %d: %s", code, stderr)
 	}
 	if strings.Contains(stdout, "kind: ConfigMap") {
-		t.Errorf("--only-crds should filter out ConfigMap; got:\n%s", stdout)
+		t.Errorf("--only-kinds should filter out ConfigMap; got:\n%s", stdout)
 	}
 }
 
-func TestRun_BuildAll_OnlyCRDs_JSONEmptyArray(t *testing.T) {
+func TestRun_BuildAll_OnlyKinds_JSONEmptyArray(t *testing.T) {
 	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", path, "--only-crds", "-o", "json")
+	stdout, stderr, code := runCLI(t, "build", "all", "--path", path, "--only-kinds", "CustomResourceDefinition", "-o", "json")
 	if code != 0 {
-		t.Fatalf("build --only-crds -o json exited %d: %s", code, stderr)
+		t.Fatalf("build --only-kinds -o json exited %d: %s", code, stderr)
 	}
 	if strings.TrimSpace(stdout) != "[]" {
 		t.Errorf("empty JSON render = %q, want []", stdout)
@@ -732,12 +735,15 @@ func copyTree(t *testing.T, src, dst string) {
 // TestBindCommon_DefaultValues sanity-checks the persistent flag set:
 // every common flag binds with a known-good default.
 func TestBindCommon_DefaultValues(t *testing.T) {
+	assert.Equal(t, buildOrchCfg(commonFlags{}, helmFlags{}).SourceRetry, source.RetryConfig{
+		Attempts: 3, MinWait: 200 * time.Millisecond, MaxWait: 3 * time.Second, Jitter: 0.1,
+	})
 	cmd := New("test")
 	build, _, err := cmd.Find([]string{"build", "all"})
 	if err != nil {
 		t.Fatalf("find build all: %v", err)
 	}
-	for _, name := range []string{"path", "krmignore", "namespace", "output", "concurrency", "skip-crds", "skip-secrets"} {
+	for _, name := range []string{"path", "namespace", "output", "concurrency", "skip-kinds"} {
 		if build.Flags().Lookup(name) == nil {
 			t.Errorf("expected common flag %q on `build all`", name)
 		}
@@ -810,15 +816,15 @@ func TestCompareDocs_OrdersByKindNamespaceName(t *testing.T) {
 	}
 }
 
-// TestEmissionDocs_OnlyCRDs drops every non-CRD doc.
-func TestEmissionDocs_OnlyCRDs(t *testing.T) {
+// TestEmissionDocs_OnlyKinds drops every non-CRD doc.
+func TestEmissionDocs_OnlyKinds(t *testing.T) {
 	docs := []map[string]any{
 		{"kind": "ConfigMap"},
 		{"kind": "CustomResourceDefinition"},
 		{"kind": "Secret"},
 		{"kind": "CustomResourceDefinition"},
 	}
-	out := emissionDocs(docs, &buildFlags{onlyCRDs: true})
+	out := emissionDocs(docs, &buildFlags{onlyKinds: []string{manifest.KindCustomResourceDefinition}})
 	if docs[2]["kind"] != "Secret" {
 		t.Errorf("emissionDocs mutated the input: %+v", docs)
 	}
@@ -834,7 +840,7 @@ func TestEmissionDocs_OnlyCRDs(t *testing.T) {
 
 func TestEmissionDocs_EmptyOnNoCRDs(t *testing.T) {
 	docs := []map[string]any{{"kind": "ConfigMap"}, {"kind": "Secret"}}
-	if out := emissionDocs(docs, &buildFlags{onlyCRDs: true}); len(out) != 0 {
+	if out := emissionDocs(docs, &buildFlags{onlyKinds: []string{manifest.KindCustomResourceDefinition}}); len(out) != 0 {
 		t.Errorf("expected no docs for no-CRD input, got %+v", out)
 	}
 }
@@ -877,50 +883,20 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 	}
 }
 
-// TestKrmignoreFlag_OverridesScanRootIgnore exercises --krmignore end to
-// end: the named file replaces <path>/.krmignore for the scan, and a
-// file that doesn't exist fails the run rather than rendering unfiltered.
-func TestKrmignoreFlag_OverridesScanRootIgnore(t *testing.T) {
+func TestRun_ConventionalIgnore(t *testing.T) {
 	path := writeFixture(t)
-	testutil.WriteFileAt(t, filepath.Join(path, "flux", "extra.yaml"), `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
+	testutil.WriteFile(t, path, "flux/extra.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
-metadata:
-  name: apps-extra
-  namespace: flux-system
+metadata: {name: apps-extra, namespace: flux-system}
 spec:
   interval: 10m
   path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  sourceRef: {kind: GitRepository, name: flux-system}
 `)
-	ignore := filepath.Join(t.TempDir(), "no-extra.krmignore")
-	testutil.WriteFileAt(t, ignore, "flux/extra.yaml\n")
-
+	testutil.WriteFile(t, path, ".krmignore", "flux/extra.yaml\n")
 	stdout, stderr, code := runCLI(t, "get", "ks", "--path", path, "-o", "name")
-	if code != 0 {
-		t.Fatalf("get ks exited %d: stderr=%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "apps-extra") {
-		t.Fatalf("unfiltered get ks should list apps-extra:\n%s", stdout)
-	}
-
-	stdout, stderr, code = runCLI(t, "get", "ks", "--path", path, "--krmignore", ignore, "-o", "name")
-	if code != 0 {
-		t.Fatalf("get ks --krmignore exited %d: stderr=%s", code, stderr)
-	}
-	if strings.Contains(stdout, "apps-extra") {
-		t.Errorf("--krmignore should drop apps-extra:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "apps") {
-		t.Errorf("--krmignore should keep apps:\n%s", stdout)
-	}
-
-	_, stderr, code = runCLI(t, "get", "ks", "--path", path, "--krmignore", ignore+".missing")
-	if code == 0 {
-		t.Fatal("expected non-zero exit for missing --krmignore file")
-	}
-	if !strings.Contains(stderr, ignore+".missing") {
-		t.Errorf("error should name the missing file; got %q", stderr)
+	if code != 0 || strings.Contains(stdout, "apps-extra") || !strings.Contains(stdout, "apps") {
+		t.Fatalf("conventional ignore: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }
 

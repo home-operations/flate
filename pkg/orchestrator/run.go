@@ -227,8 +227,8 @@ func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
 }
 
 // collectManifests harvests every reconcilable resource's rendered docs into a
-// Result.Manifests map, applying --skip-secrets/--skip-crds/--skip-kinds
-// uniformly so embedders see the same output the CLI emits. Kustomization docs
+// Result.Manifests map, applying --skip-kinds and the SDK helm.Options skip
+// fields uniformly so embedders see the same output the CLI emits. Kustomization docs
 // reach the artifact unfiltered (the Store must hold the full set for downstream
 // valuesFrom/substituteFrom resolution), so the skip-kind drop happens here, at
 // the embed boundary, leaving the Store whole.

@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"helm.sh/helm/v4/pkg/action"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -527,6 +529,67 @@ data:
 				t.Fatal(err)
 			}
 			assert.Equal(t, docs[0]["data"].(map[string]any)["version"], any(tc.want))
+		})
+	}
+}
+
+func TestTemplate_ActionSchemaPolicy(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n")
+	testutil.WriteFile(t, dir, "mychart/values.schema.json", `{"type":"object","properties":{"name":{"type":"string","pattern":"^valid$"}},"required":["name"]}`)
+	for _, tc := range []struct {
+		name                                                       string
+		install, upgrade, isUpgrade, global, placeholder, wantSkip bool
+	}{
+		{name: "install enabled, upgrade disabled", install: true, wantSkip: true},
+		{name: "install disabled, upgrade enabled", upgrade: true},
+		{name: "upgrade disabled, install enabled", install: true, isUpgrade: true},
+		{name: "upgrade enabled, install disabled", upgrade: true, isUpgrade: true, wantSkip: true},
+		{name: "nil install"},
+		{name: "nil upgrade", isUpgrade: true},
+		{name: "SDK global install", global: true, wantSkip: true},
+		{name: "SDK global upgrade", isUpgrade: true, global: true, wantSkip: true},
+		{name: "placeholder install", placeholder: true, wantSkip: true},
+		{name: "placeholder upgrade", isUpgrade: true, placeholder: true, wantSkip: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cli, err := NewClient(cacheroot.New(t.TempDir()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+			hr := newHR()
+			hr.DisableSchemaValidation = tc.install
+			if tc.install {
+				hr.Install = &helmv2.Install{DisableSchemaValidation: true}
+			}
+			if tc.upgrade {
+				hr.Upgrade = &helmv2.Upgrade{DisableSchemaValidation: true}
+			}
+			opts := Options{IsUpgrade: tc.isUpgrade, SkipSchemaValidation: tc.global}
+			values := map[string]any{"name": "invalid"}
+			if tc.placeholder {
+				values["name"] = "..PLACEHOLDER_name.."
+			}
+			warm := hr.Clone()
+			warm.DisableSchemaValidation = true
+			warm.Upgrade = &helmv2.Upgrade{DisableSchemaValidation: true}
+			if _, err := cli.Template(t.Context(), warm, values, opts); err != nil {
+				t.Fatalf("warm cache: %v", err)
+			}
+			for range 2 {
+				_, err := cli.Template(t.Context(), hr, values, opts)
+				if tc.wantSkip {
+					if err != nil {
+						t.Fatal(err)
+					}
+					continue
+				}
+				if err == nil || !strings.Contains(err.Error(), "name") {
+					t.Fatalf("invalid schema accepted after warmed skipped render: %v", err)
+				}
+			}
 		})
 	}
 }

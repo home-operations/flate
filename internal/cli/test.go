@@ -47,7 +47,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 		Short:   short,
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
-			stopProfile, err := startProfile(c.profileMode, c.profileOut)
+			stopProfile, err := startProfile()
 			if err != nil {
 				return err
 			}

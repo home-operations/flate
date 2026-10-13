@@ -305,7 +305,7 @@ func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]
 		ReleaseName:              hr.ReleaseName(),
 		ReleaseNamespace:         hr.ReleaseNamespace(),
 		CRDsPolicy:               hr.CRDsPolicy,
-		DisableSchemaValidation:  hr.DisableSchemaValidation,
+		DisableSchemaValidation:  schemaValidationSkipped(opts, hr, nil),
 		DisableOpenAPIValidation: hr.DisableOpenAPIValidation,
 		ChartVersion:             hr.Chart.Version,
 		ChartValuesFiles:         hr.ChartValuesFiles,

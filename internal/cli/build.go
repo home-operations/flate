@@ -18,12 +18,11 @@ import (
 // buildFlags holds flags shared across `build ks`, `build hr`, and
 // `build all` that aren't part of commonFlags.
 type buildFlags struct {
-	onlyCRDs bool
+	onlyKinds []string
 }
 
 func bindBuildFlags(fs *pflag.FlagSet, b *buildFlags) {
-	fs.BoolVar(&b.onlyCRDs, "only-crds", false,
-		"emit only CustomResourceDefinition resources (implies --skip-crds=false)")
+	fs.StringSliceVar(&b.onlyKinds, "only-kinds", nil, "emit only these kinds (empty includes all kinds)")
 }
 
 func newBuildCmd() *cobra.Command {
@@ -52,8 +51,12 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 		Short:   short,
 		Args:    args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
-			applyBuildFlags(c, b)
-			stopProfile, err := startProfile(c.profileMode, c.profileOut)
+			if !cmd.Flags().Changed("skip-kinds") {
+				c.skipKinds = slices.DeleteFunc(c.skipKinds, func(kind string) bool {
+					return slices.Contains(b.onlyKinds, kind)
+				})
+			}
+			stopProfile, err := startProfile()
 			if err != nil {
 				return err
 			}
@@ -82,12 +85,6 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 	return cmd
 }
 
-func applyBuildFlags(c *commonFlags, b *buildFlags) {
-	if b.onlyCRDs {
-		c.skipCRDs = false
-	}
-}
-
 func collectRendered(res *orchestrator.Result, b *buildFlags) []map[string]any {
 	out := []map[string]any{}
 	for _, obj := range res.Objects {
@@ -100,9 +97,9 @@ func collectRendered(res *orchestrator.Result, b *buildFlags) []map[string]any {
 func emissionDocs(mans []map[string]any, b *buildFlags) []map[string]any {
 	docs := slices.Clone(mans)
 	slices.SortStableFunc(docs, compareDocs)
-	if b.onlyCRDs {
+	if len(b.onlyKinds) > 0 {
 		return slices.DeleteFunc(docs, func(doc map[string]any) bool {
-			return manifest.DocKind(doc) != manifest.KindCustomResourceDefinition
+			return !slices.Contains(b.onlyKinds, manifest.DocKind(doc))
 		})
 	}
 	return docs

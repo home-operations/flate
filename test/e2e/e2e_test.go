@@ -174,14 +174,14 @@ func TestE2E_MalformedChartCRD(t *testing.T) {
 		name string
 		skip string
 	}{
-		{"omitted", "true"},
-		{"included", "false"},
+		{"omitted", "Secret,CustomResourceDefinition"},
+		{"included", "Secret"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := copyTree(t, testdataPath(t, "simple"))
 			testutil.WriteFile(t, dir, "charts/mychart/crds/bad.yaml", "apiVersion: [\n")
 			out, code := runCLIExpectErr(t, "build", "all", "--path", dir,
-				"--skip-crds="+tc.skip, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+				"--skip-kinds="+tc.skip, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 			if code != 1 {
 				t.Fatalf("got exit %d, want 1:\n%s", code, out)
 			}
@@ -676,55 +676,42 @@ func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
 	}
 }
 
-// TestE2E_SkipKindsAppliesToKustomizationOutput is the regression
-// test for issue #169 — `--skip-secrets`, `--skip-crds`, and
-// `--skip-kinds` were silently ignored for Kustomization-rendered
-// docs. helm.TemplateDocs pre-filtered HR output but KS docs reached
-// stdout unfiltered.
-//
-// The fixture contains one Kustomization that emits a ConfigMap, a
-// Secret, and a CRD straight from kustomize (no HelmRelease). With
-// default flags (--skip-secrets=true, --skip-crds=true) only the
-// ConfigMap should reach stdout. Lifting the flags brings everything
-// back.
 func TestE2E_SkipKindsAppliesToKustomizationOutput(t *testing.T) {
-	src := testdataPath(t, "skip-kinds")
-	root := copyTree(t, src)
-
-	t.Run("DefaultsDropSecretsAndCRDs", func(t *testing.T) {
-		out := runCLIStdout(t, "build", "all", "--path", root, "-o", "yaml")
-		if !strings.Contains(out, "name: kept-cm") {
-			t.Errorf("ConfigMap should reach output: %s", out)
-		}
-		if strings.Contains(out, "name: dropped-secret") {
-			t.Errorf("--skip-secrets (default true) failed to drop KS-rendered Secret:\n%s", out)
-		}
-		if strings.Contains(out, "kind: CustomResourceDefinition") {
-			t.Errorf("--skip-crds (default true) failed to drop KS-rendered CRD:\n%s", out)
-		}
-	})
-
-	t.Run("ExplicitFlagsAllowEverything", func(t *testing.T) {
-		out := runCLIStdout(t, "build", "all", "--path", root, "-o", "yaml",
-			"--skip-secrets=false", "--skip-crds=false")
-		for _, want := range []string{"name: kept-cm", "name: dropped-secret", "kind: CustomResourceDefinition"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("expected %q with --skip-* disabled:\n%s", want, out)
+	root := copyTree(t, testdataPath(t, "skip-kinds"))
+	for _, tc := range []struct {
+		name                        string
+		args                        []string
+		env                         map[string]string
+		wantCM, wantSecret, wantCRD bool
+	}{
+		{name: "defaults", wantCM: true},
+		{name: "empty skip", args: []string{"--skip-kinds", ""}, wantCM: true, wantSecret: true, wantCRD: true},
+		{name: "replacement skip", args: []string{"--skip-kinds", "ConfigMap"}, wantSecret: true, wantCRD: true},
+		{name: "only CRDs", args: []string{"--only-kinds", "CustomResourceDefinition"}, wantCRD: true},
+		{name: "only Secret", args: []string{"--only-kinds", "Secret"}, wantSecret: true},
+		{name: "only multiple", args: []string{"--only-kinds", "ConfigMap,Secret"}, wantCM: true, wantSecret: true},
+		{name: "empty only", args: []string{"--only-kinds", ""}, wantCM: true},
+		{name: "exact kind", args: []string{"--only-kinds", "secret"}},
+		{name: "explicit skip wins", args: []string{"--skip-kinds", "Secret,CustomResourceDefinition", "--only-kinds", "CustomResourceDefinition"}},
+		{name: "env skip wins", args: []string{"--only-kinds", "CustomResourceDefinition"}, env: map[string]string{"FLATE_SKIP_KINDS": "CustomResourceDefinition"}},
+		{name: "env only", env: map[string]string{"FLATE_ONLY_KINDS": "Secret"}, wantSecret: true},
+		{name: "env empty skip", env: map[string]string{"FLATE_SKIP_KINDS": ""}, wantCM: true, wantSecret: true, wantCRD: true},
+		{name: "argv overrides env skip", args: []string{"--skip-kinds", ""}, env: map[string]string{"FLATE_SKIP_KINDS": "ConfigMap"}, wantCM: true, wantSecret: true, wantCRD: true},
+		{name: "argv empty only overrides env", args: []string{"--only-kinds", ""}, env: map[string]string{"FLATE_ONLY_KINDS": "Secret"}, wantCM: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, value := range tc.env {
+				t.Setenv(key, value)
 			}
-		}
-	})
-
-	t.Run("SkipKindsListDropsArbitraryKinds", func(t *testing.T) {
-		out := runCLIStdout(t, "build", "all", "--path", root, "-o", "yaml",
-			"--skip-secrets=false", "--skip-crds=false",
-			"--skip-kinds=ConfigMap")
-		if strings.Contains(out, "name: kept-cm") {
-			t.Errorf("--skip-kinds=ConfigMap failed to drop KS-rendered ConfigMap:\n%s", out)
-		}
-		if !strings.Contains(out, "name: dropped-secret") {
-			t.Errorf("Secret should remain when only ConfigMap was skipped:\n%s", out)
-		}
-	})
+			args := append([]string{"build", "ks", "apps", "--path", root, "--no-progress", "--cache-dir", t.TempDir()}, tc.args...)
+			out := runCLIStdout(t, args...)
+			for kind, want := range map[string]bool{"ConfigMap": tc.wantCM, "Secret": tc.wantSecret, "CustomResourceDefinition": tc.wantCRD} {
+				if got := strings.Contains(out, "kind: "+kind+"\n"); got != want {
+					t.Errorf("kind %s present=%t, want %t: %s", kind, got, want, out)
+				}
+			}
+		})
+	}
 }
 
 // TestE2E_SOPSValueWipedToPlaceholder verifies the rendered output

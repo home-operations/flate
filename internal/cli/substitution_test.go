@@ -88,7 +88,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 			root := substitutionFixture(t, tc.postBuild, "${VALUE}")
 			var first string
 			for _, workers := range []int{2, 4} {
-				args := []string{"build", "all", "--path", root, "--concurrency", fmt.Sprint(workers), "--cache-dir", t.TempDir(), "--skip-secrets=false"}
+				args := []string{"build", "all", "--path", root, "--concurrency", fmt.Sprint(workers), "--cache-dir", t.TempDir(), "--skip-kinds", "CustomResourceDefinition"}
 				if tc.input != "" {
 					args = append(args, "--substitute-from", substitutionInput(t, tc.input))
 				}
@@ -319,7 +319,7 @@ func TestRun_SubstitutionHelpAndSharedCommands(t *testing.T) {
 			args := []string{verb, "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--substitute-from", input, "--substitute", "VALUE=overlay", "--strict-substitutions"}
 			if verb == "diff" {
 				base := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}-base")
-				args = append(args, "--path-orig", base, "-o", "diff", "--skip-secrets=false")
+				args = append(args, "--path-orig", base, "-o", "diff", "--skip-kinds", "CustomResourceDefinition")
 			}
 			out, diagnostic, code := runCLI(t, args...)
 			if code != 0 {

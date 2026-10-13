@@ -38,25 +38,6 @@ func TestEnv_CLIFlagOverridesEnv(t *testing.T) {
 	}
 }
 
-// TestEnv_BoolFlagParsed verifies pflag's bool Set is wired through:
-// FLATE_SKIP_CRDS=false flips a flag that defaults to true. We
-// exercise `--only-crds`'s applyBuildFlags pathway by checking that
-// the resulting render still includes the ConfigMap (i.e. nothing
-// regressed) — the boolean parse is on the silent path here, so the
-// stronger assertion comes from TestEnv_InvalidValueReportsKey,
-// which proves Value.Set is reached.
-func TestEnv_BoolFlagParsed(t *testing.T) {
-	path := writeFixture(t)
-	t.Setenv("FLATE_SKIP_CRDS", "false")
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
-	if code != 0 {
-		t.Fatalf("build all FLATE_SKIP_CRDS=false exited %d: %s", code, stderr)
-	}
-	if !strings.Contains(stdout, "kind: ConfigMap") {
-		t.Errorf("expected ConfigMap in render:\n%s", stdout)
-	}
-}
-
 // TestEnv_SliceFlagParsesCSV covers comma-separated parsing for
 // pflag.StringSliceVar (`--skip-kinds`). Setting FLATE_SKIP_KINDS to
 // "ConfigMap,Secret" should drop the fixture's only ConfigMap from
@@ -139,7 +120,7 @@ func TestEnv_HelpAdvertisesEnvVars(t *testing.T) {
 	for _, want := range []string{
 		"[env: FLATE_PATH]",
 		"[env: FLATE_LOG_LEVEL]",
-		"[env: FLATE_SKIP_CRDS]",
+		"[env: FLATE_ONLY_KINDS]",
 		"[env: FLATE_SKIP_KINDS]",
 		"[env: FLATE_CONCURRENCY]",
 		"[env: FLATE_CACHE_DIR]",
@@ -164,7 +145,6 @@ func TestEnvKey(t *testing.T) {
 	for in, want := range map[string]string{
 		"path":         "FLATE_PATH",
 		"path-orig":    "FLATE_PATH_ORIG",
-		"krmignore":    "FLATE_KRMIGNORE",
 		"log-level":    "FLATE_LOG_LEVEL",
 		"skip-kinds":   "FLATE_SKIP_KINDS",
 		"api-versions": "FLATE_API_VERSIONS",
@@ -175,22 +155,28 @@ func TestEnvKey(t *testing.T) {
 	}
 }
 
-func TestRun_StreamFlagRemoved(t *testing.T) {
-	_, stderr, code := runCLI(t, "build", "all", "--stream")
-	if code != 1 || !strings.Contains(stderr, "unknown flag: --stream") {
-		t.Fatalf("removed flag: exit=%d stderr=%s", code, stderr)
+func TestRun_RemovedFlagsRejected(t *testing.T) {
+	for _, flag := range []string{"stream", "skip-crds", "skip-secrets", "only-crds", "krmignore", "profile", "profile-out", "skip-schema-validation", "source-retry-attempts", "source-retry-min-wait", "source-retry-max-wait", "source-retry-jitter"} {
+		t.Run(flag, func(t *testing.T) {
+			_, stderr, code := runCLI(t, "build", "all", "--"+flag)
+			if code != 1 || !strings.Contains(stderr, "unknown flag: --"+flag) {
+				t.Fatalf("removed flag: exit=%d stderr=%s", code, stderr)
+			}
+			help, _, code := runCLI(t, "build", "all", "--help")
+			if code != 0 || strings.Contains(help, "--"+flag) || strings.Contains(help, envKey(flag)) {
+				t.Fatalf("obsolete option advertised: exit=%d help=%s", code, help)
+			}
+		})
 	}
 }
 
-func TestEnv_StreamIgnored(t *testing.T) {
+func TestEnv_RemovedOptionsIgnored(t *testing.T) {
 	path := writeFixture(t)
-	t.Setenv("FLATE_STREAM", "invalid-bool")
+	for _, key := range []string{"STREAM", "SKIP_CRDS", "SKIP_SECRETS", "ONLY_CRDS", "KRMIGNORE", "SKIP_SCHEMA_VALIDATION", "SOURCE_RETRY_ATTEMPTS", "SOURCE_RETRY_MIN_WAIT", "SOURCE_RETRY_MAX_WAIT", "SOURCE_RETRY_JITTER"} {
+		t.Setenv("FLATE_"+key, "invalid-value")
+	}
 	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
 	if code != 0 || !strings.Contains(stdout, "kind: ConfigMap") {
-		t.Fatalf("obsolete environment key affected render: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-	}
-	help, _, code := runCLI(t, "build", "all", "--help")
-	if code != 0 || strings.Contains(help, "--stream") || strings.Contains(help, "FLATE_STREAM") {
-		t.Fatalf("obsolete option advertised: exit=%d help=%s", code, help)
+		t.Fatalf("obsolete environment keys affected render: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }

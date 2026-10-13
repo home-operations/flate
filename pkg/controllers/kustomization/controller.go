@@ -7,6 +7,7 @@ package kustomization
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -87,7 +89,7 @@ func (c *Controller) Configure(opts Options) {
 // orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
 	return c.DispatchNode(ctx, id, level, base.Dispatch[*manifest.Kustomization]{
-		Suspended: func(ks *manifest.Kustomization) bool { return ks.Suspend },
+		Suspended: (*manifest.Kustomization).Suspended,
 		Reconcile: c.reconcile,
 	})
 }
@@ -120,7 +122,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 			ctx, id, deps, level)
 		if err != nil {
 			ref := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-			if level >= manifest.DrainCascade && ks.SourceKind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
+			_, blocked := errors.AsType[*depwait.ErrBlocked](err)
+			_, failed := errors.AsType[*manifest.DependencyFailedError](err)
+			if (blocked || failed) && level >= manifest.DrainCascade && ks.SourceKind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
 				return fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, ref)
 			}
 			return err

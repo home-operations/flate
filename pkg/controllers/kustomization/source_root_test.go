@@ -1,6 +1,8 @@
 package kustomization
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -8,6 +10,36 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "absent", true: "failed"}[failed], func(t *testing.T) {
+			c, st, _ := newControllerWithFixture(t)
+			ks := &manifest.Kustomization{
+				Name: "consumer", Namespace: "flux-system", Path: "./apps",
+				SourceKind: manifest.KindOCIRepository, SourceName: "missing", SourceNamespace: "flux-system",
+			}
+			st.AddObject(ks)
+			st.UpdateStatus(ks.Named(), store.StatusPending, "")
+			if failed {
+				st.UpdateStatus(manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}, store.StatusFailed, "fetch failed")
+			}
+			c.Tasks.Go(t.Context(), "oci cascade", func(ctx context.Context) {
+				if blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainCascade); len(blocked) != 0 {
+					t.Errorf("blocked on %v", blocked)
+				}
+			})
+			c.Tasks.BlockTillDone()
+			info, _ := st.GetStatus(ks.Named())
+			if info.Status != store.StatusFailed || !strings.Contains(info.Message, "unknown OCI artifact root") {
+				t.Fatalf("OCI cascade status = %+v", info)
+			}
+			if st.GetArtifact(ks.Named()) != nil || c.Tasks.Failures() != 0 {
+				t.Fatal("failed OCI cascade rendered or panicked")
+			}
+		})
+	}
+}
 
 // TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty covers
 // the #105 path: child Kustomizations whose YAML declares no sourceRef

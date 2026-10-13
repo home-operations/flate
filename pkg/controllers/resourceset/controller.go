@@ -75,7 +75,7 @@ func (c *Controller) Configure(opts Options) {
 // nodes. Reconciliation-disabled ResourceSets use the shared suspension gate.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
 	return c.DispatchNode(ctx, id, level, base.Dispatch[*manifest.ResourceSet]{
-		Suspended: func(rs *manifest.ResourceSet) bool { return rs.Suspend },
+		Suspended: (*manifest.ResourceSet).Suspended,
 		Reconcile: c.reconcile,
 	})
 }

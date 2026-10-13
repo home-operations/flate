@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -45,7 +47,7 @@ data: {greeting: hi}
 
 	cache := kustomize.NewTreeCache()
 
-	tasks := task.NewBounded(0)
+	tasks := task.NewBounded(2)
 	c := New(s, tasks, cache, true)
 	c.Configure(Options{})
 	c.StartLifecycle()
@@ -441,5 +443,103 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 	}
 	if info.Message == "" {
 		t.Error("expected failure message from dep cascade")
+	}
+}
+
+func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		suspended bool
+		cascade   bool
+	}{
+		{name: "suspended=false"},
+		{name: "suspended=true", suspended: true},
+		{name: "oci_cascade", suspended: true, cascade: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			suspended := tt.suspended
+			c, st, root := newControllerWithFixture(t)
+			testutil.WriteFile(t, root, "apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: ks-refresh-output}
+data: {greeting: hi}
+`)
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
+			st.AddObject(parent)
+			st.UpdateStatus(parent.Named(), store.StatusReady, "")
+			doc := map[string]any{
+				"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization,
+				"metadata": map[string]any{"name": "apps", "namespace": "flux-system"},
+				"spec": map[string]any{
+					"path": "./apps", "sourceRef": map[string]any{"kind": manifest.KindGitRepository, "name": "flux-system"},
+					"dependsOn": []any{map[string]any{"name": parent.Name}},
+				},
+			}
+			level := manifest.DrainNone
+			if tt.cascade {
+				doc["spec"].(map[string]any)["sourceRef"] = map[string]any{"kind": manifest.KindOCIRepository, "name": "missing"}
+				st.UpdateStatus(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: parent.Namespace, Name: "missing"}, store.StatusReady, "")
+				level = manifest.DrainCascade
+			}
+			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ks := obj.(*manifest.Kustomization)
+			original := ks.Clone()
+			st.AddObject(ks)
+			st.UpdateStatus(ks.Named(), store.StatusPending, "")
+			replacement := manifest.DeepCopyMap(doc)
+			spec := replacement["spec"].(map[string]any)
+			spec["suspend"] = suspended
+			spec["targetNamespace"] = "refreshed"
+			var observations atomic.Int64
+			var fired, published atomic.Bool
+			unsub := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+				info, ok := payload.(store.StatusInfo)
+				if id != ks.Named() || !ok || info.Message != "resolving dependencies" {
+					return
+				}
+				observations.Add(1)
+				if fired.Swap(true) {
+					return
+				}
+				c.Emit(parent.Named(), []map[string]any{replacement}, false, true)
+				published.Store(true)
+			}, false)
+			t.Cleanup(unsub)
+			c.Tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
+				if blocked := c.ReconcileNode(ctx, ks.Named(), level); len(blocked) != 0 {
+					t.Errorf("blocked on %v", blocked)
+				}
+			})
+			c.Tasks.BlockTillDone()
+			if observations.Load() != 1 || !published.Load() || c.Tasks.Failures() != 0 {
+				t.Fatalf("observations=%d published=%t panics=%d", observations.Load(), published.Load(), c.Tasks.Failures())
+			}
+			fresh, ok := st.Get[*manifest.Kustomization](ks.Named())
+			if !ok || fresh == ks || fresh.Suspend != suspended || fresh.TargetNamespace != "refreshed" {
+				t.Fatalf("canonical replacement = %+v", fresh)
+			}
+			if diff := cmp.Diff(original, ks); diff != "" {
+				t.Fatalf("original mutated (-want +got):\n%s", diff)
+			}
+			if owner, ok := st.EmittedParent(ks.Named()); !ok || owner != parent.Named() {
+				t.Fatalf("replacement owner = %v, found=%t", owner, ok)
+			}
+			info, _ := st.GetStatus(ks.Named())
+			art, _ := st.GetArtifact(ks.Named()).(*store.KustomizationArtifact)
+			output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "refreshed", Name: "ks-refresh-output"}
+			if suspended {
+				if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
+					t.Errorf("status = %+v, want Ready/suspended", info)
+				}
+				if art != nil || st.GetObject(output) != nil || len(st.EmittedChildrenByParent()[ks.Named()]) != 0 {
+					t.Errorf("suspended replacement rendered: artifact=%+v output=%v", art, st.GetObject(output))
+				}
+			} else if info.Status != store.StatusReady || art == nil || len(art.Manifests) != 1 || st.GetObject(output) == nil {
+				t.Fatalf("active replacement did not render %s: status=%+v artifact=%+v", output, info, art)
+			}
+		})
 	}
 }

@@ -147,6 +147,9 @@ type HelmRelease struct {
 	IgnoreMissingValuesFiles bool     `json:"-" yaml:"-"`
 }
 
+// Suspended reports whether reconciliation is paused.
+func (h *HelmRelease) Suspended() bool { return h.Suspend }
+
 // Named identifies the release.
 func (h *HelmRelease) Named() NamedResource {
 	return NamedResource{Kind: KindHelmRelease, Namespace: h.Namespace, Name: h.Name}

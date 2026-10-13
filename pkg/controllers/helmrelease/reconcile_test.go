@@ -1,9 +1,12 @@
 package helmrelease
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -269,5 +272,132 @@ func TestReconcile_MissingChartFails(t *testing.T) {
 	}
 	if info.Message == "" {
 		t.Error("expected non-empty failure for missing chart")
+	}
+}
+
+func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
+	for _, site := range []struct {
+		name, message string
+		parent        bool
+	}{
+		{"parent", "waiting for parent KS", true},
+		{"dependencies_after_parent", "resolving dependencies", true},
+		{"dependencies_without_parent", "resolving dependencies", false},
+	} {
+		t.Run(site.name, func(t *testing.T) {
+			for _, suspended := range []bool{false, true} {
+				t.Run(fmt.Sprintf("suspended=%t", suspended), func(t *testing.T) {
+					parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+					parents := map[manifest.NamedResource]manifest.NamedResource{}
+					id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "release", Namespace: "apps"}
+					if site.parent {
+						parents[id] = parent.Named()
+					}
+					c, st := newTestControllerWithParentOf(t, parents)
+					st.AddObject(parent)
+					st.UpdateStatus(parent.Named(), store.StatusReady, "")
+					dep := &manifest.HelmRelease{Name: "dependency", Namespace: "apps"}
+					st.AddObject(dep)
+					st.UpdateStatus(dep.Named(), store.StatusReady, "")
+					dir := t.TempDir()
+					testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: refresh\nversion: 1.0.0\n")
+					testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: {{ .Values.output }}, namespace: apps}
+data: {greeting: hi}
+`)
+					src := &manifest.OCIRepository{Name: "chart", Namespace: "apps", URL: "oci://example.test/chart"}
+					st.AddObject(src)
+					st.SetArtifact(src.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8", Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"})
+					st.UpdateStatus(src.Named(), store.StatusReady, "")
+					doc := map[string]any{
+						"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
+						"metadata": map[string]any{"name": id.Name, "namespace": id.Namespace},
+						"spec": map[string]any{
+							"chartRef":  map[string]any{"kind": manifest.KindOCIRepository, "name": src.Name},
+							"dependsOn": []any{map[string]any{"name": dep.Name}},
+							"values":    map[string]any{"output": "stale-output"},
+						},
+					}
+					obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					hr := obj.(*manifest.HelmRelease)
+					original := hr.Clone()
+					st.AddObject(hr)
+					st.UpdateStatus(id, store.StatusPending, "")
+					replacement := manifest.DeepCopyMap(doc)
+					spec := replacement["spec"].(map[string]any)
+					spec["suspend"] = suspended
+					spec["values"].(map[string]any)["output"] = "hr-refresh-output"
+					var observations, parentEvents atomic.Int64
+					var fired, published atomic.Bool
+					unsub := st.AddListener(store.EventStatusUpdated, func(other manifest.NamedResource, payload any) {
+						info, ok := payload.(store.StatusInfo)
+						if other != id || !ok {
+							return
+						}
+						if info.Message == "waiting for parent KS" {
+							parentEvents.Add(1)
+						}
+						if info.Message != site.message {
+							return
+						}
+						observations.Add(1)
+						if fired.Swap(true) {
+							return
+						}
+						if site.parent {
+							c.Emit(parent.Named(), []map[string]any{replacement}, false, true)
+						} else {
+							fresh := hr.Clone()
+							fresh.Suspend = suspended
+							fresh.Values["output"] = "hr-refresh-output"
+							st.AddObject(fresh)
+						}
+						published.Store(true)
+					}, false)
+					t.Cleanup(unsub)
+					c.Tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
+						if blocked := c.ReconcileNode(ctx, id, manifest.DrainNone); len(blocked) != 0 {
+							t.Errorf("blocked on %v", blocked)
+						}
+					})
+					c.Tasks.BlockTillDone()
+					if observations.Load() != 1 || !published.Load() || c.Tasks.Failures() != 0 {
+						t.Fatalf("observations=%d published=%t panics=%d", observations.Load(), published.Load(), c.Tasks.Failures())
+					}
+					if site.parent && parentEvents.Load() != 1 || !site.parent && parentEvents.Load() != 0 {
+						t.Fatalf("parent refresh events = %d", parentEvents.Load())
+					}
+					fresh, ok := st.Get[*manifest.HelmRelease](id)
+					if !ok || fresh == hr || fresh.Suspend != suspended || fresh.Values["output"] != "hr-refresh-output" {
+						t.Fatalf("canonical replacement = %+v", fresh)
+					}
+					if diff := cmp.Diff(original, hr); diff != "" {
+						t.Fatalf("original mutated (-want +got):\n%s", diff)
+					}
+					if site.parent {
+						if owner, ok := st.EmittedParent(id); !ok || owner != parent.Named() {
+							t.Fatalf("replacement owner = %v, found=%t", owner, ok)
+						}
+					}
+					info, _ := st.GetStatus(id)
+					art, _ := st.GetArtifact(id).(*store.HelmReleaseArtifact)
+					output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hr-refresh-output"}
+					if suspended {
+						if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
+							t.Errorf("status = %+v, want Ready/suspended", info)
+						}
+						if art != nil || st.GetObject(output) != nil || len(st.EmittedChildrenByParent()[id]) != 0 {
+							t.Errorf("suspended replacement rendered: artifact=%+v output=%v", art, st.GetObject(output))
+						}
+					} else if info.Status != store.StatusReady || art == nil || len(art.Manifests) != 1 || st.GetObject(output) == nil {
+						t.Fatalf("active replacement did not render %s: status=%+v artifact=%+v", output, info, art)
+					}
+				})
+			}
+		})
 	}
 }

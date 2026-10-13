@@ -90,7 +90,7 @@ func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedReso
 func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Controller, *store.Store) {
 	t.Helper()
 	st := store.New()
-	ts := task.NewBounded(0)
+	ts := task.NewBounded(2)
 	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)

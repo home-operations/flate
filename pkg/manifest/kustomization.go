@@ -63,6 +63,9 @@ func (k *Kustomization) GetLabels() map[string]string { return k.Labels }
 // GetAnnotations returns the Kustomization's metadata.annotations.
 func (k *Kustomization) GetAnnotations() map[string]string { return k.Annotations }
 
+// Suspended reports whether reconciliation is paused.
+func (k *Kustomization) Suspended() bool { return k.Suspend }
+
 // Named identifies the Kustomization.
 func (k *Kustomization) Named() NamedResource {
 	return NamedResource{Kind: KindKustomization, Namespace: k.Namespace, Name: k.Name}

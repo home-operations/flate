@@ -2,9 +2,12 @@ package resourceset
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	"github.com/google/go-cmp/cmp"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -293,6 +296,115 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 			}
 			if art := s.GetArtifact(obj.Named()); art != nil {
 				t.Fatalf("disabled ResourceSet rendered: %v", art)
+			}
+		})
+	}
+}
+
+func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
+	for _, suspended := range []bool{false, true} {
+		t.Run(fmt.Sprintf("suspended=%t", suspended), func(t *testing.T) {
+			st := store.New()
+			tasks := task.NewBounded(2)
+			c := New(st, tasks, true)
+			var deliveries atomic.Int64
+			c.Configure(Options{
+				ParentOf: st.EmittedParent,
+				RawSink:  func(_, _ manifest.NamedResource, _ map[string]any) { deliveries.Add(1) },
+			})
+			c.StartLifecycle()
+			t.Cleanup(c.Close)
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
+			st.AddObject(parent)
+			st.UpdateStatus(parent.Named(), store.StatusReady, "")
+			provider := staticRSIP("provider", "flux-system", nil, map[string]string{"user": "rs-refresh-output"})
+			st.AddObject(provider)
+			st.UpdateStatus(provider.Named(), store.StatusReady, "")
+			doc := map[string]any{
+				"apiVersion": fluxopv1.GroupVersion.String(), "kind": manifest.KindResourceSet,
+				"metadata": map[string]any{"name": "fleet", "namespace": "flux-system"},
+				"spec": map[string]any{
+					"inputsFrom": []any{map[string]any{"kind": manifest.KindResourceSetInputProvider, "name": provider.Name}},
+					"resourcesTemplate": `apiVersion: example.com/v1
+kind: Widget
+metadata: {name: stale-output}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: rs-refresh-child}
+spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
+`,
+				},
+			}
+			children, _ := c.Emit(parent.Named(), []map[string]any{doc}, false, true)
+			if len(children) != 1 {
+				t.Fatalf("initial publication: %v", children)
+			}
+			rs := children[0].Obj.(*manifest.ResourceSet)
+			original, _, _, err := manifest.ParseDoc(manifest.DeepCopyMap(doc), manifest.ParseDocOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			st.UpdateStatus(rs.Named(), store.StatusPending, "")
+			replacement := manifest.DeepCopyMap(doc)
+			replacement["spec"].(map[string]any)["resourcesTemplate"] = `apiVersion: example.com/v1
+kind: Widget
+metadata: {name: << inputs.user >>}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: rs-refresh-child}
+spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
+`
+			if suspended {
+				replacement["metadata"].(map[string]any)["annotations"] = map[string]any{fluxopv1.ReconcileAnnotation: fluxopv1.DisabledValue}
+			}
+			var observations atomic.Int64
+			var fired, published atomic.Bool
+			unsub := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+				info, ok := payload.(store.StatusInfo)
+				if id != rs.Named() || !ok || info.Message != "resolving inputs" {
+					return
+				}
+				observations.Add(1)
+				if fired.Swap(true) {
+					return
+				}
+				c.Emit(parent.Named(), []map[string]any{replacement}, false, true)
+				published.Store(true)
+			}, false)
+			t.Cleanup(unsub)
+			tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
+				if blocked := c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone); len(blocked) != 0 {
+					t.Errorf("blocked on %v", blocked)
+				}
+			})
+			tasks.BlockTillDone()
+			if observations.Load() != 1 || !published.Load() || tasks.Failures() != 0 {
+				t.Fatalf("observations=%d published=%t panics=%d", observations.Load(), published.Load(), tasks.Failures())
+			}
+			fresh, ok := st.Get[*manifest.ResourceSet](rs.Named())
+			if !ok || fresh == rs || fresh.Suspend != suspended || fresh.ResourcesTemplate != replacement["spec"].(map[string]any)["resourcesTemplate"] {
+				t.Fatalf("canonical replacement = %+v", fresh)
+			}
+			if diff := cmp.Diff(original, rs); diff != "" {
+				t.Fatalf("original mutated (-want +got):\n%s", diff)
+			}
+			if owner, ok := st.EmittedParent(rs.Named()); !ok || owner != parent.Named() {
+				t.Fatalf("replacement owner = %v, found=%t", owner, ok)
+			}
+			info, _ := st.GetStatus(rs.Named())
+			art, _ := st.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+			child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "rs-refresh-child"}
+			if suspended {
+				if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
+					t.Errorf("status = %+v, want Ready/suspended", info)
+				}
+				if art != nil || st.GetObject(child) != nil || deliveries.Load() != 0 || len(st.EmittedChildrenByParent()[rs.Named()]) != 0 {
+					t.Errorf("disabled replacement rendered: artifact=%+v child=%v raw deliveries=%d", art, st.GetObject(child), deliveries.Load())
+				}
+			} else if info.Status != store.StatusReady || !hasRenderedDoc(art, "Widget", "rs-refresh-output") || st.GetObject(child) == nil || deliveries.Load() != 1 {
+				t.Fatalf("active replacement output: status=%+v artifact=%+v child=%v raw deliveries=%d", info, art, st.GetObject(child), deliveries.Load())
 			}
 		})
 	}

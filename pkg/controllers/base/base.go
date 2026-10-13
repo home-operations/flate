@@ -24,6 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -447,14 +448,13 @@ func (c *Controller) Require(
 	return nil
 }
 
-// RequireRefresh fuses Require with the load-bearing store re-read every
-// dependency gate performs on success. A structural parent may have re-emitted
-// this object with a mutated spec while it was parked, so the caller MUST
-// reconcile against the refreshed object, not the stale snapshot it was
-// dispatched with (see #102 and the dependsOn re-read comments at the call
-// sites). Wait and re-read were two statements joined only by convention;
-// fusing them means a future gate site can't call Require and silently forget
-// the re-read.
+var errSuspended = errors.New("reconcile suspended")
+
+// RequireRefresh checks dependencies before reading the canonical object.
+// Callers MUST reconcile against that object when found and retain their
+// snapshot when absent. A suspended canonical object is marked Ready/suspended
+// and returns an internal stop error consumed by RunWithStatusOutcome; callers
+// MUST propagate that error before rendering or emitting children.
 func (c *Controller) RequireRefresh[T manifest.BaseManifest](
 	ctx context.Context,
 	id manifest.NamedResource,
@@ -466,6 +466,10 @@ func (c *Controller) RequireRefresh[T manifest.BaseManifest](
 		return zero, false, err
 	}
 	obj, ok := c.Store.Get[T](id)
+	if s, suspendable := any(obj).(source.Suspendable); ok && suspendable && s.Suspended() {
+		c.preGate(id, true)
+		return obj, true, errSuspended
+	}
 	return obj, ok, nil
 }
 
@@ -514,6 +518,9 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 		return nil
 	}
 	if err := fn(ctx, obj); err != nil {
+		if errors.Is(err, errSuspended) {
+			return nil
+		}
 		// A dependency gate is unsatisfied. Surface the blocked deps WITHOUT
 		// writing Failed — the node keeps the Pending status the body wrote and
 		// stays parkable + re-runnable.

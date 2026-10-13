@@ -15,7 +15,7 @@ import (
 func TestE2E_Diff_InTreeCache(t *testing.T) {
 	for _, source := range []string{"implicit", "self"} {
 		t.Run(source, func(t *testing.T) {
-			for _, state := range []string{"unchanged", "changed"} {
+			for _, state := range []string{"unchanged", "changed", "suspended_current", "suspended_orig"} {
 				t.Run(state, func(t *testing.T) {
 					repoRoot := t.TempDir()
 					repo := gitInit(t, repoRoot)
@@ -46,6 +46,9 @@ spec:
 ---
 ` + cluster
 					}
+					if state == "suspended_orig" {
+						cluster = strings.Replace(cluster, "  path: ./apps", "  suspend: true\n  path: ./apps", 1)
+					}
 					testutil.WriteFile(t, repoRoot, "flux/cluster.yaml", cluster)
 					testutil.WriteFile(t, repoRoot, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 					testutil.WriteFile(t, repoRoot, "apps/cm.yaml", `apiVersion: v1
@@ -66,6 +69,12 @@ data:
 					if state == "changed" {
 						mutateFile(t, filepath.Join(repoRoot, "apps", "cm.yaml"), "greeting: hola", "greeting: hi")
 					}
+					switch state {
+					case "suspended_current":
+						mutateFile(t, filepath.Join(repoRoot, "flux", "cluster.yaml"), "  path: ./apps", "  suspend: true\n  path: ./apps")
+					case "suspended_orig":
+						mutateFile(t, filepath.Join(repoRoot, "flux", "cluster.yaml"), "  suspend: true\n", "")
+					}
 					t.Chdir(repoRoot)
 					layouts := []struct {
 						name string
@@ -83,7 +92,11 @@ data:
 							}
 							for _, warmth := range []string{"fresh", "warm", "repeat"} {
 								t.Run(warmth, func(t *testing.T) {
-									args := []string{"diff", "all", "--base", "cache-base", "--concurrency", "2",
+									workers := "2"
+									if warmth == "repeat" {
+										workers = "8"
+									}
+									args := []string{"diff", "all", "--base", "cache-base", "--concurrency", workers,
 										"-o", "diff", "--cache-dir", layout.path}
 									if source == "self" {
 										args = append(args, "--path", "flux")
@@ -95,6 +108,11 @@ data:
 									if state == "changed" && (!strings.Contains(out, "-  greeting: hola") ||
 										!strings.Contains(out, "+  greeting: hi")) {
 										t.Errorf("expected greeting removal and addition:\n%s\nstderr:\n%s", out, stderr)
+									}
+									if side, suspended := strings.CutPrefix(state, "suspended_"); suspended {
+										if !strings.Contains(out, "suspended on "+side) || !strings.Contains(out, "diff suppressed") || stderr != "" || strings.Contains(out, "greeting:") || strings.Contains(out, "name: hello") {
+											t.Fatalf("suspension must disclose withheld output without pruning: stdout=%q stderr=%q", out, stderr)
+										}
 									}
 									if layout.name == "external" && warmth == "fresh" {
 										control = out

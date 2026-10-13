@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -23,6 +24,7 @@ func TestRequire_Classifications(t *testing.T) {
 			st.UpdateStatus(failed.NamedResource, store.StatusFailed, "render failed")
 			st.UpdateStatus(pending.NamedResource, store.StatusPending, "working")
 			st.UpdateStatus(id, store.StatusReady, "informative")
+			st.AddObject(&manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace, Suspend: mode != "ready"})
 			deps := []manifest.DependencyRef{ready}
 			level := manifest.DrainNone
 			switch mode {
@@ -36,7 +38,7 @@ func TestRequire_Classifications(t *testing.T) {
 					level = manifest.DrainForce
 				}
 			}
-			err := base.New(st, nil, "test").Require(t.Context(), id, deps, level)
+			_, _, err := base.New(st, nil, "test").RequireRefresh[*manifest.HelmRelease](t.Context(), id, deps, level)
 			info, _ := st.GetStatus(id)
 			if info.Status != store.StatusReady || info.Message != "informative" {
 				t.Fatalf("gate changed caller status: %+v", info)
@@ -69,11 +71,28 @@ func TestRequire_Classifications(t *testing.T) {
 }
 
 func TestRequireRefresh_CanonicalManifest(t *testing.T) {
-	st := store.New()
-	obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Suspend: true}
-	st.AddObject(obj)
-	got, ok, err := base.New(st, nil, "test").RequireRefresh[*manifest.HelmRelease](t.Context(), obj.Named(), nil, manifest.DrainNone)
-	if err != nil || !ok || got != obj {
-		t.Fatalf("refresh = %v, %v, %v; want canonical manifest", got, ok, err)
+	for _, found := range []bool{true, false} {
+		t.Run(map[bool]string{true: "active", false: "missing"}[found], func(t *testing.T) {
+			st := store.New()
+			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Values: map[string]any{"value": "old"}}
+			fresh := obj.Clone()
+			fresh.Values["value"] = "fresh"
+			var want *manifest.HelmRelease
+			if found {
+				st.AddObject(fresh)
+				want = fresh
+			}
+			c := base.New(st, nil, "test")
+			c.SetFilter(change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{obj.Named(): {File: "consumer.yaml"}},
+			}, st))
+			got, ok, err := c.RequireRefresh[*manifest.HelmRelease](t.Context(), obj.Named(), nil, manifest.DrainNone)
+			if err != nil || ok != found || got != want || obj.Values["value"] != "old" {
+				t.Fatalf("refresh = %v, %v, %v; want canonical %v, original=%v", got, ok, err, want, obj.Values)
+			}
+			if info, has := st.GetStatus(obj.Named()); has {
+				t.Fatalf("active/missing refresh changed status: %+v", info)
+			}
+		})
 	}
 }

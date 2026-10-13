@@ -33,6 +33,9 @@ type ResourceSet struct {
 	Suspend bool `json:"-" yaml:"-"`
 }
 
+// Suspended reports whether reconciliation is disabled.
+func (r *ResourceSet) Suspended() bool { return r.Suspend }
+
 // Named identifies the ResourceSet.
 func (r *ResourceSet) Named() NamedResource {
 	return NamedResource{Kind: KindResourceSet, Namespace: r.Namespace, Name: r.Name}

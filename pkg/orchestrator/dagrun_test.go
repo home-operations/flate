@@ -7,14 +7,143 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestDAG_SuspensionAfterRefresh(t *testing.T) {
+	for _, changedOnly := range []bool{false, true} {
+		for _, retained := range []bool{false, true} {
+			var previous []byte
+			for _, workers := range []int{2, 8} {
+				t.Run(fmt.Sprintf("changed_%t/retained_%t/workers_%d", changedOnly, retained, workers), func(t *testing.T) {
+					root := t.TempDir()
+					gate, child := ksID("gate"), ksID("child")
+					testutil.WriteFile(t, root, "flux/gate.yaml", strings.Replace(ksYAML("gate", "unused", ""), "spec:\n", "spec:\n  suspend: true\n", 1))
+					for _, name := range []string{"child", "dependent", "independent"} {
+						dep := ""
+						switch name {
+						case "child":
+							dep = "gate"
+						case "dependent":
+							dep = "child"
+						}
+						testutil.WriteFile(t, root, "flux/"+name+".yaml", ksYAML(name, name, dep))
+						testutil.WriteFile(t, root, name+"/kustomization.yaml", "resources: [cm.yaml]\n")
+						testutil.WriteFile(t, root, name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"}\ndata: {value: active}\n")
+					}
+					cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers}
+					if changedOnly {
+						cfg.ExternalChanges = change.NewSet([]string{"flux/gate.yaml", "flux/child.yaml", "dependent/cm.yaml", "independent/cm.yaml"})
+					}
+					o, err := New(cfg)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(o.Stop)
+					if err := o.Bootstrap(t.Context()); err != nil {
+						t.Fatal(err)
+					}
+					original, ok := o.store.Get[*manifest.Kustomization](child)
+					if !ok || original.Suspend {
+						t.Fatal("active child missing")
+					}
+					o.store.UpdateStatus(gate, store.StatusReady, store.MsgSuspended)
+					o.store.UpdateStatus(child, store.StatusPending, "queued")
+					o.configureControllers()
+					var outcome schedule.Outcome
+					var blocked []manifest.NamedResource
+					o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
+						outcome, blocked, _ = (dagDispatcher{o}).Dispatch(ctx, ksID("dependent"), manifest.DrainNone)
+					})
+					o.tasks.BlockTillDone()
+					if outcome != schedule.OutcomeBlocked || !slices.Contains(blocked, child) {
+						t.Fatalf("dependent must first wait on child: outcome=%v blocked=%v", outcome, blocked)
+					}
+					retainedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: child.Namespace, Name: "retained"}
+					var artifact *store.KustomizationArtifact
+					if retained {
+						doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": retainedID.Name, "namespace": retainedID.Namespace}, "data": map[string]any{"value": "prior"}}
+						o.ksc.Emit(child, []map[string]any{doc}, false, true)
+						artifact = &store.KustomizationArtifact{Manifests: []map[string]any{doc}, Fingerprint: "prior"}
+						o.store.SetArtifact(child, artifact)
+					}
+					var publication, arrivals atomic.Int64
+					unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+						info, ok := payload.(store.StatusInfo)
+						if id != child || !ok || info.Message != "resolving dependencies" || !publication.CompareAndSwap(0, 1) {
+							return
+						}
+						docs, err := manifest.DecodeDocs(strings.NewReader(strings.Replace(ksYAML("child", "child", "gate"), "spec:\n", "spec:\n  suspend: true\n", 1)))
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						o.ksc.Emit(gate, docs, false, true)
+					}, false)
+					t.Cleanup(unsub)
+					unsubArrivals := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+						if id == child {
+							owner, owned := o.store.EmittedParent(child)
+							if !owned || owner != gate || changedOnly && !o.filter.ShouldReconcile(child) {
+								t.Errorf("child arrived before ownership and selection: owner=%s owned=%t", owner, owned)
+							}
+						}
+						if id == retainedID || id == (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: child.Namespace, Name: child.Name}) {
+							arrivals.Add(1)
+						}
+					}, false)
+					t.Cleanup(unsubArrivals)
+					res, err := o.Render(t.Context())
+					if err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 || o.tasks.Failures() != 0 {
+						t.Fatalf("scheduler failed to drain: error=%v failures=%v blocked=%v", err, res.Failed, res.Blocked)
+					}
+					info, _ := o.store.GetStatus(child)
+					fresh, _ := o.store.Get[*manifest.Kustomization](child)
+					if publication.Load() != 1 || arrivals.Load() != 0 || !store.IsSuspended(info) || !fresh.Suspend || original.Suspend {
+						t.Fatalf("late suspension: publications=%d arrivals=%d status=%+v original=%+v fresh=%+v", publication.Load(), arrivals.Load(), info, original, fresh)
+					}
+					if owner, ok := o.store.EmittedParent(child); !ok || owner != gate {
+						t.Fatalf("child owner=%s, found=%t", owner, ok)
+					}
+					if !slices.Contains(slices.Collect(o.index.ReadersOfFile("child/cm.yaml")), child) {
+						t.Fatal("suspension lost the child's file read tracking")
+					}
+					if retained {
+						if o.store.GetArtifact(child) != artifact || o.store.GetObject(retainedID) == nil || len(o.store.EmittedChildrenByParent()[child]) != 1 {
+							t.Fatal("suspension pruned retained artifact or emission")
+						}
+					} else if o.store.GetArtifact(child) != nil || len(o.store.EmittedChildrenByParent()[child]) != 0 {
+						t.Fatal("suspended child produced output")
+					}
+					for _, name := range []string{"dependent", "independent"} {
+						id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: child.Namespace, Name: name}
+						if o.store.GetObject(id) == nil || len(res.Manifests[ksID(name)]) != 1 {
+							t.Fatalf("active output missing: %s", id)
+						}
+					}
+					output, err := json.Marshal(canonicalBatches(res))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if previous != nil && !bytes.Equal(previous, output) {
+						t.Fatal("output bytes differ across worker counts")
+					}
+					previous = output
+				})
+			}
+		}
+	}
+}
 
 func TestDAG_ParallelRenderedReplayConverges(t *testing.T) {
 	for _, workers := range []int{2, 4} {

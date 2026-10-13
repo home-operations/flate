@@ -50,7 +50,7 @@ data: {key: value}
 }
 
 func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
-	for _, name := range []string{"dedup", "fresh fingerprint identical docs", "missing artifact", "empty fingerprint", "blocked gate", "failed gate", "preflight failure", "filter skip", "vanished", "render failure", "suspended"} {
+	for _, name := range []string{"dedup", "fresh fingerprint identical docs", "missing artifact", "empty fingerprint", "blocked gate", "failed gate", "preflight failure", "filter skip", "vanished", "render failure", "suspended", "refresh suspended"} {
 		for _, selector := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/selector_%v", name, selector), func(t *testing.T) {
 				s := store.New()
@@ -107,6 +107,23 @@ data: {key: fixed}
 				case "suspended":
 					fresh.Suspend = true
 					s.AddObject(&fresh)
+				case "refresh suspended":
+					gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns", Suspend: true}
+					s.AddObject(gate)
+					fresh.DependsOn = []fluxopv1.Dependency{{Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
+					s.AddObject(&fresh)
+					s.UpdateStatus(gate.Named(), store.StatusReady, store.MsgSuspended)
+					s.UpdateStatus(rs.Named(), store.StatusPending, "queued")
+					var published atomic.Bool
+					unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+						info, ok := payload.(store.StatusInfo)
+						if id == rs.Named() && ok && info.Message == "resolving inputs" && !published.Swap(true) {
+							suspended := fresh
+							suspended.Suspend = true
+							s.AddObject(&suspended)
+						}
+					}, false)
+					t.Cleanup(unsub)
 				case "render failure":
 					fresh.ResourcesTemplate = "<< .missing.field >>"
 					s.AddObject(&fresh)
@@ -116,11 +133,16 @@ data: {key: fixed}
 				c.StartLifecycle()
 				t.Cleanup(c.Close)
 				d.o.rsc = c
-				var arrivals atomic.Int64
-				unsub := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals.Add(1) }, false)
+				var arrivals, outputArrivals atomic.Int64
+				unsub := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+					arrivals.Add(1)
+					if id == (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: rs.Namespace, Name: "output"}) {
+						outputArrivals.Add(1)
+					}
+				}, false)
 				t.Cleanup(unsub)
 				out, blocked, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
-				if rerun != (selector && name != "vanished" && name != "suspended") || out != want || (len(blocked) > 0) != (want == schedule.OutcomeBlocked) {
+				if rerun != (selector && name != "vanished" && name != "suspended" && name != "refresh suspended") || out != want || (len(blocked) > 0) != (want == schedule.OutcomeBlocked) {
 					t.Fatalf("outcome=%v blocked=%v; want %v", out, blocked, want)
 				}
 				if want == schedule.OutcomeTerminalNoop && arrivals.Load() != 0 {
@@ -139,6 +161,12 @@ data: {key: fixed}
 					info, ok := s.GetStatus(rs.Named())
 					if !ok || info.Status != store.StatusReady || info.Message != store.MsgUnchanged || s.GetArtifact(rs.Named()) != before {
 						t.Fatalf("filter must preserve artifact with Ready/unchanged: %+v", info)
+					}
+				}
+				if name == "suspended" || name == "refresh suspended" {
+					info, _ := s.GetStatus(rs.Named())
+					if !store.IsSuspended(info) || s.GetArtifact(rs.Named()) != before || outputArrivals.Load() != 0 {
+						t.Fatalf("suspension replayed or pruned output: status=%+v arrivals=%d", info, outputArrivals.Load())
 					}
 				}
 			})

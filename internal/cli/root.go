@@ -50,6 +50,7 @@ func New(version string) *cobra.Command {
 		// The live status bar paints to stderr only when it is an
 		// interactive terminal (pipes/CI/e2e buffers stay clean), --no-progress
 		// is unset. Logs share the progress renderer when it is active.
+		barSink = nil
 		logSink := cmd.ErrOrStderr()
 		noProgress, _ := cmd.Flags().GetBool("no-progress")
 		if progressBarEnabled(noProgress, writerIsTTY(cmd.ErrOrStderr())) {

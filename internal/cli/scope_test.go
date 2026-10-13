@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -71,22 +70,17 @@ func TestRun_NamedScope_UnrelatedFailure(t *testing.T) {
 				cache := t.TempDir()
 				var want string
 				for _, path := range []string{root, filepath.Join(root, "cluster"), filepath.Join(root, "cluster")} {
-					for _, stream := range []bool{false, true} {
-						args := []string{"build", kind, "selected", "--path", path, "--cache-dir", cache, "--concurrency", workers}
-						if stream {
-							args = append(args, "--stream")
-						}
-						out, errOut, code := runCLI(t, args...)
-						if code != 0 {
-							t.Fatalf("named build exited %d: %s", code, errOut)
-						}
-						want = cmp.Or(want, out)
-						if out == "" || out != want {
-							t.Fatalf("selected YAML differs: want %s, got %s", want, out)
-						}
-						if path != root && (!strings.Contains(errOut, "warnings") || !strings.Contains(errOut, "outside") || !strings.Contains(errOut, "unrelated")) {
-							t.Fatalf("unrelated diagnostics missing: %s", errOut)
-						}
+					args := []string{"build", kind, "selected", "--path", path, "--cache-dir", cache, "--concurrency", workers}
+					out, errOut, code := runCLI(t, args...)
+					if code != 0 {
+						t.Fatalf("named build exited %d: %s", code, errOut)
+					}
+					want = cmp.Or(want, out)
+					if out == "" || out != want {
+						t.Fatalf("selected YAML differs: want %s, got %s", want, out)
+					}
+					if path != root && (!strings.Contains(errOut, "warnings") || !strings.Contains(errOut, "outside") || !strings.Contains(errOut, "unrelated")) {
+						t.Fatalf("unrelated diagnostics missing: %s", errOut)
 					}
 				}
 			})
@@ -106,7 +100,7 @@ func appendScopeSpec(t *testing.T, root, file, spec string) {
 func TestRun_NamedScope_CommandsAndNamespace(t *testing.T) {
 	for _, workers := range []string{"2", "4"} {
 		for _, kind := range []string{"hr", "ks"} {
-			for _, verb := range []string{"build", "test", "diff"} {
+			for _, verb := range []string{"build", "test", "diff", "get"} {
 				t.Run(workers+"/"+kind+"/"+verb, func(t *testing.T) {
 					root := writeNamedScopeFixture(t)
 					orig := writeNamedScopeFixture(t)
@@ -141,7 +135,7 @@ func TestRun_NamedScope_UnnamedAndNoMatch(t *testing.T) {
 	root := writeNamedScopeFixture(t)
 	for _, args := range [][]string{
 		{"build", "all"}, {"build", "ks"}, {"build", "hr", "absent"},
-		{"build", "ks", "absent", "--stream"}, {"test", "hr", "absent"},
+		{"build", "ks", "absent"}, {"test", "hr", "absent"},
 		{"diff", "hr", "absent", "--path-orig", filepath.Join(writeNamedScopeFixture(t), "cluster")},
 	} {
 		t.Run(strings.Join(args[:2], "/")+fmt.Sprint(len(args)), func(t *testing.T) {
@@ -202,8 +196,8 @@ spec:
 				}
 				testutil.WriteFile(t, root, inputFile, input)
 				cfg := orchestrator.Config{Path: filepath.Join(root, "cluster"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers, AllowMissingSecrets: tc.extra != ""}
-				o, res, _ := runOrchestratorCfg(t.Context(), cfg)
-				if o == nil || o.Filter().Enabled() {
+				o, res, runErr := runOrchestratorCfg(t.Context(), cfg)
+				if o == nil || res == nil {
 					t.Fatal("full-mode fixture did not complete")
 				}
 				hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "selected"}
@@ -219,8 +213,18 @@ spec:
 					args = append(args, tc.extra)
 				}
 				stdout, stderr, code := runCLI(t, args...)
-				if !slices.Contains(o.RequiredDataDependencies(hr), producer) {
-					t.Fatalf("CLI exit=%d (required 1), output=%s, diagnostics=%s; healthy consumer has %d rendered documents, no blockers; failed owner %s is missing from authored lookup %v (producer failed=%t)", code, stdout, stderr, len(res.Manifests[hr]), producer, o.RequiredDataDependencies(hr), tc.broken)
+				selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
+					[]manifest.NamedResource{{Kind: hr.Kind, Name: hr.Name}}, nil)
+				if len(selection) != 1 {
+					t.Fatalf("selection failed: %v", selectedErr)
+				}
+				if _, failed := selection[0].Failed[producer]; failed != tc.broken || (selectedErr != nil) != tc.broken {
+					t.Fatalf("required owner failure projection violated: failed=%v unrelated=%v error=%v", selection[0].Failed, selection[0].Unrelated, selectedErr)
+				}
+				for _, warning := range selection[0].Unrelated {
+					if warning.Resource == producer {
+						t.Fatalf("required owner became unrelated: %+v", warning)
+					}
 				}
 
 				if (code == 1) != tc.broken || !strings.Contains(stdout, "selected-rendered") {
@@ -246,6 +250,7 @@ func TestScopedFailures_SharedRootCyclesAndErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(o.Stop)
 	id := func(name string) manifest.NamedResource {
 		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
 	}
@@ -255,34 +260,30 @@ func TestScopedFailures_SharedRootCyclesAndErrors(t *testing.T) {
 		Blocked: map[manifest.NamedResource][]manifest.NamedResource{selected: {root}, other: {root}, a: {b}, b: {a}},
 	}
 	for _, v := range []manifest.NamedResource{selected, root, other, a, b} {
+		o.Store().AddObject(&manifest.Kustomization{Name: v.Name, Namespace: v.Namespace})
 		res.Failed[v] = store.StatusInfo{Status: store.StatusFailed, Message: v.Name + " failure"}
 	}
-	scope := scopedFailures(o, res, &commonFlags{}, selected)
-	if len(scope.failed) != 2 || len(scope.warnings) != 3 {
-		t.Fatalf("projection lost shared/cyclic failures: %+v", scope)
-	}
-	for _, warning := range scope.warnings {
-		if warning.Resource == root || warning.Category != "" {
-			t.Fatalf("fatal root reclassified or category introduced: %+v", warning)
-		}
-	}
-	for range 10 {
-		got := scopedFailures(o, res, &commonFlags{}, selected)
-		if !slices.EqualFunc(got.warnings, scope.warnings, func(a, b manifest.Warning) bool {
-			return a.Resource == b.Resource && a.Message == b.Message && slices.Equal(a.Detail, b.Detail)
-		}) {
-			t.Fatal("warnings are nondeterministic")
-		}
-	}
 	panicErr := errors.New("unattributed panic")
-	runErr := scopedRunError(scope, errors.Join(aggregateScopedFailures(failureScope{failed: res.Failed, blocked: res.Blocked}), context.Canceled, panicErr))
+	runErr := errors.Join(&orchestrator.FailuresError{Message: "raw reconcile failures"}, context.Canceled, panicErr)
+	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
+		[]manifest.NamedResource{{Kind: selected.Kind, Name: selected.Name}}, nil)
+	if len(selection) != 1 {
+		t.Fatalf("selection failed: %v", selectedErr)
+	}
 	var out bytes.Buffer
-	got := reportFailures(&out, scope, runErr)
-	if !errors.Is(got, context.Canceled) || !errors.Is(got, panicErr) || !strings.Contains(out.String(), panicErr.Error()) || !strings.Contains(out.String(), "root failure") {
+	got := reportFailures(&out, selection[0], true, selectedErr)
+	if !errors.Is(got, context.Canceled) || !errors.Is(got, panicErr) || !strings.Contains(out.String(), panicErr.Error()) ||
+		!strings.Contains(out.String(), selection[0].Failed[root].Message) {
 		t.Fatalf("fatal diagnostics hidden: %v %s", got, out.String())
 	}
-	if err := reportFailures(failingWriter{err: errors.New("warning write failed")}, scope, nil); err == nil {
-		t.Fatal("warning write failure discarded")
+	for _, warning := range selection[0].Unrelated {
+		if !strings.Contains(out.String(), warning.Message) {
+			t.Fatalf("unrelated diagnostic hidden: %+v %s", warning, out.String())
+		}
+	}
+	writeErr := errors.New("warning write failed")
+	if got := reportFailures(failingWriter{err: writeErr}, selection[0], true, selectedErr); !errors.Is(got, writeErr) || !errors.Is(got, panicErr) {
+		t.Fatalf("warning write failure discarded: %v", got)
 	}
 }
 
@@ -418,12 +419,17 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	o.Store().AddObject(selected)
 	other := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "other"}
 	res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{other: {Status: store.StatusFailed, Message: "unrelated failure"}}}
-	scope := scopedFailures(o, res, &commonFlags{}, selected.Named())
+	t.Cleanup(o.Stop)
 	for _, fatal := range []error{context.Canceled, errors.New("unattributed panic"), errors.New("output write failed")} {
 		t.Run(fatal.Error(), func(t *testing.T) {
-			err := scopedRunError(scope, errors.Join(aggregateScopedFailures(failureScope{failed: res.Failed}), fatal))
+			runErr := errors.Join(&orchestrator.FailuresError{Message: "raw reconcile failures"}, fatal)
+			selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
+				[]manifest.NamedResource{{Kind: manifest.KindKustomization, Name: selected.Name}}, nil)
+			if len(selection) != 1 {
+				t.Fatalf("selection failed: %v", selectedErr)
+			}
 			var out bytes.Buffer
-			got := reportFailures(&out, scope, err)
+			got := reportFailures(&out, selection[0], true, selectedErr)
 			if !errors.Is(got, fatal) || !strings.Contains(out.String(), fatal.Error()) || !strings.Contains(out.String(), "unrelated failure") {
 				t.Fatalf("warning-only footer hid fatal cause: %v %s", got, out.String())
 			}
@@ -504,10 +510,7 @@ spec:
 						t.Fatalf("%s hid owned descendant failure: code=%d %s", verb, code, stderr)
 					}
 				}
-				_, stderr, code := runCLI(t, "build", "ks", "selected", "--path", root, "-n", "flux-system", "--cache-dir", t.TempDir(), "--concurrency", workers, "--stream")
-				if code != 1 || !strings.Contains(stderr, "missing-child-dependency") {
-					t.Fatalf("stream hid owned descendant failure: code=%d %s", code, stderr)
-				}
+
 			})
 		}
 	}
@@ -556,51 +559,31 @@ spec:
 	}
 }
 
-func TestAggregateScopedFailures_MissingAndCycles(t *testing.T) {
-	id := func(name string) manifest.NamedResource {
-		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
-	}
-	selected, missing, a, b, consumer := id("selected"), id("missing"), id("a"), id("b"), id("consumer")
-	failed := map[manifest.NamedResource]store.StatusInfo{
-		selected: {Status: store.StatusFailed, Message: "missing prerequisite"},
-		a:        {Status: store.StatusFailed, Message: "cycle a"},
-		b:        {Status: store.StatusFailed, Message: "cycle b"},
-		consumer: {Status: store.StatusFailed, Message: "consumer blocked"},
-	}
-	blocked := map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, a: {b}, b: {a}, consumer: {a}}
-	model := failureReport(failureScope{failed: failed, blocked: blocked})
-	assert.Equal(t, len(model.Primary), 2)
-	assert.Equal(t, len(model.Missing), 1)
-	assert.Equal(t, model.Blocked, 2)
-	assert.Diff(t, model.Primary[0].Blocks, []manifest.NamedResource{consumer})
-	for _, named := range []bool{false, true} {
-		got := aggregateScopedFailures(failureScope{named: named, failed: failed, blocked: blocked}).Error()
-		assert.Equal(t, got, "reconcile completed with 3 failure(s):\n  Kustomization/apps/a: dependency cycle: blocked by Kustomization/apps/b\n  Kustomization/apps/b: dependency cycle: blocked by Kustomization/apps/a\n  Kustomization/apps/missing: not found\n  (+2 blocked by failed/missing dependencies)")
-		for _, want := range []string{missing.String(), "blocked by " + b.String(), "blocked by " + a.String()} {
-			if !strings.Contains(got, want) {
-				t.Fatalf("fatal cause %q hidden: %s", want, got)
-			}
-		}
-	}
-}
-
 func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
+	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(o.Stop)
 	id := func(name string) manifest.NamedResource {
 		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
 	}
-	a, b := id("a"), id("b")
-	scope := failureScope{
-		named: true,
-		failed: map[manifest.NamedResource]store.StatusInfo{
-			a: {Status: store.StatusFailed, Message: "cycle a"},
-			b: {Status: store.StatusFailed, Message: "cycle b"},
+	a, b, other := id("a"), id("b"), id("other")
+	res := &orchestrator.Result{
+		Failed: map[manifest.NamedResource]store.StatusInfo{
+			a:     {Status: store.StatusFailed, Message: "cycle a"},
+			b:     {Status: store.StatusFailed, Message: "cycle b"},
+			other: {Status: store.StatusFailed, Message: "unrelated failure"},
 		},
-		blocked:  map[manifest.NamedResource][]manifest.NamedResource{a: {b}, b: {a}},
-		warnings: []manifest.Warning{{Resource: id("other"), Message: "unrelated failure"}},
+		Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {b}, b: {a}},
 	}
-	runErr := aggregateScopedFailures(scope)
+	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Kind: a.Kind, Name: a.Name}}, nil)
+	if len(selection) != 1 {
+		t.Fatalf("selection failed: %v", selectedErr)
+	}
 	var out bytes.Buffer
-	if got := reportFailures(&out, scope, runErr); got == nil {
+	if got := reportFailures(&out, selection[0], true, selectedErr); got == nil {
 		t.Fatal("fatal cycle became successful")
 	}
 	for _, want := range []string{"blocked by " + b.String(), "blocked by " + a.String(), "unrelated failure", "2 failed"} {
@@ -625,9 +608,11 @@ func TestRequiredClosure_ResourceSetAuthoredReferences(t *testing.T) {
 		dep:      {Status: store.StatusFailed, Message: "dependency failed"},
 		provider: {Status: store.StatusFailed, Message: "provider failed"},
 	}}
-	scope := scopedFailures(o, res, &commonFlags{namespace: "apps"}, rs.Named())
-	if len(scope.failed) != 2 || len(scope.warnings) != 0 {
-		t.Fatalf("authored ResourceSet prerequisite omitted: %+v", scope)
+	t.Cleanup(o.Stop)
+	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{rs.Named()}, nil)
+	if len(selection) != 1 || selectedErr == nil || len(selection[0].Failed) != 2 || len(selection[0].Unrelated) != 0 {
+		t.Fatalf("authored ResourceSet prerequisite omitted: %+v %v", selection, selectedErr)
 	}
 }
 
@@ -653,13 +638,17 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 		current: {Status: store.StatusFailed, Message: "current input failure"},
 		old:     {Status: store.StatusFailed, Message: "old input failure"},
 	}}
-	scope := scopedFailures(o, res, &commonFlags{}, id)
-	if _, ok := scope.failed[id]; !ok {
+	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Kind: id.Kind, Name: id.Name}}, nil)
+	if len(selection) != 1 || selectedErr == nil {
+		t.Fatalf("selection failed: %v", selectedErr)
+	}
+	if _, ok := selection[0].Failed[id]; !ok {
 		t.Fatal("stale artifact weakened selected failure")
 	}
-	if len(scope.failed) != 2 || scope.failed[current].Message != "current input failure" ||
-		len(scope.warnings) != 1 || scope.warnings[0].Resource != old || o.Store().GetArtifact(id) != artifact {
-		t.Fatalf("projection did not follow current canonical refs: %+v", scope)
+	if len(selection[0].Failed) != 2 || selection[0].Failed[current].Message != "current input failure" ||
+		len(selection[0].Unrelated) != 1 || selection[0].Unrelated[0].Resource != old || o.Store().GetArtifact(id) != artifact {
+		t.Fatalf("projection did not follow current canonical refs: %+v", selection[0])
 	}
 }
 
@@ -696,45 +685,6 @@ func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
 			assert.Equal(t, err.Error(), expected)
 		})
 	}
-}
-
-func TestScopedFailures_SharedMissingRoot(t *testing.T) {
-	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	selected := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "selected"}
-	other, missing := selected, selected
-	other.Name, missing.Name = "other", "missing"
-	res := &orchestrator.Result{
-		Failed: map[manifest.NamedResource]store.StatusInfo{
-			selected: {Status: store.StatusFailed, Message: "selected blocked"},
-			other:    {Status: store.StatusFailed, Message: "other blocked"},
-		},
-		Blocked: map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, other: {missing}},
-	}
-	scope := scopedFailures(o, res, &commonFlags{}, selected)
-	assert.Diff(t, scope.warnings, []manifest.Warning{{Resource: other, Message: "other blocked", Detail: []string{"blocked by " + missing.String()}}})
-	assert.Equal(t, failureReport(scope).Missing[0].ID, missing)
-}
-
-func TestScopedFailures_SortedCycleDependencies(t *testing.T) {
-	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := func(name string) manifest.NamedResource {
-		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
-	}
-	selected, a, b, c := id("selected"), id("a"), id("b"), id("c")
-	o.Store().AddObject(&manifest.Kustomization{Name: selected.Name, Namespace: selected.Namespace})
-	res := &orchestrator.Result{
-		Failed:  map[manifest.NamedResource]store.StatusInfo{a: {Message: "cycle a"}, b: {Message: "cycle b"}, c: {Message: "cycle c"}},
-		Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {c, b, c}, b: {a}, c: {a}},
-	}
-	scope := scopedFailures(o, res, &commonFlags{}, selected)
-	assert.Equal(t, len(scope.warnings), 3)
-	assert.Diff(t, scope.warnings[0].Detail, []string{"blocked by " + b.String(), "blocked by " + c.String()})
 }
 
 func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
@@ -1025,9 +975,11 @@ func TestScopedFailures_EmptyResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := scopedFailures(o, &orchestrator.Result{}, &commonFlags{}, manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "selected"})
-	if scope.failed != nil || scope.warnings != nil || scope.named {
-		t.Fatalf("successful result acquired a failure scope: %+v", scope)
+	t.Cleanup(o.Stop)
+	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: &orchestrator.Result{}}}, nil,
+		[]manifest.NamedResource{{Kind: manifest.KindHelmRelease, Name: "selected"}}, nil)
+	if len(selection) != 1 || selectedErr != nil || selection[0].Failed != nil || selection[0].Unrelated != nil {
+		t.Fatalf("successful result acquired failures: %+v %v", selection, selectedErr)
 	}
 }
 
@@ -1043,19 +995,39 @@ func TestScopedFailures_DependsOn(t *testing.T) {
 		Failed:    map[manifest.NamedResource]store.StatusInfo{dep: {Status: store.StatusFailed, Message: "dependency failed"}},
 		DependsOn: map[manifest.NamedResource][]manifest.NamedResource{selected.Named(): {dep}},
 	}
-	scope := scopedFailures(o, res, &commonFlags{namespace: "apps"}, selected.Named())
-	assert.Equal(t, len(scope.failed), 1)
-	assert.Equal(t, len(scope.warnings), 0)
-	assert.Equal(t, scope.failed[dep].Message, "dependency failed")
+	t.Cleanup(o.Stop)
+	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{selected.Named()}, nil)
+	if len(selection) != 1 || selectedErr == nil {
+		t.Fatalf("selection failed: %v", selectedErr)
+	}
+	assert.Equal(t, len(selection[0].Failed), 1)
+	assert.Equal(t, len(selection[0].Unrelated), 0)
+	assert.Equal(t, selection[0].Failed[dep].Message, "dependency failed")
 }
 
 func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 	for _, named := range []bool{false, true} {
 		t.Run(fmt.Sprint(named), func(t *testing.T) {
+			o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(o.Stop)
 			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "failed"}
-			scope := failureScope{named: named, failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "render failed"}}}
+			o.Store().AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+			res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "render failed"}}}
+			query := manifest.NamedResource{Kind: id.Kind}
+			if named {
+				query.Name = id.Name
+			}
+			selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+				&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{query}, nil)
+			if len(selection) != 1 || selectedErr == nil {
+				t.Fatalf("selection failed: %v", selectedErr)
+			}
 			var out bytes.Buffer
-			got := reportFailures(&out, scope, fmt.Errorf("reconcile: %w", context.Canceled))
+			got := reportFailures(&out, selection[0], named, errors.Join(selectedErr, fmt.Errorf("reconcile: %w", context.Canceled)))
 			if !errors.Is(got, context.Canceled) {
 				t.Fatalf("lost non-resource error: %v", got)
 			}
@@ -1063,8 +1035,46 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 				t.Errorf("non-resource error missing from report: %s", &out)
 			}
 			writeErr := errors.New("report write failed")
-			got = reportFailures(failingWriter{err: writeErr}, scope, aggregateScopedFailures(scope))
+			got = reportFailures(failingWriter{err: writeErr}, selection[0], named, selectedErr)
 			assert.Equal(t, errors.Is(got, writeErr), named)
 		})
+	}
+}
+
+func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
+	for _, kind := range []string{"ks", "hr"} {
+		for _, tc := range []struct {
+			name, label string
+			visible     bool
+		}{
+			{name: "matching", label: "area=selected", visible: true},
+			{name: "mismatching", label: "area=other"},
+			{name: "missing", label: "absent="},
+			{name: "empty", label: "empty=", visible: true},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				root := writeNamedScopeFixture(t)
+				file := "cluster/ks.yaml"
+				if kind == "hr" {
+					file = "cluster/hr.yaml"
+				}
+				body, err := os.ReadFile(filepath.Join(root, file))
+				if err != nil {
+					t.Fatal(err)
+				}
+				body = []byte(strings.Replace(string(body), "namespace: ", "labels: {area: selected, empty: ''}, namespace: ", 1))
+				testutil.WriteFile(t, root, file, string(body))
+				args := []string{"get", kind, "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "name", "-l", tc.label}
+				stdout, stderr, code := runCLI(t, args...)
+				if code != 0 || (stdout != "") != tc.visible || strings.Contains(stderr, "no ") {
+					t.Fatalf("healthy named get: exit=%d stdout=%q stderr=%s", code, stdout, stderr)
+				}
+				appendScopeSpec(t, root, file, "  dependsOn: [{name: missing, namespace: other}]\n")
+				_, stderr, code = runCLI(t, args...)
+				if code != 1 || !strings.Contains(stderr, "missing") {
+					t.Fatalf("label hid named failure: exit=%d stderr=%s", code, stderr)
+				}
+			})
+		}
 	}
 }

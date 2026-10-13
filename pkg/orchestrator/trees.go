@@ -124,20 +124,38 @@ func renderOne(ctx context.Context, cfg Config) (*Orchestrator, *Result, error) 
 	return o, res, err
 }
 
-// joinTreeErrors composes the per-side render errors into one non-nil
-// error when either side failed; both nil → nil.
-func joinTreeErrors(base, head error) error {
+// treeErrors retains side attribution so Select can project resource failures
+// without discarding outer errors from shared cache teardown.
+type treeErrors struct {
+	base error
+	head error
+}
+
+func (e *treeErrors) Error() string {
 	switch {
-	case base != nil && head != nil:
-		return errors.Join(
-			errors.New("both trees had reconcile failures"),
-			fmt.Errorf("base tree: %w", base),
-			fmt.Errorf("head tree: %w", head),
-		)
-	case base != nil:
-		return fmt.Errorf("base tree: %w", base)
-	case head != nil:
-		return fmt.Errorf("head tree: %w", head)
+	case e.base != nil && e.head != nil:
+		return "both trees had reconcile failures\nbase tree: " + e.base.Error() + "\nhead tree: " + e.head.Error()
+	case e.base != nil:
+		return "base tree: " + e.base.Error()
+	default:
+		return "head tree: " + e.head.Error()
 	}
-	return nil
+}
+
+func (e *treeErrors) Unwrap() []error {
+	var out []error
+	if e.base != nil {
+		out = append(out, fmt.Errorf("base tree: %w", e.base))
+	}
+	if e.head != nil {
+		out = append(out, fmt.Errorf("head tree: %w", e.head))
+	}
+	return out
+}
+
+func joinTreeErrors(base, head error) error {
+	if base == nil && head == nil {
+		return nil
+	}
+	return &treeErrors{base: base, head: head}
 }

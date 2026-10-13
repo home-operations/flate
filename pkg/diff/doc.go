@@ -34,34 +34,28 @@
 //
 // # SDK usage
 //
-// [RenderDocs] returns formatted bytes. A consumer that needs the diff as
-// *data* — to build its own API payload, web UI, or image report —
-// instead calls [Changes], which returns the same paired, normalized,
-// noise-filtered set as a [][Change] (added / changed / removed, with the
-// per-side manifests and the captured helm.sh/chart label). Render two
-// cluster directories with [orchestrator.RenderTrees] (it owns the
-// two-orchestrator, shared-cache, changed-only dance), then feed the
-// Results to [Changes]:
+// [Compare] consumes two completed snapshots selected by
+// [orchestrator.Select], withholds unavailable producer batches, and returns
+// formatted bytes without discarding selected render errors. Render two trees,
+// select the requested producer kinds, then compare them:
 //
-//	base, head, _ := orchestrator.RenderTrees(ctx,
+//	base, head, runErr := orchestrator.RenderTrees(ctx,
 //		orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir}, cfg)
-//	changes := diff.Changes(
-//		diff.DocsFromManifests(base.Result.Manifests, nil),
-//		diff.DocsFromManifests(head.Result.Manifests, nil),
-//		diff.Options{
-//			StripAttrs:  diff.DefaultStripAttrs,
-//			StripFields: diff.DefaultStripFields,
-//			Normalize:   redact, // optional extra per-manifest scrub
-//		},
-//	)
+//	selected, selectedErr := orchestrator.Select(
+//		[]orchestrator.Rendered{base, head}, runErr,
+//		[]manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}, nil)
+//	out, err := diff.Compare(selected, selectedErr, diff.Options{
+//		StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,
+//		Normalize: redact, // optional extra per-manifest scrub
+//	})
 //
-// [DocsFromManifests] is the store-free adapter from a render Result's
-// per-parent manifests to the flat []Doc both [Changes] and [RenderDocs]
-// take. [Options].Normalize is an optional per-manifest hook (applied
-// after the built-in strips) for noise the defaults don't cover — e.g.
-// redacting Secret values or chart-minted TLS certs. See the package
-// Example.
+// [CompareImages] uses the same selected producer availability and returns a
+// sorted image list plus suppression notes. [Changes] and [RenderDocs] retain
+// their low-level document APIs for callers that already have attributed
+// [Doc] values. [Options].Normalize runs after the built-in strips on copied
+// manifests. See the package Example for structured changes with chart metadata.
 //
 // [dyff]: https://github.com/homeport/dyff
+//
 // [orchestrator.RenderTrees]: https://pkg.go.dev/github.com/home-operations/flate/pkg/orchestrator#RenderTrees
 package diff

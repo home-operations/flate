@@ -1193,9 +1193,9 @@ spec:
 	}
 
 	producerID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-vars"}
-	f := o.Filter()
+	f := o.filter
 	if f == nil {
-		t.Fatalf("Filter() returned nil; ExternalChanges should have activated changed-only mode")
+		t.Fatalf("filter returned nil; ExternalChanges should have activated changed-only mode")
 	}
 	if !f.ShouldReconcile(producerID) {
 		t.Fatalf("producer %s must be in keep set; keep=%v", producerID, f.KeepNames())
@@ -1273,7 +1273,7 @@ data:
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	f := o.Filter()
+	f := o.filter
 	if f == nil {
 		t.Fatal("expected non-nil change filter when PathOrig differs from Path")
 	}
@@ -1352,7 +1352,7 @@ spec:
 	}
 	ksCount1 := len(o.Store().ListObjects(manifest.KindKustomization))
 	cmCount1 := len(o.Store().ListObjects(manifest.KindConfigMap))
-	filter1 := o.Filter()
+	filter1 := o.filter
 	if filter1 == nil {
 		t.Fatal("expected non-nil change filter when PathOrig differs from Path")
 	}
@@ -1362,7 +1362,7 @@ spec:
 	}
 	ksCount2 := len(o.Store().ListObjects(manifest.KindKustomization))
 	cmCount2 := len(o.Store().ListObjects(manifest.KindConfigMap))
-	filter2 := o.Filter()
+	filter2 := o.filter
 
 	if ksCount1 != ksCount2 {
 		t.Errorf("Kustomization count differs across Bootstrap calls: %d -> %d", ksCount1, ksCount2)

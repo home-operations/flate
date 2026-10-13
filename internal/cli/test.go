@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
 // `test` emits a single human-readable, pytest-style reconcile report and
@@ -55,21 +56,14 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 				return runErr
 			}
 			elapsed := time.Since(start)
-			// testrunner.Report.AnyFailed already covers per-resource
-			// reconcile failures, so the runErr is informational here —
-			// the structured report is what the user reads. We still
-			// surface a non-zero exit on any failure.
 			name := firstArg(argv)
-			report := testrunner.Run(testrunner.Job{
-				Store: o.Store(),
-				Kinds: kinds,
-				Name:  name,
-				Include: func(id manifest.NamedResource) bool {
-					return c.includeNamespace(o.Filter(), id.Namespace)
-				},
-			})
-			scope := scopedFailures(o, res, c, manifest.NamedResource{Kind: kinds[0], Name: name})
-			runErr = scopedRunError(scope, runErr)
+			selected, runErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
+				c.roots(name, kinds...), nil)
+			if len(selected) == 0 {
+				return runErr
+			}
+			res = selected[0]
+			report := testrunner.Run(res)
 			if name != "" && report.Matched == 0 {
 				return errors.Join(noNamedError(testKindName(kinds), name), runErr)
 			}
@@ -82,15 +76,15 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			// (warnings) and deferred logs (notes), then a single verdict.
 			// Dependency failures outside the selected roster need a separate
 			// diagnostic so a passing selected row cannot hide a fatal cause.
-			warnings := append(scopedWarnings(o, res, c), scope.warnings...)
+			warnings := append(res.Warnings, res.Unrelated...)
 			notes := drainLogNotes()
 			if err := report.Write(cmd.OutOrStdout(), warnings, notes, color, elapsed); err != nil {
 				return errors.Join(err, runErr)
 			}
 			if name != "" && runErr != nil {
-				diagnostics := scope
-				diagnostics.warnings = nil
-				if err := reportFailures(cmd.ErrOrStderr(), diagnostics, runErr); err != nil {
+				diagnostics := *res
+				diagnostics.Unrelated = nil
+				if err := reportFailures(cmd.ErrOrStderr(), &diagnostics, true, runErr); err != nil {
 					return err
 				}
 			}

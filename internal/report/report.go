@@ -5,7 +5,7 @@
 // with a list of what it blocked — not a wall of nested, repeated
 // "dependencies failed: A: dependencies failed: B: …" chains.
 //
-// The model is built from orchestrator data (Result.Failed + Result.Blocked) and
+// The model is built from selected orchestrator causes and status data and
 // is pure/deterministic; rendering is gated on a color bool so it is plain and
 // testable off a TTY. Styling reuses internal/style, the vocabulary the live
 // status bar and `flate test` report already speak.
@@ -13,6 +13,7 @@ package report
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -21,7 +22,7 @@ import (
 
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
 // blockedSample bounds how many blocked/requiring ids are named inline per root
@@ -56,7 +57,7 @@ type Note struct {
 type Model struct {
 	Primary []Primary
 	Missing []Missing
-	// Warnings are non-fatal render advisories (Result.Warnings).
+	// Warnings are selected unrelated-failure advisories (Result.Unrelated).
 	Warnings []manifest.Warning
 	// Blocked is the count of distinct derived (cascaded) failures. It is the
 	// verdict's "N blocked" figure — distinct resources, not the sum of the
@@ -70,81 +71,53 @@ func (m Model) Empty() bool {
 	return len(m.Primary) == 0 && len(m.Missing) == 0 && len(m.Warnings) == 0
 }
 
-// Build partitions failures into primary errors and root-grouped cascades.
-// failed is Result.Failed (sentinel-trimmed messages); blocked is Result.Blocked
-// (a failed id → the immediate deps that blocked it, absent for primaries).
-//
-// A blocked resource is folded into the root(s) it traces to: walking its
-// blockers until reaching a primary failure (a failed id that is not itself
-// blocked) or a missing id (absent from failed). Cascaded resources never get
-// their own line — they appear only in a root's Blocks / RequiredBy list.
-func Build(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource, warnings []manifest.Warning) Model {
-	byRoot := roots(blocked)
-
+// Build prepares rows from a selected result's classified failure causes.
+func Build(result *orchestrator.Result) Model {
 	var primary []Primary
 	var missing []Missing
-	for id, info := range failed {
-		if _, derived := blocked[id]; derived {
-			continue // cascaded — surfaced under its root, not on its own
+	blocked := len(result.Blocked)
+	for root, victims := range result.Causes {
+		if info, isFailed := result.Failed[root]; isFailed {
+			primary = append(primary, Primary{ID: root, Msg: info.Message, Blocks: victims})
+			if _, promoted := result.Blocked[root]; promoted {
+				blocked--
+			}
+		} else {
+			missing = append(missing, Missing{ID: root, RequiredBy: victims})
 		}
-		primary = append(primary, Primary{ID: id, Msg: info.Message, Blocks: sortedIDs(byRoot[id])})
-	}
-	for root, reqs := range byRoot {
-		if _, isFailed := failed[root]; isFailed {
-			continue // root is a primary failure, already listed above
-		}
-		missing = append(missing, Missing{ID: root, RequiredBy: sortedIDs(reqs)})
 	}
 
 	slices.SortFunc(primary, func(a, b Primary) int { return a.ID.Compare(b.ID) })
 	slices.SortFunc(missing, func(a, b Missing) int { return a.ID.Compare(b.ID) })
-	return Model{Primary: primary, Missing: missing, Warnings: warnings, Blocked: len(blocked)}
+	return Model{Primary: primary, Missing: missing, Warnings: result.Unrelated, Blocked: blocked}
 }
 
-// roots inverts a blocked graph into root cause → the resources that trace to
-// it. blocked maps each derived failure to the immediate dependencies that
-// blocked it; a root is any id reached by walking those blockers that is not
-// itself blocked (a primary failure, or a dependency missing from the graph).
-func roots(blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
-	byRoot := map[manifest.NamedResource][]manifest.NamedResource{}
-	for id := range blocked {
-		for _, r := range RootsOf(id, blocked) {
-			byRoot[r] = append(byRoot[r], id)
+// WriteErrors prints errors that are not represented by the failure rows.
+func WriteErrors(w io.Writer, err error) error {
+	var extras []error
+	var collect func(error)
+	collect = func(err error) {
+		if err == nil {
+			return
+		}
+		if _, ok := errors.AsType[*orchestrator.FailuresError](err); !ok {
+			extras = append(extras, err)
+			return
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, child := range joined.Unwrap() {
+				collect(child)
+			}
+		} else if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+			collect(wrapped.Unwrap())
 		}
 	}
-	return byRoot
-}
-
-// RootsOf resolves the root cause(s) of a blocked id by walking its blockers to
-// a primary failure or a missing id, returning a fresh slice. Cycle-safe via a
-// visited set: a victim whose blockers form a closed cycle (no escape to a
-// primary/missing root) yields nil — callers that must account for every victim
-// fall back to its immediate blockers.
-func RootsOf(id manifest.NamedResource, blocked map[manifest.NamedResource][]manifest.NamedResource) []manifest.NamedResource {
-	var out []manifest.NamedResource
-	seen := map[manifest.NamedResource]bool{id: true}
-	var walk func(manifest.NamedResource)
-	walk = func(n manifest.NamedResource) {
-		for _, dep := range blocked[n] {
-			if seen[dep] {
-				continue
-			}
-			seen[dep] = true
-			if _, derived := blocked[dep]; derived {
-				walk(dep) // dep is itself cascaded — keep climbing
-			} else {
-				out = append(out, dep) // primary failure or missing id — a root
-			}
-		}
+	collect(err)
+	if extra := errors.Join(extras...); extra != nil {
+		_, err := fmt.Fprintln(w, "flate error:", extra)
+		return err
 	}
-	walk(id)
-	return out
-}
-
-func sortedIDs(ids []manifest.NamedResource) []manifest.NamedResource {
-	out := slices.Clone(ids)
-	slices.SortFunc(out, manifest.NamedResource.Compare)
-	return slices.Compact(out) // NamedResource is a comparable struct; sorted ⇒ dups adjacent
+	return nil
 }
 
 // Write renders the model to w. color gates ANSI styling.

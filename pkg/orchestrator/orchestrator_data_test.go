@@ -33,7 +33,7 @@ func TestOrchestrator_ParentOf(t *testing.T) {
 			if tc.rendered {
 				o.store.RecordEmitted(rendered, []manifest.NamedResource{id})
 			}
-			got, ok := o.ParentOf(id)
+			got, ok := o.parentOf(id)
 			want := rendered
 			if tc.structural {
 				want = structural
@@ -72,13 +72,13 @@ spec:
 				t.Fatal(err)
 			}
 			res, _ := o.Render(t.Context())
-			if res == nil || len(res.Failed) != 3 || o.Filter().Enabled() {
+			if res == nil || len(res.Failed) != 3 || o.filter.Enabled() {
 				t.Fatalf("full-mode pre-emission fixture failed: %+v", res)
 			}
 			hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
 			hr.ValuesFrom = []helmv2.ValuesReference{{Kind: "ConfigMap", Name: "input", Optional: true}, {Kind: "Secret", Name: "generated"}, {Kind: "ConfigMap", Name: "input"}}
 			o.store.AddObject(hr)
-			got := o.RequiredDataDependencies(hr.Named())
+			got := o.requiredDataDependencies(hr.Named())
 			for _, id := range []manifest.NamedResource{
 				{Kind: "ConfigMap", Namespace: "apps", Name: "input"},
 				{Kind: "Secret", Namespace: "apps", Name: "generated"},
@@ -91,7 +91,7 @@ spec:
 			clone := hr.Clone()
 			clone.ValuesFrom = []helmv2.ValuesReference{{Kind: "ConfigMap", Name: "input", Optional: true}}
 			o.store.AddObject(clone)
-			gotInput := o.RequiredDataDependencies(hr.Named())
+			gotInput := o.requiredDataDependencies(hr.Named())
 			want := 4
 			if namespace == "foreign" {
 				want = 3
@@ -100,10 +100,10 @@ spec:
 				t.Fatalf("ownership/dedup/sort violated: all=%v input=%v", got, gotInput)
 			}
 			gotInput[0] = manifest.NamedResource{}
-			if next := o.RequiredDataDependencies(hr.Named()); len(next) != want || slices.Contains(next, manifest.NamedResource{}) {
+			if next := o.requiredDataDependencies(hr.Named()); len(next) != want || slices.Contains(next, manifest.NamedResource{}) {
 				t.Fatal("returned slice aliases stored state")
 			}
-			if len(o.RequiredDataDependencies(ksID("absent"))) != 0 {
+			if len(o.requiredDataDependencies(ksID("absent"))) != 0 {
 				t.Fatal("missing canonical consumer invents refs")
 			}
 		})
@@ -125,7 +125,7 @@ func TestOrchestrator_RequiredDataDependencies_Lifecycle(t *testing.T) {
 				if _, err := o.Render(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				deps := o.RequiredDataDependencies(id)
+				deps := o.requiredDataDependencies(id)
 				if !slices.Contains(deps, ksID("apps")) || len(deps) < 2 {
 					t.Fatalf("generated input ownership missing: %v", deps)
 				}
@@ -148,7 +148,7 @@ func TestOrchestrator_RequiredDataDependencies_Lifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := manifest.NamedResource{Kind: "Secret", Namespace: id.Namespace, Name: "new"}
-			if got := o.RequiredDataDependencies(id); !slices.Equal(got, []manifest.NamedResource{want}) || len(fresh) < 2 {
+			if got := o.requiredDataDependencies(id); !slices.Equal(got, []manifest.NamedResource{want}) || len(fresh) < 2 {
 				t.Fatalf("suspended canonical replacement changed slice or refs: %v", got)
 			}
 			clone = clone.Clone()
@@ -159,7 +159,7 @@ func TestOrchestrator_RequiredDataDependencies_Lifecycle(t *testing.T) {
 			if o.store.GetArtifact(id) != artifact || o.store.FailedResources()[id].Status != store.StatusFailed {
 				t.Fatal("stale artifact weakened selected failure")
 			}
-			if got := o.RequiredDataDependencies(id); !slices.Equal(got, []manifest.NamedResource{want}) {
+			if got := o.requiredDataDependencies(id); !slices.Equal(got, []manifest.NamedResource{want}) {
 				t.Fatalf("failed reconcile changed canonical admission: %v", got)
 			}
 		})
@@ -206,7 +206,7 @@ spec:
 				if !store.IsSuspended(before) && !store.IsUnchanged(before) || o.store.GetArtifact(id) != nil {
 					t.Fatalf("consumer was rendered: %+v", before)
 				}
-				got := o.RequiredDataDependencies(id)
+				got := o.requiredDataDependencies(id)
 				if !slices.Contains(got, ksID("producer")) || !slices.Contains(got, manifest.NamedResource{Kind: "ConfigMap", Namespace: "apps", Name: "input"}) {
 					t.Fatalf("skipped consumer lost authored refs: %v", got)
 				}
@@ -231,14 +231,14 @@ func TestOrchestrator_ChildrenByParent(t *testing.T) {
 	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{first: parent, second: parent})
 	o.store.RecordEmitted(parent, []manifest.NamedResource{second})
 	o.store.RecordEmitted(other, []manifest.NamedResource{first})
-	got := o.ChildrenByParent()
+	got := o.childrenByParent()
 	if !slices.Equal(got[parent], []manifest.NamedResource{first, second}) ||
 		!slices.Equal(got[other], []manifest.NamedResource{first}) {
 		t.Fatalf("ownership snapshot = %v", got)
 	}
 	got[parent][0] = other
 	delete(got, other)
-	fresh := o.ChildrenByParent()
+	fresh := o.childrenByParent()
 	if !slices.Equal(fresh[parent], []manifest.NamedResource{first, second}) ||
 		!slices.Equal(fresh[other], []manifest.NamedResource{first}) {
 		t.Fatalf("caller mutated ownership: %v", fresh)
@@ -259,7 +259,7 @@ func TestOrchestrator_RequiredDataDependencies_Parents(t *testing.T) {
 	o.store.RecordEmitted(rendered, []manifest.NamedResource{input})
 	want := []manifest.NamedResource{input, structural, rendered}
 	slices.SortFunc(want, manifest.NamedResource.Compare)
-	if got := o.RequiredDataDependencies(hr.Named()); !slices.Equal(got, want) {
+	if got := o.requiredDataDependencies(hr.Named()); !slices.Equal(got, want) {
 		t.Fatalf("input lost a known parent: want %v, got %v", want, got)
 	}
 }
@@ -286,7 +286,7 @@ func TestOrchestrator_RequiredDataDependencies_ChangedOnlyProducers(t *testing.T
 	assert.Diff(t, o.filter.ProducersFor(input), []manifest.NamedResource{owner.Named()})
 	want := []manifest.NamedResource{input, owner.Named()}
 	slices.SortFunc(want, manifest.NamedResource.Compare)
-	assert.Diff(t, o.RequiredDataDependencies(hr.Named()), want)
+	assert.Diff(t, o.requiredDataDependencies(hr.Named()), want)
 }
 
 func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testing.T) {
@@ -304,7 +304,7 @@ func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testin
 	st.AddObject(consumer)
 	o := &Orchestrator{store: st, index: l.Index}
 	want := []manifest.NamedResource{input, producer.Named()}
-	if got := o.RequiredDataDependencies(consumer.Named()); !slices.Equal(got, want) {
+	if got := o.requiredDataDependencies(consumer.Named()); !slices.Equal(got, want) {
 		t.Fatalf("missing-directory readers = %v, want %v", got, want)
 	}
 }

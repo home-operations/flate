@@ -49,19 +49,10 @@ func New(version string) *cobra.Command {
 		}
 		// The live status bar paints to stderr only when it is an
 		// interactive terminal (pipes/CI/e2e buffers stay clean), --no-progress
-		// is unset, and a --stream build isn't sharing that terminal with its
-		// stdout output (the sticky bar and raw streamed YAML would interleave —
-		// see progressBarEnabled). When active, slog is routed through the same
-		// stderrRouter so log records interleave above the bar instead of
-		// corrupting it; otherwise slog writes straight to stderr.
-		//
-		// `stream` is a build-subcommand flag, absent on other commands —
-		// GetBool then returns (false, err), which is the correct "no stream".
-		noProgress, _ := cmd.Flags().GetBool("no-progress")
-		stream, _ := cmd.Flags().GetBool("stream")
-		barSink = nil
+		// is unset. Logs share the progress renderer when it is active.
 		logSink := cmd.ErrOrStderr()
-		if progressBarEnabled(noProgress, stream, writerIsTTY(cmd.OutOrStdout()), writerIsTTY(cmd.ErrOrStderr())) {
+		noProgress, _ := cmd.Flags().GetBool("no-progress")
+		if progressBarEnabled(noProgress, writerIsTTY(cmd.ErrOrStderr())) {
 			barSink = newBarWriter(cmd.ErrOrStderr())
 			logSink = barSink
 		}

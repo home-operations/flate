@@ -106,6 +106,43 @@ func TestSuppression_String(t *testing.T) {
 	}
 }
 
+func TestSuppression_StringBothAndEmpty(t *testing.T) {
+	cases := []struct {
+		note Suppression
+		want string
+	}{
+		{Suppression{Parent: hrParent, Side: sideBoth, Count: 1, Reason: "failed on both sides: orig: old;\n current: new"},
+			"HelmRelease monitoring/grafana-operator: 1 object withheld; diff suppressed (failed on both sides: orig: old; current: new)"},
+		{Suppression{Parent: hrParent, Side: sideBoth, Reason: "suspended on orig; suspended on current"},
+			"HelmRelease monitoring/grafana-operator: 0 objects withheld; diff suppressed (suspended on orig; suspended on current)"},
+		{Suppression{Parent: hrParent, Side: SideCurrent, Reason: "suspended on current"},
+			"HelmRelease monitoring/grafana-operator: 0 objects not rendered on the current side; diff suppressed (suspended on current)"},
+	}
+	for _, tc := range cases {
+		if got := tc.note.String(); got != tc.want {
+			t.Errorf("String() = %q; want %q", got, tc.want)
+		}
+	}
+}
+
+func TestSuppressFailed_PreservesParentPartitions(t *testing.T) {
+	otherPath := ksParent
+	otherPath.Path = "other/apps"
+	left := []Doc{cmDoc(ksParent, "a", "ns", "v", ""), cmDoc(otherPath, "b", "ns", "v", "")}
+	right := []Doc{cmDoc(ksParent, "stale", "ns", "v", "")}
+	id := manifest.NamedResource{Kind: ksParent.Kind, Namespace: ksParent.Namespace, Name: ksParent.Name}
+	l, r, notes := SuppressFailed(left, right, nil, map[manifest.NamedResource]string{id: "failed"})
+	if len(l) != 0 || len(r) != 0 || len(notes) != 2 {
+		t.Fatalf("withheld docs/notes = %v / %v / %+v", l, r, notes)
+	}
+	for i, parent := range []Parent{ksParent, otherPath} {
+		want := Suppression{Parent: parent, Side: SideCurrent, Count: 1, Reason: "failed"}
+		if notes[i] != want {
+			t.Errorf("note[%d] = %+v; want %+v", i, notes[i], want)
+		}
+	}
+}
+
 // TestRenderDocs_SuppressionHeader pins that every format leads with the
 // suppression note, that the withheld objects are absent from the body, and
 // that a suppression alone (empty diff) still produces output.

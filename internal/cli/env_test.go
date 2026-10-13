@@ -174,3 +174,23 @@ func TestEnvKey(t *testing.T) {
 		}
 	}
 }
+
+func TestRun_StreamFlagRemoved(t *testing.T) {
+	_, stderr, code := runCLI(t, "build", "all", "--stream")
+	if code != 1 || !strings.Contains(stderr, "unknown flag: --stream") {
+		t.Fatalf("removed flag: exit=%d stderr=%s", code, stderr)
+	}
+}
+
+func TestEnv_StreamIgnored(t *testing.T) {
+	path := writeFixture(t)
+	t.Setenv("FLATE_STREAM", "invalid-bool")
+	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+	if code != 0 || !strings.Contains(stdout, "kind: ConfigMap") {
+		t.Fatalf("obsolete environment key affected render: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	help, _, code := runCLI(t, "build", "all", "--help")
+	if code != 0 || strings.Contains(help, "--stream") || strings.Contains(help, "FLATE_STREAM") {
+		t.Fatalf("obsolete option advertised: exit=%d help=%s", code, help)
+	}
+}

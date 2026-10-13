@@ -119,7 +119,7 @@ func (o *Orchestrator) configureControllers() {
 	// built once; each Configure adds its controller-specific fields.
 	common := base.Options{
 		Filter:           o.filter,
-		ParentOf:         o.ParentOf,
+		ParentOf:         o.parentOf,
 		Existence:        existence,
 		PreflightFailure: o.preflightFailure,
 		AllowMissingCRDs: o.cfg.AllowMissingCRDs,

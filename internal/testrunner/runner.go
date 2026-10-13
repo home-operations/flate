@@ -1,10 +1,9 @@
 // Package testrunner implements `flate test`.
 //
 // The runner takes the post-reconcile state of the orchestrator and
-// reports it in a pytest-like progress format. It does NOT shell out
-// to the Go toolchain — every check is performed natively against the
-// Store. A test "passes" when its Kustomization (and every nested
-// HelmRelease) reached Status.Ready; it "fails" otherwise. Resources
+// reports it in a pytest-like progress format. A test "passes" when its
+// Kustomization (and every nested HelmRelease) reached Status.Ready; it
+// "fails" otherwise. Resources
 // that were skipped by --path-orig change filtering are reported as
 // SKIPPED so users see what flate actually did.
 package testrunner
@@ -19,21 +18,9 @@ import (
 	"github.com/home-operations/flate/internal/report"
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-// Job collects the orchestrator's post-run state.
-type Job struct {
-	Store *store.Store
-	// Kinds limits the kinds reported on. Empty ↦ both Kustomization
-	// and HelmRelease.
-	Kinds []string
-	// Name optionally narrows the report to a single resource.
-	Name string
-	// Include optionally narrows the report by resource identity.
-	// Nil includes every resource that passes Kinds and Name.
-	Include func(manifest.NamedResource) bool
-}
 
 // Outcome enumerates the per-resource result.
 type Outcome int
@@ -64,7 +51,7 @@ type Report struct {
 	Failed  int
 	// Blocked holds one Case per resource whose dependency failed or was
 	// missing — the body never ran. They render after the roster, each naming
-	// the root cause(s) it traces to (see blockedCases).
+	// the prepared root cause(s) it traces to.
 	Blocked []Case
 	Matched int
 }
@@ -164,155 +151,57 @@ func (r Report) verdict(color bool, elapsed time.Duration) string {
 	)
 }
 
-// Run inspects the store and produces a Report. When j.Kinds is empty,
-// both reconciler-driven kinds (Kustomization, HelmRelease) are
-// reported on.
-func Run(j Job) Report {
-	kinds := j.Kinds
-	if len(kinds) == 0 {
-		kinds = []string{manifest.KindKustomization, manifest.KindHelmRelease}
-	}
+// Run prepares a Report from selected objects and their status snapshot.
+func Run(result *orchestrator.Result) Report {
 	var rep Report
-	// id → its immediate blockers, accumulated across kinds so a cross-kind
-	// cascade still resolves to its root cause(s) in blockedCases.
-	blocked := map[manifest.NamedResource][]manifest.NamedResource{}
-	for _, kind := range kinds {
-		// ListObjects already returns this kind's objects sorted by
-		// (namespace, name); within a single kind that order is identical to
-		// NamedResource.Compare (Kind is constant), so no re-sort is needed.
-		for _, obj := range j.Store.ListObjects(kind) {
-			id := obj.Named()
-			if j.Name != "" && id.Name != j.Name {
-				continue
-			}
-			if j.Include != nil && !j.Include(id) {
-				continue
-			}
-			// Skip the synthetic bootstrap GitRepository the
-			// discovery phase seeds for `spec.path` anchoring — it's
-			// always an internal artifact. Discovery initially tags
-			// it with the "bootstrap" message, but changed-only mode's
-			// PreGate later overwrites that with MsgUnchanged, so the
-			// status-message check that PR #212 introduced misses in
-			// the typical `flate diff ks --path-orig=...` CI flow.
-			// Skip by id alone: a user who explicitly declares a
-			// GitRepository/flux-system/flux-system loses report
-			// visibility on it (rare; flate would alias to it anyway).
-			if id == manifest.BootstrapSourceID {
-				continue
-			}
-			// A foreign CRD that reuses a rostered kind name
-			// (seaweed.seaweedfs.com Bucket) parses to a RawObject and no
-			// controller reconciles it, so it carries no status — rostering
-			// it would fail the run with "no status reported".
-			if manifest.IsRawObject(obj) {
-				continue
-			}
-			rep.Matched++
-			info, ok := j.Store.GetStatus(id)
-			c := classify(id, info, ok)
-			switch c.Outcome {
-			case OutcomePassed:
-				rep.Passed++
-			case OutcomeSkipped:
-				rep.Skipped++
-			case OutcomeBlocked:
-				// Resolved to its root cause(s) after the scan; see blockedCases.
-				blocked[id] = info.BlockedBy()
-				continue
-			default: // OutcomeFailed
-				rep.Failed++
-			}
-			rep.Cases = append(rep.Cases, c)
+	seen := make(map[manifest.NamedResource]bool, len(result.Objects))
+	for _, obj := range result.Objects {
+		id := obj.Named()
+		// Bootstrap and foreign objects have no user-facing reconcile verdict.
+		if id == manifest.BootstrapSourceID || manifest.IsRawObject(obj) {
+			continue
 		}
-	}
-	// Surface run failures whose kind isn't in the roster (e.g. a
-	// ResourceSet whose template won't parse, or a synthetic HelmChart) so a
-	// primary fault cannot be omitted. Only failed ids absent from the roster
-	// and blocked set belong here.
-	// A victim already classified blocked stays in the blocked set; a failed id
-	// that is itself blocked joins the cascade rather than listing on its own row.
-	seen := make(map[manifest.NamedResource]bool, len(rep.Cases)+len(blocked))
-	for _, c := range rep.Cases {
-		seen[c.ID] = true
-	}
-	for id := range blocked {
 		seen[id] = true
+		rep.Matched++
+		info, ok := result.Statuses[id]
+		c := classify(id, info, ok)
+		switch c.Outcome {
+		case OutcomePassed:
+			rep.Passed++
+		case OutcomeSkipped:
+			rep.Skipped++
+		case OutcomeBlocked:
+			rep.Blocked = append(rep.Blocked, c)
+			continue
+		default:
+			rep.Failed++
+		}
+		rep.Cases = append(rep.Cases, c)
 	}
+
 	extra := make([]manifest.NamedResource, 0)
-	for id := range j.Store.FailedResources() {
-		if seen[id] || id == manifest.BootstrapSourceID {
+	for id, info := range result.Statuses {
+		if info.Status != store.StatusFailed || seen[id] {
 			continue
 		}
-		// A synthetic HelmChart is internal plumbing flate materializes to
-		// drive an HR's chart fetch — never a first-class tested kind (absent
-		// from every `test` subcommand's roster). Its failure always re-surfaces
-		// in the consuming HR's blocked reason,
-		// so listing the hash-suffixed chart id again is pure duplication.
-		if id.Kind == manifest.KindHelmChart {
-			continue
-		}
-		if j.Name != "" && id.Name != j.Name {
-			continue
-		}
-		if j.Include != nil && !j.Include(id) {
+		// A synthetic HelmChart's failure is included in its consuming HR's reason.
+		if id == manifest.BootstrapSourceID || id.Kind == manifest.KindHelmChart {
 			continue
 		}
 		extra = append(extra, id)
 	}
-	slices.SortFunc(extra, func(a, b manifest.NamedResource) int { return a.Compare(b) })
+	slices.SortFunc(extra, manifest.NamedResource.Compare)
 	for _, id := range extra {
-		seen[id] = true
-		rep.Matched++
-		info, ok := j.Store.GetStatus(id)
-		c := classify(id, info, ok)
+		c := classify(id, result.Statuses[id], true)
 		if c.Outcome == OutcomeBlocked {
-			blocked[id] = info.BlockedBy()
+			rep.Blocked = append(rep.Blocked, c)
 			continue
 		}
 		rep.Failed++
 		rep.Cases = append(rep.Cases, c)
 	}
-	rep.Blocked = blockedCases(j.Store, blocked, seen)
+	slices.SortFunc(rep.Blocked, func(a, b Case) int { return a.ID.Compare(b.ID) })
 	return rep
-}
-
-// blockedCases turns the blocked-by graph into one roster Case per victim. The
-// keys of blocked ARE the resources classified blocked, so iterating them counts
-// every victim exactly once — the rendered rows and the verdict's len(r.Blocked)
-// are the same set by construction, with none lost to a grouping miss. Each
-// victim's reason names its root cause(s) via report.RootsOf; a victim whose
-// blockers form a closed cycle reaches no root, so it falls back to naming its
-// immediate blockers rather than vanishing from the report.
-func blockedCases(s *store.Store, blocked map[manifest.NamedResource][]manifest.NamedResource, seen map[manifest.NamedResource]bool) []Case {
-	cases := make([]Case, 0, len(blocked))
-	for victim, blockers := range blocked {
-		roots := report.RootsOf(victim, blocked)
-		if len(roots) == 0 {
-			roots = slices.Clone(blockers)
-		}
-		slices.SortFunc(roots, manifest.NamedResource.Compare)
-		cases = append(cases, Case{ID: victim, Outcome: OutcomeBlocked, Reason: blockedReason(s, roots, seen)})
-	}
-	slices.SortFunc(cases, func(a, b Case) int { return a.ID.Compare(b.ID) })
-	return cases
-}
-
-// blockedReason names the root cause(s) a victim traces to, tagging any the
-// store never loaded — a dependency that does not exist — as "(not found)" to
-// set it apart from a root that failed on its own roster row. Roots without a
-// reported row must include their failure message in the victim's reason.
-func blockedReason(s *store.Store, roots []manifest.NamedResource, seen map[manifest.NamedResource]bool) string {
-	names := make([]string, len(roots))
-	for i, r := range roots {
-		names[i] = r.NamespacedName()
-		if info, known := s.GetStatus(r); !known {
-			names[i] += " (not found)"
-		} else if !seen[r] && info.Status == store.StatusFailed {
-			names[i] += ": " + manifest.TrimSentinelPrefix(info.Message)
-		}
-	}
-	return "blocked by " + strings.Join(names, ", ")
 }
 
 func classify(id manifest.NamedResource, info store.StatusInfo, ok bool) Case {
@@ -320,12 +209,8 @@ func classify(id manifest.NamedResource, info store.StatusInfo, ok bool) Case {
 	case !ok:
 		return Case{ID: id, Outcome: OutcomeFailed, Reason: "no status reported"}
 	case info.Status == store.StatusFailed:
-		// A failure with recorded blockers never ran its body — it's blocked by
-		// a failed/missing dependency, not a primary fault. Report it as blocked
-		// (resolved to its root cause(s) by blockedCases) rather than reprinting
-		// the nested "dependencies failed:" chain on its own row.
 		if info.IsDependencyFailure() {
-			return Case{ID: id, Outcome: OutcomeBlocked}
+			return Case{ID: id, Outcome: OutcomeBlocked, Reason: info.Message}
 		}
 		// Strip the `flux error: input error:` sentinel chain so the
 		// `flate test` table shows the actual cause rather than two

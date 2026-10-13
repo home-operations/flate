@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -92,12 +91,12 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "monitor-b"},
 					{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "excluded-values"},
 				} {
-					if (id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) || side.Filter().ShouldReconcile(id) {
+					if (id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) || side.filter.ShouldReconcile(id) {
 						t.Errorf("excluded sibling or ordering target admitted: %s", id)
 					}
 				}
 				excludedSource := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "excluded-source"}
-				if info, _ := st.GetStatus(excludedSource); !store.IsUnchanged(info) || side.Filter().ShouldReconcile(excludedSource) {
+				if info, _ := st.GetStatus(excludedSource); !store.IsUnchanged(info) || side.filter.ShouldReconcile(excludedSource) {
 					t.Fatalf("discovered excluded source was activated: %+v", info)
 				}
 				if st.GetArtifact(excludedSource) != nil {
@@ -117,11 +116,11 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					t.Fatal("selected KS was skipped instead of reconciled")
 				}
 				chart := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "shared-chart"}
-				if st.GetObject(chart) == nil || !side.Filter().ShouldReconcile(chart) {
+				if st.GetObject(chart) == nil || !side.filter.ShouldReconcile(chart) {
 					t.Fatalf("required shared chart was not admitted: %s", chart)
 				}
 				otherSource := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "selected-source"}
-				if info, _ := st.GetStatus(otherSource); !store.IsUnchanged(info) || side.Filter().ShouldReconcile(otherSource) {
+				if info, _ := st.GetStatus(otherSource); !store.IsUnchanged(info) || side.filter.ShouldReconcile(otherSource) {
 					t.Fatalf("excluded source sibling was activated: %+v", info)
 				}
 				if st.GetArtifact(otherSource) != nil {
@@ -131,7 +130,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					selected, ksID("selected"),
 					{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared"},
 				} {
-					if st.GetObject(id) == nil || !side.Filter().ShouldReconcile(id) {
+					if st.GetObject(id) == nil || !side.filter.ShouldReconcile(id) {
 						t.Fatalf("selected source or consumer missing: %s", id)
 					}
 					if info, _ := st.GetStatus(id); info.Status != store.StatusReady {
@@ -143,13 +142,31 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 				}
 			}
 			if !broken {
-				changes := diff.Changes(diff.DocsFromManifests(base.Result.Manifests, nil), diff.DocsFromManifests(head.Result.Manifests, nil), diff.Options{})
-				if len(changes) != 2 {
-					t.Fatalf("want selected HR and its rendered ConfigMap change: %+v", changes)
-				}
-				for _, c := range changes {
-					if c.Status != diff.StatusChanged || (c.Name != "selected" && c.Name != "selected-rendered") {
-						t.Fatalf("diff included an unrelated change: %+v", c)
+				for i, side := range []Rendered{base, head} {
+					batches := canonicalBatches(side.Result)
+					if len(batches) != 2 || batches[0].Parent != (manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "selected"}) || batches[1].Parent != ksID("selected") {
+						t.Fatalf("unexpected selected producer batches: %+v", batches)
+					}
+					if len(batches[0].Documents) != 1 || len(batches[1].Documents) != 2 {
+						t.Fatalf("unexpected selected document order: %+v", batches)
+					}
+					cm := batches[0].Documents[0]
+					meta, _ := cm["metadata"].(map[string]any)
+					data, _ := cm["data"].(map[string]any)
+					want := "v1"
+					if i == 1 {
+						want = "v2"
+					}
+					if cm["kind"] != manifest.KindConfigMap || meta["name"] != "selected-rendered" || data["greeting"] != want {
+						t.Fatalf("rendered chart values = %+v, want %s", cm, want)
+					}
+					hrDoc, valuesDoc := batches[1].Documents[0], batches[1].Documents[1]
+					valuesMeta, _ := valuesDoc["metadata"].(map[string]any)
+					hrMeta, _ := hrDoc["metadata"].(map[string]any)
+					spec, _ := hrDoc["spec"].(map[string]any)
+					values, _ := spec["values"].(map[string]any)
+					if valuesDoc["kind"] != manifest.KindConfigMap || valuesMeta["name"] != "selected-values" || hrDoc["kind"] != manifest.KindHelmRelease || hrMeta["name"] != "selected" || values["greeting"] != want {
+						t.Fatalf("selected producer document order or values differ: %+v", batches[1].Documents)
 					}
 				}
 			}

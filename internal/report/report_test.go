@@ -2,11 +2,14 @@ package report
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -37,7 +40,12 @@ func TestBuild_GroupsCascadeUnderRoots(t *testing.T) {
 		dependent: {missing},
 	}
 
-	m := Build(f, blocked, nil)
+	m := Build(&orchestrator.Result{
+		Failed: f, Blocked: blocked,
+		Causes: map[manifest.NamedResource][]manifest.NamedResource{
+			root: {leaf, mid}, missing: {dependent},
+		},
+	})
 
 	if len(m.Primary) != 1 || m.Primary[0].ID != root {
 		t.Fatalf("Primary = %+v, want only root", m.Primary)
@@ -74,7 +82,7 @@ func TestBuild_GroupsCascadeUnderRoots(t *testing.T) {
 // TestBuild_PrimaryOnly covers a lone real failure with nothing depending on it.
 func TestBuild_PrimaryOnly(t *testing.T) {
 	a := ks("a")
-	m := Build(failed(a), nil, nil)
+	m := Build(&orchestrator.Result{Failed: failed(a), Causes: map[manifest.NamedResource][]manifest.NamedResource{a: nil}})
 	if len(m.Primary) != 1 || len(m.Missing) != 0 || len(m.Primary[0].Blocks) != 0 {
 		t.Fatalf("want one primary with no blocks, got %+v", m)
 	}
@@ -85,7 +93,7 @@ func TestBuild_PrimaryOnly(t *testing.T) {
 
 // TestBuild_Empty covers a clean run with nothing to show.
 func TestBuild_Empty(t *testing.T) {
-	if !Build(nil, nil, nil).Empty() {
+	if !Build(&orchestrator.Result{}).Empty() {
 		t.Error("a clean run must produce an empty model")
 	}
 }
@@ -98,7 +106,7 @@ func TestWrite_WarningsSection(t *testing.T) {
 		{Resource: hr, Category: manifest.WarnStaleValues, Message: "values not defined by the chart schema", Detail: []string{"image.tagg", "oldKey"}},
 		{Category: manifest.WarnEmptyScan, Message: "no Flux objects found"}, // global
 	}
-	m := Build(nil, nil, warns)
+	m := Build(&orchestrator.Result{Unrelated: warns})
 	if m.Empty() {
 		t.Fatal("a model with warnings is not empty")
 	}
@@ -121,7 +129,7 @@ func TestWrite_WarningsSection(t *testing.T) {
 func TestWrite_WarningCount(t *testing.T) {
 	warns := []manifest.Warning{{Category: manifest.WarnPathConfig, Message: "same root", Count: 4}}
 	var b bytes.Buffer
-	_ = Build(nil, nil, warns).Write(&b, false)
+	_ = Build(&orchestrator.Result{Unrelated: warns}).Write(&b, false)
 	if out := b.String(); !strings.Contains(out, "×4") {
 		t.Errorf("warning repeat count not rendered:\n%s", out)
 	}
@@ -138,7 +146,7 @@ func TestWrite_PrimaryMessageIsMultiLine(t *testing.T) {
 			"duplicate resource(s) produced by multiple accumulated paths:\n  - ./one\n  - ./two"},
 	}
 	var b bytes.Buffer
-	if err := Build(f, nil, nil).Write(&b, false); err != nil {
+	if err := Build(&orchestrator.Result{Failed: f, Causes: map[manifest.NamedResource][]manifest.NamedResource{a: nil}}).Write(&b, false); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -159,7 +167,12 @@ func TestBuild_BlockedCountsDistinctResources(t *testing.T) {
 		dual: {root, missing}, // blocked by a failed parent AND a missing dep
 	}
 
-	m := Build(f, blocked, nil)
+	m := Build(&orchestrator.Result{
+		Failed: f, Blocked: blocked,
+		Causes: map[manifest.NamedResource][]manifest.NamedResource{
+			root: {dual}, missing: {dual},
+		},
+	})
 	if m.Blocked != 1 {
 		t.Errorf("Blocked = %d, want 1 distinct blocked resource", m.Blocked)
 	}
@@ -244,15 +257,68 @@ func TestVerdict(t *testing.T) {
 	}
 }
 
-// TestRoots_WalksTransitiveChainToTrueRoot pins that a leaf folds under the
-// primary at the top of its blocker chain.
-func TestRoots_WalksTransitiveChainToTrueRoot(t *testing.T) {
-	root, mid, leaf := ks("root"), ks("mid"), ks("leaf")
-	byRoot := roots(map[manifest.NamedResource][]manifest.NamedResource{
-		mid:  {root},
-		leaf: {mid},
-	})
-	if got := byRoot[root]; len(got) != 2 {
-		t.Fatalf("root should gather mid and leaf, got %+v", got)
+func TestBuild_PreparedCycleRoot(t *testing.T) {
+	root, peer, leaf := ks("root"), ks("peer"), ks("leaf")
+	result := &orchestrator.Result{
+		Failed: map[manifest.NamedResource]store.StatusInfo{
+			root: {Status: store.StatusFailed, Message: "dependency cycle: blocked by " + peer.String()},
+			peer: {Status: store.StatusFailed, Message: "dependency cycle: blocked by " + root.String()},
+			leaf: {Status: store.StatusFailed, Message: "dependencies failed"},
+		},
+		Blocked: map[manifest.NamedResource][]manifest.NamedResource{
+			root: {peer}, peer: {root}, leaf: {root},
+		},
+		Causes: map[manifest.NamedResource][]manifest.NamedResource{root: {leaf}, peer: nil},
+	}
+	m := Build(result)
+	if len(m.Primary) != 2 || m.Blocked != 1 {
+		t.Fatalf("want 2 primary cycles and 1 distinct blocked child, got %+v", m)
+	}
+	var b bytes.Buffer
+	if err := m.Write(&b, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"dependency cycle: blocked by " + peer.String(), "blocks flux-system/leaf", "2 failed · 1 blocked"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("prepared report missing %q:\n%s", want, b.String())
+		}
+	}
+	if len(result.Blocked) != 3 || result.Failed[leaf].Message != "dependencies failed" {
+		t.Fatal("Build mutated the selected failure snapshot")
 	}
 }
+
+func TestWriteErrors_NonResourceDiagnostics(t *testing.T) {
+	failure := &orchestrator.FailuresError{Message: "resource failure"}
+	closeErr := errors.New("cache close failed")
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "none"},
+		{name: "failure summary", err: failure},
+		{name: "wrapped failure", err: fmt.Errorf("render: %w", failure)},
+		{name: "wrapped close", err: fmt.Errorf("close: %w", closeErr), want: "flate error: close: cache close failed\n"},
+		{name: "joined", err: errors.Join(failure, fmt.Errorf("close: %w", closeErr), errors.New("cancelled")), want: "flate error: close: cache close failed\ncancelled\n"},
+		{name: "wrapped joined", err: fmt.Errorf("run: %w", errors.Join(failure, closeErr)), want: "flate error: cache close failed\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var b bytes.Buffer
+			if err := WriteErrors(&b, tc.err); err != nil {
+				t.Fatal(err)
+			}
+			if got := b.String(); got != tc.want {
+				t.Fatalf("WriteErrors = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	writeErr := errors.New("write failed")
+	if err := WriteErrors(errorWriter{writeErr}, errors.Join(failure, closeErr)); !errors.Is(err, writeErr) {
+		t.Fatalf("writer error = %v, want %v", err, writeErr)
+	}
+}
+
+type errorWriter struct{ err error }
+
+func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,7 +23,6 @@ import (
 	"github.com/home-operations/flate/internal/report"
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -207,16 +205,6 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 		"size of the persistent on-disk kustomize render cache in megabytes (0 disables)")
 }
 
-// skipResourceKinds combines the canonical skipped kinds with --skip-kinds.
-// The stream emitter needs this union for raw artifacts before Result filtering.
-func (c *commonFlags) skipResourceKinds() []string {
-	return helm.Options{
-		SkipCRDs:    c.skipCRDs,
-		SkipSecrets: c.skipSecrets,
-		SkipKinds:   c.skipKinds,
-	}.SkipResourceKinds()
-}
-
 // listFlags holds flags that are only meaningful for list/get commands.
 // Kept separate from commonFlags so commands that don't filter by labels
 // (build/diff/test) don't carry a dead field.
@@ -258,44 +246,12 @@ func bindBase(fs *pflag.FlagSet, f *commonFlags) {
 			"Mutually exclusive with --path-orig.")
 }
 
-// scopedNamespaces returns the namespace filter the command should
-// honor. nil ↦ "no filter" (every namespace).
-//
-//   - An explicit --namespace value always wins.
-//   - In --path-orig mode, the namespaces of the resolved keep-set
-//     are used so commands automatically focus on what actually
-//     changed without the user having to set -n.
-//   - Otherwise every namespace is included.
-func (c *commonFlags) scopedNamespaces(filter *change.Filter) map[string]struct{} {
-	if c.namespace != "" {
-		return map[string]struct{}{c.namespace: {}}
+func (c *commonFlags) roots(name string, kinds ...string) []manifest.NamedResource {
+	roots := make([]manifest.NamedResource, len(kinds))
+	for i, kind := range kinds {
+		roots[i] = manifest.NamedResource{Kind: kind, Namespace: c.namespace, Name: name}
 	}
-	if filter.Enabled() {
-		if ns := filter.KeepNamespaces(); len(ns) > 0 {
-			return ns
-		}
-	}
-	return nil
-}
-
-// includeNamespace reports whether ns passes the effective filter.
-// Empty namespace (cluster-scoped resources) is always included.
-func (c *commonFlags) includeNamespace(filter *change.Filter, ns string) bool {
-	if ns == "" {
-		return true
-	}
-	// Explicit --namespace is a single-element scope: compare directly
-	// rather than letting scopedNamespaces allocate a one-entry map per
-	// resource on this in-loop path.
-	if c.namespace != "" {
-		return ns == c.namespace
-	}
-	scope := c.scopedNamespaces(filter)
-	if scope == nil {
-		return true
-	}
-	_, ok := scope[ns]
-	return ok
+	return roots
 }
 
 // helmFlags collect the helm template options. Mirrors flux-local's
@@ -511,7 +467,7 @@ func (c *commonFlags) resolveCacheRoot() string {
 	return resolveCacheRoot(&c.cacheDir)
 }
 
-func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags, pre ...func(*orchestrator.Orchestrator) store.Unsubscribe) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
+func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
 	if c.path == "" {
 		return nil, nil, errors.New("path is required")
 	}
@@ -534,7 +490,7 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags, pre ...fun
 		return nil, nil, err
 	}
 	defer cleanup()
-	return runOrchestratorCfg(ctx, buildOrchCfg(c, h), pre...)
+	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
 }
 
 // validatePathFlag rejects a flag value that doesn't point at a real
@@ -624,11 +580,7 @@ func (p *profileValue) Set(v string) error {
 // resource failures: the partial output is still usable. A nil
 // orchestrator indicates a fatal init/bootstrap error and callers
 // should bail.
-// pre hooks (optional, variadic so existing call sites are unchanged) run
-// after New and before Render — the seam for attaching store listeners that
-// must observe the run live (the --stream emitter). Each returns its
-// unsubscribe, released once Render finishes.
-func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...func(*orchestrator.Orchestrator) store.Unsubscribe) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
+func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
 	o, err := orchestrator.New(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -672,9 +624,6 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...fun
 			barSink.setProgram(nil)
 		}()
 	}
-	for _, hook := range pre {
-		defer hook(o)()
-	}
 	res, err := o.Render(ctx)
 	// A Bootstrap failure has no Result. Callers must receive a nil
 	// orchestrator so they surface the error instead of reading a
@@ -683,44 +632,6 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config, pre ...fun
 		return nil, nil, err
 	}
 	return o, res, err
-}
-
-func scopedRunError(scope failureScope, runErr error) error {
-	if runErr == nil || scope.failed == nil {
-		return runErr
-	}
-	extras := nonResourceRunErrors(runErr)
-	if len(scope.failed) == 0 {
-		return errors.Join(extras...)
-	}
-	return errors.Join(aggregateScopedFailures(scope), errors.Join(extras...))
-}
-
-// scopedWarnings projects Result.Warnings onto c's namespace filter: a
-// resource-attributed advisory is kept only when its namespace is in scope;
-// render-global advisories (zero Resource) always pass. Mirrors scopedFailures
-// so the footer's warnings section honors --namespace like the failure list.
-func scopedWarnings(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags) []manifest.Warning {
-	if o == nil || res == nil || len(res.Warnings) == 0 {
-		return nil
-	}
-	out := make([]manifest.Warning, 0, len(res.Warnings))
-	for _, w := range res.Warnings {
-		if w.Resource != (manifest.NamedResource{}) && c != nil &&
-			!c.includeNamespace(o.Filter(), w.Resource.Namespace) {
-			continue
-		}
-		out = append(out, w)
-	}
-	return out
-}
-
-// emitResult joins an emit-time error with the scoped run error so a
-// partial render still surfaces both the IO/format failure and any
-// per-resource reconcile failures. A nil emitErr collapses to just the run
-// error (and both nil to nil) via errors.Join's nil handling.
-func emitResult(emitErr error, scope failureScope, runErr error) error {
-	return errors.Join(emitErr, scopedRunError(scope, runErr))
 }
 
 // logBuffer is the process-wide deferred-log sink installed by setLogLevel; the
@@ -744,144 +655,22 @@ type reportedError struct{ err error }
 func (e reportedError) Error() string { return e.err.Error() }
 func (e reportedError) Unwrap() error { return e.err }
 
-// reportFailures renders fatal causes and unrelated resource warnings from the
-// same projection as the machine error. Named runs need a non-resource error
-// diagnostic before reportedError suppresses the top-level printer.
-func reportFailures(w io.Writer, scope failureScope, err error) error {
-	m := failureReport(scope)
+// reportFailures preserves the command's named error-write policy.
+func reportFailures(w io.Writer, res *orchestrator.Result, named bool, err error) error {
+	m := report.Build(res)
 	if m.Empty() {
 		return err
 	}
-	if writeErr := m.Write(w, style.ColorEnabled(w)); writeErr != nil && scope.named {
+	if writeErr := m.Write(w, style.ColorEnabled(w)); writeErr != nil && named {
 		return errors.Join(writeErr, err)
 	}
-	if extras := errors.Join(nonResourceRunErrors(err)...); extras != nil {
-		if _, writeErr := fmt.Fprintln(w, "flate error:", extras); writeErr != nil {
-			return errors.Join(writeErr, err)
-		}
+	if writeErr := report.WriteErrors(w, err); writeErr != nil {
+		return errors.Join(writeErr, err)
 	}
 	if err == nil {
 		return nil
 	}
 	return reportedError{err}
-}
-
-// aggregateScopedFailures is the machine error value for a scoped failure set.
-// It enumerates the PRIMARY failures (root causes) one per line and tallies the
-// derived ones as "(+N blocked …)" rather than listing every cascade victim, so
-// the plain error a verb returns — printed by run() for get/diff, carried for
-// errors.Is / the non-zero exit on every verb — stays a concise root-cause
-// summary. build/test additionally render the styled report (see
-// reportFailures). Typed as *orchestrator.FailuresError so scopedRunError can
-// recognize and re-scope an aggregate that arrives as the run error.
-func aggregateScopedFailures(scope failureScope) error {
-	model := failureReport(scope)
-	msgs := make([]string, 0, len(model.Primary)+len(model.Missing))
-	for _, root := range model.Primary {
-		msgs = append(msgs, fmt.Sprintf("%s: %s", root.ID, root.Msg))
-	}
-	for _, root := range model.Missing {
-		msgs = append(msgs, fmt.Sprintf("%s: not found", root.ID))
-	}
-	slices.Sort(msgs)
-	msg := fmt.Sprintf("reconcile completed with %d failure(s)", len(msgs))
-	if len(msgs) > 0 {
-		msg += ":\n  " + strings.Join(msgs, "\n  ")
-	}
-	if model.Blocked > 0 {
-		msg += fmt.Sprintf("\n  (+%d blocked by failed/missing dependencies)", model.Blocked)
-	}
-	return &orchestrator.FailuresError{Message: msg}
-}
-
-// Closed blocker cycles become primary causes; downstream failures remain blocked.
-func failureReport(scope failureScope) report.Model {
-	model := report.Build(scope.failed, scope.blocked, scope.warnings)
-	covered := map[manifest.NamedResource]bool{}
-	for _, root := range model.Primary {
-		covered[root.ID] = true
-		for _, id := range root.Blocks {
-			covered[id] = true
-		}
-	}
-	for _, root := range model.Missing {
-		for _, id := range root.RequiredBy {
-			covered[id] = true
-		}
-	}
-	cycles := map[manifest.NamedResource]bool{}
-	for id := range scope.failed {
-		if covered[id] {
-			continue
-		}
-		seen := map[manifest.NamedResource]bool{}
-		var reaches func(manifest.NamedResource) bool
-		reaches = func(dep manifest.NamedResource) bool {
-			if dep == id {
-				return true
-			}
-			if seen[dep] {
-				return false
-			}
-			seen[dep] = true
-			return slices.ContainsFunc(scope.blocked[dep], reaches)
-		}
-		if slices.ContainsFunc(scope.blocked[id], reaches) {
-			cycles[id] = true
-		}
-	}
-	if len(cycles) == 0 {
-		return model
-	}
-	blocked := maps.Clone(scope.blocked)
-	for id := range cycles {
-		delete(blocked, id)
-	}
-	model = report.Build(scope.failed, blocked, scope.warnings)
-	for i, root := range model.Primary {
-		if !cycles[root.ID] {
-			continue
-		}
-		peers := slices.Clone(scope.blocked[root.ID])
-		slices.SortFunc(peers, manifest.NamedResource.Compare)
-		names := make([]string, len(peers))
-		for i, p := range peers {
-			names[i] = p.String()
-		}
-		model.Primary[i].Msg = "dependency cycle: blocked by " + strings.Join(names, ", ")
-	}
-	return model
-}
-
-func nonResourceRunErrors(err error) []error {
-	var out []error
-	for _, leaf := range flattenErrors(err) {
-		if _, ok := errors.AsType[*orchestrator.FailuresError](leaf); ok {
-			continue // re-scoped + re-rendered from res.Failed, not carried verbatim
-		}
-		out = append(out, leaf)
-	}
-	return out
-}
-
-func flattenErrors(err error) []error {
-	if err == nil {
-		return nil
-	}
-	if _, ok := errors.AsType[*orchestrator.FailuresError](err); !ok {
-		return []error{err}
-	}
-	if uw, ok := err.(interface{ Unwrap() []error }); ok {
-		var out []error
-		for _, child := range uw.Unwrap() {
-			out = append(out, flattenErrors(child)...)
-		}
-		return out
-	}
-	if uw, ok := err.(interface{ Unwrap() error }); ok {
-		return flattenErrors(uw.Unwrap())
-	}
-	return []error{err}
 }
 
 func cmdContext(cmd *cobra.Command) context.Context {

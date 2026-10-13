@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -14,54 +15,8 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-func TestSuppressionReasons(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		namespace string
-		message   string
-		wantSkip  bool
-	}{
-		{name: "skipped", namespace: "apps", message: "skipped: missing Secret", wantSkip: true},
-		{name: "outside namespace", namespace: "other", message: "skipped: missing Secret"},
-		{name: "unchanged", namespace: "apps", message: store.MsgUnchanged},
-		{name: "suspended", namespace: "apps", message: store.MsgSuspended},
-		{name: "ready", namespace: "apps", message: "rendered"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
-			if err != nil {
-				t.Fatal(err)
-			}
-			objects := []manifest.BaseManifest{
-				&manifest.Kustomization{Name: "apps", Namespace: tc.namespace},
-				&manifest.HelmRelease{Name: "demo", Namespace: tc.namespace},
-			}
-			failedID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "failed"}
-			unrelatedID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "unrelated"}
-			failure := store.StatusInfo{Status: store.StatusFailed, Message: "render failed"}
-			side := diffSide{
-				O: o,
-				Res: &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
-					failedID: failure, unrelatedID: failure,
-				}},
-				Failures: failureScope{failed: map[manifest.NamedResource]store.StatusInfo{failedID: failure}},
-			}
-			want := map[manifest.NamedResource]string{failedID: failure.Message}
-			for _, obj := range objects {
-				o.Store().AddObject(obj)
-				o.Store().UpdateStatus(obj.Named(), store.StatusReady, tc.message)
-				if tc.wantSkip {
-					want[obj.Named()] = "missing Secret"
-				}
-			}
-			assert.Diff(t, suppressionReasons(side, &commonFlags{namespace: "apps"}), want)
-		})
-	}
-}
 
 func TestRun_Diff_OneSidedSkipSuppressed(t *testing.T) {
 	for _, tc := range []struct {
@@ -94,6 +49,7 @@ kind: ConfigMap
 metadata: {name: '{{ .Release.Name }}', namespace: apps}
 data:
   greeting: {{ .Values.greeting }}
+  image: ghcr.io/demo/private:v1
 `)
 				chart := `  chart:
     spec:
@@ -137,6 +93,34 @@ spec:
 				"--allow-missing-secrets", "--output", format, "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
 			if code != 0 {
 				t.Fatalf("diff hr exited %d: stderr=%s", code, stderr)
+			}
+			images, imageStderr, imageCode := runCLI(t, "diff", "images", "--include-removed", "--path", current, "--path-orig", orig,
+				"--allow-missing-secrets", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+			assert.Equal(t, imageCode, 0)
+			if tc.wantRemove {
+				assert.Equal(t, images, "ghcr.io/demo/private:v1\n")
+			} else {
+				assert.Equal(t, images, "")
+			}
+			if tc.wantSide != "" || tc.json {
+				side := tc.wantSide
+				if side == "" {
+					side = "current"
+				}
+				prefix := "flate warning: HelmRelease apps/demo: 1 object not rendered on the " + side + " side; diff suppressed ("
+				if !strings.HasPrefix(imageStderr, prefix) || !strings.Contains(imageStderr, "missing-ca") {
+					t.Fatalf("image suppression missing: %s", imageStderr)
+				}
+				writeErr := errors.New("image disclosure write failed")
+				cmd := New("test")
+				cmd.SetContext(t.Context())
+				cmd.SetArgs([]string{"diff", "images", "--path", current, "--path-orig", orig,
+					"--allow-missing-secrets", "--cache-dir", t.TempDir(), "--concurrency", "2"})
+				cmd.SetOut(&bytes.Buffer{})
+				cmd.SetErr(failingWriter{err: writeErr})
+				if err := cmd.Execute(); !errors.Is(err, writeErr) {
+					t.Fatalf("image disclosure writer error lost: %v", err)
+				}
 			}
 			if tc.json {
 				var got struct {
@@ -236,6 +220,8 @@ spec:
 		{name: "current/apps", side: "current", namespace: "apps", orig: orig, current: current},
 		{name: "orig/apps", side: "orig", namespace: "apps", orig: current, current: orig},
 		{name: "current failed", side: "current", orig: orig, current: failed, wantCode: 1},
+		{name: "current failed/apps", side: "current", namespace: "apps", orig: orig, current: failed},
+		{name: "orig failed/apps", side: "orig", namespace: "apps", orig: failed, current: orig},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr, code := runCLI(t, "diff", "all", "--path", tc.current, "--path-orig", tc.orig,
@@ -853,5 +839,65 @@ spec:
 				t.Errorf("external selection produced resource output:\n%s", stdout)
 			}
 		})
+	}
+}
+
+func TestRun_Diff_ProducerDispositionAndPath(t *testing.T) {
+	for _, workers := range []string{"2", "4"} {
+		for _, mode := range []string{"both-failed", "both-suspended", "path-only", "path-content"} {
+			t.Run(workers+"/"+mode, func(t *testing.T) {
+				orig, current := writeFixture(t), writeFixture(t)
+				switch mode {
+				case "both-failed":
+					testutil.WriteFile(t, orig, "apps/kustomization.yaml", "resources: [cm.yaml, missing-before.yaml]\n")
+					testutil.WriteFile(t, current, "apps/kustomization.yaml", "resources: [cm.yaml, missing-after.yaml]\n")
+				case "both-suspended":
+					appendScopeSpec(t, orig, "flux/cluster.yaml", "  suspend: true\n  postBuild: {substitute: {CONTROL: before}}\n")
+					appendScopeSpec(t, current, "flux/cluster.yaml", "  suspend: true\n  postBuild: {substitute: {CONTROL: after}}\n")
+				default:
+					if err := os.Rename(filepath.Join(current, "apps"), filepath.Join(current, "moved")); err != nil {
+						t.Fatal(err)
+					}
+					body, err := os.ReadFile(filepath.Join(current, "flux/cluster.yaml"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					testutil.WriteFile(t, current, "flux/cluster.yaml", strings.Replace(string(body), "./apps", "./moved", 1))
+					if mode == "path-content" {
+						testutil.WriteFile(t, current, "moved/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: changed}\n")
+					}
+				}
+				stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
+					"--output", "json", "--cache-dir", t.TempDir(), "--concurrency", workers)
+				wantCode := 0
+				if mode == "both-failed" {
+					wantCode = 1
+				}
+				if code != wantCode {
+					t.Fatalf("exit=%d want=%d stderr=%s", code, wantCode, stderr)
+				}
+				var out struct {
+					Changes    []diff.Change
+					Suppressed []diff.Suppression
+				}
+				if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+					t.Fatalf("JSON %q: %v", stdout, err)
+				}
+				switch mode {
+				case "both-failed", "both-suspended":
+					if len(out.Changes) != 0 || len(out.Suppressed) != 1 || out.Suppressed[0].Side != "both" || out.Suppressed[0].Count != 0 {
+						t.Fatalf("unavailable producer disclosure: %s", stdout)
+					}
+				case "path-only":
+					if len(out.Changes) != 0 || len(out.Suppressed) != 0 {
+						t.Fatalf("path-only move became a change: %s", stdout)
+					}
+				case "path-content":
+					if len(out.Changes) != 1 || out.Changes[0].Status != diff.StatusChanged || out.Changes[0].Parent.Path != "moved" {
+						t.Fatalf("content move did not pair with current path: %s", stdout)
+					}
+				}
+			})
+		}
 	}
 }

@@ -15,9 +15,8 @@ type Parent struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 	// Path is the Flux Kustomization spec.path (only set for KS
-	// parents). Slash-normalized, with the conventional `./` prefix
-	// stripped. Disambiguates two KS parents that share a (kind, ns,
-	// name) but render from different overlays.
+	// parents), with the conventional `./` prefix stripped. It is display
+	// metadata, not part of producer identity.
 	Path string `json:"path"`
 }
 
@@ -35,7 +34,7 @@ type Doc struct {
 	Parent   Parent
 }
 
-// Options tunes RenderDocs behavior.
+// Options tunes Compare and RenderDocs behavior.
 type Options struct {
 	// StripAttrs lists annotation/label keys removed from each
 	// manifest's metadata (and pod-template metadata) before the diff
@@ -65,9 +64,10 @@ type Options struct {
 	// Format selects the output style (see the Format constants). The
 	// zero value renders the human default.
 	Format Format
-	// Suppressed lists the producers SuppressFailed withheld from the two
-	// doc sets. Text and HTML formats disclose them in a leading note block;
-	// JSON includes them in its suppressed array.
+	// Suppressed lists additional producer disclosures. Compare appends its
+	// selected suppression notes without modifying this slice. Text and HTML
+	// formats disclose them in a leading note block; JSON includes them in its
+	// suppressed array.
 	Suppressed []Suppression
 }
 

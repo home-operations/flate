@@ -2,6 +2,7 @@ package orchestrator_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -94,12 +95,19 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 		}
 	}
 
-	// The structured diff: exactly cfg-a changed.
-	changes := diff.Changes(
-		diff.DocsFromManifests(base.Result.Manifests, nil),
-		diff.DocsFromManifests(head.Result.Manifests, nil),
-		diff.Options{},
-	)
+	selected, selectedErr := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
+		[]manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}, nil)
+	body, err := diff.Compare(selected, selectedErr, diff.Options{Format: diff.FormatJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output struct {
+		Changes []diff.Change `json:"changes"`
+	}
+	if err := json.Unmarshal(body, &output); err != nil {
+		t.Fatal(err)
+	}
+	changes := output.Changes
 	if len(changes) != 1 {
 		t.Fatalf("want exactly 1 change (cfg-a), got %d: %+v", len(changes), changes)
 	}
@@ -181,11 +189,19 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 	if base.Result == nil || head.Result == nil {
 		t.Fatalf("both sides must render: base=%v head=%v", base.Result, head.Result)
 	}
-	changes := diff.Changes(
-		diff.DocsFromManifests(base.Result.Manifests, nil),
-		diff.DocsFromManifests(head.Result.Manifests, nil),
-		diff.Options{},
-	)
+	selected, selectedErr := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
+		[]manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}, nil)
+	body, err := diff.Compare(selected, selectedErr, diff.Options{Format: diff.FormatJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output struct {
+		Changes []diff.Change `json:"changes"`
+	}
+	if err := json.Unmarshal(body, &output); err != nil {
+		t.Fatal(err)
+	}
+	changes := output.Changes
 	if len(changes) != 1 {
 		t.Fatalf("want exactly 1 change (demo ConfigMap), got %d: %+v", len(changes), changes)
 	}

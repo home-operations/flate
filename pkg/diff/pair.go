@@ -56,12 +56,9 @@ func (p pairedResource) label() string {
 
 // pairKey identifies a resource for cross-set matching.
 type pairKey struct {
-	// pPath disambiguates two KS parents with the same (kind, ns, name)
-	// but different spec.path — a real-world collision in repos where
-	// the same KS is rendered twice from different overlays.
-	pKind, pNS, pName, pPath string
-	apiVersion               string
-	kind, ns, name           string
+	pKind, pNS, pName string
+	apiVersion        string
+	kind, ns, name    string
 }
 
 // pair matches each resource in left against its counterpart in right
@@ -76,7 +73,7 @@ func pair(left, right []Doc) []pairedResource {
 		kind := manifest.DocKind(d.Manifest)
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		name, ns := manifest.DocMetadata(d.Manifest)
-		k := pairKey{d.Parent.Kind, d.Parent.Namespace, d.Parent.Name, d.Parent.Path, apiVersion, kind, ns, name}
+		k := pairKey{d.Parent.Kind, d.Parent.Namespace, d.Parent.Name, apiVersion, kind, ns, name}
 		p, ok := idx[k]
 		if !ok {
 			p = &pairedResource{parent: d.Parent, apiVersion: apiVersion, kind: kind, namespace: ns, name: name}
@@ -85,6 +82,7 @@ func pair(left, right []Doc) []pairedResource {
 		dst := &p.a
 		if side == "right" {
 			dst = &p.b
+			p.parent = d.Parent
 		}
 		if *dst != nil {
 			slog.Warn("diff: duplicate document shadows an earlier document",

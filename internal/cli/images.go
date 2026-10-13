@@ -6,23 +6,12 @@ import (
 
 	"github.com/home-operations/flate/internal/format"
 	"github.com/home-operations/flate/pkg/image"
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
-// collectImages returns the union of images extracted from every
-// rendered Kustomization and HelmRelease document. Namespace scope on
-// c is honored. Walks Result.Manifests directly (no Store
-// GetArtifact + type-assertion dance).
-func collectImages(o *orchestrator.Orchestrator, res *orchestrator.Result, c *commonFlags) map[string]struct{} {
+func collectImages(res *orchestrator.Result) map[string]struct{} {
 	set := map[string]struct{}{}
-	for id, docs := range res.Manifests {
-		if id.Kind != manifest.KindKustomization && id.Kind != manifest.KindHelmRelease {
-			continue
-		}
-		if !c.includeNamespace(o.Filter(), id.Namespace) {
-			continue
-		}
+	for _, docs := range res.Manifests {
 		for _, doc := range docs {
 			for _, img := range image.Extract(doc) {
 				set[img] = struct{}{}

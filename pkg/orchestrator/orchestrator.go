@@ -325,6 +325,26 @@ type Result struct {
 	// (submodule skips, cache resets) which stay on stderr. A consumer like
 	// konflate surfaces these alongside the diff.
 	Warnings []manifest.Warning
+	// Objects contains selected roots after metadata filtering, grouped by requested kind.
+	Objects []manifest.BaseManifest
+	// Counts records matched roots per requested kind before label filtering.
+	// It is nonnil only on completed snapshots returned by Select.
+	Counts map[string]int
+	// Statuses contains roster statuses and eligible diagnostic failures. Blocked
+	// messages are prepared for test reports without changing dependency identity.
+	Statuses map[manifest.NamedResource]store.StatusInfo
+	// ChartVersions contains versions resolved from selected HR chartRef sources.
+	ChartVersions map[manifest.NamedResource]string
+	// Causes maps prepared failure roots to sorted distinct blocked victims.
+	// Missing roots have no Failed entry; closed cycle roots carry prepared Failed messages.
+	Causes map[manifest.NamedResource][]manifest.NamedResource
+	// Unavailable contains canonical failure, soft-skip or suspension evidence for
+	// paired producer output, independently of fatal namespace scope.
+	Unavailable map[manifest.NamedResource]store.StatusInfo
+	// Unrelated contains prepared advisories for failures outside named fatal scope.
+	Unrelated []manifest.Warning
+	// External contains paired external-source skip disclosures, honoring explicit namespace scope.
+	External []manifest.Warning
 }
 
 // New constructs an Orchestrator. It allocates the Store and TaskService
@@ -454,23 +474,20 @@ func (o *Orchestrator) WithFetcher(kind string, f source.Fetcher) *Orchestrator 
 	return o
 }
 
-// Filter returns the change filter (may be nil-but-non-active).
-func (o *Orchestrator) Filter() *change.Filter { return o.filter }
-
-// ParentOf returns the structural parent, falling back to rendered ownership.
+// parentOf returns the structural parent, falling back to rendered ownership.
 // Bootstrap must have completed; structural ownership is immutable thereafter.
-func (o *Orchestrator) ParentOf(id manifest.NamedResource) (manifest.NamedResource, bool) {
+func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResource, bool) {
 	if record, _ := o.index.Lookup(id); record.Parent != (manifest.NamedResource{}) {
 		return record.Parent, true
 	}
 	return o.store.EmittedParent(id)
 }
 
-// ChildrenByParent returns structural and rendered ownership, including children
+// childrenByParent returns structural and rendered ownership, including children
 // whose structural parents failed before emission. Bootstrap must have completed
 // and Render must have returned; do not call concurrently with either. Returned
 // maps and sorted, deduplicated slices are independent of orchestrator state.
-func (o *Orchestrator) ChildrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
+func (o *Orchestrator) childrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
 	children := o.store.EmittedChildrenByParent()
 	if o.index != nil {
 		for child, record := range o.index.Records {
@@ -486,11 +503,11 @@ func (o *Orchestrator) ChildrenByParent() map[manifest.NamedResource][]manifest.
 	return children
 }
 
-// RequiredDataDependencies returns authored HR/KS inputs and their known
+// requiredDataDependencies returns authored HR/KS inputs and their known
 // producers and owners, including optional or unavailable inputs. Bootstrap
 // must have completed and Render must have returned; do not call concurrently
 // with either. The sorted, deduplicated slice is independent of stored state.
-func (o *Orchestrator) RequiredDataDependencies(consumer manifest.NamedResource) []manifest.NamedResource {
+func (o *Orchestrator) requiredDataDependencies(consumer manifest.NamedResource) []manifest.NamedResource {
 	deps := map[manifest.NamedResource]struct{}{}
 	addOwners := func(id manifest.NamedResource) {
 		record, _ := o.index.Lookup(id)

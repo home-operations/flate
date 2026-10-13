@@ -7,27 +7,28 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // Side names the side of a comparison. Left is the orig (base, --path-orig)
-// tree and right the current (head, --path) tree, matching RenderDocs' and
-// Changes' argument order.
+// tree and right the current (head, --path) tree. Suppression also uses "both"
+// when output is withheld for unavailable producers on both sides.
 type Side string
 
 // Side values, in the vocabulary the CLI uses for --path-orig / --path.
 const (
 	SideOrig    Side = "orig"
 	SideCurrent Side = "current"
+	sideBoth    Side = "both"
 )
 
-// Suppression records a producer (Kustomization or HelmRelease) whose
-// rendered objects were withheld because rendering failed or was skipped on
-// exactly one side, avoiding misleading wholesale additions or deletions.
+// Suppression records a producer whose rendered objects were withheld because
+// rendering failed, was soft-skipped, or was suspended.
 type Suppression struct {
 	Parent Parent `json:"parent"`
-	Side   Side   `json:"side"`   // the side whose rendering failed or was skipped
-	Count  int    `json:"count"`  // objects the other side rendered and the diff withheld
-	Reason string `json:"reason"` // the render failure or skip reason
+	Side   Side   `json:"side"`   // orig, current, or both unavailable sides
+	Count  int    `json:"count"`  // withheld healthy-side entries, or all entries for both
+	Reason string `json:"reason"` // the render failure, skip, or suspension reason
 }
 
 // String renders the suppression as the one-line note the formats emit.
@@ -36,59 +37,153 @@ func (s Suppression) String() string {
 	if s.Count == 1 {
 		noun = "object"
 	}
+	id := manifest.NamedResource{Namespace: s.Parent.Namespace, Name: s.Parent.Name}
+	reason := strings.Join(strings.Fields(s.Reason), " ")
+	if s.Side == sideBoth {
+		return fmt.Sprintf("%s %s: %d %s withheld; diff suppressed (%s)",
+			s.Parent.Kind, id.NamespacedName(), s.Count, noun, reason)
+	}
 	return fmt.Sprintf("%s %s: %d %s not rendered on the %s side; diff suppressed (%s)",
-		s.Parent.Kind, (manifest.NamedResource{Namespace: s.Parent.Namespace, Name: s.Parent.Name}).NamespacedName(), s.Count, noun, s.Side,
-		strings.Join(strings.Fields(s.Reason), " "))
+		s.Parent.Kind, id.NamespacedName(), s.Count, noun, s.Side, reason)
 }
 
-// SuppressFailed withholds every doc whose parent is in exactly one of
-// leftFailed / rightFailed (parent id -> render failure or skip reason) and returns the
-// trimmed sets plus one Suppression per affected parent, sorted. Docs are
-// dropped from BOTH sides so a stale artifact on the failed or skipped side cannot
-// surface as a change either. A parent failed or skipped on both sides, or with nothing
-// rendered on the healthy side, yields no Suppression. Pass the result to
-// RenderDocs via Options.Suppressed so the withheld set is disclosed in the
-// output; feed the trimmed sets to Changes the same way.
-func SuppressFailed(left, right []Doc, leftFailed, rightFailed map[manifest.NamedResource]string) (l, r []Doc, suppressed []Suppression) {
-	failedOn := func(p Parent) (Side, string, bool) {
-		id := manifest.NamedResource{Kind: p.Kind, Namespace: p.Namespace, Name: p.Name}
-		lm, lf := leftFailed[id]
-		rm, rf := rightFailed[id]
-		switch {
-		case lf && !rf:
-			return SideOrig, lm, true
-		case rf && !lf:
-			return SideCurrent, rm, true
+type suppressionPlan struct {
+	note          Suppression
+	discloseEmpty bool
+}
+
+// SuppressFailed withholds every doc whose producer is in exactly one of
+// leftFailed / rightFailed (producer id -> render failure or skip reason),
+// returning trimmed sets and notes sorted by parent. Docs are dropped from
+// both sides so stale output cannot surface as a change.
+// A producer unavailable on both sides, or with nothing rendered on the healthy
+// side, yields no Suppression. Pass notes through Options.Suppressed to disclose
+// the withheld output in RenderDocs.
+func SuppressFailed(left, right []Doc, leftFailed, rightFailed map[manifest.NamedResource]string) ([]Doc, []Doc, []Suppression) {
+	plans := make(map[manifest.NamedResource]suppressionPlan, len(leftFailed)+len(rightFailed))
+	for id, reason := range leftFailed {
+		if _, ok := rightFailed[id]; !ok {
+			plans[id] = suppressionPlan{note: Suppression{Side: SideOrig, Reason: reason}}
 		}
-		return "", "", false
 	}
-	byParent := map[Parent]*Suppression{}
-	keep := func(docs []Doc, this Side) []Doc {
-		out := make([]Doc, 0, len(docs))
-		for _, d := range docs {
-			side, reason, ok := failedOn(d.Parent)
+	for id, reason := range rightFailed {
+		if _, ok := leftFailed[id]; !ok {
+			plans[id] = suppressionPlan{note: Suppression{Side: SideCurrent, Reason: reason}}
+		}
+	}
+	return suppress(left, right, plans, func(doc Doc, _ Side) (Parent, int) { return doc.Parent, 1 })
+}
+
+func selectedSuppressionPlans(left, right map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]suppressionPlan {
+	plans := make(map[manifest.NamedResource]suppressionPlan, len(left)+len(right))
+	add := func(id manifest.NamedResource) {
+		if plan, ok := planSuppression(left[id], right[id]); ok {
+			plan.note.Parent = Parent{Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
+			plans[id] = plan
+		}
+	}
+	for id := range left {
+		add(id)
+	}
+	for id := range right {
+		if _, ok := left[id]; !ok {
+			add(id)
+		}
+	}
+	return plans
+}
+
+func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
+	lf, rf := left.Status == store.StatusFailed, right.Status == store.StatusFailed
+	ls, rs := store.IsSuspended(left), store.IsSuspended(right)
+	lu, ru := lf || ls || store.IsSkipped(left), rf || rs || store.IsSkipped(right)
+	plan := suppressionPlan{}
+	switch {
+	case lf && rf:
+		plan.note.Side = sideBoth
+		plan.note.Reason = "failed on both sides: orig: " + left.Message + "; current: " + right.Message
+		plan.discloseEmpty = true
+	case ls && rs:
+		plan.note.Side = sideBoth
+		plan.note.Reason = "suspended on orig; suspended on current"
+		plan.discloseEmpty = true
+	case ls && ru || rs && lu:
+		plan.note.Side = sideBoth
+		plan.note.Reason = unavailableReason(left, SideOrig) + "; " + unavailableReason(right, SideCurrent)
+		plan.discloseEmpty = true
+	case lu && !ru:
+		plan.note.Side = SideOrig
+		plan.note.Reason = renderReason(left)
+		if ls {
+			plan.note.Reason = "suspended on orig"
+			plan.discloseEmpty = true
+		}
+	case ru && !lu:
+		plan.note.Side = SideCurrent
+		plan.note.Reason = renderReason(right)
+		if rs {
+			plan.note.Reason = "suspended on current"
+			plan.discloseEmpty = true
+		}
+	default:
+		return suppressionPlan{}, false
+	}
+	return plan, true
+}
+
+func renderReason(info store.StatusInfo) string {
+	if store.IsSkipped(info) {
+		return strings.TrimSpace(strings.TrimPrefix(info.Message, store.SkippedPrefix))
+	}
+	return info.Message
+}
+
+func unavailableReason(info store.StatusInfo, side Side) string {
+	if store.IsSuspended(info) {
+		return "suspended on " + string(side)
+	}
+	return string(side) + ": " + renderReason(info)
+}
+
+// Each entry is either one document or one producer batch; count always measures
+// document entries. The plan and both input slices remain immutable.
+func suppress[T any](left, right []T, plans map[manifest.NamedResource]suppressionPlan, describe func(T, Side) (Parent, int)) ([]T, []T, []Suppression) {
+	byParent := map[Parent]suppressionPlan{}
+	for _, plan := range plans {
+		if plan.discloseEmpty {
+			byParent[plan.note.Parent] = plan
+		}
+	}
+	keep := func(entries []T, this Side) []T {
+		out := make([]T, 0, len(entries))
+		for _, entry := range entries {
+			parent, count := describe(entry, this)
+			id := manifest.NamedResource{Kind: parent.Kind, Namespace: parent.Namespace, Name: parent.Name}
+			plan, ok := plans[id]
 			if !ok {
-				out = append(out, d)
+				out = append(out, entry)
 				continue
 			}
-			s := byParent[d.Parent]
-			if s == nil {
-				s = &Suppression{Parent: d.Parent, Side: side, Reason: reason}
-				byParent[d.Parent] = s
+			key := parent
+			if plan.note.Parent.Kind != "" {
+				key = plan.note.Parent
 			}
-			// Only the healthy side's docs are what the reader would have
-			// mistaken for a change; the failing side's are stale.
-			if side != this {
-				s.Count++
+			if existing, ok := byParent[key]; ok {
+				plan = existing
 			}
+			plan.note.Parent = parent
+			if plan.note.Side == sideBoth || plan.note.Side != this {
+				plan.note.Count += count
+			}
+			byParent[key] = plan
 		}
 		return out
 	}
-	l = keep(left, SideOrig)
-	r = keep(right, SideCurrent)
-	for _, s := range byParent {
-		if s.Count > 0 {
-			suppressed = append(suppressed, *s)
+	l, r := keep(left, SideOrig), keep(right, SideCurrent)
+	var suppressed []Suppression
+	for _, plan := range byParent {
+		if plan.note.Count > 0 || plan.discloseEmpty {
+			suppressed = append(suppressed, plan.note)
 		}
 	}
 	slices.SortFunc(suppressed, func(a, b Suppression) int {

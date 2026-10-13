@@ -21,9 +21,13 @@ func renderUnified(left, right []Doc, opts Options) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		label := p.label()
+		if p.parent.Path != "" {
+			label += " (" + p.parent.Path + ")"
+		}
 		body, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
 			A: difflib.SplitLines(p.from), B: difflib.SplitLines(p.to),
-			FromFile: p.label(), ToFile: p.label(), Context: diffContextLines,
+			FromFile: label, ToFile: label, Context: diffContextLines,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("unified diff: %w", err)

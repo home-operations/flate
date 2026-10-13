@@ -177,7 +177,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 // this cascade, dependents that already passed their parent gate stay
 // Ready in the final report even though the parent is Failed.
 //
-// Walks the ParentOf chain per child so a deep render tree (grand-
+// Walks the parent ownership chain per child so a deep render tree (grand-
 // parent → parent → child) propagates failures all the way down in
 // one pass. Cycle-guard via a visited set keeps the walk bounded.
 func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]store.StatusInfo) (ksCount, hrCount int) {

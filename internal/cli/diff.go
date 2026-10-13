@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
-	"slices"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -15,10 +12,8 @@ import (
 	"github.com/home-operations/flate/internal/report"
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/diff"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func newDiffCmd() *cobra.Command {
@@ -62,10 +57,10 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 		Use:     use,
 		Aliases: aliases,
 		Short:   short,
-		Long:    short + ". With -o json, emit a 2-space-indented JSON object {\"changes\": [...], \"suppressed\": [...]} with normalized manifests and one-sided render failures.",
+		Long:    short + ". With -o json, emit a 2-space-indented JSON object {\"changes\": [...], \"suppressed\": [...]} with normalized manifests and unavailable producer disclosures.",
 		Args:    positional,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd, c, h, d, kind, firstArg(args))
+			return d.run(cmd, c, h, manifest.NamedResource{Kind: kind, Name: firstArg(args)})
 		},
 	}
 	bindCommon(cmd.Flags(), c, diffOutputFormats()...)
@@ -93,45 +88,24 @@ func newDiffImagesCmd() *cobra.Command {
 }
 
 func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemoved bool) error {
-	// diff images emits a flat list of image refs — name (one per line) is
-	// the default; json/yaml are the structured shapes. The -o flag rejects
-	// anything else at parse time.
 	stopProfile, err := startProfile(c.profileMode, c.profileOut)
 	if err != nil {
 		return err
 	}
 	defer stopProfile()
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
-	if orig.O == nil || current.O == nil {
+	selected, runErr := orchestrator.Select([]orchestrator.Rendered{orig, current}, runErr,
+		c.roots("", manifest.KindKustomization, manifest.KindHelmRelease), nil)
+	if len(selected) == 0 {
 		return runErr
 	}
-	orig.Failures = scopedFailures(orig.O, orig.Res, c, manifest.NamedResource{})
-	current.Failures = scopedFailures(current.O, current.Res, c, manifest.NamedResource{})
-	imgs := imageSetDiff(collectImages(orig.O, orig.Res, c), collectImages(current.O, current.Res, c), includeRemoved)
-	if err := emitImageList(cmd.OutOrStdout(), imgs, c.output); err != nil {
-		return errors.Join(err, scopedDiffRunError(orig, current, runErr))
-	}
-	return scopedDiffRunError(orig, current, runErr)
-}
-
-// imageSetDiff returns the sorted images added in current; when
-// includeRemoved is set, images dropped from orig are included too.
-func imageSetDiff(orig, current map[string]struct{}, includeRemoved bool) []string {
-	out := make([]string, 0, len(current))
-	for img := range current {
-		if _, ok := orig[img]; !ok {
-			out = append(out, img)
+	imgs, suppressed, runErr := diff.CompareImages(selected, runErr, includeRemoved)
+	for _, note := range suppressed {
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "flate warning: %s\n", note); err != nil {
+			return errors.Join(err, runErr)
 		}
 	}
-	if includeRemoved {
-		for img := range orig {
-			if _, ok := current[img]; !ok {
-				out = append(out, img)
-			}
-		}
-	}
-	slices.Sort(out)
-	return out
+	return errors.Join(emitImageList(cmd.OutOrStdout(), imgs, c.output), runErr)
 }
 
 // diffOutputFormats lists the -o values `flate diff ks/hr/all` accepts,
@@ -150,220 +124,89 @@ func diffOutputFormats() []format.Output {
 	}
 }
 
-func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kind, name string) error {
+func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, h *helmFlags, root manifest.NamedResource) error {
 	stopProfile, err := startProfile(c.profileMode, c.profileOut)
 	if err != nil {
 		return err
 	}
 	defer stopProfile()
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
-	if orig.O == nil || current.O == nil {
+	kinds := []string{root.Kind}
+	if root.Kind == "" {
+		kinds = []string{manifest.KindKustomization, manifest.KindHelmRelease}
+	}
+	selected, runErr := orchestrator.Select([]orchestrator.Rendered{orig, current}, runErr, c.roots(root.Name, kinds...), nil)
+	if len(selected) == 0 {
 		return runErr
 	}
-	origDocs, origMatched := gatherAllArtifacts(orig.O, orig.Res, kind, name, c)
-	currentDocs, currentMatched := gatherAllArtifacts(current.O, current.Res, kind, name, c)
-	for _, pair := range []struct{ side, other *diffSide }{{&orig, &current}, {&current, &orig}} {
-		selection := []manifest.NamedResource{{Kind: kind, Name: name}}
-		if name != "" {
-			// The counterpart can know an owner absent from this snapshot's path index.
-			for _, obj := range pair.other.O.Store().ListObjects(kind) {
-				id := obj.Named()
-				if id.Name == name && c.includeNamespace(pair.other.O.Filter(), id.Namespace) && pair.side.O.Store().GetObject(id) == nil {
-					if parent, ok := pair.other.O.ParentOf(id); ok {
-						selection = append(selection, parent)
-					}
-				}
+	for i, label := range []string{"orig", "current"} {
+		res := selected[i]
+		if len(res.Unrelated) > 0 {
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%s snapshot:%s", label,
+				report.Document(report.WarningsBlock(res.Unrelated, style.ColorEnabled(cmd.ErrOrStderr())))); err != nil {
+				return errors.Join(err, runErr)
 			}
 		}
-		pair.side.Failures = scopedFailures(pair.side.O, pair.side.Res, c, selection...)
+		if err := reportOmittedValues(cmd.ErrOrStderr(), res.Warnings, label); err != nil {
+			return errors.Join(err, runErr)
+		}
 	}
-	diffRunErr := scopedDiffRunError(orig, current, runErr)
-	for _, side := range []struct {
-		label string
-		run   diffSide
-	}{{"orig", orig}, {"current", current}} {
-		if len(side.run.Failures.warnings) > 0 {
-			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%s snapshot:%s", side.label,
-				report.Document(report.WarningsBlock(side.run.Failures.warnings, style.ColorEnabled(cmd.ErrOrStderr())))); err != nil {
-				return errors.Join(err, diffRunErr)
+	for i, label := range []string{"orig", "current"} {
+		for _, warning := range selected[i].External {
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "flate warning: %s snapshot: %s skipped: %s\n", label, warning.Resource, warning.Message); err != nil {
+				return errors.Join(err, runErr)
 			}
 		}
-		if err := reportOmittedValues(cmd.ErrOrStderr(), scopedWarnings(side.run.O, side.run.Res, c),
-			side.label, manifest.NamedResource{Kind: kind, Name: name}); err != nil {
-			return errors.Join(err, diffRunErr)
-		}
 	}
-	if err := reportExternalDiffSkips(cmd.ErrOrStderr(), orig, c.baselineRoot(), "orig", c, kind, name); err != nil {
-		return errors.Join(err, diffRunErr)
+	if root.Name != "" && selected[0].Counts[root.Kind]+selected[1].Counts[root.Kind] == 0 {
+		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", root.Kind, root.Name), runErr)
 	}
-	if err := reportExternalDiffSkips(cmd.ErrOrStderr(), current, repoRootOf(c.path), "current", c, kind, name); err != nil {
-		return errors.Join(err, diffRunErr)
-	}
-	if name != "" && origMatched+currentMatched == 0 {
-		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", kind, name), diffRunErr)
-	}
-
-	// A producer that failed or was skipped on one side has nothing to pair
-	// against, so its healthy-side output would read as a wholesale add or
-	// delete. Withhold it and let the formats disclose the suppression.
-	origReasons, currentReasons := suppressionReasons(orig, c), suppressionReasons(current, c)
-	inheritSuppression(origReasons, &orig, &current, origDocs, currentDocs)
-	inheritSuppression(currentReasons, &current, &orig, origDocs, currentDocs)
-	var suppressed []diff.Suppression
-	origDocs, currentDocs, suppressed = diff.SuppressFailed(origDocs, currentDocs,
-		origReasons, currentReasons)
-
-	formatted, err := diff.RenderDocs(origDocs, currentDocs, diff.Options{
-		StripAttrs:  d.stripAttrs,
-		StripFields: d.stripFields,
-		Format:      diff.Format(c.output),
-		Suppressed:  suppressed,
+	formatted, err := diff.Compare(selected, runErr, diff.Options{
+		StripAttrs: d.stripAttrs, StripFields: d.stripFields, Format: diff.Format(c.output),
 	})
-	if err != nil {
-		return errors.Join(err, diffRunErr)
+	if err != nil && formatted == nil && runErr == nil {
+		return err
 	}
-	// Surface the failure summary BEFORE the diff body so a reader scanning a
-	// CI log meets the cause first; run() then skips its trailing reprint.
-	if diffRunErr != nil {
-		if _, err := io.WriteString(cmd.ErrOrStderr(), "flate error: "+diffRunErr.Error()+"\n"); err != nil && name != "" {
-			return errors.Join(err, diffRunErr)
+	runErr = err
+	if runErr != nil {
+		if _, err := io.WriteString(cmd.ErrOrStderr(), "flate error: "+runErr.Error()+"\n"); err != nil && root.Name != "" {
+			return errors.Join(err, runErr)
 		}
 	}
 	if _, err := cmd.OutOrStdout().Write(formatted); err != nil {
-		return errors.Join(err, diffRunErr)
+		return errors.Join(err, runErr)
 	}
-	if diffRunErr != nil {
-		return reportedError{diffRunErr}
+	if runErr != nil {
+		return reportedError{runErr}
 	}
 	return nil
 }
 
-func reportOmittedValues(w io.Writer, warnings []manifest.Warning, label string, resource manifest.NamedResource) error {
+func reportOmittedValues(w io.Writer, warnings []manifest.Warning, label string) error {
 	for _, warning := range warnings {
-		if warning.Category != manifest.WarnOmittedValues ||
-			(resource.Kind != "" && warning.Resource.Kind != resource.Kind) ||
-			(resource.Name != "" && warning.Resource.Name != resource.Name) {
+		if warning.Category != manifest.WarnOmittedValues {
 			continue
 		}
-		if _, err := fmt.Fprintf(w, "flate warning: %s snapshot: %s: %s\n",
-			label, warning.Resource, warning.Message); err != nil {
+		if _, err := fmt.Fprintf(w, "flate warning: %s snapshot: %s: %s\n", label, warning.Resource, warning.Message); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func reportExternalDiffSkips(w io.Writer, side diffSide, repoRoot, label string, c *commonFlags, kind, name string) error {
-	if kind != "" && kind != manifest.KindKustomization {
-		return nil
-	}
-	for _, ks := range side.O.Store().ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		id := ks.Named()
-		if _, _, external := loader.SourceView(side.O.Store(), ks, repoRoot); !external || (name != "" && id.Name != name) {
-			continue
-		}
-		// The inferred changed-only namespace scope excludes these skips;
-		// disclosure must still honor an explicit namespace selection.
-		if c.namespace != "" && id.Namespace != "" && id.Namespace != c.namespace {
-			continue
-		}
-		info, _ := side.O.Store().GetStatus(id)
-		if !store.IsUnchanged(info) && !store.IsSkipped(info) {
-			continue
-		}
-		src := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
-		if _, err := fmt.Fprintf(w, "flate warning: %s snapshot: %s skipped: external source %s is outside the local tree; not rendered\n", label, id, src); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func inheritSuppression(reasons map[manifest.NamedResource]string, side, other *diffSide, docs ...[]diff.Doc) {
-	parents := map[manifest.NamedResource]struct{}{}
-	for _, group := range docs {
-		for _, doc := range group {
-			id := manifest.NamedResource{Kind: doc.Parent.Kind, Namespace: doc.Parent.Namespace, Name: doc.Parent.Name}
-			parents[id] = struct{}{}
-		}
-	}
-	visited := map[manifest.NamedResource]struct{}{}
-	for _, id := range slices.SortedFunc(maps.Keys(parents), manifest.NamedResource.Compare) {
-		clear(visited)
-		o := side.O
-		// The counterpart owns children absent from this snapshot's build.
-		if side.O.Store().GetObject(id) == nil {
-			o = other.O
-		}
-		for parent, ok := id, true; ok; parent, ok = o.ParentOf(parent) {
-			if _, dup := visited[parent]; dup {
-				break
-			}
-			visited[parent] = struct{}{}
-			if reason, suppressed := reasons[parent]; suppressed {
-				reasons[id] = reason
-				break
-			}
-			if info, exists := side.O.Store().GetStatus(parent); exists && store.IsSkipped(info) {
-				reasons[id] = skipReason(info)
-				break
-			}
-		}
-	}
-}
-
-func skipReason(info store.StatusInfo) string {
-	return strings.TrimSpace(strings.TrimPrefix(info.Message, store.SkippedPrefix))
-}
-
-// suppressionReasons includes scoped failures and soft-skipped render producers
-// in the id -> message map diff.SuppressFailed consumes.
-func suppressionReasons(side diffSide, c *commonFlags) map[manifest.NamedResource]string {
-	out := make(map[manifest.NamedResource]string, len(side.Failures.failed))
-	for id, info := range side.Failures.failed {
-		out[id] = info.Message
-	}
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		for _, obj := range side.O.Store().ListObjects(kind) {
-			id := obj.Named()
-			if !c.includeNamespace(side.O.Filter(), id.Namespace) {
-				continue
-			}
-			if info, ok := side.O.Store().GetStatus(id); ok && store.IsSkipped(info) {
-				out[id] = skipReason(info)
-			}
-		}
-	}
-	return out
-}
-
-// diffSide pairs an Orchestrator with its render Result. Diff
-// commands need both — orchestrator for filter/object lookup, Result
-// for the rendered docs feeding the diff.
-type diffSide struct {
-	O        *orchestrator.Orchestrator
-	Res      *orchestrator.Result
-	Err      error
-	Failures failureScope
 }
 
 // runDiffOrchestrators resolves the baseline, then hands the
-// two-orchestrator render to orchestrator.RenderTrees (swapped PathOrig
-// so each side renders changed-only against the other, one shared source
-// cache, concurrent) and maps its two sides into the diffSide pair the
-// diff/diff-images commands consume. base = --path-orig (left/old),
-// head = --path (right/new).
-func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (diffSide, diffSide, error) {
+// two completed runs to selection. Baseline lifetime ends after both renders drain.
+func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (orchestrator.Rendered, orchestrator.Rendered, error) {
 	// diff REQUIRES a baseline — when neither --path-orig nor --base
 	// is set, auto-detect via the merge-base ladder. Cleanup is
 	// deferred (not bound to ctx) so the tempdir survives SIGINT
 	// until both orchestrators' read paths have actually unwound.
 	if err := c.loadSubstitutions(ctx); err != nil {
-		return diffSide{}, diffSide{}, err
+		return orchestrator.Rendered{}, orchestrator.Rendered{}, err
 	}
 	cleanup, err := resolveBaseline(ctx, c, true)
 	if err != nil {
-		return diffSide{}, diffSide{}, err
+		return orchestrator.Rendered{}, orchestrator.Rendered{}, err
 	}
 	defer cleanup()
 	// Each side is a Tree: its scan entry point (Path) plus the source
@@ -374,87 +217,5 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 		orchestrator.Tree{RepoRoot: c.baselineRoot(), Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
 		orchestrator.Tree{RepoRoot: repoRootOf(c.path), Path: c.path},
 		buildOrchCfg(*c, *h))
-	orig := diffSide{O: base.Orchestrator, Res: base.Result, Err: base.Err}
-	current := diffSide{O: head.Orchestrator, Res: head.Result, Err: head.Err}
-	return orig, current, runErr
-}
-
-// joinRunErrors composes the orig/current Run errors into a single
-// non-nil error when either side had failures. Both nil → nil.
-func joinRunErrors(orig, curr error) error {
-	switch {
-	case orig != nil && curr != nil:
-		return errors.Join(
-			errors.New("both snapshots had reconcile failures"),
-			fmt.Errorf("orig snapshot: %w", orig),
-			fmt.Errorf("current snapshot: %w", curr),
-		)
-	case orig != nil:
-		return fmt.Errorf("orig snapshot: %w", orig)
-	case curr != nil:
-		return fmt.Errorf("current snapshot: %w", curr)
-	}
-	return nil
-}
-
-func scopedDiffRunError(orig, current diffSide, runErr error) error {
-	if runErr == nil {
-		return nil
-	}
-	return joinRunErrors(
-		scopedRunError(orig.Failures, orig.Err),
-		scopedRunError(current.Failures, current.Err),
-	)
-}
-
-// gatherAllArtifacts is gatherArtifacts with a kind="" shortcut for
-// the `diff all` command: when kind is empty, collect both
-// Kustomization- and HelmRelease-rendered manifests in one pass.
-// Each kind's docs are gathered separately so the diff header
-// attribution (parent KS vs parent HR) stays accurate.
-func gatherAllArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) ([]diff.Doc, int) {
-	if kind != "" {
-		return gatherArtifacts(o, res, kind, name, c)
-	}
-	out, matched := gatherArtifacts(o, res, manifest.KindKustomization, name, c)
-	hrs, hrMatched := gatherArtifacts(o, res, manifest.KindHelmRelease, name, c)
-	return append(out, hrs...), matched + hrMatched
-}
-
-// gatherArtifacts collects every rendered manifest produced by the
-// Kustomizations or HelmReleases of the given kind, tagged with the
-// parent that produced them. name optionally filters to a single
-// resource. When c is non-nil the namespace scope from commonFlags +
-// the orchestrator's change filter is honored.
-//
-// Reads res.Manifests for the rendered docs; falls back to the Store
-// only to recover the producing object's spec.path (the diff header
-// shows it for KS parents).
-func gatherArtifacts(o *orchestrator.Orchestrator, res *orchestrator.Result, kind, name string, c *commonFlags) ([]diff.Doc, int) {
-	// Filter the rendered manifests down to the in-scope parents
-	// (name + namespace), then hand the submap to diff.DocsFromManifests
-	// — the shared, store-free flattener SDK consumers use too — passing a
-	// store-backed pathOf so KS parents carry their spec.path.
-	sub := make(map[manifest.NamedResource][]map[string]any)
-	matched := 0
-	for _, obj := range o.Store().ListObjects(kind) {
-		id := obj.Named()
-		if name != "" && id.Name != name {
-			continue
-		}
-		if c != nil && !c.includeNamespace(o.Filter(), id.Namespace) {
-			continue
-		}
-		matched++
-		if docs, ok := res.Manifests[id]; ok {
-			sub[id] = docs
-		}
-	}
-	docs := diff.DocsFromManifests(sub, func(id manifest.NamedResource) string {
-		if ks, ok := o.Store().Get[*manifest.Kustomization](id); ok {
-			return strings.TrimPrefix(ks.Path, "./")
-		}
-		return ""
-	})
-	return docs, matched
+	return base, head, runErr
 }

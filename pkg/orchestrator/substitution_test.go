@@ -15,7 +15,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -465,7 +464,7 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 				if repository == nil || repository.Data["VALUE"] != "repository" {
 					t.Fatal("supplied input entered store or late producer did not render")
 				}
-				encoded, err := json.Marshal(diff.DocsFromManifests(res.Manifests, nil))
+				encoded, err := json.Marshal(canonicalBatches(res))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -530,13 +529,20 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 		if got := substitutionValue(t, side.Result, consumer); got != want {
 			t.Fatalf("changed consumer got %q, want %q", got, want)
 		}
-		if !side.Filter().ShouldReconcile(consumer) || side.Filter().ShouldReconcile(stable) || side.Store().GetArtifact(stable) != nil || side.Store().GetObject(source.Object.Named()) != nil {
+		if !side.filter.ShouldReconcile(consumer) || side.filter.ShouldReconcile(stable) || side.Store().GetArtifact(stable) != nil || side.Store().GetObject(source.Object.Named()) != nil {
 			t.Fatal("selected-consumer admission or supplied-object isolation failed")
 		}
 	}
-	changes := diff.Changes(diff.DocsFromManifests(base.Result.Manifests, nil), diff.DocsFromManifests(head.Result.Manifests, nil), diff.Options{})
-	if len(changes) != 1 || changes[0].Kind != manifest.KindConfigMap || changes[0].Name != "rendered" || changes[0].Status != diff.StatusChanged {
-		t.Fatalf("supplied input appeared in diff: %+v", changes)
+	for _, side := range []Rendered{base, head} {
+		batches := canonicalBatches(side.Result)
+		if len(batches) != 1 || batches[0].Parent != consumer || len(batches[0].Documents) != 1 {
+			t.Fatalf("unexpected producer batches: %+v", batches)
+		}
+		doc := batches[0].Documents[0]
+		meta, _ := doc["metadata"].(map[string]any)
+		if doc["kind"] != manifest.KindConfigMap || meta["name"] != "rendered" {
+			t.Fatalf("supplied input entered output: %+v", doc)
+		}
 	}
 }
 
@@ -599,4 +605,21 @@ func TestFreezeSubstitutions_ExactFileIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func canonicalBatches(res *Result) []struct {
+	Parent    manifest.NamedResource
+	Documents []map[string]any
+} {
+	var batches []struct {
+		Parent    manifest.NamedResource
+		Documents []map[string]any
+	}
+	for _, id := range slices.SortedFunc(maps.Keys(res.Manifests), manifest.NamedResource.Compare) {
+		batches = append(batches, struct {
+			Parent    manifest.NamedResource
+			Documents []map[string]any
+		}{Parent: id, Documents: res.Manifests[id]})
+	}
+	return batches
 }

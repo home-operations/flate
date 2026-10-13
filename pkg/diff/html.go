@@ -33,7 +33,7 @@ const (
 type htmlData struct {
 	Changed, Added, Removed int
 	ChromaCSS               template.CSS // light + dark token stylesheets (chroma)
-	Suppressed              []string     // one-sided render failures withheld from the diff
+	Suppressed              []string     // unavailable producer disclosures
 	Tree                    []treeParent // sidebar navigation
 	Resources               []htmlResource
 }

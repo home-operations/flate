@@ -16,7 +16,7 @@ import (
 
 // barSink is the slog routing adapter active while the live status bar runs; nil
 // disables the bar entirely (pipes, CI, the in-process e2e harness,
-// --no-progress, or a --stream run that shares the terminal with stdout). Set by
+// or --no-progress). Set by
 // the root command's PersistentPreRunE when progressBarEnabled allows it, and
 // pointed at by slog so log records interleave cleanly above the bar. stdout is
 // never touched — rendered output stays byte-deterministic.
@@ -156,17 +156,7 @@ func writerIsTTY(w io.Writer) bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
-// progressBarEnabled reports whether the live status bar should paint. It is
-// off when --no-progress is set, when stderr isn't an interactive terminal
-// (pipes/CI/e2e buffers), or when --stream shares that terminal with stdout:
-// the bar repaints a sticky stderr line, while --stream writes raw YAML to
-// stdout outside the bar's renderer, so on one terminal the two interleave and
-// corrupt each other — the stream wins. A --stream run whose stdout is
-// redirected (file/pipe) keeps the bar: it paints cleanly to stderr with no
-// collision.
-func progressBarEnabled(noProgress, stream, stdoutTTY, stderrTTY bool) bool {
-	if noProgress || !stderrTTY {
-		return false
-	}
-	return !stream || !stdoutTTY
+// progressBarEnabled requires an interactive stderr terminal.
+func progressBarEnabled(noProgress, stderrTTY bool) bool {
+	return !noProgress && stderrTTY
 }

@@ -655,22 +655,26 @@ type reportedError struct{ err error }
 func (e reportedError) Error() string { return e.err.Error() }
 func (e reportedError) Unwrap() error { return e.err }
 
+type reportErrors struct {
+	selected  error
+	remainder error
+}
+
 // reportFailures preserves the command's named error-write policy.
-func reportFailures(w io.Writer, res *orchestrator.Result, named bool, err error) error {
-	m := report.Build(res)
+func reportFailures(w io.Writer, m report.Model, named bool, errs reportErrors) error {
 	if m.Empty() {
-		return err
+		return errs.selected
 	}
 	if writeErr := m.Write(w, style.ColorEnabled(w)); writeErr != nil && named {
-		return errors.Join(writeErr, err)
+		return errors.Join(writeErr, errs.selected)
 	}
-	if writeErr := report.WriteErrors(w, err); writeErr != nil {
-		return errors.Join(writeErr, err)
+	if writeErr := report.WriteErrors(w, errs.remainder); writeErr != nil {
+		return errors.Join(writeErr, errs.selected)
 	}
-	if err == nil {
+	if errs.selected == nil {
 		return nil
 	}
-	return reportedError{err}
+	return reportedError{errs.selected}
 }
 
 func cmdContext(cmd *cobra.Command) context.Context {

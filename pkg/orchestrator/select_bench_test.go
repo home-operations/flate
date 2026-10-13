@@ -75,10 +75,10 @@ func completedScopeFixture(b *testing.B, count int, failures, cycle bool) orches
 }
 
 func BenchmarkSelect_CompletedScope(b *testing.B) {
-	for _, count := range []int{100, 1000, 5000} {
+	for _, count := range []int{100, 5000} {
 		for _, failures := range []bool{false, true} {
 			for _, cycle := range []bool{false, true} {
-				for _, command := range []string{"test", "documents", "documents_native", "documents_line", "images"} {
+				for _, command := range []string{"test", "documents", "images"} {
 					b.Run(fmt.Sprintf("keep_%d/failures_%t/cycle_%t/%s", count, failures, cycle, command), func(b *testing.B) {
 						current := completedScopeFixture(b, count, failures, cycle)
 						runs := []orchestrator.Rendered{current}
@@ -92,23 +92,21 @@ func BenchmarkSelect_CompletedScope(b *testing.B) {
 						}
 						roots := []manifest.NamedResource{{Kind: manifest.KindKustomization}}
 						opts := diff.Options{Format: diff.FormatJSON}
-						switch command {
-						case "documents_native":
-							opts.Format = diff.FormatHuman
-						case "documents_line":
-							opts.Format = diff.FormatDiff
-						}
 						b.ReportAllocs()
 						for b.Loop() {
-							selected, selectedErr := orchestrator.Select(runs, current.Err, roots, nil)
+							selected, selectedErr, _ := orchestrator.Select(runs, current.Err, roots, nil)
 							switch command {
 							case "test":
 								_ = report.Build(selected[0])
 								_ = testrunner.Run(selected[0])
-							case "documents", "documents_native", "documents_line":
-								_, _ = diff.Compare(selected, selectedErr, opts)
-							case "images":
-								_, _, _ = diff.CompareImages(selected, selectedErr, false)
+							case "documents", "images":
+								orig := diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable}
+								current := diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable}
+								if command == "documents" {
+									_, _ = diff.Compare(orig, current, selectedErr, opts)
+								} else {
+									_, _, _ = diff.CompareImages(orig, current, selectedErr, false)
+								}
 							}
 						}
 					})

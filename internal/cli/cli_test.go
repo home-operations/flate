@@ -938,3 +938,28 @@ spec:
 		t.Fatalf("other-kind diagnostic satisfied named roster: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }
+
+func TestRun_GetHRChartVersions(t *testing.T) {
+	for _, tc := range []struct{ name, reference, chart, want string }{
+		{name: "digest", reference: "digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, semver: '>=1.2.0', tag: '1.2.3'", want: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{name: "semver", reference: "semver: '>=1.2.0', tag: '1.2.3'", want: ">=1.2.0"},
+		{name: "tag", reference: "tag: '1.2.3'", want: "1.2.3"},
+		{name: "own version", reference: "tag: '1.2.3'", chart: "chart: {spec: {chart: app, version: '9.9.9', sourceRef: {kind: OCIRepository, name: chart}}}", want: "9.9.9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			chart := tc.chart
+			if chart == "" {
+				chart = "chartRef: {kind: OCIRepository, name: chart}"
+			}
+			testutil.WriteFile(t, root, "flux.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: app, namespace: apps}\nspec: {suspend: true, "+chart+"}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {suspend: true, url: 'oci://example.test/app', ref: {"+tc.reference+"}}\n")
+			stdout, stderr, code := runCLI(t, "get", "hr", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
+			var rows []struct {
+				Version string `json:"version"`
+			}
+			if code != 0 || json.Unmarshal([]byte(stdout), &rows) != nil || len(rows) != 1 || rows[0].Version != tc.want {
+				t.Fatalf("chart version: exit=%d stdout=%s stderr=%s want=%s", code, stdout, stderr, tc.want)
+			}
+		})
+	}
+}

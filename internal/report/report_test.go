@@ -268,9 +268,18 @@ func TestBuild_PreparedCycleRoot(t *testing.T) {
 		Blocked: map[manifest.NamedResource][]manifest.NamedResource{
 			root: {peer}, peer: {root}, leaf: {root},
 		},
-		Causes: map[manifest.NamedResource][]manifest.NamedResource{root: {leaf}, peer: nil},
 	}
-	m := Build(result)
+	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(o.Stop)
+	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: result}}, &orchestrator.FailuresError{Message: "raw failures"},
+		[]manifest.NamedResource{{Kind: manifest.KindKustomization}}, nil)
+	m := Build(selected[0])
+	if selectedErr == nil || !strings.Contains(selectedErr.Error(), fmt.Sprintf("(+%d blocked", m.Blocked)) {
+		t.Fatalf("selected error and report counts disagree: report=%+v error=%v", m, selectedErr)
+	}
 	if len(m.Primary) != 2 || m.Blocked != 1 {
 		t.Fatalf("want 2 primary cycles and 1 distinct blocked child, got %+v", m)
 	}
@@ -289,7 +298,6 @@ func TestBuild_PreparedCycleRoot(t *testing.T) {
 }
 
 func TestWriteErrors_NonResourceDiagnostics(t *testing.T) {
-	failure := &orchestrator.FailuresError{Message: "resource failure"}
 	closeErr := errors.New("cache close failed")
 	for _, tc := range []struct {
 		name string
@@ -297,11 +305,8 @@ func TestWriteErrors_NonResourceDiagnostics(t *testing.T) {
 		want string
 	}{
 		{name: "none"},
-		{name: "failure summary", err: failure},
-		{name: "wrapped failure", err: fmt.Errorf("render: %w", failure)},
 		{name: "wrapped close", err: fmt.Errorf("close: %w", closeErr), want: "flate error: close: cache close failed\n"},
-		{name: "joined", err: errors.Join(failure, fmt.Errorf("close: %w", closeErr), errors.New("cancelled")), want: "flate error: close: cache close failed\ncancelled\n"},
-		{name: "wrapped joined", err: fmt.Errorf("run: %w", errors.Join(failure, closeErr)), want: "flate error: cache close failed\n"},
+		{name: "joined", err: errors.Join(closeErr, errors.New("cancelled")), want: "flate error: cache close failed\ncancelled\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var b bytes.Buffer
@@ -314,7 +319,7 @@ func TestWriteErrors_NonResourceDiagnostics(t *testing.T) {
 		})
 	}
 	writeErr := errors.New("write failed")
-	if err := WriteErrors(errorWriter{writeErr}, errors.Join(failure, closeErr)); !errors.Is(err, writeErr) {
+	if err := WriteErrors(errorWriter{writeErr}, closeErr); !errors.Is(err, writeErr) {
 		t.Fatalf("writer error = %v, want %v", err, writeErr)
 	}
 }

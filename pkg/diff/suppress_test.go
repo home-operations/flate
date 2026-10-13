@@ -21,80 +21,6 @@ func hrDocs(n int) []Doc {
 	return out
 }
 
-func TestSuppressFailed(t *testing.T) {
-	other := cmDoc(ksParent, "keep", "apps", "v", "")
-	reason := "chart source HelmChart/monitoring/grafana not ready:\n  digest mismatch"
-	cases := []struct {
-		name                    string
-		left, right             []Doc
-		leftFailed, rightFailed map[manifest.NamedResource]string
-		wantLeft, wantRight     int
-		wantSuppressed          []Suppression
-	}{
-		{
-			name:        "current side failed: orig docs withheld",
-			left:        append(hrDocs(3), other),
-			right:       []Doc{other},
-			rightFailed: map[manifest.NamedResource]string{hrID: reason},
-			wantLeft:    1, wantRight: 1,
-			wantSuppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Count: 3, Reason: reason}},
-		},
-		{
-			name:       "orig side failed: current docs withheld",
-			left:       []Doc{other},
-			right:      append(hrDocs(2), other),
-			leftFailed: map[manifest.NamedResource]string{hrID: reason},
-			wantLeft:   1, wantRight: 1,
-			wantSuppressed: []Suppression{{Parent: hrParent, Side: SideOrig, Count: 2, Reason: reason}},
-		},
-		{
-			name:        "stale artifact on the failing side is dropped too, not counted",
-			left:        hrDocs(3),
-			right:       hrDocs(1),
-			rightFailed: map[manifest.NamedResource]string{hrID: reason},
-			wantLeft:    0, wantRight: 0,
-			wantSuppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Count: 3, Reason: reason}},
-		},
-		{
-			name:        "failed on both sides: nothing to suppress",
-			left:        hrDocs(1),
-			right:       hrDocs(1),
-			leftFailed:  map[manifest.NamedResource]string{hrID: reason},
-			rightFailed: map[manifest.NamedResource]string{hrID: reason},
-			wantLeft:    1, wantRight: 1,
-		},
-		{
-			name:        "failed but absent on the healthy side: no note",
-			left:        []Doc{other},
-			right:       []Doc{other},
-			rightFailed: map[manifest.NamedResource]string{hrID: reason},
-			wantLeft:    1, wantRight: 1,
-		},
-		{
-			name:     "no failures: passthrough",
-			left:     hrDocs(2),
-			right:    hrDocs(2),
-			wantLeft: 2, wantRight: 2,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			l, r, s := SuppressFailed(tc.left, tc.right, tc.leftFailed, tc.rightFailed)
-			if len(l) != tc.wantLeft || len(r) != tc.wantRight {
-				t.Errorf("kept left=%d right=%d, want %d/%d", len(l), len(r), tc.wantLeft, tc.wantRight)
-			}
-			if len(s) != len(tc.wantSuppressed) {
-				t.Fatalf("suppressed = %+v, want %+v", s, tc.wantSuppressed)
-			}
-			for i := range s {
-				if s[i] != tc.wantSuppressed[i] {
-					t.Errorf("suppressed[%d] = %+v, want %+v", i, s[i], tc.wantSuppressed[i])
-				}
-			}
-		})
-	}
-}
-
 func TestSuppression_String(t *testing.T) {
 	s := Suppression{Parent: hrParent, Side: SideCurrent, Count: 11, Reason: "chart source\n  not ready"}
 	want := "HelmRelease monitoring/grafana-operator: 11 objects not rendered on the current side; diff suppressed (chart source not ready)"
@@ -111,9 +37,9 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 		note Suppression
 		want string
 	}{
-		{Suppression{Parent: hrParent, Side: sideBoth, Count: 1, Reason: "failed on both sides: orig: old;\n current: new"},
+		{Suppression{Parent: hrParent, Side: SideBoth, Count: 1, Reason: "failed on both sides: orig: old;\n current: new"},
 			"HelmRelease monitoring/grafana-operator: 1 object withheld; diff suppressed (failed on both sides: orig: old; current: new)"},
-		{Suppression{Parent: hrParent, Side: sideBoth, Reason: "suspended on orig; suspended on current"},
+		{Suppression{Parent: hrParent, Side: SideBoth, Reason: "suspended on orig; suspended on current"},
 			"HelmRelease monitoring/grafana-operator: 0 objects withheld; diff suppressed (suspended on orig; suspended on current)"},
 		{Suppression{Parent: hrParent, Side: SideCurrent, Reason: "suspended on current"},
 			"HelmRelease monitoring/grafana-operator: 0 objects not rendered on the current side; diff suppressed (suspended on current)"},
@@ -125,34 +51,11 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 	}
 }
 
-func TestSuppressFailed_PreservesParentPartitions(t *testing.T) {
-	otherPath := ksParent
-	otherPath.Path = "other/apps"
-	left := []Doc{cmDoc(ksParent, "a", "ns", "v", ""), cmDoc(otherPath, "b", "ns", "v", "")}
-	right := []Doc{cmDoc(ksParent, "stale", "ns", "v", "")}
-	id := manifest.NamedResource{Kind: ksParent.Kind, Namespace: ksParent.Namespace, Name: ksParent.Name}
-	l, r, notes := SuppressFailed(left, right, nil, map[manifest.NamedResource]string{id: "failed"})
-	if len(l) != 0 || len(r) != 0 || len(notes) != 2 {
-		t.Fatalf("withheld docs/notes = %v / %v / %+v", l, r, notes)
-	}
-	for i, parent := range []Parent{ksParent, otherPath} {
-		want := Suppression{Parent: parent, Side: SideCurrent, Count: 1, Reason: "failed"}
-		if notes[i] != want {
-			t.Errorf("note[%d] = %+v; want %+v", i, notes[i], want)
-		}
-	}
-}
-
-// TestRenderDocs_SuppressionHeader pins that every format leads with the
-// suppression note, that the withheld objects are absent from the body, and
-// that a suppression alone (empty diff) still produces output.
+// Suppression headers must remain visible even when no changes render.
 func TestRenderDocs_SuppressionHeader(t *testing.T) {
-	left := append(hrDocs(2), cmDoc(ksParent, "keep", "apps", "old", ""))
-	right := []Doc{cmDoc(ksParent, "keep", "apps", "new", "")}
-	l, r, suppressed := SuppressFailed(left, right, nil, map[manifest.NamedResource]string{hrID: "chart not ready"})
-	if len(suppressed) != 1 {
-		t.Fatalf("expected one suppression, got %+v", suppressed)
-	}
+	l := []Doc{cmDoc(ksParent, "keep", "apps", "old", "")}
+	r := []Doc{cmDoc(ksParent, "keep", "apps", "new", "")}
+	suppressed := []Suppression{{Parent: hrParent, Side: SideCurrent, Count: 2, Reason: "chart not ready"}}
 	note := suppressed[0].String()
 
 	for _, tc := range []struct {
@@ -175,9 +78,6 @@ func TestRenderDocs_SuppressionHeader(t *testing.T) {
 			if !strings.HasPrefix(s, tc.prefix+note+"\n") {
 				t.Errorf("output should lead with the note %q; got:\n%s", tc.prefix+note, s)
 			}
-			if strings.Contains(s, "cm-a") {
-				t.Errorf("withheld object leaked into the body:\n%s", s)
-			}
 			if strings.TrimSpace(strings.TrimPrefix(s, tc.prefix+note)) == "" {
 				t.Errorf("unrelated change should still render after the note:\n%s", s)
 			}
@@ -191,9 +91,6 @@ func TestRenderDocs_SuppressionHeader(t *testing.T) {
 		}
 		if !strings.Contains(string(out), `class="suppressed"`) || !strings.Contains(string(out), "not rendered on the current side") {
 			t.Errorf("html should carry the suppression banner")
-		}
-		if strings.Contains(string(out), "cm-a") {
-			t.Errorf("withheld object leaked into the html body")
 		}
 	})
 

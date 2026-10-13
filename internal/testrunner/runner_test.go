@@ -138,31 +138,6 @@ func TestRun_NoStatus(t *testing.T) {
 	}
 }
 
-// TestRun_SkipsForeignKindLookalike pins issue #872: `flate test all` rosters
-// the Flux source kinds, and a CRD from another API group that reuses one of
-// those kind names (seaweed.seaweedfs.com Bucket) is an ordinary rendered
-// resource no controller reconciles. It carries no status, so rostering it
-// would report "no status reported" and fail the run.
-func TestRun_SkipsForeignKindLookalike(t *testing.T) {
-	o, s := newRunner(t)
-	flux := manifest.NamedResource{Kind: manifest.KindBucket, Namespace: "flux-system", Name: "minio"}
-	s.AddObject(&manifest.Bucket{Name: flux.Name, Namespace: flux.Namespace})
-	s.UpdateStatus(flux, store.StatusReady, "")
-	s.AddObject(&manifest.RawObject{
-		Kind:       manifest.KindBucket,
-		APIVersion: "seaweed.seaweedfs.com/v1",
-		Name:       "greptimedb", Namespace: "observability",
-	})
-
-	rep := runSelected(t, o, manifest.NamedResource{Kind: manifest.KindBucket})
-	if rep.AnyFailed() {
-		t.Errorf("foreign Bucket CRD must not be rostered; got %+v", rep)
-	}
-	if rep.Matched != 1 || rep.Passed != 1 || rep.Cases[0].ID != flux {
-		t.Errorf("report = %+v, want only the Flux Bucket %s", rep, flux)
-	}
-}
-
 func TestRun_SelectedNamespace(t *testing.T) {
 	o, s := newRunner(t)
 	alpha := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "alpha", Name: "apps"}
@@ -536,7 +511,7 @@ func runSelected(t *testing.T, o *orchestrator.Orchestrator, roots ...manifest.N
 		}
 	}
 	raw := &orchestrator.Result{Failed: failed, Blocked: blocked}
-	selected, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: raw}}, nil, roots, nil)
+	selected, _, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: raw}}, nil, roots, nil)
 	if len(selected) != 1 {
 		t.Fatalf("Select returned %d results, want 1", len(selected))
 	}

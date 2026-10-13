@@ -93,7 +93,7 @@ func getAllCmd(use, short string) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
-			selected, runErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
+			selected, runErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
 				c.roots("", manifest.KindKustomization, manifest.KindHelmRelease), nil)
 			if len(selected) == 0 {
 				return runErr
@@ -118,7 +118,7 @@ func newGetImagesCmd() *cobra.Command {
 		Short: "List container images across the cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
-			selected, runErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
+			selected, runErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
 				c.roots("", manifest.KindKustomization, manifest.KindHelmRelease), nil)
 			if len(selected) == 0 {
 				return runErr
@@ -149,7 +149,7 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
 			name := firstArg(args)
-			selected, runErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
+			selected, runErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
 				c.roots(name, view.kind), l.labels)
 			if len(selected) == 0 {
 				return runErr

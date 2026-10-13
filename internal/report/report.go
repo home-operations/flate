@@ -13,13 +13,13 @@ package report
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -75,13 +75,10 @@ func (m Model) Empty() bool {
 func Build(result *orchestrator.Result) Model {
 	var primary []Primary
 	var missing []Missing
-	blocked := len(result.Blocked)
+	blocked := selection.BlockedCount(result.Failed, result.Blocked, result.Causes)
 	for root, victims := range result.Causes {
 		if info, isFailed := result.Failed[root]; isFailed {
 			primary = append(primary, Primary{ID: root, Msg: info.Message, Blocks: victims})
-			if _, promoted := result.Blocked[root]; promoted {
-				blocked--
-			}
 		} else {
 			missing = append(missing, Missing{ID: root, RequiredBy: victims})
 		}
@@ -92,29 +89,10 @@ func Build(result *orchestrator.Result) Model {
 	return Model{Primary: primary, Missing: missing, Warnings: result.Unrelated, Blocked: blocked}
 }
 
-// WriteErrors prints errors that are not represented by the failure rows.
+// WriteErrors prints the non-resource remainder returned by selection.
 func WriteErrors(w io.Writer, err error) error {
-	var extras []error
-	var collect func(error)
-	collect = func(err error) {
-		if err == nil {
-			return
-		}
-		if _, ok := errors.AsType[*orchestrator.FailuresError](err); !ok {
-			extras = append(extras, err)
-			return
-		}
-		if joined, ok := err.(interface{ Unwrap() []error }); ok {
-			for _, child := range joined.Unwrap() {
-				collect(child)
-			}
-		} else if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-			collect(wrapped.Unwrap())
-		}
-	}
-	collect(err)
-	if extra := errors.Join(extras...); extra != nil {
-		_, err := fmt.Fprintln(w, "flate error:", extra)
+	if err != nil {
+		_, err := fmt.Fprintln(w, "flate error:", err)
 		return err
 	}
 	return nil

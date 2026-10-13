@@ -34,20 +34,28 @@
 //
 // # SDK usage
 //
-// [Compare] consumes two completed snapshots selected by
-// [orchestrator.Select], withholds unavailable producer batches, and returns
+// [Compare] consumes two [Snapshot] values from completed runs selected by
+// orchestrator.Select, withholds unavailable producer batches, and returns
 // formatted bytes without discarding selected render errors. Render two trees,
 // select the requested producer kinds, then compare them:
 //
 //	base, head, runErr := orchestrator.RenderTrees(ctx,
 //		orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir}, cfg)
-//	selected, selectedErr := orchestrator.Select(
+//	selected, selectedErr, _ := orchestrator.Select(
 //		[]orchestrator.Rendered{base, head}, runErr,
 //		[]manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}, nil)
-//	out, err := diff.Compare(selected, selectedErr, diff.Options{
-//		StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,
-//		Normalize: redact, // optional extra per-manifest scrub
-//	})
+//	if len(selected) == 0 {
+//		return selectedErr
+//	}
+//	out, err := diff.Compare(
+//		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+//		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+//		selectedErr,
+//		diff.Options{
+//			StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,
+//			Normalize: redact, // optional extra per-manifest scrub
+//		},
+//	)
 //
 // [CompareImages] uses the same selected producer availability and returns a
 // sorted image list plus suppression notes. [Changes] and [RenderDocs] retain

@@ -94,12 +94,17 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 	}
 	defer stopProfile()
 	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
-	selected, runErr := orchestrator.Select([]orchestrator.Rendered{orig, current}, runErr,
+	selected, runErr, _ := orchestrator.Select([]orchestrator.Rendered{orig, current}, runErr,
 		c.roots("", manifest.KindKustomization, manifest.KindHelmRelease), nil)
 	if len(selected) == 0 {
 		return runErr
 	}
-	imgs, suppressed, runErr := diff.CompareImages(selected, runErr, includeRemoved)
+	imgs, suppressed, runErr := diff.CompareImages(
+		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+		runErr,
+		includeRemoved,
+	)
 	for _, note := range suppressed {
 		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "flate warning: %s\n", note); err != nil {
 			return errors.Join(err, runErr)
@@ -135,7 +140,7 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, h *helmFlags, root m
 	if root.Kind == "" {
 		kinds = []string{manifest.KindKustomization, manifest.KindHelmRelease}
 	}
-	selected, runErr := orchestrator.Select([]orchestrator.Rendered{orig, current}, runErr, c.roots(root.Name, kinds...), nil)
+	selected, runErr, _ := orchestrator.Select([]orchestrator.Rendered{orig, current}, runErr, c.roots(root.Name, kinds...), nil)
 	if len(selected) == 0 {
 		return runErr
 	}
@@ -161,9 +166,12 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, h *helmFlags, root m
 	if root.Name != "" && selected[0].Counts[root.Kind]+selected[1].Counts[root.Kind] == 0 {
 		return errors.Join(fmt.Errorf("no %s named %q in --path or --path-orig", root.Kind, root.Name), runErr)
 	}
-	formatted, err := diff.Compare(selected, runErr, diff.Options{
-		StripAttrs: d.stripAttrs, StripFields: d.stripFields, Format: diff.Format(c.output),
-	})
+	formatted, err := diff.Compare(
+		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+		runErr,
+		diff.Options{StripAttrs: d.stripAttrs, StripFields: d.stripFields, Format: diff.Format(c.output)},
+	)
 	if err != nil && formatted == nil && runErr == nil {
 		return err
 	}

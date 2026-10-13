@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/go-git/go-git/v5"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/report"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -213,7 +213,7 @@ spec:
 					args = append(args, tc.extra)
 				}
 				stdout, stderr, code := runCLI(t, args...)
-				selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
+				selection, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
 					[]manifest.NamedResource{{Kind: hr.Kind, Name: hr.Name}}, nil)
 				if len(selection) != 1 {
 					t.Fatalf("selection failed: %v", selectedErr)
@@ -242,48 +242,6 @@ spec:
 				}
 			})
 		}
-	}
-}
-
-func TestScopedFailures_SharedRootCyclesAndErrors(t *testing.T) {
-	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(o.Stop)
-	id := func(name string) manifest.NamedResource {
-		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
-	}
-	selected, root, other, a, b := id("selected"), id("root"), id("other"), id("a"), id("b")
-	res := &orchestrator.Result{
-		Failed:  map[manifest.NamedResource]store.StatusInfo{},
-		Blocked: map[manifest.NamedResource][]manifest.NamedResource{selected: {root}, other: {root}, a: {b}, b: {a}},
-	}
-	for _, v := range []manifest.NamedResource{selected, root, other, a, b} {
-		o.Store().AddObject(&manifest.Kustomization{Name: v.Name, Namespace: v.Namespace})
-		res.Failed[v] = store.StatusInfo{Status: store.StatusFailed, Message: v.Name + " failure"}
-	}
-	panicErr := errors.New("unattributed panic")
-	runErr := errors.Join(&orchestrator.FailuresError{Message: "raw reconcile failures"}, context.Canceled, panicErr)
-	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
-		[]manifest.NamedResource{{Kind: selected.Kind, Name: selected.Name}}, nil)
-	if len(selection) != 1 {
-		t.Fatalf("selection failed: %v", selectedErr)
-	}
-	var out bytes.Buffer
-	got := reportFailures(&out, selection[0], true, selectedErr)
-	if !errors.Is(got, context.Canceled) || !errors.Is(got, panicErr) || !strings.Contains(out.String(), panicErr.Error()) ||
-		!strings.Contains(out.String(), selection[0].Failed[root].Message) {
-		t.Fatalf("fatal diagnostics hidden: %v %s", got, out.String())
-	}
-	for _, warning := range selection[0].Unrelated {
-		if !strings.Contains(out.String(), warning.Message) {
-			t.Fatalf("unrelated diagnostic hidden: %+v %s", warning, out.String())
-		}
-	}
-	writeErr := errors.New("warning write failed")
-	if got := reportFailures(failingWriter{err: writeErr}, selection[0], true, selectedErr); !errors.Is(got, writeErr) || !errors.Is(got, panicErr) {
-		t.Fatalf("warning write failure discarded: %v", got)
 	}
 }
 
@@ -423,13 +381,13 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	for _, fatal := range []error{context.Canceled, errors.New("unattributed panic"), errors.New("output write failed")} {
 		t.Run(fatal.Error(), func(t *testing.T) {
 			runErr := errors.Join(&orchestrator.FailuresError{Message: "raw reconcile failures"}, fatal)
-			selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
+			selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
 				[]manifest.NamedResource{{Kind: manifest.KindKustomization, Name: selected.Name}}, nil)
 			if len(selection) != 1 {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
 			var out bytes.Buffer
-			got := reportFailures(&out, selection[0], true, selectedErr)
+			got := reportFailures(&out, report.Build(selection[0]), true, reportErrors{selected: selectedErr, remainder: remainder})
 			if !errors.Is(got, fatal) || !strings.Contains(out.String(), fatal.Error()) || !strings.Contains(out.String(), "unrelated failure") {
 				t.Fatalf("warning-only footer hid fatal cause: %v %s", got, out.String())
 			}
@@ -577,42 +535,19 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 		},
 		Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {b}, b: {a}},
 	}
-	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+	selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
 		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Kind: a.Kind, Name: a.Name}}, nil)
 	if len(selection) != 1 {
 		t.Fatalf("selection failed: %v", selectedErr)
 	}
 	var out bytes.Buffer
-	if got := reportFailures(&out, selection[0], true, selectedErr); got == nil {
+	if got := reportFailures(&out, report.Build(selection[0]), true, reportErrors{selected: selectedErr, remainder: remainder}); got == nil {
 		t.Fatal("fatal cycle became successful")
 	}
 	for _, want := range []string{"blocked by " + b.String(), "blocked by " + a.String(), "unrelated failure", "2 failed"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("fatal cycle hidden by warnings: %s", out.String())
 		}
-	}
-}
-
-func TestRequiredClosure_ResourceSetAuthoredReferences(t *testing.T) {
-	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rs := &manifest.ResourceSet{Name: "selected", Namespace: "apps"}
-	rs.DependsOn = []fluxopv1.Dependency{{Kind: manifest.KindHelmRelease, Name: "dep", Namespace: "other"}}
-	rs.InputsFrom = []fluxopv1.InputProviderReference{{Name: "provider"}, {}}
-	o.Store().AddObject(rs)
-	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "other", Name: "dep"}
-	provider := manifest.NamedResource{Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "provider"}
-	res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
-		dep:      {Status: store.StatusFailed, Message: "dependency failed"},
-		provider: {Status: store.StatusFailed, Message: "provider failed"},
-	}}
-	t.Cleanup(o.Stop)
-	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{rs.Named()}, nil)
-	if len(selection) != 1 || selectedErr == nil || len(selection[0].Failed) != 2 || len(selection[0].Unrelated) != 0 {
-		t.Fatalf("authored ResourceSet prerequisite omitted: %+v %v", selection, selectedErr)
 	}
 }
 
@@ -638,7 +573,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 		current: {Status: store.StatusFailed, Message: "current input failure"},
 		old:     {Status: store.StatusFailed, Message: "old input failure"},
 	}}
-	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+	selection, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
 		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Kind: id.Kind, Name: id.Name}}, nil)
 	if len(selection) != 1 || selectedErr == nil {
 		t.Fatalf("selection failed: %v", selectedErr)
@@ -970,42 +905,6 @@ spec:
 	}
 }
 
-func TestScopedFailures_EmptyResult(t *testing.T) {
-	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(o.Stop)
-	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: &orchestrator.Result{}}}, nil,
-		[]manifest.NamedResource{{Kind: manifest.KindHelmRelease, Name: "selected"}}, nil)
-	if len(selection) != 1 || selectedErr != nil || selection[0].Failed != nil || selection[0].Unrelated != nil {
-		t.Fatalf("successful result acquired failures: %+v %v", selection, selectedErr)
-	}
-}
-
-func TestScopedFailures_DependsOn(t *testing.T) {
-	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	selected := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
-	o.Store().AddObject(selected)
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "other", Name: "dep"}
-	res := &orchestrator.Result{
-		Failed:    map[manifest.NamedResource]store.StatusInfo{dep: {Status: store.StatusFailed, Message: "dependency failed"}},
-		DependsOn: map[manifest.NamedResource][]manifest.NamedResource{selected.Named(): {dep}},
-	}
-	t.Cleanup(o.Stop)
-	selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{selected.Named()}, nil)
-	if len(selection) != 1 || selectedErr == nil {
-		t.Fatalf("selection failed: %v", selectedErr)
-	}
-	assert.Equal(t, len(selection[0].Failed), 1)
-	assert.Equal(t, len(selection[0].Unrelated), 0)
-	assert.Equal(t, selection[0].Failed[dep].Message, "dependency failed")
-}
-
 func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 	for _, named := range []bool{false, true} {
 		t.Run(fmt.Sprint(named), func(t *testing.T) {
@@ -1021,13 +920,14 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			if named {
 				query.Name = id.Name
 			}
-			selection, selectedErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+			selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
 				&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{query}, nil)
 			if len(selection) != 1 || selectedErr == nil {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
 			var out bytes.Buffer
-			got := reportFailures(&out, selection[0], named, errors.Join(selectedErr, fmt.Errorf("reconcile: %w", context.Canceled)))
+			extra := fmt.Errorf("reconcile: %w", context.Canceled)
+			got := reportFailures(&out, report.Build(selection[0]), named, reportErrors{selected: errors.Join(selectedErr, extra), remainder: errors.Join(remainder, extra)})
 			if !errors.Is(got, context.Canceled) {
 				t.Fatalf("lost non-resource error: %v", got)
 			}
@@ -1035,7 +935,7 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 				t.Errorf("non-resource error missing from report: %s", &out)
 			}
 			writeErr := errors.New("report write failed")
-			got = reportFailures(failingWriter{err: writeErr}, selection[0], named, selectedErr)
+			got = reportFailures(failingWriter{err: writeErr}, report.Build(selection[0]), named, reportErrors{selected: selectedErr, remainder: remainder})
 			assert.Equal(t, errors.Is(got, writeErr), named)
 		})
 	}

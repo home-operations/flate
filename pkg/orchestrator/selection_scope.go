@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -320,13 +321,10 @@ func selectedFailures(res *Result) error {
 		return nil
 	}
 	msgs := make([]string, 0, len(res.Causes))
-	blocked := len(res.Blocked)
+	blocked := selection.BlockedCount(res.Failed, res.Blocked, res.Causes)
 	for root := range res.Causes {
 		if info, failed := res.Failed[root]; failed {
 			msgs = append(msgs, fmt.Sprintf("%s: %s", root, info.Message))
-			if _, promoted := res.Blocked[root]; promoted {
-				blocked--
-			}
 		} else {
 			msgs = append(msgs, fmt.Sprintf("%s: not found", root))
 		}
@@ -364,47 +362,53 @@ func nonResourceErrors(err error) error {
 	}
 }
 
-func selectionError(sides []selectionSide, runErr error) error {
+func selectionError(sides []selectionSide, runErr error) (error, error) {
 	if runErr == nil {
-		return nil
+		return nil, nil
 	}
 	if len(sides) == 1 {
-		return errors.Join(selectedFailures(sides[0].result), nonResourceErrors(runErr))
+		remainder := nonResourceErrors(runErr)
+		return errors.Join(selectedFailures(sides[0].result), remainder), remainder
 	}
 	var projectedTree bool
-	var project func(error) error
-	project = func(err error) error {
+	var project func(error) (error, error)
+	project = func(err error) (error, error) {
 		if err == nil {
-			return nil
+			return nil, nil
 		}
 		if tree, ok := err.(*treeErrors); ok {
 			projectedTree = true
+			orig, current := nonResourceErrors(tree.base), nonResourceErrors(tree.head)
 			return joinSelectedErrors(
-				errors.Join(selectedFailures(sides[0].result), nonResourceErrors(tree.base)),
-				errors.Join(selectedFailures(sides[1].result), nonResourceErrors(tree.head)),
-			)
+				errors.Join(selectedFailures(sides[0].result), orig),
+				errors.Join(selectedFailures(sides[1].result), current),
+			), joinSelectedErrors(orig, current)
 		}
 		if _, ok := errors.AsType[*treeErrors](err); !ok {
-			return nonResourceErrors(err)
+			remainder := nonResourceErrors(err)
+			return remainder, remainder
 		}
 		switch e := err.(type) {
 		case interface{ Unwrap() []error }:
 			children := e.Unwrap()
 			out := make([]error, 0, len(children))
+			remainders := make([]error, 0, len(children))
 			for _, child := range children {
-				out = append(out, project(child))
+				selected, remainder := project(child)
+				out = append(out, selected)
+				remainders = append(remainders, remainder)
 			}
-			return errors.Join(out...)
+			return errors.Join(out...), errors.Join(remainders...)
 		case interface{ Unwrap() error }:
 			return project(e.Unwrap())
 		}
-		return err
+		return err, err
 	}
-	extra := project(runErr)
+	projected, remainder := project(runErr)
 	if projectedTree {
-		return extra
+		return projected, remainder
 	}
-	return errors.Join(joinSelectedErrors(selectedFailures(sides[0].result), selectedFailures(sides[1].result)), extra)
+	return errors.Join(joinSelectedErrors(selectedFailures(sides[0].result), selectedFailures(sides[1].result)), projected), remainder
 }
 
 func joinSelectedErrors(orig, current error) error {

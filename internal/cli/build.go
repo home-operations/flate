@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/internal/report"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
@@ -59,7 +60,7 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			defer stopProfile()
 			name := firstArg(argv)
 			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
-			selected, runErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr, c.roots(name, kinds...), nil)
+			selected, runErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr, c.roots(name, kinds...), nil)
 			if len(selected) == 0 {
 				return runErr
 			}
@@ -70,7 +71,9 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			} else {
 				emitErr = emitDocs(cmd.OutOrStdout(), collectRendered(res, b), format.Output(c.output))
 			}
-			return reportFailures(cmd.ErrOrStderr(), res, name != "", errors.Join(emitErr, runErr))
+			return reportFailures(cmd.ErrOrStderr(), report.Build(res), name != "", reportErrors{
+				selected: errors.Join(emitErr, runErr), remainder: errors.Join(emitErr, remainder),
+			})
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)

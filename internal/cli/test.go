@@ -2,10 +2,12 @@ package cli
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/home-operations/flate/internal/report"
 	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -57,14 +59,14 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			}
 			elapsed := time.Since(start)
 			name := firstArg(argv)
-			selected, runErr := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
+			selected, runErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
 				c.roots(name, kinds...), nil)
 			if len(selected) == 0 {
 				return runErr
 			}
 			res = selected[0]
-			report := testrunner.Run(res)
-			if name != "" && report.Matched == 0 {
+			roster := testrunner.Run(res)
+			if name != "" && roster.Matched == 0 {
 				return errors.Join(noNamedError(testKindName(kinds), name), runErr)
 			}
 			// Colorize only when stdout can show it — style.ColorEnabled
@@ -76,20 +78,20 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			// (warnings) and deferred logs (notes), then a single verdict.
 			// Dependency failures outside the selected roster need a separate
 			// diagnostic so a passing selected row cannot hide a fatal cause.
-			warnings := append(res.Warnings, res.Unrelated...)
+			warnings := slices.Concat(res.Warnings, res.Unrelated)
 			notes := drainLogNotes()
-			if err := report.Write(cmd.OutOrStdout(), warnings, notes, color, elapsed); err != nil {
+			if err := roster.Write(cmd.OutOrStdout(), warnings, notes, color, elapsed); err != nil {
 				return errors.Join(err, runErr)
 			}
 			if name != "" && runErr != nil {
-				diagnostics := *res
-				diagnostics.Unrelated = nil
-				if err := reportFailures(cmd.ErrOrStderr(), &diagnostics, true, runErr); err != nil {
+				diagnostics := report.Build(res)
+				diagnostics.Warnings = nil
+				if err := reportFailures(cmd.ErrOrStderr(), diagnostics, true, reportErrors{selected: runErr, remainder: remainder}); err != nil {
 					return err
 				}
 			}
 			final := runErr
-			if report.AnyFailed() {
+			if roster.AnyFailed() {
 				final = errors.Join(errors.New("test failures detected"), runErr)
 			}
 			// The report is rendered; wrap so run's top-level printer doesn't

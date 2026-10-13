@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/spf13/pflag"
 )
 
 // runCLI drives cli.Run inside the test binary and returns
@@ -266,6 +267,32 @@ func TestRun_BuildAll_OnlyKinds(t *testing.T) {
 	}
 	if strings.Contains(stdout, "kind: ConfigMap") {
 		t.Errorf("--only-kinds should filter out ConfigMap; got:\n%s", stdout)
+	}
+	for _, tc := range []struct {
+		name, spec string
+		empty      bool
+		code       int
+	}{
+		{name: "filtered match"},
+		{name: "suspended match", spec: "  suspend: true\n"},
+		{name: "zero document match", empty: true},
+		{name: "failed match", spec: "  dependsOn: [{name: missing}]\n", code: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeFixture(t)
+			appendScopeSpec(t, path, "flux/cluster.yaml", tc.spec)
+			if tc.empty {
+				testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: []\n")
+			}
+			stdout, stderr, code := runCLI(t, "build", "ks", "apps", "--path", path,
+				"--only-kinds", "CustomResourceDefinition", "--cache-dir", t.TempDir(), "--concurrency", "2")
+			if code != tc.code || stdout != "" || strings.Contains(stderr, "no Kustomization named") {
+				t.Fatalf("named filtered match: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+			}
+			if tc.code == 1 && !strings.Contains(stderr, "missing") {
+				t.Fatalf("matched failure lost: %s", stderr)
+			}
+		})
 	}
 }
 
@@ -748,6 +775,13 @@ func TestBindCommon_DefaultValues(t *testing.T) {
 			t.Errorf("expected common flag %q on `build all`", name)
 		}
 	}
+	var flags commonFlags
+	bindCommon(pflag.NewFlagSet("test", pflag.ContinueOnError), &flags)
+	assert.Diff(t, flags.skipKinds, []string{"Secret", "CustomResourceDefinition"})
+	opts := flags.helmOptions(helmFlags{})
+	assert.Equal(t, opts.SkipCRDs, true)
+	assert.Equal(t, opts.SkipTests, true)
+	assert.Diff(t, opts.SkipKinds, []string{"Secret"})
 }
 
 // TestBindHelmFlags_OnReconcilingSubcommands guards the reconcile-first

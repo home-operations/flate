@@ -3,6 +3,10 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 // TestEnv_FlagFromEnv covers the happy path: a flag the user did not
@@ -43,14 +47,49 @@ func TestEnv_CLIFlagOverridesEnv(t *testing.T) {
 // "ConfigMap,Secret" should drop the fixture's only ConfigMap from
 // the render, leaving an empty stream.
 func TestEnv_SliceFlagParsesCSV(t *testing.T) {
-	path := writeFixture(t)
-	t.Setenv("FLATE_SKIP_KINDS", "ConfigMap,Secret")
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
-	if code != 0 {
-		t.Fatalf("build all FLATE_SKIP_KINDS=... exited %d: %s", code, stderr)
-	}
-	if strings.Contains(stdout, "kind: ConfigMap") {
-		t.Errorf("FLATE_SKIP_KINDS=ConfigMap,Secret should have filtered ConfigMap:\n%s", stdout)
+	t.Run("render", func(t *testing.T) {
+		path := writeFixture(t)
+		t.Setenv("FLATE_SKIP_KINDS", "ConfigMap,Secret")
+		stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+		if code != 0 {
+			t.Fatalf("build all FLATE_SKIP_KINDS=... exited %d: %s", code, stderr)
+		}
+		if strings.Contains(stdout, "kind: ConfigMap") {
+			t.Errorf("FLATE_SKIP_KINDS=ConfigMap,Secret should have filtered ConfigMap:\n%s", stdout)
+		}
+	})
+	for _, tc := range []struct {
+		name, env string
+		args      []string
+		want      []string
+		setEnv    bool
+		changed   bool
+	}{
+		{name: "defaults", want: []string{"Secret", "CustomResourceDefinition"}},
+		{name: "replacement flag", args: []string{"--skip-kinds", "Job"}, want: []string{"Job"}, changed: true},
+		{name: "empty flag", args: []string{"--skip-kinds", ""}, want: []string{}, changed: true},
+		{name: "environment", env: "ConfigMap,Secret", setEnv: true, want: []string{"ConfigMap", "Secret"}, changed: true},
+		{name: "empty environment", setEnv: true, want: []string{}, changed: true},
+		{name: "flag overrides environment", env: "ConfigMap", setEnv: true, args: []string{"--skip-kinds", "Secret"}, want: []string{"Secret"}, changed: true},
+		{name: "empty flag overrides environment", env: "ConfigMap", setEnv: true, args: []string{"--skip-kinds", ""}, want: []string{}, changed: true},
+		{name: "flag overrides empty environment", setEnv: true, args: []string{"--skip-kinds", "Job"}, want: []string{"Job"}, changed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.setEnv {
+				t.Setenv("FLATE_SKIP_KINDS", tc.env)
+			}
+			cmd := &cobra.Command{}
+			var flags commonFlags
+			bindCommon(cmd.Flags(), &flags)
+			if err := cmd.Flags().Parse(tc.args); err != nil {
+				t.Fatal(err)
+			}
+			if err := applyEnvVars(cmd); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, flags.skipKinds, tc.want)
+			assert.Equal(t, cmd.Flags().Changed("skip-kinds"), tc.changed)
+		})
 	}
 }
 
@@ -156,17 +195,23 @@ func TestEnvKey(t *testing.T) {
 }
 
 func TestRun_RemovedFlagsRejected(t *testing.T) {
-	for _, flag := range []string{"stream", "skip-crds", "skip-secrets", "only-crds", "krmignore", "profile", "profile-out", "skip-schema-validation", "source-retry-attempts", "source-retry-min-wait", "source-retry-max-wait", "source-retry-jitter"} {
-		t.Run(flag, func(t *testing.T) {
-			_, stderr, code := runCLI(t, "build", "all", "--"+flag)
-			if code != 1 || !strings.Contains(stderr, "unknown flag: --"+flag) {
-				t.Fatalf("removed flag: exit=%d stderr=%s", code, stderr)
-			}
-			help, _, code := runCLI(t, "build", "all", "--help")
-			if code != 0 || strings.Contains(help, "--"+flag) || strings.Contains(help, envKey(flag)) {
-				t.Fatalf("obsolete option advertised: exit=%d help=%s", code, help)
-			}
-		})
+	for _, verb := range []string{"build", "test", "diff", "get"} {
+		flags := []string{"stream", "skip-crds", "skip-secrets", "only-crds", "krmignore", "profile", "profile-out", "skip-schema-validation", "source-retry-attempts", "source-retry-min-wait", "source-retry-max-wait", "source-retry-jitter"}
+		if verb != "build" {
+			flags = append(flags, "only-kinds")
+		}
+		for _, flag := range flags {
+			t.Run(verb+"/"+flag, func(t *testing.T) {
+				_, stderr, code := runCLI(t, verb, "all", "--"+flag)
+				if code != 1 || !strings.Contains(stderr, "unknown flag: --"+flag) {
+					t.Fatalf("removed flag: exit=%d stderr=%s", code, stderr)
+				}
+				help, _, code := runCLI(t, verb, "all", "--help")
+				if code != 0 || strings.Contains(help, "--"+flag) || strings.Contains(help, envKey(flag)) {
+					t.Fatalf("obsolete option advertised: exit=%d help=%s", code, help)
+				}
+			})
+		}
 	}
 }
 

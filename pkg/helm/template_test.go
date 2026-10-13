@@ -572,6 +572,7 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 			if tc.placeholder {
 				values["name"] = "..PLACEHOLDER_name.."
 			}
+			original := hr.Clone()
 			warm := hr.Clone()
 			warm.DisableSchemaValidation = true
 			warm.Upgrade = &helmv2.Upgrade{DisableSchemaValidation: true}
@@ -580,6 +581,8 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 			}
 			for range 2 {
 				_, err := cli.Template(t.Context(), hr, values, opts)
+				assert.Diff(t, hr.HelmReleaseSpec, original.HelmReleaseSpec)
+				assert.Equal(t, hr.DisableSchemaValidation, original.DisableSchemaValidation)
 				if tc.wantSkip {
 					if err != nil {
 						t.Fatal(err)

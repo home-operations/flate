@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
@@ -102,7 +102,7 @@ func getAllCmd(use, short string) *cobra.Command {
 			return errors.Join(printCluster(cmd.OutOrStdout(), selected[0], c.output), runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)
+	bindCommon(cmd.Flags(), c, output.FormatYAML, output.FormatJSON)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
@@ -125,10 +125,10 @@ func newGetImagesCmd() *cobra.Command {
 				return runErr
 			}
 			imgs := slices.Sorted(maps.Keys(collectImages(selected[0])))
-			return errors.Join(emitImageList(cmd.OutOrStdout(), imgs, c.output), runErr)
+			return errors.Join((output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Images(imgs), runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputName, format.OutputYAML, format.OutputJSON)
+	bindCommon(cmd.Flags(), c, output.FormatName, output.FormatYAML, output.FormatJSON)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
@@ -136,7 +136,7 @@ func newGetImagesCmd() *cobra.Command {
 type listView[T manifest.BaseManifest] struct {
 	use, short, kind string
 	aliases          []string
-	cols             []format.Column
+	cols             []output.Column
 	mapper           func(*orchestrator.Result, T) (map[string]string, map[string]any)
 }
 
@@ -161,7 +161,7 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 			return errors.Join(printResources(cmd.OutOrStdout(), selected[0], c.output, view), runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputTable, format.OutputYAML, format.OutputJSON, format.OutputName)
+	bindCommon(cmd.Flags(), c, output.FormatTable, output.FormatYAML, output.FormatJSON, output.FormatName)
 	bindSelector(cmd.Flags(), l)
 	bindHelmFlags(cmd.Flags(), h)
 	return cmd
@@ -179,24 +179,16 @@ func printResources[T manifest.BaseManifest](w io.Writer, res *orchestrator.Resu
 		rows = append(rows, row)
 		docs = append(docs, doc)
 	}
-	switch format.Output(out) {
-	case format.OutputYAML:
-		return format.YAMLMulti(w, docs)
-	case format.OutputJSON:
-		return format.JSON(w, docs)
-	case format.OutputName:
-		return format.Name(w, rows, "name")
-	}
-	return format.Table(w, view.cols, rows)
+	return (output.Encoder{Writer: w, Format: output.Format(out)}).Resources(view.cols, rows, docs)
 }
 
 var (
-	ksColumns = []format.Column{
+	ksColumns = []output.Column{
 		{Header: "NAMESPACE", Key: "namespace"},
 		{Header: "NAME", Key: "name"},
 		{Header: "PATH", Key: "path"},
 	}
-	hrColumns = []format.Column{
+	hrColumns = []output.Column{
 		{Header: "NAMESPACE", Key: "namespace"},
 		{Header: "NAME", Key: "name"},
 		{Header: "CHART", Key: "chart"},
@@ -210,8 +202,5 @@ func printCluster(w io.Writer, res *orchestrator.Result, out string) error {
 		"kustomizations": res.Counts[manifest.KindKustomization],
 		"helmReleases":   res.Counts[manifest.KindHelmRelease],
 	}
-	if format.Output(out) == format.OutputJSON {
-		return format.JSON(w, summary)
-	}
-	return format.YAML(w, summary)
+	return (output.Encoder{Writer: w, Format: output.Format(out)}).Cluster(summary)
 }

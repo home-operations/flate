@@ -1,26 +1,78 @@
-// Package format provides the table, YAML, JSON, and "name" output
-// modes used across flate's CLI surface.
-package format
+// Package output owns serialization and terminal presentation of prepared values.
+package output
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"unicode/utf8"
 
 	"sigs.k8s.io/yaml"
 )
 
-// Output is the discriminator selected via -o on the CLI.
-type Output string
+// Format is the discriminator selected via -o on the CLI.
+type Format string
 
-// Output values understood by the -o flag.
+// Format values understood by the -o flag.
 const (
-	OutputTable Output = "table"
-	OutputYAML  Output = "yaml"
-	OutputJSON  Output = "json"
-	OutputName  Output = "name"
+	FormatTable Format = "table"
+	FormatYAML  Format = "yaml"
+	FormatJSON  Format = "json"
+	FormatName  Format = "name"
 )
+
+// Encoder writes prepared values to one destination with resolved format and color.
+type Encoder struct {
+	Writer io.Writer
+	Format Format
+	Color  bool
+}
+
+// Documents writes a JSON array or a multi-document YAML stream.
+func (e Encoder) Documents(docs []map[string]any) error {
+	if e.Format == FormatJSON {
+		return e.JSON(docs)
+	}
+	return e.yamlMulti(docs)
+}
+
+// Images writes the prepared image list in its supplied order.
+func (e Encoder) Images(images []string) error {
+	switch e.Format {
+	case FormatJSON:
+		return e.JSON(images)
+	case FormatYAML:
+		return e.YAML(images)
+	}
+	for _, image := range images {
+		if _, err := fmt.Fprintln(e.Writer, image); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Cluster writes a single cluster summary.
+func (e Encoder) Cluster(summary map[string]any) error {
+	if e.Format == FormatJSON {
+		return e.JSON(summary)
+	}
+	return e.YAML(summary)
+}
+
+// Resources writes the prepared rows or documents for the selected format.
+func (e Encoder) Resources(cols []Column, rows []map[string]string, docs []map[string]any) error {
+	switch e.Format {
+	case FormatYAML:
+		return e.yamlMulti(docs)
+	case FormatJSON:
+		return e.JSON(docs)
+	case FormatName:
+		return name(e.Writer, rows, "name")
+	}
+	return table(e.Writer, cols, rows)
+}
 
 // Column describes a single table column.
 type Column struct {
@@ -31,13 +83,13 @@ type Column struct {
 // gutter is the fixed-width padding appended after each column except the last.
 const gutter = 4
 
-// Table renders rows of map[string]string into a fixed-width table.
+// table renders rows of map[string]string into a fixed-width table.
 // Columns are sized to the widest cell + a 4-char gutter. Widths
 // are measured in runes (not bytes) so cells with multi-byte UTF-8
 // (paths with non-ASCII, chart names with unicode) align correctly.
 // Doesn't account for double-width CJK glyphs — adding a runewidth
 // dependency is out of scope; bring it in when CJK output matters.
-func Table(w io.Writer, cols []Column, rows []map[string]string) error {
+func table(w io.Writer, cols []Column, rows []map[string]string) error {
 	widths := make([]int, len(cols))
 	for i, c := range cols {
 		widths[i] = utf8.RuneCountInString(c.Header)
@@ -83,17 +135,17 @@ func writeCol(b *bytes.Buffer, value string, width int, last bool) {
 	}
 }
 
-// YAMLMulti emits a multi-document YAML stream.
-func YAMLMulti(w io.Writer, docs []map[string]any) error {
+// yamlMulti emits a multi-document YAML stream.
+func (e Encoder) yamlMulti(docs []map[string]any) error {
 	for _, d := range docs {
 		out, err := yaml.Marshal(d)
 		if err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, "---\n"); err != nil {
+		if _, err := io.WriteString(e.Writer, "---\n"); err != nil {
 			return err
 		}
-		if _, err := w.Write(out); err != nil {
+		if _, err := e.Writer.Write(out); err != nil {
 			return err
 		}
 	}
@@ -101,30 +153,30 @@ func YAMLMulti(w io.Writer, docs []map[string]any) error {
 }
 
 // YAML emits a single document.
-func YAML(w io.Writer, value any) error {
+func (e Encoder) YAML(value any) error {
 	out, err := yaml.Marshal(value)
 	if err != nil {
 		return err
 	}
-	_, err = w.Write(out)
+	_, err = e.Writer.Write(out)
 	return err
 }
 
 // JSON emits a 2-space-indented JSON document.
-func JSON(w io.Writer, value any) error {
+func (e Encoder) JSON(value any) error {
 	out, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	if _, err := w.Write(out); err != nil {
+	if _, err := e.Writer.Write(out); err != nil {
 		return err
 	}
-	_, err = io.WriteString(w, "\n")
+	_, err = io.WriteString(e.Writer, "\n")
 	return err
 }
 
-// Name emits one resource name per line.
-func Name(w io.Writer, items []map[string]string, key string) error {
+// name emits one resource name per line.
+func name(w io.Writer, items []map[string]string, key string) error {
 	var b bytes.Buffer
 	b.Grow(len(items) * 32) // rough estimate: 32 bytes per name
 	for _, it := range items {

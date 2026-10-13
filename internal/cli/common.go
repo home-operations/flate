@@ -19,9 +19,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/home-operations/flate/internal/format"
-	"github.com/home-operations/flate/internal/report"
-	"github.com/home-operations/flate/internal/style"
+	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
@@ -98,7 +97,7 @@ type commonFlags struct {
 // Each subcommand passes only the formats it honors — e.g. build doesn't
 // claim `name`, and diff doesn't claim `table`. Passing no formats (test,
 // which emits one fixed report) registers no -o flag at all.
-func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
+func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...output.Format) {
 	fs.StringVarP(&f.path, "path", "p", ".", "path to the Flux cluster directory")
 	fs.StringVarP(&f.pathOrig, "path-orig", "P", "",
 		"baseline path; when set, every command runs in changed-only mode")
@@ -481,13 +480,13 @@ func validatePathFlag(flag, p string) error {
 // outputUsage renders the -o flag's help text from a subcommand's accepted
 // formats, listed in the order bindCommon received them (the first is the
 // default).
-func outputUsage(outputs []format.Output) string {
+func outputUsage(outputs []output.Format) string {
 	return "output format: " + joinOutputs(outputs)
 }
 
 // joinOutputs renders accepted -o formats as a comma-separated list, shared
 // by the help text and the parse-time rejection so the two can't drift.
-func joinOutputs(outputs []format.Output) string {
+func joinOutputs(outputs []output.Format) string {
 	names := make([]string, len(outputs))
 	for i, o := range outputs {
 		names[i] = string(o)
@@ -501,14 +500,14 @@ func joinOutputs(outputs []format.Output) string {
 // no per-command validation call needed.
 type outputValue struct {
 	target  *string
-	allowed []format.Output
+	allowed []output.Format
 }
 
 func (o *outputValue) String() string { return *o.target }
 func (o *outputValue) Type() string   { return "string" }
 
 func (o *outputValue) Set(v string) error {
-	if slices.Contains(o.allowed, format.Output(v)) {
+	if slices.Contains(o.allowed, output.Format(v)) {
 		*o.target = v
 		return nil
 	}
@@ -584,7 +583,7 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestr
 var logBuffer *deferSink
 
 // drainLogNotes returns and clears the buffered log lines (nil when unset).
-func drainLogNotes() []report.Note {
+func drainLogNotes() []output.Note {
 	if logBuffer == nil {
 		return nil
 	}
@@ -603,15 +602,33 @@ type reportErrors struct {
 	remainder error
 }
 
+func failureModel(result *orchestrator.Result) output.Model {
+	var primary []output.Primary
+	var missing []output.Missing
+	blocked := selection.BlockedCount(result.Failed, result.Blocked, result.Causes)
+	for root, victims := range result.Causes {
+		if info, isFailed := result.Failed[root]; isFailed {
+			primary = append(primary, output.Primary{ID: root, Msg: info.Message, Blocks: victims})
+		} else {
+			missing = append(missing, output.Missing{ID: root, RequiredBy: victims})
+		}
+	}
+
+	slices.SortFunc(primary, func(a, b output.Primary) int { return a.ID.Compare(b.ID) })
+	slices.SortFunc(missing, func(a, b output.Missing) int { return a.ID.Compare(b.ID) })
+	return output.Model{Primary: primary, Missing: missing, Warnings: result.Unrelated, Blocked: blocked}
+}
+
 // reportFailures preserves the command's named error-write policy.
-func reportFailures(w io.Writer, m report.Model, named bool, errs reportErrors) error {
+func reportFailures(w io.Writer, m output.Model, named bool, errs reportErrors) error {
 	if m.Empty() {
 		return errs.selected
 	}
-	if writeErr := m.Write(w, style.ColorEnabled(w)); writeErr != nil && named {
+	encoder := output.Encoder{Writer: w, Color: output.ColorEnabled(w)}
+	if writeErr := encoder.Report(m); writeErr != nil && named {
 		return errors.Join(writeErr, errs.selected)
 	}
-	if writeErr := report.WriteErrors(w, errs.remainder); writeErr != nil {
+	if writeErr := encoder.Errors(errs.remainder); writeErr != nil {
 		return errors.Join(writeErr, errs.selected)
 	}
 	if errs.selected == nil {

@@ -8,9 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/home-operations/flate/internal/format"
-	"github.com/home-operations/flate/internal/report"
-	"github.com/home-operations/flate/internal/style"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -80,7 +78,7 @@ func newDiffImagesCmd() *cobra.Command {
 			return runDiffImages(cmd, c, h, includeRemoved)
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputName, format.OutputYAML, format.OutputJSON)
+	bindCommon(cmd.Flags(), c, output.FormatName, output.FormatYAML, output.FormatJSON)
 	bindHelmFlags(cmd.Flags(), h)
 	cmd.Flags().BoolVar(&includeRemoved, "include-removed", false,
 		"also emit images present only in --path-orig (default: only newly added images)")
@@ -110,22 +108,22 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 			return errors.Join(err, runErr)
 		}
 	}
-	return errors.Join(emitImageList(cmd.OutOrStdout(), imgs, c.output), runErr)
+	return errors.Join((output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Images(imgs), runErr)
 }
 
 // diffOutputFormats lists the -o values `flate diff ks/hr/all` accepts,
 // in help-display order, with the default first. bindCommon uses this set
 // for both help and parse-time validation.
-func diffOutputFormats() []format.Output {
-	return []format.Output{
-		format.Output(diff.FormatHuman),
-		format.Output(diff.FormatGitHub),
-		format.Output(diff.FormatDiff),
-		format.Output(diff.FormatHTML),
-		format.Output(diff.FormatBrief),
-		format.Output(diff.FormatGitLab),
-		format.Output(diff.FormatGitea),
-		format.Output(diff.FormatJSON),
+func diffOutputFormats() []output.Format {
+	return []output.Format{
+		output.Format(diff.FormatHuman),
+		output.Format(diff.FormatGitHub),
+		output.Format(diff.FormatDiff),
+		output.Format(diff.FormatHTML),
+		output.Format(diff.FormatBrief),
+		output.Format(diff.FormatGitLab),
+		output.Format(diff.FormatGitea),
+		output.Format(diff.FormatJSON),
 	}
 }
 
@@ -144,11 +142,15 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, h *helmFlags, root m
 	if len(selected) == 0 {
 		return runErr
 	}
+	color := false
+	if len(selected[0].Unrelated) > 0 || len(selected[1].Unrelated) > 0 {
+		color = output.ColorEnabled(cmd.ErrOrStderr())
+	}
 	for i, label := range []string{"orig", "current"} {
 		res := selected[i]
 		if len(res.Unrelated) > 0 {
 			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%s snapshot:%s", label,
-				report.Document(report.WarningsBlock(res.Unrelated, style.ColorEnabled(cmd.ErrOrStderr())))); err != nil {
+				output.Document(output.WarningsBlock(res.Unrelated, color))); err != nil {
 				return errors.Join(err, runErr)
 			}
 		}

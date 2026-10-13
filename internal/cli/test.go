@@ -7,8 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/home-operations/flate/internal/report"
-	"github.com/home-operations/flate/internal/style"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -71,10 +70,10 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			if name != "" && roster.Matched == 0 {
 				return errors.Join(noNamedError(testKindName(kinds), name), runErr)
 			}
-			// Colorize only when stdout can show it — style.ColorEnabled
+			// Colorize only when stdout can show it — output.ColorEnabled
 			// (colorprofile) honors NO_COLOR / CLICOLOR / TTY-ness; piped or
 			// redirected output stays plain.
-			color := style.ColorEnabled(cmd.OutOrStdout())
+			color := output.ColorEnabled(cmd.OutOrStdout())
 			// One consolidated report on stdout: the per-resource report (failures
 			// already appear inline on their rows), then render advisories
 			// (warnings) and deferred logs (notes), then a single verdict.
@@ -86,7 +85,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 				return errors.Join(err, runErr)
 			}
 			if name != "" && runErr != nil {
-				diagnostics := report.Build(res)
+				diagnostics := failureModel(res)
 				diagnostics.Warnings = nil
 				if err := reportFailures(cmd.ErrOrStderr(), diagnostics, true, reportErrors{selected: runErr, remainder: remainder}); err != nil {
 					return err

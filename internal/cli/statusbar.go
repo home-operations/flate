@@ -10,7 +10,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/home-operations/flate/internal/style"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -101,7 +101,7 @@ func (m barModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // in-flight set while Pending); any terminal status (Ready / Failed / a
 // skipped-or-suspended Ready) counts toward done once and drops the id from
 // in-flight. barExcluded drops synthetic/internal ids so the gauge mirrors the
-// report.
+// output.
 func (m *barModel) track(id manifest.NamedResource, info store.StatusInfo) {
 	if barExcluded(id) {
 		return
@@ -124,20 +124,20 @@ func (m *barModel) track(id manifest.NamedResource, info store.StatusInfo) {
 	m.done++
 }
 
-// View composes one frame, styled via internal/style and truncated to the
+// View composes one frame, styled via internal/output and truncated to the
 // terminal width (ANSI- and wide-rune-aware). An empty frame after finishMsg
 // clears the line so the bar vanishes without a trace.
 func (m barModel) View() tea.View {
 	if m.finished {
 		return tea.NewView("")
 	}
-	line := style.Cyan(m.spinner.View(), m.color) + " " +
-		style.Bold(fmt.Sprintf("[%d/%d]", m.done, m.total), m.color)
+	line := output.Cyan(m.spinner.View(), m.color) + " " +
+		output.Bold(fmt.Sprintf("[%d/%d]", m.done, m.total), m.color)
 	if names := summarizeInflight(m.inflightLabels(), maxInflightNames); names != "" {
-		line += " " + style.Dim(names, m.color)
+		line += " " + output.Dim(names, m.color)
 	}
-	line += "  " + style.Dim(style.Elapsed(time.Since(m.startedAt)), m.color)
-	return tea.NewView(style.Truncate(line, m.width))
+	line += "  " + output.Dim(output.Elapsed(time.Since(m.startedAt)), m.color)
+	return tea.NewView(output.Truncate(line, m.width))
 }
 
 // barExcluded reports ids the bar must neither count nor name: the synthetic

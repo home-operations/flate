@@ -9,8 +9,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/report"
-	"github.com/home-operations/flate/internal/style"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
@@ -19,18 +18,18 @@ import (
 func TestWrite_NotesFooter(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		notes []report.Note
+		notes []output.Note
 		want  string
 	}{
 		{name: "empty", want: "\n  ✓ 0 passed\n"},
 		{
 			name:  "single",
-			notes: []report.Note{{Text: "resource orphaned id=x"}},
+			notes: []output.Note{{Text: "resource orphaned id=x"}},
 			want:  "\n  notes (1)\n    resource orphaned id=x\n\n  ✓ 0 passed\n",
 		},
 		{
 			name:  "collapsed",
-			notes: []report.Note{{Text: "resource orphaned id=x", Count: 3}, {Text: "source fetched", Count: 1}},
+			notes: []output.Note{{Text: "resource orphaned id=x", Count: 3}, {Text: "source fetched", Count: 1}},
 			want:  "\n  notes (4)\n    resource orphaned id=x (×3)\n    source fetched\n\n  ✓ 0 passed\n",
 		},
 	} {
@@ -56,7 +55,7 @@ func TestWrite_VerdictGlyphAndElapsed(t *testing.T) {
 	if err := runSelected(t, po).Write(&pb, nil, nil, false, 1500*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-	if out := pb.String(); !strings.Contains(out, style.GlyphPass) || strings.Contains(out, style.GlyphFail) {
+	if out := pb.String(); !strings.Contains(out, output.GlyphPass) || strings.Contains(out, output.GlyphFail) {
 		t.Errorf("all-pass summary wants ✓ and no ✗:\n%s", out)
 	} else if !strings.Contains(out, "1.5s") {
 		t.Errorf("summary should show the elapsed clock:\n%s", out)
@@ -68,7 +67,7 @@ func TestWrite_VerdictGlyphAndElapsed(t *testing.T) {
 	fail.UpdateStatus(bad, store.StatusFailed, "boom")
 	var fb bytes.Buffer
 	_ = runSelected(t, fo).Write(&fb, nil, nil, false, 0)
-	if out := fb.String(); !strings.Contains(out, style.GlyphFail) {
+	if out := fb.String(); !strings.Contains(out, output.GlyphFail) {
 		t.Errorf("failing summary wants ✗:\n%s", out)
 	} else if strings.Contains(out, "0.0s") {
 		t.Errorf("elapsed=0 should be omitted, not rendered:\n%s", out)
@@ -272,6 +271,38 @@ func TestWrite_ReturnsWriterError(t *testing.T) {
 
 	if err := rep.Write(errWriter{err: want}, nil, nil, false, 0); !errors.Is(err, want) {
 		t.Fatalf("Write error = %v, want %v", err, want)
+	}
+}
+
+func TestWrite_MultilineColorAndNotes(t *testing.T) {
+	root := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "root"}
+	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
+	r := Report{
+		Cases:   []Case{{ID: root, Outcome: OutcomeFailed, Reason: " first \n\t\n second\n third "}},
+		Blocked: []Case{{ID: child, Outcome: OutcomeBlocked, Reason: "blocked by ns/root"}},
+		Failed:  1,
+	}
+	for _, tc := range []struct {
+		name  string
+		color bool
+	}{{name: "plain"}, {name: "color", color: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			color := tc.color
+			want := "\n  " + output.Fail(output.GlyphFail, color) + "  " + output.Dim(root.Kind, color) + "  ns/root  " + output.Dim("first", color) +
+				"\n         " + output.Dim("second", color) + "\n         " + output.Dim("third", color) +
+				"\n  " + output.Dim(output.GlyphBlocked, color) + "  " + output.Dim(child.Kind, color) + "  ns/child  " + output.Dim("blocked by ns/root", color) +
+				"\n\n  " + output.Warn("⚠ warnings (1)", color) + "\n    " + output.Warn("advisory (×2)", color) +
+				"\n\n  " + output.Dim("notes (3)", color) + "\n    " + output.Dim("repeated (×3)", color) +
+				"\n\n  " + output.Fail(output.GlyphFail, color) + " " + output.Pass("0 passed", color) + " · " + output.Fail("1 failed", color) +
+				" · " + output.Dim("1 blocked", color) + "   " + output.Dim("1.5s", color) + "\n"
+			var b bytes.Buffer
+			if err := r.Write(&b, []manifest.Warning{{Message: "advisory", Count: 2}}, []output.Note{{Text: "repeated", Count: 3}}, color, 1500*time.Millisecond); err != nil {
+				t.Fatal(err)
+			}
+			if got := b.String(); got != want {
+				t.Fatalf("report = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

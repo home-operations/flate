@@ -7,23 +7,23 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/internal/output"
 )
 
 func TestOutputUsage(t *testing.T) {
 	cases := []struct {
 		name    string
-		outputs []format.Output
+		outputs []output.Format
 		want    string
 	}{
 		{
 			name:    "build set",
-			outputs: []format.Output{format.OutputYAML, format.OutputJSON},
+			outputs: []output.Format{output.FormatYAML, output.FormatJSON},
 			want:    "output format: yaml, json",
 		},
 		{
 			name:    "listed verbatim in order, default first",
-			outputs: []format.Output{format.OutputTable, format.OutputYAML, format.OutputJSON, format.OutputName},
+			outputs: []output.Format{output.FormatTable, output.FormatYAML, output.FormatJSON, output.FormatName},
 			want:    "output format: table, yaml, json, name",
 		},
 	}

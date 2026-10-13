@@ -1,12 +1,4 @@
-// Package style is flate's terminal presentation layer: the glyphs, lipgloss
-// color helpers, ANSI-aware truncation, and duration formatting shared by the
-// CLI status bar and the `flate test` report, so both surfaces speak one
-// vocabulary instead of hand-rolling escape codes and symbols.
-//
-// Color is gated per output writer: callers resolve ColorEnabled(w) once (a
-// pipe, NO_COLOR, CLICOLOR=0, or a dumb terminal renders plain) and thread the
-// bool through, keeping the renderers pure and deterministic for tests.
-package style
+package output
 
 import (
 	"fmt"

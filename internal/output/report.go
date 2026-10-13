@@ -1,28 +1,13 @@
-// Package report turns a reconcile's failures into a compact, styled end-of-run
-// summary: the real (primary) errors shown once, every cascaded failure folded
-// under the root that caused it, and any deferred log lines in a quiet footer.
-// It exists so a single missing or failed dependency reads as one root cause
-// with a list of what it blocked — not a wall of nested, repeated
-// "dependencies failed: A: dependencies failed: B: …" chains.
-//
-// The model is built from selected orchestrator causes and status data and
-// is pure/deterministic; rendering is gated on a color bool so it is plain and
-// testable off a TTY. Styling reuses internal/style, the vocabulary the live
-// status bar and `flate test` report already speak.
-package report
+package output
 
 import (
 	"cmp"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"time"
 
-	"github.com/home-operations/flate/internal/selection"
-	"github.com/home-operations/flate/internal/style"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
 // blockedSample bounds how many blocked/requiring ids are named inline per root
@@ -71,35 +56,18 @@ func (m Model) Empty() bool {
 	return len(m.Primary) == 0 && len(m.Missing) == 0 && len(m.Warnings) == 0
 }
 
-// Build prepares rows from a selected result's classified failure causes.
-func Build(result *orchestrator.Result) Model {
-	var primary []Primary
-	var missing []Missing
-	blocked := selection.BlockedCount(result.Failed, result.Blocked, result.Causes)
-	for root, victims := range result.Causes {
-		if info, isFailed := result.Failed[root]; isFailed {
-			primary = append(primary, Primary{ID: root, Msg: info.Message, Blocks: victims})
-		} else {
-			missing = append(missing, Missing{ID: root, RequiredBy: victims})
-		}
-	}
-
-	slices.SortFunc(primary, func(a, b Primary) int { return a.ID.Compare(b.ID) })
-	slices.SortFunc(missing, func(a, b Missing) int { return a.ID.Compare(b.ID) })
-	return Model{Primary: primary, Missing: missing, Warnings: result.Unrelated, Blocked: blocked}
-}
-
-// WriteErrors prints the non-resource remainder returned by selection.
-func WriteErrors(w io.Writer, err error) error {
+// Errors prints the non-resource remainder returned by selection.
+func (e Encoder) Errors(err error) error {
 	if err != nil {
-		_, err := fmt.Fprintln(w, "flate error:", err)
+		_, err := fmt.Fprintln(e.Writer, "flate error:", err)
 		return err
 	}
 	return nil
 }
 
-// Write renders the model to w. color gates ANSI styling.
-func (m Model) Write(w io.Writer, color bool) error {
+// Report writes the failure model with the destination color policy.
+func (e Encoder) Report(m Model) error {
+	color := e.Color
 	doc := Document(
 		m.failuresBlock(color),
 		WarningsBlock(m.Warnings, color),
@@ -108,7 +76,7 @@ func (m Model) Write(w io.Writer, color bool) error {
 	if doc == "" {
 		return nil
 	}
-	_, err := io.WriteString(w, doc)
+	_, err := io.WriteString(e.Writer, doc)
 	return err
 }
 
@@ -118,18 +86,18 @@ func (m Model) failuresBlock(color bool) string {
 	rows := make([]string, 0, len(m.Primary)+len(m.Missing))
 	for _, p := range m.Primary {
 		row := fmt.Sprintf("  %s  %s  %s",
-			style.Fail(style.GlyphFail, color), style.Dim(p.ID.Kind, color), p.ID.NamespacedName()) +
-			messageTail(p.Msg)
+			Fail(GlyphFail, color), Dim(p.ID.Kind, color), p.ID.NamespacedName()) +
+			MessageTail(p.Msg, nil, color)
 		if len(p.Blocks) > 0 {
-			row += "\n" + msgIndent + style.Dim("blocks "+summarize(p.Blocks), color)
+			row += "\n" + msgIndent + Dim("blocks "+summarize(p.Blocks), color)
 		}
 		rows = append(rows, row)
 	}
 	for _, mr := range m.Missing {
 		rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s\n%s%s",
-			style.Fail(style.GlyphFail, color), style.Dim(mr.ID.Kind, color), mr.ID.NamespacedName(),
-			style.Fail("not found", color), msgIndent,
-			style.Dim("required by "+summarize(mr.RequiredBy), color)))
+			Fail(GlyphFail, color), Dim(mr.ID.Kind, color), mr.ID.NamespacedName(),
+			Fail("not found", color), msgIndent,
+			Dim("required by "+summarize(mr.RequiredBy), color)))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -148,13 +116,13 @@ func WarningsBlock(warnings []manifest.Warning, color bool) string {
 		if wn.Count > 1 {
 			head = fmt.Sprintf("%s (×%d)", head, wn.Count)
 		}
-		item := style.Warn(head, color)
+		item := Warn(head, color)
 		if len(wn.Detail) > 0 {
-			item += "\n      " + style.Dim(strings.Join(wn.Detail, ", "), color)
+			item += "\n      " + Dim(strings.Join(wn.Detail, ", "), color)
 		}
 		items = append(items, item)
 	}
-	return section(style.Warn(fmt.Sprintf("%s warnings (%d)", style.GlyphWarn, len(warnings)), color), items)
+	return section(Warn(fmt.Sprintf("%s warnings (%d)", GlyphWarn, len(warnings)), color), items)
 }
 
 // NotesBlock renders the operational-log section: a header counting the notes,
@@ -169,9 +137,9 @@ func NotesBlock(notes []Note, color bool) string {
 		if n.Count > 1 {
 			line = fmt.Sprintf("%s (×%d)", line, n.Count)
 		}
-		items = append(items, style.Dim(line, color))
+		items = append(items, Dim(line, color))
 	}
-	return section(style.Dim(fmt.Sprintf("notes (%d)", total), color), items)
+	return section(Dim(fmt.Sprintf("notes (%d)", total), color), items)
 }
 
 // verdictBlock renders the "✗ N failed · M blocked" line, or "" when
@@ -183,9 +151,9 @@ func (m Model) verdictBlock(color bool) string {
 	if failed == 0 && m.Blocked == 0 {
 		return ""
 	}
-	return Verdict(color, style.GlyphFail, style.Fail, 0,
-		Count{N: failed, Label: "failed", Paint: style.Fail},
-		Count{N: m.Blocked, Label: "blocked", Paint: style.Dim},
+	return Verdict(color, GlyphFail, Fail, 0,
+		Count{N: failed, Label: "failed", Paint: Fail},
+		Count{N: m.Blocked, Label: "blocked", Paint: Dim},
 	)
 }
 
@@ -223,7 +191,7 @@ func Document(blocks ...string) string {
 }
 
 // Count is one labeled tally in a Verdict line: N items, a noun, and the paint
-// that colors "<N> <Label>" (e.g. style.Fail for "failed").
+// that colors "<N> <Label>" (e.g. Fail for "failed").
 type Count struct {
 	N     int
 	Label string
@@ -253,7 +221,7 @@ func Verdict(color bool, glyph string, paintGlyph func(string, bool) string, ela
 		b.WriteString(sep + c.Paint(fmt.Sprintf("%d %s", c.N, c.Label), color))
 	}
 	if elapsed > 0 {
-		b.WriteString("   " + style.Dim(style.Elapsed(elapsed), color))
+		b.WriteString("   " + Dim(Elapsed(elapsed), color))
 	}
 	return b.String()
 }
@@ -282,33 +250,23 @@ func summarize(ids []manifest.NamedResource) string {
 // line) under the message column.
 const msgIndent = "         "
 
-// messageTail renders a primary failure's message as it trails the resource
-// header line: the first line inline, any continuation lines indented beneath.
-// Multi-line build/template diagnostics — notably the duplicate-id producer
-// attribution from pkg/kustomize — survive intact instead of being truncated to
-// their first line. Returns "" for an empty message.
-func messageTail(msg string) string {
-	lines := MessageLines(msg)
-	if len(lines) == 0 {
-		return ""
-	}
+// MessageTail trims blank lines and paints each continuation line separately.
+func MessageTail(message string, paint func(string, bool) string, color bool) string {
 	var b strings.Builder
-	b.WriteString("  " + lines[0])
-	for _, line := range lines[1:] {
-		b.WriteString("\n" + msgIndent + line)
+	for line := range strings.SplitSeq(message, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if paint != nil {
+			line = paint(line, color)
+		}
+		if b.Len() == 0 {
+			b.WriteString("  ")
+		} else {
+			b.WriteString("\n" + msgIndent)
+		}
+		b.WriteString(line)
 	}
 	return b.String()
-}
-
-// MessageLines splits a stored failure message into trimmed, non-empty lines.
-// Shared with the test runner so a multi-line build/template diagnostic renders
-// the same way on both surfaces.
-func MessageLines(s string) []string {
-	var out []string
-	for line := range strings.SplitSeq(s, "\n") {
-		if t := strings.TrimSpace(line); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
 }

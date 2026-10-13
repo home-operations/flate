@@ -1,4 +1,4 @@
-package orchestrator_test
+package cli
 
 import (
 	"errors"
@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/report"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -97,7 +96,7 @@ func BenchmarkSelect_CompletedScope(b *testing.B) {
 							selected, selectedErr, _ := orchestrator.Select(runs, current.Err, roots, nil)
 							switch command {
 							case "test":
-								_ = report.Build(selected[0])
+								_ = failureModel(selected[0])
 								_ = testrunner.Run(selected[0])
 							case "documents", "images":
 								orig := diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable}

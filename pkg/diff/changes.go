@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"reflect"
 
-	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/internal/output"
 )
 
 // ChangeStatus classifies how a resource differs between two doc sets.
@@ -128,7 +128,7 @@ func chartLabel(m map[string]any) string {
 
 func renderJSON(left, right []Doc, opts Options) ([]byte, error) {
 	var buf bytes.Buffer
-	err := format.JSON(&buf, struct {
+	err := (output.Encoder{Writer: &buf}).JSON(struct {
 		Changes    []Change      `json:"changes"`
 		Suppressed []Suppression `json:"suppressed"`
 	}{Changes(left, right, opts), append([]Suppression{}, opts.Suppressed...)})

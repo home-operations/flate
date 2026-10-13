@@ -14,8 +14,10 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/spf13/pflag"
+	"sigs.k8s.io/yaml"
 )
 
 // runCLI drives cli.Run inside the test binary and returns
@@ -974,4 +976,99 @@ func TestRun_GetHRChartVersions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRun_Images_GetAndDiffFormatsMatch(t *testing.T) {
+	current, orig := writeFixture(t), writeFixture(t)
+	testutil.WriteFile(t, current, "apps/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello, namespace: apps}
+data:
+  z: ghcr.io/example/z:2
+  a: ghcr.io/example/a:1
+  duplicate: ghcr.io/example/z:2
+`)
+	cache := t.TempDir()
+	want := []string{"ghcr.io/example/a:1", "ghcr.io/example/z:2"}
+	for _, format := range []string{"name", "yaml", "json"} {
+		t.Run(format, func(t *testing.T) {
+			flags := []string{"--path", current, "--cache-dir", cache, "--concurrency", "2", "-o", format}
+			get, stderr, code := runCLI(t, append([]string{"get", "images"}, flags...)...)
+			if code != 0 {
+				t.Fatalf("get images exited %d: %s", code, stderr)
+			}
+			diffArgs := append([]string{"diff", "images", "--path-orig", orig}, flags...)
+			delta, stderr, code := runCLI(t, diffArgs...)
+			if code != 0 {
+				t.Fatalf("diff images exited %d: %s", code, stderr)
+			}
+			assert.Diff(t, delta, get)
+			var images []string
+			if format == "name" {
+				assert.Equal(t, get, strings.Join(want, "\n")+"\n")
+				images = strings.Split(strings.TrimSuffix(get, "\n"), "\n")
+			} else {
+				prefix := "- "
+				if format == "json" {
+					prefix = "["
+				}
+				if !strings.HasPrefix(get, prefix) || !strings.HasPrefix(delta, prefix) {
+					t.Fatalf("wrong %s wire format: get=%q diff=%q", format, get, delta)
+				}
+				if err := yaml.Unmarshal([]byte(get), &images); err != nil {
+					t.Fatal(err)
+				}
+			}
+			assert.Diff(t, images, want)
+		})
+	}
+}
+
+func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
+	root := writeMultiNamespaceFixture(t)
+	testutil.WriteFile(t, root, "apps-b/kustomization.yaml", "resources: [missing.yaml]\n")
+	args := []string{"build", "ks", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json"}
+	full, stderr, code := runCLI(t, args...)
+	assert.Equal(t, code, 1)
+	if !strings.Contains(stderr, "apps-b") || !strings.Contains(full, "apps-a") {
+		t.Fatalf("fixture did not preserve the healthy render: stdout=%s stderr=%s", full, stderr)
+	}
+	limit := len(full) - 1
+	writeErr := errors.New("document write failed")
+	writer := &outputFailWriter{remaining: limit, err: writeErr}
+	var errOut bytes.Buffer
+	cmd := New("test")
+	cmd.SetArgs(args)
+	cmd.SetOut(writer)
+	cmd.SetErr(&errOut)
+	got := cmd.ExecuteContext(t.Context())
+	if _, ok := errors.AsType[*orchestrator.FailuresError](got); !ok || !errors.Is(got, writeErr) {
+		t.Fatalf("render or writer error lost: %v", got)
+	}
+	if _, ok := errors.AsType[reportedError](got); !ok {
+		t.Fatalf("completed diagnostic was not marked reported: %v", got)
+	}
+	assert.Equal(t, writer.buf.String(), full[:limit])
+	assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
+	writer = &outputFailWriter{remaining: limit, err: writeErr}
+	errOut.Reset()
+	assert.Equal(t, Run(args, writer, &errOut), 1)
+	assert.Equal(t, writer.buf.String(), full[:limit])
+	assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
+}
+
+type outputFailWriter struct {
+	buf       bytes.Buffer
+	remaining int
+	err       error
+}
+
+func (w *outputFailWriter) Write(p []byte) (int, error) {
+	n := min(len(p), w.remaining)
+	_, _ = w.buf.Write(p[:n])
+	w.remaining -= n
+	if n < len(p) {
+		return n, w.err
+	}
+	return n, nil
 }

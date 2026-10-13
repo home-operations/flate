@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/report"
+	"github.com/home-operations/flate/internal/output"
 )
 
 type captureHandler struct{ msgs *[]string }
@@ -38,7 +38,7 @@ func TestDeferSink_BuffersWarnPassesError(t *testing.T) {
 	}
 
 	notes := sink.drain()
-	assert.Diff(t, notes, []report.Note{
+	assert.Diff(t, notes, []output.Note{
 		{Text: "note", Count: 1},
 		{Text: "resource orphaned id=a", Count: 2},
 	})
@@ -50,9 +50,9 @@ func TestDeferSink_BuffersWarnPassesError(t *testing.T) {
 }
 
 func TestDeferSink_DrainOrderIsDeterministic(t *testing.T) {
-	want := make([]report.Note, 0, 8)
+	want := make([]output.Note, 0, 8)
 	for _, text := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
-		want = append(want, report.Note{Text: text, Count: 1})
+		want = append(want, output.Note{Text: text, Count: 1})
 	}
 	for range 50 {
 		var inline []string

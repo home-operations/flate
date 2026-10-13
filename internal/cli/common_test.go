@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/format"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/spf13/cobra"
@@ -101,7 +101,7 @@ func TestCacheDir_FlagAndEnvPopulateRoot(t *testing.T) {
 
 func TestOutputValue_Validates(t *testing.T) {
 	var out string
-	v := &outputValue{target: &out, allowed: []format.Output{format.OutputYAML, format.OutputJSON}}
+	v := &outputValue{target: &out, allowed: []output.Format{output.FormatYAML, output.FormatJSON}}
 
 	if err := v.Set("json"); err != nil {
 		t.Fatalf("json should be accepted: %v", err)

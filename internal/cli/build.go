@@ -3,14 +3,12 @@ package cli
 import (
 	"cmp"
 	"errors"
-	"io"
 	"slices"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/home-operations/flate/internal/format"
-	"github.com/home-operations/flate/internal/report"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
@@ -72,14 +70,14 @@ func buildCmd(use string, aliases []string, short string, args cobra.PositionalA
 			if name != "" && res.Counts[kinds[0]] == 0 {
 				emitErr = noNamedError(kinds[0], name)
 			} else {
-				emitErr = emitDocs(cmd.OutOrStdout(), collectRendered(res, b), format.Output(c.output))
+				emitErr = (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Documents(collectRendered(res, b))
 			}
-			return reportFailures(cmd.ErrOrStderr(), report.Build(res), name != "", reportErrors{
+			return reportFailures(cmd.ErrOrStderr(), failureModel(res), name != "", reportErrors{
 				selected: errors.Join(emitErr, runErr), remainder: errors.Join(emitErr, remainder),
 			})
 		},
 	}
-	bindCommon(cmd.Flags(), c, format.OutputYAML, format.OutputJSON)
+	bindCommon(cmd.Flags(), c, output.FormatYAML, output.FormatJSON)
 	bindHelmFlags(cmd.Flags(), h)
 	bindBuildFlags(cmd.Flags(), b)
 	return cmd
@@ -103,18 +101,6 @@ func emissionDocs(mans []map[string]any, b *buildFlags) []map[string]any {
 		})
 	}
 	return docs
-}
-
-// emitDocs writes a sequence of rendered docs as either multi-doc YAML
-// (the default for `flate build`) or a single JSON array. Other -o values
-// are rejected at parse time by the -o flag.
-func emitDocs(w io.Writer, docs []map[string]any, out format.Output) error {
-	switch out {
-	case format.OutputJSON:
-		return format.JSON(w, docs)
-	default:
-		return format.YAMLMulti(w, docs)
-	}
 }
 
 // compareDocs orders rendered docs by (kind, namespace, name).

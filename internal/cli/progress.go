@@ -11,7 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/home-operations/flate/internal/style"
+	"github.com/home-operations/flate/internal/output"
 )
 
 // barSink is the slog routing adapter active while the live status bar runs; nil
@@ -36,7 +36,7 @@ type barWriter struct {
 }
 
 func newBarWriter(out io.Writer) *barWriter {
-	return &barWriter{out: out, color: style.ColorEnabled(out)}
+	return &barWriter{out: out, color: output.ColorEnabled(out)}
 }
 
 // setProgram attaches (or, with nil, detaches) the live Bubble Tea program so

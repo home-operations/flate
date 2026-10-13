@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,7 +17,7 @@ import (
 	"github.com/go-git/go-git/v5"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/report"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -387,7 +389,7 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
 			var out bytes.Buffer
-			got := reportFailures(&out, report.Build(selection[0]), true, reportErrors{selected: selectedErr, remainder: remainder})
+			got := reportFailures(&out, failureModel(selection[0]), true, reportErrors{selected: selectedErr, remainder: remainder})
 			if !errors.Is(got, fatal) || !strings.Contains(out.String(), fatal.Error()) || !strings.Contains(out.String(), "unrelated failure") {
 				t.Fatalf("warning-only footer hid fatal cause: %v %s", got, out.String())
 			}
@@ -541,7 +543,7 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 		t.Fatalf("selection failed: %v", selectedErr)
 	}
 	var out bytes.Buffer
-	if got := reportFailures(&out, report.Build(selection[0]), true, reportErrors{selected: selectedErr, remainder: remainder}); got == nil {
+	if got := reportFailures(&out, failureModel(selection[0]), true, reportErrors{selected: selectedErr, remainder: remainder}); got == nil {
 		t.Fatal("fatal cycle became successful")
 	}
 	for _, want := range []string{"blocked by " + b.String(), "blocked by " + a.String(), "unrelated failure", "2 failed"} {
@@ -641,14 +643,29 @@ func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
 }
 
 func TestRun_NamedScope_TestWarningFooter(t *testing.T) {
-	root := writeNamedScopeFixture(t)
-	out, stderr, code := runCLI(t, "test", "hr", "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2")
-	assert.Equal(t, code, 0)
-	assert.Equal(t, stderr, "")
-	for _, want := range []string{"warnings", "outside", "unrelated"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("named test omitted %q: %s", want, out)
-		}
+	for _, fatal := range []bool{false, true} {
+		t.Run(fmt.Sprint(fatal), func(t *testing.T) {
+			root := writeNamedScopeFixture(t)
+			wantCode := 0
+			if fatal {
+				appendScopeSpec(t, root, "cluster/hr.yaml", "  dependsOn: [{name: fatal-dependency}]\n")
+				wantCode = 1
+			}
+			out, stderr, code := runCLI(t, "test", "hr", "selected", "--path", filepath.Join(root, "cluster"),
+				"--cache-dir", t.TempDir(), "--concurrency", "2")
+			assert.Equal(t, code, wantCode)
+			assert.Equal(t, strings.Count(out, "warnings (1)"), 1)
+			assert.Equal(t, strings.Count(out, "Kustomization/flux-system/unrelated"), 1)
+			assert.Equal(t, strings.Contains(out, "outside"), true)
+			if fatal {
+				assert.Equal(t, strings.Count(stderr, "apps/fatal-dependency"), 1)
+				assert.Equal(t, strings.Contains(stderr, "unrelated"), false)
+				assert.Equal(t, strings.Contains(stderr, "warnings"), false)
+				assert.Equal(t, strings.Count(stderr, "flate error:"), 0)
+			} else {
+				assert.Equal(t, stderr, "")
+			}
+		})
 	}
 }
 
@@ -927,7 +944,7 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			}
 			var out bytes.Buffer
 			extra := fmt.Errorf("reconcile: %w", context.Canceled)
-			got := reportFailures(&out, report.Build(selection[0]), named, reportErrors{selected: errors.Join(selectedErr, extra), remainder: errors.Join(remainder, extra)})
+			got := reportFailures(&out, failureModel(selection[0]), named, reportErrors{selected: errors.Join(selectedErr, extra), remainder: errors.Join(remainder, extra)})
 			if !errors.Is(got, context.Canceled) {
 				t.Fatalf("lost non-resource error: %v", got)
 			}
@@ -935,7 +952,7 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 				t.Errorf("non-resource error missing from report: %s", &out)
 			}
 			writeErr := errors.New("report write failed")
-			got = reportFailures(failingWriter{err: writeErr}, report.Build(selection[0]), named, reportErrors{selected: selectedErr, remainder: remainder})
+			got = reportFailures(failingWriter{err: writeErr}, failureModel(selection[0]), named, reportErrors{selected: selectedErr, remainder: remainder})
 			assert.Equal(t, errors.Is(got, writeErr), named)
 		})
 	}
@@ -976,5 +993,104 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestFailureModel(t *testing.T) {
+	id := func(name string) manifest.NamedResource {
+		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+	}
+	failed := func(ids ...manifest.NamedResource) map[manifest.NamedResource]store.StatusInfo {
+		m := make(map[manifest.NamedResource]store.StatusInfo, len(ids))
+		for _, id := range ids {
+			m[id] = store.StatusInfo{Status: store.StatusFailed, Message: id.Name + " boom"}
+		}
+		return m
+	}
+	root, mid, leaf := id("root"), id("mid"), id("leaf")
+	missing, dependent, dual, peer := id("missing"), id("dependent"), id("dual"), id("peer")
+	for _, tc := range []struct {
+		name    string
+		result  orchestrator.Result
+		want    output.Model
+		prepare bool
+	}{
+		{
+			name: "GroupsCascadeUnderRoots",
+			result: orchestrator.Result{
+				Failed:  failed(root, mid, leaf, dependent),
+				Blocked: map[manifest.NamedResource][]manifest.NamedResource{mid: {root}, leaf: {mid}, dependent: {missing}},
+				Causes:  map[manifest.NamedResource][]manifest.NamedResource{root: {leaf, mid}, missing: {dependent}},
+			},
+			want: output.Model{
+				Primary: []output.Primary{{ID: root, Msg: "root boom", Blocks: []manifest.NamedResource{leaf, mid}}},
+				Missing: []output.Missing{{ID: missing, RequiredBy: []manifest.NamedResource{dependent}}},
+				Blocked: 3,
+			},
+		},
+		{
+			name:   "PrimaryOnly",
+			result: orchestrator.Result{Failed: failed(root), Causes: map[manifest.NamedResource][]manifest.NamedResource{root: nil}},
+			want:   output.Model{Primary: []output.Primary{{ID: root, Msg: "root boom"}}},
+		},
+		{name: "Empty"},
+		{
+			name: "BlockedCountsDistinctResources",
+			result: orchestrator.Result{
+				Failed:  failed(root, dual),
+				Blocked: map[manifest.NamedResource][]manifest.NamedResource{dual: {root, missing}},
+				Causes:  map[manifest.NamedResource][]manifest.NamedResource{root: {dual}, missing: {dual}},
+			},
+			want: output.Model{
+				Primary: []output.Primary{{ID: root, Msg: "root boom", Blocks: []manifest.NamedResource{dual}}},
+				Missing: []output.Missing{{ID: missing, RequiredBy: []manifest.NamedResource{dual}}},
+				Blocked: 1,
+			},
+		},
+		{
+			name: "PreparedCycleRoot", prepare: true,
+			result: orchestrator.Result{
+				Failed: map[manifest.NamedResource]store.StatusInfo{
+					root: {Status: store.StatusFailed, Message: "dependency cycle: blocked by " + peer.String()},
+					peer: {Status: store.StatusFailed, Message: "dependency cycle: blocked by " + root.String()},
+					leaf: {Status: store.StatusFailed, Message: "dependencies failed"},
+				},
+				Blocked: map[manifest.NamedResource][]manifest.NamedResource{root: {peer}, peer: {root}, leaf: {root}},
+			},
+			want: output.Model{
+				Primary: []output.Primary{
+					{ID: peer, Msg: "dependency cycle: blocked by " + root.String()},
+					{ID: root, Msg: "dependency cycle: blocked by " + peer.String(), Blocks: []manifest.NamedResource{leaf}},
+				},
+				Blocked: 1,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := &tc.result
+			failed := maps.Clone(result.Failed)
+			blocked := maps.Clone(result.Blocked)
+			for id, deps := range blocked {
+				blocked[id] = slices.Clone(deps)
+			}
+			if tc.prepare {
+				o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(o.Stop)
+				selected, err, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: result}},
+					&orchestrator.FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Kind: manifest.KindKustomization}}, nil)
+				if len(selected) != 1 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("(+%d blocked", tc.want.Blocked)) {
+					t.Fatalf("selected error and report counts disagree: %v", err)
+				}
+				result = selected[0]
+			}
+			got := failureModel(result)
+			assert.Diff(t, got, tc.want)
+			assert.Equal(t, got.Empty(), tc.want.Empty())
+			assert.Equal(t, maps.Equal(tc.result.Failed, failed), true)
+			assert.Diff(t, tc.result.Blocked, blocked)
+		})
 	}
 }

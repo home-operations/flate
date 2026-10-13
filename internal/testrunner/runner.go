@@ -15,8 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-operations/flate/internal/report"
-	"github.com/home-operations/flate/internal/style"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
@@ -67,18 +66,15 @@ func (r Report) AnyFailed() bool { return r.Failed > 0 || len(r.Blocked) > 0 }
 func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 	switch o {
 	case OutcomePassed:
-		return style.GlyphPass, style.Pass
+		return output.GlyphPass, output.Pass
 	case OutcomeFailed:
-		return style.GlyphFail, style.Fail
+		return output.GlyphFail, output.Fail
 	case OutcomeBlocked:
-		return style.GlyphBlocked, style.Dim
+		return output.GlyphBlocked, output.Dim
 	default: // OutcomeSkipped
-		return style.GlyphSkip, style.Dim
+		return output.GlyphSkip, output.Dim
 	}
 }
-
-// reasonIndent aligns a failure's continuation lines beneath its row.
-const reasonIndent = "         "
 
 // Write renders the whole `flate test` report to w as one document: the roster
 // (one row per case, then one per blocked resource), then the render advisories
@@ -88,11 +84,11 @@ const reasonIndent = "         "
 // appear inline on their roster rows, so this is the complete picture: there is
 // no separate failure block to print elsewhere. color gates the ANSI codes — the
 // caller decides based on the sink (see cli.test).
-func (r Report) Write(w io.Writer, warnings []manifest.Warning, notes []report.Note, color bool, elapsed time.Duration) error {
-	doc := report.Document(
+func (r Report) Write(w io.Writer, warnings []manifest.Warning, notes []output.Note, color bool, elapsed time.Duration) error {
+	doc := output.Document(
 		r.rosterBlock(color),
-		report.WarningsBlock(warnings, color),
-		report.NotesBlock(notes, color),
+		output.WarningsBlock(warnings, color),
+		output.NotesBlock(notes, color),
 		r.verdict(color, elapsed),
 	)
 	_, err := io.WriteString(w, doc)
@@ -124,14 +120,9 @@ func caseRow(c Case, kindW int, color bool) string {
 	var row strings.Builder
 	fmt.Fprintf(&row, "  %s  %s  %s",
 		paint(glyph, color),
-		style.Dim(fmt.Sprintf("%-*s", kindW, c.ID.Kind), color),
+		output.Dim(fmt.Sprintf("%-*s", kindW, c.ID.Kind), color),
 		c.ID.NamespacedName())
-	if lines := report.MessageLines(c.Reason); len(lines) > 0 {
-		fmt.Fprintf(&row, "  %s", style.Dim(lines[0], color))
-		for _, line := range lines[1:] {
-			fmt.Fprintf(&row, "\n%s%s", reasonIndent, style.Dim(line, color))
-		}
-	}
+	row.WriteString(output.MessageTail(c.Reason, output.Dim, color))
 	return row.String()
 }
 
@@ -139,15 +130,15 @@ func caseRow(c Case, kindW int, color bool) string {
 // when anything failed or blocked, leading the colored counts (passed always,
 // the rest only when non-zero) and the elapsed clock.
 func (r Report) verdict(color bool, elapsed time.Duration) string {
-	glyph, paint := style.GlyphPass, style.Pass
+	glyph, paint := output.GlyphPass, output.Pass
 	if r.AnyFailed() {
-		glyph, paint = style.GlyphFail, style.Fail
+		glyph, paint = output.GlyphFail, output.Fail
 	}
-	return report.Verdict(color, glyph, paint, elapsed,
-		report.Count{N: r.Passed, Label: "passed", Paint: style.Pass},
-		report.Count{N: r.Skipped, Label: "skipped", Paint: style.Dim},
-		report.Count{N: r.Failed, Label: "failed", Paint: style.Fail},
-		report.Count{N: len(r.Blocked), Label: "blocked", Paint: style.Dim},
+	return output.Verdict(color, glyph, paint, elapsed,
+		output.Count{N: r.Passed, Label: "passed", Paint: output.Pass},
+		output.Count{N: r.Skipped, Label: "skipped", Paint: output.Dim},
+		output.Count{N: r.Failed, Label: "failed", Paint: output.Fail},
+		output.Count{N: len(r.Blocked), Label: "blocked", Paint: output.Dim},
 	)
 }
 

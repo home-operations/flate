@@ -9,8 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/home-operations/flate/internal/report"
-	"github.com/home-operations/flate/internal/style"
+	"github.com/home-operations/flate/internal/output"
 )
 
 // deferSink is a slog.Handler that holds back the chatter a failing run emits —
@@ -77,16 +76,16 @@ func (d *deferSink) WithGroup(name string) slog.Handler {
 
 // drain stops buffering and returns the collected notes in text order.
 // Idempotent: a second call returns nothing.
-func (d *deferSink) drain() []report.Note {
+func (d *deferSink) drain() []output.Note {
 	d.buf.mu.Lock()
 	defer d.buf.mu.Unlock()
 	d.buf.on = false
-	notes := make([]report.Note, 0, len(d.buf.order))
+	notes := make([]output.Note, 0, len(d.buf.order))
 	for _, text := range d.buf.order {
-		notes = append(notes, report.Note{Text: text, Count: d.buf.counts[text]})
+		notes = append(notes, output.Note{Text: text, Count: d.buf.counts[text]})
 	}
 	d.buf.order, d.buf.counts = nil, map[string]int{}
-	slices.SortFunc(notes, func(a, b report.Note) int {
+	slices.SortFunc(notes, func(a, b output.Note) int {
 		return cmp.Compare(a.Text, b.Text)
 	})
 	return notes
@@ -100,7 +99,7 @@ func formatRecord(r slog.Record) string {
 	var b strings.Builder
 	b.WriteString(r.Message)
 	r.Attrs(func(a slog.Attr) bool {
-		fmt.Fprintf(&b, " %s=%s", a.Key, style.Truncate(oneLineValue(a.Value.String()), 80))
+		fmt.Fprintf(&b, " %s=%s", a.Key, output.Truncate(oneLineValue(a.Value.String()), 80))
 		return true
 	})
 	return b.String()
